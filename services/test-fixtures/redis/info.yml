@@ -1,0 +1,7 @@
+id: redis
+name: redis
+description: something awesome
+bindable: true
+tags:
+- foo
+- bar
