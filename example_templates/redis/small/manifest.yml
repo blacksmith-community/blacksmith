@@ -1,6 +1,13 @@
 name: redis-test
 director_uuid: 510ac165-ee99-4c45-8274-1b989e5d5697
 
+meta:
+  vault: (( env "secret/$BROKER_VAULT" ))
+  service:
+    username: (( vault meta.vault "redis:username" ))
+    password: (( vault meta.vault "redis:password" ))
+    echo:     (( env "$ENV" ))
+
 releases:
 - name: redis
   version: 12
@@ -30,3 +37,7 @@ instance_groups:
   persistent_disk_type: default
   networks:
   - name: default
+  properties:
+    auth:
+      username: (( grab meta.service.username ))
+      password: (( grab meta.service.password ))
