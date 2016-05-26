@@ -49,7 +49,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	var params map[interface{}]interface{}
 	params["name"] = instanceID
 
-	manifest, _, err := GenManifest(plan, params)
+	manifest, creds, err := GenManifest(plan, params)
 	if err != nil {
 		log.Printf("[provision %s] failed: %s", instanceID, err)
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
@@ -61,7 +61,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("backend BOSH deployment failed")
 	}
 
-	b.Vault.Track(instanceID, "provision", task.ID) /* FIXME: track service creds */
+	b.Vault.Track(instanceID, "provision", task.ID, creds)
 	log.Printf("[provision %s] started", instanceID)
 	return spec, nil
 }
@@ -74,13 +74,13 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 		return true, err
 	}
 
-	b.Vault.Track(instanceID, "deprovision", task.ID)
+	b.Vault.Track(instanceID, "deprovision", task.ID, nil)
 	log.Printf("[deprovision %s] started", instanceID)
 	return true, nil
 }
 
 func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, error) {
-	typ, taskID, _ := b.Vault.State(instanceID)
+	typ, taskID, _, _ := b.Vault.State(instanceID)
 	if typ == "provision" {
 		task, err := b.BOSH.GetTask(taskID)
 		if err != nil {
@@ -133,7 +133,10 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
 	var binding brokerapi.Binding
 	log.Printf("[bind %s / %s] binding service", instanceID, bindingID)
-	/* FIXME: send creds */
+
+	_, _, creds, _ := b.Vault.State(instanceID)
+	binding.Credentials = creds
+
 	log.Printf("[bind %s / %s] success", instanceID, bindingID)
 	return binding, nil
 }

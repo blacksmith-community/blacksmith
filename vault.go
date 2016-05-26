@@ -116,11 +116,12 @@ func (vault *Vault) Clear(instanceID string) {
 	rm(fmt.Sprintf("/v1/secret/%s", instanceID))
 }
 
-func (vault *Vault) Track(instanceID, action string, taskID int) error {
+func (vault *Vault) Track(instanceID, action string, taskID int, credentials interface{}) error {
 	task := struct {
-		Action string
-		Task   int
-	}{action, taskID}
+		Action      string
+		Task        int
+		Credentials interface{}
+	}{action, taskID, credentials}
 
 	b, err := json.Marshal(task)
 	if err != nil {
@@ -139,42 +140,48 @@ func (vault *Vault) Track(instanceID, action string, taskID int) error {
 	return nil
 }
 
-func (vault *Vault) State(instanceID string) (string, int, error) {
+func (vault *Vault) State(instanceID string) (string, int, interface{}, error) {
 	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/%s/task", instanceID), nil)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	if res.StatusCode != 200 && res.StatusCode != 204 {
-		return "", 0, fmt.Errorf("API %s", res.Status)
+		return "", 0, nil, fmt.Errorf("API %s", res.Status)
 	}
 
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 
 	var raw map[string]interface{}
 	if err = json.Unmarshal(b, &raw); err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 
 	var typ string
 	var id int
+	var creds map[interface{}]interface{}
 
 	if rawdata, ok := raw["data"]; ok {
 		if data, ok := rawdata.(map[string]interface{}); ok {
 			if v, ok := data["task"]; ok {
 				id, err = strconv.Atoi(fmt.Sprintf("%v", v))
 				if err != nil {
-					return "", 0, err
+					return "", 0, nil, err
 				}
 			}
 			if v, ok := data["action"]; ok {
 				typ = fmt.Sprintf("%v", v)
 			}
+			if v, ok := data["credentials"]; ok {
+				if mapped, ok := v.(map[interface{}]interface{}); ok {
+					creds = mapped
+				}
+			}
 		}
 
-		return typ, id, nil
+		return typ, id, creds, nil
 	}
-	return "", 0, fmt.Errorf("malformed response from vault")
+	return "", 0, nil, fmt.Errorf("malformed response from vault")
 }
