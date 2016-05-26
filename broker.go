@@ -10,22 +10,17 @@ import (
 
 type Broker struct {
 	Catalog []brokerapi.Service
+	Plans   map[string]Plan
 	BOSH    *gogobosh.Client
 	Vault   *Vault
 }
 
-func (b Broker) FindPlan(planID string, serviceID string) (brokerapi.ServicePlan, error) {
-	for _, s := range b.Catalog {
-		if s.ID == serviceID {
-			for _, p := range s.Plans {
-				if p.ID == planID {
-					return p, nil
-				}
-			}
-		}
+func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
+	key := fmt.Sprintf("%s/%s", planID, serviceID)
+	if plan, ok := b.Plans[key]; ok {
+		return plan, nil
 	}
-
-	return brokerapi.ServicePlan{}, fmt.Errorf("plan %s/%s not found", serviceID, planID)
+	return Plan{}, fmt.Errorf("plan %s not found", key)
 }
 
 func EnvBroker() *Broker {
@@ -54,7 +49,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	var params map[interface{}]interface{}
 	params["name"] = instanceID
 
-	manifest, err := GenManifest(plan, params)
+	manifest, _, err := GenManifest(plan, params)
 	if err != nil {
 		log.Printf("[provision %s] failed: %s", instanceID, err)
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
@@ -87,7 +82,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, error) {
 	typ, taskID, _ := b.Vault.State(instanceID)
 	if typ == "provision" {
-		task, err := b.BOSH.GetTask(strconv.Atoi(taskID))
+		task, err := b.BOSH.GetTask(taskID)
 		if err != nil {
 			log.Printf("[provision %s] failed to get task from BOSH: %s", instanceID, err)
 			return brokerapi.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")
@@ -106,7 +101,7 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 	}
 
 	if typ == "deprovision" {
-		task, err := b.BOSH.GetTask(strconv.Atoi(taskID))
+		task, err := b.BOSH.GetTask(taskID)
 		if err != nil {
 			log.Printf("[deprovision %s] failed to get task from BOSH: %s", instanceID, err)
 			return brokerapi.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")

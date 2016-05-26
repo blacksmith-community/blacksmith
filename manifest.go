@@ -21,21 +21,35 @@ func wrap(key string, data map[interface{}]interface{}) map[interface{}]interfac
 	return data
 }
 
-func GenManifest(p Plan, params map[interface{}]interface{}) (string, error) {
+func GenManifest(p Plan, params map[interface{}]interface{}) (string, map[interface{}]interface{}, error) {
+	var credentials map[interface{}]interface{}
 	var manifest map[interface{}]interface{}
+
 	err := yaml.Unmarshal([]byte(p.RawManifest), &manifest)
 	if err != nil {
-		return "", err
+		return "", credentials, err
 	}
 
 	final, err := spruce.Merge(manifest, wrap("meta.params", params))
 	if err != nil {
-		return "", err
+		return "", credentials, err
+	}
+
+	if m, ok := final["meta"]; ok {
+		if mm, ok := m.(map[interface{}]interface{}); ok {
+			if s, ok := mm["service"]; ok {
+				if ss, ok := s.(map[interface{}]interface{}); ok {
+					for k, v := range ss {
+						credentials[k] = v
+					}
+				}
+			}
+		}
 	}
 
 	b, err := yaml.Marshal(final)
 	if err != nil {
-		return "", err
+		return "", credentials, err
 	}
-	return string(b), nil
+	return string(b), credentials, nil
 }
