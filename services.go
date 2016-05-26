@@ -22,7 +22,6 @@ type Service struct {
 	Description string   `yaml:"description"`
 	Bindable    bool     `yaml:"bindable"`
 	Tags        []string `yaml:"tags"`
-	// FIXME: support metadata
 
 	Plans []Plan
 }
