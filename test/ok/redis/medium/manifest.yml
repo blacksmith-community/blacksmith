@@ -1,0 +1,32 @@
+name: redis-test
+director_uuid: 510ac165-ee99-4c45-8274-1b989e5d5697
+
+releases:
+- name: redis
+  version: 12
+
+stemcells:
+- alias: default
+  os: ubuntu-trusty
+  version: 3147
+
+update:
+  canaries: 1
+  max_in_flight: 10
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+
+instance_groups:
+- name: redis
+  instances: 1
+  azs: [z1, z2]
+  jobs:
+  - name: redis
+    release: redis
+    properties:
+      port: 3606
+  vm_type: default
+  stemcell: default
+  persistent_disk_type: default
+  networks:
+  - name: default

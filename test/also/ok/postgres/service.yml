@@ -1,0 +1,8 @@
+id: pg
+name: postgres
+description: A Database System
+bindable: true
+tags:
+  - db
+  - pg
+  - postgres

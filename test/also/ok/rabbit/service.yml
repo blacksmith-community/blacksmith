@@ -1,0 +1,7 @@
+id: rabbitmq
+name: rabbit
+description: A Message Queue
+bindable: true
+tags:
+  - rabbit
+  - mq
