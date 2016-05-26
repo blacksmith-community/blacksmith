@@ -23,14 +23,6 @@ func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
 	return Plan{}, fmt.Errorf("plan %s not found", key)
 }
 
-func EnvBroker() *Broker {
-	v := EnvVault()
-	if v == nil {
-		return nil
-	}
-	return &Broker{Vault: v}
-}
-
 func (b *Broker) Services() []brokerapi.Service {
 	log.Printf("[catalog] returning service catalog")
 	return b.Catalog

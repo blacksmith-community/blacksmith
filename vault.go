@@ -1,13 +1,11 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 )
@@ -17,46 +15,6 @@ type Vault struct {
 	Token    string
 	Insecure bool
 	HTTP     *http.Client
-}
-
-func EnvVault() *Vault {
-	var ok bool
-	c := &Vault{
-		URL:      os.Getenv("VAULT_ADDR"),
-		Token:    os.Getenv("VAULT_TOKEN"),
-		Insecure: os.Getenv("VAULT_SKIP_VERIFY") != "",
-	}
-
-	if c.URL == "" {
-		fmt.Fprintf(os.Stderr, "No VAULT_ADDR environment variable set!\n")
-		ok = false
-	}
-
-	if c.Token == "" {
-		fmt.Fprintf(os.Stderr, "No VAULT_TOKEN environment variable set!\n")
-		ok = false
-	}
-
-	if !ok {
-		return nil
-	}
-
-	c.HTTP = &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: c.Insecure,
-			},
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) > 10 {
-				return fmt.Errorf("stopped after 10 redirects")
-			}
-			req.Header.Add("X-Vault-Token", c.Token)
-			return nil
-		},
-	}
-
-	return c
 }
 
 func (vault *Vault) NewRequest(method, url string, data interface{}) (*http.Request, error) {
