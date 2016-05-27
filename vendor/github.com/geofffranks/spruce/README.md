@@ -27,7 +27,7 @@ Alternatively,  you can download a [prebuilt binaries for 64-bit Linux, or Mac O
 or you can install via `go get` (provided you have installed go):
 
 ```
-go get github.com/geofffranks/spruce
+go get github.com/geofffranks/spruce/...
 ```
 
 ## Merging Rules
@@ -147,6 +147,27 @@ embedded double quotes escaped with a single backslash - \\),
 integer literals (a string of digits) and floating point literals
 (a string of digits, a period, and another string of digits).
 Scientific notation is not currently supported.
+
+### Accessing the Environment
+
+Want to pull in secret credentials from your environment?  No
+problem!
+
+```yml
+secrets:
+  aws:
+    access_key: (( grab $AWS_ACCESS_KEY ))
+    secret_key: (( grab $AWS_SECRET_KEY ))
+```
+
+`spruce` will try to pull the named environment variables value
+from the environment, and fail if the value is not set, or is
+empty.  You can use the `||` syntax to provide defaults, á la:
+
+```yml
+meta:
+  environment: (( grab $ENV_NAME || "default-env" ))
+```
 
 ### Hmm.. How about auto-calculating static IPs for a BOSH manifest?
 
@@ -630,4 +651,4 @@ of improvement and quality assurance.
 
 ## License
 
-Licensed under [the Apache License v2.0](https://github.com/geofffranks/spruce/raw/master/LICENSE)
+Licensed under [the MIT License](https://github.com/geofffranks/spruce/raw/master/LICENSE)

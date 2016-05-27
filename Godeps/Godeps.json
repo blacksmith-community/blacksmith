@@ -13,8 +13,8 @@
 		},
 		{
 			"ImportPath": "github.com/geofffranks/spruce",
-			"Comment": "v1.0.1-1-g1487dff",
-			"Rev": "1487dff241893353ca78280b2c836f4396aa5403"
+			"Comment": "v1.4.0-2-ga9c0f5e",
+			"Rev": "a9c0f5ef973e55266728e3c625c6de6eb0a1f3f1"
 		},
 		{
 			"ImportPath": "github.com/gorilla/context",
@@ -175,6 +175,19 @@
 		{
 			"ImportPath": "gopkg.in/yaml.v2",
 			"Rev": "49c95bdc21843256fb6c4e0d370a05f24a0bf213"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/log",
+			"Comment": "v1.4.0-2-ga9c0f5e",
+			"Rev": "a9c0f5ef973e55266728e3c625c6de6eb0a1f3f1"
+		},
+		{
+			"ImportPath": "github.com/jhunt/tree",
+			"Rev": "2ad45c3404f9ea8116987e8a36db6f6d892aad26"
+		},
+		{
+			"ImportPath": "github.com/smallfish/simpleyaml",
+			"Rev": "e0865b8fe0bb302895f2862494f1d5b2f471face"
 		}
 	]
 }

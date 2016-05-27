@@ -1,17 +1,20 @@
-package main
+package spruce
 
 import (
 	"fmt"
 	"sort"
 	"strconv"
+
+	. "github.com/geofffranks/spruce/log"
+	"github.com/jhunt/tree"
 )
 
 // Evaluator ...
 type Evaluator struct {
 	Tree map[interface{}]interface{}
-	Deps map[string][]Cursor
+	Deps map[string][]tree.Cursor
 
-	Here *Cursor
+	Here *tree.Cursor
 
 	CheckOps []*Opcall
 
@@ -20,10 +23,10 @@ type Evaluator struct {
 
 // DataFlow ...
 func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
-	ev.Here = &Cursor{}
+	ev.Here = &tree.Cursor{}
 
 	all := map[string]*Opcall{}
-	locs := []*Cursor{}
+	locs := []*tree.Cursor{}
 	errors := MultiError{Errors: []error{}}
 
 	// forward decls of co-recursive function
@@ -173,7 +176,7 @@ func (ev *Evaluator) RunOps(ops []*Opcall) error {
 func (ev *Evaluator) Prune(paths []string) error {
 	DEBUG("pruning %d paths from the final YAML structure", len(paths))
 	for _, path := range paths {
-		c, err := ParseCursor(path)
+		c, err := tree.ParseCursor(path)
 		if err != nil {
 			return err
 		}

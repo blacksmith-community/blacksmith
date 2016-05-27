@@ -1,10 +1,14 @@
-package main
+package spruce
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"strconv"
 	"strings"
+
+	. "github.com/geofffranks/spruce/log"
+	"github.com/jhunt/tree"
 )
 
 // UsedIPs ...
@@ -25,11 +29,11 @@ func (StaticIPOperator) Phase() OperatorPhase {
 }
 
 // Dependencies ...
-func (StaticIPOperator) Dependencies(ev *Evaluator, _ []*Expr, _ []*Cursor) []*Cursor {
-	l := []*Cursor{}
+func (StaticIPOperator) Dependencies(ev *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
+	l := []*tree.Cursor{}
 
 	track := func(path string) {
-		c, err := ParseCursor(path)
+		c, err := tree.ParseCursor(path)
 		if err != nil {
 			return
 		}
@@ -50,16 +54,18 @@ func (StaticIPOperator) Dependencies(ev *Evaluator, _ []*Expr, _ []*Cursor) []*C
 
 	// need all the job instance count decls
 	track("jobs.*.instances")
+	track("instance_groups.*.instances")
 
 	// need all the job network name decls
 	track("jobs.*.networks.*.name")
+	track("instance_groups.*.networks.*.name")
 
 	return l
 }
 
-func currentJob(ev *Evaluator) (*Cursor, error) {
+func currentJob(ev *Evaluator) (*tree.Cursor, error) {
 	c := ev.Here.Copy()
-	for c.Depth() > 0 && c.Parent() != "jobs" {
+	for c.Depth() > 0 && c.Parent() != "jobs" && c.Parent() != "instance_groups" {
 		c.Pop()
 	}
 
@@ -69,7 +75,7 @@ func currentJob(ev *Evaluator) (*Cursor, error) {
 	return c, nil
 }
 
-func instances(ev *Evaluator, job *Cursor) (int, error) {
+func instances(ev *Evaluator, job *tree.Cursor) (int, error) {
 	c := job.Copy()
 	c.Push("instances")
 	inst, err := c.ResolveString(ev.Tree)
@@ -98,7 +104,7 @@ func statics(ev *Evaluator) ([]string, error) {
 		return addrs, err
 	}
 
-	c, err = ParseCursor(fmt.Sprintf("networks.%s.subnets.*.static.*", name))
+	c, err = tree.ParseCursor(fmt.Sprintf("networks.%s.subnets.*.static.*", name))
 	if err != nil {
 		return addrs, err
 	}
@@ -136,6 +142,10 @@ func statics(ev *Evaluator) ([]string, error) {
 		end := net.ParseIP(segments[1])
 		if end == nil {
 			return nil, fmt.Errorf("%s: not a valid IP address", segments[1])
+		}
+
+		if binary.BigEndian.Uint32(start.To4()) > binary.BigEndian.Uint32(end.To4()) {
+			return nil, fmt.Errorf("Static IP pool [%s - %s] ends before it starts", start, end)
 		}
 
 		for !start.Equal(end) {
@@ -215,6 +225,7 @@ func (s StaticIPOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	// find our network
 	DEBUG("  determining the pool of static IPs from which to provision")
 	pool, err := statics(ev)
+	DEBUG("  static IP pool: %v", pool)
 	if err != nil {
 		DEBUG("  failed: %s\n", err)
 		return nil, err

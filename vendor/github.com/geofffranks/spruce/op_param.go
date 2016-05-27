@@ -1,7 +1,8 @@
-package main
+package spruce
 
 import (
 	"fmt"
+	"github.com/jhunt/tree"
 )
 
 // ParamOperator ...
@@ -18,8 +19,8 @@ func (ParamOperator) Phase() OperatorPhase {
 }
 
 // Dependencies ...
-func (ParamOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*Cursor) []*Cursor {
-	return []*Cursor{}
+func (ParamOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
+	return []*tree.Cursor{}
 }
 
 // Run ...

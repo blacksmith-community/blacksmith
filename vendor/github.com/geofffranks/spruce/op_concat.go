@@ -1,8 +1,12 @@
-package main
+package spruce
 
 import (
 	"fmt"
 	"strings"
+
+	"github.com/jhunt/tree"
+
+	. "github.com/geofffranks/spruce/log"
 )
 
 // ConcatOperator ...
@@ -19,8 +23,8 @@ func (ConcatOperator) Phase() OperatorPhase {
 }
 
 // Dependencies ...
-func (ConcatOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*Cursor) []*Cursor {
-	return []*Cursor{}
+func (ConcatOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
+	return []*tree.Cursor{}
 }
 
 // Run ...

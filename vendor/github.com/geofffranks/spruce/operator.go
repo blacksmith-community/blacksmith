@@ -1,10 +1,13 @@
-package main
+package spruce
 
 import (
 	"fmt"
 	"os"
 	"regexp"
 	"strconv"
+
+	. "github.com/geofffranks/spruce/log"
+	"github.com/jhunt/tree"
 )
 
 // Action ...
@@ -43,7 +46,7 @@ type Operator interface {
 	Run(ev *Evaluator, args []*Expr) (*Response, error)
 
 	// returns a set of implicit / inherent dependencies used by Run()
-	Dependencies(ev *Evaluator, args []*Expr, locs []*Cursor) []*Cursor
+	Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cursor) []*tree.Cursor
 
 	// what phase does this operator run during?
 	Phase() OperatorPhase
@@ -94,13 +97,15 @@ const (
 	Literal
 	// LogicalOr ...
 	LogicalOr
+	EnvVar
 )
 
 // Expr ...
 type Expr struct {
 	Type      ExprType
-	Reference *Cursor
+	Reference *tree.Cursor
 	Literal   interface{}
+	Name      string
 	Left      *Expr
 	Right     *Expr
 }
@@ -115,6 +120,9 @@ func (e *Expr) String() string {
 			return fmt.Sprintf(`"%s"`, e.Literal)
 		}
 		return fmt.Sprintf("%v", e.Literal)
+
+	case EnvVar:
+		return fmt.Sprintf("$%s", e.Name)
 
 	case Reference:
 		return e.Reference.String()
@@ -135,6 +143,8 @@ func (e *Expr) Reduce() (*Expr, error) {
 		switch e.Type {
 		case Literal:
 			return e, e, false
+		case EnvVar:
+			return e, nil, false
 		case Reference:
 			return e, nil, false
 
@@ -167,6 +177,13 @@ func (e *Expr) Resolve(tree map[interface{}]interface{}) (*Expr, error) {
 	case Literal:
 		return e, nil
 
+	case EnvVar:
+		v := os.Getenv(e.Name)
+		if v == "" {
+			return nil, fmt.Errorf("Environment variable $%s is not set", e.Name)
+		}
+		return &Expr{Type: Literal, Literal: v}, nil
+
 	case Reference:
 		if _, err := e.Reference.Resolve(tree); err != nil {
 			return nil, fmt.Errorf("Unable to resolve `%s`: %s", e.Reference, err)
@@ -192,6 +209,8 @@ func (e *Expr) Evaluate(tree map[interface{}]interface{}) (interface{}, error) {
 	switch final.Type {
 	case Literal:
 		return final.Literal, nil
+	case EnvVar:
+		return os.Getenv(final.Name), nil
 	case Reference:
 		return final.Reference.Resolve(tree)
 	case LogicalOr:
@@ -201,10 +220,10 @@ func (e *Expr) Evaluate(tree map[interface{}]interface{}) (interface{}, error) {
 }
 
 // Dependencies ...
-func (e *Expr) Dependencies(ev *Evaluator, locs []*Cursor) []*Cursor {
-	l := []*Cursor{}
+func (e *Expr) Dependencies(ev *Evaluator, locs []*tree.Cursor) []*tree.Cursor {
+	l := []*tree.Cursor{}
 
-	canonicalize := func(c *Cursor) {
+	canonicalize := func(c *tree.Cursor) {
 		cc := c.Copy()
 		for cc.Depth() > 0 {
 			if _, err := cc.Canonical(ev.Tree); err == nil {
@@ -237,8 +256,8 @@ func (e *Expr) Dependencies(ev *Evaluator, locs []*Cursor) []*Cursor {
 // Opcall ...
 type Opcall struct {
 	src       string
-	where     *Cursor
-	canonical *Cursor
+	where     *tree.Cursor
+	canonical *tree.Cursor
 	op        Operator
 	args      []*Expr
 }
@@ -300,6 +319,7 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 		qstring := regexp.MustCompile(`^"(.*)"$`)
 		integer := regexp.MustCompile(`^[+-]?\d+(\.\d+)?$`)
 		float := regexp.MustCompile(`^[+-]?\d*\.\d+$`)
+		envvar := regexp.MustCompile(`^\$[A-Z_][A-Z0-9_]*$`)
 
 		var final []*Expr
 		var left, op *Expr
@@ -337,6 +357,10 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 			case arg == ",":
 				DEBUG("  #%d: literal comma found; treating what we've seen so far as a complete expression")
 				pop()
+
+			case envvar.MatchString(arg):
+				DEBUG("  #%d: parsed as unquoted environment variable reference '%s'", i, arg)
+				push(&Expr{Type: EnvVar, Name: arg[1:]})
 
 			case qstring.MatchString(arg):
 				m := qstring.FindStringSubmatch(arg)
@@ -383,7 +407,7 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 				push(&Expr{Type: Literal, Literal: true})
 
 			default:
-				c, err := ParseCursor(arg)
+				c, err := tree.ParseCursor(arg)
 				if err != nil {
 					DEBUG("  #%d: %s is a malformed reference: %s", i, arg, err)
 					return args, err
@@ -445,8 +469,8 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 }
 
 // Dependencies ...
-func (op *Opcall) Dependencies(ev *Evaluator, locs []*Cursor) []*Cursor {
-	l := []*Cursor{}
+func (op *Opcall) Dependencies(ev *Evaluator, locs []*tree.Cursor) []*tree.Cursor {
+	l := []*tree.Cursor{}
 	for _, arg := range op.args {
 		for _, c := range arg.Dependencies(ev, locs) {
 			l = append(l, c)
