@@ -1,0 +1,5 @@
+.DS_Store
+spruce
+spruce-*.gz
+credentials.yml
+releases
