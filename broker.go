@@ -55,7 +55,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, err
 	}
 
-	var params map[interface{}]interface{}
+	params := make(map[interface{}]interface{})
 	params["name"] = instanceID
 	params["director_uuid"] = b.BOSH.UUID()
 

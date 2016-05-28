@@ -35,6 +35,12 @@ func ReadPlan(path string) (p Plan, err error) {
 	}
 
 	err = yaml.Unmarshal(b, &p)
+	raw := fmt.Sprintf("%s/manifest.yml", path)
+	b, err = ioutil.ReadFile(raw)
+	if err != nil {
+		return
+	}
+	p.RawManifest = string(b)
 	return
 }
 
