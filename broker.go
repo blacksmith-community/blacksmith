@@ -57,6 +57,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	var params map[interface{}]interface{}
 	params["name"] = instanceID
+	params["director_uuid"] = b.BOSH.UUID()
 
 	manifest, creds, err := GenManifest(plan, params)
 	if err != nil {
