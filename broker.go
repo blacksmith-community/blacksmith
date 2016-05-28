@@ -28,6 +28,23 @@ func (b *Broker) Services() []brokerapi.Service {
 	return b.Catalog
 }
 
+func (b *Broker) ReadServices(dir ...string) error {
+	ss, err := ReadServices(dir...)
+	if err != nil {
+		return err
+	}
+
+	b.Catalog = Catalog(ss)
+	b.Plans = make(map[string]Plan)
+	for _, s := range ss {
+		for _, p := range s.Plans {
+			b.Plans[fmt.Sprintf("%s/%s", s.ID, p.ID)] = p
+		}
+	}
+
+	return nil
+}
+
 func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
 	spec := brokerapi.ProvisionedServiceSpec{IsAsync: true}
 	log.Printf("[provision %s] provisioning new service", instanceID)
