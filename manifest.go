@@ -30,10 +30,16 @@ func GenManifest(p Plan, params map[interface{}]interface{}) (string, map[interf
 		return "", credentials, err
 	}
 
-	final, err := spruce.Merge(manifest, wrap("meta.params", params))
+	merged, err := spruce.Merge(manifest, wrap("meta.params", params))
 	if err != nil {
 		return "", credentials, err
 	}
+	eval := &spruce.Evaluator{Tree: merged}
+	err = eval.Run([]string{})
+	if err != nil {
+		return "", credentials, err
+	}
+	final := eval.Tree
 
 	if m, ok := final["meta"]; ok {
 		if mm, ok := m.(map[interface{}]interface{}); ok {

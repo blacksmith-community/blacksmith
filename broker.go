@@ -73,18 +73,24 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	params := make(map[interface{}]interface{})
 	params["name"] = instanceID
-	params["director_uuid"] = b.BOSH.UUID()
+
+	info, err := b.BOSH.GetInfo()
+	if err != nil {
+		log.Printf("[provision %s] failed to get info from BOSH: %s", instanceID, err)
+		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
+	}
+	params["director_uuid"] = info.UUID
 
 	manifest, creds, err := GenManifest(plan, params)
 	if err != nil {
-		log.Printf("[provision %s] failed: %s", instanceID, err)
+		log.Printf("[provision %s] failed to generate manifest: %s", instanceID, err)
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
 	}
 
 	Debugf("generated manifest:\n%s", manifest)
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {
-		log.Printf("[provision %s] failed: %s", instanceID, err)
+		log.Printf("[provision %s] failed to create deployment: %s", instanceID, err)
 		return spec, fmt.Errorf("backend BOSH deployment failed")
 	}
 
