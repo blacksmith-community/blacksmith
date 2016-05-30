@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
@@ -15,7 +16,21 @@ type Broker struct {
 	Vault   *Vault
 }
 
+var Debugging bool
+
+func init() {
+	Debugging = os.Getenv("BLACKSMITH_DEBUG") != ""
+}
+
+func Debugf(fmt string, args ...interface{}) {
+	if Debugging {
+		log.Printf("DEBUG: %s", args...)
+	}
+}
+
 func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
+	Debugf("FindPlan: looking for plan '%s' and service '%s'", planID, serviceID)
+
 	key := fmt.Sprintf("%s/%s", planID, serviceID)
 	if plan, ok := b.Plans[key]; ok {
 		return plan, nil
@@ -38,6 +53,7 @@ func (b *Broker) ReadServices(dir ...string) error {
 	b.Plans = make(map[string]Plan)
 	for _, s := range ss {
 		for _, p := range s.Plans {
+			Debugf("tracking service/plan %s/%s", s.ID, p.ID)
 			b.Plans[fmt.Sprintf("%s/%s", s.ID, p.ID)] = p
 		}
 	}
@@ -65,6 +81,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
 	}
 
+	Debugf("generated manifest:\n%s", manifest)
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {
 		log.Printf("[provision %s] failed: %s", instanceID, err)
