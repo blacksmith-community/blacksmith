@@ -94,7 +94,11 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("backend BOSH deployment failed")
 	}
 
-	b.Vault.Track(instanceID, "provision", task.ID, creds)
+	err = b.Vault.Track(instanceID, "provision", task.ID, creds)
+	if err != nil {
+		log.Printf("[provision %s] failed to track deployment: %s", instanceID, err)
+		return spec, fmt.Errorf("Vault tracking failed")
+	}
 	log.Printf("[provision %s] started", instanceID)
 	return spec, nil
 }
