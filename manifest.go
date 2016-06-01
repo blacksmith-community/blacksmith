@@ -21,9 +21,9 @@ func wrap(key string, data map[interface{}]interface{}) map[interface{}]interfac
 	return data
 }
 
-func GenManifest(p Plan, params map[interface{}]interface{}) (string, map[interface{}]interface{}, error) {
+func GenManifest(p Plan, params map[interface{}]interface{}) (string, map[string]interface{}, error) {
 	var manifest map[interface{}]interface{}
-	credentials := make(map[interface{}]interface{})
+	credentials := make(map[string]interface{})
 
 	err := yaml.Unmarshal([]byte(p.RawManifest), &manifest)
 	if err != nil {
@@ -46,7 +46,7 @@ func GenManifest(p Plan, params map[interface{}]interface{}) (string, map[interf
 			if s, ok := mm["service"]; ok {
 				if ss, ok := s.(map[interface{}]interface{}); ok {
 					for k, v := range ss {
-						credentials[k] = v
+						credentials[k.(string)] = v
 					}
 				}
 			}

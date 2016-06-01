@@ -81,13 +81,7 @@ func (vault *Vault) Track(instanceID, action string, taskID int, credentials int
 		Credentials interface{}
 	}{action, taskID, credentials}
 
-	b, err := json.Marshal(task)
-	if err != nil {
-		return err
-	}
-
-	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s/task", instanceID),
-		strings.NewReader(string(b)))
+	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s/task", instanceID), task)
 	if err != nil {
 		return err
 	}
