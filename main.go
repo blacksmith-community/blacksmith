@@ -63,9 +63,6 @@ func main() {
 		BOSH:   gogobosh.NewClient(bosh),
 		logger: logger,
 	}
-	logger.Debug("main", lager.Data{
-		"args", os.Args[3:],
-	})
 	err = broker.ReadServices(os.Args[3:]...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read SERVICE directories: %s\n", err)
