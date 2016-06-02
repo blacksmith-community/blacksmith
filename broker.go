@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
+	"github.com/pivotal-golang/lager"
 )
 
 type Broker struct {
@@ -14,6 +15,7 @@ type Broker struct {
 	Plans   map[string]Plan
 	BOSH    *gogobosh.Client
 	Vault   *Vault
+	logger  lager.Logger
 }
 
 var Debugging bool

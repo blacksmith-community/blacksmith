@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,41 +13,27 @@ import (
 	"github.com/pivotal-golang/lager"
 )
 
-var (
-	AuthUsername string
-	AuthPassword string
-)
-
 func main() {
-	AuthUsername = os.Getenv("AUTH_USERNAME")
-	if AuthUsername == "" {
-		AuthUsername = "blacksmith"
+	configPath := flag.String("c", "", "path to config")
+	flag.Parse()
+
+	config, err := ReadConfig(*configPath)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	AuthPassword = os.Getenv("AUTH_PASSWORD")
-	if AuthPassword == "" {
-		AuthPassword = "blacksmith"
+	bind := fmt.Sprintf(":%s", config.Broker.Port)
+
+	logger := lager.NewLogger("blacksmith-broker")
+	if config.Debug {
+		logger.RegisterSink(lager.NewWriterSink(os.Stdout, lager.DEBUG))
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "3000"
-	}
-	bind := fmt.Sprintf(":%s", port)
-
-	ok := true
 	vault := &Vault{
-		URL:      os.Getenv("VAULT_ADDR"),
-		Token:    os.Getenv("VAULT_TOKEN"),
-		Insecure: os.Getenv("VAULT_SKIP_VERIFY") != "",
-	}
-	if vault.URL == "" {
-		fmt.Fprintf(os.Stderr, "No VAULT_ADDR environment variable set!\n")
-		ok = false
-	}
-	if vault.Token == "" {
-		fmt.Fprintf(os.Stderr, "No VAULT_TOKEN environment variable set!\n")
-		ok = false
+		URL:      config.Vault.Address,
+		Token:    config.Vault.Token,
+		Insecure: config.Vault.Insecure,
+		logger:   logger,
 	}
 	vault.HTTP = &http.Client{
 		Transport: &http.Transport{
@@ -64,34 +51,20 @@ func main() {
 	}
 
 	bosh := &gogobosh.Config{
-		BOSHAddress:       os.Getenv("BOSH_ADDRESS"),
-		Username:          os.Getenv("BOSH_USERNAME"),
-		Password:          os.Getenv("BOSH_PASSWORD"),
+		BOSHAddress:       config.BOSH.Address,
+		Username:          config.BOSH.Username,
+		Password:          config.BOSH.Password,
 		HttpClient:        http.DefaultClient,
-		SkipSslValidation: os.Getenv("BOSH_SKIP_SSL") != "",
-	}
-	if bosh.BOSHAddress == "" {
-		fmt.Fprintf(os.Stderr, "No BOSH_ADDRESS environment variable set!\n")
-		ok = false
-	}
-	if bosh.Username == "" {
-		fmt.Fprintf(os.Stderr, "No BOSH_USERNAME environment variable set!\n")
-		ok = false
-	}
-	if bosh.Password == "" {
-		fmt.Fprintf(os.Stderr, "No BOSH_PASSWORD environment variable set!\n")
-		ok = false
+		SkipSslValidation: config.BOSH.SkipSslValidation,
 	}
 
-	if !ok {
-		os.Exit(1)
-	}
 	broker := &Broker{
-		Vault: vault,
-		BOSH:  gogobosh.NewClient(bosh),
+		Vault:  vault,
+		BOSH:   gogobosh.NewClient(bosh),
+		logger: logger,
 	}
 	fmt.Printf("found %v\n", os.Args)
-	err := broker.ReadServices(os.Args[1:]...)
+	err = broker.ReadServices(os.Args[1:]...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read SERVICE directories: %s\n", err)
 		os.Exit(2)
@@ -102,8 +75,8 @@ func main() {
 		broker,
 		lager.NewLogger("blacksmith-broker"),
 		brokerapi.BrokerCredentials{
-			Username: AuthUsername,
-			Password: AuthPassword,
+			Username: config.Broker.Username,
+			Password: config.Broker.Password,
 		}))
 	http.ListenAndServe(bind, nil)
 }

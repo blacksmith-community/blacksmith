@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/pivotal-golang/lager"
 )
 
 type Vault struct {
@@ -15,6 +17,7 @@ type Vault struct {
 	Token    string
 	Insecure bool
 	HTTP     *http.Client
+	logger   lager.Logger
 }
 
 func (vault *Vault) NewRequest(method, url string, data interface{}) (*http.Request, error) {
