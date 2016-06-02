@@ -189,11 +189,29 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 		"instance_id": instanceID,
 		"binding_id":  bindingID,
 	})
-
 	logger.Info("binding-started")
+
+	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
+	if err != nil {
+		logger.Error("failed-to-find-plan", err)
+		return binding, err
+	}
+	deploymentName := plan.Name + "-" + instanceID
+	vms, err := b.BOSH.GetDeploymentVMs(deploymentName)
+	if err != nil {
+		logger.Error("failed-to-get-vms", err)
+		return binding, err
+	}
 	_, _, creds, _ := b.Vault.State(instanceID)
+
+	for _, vm := range vms {
+		//FIXME always returning first ip seems bad?
+		creds[vm.JobName] = vm.IPs[0]
+	}
+
 	binding.Credentials = creds
-	logger.Debug("binding-creds", creds.(map[string]interface{}))
+
+	logger.Debug("binding-creds", creds)
 	logger.Info("binding-succeeded")
 	return binding, nil
 }

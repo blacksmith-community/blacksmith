@@ -101,7 +101,7 @@ func (vault *Vault) Track(instanceID, action string, taskID int, credentials int
 	return nil
 }
 
-func (vault *Vault) State(instanceID string) (string, int, interface{}, error) {
+func (vault *Vault) State(instanceID string) (string, int, map[string]interface{}, error) {
 	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/%s/task", instanceID), nil)
 	if err != nil {
 		return "", 0, nil, err
