@@ -76,9 +76,9 @@ func (vault *Vault) Clear(instanceID string) {
 
 func (vault *Vault) Track(instanceID, action string, taskID int, credentials interface{}) error {
 	task := struct {
-		Action      string
-		Task        int
-		Credentials interface{}
+		Action      string      `json:"action"`
+		Task        int         `json:"task"`
+		Credentials interface{} `json:"credentials"`
 	}{action, taskID, credentials}
 
 	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s/task", instanceID), task)
@@ -113,7 +113,7 @@ func (vault *Vault) State(instanceID string) (string, int, interface{}, error) {
 
 	var typ string
 	var id int
-	var creds map[interface{}]interface{}
+	var creds map[string]interface{}
 
 	if rawdata, ok := raw["data"]; ok {
 		if data, ok := rawdata.(map[string]interface{}); ok {
@@ -127,7 +127,7 @@ func (vault *Vault) State(instanceID string) (string, int, interface{}, error) {
 				typ = fmt.Sprintf("%v", v)
 			}
 			if v, ok := data["credentials"]; ok {
-				if mapped, ok := v.(map[interface{}]interface{}); ok {
+				if mapped, ok := v.(map[string]interface{}); ok {
 					creds = mapped
 				}
 			}

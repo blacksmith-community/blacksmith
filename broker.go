@@ -72,7 +72,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 
 	params := make(map[interface{}]interface{})
-	params["name"] = instanceID
+	params["name"] = plan.Name + "-" + instanceID
 
 	info, err := b.BOSH.GetInfo()
 	if err != nil {
