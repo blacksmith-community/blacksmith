@@ -1,14 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"log"
-	"os"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
 	"github.com/pivotal-golang/lager"
 )
+
+const findPlanKey = "findPlan"
 
 type Broker struct {
 	Catalog []brokerapi.Service
@@ -18,20 +19,11 @@ type Broker struct {
 	logger  lager.Logger
 }
 
-var Debugging bool
-
-func init() {
-	Debugging = os.Getenv("BLACKSMITH_DEBUG") != ""
-}
-
-func Debugf(fmt string, args ...interface{}) {
-	if Debugging {
-		log.Printf("DEBUG: %s", args...)
-	}
-}
-
 func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
-	Debugf("FindPlan: looking for plan '%s' and service '%s'", planID, serviceID)
+	b.logger.Debug("findPlan", lager.Data{
+		"plan_id":    planID,
+		"service_id": serviceID,
+	})
 
 	key := fmt.Sprintf("%s/%s", planID, serviceID)
 	if plan, ok := b.Plans[key]; ok {
@@ -41,7 +33,7 @@ func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
 }
 
 func (b *Broker) Services() []brokerapi.Service {
-	log.Printf("[catalog] returning service catalog")
+	b.logger.Info("fetching catalog")
 	return b.Catalog
 }
 
@@ -55,7 +47,10 @@ func (b *Broker) ReadServices(dir ...string) error {
 	b.Plans = make(map[string]Plan)
 	for _, s := range ss {
 		for _, p := range s.Plans {
-			Debugf("tracking service/plan %s/%s", s.ID, p.ID)
+			b.logger.Debug("findPlan", lager.Data{
+				"plan_id":    p.ID,
+				"service_id": s.ID,
+			})
 			b.Plans[fmt.Sprintf("%s/%s", s.ID, p.ID)] = p
 		}
 	}
@@ -65,11 +60,16 @@ func (b *Broker) ReadServices(dir ...string) error {
 
 func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
 	spec := brokerapi.ProvisionedServiceSpec{IsAsync: true}
-	log.Printf("[provision %s] provisioning new service", instanceID)
+
+	logger := b.logger.Session("provision", lager.Data{
+		"instance_id": instanceID,
+	})
+
+	logger.Info("starting-provision")
 
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
 	if err != nil {
-		log.Printf("[provision %s] failed: %s", instanceID, err)
+		logger.Error("failed-to-find-plan", err)
 		return spec, err
 	}
 
@@ -78,35 +78,41 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	info, err := b.BOSH.GetInfo()
 	if err != nil {
-		log.Printf("[provision %s] failed to get info from BOSH: %s", instanceID, err)
+		logger.Error("failed-to-get-bosh-info", err)
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
 	}
 	params["director_uuid"] = info.UUID
 
 	manifest, creds, err := GenManifest(plan, params)
 	if err != nil {
-		log.Printf("[provision %s] failed to generate manifest: %s", instanceID, err)
+		logger.Error("failed-to-generate-manifest", err)
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
 	}
 
-	Debugf("generated manifest:\n%s", manifest)
+	logger.Debug("generated-manifest", lager.Data{
+		"manifest": manifest,
+	})
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {
-		log.Printf("[provision %s] failed to create deployment: %s", instanceID, err)
+		logger.Error("failed-to-create-deployment", err)
 		return spec, fmt.Errorf("backend BOSH deployment failed")
 	}
 
 	err = b.Vault.Track(instanceID, "provision", task.ID, creds)
 	if err != nil {
-		log.Printf("[provision %s] failed to track deployment: %s", instanceID, err)
+		logger.Error("failed-to-track-deployment", err)
 		return spec, fmt.Errorf("Vault tracking failed")
 	}
-	log.Printf("[provision %s] started", instanceID)
+	logger.Info("stared-provisioning")
 	return spec, nil
 }
 
 func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.IsAsync, error) {
-	log.Printf("[deprovision %s] deleting deployment %s", instanceID, instanceID)
+	logger := b.logger.Session("deprovision", lager.Data{
+		"instance_id": instanceID,
+	})
+
+	logger.Info("starting-deprovision")
 	/* FIXME: what if we still have a valid task for deployment? */
 	task, err := b.BOSH.DeleteDeployment(instanceID)
 	if err != nil {
@@ -114,25 +120,29 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	}
 
 	b.Vault.Track(instanceID, "deprovision", task.ID, nil)
-	log.Printf("[deprovision %s] started", instanceID)
+	logger.Info("finished-deprovision")
 	return true, nil
 }
 
 func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, error) {
 	typ, taskID, _, _ := b.Vault.State(instanceID)
+	logger := b.logger.Session("last-operation", lager.Data{
+		"instance_id": instanceID,
+		"type":        typ,
+	})
 	if typ == "provision" {
 		task, err := b.BOSH.GetTask(taskID)
 		if err != nil {
-			log.Printf("[provision %s] failed to get task from BOSH: %s", instanceID, err)
+			logger.Error("failed-to-get-task-from-bosh", err)
 			return brokerapi.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")
 		}
 
 		if task.State == "done" {
-			log.Printf("[provision %s] succeeded", instanceID)
+			logger.Info("provision-succeeded")
 			return brokerapi.LastOperation{State: "succeeded"}, nil
 		}
 		if task.State == "error" {
-			log.Printf("[provision %s] failed", instanceID)
+			logger.Error("provision-error", errors.New("deployment failed"))
 			return brokerapi.LastOperation{State: "failed"}, nil
 		}
 
@@ -142,24 +152,20 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 	if typ == "deprovision" {
 		task, err := b.BOSH.GetTask(taskID)
 		if err != nil {
-			log.Printf("[deprovision %s] failed to get task from BOSH: %s", instanceID, err)
+			logger.Error("failed-to-get-task-from-bosh", err)
 			return brokerapi.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")
 		}
 
 		if task.State == "done" {
-			log.Printf("[deprovision %s] task completed", instanceID)
-			log.Printf("[deprovision %s] clearing secrets under secret/%s", instanceID, instanceID)
 			b.Vault.Clear(instanceID)
-
-			log.Printf("[deprovision %s] succeeded", instanceID)
+			logger.Info("deprovision-succeeded")
 			return brokerapi.LastOperation{State: "succeeded"}, nil
 		}
 
 		if task.State == "error" {
-			log.Printf("[deprovision %s] clearing secrets under secret/%s", instanceID, instanceID)
 			b.Vault.Clear(instanceID)
 
-			log.Printf("[deprovision %s] failed", instanceID)
+			logger.Error("deprovision-error", errors.New("deprovision failed"))
 			return brokerapi.LastOperation{State: "failed"}, nil
 		}
 
@@ -171,20 +177,35 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 
 func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
 	var binding brokerapi.Binding
-	log.Printf("[bind %s / %s] binding service", instanceID, bindingID)
+	logger := b.logger.Session("bind", lager.Data{
+		"instance_id": instanceID,
+		"binding_id":  bindingID,
+	})
 
+	logger.Info("binding-started")
 	_, _, creds, _ := b.Vault.State(instanceID)
 	binding.Credentials = creds
 
-	log.Printf("[bind %s / %s] success", instanceID, bindingID)
+	logger.Info("binding-succeeded")
 	return binding, nil
 }
 
 func (b *Broker) Unbind(instanceID, bindingID string, details brokerapi.UnbindDetails) error {
+	logger := b.logger.Session("unbind", lager.Data{
+		"instance_id": instanceID,
+		"binding_id":  bindingID,
+	})
+
+	logger.Info("unbinding-started")
 	return nil
 }
 
 func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.IsAsync, error) {
+	logger := b.logger.Session("update", lager.Data{
+		"instance_id": instanceID,
+	})
+
+	logger.Info("update-started")
 	// Update instance here
 	return false, fmt.Errorf("not implemented")
 }
