@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,35 +44,38 @@ func (vault *Vault) Do(method, url string, data interface{}) (*http.Response, er
 func (vault *Vault) Clear(instanceID string) {
 	var rm func(string)
 	rm = func(path string) {
-		log.Printf("[deprovision %s] removing secret at %s", instanceID, path)
+		logger := vault.logger.Session("vault-clear", lager.Data{
+			"instance_id": instanceID,
+			"path":        path,
+		})
 		res, err := vault.Do("DELETE", path, nil)
 		if err != nil {
-			log.Printf("[deprovision %s] unable to delete %s: %s", instanceID, path, err)
+			logger.Error("failed-to-delete-secret", err)
 		}
 
 		res, err = vault.Do("GET", fmt.Sprintf("%s?list=1", path), nil)
 		if err != nil {
-			log.Printf("[deprovision %s] unable to list %s: %s", instanceID, path, err)
+			logger.Error("failed-to-list-secret", err)
 			return
 		}
 
 		b, err := ioutil.ReadAll(res.Body)
 		if err != nil {
-			log.Printf("[deprovision %s] unable to list %s: %s", instanceID, path, err)
+			logger.Error("failed-to-list-secret", err)
 			return
 		}
 
 		var r struct{ Data struct{ Keys []string } }
 		if err = json.Unmarshal(b, &r); err != nil {
-			log.Printf("[deprovision %s] unable to list %s: %s", instanceID, path, err)
+			logger.Error("failed-to-list-secret", err)
 			return
 		}
 
 		for _, sub := range r.Data.Keys {
 			rm(fmt.Sprintf("%s/%s", path, strings.TrimSuffix(sub, "/")))
 		}
+		logger.Info("cleared-secrets")
 	}
-	log.Printf("[deprovision %s] clearing out secrets", instanceID)
 	rm(fmt.Sprintf("/v1/secret/%s", instanceID))
 }
 
@@ -83,7 +85,11 @@ func (vault *Vault) Track(instanceID, action string, taskID int, credentials int
 		Task        int         `json:"task"`
 		Credentials interface{} `json:"credentials"`
 	}{action, taskID, credentials}
-
+	vault.logger.Debug("vault-track", lager.Data{
+		"action":      action,
+		"task_id":     taskID,
+		"credentials": credentials,
+	})
 	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s/task", instanceID), task)
 	if err != nil {
 		return err
@@ -138,5 +144,10 @@ func (vault *Vault) State(instanceID string) (string, int, interface{}, error) {
 
 		return typ, id, creds, nil
 	}
+	vault.logger.Debug("vault-state", lager.Data{
+		"typ":         typ,
+		"id":          id,
+		"credentials": creds,
+	})
 	return "", 0, nil, fmt.Errorf("malformed response from vault")
 }
