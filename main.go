@@ -63,14 +63,15 @@ func main() {
 		BOSH:   gogobosh.NewClient(bosh),
 		logger: logger,
 	}
-	logger.Info(fmt.Sprintf("found %v\n", os.Args))
+	logger.Debug("main", lager.Data{
+		"args", os.Args[3:],
+	})
 	err = broker.ReadServices(os.Args[3:]...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read SERVICE directories: %s\n", err)
 		os.Exit(2)
 	}
 
-	logger.Info("Blacksmith Service Broker listening on " + bind)
 	http.Handle("/", brokerapi.New(
 		broker,
 		logger,

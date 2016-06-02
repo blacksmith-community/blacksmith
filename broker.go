@@ -20,7 +20,7 @@ type Broker struct {
 }
 
 func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
-	b.logger.Debug("findPlan", lager.Data{
+	b.logger.Debug("find-plan", lager.Data{
 		"plan_id":    planID,
 		"service_id": serviceID,
 	})
@@ -33,7 +33,7 @@ func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
 }
 
 func (b *Broker) Services() []brokerapi.Service {
-	b.logger.Info("fetching catalog")
+	b.logger.Info("fetching-catalog")
 	return b.Catalog
 }
 
@@ -47,7 +47,7 @@ func (b *Broker) ReadServices(dir ...string) error {
 	b.Plans = make(map[string]Plan)
 	for _, s := range ss {
 		for _, p := range s.Plans {
-			b.logger.Debug("findPlan", lager.Data{
+			b.logger.Debug("read-services", lager.Data{
 				"plan_id":    p.ID,
 				"service_id": s.ID,
 			})
