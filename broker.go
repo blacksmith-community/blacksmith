@@ -193,7 +193,7 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	logger.Info("binding-started")
 	_, _, creds, _ := b.Vault.State(instanceID)
 	binding.Credentials = creds
-
+	logger.Debug("binding-creds", creds.(map[string]interface{}))
 	logger.Info("binding-succeeded")
 	return binding, nil
 }
