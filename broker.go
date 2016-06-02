@@ -113,8 +113,16 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	})
 
 	logger.Info("starting-deprovision")
+
+	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
+	if err != nil {
+		logger.Error("failed-to-find-plan", err)
+		return true, err
+	}
+
+	deploymentName := plan.Name + "-" + instanceID
 	/* FIXME: what if we still have a valid task for deployment? */
-	task, err := b.BOSH.DeleteDeployment(instanceID)
+	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
 		return true, err
 	}
