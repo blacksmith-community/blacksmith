@@ -5,7 +5,7 @@
 	"Deps": [
 		{
 			"ImportPath": "github.com/cloudfoundry-community/gogobosh",
-			"Rev": "3b289eac64f531199a22941fa8a85e80480f9a2d"
+			"Rev": "6e8944519c14f7d15dbcc5ddf489e8b018286f97"
 		},
 		{
 			"ImportPath": "github.com/geofffranks/simpleyaml",
