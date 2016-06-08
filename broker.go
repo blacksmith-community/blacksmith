@@ -83,6 +83,12 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 	params["director_uuid"] = info.UUID
 
+	err = InitManifest(plan, instanceID, params)
+	if err != nil {
+		logger.Error("failed-to-init-manifest", err)
+		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
+	}
+
 	manifest, creds, err := GenManifest(plan, params)
 	if err != nil {
 		logger.Error("failed-to-generate-manifest", err)

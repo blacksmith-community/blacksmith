@@ -14,6 +14,7 @@ type Plan struct {
 	Description string `yaml:"description"`
 
 	RawManifest string
+	InitScript  string // FIXME
 }
 
 type Service struct {

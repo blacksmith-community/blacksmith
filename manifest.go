@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/geofffranks/spruce"
@@ -19,6 +21,19 @@ func wrap(key string, data map[interface{}]interface{}) map[interface{}]interfac
 		data = map[interface{}]interface{}{k: data}
 	}
 	return data
+}
+
+func InitManifest(p Plan, instanceID string, params map[interface{}]interface{}) error {
+	cmd := exec.Command(p.InitScript)
+
+	cmd.Env = append(cmd.Env, fmt.Sprintf("CREDENTIALS=secret/%s", instanceID))
+	/* put more environment variables here, as needed */
+
+	_, err := cmd.CombinedOutput()
+	//	logger.Debug("initialized-manifest", lager.Data{
+	//		"output": string(out),
+	//	})
+	return err
 }
 
 func GenManifest(p Plan, params map[interface{}]interface{}) (string, map[string]interface{}, error) {
