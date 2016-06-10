@@ -41,14 +41,7 @@ func InitManifest(logger lager.Logger, p Plan, instanceID string) error {
 }
 
 func GenManifest(p Plan, manifests ...map[interface{}]interface{}) (string, error) {
-	var manifest map[interface{}]interface{}
-
-	err := yaml.Unmarshal([]byte(p.RawManifest), &manifest)
-	if err != nil {
-		return "", err
-	}
-
-	merged, err := spruce.Merge(manifest)
+	merged, err := spruce.Merge(p.Manifest)
 	if err != nil {
 		return "", err
 	}

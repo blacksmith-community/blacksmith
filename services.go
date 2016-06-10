@@ -13,8 +13,9 @@ type Plan struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 
-	RawManifest    string
-	InitScriptPath string // FIXME
+	Manifest       map[interface{}]interface{}
+	Credentials    map[interface{}]interface{}
+	InitScriptPath string
 }
 
 type Service struct {
@@ -41,7 +42,13 @@ func ReadPlan(path string) (p Plan, err error) {
 	if err != nil {
 		return
 	}
-	p.RawManifest = string(b)
+	err = yaml.Unmarshal(b, &p.Manifest)
+	raw = fmt.Sprintf("%s/credentials.yml", path)
+	b, err = ioutil.ReadFile(raw)
+	if err != nil {
+		return
+	}
+	err = yaml.Unmarshal(b, &p.Credentials)
 	p.InitScriptPath = fmt.Sprintf("%s/init", path)
 	return
 }
