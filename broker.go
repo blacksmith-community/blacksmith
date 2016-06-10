@@ -75,6 +75,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 
 	defaults := make(map[interface{}]interface{})
+	//TODO parse params from json to yaml
 	params := make(map[interface{}]interface{})
 	defaults["name"] = plan.Name + "-" + instanceID
 

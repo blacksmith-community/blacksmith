@@ -4,26 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/geofffranks/spruce"
 	"github.com/pivotal-golang/lager"
 	"gopkg.in/yaml.v2"
 )
-
-func wrap(key string, data map[interface{}]interface{}) map[interface{}]interface{} {
-	kk := strings.Split(key, ".")
-
-	for i := 0; i < len(kk)/2; i++ {
-		s := kk[i]
-		kk[i] = kk[len(kk)-i-1]
-		kk[len(kk)-i-1] = s
-	}
-	for _, k := range kk {
-		data = map[interface{}]interface{}{k: data}
-	}
-	return data
-}
 
 func InitManifest(logger lager.Logger, p Plan, instanceID string) error {
 	os.Chmod(p.InitScriptPath, 755)

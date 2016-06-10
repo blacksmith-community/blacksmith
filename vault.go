@@ -80,14 +80,7 @@ func (vault *Vault) Clear(instanceID string) {
 }
 
 func (vault *Vault) Track(instanceID, action string, taskID int, params interface{}) error {
-
-	mapParams := make(map[string]interface{})
-	if data, ok := params.(map[interface{}]interface{}); ok {
-		for k, v := range data {
-			mapParams[k.(string)] = v
-		}
-	}
-
+	mapParams := deinterfaceMap(params.(map[interface{}]interface{}))
 	task := struct {
 		Action string      `json:"action"`
 		Task   int         `json:"task"`
