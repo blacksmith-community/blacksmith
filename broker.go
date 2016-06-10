@@ -4,10 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+
+	"gopkg.in/yaml.v2"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
 	"github.com/pivotal-golang/lager"
+	"github.com/smallfish/simpleyaml"
 )
 
 const findPlanKey = "findPlan"
@@ -18,6 +22,11 @@ type Broker struct {
 	BOSH    *gogobosh.Client
 	Vault   *Vault
 	logger  lager.Logger
+}
+
+type Job struct {
+	Name string
+	IPs  []string
 }
 
 func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
@@ -195,6 +204,8 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 
 func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
 	var binding brokerapi.Binding
+	var jobs []Job
+	jobsYAML := make(map[string][]Job)
 	logger := b.logger.Session("bind", lager.Data{
 		"instance_id": instanceID,
 		"binding_id":  bindingID,
@@ -212,16 +223,55 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 		logger.Error("failed-to-get-vms", err)
 		return binding, err
 	}
-	_, _, creds, _ := b.Vault.State(instanceID)
+
+	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID))
 
 	for _, vm := range vms {
-		//FIXME always returning first ip seems bad?
-		creds[vm.JobName] = vm.IPs[0]
+		job := Job{vm.JobName + "/" + strconv.Itoa(vm.Index), vm.IPs}
+		jobs = append(jobs, job)
+	}
+	jobsYAML["jobs"] = jobs
+
+	jobsMarshal, err := yaml.Marshal(jobsYAML)
+	if err != nil {
+		logger.Error("failed-to-generate-manifest", err)
+		return binding, err
 	}
 
-	binding.Credentials = creds
+	yamlJobs, err := simpleyaml.NewYaml(jobsMarshal)
+	if err != nil {
+		logger.Error("failed-to-generate-manifest", err)
+		return binding, err
+	}
+	jobsIfc, err := yamlJobs.Map()
+	if err != nil {
+		logger.Error("failed-to-generate-manifest", err)
+		return binding, err
+	}
 
-	logger.Debug("binding-creds", creds)
+	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials)
+	if err != nil {
+		logger.Error("failed-to-generate-manifest", err)
+		return binding, err
+	}
+
+	yamlManifest, err := simpleyaml.NewYaml([]byte(manifest))
+	if err != nil {
+		logger.Error("failed-to-generate-manifest", err)
+		return binding, err
+	}
+
+	yamlCreds := yamlManifest.Get("credentials")
+	yamlMap, err := yamlCreds.Map()
+	if err != nil {
+		logger.Error("failed-to-generate-manifest", err)
+		return binding, err
+	}
+
+	binding.Credentials = deinterfaceMap(yamlMap)
+
+	logger.Debug("binding-creds", lager.Data{
+		"creds": deinterfaceMap(yamlMap)})
 	logger.Info("binding-succeeded")
 	return binding, nil
 }
