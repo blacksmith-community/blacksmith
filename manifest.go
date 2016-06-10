@@ -25,7 +25,7 @@ func wrap(key string, data map[interface{}]interface{}) map[interface{}]interfac
 	return data
 }
 
-func InitManifest(logger lager.Logger, p Plan, instanceID string, params map[interface{}]interface{}) error {
+func InitManifest(logger lager.Logger, p Plan, instanceID string) error {
 	os.Chmod(p.InitScriptPath, 755)
 	cmd := exec.Command(p.InitScriptPath)
 
@@ -40,7 +40,7 @@ func InitManifest(logger lager.Logger, p Plan, instanceID string, params map[int
 	return err
 }
 
-func GenManifest(p Plan, params map[interface{}]interface{}) (string, map[string]interface{}, error) {
+func GenManifest(p Plan, defaults map[interface{}]interface{}, params map[interface{}]interface{}) (string, map[string]interface{}, error) {
 	var manifest map[interface{}]interface{}
 	credentials := make(map[string]interface{})
 
