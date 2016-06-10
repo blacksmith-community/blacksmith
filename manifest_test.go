@@ -20,7 +20,7 @@ foo: bar
 
 		Context("without user parameters", func() {
 			It("can generate a manifest", func() {
-				s, _, err := GenManifest(plan, map[interface{}]interface{}{})
+				s, err := GenManifest(plan, map[interface{}]interface{}{})
 				Ω(err).ShouldNot(HaveOccurred())
 				Ω(s).Should(Equal(`foo: bar
 meta:
@@ -32,7 +32,7 @@ meta:
 
 		Context("with user parameters", func() {
 			It("can generate a manifest", func() {
-				s, _, err := GenManifest(plan, map[interface{}]interface{}{
+				s, err := GenManifest(plan, map[interface{}]interface{}{
 					"extra": "value",
 				})
 				Ω(err).ShouldNot(HaveOccurred())
@@ -47,7 +47,7 @@ meta:
 
 		Context("with multi-level user parameters", func() {
 			It("can generate a manifest", func() {
-				s, _, err := GenManifest(plan, map[interface{}]interface{}{
+				s, err := GenManifest(plan, map[interface{}]interface{}{
 					"extra": map[interface{}]interface{}{
 						"second": "value",
 					},

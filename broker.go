@@ -92,7 +92,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
 	}
 
-	manifest, creds, err := GenManifest(plan, defaults, params)
+	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
 	if err != nil {
 		logger.Error("failed-to-generate-manifest", err)
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
@@ -107,7 +107,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("backend BOSH deployment failed")
 	}
 
-	err = b.Vault.Track(instanceID, "provision", task.ID, creds)
+	err = b.Vault.Track(instanceID, "provision", task.ID, params)
 	if err != nil {
 		logger.Error("failed-to-track-deployment", err)
 		return spec, fmt.Errorf("Vault tracking failed")

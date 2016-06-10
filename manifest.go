@@ -40,41 +40,34 @@ func InitManifest(logger lager.Logger, p Plan, instanceID string) error {
 	return err
 }
 
-func GenManifest(p Plan, defaults map[interface{}]interface{}, params map[interface{}]interface{}) (string, map[string]interface{}, error) {
+func GenManifest(p Plan, manifests ...map[interface{}]interface{}) (string, error) {
 	var manifest map[interface{}]interface{}
-	credentials := make(map[string]interface{})
 
 	err := yaml.Unmarshal([]byte(p.RawManifest), &manifest)
 	if err != nil {
-		return "", credentials, err
+		return "", err
 	}
 
-	merged, err := spruce.Merge(manifest, wrap("meta.params", params))
+	merged, err := spruce.Merge(manifest)
 	if err != nil {
-		return "", credentials, err
+		return "", err
+	}
+	for _, next := range manifests {
+		merged, err = spruce.Merge(merged, next)
+		if err != nil {
+			return "", err
+		}
 	}
 	eval := &spruce.Evaluator{Tree: merged}
 	err = eval.Run([]string{})
 	if err != nil {
-		return "", credentials, err
+		return "", err
 	}
 	final := eval.Tree
 
-	if m, ok := final["meta"]; ok {
-		if mm, ok := m.(map[interface{}]interface{}); ok {
-			if s, ok := mm["service"]; ok {
-				if ss, ok := s.(map[interface{}]interface{}); ok {
-					for k, v := range ss {
-						credentials[k.(string)] = v
-					}
-				}
-			}
-		}
-	}
-
 	b, err := yaml.Marshal(final)
 	if err != nil {
-		return "", credentials, err
+		return "", err
 	}
-	return string(b), credentials, nil
+	return string(b), nil
 }

@@ -79,16 +79,24 @@ func (vault *Vault) Clear(instanceID string) {
 	rm(fmt.Sprintf("/v1/secret/%s", instanceID))
 }
 
-func (vault *Vault) Track(instanceID, action string, taskID int, credentials interface{}) error {
+func (vault *Vault) Track(instanceID, action string, taskID int, params interface{}) error {
+
+	mapParams := make(map[string]interface{})
+	if data, ok := params.(map[interface{}]interface{}); ok {
+		for k, v := range data {
+			mapParams[k.(string)] = v
+		}
+	}
+
 	task := struct {
-		Action      string      `json:"action"`
-		Task        int         `json:"task"`
-		Credentials interface{} `json:"credentials"`
-	}{action, taskID, credentials}
+		Action string      `json:"action"`
+		Task   int         `json:"task"`
+		Params interface{} `json:"params"`
+	}{action, taskID, mapParams}
 	vault.logger.Debug("vault-track", lager.Data{
-		"action":      action,
-		"task_id":     taskID,
-		"credentials": credentials,
+		"action":  action,
+		"task_id": taskID,
+		"params":  mapParams,
 	})
 	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s/task", instanceID), task)
 	if err != nil {
@@ -122,7 +130,7 @@ func (vault *Vault) State(instanceID string) (string, int, map[string]interface{
 
 	var typ string
 	var id int
-	var creds map[string]interface{}
+	var params map[string]interface{}
 
 	if rawdata, ok := raw["data"]; ok {
 		if data, ok := rawdata.(map[string]interface{}); ok {
@@ -135,19 +143,19 @@ func (vault *Vault) State(instanceID string) (string, int, map[string]interface{
 			if v, ok := data["action"]; ok {
 				typ = fmt.Sprintf("%v", v)
 			}
-			if v, ok := data["credentials"]; ok {
+			if v, ok := data["params"]; ok {
 				if mapped, ok := v.(map[string]interface{}); ok {
-					creds = mapped
+					params = mapped
 				}
 			}
 		}
 
-		return typ, id, creds, nil
+		return typ, id, params, nil
 	}
 	vault.logger.Debug("vault-state", lager.Data{
-		"typ":         typ,
-		"id":          id,
-		"credentials": creds,
+		"typ":    typ,
+		"id":     id,
+		"params": params,
 	})
 	return "", 0, nil, fmt.Errorf("malformed response from vault")
 }
