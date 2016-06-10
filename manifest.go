@@ -26,7 +26,7 @@ func wrap(key string, data map[interface{}]interface{}) map[interface{}]interfac
 }
 
 func InitManifest(logger lager.Logger, p Plan, instanceID string, params map[interface{}]interface{}) error {
-	os.Chmod(p.InitScriptPath, 644)
+	os.Chmod(p.InitScriptPath, 755)
 	cmd := exec.Command(p.InitScriptPath)
 
 	cmd.Env = os.Environ()
