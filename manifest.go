@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/geofffranks/spruce"
+	"github.com/pivotal-golang/lager"
 	"gopkg.in/yaml.v2"
 )
 
@@ -23,16 +25,18 @@ func wrap(key string, data map[interface{}]interface{}) map[interface{}]interfac
 	return data
 }
 
-func InitManifest(p Plan, instanceID string, params map[interface{}]interface{}) error {
-	cmd := exec.Command(p.InitScript)
+func InitManifest(logger lager.Logger, p Plan, instanceID string, params map[interface{}]interface{}) error {
+	os.Chmod(p.InitScriptPath, 644)
+	cmd := exec.Command(p.InitScriptPath)
 
+	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("CREDENTIALS=secret/%s", instanceID))
 	/* put more environment variables here, as needed */
 
-	_, err := cmd.CombinedOutput()
-	//	logger.Debug("initialized-manifest", lager.Data{
-	//		"output": string(out),
-	//	})
+	out, err := cmd.CombinedOutput()
+	logger.Debug("initialized-manifest", lager.Data{
+		"output": string(out),
+	})
 	return err
 }
 

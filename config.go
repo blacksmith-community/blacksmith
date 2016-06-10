@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 
 	"gopkg.in/yaml.v2"
 )
@@ -76,6 +77,9 @@ func ReadConfig(path string) (c Config, err error) {
 	if c.BOSH.Password == "" {
 		return c, fmt.Errorf("BOSH Password is not set")
 	}
+
+	os.Setenv("VAULT_ADDR", c.Vault.Address)
+	os.Setenv("VAULT_TOKEN", c.Vault.Token)
 
 	return
 }

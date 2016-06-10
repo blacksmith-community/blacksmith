@@ -13,8 +13,8 @@ type Plan struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 
-	RawManifest string
-	InitScript  string // FIXME
+	RawManifest    string
+	InitScriptPath string // FIXME
 }
 
 type Service struct {
@@ -42,6 +42,7 @@ func ReadPlan(path string) (p Plan, err error) {
 		return
 	}
 	p.RawManifest = string(b)
+	p.InitScriptPath = fmt.Sprintf("%s/init", path)
 	return
 }
 

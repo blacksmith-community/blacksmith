@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
@@ -83,7 +84,8 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 	params["director_uuid"] = info.UUID
 
-	err = InitManifest(plan, instanceID, params)
+	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID))
+	err = InitManifest(b.logger, plan, instanceID, params)
 	if err != nil {
 		logger.Error("failed-to-init-manifest", err)
 		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
