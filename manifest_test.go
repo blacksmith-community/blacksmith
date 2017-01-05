@@ -5,6 +5,8 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
+	"gopkg.in/yaml.v2"
 )
 
 var _ = Describe("Manifests", func() {
@@ -14,9 +16,12 @@ meta:
   user: redis
 foo: bar
 `
-		plan := Plan{
-			RawManifest: manifest,
-		}
+		plan := Plan{}
+
+		BeforeEach(func() {
+			err := yaml.Unmarshal([]byte(manifest), &plan.Manifest)
+			Ω(err).ShouldNot(HaveOccurred())
+		})
 
 		Context("without user parameters", func() {
 			It("can generate a manifest", func() {
@@ -24,7 +29,6 @@ foo: bar
 				Ω(err).ShouldNot(HaveOccurred())
 				Ω(s).Should(Equal(`foo: bar
 meta:
-  params: {}
   user: redis
 `))
 			})
@@ -33,7 +37,11 @@ meta:
 		Context("with user parameters", func() {
 			It("can generate a manifest", func() {
 				s, err := GenManifest(plan, map[interface{}]interface{}{
-					"extra": "value",
+					"meta": map[interface{}]interface{}{
+						"params": map[interface{}]interface{}{
+							"extra": "value",
+						},
+					},
 				})
 				Ω(err).ShouldNot(HaveOccurred())
 				Ω(s).Should(Equal(`foo: bar
@@ -48,8 +56,12 @@ meta:
 		Context("with multi-level user parameters", func() {
 			It("can generate a manifest", func() {
 				s, err := GenManifest(plan, map[interface{}]interface{}{
-					"extra": map[interface{}]interface{}{
-						"second": "value",
+					"meta": map[interface{}]interface{}{
+						"params": map[interface{}]interface{}{
+							"extra": map[interface{}]interface{}{
+								"second": "value",
+							},
+						},
 					},
 				})
 				Ω(err).ShouldNot(HaveOccurred())
