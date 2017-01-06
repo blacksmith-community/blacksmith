@@ -25,6 +25,7 @@ type VaultConfig struct {
 	Address  string `yaml:"address"`
 	Token    string `yaml:"token"`
 	Insecure bool   `yaml:"skip_ssl_validation"`
+	CredPath string `yaml:"credentials"`
 }
 
 type BOSHConfig struct {
@@ -62,10 +63,6 @@ func ReadConfig(path string) (c Config, err error) {
 		return c, fmt.Errorf("Vault Address is not set")
 	}
 
-	if c.Vault.Token == "" {
-		return c, fmt.Errorf("Vault Token is not set")
-	}
-
 	if c.BOSH.Address == "" {
 		return c, fmt.Errorf("BOSH Address is not set")
 	}
@@ -79,7 +76,6 @@ func ReadConfig(path string) (c Config, err error) {
 	}
 
 	os.Setenv("VAULT_ADDR", c.Vault.Address)
-	os.Setenv("VAULT_TOKEN", c.Vault.Token)
 
 	return
 }

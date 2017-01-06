@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,159 @@ type Vault struct {
 	Insecure bool
 	HTTP     *http.Client
 	logger   lager.Logger
+}
+
+type VaultCreds struct {
+	SealKey   string `json:"seal_key"`
+	RootToken string `json:"root_token"`
+}
+
+func (vault *Vault) Init(store string) error {
+	logger := vault.logger.Session("vault-init", lager.Data{})
+
+	res, err := vault.Do("GET", "/v1/sys/init", nil)
+	if err != nil {
+		logger.Error("failed-to-check-vault", err)
+		return err
+	}
+
+	b, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		logger.Error("failed-to-read-init-response", err)
+		return err
+	}
+
+	var init struct {
+		Initialized bool `json:"initialized"`
+	}
+	if err = json.Unmarshal(b, &init); err != nil {
+		logger.Error("failed-to-parse-init-response", err)
+		return err
+	}
+	if init.Initialized {
+		b, err := ioutil.ReadFile(store)
+		if err != nil {
+			logger.Error("failed-to-read-vault-credentials-file", err)
+			return err
+		}
+		creds := VaultCreds{}
+		err = json.Unmarshal(b, &creds)
+		if err != nil {
+			logger.Error("failed-to-parse-vault-credentials-file", err)
+			return err
+		}
+		vault.Token = creds.RootToken
+		os.Setenv("VAULT_TOKEN", vault.Token)
+		return vault.Unseal(creds.SealKey)
+	}
+
+	//////////////////////////////////////////
+
+	res, err = vault.Do("PUT", "/v1/sys/init", map[string]int{
+		"secret_shares":    1,
+		"secret_threshold": 1,
+	})
+	if err != nil {
+		logger.Error("failed-to-init-vault", err)
+		return err
+	}
+
+	b, err = ioutil.ReadAll(res.Body)
+	if err != nil {
+		logger.Error("failed-to-read-init-response", err)
+		return err
+	}
+
+	var keys struct {
+		RootToken string   `json:"root_token"`
+		Keys      []string `json:"keys"`
+	}
+	if err = json.Unmarshal(b, &keys); err != nil {
+		logger.Error("failed-to-parse-init-response", err)
+		return err
+	}
+	if keys.RootToken == "" || len(keys.Keys) != 1 {
+		err = fmt.Errorf("invalid response from vault: token '%s' and %d keys", keys.RootToken, len(keys.Keys))
+		logger.Error("failed-to-parse-init-response", err)
+		return err
+	}
+
+	creds := VaultCreds{
+		SealKey:   keys.Keys[0],
+		RootToken: keys.RootToken,
+	}
+	b, err = json.Marshal(creds)
+	if err != nil {
+		logger.Error("failed-to-marshal-vault-credentials", err)
+		return err
+	}
+	err = ioutil.WriteFile(store, b, 0600)
+	if err != nil {
+		logger.Error("failed-to-write-vault-credentials-file", err)
+		return err
+	}
+
+	vault.Token = creds.RootToken
+	os.Setenv("VAULT_TOKEN", vault.Token)
+	return vault.Unseal(creds.SealKey)
+}
+
+func (vault *Vault) Unseal(key string) error {
+	logger := vault.logger.Session("vault-unseal", lager.Data{})
+
+	res, err := vault.Do("GET", "/v1/sys/seal-status", nil)
+	if err != nil {
+		logger.Error("failed-to-query-seal-status", err)
+		return err
+	}
+
+	b, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		logger.Error("failed-to-read-seal-status-response-body", err)
+		return err
+	}
+
+	var status struct {
+		Sealed bool `json:"sealed"`
+	}
+	err = json.Unmarshal(b, &status)
+	if err != nil {
+		logger.Error("failed-to-parse-seal-status-response-body", err)
+		return err
+	}
+
+	if !status.Sealed {
+		return nil
+	}
+
+	//////////////////////////////////////////
+
+	res, err = vault.Do("POST", "/v1/sys/unseal", map[string]string{
+		"key": key,
+	})
+	if err != nil {
+		logger.Error("failed-to-unseal-vault", err)
+		return err
+	}
+
+	b, err = ioutil.ReadAll(res.Body)
+	if err != nil {
+		logger.Error("failed-to-read-unseal-response-body", err)
+		return err
+	}
+	err = json.Unmarshal(b, &status)
+	if err != nil {
+		logger.Error("failed-to-parse-unseal-response-body", err)
+		return err
+	}
+
+	if status.Sealed {
+		err = fmt.Errorf("vault is still sealed after unseal attempt")
+		logger.Error("failed-to-unseal-vault", err)
+		return err
+	}
+
+	return nil
 }
 
 func (vault *Vault) NewRequest(method, url string, data interface{}) (*http.Request, error) {

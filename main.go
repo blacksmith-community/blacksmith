@@ -31,7 +31,7 @@ func main() {
 
 	vault := &Vault{
 		URL:      config.Vault.Address,
-		Token:    config.Vault.Token,
+		Token:    "", // will be supplied soon.
 		Insecure: config.Vault.Insecure,
 		logger:   logger,
 	}
@@ -48,6 +48,9 @@ func main() {
 			req.Header.Add("X-Vault-Token", vault.Token)
 			return nil
 		},
+	}
+	if err = vault.Init(config.Vault.CredPath); err != nil {
+		log.Fatal(err)
 	}
 
 	bosh := &gogobosh.Config{
