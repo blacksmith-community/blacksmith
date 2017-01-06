@@ -231,27 +231,25 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 		jobs = append(jobs, job)
 	}
 	jobsYAML["jobs"] = jobs
-
 	jobsMarshal, err := yaml.Marshal(jobsYAML)
 	if err != nil {
-		logger.Error("failed-to-generate-manifest", err)
+		logger.Error("failed-to-generate-manifest-jobs-yaml", err)
 		return binding, err
 	}
-
 	yamlJobs, err := simpleyaml.NewYaml(jobsMarshal)
 	if err != nil {
-		logger.Error("failed-to-generate-manifest", err)
+		logger.Error("failed-to-generate-manifest-jobs-yaml", err)
 		return binding, err
 	}
 	jobsIfc, err := yamlJobs.Map()
 	if err != nil {
-		logger.Error("failed-to-generate-manifest", err)
+		logger.Error("failed-to-generate-jobs-map", err)
 		return binding, err
 	}
 
 	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials)
 	if err != nil {
-		logger.Error("failed-to-generate-manifest", err)
+		logger.Error("failed-to-generate-manifest-credentials", err)
 		return binding, err
 	}
 
@@ -264,7 +262,7 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	yamlCreds := yamlManifest.Get("credentials")
 	yamlMap, err := yamlCreds.Map()
 	if err != nil {
-		logger.Error("failed-to-generate-manifest", err)
+		logger.Error("failed-to-retrieve-manifest-credentials", err)
 		return binding, err
 	}
 
