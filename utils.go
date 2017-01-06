@@ -2,7 +2,12 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
 	"strings"
+
+	"github.com/geofffranks/spruce"
+	"gopkg.in/yaml.v2"
 )
 
 func wrap(key string, data map[interface{}]interface{}) map[interface{}]interface{} {
@@ -44,4 +49,51 @@ func deinterfaceList(o []interface{}) []interface{} {
 		l[i] = deinterface(v)
 	}
 	return l
+}
+
+func readFile(path string) ([]byte, bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return []byte{}, false, nil
+		}
+		return []byte{}, true, err
+	}
+
+	b, err := ioutil.ReadFile(path)
+	return b, true, err
+}
+
+func mergeFiles(required string, optional ...string) (map[interface{}]interface{}, error) {
+	// Required Manifest
+	b, err := ioutil.ReadFile(required)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[interface{}]interface{})
+	err = yaml.Unmarshal(b, &m)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optional Manifests
+	for _, path := range optional {
+		b, exists, err := readFile(path)
+		if !exists {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		tmp := make(map[interface{}]interface{})
+		err = yaml.Unmarshal(b, &tmp)
+		if err != nil {
+			return nil, err
+		}
+		m, err = spruce.Merge(m, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return m, nil
 }

@@ -29,26 +29,38 @@ type Service struct {
 }
 
 func ReadPlan(path string) (p Plan, err error) {
-	file := fmt.Sprintf("%s/plan.yml", path)
-
-	b, err := ioutil.ReadFile(file)
+	b, err := ioutil.ReadFile(fmt.Sprintf("%s/plan.yml", path))
 	if err != nil {
 		return
 	}
-
 	err = yaml.Unmarshal(b, &p)
-	raw := fmt.Sprintf("%s/manifest.yml", path)
-	b, err = ioutil.ReadFile(raw)
 	if err != nil {
 		return
 	}
-	err = yaml.Unmarshal(b, &p.Manifest)
-	raw = fmt.Sprintf("%s/credentials.yml", path)
-	b, err = ioutil.ReadFile(raw)
+
+	p.Manifest, err = mergeFiles(
+		fmt.Sprintf("%s/manifest.yml", path),
+		fmt.Sprintf("%s/params.yml", path),
+	)
 	if err != nil {
 		return
 	}
-	err = yaml.Unmarshal(b, &p.Credentials)
+
+	b, exists, err := readFile(fmt.Sprintf("%s/credentials.yml", path))
+	if exists {
+		if err != nil {
+			return
+		}
+		err = yaml.Unmarshal(b, &p.Credentials)
+		if err != nil {
+			return
+		}
+	} else if err != nil {
+		return
+	} else {
+		p.Credentials = make(map[interface{}]interface{})
+	}
+
 	p.InitScriptPath = fmt.Sprintf("%s/init", path)
 	return
 }
