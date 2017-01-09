@@ -86,7 +86,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	defaults := make(map[interface{}]interface{})
 	//TODO parse params from json to yaml
 	params := make(map[interface{}]interface{})
-	defaults["name"] = plan.Name + "-" + instanceID
+	defaults["name"] = plan.ID + "-" + instanceID
 
 	info, err := b.BOSH.GetInfo()
 	if err != nil {
@@ -139,7 +139,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 		return true, err
 	}
 
-	deploymentName := plan.Name + "-" + instanceID
+	deploymentName := plan.ID + "-" + instanceID
 	/* FIXME: what if we still have a valid task for deployment? */
 	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
@@ -217,7 +217,7 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 		logger.Error("failed-to-find-plan", err)
 		return binding, err
 	}
-	deploymentName := plan.Name + "-" + instanceID
+	deploymentName := plan.ID + "-" + instanceID
 	vms, err := b.BOSH.GetDeploymentVMs(deploymentName)
 	if err != nil {
 		logger.Error("failed-to-get-vms", err)
