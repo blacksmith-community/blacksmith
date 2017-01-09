@@ -114,7 +114,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {
 		logger.Error("failed-to-create-deployment", err)
-		return spec, fmt.Errorf("backend BOSH deployment failed")
+		return spec, fmt.Errorf("BOSH deployment failed")
 	}
 
 	err = b.Vault.Track(instanceID, "provision", task.ID, params)
