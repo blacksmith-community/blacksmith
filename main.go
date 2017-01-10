@@ -72,6 +72,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	http.Handle("/b/", &InternalApi{
+		Vault:    vault,
+		Broker:   broker,
+		Username: config.Broker.Username,
+		Password: config.Broker.Password,
+	})
 	http.Handle("/", brokerapi.New(
 		broker,
 		logger,
