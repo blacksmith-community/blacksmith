@@ -32,6 +32,10 @@ type Service struct {
 	Plans []Plan `yaml:"plans" json:"plans"`
 }
 
+func (p Plan) String() string {
+	return fmt.Sprintf("%s/%s", p.Service.ID, p.ID)
+}
+
 func (p Plan) OverLimit(db *VaultIndex) bool {
 	if p.Limit == 0 && p.Service.Limit == 0 {
 		return false

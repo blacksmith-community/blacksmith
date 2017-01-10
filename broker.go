@@ -61,7 +61,7 @@ func (b *Broker) ReadServices(dir ...string) error {
 				"plan_id":    p.ID,
 				"service_id": s.ID,
 			})
-			b.Plans[fmt.Sprintf("%s/%s", s.ID, p.ID)] = p
+			b.Plans[p.String()] = p
 		}
 	}
 
@@ -90,7 +90,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 
 	if plan.OverLimit(db) {
-		err := fmt.Errorf("Service Limit reached for %s/%s", details.ServiceID, details.PlanID)
+		err := fmt.Errorf("Service Limit reached for %s/%s", plan)
 		logger.Error("over-service-limit", err)
 		return spec, err
 	}
