@@ -195,6 +195,49 @@ func (vault *Vault) Do(method, url string, data interface{}) (*http.Response, er
 	return vault.HTTP.Do(req)
 }
 
+func (vault *Vault) Get(path string) (map[string]interface{}, bool, error) {
+	exists := false
+
+	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/%s", path), nil)
+	if err != nil {
+		return nil, exists, err
+	}
+	if res.StatusCode == 404 {
+		return nil, exists, nil
+	}
+	if res.StatusCode != 200 && res.StatusCode != 204 {
+		return nil, exists, fmt.Errorf("API %s", res.Status)
+	}
+
+	exists = true
+	b, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return nil, exists, err
+	}
+
+	var raw map[string]interface{}
+	if err = json.Unmarshal(b, &raw); err != nil {
+		return nil, exists, err
+	}
+
+	if x, ok := raw["data"]; ok {
+		return x.(map[string]interface{}), exists, nil
+	}
+
+	return nil, exists, fmt.Errorf("Malformed response from Vault")
+}
+
+func (vault *Vault) Put(path string, data interface{}) error {
+	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s", path), data)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode != 200 && res.StatusCode != 204 {
+		return fmt.Errorf("API %s", res.Status)
+	}
+	return nil
+}
+
 func (vault *Vault) Clear(instanceID string) {
 	var rm func(string)
 	rm = func(path string) {
@@ -245,64 +288,50 @@ func (vault *Vault) Track(instanceID, action string, taskID int, params interfac
 		"task_id": taskID,
 		"params":  mapParams,
 	})
-	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s/task", instanceID), task)
+
+	return vault.Put(fmt.Sprintf("%s/task", instanceID), task)
+}
+
+func (vault *Vault) Index(instanceID string, data interface{}) error {
+	idx, err := vault.GetIndex("db")
 	if err != nil {
 		return err
 	}
-	if res.StatusCode != 200 && res.StatusCode != 204 {
-		return fmt.Errorf("API %s", res.Status)
+	if data != nil {
+		idx.Data[instanceID] = data
+	} else {
+		delete(idx.Data, instanceID)
 	}
-
-	return nil
+	return idx.Save()
 }
 
 func (vault *Vault) State(instanceID string) (string, int, map[string]interface{}, error) {
-	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/%s/task", instanceID), nil)
+	data, exists, err := vault.Get(fmt.Sprintf("%s/task", instanceID))
 	if err != nil {
 		return "", 0, nil, err
 	}
-	if res.StatusCode != 200 && res.StatusCode != 204 {
-		return "", 0, nil, fmt.Errorf("API %s", res.Status)
-	}
-
-	b, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return "", 0, nil, err
-	}
-
-	var raw map[string]interface{}
-	if err = json.Unmarshal(b, &raw); err != nil {
-		return "", 0, nil, err
+	if !exists {
+		return "", 0, nil, fmt.Errorf("Instance %s not found in Vault", instanceID)
 	}
 
 	var typ string
 	var id int
 	var params map[string]interface{}
 
-	if rawdata, ok := raw["data"]; ok {
-		if data, ok := rawdata.(map[string]interface{}); ok {
-			if v, ok := data["task"]; ok {
-				id, err = strconv.Atoi(fmt.Sprintf("%v", v))
-				if err != nil {
-					return "", 0, nil, err
-				}
-			}
-			if v, ok := data["action"]; ok {
-				typ = fmt.Sprintf("%v", v)
-			}
-			if v, ok := data["params"]; ok {
-				if mapped, ok := v.(map[string]interface{}); ok {
-					params = mapped
-				}
-			}
+	if v, ok := data["task"]; ok {
+		id, err = strconv.Atoi(fmt.Sprintf("%v", v))
+		if err != nil {
+			return "", 0, nil, err
 		}
-
-		return typ, id, params, nil
 	}
-	vault.logger.Debug("vault-state", lager.Data{
-		"typ":    typ,
-		"id":     id,
-		"params": params,
-	})
-	return "", 0, nil, fmt.Errorf("malformed response from vault")
+	if v, ok := data["action"]; ok {
+		typ = fmt.Sprintf("%v", v)
+	}
+	if v, ok := data["params"]; ok {
+		if mapped, ok := v.(map[string]interface{}); ok {
+			params = mapped
+		}
+	}
+
+	return typ, id, params, nil
 }
