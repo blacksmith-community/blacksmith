@@ -83,6 +83,18 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, err
 	}
 
+	db, err := b.Vault.GetIndex("db")
+	if err != nil {
+		logger.Error("failed-to-retrieve-index", err)
+		return spec, err
+	}
+
+	if plan.OverLimit(db) {
+		err := fmt.Errorf("Service Limit reached for %s/%s", details.ServiceID, details.PlanID)
+		logger.Error("over-service-limit", err)
+		return spec, err
+	}
+
 	defaults := make(map[interface{}]interface{})
 	//TODO parse params from json to yaml
 	params := make(map[interface{}]interface{})
@@ -117,10 +129,18 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("BOSH deployment failed")
 	}
 
+	err = b.Vault.Index(instanceID, map[string]interface{}{
+		"service_id": details.ServiceID,
+		"plan_id":    plan.ID,
+	})
+	if err != nil {
+		logger.Error("failed-to-track-deployment", err)
+		return spec, fmt.Errorf("Failed to track new service in Vault")
+	}
 	err = b.Vault.Track(instanceID, "provision", task.ID, params)
 	if err != nil {
 		logger.Error("failed-to-track-deployment", err)
-		return spec, fmt.Errorf("Vault tracking failed")
+		return spec, fmt.Errorf("Failed to track the BOSH deployment task in Vault")
 	}
 	logger.Info("stared-provisioning")
 	return spec, nil
@@ -146,6 +166,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 		return true, err
 	}
 
+	b.Vault.Index(instanceID, nil)
 	b.Vault.Track(instanceID, "deprovision", task.ID, nil)
 	logger.Info("finished-deprovision")
 	return true, nil

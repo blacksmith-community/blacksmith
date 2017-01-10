@@ -9,23 +9,61 @@ import (
 )
 
 type Plan struct {
-	ID          string `yaml:"id"`
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	ID          string `yaml:"id" json:"id"`
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description"`
+	Limit       int    `yaml:"limit" json:"limit"`
 
-	Manifest       map[interface{}]interface{}
-	Credentials    map[interface{}]interface{}
-	InitScriptPath string
+	Manifest       map[interface{}]interface{} `json:"-"`
+	Credentials    map[interface{}]interface{} `json:"-"`
+	InitScriptPath string                      `json:"-"`
+
+	Service *Service `yaml:"service" json:"service"`
 }
 
 type Service struct {
-	ID          string   `yaml:"id"`
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	Bindable    bool     `yaml:"bindable"`
-	Tags        []string `yaml:"tags"`
+	ID          string   `yaml:"id" json:"id"`
+	Name        string   `yaml:"name" json:"name"`
+	Description string   `yaml:"description" json:"description"`
+	Bindable    bool     `yaml:"bindable" json:"bindable"`
+	Tags        []string `yaml:"tags" json:"tags"`
+	Limit       int      `yaml:"limit" json:"limit"`
 
-	Plans []Plan
+	Plans []Plan `yaml:"plans" json:"plans"`
+}
+
+func (p Plan) OverLimit(db *VaultIndex) bool {
+	if p.Limit == 0 && p.Service.Limit == 0 {
+		return false
+	}
+
+	existingPlan := 0
+	existingService := 0
+
+	for _, s := range db.Data {
+		if ss, ok := s.(map[string]interface{}); ok {
+			service, haveService := ss["service_id"]
+			plan, havePlan := ss["plan_id"]
+			if havePlan && haveService {
+				if v, ok := service.(string); ok && v == p.Service.ID {
+					existingService += 1
+					if v, ok := plan.(string); ok && v == p.ID {
+						existingPlan += 1
+					}
+				}
+			}
+		}
+	}
+
+	if p.Limit > 0 && existingPlan >= p.Limit {
+		return true
+	}
+
+	if p.Service.Limit > 0 && existingService >= p.Service.Limit {
+		return true
+	}
+
+	return false
 }
 
 func ReadPlan(path string) (p Plan, err error) {
@@ -65,7 +103,7 @@ func ReadPlan(path string) (p Plan, err error) {
 	return
 }
 
-func ReadPlans(dir string) ([]Plan, error) {
+func ReadPlans(dir string, service Service) ([]Plan, error) {
 	pp := make([]Plan, 0)
 
 	ls, err := ioutil.ReadDir(dir)
@@ -79,6 +117,7 @@ func ReadPlans(dir string) ([]Plan, error) {
 			if err != nil {
 				return pp, err
 			}
+			p.Service = &service
 			pp = append(pp, p)
 		}
 	}
@@ -99,7 +138,7 @@ func ReadService(path string) (Service, error) {
 		return s, err
 	}
 
-	pp, err := ReadPlans(path)
+	pp, err := ReadPlans(path, s)
 	if err != nil {
 		return s, err
 	}

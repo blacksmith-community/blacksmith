@@ -1,6 +1,8 @@
 package main_test
 
 import (
+	"fmt"
+
 	. "github.com/cloudfoundry-community/blacksmith"
 
 	. "github.com/onsi/ginkgo"
@@ -106,6 +108,200 @@ var _ = Describe("Services", func() {
 			It("throws an error", func() {
 				_, err := ReadServices()
 				Ω(err).Should(HaveOccurred())
+			})
+		})
+	})
+
+	Describe("Service Limits", func() {
+		GiveMeAPlan := func(serviceLimit, planLimit int) Plan {
+			return Plan{
+				ID:    "test-plan",
+				Name:  "Test Plan",
+				Limit: planLimit,
+				Service: &Service{
+					ID:    "test-service",
+					Name:  "Test Service",
+					Limit: serviceLimit,
+				},
+			}
+		}
+		GiveMeAnIndex := func(inPlan, outOfPlan, outOfService int) *VaultIndex {
+			db := &VaultIndex{
+				Data: make(map[string]interface{}),
+			}
+
+			for n := 0; n < inPlan; n += 1 {
+				name := fmt.Sprintf("in-plan-%d", n)
+				db.Data[name] = map[string]interface{}{
+					"service_id": "test-service",
+					"plan_id":    "test-plan",
+				}
+			}
+
+			for n := 0; n < outOfPlan; n += 1 {
+				name := fmt.Sprintf("out-of-plan-%d", n)
+				db.Data[name] = map[string]interface{}{
+					"service_id": "test-service",
+					"plan_id":    "not-our-plan",
+				}
+			}
+
+			for n := 0; n < outOfService; n += 1 {
+				name := fmt.Sprintf("out-of-service-%d", n)
+				db.Data[name] = map[string]interface{}{
+					"service_id": "not-our-service",
+					"plan_id":    "not-our-plan",
+				}
+			}
+
+			return db
+		}
+
+		Context("with no limits", func() {
+			It("can handle any number of existing instances without going over-limit", func() {
+				plan := GiveMeAPlan(0, 0)
+				for i := 0; i < 100; i = 100 {
+					for j := 0; j < 100; j = 100 {
+						for k := 0; k < 100; k = 100 {
+							db := GiveMeAnIndex(i, j, k)
+							Ω(plan.OverLimit(db)).Should(BeFalse())
+						}
+					}
+				}
+			})
+		})
+
+		Context("with only plan limits", func() {
+			var plan Plan
+			BeforeEach(func() {
+				plan = GiveMeAPlan(0, 5)
+			})
+
+			It("can handle the zero case", func() {
+				db := GiveMeAnIndex(0, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is not over-limit when the number of plan-instances is less than the limit", func() {
+				db := GiveMeAnIndex(2, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is over-limit when the number of plan-instances equals the limit", func() {
+				db := GiveMeAnIndex(5, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is over-limit when the number of plan-instances exceeds the limit", func() {
+				db := GiveMeAnIndex(6, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is not over-limit when another plan exceeds the limit", func() {
+				db := GiveMeAnIndex(2, 200, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is not over-limit when another service exceeds the limit", func() {
+				db := GiveMeAnIndex(2, 0, 200)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+		})
+
+		Context("with only service limits", func() {
+			var plan Plan
+			BeforeEach(func() {
+				plan = GiveMeAPlan(5, 0)
+			})
+
+			It("can handle the zero case", func() {
+				db := GiveMeAnIndex(0, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is not over-limit when the combined number of service-instances is less than the limit", func() {
+				db := GiveMeAnIndex(2, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+
+				db = GiveMeAnIndex(0, 2, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+
+				db = GiveMeAnIndex(2, 2, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is over-limit when the combined number of service-instances equals the limit", func() {
+				db := GiveMeAnIndex(5, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+
+				db = GiveMeAnIndex(0, 5, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+
+				db = GiveMeAnIndex(3, 2, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is over-limit when the combined number of service-instances exceeds the limit", func() {
+				db := GiveMeAnIndex(6, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+
+				db = GiveMeAnIndex(0, 6, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+
+				db = GiveMeAnIndex(3, 3, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is not over-limit when another service exceeds the limit", func() {
+				db := GiveMeAnIndex(2, 0, 200)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+		})
+
+		Context("with service and plan limits", func() {
+			var plan Plan
+			BeforeEach(func() {
+				plan = GiveMeAPlan(7, 5)
+			})
+
+			It("can handle the zero case", func() {
+				db := GiveMeAnIndex(0, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is not over-limit when the number of plan-instances is less than the plan-limit", func() {
+				db := GiveMeAnIndex(2, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is not over-limit when the number of service-instances is less than the service-limit", func() {
+				db := GiveMeAnIndex(2, 4, 0)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
+			})
+
+			It("is over-limit when the number of plan-instances equals the plan-limit", func() {
+				db := GiveMeAnIndex(5, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is over-limit when the number of service-instances equals the service-limit", func() {
+				db := GiveMeAnIndex(4, 3, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is over-limit when the number of plan-instances exceeds the plan-limit", func() {
+				db := GiveMeAnIndex(6, 0, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is over-limit when the number of service-instances exceeds the service-limit", func() {
+				db := GiveMeAnIndex(4, 4, 0)
+				Ω(plan.OverLimit(db)).Should(BeTrue())
+			})
+
+			It("is not over-limit when another service exceeds the limit", func() {
+				db := GiveMeAnIndex(2, 2, 200)
+				Ω(plan.OverLimit(db)).Should(BeFalse())
 			})
 		})
 	})
