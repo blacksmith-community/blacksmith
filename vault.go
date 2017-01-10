@@ -277,16 +277,14 @@ func (vault *Vault) Clear(instanceID string) {
 }
 
 func (vault *Vault) Track(instanceID, action string, taskID int, params interface{}) error {
-	mapParams := deinterfaceMap(params.(map[interface{}]interface{}))
 	task := struct {
 		Action string      `json:"action"`
 		Task   int         `json:"task"`
 		Params interface{} `json:"params"`
-	}{action, taskID, mapParams}
+	}{action, taskID, deinterface(params)}
 	vault.logger.Debug("vault-track", lager.Data{
 		"action":  action,
 		"task_id": taskID,
-		"params":  mapParams,
 	})
 
 	return vault.Put(fmt.Sprintf("%s/task", instanceID), task)
