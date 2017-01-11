@@ -6,11 +6,10 @@ import (
 	"os/exec"
 
 	"github.com/geofffranks/spruce"
-	"github.com/pivotal-golang/lager"
 	"gopkg.in/yaml.v2"
 )
 
-func InitManifest(logger lager.Logger, p Plan, instanceID string) error {
+func InitManifest(p Plan, instanceID string) error {
 	os.Chmod(p.InitScriptPath, 755)
 	cmd := exec.Command(p.InitScriptPath)
 
@@ -19,9 +18,7 @@ func InitManifest(logger lager.Logger, p Plan, instanceID string) error {
 	/* put more environment variables here, as needed */
 
 	out, err := cmd.CombinedOutput()
-	logger.Debug("initialized-manifest", lager.Data{
-		"output": string(out),
-	})
+	Debug("init script `%s' said:\n%s", p.InitScriptPath, string(out))
 	return err
 }
 

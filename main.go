@@ -24,16 +24,10 @@ func main() {
 
 	bind := fmt.Sprintf(":%s", config.Broker.Port)
 
-	logger := lager.NewLogger("blacksmith-broker")
-	if config.Debug {
-		logger.RegisterSink(lager.NewWriterSink(os.Stdout, lager.DEBUG))
-	}
-
 	vault := &Vault{
 		URL:      config.Vault.Address,
 		Token:    "", // will be supplied soon.
 		Insecure: config.Vault.Insecure,
-		logger:   logger,
 	}
 	vault.HTTP = &http.Client{
 		Transport: &http.Transport{
@@ -64,7 +58,6 @@ func main() {
 	broker := &Broker{
 		Vault:  vault,
 		BOSH:   gogobosh.NewClient(bosh),
-		logger: logger,
 	}
 	err = broker.ReadServices(os.Args[3:]...)
 	if err != nil {
@@ -80,7 +73,7 @@ func main() {
 	})
 	http.Handle("/", brokerapi.New(
 		broker,
-		logger,
+		lager.NewLogger("blacksmith-broker"),
 		brokerapi.BrokerCredentials{
 			Username: config.Broker.Username,
 			Password: config.Broker.Password,

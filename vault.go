@@ -8,8 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/pivotal-golang/lager"
 )
 
 type Vault struct {
@@ -17,7 +15,6 @@ type Vault struct {
 	Token    string
 	Insecure bool
 	HTTP     *http.Client
-	logger   lager.Logger
 }
 
 type VaultCreds struct {
@@ -26,37 +23,39 @@ type VaultCreds struct {
 }
 
 func (vault *Vault) Init(store string) error {
-	logger := vault.logger.Session("vault-init", lager.Data{})
+	l := Logger.Wrap("vault init")
 
+	l.Debug("checking initialization state of the vault")
 	res, err := vault.Do("GET", "/v1/sys/init", nil)
 	if err != nil {
-		logger.Error("failed-to-check-vault", err)
+		l.Error("failed to check initialization state of the vault: %s", err)
 		return err
 	}
-
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		logger.Error("failed-to-read-init-response", err)
+		l.Error("failed to read response from the vault, concerning its initialization state: %s", err)
 		return err
 	}
-
 	var init struct {
 		Initialized bool `json:"initialized"`
 	}
 	if err = json.Unmarshal(b, &init); err != nil {
-		logger.Error("failed-to-parse-init-response", err)
+		l.Error("failed to parse response from the vault, concerning its initialization state: %s", err)
 		return err
 	}
 	if init.Initialized {
+		l.Info("vault is already initialized")
+
+		l.Debug("reading credentials files from %s", store)
 		b, err := ioutil.ReadFile(store)
 		if err != nil {
-			logger.Error("failed-to-read-vault-credentials-file", err)
+			l.Error("failed to read vault credentials from %s: %s", store, err)
 			return err
 		}
 		creds := VaultCreds{}
 		err = json.Unmarshal(b, &creds)
 		if err != nil {
-			logger.Error("failed-to-parse-vault-credentials-file", err)
+			l.Error("failed to parse vault credentials from %s: %s", store, err)
 			return err
 		}
 		vault.Token = creds.RootToken
@@ -66,18 +65,18 @@ func (vault *Vault) Init(store string) error {
 
 	//////////////////////////////////////////
 
+	l.Info("initializing the vault with 1/1 keys")
 	res, err = vault.Do("PUT", "/v1/sys/init", map[string]int{
 		"secret_shares":    1,
 		"secret_threshold": 1,
 	})
 	if err != nil {
-		logger.Error("failed-to-init-vault", err)
+		l.Error("failed to initialize the vault: %s", err)
 		return err
 	}
-
 	b, err = ioutil.ReadAll(res.Body)
 	if err != nil {
-		logger.Error("failed-to-read-init-response", err)
+		l.Error("failed to read response from the vault, concerning our initialization attempt: %s", err)
 		return err
 	}
 
@@ -86,12 +85,17 @@ func (vault *Vault) Init(store string) error {
 		Keys      []string `json:"keys"`
 	}
 	if err = json.Unmarshal(b, &keys); err != nil {
-		logger.Error("failed-to-parse-init-response", err)
+		l.Error("failed to parse response from the vault, concerning our initialization attempt: %s", err)
 		return err
 	}
 	if keys.RootToken == "" || len(keys.Keys) != 1 {
+		if keys.RootToken == "" {
+			l.Error("failed to initialize vault: root token was blank")
+		}
+		if len(keys.Keys) != 1 {
+			l.Error("failed to initialize vault: incorrect number of seal keys (%d) returned", len(keys.Keys))
+		}
 		err = fmt.Errorf("invalid response from vault: token '%s' and %d keys", keys.RootToken, len(keys.Keys))
-		logger.Error("failed-to-parse-init-response", err)
 		return err
 	}
 
@@ -99,14 +103,16 @@ func (vault *Vault) Init(store string) error {
 		SealKey:   keys.Keys[0],
 		RootToken: keys.RootToken,
 	}
+	l.Debug("marshaling credentials for longterm storage")
 	b, err = json.Marshal(creds)
 	if err != nil {
-		logger.Error("failed-to-marshal-vault-credentials", err)
+		l.Error("failed to marshal vault root token / seal key for longterm storage: %s", err)
 		return err
 	}
+	l.Debug("storing credentials at %s (mode 0600)", store)
 	err = ioutil.WriteFile(store, b, 0600)
 	if err != nil {
-		logger.Error("failed-to-write-vault-credentials-file", err)
+		l.Error("failed to write credentials to longterm storage file %s: %s", store, err)
 		return err
 	}
 
@@ -116,17 +122,17 @@ func (vault *Vault) Init(store string) error {
 }
 
 func (vault *Vault) Unseal(key string) error {
-	logger := vault.logger.Session("vault-unseal", lager.Data{})
+	l := Logger.Wrap("vault unseal")
 
+	l.Debug("checking current seal status of the vault")
 	res, err := vault.Do("GET", "/v1/sys/seal-status", nil)
 	if err != nil {
-		logger.Error("failed-to-query-seal-status", err)
+		l.Error("failed to check current seal status of the vault: %s", err)
 		return err
 	}
-
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		logger.Error("failed-to-read-seal-status-response-body", err)
+		l.Error("failed to read response from the vault, concerning current seal status: %s", err)
 		return err
 	}
 
@@ -135,41 +141,43 @@ func (vault *Vault) Unseal(key string) error {
 	}
 	err = json.Unmarshal(b, &status)
 	if err != nil {
-		logger.Error("failed-to-parse-seal-status-response-body", err)
+		l.Error("failed to parse response from the vault, concerning current seal status: %s", err)
 		return err
 	}
 
 	if !status.Sealed {
+		l.Info("vault is already unsealed")
 		return nil
 	}
 
 	//////////////////////////////////////////
 
+	l.Info("vault is sealed; unsealing it")
 	res, err = vault.Do("POST", "/v1/sys/unseal", map[string]string{
 		"key": key,
 	})
 	if err != nil {
-		logger.Error("failed-to-unseal-vault", err)
+		l.Error("failed to unseal vault: %s", err)
 		return err
 	}
-
 	b, err = ioutil.ReadAll(res.Body)
 	if err != nil {
-		logger.Error("failed-to-read-unseal-response-body", err)
+		l.Error("failed to read response from the vault, concerning our unseal attempt: %s", err)
 		return err
 	}
 	err = json.Unmarshal(b, &status)
 	if err != nil {
-		logger.Error("failed-to-parse-unseal-response-body", err)
+		l.Error("failed to parse response from the vault, concerning our unseal attempt: %s", err)
 		return err
 	}
 
 	if status.Sealed {
 		err = fmt.Errorf("vault is still sealed after unseal attempt")
-		logger.Error("failed-to-unseal-vault", err)
+		l.Error("%s", err)
 		return err
 	}
 
+	l.Info("unsealed the vault")
 	return nil
 }
 
@@ -239,53 +247,54 @@ func (vault *Vault) Put(path string, data interface{}) error {
 }
 
 func (vault *Vault) Clear(instanceID string) {
+	l := Logger.Wrap("vault clear %s", instanceID)
+
 	var rm func(string)
 	rm = func(path string) {
-		logger := vault.logger.Session("vault-clear", lager.Data{
-			"instance_id": instanceID,
-			"path":        path,
-		})
+		l.Debug("removing Vault secrets at/below %s", path)
+
 		res, err := vault.Do("DELETE", path, nil)
 		if err != nil {
-			logger.Error("failed-to-delete-secret", err)
+			l.Error("failed to delete %s: %s", path, err)
 		}
 
 		res, err = vault.Do("GET", fmt.Sprintf("%s?list=1", path), nil)
 		if err != nil {
-			logger.Error("failed-to-list-secret", err)
+			l.Error("failed to list secrets at %s: %s", path, err)
 			return
 		}
-
 		b, err := ioutil.ReadAll(res.Body)
 		if err != nil {
-			logger.Error("failed-to-list-secret", err)
+			l.Error("failed to read response from the vault: %s", err)
 			return
 		}
 
 		var r struct{ Data struct{ Keys []string } }
 		if err = json.Unmarshal(b, &r); err != nil {
-			logger.Error("failed-to-list-secret", err)
+			l.Error("failed to parse response from the vault: %s", err)
 			return
 		}
 
 		for _, sub := range r.Data.Keys {
 			rm(fmt.Sprintf("%s/%s", path, strings.TrimSuffix(sub, "/")))
 		}
-		logger.Info("cleared-secrets")
+
+		l.Debug("cleared out vault secrets")
 	}
+	l.Info("removing secrets under /v1/secrets/%s", instanceID)
 	rm(fmt.Sprintf("/v1/secret/%s", instanceID))
+	l.Info("completed")
 }
 
 func (vault *Vault) Track(instanceID, action string, taskID int, params interface{}) error {
+	l := Logger.Wrap("vault track %s", instanceID)
+	l.Debug("tracking action '%s', task %d", action, taskID)
+
 	task := struct {
 		Action string      `json:"action"`
 		Task   int         `json:"task"`
 		Params interface{} `json:"params"`
 	}{action, taskID, deinterface(params)}
-	vault.logger.Debug("vault-track", lager.Data{
-		"action":  action,
-		"task_id": taskID,
-	})
 
 	return vault.Put(fmt.Sprintf("%s/task", instanceID), task)
 }
