@@ -113,6 +113,12 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		l.Error("failed to generate service deployment manifest: %s", err)
 		return spec, fmt.Errorf("BOSH service deployment manifest generation failed")
 	}
+	err = b.Vault.Put(fmt.Sprintf("%s/manifest", instanceID), map[string]interface{}{
+		"manifest": manifest,
+	})
+	if err != nil {
+		l.Error("failed to store manifest in the vault (non-fatal): %s", err)
+	}
 
 	l.Debug("deploying to BOSH director")
 	task, err := b.BOSH.CreateDeployment(manifest)

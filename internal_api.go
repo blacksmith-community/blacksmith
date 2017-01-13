@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 )
 
 type InternalApi struct {
@@ -14,6 +15,7 @@ type InternalApi struct {
 }
 
 func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var pattern *regexp.Regexp
 	username, password, ok := req.BasicAuth()
 	if !ok {
 		w.WriteHeader(401)
@@ -53,5 +55,20 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "...\n")
+	pattern = regexp.MustCompile("^/b/([^/]+)/manifest$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		d, exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]))
+		if err == nil && exists {
+			if s, ok := d["manifest"]; ok {
+				w.Header().Set("Content-type", "text/plain")
+				fmt.Fprintf(w, "%v\n", s)
+				return
+			}
+		}
+		w.WriteHeader(404)
+		return
+	}
+
+	w.WriteHeader(404)
+	fmt.Fprintf(w, "endpoint not found...\n")
 }
