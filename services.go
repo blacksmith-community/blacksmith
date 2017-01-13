@@ -146,6 +146,7 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 			if err != nil {
 				return pp, err
 			}
+			p.ID = service.ID + "-" + p.ID
 			p.Service = &service
 			pp = append(pp, p)
 		}
@@ -219,7 +220,7 @@ func Catalog(ss []Service) []brokerapi.Service {
 		copy(bb[i].Tags, s.Tags)
 		bb[i].Plans = make([]brokerapi.ServicePlan, len(s.Plans))
 		for j, p := range s.Plans {
-			bb[i].Plans[j].ID = s.ID + "-" + p.ID
+			bb[i].Plans[j].ID = p.ID
 			bb[i].Plans[j].Name = p.Name
 			bb[i].Plans[j].Description = p.Description
 			/* FIXME: support free */
