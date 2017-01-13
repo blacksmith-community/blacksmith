@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"regexp"
 
 	"github.com/pivotal-cf/brokerapi"
 	"gopkg.in/yaml.v2"
@@ -30,6 +31,21 @@ type Service struct {
 	Limit       int      `yaml:"limit" json:"limit"`
 
 	Plans []Plan `yaml:"plans" json:"plans"`
+}
+
+var ValidName *regexp.Regexp
+
+func init() {
+	ValidName = regexp.MustCompile("^[a-zA-Z0-9-]+$")
+}
+
+func CheckNames(names ...string) error {
+	for _, s := range names {
+		if !ValidName.MatchString(s) {
+			return fmt.Errorf("'%s' is invalid; names should only contain letters, numbers and hyphens.", s)
+		}
+	}
+	return nil
 }
 
 func (p Plan) String() string {
@@ -77,6 +93,15 @@ func ReadPlan(path string) (p Plan, err error) {
 	}
 	err = yaml.Unmarshal(b, &p)
 	if err != nil {
+		return
+	}
+	if p.ID == "" && p.Name != "" {
+		p.ID = p.Name
+	}
+	if p.Name == "" && p.ID != "" {
+		p.Name = p.ID
+	}
+	if err = CheckNames(p.ID, p.Name); err != nil {
 		return
 	}
 
@@ -141,6 +166,15 @@ func ReadService(path string) (Service, error) {
 	if err != nil {
 		return s, err
 	}
+	if s.ID == "" && s.Name != "" {
+		s.ID = s.Name
+	}
+	if s.Name == "" && s.ID != "" {
+		s.Name = s.ID
+	}
+	if err = CheckNames(s.ID, s.Name); err != nil {
+		return s, err
+	}
 
 	pp, err := ReadPlans(path, s)
 	if err != nil {
@@ -185,7 +219,7 @@ func Catalog(ss []Service) []brokerapi.Service {
 		copy(bb[i].Tags, s.Tags)
 		bb[i].Plans = make([]brokerapi.ServicePlan, len(s.Plans))
 		for j, p := range s.Plans {
-			bb[i].Plans[j].ID = p.ID
+			bb[i].Plans[j].ID = s.ID + "-" + p.ID
 			bb[i].Plans[j].Name = p.Name
 			bb[i].Plans[j].Description = p.Description
 			/* FIXME: support free */
