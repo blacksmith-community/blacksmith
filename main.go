@@ -56,8 +56,8 @@ func main() {
 	}
 
 	broker := &Broker{
-		Vault:  vault,
-		BOSH:   gogobosh.NewClient(bosh),
+		Vault: vault,
+		BOSH:  gogobosh.NewClient(bosh),
 	}
 	err = broker.ReadServices(os.Args[3:]...)
 	if err != nil {
