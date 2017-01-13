@@ -217,6 +217,7 @@ func Catalog(ss []Service) []brokerapi.Service {
 		bb[i].Name = s.Name
 		bb[i].Description = s.Description
 		bb[i].Bindable = s.Bindable
+		bb[i].Tags = make([]string, len(s.Tags))
 		copy(bb[i].Tags, s.Tags)
 		bb[i].Plans = make([]brokerapi.ServicePlan, len(s.Plans))
 		for j, p := range s.Plans {
