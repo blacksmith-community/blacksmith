@@ -1,3 +1,6 @@
+build:
+	go build
+
 test:
 	ginkgo .
 
@@ -7,4 +10,4 @@ report: coverage
 	go tool cover -html=test.cov
 
 
-.PHONY: test coverage report
+.PHONY: build test coverage report

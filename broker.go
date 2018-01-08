@@ -81,7 +81,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	l.Debug("checking if we are over out service and/or plan limits")
 	if plan.OverLimit(db) {
 		l.Error("service limit exceeded for %s/%s", plan)
-		return spec, fmt.Errorf("service limit exceeded for %s/%s", plan)
+		return spec, fmt.Errorf("service limit exceeded for %s/%s", plan.Service.Name, plan.Name)
 	}
 
 	defaults := make(map[interface{}]interface{})
