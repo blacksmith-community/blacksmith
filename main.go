@@ -13,9 +13,18 @@ import (
 	"github.com/pivotal-golang/lager"
 )
 
+//Version gets edited during a release build
+var Version = "(development version)"
+
 func main() {
+	showVersion := flag.Bool("v", false, "Display the version of Blacksmith")
 	configPath := flag.String("c", "", "path to config")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("blacksmith %s\n", Version)
+		os.Exit(0)
+	}
 
 	config, err := ReadConfig(*configPath)
 	if err != nil {
