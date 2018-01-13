@@ -56,18 +56,32 @@ func main() {
 		log.Fatal(err)
 	}
 
-	bosh := &gogobosh.Config{
+	bosh, err := gogobosh.NewClient(&gogobosh.Config{
 		BOSHAddress:       config.BOSH.Address,
 		Username:          config.BOSH.Username,
 		Password:          config.BOSH.Password,
 		HttpClient:        http.DefaultClient,
 		SkipSslValidation: config.BOSH.SkipSslValidation,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to authenticate to BOSH: %s\n", err)
+		os.Exit(2)
+	}
+
+	if config.BOSH.CloudConfig != "" {
+		fmt.Fprintf(os.Stderr, "updating cloud-config...\n%s\n", config.BOSH.CloudConfig)
+		err = bosh.UpdateCloudConfig(config.BOSH.CloudConfig)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
+			os.Exit(2)
+		}
 	}
 
 	broker := &Broker{
 		Vault: vault,
-		BOSH:  gogobosh.NewClient(bosh),
+		BOSH:  bosh,
 	}
+
 	err = broker.ReadServices(os.Args[3:]...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read SERVICE directories: %s\n", err)

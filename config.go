@@ -33,6 +33,8 @@ type BOSHConfig struct {
 	Username          string `yaml:"username"`
 	Password          string `yaml:"password"`
 	SkipSslValidation bool   `yaml:"skip_ssl_validation"`
+	CCPath            string `yaml:"cloud-config"`
+	CloudConfig       string
 }
 
 func ReadConfig(path string) (c Config, err error) {
@@ -73,6 +75,15 @@ func ReadConfig(path string) (c Config, err error) {
 
 	if c.BOSH.Password == "" {
 		return c, fmt.Errorf("BOSH Password is not set")
+	}
+
+	if c.BOSH.CCPath != "" {
+		/* cloud-config provided; try to read it. */
+		b, err := ioutil.ReadFile(c.BOSH.CCPath)
+		if err != nil {
+			return c, fmt.Errorf("BOSH cloud-config file '%s': %s", c.BOSH.CCPath, err)
+		}
+		c.BOSH.CloudConfig = string(b)
 	}
 
 	os.Setenv("VAULT_ADDR", c.Vault.Address)

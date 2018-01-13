@@ -1,11 +1,11 @@
 {
 	"ImportPath": "github.com/cloudfoundry-community/blacksmith",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v71",
+	"GodepVersion": "v79",
 	"Deps": [
 		{
 			"ImportPath": "github.com/cloudfoundry-community/gogobosh",
-			"Rev": "6e8944519c14f7d15dbcc5ddf489e8b018286f97"
+			"Rev": "e2c5e703e0732300300c991d0fb6040051c43255"
 		},
 		{
 			"ImportPath": "github.com/geofffranks/simpleyaml",
@@ -188,6 +188,22 @@
 		{
 			"ImportPath": "github.com/smallfish/simpleyaml",
 			"Rev": "e0865b8fe0bb302895f2862494f1d5b2f471face"
+		},
+		{
+			"ImportPath": "github.com/cloudfoundry-community/gogobosh/vendor/golang.org/x/net/context",
+			"Rev": "e2c5e703e0732300300c991d0fb6040051c43255"
+		},
+		{
+			"ImportPath": "github.com/cloudfoundry-community/gogobosh/vendor/golang.org/x/oauth2",
+			"Rev": "e2c5e703e0732300300c991d0fb6040051c43255"
+		},
+		{
+			"ImportPath": "github.com/cloudfoundry-community/gogobosh/vendor/golang.org/x/oauth2/clientcredentials",
+			"Rev": "e2c5e703e0732300300c991d0fb6040051c43255"
+		},
+		{
+			"ImportPath": "github.com/cloudfoundry-community/gogobosh/vendor/golang.org/x/oauth2/internal",
+			"Rev": "e2c5e703e0732300300c991d0fb6040051c43255"
 		}
 	]
 }

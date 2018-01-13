@@ -11,21 +11,35 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 //Client used to communicate with BOSH
 type Client struct {
-	config Config
+	config   Config
+	Endpoint Endpoint
 }
 
 //Config is used to configure the creation of a client
 type Config struct {
 	BOSHAddress       string
-	Port              string
 	Username          string
 	Password          string
+	ClientID          string
+	ClientSecret      string
+	UAAAuth           bool
 	HttpClient        *http.Client
 	SkipSslValidation bool
+	TokenSource       oauth2.TokenSource
+	Endpoint          *Endpoint
+}
+
+type Endpoint struct {
+	URL string `json:"doppler_logging_endpoint"`
 }
 
 // request is used to help build up a request
@@ -49,8 +63,14 @@ func DefaultConfig() *Config {
 	}
 }
 
+func DefaultEndpoint() *Endpoint {
+	return &Endpoint{
+		URL: "https://192.168.50.4:8443",
+	}
+}
+
 // NewClient returns a new client
-func NewClient(config *Config) *Client {
+func NewClient(config *Config) (*Client, error) {
 	// bootstrap the config
 	defConfig := DefaultConfig()
 
@@ -66,24 +86,126 @@ func NewClient(config *Config) *Client {
 		config.Password = defConfig.Password
 	}
 
+	//Save the configured HTTP Client timeout for later
+	var timeout time.Duration
+	if config.HttpClient != nil {
+		timeout = config.HttpClient.Timeout
+	}
+
+	endpoint := &Endpoint{}
 	config.HttpClient = &http.Client{
+		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: config.SkipSslValidation,
 			},
 		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	}
+
+	authType, err := getAuthType(config.BOSHAddress, config.HttpClient)
+	if err != nil {
+		return nil, fmt.Errorf("Could not get auth type: %v", err)
+	}
+	if authType != "uaa" {
+		config.HttpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			if len(via) > 10 {
 				return fmt.Errorf("stopped after 10 redirects")
 			}
 			req.URL.Host = strings.TrimPrefix(config.BOSHAddress, req.URL.Scheme+"://")
 			req.SetBasicAuth(config.Username, config.Password)
+			req.Header.Add("User-Agent", "gogo-bosh")
+			req.Header.Del("Referer")
 			return nil
-		}}
-	client := &Client{
-		config: *config,
+		}
+	} else {
+		ctx := getContext(*config)
+
+		endpoint, err := getUAAEndpoint(config.BOSHAddress, oauth2.NewClient(ctx, nil))
+
+		if err != nil {
+			return nil, fmt.Errorf("Could not get api /info: %v", err)
+		}
+
+		config.Endpoint = endpoint
+
+		if config.ClientID == "" { //No ClientID? Do UAA User auth
+			authConfig, token, err := getToken(ctx, *config)
+
+			if err != nil {
+				return nil, fmt.Errorf("Error getting token: %v", err)
+			}
+
+			config.TokenSource = authConfig.TokenSource(ctx, token)
+			config.HttpClient = oauth2.NewClient(ctx, config.TokenSource)
+		} else { //Got a ClientID? Do UAA Client Auth (two-legged auth)
+			authConfig := &clientcredentials.Config{
+				ClientID:     config.ClientID,
+				ClientSecret: config.ClientSecret,
+				TokenURL:     endpoint.URL + "/oauth/token",
+			}
+			config.TokenSource = authConfig.TokenSource(ctx)
+			config.HttpClient = authConfig.Client(ctx)
+		}
+
+		config.HttpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) > 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			req.URL.Host = strings.TrimPrefix(config.BOSHAddress, req.URL.Scheme+"://")
+			req.Header.Add("User-Agent", "gogo-bosh")
+			req.Header.Del("Referer")
+			return nil
+		}
 	}
-	return client
+
+	//Restore the timeout from the provided HTTP Client
+	config.HttpClient.Timeout = timeout
+
+	client := &Client{
+		config:   *config,
+		Endpoint: *endpoint,
+	}
+
+	return client, nil
+}
+
+func getAuthType(api string, httpClient *http.Client) (string, error) {
+	info, err := getInfo(api, httpClient)
+	return info.UserAuthenication.Type, err
+}
+
+func getInfo(api string, httpClient *http.Client) (*Info, error) {
+	var (
+		info Info
+	)
+
+	if api == "" {
+		return &Info{}, nil
+	}
+
+	resp, err := httpClient.Get(api + "/info")
+	if err != nil {
+		log.Printf("Error requesting info %v", err)
+		return &Info{}, err
+	}
+	defer resp.Body.Close()
+
+	resBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Error reading info request %v", resBody)
+		return &Info{}, err
+	}
+	err = json.Unmarshal(resBody, &info)
+	return &info, err
+}
+
+func getUAAEndpoint(api string, httpClient *http.Client) (*Endpoint, error) {
+	if api == "" {
+		return DefaultEndpoint(), nil
+	}
+	info, err := getInfo(api, httpClient)
+	URL := info.UserAuthenication.Options.URL
+	return &Endpoint{URL: URL}, err
 }
 
 // NewRequest is used to create a new request
@@ -109,6 +231,12 @@ func (c *Client) DoRequest(r *request) (*http.Response, error) {
 	req.SetBasicAuth(c.config.Username, c.config.Password)
 	req.Header.Add("User-Agent", "gogo-bosh")
 	resp, err := c.config.HttpClient.Do(req)
+	if err != nil {
+		if strings.Contains(err.Error(), "oauth2: cannot fetch token") {
+			c.refreshClient()
+			resp, err = c.config.HttpClient.Do(req)
+		}
+	}
 	return resp, err
 }
 
@@ -127,6 +255,8 @@ func (c *Client) GetInfo() (info Info, err error) {
 		log.Printf("Error requesting info %v", err)
 		return
 	}
+	defer resp.Body.Close()
+
 	resBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("Error reading info request %v", resBody)
@@ -138,6 +268,46 @@ func (c *Client) GetInfo() (info Info, err error) {
 		return
 	}
 	return
+}
+
+func (c *Client) refreshClient() error {
+	ctx := getContext(c.config)
+
+	authConfig, token, err := getToken(ctx, c.config)
+	if err != nil {
+		return fmt.Errorf("Error getting token: %v", err)
+	}
+
+	c.config.TokenSource = authConfig.TokenSource(ctx, token)
+	c.config.HttpClient = oauth2.NewClient(ctx, c.config.TokenSource)
+	c.config.HttpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		req.URL.Host = strings.TrimPrefix(c.config.BOSHAddress, req.URL.Scheme+"://")
+		req.Header.Add("User-Agent", "gogo-bosh")
+		req.Header.Del("Referer")
+		return nil
+	}
+
+	return nil
+}
+
+func getToken(ctx context.Context, config Config) (*oauth2.Config, *oauth2.Token, error) {
+	authConfig := &oauth2.Config{
+		ClientID: "bosh_cli",
+		Scopes:   []string{""},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  config.Endpoint.URL + "/oauth/authorize",
+			TokenURL: config.Endpoint.URL + "/oauth/token",
+		},
+	}
+	token, err := authConfig.PasswordCredentialsToken(ctx, config.Username, config.Password)
+	return authConfig, token, err
+}
+
+func getContext(config Config) context.Context {
+	return context.WithValue(oauth2.NoContext, oauth2.HTTPClient, config.HttpClient)
 }
 
 // toHTTP converts the request to an HTTP request
@@ -154,6 +324,15 @@ func (r *request) toHTTP() (*http.Request, error) {
 
 	// Create the HTTP request
 	return http.NewRequest(r.method, r.url, r.body)
+}
+
+// GetToken - returns the current token bearer
+func (c *Client) GetToken() (string, error) {
+	token, err := c.config.TokenSource.Token()
+	if err != nil {
+		return "", fmt.Errorf("Error getting bearer token: %v", err)
+	}
+	return "bearer " + token.AccessToken, nil
 }
 
 // decodeBody is used to JSON decode a body
