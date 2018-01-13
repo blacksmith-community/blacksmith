@@ -28,12 +28,20 @@ type VaultConfig struct {
 	CredPath string `yaml:"credentials"`
 }
 
+type BOSHStemcell struct {
+	Name    string `yaml:"name"`
+	Version string `yaml:"version"`
+	URL     string `yaml:"url"`
+	SHA1    string `yaml:"sha1"`
+}
+
 type BOSHConfig struct {
-	Address           string `yaml:"address"`
-	Username          string `yaml:"username"`
-	Password          string `yaml:"password"`
-	SkipSslValidation bool   `yaml:"skip_ssl_validation"`
-	CCPath            string `yaml:"cloud-config"`
+	Address           string         `yaml:"address"`
+	Username          string         `yaml:"username"`
+	Password          string         `yaml:"password"`
+	SkipSslValidation bool           `yaml:"skip_ssl_validation"`
+	Stemcells         []BOSHStemcell `yaml:"stemcells"`
+	CCPath            string         `yaml:"cloud-config"`
 	CloudConfig       string
 }
 

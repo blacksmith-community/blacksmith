@@ -69,11 +69,38 @@ func main() {
 	}
 
 	if config.BOSH.CloudConfig != "" {
-		fmt.Fprintf(os.Stderr, "updating cloud-config...\n%s\n", config.BOSH.CloudConfig)
+		fmt.Fprintf(os.Stderr, "updating cloud-config...\n")
 		err = bosh.UpdateCloudConfig(config.BOSH.CloudConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
 			os.Exit(2)
+		}
+	}
+
+	if config.BOSH.Stemcells != nil {
+		ss, err := bosh.GetStemcells()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to retrieve STEMCELLS list: %s\n", err)
+			os.Exit(2)
+		}
+		have := make(map[string]bool)
+		for _, sc := range ss {
+			have[sc.Name+"/"+sc.Version] = true
+		}
+
+		fmt.Fprintf(os.Stderr, "uploading stemcells...\n")
+		for _, sc := range config.BOSH.Stemcells {
+			fmt.Fprintf(os.Stderr, "  - [%s] %s", sc.SHA1, sc.URL)
+			if have[sc.Name+"/"+sc.Version] {
+				fmt.Fprintf(os.Stderr, " --- SKIP (already uploaded)\n")
+				continue
+			}
+			task, err := bosh.UploadStemcell(sc.URL, sc.SHA1)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\nFailed to upload STEMCELL (%s) sha1 [%s]: %s\n", err, sc.URL, sc.SHA1)
+				os.Exit(2)
+			}
+			fmt.Fprintf(os.Stderr, " --- uploading, BOSH task %d\n", task.ID)
 		}
 	}
 
