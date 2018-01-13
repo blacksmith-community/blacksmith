@@ -5,29 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"time"
 )
 
 type InternalApi struct {
-	Vault    *Vault
-	Broker   *Broker
-	Username string
-	Password string
+	Env    string
+	Vault  *Vault
+	Broker *Broker
 }
 
 func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var pattern *regexp.Regexp
-	username, password, ok := req.BasicAuth()
-	if !ok {
-		w.WriteHeader(401)
-		fmt.Fprintf(w, "Authorization Required\n")
-		return
-	}
-	if username != api.Username || password != api.Password {
-		w.WriteHeader(403)
-		fmt.Fprintf(w, "Forbidden\n")
-		return
-	}
-
 	if req.URL.Path == "/b/status" {
 		idx, err := api.Vault.GetIndex("db")
 		if err != nil {
@@ -36,14 +23,18 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s\n", idx.JSON())
-		return
-	}
-
-	if req.URL.Path == "/b/plans" {
-		p := deinterface(api.Broker.Plans)
-		b, err := json.Marshal(p)
+		out := struct {
+			Env       string      `json:"env"`
+			Instances interface{} `json:"instances"`
+			Plans     interface{} `json:"plans"`
+			Log       string      `json:"log"`
+		}{
+			Env:       api.Env,
+			Instances: idx.Data,
+			Plans:     deinterface(api.Broker.Plans),
+			Log:       Logger.String(),
+		}
+		b, err := json.Marshal(out)
 		if err != nil {
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error: %s\n", err)
@@ -55,7 +46,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pattern = regexp.MustCompile("^/b/([^/]+)/manifest$")
+	pattern := regexp.MustCompile("^/b/([^/]+)/manifest\\.yml$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		d, exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]))
 		if err == nil && exists {
@@ -64,6 +55,38 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				fmt.Fprintf(w, "%v\n", s)
 				return
 			}
+		}
+		w.WriteHeader(404)
+		return
+	}
+
+	pattern = regexp.MustCompile("^/b/([^/]+)/task\\.log$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("task.log")
+		l.Debug("looking up task log for %s", m[1])
+		d, exists, err := api.Vault.Get(fmt.Sprintf("%s/task", m[1]))
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", m[1])
+		} else if idf, ok := d["task"]; ok {
+			id := int(idf.(float64))
+			events, err := api.Broker.BOSH.GetTaskEvents(id)
+			if err != nil {
+				w.WriteHeader(500)
+				fmt.Fprintf(w, "error: %s\n", err)
+				return
+			}
+			w.Header().Set("Content-type", "text/plain")
+			for _, event := range events {
+				ts := time.Unix(int64(event.Time), 0)
+				if event.Task != "" {
+					fmt.Fprintf(w, "Task %d | %s | %s: %s %s\n", id, ts.Format("15:04:05"), event.Stage, event.Task, event.State)
+				} else if event.Error.Code != 0 {
+					fmt.Fprintf(w, "Task %d | %s | ERROR: [%d] %s\n", id, ts.Format("15:04:05"), event.Error.Code, event.Error.Message)
+				}
+			}
+			return
+		} else {
+			l.Error("'task' key not found in vault index for service instance %s; perhaps vault is corrupted?", m[1])
 		}
 		w.WriteHeader(404)
 		return

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Blacksmith Management Console</title>
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css">
+</head>
+<body>
+
+  <header>
+    <div class="wrap">
+      <span id="logo">blacksmith</span>
+      <span id="ident"></span>
+      <nav>
+        <li><a href="#log">log</a></li>
+        <li><a href="#services">services</a></li>
+        <li><a href="#plans">plans</a></li>
+      </nav>
+    </div>
+  </header>
+
+  <div class="wrap">
+    <div id="plans" class="wedge">
+    <div class="card">
+      <h1>Plans</h1>
+      <div class="content">loading, please wait...</div>
+    </div>
+    </div>
+
+    <div id="services" class="wedge">
+    <div class="card">
+      <h1>Service Instances</h1>
+      <div class="content">loading, please wait...
+    </div>
+    </div>
+
+    <div id="log" class="wedge">
+    <div class="card">
+      <h1>Log</h1>
+      <pre><code>loading, please wait...</code></pre>
+    </div>
+    </div>
+
+  </div>
+
+  <footer>
+    <div class="wrap">
+      <p>Copyright &copy; 2018 James Hunt</p>
+    </div>
+  </footer>
+
+  <script type="text/html" id="template:plans"><!-- {{{ -->
+    [[#
+        {plans}
+
+        Displays services and plans from the Blacksmith
+        broker catalog.
+    ]]
+    [[ $.each(_.services, function (i, service) { ]]
+      <h2>[[= service.name ]]</h2>
+      <ul class="tags">[[ $.each(service.tags, function (j, tag) { ]]<li>[[= tag ]]</li>[[ }); ]]</ul>
+      <div class="desc"><p>[[= service.description ]]</p></div>
+
+      <table><thead><tr>
+        <th>Plan</th>
+        <th>Description</th>
+        <th># Instances</th>
+      </tr></thead>
+      <tbody>
+        [[ $.each(service.plans, function (j, plan) { ]]
+          <tr>
+            <td>[[= plan.name ]]</td>
+            <td>[[= plan.description ]]</td>
+            <td>[[= plan.blacksmith.instances ]] / [[= plan.blacksmith.limit || '&infin;' ]]</td>
+          </tr>
+        [[ }); ]]
+      </tbody>
+      </table>
+    [[ }); ]]
+  </script><!-- }}} -->
+  <script type="text/html" id="template:services"><!-- {{{ -->
+    [[#
+        {services}
+
+        Displays service instances from the Blacksmith Index.
+    ]]
+    [[ if ($.empty(_)) { ]]
+    <div class="no-data">No services have been provisioned yet.</div>
+    [[ } else { ]]
+    <table><thead><tr>
+      <th>ID</th>
+      <th>Plan</th>
+      <th>BOSH Manifest</th>
+      <th>Deployment Log</th>
+    </tr></thead>
+    <tbody>
+      [[ $.each(_, function (id, details) { ]]
+      <tr>
+        <td class="uuid">[[= id ]]</td>
+        <td>[[= details.plan ]]</td>
+        <td><a href="/b/[[= id ]]/manifest.yml">manifest.yml</a></td>
+        <td><a href="/b/[[= id ]]/task.log">task.log</a></td>
+      </tr>
+      [[ }); ]]
+    </tbody>
+    </table>
+    [[ } ]]
+  </script><!-- }}} -->
+  <script type="text/javascript" src="/jquery.js"></script>
+  <script type="text/javascript" src="/lens.js"></script>
+  <script type="text/javascript" src="/blacksmith.js"></script>
+</body>
+</html>

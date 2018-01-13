@@ -62,6 +62,7 @@ fi
 pushd $REPO_ROOT
 mkdir artifacts
 gox -osarch="${TARGETS}" --output="artifacts/${BINARY}-{{.OS}}-{{.Arch}}" -ldflags="-X main.Version=${VERSION}" ./...
+tar -cjf artifacts/webroot.tar.bz2 ui/
 go build -o "${BINARY}" -ldflags="-X main.Version=${VERSION}" ${CMD_PKG:-.}
 ./${BINARY} -v
 popd

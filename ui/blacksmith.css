@@ -1,0 +1,198 @@
+html, body, div, span, applet, object, iframe,
+h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+a, abbr, acronym, address, big, cite, code,
+del, dfn, em, img, ins, kbd, q, s, samp,
+small, strike, strong, sub, sup, tt, var,
+b, u, i, center,
+dl, dt, dd, ol, ul, li,
+fieldset, form, label, legend,
+table, caption, tbody, tfoot, thead, tr, th, td,
+article, aside, canvas, details, embed, 
+figure, figcaption, footer, header, hgroup, 
+menu, nav, output, ruby, section, summary,
+time, mark, audio, video {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+  font: inherit;
+  vertical-align: baseline;
+}
+/* HTML5 display-role reset for older browsers */
+article, aside, details, figcaption, figure, 
+footer, header, hgroup, menu, nav, section {
+  display: block;
+}
+body {
+  line-height: 1;
+}
+nav, ol, ul {
+  list-style: none;
+}
+blockquote, q {
+  quotes: none;
+}
+blockquote:before, blockquote:after,
+q:before, q:after {
+  content: '';
+  content: none;
+}
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+
+
+body {
+  background-color: #efefef;
+  font-family: sans-serif;
+}
+.wrap {
+  width: 960px;
+  margin: 0 auto;
+}
+header {
+  position: fixed;
+  width: 100%;
+  top: 0px;
+
+  background-color: #000;
+  color: #fff;
+  box-shadow: 3px 3px 3px #777;
+  overflow: hidden;
+  height: 30px;
+}
+body {
+  padding-top: 30px;
+}
+header a {
+  color: #fff;
+  text-decoration: none;
+  border-bottom: 1px dotted #fff;
+}
+header span, header nav li {
+  height: 30px;
+  line-height: 30px;
+}
+header span {
+  float: left;
+  padding-right: 1ex;
+}
+header nav li {
+  float: right;
+  padding-left: 1em;
+}
+header span#ident {
+  color: lime;
+}
+
+.wedge {
+  padding-top: 20px;
+}
+.card {
+  background-color: #fff;
+  box-shadow: 3px 3px 3px #777;
+  padding: 1em;
+  margin: 2em 0;
+}
+.card h1 {
+  font-size: 16pt;
+  font-weight: bold;
+}
+.card .content {
+  padding: 1em;
+}
+
+footer {
+  margin-top: 8em;
+  padding-bottom: 10px;
+}
+footer p {
+  text-align: center;
+  font-size: 9pt;
+  color: #777;
+}
+
+
+
+table {
+  width: 100%;
+}
+thead th {
+  font-weight: bold;
+  text-align: left;
+font-size: 10pt;
+  border-bottom: 1px dashed #ccc;
+  padding: 4px;
+}
+td {
+  padding: 4px;
+}
+td.uuid {
+  font-family: monospace;
+}
+td a {
+  text-decoration: none;
+  color: #0071bc;
+}
+
+.no-data {
+  font-size: 14pt;
+  color: #ccc;
+  font-style: italic;
+  margin: 2em;
+  text-align: center;
+}
+
+#plans h2 {
+  font-size: 14pt;
+  font-weight: bold;
+  margin-top: 3em;
+}
+#plans h2:first-child {
+  margin-top: 1em;
+}
+#plans .desc {
+  margin: 2em 0.5em;
+  width: 35em;
+}
+#plan .desc p {
+  margin: 1em;
+}
+#plans ul.tags {
+  overflow: hidden;
+}
+#plans ul.tags li {
+  font-size: 8pt;
+  font-family: monospace;
+  border: 1px solid #2d5072;
+  border: 1px solid #66b2ff;
+  border-radius: 3px;
+  background-color: #66b2ff;
+  background-color: #9eceff;
+  display: inline-block;
+  padding: 3px;
+  margin: 2px;
+}
+
+#log pre {
+  color: #eee;
+  background-color: #333;
+  font-family: monospace;
+  padding: 1em;
+  line-height: 1.4em;
+  white-space: pre-line;
+  margin: 1em 0;
+}
+#log pre .d {
+  color: lime;
+}
+#log pre .i {
+  color: yellow;
+}
+#log pre .l {
+  font-weight: bold;
+}
+#log pre .l.INFO { color: skyblue; }
+#log pre .l.ERROR { color: red; }

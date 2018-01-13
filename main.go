@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
@@ -31,7 +32,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	l := Logger.Wrap("*")
+
 	bind := fmt.Sprintf(":%s", config.Broker.Port)
+	l.Info("broker will listen on %s", bind)
 
 	vault := &Vault{
 		URL:      config.Vault.Address,
@@ -69,7 +73,7 @@ func main() {
 	}
 
 	if config.BOSH.CloudConfig != "" {
-		fmt.Fprintf(os.Stderr, "updating cloud-config...\n")
+		l.Info("updating cloud-config...")
 		err = bosh.UpdateCloudConfig(config.BOSH.CloudConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
@@ -88,11 +92,10 @@ func main() {
 			have[sc.Name+"/"+sc.Version] = true
 		}
 
-		fmt.Fprintf(os.Stderr, "uploading stemcells...\n")
+		l.Info("uploading stemcells...")
 		for _, sc := range config.BOSH.Stemcells {
-			fmt.Fprintf(os.Stderr, "  - [%s] %s", sc.SHA1, sc.URL)
 			if have[sc.Name+"/"+sc.Version] {
-				fmt.Fprintf(os.Stderr, " --- SKIP (already uploaded)\n")
+				l.Info("skipping %s/%s (already uploaded)", sc.Name, sc.Version)
 				continue
 			}
 			task, err := bosh.UploadStemcell(sc.URL, sc.SHA1)
@@ -100,7 +103,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "\nFailed to upload STEMCELL (%s) sha1 [%s]: %s\n", err, sc.URL, sc.SHA1)
 				os.Exit(2)
 			}
-			fmt.Fprintf(os.Stderr, " --- uploading, BOSH task %d\n", task.ID)
+			l.Info("uploading stemcell %s/%s [sha1 %s] in BOSH task %d, from %s", sc.Name, sc.Version, sc.SHA1, task.ID, sc.URL)
 		}
 	}
 
@@ -109,24 +112,36 @@ func main() {
 		BOSH:  bosh,
 	}
 
+	l.Info("reading services from %s", strings.Join(os.Args[3:], ", "))
 	err = broker.ReadServices(os.Args[3:]...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read SERVICE directories: %s\n", err)
 		os.Exit(2)
 	}
 
-	http.Handle("/b/", &InternalApi{
-		Vault:    vault,
-		Broker:   broker,
+	var ui http.Handler = NullHandler{}
+	if config.WebRoot != "" {
+		ui = http.FileServer(http.Dir(config.WebRoot))
+	}
+	http.Handle("/", &API{
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,
+		WebRoot:  ui,
+		Internal: &InternalApi{
+			Env:    config.Env,
+			Vault:  vault,
+			Broker: broker,
+		},
+		Primary: brokerapi.New(
+			broker,
+			lager.NewLogger("blacksmith-broker"),
+			brokerapi.BrokerCredentials{
+				Username: config.Broker.Username,
+				Password: config.Broker.Password,
+			},
+		),
 	})
-	http.Handle("/", brokerapi.New(
-		broker,
-		lager.NewLogger("blacksmith-broker"),
-		brokerapi.BrokerCredentials{
-			Username: config.Broker.Username,
-			Password: config.Broker.Password,
-		}))
+
+	l.Info("blacksmith service broker v%s starting up...", Version)
 	http.ListenAndServe(bind, nil)
 }
