@@ -63,6 +63,9 @@ pushd $REPO_ROOT
 mkdir artifacts
 gox -osarch="${TARGETS}" --output="artifacts/${BINARY}-{{.OS}}-{{.Arch}}" -ldflags="-X main.Version=${VERSION}" ./...
 tar -cjf artifacts/webroot.tar.bz2 ui/
+mkdir -p blacksmith-${VERSION}
+cp artifacts/* blacksmith-${VERSION}/
+tar -cjf artifacts/blacksmith-${VERSION}.tar.bz2 blacksmith-${VERSION}/
 go build -o "${BINARY}" -ldflags="-X main.Version=${VERSION}" ${CMD_PKG:-.}
 ./${BINARY} -v
 popd
