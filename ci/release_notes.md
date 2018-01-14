@@ -6,3 +6,7 @@
   Forges can also now reference releases via URL and SHA1, and
   the broker will upload them before any service deployment, if
   they are missing.
+
+# Bug Fixes
+
+- The Management UI now properly shows service limits.

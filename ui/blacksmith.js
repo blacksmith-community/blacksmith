@@ -43,7 +43,7 @@
                 plans[plan.id] = service.name + '/' + plan.name;
                 catalog.services[i].plans[j].blacksmith = {
                   instances: instances[plan.id] || 0,
-                  limit:     data.plans[plan.id] || 0
+                  limit:     data.plans[service.name+'/'+plan.id].limit || 0
                 };
               });
             });
