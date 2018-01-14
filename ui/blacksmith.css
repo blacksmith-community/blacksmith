@@ -176,6 +176,10 @@ td a {
   margin: 2px;
 }
 
+#services tbody tr:hover td {
+  background-color: #fffac7;
+}
+
 #log pre {
   color: #eee;
   background-color: #333;
