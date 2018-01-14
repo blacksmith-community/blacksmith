@@ -120,6 +120,13 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		l.Error("failed to store manifest in the vault (non-fatal): %s", err)
 	}
 
+	l.Debug("uploading releases (if necessary) to BOSH director")
+	err = UploadReleasesFromManifest(manifest, b.BOSH)
+	if err != nil {
+		l.Error("failed to upload service deployment releases: %s", err)
+		return spec, fmt.Errorf("BOSH service deployment failed")
+	}
+
 	l.Debug("deploying to BOSH director")
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {

@@ -81,6 +81,34 @@ func main() {
 		}
 	}
 
+	if config.BOSH.Releases != nil {
+		rr, err := bosh.GetReleases()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to retrieve RELEASES list: %s\n", err)
+			os.Exit(2)
+		}
+		have := make(map[string]bool)
+		for _, r := range rr {
+			for _, v := range r.ReleaseVersions {
+				have[r.Name+"/"+v.Version] = true
+			}
+		}
+
+		l.Info("uploading releases...")
+		for _, r := range config.BOSH.Releases {
+			if have[r.Name+"/"+r.Version] {
+				l.Info("skipping %s/%s (already uploaded)", r.Name, r.Version)
+				continue
+			}
+			task, err := bosh.UploadRelease(r.URL, r.SHA1)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\nFailed to upload RELEASE (%s) sha1 [%s]: %s\n", err, r.URL, r.SHA1)
+				os.Exit(2)
+			}
+			l.Info("uploading release %s/%s [sha1 %s] in BOSH task %d, from %s", r.Name, r.Version, r.SHA1, task.ID, r.URL)
+		}
+	}
+
 	if config.BOSH.Stemcells != nil {
 		ss, err := bosh.GetStemcells()
 		if err != nil {

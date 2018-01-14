@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/geofffranks/spruce"
 	"gopkg.in/yaml.v2"
 )
@@ -45,4 +46,43 @@ func GenManifest(p Plan, manifests ...map[interface{}]interface{}) (string, erro
 		return "", err
 	}
 	return string(b), nil
+}
+
+func UploadReleasesFromManifest(raw string, bosh *gogobosh.Client) error {
+	var manifest struct {
+		Releases []struct {
+			Name    string `yaml:"name"`
+			Version string `yaml:"version"`
+			URL     string `yaml:"url"`
+			SHA1    string `yaml:"sha1"`
+		} `yaml:"releases"`
+	}
+
+	err := yaml.Unmarshal([]byte(raw), &manifest)
+	if err != nil {
+		return err
+	}
+
+	rr, err := bosh.GetReleases()
+	if err != nil {
+		return err
+	}
+
+	have := make(map[string]bool)
+	for _, rl := range rr {
+		for _, v := range rl.ReleaseVersions {
+			have[rl.Name+"/"+v.Version] = true
+		}
+	}
+
+	for _, rl := range manifest.Releases {
+		if !have[rl.Name+"/"+rl.Version] && rl.URL != "" && rl.SHA1 != "" {
+			_, err := bosh.UploadRelease(rl.URL, rl.SHA1)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
