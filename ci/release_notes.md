@@ -10,3 +10,6 @@
 # Bug Fixes
 
 - The Management UI now properly shows service limits.
+
+- Deprovisioning services no longer uses the `--force` mechanism,
+  so it no longer panics, and we properly handle our bookkeeping.

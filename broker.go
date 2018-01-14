@@ -174,6 +174,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	/* FIXME: what if we still have a valid task for deployment? */
 	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
+		l.Error("failed to delete BOSH deployment %s: %s", deploymentName, err)
 		return true, err
 	}
 	l.Debug("delete operation started, BOSH task %d", task.ID)
