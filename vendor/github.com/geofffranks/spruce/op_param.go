@@ -2,7 +2,8 @@ package spruce
 
 import (
 	"fmt"
-	"github.com/jhunt/tree"
+
+	"github.com/starkandwayne/goutils/tree"
 )
 
 // ParamOperator ...
@@ -15,12 +16,12 @@ func (ParamOperator) Setup() error {
 
 // Phase ...
 func (ParamOperator) Phase() OperatorPhase {
-	return EvalPhase
+	return ParamPhase
 }
 
 // Dependencies ...
-func (ParamOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
-	return []*tree.Cursor{}
+func (ParamOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor, _ []*tree.Cursor) []*tree.Cursor {
+	return nil
 }
 
 // Run ...

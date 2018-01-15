@@ -35,7 +35,7 @@ func GenManifest(p Plan, manifests ...map[interface{}]interface{}) (string, erro
 		}
 	}
 	eval := &spruce.Evaluator{Tree: merged}
-	err = eval.Run([]string{})
+	err = eval.Run(nil, nil)
 	if err != nil {
 		return "", err
 	}

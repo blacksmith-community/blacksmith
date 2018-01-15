@@ -2,23 +2,49 @@ package spruce
 
 import (
 	"fmt"
+	"os"
+	"reflect"
 	"sort"
 	"strconv"
 
+	"github.com/starkandwayne/goutils/ansi"
+
 	. "github.com/geofffranks/spruce/log"
-	"github.com/jhunt/tree"
+	"github.com/starkandwayne/goutils/tree"
 )
 
 // Evaluator ...
 type Evaluator struct {
-	Tree map[interface{}]interface{}
-	Deps map[string][]tree.Cursor
-
-	Here *tree.Cursor
+	Tree     map[interface{}]interface{}
+	Deps     map[string][]tree.Cursor
+	SkipEval bool
+	Here     *tree.Cursor
 
 	CheckOps []*Opcall
 
+	Only []string
+
 	pointer *interface{}
+}
+
+func nameOfObj(o interface{}, def string) string {
+	for _, field := range tree.NameFields {
+		switch o.(type) {
+		case map[string]interface{}:
+			if value, ok := o.(map[string]interface{})[field]; ok {
+				if s, ok := value.(string); ok {
+					return s
+				}
+			}
+		case map[interface{}]interface{}:
+			if value, ok := o.(map[interface{}]interface{})[field]; ok {
+				if s, ok := value.(string); ok {
+					return s
+				}
+			}
+		}
+	}
+	return def
 }
 
 // DataFlow ...
@@ -66,7 +92,13 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 
 		case []interface{}:
 			for i, v := range o.([]interface{}) {
-				ev.Here.Push(fmt.Sprintf("%d", i))
+				name := nameOfObj(v, fmt.Sprintf("%d", i))
+				op, _ := ParseOpcall(phase, name)
+				if op == nil {
+					ev.Here.Push(name)
+				} else {
+					ev.Here.Push(fmt.Sprintf("%d", i))
+				}
 				check(v)
 				ev.Here.Pop()
 			}
@@ -77,13 +109,145 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 
 	// construct the data flow graph, where a -> b = b calls/requires a
 	// represent the graph as list of adjancies, that is [a,b] = a -> b
-	var g [][2]*Opcall
+	var g [][]*Opcall
 	for _, a := range all {
 		for _, path := range a.Dependencies(ev, locs) {
 			if b, found := all[path.String()]; found {
-				g = append(g, [2]*Opcall{b, a})
+				g = append(g, []*Opcall{b, a})
 			}
 		}
+	}
+
+	if len(ev.Only) > 0 {
+		/*
+			[],
+			[
+			  { name:(( concat env "-" type )), list.1:(( grab name )) }
+			  { name:(( concat env "-" type )), list.2:(( grab name )) }
+			  { name:(( concat env "-" type )), list.3:(( grab name )) }
+			  { name:(( concat env "-" type )), list.4:(( grab name )) }
+			  { name:(( concat env "-" type )), params.bosh_username:(( grab name )) }
+			  { type:(( grab meta.type )), name:(( concat env "-" type )) }
+			  { name:(( concat env "-" type )), list.0:(( grab name )) }
+			]
+
+			pass 1:
+			[
+			  # add this one, because it is under `params`
+			  { name:(( concat env "-" type )), params.bosh_username:(( grab name )) }
+			], [
+			  { name:(( concat env "-" type )), list.1:(( grab name )) }
+			  { name:(( concat env "-" type )), list.2:(( grab name )) }
+			  { name:(( concat env "-" type )), list.3:(( grab name )) }
+			  { name:(( concat env "-" type )), list.4:(( grab name )) }
+			  { type:(( grab meta.type )), name:(( concat env "-" type )) }
+			  { name:(( concat env "-" type )), list.0:(( grab name )) }
+			]
+
+			pass2:
+			[
+			  { name:(( concat env "-" type )), params.bosh_username:(( grab name )) }
+
+			  # add this one, because in[1] is a out[0] of a previously partitioned element.
+			  { type:(( grab meta.type )), name:(( concat env "-" type )) }
+			], [
+			  { name:(( concat env "-" type )), list.1:(( grab name )) }
+			  { name:(( concat env "-" type )), list.2:(( grab name )) }
+			  { name:(( concat env "-" type )), list.3:(( grab name )) }
+			  { name:(( concat env "-" type )), list.4:(( grab name )) }
+			  { name:(( concat env "-" type )), list.0:(( grab name )) }
+			]
+
+			pass3:
+			[
+			  { name:(( concat env "-" type )), params.bosh_username:(( grab name )) }
+			  { type:(( grab meta.type )), name:(( concat env "-" type )) }
+
+			  # add nothing, because there is no [1] in the second list that is also a [0]
+			  # in the first list.  partitioning is complete, and we use just the first list.
+			], [
+			  { name:(( concat env "-" type )), list.1:(( grab name )) }
+			  { name:(( concat env "-" type )), list.2:(( grab name )) }
+			  { name:(( concat env "-" type )), list.3:(( grab name )) }
+			  { name:(( concat env "-" type )), list.4:(( grab name )) }
+			  { name:(( concat env "-" type )), list.0:(( grab name )) }
+			]
+		*/
+
+		// filter `in`, migrating elements to `out` if they are
+		// dependencies of anything already in `out`.
+		filter := func(out, in *[][]*Opcall) int {
+			l := make([][]*Opcall, 0)
+
+			for i, candidate := range *in {
+				if candidate == nil {
+					continue
+				}
+				for _, op := range *out {
+					if candidate[1] == op[0] {
+						TRACE("data flow - adding [%s: %s, %s: %s] to data flow set (it matched {%s})",
+							candidate[0].canonical, candidate[0].src,
+							candidate[1].canonical, candidate[1].src,
+							op[0].canonical)
+						l = append(l, candidate)
+						(*in)[i] = nil
+						break
+					}
+				}
+			}
+
+			*out = append(*out, l...)
+			return len(l)
+		}
+
+		// return a subset of `ops` that is strictly related to
+		// the processing of the top-levels listed in `picks`
+		firsts := func(ops [][]*Opcall, picks []*tree.Cursor) [][]*Opcall {
+			final := make([][]*Opcall, 0)
+			for i, op := range ops {
+				// check to see if this op.src is underneath
+				// any of the paths in `picks` -- if so, we
+				// want that opcall adjacency in `final`
+
+				for _, pick := range picks {
+					if pick.Contains(op[1].canonical) {
+						final = append(final, op)
+						ops[i] = nil
+						TRACE("data flow - adding [%s: %s, %s: %s] to data flow set (it matched --cherry-pick %s)",
+							op[0].canonical, op[0].src,
+							op[1].canonical, op[1].src,
+							pick)
+						break
+					}
+				}
+			}
+
+			for filter(&final, &ops) > 0 {
+			}
+
+			return final
+		}
+
+		picks := make([]*tree.Cursor, len(ev.Only))
+		for i, s := range ev.Only {
+			c, err := tree.ParseCursor(s)
+			if err != nil {
+				panic(err) // FIXME
+			}
+			picks[i] = c
+		}
+		g = firsts(g, picks)
+
+		// repackage `all`, since follow-on logic needs it
+		all = map[string]*Opcall{}
+		for _, ops := range g {
+			all[ops[0].canonical.String()] = ops[0]
+			all[ops[1].canonical.String()] = ops[1]
+		}
+	}
+
+	for i, node := range g {
+		TRACE("data flow -- g[%d] is { %s:%s, %s:%s }\n", i, node[0].where, node[0].src, node[1].where, node[1].src)
 	}
 
 	// construct a sorted list of keys in $all, so that we
@@ -95,7 +259,7 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 	sort.Strings(sortedKeys)
 
 	// find all nodes in g that are free (no futher dependencies)
-	freeNodes := func(g [][2]*Opcall) []*Opcall {
+	freeNodes := func(g [][]*Opcall) []*Opcall {
 		l := []*Opcall{}
 		for _, k := range sortedKeys {
 			node, ok := all[k]
@@ -121,8 +285,8 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 	}
 
 	// removes (nullifies) all dependencies on n in g
-	remove := func(old [][2]*Opcall, n *Opcall) [][2]*Opcall {
-		l := [][2]*Opcall{}
+	remove := func(old [][]*Opcall, n *Opcall) [][]*Opcall {
+		l := [][]*Opcall{}
 		for _, pair := range old {
 			if pair[0] != n {
 				l = append(l, pair)
@@ -138,7 +302,7 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 		wave++
 		free := freeNodes(g)
 		if len(free) == 0 {
-			return nil, fmt.Errorf("cycle detected in operator data-flow graph")
+			return nil, ansi.Errorf("@*{cycle detected in operator data-flow graph}")
 		}
 
 		for _, node := range free {
@@ -196,13 +360,124 @@ func (ev *Evaluator) Prune(paths []string) error {
 				delete(o.(map[interface{}]interface{}), key)
 			}
 
-		// NOTE: `--prune` does not currently handle list index removal,
-		//       i.e. `--prune meta.things[3]`;  This was deemed unnecessary
+		case []interface{}:
+			if list, ok := o.([]interface{}); ok {
+				if idx, err := strconv.Atoi(key); err == nil {
+					parent.Pop()
+					if s, err := parent.Resolve(ev.Tree); err == nil {
+						if reflect.TypeOf(s).Kind() == reflect.Map {
+							parentName := fmt.Sprintf("%s", c.Component(-2))
+							DEBUG("  pruning index %d of array '%s'", idx, parentName)
+
+							length := len(list) - 1
+							replacement := make([]interface{}, length)
+							copy(replacement, append(list[:idx], list[idx+1:]...))
+
+							delete(s.(map[interface{}]interface{}), parentName)
+							s.(map[interface{}]interface{})[parentName] = replacement
+						}
+					}
+				}
+			}
 
 		default:
 			DEBUG("  I don't know how to prune %s\n    value=%v\n", path, o)
 		}
 	}
+	DEBUG("")
+	return nil
+}
+
+// Cherry-pick ...
+func (ev *Evaluator) CherryPick(paths []string) error {
+	DEBUG("cherry-picking %d paths from the final YAML structure", len(paths))
+
+	if len(paths) > 0 {
+		// This will serve as the replacement tree ...
+		replacement := make(map[interface{}]interface{})
+
+		for _, path := range paths {
+			cursor, err := tree.ParseCursor(path)
+			if err != nil {
+				return err
+			}
+
+			// These variables will potentially be modified (depending on the structure)
+			var cherryName string
+			var cherryValue interface{}
+
+			// Resolve the value that needs to be cherry picked
+			cherryValue, err = cursor.Resolve(ev.Tree)
+			if err != nil {
+				return err
+			}
+
+			// Name of the parameter of the to-be-picked value
+			cherryName = cursor.Nodes[len(cursor.Nodes)-1]
+
+			// Since the cherry can be deep down the structure, we need to go down
+			// (or up, depending how you read it) the structure to include the parent
+			// names of the respective cherry. The pointer will be reassigned with
+			// each level.
+			pointer := cursor
+			for pointer != nil {
+				parent := pointer.Copy()
+				parent.Pop()
+
+				if parent.String() == "" {
+					// Empty parent string means we reached the root, setting the pointer nil to stop processing ...
+					pointer = nil
+
+					// ... create the final cherry wrapped in its container ...
+					tmp := make(map[interface{}]interface{})
+					tmp[cherryName] = cherryValue
+
+					// ... and add it to the replacement map
+					DEBUG("Merging '%s' into the replacement tree", path)
+					merger := &Merger{AppendByDefault: true}
+					merged := merger.mergeObj(tmp, replacement, path)
+					if err := merger.Error(); err != nil {
+						return err
+					}
+
+					replacement = merged.(map[interface{}]interface{})
+
+				} else {
+					// Reassign the pointer to the parent and restructre the current cherry value to address the parent structure and name
+					pointer = parent
+
+					// Depending on the type of the parent, either a map or a list is created for the new parent of the cherry value
+					if obj, err := parent.Resolve(ev.Tree); err == nil {
+						switch obj.(type) {
+						case map[interface{}]interface{}:
+							tmp := make(map[interface{}]interface{})
+							tmp[cherryName] = cherryValue
+
+							cherryName = parent.Nodes[len(parent.Nodes)-1]
+							cherryValue = tmp
+
+						case []interface{}:
+							tmp := make([]interface{}, 0, 0)
+							tmp = append(tmp, cherryValue)
+
+							cherryName = parent.Nodes[len(parent.Nodes)-1]
+							cherryValue = tmp
+
+						default:
+							return ansi.Errorf("@*{Unsupported type detected, %s is neither a map nor a list}", parent.String())
+						}
+
+					} else {
+						return err
+					}
+				}
+			}
+		}
+
+		// replace the existing tree with a new one that contain the cherry-picks
+		ev.Tree = replacement
+	}
+
 	DEBUG("")
 	return nil
 }
@@ -214,7 +489,7 @@ func (ev *Evaluator) CheckForCycles(maxDepth int) error {
 	var check func(o interface{}, depth int) error
 	check = func(o interface{}, depth int) error {
 		if depth == 0 {
-			return fmt.Errorf("Hit max recursion depth. You seem to have a self-referencing dataset")
+			return ansi.Errorf("@*{Hit max recursion depth. You seem to have a self-referencing dataset}")
 		}
 
 		switch o.(type) {
@@ -248,6 +523,7 @@ func (ev *Evaluator) CheckForCycles(maxDepth int) error {
 
 // RunOp ...
 func (ev *Evaluator) RunOp(op *Opcall) error {
+
 	resp, err := op.Run(ev)
 	if err != nil {
 		return err
@@ -278,7 +554,7 @@ func (ev *Evaluator) RunOp(op *Opcall) error {
 			o.(map[interface{}]interface{})[key] = resp.Value
 
 		default:
-			err := TypeMismatchError{
+			err := tree.TypeMismatchError{
 				Path:   parent.Nodes,
 				Wanted: "a map or a list",
 				Got:    "a scalar",
@@ -329,24 +605,48 @@ func (ev *Evaluator) RunPhase(p OperatorPhase) error {
 	if err != nil {
 		return err
 	}
+
 	op, err := ev.DataFlow(p)
 	if err != nil {
 		return err
 	}
+
 	return ev.RunOps(op)
 }
 
 // Run ...
-func (ev *Evaluator) Run(prune []string) error {
+func (ev *Evaluator) Run(prune []string, picks []string) error {
 	errors := MultiError{Errors: []error{}}
-	errors.Append(ev.RunPhase(MergePhase))
-	errors.Append(ev.RunPhase(EvalPhase))
-	errors.Append(ev.Prune(prune))
+	paramErrs := MultiError{Errors: []error{}}
+
+	if os.Getenv("REDACT") != "" {
+		DEBUG("Setting vault operator to redact keys")
+		SkipVault = true
+	}
+
+	if !ev.SkipEval {
+		ev.Only = picks
+		errors.Append(ev.RunPhase(MergePhase))
+		paramErrs.Append(ev.RunPhase(ParamPhase))
+		if len(paramErrs.Errors) > 0 {
+			return paramErrs
+		}
+
+		errors.Append(ev.RunPhase(EvalPhase))
+	}
 
 	// this is a big failure...
 	if err := ev.CheckForCycles(4096); err != nil {
 		return err
 	}
+
+	// post-processing: prune
+	addToPruneListIfNecessary(prune...)
+	errors.Append(ev.Prune(keysToPrune))
+	keysToPrune = nil
+
+	// post-processing: cherry-pick
+	errors.Append(ev.CherryPick(picks))
 
 	if len(errors.Errors) > 0 {
 		return errors

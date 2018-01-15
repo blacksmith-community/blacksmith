@@ -1,9 +1,8 @@
 package spruce
 
 import (
-	"fmt"
-
-	"github.com/jhunt/tree"
+	"github.com/starkandwayne/goutils/ansi"
+	"github.com/starkandwayne/goutils/tree"
 )
 
 // NullOperator ...
@@ -22,11 +21,11 @@ func (NullOperator) Phase() OperatorPhase {
 }
 
 // Dependencies ...
-func (NullOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
-	return []*tree.Cursor{}
+func (NullOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor, _ []*tree.Cursor) []*tree.Cursor {
+	return nil
 }
 
 // Run ...
 func (n NullOperator) Run(ev *Evaluator, _ []*Expr) (*Response, error) {
-	return nil, fmt.Errorf("(( %s )) operator not defined", n.Missing)
+	return nil, ansi.Errorf("@c{(( %s ))} @R{operator not defined}", n.Missing)
 }

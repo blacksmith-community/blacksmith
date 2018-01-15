@@ -3,6 +3,7 @@ package spruce
 import (
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -10,10 +11,23 @@ import (
 	"os"
 	"strings"
 
+	"github.com/starkandwayne/goutils/ansi"
+
 	. "github.com/geofffranks/spruce/log"
-	"github.com/jhunt/tree"
-	"gopkg.in/yaml.v2"
+	"github.com/starkandwayne/goutils/tree"
+	// Use geofffranks forks to persist the fix in https://github.com/go-yaml/yaml/pull/133/commits
+	// Also https://github.com/go-yaml/yaml/pull/195
+	"github.com/geofffranks/yaml"
 )
+
+var vaultSecretCache = map[string]map[string]interface{}{}
+
+//VaultRefs maps secret path to paths in YAML structure which call for it
+var VaultRefs = map[string][]string{}
+
+//SkipVault toggles whether calls to the Vault operator actually cause the
+// Vault to be contacted and the keys substituted in.
+var SkipVault bool
 
 // The VaultOperator provides a means of injecting credentials and
 // other secrets from a Vault (vaultproject.io) Secure Key Storage
@@ -26,15 +40,16 @@ func (VaultOperator) Setup() error {
 }
 
 // Phase identifies what phase of document management the vault
-// operator should be evaulated in.  Vault lives in the Eval phase
+// operator should be evaluated in.  Vault lives in the Eval phase
 func (VaultOperator) Phase() OperatorPhase {
 	return EvalPhase
 }
 
-// Dependencies collects implicit dependencies that a given
-// `(( vault ... ))` call has.  There are none.
-func (VaultOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
-	return []*tree.Cursor{}
+// Dependencies collects implicit dependencies that a given `(( vault ... ))`
+// call has. There are no dependencies other that those given as args to the
+// command.
+func (VaultOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor {
+	return auto
 }
 
 // Run executes the `(( vault ... ))` operator call, which entails
@@ -75,11 +90,11 @@ func (VaultOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			switch s.(type) {
 			case map[interface{}]interface{}:
 				DEBUG("  arg[%d]: %v is not a string scalar", i, s)
-				return nil, fmt.Errorf("tried to look up $.%s, which is not a string scalar", v.Reference)
+				return nil, ansi.Errorf("@R{tried to look up} @c{$.%s}@R{, which is not a string scalar}", v.Reference)
 
 			case []interface{}:
 				DEBUG("  arg[%d]: %v is not a string scalar", i, s)
-				return nil, fmt.Errorf("tried to look up $.%s, which is not a string scalar", v.Reference)
+				return nil, ansi.Errorf("@R{tried to look up} @c{$.%s}@R{, which is not a string scalar}", v.Reference)
 
 			default:
 				l = append(l, fmt.Sprintf("%v", s))
@@ -93,10 +108,18 @@ func (VaultOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	key := strings.Join(l, "")
 	DEBUG("     [0]: Using vault key '%s'\n", key)
 
+	//Append the location from which this operator was called to the list of
+	// places from which this key was referenced
+	if refs, found := VaultRefs[key]; !found {
+		VaultRefs[key] = []string{ev.Here.String()}
+	} else {
+		VaultRefs[key] = append(refs, ev.Here.String())
+	}
+
 	secret := "REDACTED"
 	var err error
 
-	if os.Getenv("REDACT") == "" {
+	if !SkipVault {
 		/*
 		   user is not okay with a redacted manifest.
 		   try to look up vault connection details from:
@@ -107,11 +130,13 @@ func (VaultOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 		url := os.Getenv("VAULT_ADDR")
 		token := os.Getenv("VAULT_TOKEN")
+		skip := false
 
 		if url == "" || token == "" {
 			svtoken := struct {
-				Vault string `yaml:"vault"`
-				Token string `yaml:"token"`
+				Vault      string `yaml:"vault"`
+				Token      string `yaml:"token"`
+				SkipVerify bool   `yaml:"skip_verify"`
 			}{}
 			b, err := ioutil.ReadFile(os.ExpandEnv("${HOME}/.svtoken"))
 			if err == nil {
@@ -119,8 +144,13 @@ func (VaultOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 				if err == nil {
 					url = svtoken.Vault
 					token = svtoken.Token
+					skip = svtoken.SkipVerify
 				}
 			}
+		}
+
+		if skipVaultVerify(os.Getenv("VAULT_SKIP_VERIFY")) {
+			skip = true
 		}
 
 		if token == "" {
@@ -136,12 +166,31 @@ func (VaultOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 
 		os.Setenv("VAULT_ADDR", url)
 		os.Setenv("VAULT_TOKEN", token)
-
-		parts := strings.SplitN(key, ":", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid argument %s; must be in the form path/to/secret:key", key)
+		if skip {
+			os.Setenv("VAULT_SKIP_VERIFY", "1")
+		} else {
+			os.Unsetenv("VAULT_SKIP_VERIFY")
 		}
-		secret, err = getVaultSecret(parts[0], parts[1])
+
+		leftPart, rightPart := parsePath(key)
+		if leftPart == "" || rightPart == "" {
+			return nil, ansi.Errorf("@R{invalid argument} @c{%s}@R{; must be in the form} @m{path/to/secret:key}", key)
+		}
+		var fullSecret map[string]interface{}
+		var found bool
+		if fullSecret, found = vaultSecretCache[leftPart]; found {
+			DEBUG("vault: Cache hit for `%s`", leftPart)
+		} else {
+			DEBUG("vault: Cache MISS for `%s`", leftPart)
+			// Secret isn't cached. Grab it from the vault.
+			fullSecret, err = getVaultSecret(leftPart)
+			if err != nil {
+				return nil, err
+			}
+			vaultSecretCache[leftPart] = fullSecret
+		}
+
+		secret, err = extractSubkey(fullSecret, leftPart, rightPart)
 		if err != nil {
 			return nil, err
 		}
@@ -159,17 +208,23 @@ func init() {
 
 /****** VAULT INTEGRATION ***********************************/
 
-func getVaultSecret(secret string, subkey string) (string, error) {
+func getVaultSecret(secret string) (map[string]interface{}, error) {
 	vault := os.Getenv("VAULT_ADDR")
-	DEBUG("  accessing the vault at %s", vault)
+	DEBUG("  accessing the vault at %s (with VAULT_SKIP_VERIFY='%s')", vault, os.Getenv("VAULT_SKIP_VERIFY"))
 
 	url := fmt.Sprintf("%s/v1/%s", vault, secret)
 	DEBUG("  crafting GET %s", url)
 
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("unable to retrieve system root certificate authorities: %s", err)
+	}
+
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: os.Getenv("VAULT_SKIP_VERIFY") != "",
+				RootCAs:            roots,
+				InsecureSkipVerify: skipVaultVerify(os.Getenv("VAULT_SKIP_VERIFY")),
 			},
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -183,8 +238,8 @@ func getVaultSecret(secret string, subkey string) (string, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		DEBUG("    !! failed to craft API request:\n    !! %s\n", err)
-		return "", fmt.Errorf("failed to retrieve %s:%s from Vault (%s): %s",
-			secret, subkey, vault, err)
+		return nil, ansi.Errorf("@R{failed to retrieve} @c{%s}@R{ from Vault (%s): %s}",
+			secret, vault, err)
 	}
 	req.Header.Add("X-Vault-Token", os.Getenv("VAULT_TOKEN"))
 
@@ -192,8 +247,8 @@ func getVaultSecret(secret string, subkey string) (string, error) {
 	res, err := client.Do(req)
 	if err != nil {
 		DEBUG("    !! failed to issue API request:\n    !! %s\n", err)
-		return "", fmt.Errorf("failed to retrieve %s:%s from Vault (%s): %s",
-			secret, subkey, vault, err)
+		return nil, ansi.Errorf("@R{failed to retrieve} @c{%s} @R{from Vault (%s): %s}",
+			secret, vault, err)
 	}
 	defer res.Body.Close()
 
@@ -201,8 +256,8 @@ func getVaultSecret(secret string, subkey string) (string, error) {
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		DEBUG("    !! failed to read JSON:\n    !! %s\n", err)
-		return "", fmt.Errorf("failed to retrieve %s:%s from Vault (%s): %s",
-			secret, subkey, vault, err)
+		return nil, ansi.Errorf("@R{failed to retrieve} @c{%s} @R{from Vault (%s): %s}",
+			secret, vault, err)
 	}
 
 	TRACE("    decoding raw JSON:\n%s\n", string(b))
@@ -213,25 +268,46 @@ func getVaultSecret(secret string, subkey string) (string, error) {
 	err = json.NewDecoder(bytes.NewReader(b)).Decode(&raw)
 	if err != nil {
 		DEBUG("    !! failed to decode JSON:\n    !! %s\n", err)
-		return "", fmt.Errorf("bad JSON response received from Vault: \"%s\"", string(b))
+		return nil, fmt.Errorf("bad JSON response received from Vault: \"%s\"", string(b))
 	}
 	if len(raw.Errors) > 0 {
 		DEBUG("    !! error: %s", raw.Errors[0])
-		return "", fmt.Errorf("failed to retrieve %s:%s from Vault (%s): %s",
-			secret, subkey, vault, raw.Errors[0])
-	}
-
-	DEBUG("  extracting the [%s] subkey from the secret", subkey)
-	v, ok := raw.Data[subkey]
-	if !ok {
-		DEBUG("    !! %s:%s not found!\n", secret, subkey)
-		return "", fmt.Errorf("secret %s:%s not found", secret, subkey)
-	}
-	if _, ok := v.(string); !ok {
-		DEBUG("    !! %s:%s is not a string!\n", secret, subkey)
-		return "", fmt.Errorf("secret %s:%s is not a string", secret, subkey)
+		return nil, ansi.Errorf("@R{failed to retrieve} @c{%s} @R{from Vault (%s): %s}",
+			secret, vault, raw.Errors[0])
 	}
 
 	DEBUG("  success.")
+	return raw.Data, nil
+}
+
+func extractSubkey(secretMap map[string]interface{}, secret, subkey string) (string, error) {
+	DEBUG("  extracting the [%s] subkey from the secret", subkey)
+	v, ok := secretMap[subkey]
+	if !ok {
+		DEBUG("    !! %s:%s not found!\n", secret, subkey)
+		return "", ansi.Errorf("@R{secret} @c{%s:%s} @R{not found}", secret, subkey)
+	}
+	if _, ok := v.(string); !ok {
+		DEBUG("    !! %s:%s is not a string!\n", secret, subkey)
+		return "", ansi.Errorf("@R{secret} @c{%s:%s} @R{is not a string}", secret, subkey)
+	}
+	DEBUG(" success.")
 	return v.(string), nil
+}
+
+func parsePath(path string) (secret, key string) {
+	secret = path
+	if idx := strings.LastIndex(path, ":"); idx >= 0 {
+		secret = path[:idx]
+		key = path[idx+1:]
+	}
+	return
+}
+
+func skipVaultVerify(env string) bool {
+	env = strings.ToLower(env)
+	if env == "" || env == "no" || env == "false" || env == "0" || env == "off" {
+		return false
+	}
+	return true
 }

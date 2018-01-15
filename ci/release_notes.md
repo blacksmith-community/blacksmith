@@ -7,6 +7,10 @@
   the broker will upload them before any service deployment, if
   they are missing.
 
+# Updates
+
+- You can now use any operator supported by Spruce 1.14.0!
+
 # Bug Fixes
 
 - The Management UI now properly shows service limits.

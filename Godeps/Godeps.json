@@ -13,8 +13,8 @@
 		},
 		{
 			"ImportPath": "github.com/geofffranks/spruce",
-			"Comment": "v1.4.0-2-ga9c0f5e",
-			"Rev": "a9c0f5ef973e55266728e3c625c6de6eb0a1f3f1"
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
 		},
 		{
 			"ImportPath": "github.com/gorilla/context",
@@ -178,8 +178,8 @@
 		},
 		{
 			"ImportPath": "github.com/geofffranks/spruce/log",
-			"Comment": "v1.4.0-2-ga9c0f5e",
-			"Rev": "a9c0f5ef973e55266728e3c625c6de6eb0a1f3f1"
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
 		},
 		{
 			"ImportPath": "github.com/jhunt/tree",
@@ -204,6 +204,46 @@
 		{
 			"ImportPath": "github.com/cloudfoundry-community/gogobosh/vendor/golang.org/x/oauth2/internal",
 			"Rev": "7fc59793af8dff91617ac6c95b10492f1335db7a"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/github.com/Knetic/govaluate",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/github.com/geofffranks/simpleyaml",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/github.com/geofffranks/yaml",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/github.com/starkandwayne/goutils/ansi",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/github.com/starkandwayne/goutils/tree",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/github.com/ziutek/utils/netaddr",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/github.com/mattn/go-isatty",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
+		},
+		{
+			"ImportPath": "github.com/geofffranks/spruce/vendor/golang.org/x/sys/unix",
+			"Comment": "v1.14.0",
+			"Rev": "5296bae2d90bf74bb3286c358d97400ba8e27a51"
 		}
 	]
 }

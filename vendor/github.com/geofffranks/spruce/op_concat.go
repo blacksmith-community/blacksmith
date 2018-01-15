@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jhunt/tree"
+	"github.com/starkandwayne/goutils/ansi"
+
+	"github.com/starkandwayne/goutils/tree"
 
 	. "github.com/geofffranks/spruce/log"
 )
@@ -23,8 +25,8 @@ func (ConcatOperator) Phase() OperatorPhase {
 }
 
 // Dependencies ...
-func (ConcatOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
-	return []*tree.Cursor{}
+func (ConcatOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor {
+	return auto
 }
 
 // Run ...
@@ -63,11 +65,11 @@ func (ConcatOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			switch s.(type) {
 			case map[interface{}]interface{}:
 				DEBUG("  arg[%d]: %v is not a string scalar", i, s)
-				return nil, fmt.Errorf("tried to concat %s, which is not a string scalar", v.Reference)
+				return nil, ansi.Errorf("@R{tried to concat} @c{%s}@R{, which is not a string scalar}", v.Reference)
 
 			case []interface{}:
 				DEBUG("  arg[%d]: %v is not a string scalar", i, s)
-				return nil, fmt.Errorf("tried to concat %s, which is not a string scalar", v.Reference)
+				return nil, ansi.Errorf("@R{tried to concat} @c{%s}@R{, which is not a string scalar}", v.Reference)
 
 			default:
 				DEBUG("     [%d]: appending '%s' to resultant string", i, s)

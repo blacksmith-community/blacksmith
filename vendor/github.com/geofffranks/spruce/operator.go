@@ -6,8 +6,11 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/geofffranks/yaml"
+	"github.com/starkandwayne/goutils/ansi"
+
 	. "github.com/geofffranks/spruce/log"
-	"github.com/jhunt/tree"
+	"github.com/starkandwayne/goutils/tree"
 )
 
 // Action ...
@@ -29,6 +32,8 @@ const (
 	MergePhase OperatorPhase = iota
 	// EvalPhase ...
 	EvalPhase
+	// ParamPhase ...
+	ParamPhase
 )
 
 // Response ...
@@ -46,7 +51,7 @@ type Operator interface {
 	Run(ev *Evaluator, args []*Expr) (*Response, error)
 
 	// returns a set of implicit / inherent dependencies used by Run()
-	Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cursor) []*tree.Cursor
+	Dependencies(ev *Evaluator, args []*Expr, locs []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor
 
 	// what phase does this operator run during?
 	Phase() OperatorPhase
@@ -166,7 +171,7 @@ func (e *Expr) Reduce() (*Expr, error) {
 
 	reduced, short, more := reduce(e)
 	if more && short != nil {
-		return reduced, fmt.Errorf("literal %v short-circuits expression (%s)", short, e)
+		return reduced, NewWarningError(eContextAll, "@R{literal} @c{%v} @R{short-circuits expression (}@c{%s}@R{)}", short, e)
 	}
 	return reduced, nil
 }
@@ -180,13 +185,20 @@ func (e *Expr) Resolve(tree map[interface{}]interface{}) (*Expr, error) {
 	case EnvVar:
 		v := os.Getenv(e.Name)
 		if v == "" {
-			return nil, fmt.Errorf("Environment variable $%s is not set", e.Name)
+			return nil, ansi.Errorf("@R{Environment variable} @c{$%s} @R{is not set}", e.Name)
 		}
-		return &Expr{Type: Literal, Literal: v}, nil
+
+		var val interface{}
+		err := yaml.Unmarshal([]byte(v), &val)
+		_, isString := val.(string)
+		if isString || err != nil {
+			return &Expr{Type: Literal, Literal: v}, nil
+		}
+		return &Expr{Type: Literal, Literal: val}, nil
 
 	case Reference:
 		if _, err := e.Reference.Resolve(tree); err != nil {
-			return nil, fmt.Errorf("Unable to resolve `%s`: %s", e.Reference, err)
+			return nil, ansi.Errorf("@R{Unable to resolve `}@c{%s}@R{`: %s}", e.Reference, err)
 		}
 		return e, nil
 
@@ -196,7 +208,7 @@ func (e *Expr) Resolve(tree map[interface{}]interface{}) (*Expr, error) {
 		}
 		return e.Right.Resolve(tree)
 	}
-	return nil, fmt.Errorf("unknown expression operand type (%d)", e.Type)
+	return nil, ansi.Errorf("@R{unknown expression operand type (}@c{%d}@R{)}", e.Type)
 }
 
 // Evaluate ...
@@ -273,7 +285,16 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 
 		for _, c := range src {
 			if escaped {
-				buf += string(c)
+				switch c {
+				case 'n':
+					buf += "\n"
+				case 'r':
+					buf += "\r"
+				case 't':
+					buf += "\t"
+				default:
+					buf += string(c)
+				}
 				escaped = false
 				continue
 			}
@@ -316,10 +337,10 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 	}
 
 	argify := func(src string) (args []*Expr, err error) {
-		qstring := regexp.MustCompile(`^"(.*)"$`)
+		qstring := regexp.MustCompile(`(?s)^"(.*)"$`)
 		integer := regexp.MustCompile(`^[+-]?\d+(\.\d+)?$`)
 		float := regexp.MustCompile(`^[+-]?\d*\.\d+$`)
-		envvar := regexp.MustCompile(`^\$[A-Z_][A-Z0-9_]*$`)
+		envvar := regexp.MustCompile(`^\$[a-zA-Z_][a-zA-Z0-9_.]*$`)
 
 		var final []*Expr
 		var left, op *Expr
@@ -355,7 +376,7 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 		for i, arg := range split(src) {
 			switch {
 			case arg == ",":
-				DEBUG("  #%d: literal comma found; treating what we've seen so far as a complete expression")
+				DEBUG("  #%d: literal comma found; treating what we've seen so far as a complete expression", i)
 				pop()
 
 			case envvar.MatchString(arg):
@@ -379,11 +400,16 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 			case integer.MatchString(arg):
 				DEBUG("  #%d: parsed as unquoted integer literal '%s'", i, arg)
 				v, err := strconv.ParseInt(arg, 10, 64)
-				if err != nil {
-					DEBUG("  #%d: %s is not parsable as an integer: %s", i, arg, err)
-					return args, err
+				if err == nil {
+					push(&Expr{Type: Literal, Literal: v})
+					break
 				}
-				push(&Expr{Type: Literal, Literal: v})
+				DEBUG("  #%d: %s is not parsable as an integer, falling back to parsing as float: %s", i, arg, err)
+				f, err := strconv.ParseFloat(arg, 64)
+				push(&Expr{Type: Literal, Literal: f})
+				if err != nil {
+					panic("Could not actually parse as an int or a float. Need to fix regexp?")
+				}
 
 			case arg == "||":
 				DEBUG("  #%d: parsed logical-or operator, '||'", i)
@@ -426,7 +452,11 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 			TRACE("expr: pushing expression `%v' onto the operand list", e)
 			reduced, err := e.Reduce()
 			if err != nil {
-				fmt.Fprintf(os.Stdout, "warning: %s\n", err)
+				if warning, isWarning := err.(WarningError); isWarning {
+					warning.Warn()
+				} else {
+					fmt.Fprintf(os.Stdout, "warning: %s\n", err)
+				}
 			}
 			args = append(args, reduced)
 		}
@@ -449,6 +479,10 @@ func ParseOpcall(phase OperatorPhase, src string) (*Opcall, error) {
 		DEBUG("parsing `%s': looks like a (( %s ... )) operator\n arguments:", src, m[1])
 
 		op.op = OperatorFor(m[1])
+		if _, ok := op.op.(NullOperator); ok && len(m[2]) == 0 {
+			DEBUG("skipping `%s': not a real operator -- might be a BOSH variable?", src)
+			continue
+		}
 		if op.op.Phase() != phase {
 			DEBUG("  - skipping (( %s ... )) operation; it belongs to a different phase", m[1])
 			return nil, nil
@@ -477,10 +511,7 @@ func (op *Opcall) Dependencies(ev *Evaluator, locs []*tree.Cursor) []*tree.Curso
 		}
 	}
 
-	for _, c := range op.op.Dependencies(ev, op.args, locs) {
-		l = append(l, c)
-	}
-	return l
+	return op.op.Dependencies(ev, op.args, locs, l)
 }
 
 // Run ...
@@ -491,7 +522,7 @@ func (op *Opcall) Run(ev *Evaluator) (*Response, error) {
 	ev.Here = was
 
 	if err != nil {
-		return nil, fmt.Errorf("$.%s: %s", op.where, err)
+		return nil, ansi.Errorf("@m{$.%s}: @R{%s}", op.where, err)
 	}
 	return r, nil
 }

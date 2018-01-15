@@ -6,8 +6,10 @@ import (
 	"io"
 	"io/ioutil"
 
+	"github.com/starkandwayne/goutils/ansi"
+
+	"github.com/geofffranks/simpleyaml"
 	. "github.com/geofffranks/spruce/log"
-	"github.com/smallfish/simpleyaml"
 )
 
 func jsonifyData(data []byte) (string, error) {
@@ -18,7 +20,7 @@ func jsonifyData(data []byte) (string, error) {
 
 	doc, err := y.Map()
 	if err != nil {
-		return "", fmt.Errorf("Root of YAML document is not a hash/map: %s\n", err.Error())
+		return "", ansi.Errorf("@R{Root of YAML document is not a hash/map}: %s\n", err.Error())
 	}
 
 	b, err := json.Marshal(deinterface(doc))
@@ -32,7 +34,7 @@ func jsonifyData(data []byte) (string, error) {
 func JSONifyIO(in io.Reader) (string, error) {
 	data, err := ioutil.ReadAll(in)
 	if err != nil {
-		return "", fmt.Errorf("Error reading input: %s", err)
+		return "", ansi.Errorf("@R{Error reading input}: %s", err)
 	}
 	return jsonifyData(data)
 }
@@ -44,11 +46,11 @@ func JSONifyFiles(paths []string) ([]string, error) {
 		DEBUG("Processing file '%s'", path)
 		data, err := ioutil.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("Error reading file %s: %s", path, err)
+			return nil, ansi.Errorf("@R{Error reading file} @m{%s}: %s", path, err)
 		}
 
 		if l[i], err = jsonifyData(data); err != nil {
-			return nil, fmt.Errorf("%s: %s", path, err)
+			return nil, ansi.Errorf("%s: %s", path, err)
 		}
 	}
 

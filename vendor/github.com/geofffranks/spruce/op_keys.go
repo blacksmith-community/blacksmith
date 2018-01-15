@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/starkandwayne/goutils/ansi"
+
 	. "github.com/geofffranks/spruce/log"
-	"github.com/jhunt/tree"
+	"github.com/starkandwayne/goutils/tree"
 )
 
 // KeysOperator ...
@@ -22,8 +24,8 @@ func (KeysOperator) Phase() OperatorPhase {
 }
 
 // Dependencies ...
-func (KeysOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
-	return []*tree.Cursor{}
+func (KeysOperator) Dependencies(_ *Evaluator, _ []*Expr, _ []*tree.Cursor, auto []*tree.Cursor) []*tree.Cursor {
+	return auto
 }
 
 // Run ...
@@ -57,7 +59,7 @@ func (KeysOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 			m, ok := s.(map[interface{}]interface{})
 			if !ok {
 				DEBUG("     [%d]: resolved to something that is not a map.  that is unacceptable.", i)
-				return nil, fmt.Errorf("%s is not a map", v.Reference)
+				return nil, ansi.Errorf("@c{%s} @R{is not a map}", v.Reference)
 			}
 			DEBUG("     [%d]: resolved to a map; extracting keys", i)
 			for k := range m {
@@ -74,7 +76,7 @@ func (KeysOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	switch len(args) {
 	case 0:
 		DEBUG("  no arguments supplied to (( keys ... )) operation.  oops.")
-		return nil, fmt.Errorf("no arguments specified to (( keys ... ))")
+		return nil, ansi.Errorf("no arguments specified to @c{(( keys ... ))}")
 
 	default:
 		sort.Strings(vals)

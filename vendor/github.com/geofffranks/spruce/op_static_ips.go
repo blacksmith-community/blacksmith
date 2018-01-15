@@ -8,8 +8,11 @@ import (
 	"strings"
 
 	. "github.com/geofffranks/spruce/log"
-	"github.com/jhunt/tree"
+	"github.com/starkandwayne/goutils/ansi"
+	"github.com/starkandwayne/goutils/tree"
 )
+
+const UNDEFINED_AZ = "__UNDEFINED_AZ__"
 
 // UsedIPs ...
 var UsedIPs map[string]string
@@ -29,7 +32,7 @@ func (StaticIPOperator) Phase() OperatorPhase {
 }
 
 // Dependencies ...
-func (StaticIPOperator) Dependencies(ev *Evaluator, _ []*Expr, _ []*tree.Cursor) []*tree.Cursor {
+func (StaticIPOperator) Dependencies(ev *Evaluator, _ []*Expr, _ []*tree.Cursor, _ []*tree.Cursor) []*tree.Cursor {
 	l := []*tree.Cursor{}
 
 	track := func(path string) {
@@ -46,11 +49,25 @@ func (StaticIPOperator) Dependencies(ev *Evaluator, _ []*Expr, _ []*tree.Cursor)
 		}
 	}
 
+	// top level stuff
+	track("networks")
+	track("networks.*")
+	track("jobs")
+	track("jobs.*")
+	track("instance_groups")
+	track("instance_groups.*")
+
 	// need all the network name decls
 	track("networks.*.name")
+	track("networks.*.subnets")
 
 	// need all the static range decls
 	track("networks.*.subnets.*.static")
+
+	// need all the az decls
+	track("networks.*.subnets.*.az")
+	track("networks.*.subnets.*.azs")
+	track("networks.*.subnets.*.static.*")
 
 	// need all the job instance count decls
 	track("jobs.*.instances")
@@ -59,6 +76,10 @@ func (StaticIPOperator) Dependencies(ev *Evaluator, _ []*Expr, _ []*tree.Cursor)
 	// need all the job network name decls
 	track("jobs.*.networks.*.name")
 	track("instance_groups.*.networks.*.name")
+
+	// need all the instance_group azs decls
+	track("instance_groups.*.azs")
+	track("instance_groups.*.azs.*")
 
 	return l
 }
@@ -85,75 +106,150 @@ func instances(ev *Evaluator, job *tree.Cursor) (int, error) {
 
 	i, err := strconv.ParseInt(inst, 10, 0)
 	if err != nil {
-		return 0, fmt.Errorf("the `instances:` for the current job is not numeric")
+		return 0, ansi.Errorf("@R{the `}@c{instances:}@R{` for the current job is not numeric}")
 	}
 	if i < 0 {
-		return 0, fmt.Errorf("negative number found in `instances:` for the current job")
+		return 0, ansi.Errorf("@R{negative number found in `}@c{instances:}@R{` for the current job}")
 	}
 	return int(i), nil
 }
 
-func statics(ev *Evaluator) ([]string, error) {
-	addrs := []string{}
+func statics(ev *Evaluator) (map[string][]string, []string, error) {
+	addrs := map[string][]string{}
+	azs := []string{}
 
 	c := ev.Here.Copy()
 	c.Pop()
 	c.Push("name")
 	name, err := c.ResolveString(ev.Tree)
 	if err != nil {
-		return addrs, err
+		return addrs, azs, err
 	}
 
-	c, err = tree.ParseCursor(fmt.Sprintf("networks.%s.subnets.*.static.*", name))
+	c, err = tree.ParseCursor(fmt.Sprintf("networks.%s.subnets.*", name))
 	if err != nil {
-		return addrs, err
+		return addrs, azs, err
 	}
-
 	keys, err := c.Glob(ev.Tree)
 	if err != nil {
-		return addrs, err
+		return addrs, azs, err
 	}
 
 	for _, key := range keys {
-		r, err := key.Resolve(ev.Tree)
+		r, err := key.Canonical(ev.Tree)
 		if err != nil {
-			return addrs, err
+			return addrs, azs, err
 		}
 
-		if _, ok := r.(string); !ok {
-			return addrs, fmt.Errorf("%s is not a well-formed BOSH network", name)
+		// list of azs associated with this specific subnet
+		// do not confuse with `azs`, which is a list of
+		// all `azs` for the network.
+		subnet_zones := []string{}
+
+		// look for az definition in the `az` key
+		c, _ = tree.ParseCursor(fmt.Sprintf("%s.az", r.String()))
+		z, err := c.ResolveString(ev.Tree)
+		if err == nil && len(z) > 0 {
+			azs = append(azs, z) // to preserve subnet ordering
+			subnet_zones = append(subnet_zones, z)
 		}
 
-		segments := strings.Split(r.(string), "-")
-		for i, s := range segments {
-			segments[i] = strings.TrimSpace(s)
+		// look for az definitions in the `azs` key
+		c, _ = tree.ParseCursor(fmt.Sprintf("%s.azs", r.String()))
+		os, err := c.Resolve(ev.Tree)
+		if err == nil {
+			if zs, ok := os.([]interface{}); ok {
+				for _, o := range zs {
+					if z, ok := o.(string); ok && len(z) > 0 {
+						azs = append(azs, z)
+						subnet_zones = append(subnet_zones, z)
+					}
+				}
+			}
 		}
 
-		start := net.ParseIP(segments[0])
-		if start == nil {
-			return nil, fmt.Errorf("%s: not a valid IP address", segments[0])
+		// add a default zone for azs + subnet zones, if
+		// this network has no zones specified
+		if len(subnet_zones) == 0 {
+			azs = append(azs, "z1")
+			subnet_zones = append(subnet_zones, "z1")
 		}
 
-		addrs = append(addrs, start.String())
-		if len(segments) == 1 {
-			continue
+		c, err = tree.ParseCursor(fmt.Sprintf("%s.static.*", r.String()))
+		if err != nil {
+			return addrs, azs, err
+		}
+		keys, err := c.Glob(ev.Tree)
+		if err != nil {
+			return addrs, azs, err
 		}
 
-		end := net.ParseIP(segments[1])
-		if end == nil {
-			return nil, fmt.Errorf("%s: not a valid IP address", segments[1])
-		}
+		for _, key := range keys {
+			r, err := key.Resolve(ev.Tree)
+			if err != nil {
+				return addrs, azs, err
+			}
 
-		if binary.BigEndian.Uint32(start.To4()) > binary.BigEndian.Uint32(end.To4()) {
-			return nil, fmt.Errorf("Static IP pool [%s - %s] ends before it starts", start, end)
-		}
+			if _, ok := r.(string); !ok {
+				return addrs, azs, ansi.Errorf("@c{%s} @R{is not a well-formed BOSH network}", name)
+			}
 
-		for !start.Equal(end) {
-			incrementIP(start, len(start)-1)
-			addrs = append(addrs, start.String())
+			segments := strings.Split(r.(string), "-")
+			for i, s := range segments {
+				segments[i] = strings.TrimSpace(s)
+			}
+
+			start := net.ParseIP(segments[0])
+			if start == nil {
+				return nil, azs, ansi.Errorf("@c{%s}@R{: not a valid IP address}", segments[0])
+			}
+
+			for _, az := range subnet_zones {
+				addrs[az] = append(addrs[az], start.String())
+				if len(segments) == 1 {
+					continue
+				}
+			}
+
+			if len(segments) == 2 {
+				end := net.ParseIP(segments[1])
+				if end == nil {
+					return nil, azs, ansi.Errorf("@c{%s}@R{: not a valid IP address}", segments[1])
+				}
+
+				if binary.BigEndian.Uint32(start.To4()) > binary.BigEndian.Uint32(end.To4()) {
+					return nil, azs, ansi.Errorf("@R{Static IP pool }@c{[%s - %s]} @R{ends before it starts}", start, end)
+				}
+
+				for !start.Equal(end) {
+					incrementIP(start, len(start)-1)
+					for _, az := range subnet_zones {
+						addrs[az] = append(addrs[az], start.String())
+					}
+				}
+			}
 		}
 	}
-	return addrs, nil
+	return addrs, azs, nil
+}
+
+func allIPs(pools map[string][]string, azs []string) []string {
+	var ips []string
+	seen := map[string]bool{}
+
+	for _, az := range azs {
+		pool, ok := pools[az]
+		if !ok {
+			continue
+		}
+		for _, ip := range pool {
+			if !seen[ip] {
+				ips = append(ips, ip)
+				seen[ip] = true
+			}
+		}
+	}
+	return ips
 }
 
 func incrementIP(ip net.IP, i int) net.IP {
@@ -198,6 +294,26 @@ func (s StaticIPOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	job.Pop()
 	DEBUG("  got it.  job is %s\n", jobname)
 
+	job.Push("azs")
+	DEBUG("  extracting azs from $.%s", job)
+	var azs []string
+	if zs, err := job.Resolve(ev.Tree); err == nil {
+		if _, ok := zs.([]interface{}); ok {
+			for _, z := range zs.([]interface{}) {
+				if _, ok := z.(string); !ok {
+					DEBUG("  azs %v: '%v' is not a string literal\n", zs, z)
+					return nil, ansi.Errorf("@R{azs} @c{%#v} @R{must be a list of strings}", zs)
+				}
+				azs = append(azs, z.(string))
+			}
+		} else {
+			DEBUG("  azs must be a list of strings\n")
+			return nil, ansi.Errorf("@R{azs} @c{%#v} @R{must be a list of strings}", zs)
+		}
+	}
+	job.Pop()
+	DEBUG("  got it.  azs are %v\n", azs)
+
 	// determine if we have any instances
 	DEBUG("  determining how many instances of job %s there are", jobname)
 	inst, err := instances(ev, job)
@@ -218,19 +334,39 @@ func (s StaticIPOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 	DEBUG("  checking to see if the caller asked for enough static_ips to provision all job instances (need at least %d)", inst)
 	if len(args) < inst {
 		DEBUG("  oops.  you asked for %d IPs for a job with %d instances\n", len(args), inst)
-		return nil, fmt.Errorf("not enough static IPs requested for job of %d instances (only asked for %d)", inst, len(args))
+		return nil, ansi.Errorf("@R{not enough static IPs requested for} @c{job of %d instances} @R{(only asked for} @c{%d}@R{)}", inst, len(args))
 	}
 	DEBUG("  looks good.  asking for %d IPs for a job with %d instances\n", len(args), inst)
 
 	// find our network
 	DEBUG("  determining the pool of static IPs from which to provision")
-	pool, err := statics(ev)
-	DEBUG("  static IP pool: %v", pool)
+	pools, poolAZs, err := statics(ev)
+	DEBUG("  static IP pools: %v", pools)
+	DEBUG("  static IP pool AZs: %v", poolAZs)
 	if err != nil {
 		DEBUG("  failed: %s\n", err)
 		return nil, err
 	}
-	DEBUG("  found %d addresses in the pool\n", len(pool))
+	count := 0
+	for _, pool := range pools {
+		count += len(pool)
+	}
+	DEBUG("  found %d addresses in the pool\n", count)
+
+	// verify that pools contain all specified AZs, just like BOSH
+	for _, az := range azs {
+		if _, ok := pools[az]; !ok {
+			DEBUG("  could not find AZ %s in network AZS: %v\n", az, azs)
+			return nil, ansi.Errorf("@R{could not find AZ} @c{%s} (@R{in network AZS} @c{%v})", az, azs)
+		}
+	}
+
+	// if no AZs are specified on instance_groups, then just use whatever is in networks / pools
+	if len(azs) == 0 {
+		for _, az := range poolAZs {
+			azs = append(azs, az)
+		}
+	}
 
 	ord := func(n int) string {
 		switch {
@@ -260,11 +396,54 @@ func (s StaticIPOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		}
 
 		current := fmt.Sprintf("%s/%d", jobname, i)
-		n, ok := v.Literal.(int64)
+
+		// parse argument, could be in form of <az>:<number>, or just <number>
+		var n int64
+		az := UNDEFINED_AZ
+		a, ok := v.Literal.(string)
 		if !ok {
-			DEBUG("  arg[%d]: '%v' is not a string literal\n", i, arg)
-			return nil, fmt.Errorf("static_ips operator only accepts literal numbers for arguments")
+			n, ok = v.Literal.(int64)
+			if !ok {
+				DEBUG("  arg[%d]: '%v' is not a number literal\n", i, arg)
+				return nil, fmt.Errorf("static_ips operator arguments must have format <az>:<number> or <number>")
+			}
+		} else {
+			if strings.Contains(a, ":") {
+				// must be of format <az>:<number>
+				params := strings.SplitN(a, ":", 2)
+				az = params[0]
+				a = params[1]
+			}
+			n, err = strconv.ParseInt(a, 10, 64)
+			if err != nil {
+				DEBUG("  arg[%d]: '%v' is not a number literal\n", i, arg)
+				return nil, fmt.Errorf("static_ips operator arguments must have format <az>:<number> or <number>")
+			}
 		}
+
+		// get IPs to use
+		pool := allIPs(pools, azs)
+		if az != UNDEFINED_AZ {
+			// check if az is actually in instance_groups azs
+			var found bool
+			for _, z := range azs {
+				if az == z {
+					found = true
+					break
+				}
+			}
+			if !found {
+				DEBUG("  specified az %s is not in instance_groups azs %v\n", az, azs)
+				return nil, ansi.Errorf("@R{could not find AZ} @c{%s} @R{in instance_groups AZS} @c{%v}", az, azs)
+			}
+
+			pool, ok = pools[az]
+			if !ok {
+				DEBUG("  could not find pool: %s\n", az)
+				return nil, ansi.Errorf("@R{could not find AZ} @c{%s} @R{in IP pool}", az)
+			}
+		}
+
 		if n < 0 {
 			DEBUG("  arg[%d]: '%d' is not a positive number\n", i, n)
 			return nil, fmt.Errorf("static_ips operator only accepts literal non-negative numbers for arguments")
@@ -274,7 +453,7 @@ func (s StaticIPOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		DEBUG("  arg[%d]: asking for the %d%s IP from the static address pool", i, offset, ord(offset))
 		if offset >= len(pool) {
 			DEBUG("     [%d]: pool only has %d addresses; offset %d is out of bounds\n", i, len(pool), offset)
-			return nil, fmt.Errorf("request for static_ip(%d) in a pool of only %d (zero-indexed) static addresses", offset, len(pool))
+			return nil, ansi.Errorf("@R{request for} @c{static_ip(%d)} @R{in a pool of only} @c{%d (zero-indexed)} @R{static addresses}", offset, len(pool))
 		}
 
 		// check to see if the address is already claimed
@@ -282,7 +461,7 @@ func (s StaticIPOperator) Run(ev *Evaluator, args []*Expr) (*Response, error) {
 		DEBUG("     [%d]: checking to see if %s is already claimed", i, ip)
 		if thief, taken := UsedIPs[ip]; taken {
 			DEBUG("     [%d]: %s is in use by %s\n", i, ip, thief)
-			return nil, fmt.Errorf("tried to use IP '%s', but that address is already allocated to %s", ip, thief)
+			return nil, ansi.Errorf("@R{tried to use IP '}@c{%s}@R{', but that address is already allocated to} @c{%s}", ip, thief)
 		}
 
 		// claim this address for ourselves
