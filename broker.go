@@ -263,8 +263,8 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 
 func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
 	var binding brokerapi.Binding
-	var jobs []Job
-	jobsYAML := make(map[string][]Job)
+	var jobs []*Job
+	jobsYAML := make(map[string][]*Job)
 
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
 	l.Info("bind operation started")
@@ -285,9 +285,21 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	}
 
 	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID))
+	byType := make(map[string]*Job)
 	for _, vm := range vms {
 		job := Job{vm.JobName + "/" + strconv.Itoa(vm.Index), vm.IPs}
 		l.Debug("found job %s with IPs [%s]", job.Name, strings.Join(vm.IPs, ", "))
+		jobs = append(jobs, &job)
+
+		if typ, ok := byType[vm.JobName]; ok {
+			for _, ip := range vm.IPs {
+				typ.IPs = append(typ.IPs, ip)
+			}
+		} else {
+			byType[vm.JobName] = &Job{vm.JobName, vm.IPs}
+		}
+	}
+	for _, job := range byType {
 		jobs = append(jobs, job)
 	}
 	jobsYAML["jobs"] = jobs
@@ -333,6 +345,7 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	}
 
 	binding.Credentials = deinterfaceMap(yamlMap)
+	l.Debug("credentials are: %v", binding)
 
 	l.Info("bind successful")
 	return binding, nil
