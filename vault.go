@@ -312,6 +312,42 @@ func (vault *Vault) Index(instanceID string, data interface{}) error {
 	return idx.Save()
 }
 
+type Instance struct {
+	ID        string
+	ServiceID string
+	PlanID    string
+}
+
+func (vault *Vault) FindInstance(id string) (*Instance, bool, error) {
+	idx, err := vault.GetIndex("db")
+	if err != nil {
+		return nil, false, err
+	}
+
+	raw, err := idx.Lookup(id)
+	if err != nil {
+		return nil, false, nil /* not found */
+	}
+
+	inst, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, true, fmt.Errorf("indexed value [%s] is malformed (not a real map)", id)
+	}
+
+	instance := &Instance{}
+	if v, ok := inst["service_id"]; ok {
+		if s, ok := v.(string); ok {
+			instance.ServiceID = s
+		}
+	}
+	if v, ok := inst["plan_id"]; ok {
+		if s, ok := v.(string); ok {
+			instance.PlanID = s
+		}
+	}
+	return instance, true, nil
+}
+
 func (vault *Vault) State(instanceID string) (string, int, map[string]interface{}, error) {
 	data, exists, err := vault.Get(fmt.Sprintf("%s/task", instanceID))
 	if err != nil {

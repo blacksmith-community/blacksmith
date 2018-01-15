@@ -81,7 +81,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	l.Debug("checking if we are over out service and/or plan limits")
 	if plan.OverLimit(db) {
 		l.Error("service limit exceeded for %s/%s", plan.Service.Name, plan.Name)
-		return spec, fmt.Errorf("service limit exceeded for %s/%s", plan.Service.Name, plan.Name)
+		return spec, brokerapi.ErrPlanQuotaExceeded
 	}
 
 	defaults := make(map[interface{}]interface{})
@@ -160,22 +160,37 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	l := Logger.Wrap(fmt.Sprintf("%s %s/%s", instanceID, details.ServiceID, details.PlanID))
 	l.Info("deprovisioning service instance")
 
-	l.Debug("looking for plan in blacksmith catalog")
-	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
+	instance, exists, err := b.Vault.FindInstance(instanceID)
 	if err != nil {
-		l.Error("failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
-		return true, err
+		l.Error("unable to retrieve instance details from vault index: %s", err)
+		return false, err
+	}
+	if !exists {
+		l.Debug("removing defunct service from vault index")
+		b.Vault.Index(instanceID, nil)
+
+		/* return a 410 Gone to the caller */
+		return false, brokerapi.ErrInstanceDoesNotExist
 	}
 
-	deploymentName := plan.ID + "-" + instanceID
+	deploymentName := instance.PlanID + "-" + instanceID
 	l.Debug("determined BOSH deployment name to be %s", deploymentName)
+
+	manifest, err := b.BOSH.GetDeployment(deploymentName)
+	if err != nil || manifest.Manifest == "" {
+		l.Debug("removing defunct service from vault index")
+		b.Vault.Index(instanceID, nil)
+
+		/* return a 410 Gone to the caller */
+		return false, brokerapi.ErrInstanceDoesNotExist
+	}
 
 	l.Debug("deleting BOSH deployment")
 	/* FIXME: what if we still have a valid task for deployment? */
 	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
 		l.Error("failed to delete BOSH deployment %s: %s", deploymentName, err)
-		return true, err
+		return false, err
 	}
 	l.Debug("delete operation started, BOSH task %d", task.ID)
 

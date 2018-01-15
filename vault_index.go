@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 type VaultIndex struct {
@@ -23,6 +24,14 @@ func (v *Vault) GetIndex(path string) (*VaultIndex, error) {
 		path:   path,
 		Data:   Data,
 	}, nil
+}
+
+func (vi *VaultIndex) Lookup(key string) (interface{}, error) {
+	v, ok := vi.Data[key]
+	if !ok {
+		return nil, fmt.Errorf("key '%s' not found in index", key)
+	}
+	return v, nil
 }
 
 func (vi *VaultIndex) Save() error {
