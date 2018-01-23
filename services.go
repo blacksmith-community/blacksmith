@@ -160,12 +160,12 @@ func ReadService(path string) (Service, error) {
 
 	b, err := ioutil.ReadFile(file)
 	if err != nil {
-		return s, err
+		return s, fmt.Errorf("%s: %s", file, err)
 	}
 
 	err = yaml.Unmarshal(b, &s)
 	if err != nil {
-		return s, err
+		return s, fmt.Errorf("%s: %s", file, err)
 	}
 	if s.ID == "" && s.Name != "" {
 		s.ID = s.Name
@@ -174,12 +174,12 @@ func ReadService(path string) (Service, error) {
 		s.Name = s.ID
 	}
 	if err = CheckNames(s.ID, s.Name); err != nil {
-		return s, err
+		return s, fmt.Errorf("%s: %s", file, err)
 	}
 
 	pp, err := ReadPlans(path, s)
 	if err != nil {
-		return s, err
+		return s, fmt.Errorf("%s: %s", file, err)
 	}
 	s.Plans = pp
 	return s, nil
@@ -194,14 +194,14 @@ func ReadServices(dirs ...string) ([]Service, error) {
 	for _, dir := range dirs {
 		ls, err := ioutil.ReadDir(dir)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %s", dir, err)
 		}
 
 		for _, f := range ls {
 			if f.IsDir() {
 				s, err := ReadService(fmt.Sprintf("%s/%s", dir, f.Name()))
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("%s/%s: %s", dir, f.Name(), err)
 				}
 				ss = append(ss, s)
 			}
