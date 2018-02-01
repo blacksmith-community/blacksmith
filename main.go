@@ -171,5 +171,6 @@ func main() {
 	})
 
 	l.Info("blacksmith service broker v%s starting up...", Version)
+	//TODO alex add bosh maintenance stuff here
 	http.ListenAndServe(bind, nil)
 }
