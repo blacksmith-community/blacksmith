@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
@@ -171,6 +172,22 @@ func main() {
 	})
 
 	l.Info("blacksmith service broker v%s starting up...", Version)
-	//TODO alex add bosh maintenance stuff here
-	http.ListenAndServe(bind, nil)
+	maintenance_checker := time.NewTicker(300)
+	go func() {
+		err := http.ListenAndServe(bind, nil)
+		if err != nil {
+			l.Error("blacksmith service broker failed to start up: %s", err)
+			os.Exit(2)
+		}
+		l.Info("shutting down blacksmith service broker")
+	}()
+
+	bosh_maintenance_loop:=time.NewTicker(30)
+	for {
+        select {
+		case <-core.slowloop.C:
+			serviceWithNoDeploymentCheck()
+			boshCleanup()
+		}
+	}
 }
