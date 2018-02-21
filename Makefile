@@ -1,9 +1,9 @@
 build:
 	go build
-
+linux:
+	env GOOS=linux GOARCH=amd64 go build
 test:
 	ginkgo .
-
 coverage:
 	go test -coverprofile test.cov
 report: coverage
