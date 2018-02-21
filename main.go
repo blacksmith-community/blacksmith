@@ -172,7 +172,6 @@ func main() {
 	})
 
 	l.Info("blacksmith service broker v%s starting up...", Version)
-	maintenance_checker := time.NewTicker(300)
 	go func() {
 		err := http.ListenAndServe(bind, nil)
 		if err != nil {
@@ -182,10 +181,10 @@ func main() {
 		l.Info("shutting down blacksmith service broker")
 	}()
 
-	bosh_maintenance_loop:=time.NewTicker(30)
+	BoshMaintenanceLoop := time.NewTicker(01 * time.Minute)
 	for {
-        select {
-		case <-core.slowloop.C:
+		select {
+		case <-BoshMaintenanceLoop.C:
 			serviceWithNoDeploymentCheck()
 			boshCleanup()
 		}
