@@ -121,7 +121,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 
 	l.Debug("uploading releases (if necessary) to BOSH director")
-	err = UploadReleasesFromManifest(manifest, b.BOSH)
+	err = UploadReleasesFromManifest(manifest, b.BOSH, l)
 	if err != nil {
 		l.Error("failed to upload service deployment releases: %s", err)
 		return spec, fmt.Errorf("BOSH service deployment failed")
