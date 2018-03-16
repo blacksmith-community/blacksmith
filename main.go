@@ -185,8 +185,8 @@ func main() {
 	for {
 		select {
 		case <-BoshMaintenanceLoop.C:
-			serviceWithNoDeploymentCheck()
-			boshCleanup()
+			serviceWithNoDeploymentCheck(bosh, vault)
+			boshCleanup(bosh)
 		}
 	}
 }
