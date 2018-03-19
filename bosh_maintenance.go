@@ -41,43 +41,38 @@ func serviceWithNoDeploymentCheck(bosh *gogobosh.Client, vault *Vault) {
 		l.Error(err.Error())
 	}
 
-	var markedForDeath []gogobosh.Deployment
+	//turn deployments from a slice of deployments into a map of
+	//string to bool because all we care about is the name of the deployment (the string here)
+	var deploymentNames map[string]bool
+	for _, deployment := range deployments {
+		deploymentNames[deployment.Name] = true
+	}
+	//grab the vault DB json blob out of vault
 	vaultDB, err := vault.getVaultDB()
 	if err != nil {
 		l.Error(err.Error())
 	}
-	//TODO
-	//loop through whats in the bosh director,
-	//at each deployment in the director, grab that key from vault, and add it to a list
-	//at the end of the loop through the bosh stuff put all of the newly created lists of things
-	//into vault using the save function
-	for _, deployment := range deployments {
-		//deployments are named as instance.PlanID + "-" + instanceID
-		var p Plan
-		for _, s := range vaultDB.Data {
-			if ss, ok := s.(map[string]interface{}); ok {
-				service, haveService := ss["service_id"]
-				plan, havePlan := ss["plan_id"]
-				instance
-				if havePlan && haveService {
-					if v, ok := service.(string); ok && v == p.Service.ID {
-						existingService += 1
-						if v, ok := plan.(string); ok && v == p.ID {
-							existingPlan += 1
-						}
-					}
-				}
-			}
-		}
 
-		b.Vault.Index(instanceID, map[string]interface{}{
-			"service_id": details.ServiceID,
-			"plan_id":    plan.ID,
-		})
-		//looks like instanceid is the key, with service id and plan id as values
-		if !vaultDB.Contains(deployment.Name) {
-			markedForDeath = append(markedForDeath, deployment)
+	//loop through all current instances in the "db"
+	//check bosh director for each instance in the "db"
+	//if the instance matches to one in the director delete it from the list
+	//the list you're left with will be all of the instances that need to be deleted
+	//delete those instances by calling the index function with the instance id and nil (deletes them)
+	for _, serviceInstance := range vaultDB.Data {
+		if ss, ok := serviceInstance.(map[string]interface{}); ok {
+			service, _ := ss["service_id"]
+			plan, _ := ss["plan_id"]
+
+			//deployments are named as instance.PlanID + "-" + instanceID
+			if val, ok := deploymentNames[plan.PlanID+"-"+serviceInstance.ID]; !ok {
+				//if the deployment name isn't listed in our director then delete it from vault
+				//passing a nil data value to vault index will delete it from vault and then save for us
+				vault.Index(serviceInstance.ID, nil)
+			}
+
 		}
+		l.Error("could not find ")
+
 	}
 }
 
