@@ -381,8 +381,9 @@ func (vault *Vault) State(instanceID string) (string, int, map[string]interface{
 
 // getVaultDB returns the vault index (some useful vault constructs) that we're using to keep track of service/plan usage data
 func (vault *Vault) getVaultDB() (*VaultIndex, error) {
+	l := Logger.Wrap("task.log")
 	l.Debug("retrieving vault 'db' index (for tracking service usage)")
-	db, err := Vault.GetIndex("db")
+	db, err := vault.GetIndex("db")
 	if err != nil {
 		l.Error("failed to get 'db' index out of the vault: %s", err)
 		return nil, err

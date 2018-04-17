@@ -181,12 +181,20 @@ func main() {
 		l.Info("shutting down blacksmith service broker")
 	}()
 
-	BoshMaintenanceLoop := time.NewTicker(01 * time.Minute)
+	BoshMaintenanceLoop := time.NewTicker(1 * time.Minute)
 	for {
 		select {
 		case <-BoshMaintenanceLoop.C:
-			serviceWithNoDeploymentCheck(bosh, vault)
-			boshCleanup(bosh)
+			vaultDB, err := vault.getVaultDB()
+			if err != nil {
+				l.Error("error grabbing vaultdb for debugging: %s", err)
+			}
+			l.Debug("current vault db looks like: %v", vaultDB.Data)
+			broker.serviceWithNoDeploymentCheck()
+			err = bosh.Cleanup(false)
+			if err != nil {
+				l.Error("bosh cleanup failed to run properly: %s", err)
+			}
 		}
 	}
 }
