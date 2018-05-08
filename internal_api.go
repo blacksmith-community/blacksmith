@@ -53,12 +53,18 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		//return a 200 and a task id for the cleanup task
+		cleanups, err := api.Broker.serviceWithNoDeploymentCheck()
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
 		out := struct {
 			taskID   int      `json:"task_id"`
 			cleanups []string `json:"cleanups"`
 		}{
 			taskID:   taskID,
-			cleanups: api.Broker.serviceWithNoDeploymentCheck(),
+			cleanups: cleanups,
 		}
 		js, err := json.Marshal(out)
 		w.Header().Set("Content-Type", "application/json")

@@ -189,9 +189,10 @@ func main() {
 			if err != nil {
 				l.Error("error grabbing vaultdb for debugging: %s", err)
 			}
-			l.Debug("current vault db looks like: %v", vaultDB.Data)
+			l.Info("current vault db looks like: %v", vaultDB.Data)
 			broker.serviceWithNoDeploymentCheck()
-			err = bosh.Cleanup(false)
+			taskid, err := bosh.Cleanup(false)
+			l.Info("taskid for the bosh cleanup is %v", taskid)
 			if err != nil {
 				l.Error("bosh cleanup failed to run properly: %s", err)
 			}
