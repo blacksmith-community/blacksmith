@@ -25,8 +25,8 @@ type Job struct {
 	IPs  []string
 }
 
-func (b Broker) FindPlan(planID string, serviceID string) (Plan, error) {
-	key := fmt.Sprintf("%s/%s", planID, serviceID)
+func (b Broker) FindPlan(serviceID string, planID string) (Plan, error) {
+	key := fmt.Sprintf("%s/%s", serviceID, planID)
 	if plan, ok := b.Plans[key]; ok {
 		return plan, nil
 	}
