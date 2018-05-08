@@ -40,10 +40,12 @@
             var plans = {};
             $.each(catalog.services, function (i, service) {
               $.each(service.plans, function (j, plan) {
-                plans[plan.id] = service.name + '/' + plan.name;
+                var key = service.id + '/' + plan.name;
+                plans[plan.id] = key;
+
                 catalog.services[i].plans[j].blacksmith = {
                   instances: instances[plan.id] || 0,
-                  limit:     data.plans[service.name+'/'+plan.id].limit || 0
+                  limit:     data.plans[key].limit || 0
                 };
               });
             });
