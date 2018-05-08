@@ -68,8 +68,9 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		js, err := json.Marshal(out)
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
 		w.Write(js)
-
+		return
 	}
 
 	pattern := regexp.MustCompile("^/b/([^/]+)/manifest\\.yml$")
