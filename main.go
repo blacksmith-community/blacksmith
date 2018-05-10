@@ -181,7 +181,7 @@ func main() {
 		l.Info("shutting down blacksmith service broker")
 	}()
 
-	BoshMaintenanceLoop := time.NewTicker(1 * time.Minute)
+	BoshMaintenanceLoop := time.NewTicker(1 * time.Hour)
 	//TODO set task to -1 or something out here and check to make sure the cleanup is finished before you run another one
 	for {
 		select {
