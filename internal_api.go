@@ -60,16 +60,16 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		out := struct {
-			taskID   int      `json:"task_id"`
-			cleanups []string `json:"cleanups"`
+			TaskID   int      `json:"task_id"`
+			Cleanups []string `json:"cleanups"`
 		}{
-			taskID:   taskID,
-			cleanups: cleanups,
+			TaskID:   taskID,
+			Cleanups: cleanups,
 		}
 		js, err := json.Marshal(out)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		w.Write(js)
+		fmt.Fprintf(w, "%s\n", string(js))
 		return
 	}
 
