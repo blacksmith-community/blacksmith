@@ -45,6 +45,33 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
+	if req.URL.Path == "/b/cleanup" {
+		task, err := api.Broker.BOSH.Cleanup(false)
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+		//return a 200 and a task id for the cleanup task
+		cleanups, err := api.Broker.serviceWithNoDeploymentCheck()
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+		out := struct {
+			TaskID   int      `json:"task_id"`
+			Cleanups []string `json:"cleanups"`
+		}{
+			TaskID:   task.ID,
+			Cleanups: cleanups,
+		}
+		js, err := json.Marshal(out)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "%s\n", string(js))
+		return
+	}
 
 	pattern := regexp.MustCompile("^/b/([^/]+)/manifest\\.yml$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -366,4 +367,57 @@ func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyn
 	// FIXME: implement this!
 
 	return false, fmt.Errorf("not implemented")
+}
+
+func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {
+	l := Logger.Wrap("*")
+	l.Info("checking for service instances with no backing deployment")
+	//grab all current deployments
+	deployments, err := b.BOSH.GetDeployments()
+	if err != nil {
+		return nil, err
+	}
+
+	//turn deployments from a slice of deployments into a map of
+	//string to bool because all we care about is the name of the deployment (the string here)
+	deploymentNames := make(map[string]bool)
+	for _, deployment := range deployments {
+		deploymentNames[deployment.Name] = true
+	}
+	//grab the vault DB json blob out of vault
+	vaultDB, err := b.Vault.getVaultDB()
+	if err != nil {
+		return nil, err
+	}
+
+	//loop through all current instances in the "db"
+	//check bosh director for each instance in the "db"
+	var removedDeploymentNames []string
+	for instanceID, serviceInstance := range vaultDB.Data {
+		l.Debug("current value of instanceID: %v", instanceID)
+		if ss, ok := serviceInstance.(map[string]interface{}); ok {
+			service, ok := ss["service_id"].(string)
+			if !ok {
+				return nil, errors.New("could not assert service id to string")
+			}
+			l.Debug("current value of service: %v", service)
+			plan, ok := ss["plan_id"].(string)
+			if !ok {
+				l.Error("could not assert plan id to string")
+				return nil, errors.New("could not assert plan id to string")
+			}
+			l.Debug("current value of plan: %v", plan)
+			currentDeployment := plan + "-" + instanceID
+			//deployments are named as instance.PlanID + "-" + instanceID
+			if _, ok := deploymentNames[currentDeployment]; !ok {
+				//if the deployment name isn't listed in our director then delete it from vault
+				l.Debug("found no deployment on bosh director named: %v", currentDeployment)
+				removedDeploymentNames = append(removedDeploymentNames, currentDeployment)
+				l.Debug("removing service id: " + instanceID + " from vault db")
+				//passing a nil data value to vault index will delete it from vault and then save for us
+				b.Vault.Index(instanceID, nil)
+			}
+		}
+	}
+	return removedDeploymentNames, nil
 }

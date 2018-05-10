@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
@@ -171,5 +172,31 @@ func main() {
 	})
 
 	l.Info("blacksmith service broker v%s starting up...", Version)
-	http.ListenAndServe(bind, nil)
+	go func() {
+		err := http.ListenAndServe(bind, nil)
+		if err != nil {
+			l.Error("blacksmith service broker failed to start up: %s", err)
+			os.Exit(2)
+		}
+		l.Info("shutting down blacksmith service broker")
+	}()
+
+	BoshMaintenanceLoop := time.NewTicker(1 * time.Hour)
+	//TODO set task to -1 or something out here and check to make sure the cleanup is finished before you run another one
+	for {
+		select {
+		case <-BoshMaintenanceLoop.C:
+			vaultDB, err := vault.getVaultDB()
+			if err != nil {
+				l.Error("error grabbing vaultdb for debugging: %s", err)
+			}
+			l.Info("current vault db looks like: %v", vaultDB.Data)
+			broker.serviceWithNoDeploymentCheck()
+			task, err := bosh.Cleanup(false)
+			l.Info("taskid for the bosh cleanup is %v", task.ID)
+			if err != nil {
+				l.Error("bosh cleanup failed to run properly: %s", err)
+			}
+		}
+	}
 }

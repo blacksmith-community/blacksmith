@@ -1,9 +1,0 @@
-.DS_Store
-/spruce
-/spruce-*
-credentials.yml
-releases
-artifacts
-.svtoken
-*.swp
-.vscode
