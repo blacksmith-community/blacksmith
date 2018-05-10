@@ -1,0 +1,40 @@
+#!/bin/bash
+
+BLACKSMITH_IP=10.200.136.0
+BOSH_ENV_ALIAS=lab
+BLACKSMITH_DEPLOYMENT_NAME=buffalo-lab-blacksmith
+
+echo "checking for tmux..."
+  if ! type tmux &>/dev/null; then
+    echo
+    echo "Blacksmith's testdev environment requires tmux (https://tmux.github.io)"
+    echo "You will need to install tmux to continue."
+    case $OSTYPE in
+    *darwin*) echo
+              echo "On macOS ($OSTYPE), you can \`brew install tmux\` and be on your way."
+    esac
+    exit 1
+  fi
+
+case "${1}" in
+(localenv)
+  nc $BLACKSMITH_IP 4004 < blacksmith
+
+(boshvm)
+#ssh into bosh vm and run the netcat thing
+bosh -e $BOSH_ENV_ALIAS -d $BLACKSMITH_DEPLOYMENT_NAME ssh << EOF
+  nc -l 4004 > blacksmith \
+    && chmod 755 blacksmith \
+    && monit stop blacksmith \
+    && sleep 5 \
+    && cp blacksmith /var/vcap/packages/blacksmith/bin/blacksmith \
+    && monit start blacksmith \
+    && tail -f /var/vcap/sys/log/blacksmith/blacksmith.log
+EOF
+
+("")
+  tmux new-session \; \
+    new-window -n boshvm ./bin/testdev boshvm \; \
+    new-window -n localenv ./bin/testdev localenv \;
+  ;;
+esac
