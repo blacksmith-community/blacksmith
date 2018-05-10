@@ -182,6 +182,7 @@ func main() {
 	}()
 
 	BoshMaintenanceLoop := time.NewTicker(1 * time.Minute)
+	//TODO set task to -1 or something out here and check to make sure the cleanup is finished before you run another one
 	for {
 		select {
 		case <-BoshMaintenanceLoop.C:
@@ -191,8 +192,8 @@ func main() {
 			}
 			l.Info("current vault db looks like: %v", vaultDB.Data)
 			broker.serviceWithNoDeploymentCheck()
-			taskid, err := bosh.Cleanup(false)
-			l.Info("taskid for the bosh cleanup is %v", taskid)
+			task, err := bosh.Cleanup(false)
+			l.Info("taskid for the bosh cleanup is %v", task.ID)
 			if err != nil {
 				l.Error("bosh cleanup failed to run properly: %s", err)
 			}

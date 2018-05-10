@@ -46,7 +46,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if req.URL.Path == "/b/cleanup" {
-		taskID, err := api.Broker.BOSH.Cleanup(false)
+		task, err := api.Broker.BOSH.Cleanup(false)
 		if err != nil {
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error: %s\n", err)
@@ -63,7 +63,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			TaskID   int      `json:"task_id"`
 			Cleanups []string `json:"cleanups"`
 		}{
-			TaskID:   taskID,
+			TaskID:   task.ID,
 			Cleanups: cleanups,
 		}
 		js, err := json.Marshal(out)

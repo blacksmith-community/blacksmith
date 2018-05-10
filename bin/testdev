@@ -18,33 +18,28 @@ echo "checking for tmux..."
 
 case "${1}" in
 (boshvm)
-#ssh into bosh vm and run the netcat thing
-
   bosh -e $BOSH_ENV_ALIAS -d $BLACKSMITH_DEPLOYMENT_NAME ssh << EOF
-    sudo -i \
-      && nc -l 4004 > blacksmith \
-      && chmod 755 blacksmith \
-      && monit stop blacksmith \
+      sudo nc -l 4004 > blacksmith \
+      && sudo chmod 755 blacksmith \
+      && sudo /var/vcap/bosh/bin/monit stop blacksmith \
       && sleep 5 \
-      && cp blacksmith /var/vcap/packages/blacksmith/bin/blacksmith \
-      && monit start blacksmith \
-      && tail -f /var/vcap/sys/log/blacksmith/blacksmith.log
+      && sudo cp blacksmith /var/vcap/packages/blacksmith/bin/blacksmith \
+      && sudo /var/vcap/bosh/bin/monit start blacksmith \
+      && sudo tail -f /var/vcap/sys/log/blacksmith/blacksmith.log
 EOF
 ;;
+
 (localenv)
   nc $BLACKSMITH_IP 4004 < blacksmith
 ;;
+
 ("")
-  tmux new-session \; \
+  tmux new-session \; set-option update-environment ' BLACKSMITH' \; \
     new-window -n boshvm ./bin/testdev boshvm \; \
     new-window -n localenv ./bin/testdev localenv \;
-  ;;
-  (*)
-  echo >&2 "USAGE: $0 [ACTION]"
-  echo >&2 ""
-  echo >&2 "Run components of a test/dev shield setup, on http://${ADDR}"
-  echo >&2 ""
-  echo >&2 "Actions:"
-  echo >&2 "  shieldd     Run SHIELD core daemon"
+;;
+
+(*)
+  echo >&2 "uhhh default case? you did something wrong"
 ;;
 esac
