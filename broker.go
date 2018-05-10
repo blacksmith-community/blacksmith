@@ -413,9 +413,9 @@ func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {
 				//if the deployment name isn't listed in our director then delete it from vault
 				l.Debug("found no deployment on bosh director named: %v", currentDeployment)
 				removedDeploymentNames = append(removedDeploymentNames, currentDeployment)
-				l.Debug("removing service id: " + service + " from vault db")
+				l.Debug("removing service id: " + instanceID + " from vault db")
 				//passing a nil data value to vault index will delete it from vault and then save for us
-				b.Vault.Index(service, nil)
+				b.Vault.Index(instanceID, nil)
 			}
 		}
 	}
