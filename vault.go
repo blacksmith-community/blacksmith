@@ -301,7 +301,6 @@ func (vault *Vault) Track(instanceID, action string, taskID int, params interfac
 
 func (vault *Vault) Index(instanceID string, data interface{}) error {
 	idx, err := vault.GetIndex("db")
-	//TODO replace with list of uuids?
 	if err != nil {
 		return err
 	}
@@ -391,20 +390,3 @@ func (vault *Vault) getVaultDB() (*VaultIndex, error) {
 	}
 	return db, nil
 }
-
-// db:map[
-//     34c43057-1136-4008-bf18-1746c4bfaabd:map[
-//         plan_id:postgresql-standalone
-//         service_id:postgresql
-//     ]
-
-//     49274b83-9ce9-4e6d-932e-a5d732c9fe87:map[
-//         plan_id:redis-dedicated-cache
-//         service_id:redis
-//     ]
-
-//     7f7b83cd-95ac-4c21-95f6-1d0fe567e952:map[
-//         plan_id:rabbitmq-dedicated
-//         service_id:rabbitmq
-//     ]
-// ]
