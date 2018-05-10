@@ -3,7 +3,7 @@ build:
 linux:
 	env GOOS=linux GOARCH=amd64 go build
 dev:
-    linux ./bin/testdev
+	linux ./bin/testdev
 test:
 	ginkgo .
 coverage:
