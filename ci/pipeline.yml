@@ -24,16 +24,13 @@ meta:
   go:
     version: 1.9
     module:  (( concat "github.com/" meta.github.owner "/" meta.github.repo ))
-    cmd_module: (( grab meta.go.module ))
-    binary:  (( grab meta.github.repo ))
-    force_static_binary: false
 
   image:
     name: starkandwayne/concourse-go
     tag: (( grab meta.go.version ))
 
   aws:
-    bucket:      (( concat meta.pipeline "-pipeline" ))
+    bucket:     (( concat meta.pipeline "-pipeline" ))
     region_name: us-east-1
     access_key: (( param "Please set your AWS Access Key ID" ))
     secret_key: (( param "Please set your AWS Secret Key ID" ))
@@ -46,32 +43,35 @@ meta:
     private_key:  (( param "Please generate an SSH Deployment Key for this repo and specify it here" ))
     access_token: (( param "Please generate a Personal Access Token and specify it here" ))
 
-  slack:
-    webhook:       (( param "Please specify your Slack Incoming Webhook Integration URL" ))
-    username:      concourse
-    icon:          https://cl.ly/2F421Y300u07/concourse-logo-blue-transparent.png
-    notification: '(( concat ":sadpanda: " meta.pipeline " build failed!<br>URL-GOES-HERE" ))'
-    channel:       (( param "Please specify the channel (#name) or user (@user) to send messages to" ))
-    fail_moji:     ":airplane_arriving:"
-    success_moji:  ":airplane_departure:"
-    upset_moji:    ":sad_panda:"
-    fail_url: '(( concat "<" meta.url "/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME| Concourse Failure! " meta.slack.upset_moji ">" ))'
+  shout:
+    topic:    (( concat meta.name "-pipeline" ))
+    url:      (( param "Please specify the Shout! endpoint" ))
+    username: (( param "Please specify the Shout! operations username" ))
+    password: (( param "Please specify the Shout! operations password" ))
+
+    metadata:
+      build-team-name:     $BUILD_TEAM_NAME
+      build-job-name:      $BUILD_JOB_NAME
+      build-pipeline-name: $BUILD_PIPELINE_NAME
+
+    links:
+      pipeline: (( concat meta.url "/teams/$BUILD_TEAM_NAME/pipelines/$BUILD_PIPELINE_NAME" ))
+      build:    (( concat meta.shout.links.pipeline "/jobs/$BUILD_JOB_NAME/builds/$BUILD_NAME" ))
 
   url: (( param "What is the URL for the Concourse instance this pipeline is located on?" ))
 
 groups:
   - name: (( grab meta.pipeline ))
     jobs:
-      - test
-      - test-pr
+      - testflight
+      - pr
       - rc
       - shipit
       - major
       - minor
-      - bump-patch
 
 jobs:
-  - name: test
+  - name: testflight
     public: true
     serial: true
     plan:
@@ -93,23 +93,30 @@ jobs:
               args: []
             params:
               MODULE: (( grab meta.go.module ))
+        on_success:
+          put: notify
+          params:
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: mainline tests job '$BUILD_JOB_NAME' succeeded.
+            ok:      yes
+            link:    (( grab meta.shout.links.build ))
         on_failure:
           put: notify
           params:
-            channel:  (( grab meta.slack.channel ))
-            username: (( grab meta.slack.username ))
-            icon_url: (( grab meta.slack.icon ))
-            text:    '(( concat meta.slack.fail_url " " meta.pipeline ": test job failed" ))'
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: mainline tests job '$BUILD_JOB_NAME' failed.
+            ok:      no
+            link:    (( grab meta.shout.links.build ))
 
-  - name: test-pr
+  - name: pr
     public: true
     serial: true
     plan:
       - do:
-        - { get: git-pull-requests, trigger: true, version: every }
-        - put: git-pull-requests
+        - { get: git-prs, trigger: true, version: every }
+        - put: git-prs
           params:
-            path: git-pull-requests
+            path: git-prs
             status: pending
         - task: test
           config:
@@ -120,7 +127,7 @@ jobs:
                 repository: (( grab meta.image.name ))
                 tag:        (( grab meta.image.tag ))
             inputs:
-              - name: git-pull-requests
+              - name: git-prs
                 path: (( concat "gopath/src/" meta.go.module ))
             run:
               path: (( concat "./gopath/src/" meta.go.module "/ci/scripts/test" ))
@@ -128,14 +135,14 @@ jobs:
             params:
               MODULE: (( grab meta.go.module ))
           on_success:
-            put: git-pull-requests
+            put: git-prs
             params:
-              path: git-pull-requests
+              path: git-prs
               status: success
           on_failure:
-            put: git-pull-requests
+            put: git-prs
             params:
-              path: git-pull-requests
+              path: git-prs
               status: failure
         - task: pr-success-message
           config:
@@ -146,7 +153,7 @@ jobs:
                 repository: (( grab meta.image.name ))
                 tag:        (( grab meta.image.tag ))
             inputs:
-              - { name: git-pull-requests }
+              - { name: git-prs }
             outputs:
               - { name: message }
             run:
@@ -154,48 +161,64 @@ jobs:
               args:
               - -ce
               - |
-                cd git-pull-requests
+                cd git-prs
                 pr_url=$(git config --get pullrequest.url)
                 cd -
                 echo "<${pr_url}|Pull request passed test> Merge when ready: ${pr_url}" > message/body
-        on_failure:
-          put: notify
-          params:
-            channel:  (( grab meta.slack.channel ))
-            username: (( grab meta.slack.username ))
-            icon_url: (( grab meta.slack.icon ))
-            text:    '(( concat meta.slack.fail_url " " meta.pipeline ": test job failed" ))'
 
   - name: rc
     public: true
+    serial: true
     plan:
       - do:
         - aggregate:
-            - { get: git,     trigger: true,  passed: [test] }
+            - { get: git,     trigger: true,  passed: [testflight] }
             - { get: version, trigger: true, params: {pre: rc} }
+        - task: release-notes
+          config:
+            platform: linux
+            image_resource:
+              type: docker-image
+              source:
+                repository: (( grab meta.image.name ))
+                tag:        (( grab meta.image.tag ))
+            inputs:
+                - { name: git }
+            run:
+              path: sh
+              args:
+              - -ce
+              - |
+                cd git
+                if [ -f ci/release_notes.md ]; then
+                  echo "######   RELEASE NOTES   ###############"
+                  echo
+                  cat ci/release_notes.md
+                  echo
+                  echo "########################################"
+                  echo
+                else
+                  echo "NO RELEASE NOTES HAVE BEEN WRITTEN"
+                  echo "You *might* want to do that before"
+                  echo "hitting (+) on that shipit job..."
+                  echo
+                fi
         - put: version
           params: {file: version/number}
+        on_success:
+          put: notify
+          params:
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: release candidate job 'rc' succeeded.
+            ok:      yes
+            link:    (( grab meta.shout.links.build ))
         on_failure:
           put: notify
           params:
-            channel:  (( grab meta.slack.channel ))
-            username: (( grab meta.slack.username ))
-            icon_url: (( grab meta.slack.icon ))
-            text:    '(( concat meta.slack.fail_url " " meta.pipeline ": rc job failed" ))'
-
-  - name: bump-patch
-    public: true
-    plan:
-      - do:
-        - { get: version, trigger: true, params: { bump: patch, pre: rc }, passed: [shipit] } # bump rc + patch, so that subesquent version bumps can trigger a new bump-patch
-        - { put: version,                params: { file: version/number} }
-        on_failure:
-          put: notify
-          params:
-            channel:  (( grab meta.slack.channel ))
-            username: (( grab meta.slack.username ))
-            icon_url: (( grab meta.slack.icon ))
-            text:    '(( concat meta.slack.fail_url " " meta.pipeline ": bump-patch job failed" ))'
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: release candidate job 'rc' failed (which is unusual).
+            ok:      no
+            link:    (( grab meta.shout.links.build ))
 
   - name: minor
     public: true
@@ -203,13 +226,20 @@ jobs:
       - do:
         - { get: version, trigger: false, params: {bump: minor} }
         - { put: version,                 params: {file: version/number} }
+        on_success:
+          put: notify
+          params:
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: minor version bump job 'minor' succeeded.
+            ok:      yes
+            link:    (( grab meta.shout.links.build ))
         on_failure:
           put: notify
           params:
-            channel:  (( grab meta.slack.channel ))
-            username: (( grab meta.slack.username ))
-            icon_url: (( grab meta.slack.icon ))
-            text:    '(( concat meta.slack.fail_url " " meta.pipeline ": minor job failed" ))'
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: minor version bump job 'minor' failed (which is unusual).
+            ok:      no
+            link:    (( grab meta.shout.links.build ))
 
   - name: major
     public: true
@@ -217,13 +247,20 @@ jobs:
       - do:
         - { get: version, trigger: false, params: {bump: major} }
         - { put: version,                 params: {file: version/number} }
+        on_success:
+          put: notify
+          params:
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: major version bump job '$BUILD_JOB_NAME' succeeded.
+            ok:      no
+            link:    (( grab meta.shout.links.build ))
         on_failure:
           put: notify
           params:
-            channel:  (( grab meta.slack.channel ))
-            username: (( grab meta.slack.username ))
-            icon_url: (( grab meta.slack.icon ))
-            text:    '(( concat meta.slack.fail_url " " meta.pipeline ": major job failed" ))'
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: major version bump job '$BUILD_JOB_NAME' failed (which is unusual).
+            ok:      no
+            link:    (( grab meta.shout.links.build ))
 
   - name: shipit
     public: true
@@ -254,20 +291,14 @@ jobs:
               path: (( concat "./gopath/src/" meta.go.module "/ci/scripts/shipit" ))
               args: []
             params:
-              BINARY:       (( grab meta.go.binary ))
               REPO_ROOT:    (( concat "gopath/src/" meta.go.module ))
               VERSION_FROM: version/number
               RELEASE_NAME: (( grab meta.release ))
               RELEASE_ROOT: gh
               REPO_OUT:     pushme
               BRANCH:       (( grab meta.github.branch ))
-              CMD_PKG:      (( grab meta.go.cmd_module ))
-              STATIC_BINARY:  (( grab meta.go.force_static_binary ))
-              GIT_EMAIL:      (( grab meta.git.email ))
-              GIT_NAME:       (( grab meta.git.name ))
-        - name: version
-          put: version
-          params: { bump: final }
+              GIT_EMAIL:    (( grab meta.git.email ))
+              GIT_NAME:     (( grab meta.git.name ))
         - name: git
           put: git
           params:
@@ -280,27 +311,37 @@ jobs:
             tag:    gh/tag
             body:   gh/notes.md
             globs: [gh/artifacts/*]
+        - name: version-bump
+          put: version
+          params:
+            bump: patch
         - name: notify
           aggregate:
           - put: notify
             params:
-              channel:  (( grab meta.slack.channel ))
-              username: (( grab meta.slack.username ))
-              icon_url: (( grab meta.slack.icon ))
-              text_file: notifications/message
+              method: announce
+              file: notifications/message
+              link: (( concat meta.github.uri "/releases" ))
+        on_success:
+          put: notify
+          params:
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: release job '$BUILD_JOB_NAME' succeeded.
+            ok:      yes
+            link:    (( grab meta.shout.links.build ))
         on_failure:
           put: notify
           params:
-            channel:  (( grab meta.slack.channel ))
-            username: (( grab meta.slack.username ))
-            icon_url: (( grab meta.slack.icon ))
-            text:    '(( concat meta.slack.fail_url " " meta.pipeline ": shipit job failed" ))'
+            topic:   (( concat meta.shout.topic "-$BUILD_JOB_NAME" ))
+            message: release job '$BUILD_JOB_NAME' failed.
+            ok:      no
+            link:    (( grab meta.shout.links.build ))
 
 resource_types:
-  - name: slack-notification
+  - name: shout-notification
     type: docker-image
     source:
-      repository: cfcommunity/slack-notification-resource
+      repository: huntprod/shout-resource
 
   - name: pull-request
     type: docker-image
@@ -327,9 +368,12 @@ resources:
       initial_version:   (( grab meta.initial_version || "0.0.1" ))
 
   - name: notify
-    type: slack-notification
+    type: shout-notification
     source:
-      url: (( grab meta.slack.webhook ))
+      topic:    (( grab meta.shout.topic ))
+      url:      (( grab meta.shout.url ))
+      username: (( grab meta.shout.username ))
+      password: (( grab meta.shout.password ))
 
   - name: github
     type: github-release
@@ -338,8 +382,9 @@ resources:
       repository:   (( grab meta.github.repo ))
       access_token: (( grab meta.github.access_token ))
 
-  - name: git-pull-requests
+  - name: git-prs
     type: pull-request
+    check_every: 20m # avoid Github API rate-limiting
     source:
       access_token: (( grab meta.github.access_token ))
       private_key:  (( grab meta.github.private_key ))

@@ -1,23 +1,26 @@
 ---
 meta:
-  name: blacksmith
-  target: blacksmith
-  url: (( vault "secret/pipelines/concourse:url" ))
-  
+  name:    blacksmith
+  release: Blacksmith
+  target:  blacksmith@pipes
+  url:     https://pipes.starkandwayne.com
+
   git:
+    name: Stark & Wayne CI Bot
     email: ci@starkandwayne.com
-    name: CI Bot
 
   aws:
-    access_key: (( vault "secret/aws/cfcommunity:access" ))
-    secret_key: (( vault "secret/aws/cfcommunity:secret" ))
+    access_key: (( vault "secret/pipelines/aws/cf-community:access" ))
+    secret_key: (( vault "secret/pipelines/aws/cf-community:secret" ))
 
   github:
-    owner: cloudfoundry-community
-    repo: blacksmith
-    access_token: (( vault "secret/pipelines/blacksmith/github:token" ))
-    private_key: (( vault "secret/pipelines/blacksmith/github:private" ))
+    owner:  blacksmith-community
+    repo:   blacksmith
+    branch: master
+    private_key:  (( vault "secret/pipelines/github/starkandwayne/ci-bot:private" ))
+    access_token: (( vault "secret/pipelines/github/starkandwayne/ci-bot:access_token" ))
 
-  slack:
-    webhook: (( vault "secret/pipelines/blacksmith/slack:webhook" ))
-    channel: "#botspam"
+  shout:
+    url:      http://10.200.131.1:7109
+    username: ops
+    password: (( vault "secret/buffalo/lab/concourse/shout/ops:password" ))
