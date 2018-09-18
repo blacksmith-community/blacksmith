@@ -3,7 +3,7 @@ package main_test
 import (
 	"fmt"
 
-	. "github.com/cloudfoundry-community/blacksmith"
+	. "github.com/blacksmith-community/blacksmith"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"

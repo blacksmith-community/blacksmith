@@ -1,7 +1,7 @@
 package main_test
 
 import (
-	. "github.com/cloudfoundry-community/blacksmith"
+	. "github.com/blacksmith-community/blacksmith"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"

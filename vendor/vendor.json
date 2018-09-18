@@ -82,5 +82,5 @@
 			"revision": "49c95bdc21843256fb6c4e0d370a05f24a0bf213"
 		}
 	],
-	"rootPath": "github.com/cloudfoundry-community/blacksmith"
+	"rootPath": "github.com/blacksmith-community/blacksmith"
 }
