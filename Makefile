@@ -5,7 +5,8 @@ linux:
 dev:
 	env GOOS=linux GOARCH=amd64 go build && ./bin/testdev
 test:
-	ginkgo .
+	go test ./...
+
 coverage:
 	go test -coverprofile test.cov
 report: coverage
