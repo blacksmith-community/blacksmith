@@ -170,7 +170,9 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	}
 	if !exists {
 		l.Debug("removing defunct service from vault index")
-		b.Vault.Index(instanceID, nil)
+		if err := b.Vault.Index(instanceID, nil); err != nil {
+			l.Error("failed to remove defunct service instance '%s' from vault: %s", instanceID, err)
+		}
 
 		/* return a 410 Gone to the caller */
 		return false, brokerapi.ErrInstanceDoesNotExist
@@ -182,7 +184,9 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	manifest, err := b.BOSH.GetDeployment(deploymentName)
 	if err != nil || manifest.Manifest == "" {
 		l.Debug("removing defunct service from vault index")
-		b.Vault.Index(instanceID, nil)
+		if err := b.Vault.Index(instanceID, nil); err != nil {
+			l.Error("failed to remove defunct service instance '%s' from vault: %s", instanceID, err)
+		}
 
 		/* return a 410 Gone to the caller */
 		return false, brokerapi.ErrInstanceDoesNotExist
@@ -198,9 +202,14 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	l.Debug("delete operation started, BOSH task %d", task.ID)
 
 	l.Debug("removing service from vault 'db' index")
-	b.Vault.Index(instanceID, nil)
+	if err := b.Vault.Index(instanceID, nil); err != nil {
+		l.Error("failed to remove service '%s' from vault 'db' index: %s", instanceID, err)
+	}
+
 	l.Debug("updating service status in the vault")
-	b.Vault.Track(instanceID, "deprovision", task.ID, nil)
+	if err := b.Vault.Track(instanceID, "deprovision", task.ID, nil); err != nil {
+		l.Error("failed to track deprovision BOSH task #%d in vault: %s", task.ID, err)
+	}
 
 	l.Info("started deprovisioning")
 	return true, nil
@@ -416,8 +425,9 @@ func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {
 				l.Debug("found no deployment on bosh director named: %v", currentDeployment)
 				removedDeploymentNames = append(removedDeploymentNames, currentDeployment)
 				l.Debug("removing service id: " + instanceID + " from vault db")
-				//passing a nil data value to vault index will delete it from vault and then save for us
-				b.Vault.Index(instanceID, nil)
+				if err := b.Vault.Index(instanceID, nil); err != nil {
+					l.Error("unable to remove service instance '%s' from vault db: %s", instanceID, err)
+				}
 			}
 		}
 	}
