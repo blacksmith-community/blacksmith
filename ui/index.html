@@ -88,7 +88,7 @@
     [[ } else { ]]
     <table><thead><tr>
       <th>ID</th>
-      <th>Plan</th>
+      <th>Service/Plan</th>
       <th>Created at</th>
       <th>BOSH Manifest</th>
       <th>Deployment Log</th>
@@ -97,7 +97,7 @@
       [[ $.each(_, function (id, details) { ]]
       <tr>
         <td class="uuid">[[= id ]]</td>
-        <td>[[= details.plan ]]</td>
+        <td>[[= details.service_id ]]/[[= details.plan.name ]]</td>
         <td>[[ if (details.created) { ]]
               [[= strftime("%Y-%m-%d %H:%M:%S", details.created) ]]
             [[ }else { ]]

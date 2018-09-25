@@ -40,8 +40,9 @@
             var plans = {};
             $.each(catalog.services, function (i, service) {
               $.each(service.plans, function (j, plan) {
-                var key = service.id + '/' + plan.name;
+                var key = service.id + '/' + plan.id;
                 plans[plan.id] = key;
+                console.log("looking up service ["+service.id+"] plan ["+plan.id+"] (as '"+plan.name+"') using key {"+key+"}");
 
                 catalog.services[i].plans[j].blacksmith = {
                   instances: instances[plan.id] || 0,
@@ -51,7 +52,7 @@
             });
 
             $.each(data.instances, function (i, instance) {
-              data.instances[i].plan = plans[instance.plan_id];
+              data.instances[i].plan = data.plans[plans[instance.plan_id]];
             });
 
             $('#ident').html(data.env);
