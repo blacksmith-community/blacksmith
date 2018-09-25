@@ -11,7 +11,13 @@ import (
 )
 
 func InitManifest(p Plan, instanceID string) error {
-	os.Chmod(p.InitScriptPath, 755)
+	/* skip running the plan initialization script if it doesn't exist */
+	if _, err := os.Stat(p.InitScriptPath); err != nil && os.IsNotExist(err) {
+		return nil
+	}
+
+	/* otherwise, execute it (chmodding to cut Forge authors some slack...) */
+	os.Chmod(p.InitScriptPath, 0755)
 	cmd := exec.Command(p.InitScriptPath)
 
 	cmd.Env = os.Environ()
