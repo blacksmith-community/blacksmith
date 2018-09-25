@@ -246,6 +246,18 @@ func (vault *Vault) Put(path string, data interface{}) error {
 	return nil
 }
 
+func (vault *Vault) Delete(path string) error {
+	res, err := vault.Do("DELETE", fmt.Sprintf("/v1/secret/%s", path), nil)
+	if err != nil {
+		return err
+	}
+
+	if res.StatusCode != 200 && res.StatusCode != 204 && res.StatusCode != 404 {
+		return fmt.Errorf("API %s", res.Status)
+	}
+	return nil
+}
+
 func (vault *Vault) Clear(instanceID string) {
 	l := Logger.Wrap("vault clear %s", instanceID)
 
@@ -253,12 +265,11 @@ func (vault *Vault) Clear(instanceID string) {
 	rm = func(path string) {
 		l.Debug("removing Vault secrets at/below %s", path)
 
-		res, err := vault.Do("DELETE", path, nil)
-		if err != nil {
+		if err := vault.Delete(path); err != nil {
 			l.Error("failed to delete %s: %s", path, err)
 		}
 
-		res, err = vault.Do("GET", fmt.Sprintf("%s?list=1", path), nil)
+		res, err := vault.Do("GET", fmt.Sprintf("%s?list=1", path), nil)
 		if err != nil {
 			l.Error("failed to list secrets at %s: %s", path, err)
 			return
@@ -306,10 +317,13 @@ func (vault *Vault) Index(instanceID string, data interface{}) error {
 	}
 	if data != nil {
 		idx.Data[instanceID] = data
-	} else {
-		delete(idx.Data, instanceID)
+		return idx.Save()
 	}
-	return idx.Save()
+
+	delete(idx.Data, instanceID)
+	err = idx.Save()
+	vault.Clear(instanceID)
+	return err
 }
 
 type Instance struct {

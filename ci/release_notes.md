@@ -18,3 +18,8 @@
   not impossible), Blacksmith will no longer try to execute it.
   (This was encountered in development mode only, no production
   Forge exhibits this peculiar behavior...)
+
+- The last service can now be deleted.  Previously, the Vault
+  subroutines would not allow an update that would empty out the
+  database index.  Now, if the last index entry is deleted, we
+  delete the entire index path.

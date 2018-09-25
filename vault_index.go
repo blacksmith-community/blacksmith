@@ -35,6 +35,9 @@ func (vi *VaultIndex) Lookup(key string) (interface{}, error) {
 }
 
 func (vi *VaultIndex) Save() error {
+	if len(vi.Data) == 0 {
+		return vi.parent.Delete(vi.path)
+	}
 	return vi.parent.Put(vi.path, vi.Data)
 }
 
