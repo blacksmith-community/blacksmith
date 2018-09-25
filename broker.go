@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v2"
 
@@ -140,6 +141,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	err = b.Vault.Index(instanceID, map[string]interface{}{
 		"service_id": details.ServiceID,
 		"plan_id":    plan.ID,
+		"created":    time.Now().Unix(),
 	})
 	if err != nil {
 		l.Error("failed to track new service in the vault index: %s", err)

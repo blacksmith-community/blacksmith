@@ -1,3 +1,8 @@
+# Improvements
+
+- Blacksmith now keeps track of the date/time of service
+  provisioning, and displays it in the management interface.
+
 # Bug Fixes
 
 - The `debug` configuration option now has the same effect as

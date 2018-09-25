@@ -89,6 +89,7 @@
     <table><thead><tr>
       <th>ID</th>
       <th>Plan</th>
+      <th>Created at</th>
       <th>BOSH Manifest</th>
       <th>Deployment Log</th>
     </tr></thead>
@@ -97,6 +98,11 @@
       <tr>
         <td class="uuid">[[= id ]]</td>
         <td>[[= details.plan ]]</td>
+        <td>[[ if (details.created) { ]]
+              [[= strftime("%Y-%m-%d %H:%M:%S", details.created) ]]
+            [[ }else { ]]
+              <em>-</em>
+            [[ } ]]</td>
         <td><a href="/b/[[= id ]]/manifest.yml">manifest.yml</a></td>
         <td><a href="/b/[[= id ]]/task.log">task.log</a></td>
       </tr>
