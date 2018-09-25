@@ -32,6 +32,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if config.Debug {
+		Debugging = true
+	}
 
 	l := Logger.Wrap("*")
 
