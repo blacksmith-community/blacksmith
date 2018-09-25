@@ -23,3 +23,7 @@
   subroutines would not allow an update that would empty out the
   database index.  Now, if the last index entry is deleted, we
   delete the entire index path.
+
+- Blacksmith now properly deletes deployments.  BOSH changed its
+  APIs and how it responds to delete requests, at some point in
+  the last year.  The world moves on.
