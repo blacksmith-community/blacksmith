@@ -76,7 +76,7 @@ if [[ -d ${newgopath} ]]; then
 fi
 echo ">> Using GOPATH ${GOPATH}"
 
-make shipit
+make shipit VERSION=${VERSION}
 popd
 
 
