@@ -4,15 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"time"
-
-	"gopkg.in/yaml.v2"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
-	"github.com/smallfish/simpleyaml"
 )
 
 type Broker struct {
@@ -275,8 +270,6 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 
 func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
 	var binding brokerapi.Binding
-	var jobs []*Job
-	jobsYAML := make(map[string][]*Job)
 
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
 	l.Info("bind operation started")
@@ -288,75 +281,12 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 		return binding, err
 	}
 
-	deploymentName := plan.ID + "-" + instanceID
-	l.Debug("looking up BOSH VM information for %s", deploymentName)
-	vms, err := b.BOSH.GetDeploymentVMs(deploymentName)
+	creds, err := GetCreds(instanceID, plan, b.BOSH, l)
 	if err != nil {
-		l.Error("failed to retrieve BOSH VM information for %s: %s", deploymentName, err)
 		return binding, err
 	}
 
-	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID))
-	byType := make(map[string]*Job)
-	for _, vm := range vms {
-		job := Job{vm.JobName + "/" + strconv.Itoa(vm.Index), vm.IPs}
-		l.Debug("found job %s with IPs [%s]", job.Name, strings.Join(vm.IPs, ", "))
-		jobs = append(jobs, &job)
-
-		if typ, ok := byType[vm.JobName]; ok {
-			for _, ip := range vm.IPs {
-				typ.IPs = append(typ.IPs, ip)
-			}
-		} else {
-			byType[vm.JobName] = &Job{vm.JobName, vm.IPs}
-		}
-	}
-	for _, job := range byType {
-		jobs = append(jobs, job)
-	}
-	jobsYAML["jobs"] = jobs
-	l.Debug("marshaling BOSH VM information")
-	jobsMarshal, err := yaml.Marshal(jobsYAML)
-	if err != nil {
-		l.Error("failed to marshal BOSH VM information (for credentials.yml merge): %s", err)
-		return binding, err
-	}
-	l.Debug("converting BOSH VM information to YAML")
-	yamlJobs, err := simpleyaml.NewYaml(jobsMarshal)
-	if err != nil {
-		l.Error("failed to convert BOSH VM information to YAML (for credentials.yml merge): %s", err)
-		return binding, err
-	}
-	jobsIfc, err := yamlJobs.Map()
-	l.Debug("parsing BOSH VM information from YAML (don't ask)")
-	if err != nil {
-		l.Error("failed to parse BOSH VM information from YAML (for credentials.yml merge): %s", err)
-		return binding, err
-	}
-
-	l.Debug("merging service deployment manifest with credentials.yml (for retrieve/bind)")
-	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials)
-	if err != nil {
-		l.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
-		return binding, err
-	}
-
-	l.Debug("parsing merged YAML super-structure, to retrieve `credentials' top-level key")
-	yamlManifest, err := simpleyaml.NewYaml([]byte(manifest))
-	if err != nil {
-		l.Error("failed to parse merged YAML; unable to retrieve credentials for bind: %s", err)
-		return binding, err
-	}
-
-	l.Debug("retrieving `credentials' top-level key, to return to the caller")
-	yamlCreds := yamlManifest.Get("credentials")
-	yamlMap, err := yamlCreds.Map()
-	if err != nil {
-		l.Error("failed to retrieve `credentials' top-level key: %s", err)
-		return binding, err
-	}
-
-	binding.Credentials = deinterfaceMap(yamlMap)
+	binding.Credentials = creds
 	l.Debug("credentials are: %v", binding)
 
 	l.Info("bind successful")

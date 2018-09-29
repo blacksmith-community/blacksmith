@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"regexp"
 	"time"
+
+	"gopkg.in/yaml.v2"
 )
 
 type InternalApi struct {
@@ -75,14 +77,56 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	pattern := regexp.MustCompile("^/b/([^/]+)/manifest\\.yml$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("manifest.yml")
+		l.Debug("looking up BOSH manifest for %s", m[1])
 		d, exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]))
-		if err == nil && exists {
-			if s, ok := d["manifest"]; ok {
-				w.Header().Set("Content-type", "text/plain")
-				fmt.Fprintf(w, "%v\n", s)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", m[1])
+		} else if s, ok := d["manifest"]; ok {
+			w.Header().Set("Content-type", "text/plain")
+			fmt.Fprintf(w, "%v\n", s)
+			return
+		}
+		w.WriteHeader(404)
+		return
+	}
+
+	pattern = regexp.MustCompile("^/b/([^/]+)/creds\\.yml$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("creds.yml")
+		l.Debug("looking up credentials for %s", m[1])
+		inst, exists, err := api.Vault.FindInstance(m[1])
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", m[1])
+		} else {
+			w.Header().Set("Content-type", "text/plain")
+
+			l.Debug("looking up service '%s' / plan '%s' in catalog", inst.ServiceID, inst.PlanID)
+			plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+			if err != nil {
+				w.WriteHeader(500)
+				fmt.Fprintf(w, "---\nerror: unable to find plan '%s'\n\n", inst.PlanID)
 				return
 			}
+
+			creds, err := GetCreds(m[1], plan, api.Broker.BOSH, l)
+			if err != nil {
+				w.WriteHeader(500)
+				fmt.Fprintf(w, "---\nerror: unable to retrieve credentials\n\n")
+				return
+			}
+
+			b, err := yaml.Marshal(creds)
+			if err != nil {
+				w.WriteHeader(500)
+				fmt.Fprintf(w, "---\nerror: unable to yamlify credentials\n\n")
+				return
+			}
+
+			fmt.Fprintf(w, "%s\n", string(b))
+			return
 		}
+
 		w.WriteHeader(404)
 		return
 	}

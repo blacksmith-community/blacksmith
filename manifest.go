@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/geofffranks/spruce"
+	"github.com/smallfish/simpleyaml"
 	"gopkg.in/yaml.v2"
 )
 
@@ -101,4 +104,79 @@ func UploadReleasesFromManifest(raw string, bosh *gogobosh.Client, l *Log) error
 	}
 
 	return nil
+}
+
+func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{}, error) {
+	var jobs []*Job
+	jobsYAML := make(map[string][]*Job)
+
+	deployment := plan.ID + "-" + id
+	l.Debug("looking up BOSH VM information for %s", deployment)
+	vms, err := bosh.GetDeploymentVMs(deployment)
+	if err != nil {
+		l.Error("failed to retrieve BOSH VM information for %s: %s", deployment, err)
+		return nil, err
+	}
+
+	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", id))
+	byType := make(map[string]*Job)
+	for _, vm := range vms {
+		job := Job{vm.JobName + "/" + strconv.Itoa(vm.Index), vm.IPs}
+		l.Debug("found job %s with IPs [%s]", job.Name, strings.Join(vm.IPs, ", "))
+		jobs = append(jobs, &job)
+
+		if typ, ok := byType[vm.JobName]; ok {
+			for _, ip := range vm.IPs {
+				typ.IPs = append(typ.IPs, ip)
+			}
+		} else {
+			byType[vm.JobName] = &Job{vm.JobName, vm.IPs}
+		}
+	}
+	for _, job := range byType {
+		jobs = append(jobs, job)
+	}
+	jobsYAML["jobs"] = jobs
+	l.Debug("marshaling BOSH VM information")
+	jobsMarshal, err := yaml.Marshal(jobsYAML)
+	if err != nil {
+		l.Error("failed to marshal BOSH VM information (for credentials.yml merge): %s", err)
+		return nil, err
+	}
+	l.Debug("converting BOSH VM information to YAML")
+	yamlJobs, err := simpleyaml.NewYaml(jobsMarshal)
+	if err != nil {
+		l.Error("failed to convert BOSH VM information to YAML (for credentials.yml merge): %s", err)
+		return nil, err
+	}
+	jobsIfc, err := yamlJobs.Map()
+	l.Debug("parsing BOSH VM information from YAML (don't ask)")
+	if err != nil {
+		l.Error("failed to parse BOSH VM information from YAML (for credentials.yml merge): %s", err)
+		return nil, err
+	}
+
+	l.Debug("merging service deployment manifest with credentials.yml (for retrieve/bind)")
+	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials)
+	if err != nil {
+		l.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
+		return nil, err
+	}
+
+	l.Debug("parsing merged YAML super-structure, to retrieve `credentials' top-level key")
+	yamlManifest, err := simpleyaml.NewYaml([]byte(manifest))
+	if err != nil {
+		l.Error("failed to parse merged YAML; unable to retrieve credentials for bind: %s", err)
+		return nil, err
+	}
+
+	l.Debug("retrieving `credentials' top-level key, to return to the caller")
+	yamlCreds := yamlManifest.Get("credentials")
+	yamlMap, err := yamlCreds.Map()
+	if err != nil {
+		l.Error("failed to retrieve `credentials' top-level key: %s", err)
+		return nil, err
+	}
+
+	return deinterfaceMap(yamlMap), nil
 }
