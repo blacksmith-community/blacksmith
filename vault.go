@@ -60,6 +60,8 @@ func (vault *Vault) Init(store string) error {
 		}
 		vault.Token = creds.RootToken
 		os.Setenv("VAULT_TOKEN", vault.Token)
+		vault.writeSafeRC();
+		vault.writeSVToken();
 		return vault.Unseal(creds.SealKey)
 	}
 
@@ -118,6 +120,8 @@ func (vault *Vault) Init(store string) error {
 
 	vault.Token = creds.RootToken
 	os.Setenv("VAULT_TOKEN", vault.Token)
+	vault.writeSafeRC();
+	vault.writeSVToken();
 	return vault.Unseal(creds.SealKey)
 }
 
@@ -403,4 +407,66 @@ func (vault *Vault) getVaultDB() (*VaultIndex, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func (vault *Vault) writeSafeRC() {
+	path := os.Getenv("BLACKSMITH_SAFERC")
+	if path == "" {
+		return
+	}
+
+	var out struct {
+		Version int `json:"version"`
+		Current string `json:"current"`
+		Vaults struct {
+			Local struct {
+				URL string `json:"url"`
+				Token string `json:"token"`
+			} `json:"blacksmith"`
+		} `json:"vaults"`
+	}
+
+	out.Version = 1
+	out.Current = "blacksmith"
+	out.Vaults.Local.URL = vault.URL
+	out.Vaults.Local.Token = vault.Token
+
+	b, err := json.Marshal(out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to marshal new ~/.saferc: %s", err)
+		return
+	}
+
+	err = ioutil.WriteFile(path, b, 0666)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write new ~/.saferc to %s: %s", path, err)
+		return
+	}
+}
+
+func (vault *Vault) writeSVToken() {
+	path := os.Getenv("BLACKSMITH_SVTOKEN")
+	if path == "" {
+		return
+	}
+
+	var out struct {
+		Vault string `json:"vault"`
+		Token string `json:"token"`
+	}
+
+	out.Vault = vault.URL
+	out.Token = vault.Token
+
+	b, err := json.Marshal(out)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to marshal new ~/.svtoken: %s", err)
+		return
+	}
+
+	err = ioutil.WriteFile(path, b, 0666)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to write new ~/.svtoken to %s: %s", path, err)
+		return
+	}
 }
