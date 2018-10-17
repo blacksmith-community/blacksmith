@@ -60,8 +60,7 @@ func (vault *Vault) Init(store string) error {
 		}
 		vault.Token = creds.RootToken
 		os.Setenv("VAULT_TOKEN", vault.Token)
-		vault.writeSafeRC();
-		vault.writeSVToken();
+		vault.updateHomeDirs();
 		return vault.Unseal(creds.SealKey)
 	}
 
@@ -120,8 +119,7 @@ func (vault *Vault) Init(store string) error {
 
 	vault.Token = creds.RootToken
 	os.Setenv("VAULT_TOKEN", vault.Token)
-	vault.writeSafeRC();
-	vault.writeSVToken();
+	vault.updateHomeDirs();
 	return vault.Unseal(creds.SealKey)
 }
 
@@ -409,13 +407,18 @@ func (vault *Vault) getVaultDB() (*VaultIndex, error) {
 	return db, nil
 }
 
-func (vault *Vault) writeSafeRC() {
-	path := os.Getenv("BLACKSMITH_SAFERC")
-	if path == "" {
+func (vault *Vault) updateHomeDirs() {
+	home := os.Getenv("BLACKSMITH_OPER_HOME")
+	if home == "" {
 		return
 	}
 
-	var out struct {
+	l := Logger.Wrap("update-home")
+
+	/* ~/.saferc */
+	path := fmt.Sprintf("%s/.saferc", home)
+	l.Debug("writing ~/.saferc file to %s", path);
+	var saferc struct {
 		Version int `json:"version"`
 		Current string `json:"current"`
 		Vaults struct {
@@ -425,48 +428,46 @@ func (vault *Vault) writeSafeRC() {
 			} `json:"blacksmith"`
 		} `json:"vaults"`
 	}
+	saferc.Version = 1
+	saferc.Current = "blacksmith"
+	saferc.Vaults.Local.URL = vault.URL
+	saferc.Vaults.Local.Token = vault.Token
 
-	out.Version = 1
-	out.Current = "blacksmith"
-	out.Vaults.Local.URL = vault.URL
-	out.Vaults.Local.Token = vault.Token
-
-	b, err := json.Marshal(out)
+	b, err := json.Marshal(saferc)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to marshal new ~/.saferc: %s", err)
-		return
+		l.Error("failed to marshal new ~/.saferc: %s", err)
+	} else {
+		err = ioutil.WriteFile(path, b, 0666)
+		if err != nil {
+			l.Error("failed to write new ~/.saferc: %s", err)
+		}
 	}
 
-	err = ioutil.WriteFile(path, b, 0666)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to write new ~/.saferc to %s: %s", path, err)
-		return
-	}
-}
-
-func (vault *Vault) writeSVToken() {
-	path := os.Getenv("BLACKSMITH_SVTOKEN")
-	if path == "" {
-		return
-	}
-
-	var out struct {
+	/* ~/.svtoken */
+	path = fmt.Sprintf("%s/.svtoken", home)
+	l.Debug("writing ~/.svtoken file to %s", path);
+	var svtoken struct {
 		Vault string `json:"vault"`
 		Token string `json:"token"`
 	}
+	svtoken.Vault = vault.URL
+	svtoken.Token = vault.Token
 
-	out.Vault = vault.URL
-	out.Token = vault.Token
-
-	b, err := json.Marshal(out)
+	b, err = json.Marshal(svtoken)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to marshal new ~/.svtoken: %s", err)
-		return
+		l.Error("failed to marshal new ~/.svtoken: %s", err)
+	} else {
+		err = ioutil.WriteFile(path, b, 0666)
+		if err != nil {
+			l.Error("failed to write new ~/.svtoken: %s", err)
+		}
 	}
 
-	err = ioutil.WriteFile(path, b, 0666)
+	/* ~/.vault-token */
+	path = fmt.Sprintf("%s/.vault-token", home)
+	l.Debug("writing ~/.vault-token file to %s", path);
+	err = ioutil.WriteFile(path, []byte(vault.Token), 0666)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to write new ~/.svtoken to %s: %s", path, err)
-		return
+		l.Error("failed to write new ~/.vault-token: %s", err)
 	}
 }
