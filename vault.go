@@ -60,7 +60,7 @@ func (vault *Vault) Init(store string) error {
 		}
 		vault.Token = creds.RootToken
 		os.Setenv("VAULT_TOKEN", vault.Token)
-		vault.updateHomeDirs();
+		vault.updateHomeDirs()
 		return vault.Unseal(creds.SealKey)
 	}
 
@@ -119,7 +119,7 @@ func (vault *Vault) Init(store string) error {
 
 	vault.Token = creds.RootToken
 	os.Setenv("VAULT_TOKEN", vault.Token)
-	vault.updateHomeDirs();
+	vault.updateHomeDirs()
 	return vault.Unseal(creds.SealKey)
 }
 
@@ -417,13 +417,13 @@ func (vault *Vault) updateHomeDirs() {
 
 	/* ~/.saferc */
 	path := fmt.Sprintf("%s/.saferc", home)
-	l.Debug("writing ~/.saferc file to %s", path);
+	l.Debug("writing ~/.saferc file to %s", path)
 	var saferc struct {
-		Version int `json:"version"`
+		Version int    `json:"version"`
 		Current string `json:"current"`
-		Vaults struct {
+		Vaults  struct {
 			Local struct {
-				URL string `json:"url"`
+				URL   string `json:"url"`
 				Token string `json:"token"`
 			} `json:"blacksmith"`
 		} `json:"vaults"`
@@ -445,7 +445,7 @@ func (vault *Vault) updateHomeDirs() {
 
 	/* ~/.svtoken */
 	path = fmt.Sprintf("%s/.svtoken", home)
-	l.Debug("writing ~/.svtoken file to %s", path);
+	l.Debug("writing ~/.svtoken file to %s", path)
 	var svtoken struct {
 		Vault string `json:"vault"`
 		Token string `json:"token"`
@@ -465,7 +465,7 @@ func (vault *Vault) updateHomeDirs() {
 
 	/* ~/.vault-token */
 	path = fmt.Sprintf("%s/.vault-token", home)
-	l.Debug("writing ~/.vault-token file to %s", path);
+	l.Debug("writing ~/.vault-token file to %s", path)
 	err = ioutil.WriteFile(path, []byte(vault.Token), 0666)
 	if err != nil {
 		l.Error("failed to write new ~/.vault-token: %s", err)
