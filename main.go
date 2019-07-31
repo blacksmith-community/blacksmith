@@ -64,10 +64,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	//look here for adding UAA options
 	bosh, err := gogobosh.NewClient(&gogobosh.Config{
 		BOSHAddress:       config.BOSH.Address,
 		Username:          config.BOSH.Username,
 		Password:          config.BOSH.Password,
+		ClientID:          config.BOSH.ClientID,
+		ClientSecret:      config.BOSH.ClientSecret,
 		HttpClient:        http.DefaultClient,
 		SkipSslValidation: config.BOSH.SkipSslValidation,
 	})
@@ -200,6 +203,7 @@ func main() {
 			if err != nil {
 				l.Error("bosh cleanup failed to run properly: %s", err)
 			}
+
 		}
 	}
 }
