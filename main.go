@@ -208,10 +208,10 @@ func main() {
 			}
 		case <-redoLogin.C:
 			if authInfo.UserAuthenication.Type == "uaa" {
-				fmt.Println("logging in again")
+				l.Info("logging in again")
 				bosh, err = gogobosh.NewClient(gogoBoshConfig)
 				if err != nil {
-					fmt.Println("error logging in: ", err)
+					l.Error("error logging in: ", err)
 				}
 			}
 		}
