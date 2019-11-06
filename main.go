@@ -189,6 +189,7 @@ func main() {
 	for {
 		select {
 		case <-BoshMaintenanceLoop.C:
+			bosh.refreshClient()
 			vaultDB, err := vault.getVaultDB()
 			if err != nil {
 				l.Error("error grabbing vaultdb for debugging: %s", err)
