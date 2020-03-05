@@ -29,8 +29,8 @@ type Service struct {
 	Bindable    bool     `yaml:"bindable" json:"bindable"`
 	Tags        []string `yaml:"tags" json:"tags"`
 	Limit       int      `yaml:"limit" json:"limit"`
-
-	Plans []Plan `yaml:"plans" json:"plans"`
+	Shareable   bool     `yaml:"shareable" json:"shareable"`
+	Plans       []Plan   `yaml:"plans" json:"plans"`
 }
 
 var ValidName *regexp.Regexp
@@ -213,11 +213,14 @@ func ReadServices(dirs ...string) ([]Service, error) {
 func Catalog(ss []Service) []brokerapi.Service {
 	bb := make([]brokerapi.Service, len(ss))
 	for i, s := range ss {
+		var md brokerapi.ServiceMetadata
 		bb[i].ID = s.ID
 		bb[i].Name = s.Name
 		bb[i].Description = s.Description
 		bb[i].Bindable = s.Bindable
 		bb[i].Tags = make([]string, len(s.Tags))
+		bb[i].Metadata = &md
+		bb[i].Metadata.Shareable = brokerapi.FreeValue(s.Shareable)
 		copy(bb[i].Tags, s.Tags)
 		bb[i].Plans = make([]brokerapi.ServicePlan, len(s.Plans))
 		for j, p := range s.Plans {
