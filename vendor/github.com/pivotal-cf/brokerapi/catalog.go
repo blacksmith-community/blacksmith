@@ -45,6 +45,7 @@ type ServiceMetadata struct {
 	ProviderDisplayName string `json:"providerDisplayName,omitempty"`
 	DocumentationUrl    string `json:"documentationUrl,omitempty"`
 	SupportUrl          string `json:"supportUrl,omitempty"`
+	Shareable           *bool  `json:"shareable,omitempty"`
 }
 
 func FreeValue(v bool) *bool {

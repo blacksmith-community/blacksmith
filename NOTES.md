@@ -47,6 +47,11 @@ plan disks, and deploy the data + code to a new deployment.
 For service decommission, the broker simply deletes the BOSH
 deployment for the service UUID.
 
+Shareable services is a flag in the Catalog API used by the CF
+`create-service-broker` and `update-service-broker` commands. By
+default, this is false.  The flag can be set in the config to
+update the Catalog to advertise services as shareable.
+
 
 
 Deploying Blacksmith

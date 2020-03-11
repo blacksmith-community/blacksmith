@@ -9,12 +9,13 @@ import (
 )
 
 type Config struct {
-	Broker  BrokerConfig `yaml:"broker"`
-	Vault   VaultConfig  `yaml:"vault"`
-	BOSH    BOSHConfig   `yaml:"bosh"`
-	Debug   bool         `yaml:"debug"`
-	WebRoot string       `yaml:"web-root"`
-	Env     string       `yaml:"env"`
+	Broker    BrokerConfig `yaml:"broker"`
+	Vault     VaultConfig  `yaml:"vault"`
+	BOSH      BOSHConfig   `yaml:"bosh"`
+	Debug     bool         `yaml:"debug"`
+	WebRoot   string       `yaml:"web-root"`
+	Env       string       `yaml:"env"`
+	Shareable bool         `yaml:"shareable"`
 }
 
 type BrokerConfig struct {
