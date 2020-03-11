@@ -5,6 +5,11 @@ meta:
   target:  blacksmith@pipes
   url:     https://pipes.starkandwayne.com
 
+  go:
+    version: "1.11"
+    binary: $(basename $PWD)
+    cmd_module: .
+
   git:
     name: Stark & Wayne CI Bot
     email: ci@starkandwayne.com

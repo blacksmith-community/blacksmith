@@ -76,6 +76,15 @@ if [[ -d ${newgopath} ]]; then
 fi
 echo ">> Using GOPATH ${GOPATH}"
 
+case ${GO_STATIC:-no} in
+(0|false|f|no)
+  ;;
+(*)
+  echo ">> Compiling without CGO; building a static binary..."
+  export CGO_ENABLED=0
+  ;;
+esac
+
 make shipit VERSION=${VERSION}
 popd
 
