@@ -10,17 +10,17 @@ meta:
     email: ci@starkandwayne.com
 
   aws:
-    access_key: (( vault "secret/pipelines/aws/cf-community:access" ))
-    secret_key: (( vault "secret/pipelines/aws/cf-community:secret" ))
+    access_key: ((aws.access_key_id))
+    secret_key: ((aws.secret_access_key))
 
   github:
     owner:  blacksmith-community
     repo:   blacksmith
     branch: master
-    private_key:  (( vault "secret/pipelines/github/starkandwayne/ci-bot:private" ))
-    access_token: (( vault "secret/pipelines/github/starkandwayne/ci-bot:access_token" ))
+    private_key:  ((github.private_key))
+    access_token: ((github.access_token))
 
   shout:
-    url:      http://10.200.131.1:7109
-    username: ops
-    password: (( vault "secret/buffalo/lab/concourse/shout/ops:password" ))
+    url:      ((shout.url))
+    username: ((shout.username))
+    password: ((shout.password))
