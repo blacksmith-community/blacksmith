@@ -9,6 +9,8 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+var Shareable bool
+
 type Plan struct {
 	ID          string `yaml:"id" json:"id"`
 	Name        string `yaml:"name" json:"name"`
@@ -37,6 +39,7 @@ var ValidName *regexp.Regexp
 
 func init() {
 	ValidName = regexp.MustCompile("^[a-zA-Z0-9-]+$")
+	Shareable = false
 }
 
 func CheckNames(names ...string) error {
@@ -220,7 +223,7 @@ func Catalog(ss []Service) []brokerapi.Service {
 		bb[i].Bindable = s.Bindable
 		bb[i].Tags = make([]string, len(s.Tags))
 		bb[i].Metadata = &md
-		bb[i].Metadata.Shareable = brokerapi.FreeValue(s.Shareable)
+		bb[i].Metadata.Shareable = brokerapi.FreeValue(Shareable)
 		copy(bb[i].Tags, s.Tags)
 		bb[i].Plans = make([]brokerapi.ServicePlan, len(s.Plans))
 		for j, p := range s.Plans {
