@@ -25,6 +25,8 @@ func InitManifest(p Plan, instanceID string) error {
 
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("CREDENTIALS=secret/%s", instanceID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("RAWJSONFILE=/var/vcap/data/blacksmith/%s.json", instanceID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("YAMLFILE=/var/vcap/data/blacksmith/%s.yml", instanceID))
 	/* put more environment variables here, as needed */
 
 	out, err := cmd.CombinedOutput()
