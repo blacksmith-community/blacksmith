@@ -3,13 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"time"
-  "io/ioutil"
 
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
-  "gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v2"
 )
 
 type Broker struct {
@@ -24,28 +24,28 @@ type Job struct {
 	IPs  []string
 }
 
-func WriteDataFile(instanceID string, data []byte) (error) {
-  filepath := "/var/vcap/data/blacksmith/"
-  filename := filepath + instanceID + ".json"
-  err := ioutil.WriteFile(filename, data, 0644)
-  return err
+func WriteDataFile(instanceID string, data []byte) error {
+	filepath := "/var/vcap/data/blacksmith/"
+	filename := filepath + instanceID + ".json"
+	err := ioutil.WriteFile(filename, data, 0644)
+	return err
 }
 
-func WriteYamlFile(instanceID string, data []byte) (error) {
+func WriteYamlFile(instanceID string, data []byte) error {
 	l := Logger.Wrap("%s", instanceID)
-  m := make(map[interface{}]interface{})
-  err := yaml.Unmarshal(data, &m)
-  if err != nil {
-    l.Debug("Error unmarshalling data: %s, %s", err, data)
-  }
-  b, err := yaml.Marshal(m)
-  if err != nil {
-    l.Debug("Error marshalling data: %s, %s", err, m)
-  }
-  filepath := "/var/vcap/data/blacksmith/"
-  filename := filepath + instanceID + ".yml"
-  err = ioutil.WriteFile(filename, b, 0644)
-  return err
+	m := make(map[interface{}]interface{})
+	err := yaml.Unmarshal(data, &m)
+	if err != nil {
+		l.Debug("Error unmarshalling data: %s, %s", err, data)
+	}
+	b, err := yaml.Marshal(m)
+	if err != nil {
+		l.Debug("Error marshalling data: %s, %s", err, m)
+	}
+	filepath := "/var/vcap/data/blacksmith/"
+	filename := filepath + instanceID + ".yml"
+	err = ioutil.WriteFile(filename, b, 0644)
+	return err
 }
 
 func (b Broker) FindPlan(serviceID string, planID string) (Plan, error) {
@@ -109,15 +109,15 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	defaults := make(map[interface{}]interface{})
 	//TODO parse params from json to yaml
-  l.Debug("Param raw data: %s", details.RawParameters)
-  err = WriteDataFile(instanceID, details.RawParameters)
-  if err != nil {
-    l.Debug("WriteDataFile write failed with '%s'", err)
-  }
-  err = WriteYamlFile(instanceID, details.RawParameters)
-  if err != nil {
-    l.Debug("WriteYamlFile write failed with '%s'", err)
-  }
+	l.Debug("Param raw data: %s", details.RawParameters)
+	err = WriteDataFile(instanceID, details.RawParameters)
+	if err != nil {
+		l.Debug("WriteDataFile write failed with '%s'", err)
+	}
+	err = WriteYamlFile(instanceID, details.RawParameters)
+	if err != nil {
+		l.Debug("WriteYamlFile write failed with '%s'", err)
+	}
 	params := make(map[interface{}]interface{})
 	defaults["name"] = plan.ID + "-" + instanceID
 
@@ -139,8 +139,8 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("BOSH service deployment initial setup failed")
 	}
 
-  l.Debug("Provision defaults: %s", defaults)
-  l.Debug("Provision params: %s", params)
+	l.Debug("Provision defaults: %s", defaults)
+	l.Debug("Provision params: %s", params)
 
 	l.Debug("generating manifest for service deployment")
 	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
