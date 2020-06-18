@@ -42,7 +42,7 @@ func main() {
 
 	l := Logger.Wrap("*")
 
-	bind := fmt.Sprintf(":%s", config.Broker.Port)
+	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.Port)
 	l.Info("broker will listen on %s", bind)
 
 	vault := &Vault{
