@@ -22,6 +22,7 @@ type BrokerConfig struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	Port     string `yaml:"port"`
+	BindIP   string `yaml:"bind_ip"`
 }
 
 type VaultConfig struct {
