@@ -3,10 +3,10 @@
 	"ignore": "test",
 	"package": [
 		{
-			"checksumSHA1": "7RyPwSPhSFLh5zvTNaQEbg5bKdA=",
+			"checksumSHA1": "H1viFGEw/cZmwzIW5MSZ6ZcuoOA=",
 			"path": "github.com/cloudfoundry-community/gogobosh",
-			"revision": "445067b956cd396b81d3d37d3756b62b005c9a9a",
-			"revisionTime": "2018-05-10T20:27:40Z"
+			"revision": "58a0707fe032fea9e2a00cd6470be8cf1c93c57f",
+			"revisionTime": "2020-07-13T19:01:55Z"
 		},
 		{
 			"checksumSHA1": "flTBhERN4lBAujOIQBWHCZTcjRs=",
