@@ -38,7 +38,7 @@ type Service struct {
 var ValidName *regexp.Regexp
 
 func init() {
-	ValidName = regexp.MustCompile("^[a-zA-Z0-9-]+$")
+	ValidName = regexp.MustCompile("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
 	Shareable = false
 }
 
