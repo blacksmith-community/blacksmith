@@ -14,11 +14,11 @@ jobs:
 
       - name: Determine Version
         id:   version
-        uses: ashley-taylor/regex-property-action@v1.2
+        uses: frabert/replace-string-action@v1.1
         with:
-          value: ${{ github.ref }}
-          regex: '^v'
-          replacement: ''
+          pattern:      '^v'
+          string:       ${{ github.ref }}
+          replace-with: ''
 
       - name: Build Blacksmith
         run: |
