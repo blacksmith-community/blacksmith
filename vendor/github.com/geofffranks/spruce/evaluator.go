@@ -107,8 +107,9 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 
 	scan(ev.Tree)
 
-	// construct the data flow graph, where a -> b = b calls/requires a
-	// represent the graph as list of adjancies, that is [a,b] = a -> b
+	// construct the data flow graph, where a -> b means 'b' calls or requires 'a'
+	// represent the graph as list of adjancies, where [a,b] = a -> b
+	// []{ []*Opcall{ grabStaticValue, grabTheThingThatGrabsTheStaticValue}}
 	var g [][]*Opcall
 	for _, a := range all {
 		for _, path := range a.Dependencies(ev, locs) {
@@ -239,7 +240,21 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 		g = firsts(g, picks)
 
 		// repackage `all`, since follow-on logic needs it
-		all = map[string]*Opcall{}
+		newAll := map[string]*Opcall{}
+		// findall ops underneath cherry-picked paths
+		for path, op := range all {
+			for _, pickedPath := range ev.Only {
+				cursor, err := tree.ParseCursor(pickedPath)
+				if err != nil {
+					panic(err) // FIXME
+				}
+				if cursor.Contains(op.canonical) {
+					newAll[path] = op
+				}
+			}
+		}
+		all = newAll
+		// add in any dependencies of things cherry-picked
 		for _, ops := range g {
 			all[ops[0].canonical.String()] = ops[0]
 			all[ops[1].canonical.String()] = ops[1]
@@ -258,7 +273,7 @@ func (ev *Evaluator) DataFlow(phase OperatorPhase) ([]*Opcall, error) {
 	}
 	sort.Strings(sortedKeys)
 
-	// find all nodes in g that are free (no futher dependencies)
+	// find all nodes in g that are free (no further dependencies)
 	freeNodes := func(g [][]*Opcall) []*Opcall {
 		l := []*Opcall{}
 		for _, k := range sortedKeys {
@@ -384,6 +399,50 @@ func (ev *Evaluator) Prune(paths []string) error {
 			DEBUG("  I don't know how to prune %s\n    value=%v\n", path, o)
 		}
 	}
+	DEBUG("")
+	return nil
+}
+
+// SortPaths sorts all paths (keys in map) using the provided sort-key (respective value)
+func (ev *Evaluator) SortPaths(pathKeyMap map[string]string) error {
+	DEBUG("sorting %d paths in the final YAML structure", len(pathKeyMap))
+	for path, sortBy := range pathKeyMap {
+		DEBUG("  sorting path %s (sort-key %s)", path, sortBy)
+
+		cursor, err := tree.ParseCursor(path)
+		if err != nil {
+			return err
+		}
+
+		value, err := cursor.Resolve(ev.Tree)
+		if err != nil {
+			return err
+		}
+
+		switch value.(type) {
+		case []interface{}:
+			// no-op, that's what we want ...
+
+		case map[interface{}]interface{}:
+			return tree.TypeMismatchError{
+				Path:   []string{path},
+				Wanted: "a list",
+				Got:    "a map",
+			}
+
+		default:
+			return tree.TypeMismatchError{
+				Path:   []string{path},
+				Wanted: "a list",
+				Got:    "a scalar",
+			}
+		}
+
+		if err := sortList(path, value.([]interface{}), sortBy); err != nil {
+			return err
+		}
+	}
+
 	DEBUG("")
 	return nil
 }
@@ -620,8 +679,9 @@ func (ev *Evaluator) Run(prune []string, picks []string) error {
 	paramErrs := MultiError{Errors: []error{}}
 
 	if os.Getenv("REDACT") != "" {
-		DEBUG("Setting vault operator to redact keys")
+		DEBUG("Setting vault & aws operators to redact keys")
 		SkipVault = true
+		SkipAws = true
 	}
 
 	if !ev.SkipEval {
@@ -644,6 +704,10 @@ func (ev *Evaluator) Run(prune []string, picks []string) error {
 	addToPruneListIfNecessary(prune...)
 	errors.Append(ev.Prune(keysToPrune))
 	keysToPrune = nil
+
+	// post-processing: sorting
+	errors.Append(ev.SortPaths(pathsToSort))
+	pathsToSort = map[string]string{}
 
 	// post-processing: cherry-pick
 	errors.Append(ev.CherryPick(picks))
