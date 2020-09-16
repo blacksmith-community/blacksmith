@@ -22,7 +22,7 @@ jobs:
 
       - name: Build Blacksmith
         run: |
-          make VERSION=${{ steps.version.outputs.value}} shipit
+          make VERSION=${{ steps.version.outputs.replaced }} shipit
 
       - name: Create Release
         id:   release
@@ -31,7 +31,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
         with:
-          tag_name:     ${{ steps.version.outputs.value }}
+          tag_name:     ${{ steps.version.outputs.replaced }}
           release_name: Blacksmith ${{ github.ref }}
           draft:        false
           prerelease:   false
@@ -44,8 +44,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ./blacksmith-${{ steps.version.outputs.value }}.tar.bz2
-          asset_name: blacksmith-${{ steps.version.outputs.value }}.tar.bz2
+          asset_path: ./blacksmith-${{ steps.version.outputs.replaced }}.tar.bz2
+          asset_name: blacksmith-${{ steps.version.outputs.replaced }}.tar.bz2
 
       - name: Upload Blacksmith for Linux
         uses: actions/upload-release-asset@v1
