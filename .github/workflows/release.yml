@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+jobs:
+  build:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Determine Version
+        id:   version
+        uses: ashley-taylor/regex-property-action@v1.2
+        with:
+          value: ${{ github.ref }}
+          regex: '^v'
+          replacement: ''
+
+      - name: Build Blacksmith
+        run: |
+          make VERSION=${{ steps.version.outputs.value}} shipit
+
+      - name: Create Release
+        id:   release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        with:
+          tag_name:     ${{ steps.version.outputs.value }}
+          release_name: Blacksmith ${{ github.ref }}
+          draft:        false
+          prerelease:   false
+          body: |
+            _one of the Blacksmith devs really ought to update these release notes..._
+
+      - name: Upload Release Tarball
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: ./blacksmith-${{ steps.version.outputs.value }}.tar.bz2
+          asset_name: blacksmith-${{ steps.version.outputs.value }}.tar.bz2
+
+      - name: Upload Blacksmith for Linux
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: ./blacksmith-linux-amd64
+          asset_name: blacksmith-linux-amd64
+
+      - name: Upload Blacksmith for Linux
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: ./blacksmith-darwin-amd64
+          asset_name: blacksmith-darwin-amd64
