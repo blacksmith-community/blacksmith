@@ -36,10 +36,6 @@ func main() {
 		Debugging = true
 	}
 
-	if config.Shareable {
-		Shareable = true
-	}
-
 	l := Logger.Wrap("*")
 
 	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.Port)
