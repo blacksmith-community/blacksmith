@@ -44,7 +44,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ./blacksmith-${{ steps.version.outputs.replaced }}.tar.bz2
+          asset_path: ./artifacts/blacksmith-${{ steps.version.outputs.replaced }}.tar.bz2
           asset_name: blacksmith-${{ steps.version.outputs.replaced }}.tar.bz2
           asset_content_type: application/octet-stream
 
