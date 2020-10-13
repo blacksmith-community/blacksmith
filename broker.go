@@ -108,7 +108,6 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 
 	defaults := make(map[interface{}]interface{})
-	//TODO parse params from json to yaml
 	l.Debug("Param raw data: %s", details.RawParameters)
 	err = WriteDataFile(instanceID, details.RawParameters)
 	if err != nil {
@@ -119,6 +118,10 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		l.Debug("WriteYamlFile write failed with '%s'", err)
 	}
 	params := make(map[interface{}]interface{})
+	err = yaml.Unmarshal(details.RawParameters, &params)
+	if err != nil {
+		l.Debug("Error unmarshalling params: %s, %s", err, details.RawParameters)
+	}
 	defaults["name"] = plan.ID + "-" + instanceID
 
 	l.Debug("querying BOSH director for director UUID")
