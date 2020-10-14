@@ -54,7 +54,7 @@ update the Catalog to advertise services as shareable.
 
 If you create a service with the `-c PARAMETERS_AS_JSON` containing
 service-specific configuration parameters, Blacksmith will merge this
-into the manifest under `params:` as well as write a YAML and JSON
+into the manifest under `meta.params:` as well as write a YAML and JSON
 file of the parameters to `/var/vcap/data/blacksmith/INSTANCE_ID.yml`
 and `/var/vcap/data/blacksmith/INSTANCE_ID.json` the init script can
 use.
