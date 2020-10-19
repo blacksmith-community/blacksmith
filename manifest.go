@@ -14,12 +14,12 @@ import (
 )
 
 const (
-	// If BLACKSMITH_WORKDIR environment variable is not set, use this as a default
+	// If BLACKSMITH_INSTANCE_DATA_DIR environment variable is not set, use this as a default
 	DefaultBlacksmithWorkDir = "/var/vcap/data/blacksmith/"
 )
 
 func GetWorkDir() string {
-	var blacksmithWorkDir = os.Getenv("BLACKSMITH_WORKDIR")
+	var blacksmithWorkDir = os.Getenv("BLACKSMITH_INSTANCE_DATA_DIR")
 	if blacksmithWorkDir == "" {
 		blacksmithWorkDir = DefaultBlacksmithWorkDir
 	}
@@ -40,7 +40,7 @@ func InitManifest(p Plan, instanceID string) error {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("CREDENTIALS=secret/%s", instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("RAWJSONFILE=%s%s.json", GetWorkDir(), instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("YAMLFILE=%s%s.yml", GetWorkDir(), instanceID))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_WORKDIR=%s", GetWorkDir()))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_INSTANCE_DATA_DIR=%s", GetWorkDir()))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("INSTANCE_ID=%s", instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_PLAN=%s", p.ID))
 	/* put more environment variables here, as needed */
