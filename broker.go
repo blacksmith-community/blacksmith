@@ -25,8 +25,7 @@ type Job struct {
 }
 
 func WriteDataFile(instanceID string, data []byte) error {
-	filepath := "/var/vcap/data/blacksmith/"
-	filename := filepath + instanceID + ".json"
+	filename := GetWorkDir() + instanceID + ".json"
 	err := ioutil.WriteFile(filename, data, 0644)
 	return err
 }
@@ -42,8 +41,7 @@ func WriteYamlFile(instanceID string, data []byte) error {
 	if err != nil {
 		l.Debug("Error marshalling data: %s, %s", err, m)
 	}
-	filepath := "/var/vcap/data/blacksmith/"
-	filename := filepath + instanceID + ".yml"
+	filename := GetWorkDir() + instanceID + ".yml"
 	err = ioutil.WriteFile(filename, b, 0644)
 	return err
 }
