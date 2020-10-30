@@ -31,6 +31,10 @@ func (vault *Vault) Init(store string) error {
 		l.Error("failed to check initialization state of the vault: %s", err)
 		return err
 	}
+	defer func() {
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+	}()
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning its initialization state: %s", err)
@@ -75,6 +79,10 @@ func (vault *Vault) Init(store string) error {
 		l.Error("failed to initialize the vault: %s", err)
 		return err
 	}
+	defer func() {
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+	}()
 	b, err = ioutil.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning our initialization attempt: %s", err)
@@ -132,6 +140,10 @@ func (vault *Vault) Unseal(key string) error {
 		l.Error("failed to check current seal status of the vault: %s", err)
 		return err
 	}
+	defer func() {
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+	}()
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning current seal status: %s", err)
@@ -162,6 +174,10 @@ func (vault *Vault) Unseal(key string) error {
 		l.Error("failed to unseal vault: %s", err)
 		return err
 	}
+	defer func() {
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+	}()
 	b, err = ioutil.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning our unseal attempt: %s", err)
@@ -212,6 +228,10 @@ func (vault *Vault) Get(path string) (map[string]interface{}, bool, error) {
 	if err != nil {
 		return nil, exists, err
 	}
+	defer func() {
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+	}()
 	if res.StatusCode == 404 {
 		return nil, exists, nil
 	}
@@ -242,6 +262,10 @@ func (vault *Vault) Put(path string, data interface{}) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+	}()
 	if res.StatusCode != 200 && res.StatusCode != 204 {
 		return fmt.Errorf("API %s", res.Status)
 	}
@@ -253,6 +277,10 @@ func (vault *Vault) Delete(path string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		ioutil.ReadAll(res.Body)
+		res.Body.Close()
+	}()
 
 	if res.StatusCode != 200 && res.StatusCode != 204 && res.StatusCode != 404 {
 		return fmt.Errorf("API %s", res.Status)
@@ -276,6 +304,10 @@ func (vault *Vault) Clear(instanceID string) {
 			l.Error("failed to list secrets at %s: %s", path, err)
 			return
 		}
+		defer func() {
+			ioutil.ReadAll(res.Body)
+			res.Body.Close()
+		}()
 		b, err := ioutil.ReadAll(res.Body)
 		if err != nil {
 			l.Error("failed to read response from the vault: %s", err)
