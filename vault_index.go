@@ -12,7 +12,8 @@ type VaultIndex struct {
 }
 
 func (v *Vault) GetIndex(path string) (*VaultIndex, error) {
-	Data, exists, err := v.Get(path)
+	Data := map[string]interface{}{}
+	exists, err := v.Get(path, &Data)
 	if err != nil {
 		return nil, err
 	}
