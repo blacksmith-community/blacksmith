@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -221,40 +220,52 @@ func (vault *Vault) Do(method, url string, data interface{}) (*http.Response, er
 	return vault.HTTP.Do(req)
 }
 
-func (vault *Vault) Get(path string) (map[string]interface{}, bool, error) {
+func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 	exists := false
 
 	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/%s", path), nil)
 	if err != nil {
-		return nil, exists, err
+		return exists, err
 	}
 	defer func() {
 		ioutil.ReadAll(res.Body)
 		res.Body.Close()
 	}()
 	if res.StatusCode == 404 {
-		return nil, exists, nil
+		return exists, nil
 	}
 	if res.StatusCode != 200 && res.StatusCode != 204 {
-		return nil, exists, fmt.Errorf("API %s", res.Status)
+		return exists, fmt.Errorf("API %s", res.Status)
 	}
 
 	exists = true
 	b, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return nil, exists, err
+		return exists, err
+	}
+
+	if out == nil {
+		return exists, nil
 	}
 
 	var raw map[string]interface{}
 	if err = json.Unmarshal(b, &raw); err != nil {
-		return nil, exists, err
+		return exists, err
 	}
 
-	if x, ok := raw["data"]; ok {
-		return x.(map[string]interface{}), exists, nil
+	var data interface{}
+	var ok bool
+	if data, ok = raw["data"]; !ok {
+		return exists, fmt.Errorf("Malformed response from Vault")
 	}
 
-	return nil, exists, fmt.Errorf("Malformed response from Vault")
+	dataBytes, err := json.Marshal(&data)
+	if err != nil {
+		return exists, fmt.Errorf("could not remarshal vault data")
+	}
+	
+	err = json.Unmarshal(dataBytes, &out)
+	return exists, err
 }
 
 func (vault *Vault) Put(path string, data interface{}) error {
@@ -397,34 +408,20 @@ func (vault *Vault) FindInstance(id string) (*Instance, bool, error) {
 }
 
 func (vault *Vault) State(instanceID string) (string, int, map[string]interface{}, error) {
-	data, exists, err := vault.Get(fmt.Sprintf("%s/task", instanceID))
-	if err != nil {
-		return "", 0, nil, err
-	}
-	if !exists {
-		return "", 0, nil, fmt.Errorf("Instance %s not found in Vault", instanceID)
+	type TaskState struct {
+		Action string `json:"action"`
+		Task   int  `json:"task"`
+		Params map[string]interface{} `json:"params"`
 	}
 
-	var typ string
-	var id int
-	var params map[string]interface{}
+	state := TaskState{}
 
-	if v, ok := data["task"]; ok {
-		id, err = strconv.Atoi(fmt.Sprintf("%v", v))
-		if err != nil {
-			return "", 0, nil, err
-		}
-	}
-	if v, ok := data["action"]; ok {
-		typ = fmt.Sprintf("%v", v)
-	}
-	if v, ok := data["params"]; ok {
-		if mapped, ok := v.(map[string]interface{}); ok {
-			params = mapped
-		}
+	exists, err := vault.Get(fmt.Sprintf("%s/task", instanceID), &state)
+	if err == nil && !exists {
+		err = fmt.Errorf("Instance %s not found in Vault", instanceID)
 	}
 
-	return typ, id, params, nil
+	return state.Action, state.Task, state.Params, err
 }
 
 // getVaultDB returns the vault index (some useful vault constructs) that we're using to keep track of service/plan usage data

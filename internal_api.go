@@ -79,15 +79,17 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		l := Logger.Wrap("manifest.yml")
 		l.Debug("looking up BOSH manifest for %s", m[1])
-		d, exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]))
+		manifest := struct {
+			Manifest string `json:"manifest"`
+		} {}
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]), &manifest)
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", m[1])
-		} else if s, ok := d["manifest"]; ok {
-			w.Header().Set("Content-type", "text/plain")
-			fmt.Fprintf(w, "%v\n", s)
+			w.WriteHeader(404)
 			return
 		}
-		w.WriteHeader(404)
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(manifest.Manifest+"\n"))
 		return
 	}
 
@@ -135,31 +137,33 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		l := Logger.Wrap("task.log")
 		l.Debug("looking up task log for %s", m[1])
-		d, exists, err := api.Vault.Get(fmt.Sprintf("%s/task", m[1]))
-		if err != nil || !exists {
+		_, id, _, err := api.Vault.State(m[1])
+		if err != nil {
 			l.Error("unable to find service instance %s in vault index", m[1])
-		} else if idf, ok := d["task"]; ok {
-			id := int(idf.(float64))
-			events, err := api.Broker.BOSH.GetTaskEvents(id)
-			if err != nil {
-				w.WriteHeader(500)
-				fmt.Fprintf(w, "error: %s\n", err)
-				return
-			}
-			w.Header().Set("Content-type", "text/plain")
-			for _, event := range events {
-				ts := time.Unix(int64(event.Time), 0)
-				if event.Task != "" {
-					fmt.Fprintf(w, "Task %d | %s | %s: %s %s\n", id, ts.Format("15:04:05"), event.Stage, event.Task, event.State)
-				} else if event.Error.Code != 0 {
-					fmt.Fprintf(w, "Task %d | %s | ERROR: [%d] %s\n", id, ts.Format("15:04:05"), event.Error.Code, event.Error.Message)
-				}
-			}
+			w.WriteHeader(404)
 			return
-		} else {
+		} 
+		if id == 0 {
 			l.Error("'task' key not found in vault index for service instance %s; perhaps vault is corrupted?", m[1])
+			w.WriteHeader(404)
+			return
 		}
-		w.WriteHeader(404)
+
+		events, err := api.Broker.BOSH.GetTaskEvents(id)
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+		w.Header().Set("Content-type", "text/plain")
+		for _, event := range events {
+			ts := time.Unix(int64(event.Time), 0)
+			if event.Task != "" {
+				fmt.Fprintf(w, "Task %d | %s | %s: %s %s\n", id, ts.Format("15:04:05"), event.Stage, event.Task, event.State)
+			} else if event.Error.Code != 0 {
+				fmt.Fprintf(w, "Task %d | %s | ERROR: [%d] %s\n", id, ts.Format("15:04:05"), event.Error.Code, event.Error.Message)
+			}
+		}
 		return
 	}
 
