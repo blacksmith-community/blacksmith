@@ -81,7 +81,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		l.Debug("looking up BOSH manifest for %s", m[1])
 		manifest := struct {
 			Manifest string `json:"manifest"`
-		} {}
+		}{}
 		exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]), &manifest)
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", m[1])
@@ -89,7 +89,31 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(manifest.Manifest+"\n"))
+		w.Write([]byte(manifest.Manifest + "\n"))
+		return
+	}
+
+	pattern = regexp.MustCompile("^/b/([^/]+)/redeploy$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("update-service")
+		l.Debug("looking up BOSH manifest for %s", m[1])
+		manifest := struct {
+			Manifest string `json:"manifest"`
+		}{}
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]), &manifest)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", m[1])
+			w.WriteHeader(404)
+			return
+		}
+		task, err := api.Broker.BOSH.CreateDeployment(manifest.Manifest)
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{\"message\": \"Redeploy of %s requested in task %d\"}", m[1], task.ID)
 		return
 	}
 
@@ -142,7 +166,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Error("unable to find service instance %s in vault index", m[1])
 			w.WriteHeader(404)
 			return
-		} 
+		}
 		if id == 0 {
 			l.Error("'task' key not found in vault index for service instance %s; perhaps vault is corrupted?", m[1])
 			w.WriteHeader(404)
