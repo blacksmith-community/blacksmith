@@ -75,6 +75,34 @@ func GenManifest(p Plan, manifests ...map[interface{}]interface{}) (string, erro
 	return string(b), nil
 }
 
+func UpgradePrep(p Plan, instanceID string, oldManifest string) (bool, error) {
+	/* Bail from regenerating manifest if plan upgrade script if it doesn't exist */
+	if p.UpgradeScriptPath == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(p.UpgradeScriptPath); err != nil && os.IsNotExist(err) {
+		return false, nil
+	}
+
+	/* otherwise, execute it (chmodding to cut Forge authors some slack...) */
+	os.Chmod(p.UpgradeScriptPath, 0755)
+	cmd := exec.Command(p.UpgradeScriptPath)
+
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, fmt.Sprintf("CREDENTIALS=secret/%s", instanceID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("RAWJSONFILE=%s%s.json", GetWorkDir(), instanceID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("YAMLFILE=%s%s.yml", GetWorkDir(), instanceID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_INSTANCE_DATA_DIR=%s", GetWorkDir()))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("INSTANCE_ID=%s", instanceID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_PLAN=%s", p.ID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("CURRENT_MANIFEST=%s", oldManifest))
+	/* put more environment variables here, as needed */
+
+	out, err := cmd.CombinedOutput()
+	Debug("upgrade script `%s' said:\n%s", p.UpgradeScriptPath, string(out))
+	return (err == nil), err
+}
+
 func UploadReleasesFromManifest(raw string, bosh *gogobosh.Client, l *Log) error {
 	var manifest struct {
 		Releases []struct {

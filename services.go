@@ -15,9 +15,10 @@ type Plan struct {
 	Description string `yaml:"description" json:"description"`
 	Limit       int    `yaml:"limit" json:"limit"`
 
-	Manifest       map[interface{}]interface{} `json:"-"`
-	Credentials    map[interface{}]interface{} `json:"-"`
-	InitScriptPath string                      `json:"-"`
+	Manifest          map[interface{}]interface{} `json:"-"`
+	Credentials       map[interface{}]interface{} `json:"-"`
+	InitScriptPath    string                      `json:"-"`
+	UpgradeScriptPath string                      `json:"-"`
 
 	Service *Service `yaml:"service" json:"service"`
 }
