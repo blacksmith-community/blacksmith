@@ -129,6 +129,7 @@ func ReadPlan(path string) (p Plan, err error) {
 	}
 
 	p.InitScriptPath = fmt.Sprintf("%s/init", path)
+	p.UpgradeScriptPath = fmt.Sprintf("%s/upgrade", path)
 	return
 }
 

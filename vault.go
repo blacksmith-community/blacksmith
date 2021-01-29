@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"gopkg.in/yaml.v2"
 )
 
 type Vault struct {
@@ -223,7 +225,7 @@ func (vault *Vault) Do(method, url string, data interface{}) (*http.Response, er
 func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 	exists := false
 
-	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/%s", path), nil)
+	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/data/%s", path), nil)
 	if err != nil {
 		return exists, err
 	}
@@ -248,14 +250,18 @@ func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 		return exists, nil
 	}
 
-	var raw map[string]interface{}
-	if err = json.Unmarshal(b, &raw); err != nil {
+	var data_wrapper struct {
+		Data map[string]interface{} `json:"data"`
+	}
+
+	//	var raw map[string]interface{}
+	if err = json.Unmarshal(b, &data_wrapper); err != nil {
 		return exists, err
 	}
 
 	var data interface{}
 	var ok bool
-	if data, ok = raw["data"]; !ok {
+	if data, ok = data_wrapper.Data["data"]; !ok {
 		return exists, fmt.Errorf("Malformed response from Vault")
 	}
 
@@ -263,13 +269,15 @@ func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 	if err != nil {
 		return exists, fmt.Errorf("could not remarshal vault data")
 	}
-	
+
 	err = json.Unmarshal(dataBytes, &out)
 	return exists, err
 }
 
 func (vault *Vault) Put(path string, data interface{}) error {
-	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s", path), data)
+	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/data/%s", path), map[string]interface{}{
+		"data": data,
+	})
 	if err != nil {
 		return err
 	}
@@ -284,7 +292,7 @@ func (vault *Vault) Put(path string, data interface{}) error {
 }
 
 func (vault *Vault) Delete(path string) error {
-	res, err := vault.Do("DELETE", fmt.Sprintf("/v1/secret/%s", path), nil)
+	res, err := vault.Do("DELETE", fmt.Sprintf("/v1/secret/data/%s", path), nil)
 	if err != nil {
 		return err
 	}
@@ -371,6 +379,63 @@ func (vault *Vault) Index(instanceID string, data interface{}) error {
 	return err
 }
 
+func (vault *Vault) StoreState(instanceID string, manifest map[interface{}]interface{}, credentials map[interface{}]interface{}, params map[interface{}]interface{}, initScriptPath string, upgradeScriptPath string) error {
+
+	l := Logger.Wrap("vault store %s", instanceID)
+	l.Debug("Storing files for plan")
+
+	manifestBytes, _ := yaml.Marshal(manifest)
+
+	credentialsBytes, _ := yaml.Marshal(credentials)
+
+	paramsBytes, _ := yaml.Marshal(credentials)
+
+	initFile, err := ioutil.ReadFile(initScriptPath)
+	if err != nil {
+		initFile = nil
+	}
+
+	upgradeFile, err := ioutil.ReadFile(upgradeScriptPath)
+	if err != nil {
+		upgradeFile = nil
+	}
+
+	state := struct {
+		Manifest      string `json:"manifest"`
+		Credentials   string `json:"credentials"`
+		Params        string `json:"params"`
+		InitScript    string `json:"init"`
+		UpgradeScript string `json:"upgrade"`
+	}{string(manifestBytes), string(credentialsBytes), string(paramsBytes), string(initFile), string(upgradeFile)}
+
+	return vault.Put(fmt.Sprintf("%s/state", instanceID), state)
+}
+
+func (vault *Vault) RestoreState(instanceID string) (map[interface{}]interface{}, map[interface{}]interface{}, map[interface{}]interface{}, string, string, error) {
+	l := Logger.Wrap("vault restore %s", instanceID)
+	state := struct {
+		Manifest      string `json:"manifest"`
+		Credentials   string `json:"credentials"`
+		Params        string `json:"params"`
+		InitScript    string `json:"init"`
+		UpgradeScript string `json:"upgrade"`
+	}{}
+
+	manifest := make(map[interface{}]interface{})
+	credentials := make(map[interface{}]interface{})
+	params := make(map[interface{}]interface{})
+	initFile := ""
+	upgradeFile := ""
+
+	exists, err := vault.Get(fmt.Sprintf("%s/state", instanceID), &state)
+	if err != nil || !exists {
+		l.Error("unable to find service instance %s in vault index", instanceID)
+		return manifest, credentials, params, initFile, upgradeFile, err
+	}
+
+	return manifest, credentials, params, initFile, upgradeFile, nil
+}
+
 type Instance struct {
 	ID        string
 	ServiceID string
@@ -409,8 +474,8 @@ func (vault *Vault) FindInstance(id string) (*Instance, bool, error) {
 
 func (vault *Vault) State(instanceID string) (string, int, map[string]interface{}, error) {
 	type TaskState struct {
-		Action string `json:"action"`
-		Task   int  `json:"task"`
+		Action string                 `json:"action"`
+		Task   int                    `json:"task"`
 		Params map[string]interface{} `json:"params"`
 	}
 
