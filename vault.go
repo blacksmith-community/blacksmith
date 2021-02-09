@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-
-	"gopkg.in/yaml.v2"
 )
 
 type Vault struct {
@@ -200,6 +198,18 @@ func (vault *Vault) Unseal(key string) error {
 	return nil
 }
 
+func (vault *Vault) EnsureVaultV2() error {
+	l := Logger.Wrap("vault KV version")
+
+	options := make(map[interface{}]interface{})
+	options["version"] = "2"
+
+	l.Info("Ensuring KV is version 2")
+	_, err := vault.Do("POST", "/v1/sys/mounts/secret/tune", wrap("options", options))
+	// TODO: check result
+	return err
+}
+
 func (vault *Vault) NewRequest(method, url string, data interface{}) (*http.Request, error) {
 	if data == nil {
 		return http.NewRequest(method, url, nil)
@@ -384,12 +394,6 @@ func (vault *Vault) StoreState(instanceID string, manifest map[interface{}]inter
 	l := Logger.Wrap("vault store %s", instanceID)
 	l.Debug("Storing files for plan")
 
-	manifestBytes, _ := yaml.Marshal(manifest)
-
-	credentialsBytes, _ := yaml.Marshal(credentials)
-
-	paramsBytes, _ := yaml.Marshal(credentials)
-
 	initFile, err := ioutil.ReadFile(initScriptPath)
 	if err != nil {
 		initFile = nil
@@ -401,12 +405,12 @@ func (vault *Vault) StoreState(instanceID string, manifest map[interface{}]inter
 	}
 
 	state := struct {
-		Manifest      string `json:"manifest"`
-		Credentials   string `json:"credentials"`
-		Params        string `json:"params"`
-		InitScript    string `json:"init"`
-		UpgradeScript string `json:"upgrade"`
-	}{string(manifestBytes), string(credentialsBytes), string(paramsBytes), string(initFile), string(upgradeFile)}
+		Manifest      interface{} `json:"manifest"`
+		Credentials   interface{} `json:"credentials"`
+		Params        interface{} `json:"params"`
+		InitScript    string      `json:"init"`
+		UpgradeScript string      `json:"upgrade"`
+	}{deinterface(manifest), deinterface(credentials), deinterface(params), string(initFile), string(upgradeFile)}
 
 	return vault.Put(fmt.Sprintf("%s/state", instanceID), state)
 }
@@ -414,11 +418,11 @@ func (vault *Vault) StoreState(instanceID string, manifest map[interface{}]inter
 func (vault *Vault) RestoreState(instanceID string) (map[interface{}]interface{}, map[interface{}]interface{}, map[interface{}]interface{}, string, string, error) {
 	l := Logger.Wrap("vault restore %s", instanceID)
 	state := struct {
-		Manifest      string `json:"manifest"`
-		Credentials   string `json:"credentials"`
-		Params        string `json:"params"`
-		InitScript    string `json:"init"`
-		UpgradeScript string `json:"upgrade"`
+		Manifest      map[string]interface{} `json:"manifest"`
+		Credentials   map[string]interface{} `json:"credentials"`
+		Params        map[string]interface{} `json:"params"`
+		InitScript    string                 `json:"init"`
+		UpgradeScript string                 `json:"upgrade"`
 	}{}
 
 	manifest := make(map[interface{}]interface{})

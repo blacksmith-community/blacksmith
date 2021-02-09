@@ -64,6 +64,8 @@ func main() {
 		log.Fatal(err)
 	}
 
+	_ = vault.EnsureVaultV2()
+
 	bosh, err := gogobosh.NewClient(&gogobosh.Config{
 		BOSHAddress:       config.BOSH.Address,
 		Username:          config.BOSH.Username,
