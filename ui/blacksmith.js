@@ -27,6 +27,9 @@
     $.ajax({
       type: 'GET',
       url:  '/v2/catalog',
+      headers: {
+        'X-Broker-API-Version': '2.16'
+      },
       success: function (catalog) {
         $.ajax({
           type: 'GET',

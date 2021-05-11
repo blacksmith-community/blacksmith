@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -54,8 +55,8 @@ func (b Broker) FindPlan(serviceID string, planID string) (Plan, error) {
 	return Plan{}, fmt.Errorf("plan %s not found", key)
 }
 
-func (b *Broker) Services() []brokerapi.Service {
-	return b.Catalog
+func (b *Broker) Services(ctx context.Context) ([]brokerapi.Service, error) {
+	return b.Catalog, nil
 }
 
 func (b *Broker) ReadServices(dir ...string) error {
@@ -79,7 +80,7 @@ func (b *Broker) ReadServices(dir ...string) error {
 	return nil
 }
 
-func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
+func (b *Broker) Provision(ctx context.Context, instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
 	spec := brokerapi.ProvisionedServiceSpec{IsAsync: true}
 
 	l := Logger.Wrap("%s %s/%s", instanceID, details.ServiceID, details.PlanID)
@@ -193,14 +194,15 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	return spec, nil
 }
 
-func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.IsAsync, error) {
+func (b *Broker) Deprovision(ctx context.Context, instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
+	spec := brokerapi.DeprovisionServiceSpec{IsAsync: true}
 	l := Logger.Wrap(fmt.Sprintf("%s %s/%s", instanceID, details.ServiceID, details.PlanID))
 	l.Info("deprovisioning service instance")
 
 	instance, exists, err := b.Vault.FindInstance(instanceID)
 	if err != nil {
 		l.Error("unable to retrieve instance details from vault index: %s", err)
-		return false, err
+		return spec, err
 	}
 	if !exists {
 		l.Debug("removing defunct service from vault index")
@@ -209,7 +211,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 		}
 
 		/* return a 410 Gone to the caller */
-		return false, brokerapi.ErrInstanceDoesNotExist
+		return spec, brokerapi.ErrInstanceDoesNotExist
 	}
 
 	deploymentName := instance.PlanID + "-" + instanceID
@@ -223,7 +225,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 		}
 
 		/* return a 410 Gone to the caller */
-		return false, brokerapi.ErrInstanceDoesNotExist
+		return spec, brokerapi.ErrInstanceDoesNotExist
 	}
 
 	l.Debug("deleting BOSH deployment")
@@ -231,7 +233,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
 		l.Error("failed to delete BOSH deployment %s: %s", deploymentName, err)
-		return false, err
+		return spec, err
 	}
 	l.Debug("delete operation started, BOSH task %d", task.ID)
 
@@ -246,10 +248,10 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	}
 
 	l.Info("started deprovisioning")
-	return true, nil
+	return spec, nil
 }
 
-func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, error) {
+func (b *Broker) LastOperation(ctx context.Context, instanceID string, operationData string) (brokerapi.LastOperation, error) {
 	l := Logger.Wrap(instanceID)
 	l.Debug("last-operation check received; checking state of service deployment")
 
@@ -307,7 +309,7 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 	return brokerapi.LastOperation{}, fmt.Errorf("invalid state type '%s'", typ)
 }
 
-func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
+func (b *Broker) Bind(ctx context.Context, instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
 	var binding brokerapi.Binding
 
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
@@ -332,7 +334,7 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	return binding, nil
 }
 
-func (b *Broker) Unbind(instanceID, bindingID string, details brokerapi.UnbindDetails) error {
+func (b *Broker) Unbind(ctx context.Context, instanceID, bindingID string, details brokerapi.UnbindDetails) error {
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
 	l.Info("unbind operation started")
 	/* nothing to do */
@@ -340,13 +342,99 @@ func (b *Broker) Unbind(instanceID, bindingID string, details brokerapi.UnbindDe
 	return nil
 }
 
-func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.IsAsync, error) {
+func (b *Broker) Update(ctx context.Context, instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.UpdateServiceSpec, error) {
 	l := Logger.Wrap("%s %s %s", instanceID, details.ServiceID, details.PlanID)
-	l.Error("update operation not implemented")
 
-	// FIXME: implement this!
+	spec := brokerapi.UpdateServiceSpec{IsAsync: true}
 
-	return false, fmt.Errorf("not implemented")
+	l.Info("updating current service instance")
+
+	instance, exists, err := b.Vault.FindInstance(instanceID)
+	if err != nil {
+		l.Error("unable to retrieve instance details from vault index: %s", err)
+		return spec, err
+	}
+
+	if !exists {
+		l.Debug("removing defunct service from vault index")
+		if err := b.Vault.Index(instanceID, nil); err != nil {
+			l.Error("failed to remove defunct service instance '%s' from vault: %s", instanceID, err)
+		}
+
+		/* return a 410 Gone to the caller */
+		return spec, brokerapi.ErrInstanceDoesNotExist
+	}
+
+	plan, err := b.FindPlan(instance.ServiceID, instance.PlanID)
+
+	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID))
+
+	defaults := make(map[interface{}]interface{})
+	l.Debug("Param raw data: %s", details.RawParameters)
+	err = WriteDataFile(instanceID, details.RawParameters)
+	if err != nil {
+		l.Debug("WriteDataFile write failed with '%s'", err)
+	}
+	err = WriteYamlFile(instanceID, details.RawParameters)
+	if err != nil {
+		l.Debug("WriteYamlFile write failed with '%s'", err)
+	}
+	params := make(map[interface{}]interface{})
+	err = yaml.Unmarshal(details.RawParameters, &params)
+	if err != nil {
+		l.Debug("Error unmarshalling params: %s, %s", err, details.RawParameters)
+	}
+	defaults["name"] = plan.ID + "-" + instanceID
+
+	l.Debug("querying BOSH director for director UUID")
+	info, err := b.BOSH.GetInfo()
+	if err != nil {
+		l.Error("failed to get information about BOSH director: %s", err)
+		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
+	}
+	l.Debug("found BOSH director UUID: %s", info.UUID)
+	defaults["director_uuid"] = info.UUID
+
+	l.Debug("Update defaults: %s", defaults)
+	l.Debug("Update params: %s", params)
+
+	l.Debug("generating manifest for service deployment")
+	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
+	if err != nil {
+		l.Error("failed to generate service deployment manifest: %s", err)
+		return spec, fmt.Errorf("BOSH service deployment manifest generation failed")
+	}
+	err = b.Vault.Put(fmt.Sprintf("%s/manifest", instanceID), map[string]interface{}{
+		"manifest": manifest,
+	})
+	if err != nil {
+		l.Error("failed to store manifest in the vault (non-fatal): %s", err)
+	}
+
+	l.Debug("uploading releases (if necessary) to BOSH director")
+	err = UploadReleasesFromManifest(manifest, b.BOSH, l)
+	if err != nil {
+		l.Error("failed to upload service deployment releases: %s", err)
+		return spec, fmt.Errorf("BOSH service deployment failed")
+	}
+
+	l.Debug("deploying to BOSH director")
+	task, err := b.BOSH.CreateDeployment(manifest)
+	if err != nil {
+		l.Error("failed to create service deployment: %s", err)
+		return spec, fmt.Errorf("BOSH service deployment failed")
+	}
+	l.Debug("deployment started, BOSH task %d", task.ID)
+
+	l.Debug("updating service status in the vault")
+	err = b.Vault.Track(instanceID, "update", task.ID, params)
+	if err != nil {
+		l.Error("failed to store service status in the vault: %s", err)
+		return spec, fmt.Errorf("Failed to store service deployment status")
+	}
+
+	l.Debug("started update")
+	return spec, nil
 }
 
 func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {

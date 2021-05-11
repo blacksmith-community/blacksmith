@@ -14,7 +14,7 @@ type Plan struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description"`
 	Limit       int    `yaml:"limit" json:"limit"`
-
+	PlanUpdatable bool   `yaml:"plan_updateable" json:"plan_updateable"`
 	Manifest       map[interface{}]interface{} `json:"-"`
 	Credentials    map[interface{}]interface{} `json:"-"`
 	InitScriptPath string                      `json:"-"`
@@ -29,6 +29,7 @@ type Service struct {
 	Bindable    bool     `yaml:"bindable" json:"bindable"`
 	Tags        []string `yaml:"tags" json:"tags"`
 	Limit       int      `yaml:"limit" json:"limit"`
+	PlanUpdatable bool   `yaml:"plan_updateable" json:"plan_updateable"`
 	Plans       []Plan   `yaml:"plans" json:"plans"`
 }
 
@@ -219,6 +220,7 @@ func Catalog(ss []Service) []brokerapi.Service {
 		bb[i].Bindable = s.Bindable
 		bb[i].Tags = make([]string, len(s.Tags))
 		bb[i].Metadata = &md
+		bb[i].PlanUpdatable = s.PlanUpdatable
 		copy(bb[i].Tags, s.Tags)
 		bb[i].Plans = make([]brokerapi.ServicePlan, len(s.Plans))
 		for j, p := range s.Plans {
