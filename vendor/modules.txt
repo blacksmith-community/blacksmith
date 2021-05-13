@@ -1,3 +1,6 @@
+# code.cloudfoundry.org/lager v2.0.0+incompatible
+## explicit
+code.cloudfoundry.org/lager
 # github.com/Knetic/govaluate v3.0.0+incompatible
 github.com/Knetic/govaluate
 # github.com/aws/aws-sdk-go v1.34.24
@@ -63,7 +66,7 @@ github.com/geofffranks/yaml
 github.com/golang/protobuf/proto
 # github.com/gorilla/context v0.0.0-20140306180640-1be7a086a5fd
 ## explicit
-# github.com/gorilla/mux v1.7.3
+# github.com/gorilla/mux v1.8.0
 ## explicit
 github.com/gorilla/mux
 # github.com/hpcloud/tail v1.0.1-0.20180514194441-a1dbeea552b7
@@ -113,7 +116,7 @@ github.com/onsi/gomega/matchers/support/goraph/edge
 github.com/onsi/gomega/matchers/support/goraph/node
 github.com/onsi/gomega/matchers/support/goraph/util
 github.com/onsi/gomega/types
-# github.com/pivotal-cf/brokerapi v0.0.0-20160426160527-3abc5864a39f
+# github.com/pivotal-cf/brokerapi v1.0.0
 ## explicit
 github.com/pivotal-cf/brokerapi
 github.com/pivotal-cf/brokerapi/auth
