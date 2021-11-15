@@ -42,7 +42,7 @@ github.com/aws/aws-sdk-go/service/ssm
 github.com/aws/aws-sdk-go/service/ssm/ssmiface
 github.com/aws/aws-sdk-go/service/sts
 github.com/aws/aws-sdk-go/service/sts/stsiface
-# github.com/cloudfoundry-community/gogobosh v0.0.0-20200713192209-ea05125c57d1
+# github.com/cloudfoundry-community/gogobosh v0.0.0-20210826203159-894da954b612
 ## explicit
 github.com/cloudfoundry-community/gogobosh
 # github.com/cloudfoundry-community/vaultkv v0.1.1

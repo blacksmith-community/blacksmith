@@ -4,7 +4,7 @@ go 1.14
 
 require (
 	github.com/aws/aws-sdk-go v1.34.24 // indirect
-	github.com/cloudfoundry-community/gogobosh v0.0.0-20200713192209-ea05125c57d1
+	github.com/cloudfoundry-community/gogobosh v0.0.0-20210826203159-894da954b612
 	github.com/cloudfoundry-community/vaultkv v0.1.1 // indirect
 	github.com/geofffranks/spruce v1.27.0
 	github.com/golang/protobuf v1.4.2 // indirect
