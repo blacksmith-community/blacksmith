@@ -22,6 +22,7 @@ type Broker struct {
 type Job struct {
 	Name string
 	IPs  []string
+	DNS  []string
 }
 
 func WriteDataFile(instanceID string, data []byte) error {

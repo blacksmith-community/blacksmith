@@ -137,24 +137,30 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 	}
 
 	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", id))
+
 	byType := make(map[string]*Job)
+
 	for _, vm := range vms {
-		job := Job{vm.JobName + "/" + strconv.Itoa(vm.Index), vm.IPs}
-		l.Debug("found job %s with IPs [%s]", job.Name, strings.Join(vm.IPs, ", "))
+		job := Job{vm.JobName + "/" + strconv.Itoa(vm.Index), vm.IPs, vm.DNS}
+		l.Debug("found job %s with IPs [%s] and DNS [%s]", job.Name, strings.Join(vm.IPs, ", "), strings.Join(vm.DNS, ", "))
 		jobs = append(jobs, &job)
 
 		if typ, ok := byType[vm.JobName]; ok {
 			for _, ip := range vm.IPs {
 				typ.IPs = append(typ.IPs, ip)
 			}
+			for _, dns := range vm.DNS {
+				typ.DNS = append(typ.DNS, dns)
+			}
 		} else {
-			byType[vm.JobName] = &Job{vm.JobName, vm.IPs}
+			byType[vm.JobName] = &Job{vm.JobName, vm.IPs, vm.DNS}
 		}
 	}
 	for _, job := range byType {
 		jobs = append(jobs, job)
 	}
 	jobsYAML["jobs"] = jobs
+
 	l.Debug("marshaling BOSH VM information")
 	jobsMarshal, err := yaml.Marshal(jobsYAML)
 	if err != nil {
