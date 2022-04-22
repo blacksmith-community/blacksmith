@@ -141,8 +141,18 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 	byType := make(map[string]*Job)
 
 	for _, vm := range vms {
-		job := Job{vm.JobName + "/" + strconv.Itoa(vm.Index), vm.IPs, vm.DNS}
-		l.Debug("found job %s with IPs [%s] and DNS [%s]", job.Name, strings.Join(vm.IPs, ", "), strings.Join(vm.DNS, ", "))
+		l.Debug("vm.id: %s, vm.VMCID: %s", vm.ID, vm.VMCID)
+		job := Job{
+			vm.JobName + "/" + strconv.Itoa(vm.Index),
+			deployment,
+			vm.ID,
+			plan.ID,
+			plan.Name,
+			vm.ID + ".standalone.blacksmith." + deployment + ".bosh",
+			vm.IPs,
+			vm.DNS,
+		}
+		l.Debug("found job {name: %s, deployment: %s, id: %s, plan_id: %s, plan_name: %s, fqdn: %s, ips: [%s], dns: []", job.Name, job.Deployment, job.ID, job.PlanID, job.PlanName, job.FQDN, strings.Join(vm.IPs, ", "), strings.Join(vm.DNS, ", "))
 		jobs = append(jobs, &job)
 
 		if typ, ok := byType[vm.JobName]; ok {
@@ -153,7 +163,16 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 				typ.DNS = append(typ.DNS, dns)
 			}
 		} else {
-			byType[vm.JobName] = &Job{vm.JobName, vm.IPs, vm.DNS}
+			byType[vm.JobName] = &Job{
+				vm.JobName,
+				deployment,
+				vm.ID,
+				plan.ID,
+				plan.Name,
+				vm.ID + ".standalone.blacksmith." + deployment + ".bosh",
+				vm.IPs,
+				vm.DNS,
+			}
 		}
 	}
 	for _, job := range byType {
