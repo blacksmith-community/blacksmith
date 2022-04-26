@@ -56,6 +56,10 @@ func (p Plan) OverLimit(db *VaultIndex) bool {
 		return false
 	}
 
+	if p.Limit < 0 || p.Service.Limit < 0 {
+		return true
+	}
+
 	existingPlan := 0
 	existingService := 0
 
