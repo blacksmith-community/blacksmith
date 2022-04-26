@@ -70,7 +70,7 @@
           <tr>
             <td>[[= plan.name ]]</td>
             <td>[[= plan.description ]]</td>
-            <td>[[= plan.blacksmith.instances ]] / [[= plan.blacksmith.limit || '&infin;' ]]</td>
+            <td>[[= plan.blacksmith.instances ]] / [[= (plan.blacksmith.limit > 0) ? plan.blacksmith.limit : ((plan.blacksmith.limit == 0) ? ('&infin;') : ('&#8209;')) ]]</td>
           </tr>
         [[ }); ]]
       </tbody>
