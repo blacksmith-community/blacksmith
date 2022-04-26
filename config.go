@@ -43,6 +43,8 @@ type BOSHConfig struct {
 	Address           string       `yaml:"address"`
 	Username          string       `yaml:"username"`
 	Password          string       `yaml:"password"`
+	ClientID          string       `yaml:"client_id"`
+	ClientSecret      string       `yaml:"client_secret"`
 	SkipSslValidation bool         `yaml:"skip_ssl_validation"`
 	Stemcells         []Uploadable `yaml:"stemcells"`
 	Releases          []Uploadable `yaml:"releases"`

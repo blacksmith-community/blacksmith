@@ -64,13 +64,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	bosh, err := gogobosh.NewClient(&gogobosh.Config{
+	//look here for adding UAA options
+	gogoBoshConfig := &gogobosh.Config{
 		BOSHAddress:       config.BOSH.Address,
 		Username:          config.BOSH.Username,
 		Password:          config.BOSH.Password,
+		ClientID:          config.BOSH.ClientID,
+		ClientSecret:      config.BOSH.ClientSecret,
 		HttpClient:        http.DefaultClient,
 		SkipSslValidation: config.BOSH.SkipSslValidation,
-	})
+	}
+	bosh, err := gogobosh.NewClient(gogoBoshConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to authenticate to BOSH: %s\n", err)
 		os.Exit(2)
@@ -185,6 +189,8 @@ func main() {
 	}()
 
 	BoshMaintenanceLoop := time.NewTicker(1 * time.Hour)
+	redoLogin := time.NewTicker(23 * time.Hour)
+	authInfo, _ := bosh.GetInfo()
 	//TODO set task to -1 or something out here and check to make sure the cleanup is finished before you run another one
 	for {
 		select {
@@ -199,6 +205,14 @@ func main() {
 			l.Info("taskid for the bosh cleanup is %v", task.ID)
 			if err != nil {
 				l.Error("bosh cleanup failed to run properly: %s", err)
+			}
+		case <-redoLogin.C:
+			if authInfo.UserAuthenication.Type == "uaa" {
+				l.Info("logging in again")
+				bosh, err = gogobosh.NewClient(gogoBoshConfig)
+				if err != nil {
+					l.Error("error logging in: ", err)
+				}
 			}
 		}
 	}
