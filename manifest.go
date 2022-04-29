@@ -152,7 +152,7 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 			vm.IPs,
 			vm.DNS,
 		}
-		l.Debug("found job {name: %s, deployment: %s, id: %s, plan_id: %s, plan_name: %s, fqdn: %s, ips: [%s], dns: []", job.Name, job.Deployment, job.ID, job.PlanID, job.PlanName, job.FQDN, strings.Join(vm.IPs, ", "), strings.Join(vm.DNS, ", "))
+		l.Debug("found job {name: %s, deployment: %s, id: %s, plan_id: %s, plan_name: %s, fqdn: %s, ips: [%s], dns: [%s]", job.Name, job.Deployment, job.ID, job.PlanID, job.PlanName, job.FQDN, strings.Join(vm.IPs, ", "), strings.Join(vm.DNS, ", "))
 		jobs = append(jobs, &job)
 
 		if typ, ok := byType[vm.JobName]; ok {
