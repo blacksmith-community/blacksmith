@@ -1,3 +1,4 @@
 /blacksmith
 /artifacts
 *.cov
+.DS_Store

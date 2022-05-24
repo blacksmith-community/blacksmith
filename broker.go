@@ -149,6 +149,8 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	l.Debug("Provision defaults: %s", defaults)
 	l.Debug("Provision params: %s", params)
 
+	params["instance_id"] = instanceID
+
 	l.Debug("generating manifest for service deployment")
 	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
 	if err != nil {

@@ -43,6 +43,8 @@ func InitManifest(p Plan, instanceID string) error {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_INSTANCE_DATA_DIR=%s", GetWorkDir()))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("INSTANCE_ID=%s", instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_PLAN=%s", p.ID))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_NETWORK=%s", os.Getenv("BLACKSMITH_NETWORK") || "blacksmith"))
+
 	/* put more environment variables here, as needed */
 
 	out, err := cmd.CombinedOutput()
@@ -129,6 +131,7 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 	jobsYAML := make(map[string][]*Job)
 
 	deployment := plan.ID + "-" + id
+
 	l.Debug("looking up BOSH VM information for %s", deployment)
 	vms, err := bosh.GetDeploymentVMs(deployment)
 	if err != nil {
@@ -140,6 +143,8 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 
 	byType := make(map[string]*Job)
 
+	network := os.Getenv("BLACKSMITH_NETWORK") || "blacksmith" // TODO: From Config
+
 	for _, vm := range vms {
 		l.Debug("vm.id: %s, vm.VMCID: %s", vm.ID, vm.VMCID)
 		job := Job{
@@ -148,7 +153,7 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 			vm.ID,
 			plan.ID,
 			plan.Name,
-			vm.ID + ".standalone.blacksmith." + deployment + ".bosh",
+			vm.ID + "." + plan.ID + "." network "." + deployment + ".bosh",
 			vm.IPs,
 			vm.DNS,
 		}
@@ -200,7 +205,8 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 	}
 
 	l.Debug("merging service deployment manifest with credentials.yml (for retrieve/bind)")
-	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials)
+
+	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials, wrap("name", deployment), wrap("params.instance_id", instanceID))
 	if err != nil {
 		l.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
 		return nil, err
