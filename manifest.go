@@ -43,7 +43,11 @@ func InitManifest(p Plan, instanceID string) error {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_INSTANCE_DATA_DIR=%s", GetWorkDir()))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("INSTANCE_ID=%s", instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_PLAN=%s", p.ID))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_NETWORK=%s", os.Getenv("BLACKSMITH_NETWORK") || "blacksmith"))
+	network := os.Getenv("BLACKSMITH_NETWORK") 
+	if len(network) == 0 {
+		network = "blacksmith" // TODO: From Config
+	}
+	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_NETWORK=%s", network))
 
 	/* put more environment variables here, as needed */
 
@@ -143,7 +147,10 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 
 	byType := make(map[string]*Job)
 
-	network := os.Getenv("BLACKSMITH_NETWORK") || "blacksmith" // TODO: From Config
+	network := os.Getenv("BLACKSMITH_NETWORK") 
+	if len(network) == 0 {
+		network = "blacksmith" // TODO: From Config
+	}
 
 	for _, vm := range vms {
 		l.Debug("vm.id: %s, vm.VMCID: %s", vm.ID, vm.VMCID)
@@ -153,7 +160,7 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 			vm.ID,
 			plan.ID,
 			plan.Name,
-			vm.ID + "." + plan.ID + "." network "." + deployment + ".bosh",
+			vm.ID + "." + plan.ID + "." + network + "." + deployment + ".bosh",
 			vm.IPs,
 			vm.DNS,
 		}
@@ -206,7 +213,13 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 
 	l.Debug("merging service deployment manifest with credentials.yml (for retrieve/bind)")
 
-	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials, wrap("name", deployment), wrap("params.instance_id", instanceID))
+	defaults := make(map[interface{}]interface{})
+	defaults["name"] = deployment
+
+	params := make(map[interface{}]interface{})
+	params["instance_id"] = id
+
+	manifest, err := GenManifest(plan, jobsIfc, plan.Credentials, defaults, wrap("params", params))
 	if err != nil {
 		l.Error("failed to merge service deployment manifest with credentials.yml: %s", err)
 		return nil, err
