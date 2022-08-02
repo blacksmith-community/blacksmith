@@ -1,6 +1,6 @@
 module github.com/cloudfoundry-community/vaultkv
 
-go 1.14
+go 1.15
 
 require (
 	github.com/onsi/ginkgo v1.13.0
