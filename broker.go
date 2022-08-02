@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/blacksmith-community/blacksmith/shield"
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
 	"gopkg.in/yaml.v2"
@@ -17,6 +18,7 @@ type Broker struct {
 	Plans   map[string]Plan
 	BOSH    *gogobosh.Client
 	Vault   *Vault
+	Shield  shield.Client
 }
 
 type Job struct {
@@ -197,6 +199,13 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("Failed to store service deployment status")
 	}
 
+	l.Debug("scheduling S.H.I.E.L.D. backup")
+	err = b.Shield.CreateSchedule(instanceID, params)
+	if err != nil {
+		l.Error("failed to schedule S.H.I.E.L.D. backup: %s", err)
+		return spec, fmt.Errorf("Failed to schedule S.H.I.E.L.D. backup")
+	}
+
 	l.Debug("started provisioning")
 	return spec, nil
 }
@@ -251,6 +260,12 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	l.Debug("updating service status in the vault")
 	if err := b.Vault.Track(instanceID, "deprovision", task.ID, nil); err != nil {
 		l.Error("failed to track deprovision BOSH task #%d in vault: %s", task.ID, err)
+	}
+
+	l.Debug("descheduling S.H.I.E.L.D. backup")
+	err = b.Shield.DeleteSchedule(instanceID)
+	if err != nil {
+		l.Error("failed to deschedule S.H.I.E.L.D. backup for instance %s: %s", instanceID, err)
 	}
 
 	l.Info("started deprovisioning")

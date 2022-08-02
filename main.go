@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blacksmith-community/blacksmith/shield"
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
 	"github.com/pivotal-golang/lager"
@@ -139,9 +140,19 @@ func main() {
 		}
 	}
 
+	var shieldClient shield.Client = &shield.NoopClient{}
+	if cfg := config.Shield; cfg.Enabled {
+		shieldClient = shield.NewClient(cfg.Address, cfg.Insecure)
+		if err := shieldClient.Authenticate(cfg.Token); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to authenticate to S.H.I.E.L.D.: %s\n", err)
+			os.Exit(2)
+		}
+	}
+
 	broker := &Broker{
-		Vault: vault,
-		BOSH:  bosh,
+		Vault:  vault,
+		BOSH:   bosh,
+		Shield: shieldClient,
 	}
 
 	l.Info("reading services from %s", strings.Join(os.Args[3:], ", "))

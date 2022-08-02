@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Broker    BrokerConfig `yaml:"broker"`
 	Vault     VaultConfig  `yaml:"vault"`
+	Shield    ShieldConfig `yaml:"shield"`
 	BOSH      BOSHConfig   `yaml:"bosh"`
 	Debug     bool         `yaml:"debug"`
 	WebRoot   string       `yaml:"web-root"`
@@ -30,6 +31,13 @@ type VaultConfig struct {
 	Token    string `yaml:"token"`
 	Insecure bool   `yaml:"skip_ssl_validation"`
 	CredPath string `yaml:"credentials"`
+}
+
+type ShieldConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Address  string `yaml:"address"`
+	Token    string `yaml:"token"`
+	Insecure bool   `yaml:"skip_ssl_validation"`
 }
 
 type Uploadable struct {
