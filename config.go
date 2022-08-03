@@ -38,6 +38,12 @@ type ShieldConfig struct {
 	Address  string `yaml:"address"`
 	Token    string `yaml:"token"`
 	Insecure bool   `yaml:"skip_ssl_validation"`
+
+	Tenant string `yaml:"tenant"`
+	Store  string `yaml:"store"`
+
+	Schedule string `yaml:"schedule"`
+	Retain   string `yaml:"retain"`
 }
 
 type Uploadable struct {

@@ -200,7 +200,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	}
 
 	l.Debug("scheduling S.H.I.E.L.D. backup")
-	err = b.Shield.CreateSchedule(instanceID, params)
+	err = b.Shield.CreateSchedule(instanceID, details)
 	if err != nil {
 		l.Error("failed to schedule S.H.I.E.L.D. backup: %s", err)
 		return spec, fmt.Errorf("Failed to schedule S.H.I.E.L.D. backup")
@@ -263,7 +263,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	}
 
 	l.Debug("descheduling S.H.I.E.L.D. backup")
-	err = b.Shield.DeleteSchedule(instanceID)
+	err = b.Shield.DeleteSchedule(instanceID, details)
 	if err != nil {
 		l.Error("failed to deschedule S.H.I.E.L.D. backup for instance %s: %s", instanceID, err)
 	}

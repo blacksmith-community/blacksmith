@@ -141,9 +141,27 @@ func main() {
 	}
 
 	var shieldClient shield.Client = &shield.NoopClient{}
-	if cfg := config.Shield; cfg.Enabled {
-		shieldClient = shield.NewClient(cfg.Address, cfg.Insecure)
-		if err := shieldClient.Authenticate(cfg.Token); err != nil {
+	if config.Shield.Enabled {
+		cfg := shield.Config{
+			Address:  config.Shield.Address,
+			Insecure: config.Shield.Insecure,
+
+			TenantUUID: config.Shield.Tenant,
+			StoreUUID:  config.Shield.Store,
+
+			Schedule: config.Shield.Schedule,
+			Retain:   config.Shield.Retain,
+		}
+
+		if cfg.Schedule == "" {
+			cfg.Schedule = "daily"
+		}
+		if cfg.Retain == "" {
+			cfg.Schedule = "7d"
+		}
+
+		shieldClient = shield.NewClient(cfg)
+		if err := shieldClient.Authenticate(config.Shield.Token); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to authenticate to S.H.I.E.L.D.: %s\n", err)
 			os.Exit(2)
 		}
