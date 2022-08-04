@@ -22,14 +22,14 @@ type Broker struct {
 }
 
 type Job struct {
-	Name       string   `json: name`
-	Deployment string   `json: deployment`
-	ID         string   `json: id`
-	PlanID     string   `json: plan_id`
-	PlanName   string   `json: plan_name`
-	FQDN       string   `json: fqdn`
-	IPs        []string `json: ips`
-	DNS        []string `json: dns`
+	Name       string   `json:"name"`
+	Deployment string   `json:"deployment"`
+	ID         string   `json:"id"`
+	PlanID     string   `json:"plan_id"`
+	PlanName   string   `json:"plan_name"`
+	FQDN       string   `json:"fqdn"`
+	IPs        []string `json:"ips"`
+	DNS        []string `json:"dns"`
 }
 
 func WriteDataFile(instanceID string, data []byte) error {
