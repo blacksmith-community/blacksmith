@@ -153,6 +153,12 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	params["instance_id"] = instanceID
 
+	l.Debug("storing metadata details in Vault")
+	err = b.Vault.Put(instanceID, details)
+	if err != nil {
+		l.Error("failed to store metadata in the vault (non-fatal): %s", err)
+	}
+
 	l.Debug("generating manifest for service deployment")
 	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
 	if err != nil {
@@ -197,13 +203,6 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	if err != nil {
 		l.Error("failed to store service status in the vault: %s", err)
 		return spec, fmt.Errorf("Failed to store service deployment status")
-	}
-
-	l.Debug("scheduling S.H.I.E.L.D. backup")
-	err = b.Shield.CreateSchedule(instanceID, details)
-	if err != nil {
-		l.Error("failed to schedule S.H.I.E.L.D. backup: %s", err)
-		return spec, fmt.Errorf("Failed to schedule S.H.I.E.L.D. backup")
 	}
 
 	l.Debug("started provisioning")
@@ -272,6 +271,57 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	return true, nil
 }
 
+func (b *Broker) OnProvisionCompleted(l *Log, instanceID string) error {
+	l.Debug("provision task was successfully completed; scheduling backup in S.H.I.E.L.D. if required")
+	l.Debug("fetching instance provision details from Vault")
+	var details brokerapi.ProvisionDetails
+	exists, err := b.Vault.Get(instanceID, &details)
+	if err != nil {
+		l.Error("failed to fetch instance provision details from Vault: %s", err)
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("could not find instance provision details in Vault (key: %s)", instanceID)
+	}
+
+	l.Debug("fetching deployment VMs metadata")
+	deployment := details.PlanID + "-" + instanceID
+	vms, err := b.BOSH.GetDeploymentVMs(deployment)
+	if err != nil {
+		l.Error("failed to fetch VMs metadata for deployment '%s': %s", deployment, err)
+		return err
+	}
+	if len(vms) == 0 {
+		return fmt.Errorf("could not find any running VM for the deployment %s", deployment)
+	}
+	if len(vms[0].IPs) == 0 {
+		return fmt.Errorf("could not find any IP for the VM '%s' (deployment: %s)", vms[0].ID, deployment)
+	}
+
+	l.Debug("fetching instance plan details")
+	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
+	if err != nil {
+		l.Error("failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
+		return err
+	}
+
+	l.Debug("fetching instance credentials directly from BOSH")
+	creds, err := GetCreds(instanceID, plan, b.BOSH, l)
+	if err != nil {
+		return err
+	}
+
+	l.Debug("scheduling S.H.I.E.L.D. backup for instance '%s'", instanceID)
+	err = b.Shield.CreateSchedule(instanceID, details, vms[0].IPs[0], creds)
+	if err != nil {
+		l.Error("failed to schedule S.H.I.E.L.D. backup: %s", err)
+		return fmt.Errorf("Failed to schedule S.H.I.E.L.D. backup")
+	}
+
+	l.Debug("scheduling of S.H.I.E.L.D. backup for instance '%s' succesfully completed", instanceID)
+	return nil
+}
+
 func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, error) {
 	l := Logger.Wrap(instanceID)
 	l.Debug("last-operation check received; checking state of service deployment")
@@ -288,6 +338,10 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 		}
 
 		if task.State == "done" {
+			if err := b.OnProvisionCompleted(l, instanceID); err != nil {
+				return brokerapi.LastOperation{}, fmt.Errorf("provision task was successfully completed but the post-hook failed")
+			}
+
 			l.Debug("provision operation succeeded")
 			return brokerapi.LastOperation{State: "succeeded"}, nil
 		}

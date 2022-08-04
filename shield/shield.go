@@ -19,7 +19,7 @@ type Client interface {
 
 	Authenticate(token string) error
 
-	CreateSchedule(instance string, details brokerapi.ProvisionDetails) error
+	CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error
 	DeleteSchedule(instance string, details brokerapi.DeprovisionDetails) error
 }
 
@@ -32,7 +32,7 @@ func (cli *NoopClient) Close() error {
 func (cli *NoopClient) Authenticate(token string) error {
 	return nil
 }
-func (cli *NoopClient) CreateSchedule(instance string, details brokerapi.ProvisionDetails) error {
+func (cli *NoopClient) CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error {
 	return nil
 }
 func (cli *NoopClient) DeleteSchedule(instance string, details brokerapi.DeprovisionDetails) error {
@@ -94,23 +94,43 @@ func join(s ...string) string {
 	return strings.Join(s, ":")
 }
 
-func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.ProvisionDetails) error {
-	// config := map[string]interface{}{
-	// 	"rmq_url": "https://",
+func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.ProvisionDetails, url string, creds interface{}) error {
+	m := map[string]string{
+		"rabbitmq": "rabbitmq-broker",
+		"redis":    "redis-broker",
+	}
 
-	// 	"rmq_username": "admin",
-	// 	"rmq_password": "secret",
+	// Verify that the target should be backed up.
+	var enabled bool = false
+	for _, target := range cli.enabledOnTargets {
+		enabled = target == details.ServiceID || enabled
+	}
+	if !enabled {
+		return nil
+	}
 
-	// 	"skip_ssl_validation": true,
-	// },
+	// Generate the target configurations.
+	var config map[string]interface{}
+	switch details.ServiceID {
+	case "rabbitmq":
+		config = map[string]interface{}{
+			"rmq_url": "https://" + url,
+
+			"rmq_username": creds.(map[string]interface{})["username"],
+			"rmq_password": creds.(map[string]interface{})["password"],
+
+			"skip_ssl_validation": true,
+		}
+	default:
+		return nil
+	}
 
 	target := &shield.Target{
 		Name:    join("targets", details.ServiceID, details.PlanID, instanceID),
 		Summary: "This target is managed by Blacksmith.",
 
-		Plugin:      "rabbitmq-broker",        // TODO: this value must be configurable.
-		Compression: "bzip2",                  // TODO: this value must be configurable.
-		Config:      map[string]interface{}{}, // TODO: this value must be configurable.
+		Plugin: m[details.ServiceID],
+		Config: config,
 	}
 
 	target, err := cli.shield.CreateTarget(cli.tenant, target)
