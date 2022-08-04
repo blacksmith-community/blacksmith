@@ -151,6 +151,8 @@ func main() {
 
 			Schedule: config.Shield.Schedule,
 			Retain:   config.Shield.Retain,
+
+			EnabledOnTargets: config.Shield.EnabledOnTargets,
 		}
 
 		if cfg.Schedule == "" {

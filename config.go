@@ -42,8 +42,10 @@ type ShieldConfig struct {
 	Tenant string `yaml:"tenant"`
 	Store  string `yaml:"store"`
 
-	Schedule string `yaml:"schedule"`
-	Retain   string `yaml:"retain"`
+	Schedule string `yaml:"schedule"` // daily, weekly, daily at 11:00
+	Retain   string `yaml:"retain"`   // 7d, 7w, ...
+
+	EnabledOnTargets []string `yaml:"enabled_on_targets"` // rabbitmq, redis, ...
 }
 
 type Uploadable struct {

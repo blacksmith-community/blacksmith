@@ -48,6 +48,8 @@ type NetworkClient struct {
 
 	schedule string
 	retain   string
+
+	enabledOnTargets []string
 }
 
 type Config struct {
@@ -59,6 +61,8 @@ type Config struct {
 
 	Schedule string
 	Retain   string
+
+	EnabledOnTargets []string
 }
 
 func NewClient(cfg Config) *NetworkClient {
@@ -73,6 +77,8 @@ func NewClient(cfg Config) *NetworkClient {
 
 		schedule: cfg.Schedule,
 		retain:   cfg.Retain,
+
+		enabledOnTargets: cfg.EnabledOnTargets,
 	}
 }
 
