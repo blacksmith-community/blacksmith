@@ -36,8 +36,12 @@ type VaultConfig struct {
 type ShieldConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Address  string `yaml:"address"`
-	Token    string `yaml:"token"`
 	Insecure bool   `yaml:"skip_ssl_validation"`
+
+	AuthMethod string `yaml:"auth_method"` // "token", "local"
+	Token      string `yaml:"token"`
+	Username   string `yaml:"username"`
+	Password   string `yaml:"password"`
 
 	Tenant string `yaml:"tenant"`
 	Store  string `yaml:"store"`

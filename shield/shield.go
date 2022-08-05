@@ -8,6 +8,13 @@ import (
 	"github.com/shieldproject/shield/client/v2/shield"
 )
 
+type (
+	AuthMethod = shield.AuthMethod
+
+	TokenAuth = shield.TokenAuth
+	LocalAuth = shield.LocalAuth
+)
+
 var (
 	_ Client = (*NetworkClient)(nil)
 	_ Client = (*NoopClient)(nil)
@@ -17,7 +24,7 @@ var (
 type Client interface {
 	io.Closer
 
-	Authenticate(token string) error
+	Authenticate(auth shield.AuthMethod) error
 
 	CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error
 	DeleteSchedule(instance string, details brokerapi.DeprovisionDetails) error
@@ -29,7 +36,7 @@ type NoopClient struct{}
 func (cli *NoopClient) Close() error {
 	return nil
 }
-func (cli *NoopClient) Authenticate(token string) error {
+func (cli *NoopClient) Authenticate(auth shield.AuthMethod) error {
 	return nil
 }
 func (cli *NoopClient) CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error {
@@ -86,8 +93,8 @@ func (cli *NetworkClient) Close() error {
 	return cli.shield.Logout()
 }
 
-func (cli *NetworkClient) Authenticate(token string) error {
-	return cli.shield.Authenticate(&shield.TokenAuth{Token: token})
+func (cli *NetworkClient) Authenticate(auth shield.AuthMethod) error {
+	return cli.shield.Authenticate(auth)
 }
 
 func join(s ...string) string {
