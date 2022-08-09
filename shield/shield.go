@@ -50,6 +50,8 @@ func (cli *NoopClient) DeleteSchedule(instance string, details brokerapi.Deprovi
 type NetworkClient struct {
 	shield *shield.Client
 
+	agent string
+
 	tenant *shield.Tenant
 	store  *shield.Store
 
@@ -62,6 +64,8 @@ type NetworkClient struct {
 type Config struct {
 	Address  string
 	Insecure bool
+
+	Agent string
 
 	TenantUUID string
 	StoreUUID  string
@@ -78,6 +82,8 @@ func NewClient(cfg Config) *NetworkClient {
 			URL:                cfg.Address,
 			InsecureSkipVerify: cfg.Insecure,
 		},
+
+		agent: cfg.Agent,
 
 		tenant: &shield.Tenant{UUID: cfg.TenantUUID},
 		store:  &shield.Store{UUID: cfg.StoreUUID},
@@ -137,6 +143,7 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.Pr
 		Summary: "This target is managed by Blacksmith.",
 
 		Plugin: m[details.ServiceID],
+		Agent:  cli.agent,
 		Config: config,
 	}
 
@@ -166,7 +173,7 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.Pr
 
 func (cli *NetworkClient) DeleteSchedule(instanceID string, details brokerapi.DeprovisionDetails) error {
 	name := join("jobs", details.ServiceID, details.PlanID, instanceID)
-	job, err := cli.shield.FindJob(cli.tenant, "name="+name, false) // TODO: verify correct query format.
+	job, err := cli.shield.FindJob(cli.tenant, name, false)
 	if err != nil {
 		return err
 	}

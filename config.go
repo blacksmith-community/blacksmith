@@ -38,6 +38,8 @@ type ShieldConfig struct {
 	Address  string `yaml:"address"`
 	Insecure bool   `yaml:"skip_ssl_validation"`
 
+	Agent string `yaml:"agent"`
+
 	AuthMethod string `yaml:"auth_method"` // "token", "local"
 	Token      string `yaml:"token"`
 	Username   string `yaml:"username"`

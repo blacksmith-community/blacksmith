@@ -146,6 +146,8 @@ func main() {
 			Address:  config.Shield.Address,
 			Insecure: config.Shield.Insecure,
 
+			Agent: config.Shield.Agent,
+
 			TenantUUID: config.Shield.Tenant,
 			StoreUUID:  config.Shield.Store,
 
