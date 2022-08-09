@@ -179,13 +179,13 @@ func (cli *NetworkClient) DeleteSchedule(instanceID string, details brokerapi.De
 	}
 
 	// TODO: do we need to verify that the response is OK? What if it's not?
-	_, err = cli.shield.DeleteTarget(cli.tenant, &shield.Target{UUID: job.Target.UUID})
+	_, err = cli.shield.DeleteJob(cli.tenant, &shield.Job{UUID: job.UUID})
 	if err != nil {
 		return err
 	}
 
 	// TODO: do we need to verify that the response is OK? What if it's not?
-	_, err = cli.shield.DeleteJob(cli.tenant, &shield.Job{UUID: job.UUID})
+	_, err = cli.shield.DeleteTarget(cli.tenant, &shield.Target{UUID: job.Target.UUID})
 	if err != nil {
 		return err
 	}
