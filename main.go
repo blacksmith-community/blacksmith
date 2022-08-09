@@ -158,10 +158,10 @@ func main() {
 		}
 
 		if cfg.Schedule == "" {
-			cfg.Schedule = "daily"
+			cfg.Schedule = "daily 6am"
 		}
 		if cfg.Retain == "" {
-			cfg.Schedule = "7d"
+			cfg.Retain = "7d"
 		}
 
 		var auth shield.AuthMethod
