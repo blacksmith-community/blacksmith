@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Broker    BrokerConfig `yaml:"broker"`
 	Vault     VaultConfig  `yaml:"vault"`
+	Shield    ShieldConfig `yaml:"shield"`
 	BOSH      BOSHConfig   `yaml:"bosh"`
 	Debug     bool         `yaml:"debug"`
 	WebRoot   string       `yaml:"web-root"`
@@ -30,6 +31,27 @@ type VaultConfig struct {
 	Token    string `yaml:"token"`
 	Insecure bool   `yaml:"skip_ssl_validation"`
 	CredPath string `yaml:"credentials"`
+}
+
+type ShieldConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Address  string `yaml:"address"`
+	Insecure bool   `yaml:"skip_ssl_validation"`
+
+	Agent string `yaml:"agent"`
+
+	AuthMethod string `yaml:"auth_method"` // "token", "local"
+	Token      string `yaml:"token"`
+	Username   string `yaml:"username"`
+	Password   string `yaml:"password"`
+
+	Tenant string `yaml:"tenant"`
+	Store  string `yaml:"store"`
+
+	Schedule string `yaml:"schedule"` // daily, weekly, daily at 11:00
+	Retain   string `yaml:"retain"`   // 7d, 7w, ...
+
+	EnabledOnTargets []string `yaml:"enabled_on_targets"` // rabbitmq, redis, ...
 }
 
 type Uploadable struct {

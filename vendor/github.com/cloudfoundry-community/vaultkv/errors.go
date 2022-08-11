@@ -186,8 +186,7 @@ type ErrKVUnsupported struct {
 }
 
 func (e *ErrKVUnsupported) Error() string {
-	return fmt.Sprintf("KV Version Support: %s", e.message)
-	return e.message
+	return fmt.Sprintf("Operation unsupported by KV version: %s", e.message)
 }
 
 //IsErrKVUnsupported returns true if the error is an ErrKVUnsupported

@@ -167,6 +167,9 @@ func (v *Client) AuthUserpass(username, password string) (ret *AuthOutput, err e
 	return
 }
 
+//AuthApprole performs auth against the /auth/approle mount with the given
+// approle ID and secret. If the login is successful, this client's AuthToken is
+// set to the returned token.
 func (v *Client) AuthApprole(roleID, secretID string) (ret *AuthOutput, err error) {
 	raw := &authOutputRaw{}
 	err = v.doRequest(
@@ -197,6 +200,8 @@ func (v *Client) TokenRenewSelf() (err error) {
 	return v.doRequest("POST", "/auth/token/renew-self", nil, nil)
 }
 
+//TokenInfo contains metadata about a token. Return values from the Vault API
+// are converted into more easily usable Golang types.
 type TokenInfo struct {
 	Accessor       string
 	CreationTime   time.Time

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blacksmith-community/blacksmith/shield"
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
 	"github.com/pivotal-golang/lager"
@@ -139,9 +140,52 @@ func main() {
 		}
 	}
 
+	var shieldClient shield.Client = &shield.NoopClient{}
+	if config.Shield.Enabled {
+		cfg := shield.Config{
+			Address:  config.Shield.Address,
+			Insecure: config.Shield.Insecure,
+
+			Agent: config.Shield.Agent,
+
+			TenantUUID: config.Shield.Tenant,
+			StoreUUID:  config.Shield.Store,
+
+			Schedule: config.Shield.Schedule,
+			Retain:   config.Shield.Retain,
+
+			EnabledOnTargets: config.Shield.EnabledOnTargets,
+		}
+
+		if cfg.Schedule == "" {
+			cfg.Schedule = "daily 6am"
+		}
+		if cfg.Retain == "" {
+			cfg.Retain = "7d"
+		}
+
+		var auth shield.AuthMethod
+		switch config.Shield.AuthMethod {
+		case "local":
+			auth = &shield.LocalAuth{Username: config.Shield.Username, Password: config.Shield.Password}
+		case "token":
+			auth = &shield.TokenAuth{Token: config.Shield.Token}
+		default:
+			fmt.Fprintf(os.Stderr, "Invalid S.H.I.E.L.D. authentication method (must be one of 'local' or 'token'): %s\n", config.Shield.AuthMethod)
+			os.Exit(2)
+		}
+
+		shieldClient = shield.NewClient(cfg)
+		if err := shieldClient.Authenticate(auth); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to authenticate to S.H.I.E.L.D.: %s\n", err)
+			os.Exit(2)
+		}
+	}
+
 	broker := &Broker{
-		Vault: vault,
-		BOSH:  bosh,
+		Vault:  vault,
+		BOSH:   bosh,
+		Shield: shieldClient,
 	}
 
 	l.Info("reading services from %s", strings.Join(os.Args[3:], ", "))
