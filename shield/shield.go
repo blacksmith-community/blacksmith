@@ -2,6 +2,7 @@ package shield
 
 import (
 	"io"
+	"net"
 	"strings"
 
 	"github.com/pivotal-cf/brokerapi"
@@ -107,7 +108,7 @@ func join(s ...string) string {
 	return strings.Join(s, ":")
 }
 
-func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.ProvisionDetails, url string, creds interface{}) error {
+func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.ProvisionDetails, host string, creds interface{}) error {
 	m := map[string]string{
 		"rabbitmq": "rabbitmq-broker",
 		"redis":    "redis-broker",
@@ -127,12 +128,10 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.Pr
 	switch details.ServiceID {
 	case "rabbitmq":
 		config = map[string]interface{}{
-			"rmq_url": "https://" + url,
+			"rmq_url": "http://" + net.JoinHostPort(host, "15672"),
 
 			"rmq_username": creds.(map[string]interface{})["username"],
 			"rmq_password": creds.(map[string]interface{})["password"],
-
-			"skip_ssl_validation": true,
 		}
 	default:
 		return nil
