@@ -164,19 +164,18 @@ func main() {
 			cfg.Retain = "7d"
 		}
 
-		var auth shield.AuthMethod
 		switch config.Shield.AuthMethod {
 		case "local":
-			auth = &shield.LocalAuth{Username: config.Shield.Username, Password: config.Shield.Password}
+			cfg.Authentication = &shield.LocalAuth{Username: config.Shield.Username, Password: config.Shield.Password}
 		case "token":
-			auth = &shield.TokenAuth{Token: config.Shield.Token}
+			cfg.Authentication = &shield.TokenAuth{Token: config.Shield.Token}
 		default:
 			fmt.Fprintf(os.Stderr, "Invalid S.H.I.E.L.D. authentication method (must be one of 'local' or 'token'): %s\n", config.Shield.AuthMethod)
 			os.Exit(2)
 		}
 
 		shieldClient = shield.NewClient(cfg)
-		if err := shieldClient.Authenticate(auth); err != nil {
+		if err := shieldClient.VerifyAuthentication(cfg.Authentication); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to authenticate to S.H.I.E.L.D.: %s\n", err)
 			os.Exit(2)
 		}
