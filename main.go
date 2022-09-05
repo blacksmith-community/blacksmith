@@ -148,8 +148,8 @@ func main() {
 
 			Agent: config.Shield.Agent,
 
-			TenantUUID: config.Shield.Tenant,
-			StoreUUID:  config.Shield.Store,
+			Tenant: config.Shield.Tenant,
+			Store:  config.Shield.Store,
 
 			Schedule: config.Shield.Schedule,
 			Retain:   config.Shield.Retain,
@@ -174,9 +174,9 @@ func main() {
 			os.Exit(2)
 		}
 
-		shieldClient = shield.NewClient(cfg)
-		if err := shieldClient.VerifyAuthentication(cfg.Authentication); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to authenticate to S.H.I.E.L.D.: %s\n", err)
+		shieldClient, err = shield.NewClient(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create S.H.I.E.L.D. client: %s\n", err)
 			os.Exit(2)
 		}
 	}

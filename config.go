@@ -45,8 +45,8 @@ type ShieldConfig struct {
 	Username   string `yaml:"username"`
 	Password   string `yaml:"password"`
 
-	Tenant string `yaml:"tenant"`
-	Store  string `yaml:"store"`
+	Tenant string `yaml:"tenant"` // Full UUID or exact name
+	Store  string `yaml:"store"`  // Full UUID or exact name
 
 	Schedule string `yaml:"schedule"` // daily, weekly, daily at 11:00
 	Retain   string `yaml:"retain"`   // 7d, 7w, ...

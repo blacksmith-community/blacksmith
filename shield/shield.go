@@ -25,8 +25,6 @@ var (
 type Client interface {
 	io.Closer
 
-	VerifyAuthentication(auth shield.AuthMethod) error
-
 	CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error
 	DeleteSchedule(instance string, details brokerapi.DeprovisionDetails) error
 }
@@ -35,9 +33,6 @@ type Client interface {
 type NoopClient struct{}
 
 func (cli *NoopClient) Close() error {
-	return nil
-}
-func (cli *NoopClient) VerifyAuthentication(auth shield.AuthMethod) error {
 	return nil
 }
 func (cli *NoopClient) CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error {
@@ -70,8 +65,8 @@ type Config struct {
 
 	Agent string
 
-	TenantUUID string
-	StoreUUID  string
+	Tenant string
+	Store  string
 
 	Schedule string
 	Retain   string
@@ -81,17 +76,33 @@ type Config struct {
 	Authentication AuthMethod
 }
 
-func NewClient(cfg Config) *NetworkClient {
+func NewClient(cfg Config) (*NetworkClient, error) {
+	cli := &shield.Client{
+		URL:                cfg.Address,
+		InsecureSkipVerify: cfg.Insecure,
+	}
+
+	if err := cli.Authenticate(cfg.Authentication); err != nil {
+		return nil, err
+	}
+
+	tenant, err := cli.FindTenant(cfg.Tenant, false)
+	if err != nil {
+		return nil, err
+	}
+
+	store, err := cli.FindStore(tenant, cfg.Store, false)
+	if err != nil {
+		return nil, err
+	}
+
 	return &NetworkClient{
-		shield: &shield.Client{
-			URL:                cfg.Address,
-			InsecureSkipVerify: cfg.Insecure,
-		},
+		shield: cli,
 
 		agent: cfg.Agent,
 
-		tenant: &shield.Tenant{UUID: cfg.TenantUUID},
-		store:  &shield.Store{UUID: cfg.StoreUUID},
+		tenant: tenant,
+		store:  store,
 
 		schedule: cfg.Schedule,
 		retain:   cfg.Retain,
@@ -99,15 +110,11 @@ func NewClient(cfg Config) *NetworkClient {
 		enabledOnTargets: cfg.EnabledOnTargets,
 
 		auth: cfg.Authentication,
-	}
+	}, nil
 }
 
 func (cli *NetworkClient) Close() error {
 	return cli.shield.Logout()
-}
-
-func (cli *NetworkClient) VerifyAuthentication(auth shield.AuthMethod) error {
-	return cli.shield.Authenticate(auth)
 }
 
 func join(s ...string) string {
