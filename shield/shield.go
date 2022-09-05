@@ -86,7 +86,7 @@ func NewClient(cfg Config) (*NetworkClient, error) {
 		return nil, err
 	}
 
-	tenant, err := cli.FindTenant(cfg.Tenant, false)
+	tenant, err := cli.FindMyTenant(cfg.Tenant, false)
 	if err != nil {
 		return nil, err
 	}
