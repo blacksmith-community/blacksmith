@@ -1,0 +1,56 @@
+workspace(name = "blacksmith")
+
+GAZELLE_VERSION = "v0.26.0"
+
+GAZELLE_SHA = "501deb3d5695ab658e82f6f6f549ba681ea3ca2a5fb7911154b5aa45596183fa"
+
+GO_VERSION = "1.18.4"
+
+RULES_GO_VERSION = "v0.33.0"
+
+RULES_GO_SHA = "685052b498b6ddfe562ca7a97736741d87916fe536623afb7da2824c0211c369"
+
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+##############################################################################
+# Golang
+##############################################################################
+# buildifier is written in Go and hence needs rules_go to be built.
+# See https://github.com/bazelbuild/rules_go for the up to date setup instructions.
+http_archive(
+    name = "io_bazel_rules_go",
+    sha256 = RULES_GO_SHA,
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/%s/rules_go-%s.zip" % (RULES_GO_VERSION, RULES_GO_VERSION),
+        "https://github.com/bazelbuild/rules_go/releases/download/%s/rules_go-%s.zip" % (RULES_GO_VERSION, RULES_GO_VERSION),
+    ],
+)
+
+load("@io_bazel_rules_go//go:deps.bzl", "go_register_toolchains", "go_rules_dependencies")
+
+go_rules_dependencies()
+
+go_register_toolchains(
+    # nogo = "@//:nogo",
+    version = GO_VERSION,
+)
+
+##############################################################################
+# Gazelle
+##############################################################################
+http_archive(
+    name = "bazel_gazelle",
+    sha256 = GAZELLE_SHA,
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-gazelle/releases/download/%s/bazel-gazelle-%s.tar.gz" % (GAZELLE_VERSION, GAZELLE_VERSION),
+        "https://github.com/bazelbuild/bazel-gazelle/releases/download/%s/bazel-gazelle-%s.tar.gz" % (GAZELLE_VERSION, GAZELLE_VERSION),
+    ],
+)
+
+load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
+load("//:go_deps.bzl", "go_repositories")
+
+# gazelle:repository_macro go_deps.bzl%go_repositories
+go_repositories()
+
+gazelle_dependencies(go_repository_default_config = "@//:WORKSPACE.bazel")
