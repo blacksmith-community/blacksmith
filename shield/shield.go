@@ -91,7 +91,7 @@ func NewClient(cfg Config) (*NetworkClient, error) {
 		return nil, err
 	}
 
-	store, err := cli.FindStore(tenant, cfg.Store, false)
+	store, err := cli.FindUsableStore(tenant, cfg.Store, false)
 	if err != nil {
 		return nil, err
 	}
