@@ -403,21 +403,8 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	}
 
 	if m, ok := creds.(map[string]interface{}); ok {
-		if ok {
-			elem, ok := m["admin_username"]
-			if elem, ok = m["admin_username"]; ok {
-				if ok {
-					delete(m, "admin_username")
-				}
-			}
-			if elem, ok = m["admin_password"]; ok {
-				if ok {
-					delete(m, "admin_password")
-				}
-			}
-			_ = elem
-			creds = m
-		}
+		delete(m, "admin_username")
+		delete(m, "admin_password")
 	}
 
 	binding.Credentials = creds
