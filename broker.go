@@ -402,6 +402,11 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 		return binding, err
 	}
 
+	if m, ok := creds.(map[string]interface{}); ok {
+		delete(m, "admin_username")
+		delete(m, "admin_password")
+	}
+
 	binding.Credentials = creds
 	l.Debug("credentials are: %v", binding)
 
