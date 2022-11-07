@@ -147,8 +147,8 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.Pr
 		config = map[string]interface{}{
 			"rmq_url": "http://" + net.JoinHostPort(host, "15672"),
 
-			"rmq_username": creds.(map[string]interface{})["username"],
-			"rmq_password": creds.(map[string]interface{})["password"],
+			"rmq_username": creds.(map[string]interface{})["admin_username"],
+			"rmq_password": creds.(map[string]interface{})["admin_password"],
 		}
 	default:
 		return nil
