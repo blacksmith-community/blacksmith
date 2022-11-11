@@ -431,10 +431,6 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 				return binding, err
 			}
 
-			m["username"] = usernameDynamic
-			m["password"] = passwordDynamic
-			m["credential_type"] = "dynamic"
-
 			creds, err = yamlGsub(creds, usernameStatic, usernameDynamic)
 			if err != nil {
 				return binding, err
