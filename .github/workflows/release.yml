@@ -23,18 +23,10 @@ jobs:
       - name: Build Blacksmith
         run: |
           make VERSION=${{ steps.version.outputs.replaced }} shipit
-      
-      - name: Conventional Changelog Action
-        id: changelog
-        uses: TriPSs/conventional-changelog-action@v3
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          output-file: "false"
 
       - name: Create Release
         id:   release
         uses: actions/create-release@v1
-        if: ${{ steps.changelog.outputs.skipped == 'false' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -43,7 +35,8 @@ jobs:
           release_name: Blacksmith ${{ github.ref }}
           draft:        false
           prerelease:   false
-          body: ${{ steps.changelog.outputs.clean_changelog }}
+          body: |
+            _one of the Blacksmith devs really ought to update these release notes..._
 
       - name: Upload Release Tarball
         uses: actions/upload-release-asset@v1
