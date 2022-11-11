@@ -661,6 +661,5 @@ func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {
 			}
 		}
 	}
-	l.Debug("current value of removedDeploymentNames: %v", removedDeploymentNames)
 	return removedDeploymentNames, nil
 }
