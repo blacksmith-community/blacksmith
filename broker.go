@@ -6,10 +6,15 @@ import (
 	"io/ioutil"
 	"os"
 	"time"
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"strings"
 
 	"github.com/blacksmith-community/blacksmith/shield"
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v2"
 )
 
@@ -403,6 +408,50 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	}
 
 	if m, ok := creds.(map[string]interface{}); ok {
+
+		if apiUrl, ok := m["api_url"]; ok {
+			adminUsername := m["admin_username"].(string)
+			adminPassword := m["admin_password"].(string)
+			vhost := m["vhost"].(string)
+
+			usernameDynamic := bindingID
+			passwordDynamic := uuid.New().String()
+			usernameStatic := m["username"].(string)
+			passwordStatic := m["password"].(string)
+
+			err := CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl.(string))
+			if err != nil {
+				// err
+				return binding, err
+			}
+
+			err = GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl.(string))
+			if err != nil {
+				// err
+				return binding, err
+			}
+
+			m["username"] = usernameDynamic
+			m["password"] = passwordDynamic
+			m["credential_type"] = "dynamic"
+
+			creds, err = yamlGsub(creds, usernameStatic, usernameDynamic)
+			if err != nil {
+				return binding, err
+			}
+	
+			creds, err = yamlGsub(creds, passwordStatic, passwordDynamic)
+			if err != nil {
+				return binding, err
+			}
+			m["username"] = usernameDynamic
+			m["password"] = passwordDynamic
+			m["credential_type"] = "dynamic"
+
+		}
+	}
+
+	if m, ok := creds.(map[string]interface{}); ok {
 		delete(m, "admin_username")
 		delete(m, "admin_password")
 	}
@@ -414,10 +463,144 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	return binding, nil
 }
 
+func yamlGsub(obj interface{}, orig string, replacement string) (interface{}, error) {
+	m, err := yaml.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	s := string(m)
+	replaced := strings.Replace(s, orig, replacement, -1)
+
+	var data map[interface{}]interface{}
+
+	if err = yaml.Unmarshal([]byte(replaced), &data); err != nil {
+		return nil, err
+	}
+
+	return deinterfaceMap(data), nil
+}
+
+func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl string) error {
+	payload := struct {
+		Password string `json:"password"`
+		Tags     string `json:"tags"`
+	}{Password: passwordDynamic, Tags: "management,policymaker"}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	createUrl := apiUrl + "/users/" + usernameDynamic
+
+
+	request, err := http.NewRequest(http.MethodPut, createUrl, bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+	
+	request.SetBasicAuth(adminUsername, adminPassword)
+
+	request.Header.Set("content-type", "application/json")
+
+
+	resp, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusCreated { 
+		return err
+	}
+
+	return nil
+}
+
+func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl string) error {
+	payload := struct {
+		Configure string `json:"configure"`
+		Write     string `json:"write"`
+		Read      string `json:"read"`
+	}{Configure: ".*", Write: ".*", Read: ".*"}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	permUrl := apiUrl + "/permissions/" + vhost + "/" + usernameDynamic
+
+	request, err := http.NewRequest(http.MethodPut, permUrl, bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+
+	request.SetBasicAuth(adminUsername, adminPassword)
+	request.Header.Set("content-type", "application/json")
+
+	resp, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return err
+	}
+
+	return nil
+}
+
+func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string) error {
+
+	deleteUrl := apiUrl + "/users/" + bindingID
+
+	request, err := http.NewRequest("DELETE", deleteUrl, nil)
+	if err != nil {
+		return err
+	}
+
+	request.SetBasicAuth(adminUsername, adminPassword)
+	request.Header.Set("content-type", "application/json")
+
+	resp, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		return err
+	}
+
+	return nil
+}
+
 func (b *Broker) Unbind(instanceID, bindingID string, details brokerapi.UnbindDetails) error {
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
 	l.Info("unbind operation started")
-	/* nothing to do */
+
+	if strings.Contains(details.PlanID, "rabbitmq") {
+		fmt.Println("Unbind operation for rabbitmq service")
+		plan, err := b.FindPlan(details.ServiceID, details.PlanID)
+		if err != nil {
+			l.Error("failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
+			return err
+		}
+		creds, err := GetCreds(instanceID, plan, b.BOSH, l)
+		if err != nil {
+			return  err
+		}
+		if m, ok := creds.(map[string]interface{}); ok {
+			adminUsername := m["admin_username"].(string)
+			adminPassword := m["admin_password"].(string)
+			apiUrl := m["api_url"].(string)
+			fmt.Println("Deleting dynamic credentials for user/bindingID", bindingID, "from rabbtimq instance")
+			err = DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl)
+			if err != nil {
+				fmt.Println("Failed to delete user/bindingID", bindingID)
+				return  err
+			}
+		}
+	}
+
 	l.Info("unbind successful")
 	return nil
 }
@@ -482,5 +665,6 @@ func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {
 			}
 		}
 	}
+	l.Debug("current value of removedDeploymentNames: %v", removedDeploymentNames)
 	return removedDeploymentNames, nil
 }
