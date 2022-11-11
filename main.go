@@ -238,11 +238,12 @@ func main() {
 			}
 			l.Info("current vault db looks like: %v", vaultDB.Data)
 			broker.serviceWithNoDeploymentCheck()
-			task, err := bosh.Cleanup(false)
-			l.Info("taskid for the bosh cleanup is %v", task.ID)
-			if err != nil {
-				l.Error("bosh cleanup failed to run properly: %s", err)
-			}
+//			Disable cleanup process, using external bosh director
+//			task, err := bosh.Cleanup(false)
+//			l.Info("taskid for the bosh cleanup is %v", task.ID)
+//			if err != nil {
+//				l.Error("bosh cleanup failed to run properly: %s", err)
+//			}
 		}
 	}
 }

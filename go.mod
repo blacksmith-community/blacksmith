@@ -9,6 +9,7 @@ require (
 	github.com/drewolson/testflight v1.0.0 // indirect
 	github.com/geofffranks/spruce v1.27.0
 	github.com/go-martini/martini v0.0.0-20170121215854-22fa46961aab // indirect
+	github.com/google/uuid v1.1.2-0.20190416172445-c2e93f3ae59f
 	github.com/martini-contrib/render v0.0.0-20150707142108-ec18f8345a11 // indirect
 	github.com/onsi/ginkgo v1.13.0
 	github.com/onsi/gomega v1.10.1
