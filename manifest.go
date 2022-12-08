@@ -34,6 +34,7 @@ func InitManifest(p Plan, instanceID string) error {
 
 	/* otherwise, execute it (chmodding to cut Forge authors some slack...) */
 	os.Chmod(p.InitScriptPath, 0755)
+
 	cmd := exec.Command(p.InitScriptPath)
 
 	cmd.Env = os.Environ()
@@ -43,13 +44,9 @@ func InitManifest(p Plan, instanceID string) error {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_INSTANCE_DATA_DIR=%s", GetWorkDir()))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("INSTANCE_ID=%s", instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_PLAN=%s", p.ID))
-	network := os.Getenv("BLACKSMITH_NETWORK") 
-	if len(network) == 0 {
-		network = "blacksmith" // TODO: From Config
-	}
-	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_NETWORK=%s", network))
+  // NOTE: BOSH_NETWORK is set in the env in config.go
 
-	/* put more environment variables here, as needed */
+  /* TODO: put more environment variables here, as needed */
 
 	out, err := cmd.CombinedOutput()
 	Debug("init script `%s' said:\n%s", p.InitScriptPath, string(out))
@@ -148,10 +145,7 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 
 	byType := make(map[string]*Job)
 
-	network := os.Getenv("BLACKSMITH_NETWORK") 
-	if len(network) == 0 {
-		network = "blacksmith" // TODO: From Config
-	}
+	network := os.Getenv("BOSH_NETWORK")
 
 	for _, vm := range vms {
 		l.Debug("vm.id: %s, vm.VMCID: %s", vm.ID, vm.VMCID)

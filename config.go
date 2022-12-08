@@ -68,8 +68,9 @@ type BOSHConfig struct {
 	SkipSslValidation bool         `yaml:"skip_ssl_validation"`
 	Stemcells         []Uploadable `yaml:"stemcells"`
 	Releases          []Uploadable `yaml:"releases"`
-	CCPath            string       `yaml:"cloud-config"`
+  CCPath            string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???
 	CloudConfig       string
+	Network           string       `yaml:"network"`
 }
 
 func ReadConfig(path string) (c Config, err error) {
@@ -120,6 +121,12 @@ func ReadConfig(path string) (c Config, err error) {
 		}
 		c.BOSH.CloudConfig = string(b)
 	}
+
+  if c.BOSH.Network == "" {
+    c.BOSH.Network = "blacksmith" // Default
+  }
+
+  os.Setenv("BOSH_NETWORK", c.BOSH.Network) // Required by manifest.go
 
 	os.Setenv("VAULT_ADDR", c.Vault.Address)
 
