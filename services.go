@@ -14,6 +14,7 @@ type Plan struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description" json:"description"`
 	Limit       int    `yaml:"limit" json:"limit"`
+	Type        string `yaml:"type" json:"type"`
 
 	Manifest       map[interface{}]interface{} `json:"-"`
 	Credentials    map[interface{}]interface{} `json:"-"`
@@ -25,6 +26,7 @@ type Plan struct {
 type Service struct {
 	ID          string   `yaml:"id" json:"id"`
 	Name        string   `yaml:"name" json:"name"`
+	Type        string   `yaml:"type" json:"type"`
 	Description string   `yaml:"description" json:"description"`
 	Bindable    bool     `yaml:"bindable" json:"bindable"`
 	Tags        []string `yaml:"tags" json:"tags"`
@@ -150,6 +152,7 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 				return pp, err
 			}
 			p.ID = service.ID + "-" + p.ID
+			p.Type = service.Type
 			p.Service = &service
 			pp = append(pp, p)
 		}
