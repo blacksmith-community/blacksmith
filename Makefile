@@ -21,6 +21,7 @@ shipit:
 	@echo "Compiling Blacksmith Broker binaries..."
 	rm -rf artifacts
 	mkdir artifacts
+	GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o artifacts/blacksmith-darwin-arm64 .
 	GOOS=darwin GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o artifacts/blacksmith-darwin-amd64 .
 	GOOS=linux  GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o artifacts/blacksmith-linux-amd64  .
 
