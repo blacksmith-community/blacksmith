@@ -2,6 +2,3 @@
 /artifacts
 *.cov
 .DS_Store
-
-# Bazel
-bazel-*
