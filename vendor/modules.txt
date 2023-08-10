@@ -1,7 +1,8 @@
 # github.com/Knetic/govaluate v3.0.0+incompatible
+## explicit
 github.com/Knetic/govaluate
 # github.com/aws/aws-sdk-go v1.34.24
-## explicit
+## explicit; go 1.11
 github.com/aws/aws-sdk-go/aws
 github.com/aws/aws-sdk-go/aws/awserr
 github.com/aws/aws-sdk-go/aws/awsutil
@@ -46,48 +47,59 @@ github.com/aws/aws-sdk-go/service/sts/stsiface
 ## explicit
 github.com/cloudfoundry-community/gogobosh
 # github.com/cloudfoundry-community/vaultkv v0.3.0
+## explicit; go 1.15
 github.com/cloudfoundry-community/vaultkv
 # github.com/codegangsta/inject v0.0.0-20150114235600-33e0aa1cb7c0
 ## explicit
 # github.com/drewolson/testflight v1.0.0
 ## explicit
 # github.com/fsnotify/fsnotify v1.4.9
+## explicit; go 1.13
 github.com/fsnotify/fsnotify
 # github.com/geofffranks/simpleyaml v0.0.0-20161109204137-c9320f076de5
+## explicit
 github.com/geofffranks/simpleyaml
 # github.com/geofffranks/spruce v1.27.0
-## explicit
+## explicit; go 1.14
 github.com/geofffranks/spruce
 github.com/geofffranks/spruce/log
 # github.com/geofffranks/yaml v0.0.0-20161117152608-9f2fe4b6f295
+## explicit
 github.com/geofffranks/yaml
 # github.com/go-martini/martini v0.0.0-20170121215854-22fa46961aab
 ## explicit
 # github.com/golang/protobuf v1.4.2
+## explicit; go 1.9
 github.com/golang/protobuf/proto
 # github.com/google/uuid v1.1.2-0.20190416172445-c2e93f3ae59f
 ## explicit
 github.com/google/uuid
 # github.com/gorilla/mux v1.7.3
+## explicit
 github.com/gorilla/mux
 # github.com/gorilla/websocket v1.2.1-0.20171123081129-23059f29570f
+## explicit
 github.com/gorilla/websocket
 # github.com/jhunt/go-querytron v0.0.0-20190121150331-d03b28210bbc
+## explicit
 github.com/jhunt/go-querytron
 # github.com/jmespath/go-jmespath v0.3.0
+## explicit; go 1.14
 github.com/jmespath/go-jmespath
 # github.com/martini-contrib/render v0.0.0-20150707142108-ec18f8345a11
 ## explicit
 # github.com/mattn/go-isatty v0.0.12
+## explicit; go 1.12
 github.com/mattn/go-isatty
 # github.com/nxadm/tail v1.4.4
+## explicit; go 1.13
 github.com/nxadm/tail
 github.com/nxadm/tail/ratelimiter
 github.com/nxadm/tail/util
 github.com/nxadm/tail/watch
 github.com/nxadm/tail/winfile
 # github.com/onsi/ginkgo v1.13.0
-## explicit
+## explicit; go 1.13
 github.com/onsi/ginkgo
 github.com/onsi/ginkgo/config
 github.com/onsi/ginkgo/internal/codelocation
@@ -122,7 +134,7 @@ github.com/onsi/gomega/matchers/support/goraph/node
 github.com/onsi/gomega/matchers/support/goraph/util
 github.com/onsi/gomega/types
 # github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c
-## explicit
+## explicit; go 1.12
 # github.com/pborman/uuid v1.2.1
 ## explicit
 github.com/pborman/uuid
@@ -134,30 +146,36 @@ github.com/pivotal-cf/brokerapi/auth
 ## explicit
 github.com/pivotal-golang/lager
 # github.com/shieldproject/shield v0.10.10-0.20220624132236-7b2f20a37a18
-## explicit
+## explicit; go 1.13
 github.com/shieldproject/shield/client/v2/shield
 # github.com/smallfish/simpleyaml v0.0.0-20160128122539-e0865b8fe0bb
 ## explicit
 github.com/smallfish/simpleyaml
 # github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be
+## explicit
 github.com/starkandwayne/goutils/ansi
 github.com/starkandwayne/goutils/tree
 # github.com/ziutek/utils v0.0.0-20190626152656-eb2a3b364d6c
+## explicit
 github.com/ziutek/utils/netaddr
 # golang.org/x/net v0.0.0-20201224014010-6772e930b67b
+## explicit; go 1.11
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp
 golang.org/x/net/html
 golang.org/x/net/html/atom
 golang.org/x/net/html/charset
 # golang.org/x/oauth2 v0.0.0-20180821212333-d2e6202438be
+## explicit
 golang.org/x/oauth2
 golang.org/x/oauth2/clientcredentials
 golang.org/x/oauth2/internal
 # golang.org/x/sys v0.0.0-20210113181707-4bcb84eeeb78
+## explicit; go 1.12
 golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
 # golang.org/x/text v0.3.5
+## explicit; go 1.11
 golang.org/x/text/encoding
 golang.org/x/text/encoding/charmap
 golang.org/x/text/encoding/htmlindex
@@ -176,9 +194,11 @@ golang.org/x/text/language
 golang.org/x/text/runes
 golang.org/x/text/transform
 # golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543
+## explicit; go 1.11
 golang.org/x/xerrors
 golang.org/x/xerrors/internal
 # google.golang.org/appengine v1.4.0
+## explicit
 google.golang.org/appengine/internal
 google.golang.org/appengine/internal/base
 google.golang.org/appengine/internal/datastore
@@ -187,6 +207,7 @@ google.golang.org/appengine/internal/remote_api
 google.golang.org/appengine/internal/urlfetch
 google.golang.org/appengine/urlfetch
 # google.golang.org/protobuf v1.23.0
+## explicit; go 1.9
 google.golang.org/protobuf/encoding/prototext
 google.golang.org/protobuf/encoding/protowire
 google.golang.org/protobuf/internal/descfmt
@@ -215,7 +236,8 @@ google.golang.org/protobuf/reflect/protoregistry
 google.golang.org/protobuf/runtime/protoiface
 google.golang.org/protobuf/runtime/protoimpl
 # gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7
+## explicit
 gopkg.in/tomb.v1
 # gopkg.in/yaml.v2 v2.4.0
-## explicit
+## explicit; go 1.15
 gopkg.in/yaml.v2
