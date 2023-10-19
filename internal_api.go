@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"regexp"
 	"time"
@@ -188,6 +189,44 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				fmt.Fprintf(w, "Task %d | %s | ERROR: [%d] %s\n", id, ts.Format("15:04:05"), event.Error.Code, event.Error.Message)
 			}
 		}
+		return
+	}
+
+	pattern = regexp.MustCompile("^/b/([^/]+)/update-manifest$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		if req.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprint(w, "Method Not Allowed")
+			return
+		}
+
+		l := Logger.Wrap("update-manifest")
+		l.Debug("Updating BOSH manifest for %s", m[1])
+
+		newManifest, err := ioutil.ReadAll(req.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "error reading request body: %s\n", err)
+			return
+		}
+
+		vaultPath := fmt.Sprintf("%s/manifest", m[1])
+
+		manifestData := struct {
+			Manifest string `json:"manifest"`
+		}{
+			Manifest: string(newManifest),
+		}
+
+		err = api.Vault.Put(vaultPath, &manifestData)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, "error updating manifest in vault: %s\n", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "{\"message\": \"Manifest for %s updated successfully\"}", m[1])
 		return
 	}
 
