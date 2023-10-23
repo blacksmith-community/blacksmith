@@ -27,7 +27,7 @@ require (
 	github.com/go-martini/martini v0.0.0-20170121215854-22fa46961aab // indirect
 	github.com/golang/protobuf v1.4.2 // indirect
 	github.com/gorilla/mux v1.7.3 // indirect
-	github.com/gorilla/websocket v1.2.1-0.20171123081129-23059f29570f // indirect
+	github.com/gorilla/websocket v1.4.1 // indirect
 	github.com/jhunt/go-querytron v0.0.0-20190121150331-d03b28210bbc // indirect
 	github.com/jmespath/go-jmespath v0.3.0 // indirect
 	github.com/martini-contrib/render v0.0.0-20150707142108-ec18f8345a11 // indirect
