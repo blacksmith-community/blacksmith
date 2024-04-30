@@ -454,6 +454,7 @@ func (vault *Vault) updateHomeDirs() {
 			Local struct {
 				URL   string `json:"url"`
 				Token string `json:"token"`
+				NoStrongbox bool `json:"no-strongbox"`
 			} `json:"blacksmith"`
 		} `json:"vaults"`
 	}
@@ -461,6 +462,7 @@ func (vault *Vault) updateHomeDirs() {
 	saferc.Current = "blacksmith"
 	saferc.Vaults.Local.URL = vault.URL
 	saferc.Vaults.Local.Token = vault.Token
+	saferc.Vaults.Local.NoStrongbox = true
 
 	b, err := json.Marshal(saferc)
 	if err != nil {
