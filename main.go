@@ -16,7 +16,7 @@ import (
 	"github.com/pivotal-golang/lager"
 )
 
-//Version gets edited during a release build
+// Version gets edited during a release build
 var Version = "(development version)"
 
 func main() {
@@ -64,7 +64,9 @@ func main() {
 	if err = vault.Init(config.Vault.CredPath); err != nil {
 		log.Fatal(err)
 	}
-
+	if err = vault.VerifyMount("secret", true); err != nil {
+		log.Fatal(err)
+	}
 	bosh, err := gogobosh.NewClient(&gogobosh.Config{
 		BOSHAddress:       config.BOSH.Address,
 		Username:          config.BOSH.Username,
@@ -238,12 +240,12 @@ func main() {
 			}
 			l.Info("current vault db looks like: %v", vaultDB.Data)
 			broker.serviceWithNoDeploymentCheck()
-//			Disable cleanup process, using external bosh director
-//			task, err := bosh.Cleanup(false)
-//			l.Info("taskid for the bosh cleanup is %v", task.ID)
-//			if err != nil {
-//				l.Error("bosh cleanup failed to run properly: %s", err)
-//			}
+			//			Disable cleanup process, using external bosh director
+			//			task, err := bosh.Cleanup(false)
+			//			l.Info("taskid for the bosh cleanup is %v", task.ID)
+			//			if err != nil {
+			//				l.Error("bosh cleanup failed to run properly: %s", err)
+			//			}
 		}
 	}
 }

@@ -1,12 +1,17 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+
+	"github.com/cloudfoundry-community/vaultkv"
 )
 
 type Vault struct {
@@ -198,6 +203,59 @@ func (vault *Vault) Unseal(key string) error {
 	return nil
 }
 
+func (vault *Vault) VerifyMount(store string, createIfMissing bool) error {
+	l := Logger.Wrap("Verify Mount")
+
+	vault_url, err := url.Parse(vault.URL)
+
+	if err != nil {
+		l.Error("vault URL is invalid: %s", err)
+		return err
+	}
+
+	kvvault := &vaultkv.Client{
+		AuthToken: vault.Token,
+		VaultURL:  vault_url,
+		Client: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: vault.Insecure,
+				},
+			},
+		},
+		Trace: os.Stdout,
+	}
+
+	l.Debug("checking vault has the secret mount created")
+	var mounts []string
+	var mountMap map[string]vaultkv.Mount
+	mountMap, err = kvvault.ListMounts()
+	if err != nil {
+		return err
+	}
+
+	for k := range mountMap {
+		mounts = append(mounts, k)
+	}
+
+	for _, mount := range mounts {
+		if strings.Trim(store, "/") == strings.Trim(mount, "/") {
+			l.Debug("Found secret mount %s", store)
+			return nil // Path is found
+		}
+	}
+
+	if createIfMissing {
+		return kvvault.EnableSecretsMount(store, vaultkv.Mount{
+			Type:        "kv",
+			Description: fmt.Sprintf("A KV v%d Mount created by safe", 1),
+			Options:     vaultkv.KVMountOptions{}.WithVersion(1),
+		})
+	}
+
+	return errors.New(fmt.Sprintf("Secret mount %s is missing", store))
+}
+
 func (vault *Vault) NewRequest(method, url string, data interface{}) (*http.Request, error) {
 	if data == nil {
 		return http.NewRequest(method, url, nil)
@@ -263,7 +321,7 @@ func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 	if err != nil {
 		return exists, fmt.Errorf("could not remarshal vault data")
 	}
-	
+
 	err = json.Unmarshal(dataBytes, &out)
 	return exists, err
 }
@@ -409,8 +467,8 @@ func (vault *Vault) FindInstance(id string) (*Instance, bool, error) {
 
 func (vault *Vault) State(instanceID string) (string, int, map[string]interface{}, error) {
 	type TaskState struct {
-		Action string `json:"action"`
-		Task   int  `json:"task"`
+		Action string                 `json:"action"`
+		Task   int                    `json:"task"`
 		Params map[string]interface{} `json:"params"`
 	}
 
