@@ -59,6 +59,70 @@ func WriteYamlFile(instanceID string, data []byte) error {
 	return err
 }
 
+// type Plan struct {
+//   ID          string `yaml:"id" json:"id"`
+//   Name        string `yaml:"name" json:"name"`
+//   Description string `yaml:"description" json:"description"`
+//   Limit       int    `yaml:"limit" json:"limit"`
+//
+//   Manifest          map[interface{}]interface{} `json:"-"`
+//   Credentials       map[interface{}]interface{} `json:"-"`
+//   InitScriptPath    string                      `json:"-"`
+//   UpgradeScriptPath string                      `json:"-"`
+//
+//   Service *Service `yaml:"service" json:"service"`
+// }
+
+func (b Broker) RestorePlan(instanceID string) (Plan, map[interface{}]interface{}, error) {
+	l := Logger.Wrap("Restore Plan for Instance %s", instanceID)
+
+	l.Debug("looking up details for %s", instanceID)
+	inst, exists, err := b.Vault.FindInstance(instanceID)
+	if err != nil || !exists {
+		l.Error("unable to find service instance %s in vault index", instanceID)
+		return Plan{}, nil, err
+	}
+	l.Debug("looking up service '%s' / plan '%s' in catalog", inst.ServiceID, inst.PlanID)
+	plan, err := b.FindPlan(inst.ServiceID, inst.PlanID)
+	if err != nil {
+		return Plan{}, nil, fmt.Errorf("plan %s not found", inst.PlanID)
+	}
+
+	manifest, credentials, params, initFile, upgradeFile, err := b.Vault.RestoreState(instanceID)
+
+	if err != nil {
+		// Could not  find state so return the defaults
+		l.Debug("Using default plan '%s' for %s", plan.Name, instanceID)
+		return plan, params, fmt.Errorf("Stored state for %s not found.  Err: %v", instanceID, err)
+	}
+
+	plan.Manifest = manifest
+	plan.Credentials = credentials
+
+	if len(initFile) > 1 {
+		initFileName := fmt.Sprintf("%s/init-%s", GetWorkDir(), instanceID)
+		plan.InitScriptPath = initFileName
+		err = ioutil.WriteFile(initFileName, []byte(initFile), 755)
+		if err != nil {
+			return plan, params, fmt.Errorf("Could not write init for %s/%s, err: %v", inst.PlanID, instanceID, err)
+		}
+	} // If there is no stored init, use plan default  from FindPlan
+
+	if len(upgradeFile) > 1 {
+		upgradeFileName := fmt.Sprintf("%s/upgrade-%s", GetWorkDir(), instanceID)
+		plan.UpgradeScriptPath = upgradeFileName
+
+		err = ioutil.WriteFile(upgradeFileName, []byte(upgradeFile), 755)
+		if err != nil {
+			return plan, params, fmt.Errorf("Could not write init for %s/%s, err: %v", inst.PlanID, instanceID, err)
+		}
+	} // If there is no stored upgrade, use plan default from FindPlan
+
+	//TODO:  prune blacksmith actions
+
+	return plan, params, nil
+}
+
 func (b Broker) FindPlan(serviceID string, planID string) (Plan, error) {
 	key := fmt.Sprintf("%s/%s", serviceID, planID)
 	if plan, ok := b.Plans[key]; ok {
@@ -120,6 +184,8 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	defaults := make(map[interface{}]interface{})
 	l.Debug("Param raw data: %s", details.RawParameters)
+
+	// Write data files for "init" script to process
 	err = WriteDataFile(instanceID, details.RawParameters)
 	if err != nil {
 		l.Debug("WriteDataFile write failed with '%s'", err)
@@ -128,6 +194,8 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	if err != nil {
 		l.Debug("WriteYamlFile write failed with '%s'", err)
 	}
+
+	// populate params values
 	params := make(map[interface{}]interface{})
 	err = yaml.Unmarshal(details.RawParameters, &params)
 	if err != nil {
@@ -177,10 +245,25 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		l.Error("failed to store manifest in the vault (non-fatal): %s", err)
 	}
 
+	err = b.Vault.Put(fmt.Sprintf("%s/params", instanceID), map[string]interface{}{
+		"RawParameters": details.RawParameters,
+	})
+	if err != nil {
+		l.Error("failed to store Parameters in the vault: %s", err)
+		return spec, fmt.Errorf("BOSH service deployment parameter storage failed")
+	}
+
 	l.Debug("uploading releases (if necessary) to BOSH director")
 	err = UploadReleasesFromManifest(manifest, b.BOSH, l)
 	if err != nil {
 		l.Error("failed to upload service deployment releases: %s", err)
+		return spec, fmt.Errorf("BOSH service deployment failed")
+	}
+
+	l.Debug("Store current source files in the vault (manifest.yml/credential.yml/init/upgrade)")
+	err = b.Vault.StoreState(instanceID, plan.Manifest, plan.Credentials, params, plan.InitScriptPath, plan.UpgradeScriptPath)
+	if err != nil {
+		l.Error("failed to upload source files: %s", err)
 		return spec, fmt.Errorf("BOSH service deployment failed")
 	}
 
@@ -402,6 +485,14 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 		return binding, err
 	}
 
+	storedplan, _, err := b.RestorePlan(instanceID)
+
+	if err != nil {
+		// If we stored a plan, use it instead
+		l.Debug("Found a stored plan for instance")
+		plan = storedplan
+	}
+
 	creds, err := GetCreds(instanceID, plan, b.BOSH, l)
 	if err != nil {
 		return binding, err
@@ -605,7 +696,7 @@ func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyn
 	l := Logger.Wrap("%s %s %s", instanceID, details.ServiceID, details.PlanID)
 	l.Error("update operation not implemented")
 
-	// FIXME: implement this!
+	// Implemented in internal API for testing before exposing to broker API
 
 	return false, fmt.Errorf("not implemented")
 }

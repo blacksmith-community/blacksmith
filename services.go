@@ -16,9 +16,10 @@ type Plan struct {
 	Limit       int    `yaml:"limit" json:"limit"`
 	Type        string `yaml:"type" json:"type"`
 
-	Manifest       map[interface{}]interface{} `json:"-"`
-	Credentials    map[interface{}]interface{} `json:"-"`
-	InitScriptPath string                      `json:"-"`
+	Manifest          map[interface{}]interface{} `json:"-"`
+	Credentials       map[interface{}]interface{} `json:"-"`
+	InitScriptPath    string                      `json:"-"`
+	UpgradeScriptPath string                      `json:"-"`
 
 	Service *Service `yaml:"service" json:"service"`
 }
@@ -134,6 +135,7 @@ func ReadPlan(path string) (p Plan, err error) {
 	}
 
 	p.InitScriptPath = fmt.Sprintf("%s/init", path)
+	p.UpgradeScriptPath = fmt.Sprintf("%s/upgrade", path)
 	return
 }
 
