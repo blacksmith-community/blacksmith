@@ -4,6 +4,7 @@ go 1.20
 
 require (
 	github.com/cloudfoundry-community/gogobosh v0.0.0-20210826203159-894da954b612
+	github.com/cloudfoundry-community/vaultkv v0.7.0
 	github.com/geofffranks/spruce v1.27.0
 	github.com/google/uuid v1.1.2-0.20190416172445-c2e93f3ae59f
 	github.com/onsi/ginkgo v1.16.5
@@ -18,7 +19,6 @@ require (
 require (
 	github.com/Knetic/govaluate v3.0.0+incompatible // indirect
 	github.com/aws/aws-sdk-go v1.34.24 // indirect
-	github.com/cloudfoundry-community/vaultkv v0.7.0-rc2 // indirect
 	github.com/codegangsta/inject v0.0.0-20150114235600-33e0aa1cb7c0 // indirect
 	github.com/drewolson/testflight v1.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.4.9 // indirect

@@ -46,7 +46,7 @@ github.com/aws/aws-sdk-go/service/sts/stsiface
 # github.com/cloudfoundry-community/gogobosh v0.0.0-20210826203159-894da954b612
 ## explicit
 github.com/cloudfoundry-community/gogobosh
-# github.com/cloudfoundry-community/vaultkv v0.7.0-rc2
+# github.com/cloudfoundry-community/vaultkv v0.7.0
 ## explicit; go 1.15
 github.com/cloudfoundry-community/vaultkv
 # github.com/codegangsta/inject v0.0.0-20150114235600-33e0aa1cb7c0

@@ -30,8 +30,8 @@ github.com/cloudfoundry-community/gogobosh v0.0.0-20210826203159-894da954b612/go
 github.com/cloudfoundry-community/vaultkv v0.0.0-20200311151509-343c0e6fc506/go.mod h1:pMz8czjvi3S7Lb7hgAK4J8knpIi+4fK3Bbe+LyzsHus=
 github.com/cloudfoundry-community/vaultkv v0.1.1/go.mod h1:qjEGtHytd0cvF0m9LxA2oJlkP1k2CwRMimDeiW7iYgE=
 github.com/cloudfoundry-community/vaultkv v0.3.0/go.mod h1:LtRaWcG9IMMsGBcq5HMj3rEK0sCG/ckw1xNM/JYdIxU=
-github.com/cloudfoundry-community/vaultkv v0.7.0-rc2 h1:mmh4j1BcJxrASNauBwTNqHUKA4HL0Nv8ok3HcRcEZsU=
-github.com/cloudfoundry-community/vaultkv v0.7.0-rc2/go.mod h1:D17jAL9n2GS66nbapOU7vRkGQ2D5zhsnyhCuspfNDlg=
+github.com/cloudfoundry-community/vaultkv v0.7.0 h1:VFq0TQxGIxuJuqXKDlY73XneOQyKKTEBA8EwqKI3OOU=
+github.com/cloudfoundry-community/vaultkv v0.7.0/go.mod h1:D17jAL9n2GS66nbapOU7vRkGQ2D5zhsnyhCuspfNDlg=
 github.com/codegangsta/inject v0.0.0-20150114235600-33e0aa1cb7c0 h1:sDMmm+q/3+BukdIpxwO365v/Rbspp2Nt5XntgQRXq8Q=
 github.com/codegangsta/inject v0.0.0-20150114235600-33e0aa1cb7c0/go.mod h1:4Zcjuz89kmFXt9morQgcfYZAYZ5n8WHjt81YYWIwtTM=
 github.com/coreos/etcd v3.3.10+incompatible/go.mod h1:uF7uidLiAD3TWHmW31ZFd/JWoc32PjwdhPthX9715RE=
