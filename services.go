@@ -152,7 +152,6 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 				return pp, err
 			}
 			p.ID = service.ID + "-" + p.ID
-			p.Type = service.Type
 			p.Service = &service
 			pp = append(pp, p)
 		}
