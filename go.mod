@@ -1,8 +1,6 @@
 module github.com/blacksmith-community/blacksmith
 
-go 1.22
-
-toolchain go1.22.11
+go 1.23
 
 require (
 	github.com/cloudfoundry-community/gogobosh v0.0.0-20210826203159-894da954b612
@@ -15,6 +13,7 @@ require (
 	github.com/pivotal-golang/lager v0.0.0-20160311180000-7639e31ce662
 	github.com/shieldproject/shield v0.0.0-20240719171746-f6c0035785ec
 	github.com/smallfish/simpleyaml v0.0.0-20160128122539-e0865b8fe0bb
+	golang.org/x/net v0.33.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -45,10 +44,9 @@ require (
 	github.com/pborman/uuid v1.2.1 // indirect
 	github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be // indirect
 	github.com/ziutek/utils v0.0.0-20190626152656-eb2a3b364d6c // indirect
-	golang.org/x/net v0.24.0 // indirect
 	golang.org/x/oauth2 v0.18.0 // indirect
-	golang.org/x/sys v0.19.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
