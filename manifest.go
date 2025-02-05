@@ -161,9 +161,6 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 		}
 		l.Debug("found job {name: %s, deployment: %s, id: %s, plan_id: %s, plan_name: %s, fqdn: %s, ips: [%s], dns: [%s]", job.Name, job.Deployment, job.ID, job.PlanID, job.PlanName, job.FQDN, strings.Join(vm.IPs, ", "), strings.Join(vm.DNS, ", "))
 		dnsname = job.FQDN
-		if !strings.Contains(job.PlanName, "single-node") {
-			dnsname = strings.Replace(dnsname, ".standalone.", ".node.", 1)
-		}
 
 		jobs = append(jobs, &job)
 
