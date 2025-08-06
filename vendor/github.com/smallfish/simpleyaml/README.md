@@ -2,13 +2,12 @@
 
 a Go package to interact with arbitrary YAML, similar as [go-simplejson](https://github.com/bitly/go-simplejson).
 
-[![GoDoc](https://godoc.org/github.com/smallfish/simpleyaml?status.svg)](http://godoc.org/github.com/smallfish/simpleyaml)
+[![GoDoc](https://godoc.org/github.com/smallfish/simpleyaml?status.svg)](http://godoc.org/github.com/smallfish/simpleyaml) [![Build Status](https://travis-ci.org/smallfish/simpleyaml.png)](https://travis-ci.org/smallfish/simpleyaml)
 
 #### INSTALL
     
 ```bash
-go get -u gopkg.in/yaml.v2 # required
-go get -u github.com/smallfish/simpleyaml
+$ go get -u -v github.com/smallfish/simpleyaml
 ```
 
 #### EXAMPLE
@@ -17,6 +16,7 @@ go get -u github.com/smallfish/simpleyaml
 var data = []byte(`
 name: smallfish
 age: 99
+float: 3.14159
 bool: true
 emails:
    - xxx@xx.com
@@ -42,6 +42,7 @@ if err != nil {
 fmt.Println("name:", name)
 
 // y.Get("age").Int()
+// y.Get("float").Float()
 // y.Get("bool").Bool()
 // y.Get("bb").Get("cc").Get("ee").String()
 // y.Get("bb").Get("cc").Get("ee").GetIndex(1).Int()

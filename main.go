@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blacksmith-community/blacksmith/shield"
+	"code.cloudfoundry.org/lager"
+	"blacksmith/shield"
 	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/pivotal-cf/brokerapi"
-	"github.com/pivotal-golang/lager"
 )
 
 // Version gets edited during a release build
@@ -81,6 +81,7 @@ func main() {
 
 	if config.BOSH.CloudConfig != "" {
 		l.Info("updating cloud-config...")
+		l.Debug("updating cloud-config with:\n%s", config.BOSH.CloudConfig)
 		err = bosh.UpdateCloudConfig(config.BOSH.CloudConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
@@ -107,9 +108,10 @@ func main() {
 				l.Info("skipping %s/%s (already uploaded)", r.Name, r.Version)
 				continue
 			}
+			l.Debug("uploading release %s/%s [sha1 %s] from %s", r.Name, r.Version, r.SHA1, r.URL)
 			task, err := bosh.UploadRelease(r.URL, r.SHA1)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\nFailed to upload RELEASE (%s) sha1 [%s]: %s\n", err, r.URL, r.SHA1)
+				fmt.Fprintf(os.Stderr, "\nFailed to upload RELEASE (%s) sha1 [%s]: %s\n", r.URL, r.SHA1, err)
 				os.Exit(2)
 			}
 			l.Info("uploading release %s/%s [sha1 %s] in BOSH task %d, from %s", r.Name, r.Version, r.SHA1, task.ID, r.URL)
@@ -133,6 +135,7 @@ func main() {
 				l.Info("skipping %s/%s (already uploaded)", sc.Name, sc.Version)
 				continue
 			}
+			l.Debug("uploading stemcell %s/%s [sha1 %s] from %s", sc.Name, sc.Version, sc.SHA1, sc.URL)
 			task, err := bosh.UploadStemcell(sc.URL, sc.SHA1)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\nFailed to upload STEMCELL (%s) sha1 [%s]: %s\n", err, sc.URL, sc.SHA1)
@@ -176,6 +179,7 @@ func main() {
 			os.Exit(2)
 		}
 
+		l.Debug("creating S.H.I.E.L.D. client with config: %+v", cfg)
 		shieldClient, err = shield.NewClient(cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create S.H.I.E.L.D. client: %s\n", err)

@@ -1,103 +1,140 @@
+// Copyright (C) 2015-Present Pivotal Software, Inc. All rights reserved.
+
+// This program and the accompanying materials are made available under
+// the terms of the under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+
+// http://www.apache.org/licenses/LICENSE-2.0
+
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package brokerapi
 
 import (
-	"encoding/json"
-	"errors"
+	"github.com/pivotal-cf/brokerapi/domain"
+	"github.com/pivotal-cf/brokerapi/domain/apiresponses"
 )
 
+//go:generate counterfeiter -o fakes/auto_fake_service_broker.go -fake-name AutoFakeServiceBroker . ServiceBroker
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+//Each method of the ServiceBroker interface maps to an individual endpoint of the Open Service Broker API.
+//
+//The specification is available here: https://github.com/openservicebrokerapi/servicebroker/blob/v2.14/spec.md
+//
+//The OpenAPI documentation is available here: http://petstore.swagger.io/?url=https://raw.githubusercontent.com/openservicebrokerapi/servicebroker/v2.14/openapi.yaml
 type ServiceBroker interface {
-	Services() []Service
-
-	Provision(instanceID string, details ProvisionDetails, asyncAllowed bool) (ProvisionedServiceSpec, error)
-	Deprovision(instanceID string, details DeprovisionDetails, asyncAllowed bool) (IsAsync, error)
-
-	Bind(instanceID, bindingID string, details BindDetails) (Binding, error)
-	Unbind(instanceID, bindingID string, details UnbindDetails) error
-
-	Update(instanceID string, details UpdateDetails, asyncAllowed bool) (IsAsync, error)
-
-	LastOperation(instanceID string) (LastOperation, error)
+	domain.ServiceBroker
 }
 
-type IsAsync bool
-
-type ProvisionDetails struct {
-	ServiceID        string          `json:"service_id"`
-	PlanID           string          `json:"plan_id"`
-	OrganizationGUID string          `json:"organization_guid"`
-	SpaceGUID        string          `json:"space_guid"`
-	RawParameters    json.RawMessage `json:"parameters,omitempty"`
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type DetailsWithRawParameters interface {
+	domain.DetailsWithRawParameters
 }
 
-type ProvisionedServiceSpec struct {
-	IsAsync      bool
-	DashboardURL string
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type DetailsWithRawContext interface {
+	domain.DetailsWithRawContext
 }
 
-type BindDetails struct {
-	AppGUID      string                 `json:"app_guid"`
-	PlanID       string                 `json:"plan_id"`
-	ServiceID    string                 `json:"service_id"`
-	BindResource *BindResource          `json:"bind_resource,omitempty"`
-	Parameters   map[string]interface{} `json:"parameters,omitempty"`
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type ProvisionDetails = domain.ProvisionDetails
 
-type BindResource struct {
-	AppGuid string `json:"app_guid,omitempty"`
-	Route   string `json:"route,omitempty"`
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type ProvisionedServiceSpec = domain.ProvisionedServiceSpec
 
-type UnbindDetails struct {
-	PlanID    string `json:"plan_id"`
-	ServiceID string `json:"service_id"`
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type GetInstanceDetailsSpec = domain.GetInstanceDetailsSpec
 
-type DeprovisionDetails struct {
-	PlanID    string `json:"plan_id"`
-	ServiceID string `json:"service_id"`
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type UnbindSpec = domain.UnbindSpec
 
-type UpdateDetails struct {
-	ServiceID      string                 `json:"service_id"`
-	PlanID         string                 `json:"plan_id"`
-	Parameters     map[string]interface{} `json:"parameters"`
-	PreviousValues PreviousValues         `json:"previous_values"`
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type BindDetails = domain.BindDetails
 
-type PreviousValues struct {
-	PlanID    string `json:"plan_id"`
-	ServiceID string `json:"service_id"`
-	OrgID     string `json:"organization_id"`
-	SpaceID   string `json:"space_id"`
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type BindResource = domain.BindResource
 
-type LastOperation struct {
-	State       LastOperationState
-	Description string
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type UnbindDetails = domain.UnbindDetails
 
-type LastOperationState string
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type UpdateServiceSpec = domain.UpdateServiceSpec
 
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type DeprovisionServiceSpec = domain.DeprovisionServiceSpec
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type DeprovisionDetails = domain.DeprovisionDetails
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type UpdateDetails = domain.UpdateDetails
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type PreviousValues = domain.PreviousValues
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type PollDetails = domain.PollDetails
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type LastOperation = domain.LastOperation
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type LastOperationState = domain.LastOperationState
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
 const (
 	InProgress LastOperationState = "in progress"
 	Succeeded  LastOperationState = "succeeded"
 	Failed     LastOperationState = "failed"
 )
 
-type Binding struct {
-	Credentials     interface{} `json:"credentials"`
-	SyslogDrainURL  string      `json:"syslog_drain_url,omitempty"`
-	RouteServiceURL string      `json:"route_service_url,omitempty"`
-}
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type Binding = domain.Binding
 
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type GetBindingSpec = domain.GetBindingSpec
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type VolumeMount = domain.VolumeMount
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain
+type SharedDevice = domain.SharedDevice
+
+//Deprecated: Use github.com/pivotal-cf/brokerapi/domain/apiresponses
 var (
-	ErrInstanceAlreadyExists  = errors.New("instance already exists")
-	ErrInstanceDoesNotExist   = errors.New("instance does not exist")
-	ErrInstanceLimitMet       = errors.New("instance limit for this service has been reached")
-	ErrPlanQuotaExceeded      = errors.New("The quota for this service plan has been exceeded. Please contact your Operator for help.")
-	ErrBindingAlreadyExists   = errors.New("binding already exists")
-	ErrBindingDoesNotExist    = errors.New("binding does not exist")
-	ErrAsyncRequired          = errors.New("This service plan requires client support for asynchronous service operations.")
-	ErrPlanChangeNotSupported = errors.New("The requested plan migration cannot be performed")
-	ErrRawParamsInvalid       = errors.New("The format of the parameters is not valid JSON")
+	ErrInstanceAlreadyExists = apiresponses.ErrInstanceAlreadyExists
+
+	ErrInstanceDoesNotExist = apiresponses.ErrInstanceDoesNotExist
+
+	ErrInstanceLimitMet = apiresponses.ErrInstanceLimitMet
+
+	ErrBindingAlreadyExists = apiresponses.ErrBindingAlreadyExists
+
+	ErrBindingDoesNotExist = apiresponses.ErrBindingDoesNotExist
+
+	ErrBindingNotFound = apiresponses.ErrBindingNotFound
+
+	ErrAsyncRequired = apiresponses.ErrAsyncRequired
+
+	ErrPlanChangeNotSupported = apiresponses.ErrPlanChangeNotSupported
+
+	ErrRawParamsInvalid = apiresponses.ErrRawParamsInvalid
+
+	ErrAppGuidNotProvided = apiresponses.ErrAppGuidNotProvided
+
+	ErrPlanQuotaExceeded = apiresponses.ErrPlanQuotaExceeded
+
+	ErrServiceQuotaExceeded = apiresponses.ErrServiceQuotaExceeded
+
+	ErrConcurrentInstanceAccess = apiresponses.ErrConcurrentInstanceAccess
+
+	ErrMaintenanceInfoConflict = apiresponses.ErrMaintenanceInfoConflict
+
+	ErrMaintenanceInfoNilConflict = apiresponses.ErrMaintenanceInfoNilConflict
 )

@@ -6,25 +6,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	boshhttp "github.com/cloudfoundry/bosh-utils/httpclient"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
-//Client used to communicate with BOSH
+// Client used to communicate with BOSH
 type Client struct {
 	config   Config
 	Endpoint Endpoint
 }
 
-//Config is used to configure the creation of a client
+// Config is used to configure the creation of a client
 type Config struct {
 	BOSHAddress       string
 	Username          string
@@ -52,10 +51,10 @@ type request struct {
 	obj    interface{}
 }
 
-//DefaultConfig configuration for client
+// DefaultConfig configuration for client
 func DefaultConfig() *Config {
 	return &Config{
-		BOSHAddress:       "https://192.168.50.4:25555",
+		BOSHAddress:       "https://192.168.50.4:25555", // bosh-lite default IP:PORT
 		Username:          "admin",
 		Password:          "admin",
 		HttpClient:        http.DefaultClient,
@@ -86,25 +85,19 @@ func NewClient(config *Config) (*Client, error) {
 		config.Password = defConfig.Password
 	}
 
-	//Save the configured HTTP Client timeout for later
+	// Save the configured HTTP Client timeout for later
 	var timeout time.Duration
 	if config.HttpClient != nil {
 		timeout = config.HttpClient.Timeout
 	}
 
+	// Skip TLS cert validation and respect BOSH_ALL_PROXY env var
+	config.HttpClient = boshhttp.CreateDefaultClientInsecureSkipVerify()
 	endpoint := &Endpoint{}
-	config.HttpClient = &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: config.SkipSslValidation,
-			},
-		},
-	}
 
 	authType, err := getAuthType(config.BOSHAddress, config.HttpClient)
 	if err != nil {
-		return nil, fmt.Errorf("Could not get auth type: %v", err)
+		return nil, fmt.Errorf("could not get client auth type: %w", err)
 	}
 	if authType != "uaa" {
 		config.HttpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -123,7 +116,7 @@ func NewClient(config *Config) (*Client, error) {
 		endpoint, err := getUAAEndpoint(config.BOSHAddress, oauth2.NewClient(ctx, nil))
 
 		if err != nil {
-			return nil, fmt.Errorf("Could not get api /info: %v", err)
+			return nil, fmt.Errorf("could not get api /info: %w", err)
 		}
 
 		config.Endpoint = endpoint
@@ -132,7 +125,7 @@ func NewClient(config *Config) (*Client, error) {
 			authConfig, token, err := getToken(ctx, *config)
 
 			if err != nil {
-				return nil, fmt.Errorf("Error getting token: %v", err)
+				return nil, fmt.Errorf("error getting token: %w", err)
 			}
 
 			config.TokenSource = authConfig.TokenSource(ctx, token)
@@ -175,27 +168,21 @@ func getAuthType(api string, httpClient *http.Client) (string, error) {
 }
 
 func getInfo(api string, httpClient *http.Client) (*Info, error) {
-	var (
-		info Info
-	)
-
 	if api == "" {
 		return &Info{}, nil
 	}
 
 	resp, err := httpClient.Get(api + "/info")
 	if err != nil {
-		log.Printf("Error requesting info %v", err)
 		return &Info{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	resBody, err := ioutil.ReadAll(resp.Body)
+	var info Info
+	err = json.NewDecoder(resp.Body).Decode(&info)
 	if err != nil {
-		log.Printf("Error reading info request %v", resBody)
-		return &Info{}, err
+		return &Info{}, fmt.Errorf("error unmarshalling info response: %w", err)
 	}
-	err = json.Unmarshal(resBody, &info)
 	return &info, err
 }
 
@@ -219,6 +206,20 @@ func (c *Client) NewRequest(method, path string) *request {
 	return r
 }
 
+func (c *Client) DoRequestAndUnmarshal(r *request, objPtr interface{}) error {
+	resp, err := c.DoRequest(r)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	err = json.NewDecoder(resp.Body).Decode(objPtr)
+	if err != nil {
+		return fmt.Errorf("error unmarshalling http response: %w", err)
+	}
+	return nil
+}
+
 // DoRequest runs a request with our client
 func (c *Client) DoRequest(r *request) (*http.Response, error) {
 	req, err := r.toHTTP()
@@ -232,61 +233,56 @@ func (c *Client) DoRequest(r *request) (*http.Response, error) {
 	req.Header.Add("User-Agent", "gogo-bosh")
 	resp, err := c.config.HttpClient.Do(req)
 	if err != nil {
-		log.Printf("Error in DoRequest: '%v'\n  Err: '%v'\n", r, err)
 		if strings.Contains(err.Error(), "oauth2: cannot fetch token") {
 			err = c.refreshClient()
 			if err != nil {
-				log.Printf("Error refreshing UAA client: %s\n", err.Error())
+				return nil, fmt.Errorf("error refreshing UAA client: %w", err)
 			}
 			resp, err = c.config.HttpClient.Do(req)
+		} else {
+			// errors are only returned for very bad things, not 400s etc
+			return nil, fmt.Errorf("error making bosh client http request: %w", err)
 		}
-	}
-	if resp.StatusCode > 399 {
-		log.Printf("4xx/5xx Code in DoRequest: '%v' - Status: %v \n  Err: '%v'\n", r, err, resp.Status)
+	} else if resp.StatusCode >= 400 {
 		if strings.Contains(resp.Status, "Unauthorized") {
 			err = c.refreshClient()
 			if err != nil {
-				log.Printf("Error refreshing UAA client from 400: %s\n", err.Error())
+				return nil, fmt.Errorf("error refreshing UAA client from 400: %w", err)
 			}
 			resp, err = c.config.HttpClient.Do(req)
+		} else {
+			return nil, fmt.Errorf("http %s request to %s failed with %s", req.Method, req.URL, resp.Status)
 		}
 	}
 	return resp, err
 }
 
-// UUID return uuid
+// GetUUID returns the BOSH UUID
+func (c *Client) GetUUID() (string, error) {
+	info, err := c.GetInfo()
+	if err != nil {
+		return "", fmt.Errorf("error getting the UUID: %w", err)
+	}
+	return info.UUID, nil
+}
+
+// UUID returns the BOSH uuid
+// Deprecated: Use GetUUID and check for errors
 func (c *Client) UUID() string {
-	info, _ := c.GetInfo()
-	return info.UUID
+	uuid, _ := c.GetUUID()
+	return uuid
 }
 
 // GetInfo returns BOSH Info
-func (c *Client) GetInfo() (info Info, err error) {
-	r := c.NewRequest("GET", "/info")
-	resp, err := c.DoRequest(r)
-
+func (c *Client) GetInfo() (Info, error) {
+	info, err := getInfo(c.config.BOSHAddress, c.config.HttpClient)
 	if err != nil {
-		log.Printf("Error requesting info %v", err)
-		return
+		return Info{}, err
 	}
-	defer resp.Body.Close()
-
-	resBody, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Error reading info request %v", resBody)
-		return
-	}
-	err = json.Unmarshal(resBody, &info)
-	if err != nil {
-		log.Printf("Error unmarshaling info %v", err)
-		return
-	}
-	return
+	return *info, nil
 }
 
 func (c *Client) refreshClient() error {
-	log.Printf("Refreshing expired UAA token...")
-
 	// Create a new http client to avoid authentication failure when getting a new
 	// token as the oauth2 client passes along the expired/revoked refresh token.
 	c.config.HttpClient = &http.Client{
@@ -302,7 +298,7 @@ func (c *Client) refreshClient() error {
 
 	authConfig, token, err := getToken(ctx, c.config)
 	if err != nil {
-		return fmt.Errorf("Error getting token: %v", err)
+		return fmt.Errorf("error getting token to refresh client: %w", err)
 	}
 
 	c.config.TokenSource = authConfig.TokenSource(ctx, token)
@@ -334,7 +330,7 @@ func getToken(ctx context.Context, config Config) (*oauth2.Config, *oauth2.Token
 }
 
 func getContext(config Config) context.Context {
-	return context.WithValue(oauth2.NoContext, oauth2.HTTPClient, config.HttpClient)
+	return context.WithValue(context.Background(), oauth2.HTTPClient, config.HttpClient)
 }
 
 // toHTTP converts the request to an HTTP request
@@ -357,16 +353,9 @@ func (r *request) toHTTP() (*http.Request, error) {
 func (c *Client) GetToken() (string, error) {
 	token, err := c.config.TokenSource.Token()
 	if err != nil {
-		return "", fmt.Errorf("Error getting bearer token: %v", err)
+		return "", fmt.Errorf("error getting bearer token: %w", err)
 	}
 	return "bearer " + token.AccessToken, nil
-}
-
-// decodeBody is used to JSON decode a body
-func decodeBody(resp *http.Response, out interface{}) error {
-	defer resp.Body.Close()
-	dec := json.NewDecoder(resp.Body)
-	return dec.Decode(out)
 }
 
 // encodeBody is used to encode a request body

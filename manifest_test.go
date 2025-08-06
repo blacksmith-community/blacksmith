@@ -1,8 +1,6 @@
-package main_test
+package main
 
 import (
-	. "github.com/blacksmith-community/blacksmith"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 

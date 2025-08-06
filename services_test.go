@@ -1,9 +1,7 @@
-package main_test
+package main
 
 import (
 	"fmt"
-
-	. "github.com/blacksmith-community/blacksmith"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"

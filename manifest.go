@@ -44,9 +44,9 @@ func InitManifest(p Plan, instanceID string) error {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_INSTANCE_DATA_DIR=%s", GetWorkDir()))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("INSTANCE_ID=%s", instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_PLAN=%s", p.ID))
-  // NOTE: BOSH_NETWORK is set in the env in config.go
+	// NOTE: BOSH_NETWORK is set in the env in config.go
 
-  /* TODO: put more environment variables here, as needed */
+	/* TODO: put more environment variables here, as needed */
 
 	out, err := cmd.CombinedOutput()
 	Debug("init script `%s' said:\n%s", p.InitScriptPath, string(out))

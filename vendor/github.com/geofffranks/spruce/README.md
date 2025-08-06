@@ -9,7 +9,7 @@
       ^^^[_]^^^                                                   ^^^[_]^^^
 ```
 
-[![Build Status][build-status-icon]][build-status-link] [![Slack][slack-badge]][slack-channel] ( We'll be in `#spruce`)
+[![Slack][slack-badge]][slack-channel] ( We'll be in `#spruce`)
 
 ## Introducing Spruce
 
@@ -24,29 +24,18 @@ for site-specific configurations to [DRY][dry-definition] your configs up as muc
 
 `spruce` is available via Homebrew, just `brew tap starkandwayne/cf; brew install spruce`
 
-Alternatively,  you can download a [prebuilt binaries for 64-bit Linux, or Mac OS X][releases] 
+Alternatively, you can download a [prebuilt binaries for 64-bit Linux, or Mac OS X][releases]
 
 ## How do I compile from source?
 
 1. [Install Go][install-go], e.g. on Ubuntu `sudo snap install --classic go`
-1. Install [dep](https://github.com/golang/dep)
-1. Fetch sources via `go get github.com/geofffranks/spruce/...`
+1. Fetch sources via `go get github.com/geofffranks/spruce`
 1. Change current directory to the source root `cd ~/go/src/github.com/geofffranks/spruce/`
-1. `dep ensure`
 1. Compile and execute tests `make all`
-
-## Is there a playground I can use before installing spruce?
-
-Yes! [play.spruce.cf][play.spruce] is around for testing out data merging +
-transformation in a cleanroom environment. It has a number of spruce
-versions available to it, and can be used to reproduce/troubleshoot bugs that
-you're seeing in production. Once you've reproduced an issue, or solution to a
-problem, you can save it, and share with a colleague, or reference in a GitHub
-issue.
 
 ## A Quick Example
 
-```
+```sh
 # Let's build the first yaml file we will merge
 $ cat <<EOF first.yml
 some_data: this will be overwritten later
@@ -79,7 +68,7 @@ some_data: 42
 ```
 
 The data in `second.yml` is overlayed on top of the data in `first.yml`. Check out the
-[merge semantics][merge-semantics] and [array merging][array-merge] for more info on how that was done. Or, 
+[merge semantics][merge-semantics] and [array merging][array-merge] for more info on how that was done. Or,
 check out [this example on play.spruce.cf][play.spruce-example]
 
 ## Documentation
@@ -93,7 +82,6 @@ check out [this example on play.spruce.cf][play.spruce-example]
 - [Can I use spruce with Vault?][vault-support]
 - [How can I generate spruce templates with spruce itself?][defer]
 - [How can I use spruce with BOSH's Cloud Config?][cloud-config-support]
-
 
 ## What else can Spruce do for you?
 
@@ -117,14 +105,11 @@ to audit what credentials your configs are retrieving for a system..
 
 Licensed under [the MIT License][license]
 
-[build-status-icon]:    https://ci.spruce.cf/api/v1/teams/main/pipelines/spruce-release/jobs/test/badge
-[build-status-link]:    https://ci.spruce.cf/teams/main/pipelines/spruce-release
+
 [slack-channel]:        https://cloudfoundry.slack.com/messages/spruce/
 [slack-badge]:          http://slack.cloudfoundry.org/badge.svg
 [dry-definition]:       https://en.wikipedia.org/wiki/Don%27t_repeat_yourself
 [releases]:             https://github.com/geofffranks/spruce/releases/
-[play.spruce]:          http://play.spruce.cf
-[play.spruce-example]:  http://play.spruce.cf/#0a9d88de624c1f499a4b12eb8573089a
 [operator-docs]:        https://github.com/geofffranks/spruce/blob/master/doc/operators.md
 [merge-semantics]:      https://github.com/geofffranks/spruce/blob/master/doc/merging.md
 [array-merge]:          https://github.com/geofffranks/spruce/blob/master/doc/array-merging.md

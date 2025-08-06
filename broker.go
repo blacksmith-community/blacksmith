@@ -1,20 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"os"
-	"time"
-	"bytes"
-	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
-	"github.com/blacksmith-community/blacksmith/shield"
+	"blacksmith/shield"
 	"github.com/cloudfoundry-community/gogobosh"
-	"github.com/pivotal-cf/brokerapi"
 	"github.com/google/uuid"
+	"github.com/pivotal-cf/brokerapi"
+	"github.com/pivotal-cf/brokerapi/domain"
 	"gopkg.in/yaml.v2"
 )
 
@@ -37,13 +39,19 @@ type Job struct {
 	DNS        []string `json:"dns"`
 }
 
-func WriteDataFile(instanceID string, data []byte) error {
+func WriteDataFile(
+	instanceID string,
+	data []byte,
+) error {
 	filename := GetWorkDir() + instanceID + ".json"
 	err := ioutil.WriteFile(filename, data, 0644)
 	return err
 }
 
-func WriteYamlFile(instanceID string, data []byte) error {
+func WriteYamlFile(
+	instanceID string,
+	data []byte,
+) error {
 	l := Logger.Wrap("%s", instanceID)
 	m := make(map[interface{}]interface{})
 	err := yaml.Unmarshal(data, &m)
@@ -59,7 +67,10 @@ func WriteYamlFile(instanceID string, data []byte) error {
 	return err
 }
 
-func (b Broker) FindPlan(serviceID string, planID string) (Plan, error) {
+func (b Broker) FindPlan(
+	serviceID string,
+	planID string,
+) (Plan, error) {
 	key := fmt.Sprintf("%s/%s", serviceID, planID)
 	if plan, ok := b.Plans[key]; ok {
 		return plan, nil
@@ -67,8 +78,36 @@ func (b Broker) FindPlan(serviceID string, planID string) (Plan, error) {
 	return Plan{}, fmt.Errorf("plan %s not found", key)
 }
 
-func (b *Broker) Services() []brokerapi.Service {
-	return b.Catalog
+func (b *Broker) Services(ctx context.Context) ([]domain.Service, error) {
+	// Convert brokerapi.Service to domain.Service
+	services := make([]domain.Service, len(b.Catalog))
+	for i, svc := range b.Catalog {
+		services[i] = domain.Service{
+			ID:                   svc.ID,
+			Name:                 svc.Name,
+			Description:          svc.Description,
+			Bindable:             svc.Bindable,
+			InstancesRetrievable: svc.InstancesRetrievable,
+			BindingsRetrievable:  svc.BindingsRetrievable,
+			PlanUpdatable:        svc.PlanUpdatable,
+			Plans:                make([]domain.ServicePlan, len(svc.Plans)),
+			Tags:                 svc.Tags,
+			Requires:             svc.Requires,
+			Metadata:             svc.Metadata,
+			DashboardClient:      (*domain.ServiceDashboardClient)(svc.DashboardClient),
+		}
+		for j, plan := range svc.Plans {
+			services[i].Plans[j] = domain.ServicePlan{
+				ID:          plan.ID,
+				Name:        plan.Name,
+				Description: plan.Description,
+				Free:        plan.Free,
+				Bindable:    plan.Bindable,
+				Metadata:    plan.Metadata,
+			}
+		}
+	}
+	return services, nil
 }
 
 func (b *Broker) ReadServices(dir ...string) error {
@@ -92,8 +131,16 @@ func (b *Broker) ReadServices(dir ...string) error {
 	return nil
 }
 
-func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
-	spec := brokerapi.ProvisionedServiceSpec{IsAsync: true}
+func (b *Broker) Provision(
+	ctx context.Context,
+	instanceID string,
+	details domain.ProvisionDetails,
+	asyncAllowed bool,
+) (
+	domain.ProvisionedServiceSpec,
+	error,
+) {
+	spec := domain.ProvisionedServiceSpec{IsAsync: true}
 
 	l := Logger.Wrap("%s %s/%s", instanceID, details.ServiceID, details.PlanID)
 	l.Info("provisioning new service instance")
@@ -184,7 +231,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return spec, fmt.Errorf("BOSH service deployment failed")
 	}
 
-	l.Debug("deploying to BOSH director")
+	l.Debug("deploying manifest to BOSH director:%s", manifest)
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {
 		l.Error("failed to create service deployment: %s", err)
@@ -214,14 +261,22 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	return spec, nil
 }
 
-func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.IsAsync, error) {
-	l := Logger.Wrap(fmt.Sprintf("%s %s/%s", instanceID, details.ServiceID, details.PlanID))
-	l.Info("deprovisioning service instance")
+func (b *Broker) Deprovision(
+	ctx context.Context,
+	instanceID string,
+	details domain.DeprovisionDetails,
+	asyncAllowed bool,
+) (
+	domain.DeprovisionServiceSpec,
+	error,
+) {
+	l := Logger.Wrap("%s %s/%s", instanceID, details.ServiceID, details.PlanID)
+	l.Info("deprovisioning plan (%s) service (%s) instance (%s)", details.PlanID, details.ServiceID, instanceID)
 
 	instance, exists, err := b.Vault.FindInstance(instanceID)
 	if err != nil {
 		l.Error("unable to retrieve instance details from vault index: %s", err)
-		return false, err
+		return domain.DeprovisionServiceSpec{}, err
 	}
 	if !exists {
 		l.Debug("removing defunct service from vault index")
@@ -230,7 +285,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 		}
 
 		/* return a 410 Gone to the caller */
-		return false, brokerapi.ErrInstanceDoesNotExist
+		return domain.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
 	}
 
 	deploymentName := instance.PlanID + "-" + instanceID
@@ -244,7 +299,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 		}
 
 		/* return a 410 Gone to the caller */
-		return false, brokerapi.ErrInstanceDoesNotExist
+		return domain.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
 	}
 
 	l.Debug("deleting BOSH deployment")
@@ -252,7 +307,7 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
 		l.Error("failed to delete BOSH deployment %s: %s", deploymentName, err)
-		return false, err
+		return domain.DeprovisionServiceSpec{}, err
 	}
 	l.Debug("delete operation started, BOSH task %d", task.ID)
 
@@ -273,10 +328,13 @@ func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	}
 
 	l.Info("started deprovisioning")
-	return true, nil
+	return domain.DeprovisionServiceSpec{IsAsync: true}, nil
 }
 
-func (b *Broker) OnProvisionCompleted(l *Log, instanceID string) error {
+func (b *Broker) OnProvisionCompleted(
+	l *Log,
+	instanceID string,
+) error {
 	l.Debug("provision task was successfully completed; scheduling backup in S.H.I.E.L.D. if required")
 	l.Debug("fetching instance provision details from Vault")
 	var details brokerapi.ProvisionDetails
@@ -327,8 +385,15 @@ func (b *Broker) OnProvisionCompleted(l *Log, instanceID string) error {
 	return nil
 }
 
-func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, error) {
-	l := Logger.Wrap(instanceID)
+func (b *Broker) LastOperation(
+	ctx context.Context,
+	instanceID string,
+	details domain.PollDetails,
+) (
+	domain.LastOperation,
+	error,
+) {
+	l := Logger.Wrap("%s", instanceID)
 	l.Debug("last-operation check received; checking state of service deployment")
 
 	typ, taskID, _, _ := b.Vault.State(instanceID)
@@ -339,24 +404,24 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 		task, err := b.BOSH.GetTask(taskID)
 		if err != nil {
 			l.Error("failed to retrieve task %d from BOSH director: %s", taskID, err)
-			return brokerapi.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")
+			return domain.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")
 		}
 
 		if task.State == "done" {
 			if err := b.OnProvisionCompleted(l, instanceID); err != nil {
-				return brokerapi.LastOperation{}, fmt.Errorf("provision task was successfully completed but the post-hook failed")
+				return domain.LastOperation{}, fmt.Errorf("provision task was successfully completed but the post-hook failed")
 			}
 
 			l.Debug("provision operation succeeded")
-			return brokerapi.LastOperation{State: "succeeded"}, nil
+			return domain.LastOperation{State: domain.Succeeded}, nil
 		}
 		if task.State == "error" {
 			l.Error("provision operation failed!")
-			return brokerapi.LastOperation{State: "failed"}, nil
+			return domain.LastOperation{State: domain.Failed}, nil
 		}
 
 		l.Debug("provision operation is still in progress")
-		return brokerapi.LastOperation{State: "in progress"}, nil
+		return domain.LastOperation{State: domain.InProgress}, nil
 	}
 
 	if typ == "deprovision" {
@@ -364,33 +429,41 @@ func (b *Broker) LastOperation(instanceID string) (brokerapi.LastOperation, erro
 		task, err := b.BOSH.GetTask(taskID)
 		if err != nil {
 			l.Error("failed to retrieve task %d from BOSH director: %s", taskID, err)
-			return brokerapi.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")
+			return domain.LastOperation{}, fmt.Errorf("unrecognized backend BOSH task")
 		}
 
 		if task.State == "done" {
 			l.Debug("deprovision operation succeeded")
 			l.Debug("cleaning up secret/%s from the vault", instanceID)
 			b.Vault.Clear(instanceID)
-			return brokerapi.LastOperation{State: "succeeded"}, nil
+			return domain.LastOperation{State: domain.Succeeded}, nil
 		}
 
 		if task.State == "error" {
 			l.Debug("deprovision operation failed!")
 			l.Debug("cleaning up secret/%s from the vault", instanceID)
 			b.Vault.Clear(instanceID)
-			return brokerapi.LastOperation{State: "failed"}, nil
+			return domain.LastOperation{State: domain.Failed}, nil
 		}
 
 		l.Debug("deprovision operation is still in progress")
-		return brokerapi.LastOperation{State: "in progress"}, nil
+		return domain.LastOperation{State: domain.InProgress}, nil
 	}
 
 	l.Error("invalid state '%s' found in the vault", typ)
-	return brokerapi.LastOperation{}, fmt.Errorf("invalid state type '%s'", typ)
+	return domain.LastOperation{}, fmt.Errorf("invalid state type '%s'", typ)
 }
 
-func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
-	var binding brokerapi.Binding
+func (b *Broker) Bind(
+	ctx context.Context,
+	instanceID, bindingID string,
+	details domain.BindDetails,
+	asyncAllowed bool,
+) (
+	domain.Binding,
+	error,
+) {
+	var binding domain.Binding
 
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
 	l.Info("bind operation started")
@@ -435,7 +508,7 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 			if err != nil {
 				return binding, err
 			}
-	
+
 			creds, err = yamlGsub(creds, passwordStatic, passwordDynamic)
 			if err != nil {
 				return binding, err
@@ -459,7 +532,14 @@ func (b *Broker) Bind(instanceID, bindingID string, details brokerapi.BindDetail
 	return binding, nil
 }
 
-func yamlGsub(obj interface{}, orig string, replacement string) (interface{}, error) {
+func yamlGsub(
+	obj interface{},
+	orig string,
+	replacement string,
+) (
+	interface{},
+	error,
+) {
 	m, err := yaml.Marshal(obj)
 	if err != nil {
 		return nil, err
@@ -490,23 +570,21 @@ func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adm
 
 	createUrl := apiUrl + "/users/" + usernameDynamic
 
-
 	request, err := http.NewRequest(http.MethodPut, createUrl, bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
-	
+
 	request.SetBasicAuth(adminUsername, adminPassword)
 
 	request.Header.Set("content-type", "application/json")
-
 
 	resp, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return err
 	}
 
-	if resp.StatusCode != http.StatusCreated { 
+	if resp.StatusCode != http.StatusCreated {
 		return err
 	}
 
@@ -569,7 +647,12 @@ func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string)
 	return nil
 }
 
-func (b *Broker) Unbind(instanceID, bindingID string, details brokerapi.UnbindDetails) error {
+func (b *Broker) Unbind(
+	ctx context.Context,
+	instanceID, bindingID string,
+	details domain.UnbindDetails,
+	asyncAllowed bool,
+) (domain.UnbindSpec, error) {
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
 	l.Info("unbind operation started")
 
@@ -578,11 +661,11 @@ func (b *Broker) Unbind(instanceID, bindingID string, details brokerapi.UnbindDe
 		plan, err := b.FindPlan(details.ServiceID, details.PlanID)
 		if err != nil {
 			l.Error("failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
-			return err
+			return domain.UnbindSpec{}, err
 		}
 		creds, err := GetCreds(instanceID, plan, b.BOSH, l)
 		if err != nil {
-			return  err
+			return domain.UnbindSpec{}, err
 		}
 		if m, ok := creds.(map[string]interface{}); ok {
 			adminUsername := m["admin_username"].(string)
@@ -592,25 +675,51 @@ func (b *Broker) Unbind(instanceID, bindingID string, details brokerapi.UnbindDe
 			err = DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl)
 			if err != nil {
 				fmt.Println("Failed to delete user/bindingID", bindingID)
-				return  err
+				return domain.UnbindSpec{}, err
 			}
 		}
 	}
 
 	l.Info("unbind successful")
-	return nil
+	return domain.UnbindSpec{}, nil
 }
 
-func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.IsAsync, error) {
+func (b *Broker) Update(
+	ctx context.Context,
+	instanceID string,
+	details domain.UpdateDetails,
+	asyncAllowed bool,
+) (
+	domain.UpdateServiceSpec,
+	error,
+) {
 	l := Logger.Wrap("%s %s %s", instanceID, details.ServiceID, details.PlanID)
 	l.Error("update operation not implemented")
 
 	// FIXME: implement this!
 
-	return false, fmt.Errorf("not implemented")
+	return domain.UpdateServiceSpec{}, fmt.Errorf("not implemented")
 }
 
-func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {
+func (b *Broker) GetInstance(ctx context.Context, instanceID string) (domain.GetInstanceDetailsSpec, error) {
+	// Not implemented - return empty spec
+	return domain.GetInstanceDetailsSpec{}, fmt.Errorf("GetInstance not implemented")
+}
+
+func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string) (domain.GetBindingSpec, error) {
+	// Not implemented - return empty spec
+	return domain.GetBindingSpec{}, fmt.Errorf("GetBinding not implemented")
+}
+
+func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
+	// Not implemented - return successful immediately since we don't support async bindings
+	return domain.LastOperation{State: domain.Succeeded}, nil
+}
+
+func (b *Broker) serviceWithNoDeploymentCheck() (
+	[]string,
+	error,
+) {
 	l := Logger.Wrap("*")
 	l.Info("checking for service instances with no backing deployment")
 	//grab all current deployments
@@ -654,7 +763,7 @@ func (b *Broker) serviceWithNoDeploymentCheck() ([]string, error) {
 				//if the deployment name isn't listed in our director then delete it from vault
 				l.Debug("found no deployment on bosh director named: %v", currentDeployment)
 				removedDeploymentNames = append(removedDeploymentNames, currentDeployment)
-				l.Debug("removing service id: " + instanceID + " from vault db")
+				l.Debug("removing service id: %s from vault db", instanceID)
 				if err := b.Vault.Index(instanceID, nil); err != nil {
 					l.Error("unable to remove service instance '%s' from vault db: %s", instanceID, err)
 				}

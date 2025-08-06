@@ -510,9 +510,9 @@ func (vault *Vault) updateHomeDirs() {
 		Current string `json:"current"`
 		Vaults  struct {
 			Local struct {
-				URL   string `json:"url"`
-				Token string `json:"token"`
-				NoStrongbox bool `json:"no-strongbox"`
+				URL         string `json:"url"`
+				Token       string `json:"token"`
+				NoStrongbox bool   `json:"no-strongbox"`
 			} `json:"blacksmith"`
 		} `json:"vaults"`
 	}

@@ -2,11 +2,11 @@ package gogobosh
 
 // Info struct
 type Info struct {
-	Name              string            `json:"name"`
-	UUID              string            `json:"uuid"`
-	Version           string            `json:"version"`
-	User              string            `json:"user"`
-	CPI               string            `json:"cpi"`
+	Name               string             `json:"name"`
+	UUID               string             `json:"uuid"`
+	Version            string             `json:"version"`
+	User               string             `json:"user"`
+	CPI                string             `json:"cpi"`
 	UserAuthentication UserAuthentication `json:"user_authentication"`
 }
 
@@ -24,6 +24,7 @@ type Stemcell struct {
 	OperatingSystem string `json:"operating_system"`
 	Version         string `json:"version"`
 	CID             string `json:"cid"`
+	CPI             string `json:"cpi"`
 	Deployments     []struct {
 		Name string `json:"name"`
 	} `json:"deployments"`
@@ -35,7 +36,7 @@ type Release struct {
 	ReleaseVersions []ReleaseVersion `json:"release_versions"`
 }
 
-//ReleaseVersion struct
+// ReleaseVersion struct
 type ReleaseVersion struct {
 	Version            string   `json:"version"`
 	CommitHash         string   `json:"commit_hash"`
@@ -65,26 +66,26 @@ type Manifest struct {
 
 // VM struct
 type VM struct {
-	VMCID             string    `json:"vm_cid"`
-	IPs               []string  `json:"ips"`
-	DNS               []string  `json:"dns"`
-	AgentID           string    `json:"agent_id"`
-	JobName           string    `json:"job_name"`
-	Index             int       `json:"index"`
-	JobState          string    `json:"job_state"`
-	State             string    `json:"state"`
-	ResourcePool      string    `json:"resource_pool"`
-	VMType            string    `json:"vm_type"`
-	Vitals            Vitals    `json:"vitals"`
-	Processes         []Process `json:"processes"`
-	ResurectionPaused bool      `json:"resurrection_paused"`
-	AZ                string    `json:"az"`
-	ID                string    `json:"id"`
-	Bootstrap         bool      `json:"bootstrap"`
-	Ignore            bool      `json:"ignore"`
+	VMCID              string    `json:"vm_cid"`
+	IPs                []string  `json:"ips"`
+	DNS                []string  `json:"dns"`
+	AgentID            string    `json:"agent_id"`
+	JobName            string    `json:"job_name"`
+	Index              int       `json:"index"`
+	JobState           string    `json:"job_state"`
+	State              string    `json:"state"`
+	ResourcePool       string    `json:"resource_pool"`
+	VMType             string    `json:"vm_type"`
+	Vitals             Vitals    `json:"vitals"`
+	Processes          []Process `json:"processes"`
+	ResurrectionPaused bool      `json:"resurrection_paused"`
+	AZ                 string    `json:"az"`
+	ID                 string    `json:"id"`
+	Bootstrap          bool      `json:"bootstrap"`
+	Ignore             bool      `json:"ignore"`
 }
 
-// VM Vitals struct
+// Vitals for a VM
 type Vitals struct {
 	Disk Disk     `json:"disk"`
 	Load []string `json:"load"`
@@ -119,7 +120,7 @@ type Memory struct {
 	KB      string `json:"KB"`
 }
 
-// VM Process struct
+// Process running on a VM
 type Process struct {
 	Name   string        `json:"name"`
 	State  string        `json:"state"`
@@ -188,8 +189,9 @@ type TaskEvent struct {
 
 // Cfg struct
 type Cfg struct {
+	ID        string `json:"id"`
 	Name      string `json:"name"`
-	Type      string `json:"name"`
+	Type      string `json:"type"`
 	Content   string `json:"content"`
 	CreatedAt int    `json:"int"`
 	Deleted   bool   `json:"deleted"`

@@ -21,7 +21,6 @@ type Task struct {
 	Clear       string `json:"clear"`
 	JobUUID     string `json:"job_uuid"`
 	ArchiveUUID string `json:"archive_uuid"`
-	Retries     int    `json:"retries"`
 }
 
 type TaskFilter struct {

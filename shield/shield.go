@@ -176,7 +176,6 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.Pr
 		StoreUUID:  cli.store.UUID,
 		Schedule:   cli.schedule,
 		Retain:     cli.retain,
-		Retries:    3,
 	}
 
 	_, err = cli.shield.CreateJob(cli.tenant, job)
