@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cloudfoundry-community/gogobosh"
+	"blacksmith/bosh"
 	"github.com/geofffranks/spruce"
 	"github.com/smallfish/simpleyaml"
 	"gopkg.in/yaml.v2"
@@ -27,13 +27,20 @@ func GetWorkDir() string {
 }
 
 func InitManifest(p Plan, instanceID string) error {
+	Info("Initializing manifest for plan %s, instance %s", p.ID, instanceID)
+
 	/* skip running the plan initialization script if it doesn't exist */
 	if _, err := os.Stat(p.InitScriptPath); err != nil && os.IsNotExist(err) {
+		Debug("No init script found at %s, skipping initialization", p.InitScriptPath)
 		return nil
 	}
 
 	/* otherwise, execute it (chmodding to cut Forge authors some slack...) */
-	os.Chmod(p.InitScriptPath, 0755)
+	Info("Running init script: %s", p.InitScriptPath)
+	if err := os.Chmod(p.InitScriptPath, 0755); err != nil {
+		Error("failed to make init script executable: %s", err)
+		return err
+	}
 
 	cmd := exec.Command(p.InitScriptPath)
 
@@ -49,36 +56,54 @@ func InitManifest(p Plan, instanceID string) error {
 	/* TODO: put more environment variables here, as needed */
 
 	out, err := cmd.CombinedOutput()
-	Debug("init script `%s' said:\n%s", p.InitScriptPath, string(out))
-	return err
+	if err != nil {
+		Error("Init script failed: %s", err)
+		Debug("Init script output:\n%s", string(out))
+		return err
+	}
+	Info("Init script completed successfully")
+	Debug("Init script `%s' output:\n%s", p.InitScriptPath, string(out))
+	return nil
 }
 
 func GenManifest(p Plan, manifests ...map[interface{}]interface{}) (string, error) {
+	Info("Generating manifest for plan %s", p.ID)
+	Debug("Starting spruce merge with %d additional manifests", len(manifests))
+
 	merged, err := spruce.Merge(p.Manifest)
 	if err != nil {
+		Error("Failed to merge base manifest: %s", err)
 		return "", err
 	}
-	for _, next := range manifests {
+	for i, next := range manifests {
+		Debug("Merging manifest %d of %d", i+1, len(manifests))
 		merged, err = spruce.Merge(merged, next)
 		if err != nil {
+			Error("Failed to merge manifest %d: %s", i+1, err)
 			return "", err
 		}
 	}
+	Debug("Running spruce evaluator on merged manifest")
 	eval := &spruce.Evaluator{Tree: merged}
 	err = eval.Run(nil, nil)
 	if err != nil {
+		Error("Failed to evaluate spruce expressions: %s", err)
 		return "", err
 	}
 	final := eval.Tree
 
 	b, err := yaml.Marshal(final)
 	if err != nil {
+		Error("Failed to marshal final manifest to YAML: %s", err)
 		return "", err
 	}
-	return string(b), nil
+
+	manifestStr := string(b)
+	Info("Successfully generated manifest (size: %d bytes)", len(manifestStr))
+	return manifestStr, nil
 }
 
-func UploadReleasesFromManifest(raw string, bosh *gogobosh.Client, l *Log) error {
+func UploadReleasesFromManifest(raw string, director bosh.Director, l *Log) error {
 	var manifest struct {
 		Releases []struct {
 			Name    string `yaml:"name"`
@@ -94,7 +119,7 @@ func UploadReleasesFromManifest(raw string, bosh *gogobosh.Client, l *Log) error
 	}
 
 	l.Debug("enumerating uploaded BOSH releases")
-	rr, err := bosh.GetReleases()
+	rr, err := director.GetReleases()
 	if err != nil {
 		return err
 	}
@@ -117,7 +142,7 @@ func UploadReleasesFromManifest(raw string, bosh *gogobosh.Client, l *Log) error
 			l.Debug("%s/%s is missing either its SHA1 checksum; skipping upload", rl.Name, rl.Version)
 		} else {
 			l.Debug("uploading BOSH release %s/%s from %s (sha1 %s)...", rl.Name, rl.Version, rl.URL, rl.SHA1)
-			_, err := bosh.UploadRelease(rl.URL, rl.SHA1)
+			_, err := director.UploadRelease(rl.URL, rl.SHA1)
 			if err != nil {
 				return err
 			}
@@ -127,7 +152,7 @@ func UploadReleasesFromManifest(raw string, bosh *gogobosh.Client, l *Log) error
 	return nil
 }
 
-func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{}, error) {
+func GetCreds(id string, plan Plan, director bosh.Director, l *Log) (interface{}, error) {
 	var jobs []*Job
 	jobsYAML := make(map[string][]*Job)
 	var dnsname string
@@ -135,22 +160,25 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 	deployment := plan.ID + "-" + id
 
 	l.Debug("looking up BOSH VM information for %s", deployment)
-	vms, err := bosh.GetDeploymentVMs(deployment)
+	vms, err := director.GetDeploymentVMs(deployment)
 	if err != nil {
 		l.Error("failed to retrieve BOSH VM information for %s: %s", deployment, err)
 		return nil, err
 	}
 
-	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", id))
+	if err := os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", id)); err != nil {
+		l.Error("failed to set CREDENTIALS environment variable: %s", err)
+		return nil, err
+	}
 
 	byType := make(map[string]*Job)
 
 	network := os.Getenv("BOSH_NETWORK")
 
 	for _, vm := range vms {
-		l.Debug("vm.id: %s, vm.VMCID: %s", vm.ID, vm.VMCID)
+		l.Debug("vm.id: %s, vm.CID: %s", vm.ID, vm.CID)
 		job := Job{
-			vm.JobName + "/" + strconv.Itoa(vm.Index),
+			vm.Job + "/" + strconv.Itoa(vm.Index),
 			deployment,
 			vm.ID,
 			plan.ID,
@@ -164,7 +192,7 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 
 		jobs = append(jobs, &job)
 
-		if typ, ok := byType[vm.JobName]; ok {
+		if typ, ok := byType[vm.Job]; ok {
 			for _, ip := range vm.IPs {
 				typ.IPs = append(typ.IPs, ip)
 			}
@@ -172,8 +200,8 @@ func GetCreds(id string, plan Plan, bosh *gogobosh.Client, l *Log) (interface{},
 				typ.DNS = append(typ.DNS, dns)
 			}
 		} else {
-			byType[vm.JobName] = &Job{
-				vm.JobName,
+			byType[vm.Job] = &Job{
+				vm.Job,
 				deployment,
 				vm.ID,
 				plan.ID,

@@ -2,3 +2,4 @@
 /artifacts
 *.cov
 .DS_Store
+coverage.out

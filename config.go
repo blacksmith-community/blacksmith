@@ -126,9 +126,13 @@ func ReadConfig(path string) (c Config, err error) {
 		c.BOSH.Network = "blacksmith" // Default
 	}
 
-	os.Setenv("BOSH_NETWORK", c.BOSH.Network) // Required by manifest.go
+	if err := os.Setenv("BOSH_NETWORK", c.BOSH.Network); err != nil { // Required by manifest.go
+		return Config{}, fmt.Errorf("failed to set BOSH_NETWORK environment variable: %s", err)
+	}
 
-	os.Setenv("VAULT_ADDR", c.Vault.Address)
+	if err := os.Setenv("VAULT_ADDR", c.Vault.Address); err != nil {
+		return Config{}, fmt.Errorf("failed to set VAULT_ADDR environment variable: %s", err)
+	}
 
 	return
 }

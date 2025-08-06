@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"regexp"
-	"time"
 
 	"gopkg.in/yaml.v2"
 )
@@ -182,7 +181,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		w.Header().Set("Content-type", "text/plain")
 		for _, event := range events {
-			ts := time.Unix(int64(event.Time), 0)
+			ts := event.Time
 			if event.Task != "" {
 				fmt.Fprintf(w, "Task %d | %s | %s: %s %s\n", id, ts.Format("15:04:05"), event.Stage, event.Task, event.State)
 			} else if event.Error.Code != 0 {

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"code.cloudfoundry.org/lager"
+	"blacksmith/bosh"
 	"blacksmith/shield"
-	"github.com/cloudfoundry-community/gogobosh"
+	"code.cloudfoundry.org/lager"
 	"github.com/pivotal-cf/brokerapi"
 )
 
@@ -67,13 +67,15 @@ func main() {
 	if err = vault.VerifyMount("secret", true); err != nil {
 		log.Fatal(err)
 	}
-	bosh, err := gogobosh.NewClient(&gogobosh.Config{
-		BOSHAddress:       config.BOSH.Address,
-		Username:          config.BOSH.Username,
-		Password:          config.BOSH.Password,
-		HttpClient:        http.DefaultClient,
-		SkipSslValidation: config.BOSH.SkipSslValidation,
-	})
+	// Create a logger adapter for BOSH operations
+	boshLogger := bosh.NewLoggerAdapter(l)
+	boshDirector, err := bosh.CreateDirectorWithLogger(
+		config.BOSH.Address,
+		config.BOSH.Username,
+		config.BOSH.Password,
+		config.BOSH.SkipSslValidation,
+		boshLogger,
+	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to authenticate to BOSH: %s\n", err)
 		os.Exit(2)
@@ -82,7 +84,7 @@ func main() {
 	if config.BOSH.CloudConfig != "" {
 		l.Info("updating cloud-config...")
 		l.Debug("updating cloud-config with:\n%s", config.BOSH.CloudConfig)
-		err = bosh.UpdateCloudConfig(config.BOSH.CloudConfig)
+		err = boshDirector.UpdateCloudConfig(config.BOSH.CloudConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
 			os.Exit(2)
@@ -90,7 +92,7 @@ func main() {
 	}
 
 	if config.BOSH.Releases != nil {
-		rr, err := bosh.GetReleases()
+		rr, err := boshDirector.GetReleases()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve RELEASES list: %s\n", err)
 			os.Exit(2)
@@ -109,7 +111,7 @@ func main() {
 				continue
 			}
 			l.Debug("uploading release %s/%s [sha1 %s] from %s", r.Name, r.Version, r.SHA1, r.URL)
-			task, err := bosh.UploadRelease(r.URL, r.SHA1)
+			task, err := boshDirector.UploadRelease(r.URL, r.SHA1)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\nFailed to upload RELEASE (%s) sha1 [%s]: %s\n", r.URL, r.SHA1, err)
 				os.Exit(2)
@@ -119,7 +121,7 @@ func main() {
 	}
 
 	if config.BOSH.Stemcells != nil {
-		ss, err := bosh.GetStemcells()
+		ss, err := boshDirector.GetStemcells()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve STEMCELLS list: %s\n", err)
 			os.Exit(2)
@@ -136,7 +138,7 @@ func main() {
 				continue
 			}
 			l.Debug("uploading stemcell %s/%s [sha1 %s] from %s", sc.Name, sc.Version, sc.SHA1, sc.URL)
-			task, err := bosh.UploadStemcell(sc.URL, sc.SHA1)
+			task, err := boshDirector.UploadStemcell(sc.URL, sc.SHA1)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\nFailed to upload STEMCELL (%s) sha1 [%s]: %s\n", err, sc.URL, sc.SHA1)
 				os.Exit(2)
@@ -189,7 +191,7 @@ func main() {
 
 	broker := &Broker{
 		Vault:  vault,
-		BOSH:   bosh,
+		BOSH:   boshDirector,
 		Shield: shieldClient,
 	}
 
@@ -224,9 +226,19 @@ func main() {
 	})
 
 	l.Info("blacksmith service broker v%s starting up...", Version)
+	
+	// Create HTTP server with proper timeouts for security
+	server := &http.Server{
+		Addr:         bind,
+		Handler:      nil, // Uses http.DefaultServeMux
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	
 	go func() {
-		err := http.ListenAndServe(bind, nil)
-		if err != nil {
+		err := server.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
 			l.Error("blacksmith service broker failed to start up: %s", err)
 			os.Exit(2)
 		}

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/bosh"
 	"blacksmith/shield"
-	"github.com/cloudfoundry-community/gogobosh"
 	"github.com/google/uuid"
 	"github.com/pivotal-cf/brokerapi"
 	"github.com/pivotal-cf/brokerapi/domain"
@@ -23,7 +23,7 @@ import (
 type Broker struct {
 	Catalog []brokerapi.Service
 	Plans   map[string]Plan
-	BOSH    *gogobosh.Client
+	BOSH    bosh.Director
 	Vault   *Vault
 	Shield  shield.Client
 }
@@ -143,14 +143,17 @@ func (b *Broker) Provision(
 	spec := domain.ProvisionedServiceSpec{IsAsync: true}
 
 	l := Logger.Wrap("%s %s/%s", instanceID, details.ServiceID, details.PlanID)
-	l.Info("provisioning new service instance")
+	l.Info("Starting provision of service instance %s (service: %s, plan: %s)", instanceID, details.ServiceID, details.PlanID)
+	l.Debug("Provision details - OrganizationGUID: %s, SpaceGUID: %s", details.OrganizationGUID, details.SpaceGUID)
 
-	l.Debug("looking for plan in blacksmith catalog")
+	l.Info("Looking up plan %s for service %s", details.PlanID, details.ServiceID)
+	l.Debug("Searching in blacksmith catalog for plan")
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
 	if err != nil {
-		l.Error("failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
+		l.Error("Failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
 		return spec, err
 	}
+	l.Debug("Found plan: %s (limit: %d)", plan.Name, plan.Limit)
 
 	l.Debug("retrieving vault 'db' index (for tracking service usage)")
 	db, err := b.Vault.GetIndex("db")
@@ -159,11 +162,13 @@ func (b *Broker) Provision(
 		return spec, err
 	}
 
-	l.Debug("checking if we are over out service and/or plan limits")
+	l.Info("Checking service limits for plan %s", plan.Name)
+	l.Debug("Current usage count from DB index, checking against limit %d", plan.Limit)
 	if plan.OverLimit(db) {
-		l.Error("service limit exceeded for %s/%s", plan.Service.Name, plan.Name)
+		l.Error("Service limit exceeded for %s/%s (limit: %d)", plan.Service.Name, plan.Name, plan.Limit)
 		return spec, brokerapi.ErrPlanQuotaExceeded
 	}
+	l.Debug("Service limit check passed")
 
 	defaults := make(map[interface{}]interface{})
 	l.Debug("Param raw data: %s", details.RawParameters)
@@ -191,7 +196,10 @@ func (b *Broker) Provision(
 	l.Debug("found BOSH director UUID: %s", info.UUID)
 	defaults["director_uuid"] = info.UUID
 
-	os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID))
+	if err := os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID)); err != nil {
+		l.Error("failed to set CREDENTIALS environment variable: %s", err)
+		return brokerapi.ProvisionedServiceSpec{}, err
+	}
 	l.Debug("setting vault prefix to %s", os.Getenv("CREDENTIALS"))
 	l.Debug("running service init script")
 	err = InitManifest(plan, instanceID)
@@ -211,12 +219,14 @@ func (b *Broker) Provision(
 		l.Error("failed to store metadata in the vault (non-fatal): %s", err)
 	}
 
-	l.Debug("generating manifest for service deployment")
+	l.Info("Generating BOSH deployment manifest for %s", defaults["name"])
+	l.Debug("Calling GenManifest with plan %s and parameters", plan.Name)
 	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
 	if err != nil {
-		l.Error("failed to generate service deployment manifest: %s", err)
+		l.Error("Failed to generate service deployment manifest: %s", err)
 		return spec, fmt.Errorf("BOSH service deployment manifest generation failed")
 	}
+	l.Debug("Generated manifest size: %d bytes", len(manifest))
 	err = b.Vault.Put(fmt.Sprintf("%s/manifest", instanceID), map[string]interface{}{
 		"manifest": manifest,
 	})
@@ -231,13 +241,15 @@ func (b *Broker) Provision(
 		return spec, fmt.Errorf("BOSH service deployment failed")
 	}
 
-	l.Debug("deploying manifest to BOSH director:%s", manifest)
+	l.Info("Deploying service instance to BOSH director")
+	l.Debug("Submitting deployment manifest to BOSH (size: %d bytes)", len(manifest))
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {
-		l.Error("failed to create service deployment: %s", err)
+		l.Error("Failed to create service deployment: %s", err)
 		return spec, fmt.Errorf("BOSH service deployment failed")
 	}
-	l.Debug("deployment started, BOSH task %d", task.ID)
+	l.Info("Deployment started successfully, BOSH task ID: %d", task.ID)
+	l.Debug("Task state: %s, description: %s", task.State, task.Description)
 
 	l.Debug("tracking service instance in the vault 'db' index")
 	err = b.Vault.Index(instanceID, map[string]interface{}{
@@ -257,7 +269,7 @@ func (b *Broker) Provision(
 		return spec, fmt.Errorf("Failed to store service deployment status")
 	}
 
-	l.Debug("started provisioning")
+	l.Info("Successfully initiated provisioning of service instance %s", instanceID)
 	return spec, nil
 }
 
@@ -289,7 +301,8 @@ func (b *Broker) Deprovision(
 	}
 
 	deploymentName := instance.PlanID + "-" + instanceID
-	l.Debug("determined BOSH deployment name to be %s", deploymentName)
+	l.Info("Found deployment %s for instance %s", deploymentName, instanceID)
+	l.Debug("Determined BOSH deployment name from plan ID and instance ID")
 
 	manifest, err := b.BOSH.GetDeployment(deploymentName)
 	if err != nil || manifest.Manifest == "" {
@@ -302,14 +315,16 @@ func (b *Broker) Deprovision(
 		return domain.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
 	}
 
-	l.Debug("deleting BOSH deployment")
+	l.Info("Initiating deletion of BOSH deployment %s", deploymentName)
+	l.Debug("Calling BOSH DeleteDeployment API")
 	/* FIXME: what if we still have a valid task for deployment? */
 	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
-		l.Error("failed to delete BOSH deployment %s: %s", deploymentName, err)
+		l.Error("Failed to delete BOSH deployment %s: %s", deploymentName, err)
 		return domain.DeprovisionServiceSpec{}, err
 	}
-	l.Debug("delete operation started, BOSH task %d", task.ID)
+	l.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
+	l.Debug("Task state: %s, description: %s", task.State, task.Description)
 
 	l.Debug("removing service from vault 'db' index")
 	if err := b.Vault.Index(instanceID, nil); err != nil {
@@ -466,19 +481,26 @@ func (b *Broker) Bind(
 	var binding domain.Binding
 
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
-	l.Info("bind operation started")
+	l.Info("Starting bind operation for instance %s, binding %s", instanceID, bindingID)
+	l.Debug("Bind details - Service: %s, Plan: %s, AppGUID: %s", details.ServiceID, details.PlanID, details.AppGUID)
 
-	l.Debug("looking for plan in blacksmith catalog")
+	l.Info("Looking up plan %s for service %s", details.PlanID, details.ServiceID)
+	l.Debug("Searching in blacksmith catalog for binding plan")
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
 	if err != nil {
-		l.Error("failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
+		l.Error("Failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
 		return binding, err
 	}
+	l.Debug("Found plan: %s", plan.Name)
 
+	l.Info("Retrieving credentials for instance %s", instanceID)
+	l.Debug("Calling GetCreds for plan %s", plan.Name)
 	creds, err := GetCreds(instanceID, plan, b.BOSH, l)
 	if err != nil {
+		l.Error("Failed to retrieve credentials: %s", err)
 		return binding, err
 	}
+	l.Debug("Successfully retrieved credentials")
 
 	if m, ok := creds.(map[string]interface{}); ok {
 
@@ -492,11 +514,14 @@ func (b *Broker) Bind(
 			usernameStatic := m["username"].(string)
 			passwordStatic := m["password"].(string)
 
+			l.Info("Creating dynamic RabbitMQ user for binding %s", bindingID)
+			l.Debug("Creating user %s in RabbitMQ at %s", usernameDynamic, apiUrl)
 			err := CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl.(string))
 			if err != nil {
-				// err
+				l.Error("Failed to create RabbitMQ user: %s", err)
 				return binding, err
 			}
+			l.Debug("Successfully created RabbitMQ user %s", usernameDynamic)
 
 			err = GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl.(string))
 			if err != nil {
@@ -528,7 +553,7 @@ func (b *Broker) Bind(
 	binding.Credentials = creds
 	l.Debug("credentials are: %v", binding)
 
-	l.Info("bind successful")
+	l.Info("Successfully completed bind operation for binding %s", bindingID)
 	return binding, nil
 }
 
@@ -654,33 +679,39 @@ func (b *Broker) Unbind(
 	asyncAllowed bool,
 ) (domain.UnbindSpec, error) {
 	l := Logger.Wrap("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID)
-	l.Info("unbind operation started")
+	l.Info("Starting unbind operation for instance %s, binding %s", instanceID, bindingID)
+	l.Debug("Unbind details - Service: %s, Plan: %s", details.ServiceID, details.PlanID)
 
 	if strings.Contains(details.PlanID, "rabbitmq") {
-		fmt.Println("Unbind operation for rabbitmq service")
+		l.Info("Processing unbind for RabbitMQ service")
+		l.Debug("RabbitMQ plan detected, will delete dynamic user")
 		plan, err := b.FindPlan(details.ServiceID, details.PlanID)
 		if err != nil {
-			l.Error("failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
+			l.Error("Failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
 			return domain.UnbindSpec{}, err
 		}
+		l.Debug("Retrieving admin credentials for RabbitMQ instance")
 		creds, err := GetCreds(instanceID, plan, b.BOSH, l)
 		if err != nil {
+			l.Error("Failed to retrieve credentials: %s", err)
 			return domain.UnbindSpec{}, err
 		}
 		if m, ok := creds.(map[string]interface{}); ok {
 			adminUsername := m["admin_username"].(string)
 			adminPassword := m["admin_password"].(string)
 			apiUrl := m["api_url"].(string)
-			fmt.Println("Deleting dynamic credentials for user/bindingID", bindingID, "from rabbtimq instance")
+			l.Info("Deleting dynamic RabbitMQ user %s", bindingID)
+			l.Debug("Calling RabbitMQ API at %s to delete user", apiUrl)
 			err = DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl)
 			if err != nil {
-				fmt.Println("Failed to delete user/bindingID", bindingID)
+				l.Error("Failed to delete RabbitMQ user %s: %s", bindingID, err)
 				return domain.UnbindSpec{}, err
 			}
+			l.Debug("Successfully deleted RabbitMQ user %s", bindingID)
 		}
 	}
 
-	l.Info("unbind successful")
+	l.Info("Successfully completed unbind operation for binding %s", bindingID)
 	return domain.UnbindSpec{}, nil
 }
 
