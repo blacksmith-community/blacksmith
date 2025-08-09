@@ -56,13 +56,14 @@ func CreateDirectorFromLegacyConfig(address, username, password string, skipSSL 
 }
 
 // CreateDirectorWithLogger creates a Director with a logger for comprehensive logging
-func CreateDirectorWithLogger(address, username, password string, skipSSL bool, logger Logger) (Director, error) {
+func CreateDirectorWithLogger(address, username, password, caCert string, skipSSL bool, logger Logger) (Director, error) {
 	factory := NewDefaultFactory()
 
 	config := Config{
 		Address:           address,
 		Username:          username,
 		Password:          password,
+		CACert:            caCert,
 		SkipSSLValidation: skipSSL,
 		Logger:            logger,
 	}

@@ -66,6 +66,7 @@ type BOSHConfig struct {
 	Username          string       `yaml:"username"`
 	Password          string       `yaml:"password"`
 	SkipSslValidation bool         `yaml:"skip_ssl_validation"`
+	CACert            string       `yaml:"cacert"`
 	Stemcells         []Uploadable `yaml:"stemcells"`
 	Releases          []Uploadable `yaml:"releases"`
 	CCPath            string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???

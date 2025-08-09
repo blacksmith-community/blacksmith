@@ -73,6 +73,7 @@ func main() {
 		config.BOSH.Address,
 		config.BOSH.Username,
 		config.BOSH.Password,
+		config.BOSH.CACert,
 		config.BOSH.SkipSslValidation,
 		boshLogger,
 	)
@@ -226,7 +227,7 @@ func main() {
 	})
 
 	l.Info("blacksmith service broker v%s starting up...", Version)
-	
+
 	// Create HTTP server with proper timeouts for security
 	server := &http.Server{
 		Addr:         bind,
@@ -235,7 +236,7 @@ func main() {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	
+
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
