@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,13 +91,12 @@ func NewDirectorAdapter(config Config) (Director, error) {
 	appLogger.Debug("Creating director factory")
 	factory := boshdirector.NewFactory(logger)
 
-	// Create task reporter (nil for now)
-	var taskReporter boshdirector.TaskReporter
+	// Create task reporter and file reporter
+	// Use the built-in no-op reporters from the director package
+	taskReporter := boshdirector.NoopTaskReporter{}
+	fileReporter := boshdirector.NoopFileReporter{}
 
-	// Create file reporter (nil for now)
-	var fileReporter boshdirector.FileReporter
-
-	// Create director with basic auth
+	// Create director with authentication
 	appLogger.Debug("Creating director client")
 	director, err := factory.New(*factoryConfig, taskReporter, fileReporter)
 	if err != nil {
@@ -364,6 +364,28 @@ func (d *DirectorAdapter) GetReleases() ([]Release, error) {
 	d.log.Info("Getting all releases")
 	d.log.Debug("Calling director.Releases()")
 
+	// Test basic connectivity first
+	info, err := d.director.Info()
+	if err != nil {
+		d.log.Error("Failed to get director info (auth test): %v", err)
+		d.log.Error("This might indicate an authentication issue")
+	} else {
+		d.log.Debug("Director info test successful - User: %s, Name: %s", info.User, info.Name)
+		d.log.Debug("Director authentication type: %s", info.Auth.Type)
+		if info.Auth.Type == "uaa" {
+			if uaaURL, ok := info.Auth.Options["url"].(string); ok {
+				d.log.Debug("Director is configured for UAA authentication at: %s", uaaURL)
+				d.log.Error("ERROR: Director is configured for UAA authentication but we're using basic auth credentials")
+				d.log.Error("The director expects UAA client credentials, not basic username/password")
+			}
+		} else if info.Auth.Type == "basic" {
+			d.log.Debug("Director is configured for basic authentication")
+		}
+		if info.User == "" {
+			d.log.Debug("Note: User field is empty in /info response - this is expected as /info doesn't require authentication")
+		}
+	}
+
 	releases, err := d.director.Releases()
 	if err != nil {
 		d.log.Error("Failed to get releases: %v", err)
@@ -374,12 +396,12 @@ func (d *DirectorAdapter) GetReleases() ([]Release, error) {
 
 	result := make([]Release, 0, len(releases))
 	for _, rel := range releases {
-		// Simplified version - bosh-cli API is different
+		// Get the actual version string without the asterisk
 		result = append(result, Release{
 			Name: rel.Name(),
 			ReleaseVersions: []ReleaseVersion{
 				{
-					Version: rel.VersionMark("*"),
+					Version: rel.Version().String(),
 				},
 			},
 		})
@@ -433,7 +455,7 @@ func (d *DirectorAdapter) GetStemcells() ([]Stemcell, error) {
 	for i, sc := range stemcells {
 		result[i] = Stemcell{
 			Name:        sc.Name(),
-			Version:     sc.VersionMark("*"),
+			Version:     sc.Version().String(),
 			OS:          sc.OSName(),
 			CID:         sc.CID(),
 			CPI:         sc.CPI(),
@@ -709,14 +731,119 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 		CACert: config.CACert,
 	}
 
-	// Set up basic authentication if no UAA configured
-	if config.UAA == nil && config.Username != "" && config.Password != "" {
-		// Use Client and ClientSecret for basic auth
-		factoryConfig.Client = config.Username
-		factoryConfig.ClientSecret = config.Password
+	// First, try to detect if the director uses UAA by making an unauthenticated info call
+	// Create a temporary director to check authentication type
+	tempFactory := boshdirector.NewFactory(logger)
+	tempDirector, err := tempFactory.New(*factoryConfig, nil, nil)
+	if err == nil {
+		if info, err := tempDirector.Info(); err == nil {
+			if config.Logger != nil {
+				config.Logger.Debug("Detected director auth type: %s", info.Auth.Type)
+			}
+
+			// If director uses UAA and we have username/password, set up UAA client auth
+			if info.Auth.Type == "uaa" && config.Username != "" && config.Password != "" {
+				// Extract UAA URL from auth options
+				if uaaURL, ok := info.Auth.Options["url"].(string); ok {
+					if config.Logger != nil {
+						config.Logger.Info("Director uses UAA authentication, configuring UAA client")
+						config.Logger.Debug("UAA URL: %s", uaaURL)
+					}
+					
+					// Parse UAA URL to extract host and port
+					uaaHost := uaaURL
+					uaaPort := 443 // Default HTTPS port
+					
+					// Remove https:// or http:// prefix if present
+					if strings.HasPrefix(uaaHost, "https://") {
+						uaaHost = strings.TrimPrefix(uaaHost, "https://")
+						uaaPort = 443
+					} else if strings.HasPrefix(uaaHost, "http://") {
+						uaaHost = strings.TrimPrefix(uaaHost, "http://")
+						uaaPort = 80
+					}
+					
+					// Extract port if specified
+					if strings.Contains(uaaHost, ":") {
+						parts := strings.Split(uaaHost, ":")
+						uaaHost = parts[0]
+						if len(parts) > 1 {
+							if p, err := strconv.Atoi(parts[1]); err == nil {
+								uaaPort = p
+							}
+						}
+					}
+					
+					if config.Logger != nil {
+						config.Logger.Debug("UAA Host: %s, Port: %d", uaaHost, uaaPort)
+					}
+					
+					// Create UAA client using the username/password as client credentials
+					uaaConfig := boshuaa.Config{
+						Host:         uaaHost,
+						Port:         uaaPort,
+						Client:       config.Username,
+						ClientSecret: config.Password,
+						CACert:       config.CACert,
+					}
+					
+					uaaFactory := boshuaa.NewFactory(logger)
+					uaa, err := uaaFactory.New(uaaConfig)
+					if err != nil {
+						if config.Logger != nil {
+							config.Logger.Error("Failed to create UAA client: %v", err)
+						}
+						return nil, fmt.Errorf("failed to create UAA client: %w", err)
+					}
+					
+					// Set up token function for UAA authentication
+					factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
+					
+					// Also set environment variables for compatibility
+					os.Setenv("BOSH_CLIENT", config.Username)
+					os.Setenv("BOSH_CLIENT_SECRET", config.Password)
+					
+					return factoryConfig, nil
+				}
+			}
+		}
 	}
 
-	// Set up UAA if configured
+	// Fall back to basic auth or explicit UAA config
+	if config.UAA == nil {
+		if config.Username != "" && config.Password != "" {
+			// Set environment variables for BOSH CLI
+			os.Setenv("BOSH_CLIENT", config.Username)
+			os.Setenv("BOSH_CLIENT_SECRET", config.Password)
+
+			// Also set in factory config for direct usage
+			if config.Logger != nil {
+				config.Logger.Debug("Setting up basic auth with username: %s", config.Username)
+				config.Logger.Debug("Set BOSH_CLIENT env var to: %s", config.Username)
+			}
+			factoryConfig.Client = config.Username
+			factoryConfig.ClientSecret = config.Password
+		} else {
+			// Check if env vars are already set
+			envClient := os.Getenv("BOSH_CLIENT")
+			envSecret := os.Getenv("BOSH_CLIENT_SECRET")
+
+			if envClient != "" && envSecret != "" {
+				if config.Logger != nil {
+					config.Logger.Debug("Using BOSH_CLIENT from environment: %s", envClient)
+				}
+				factoryConfig.Client = envClient
+				factoryConfig.ClientSecret = envSecret
+			} else {
+				// Log warning if no credentials provided
+				if config.Logger != nil {
+					config.Logger.Error("No authentication credentials provided (neither config nor env vars)")
+				}
+			}
+		}
+	}
+
+	// Set up UAA if explicitly configured
 	if config.UAA != nil {
 		uaaConfig := boshuaa.Config{
 			Host:         config.UAA.URL,

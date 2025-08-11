@@ -67,6 +67,15 @@ func main() {
 	if err = vault.VerifyMount("secret", true); err != nil {
 		log.Fatal(err)
 	}
+	// Set BOSH environment variables for CLI compatibility
+	if err := os.Setenv("BOSH_CLIENT", config.BOSH.Username); err != nil {
+		l.Error("Failed to set BOSH_CLIENT env var: %s", err)
+	}
+	if err := os.Setenv("BOSH_CLIENT_SECRET", config.BOSH.Password); err != nil {
+		l.Error("Failed to set BOSH_CLIENT_SECRET env var: %s", err)
+	}
+	l.Debug("Set BOSH_CLIENT to: %s", config.BOSH.Username)
+
 	// Create a logger adapter for BOSH operations
 	boshLogger := bosh.NewLoggerAdapter(l)
 	boshDirector, err := bosh.CreateDirectorWithLogger(
@@ -83,12 +92,16 @@ func main() {
 	}
 
 	if config.BOSH.CloudConfig != "" {
-		l.Info("updating cloud-config...")
-		l.Debug("updating cloud-config with:\n%s", config.BOSH.CloudConfig)
-		err = boshDirector.UpdateCloudConfig(config.BOSH.CloudConfig)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
-			os.Exit(2)
+		// Check if cloud config is effectively empty (just {} or whitespace)
+		trimmed := strings.TrimSpace(config.BOSH.CloudConfig)
+		if trimmed != "{}" && trimmed != "---" && trimmed != "--- {}" && trimmed != "" {
+			l.Info("updating cloud-config...")
+			l.Debug("updating cloud-config with:\n%s", config.BOSH.CloudConfig)
+			err = boshDirector.UpdateCloudConfig(config.BOSH.CloudConfig)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
+				os.Exit(2)
+			}
 		}
 	}
 

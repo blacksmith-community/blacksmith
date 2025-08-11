@@ -43,8 +43,15 @@ func WriteDataFile(
 	instanceID string,
 	data []byte,
 ) error {
+	l := Logger.Wrap("WriteDataFile")
 	filename := GetWorkDir() + instanceID + ".json"
+	l.Debug("Writing data file for instance %s to %s (size: %d bytes)", instanceID, filename, len(data))
 	err := ioutil.WriteFile(filename, data, 0644)
+	if err != nil {
+		l.Error("Failed to write data file %s: %s", filename, err)
+	} else {
+		l.Debug("Successfully wrote data file %s", filename)
+	}
 	return err
 }
 
@@ -52,18 +59,32 @@ func WriteYamlFile(
 	instanceID string,
 	data []byte,
 ) error {
-	l := Logger.Wrap("%s", instanceID)
+	l := Logger.Wrap("WriteYamlFile")
+	l.Debug("Writing YAML file for instance %s (input size: %d bytes)", instanceID, len(data))
+
 	m := make(map[interface{}]interface{})
 	err := yaml.Unmarshal(data, &m)
 	if err != nil {
-		l.Debug("Error unmarshalling data: %s, %s", err, data)
+		l.Error("Failed to unmarshal data for YAML file: %s", err)
+		l.Debug("Raw data (first 500 chars): %s", string(data[:min(len(data), 500)]))
+		return err
 	}
+
 	b, err := yaml.Marshal(m)
 	if err != nil {
-		l.Debug("Error marshalling data: %s, %s", err, m)
+		l.Error("Failed to marshal data to YAML: %s", err)
+		l.Debug("Map content: %+v", m)
+		return err
 	}
+
 	filename := GetWorkDir() + instanceID + ".yml"
+	l.Debug("Writing YAML to file: %s (size: %d bytes)", filename, len(b))
 	err = ioutil.WriteFile(filename, b, 0644)
+	if err != nil {
+		l.Error("Failed to write YAML file %s: %s", filename, err)
+	} else {
+		l.Debug("Successfully wrote YAML file %s", filename)
+	}
 	return err
 }
 
@@ -71,14 +92,29 @@ func (b Broker) FindPlan(
 	serviceID string,
 	planID string,
 ) (Plan, error) {
+	l := Logger.Wrap("FindPlan")
 	key := fmt.Sprintf("%s/%s", serviceID, planID)
+	l.Debug("Looking up plan with key: %s", key)
+	l.Debug("Total plans in catalog: %d", len(b.Plans))
+
 	if plan, ok := b.Plans[key]; ok {
+		l.Debug("Found plan - Name: %s, Type: %s, Limit: %d", plan.Name, plan.Type, plan.Limit)
 		return plan, nil
+	}
+
+	l.Error("Plan not found - serviceID: %s, planID: %s, key: %s", serviceID, planID, key)
+	l.Debug("Available plan keys in catalog:")
+	for k := range b.Plans {
+		l.Debug("  - %s", k)
 	}
 	return Plan{}, fmt.Errorf("plan %s not found", key)
 }
 
 func (b *Broker) Services(ctx context.Context) ([]domain.Service, error) {
+	l := Logger.Wrap("Services")
+	l.Info("Retrieving service catalog")
+	l.Debug("Converting %d brokerapi.Service entries to domain.Service", len(b.Catalog))
+
 	// Convert brokerapi.Service to domain.Service
 	services := make([]domain.Service, len(b.Catalog))
 	for i, svc := range b.Catalog {
@@ -106,27 +142,43 @@ func (b *Broker) Services(ctx context.Context) ([]domain.Service, error) {
 				Metadata:    plan.Metadata,
 			}
 		}
+		l.Debug("Converted service %s with %d plans", services[i].Name, len(services[i].Plans))
 	}
+	l.Info("Successfully retrieved %d services from catalog", len(services))
 	return services, nil
 }
 
 func (b *Broker) ReadServices(dir ...string) error {
-	l := Logger.Wrap("catalog")
-	l.Info("reading catalog")
+	l := Logger.Wrap("Broker.ReadServices")
+	l.Info("Starting to read and build service catalog")
+	l.Debug("Service directories provided: %v", dir)
 
+	l.Debug("Calling ReadServices to read service definitions")
 	ss, err := ReadServices(dir...)
 	if err != nil {
+		l.Error("Failed to read services: %s", err)
+		l.Debug("Error occurred while reading from directories: %v", dir)
 		return err
 	}
+	l.Info("Successfully read %d services", len(ss))
 
+	l.Debug("Converting services to broker catalog format")
 	b.Catalog = Catalog(ss)
+	l.Debug("Catalog created with %d services", len(b.Catalog))
+
 	b.Plans = make(map[string]Plan)
+	totalPlans := 0
 	for _, s := range ss {
+		l.Debug("Processing service %s (ID: %s) with %d plans", s.Name, s.ID, len(s.Plans))
 		for _, p := range s.Plans {
-			l.Info("adding service/plan %s/%s to catalog", s.ID, p.ID)
-			b.Plans[p.String()] = p
+			planKey := p.String()
+			l.Info("Adding service/plan %s/%s to catalog (key: %s)", s.ID, p.ID, planKey)
+			l.Debug("Plan details - Name: %s, Type: %s, Limit: %d", p.Name, p.Type, p.Limit)
+			b.Plans[planKey] = p
+			totalPlans++
 		}
 	}
+	l.Info("Successfully built catalog with %d services and %d total plans", len(b.Catalog), totalPlans)
 
 	return nil
 }
@@ -523,11 +575,13 @@ func (b *Broker) Bind(
 			}
 			l.Debug("Successfully created RabbitMQ user %s", usernameDynamic)
 
+			l.Debug("Granting permissions to user %s for vhost %s", usernameDynamic, vhost)
 			err = GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl.(string))
 			if err != nil {
-				// err
+				l.Error("Failed to grant permissions to RabbitMQ user %s: %s", usernameDynamic, err)
 				return binding, err
 			}
+			l.Debug("Successfully granted permissions to user %s", usernameDynamic)
 
 			creds, err = yamlGsub(creds, usernameStatic, usernameDynamic)
 			if err != nil {
@@ -565,24 +619,35 @@ func yamlGsub(
 	interface{},
 	error,
 ) {
+	l := Logger.Wrap("yamlGsub")
+	l.Debug("Performing YAML string substitution - orig: %s, replacement: %s", orig, replacement)
+
 	m, err := yaml.Marshal(obj)
 	if err != nil {
+		l.Error("Failed to marshal object to YAML: %s", err)
 		return nil, err
 	}
 
 	s := string(m)
 	replaced := strings.Replace(s, orig, replacement, -1)
+	l.Debug("Replaced %d occurrences", strings.Count(s, orig))
 
 	var data map[interface{}]interface{}
 
 	if err = yaml.Unmarshal([]byte(replaced), &data); err != nil {
+		l.Error("Failed to unmarshal replaced YAML: %s", err)
 		return nil, err
 	}
 
+	l.Debug("Successfully completed YAML substitution")
 	return deinterfaceMap(data), nil
 }
 
 func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl string) error {
+	l := Logger.Wrap("CreateUserPassRabbitMQ")
+	l.Info("Creating RabbitMQ user: %s", usernameDynamic)
+	l.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
+
 	payload := struct {
 		Password string `json:"password"`
 		Tags     string `json:"tags"`
@@ -590,33 +655,46 @@ func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adm
 
 	data, err := json.Marshal(payload)
 	if err != nil {
+		l.Error("Failed to marshal user creation payload: %s", err)
 		return err
 	}
+	l.Debug("User creation payload: %s", string(data))
 
 	createUrl := apiUrl + "/users/" + usernameDynamic
+	l.Debug("Creating user at URL: %s", createUrl)
 
 	request, err := http.NewRequest(http.MethodPut, createUrl, bytes.NewBuffer(data))
 	if err != nil {
+		l.Error("Failed to create HTTP request for user creation: %s", err)
 		return err
 	}
 
 	request.SetBasicAuth(adminUsername, adminPassword)
-
 	request.Header.Set("content-type", "application/json")
 
+	l.Debug("Sending PUT request to create user")
 	resp, err := http.DefaultClient.Do(request)
 	if err != nil {
+		l.Error("HTTP request failed for user creation: %s", err)
 		return err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		return err
+		body, _ := ioutil.ReadAll(resp.Body)
+		l.Error("Failed to create user - Status: %d, Response: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("failed to create RabbitMQ user, status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 
+	l.Info("Successfully created RabbitMQ user: %s", usernameDynamic)
 	return nil
 }
 
 func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl string) error {
+	l := Logger.Wrap("GrantUserPermissionsRabbitMQ")
+	l.Info("Granting permissions to user %s on vhost %s", usernameDynamic, vhost)
+	l.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
+
 	payload := struct {
 		Configure string `json:"configure"`
 		Write     string `json:"write"`
@@ -625,50 +703,73 @@ func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword,
 
 	data, err := json.Marshal(payload)
 	if err != nil {
+		l.Error("Failed to marshal permissions payload: %s", err)
 		return err
 	}
+	l.Debug("Permissions payload: %s", string(data))
 
 	permUrl := apiUrl + "/permissions/" + vhost + "/" + usernameDynamic
+	l.Debug("Setting permissions at URL: %s", permUrl)
 
 	request, err := http.NewRequest(http.MethodPut, permUrl, bytes.NewBuffer(data))
 	if err != nil {
+		l.Error("Failed to create HTTP request for permissions: %s", err)
 		return err
 	}
 
 	request.SetBasicAuth(adminUsername, adminPassword)
 	request.Header.Set("content-type", "application/json")
 
+	l.Debug("Sending PUT request to grant permissions")
 	resp, err := http.DefaultClient.Do(request)
 	if err != nil {
+		l.Error("HTTP request failed for granting permissions: %s", err)
 		return err
 	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusCreated {
-		return err
+		body, _ := ioutil.ReadAll(resp.Body)
+		l.Error("Failed to grant permissions - Status: %d, Response: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("failed to grant RabbitMQ permissions, status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 
+	l.Info("Successfully granted permissions to user %s on vhost %s", usernameDynamic, vhost)
 	return nil
 }
 
 func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string) error {
+	l := Logger.Wrap("DeleteUserRabbitMQ")
+	l.Info("Deleting RabbitMQ user: %s", bindingID)
+	l.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
 
 	deleteUrl := apiUrl + "/users/" + bindingID
+	l.Debug("Deleting user at URL: %s", deleteUrl)
 
 	request, err := http.NewRequest("DELETE", deleteUrl, nil)
 	if err != nil {
+		l.Error("Failed to create HTTP DELETE request: %s", err)
 		return err
 	}
 
 	request.SetBasicAuth(adminUsername, adminPassword)
 	request.Header.Set("content-type", "application/json")
 
+	l.Debug("Sending DELETE request to remove user")
 	resp, err := http.DefaultClient.Do(request)
 	if err != nil {
+		l.Error("HTTP request failed for user deletion: %s", err)
 		return err
 	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNoContent {
-		return err
+		body, _ := ioutil.ReadAll(resp.Body)
+		l.Error("Failed to delete user - Status: %d, Response: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("failed to delete RabbitMQ user, status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 
+	l.Info("Successfully deleted RabbitMQ user: %s", bindingID)
 	return nil
 }
 
@@ -725,7 +826,10 @@ func (b *Broker) Update(
 	error,
 ) {
 	l := Logger.Wrap("%s %s %s", instanceID, details.ServiceID, details.PlanID)
-	l.Error("update operation not implemented")
+	l.Error("Update operation not implemented")
+	l.Debug("Update request - InstanceID: %s, ServiceID: %s, CurrentPlanID: %s, NewPlanID: %s",
+		instanceID, details.ServiceID, details.PlanID, details.PreviousValues.PlanID)
+	l.Debug("Async allowed: %v, Raw parameters: %s", asyncAllowed, string(details.RawParameters))
 
 	// FIXME: implement this!
 
@@ -733,16 +837,25 @@ func (b *Broker) Update(
 }
 
 func (b *Broker) GetInstance(ctx context.Context, instanceID string) (domain.GetInstanceDetailsSpec, error) {
+	l := Logger.Wrap("GetInstance")
+	l.Debug("GetInstance called for instanceID: %s", instanceID)
+	l.Info("GetInstance operation not implemented")
 	// Not implemented - return empty spec
 	return domain.GetInstanceDetailsSpec{}, fmt.Errorf("GetInstance not implemented")
 }
 
 func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string) (domain.GetBindingSpec, error) {
+	l := Logger.Wrap("GetBinding")
+	l.Debug("GetBinding called for instanceID: %s, bindingID: %s", instanceID, bindingID)
+	l.Info("GetBinding operation not implemented")
 	// Not implemented - return empty spec
 	return domain.GetBindingSpec{}, fmt.Errorf("GetBinding not implemented")
 }
 
 func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
+	l := Logger.Wrap("LastBindingOperation")
+	l.Debug("LastBindingOperation called for instanceID: %s, bindingID: %s", instanceID, bindingID)
+	l.Debug("Returning success immediately as async bindings are not supported")
 	// Not implemented - return successful immediately since we don't support async bindings
 	return domain.LastOperation{State: domain.Succeeded}, nil
 }
@@ -751,55 +864,75 @@ func (b *Broker) serviceWithNoDeploymentCheck() (
 	[]string,
 	error,
 ) {
-	l := Logger.Wrap("*")
-	l.Info("checking for service instances with no backing deployment")
-	//grab all current deployments
+	l := Logger.Wrap("serviceWithNoDeploymentCheck")
+	l.Info("Starting check for orphaned service instances with no backing BOSH deployment")
+
+	l.Debug("Fetching all current deployments from BOSH director")
 	deployments, err := b.BOSH.GetDeployments()
 	if err != nil {
+		l.Error("Failed to get deployments from BOSH director: %s", err)
 		return nil, err
 	}
+	l.Debug("Found %d deployments in BOSH director", len(deployments))
 
 	//turn deployments from a slice of deployments into a map of
 	//string to bool because all we care about is the name of the deployment (the string here)
 	deploymentNames := make(map[string]bool)
 	for _, deployment := range deployments {
 		deploymentNames[deployment.Name] = true
+		l.Debug("Found BOSH deployment: %s", deployment.Name)
 	}
 	//grab the vault DB json blob out of vault
+	l.Debug("Fetching vault DB index to check for service instances")
 	vaultDB, err := b.Vault.getVaultDB()
 	if err != nil {
+		l.Error("Failed to get vault DB index: %s", err)
 		return nil, err
 	}
+	l.Debug("Found %d service instances in vault DB", len(vaultDB.Data))
 
 	//loop through all current instances in the "db"
 	//check bosh director for each instance in the "db"
 	var removedDeploymentNames []string
+	l.Debug("Checking each service instance for corresponding BOSH deployment")
 	for instanceID, serviceInstance := range vaultDB.Data {
-		l.Debug("current value of instanceID: %v", instanceID)
+		l.Debug("Checking instance: %s", instanceID)
 		if ss, ok := serviceInstance.(map[string]interface{}); ok {
 			service, ok := ss["service_id"].(string)
 			if !ok {
+				l.Error("Could not parse service_id for instance %s - value type: %T", instanceID, ss["service_id"])
 				return nil, errors.New("could not assert service id to string")
 			}
-			l.Debug("current value of service: %v", service)
+			l.Debug("Instance %s - service_id: %s", instanceID, service)
+
 			plan, ok := ss["plan_id"].(string)
 			if !ok {
-				l.Error("could not assert plan id to string")
+				l.Error("Could not parse plan_id for instance %s - value type: %T", instanceID, ss["plan_id"])
 				return nil, errors.New("could not assert plan id to string")
 			}
-			l.Debug("current value of plan: %v", plan)
+			l.Debug("Instance %s - plan_id: %s", instanceID, plan)
+
 			currentDeployment := plan + "-" + instanceID
+			l.Debug("Looking for deployment: %s", currentDeployment)
+
 			//deployments are named as instance.PlanID + "-" + instanceID
 			if _, ok := deploymentNames[currentDeployment]; !ok {
 				//if the deployment name isn't listed in our director then delete it from vault
-				l.Debug("found no deployment on bosh director named: %v", currentDeployment)
+				l.Info("Found orphaned instance %s - no BOSH deployment named: %s", instanceID, currentDeployment)
 				removedDeploymentNames = append(removedDeploymentNames, currentDeployment)
-				l.Debug("removing service id: %s from vault db", instanceID)
+				l.Info("Removing orphaned service instance %s from vault DB", instanceID)
 				if err := b.Vault.Index(instanceID, nil); err != nil {
-					l.Error("unable to remove service instance '%s' from vault db: %s", instanceID, err)
+					l.Error("Failed to remove orphaned service instance '%s' from vault DB: %s", instanceID, err)
+				} else {
+					l.Debug("Successfully removed orphaned instance %s from vault DB", instanceID)
 				}
+			} else {
+				l.Debug("Instance %s has valid BOSH deployment %s", instanceID, currentDeployment)
 			}
+		} else {
+			l.Error("Could not parse service instance data for %s - unexpected type: %T", instanceID, serviceInstance)
 		}
 	}
+	l.Info("Orphan check complete - removed %d orphaned instances", len(removedDeploymentNames))
 	return removedDeploymentNames, nil
 }
