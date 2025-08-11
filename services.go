@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"regexp"
 
 	"github.com/pivotal-cf/brokerapi"
@@ -103,7 +103,7 @@ func ReadPlan(path string) (p Plan, err error) {
 	l.Debug("Reading plan from path: %s", path)
 	planFile := fmt.Sprintf("%s/plan.yml", path)
 	l.Debug("Reading plan file: %s", planFile)
-	b, err := ioutil.ReadFile(planFile)
+	b, err := os.ReadFile(planFile)
 	if err != nil {
 		l.Error("Failed to read plan file %s: %s", planFile, err)
 		return
@@ -171,7 +171,7 @@ func ReadPlans(dir string, service Service) ([]Plan, error) {
 	l.Debug("Reading plans from directory: %s for service: %s", dir, service.Name)
 	pp := make([]Plan, 0)
 
-	ls, err := ioutil.ReadDir(dir)
+	ls, err := os.ReadDir(dir)
 	if err != nil {
 		l.Error("Failed to read plans directory %s: %s", dir, err)
 		return pp, err
@@ -207,7 +207,7 @@ func ReadService(path string) (Service, error) {
 	file := fmt.Sprintf("%s/service.yml", path)
 	l.Debug("Reading service file: %s", file)
 
-	b, err := ioutil.ReadFile(file)
+	b, err := os.ReadFile(file)
 	if err != nil {
 		l.Error("Failed to read service file %s: %s", file, err)
 		return s, fmt.Errorf("%s: %s", file, err)
@@ -260,7 +260,7 @@ func ReadServices(dirs ...string) ([]Service, error) {
 	ss := make([]Service, 0)
 	for _, dir := range dirs {
 		l.Debug("Processing service directory: %s", dir)
-		ls, err := ioutil.ReadDir(dir)
+		ls, err := os.ReadDir(dir)
 		if err != nil {
 			l.Error("Failed to read service directory %s: %s", dir, err)
 			return nil, fmt.Errorf("%s: %s", dir, err)

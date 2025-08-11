@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -36,10 +36,10 @@ func (vault *Vault) Init(store string) error {
 		return err
 	}
 	defer func() {
-		ioutil.ReadAll(res.Body)
+		io.ReadAll(res.Body)
 		res.Body.Close()
 	}()
-	b, err := ioutil.ReadAll(res.Body)
+	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning its initialization state: %s", err)
 		return err
@@ -55,7 +55,7 @@ func (vault *Vault) Init(store string) error {
 		l.Info("vault is already initialized")
 
 		l.Debug("reading credentials files from %s", store)
-		b, err := ioutil.ReadFile(store)
+		b, err := os.ReadFile(store)
 		if err != nil {
 			l.Error("failed to read vault credentials from %s: %s", store, err)
 			return err
@@ -84,10 +84,10 @@ func (vault *Vault) Init(store string) error {
 		return err
 	}
 	defer func() {
-		ioutil.ReadAll(res.Body)
+		io.ReadAll(res.Body)
 		res.Body.Close()
 	}()
-	b, err = ioutil.ReadAll(res.Body)
+	b, err = io.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning our initialization attempt: %s", err)
 		return err
@@ -123,7 +123,7 @@ func (vault *Vault) Init(store string) error {
 		return err
 	}
 	l.Debug("storing credentials at %s (mode 0600)", store)
-	err = ioutil.WriteFile(store, b, 0600)
+	err = os.WriteFile(store, b, 0600)
 	if err != nil {
 		l.Error("failed to write credentials to longterm storage file %s: %s", store, err)
 		return err
@@ -145,10 +145,10 @@ func (vault *Vault) Unseal(key string) error {
 		return err
 	}
 	defer func() {
-		ioutil.ReadAll(res.Body)
+		io.ReadAll(res.Body)
 		res.Body.Close()
 	}()
-	b, err := ioutil.ReadAll(res.Body)
+	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning current seal status: %s", err)
 		return err
@@ -179,10 +179,10 @@ func (vault *Vault) Unseal(key string) error {
 		return err
 	}
 	defer func() {
-		ioutil.ReadAll(res.Body)
+		io.ReadAll(res.Body)
 		res.Body.Close()
 	}()
-	b, err = ioutil.ReadAll(res.Body)
+	b, err = io.ReadAll(res.Body)
 	if err != nil {
 		l.Error("failed to read response from the vault, concerning our unseal attempt: %s", err)
 		return err
@@ -286,7 +286,7 @@ func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 		return exists, err
 	}
 	defer func() {
-		ioutil.ReadAll(res.Body)
+		io.ReadAll(res.Body)
 		res.Body.Close()
 	}()
 	if res.StatusCode == 404 {
@@ -297,7 +297,7 @@ func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 	}
 
 	exists = true
-	b, err := ioutil.ReadAll(res.Body)
+	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return exists, err
 	}
@@ -332,7 +332,7 @@ func (vault *Vault) Put(path string, data interface{}) error {
 		return err
 	}
 	defer func() {
-		ioutil.ReadAll(res.Body)
+		io.ReadAll(res.Body)
 		res.Body.Close()
 	}()
 	if res.StatusCode != 200 && res.StatusCode != 204 {
@@ -347,7 +347,7 @@ func (vault *Vault) Delete(path string) error {
 		return err
 	}
 	defer func() {
-		ioutil.ReadAll(res.Body)
+		io.ReadAll(res.Body)
 		res.Body.Close()
 	}()
 
@@ -374,10 +374,10 @@ func (vault *Vault) Clear(instanceID string) {
 			return
 		}
 		defer func() {
-			ioutil.ReadAll(res.Body)
+			io.ReadAll(res.Body)
 			res.Body.Close()
 		}()
-		b, err := ioutil.ReadAll(res.Body)
+		b, err := io.ReadAll(res.Body)
 		if err != nil {
 			l.Error("failed to read response from the vault: %s", err)
 			return
@@ -526,7 +526,7 @@ func (vault *Vault) updateHomeDirs() {
 	if err != nil {
 		l.Error("failed to marshal new ~/.saferc: %s", err)
 	} else {
-		err = ioutil.WriteFile(path, b, 0666)
+		err = os.WriteFile(path, b, 0666)
 		if err != nil {
 			l.Error("failed to write new ~/.saferc: %s", err)
 		}
@@ -546,7 +546,7 @@ func (vault *Vault) updateHomeDirs() {
 	if err != nil {
 		l.Error("failed to marshal new ~/.svtoken: %s", err)
 	} else {
-		err = ioutil.WriteFile(path, b, 0666)
+		err = os.WriteFile(path, b, 0666)
 		if err != nil {
 			l.Error("failed to write new ~/.svtoken: %s", err)
 		}
@@ -555,7 +555,7 @@ func (vault *Vault) updateHomeDirs() {
 	/* ~/.vault-token */
 	path = fmt.Sprintf("%s/.vault-token", home)
 	l.Debug("writing ~/.vault-token file to %s", path)
-	err = ioutil.WriteFile(path, []byte(vault.Token), 0666)
+	err = os.WriteFile(path, []byte(vault.Token), 0666)
 	if err != nil {
 		l.Error("failed to write new ~/.vault-token: %s", err)
 	}

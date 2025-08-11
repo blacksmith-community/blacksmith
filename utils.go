@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -59,13 +58,13 @@ func readFile(path string) ([]byte, bool, error) {
 		return []byte{}, true, err
 	}
 
-	b, err := ioutil.ReadFile(path)
+	b, err := os.ReadFile(path)
 	return b, true, err
 }
 
 func mergeFiles(required string, optional ...string) (map[interface{}]interface{}, error) {
 	// Required Manifest
-	b, err := ioutil.ReadFile(required)
+	b, err := os.ReadFile(required)
 	if err != nil {
 		return nil, err
 	}

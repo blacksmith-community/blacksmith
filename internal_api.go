@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"regexp"
 
@@ -202,7 +202,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		l := Logger.Wrap("update-manifest")
 		l.Debug("Updating BOSH manifest for %s", m[1])
 
-		newManifest, err := ioutil.ReadAll(req.Body)
+		newManifest, err := io.ReadAll(req.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "error reading request body: %s\n", err)

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"gopkg.in/yaml.v2"
@@ -75,7 +74,7 @@ type BOSHConfig struct {
 }
 
 func ReadConfig(path string) (c Config, err error) {
-	b, err := ioutil.ReadFile(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
@@ -116,7 +115,7 @@ func ReadConfig(path string) (c Config, err error) {
 
 	if c.BOSH.CCPath != "" {
 		/* cloud-config provided; try to read it. */
-		b, err := ioutil.ReadFile(c.BOSH.CCPath)
+		b, err := os.ReadFile(c.BOSH.CCPath)
 		if err != nil {
 			return c, fmt.Errorf("BOSH cloud-config file '%s': %s", c.BOSH.CCPath, err)
 		}

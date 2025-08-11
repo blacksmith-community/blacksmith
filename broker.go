@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -46,7 +46,7 @@ func WriteDataFile(
 	l := Logger.Wrap("WriteDataFile")
 	filename := GetWorkDir() + instanceID + ".json"
 	l.Debug("Writing data file for instance %s to %s (size: %d bytes)", instanceID, filename, len(data))
-	err := ioutil.WriteFile(filename, data, 0644)
+	err := os.WriteFile(filename, data, 0644)
 	if err != nil {
 		l.Error("Failed to write data file %s: %s", filename, err)
 	} else {
@@ -79,7 +79,7 @@ func WriteYamlFile(
 
 	filename := GetWorkDir() + instanceID + ".yml"
 	l.Debug("Writing YAML to file: %s (size: %d bytes)", filename, len(b))
-	err = ioutil.WriteFile(filename, b, 0644)
+	err = os.WriteFile(filename, b, 0644)
 	if err != nil {
 		l.Error("Failed to write YAML file %s: %s", filename, err)
 	} else {
@@ -681,7 +681,7 @@ func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adm
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		l.Error("Failed to create user - Status: %d, Response: %s", resp.StatusCode, string(body))
 		return fmt.Errorf("failed to create RabbitMQ user, status code: %d, response: %s", resp.StatusCode, string(body))
 	}
@@ -729,7 +729,7 @@ func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		l.Error("Failed to grant permissions - Status: %d, Response: %s", resp.StatusCode, string(body))
 		return fmt.Errorf("failed to grant RabbitMQ permissions, status code: %d, response: %s", resp.StatusCode, string(body))
 	}
@@ -764,7 +764,7 @@ func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		l.Error("Failed to delete user - Status: %d, Response: %s", resp.StatusCode, string(body))
 		return fmt.Errorf("failed to delete RabbitMQ user, status code: %d, response: %s", resp.StatusCode, string(body))
 	}

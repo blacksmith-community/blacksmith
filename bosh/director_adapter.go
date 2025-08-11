@@ -749,11 +749,11 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 						config.Logger.Info("Director uses UAA authentication, configuring UAA client")
 						config.Logger.Debug("UAA URL: %s", uaaURL)
 					}
-					
+
 					// Parse UAA URL to extract host and port
 					uaaHost := uaaURL
 					uaaPort := 443 // Default HTTPS port
-					
+
 					// Remove https:// or http:// prefix if present
 					if strings.HasPrefix(uaaHost, "https://") {
 						uaaHost = strings.TrimPrefix(uaaHost, "https://")
@@ -762,7 +762,7 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 						uaaHost = strings.TrimPrefix(uaaHost, "http://")
 						uaaPort = 80
 					}
-					
+
 					// Extract port if specified
 					if strings.Contains(uaaHost, ":") {
 						parts := strings.Split(uaaHost, ":")
@@ -773,11 +773,11 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 							}
 						}
 					}
-					
+
 					if config.Logger != nil {
 						config.Logger.Debug("UAA Host: %s, Port: %d", uaaHost, uaaPort)
 					}
-					
+
 					// Create UAA client using the username/password as client credentials
 					uaaConfig := boshuaa.Config{
 						Host:         uaaHost,
@@ -786,7 +786,7 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 						ClientSecret: config.Password,
 						CACert:       config.CACert,
 					}
-					
+
 					uaaFactory := boshuaa.NewFactory(logger)
 					uaa, err := uaaFactory.New(uaaConfig)
 					if err != nil {
@@ -795,14 +795,14 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 						}
 						return nil, fmt.Errorf("failed to create UAA client: %w", err)
 					}
-					
+
 					// Set up token function for UAA authentication
 					factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
-					
+
 					// Also set environment variables for compatibility
 					os.Setenv("BOSH_CLIENT", config.Username)
 					os.Setenv("BOSH_CLIENT_SECRET", config.Password)
-					
+
 					return factoryConfig, nil
 				}
 			}
