@@ -17,10 +17,12 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
+replace github.com/cloudfoundry/bosh-cli/v7 => github.com/wayneeseguin/bosh-cli/v7 v7.0.0-20250812224441-711e1552adc5
+
 require (
-	code.cloudfoundry.org/tlsconfig v0.31.0 // indirect
+	code.cloudfoundry.org/tlsconfig v0.32.0 // indirect
 	github.com/Knetic/govaluate v3.0.0+incompatible // indirect
-	github.com/aws/aws-sdk-go v1.55.7 // indirect
+	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/charlievieth/fs v0.0.3 // indirect
@@ -32,7 +34,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/geofffranks/simpleyaml v0.0.0-20161109204137-c9320f076de5 // indirect
 	github.com/geofffranks/yaml v0.0.0-20161117152608-9f2fe4b6f295 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
@@ -64,10 +66,10 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be // indirect
 	github.com/ziutek/utils v0.0.0-20190626152656-eb2a3b364d6c // indirect
-	golang.org/x/crypto v0.40.0 // indirect
-	golang.org/x/net v0.42.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
-	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/crypto v0.41.0 // indirect
+	golang.org/x/net v0.43.0 // indirect
+	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

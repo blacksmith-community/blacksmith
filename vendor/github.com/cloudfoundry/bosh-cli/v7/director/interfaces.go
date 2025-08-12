@@ -179,7 +179,9 @@ type Deployment interface {
 	EnableResurrection(InstanceSlug, bool) error
 
 	Update(manifest []byte, opts UpdateOpts) error
+	UpdateWithTaskID(manifest []byte, opts UpdateOpts) (int, error)
 	Delete(force bool) error
+	DeleteWithTaskID(force bool) (int, error)
 
 	AttachDisk(slug InstanceSlug, diskCID string, diskProperties string) error
 }

@@ -191,6 +191,10 @@ func (d DeploymentImpl) Update(manifest []byte, opts UpdateOpts) error {
 	return d.client.UpdateDeployment(manifest, opts)
 }
 
+func (d DeploymentImpl) UpdateWithTaskID(manifest []byte, opts UpdateOpts) (int, error) {
+	return d.client.UpdateDeploymentWithTaskID(manifest, opts)
+}
+
 func (d DeploymentImpl) Delete(force bool) error {
 	err := d.client.DeleteDeployment(d.name, force)
 	if err != nil {
@@ -207,6 +211,24 @@ func (d DeploymentImpl) Delete(force bool) error {
 	}
 
 	return nil
+}
+
+func (d DeploymentImpl) DeleteWithTaskID(force bool) (int, error) {
+	taskID, err := d.client.DeleteDeploymentWithTaskID(d.name, force)
+	if err != nil {
+		resps, listErr := d.client.Deployments()
+		if listErr != nil {
+			return taskID, err
+		}
+
+		for _, resp := range resps {
+			if resp.Name == d.name {
+				return taskID, err
+			}
+		}
+	}
+
+	return taskID, nil
 }
 
 func (d DeploymentImpl) AttachDisk(slug InstanceSlug, diskCID string, diskProperties string) error {
@@ -578,6 +600,70 @@ func (c Client) UpdateDeployment(manifest []byte, opts UpdateOpts) error {
 	return nil
 }
 
+func (c Client) UpdateDeploymentWithTaskID(manifest []byte, opts UpdateOpts) (int, error) {
+	query := url.Values{}
+
+	if opts.Recreate {
+		query.Add("recreate", "true")
+	}
+
+	if opts.RecreatePersistentDisks {
+		query.Add("recreate_persistent_disks", "true")
+	}
+
+	if opts.Fix {
+		query.Add("fix", "true")
+	}
+
+	if len(opts.SkipDrain.AsQueryValue()) > 0 {
+		query.Add("skip_drain", opts.SkipDrain.AsQueryValue())
+	}
+
+	if opts.Canaries != "" {
+		query.Add("canaries", opts.Canaries)
+	}
+
+	if opts.MaxInFlight != "" {
+		query.Add("max_in_flight", opts.MaxInFlight)
+	}
+
+	if opts.DryRun {
+		query.Add("dry_run", "true")
+	}
+
+	if opts.ForceLatestVariables {
+		query.Add("force_latest_variables", "true")
+	}
+
+	if len(opts.Diff.context) != 0 {
+		context := map[string]interface{}{}
+
+		for key, value := range opts.Diff.context {
+			context[key] = value
+		}
+
+		contextJson, err := json.Marshal(context)
+		if err != nil {
+			return 0, bosherr.WrapErrorf(err, "Marshaling context")
+		}
+
+		query.Add("context", string(contextJson))
+	}
+
+	path := fmt.Sprintf("/deployments?%s", query.Encode())
+
+	setHeaders := func(req *http.Request) {
+		req.Header.Add("Content-Type", "text/yaml")
+	}
+
+	taskResp, _, err := c.taskClientRequest.PostResultWithTask(path, manifest, setHeaders)
+	if err != nil {
+		return 0, bosherr.WrapErrorf(err, "Updating deployment")
+	}
+
+	return taskResp.ID, nil
+}
+
 func (c Client) DeleteDeployment(deploymentName string, force bool) error {
 	if len(deploymentName) == 0 {
 		return bosherr.Error("Expected non-empty deployment name")
@@ -597,6 +683,27 @@ func (c Client) DeleteDeployment(deploymentName string, force bool) error {
 	}
 
 	return nil
+}
+
+func (c Client) DeleteDeploymentWithTaskID(deploymentName string, force bool) (int, error) {
+	if len(deploymentName) == 0 {
+		return 0, bosherr.Error("Expected non-empty deployment name")
+	}
+
+	query := url.Values{}
+
+	if force {
+		query.Add("force", "true")
+	}
+
+	path := fmt.Sprintf("/deployments/%s?%s", deploymentName, query.Encode())
+
+	taskResp, _, err := c.taskClientRequest.DeleteResultWithTask(path)
+	if err != nil {
+		return 0, bosherr.WrapErrorf(err, "Deleting deployment '%s'", deploymentName)
+	}
+
+	return taskResp.ID, nil
 }
 
 type DeploymentVMResp struct {

@@ -228,80 +228,53 @@ func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 	d.log.Info("Creating/updating deployment: %s", deploymentName)
 	d.log.Debug("Manifest size: %d bytes", len(manifest))
 
-	// For new deployments, we need to use the director's deploy capability directly
-	// The bosh-cli library doesn't have a direct "create" method, but we can use
-	// the UpdateDeployment method which works for both create and update
-	updateOpts := boshdirector.UpdateOpts{
+	// Try to find existing deployment
+	dep, err := d.director.FindDeployment(deploymentName)
+	if err != nil {
+		// Deployment doesn't exist - the bosh-cli library doesn't support creating new deployments directly
+		// We need to use a workaround or implement direct API calls
+		d.log.Debug("Deployment %s not found, will be created on first update", deploymentName)
+		
+		// Since we can't create deployments directly with the library, we need to handle this differently
+		// The best approach is to use the manifest deployment capability when it exists
+		// For now, we'll need to fail with a clear error
+		return nil, fmt.Errorf("deployment %s does not exist and cannot be created via this library; please create it manually first", deploymentName)
+	}
+	
+	// Update existing deployment using the new WithTaskID method
+	d.log.Debug("Updating existing deployment %s using WithTaskID method", deploymentName)
+	
+	taskID, err := dep.UpdateWithTaskID([]byte(manifest), boshdirector.UpdateOpts{
 		Recreate:    false,
 		Fix:         false,
 		SkipDrain:   boshdirector.SkipDrains{},
 		Canaries:    "",
 		MaxInFlight: "",
 		DryRun:      false,
-	}
-
-	// In BOSH, deployments are created/updated through the same API endpoint.
-	// The director will create the deployment if it doesn't exist.
-	// However, the bosh-cli library requires a deployment object to call Update.
-	
-	// Try to find existing deployment
-	dep, err := d.director.FindDeployment(deploymentName)
-	if err != nil {
-		// Deployment doesn't exist - we need to work around the bosh-cli limitation
-		d.log.Debug("Deployment %s not found, attempting to create via manifest deployment", deploymentName)
-		
-		// Since the bosh-cli library doesn't provide a way to create deployments directly,
-		// and the deployment object's Update method just calls client.UpdateDeployment,
-		// we have a few options:
-		// 1. Use reflection to access the unexported client (fragile)
-		// 2. Create a fake deployment object (what we'll do)
-		// 3. Return a placeholder task and let the async process handle it
-		
-		// For now, return a placeholder task with ID 1 (non-zero to avoid triggering failures)
-		// The async provisioning process will need to handle the actual deployment creation
-		d.log.Info("Deployment %s does not exist yet, returning placeholder task for async creation", deploymentName)
-		return &Task{
-			ID:          1, // Use ID 1 instead of 0 to avoid CF thinking it failed
-			State:       "processing",
-			Description: fmt.Sprintf("Creating deployment %s", deploymentName),
-			User:        "admin",
-			Deployment:  deploymentName,
-			StartedAt:   time.Now(),
-		}, nil
-	}
-	
-	// Update existing deployment
-	d.log.Debug("Updating existing deployment %s", deploymentName)
-	err = dep.Update([]byte(manifest), updateOpts)
+	})
 	if err != nil {
 		d.log.Error("Failed to update deployment %s: %v", deploymentName, err)
 		return nil, fmt.Errorf("failed to update deployment: %w", err)
 	}
 
-	// Get the latest task for this deployment
-	tasks, err := d.director.RecentTasks(1, boshdirector.TasksFilter{
-		Deployment: deploymentName,
-	})
+	d.log.Info("Deployment %s update started with task ID: %d", deploymentName, taskID)
+	
+	// Get the task details
+	task, err := d.director.FindTask(taskID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get task for deployment: %w", err)
+		d.log.Error("Failed to get task %d details: %v", taskID, err)
+		// Return what we know even if we can't get full details
+		return &Task{
+			ID:          taskID,
+			Deployment:  deploymentName,
+			Description: fmt.Sprintf("Update deployment %s", deploymentName),
+			StartedAt:   time.Now(),
+		}, nil
 	}
 
-	if len(tasks) > 0 {
-		task := convertDirectorTask(tasks[0])
-		d.log.Info("Deployment %s update started, task ID: %d", deploymentName, task.ID)
-		return task, nil
-	}
-
-	// If no task found, create a dummy task response
-	d.log.Debug("No task found for deployment update, creating placeholder task")
-	return &Task{
-		ID:          0,
-		State:       "running",
-		Description: fmt.Sprintf("Creating deployment %s", deploymentName),
-		User:        "admin",
-		Deployment:  deploymentName,
-		StartedAt:   time.Now(),
-	}, nil
+	convertedTask := convertDirectorTask(task)
+	d.log.Info("Deployment %s update task retrieved, ID: %d, State: %s", deploymentName, convertedTask.ID, convertedTask.State)
+	return convertedTask, nil
 }
 
 // DeleteDeployment deletes a deployment
@@ -315,30 +288,32 @@ func (d *DirectorAdapter) DeleteDeployment(name string) (*Task, error) {
 		return nil, fmt.Errorf("failed to find deployment %s: %w", name, err)
 	}
 
-	// Delete the deployment (force = false)
-	d.log.Debug("Initiating deletion of deployment %s (force=false)", name)
-	err = dep.Delete(false)
+	// Delete the deployment using the new DeleteWithTaskID method (force = false)
+	d.log.Debug("Initiating deletion of deployment %s using DeleteWithTaskID method (force=false)", name)
+	taskID, err := dep.DeleteWithTaskID(false)
 	if err != nil {
 		d.log.Error("Failed to delete deployment %s: %v", name, err)
 		return nil, fmt.Errorf("failed to delete deployment %s: %w", name, err)
 	}
 
-	// Get the latest task
-	tasks, err := d.director.RecentTasks(1, boshdirector.TasksFilter{
-		Deployment: name,
-	})
+	d.log.Info("Deployment %s deletion started with task ID: %d", name, taskID)
+	
+	// Get the task details
+	task, err := d.director.FindTask(taskID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get task for deployment deletion: %w", err)
+		d.log.Error("Failed to get task %d details: %v", taskID, err)
+		// Return what we know even if we can't get full details
+		return &Task{
+			ID:          taskID,
+			Deployment:  name,
+			Description: fmt.Sprintf("Delete deployment %s", name),
+			StartedAt:   time.Now(),
+		}, nil
 	}
 
-	if len(tasks) > 0 {
-		task := convertDirectorTask(tasks[0])
-		d.log.Info("Deployment %s deletion started, task ID: %d", name, task.ID)
-		return task, nil
-	}
-
-	d.log.Error("No task found for deployment %s deletion", name)
-	return nil, fmt.Errorf("no task found for deployment deletion")
+	convertedTask := convertDirectorTask(task)
+	d.log.Info("Deployment %s deletion task retrieved, ID: %d, State: %s", name, convertedTask.ID, convertedTask.State)
+	return convertedTask, nil
 }
 
 // GetDeploymentVMs retrieves VMs for a deployment

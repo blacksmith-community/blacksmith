@@ -26,21 +26,21 @@ func NewTaskClientRequest(
 	}
 }
 
-type taskShortResp struct {
+type TaskShortResp struct {
 	ID    int    // 165
 	State string // e.g. "queued", "processing", "done", "error", "cancelled"
 }
 
-func (r taskShortResp) IsRunning() bool {
+func (r TaskShortResp) IsRunning() bool {
 	return r.State == "queued" || r.State == "processing" || r.State == "cancelling"
 }
 
-func (r taskShortResp) IsSuccessfullyDone() bool {
+func (r TaskShortResp) IsSuccessfullyDone() bool {
 	return r.State == "done"
 }
 
 func (r TaskClientRequest) GetResult(path string) (int, []byte, error) {
-	var taskResp taskShortResp
+	var taskResp TaskShortResp
 
 	err := r.clientRequest.Get(path, &taskResp)
 	if err != nil {
@@ -53,7 +53,7 @@ func (r TaskClientRequest) GetResult(path string) (int, []byte, error) {
 }
 
 func (r TaskClientRequest) PostResult(path string, payload []byte, f func(*http.Request)) ([]byte, error) {
-	var taskResp taskShortResp
+	var taskResp TaskShortResp
 
 	err := r.clientRequest.Post(path, payload, f, &taskResp)
 	if err != nil {
@@ -63,8 +63,20 @@ func (r TaskClientRequest) PostResult(path string, payload []byte, f func(*http.
 	return r.waitForResult(taskResp)
 }
 
+func (r TaskClientRequest) PostResultWithTask(path string, payload []byte, f func(*http.Request)) (TaskShortResp, []byte, error) {
+	var taskResp TaskShortResp
+
+	err := r.clientRequest.Post(path, payload, f, &taskResp)
+	if err != nil {
+		return taskResp, nil, err
+	}
+
+	result, err := r.waitForResult(taskResp)
+	return taskResp, result, err
+}
+
 func (r TaskClientRequest) PutResult(path string, payload []byte, f func(*http.Request)) ([]byte, error) {
-	var taskResp taskShortResp
+	var taskResp TaskShortResp
 
 	err := r.clientRequest.Put(path, payload, f, &taskResp)
 	if err != nil {
@@ -75,7 +87,7 @@ func (r TaskClientRequest) PutResult(path string, payload []byte, f func(*http.R
 }
 
 func (r TaskClientRequest) DeleteResult(path string) ([]byte, error) {
-	var taskResp taskShortResp
+	var taskResp TaskShortResp
 
 	err := r.clientRequest.Delete(path, &taskResp)
 	if err != nil {
@@ -85,10 +97,22 @@ func (r TaskClientRequest) DeleteResult(path string) ([]byte, error) {
 	return r.waitForResult(taskResp)
 }
 
+func (r TaskClientRequest) DeleteResultWithTask(path string) (TaskShortResp, []byte, error) {
+	var taskResp TaskShortResp
+
+	err := r.clientRequest.Delete(path, &taskResp)
+	if err != nil {
+		return taskResp, nil, err
+	}
+
+	result, err := r.waitForResult(taskResp)
+	return taskResp, result, err
+}
+
 func (r TaskClientRequest) WaitForCompletion(id int, type_ string, taskReporter TaskReporter) error {
 	taskReporter.TaskStarted(id)
 
-	var taskResp taskShortResp
+	var taskResp TaskShortResp
 	var outputOffset int
 
 	defer func() {
@@ -125,7 +149,7 @@ func (r TaskClientRequest) WaitForCompletion(id int, type_ string, taskReporter 
 	}
 }
 
-func (r TaskClientRequest) waitForResult(taskResp taskShortResp) ([]byte, error) {
+func (r TaskClientRequest) waitForResult(taskResp TaskShortResp) ([]byte, error) {
 	err := r.WaitForCompletion(taskResp.ID, "event", r.taskReporter)
 	if err != nil {
 		return nil, err
