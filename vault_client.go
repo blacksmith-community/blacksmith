@@ -144,12 +144,33 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 		return err
 	}
 
-	// Normalize mount path
+	// Normalize mount path - always add trailing slash for comparison
 	mountPath := strings.Trim(mount, "/") + "/"
+	
+	// Debug: log all mounts
+	l.Debug("Current mounts:")
+	for path, mountInfo := range mounts {
+		l.Debug("  - %s: type=%s, version=%v", path, mountInfo.Type, mountInfo.Options["version"])
+	}
 
 	// Check if mount exists
-	if _, exists := mounts[mountPath]; exists {
-		l.Debug("Found secret mount %s", mount)
+	if mountInfo, exists := mounts[mountPath]; exists {
+		// Verify it's a KV mount
+		if mountInfo.Type == "kv" || mountInfo.Type == "generic" {
+			version := "1"
+			if v, ok := mountInfo.Options["version"]; ok {
+				version = v
+			}
+			l.Debug("Found KV mount at %s (version %s)", mount, version)
+			
+			// If it's KV v2, we might need to handle it differently
+			if version != "1" {
+				l.Info("WARNING: Mount %s is KV version %s, expected version 1", mount, version)
+				// For now, continue - the API should handle both versions
+			}
+		} else {
+			l.Info("WARNING: Mount %s exists but is type %s, not KV", mount, mountInfo.Type)
+		}
 		return nil
 	}
 
@@ -160,10 +181,10 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 	}
 
 	// Create the mount
-	l.Info("creating mount %s", mount)
+	l.Info("creating KV v1 mount at %s", mount)
 	mountInput := &api.MountInput{
 		Type:        "kv",
-		Description: fmt.Sprintf("A KV v1 Mount created by safe"),
+		Description: "KV v1 secrets engine for Blacksmith",
 		Options: map[string]string{
 			"version": "1",
 		},
@@ -171,11 +192,25 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 
 	err = vc.Sys().Mount(mount, mountInput)
 	if err != nil {
+		// Check if the error is because it already exists (race condition)
+		if strings.Contains(err.Error(), "path is already in use") {
+			l.Info("mount %s already exists (created elsewhere)", mount)
+			return nil
+		}
 		l.Error("failed to create mount %s: %s", mount, err)
 		return err
 	}
 
-	l.Info("mount %s created successfully", mount)
+	l.Info("mount %s created successfully as KV v1", mount)
+	
+	// Verify the mount was created
+	mounts, err = vc.Sys().ListMounts()
+	if err != nil {
+		l.Info("WARNING: failed to verify mount creation: %s", err)
+	} else if _, exists := mounts[mountPath]; !exists {
+		l.Error("mount %s was created but not found in list", mount)
+	}
+	
 	return nil
 }
 
