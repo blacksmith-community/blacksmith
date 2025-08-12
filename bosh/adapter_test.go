@@ -1,6 +1,7 @@
 package bosh_test
 
 import (
+	"os"
 	"testing"
 
 	"blacksmith/bosh"
@@ -21,6 +22,10 @@ func TestFactoryCreation(t *testing.T) {
 }
 
 func TestFactoryNew(t *testing.T) {
+	// Set test mode to skip network calls
+	os.Setenv("BLACKSMITH_TEST_MODE", "true")
+	defer os.Unsetenv("BLACKSMITH_TEST_MODE")
+
 	factory := bosh.NewFactory()
 	if factory == nil {
 		t.Fatal("Expected factory to be created")
@@ -44,6 +49,10 @@ func TestFactoryNew(t *testing.T) {
 }
 
 func TestCreateDirectorFromLegacyConfig(t *testing.T) {
+	// Set test mode to skip network calls
+	os.Setenv("BLACKSMITH_TEST_MODE", "true")
+	defer os.Unsetenv("BLACKSMITH_TEST_MODE")
+
 	// This test verifies the function exists and creates a director
 	// The BOSH CLI director doesn't connect until first use
 	director, err := bosh.CreateDirectorFromLegacyConfig(

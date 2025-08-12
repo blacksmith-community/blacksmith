@@ -731,6 +731,19 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 		CACert: config.CACert,
 	}
 
+	// Skip auto-detection if we're in a test environment
+	// This prevents hanging on network calls during tests
+	if os.Getenv("BLACKSMITH_TEST_MODE") == "true" {
+		// Just set up basic auth without trying to connect
+		if config.Username != "" && config.Password != "" {
+			os.Setenv("BOSH_CLIENT", config.Username)
+			os.Setenv("BOSH_CLIENT_SECRET", config.Password)
+			factoryConfig.Client = config.Username
+			factoryConfig.ClientSecret = config.Password
+		}
+		return factoryConfig, nil
+	}
+
 	// First, try to detect if the director uses UAA by making an unauthenticated info call
 	// Create a temporary director to check authentication type
 	tempFactory := boshdirector.NewFactory(logger)
