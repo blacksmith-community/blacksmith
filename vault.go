@@ -341,14 +341,30 @@ func (vault *Vault) AppendHistory(instanceID, action, description string) error 
 	historyPath := fmt.Sprintf("%s/history", instanceID)
 	
 	// Get existing history
-	var history []map[string]interface{}
-	exists, err := vault.Get(historyPath, &history)
+	var historyData map[string]interface{}
+	exists, err := vault.Get(historyPath, &historyData)
 	if err != nil {
 		l.Error("failed to get history: %s", err)
 		// Start fresh if there's an error
-		history = []map[string]interface{}{}
+		historyData = map[string]interface{}{"entries": []map[string]interface{}{}}
 	}
 	if !exists {
+		historyData = map[string]interface{}{"entries": []map[string]interface{}{}}
+	}
+	
+	// Extract the entries array
+	var history []map[string]interface{}
+	if entries, ok := historyData["entries"].([]interface{}); ok {
+		// Convert []interface{} to []map[string]interface{}
+		for _, entry := range entries {
+			if entryMap, ok := entry.(map[string]interface{}); ok {
+				history = append(history, entryMap)
+			}
+		}
+	} else if entries, ok := historyData["entries"].([]map[string]interface{}); ok {
+		history = entries
+	} else {
+		// If entries doesn't exist or is wrong type, start fresh
 		history = []map[string]interface{}{}
 	}
 
@@ -365,7 +381,9 @@ func (vault *Vault) AppendHistory(instanceID, action, description string) error 
 		history = history[len(history)-50:]
 	}
 
-	return vault.Put(historyPath, history)
+	// Store history wrapped in a map
+	historyData = map[string]interface{}{"entries": history}
+	return vault.Put(historyPath, historyData)
 }
 
 func (vault *Vault) Index(instanceID string, data interface{}) error {

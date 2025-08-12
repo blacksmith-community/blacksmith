@@ -310,9 +310,19 @@ func (b *Broker) Deprovision(
 	// Store delete_requested_at timestamp
 	l.Debug("storing delete_requested_at timestamp in Vault")
 	deleteRequestedAt := time.Now()
-	err = b.Vault.Put(fmt.Sprintf("%s/timestamps/delete_requested_at", instanceID), map[string]interface{}{
-		"delete_requested_at": deleteRequestedAt.Format(time.RFC3339),
-	})
+	
+	// Get existing timestamps
+	var timestamps map[string]interface{}
+	exists, err = b.Vault.Get(fmt.Sprintf("%s/timestamps", instanceID), &timestamps)
+	if err != nil || !exists {
+		timestamps = make(map[string]interface{})
+	}
+	
+	// Add delete_requested_at
+	timestamps["delete_requested_at"] = deleteRequestedAt.Format(time.RFC3339)
+	
+	// Store updated timestamps
+	err = b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), timestamps)
 	if err != nil {
 		l.Error("failed to store delete_requested_at timestamp: %s", err)
 		// Continue anyway, this is non-fatal
@@ -526,9 +536,19 @@ func (b *Broker) LastOperation(
 			// Store deleted_at timestamp
 			l.Debug("storing deleted_at timestamp in Vault")
 			deletedAt := time.Now()
-			err = b.Vault.Put(fmt.Sprintf("%s/timestamps/deleted_at", instanceID), map[string]interface{}{
-				"deleted_at": deletedAt.Format(time.RFC3339),
-			})
+			
+			// Get existing timestamps
+			var timestamps map[string]interface{}
+			exists2, err := b.Vault.Get(fmt.Sprintf("%s/timestamps", instanceID), &timestamps)
+			if err != nil || !exists2 {
+				timestamps = make(map[string]interface{})
+			}
+			
+			// Add deleted_at
+			timestamps["deleted_at"] = deletedAt.Format(time.RFC3339)
+			
+			// Store updated timestamps
+			err = b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), timestamps)
 			if err != nil {
 				l.Error("failed to store deleted_at timestamp: %s", err)
 				// Continue anyway, this is non-fatal
