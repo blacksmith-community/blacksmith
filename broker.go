@@ -198,8 +198,13 @@ func (b *Broker) Provision(
 	l.Info("Starting provision of service instance %s (service: %s, plan: %s)", instanceID, details.ServiceID, details.PlanID)
 	l.Debug("Provision details - OrganizationGUID: %s, SpaceGUID: %s", details.OrganizationGUID, details.SpaceGUID)
 
+	// Check if async is allowed
+	if !asyncAllowed {
+		l.Error("Async operations required but not allowed by client")
+		return spec, fmt.Errorf("This service broker requires async operations")
+	}
+
 	l.Info("Looking up plan %s for service %s", details.PlanID, details.ServiceID)
-	l.Debug("Searching in blacksmith catalog for plan")
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
 	if err != nil {
 		l.Error("Failed to find plan %s/%s: %s", details.ServiceID, details.PlanID, err)
@@ -207,6 +212,7 @@ func (b *Broker) Provision(
 	}
 	l.Debug("Found plan: %s (limit: %d)", plan.Name, plan.Limit)
 
+	// Check service limits
 	l.Debug("retrieving vault 'db' index (for tracking service usage)")
 	db, err := b.Vault.GetIndex("db")
 	if err != nil {
@@ -215,113 +221,59 @@ func (b *Broker) Provision(
 	}
 
 	l.Info("Checking service limits for plan %s", plan.Name)
-	l.Debug("Current usage count from DB index, checking against limit %d", plan.Limit)
 	if plan.OverLimit(db) {
 		l.Error("Service limit exceeded for %s/%s (limit: %d)", plan.Service.Name, plan.Name, plan.Limit)
 		return spec, brokerapi.ErrPlanQuotaExceeded
 	}
 	l.Debug("Service limit check passed")
 
-	defaults := make(map[interface{}]interface{})
-	l.Debug("Param raw data: %s", details.RawParameters)
-	err = WriteDataFile(instanceID, details.RawParameters)
-	if err != nil {
-		l.Debug("WriteDataFile write failed with '%s'", err)
-	}
-	err = WriteYamlFile(instanceID, details.RawParameters)
-	if err != nil {
-		l.Debug("WriteYamlFile write failed with '%s'", err)
-	}
-	params := make(map[interface{}]interface{})
-	err = yaml.Unmarshal(details.RawParameters, &params)
-	if err != nil {
-		l.Debug("Error unmarshalling params: %s, %s", err, details.RawParameters)
-	}
-	defaults["name"] = plan.ID + "-" + instanceID
-
-	l.Debug("querying BOSH director for director UUID")
-	info, err := b.BOSH.GetInfo()
-	if err != nil {
-		l.Error("failed to get information about BOSH director: %s", err)
-		return spec, fmt.Errorf("BOSH deployment manifest generation failed")
-	}
-	l.Debug("found BOSH director UUID: %s", info.UUID)
-	defaults["director_uuid"] = info.UUID
-
-	if err := os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID)); err != nil {
-		l.Error("failed to set CREDENTIALS environment variable: %s", err)
-		return brokerapi.ProvisionedServiceSpec{}, err
-	}
-	l.Debug("setting vault prefix to %s", os.Getenv("CREDENTIALS"))
-	l.Debug("running service init script")
-	err = InitManifest(plan, instanceID)
-	if err != nil {
-		l.Error("service deployment initialization script failed: %s", err)
-		return spec, fmt.Errorf("BOSH service deployment initial setup failed")
-	}
-
-	l.Debug("Provision defaults: %s", defaults)
-	l.Debug("Provision params: %s", params)
-
-	params["instance_id"] = instanceID
-
-	l.Debug("storing metadata details in Vault")
-	err = b.Vault.Put(instanceID, details)
-	if err != nil {
-		l.Error("failed to store metadata in the vault (non-fatal): %s", err)
-	}
-
-	l.Info("Generating BOSH deployment manifest for %s", defaults["name"])
-	l.Debug("Calling GenManifest with plan %s and parameters", plan.Name)
-	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
-	if err != nil {
-		l.Error("Failed to generate service deployment manifest: %s", err)
-		return spec, fmt.Errorf("BOSH service deployment manifest generation failed")
-	}
-	l.Debug("Generated manifest size: %d bytes", len(manifest))
-	err = b.Vault.Put(fmt.Sprintf("%s/manifest", instanceID), map[string]interface{}{
-		"manifest": manifest,
-	})
-	if err != nil {
-		l.Error("failed to store manifest in the vault (non-fatal): %s", err)
-	}
-
-	l.Debug("uploading releases (if necessary) to BOSH director")
-	err = UploadReleasesFromManifest(manifest, b.BOSH, l)
-	if err != nil {
-		l.Error("failed to upload service deployment releases: %s", err)
-		return spec, fmt.Errorf("BOSH service deployment failed")
-	}
-
-	l.Info("Deploying service instance to BOSH director")
-	l.Debug("Submitting deployment manifest to BOSH (size: %d bytes)", len(manifest))
-	task, err := b.BOSH.CreateDeployment(manifest)
-	if err != nil {
-		l.Error("Failed to create service deployment: %s", err)
-		return spec, fmt.Errorf("BOSH service deployment failed")
-	}
-	l.Info("Deployment started successfully, BOSH task ID: %d", task.ID)
-	l.Debug("Task state: %s, description: %s", task.State, task.Description)
-
+	// Store instance in index immediately with requested_at timestamp
 	l.Debug("tracking service instance in the vault 'db' index")
+	now := time.Now()
 	err = b.Vault.Index(instanceID, map[string]interface{}{
-		"service_id": details.ServiceID,
-		"plan_id":    plan.ID,
-		"created":    time.Now().Unix(),
+		"service_id":   details.ServiceID,
+		"plan_id":      plan.ID,
+		"created":      now.Unix(), // Keep for backward compatibility
+		"requested_at": now.Format(time.RFC3339),
 	})
 	if err != nil {
 		l.Error("failed to track new service in the vault index: %s", err)
 		return spec, fmt.Errorf("Failed to track new service in Vault")
 	}
 
-	l.Debug("updating service status in the vault")
-	err = b.Vault.Track(instanceID, "provision", task.ID, params)
+	// Store metadata for later use with timestamp
+	l.Debug("storing metadata details in Vault with requested_at timestamp")
+	metadata := map[string]interface{}{
+		"details":      details,
+		"requested_at": time.Now().Format(time.RFC3339),
+	}
+	err = b.Vault.Put(instanceID, metadata)
 	if err != nil {
-		l.Error("failed to store service status in the vault: %s", err)
-		return spec, fmt.Errorf("Failed to store service deployment status")
+		l.Error("failed to store metadata in the vault: %s", err)
+		// Remove from index since we're failing
+		b.Vault.Index(instanceID, nil)
+		return spec, fmt.Errorf("Failed to store service metadata")
 	}
 
-	l.Info("Successfully initiated provisioning of service instance %s", instanceID)
+	// Write data files for debugging/audit
+	if len(details.RawParameters) > 0 {
+		WriteDataFile(instanceID, details.RawParameters)
+		WriteYamlFile(instanceID, details.RawParameters)
+	}
+
+	// Convert details to a map for the async function
+	detailsMap := map[string]interface{}{
+		"service_id":        details.ServiceID,
+		"plan_id":           details.PlanID,
+		"organization_guid": details.OrganizationGUID,
+		"space_guid":        details.SpaceGUID,
+		"raw_parameters":    details.RawParameters,
+	}
+
+	// Launch async provisioning in background
+	go b.provisionAsync(instanceID, detailsMap, plan)
+
+	l.Info("Accepted provisioning request for service instance %s", instanceID)
 	return spec, nil
 }
 
@@ -337,64 +289,47 @@ func (b *Broker) Deprovision(
 	l := Logger.Wrap("%s %s/%s", instanceID, details.ServiceID, details.PlanID)
 	l.Info("deprovisioning plan (%s) service (%s) instance (%s)", details.PlanID, details.ServiceID, instanceID)
 
+	// Check if async is allowed
+	if !asyncAllowed {
+		l.Error("Async operations required but not allowed by client")
+		return domain.DeprovisionServiceSpec{}, fmt.Errorf("This service broker requires async operations")
+	}
+
+	// Check if instance exists
 	instance, exists, err := b.Vault.FindInstance(instanceID)
 	if err != nil {
 		l.Error("unable to retrieve instance details from vault index: %s", err)
 		return domain.DeprovisionServiceSpec{}, err
 	}
 	if !exists {
-		l.Debug("removing defunct service from vault index")
-		if err := b.Vault.Index(instanceID, nil); err != nil {
-			l.Error("failed to remove defunct service instance '%s' from vault: %s", instanceID, err)
-		}
-
+		l.Debug("Instance not found in vault index")
 		/* return a 410 Gone to the caller */
 		return domain.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
 	}
 
-	deploymentName := instance.PlanID + "-" + instanceID
-	l.Info("Found deployment %s for instance %s", deploymentName, instanceID)
-	l.Debug("Determined BOSH deployment name from plan ID and instance ID")
-
-	manifest, err := b.BOSH.GetDeployment(deploymentName)
-	if err != nil || manifest.Manifest == "" {
-		l.Debug("removing defunct service from vault index")
-		if err := b.Vault.Index(instanceID, nil); err != nil {
-			l.Error("failed to remove defunct service instance '%s' from vault: %s", instanceID, err)
-		}
-
-		/* return a 410 Gone to the caller */
-		return domain.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
-	}
-
-	l.Info("Initiating deletion of BOSH deployment %s", deploymentName)
-	l.Debug("Calling BOSH DeleteDeployment API")
-	/* FIXME: what if we still have a valid task for deployment? */
-	task, err := b.BOSH.DeleteDeployment(deploymentName)
+	// Store delete_requested_at timestamp
+	l.Debug("storing delete_requested_at timestamp in Vault")
+	deleteRequestedAt := time.Now()
+	err = b.Vault.Put(fmt.Sprintf("%s/timestamps/delete_requested_at", instanceID), map[string]interface{}{
+		"delete_requested_at": deleteRequestedAt.Format(time.RFC3339),
+	})
 	if err != nil {
-		l.Error("Failed to delete BOSH deployment %s: %s", deploymentName, err)
-		return domain.DeprovisionServiceSpec{}, err
-	}
-	l.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
-	l.Debug("Task state: %s, description: %s", task.State, task.Description)
-
-	l.Debug("removing service from vault 'db' index")
-	if err := b.Vault.Index(instanceID, nil); err != nil {
-		l.Error("failed to remove service '%s' from vault 'db' index: %s", instanceID, err)
+		l.Error("failed to store delete_requested_at timestamp: %s", err)
+		// Continue anyway, this is non-fatal
 	}
 
-	l.Debug("updating service status in the vault")
-	if err := b.Vault.Track(instanceID, "deprovision", task.ID, nil); err != nil {
-		l.Error("failed to track deprovision BOSH task #%d in vault: %s", task.ID, err)
-	}
-
+	// Deschedule SHIELD backup early (synchronous but fast)
 	l.Debug("descheduling S.H.I.E.L.D. backup")
 	err = b.Shield.DeleteSchedule(instanceID, details)
 	if err != nil {
 		l.Error("failed to deschedule S.H.I.E.L.D. backup for instance %s: %s", instanceID, err)
+		// Continue anyway, this is non-fatal
 	}
 
-	l.Info("started deprovisioning")
+	// Launch async deprovisioning in background
+	go b.deprovisionAsync(instanceID, instance)
+
+	l.Info("Accepted deprovisioning request for service instance %s", instanceID)
 	return domain.DeprovisionServiceSpec{IsAsync: true}, nil
 }
 
@@ -404,14 +339,59 @@ func (b *Broker) OnProvisionCompleted(
 ) error {
 	l.Debug("provision task was successfully completed; scheduling backup in S.H.I.E.L.D. if required")
 	l.Debug("fetching instance provision details from Vault")
-	var details brokerapi.ProvisionDetails
-	exists, err := b.Vault.Get(instanceID, &details)
+
+	// First, update the instance with created_at timestamp
+	l.Debug("updating instance with created_at timestamp")
+	createdAt := time.Now()
+	err := b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), map[string]interface{}{
+		"created_at": createdAt.Format(time.RFC3339),
+	})
 	if err != nil {
-		l.Error("failed to fetch instance provision details from Vault: %s", err)
+		l.Error("failed to store created_at timestamp: %s", err)
+		// Continue anyway, this is non-fatal
+	}
+
+	// Update the index with created_at
+	l.Debug("updating index with created_at timestamp")
+	idx, err := b.Vault.GetIndex("db")
+	if err == nil {
+		if raw, err := idx.Lookup(instanceID); err == nil {
+			if data, ok := raw.(map[string]interface{}); ok {
+				data["created_at"] = createdAt.Format(time.RFC3339)
+				b.Vault.Index(instanceID, data)
+			}
+		}
+	}
+
+	// Get the metadata which now includes details wrapped
+	var metadata map[string]interface{}
+	exists, err := b.Vault.Get(instanceID, &metadata)
+	if err != nil {
+		l.Error("failed to fetch instance metadata from Vault: %s", err)
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("could not find instance provision details in Vault (key: %s)", instanceID)
+		return fmt.Errorf("could not find instance metadata in Vault (key: %s)", instanceID)
+	}
+
+	// Extract the details from metadata
+	var details brokerapi.ProvisionDetails
+	if detailsData, ok := metadata["details"]; ok {
+		// Convert the details back to ProvisionDetails struct
+		if detailsMap, ok := detailsData.(map[string]interface{}); ok {
+			if serviceID, ok := detailsMap["service_id"].(string); ok {
+				details.ServiceID = serviceID
+			}
+			if planID, ok := detailsMap["plan_id"].(string); ok {
+				details.PlanID = planID
+			}
+		}
+	} else {
+		// Fallback: try to read as old format
+		_, err = b.Vault.Get(instanceID, &details)
+		if err != nil {
+			return fmt.Errorf("could not parse instance provision details from Vault")
+		}
 	}
 
 	l.Debug("fetching deployment VMs metadata")
@@ -466,6 +446,47 @@ func (b *Broker) LastOperation(
 	typ, taskID, _, _ := b.Vault.State(instanceID)
 	l.Debug("instance was last in '%s' state, BOSH task %d", typ, taskID)
 
+	// Handle special task IDs
+	if taskID == 0 {
+		// Task is still being initialized
+		l.Debug("operation is still being initialized")
+		return domain.LastOperation{State: domain.InProgress}, nil
+	}
+	if taskID == -1 {
+		// Task failed during initialization
+		l.Error("operation failed during initialization")
+		return domain.LastOperation{State: domain.Failed}, nil
+	}
+	if taskID == 1 {
+		// Placeholder task for new deployment creation
+		// Check if the deployment actually exists now
+		l.Debug("checking status of new deployment creation")
+
+		// Get instance details from vault to find plan ID
+		instance, exists, err := b.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("could not find instance details for placeholder task")
+			return domain.LastOperation{State: domain.Failed}, nil
+		}
+
+		deploymentName := instance.PlanID + "-" + instanceID
+		_, err = b.BOSH.GetDeployment(deploymentName)
+		if err != nil {
+			// Still being created
+			l.Debug("deployment %s still being created", deploymentName)
+			return domain.LastOperation{State: domain.InProgress}, nil
+		}
+		// Deployment exists, mark as succeeded
+		l.Debug("deployment %s created successfully", deploymentName)
+
+		// Run post-provision hook
+		if err := b.OnProvisionCompleted(l, instanceID); err != nil {
+			return domain.LastOperation{}, fmt.Errorf("provision task was successfully completed but the post-hook failed")
+		}
+
+		return domain.LastOperation{State: domain.Succeeded}, nil
+	}
+
 	if typ == "provision" {
 		l.Debug("retrieving task %d from BOSH director", taskID)
 		task, err := b.BOSH.GetTask(taskID)
@@ -501,15 +522,42 @@ func (b *Broker) LastOperation(
 
 		if task.State == "done" {
 			l.Debug("deprovision operation succeeded")
-			l.Debug("cleaning up secret/%s from the vault", instanceID)
-			b.Vault.Clear(instanceID)
+
+			// Store deleted_at timestamp
+			l.Debug("storing deleted_at timestamp in Vault")
+			deletedAt := time.Now()
+			err = b.Vault.Put(fmt.Sprintf("%s/timestamps/deleted_at", instanceID), map[string]interface{}{
+				"deleted_at": deletedAt.Format(time.RFC3339),
+			})
+			if err != nil {
+				l.Error("failed to store deleted_at timestamp: %s", err)
+				// Continue anyway, this is non-fatal
+			}
+
+			// Update the index with deleted_at (but don't remove it)
+			l.Debug("updating index with deleted_at timestamp")
+			idx, err := b.Vault.GetIndex("db")
+			if err == nil {
+				if raw, err := idx.Lookup(instanceID); err == nil {
+					if data, ok := raw.(map[string]interface{}); ok {
+						data["deleted_at"] = deletedAt.Format(time.RFC3339)
+						data["deleted"] = true // Mark as deleted but keep in index
+						b.Vault.Index(instanceID, data)
+					}
+				}
+			}
+
+			l.Debug("keeping secrets in vault for audit purposes")
+			// Note: We intentionally do NOT call b.Vault.Clear(instanceID) here
+			// to preserve secrets for auditing purposes
 			return domain.LastOperation{State: domain.Succeeded}, nil
 		}
 
 		if task.State == "error" {
 			l.Debug("deprovision operation failed!")
-			l.Debug("cleaning up secret/%s from the vault", instanceID)
-			b.Vault.Clear(instanceID)
+			l.Debug("keeping secrets in vault for audit purposes")
+			// Note: We intentionally do NOT call b.Vault.Clear(instanceID) here
+			// to preserve secrets for auditing purposes
 			return domain.LastOperation{State: domain.Failed}, nil
 		}
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 type Vault struct {
@@ -260,13 +261,111 @@ func (vault *Vault) Track(instanceID, action string, taskID int, params interfac
 	l := Logger.Wrap("vault track %s", instanceID)
 	l.Debug("tracking action '%s', task %d", action, taskID)
 
+	// Determine the state description based on task ID
+	var state string
+	switch taskID {
+	case -1:
+		state = "failed"
+	case 0:
+		state = "initializing"
+	default:
+		state = "in_progress"
+	}
+
 	task := struct {
-		Action string      `json:"action"`
-		Task   int         `json:"task"`
-		Params interface{} `json:"params"`
-	}{action, taskID, deinterface(params)}
+		Action      string      `json:"action"`
+		Task        int         `json:"task"`
+		State       string      `json:"state"`
+		Description string      `json:"description"`
+		UpdatedAt   int64       `json:"updated_at"`
+		Params      interface{} `json:"params"`
+	}{
+		Action:      action,
+		Task:        taskID,
+		State:       state,
+		Description: "",
+		UpdatedAt:   time.Now().Unix(),
+		Params:      deinterface(params),
+	}
 
 	return vault.Put(fmt.Sprintf("%s/task", instanceID), task)
+}
+
+// TrackProgress updates the progress of an async operation with a description
+func (vault *Vault) TrackProgress(instanceID, action, description string, taskID int, params interface{}) error {
+	l := Logger.Wrap("vault track progress %s", instanceID)
+	l.Debug("tracking progress for '%s': %s", action, description)
+
+	// Determine the state based on task ID
+	var state string
+	switch taskID {
+	case -1:
+		state = "failed"
+	case 0:
+		state = "initializing"
+	default:
+		state = "in_progress"
+	}
+
+	task := struct {
+		Action      string      `json:"action"`
+		Task        int         `json:"task"`
+		State       string      `json:"state"`
+		Description string      `json:"description"`
+		UpdatedAt   int64       `json:"updated_at"`
+		Params      interface{} `json:"params"`
+	}{
+		Action:      action,
+		Task:        taskID,
+		State:       state,
+		Description: description,
+		UpdatedAt:   time.Now().Unix(),
+		Params:      deinterface(params),
+	}
+
+	// Store current state
+	err := vault.Put(fmt.Sprintf("%s/task", instanceID), task)
+	if err != nil {
+		return err
+	}
+
+	// Append to history
+	return vault.AppendHistory(instanceID, action, description)
+}
+
+// AppendHistory adds an entry to the operation history for an instance
+func (vault *Vault) AppendHistory(instanceID, action, description string) error {
+	l := Logger.Wrap("vault history %s", instanceID)
+	l.Debug("appending to history: %s - %s", action, description)
+
+	historyPath := fmt.Sprintf("%s/history", instanceID)
+	
+	// Get existing history
+	var history []map[string]interface{}
+	exists, err := vault.Get(historyPath, &history)
+	if err != nil {
+		l.Error("failed to get history: %s", err)
+		// Start fresh if there's an error
+		history = []map[string]interface{}{}
+	}
+	if !exists {
+		history = []map[string]interface{}{}
+	}
+
+	// Append new entry
+	entry := map[string]interface{}{
+		"timestamp":   time.Now().Unix(),
+		"action":      action,
+		"description": description,
+	}
+	history = append(history, entry)
+
+	// Limit history to last 50 entries
+	if len(history) > 50 {
+		history = history[len(history)-50:]
+	}
+
+	return vault.Put(historyPath, history)
 }
 
 func (vault *Vault) Index(instanceID string, data interface{}) error {
@@ -281,7 +380,8 @@ func (vault *Vault) Index(instanceID string, data interface{}) error {
 
 	delete(idx.Data, instanceID)
 	err = idx.Save()
-	vault.Clear(instanceID)
+	// Note: We intentionally do NOT call vault.Clear(instanceID) here
+	// to preserve secrets for auditing purposes
 	return err
 }
 

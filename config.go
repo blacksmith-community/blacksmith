@@ -19,10 +19,13 @@ type Config struct {
 }
 
 type BrokerConfig struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	Port     string `yaml:"port"`
-	BindIP   string `yaml:"bind_ip"`
+	Username      string `yaml:"username"`
+	Password      string `yaml:"password"`
+	Port          string `yaml:"port"`
+	BindIP        string `yaml:"bind_ip"`
+	ReadTimeout   int    `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
+	WriteTimeout  int    `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
+	IdleTimeout   int    `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
 }
 
 type VaultConfig struct {

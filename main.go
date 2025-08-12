@@ -227,13 +227,30 @@ func main() {
 
 	l.Info("blacksmith service broker v%s starting up...", Version)
 
-	// Create HTTP server with proper timeouts for security
+	// Create HTTP server with proper timeouts for service broker operations
+	// Service provisioning can take longer due to BOSH operations (manifest generation, release uploads, etc.)
+	// Default timeouts if not specified in config
+	readTimeout := 120
+	if config.Broker.ReadTimeout > 0 {
+		readTimeout = config.Broker.ReadTimeout
+	}
+	writeTimeout := 120
+	if config.Broker.WriteTimeout > 0 {
+		writeTimeout = config.Broker.WriteTimeout
+	}
+	idleTimeout := 300
+	if config.Broker.IdleTimeout > 0 {
+		idleTimeout = config.Broker.IdleTimeout
+	}
+	
+	l.Info("HTTP server timeouts - Read: %ds, Write: %ds, Idle: %ds", readTimeout, writeTimeout, idleTimeout)
+	
 	server := &http.Server{
 		Addr:         bind,
 		Handler:      nil, // Uses http.DefaultServeMux
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  time.Duration(readTimeout) * time.Second,
+		WriteTimeout: time.Duration(writeTimeout) * time.Second,
+		IdleTimeout:  time.Duration(idleTimeout) * time.Second, // Increased from 60s for long-running connections
 	}
 
 	go func() {
