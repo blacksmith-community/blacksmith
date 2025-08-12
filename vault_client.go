@@ -217,20 +217,21 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 // GetSecret reads a secret from vault
 func (vc *VaultClient) GetSecret(path string) (map[string]interface{}, bool, error) {
 	l := Logger.Wrap("vault get")
-	l.Debug("reading secret at secret/%s", path)
+	fullPath := "secret/" + path
+	l.Debug("reading secret at %s", fullPath)
 
-	secret, err := vc.Logical().Read("secret/" + path)
+	secret, err := vc.Logical().Read(fullPath)
 	if err != nil {
-		l.Error("failed to read secret at %s: %s", path, err)
+		l.Error("failed to read secret at %s: %s", fullPath, err)
 		return nil, false, err
 	}
 
 	if secret == nil || secret.Data == nil {
-		l.Debug("secret not found at %s", path)
+		l.Debug("secret not found at %s", fullPath)
 		return nil, false, nil
 	}
 
-	l.Debug("secret found at %s", path)
+	l.Debug("secret found at %s", fullPath)
 	return secret.Data, true, nil
 }
 
@@ -252,18 +253,19 @@ func (vc *VaultClient) PutSecret(path string, data map[string]interface{}) error
 // DeleteSecret deletes a secret from vault
 func (vc *VaultClient) DeleteSecret(path string) error {
 	l := Logger.Wrap("vault delete")
-	l.Debug("deleting secret at secret/%s", path)
+	fullPath := "secret/" + path
+	l.Debug("deleting secret at %s", fullPath)
 
-	_, err := vc.Logical().Delete("secret/" + path)
+	_, err := vc.Logical().Delete(fullPath)
 	if err != nil {
 		// Don't error on 404s
 		if !strings.Contains(err.Error(), "404") {
-			l.Error("failed to delete secret at %s: %s", path, err)
+			l.Error("failed to delete secret at %s: %s", fullPath, err)
 			return err
 		}
-		l.Debug("secret not found at %s (already deleted)", path)
+		l.Debug("secret not found at %s (already deleted)", fullPath)
 	} else {
-		l.Debug("secret deleted at %s", path)
+		l.Debug("secret deleted at %s", fullPath)
 	}
 
 	return nil

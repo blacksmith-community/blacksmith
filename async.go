@@ -115,6 +115,12 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 	if err != nil {
 		l.Error("failed to store service status in the vault: %s", err)
 	}
+	
+	// Also update the main task record with the actual task ID
+	err = b.Vault.Track(instanceID, "provision", task.ID, params)
+	if err != nil {
+		l.Error("failed to update task ID in vault: %s", err)
+	}
 
 	l.Info("Async provisioning handed off to BOSH for instance %s", instanceID)
 }
@@ -169,6 +175,12 @@ func (b *Broker) deprovisionAsync(instanceID string, instance *Instance) {
 	err = b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), task.ID, nil)
 	if err != nil {
 		l.Error("failed to store deprovision status in the vault: %s", err)
+	}
+	
+	// Also update the main task record with the actual task ID
+	err = b.Vault.Track(instanceID, "deprovision", task.ID, nil)
+	if err != nil {
+		l.Error("failed to update task ID in vault: %s", err)
 	}
 
 	// Remove from index (will be cleaned up when task completes)

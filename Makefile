@@ -10,7 +10,11 @@ RESET  := \033[0m
 .DEFAULT_GOAL := help
 
 # Variables
-LDFLAGS := -X main.Version=$(VERSION)
+# Git version information
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION ?= "dev/$(GIT_BRANCH)/$(GIT_SHA)"
+LDFLAGS := -X main.Version="$(VERSION)"
 BINARY_NAME := blacksmith
 GO_FILES := $(shell find . -name '*.go' -type f -not -path "./vendor/*")
 
@@ -27,13 +31,13 @@ help: ## Display this help message
 .PHONY: build
 build: ## Build the blacksmith binary for current OS/architecture
 	@echo "$(GREEN)Building $(BINARY_NAME)...$(RESET)"
-	@go build -o $(BINARY_NAME) .
+	@go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) .
 	@echo "$(GREEN)✓ Build complete$(RESET)"
 
 .PHONY: linux
 linux: ## Build the blacksmith binary for Linux AMD64
 	@echo "$(GREEN)Building $(BINARY_NAME) for Linux AMD64...$(RESET)"
-	@env GOOS=linux GOARCH=amd64 go build -o $(BINARY_NAME)-linux-amd64 .
+	@env GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME)-linux-amd64 .
 	@echo "$(GREEN)✓ Linux build complete$(RESET)"
 
 .PHONY: dev

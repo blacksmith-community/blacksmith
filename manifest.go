@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -125,11 +126,22 @@ func UploadReleasesFromManifest(raw string, director bosh.Director, l *Log) erro
 	}
 
 	have := make(map[string]bool)
+	releases := []string{}
 	for _, rl := range rr {
 		for _, v := range rl.ReleaseVersions {
-			l.Debug("found BOSH release %s/%s", rl.Name, v.Version)
-			have[rl.Name+"/"+v.Version] = true
+			releaseID := rl.Name + "/" + v.Version
+			releases = append(releases, releaseID)
+			have[releaseID] = true
 		}
+	}
+	
+	// Log all releases as a single JSON object
+	if len(releases) > 0 {
+		releasesJSON, _ := json.Marshal(map[string]interface{}{
+			"count": len(releases),
+			"releases": releases,
+		})
+		l.Debug("found BOSH releases: %s", string(releasesJSON))
 	}
 
 	l.Debug("determining which BOSH releases need uploaded")

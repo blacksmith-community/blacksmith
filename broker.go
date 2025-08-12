@@ -458,9 +458,41 @@ func (b *Broker) LastOperation(
 
 	// Handle special task IDs
 	if taskID == 0 {
-		// Task is still being initialized
-		l.Debug("operation is still being initialized")
-		return domain.LastOperation{State: domain.InProgress}, nil
+		// Task ID 0 means the task was never properly recorded
+		// This can happen with old deployments before the fix
+		// Check if the deployment actually exists to determine success
+		l.Debug("task ID is 0, checking if deployment exists")
+		
+		// Get instance details from vault to find plan ID
+		instance, exists, err := b.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("could not find instance details for task ID 0")
+			return domain.LastOperation{State: domain.Failed}, nil
+		}
+		
+		deploymentName := instance.PlanID + "-" + instanceID
+		l.Debug("checking for deployment: %s", deploymentName)
+		
+		// Check if deployment exists
+		_, err = b.BOSH.GetDeployment(deploymentName)
+		if err != nil {
+			// Deployment doesn't exist, still in progress or failed
+			l.Debug("deployment %s does not exist, operation still in progress", deploymentName)
+			return domain.LastOperation{State: domain.InProgress}, nil
+		}
+		
+		// Deployment exists with task ID 0 - this is a completed deployment from before the fix
+		l.Info("deployment %s exists with task ID 0, marking as succeeded", deploymentName)
+		
+		// Run post-provision hook if this was a provision operation
+		if typ == "provision" {
+			if err := b.OnProvisionCompleted(l, instanceID); err != nil {
+				l.Error("provision succeeded but post-hook failed: %s", err)
+				// Don't fail the operation, just log the error
+			}
+		}
+		
+		return domain.LastOperation{State: domain.Succeeded}, nil
 	}
 	if taskID == -1 {
 		// Task failed during initialization
