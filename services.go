@@ -5,7 +5,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/pivotal-cf/brokerapi"
+	"github.com/pivotal-cf/brokerapi/v8"
 	"gopkg.in/yaml.v2"
 )
 

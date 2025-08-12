@@ -13,7 +13,7 @@ import (
 	"blacksmith/bosh"
 	"blacksmith/shield"
 	"code.cloudfoundry.org/lager"
-	"github.com/pivotal-cf/brokerapi"
+	"github.com/pivotal-cf/brokerapi/v8"
 )
 
 // Version gets edited during a release build

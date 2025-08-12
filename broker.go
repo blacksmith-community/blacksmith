@@ -15,8 +15,8 @@ import (
 	"blacksmith/bosh"
 	"blacksmith/shield"
 	"github.com/google/uuid"
-	"github.com/pivotal-cf/brokerapi"
-	"github.com/pivotal-cf/brokerapi/domain"
+	"github.com/pivotal-cf/brokerapi/v8"
+	"github.com/pivotal-cf/brokerapi/v8/domain"
 	"gopkg.in/yaml.v2"
 )
 
@@ -836,7 +836,7 @@ func (b *Broker) Update(
 	return domain.UpdateServiceSpec{}, fmt.Errorf("not implemented")
 }
 
-func (b *Broker) GetInstance(ctx context.Context, instanceID string) (domain.GetInstanceDetailsSpec, error) {
+func (b *Broker) GetInstance(ctx context.Context, instanceID string, details domain.FetchInstanceDetails) (domain.GetInstanceDetailsSpec, error) {
 	l := Logger.Wrap("GetInstance")
 	l.Debug("GetInstance called for instanceID: %s", instanceID)
 	l.Info("GetInstance operation not implemented")
@@ -844,7 +844,7 @@ func (b *Broker) GetInstance(ctx context.Context, instanceID string) (domain.Get
 	return domain.GetInstanceDetailsSpec{}, fmt.Errorf("GetInstance not implemented")
 }
 
-func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string) (domain.GetBindingSpec, error) {
+func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string, details domain.FetchBindingDetails) (domain.GetBindingSpec, error) {
 	l := Logger.Wrap("GetBinding")
 	l.Debug("GetBinding called for instanceID: %s, bindingID: %s", instanceID, bindingID)
 	l.Info("GetBinding operation not implemented")

@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.38.0
-	github.com/pivotal-cf/brokerapi v6.4.2+incompatible
+	github.com/pivotal-cf/brokerapi/v8 v8.2.3
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/smallfish/simpleyaml v0.1.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -27,12 +27,11 @@ require (
 	github.com/cloudfoundry/socks5-proxy v0.2.156 // indirect
 	github.com/cppforlife/go-semi-semantic v0.0.0-20160921010311-576b6af77ae4 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/drewolson/testflight v1.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/geofffranks/simpleyaml v0.0.0-20161109204137-c9320f076de5 // indirect
 	github.com/geofffranks/yaml v0.0.0-20161117152608-9f2fe4b6f295 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/gorilla/mux v1.7.3 // indirect
+	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/hashicorp/cap v0.7.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
