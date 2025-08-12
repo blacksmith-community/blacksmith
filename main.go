@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"log"
@@ -47,20 +46,7 @@ func main() {
 		Token:    "", // will be supplied soon.
 		Insecure: config.Vault.Insecure,
 	}
-	vault.HTTP = &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: vault.Insecure,
-			},
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) > 10 {
-				return fmt.Errorf("stopped after 10 redirects")
-			}
-			req.Header.Add("X-Vault-Token", vault.Token)
-			return nil
-		},
-	}
+	// TLS configuration is now handled by VaultClient internally
 	if err = vault.Init(config.Vault.CredPath); err != nil {
 		log.Fatal(err)
 	}

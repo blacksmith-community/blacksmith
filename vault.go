@@ -1,24 +1,30 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
-
-	"github.com/cloudfoundry-community/vaultkv"
 )
 
 type Vault struct {
 	URL      string
 	Token    string
 	Insecure bool
-	HTTP     *http.Client
+	client   *VaultClient // HashiCorp API client
+}
+
+// ensureClient ensures the vault client is initialized
+func (vault *Vault) ensureClient() error {
+	if vault.client == nil {
+		client, err := NewVaultClient(vault.URL, vault.Token, vault.Insecure)
+		if err != nil {
+			return err
+		}
+		vault.client = client
+	}
+	return nil
 }
 
 type VaultCreds struct {
@@ -29,31 +35,20 @@ type VaultCreds struct {
 func (vault *Vault) Init(store string) error {
 	l := Logger.Wrap("vault init")
 
-	l.Debug("checking initialization state of the vault")
-	res, err := vault.Do("GET", "/v1/sys/init", nil)
-	if err != nil {
-		l.Error("failed to check initialization state of the vault: %s", err)
+	// Initialize the new client if not already done
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
 		return err
 	}
-	defer func() {
-		io.ReadAll(res.Body)
-		res.Body.Close()
-	}()
-	b, err := io.ReadAll(res.Body)
-	if err != nil {
-		l.Error("failed to read response from the vault, concerning its initialization state: %s", err)
-		return err
-	}
-	var init struct {
-		Initialized bool `json:"initialized"`
-	}
-	if err = json.Unmarshal(b, &init); err != nil {
-		l.Error("failed to parse response from the vault, concerning its initialization state: %s", err)
-		return err
-	}
-	if init.Initialized {
-		l.Info("vault is already initialized")
 
+	// Check if vault is already initialized
+	initResp, err := vault.client.InitVault(1, 1)
+	if err != nil {
+		return err
+	}
+
+	if initResp == nil {
+		// Vault was already initialized, read existing credentials
 		l.Debug("reading credentials files from %s", store)
 		b, err := os.ReadFile(store)
 		if err != nil {
@@ -67,57 +62,31 @@ func (vault *Vault) Init(store string) error {
 			return err
 		}
 		vault.Token = creds.RootToken
+		vault.client.Token = creds.RootToken
+		vault.client.SetToken(creds.RootToken)
 		os.Setenv("VAULT_TOKEN", vault.Token)
 		vault.updateHomeDirs()
 		return vault.Unseal(creds.SealKey)
 	}
 
-	//////////////////////////////////////////
-
-	l.Info("initializing the vault with 1/1 keys")
-	res, err = vault.Do("PUT", "/v1/sys/init", map[string]int{
-		"secret_shares":    1,
-		"secret_threshold": 1,
-	})
-	if err != nil {
-		l.Error("failed to initialize the vault: %s", err)
-		return err
-	}
-	defer func() {
-		io.ReadAll(res.Body)
-		res.Body.Close()
-	}()
-	b, err = io.ReadAll(res.Body)
-	if err != nil {
-		l.Error("failed to read response from the vault, concerning our initialization attempt: %s", err)
-		return err
-	}
-
-	var keys struct {
-		RootToken string   `json:"root_token"`
-		Keys      []string `json:"keys"`
-	}
-	if err = json.Unmarshal(b, &keys); err != nil {
-		l.Error("failed to parse response from the vault, concerning our initialization attempt: %s", err)
-		return err
-	}
-	if keys.RootToken == "" || len(keys.Keys) != 1 {
-		if keys.RootToken == "" {
+	// Vault was just initialized
+	if initResp.RootToken == "" || len(initResp.Keys) != 1 {
+		if initResp.RootToken == "" {
 			l.Error("failed to initialize vault: root token was blank")
 		}
-		if len(keys.Keys) != 1 {
-			l.Error("failed to initialize vault: incorrect number of seal keys (%d) returned", len(keys.Keys))
+		if len(initResp.Keys) != 1 {
+			l.Error("failed to initialize vault: incorrect number of seal keys (%d) returned", len(initResp.Keys))
 		}
-		err = fmt.Errorf("invalid response from vault: token '%s' and %d keys", keys.RootToken, len(keys.Keys))
+		err = fmt.Errorf("invalid response from vault: token '%s' and %d keys", initResp.RootToken, len(initResp.Keys))
 		return err
 	}
 
 	creds := VaultCreds{
-		SealKey:   keys.Keys[0],
-		RootToken: keys.RootToken,
+		SealKey:   initResp.Keys[0],
+		RootToken: initResp.RootToken,
 	}
 	l.Debug("marshaling credentials for longterm storage")
-	b, err = json.Marshal(creds)
+	b, err := json.Marshal(creds)
 	if err != nil {
 		l.Error("failed to marshal vault root token / seal key for longterm storage: %s", err)
 		return err
@@ -130,6 +99,8 @@ func (vault *Vault) Init(store string) error {
 	}
 
 	vault.Token = creds.RootToken
+	vault.client.Token = creds.RootToken
+	vault.client.SetToken(creds.RootToken)
 	os.Setenv("VAULT_TOKEN", vault.Token)
 	vault.updateHomeDirs()
 	return vault.Unseal(creds.SealKey)
@@ -138,122 +109,27 @@ func (vault *Vault) Init(store string) error {
 func (vault *Vault) Unseal(key string) error {
 	l := Logger.Wrap("vault unseal")
 
-	l.Debug("checking current seal status of the vault")
-	res, err := vault.Do("GET", "/v1/sys/seal-status", nil)
-	if err != nil {
-		l.Error("failed to check current seal status of the vault: %s", err)
-		return err
-	}
-	defer func() {
-		io.ReadAll(res.Body)
-		res.Body.Close()
-	}()
-	b, err := io.ReadAll(res.Body)
-	if err != nil {
-		l.Error("failed to read response from the vault, concerning current seal status: %s", err)
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
 		return err
 	}
 
-	var status struct {
-		Sealed bool `json:"sealed"`
-	}
-	err = json.Unmarshal(b, &status)
-	if err != nil {
-		l.Error("failed to parse response from the vault, concerning current seal status: %s", err)
-		return err
-	}
-
-	if !status.Sealed {
-		l.Info("vault is already unsealed")
-		return nil
-	}
-
-	//////////////////////////////////////////
-
-	l.Info("vault is sealed; unsealing it")
-	res, err = vault.Do("POST", "/v1/sys/unseal", map[string]string{
-		"key": key,
-	})
-	if err != nil {
-		l.Error("failed to unseal vault: %s", err)
-		return err
-	}
-	defer func() {
-		io.ReadAll(res.Body)
-		res.Body.Close()
-	}()
-	b, err = io.ReadAll(res.Body)
-	if err != nil {
-		l.Error("failed to read response from the vault, concerning our unseal attempt: %s", err)
-		return err
-	}
-	err = json.Unmarshal(b, &status)
-	if err != nil {
-		l.Error("failed to parse response from the vault, concerning our unseal attempt: %s", err)
-		return err
-	}
-
-	if status.Sealed {
-		err = fmt.Errorf("vault is still sealed after unseal attempt")
-		l.Error("%s", err)
-		return err
-	}
-
-	l.Info("unsealed the vault")
-	return nil
+	// Use the new client to unseal
+	return vault.client.UnsealVault(key)
 }
 
 func (vault *Vault) VerifyMount(store string, createIfMissing bool) error {
 	l := Logger.Wrap("Verify Mount")
 
-	vault_url, err := url.Parse(vault.URL)
-
-	if err != nil {
-		l.Error("vault URL is invalid: %s", err)
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
 		return err
 	}
 
-	kvvault := &vaultkv.Client{
-		AuthToken: vault.Token,
-		VaultURL:  vault_url,
-		Client: &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: vault.Insecure,
-				},
-			},
-		},
-		Trace: os.Stdout,
-	}
-
-	l.Debug("checking vault has the secret mount created")
-	var mounts []string
-	var mountMap map[string]vaultkv.Mount
-	mountMap, err = kvvault.ListMounts()
-	if err != nil {
-		return err
-	}
-
-	for k := range mountMap {
-		mounts = append(mounts, k)
-	}
-
-	for _, mount := range mounts {
-		if strings.Trim(store, "/") == strings.Trim(mount, "/") {
-			l.Debug("Found secret mount %s", store)
-			return nil // Path is found
-		}
-	}
-
-	if createIfMissing {
-		return kvvault.EnableSecretsMount(store, vaultkv.Mount{
-			Type:        "kv",
-			Description: fmt.Sprintf("A KV v%d Mount created by safe", 1),
-			Options:     vaultkv.KVMountOptions{}.WithVersion(1),
-		})
-	}
-
-	return errors.New(fmt.Sprintf("Secret mount %s is missing", store))
+	// Use the new client to verify/create mount
+	return vault.client.VerifyMount(store, createIfMissing)
 }
 
 func (vault *Vault) NewRequest(method, url string, data interface{}) (*http.Request, error) {
@@ -275,128 +151,108 @@ func (vault *Vault) Do(method, url string, data interface{}) (*http.Response, er
 	}
 
 	req.Header.Add("X-Vault-Token", vault.Token)
-	return vault.HTTP.Do(req)
+	client := &http.Client{}
+	return client.Do(req)
 }
 
 func (vault *Vault) Get(path string, out interface{}) (bool, error) {
-	exists := false
+	l := Logger.Wrap("vault get")
 
-	res, err := vault.Do("GET", fmt.Sprintf("/v1/secret/%s", path), nil)
-	if err != nil {
-		return exists, err
-	}
-	defer func() {
-		io.ReadAll(res.Body)
-		res.Body.Close()
-	}()
-	if res.StatusCode == 404 {
-		return exists, nil
-	}
-	if res.StatusCode != 200 && res.StatusCode != 204 {
-		return exists, fmt.Errorf("API %s", res.Status)
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
+		return false, err
 	}
 
-	exists = true
-	b, err := io.ReadAll(res.Body)
+	// Get the secret using the new client
+	data, exists, err := vault.client.GetSecret(path)
 	if err != nil {
-		return exists, err
+		return false, err
+	}
+
+	if !exists {
+		return false, nil
 	}
 
 	if out == nil {
-		return exists, nil
+		return true, nil
 	}
 
-	var raw map[string]interface{}
-	if err = json.Unmarshal(b, &raw); err != nil {
-		return exists, err
-	}
-
-	var data interface{}
-	var ok bool
-	if data, ok = raw["data"]; !ok {
-		return exists, fmt.Errorf("Malformed response from Vault")
-	}
-
-	dataBytes, err := json.Marshal(&data)
+	// Marshal and unmarshal to populate the output
+	dataBytes, err := json.Marshal(data)
 	if err != nil {
-		return exists, fmt.Errorf("could not remarshal vault data")
+		l.Error("could not remarshal vault data: %s", err)
+		return true, fmt.Errorf("could not remarshal vault data")
 	}
 
 	err = json.Unmarshal(dataBytes, &out)
-	return exists, err
+	return true, err
 }
 
 func (vault *Vault) Put(path string, data interface{}) error {
-	res, err := vault.Do("POST", fmt.Sprintf("/v1/secret/%s", path), data)
-	if err != nil {
+	l := Logger.Wrap("vault put")
+
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
 		return err
 	}
-	defer func() {
-		io.ReadAll(res.Body)
-		res.Body.Close()
-	}()
-	if res.StatusCode != 200 && res.StatusCode != 204 {
-		return fmt.Errorf("API %s", res.Status)
+
+	// Convert data to map[string]interface{}
+	dataMap, err := convertToMap(data)
+	if err != nil {
+		l.Error("failed to convert data to map: %s", err)
+		return err
 	}
-	return nil
+
+	// Put the secret using the new client
+	return vault.client.PutSecret(path, dataMap)
 }
 
 func (vault *Vault) Delete(path string) error {
-	res, err := vault.Do("DELETE", fmt.Sprintf("/v1/secret/%s", path), nil)
-	if err != nil {
+	l := Logger.Wrap("vault delete")
+
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
 		return err
 	}
-	defer func() {
-		io.ReadAll(res.Body)
-		res.Body.Close()
-	}()
 
-	if res.StatusCode != 200 && res.StatusCode != 204 && res.StatusCode != 404 {
-		return fmt.Errorf("API %s", res.Status)
-	}
-	return nil
+	// Delete the secret using the new client
+	return vault.client.DeleteSecret(path)
 }
 
 func (vault *Vault) Clear(instanceID string) {
 	l := Logger.Wrap("vault clear %s", instanceID)
 
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
+		return
+	}
+
 	var rm func(string)
 	rm = func(path string) {
 		l.Debug("removing Vault secrets at/below %s", path)
 
-		if err := vault.Delete(path); err != nil {
+		if err := vault.client.DeleteSecret(path); err != nil {
 			l.Error("failed to delete %s: %s", path, err)
 		}
 
-		res, err := vault.Do("GET", fmt.Sprintf("%s?list=1", path), nil)
+		keys, err := vault.client.ListSecrets(path)
 		if err != nil {
 			l.Error("failed to list secrets at %s: %s", path, err)
 			return
 		}
-		defer func() {
-			io.ReadAll(res.Body)
-			res.Body.Close()
-		}()
-		b, err := io.ReadAll(res.Body)
-		if err != nil {
-			l.Error("failed to read response from the vault: %s", err)
-			return
-		}
 
-		var r struct{ Data struct{ Keys []string } }
-		if err = json.Unmarshal(b, &r); err != nil {
-			l.Error("failed to parse response from the vault: %s", err)
-			return
-		}
-
-		for _, sub := range r.Data.Keys {
+		for _, sub := range keys {
 			rm(fmt.Sprintf("%s/%s", path, strings.TrimSuffix(sub, "/")))
 		}
 
 		l.Debug("cleared out vault secrets")
 	}
-	l.Info("removing secrets under /v1/secrets/%s", instanceID)
-	rm(fmt.Sprintf("/v1/secret/%s", instanceID))
+	l.Info("removing secrets under %s", instanceID)
+	rm(instanceID)
 	l.Info("completed")
 }
 
