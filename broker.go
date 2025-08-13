@@ -482,6 +482,14 @@ func (b *Broker) OnProvisionCompleted(
 	if err != nil {
 		return err
 	}
+	
+	// Store credentials in vault
+	l.Debug("storing credentials in vault at %s/credentials", instanceID)
+	err = b.Vault.Put(fmt.Sprintf("%s/credentials", instanceID), creds)
+	if err != nil {
+		l.Error("failed to store credentials in vault: %s", err)
+		// Continue anyway as this is non-fatal
+	}
 
 	l.Debug("scheduling S.H.I.E.L.D. backup for instance '%s'", instanceID)
 	err = b.Shield.CreateSchedule(instanceID, details, vms[0].IPs[0], creds)
