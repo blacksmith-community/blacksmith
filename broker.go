@@ -300,14 +300,47 @@ func (b *Broker) Provision(
 		// Continue anyway, this is not fatal
 	}
 	
-	// Also store basic metadata at root instance path for backward compatibility
-	l.Debug("storing basic metadata at root instance path: %s", instanceID)
-	err = b.Vault.Put(instanceID, map[string]interface{}{
-		"details": details,
-		"requested_at": time.Now().Format(time.RFC3339),
-	})
+	// Also store flattened data at root instance path for backward compatibility
+	l.Debug("storing flattened data at root instance path: %s", instanceID)
+	rootData := map[string]interface{}{
+		"requested_at":      time.Now().Format(time.RFC3339),
+		"organization_guid": details.OrganizationGUID,
+		"space_guid":        details.SpaceGUID,
+		"service_id":        details.ServiceID,
+		"plan_id":           details.PlanID,
+	}
+	
+	// Add context fields if available
+	if len(details.RawContext) > 0 {
+		var contextData map[string]interface{}
+		if err := json.Unmarshal(details.RawContext, &contextData); err == nil {
+			if orgName, ok := contextData["organization_name"].(string); ok {
+				rootData["organization_name"] = orgName
+			}
+			if spaceName, ok := contextData["space_name"].(string); ok {
+				rootData["space_name"] = spaceName
+			}
+			if instanceName, ok := contextData["instance_name"].(string); ok {
+				rootData["instance_name"] = instanceName
+			}
+			if platform, ok := contextData["platform"].(string); ok {
+				rootData["platform"] = platform
+			}
+		}
+		rootData["context"] = contextData
+	}
+	
+	// Add raw parameters if present
+	if len(details.RawParameters) > 0 {
+		var paramsData interface{}
+		if err := json.Unmarshal(details.RawParameters, &paramsData); err == nil {
+			rootData["parameters"] = paramsData
+		}
+	}
+	
+	err = b.Vault.Put(instanceID, rootData)
 	if err != nil {
-		l.Error("failed to store metadata at root instance path: %s", err)
+		l.Error("failed to store data at root instance path: %s", err)
 		// Continue anyway, this is not fatal
 	}
 
@@ -409,9 +442,19 @@ func (b *Broker) OnProvisionCompleted(
 	// First, update the instance with created_at timestamp
 	l.Debug("updating instance with created_at timestamp")
 	createdAt := time.Now()
-	err := b.Vault.Put(fmt.Sprintf("%s/metadata", instanceID), map[string]interface{}{
-		"created_at": createdAt.Format(time.RFC3339),
-	})
+	
+	// Get existing metadata to preserve history and other fields
+	var metadata map[string]interface{}
+	exists, err := b.Vault.Get(fmt.Sprintf("%s/metadata", instanceID), &metadata)
+	if err != nil || !exists {
+		metadata = make(map[string]interface{})
+	}
+	
+	// Add created_at to existing metadata
+	metadata["created_at"] = createdAt.Format(time.RFC3339)
+	
+	// Store updated metadata
+	err = b.Vault.Put(fmt.Sprintf("%s/metadata", instanceID), metadata)
 	if err != nil {
 		l.Error("failed to store created_at timestamp: %s", err)
 		// Continue anyway, this is non-fatal
@@ -441,12 +484,12 @@ func (b *Broker) OnProvisionCompleted(
 	deploymentName := instance.PlanID + "-" + instanceID
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
 	
-	var metadata map[string]interface{}
-	exists, err = b.Vault.Get(vaultPath, &metadata)
+	var detailsMetadata map[string]interface{}
+	exists, err = b.Vault.Get(vaultPath, &detailsMetadata)
 	if err != nil {
 		// Try legacy path for backward compatibility
 		l.Debug("failed to fetch from new path, trying legacy path")
-		exists, err = b.Vault.Get(instanceID, &metadata)
+		exists, err = b.Vault.Get(instanceID, &detailsMetadata)
 		if err != nil {
 			l.Error("failed to fetch instance metadata from Vault: %s", err)
 			return err
@@ -458,7 +501,7 @@ func (b *Broker) OnProvisionCompleted(
 
 	// Extract the details from metadata
 	var details brokerapi.ProvisionDetails
-	if detailsData, ok := metadata["details"]; ok {
+	if detailsData, ok := detailsMetadata["details"]; ok {
 		// Convert the details back to ProvisionDetails struct
 		if detailsMap, ok := detailsData.(map[string]interface{}); ok {
 			if serviceID, ok := detailsMap["service_id"].(string); ok {
