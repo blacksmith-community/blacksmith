@@ -308,6 +308,8 @@ func (b *Broker) Provision(
 		"space_guid":        details.SpaceGUID,
 		"service_id":        details.ServiceID,
 		"plan_id":           details.PlanID,
+		"deployment_name":   deploymentName,
+		"instance_id":       instanceID,
 	}
 	
 	// Add context fields if available
