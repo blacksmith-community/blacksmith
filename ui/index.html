@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" type="text/css" href="/blacksmith.css">
 </head>
+
 <body>
 
   <header>
@@ -11,7 +13,7 @@
       <span id="logo">blacksmith</span>
       <span id="ident"></span>
       <nav>
-        <li><a href="#log">log</a></li>
+        <li><a href="#log">blacksmith broker log</a></li>
         <li><a href="#services">services</a></li>
         <li><a href="#plans">plans</a></li>
       </nav>
@@ -20,35 +22,35 @@
 
   <div class="wrap">
     <div id="plans" class="wedge">
-    <div class="card">
-      <h1>Plans</h1>
-      <div class="content">loading, please wait...</div>
-    </div>
+      <div class="card">
+        <h1>Plans</h1>
+        <div class="content">loading, please wait...</div>
+      </div>
     </div>
 
     <div id="services" class="wedge">
-    <div class="card">
-      <h1>Service Instances</h1>
-      <div class="content">loading, please wait...
-    </div>
+      <div class="card">
+        <h1>Service Instances</h1>
+        <div class="content">loading, please wait...
+        </div>
+      </div>
+
+      <div id="log" class="wedge">
+        <div class="card">
+          <h1>Blacksmith Broker Log</h1>
+          <pre><code>loading, please wait...</code></pre>
+        </div>
+      </div>
+
     </div>
 
-    <div id="log" class="wedge">
-    <div class="card">
-      <h1>Log</h1>
-      <pre><code>loading, please wait...</code></pre>
-    </div>
-    </div>
+    <footer>
+      <div class="wrap">
+        <p>Copyright &copy; 2025 Blacksmmith Community | <span id="version-info">Blacksmith</span></p>
+      </div>
+    </footer>
 
-  </div>
-
-  <footer>
-    <div class="wrap">
-      <p>Copyright &copy; 2018 James Hunt</p>
-    </div>
-  </footer>
-
-  <script type="text/html" id="template:plans"><!-- {{{ -->
+    <script type="text/html" id="template:plans"><!-- {{{ -->
     [[#
         {plans}
 
@@ -56,28 +58,34 @@
         broker catalog.
     ]]
     [[ $.each(_.services, function (i, service) { ]]
-      <h2>[[= service.name ]]</h2>
-      <ul class="tags">[[ $.each(service.tags, function (j, tag) { ]]<li>[[= tag ]]</li>[[ }); ]]</ul>
-      <div class="desc"><p>[[= service.description ]]</p></div>
+    <h2>[[= service.name ]]</h2>
+    <ul class="tags">[[ $.each(service.tags, function (j, tag) { ]]<li>[[= tag ]]</li>[[ }); ]]</ul>
+    <div class="desc">
+      <p>[[= service.description ]]</p>
+    </div>
 
-      <table><thead><tr>
-        <th>Plan</th>
-        <th>Description</th>
-        <th># Instances</th>
-      </tr></thead>
+    <table>
+      <thead>
+        <tr>
+          <th>Plan</th>
+          <th>Description</th>
+          <th># Instances</th>
+        </tr>
+      </thead>
       <tbody>
         [[ $.each(service.plans, function (j, plan) { ]]
-          <tr>
-            <td>[[= plan.name ]]</td>
-            <td>[[= plan.description ]]</td>
-            <td>[[= plan.blacksmith.instances ]] / [[= (plan.blacksmith.limit > 0) ? plan.blacksmith.limit : ((plan.blacksmith.limit == 0) ? ('&infin;') : ('&#8209;')) ]]</td>
-          </tr>
+        <tr>
+          <td>[[= plan.name ]]</td>
+          <td>[[= plan.description ]]</td>
+          <td>[[= plan.blacksmith.instances ]] / [[= (plan.blacksmith.limit > 0) ? plan.blacksmith.limit :
+            ((plan.blacksmith.limit == 0) ? ('&infin;') : ('&#8209;')) ]]</td>
+        </tr>
         [[ }); ]]
       </tbody>
-      </table>
+    </table>
     [[ }); ]]
-  </script><!-- }}} -->
-  <script type="text/html" id="template:services"><!-- {{{ -->
+    </script><!-- }}} -->
+    <script type="text/html" id="template:services"><!-- {{{ -->
     [[#
         {services}
 
@@ -86,35 +94,42 @@
     [[ if ($.empty(_)) { ]]
     <div class="no-data">No services have been provisioned yet.</div>
     [[ } else { ]]
-    <table><thead><tr>
-      <th>ID</th>
-      <th>Service/Plan</th>
-      <th>Created at</th>
-      <th>BOSH Manifest</th>
-      <th>Credentials</th>
-      <th>Deployment Log</th>
-    </tr></thead>
-    <tbody>
-      [[ $.each(_, function (id, details) { ]]
-      <tr>
-        <td class="uuid">[[= id ]]</td>
-        <td>[[= details.service_id ]]/[[= details.plan.name ]]</td>
-        <td>[[ if (details.created) { ]]
-              [[= strftime("%Y-%m-%d %H:%M:%S", details.created) ]]
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Service/Plan</th>
+          <th>Created at</th>
+          <th>BOSH Manifest</th>
+          <th>Credentials</th>
+          <th>Events</th>
+          <th>Deployment Log</th>
+        </tr>
+      </thead>
+      <tbody>
+        [[ $.each(_, function (id, details) { ]]
+        <tr>
+          <td class="uuid">[[= id ]]</td>
+          <td>[[= details.service_id ]]/[[= details.plan.name ]]</td>
+          <td>[[ if (details.created) { ]]
+            [[= strftime("%Y-%m-%d %H:%M:%S", details.created) ]]
             [[ }else { ]]
-              <em>-</em>
-            [[ } ]]</td>
-        <td><a href="/b/[[= id ]]/manifest.yml">manifest.yml</a></td>
-        <td><a href="/b/[[= id ]]/creds.yml">creds.yml</a></td>
-        <td><a href="/b/[[= id ]]/task.log">task.log</a></td>
-      </tr>
-      [[ }); ]]
-    </tbody>
+            <em>-</em>
+            [[ } ]]
+          </td>
+          <td><a href="/b/[[= id ]]/manifest.yml">manifest.yml</a></td>
+          <td><a href="/b/[[= id ]]/creds.yml">creds.yml</a></td>
+          <td><a href="/b/[[= id ]]/events">events</a></td>
+          <td><a href="/b/[[= id ]]/task.log">task.log</a></td>
+        </tr>
+        [[ }); ]]
+      </tbody>
     </table>
     [[ } ]]
-  </script><!-- }}} -->
-  <script type="text/javascript" src="/jquery.js"></script>
-  <script type="text/javascript" src="/lens.js"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=2"></script>
+    </script><!-- }}} -->
+    <script type="text/javascript" src="/jquery.js"></script>
+    <script type="text/javascript" src="/lens.js"></script>
+    <script type="text/javascript" src="/blacksmith.js?v=2"></script>
 </body>
+
 </html>

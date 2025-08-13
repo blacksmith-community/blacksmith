@@ -128,7 +128,7 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 	l.Info("Deployment started successfully, BOSH task ID: %d", task.ID)
 
 	// Update tracking with deployment status (no longer storing task ID)
-	err = b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", task.ID), 0, params)
+	err = b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", task.ID), task.ID, params)
 	if err != nil {
 		l.Error("failed to store service status in the vault: %s", err)
 	}
@@ -183,7 +183,7 @@ func (b *Broker) deprovisionAsync(instanceID string, instance *Instance) {
 	l.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
 
 	// Update tracking with deployment status (no longer storing task ID)
-	err = b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), 0, nil)
+	err = b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), task.ID, nil)
 	if err != nil {
 		l.Error("failed to store deprovision status in the vault: %s", err)
 	}

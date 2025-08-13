@@ -117,7 +117,27 @@
             }
 
             // Update the UI
-            $('#ident').html(data.env || 'Unknown Environment');
+            var identHtml = data.env || 'Unknown Environment';
+            if (data.version) {
+              identHtml += ' <span style="font-size: 0.8em; color: #888;">| v' + data.version;
+              if (data.git_commit && data.git_commit !== 'unknown') {
+                identHtml += ' (' + data.git_commit.substring(0, 7) + ')';
+              }
+              identHtml += '</span>';
+            }
+            $('#ident').html(identHtml);
+            
+            // Update version info in footer
+            if (data.version) {
+              var versionText = 'Blacksmith v' + data.version;
+              if (data.build_time && data.build_time !== 'unknown') {
+                versionText += ' | Built: ' + data.build_time;
+              }
+              if (data.git_commit && data.git_commit !== 'unknown') {
+                versionText += ' | Commit: ' + data.git_commit.substring(0, 7);
+              }
+              $('#version-info').html(versionText);
+            }
             
             // Render plans if we have services
             if (catalog.services && catalog.services.length > 0) {

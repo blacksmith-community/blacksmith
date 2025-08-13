@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 
 	"gopkg.in/yaml.v2"
 )
@@ -27,11 +28,17 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		out := struct {
 			Env       string      `json:"env"`
+			Version   string      `json:"version"`
+			BuildTime string      `json:"build_time"`
+			GitCommit string      `json:"git_commit"`
 			Instances interface{} `json:"instances"`
 			Plans     interface{} `json:"plans"`
 			Log       string      `json:"log"`
 		}{
 			Env:       api.Env,
+			Version:   Version,
+			BuildTime: BuildTime,
+			GitCommit: GitCommit,
 			Instances: idx.Data,
 			Plans:     deinterface(api.Broker.Plans),
 			Log:       Logger.String(),
@@ -160,34 +167,126 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	pattern = regexp.MustCompile("^/b/([^/]+)/task\\.log$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		l := Logger.Wrap("task.log")
-		l.Debug("looking up task log for %s", m[1])
-		_, id, _, err := api.Vault.State(m[1])
-		if err != nil {
-			l.Error("unable to find service instance %s in vault index", m[1])
+		instanceID := m[1]
+		l.Debug("looking up task log for %s", instanceID)
+		
+		// Get deployment name from vault
+		var deploymentData struct {
+			DeploymentName string `json:"deployment_name"`
+		}
+		exists, err := api.Vault.Get(instanceID, &deploymentData)
+		if err != nil || !exists || deploymentData.DeploymentName == "" {
+			l.Error("unable to find deployment name for service instance %s in vault", instanceID)
 			w.WriteHeader(404)
 			return
 		}
-		if id == 0 {
-			l.Error("'task' key not found in vault index for service instance %s; perhaps vault is corrupted?", m[1])
-			w.WriteHeader(404)
-			return
-		}
-
-		events, err := api.Broker.BOSH.GetTaskEvents(id)
+		
+		deploymentName := deploymentData.DeploymentName
+		l.Debug("fetching task log for deployment %s", deploymentName)
+		
+		// Get deployment events from BOSH
+		events, err := api.Broker.BOSH.GetEvents(deploymentName)
 		if err != nil {
+			l.Error("unable to get events for deployment %s: %s", deploymentName, err)
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
-		w.Header().Set("Content-type", "text/plain")
-		for _, event := range events {
-			ts := event.Time
-			if event.Task != "" {
-				fmt.Fprintf(w, "Task %d | %s | %s: %s %s\n", id, ts.Format("15:04:05"), event.Stage, event.Task, event.State)
-			} else if event.Error.Code != 0 {
-				fmt.Fprintf(w, "Task %d | %s | ERROR: [%d] %s\n", id, ts.Format("15:04:05"), event.Error.Code, event.Error.Message)
+		
+		// Find the most recent task ID from events
+		var taskID int
+		for i := len(events) - 1; i >= 0; i-- {
+			if events[i].TaskID != "" && events[i].TaskID != "0" {
+				if id, err := strconv.Atoi(events[i].TaskID); err == nil && id > 0 {
+					taskID = id
+					break
+				}
 			}
 		}
+		
+		if taskID == 0 {
+			l.Error("no valid task ID found in deployment events for %s", deploymentName)
+			w.WriteHeader(404)
+			return
+		}
+		
+		l.Debug("found task ID %d for deployment %s", taskID, deploymentName)
+		
+		// Get the actual task output/logs
+		// Try "event" type first (what bosh CLI uses for --debug)
+		output, err := api.Broker.BOSH.GetTaskOutput(taskID, "event")
+		if err != nil || output == "" {
+			// If event output fails, try debug output
+			output, err = api.Broker.BOSH.GetTaskOutput(taskID, "debug")
+			if err != nil || output == "" {
+				// Finally try result output
+				output, err = api.Broker.BOSH.GetTaskOutput(taskID, "result")
+			}
+		}
+		if err != nil || output == "" {
+			// Fall back to events if output is not available
+			events, err := api.Broker.BOSH.GetTaskEvents(taskID)
+			if err != nil {
+				w.WriteHeader(500)
+				fmt.Fprintf(w, "error: %s\n", err)
+				return
+			}
+			w.Header().Set("Content-type", "text/plain")
+			for _, event := range events {
+				ts := event.Time
+				if event.Task != "" {
+					fmt.Fprintf(w, "Task %d | %s | %s: %s %s\n", taskID, ts.Format("15:04:05"), event.Stage, event.Task, event.State)
+				} else if event.Error != nil && event.Error.Code != 0 {
+					fmt.Fprintf(w, "Task %d | %s | ERROR: [%d] %s\n", taskID, ts.Format("15:04:05"), event.Error.Code, event.Error.Message)
+				}
+			}
+			return
+		}
+		
+		w.Header().Set("Content-type", "text/plain")
+		fmt.Fprintf(w, "%s\n", output)
+		return
+	}
+
+	pattern = regexp.MustCompile("^/b/([^/]+)/events$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("events")
+		instanceID := m[1]
+		l.Debug("looking up events for %s", instanceID)
+		
+		// Get deployment name from vault
+		var deploymentData struct {
+			DeploymentName string `json:"deployment_name"`
+		}
+		exists, err := api.Vault.Get(instanceID, &deploymentData)
+		if err != nil || !exists || deploymentData.DeploymentName == "" {
+			l.Error("unable to find deployment name for service instance %s in vault", instanceID)
+			w.WriteHeader(404)
+			return
+		}
+		
+		deploymentName := deploymentData.DeploymentName
+		l.Debug("fetching events for deployment %s", deploymentName)
+		
+		// Get deployment events from BOSH
+		events, err := api.Broker.BOSH.GetEvents(deploymentName)
+		if err != nil {
+			l.Error("unable to get events for deployment %s: %s", deploymentName, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+		
+		// Convert events to JSON
+		b, err := json.MarshalIndent(events, "", "  ")
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling events: %s\n", err)
+			return
+		}
+		
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
 

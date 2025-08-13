@@ -548,18 +548,17 @@ func (d *DirectorAdapter) GetTaskOutput(id int, outputType string) (string, erro
 	// Get task output based on type
 	switch outputType {
 	case "debug":
-		// For debug output, we need the full task result
-		err = task.ResultOutput(reporter)
-	case "result":
-		// For result output, use the same method
-		err = task.ResultOutput(reporter)
+		// For debug output, use DebugOutput method
+		err = task.DebugOutput(reporter)
 	case "event":
-		// Event output is typically JSON lines of task events
-		// This might need special handling
+		// For event output, use EventOutput method
+		err = task.EventOutput(reporter)
+	case "result":
+		// For result output, use ResultOutput method
 		err = task.ResultOutput(reporter)
 	default:
-		// Default to result output
-		err = task.ResultOutput(reporter)
+		// Default to debug output
+		err = task.DebugOutput(reporter)
 	}
 
 	if err != nil {

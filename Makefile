@@ -162,6 +162,22 @@ shipit: ## Build release artifacts (requires VERSION env var)
 version: ## Display the current version
 	@echo "$(CYAN)Version: $(VERSION)$(RESET)"
 
+##@ Deployment
+
+.PHONY: deploy-ui
+deploy-ui: ## Deploy UI files to BOSH instance (use DEPLOYMENT=name INSTANCE=group/id)
+	@echo "$(GREEN)Deploying UI files to BOSH...$(RESET)"
+	@./deploy-ui-quick.sh $(DEPLOYMENT) $(INSTANCE)
+	@echo "$(GREEN)✓ UI deployed$(RESET)"
+
+.PHONY: deploy-all
+deploy-all: build deploy-ui ## Build and deploy both binary and UI to BOSH
+	@echo "$(GREEN)Deploying blacksmith binary...$(RESET)"
+	@bosh -d $(DEPLOYMENT) scp blacksmith $(INSTANCE):/tmp/blacksmith
+	@bosh -d $(DEPLOYMENT) ssh $(INSTANCE) -c "sudo cp /tmp/blacksmith /var/vcap/packages/blacksmith/bin/blacksmith && sudo chown vcap:vcap /var/vcap/packages/blacksmith/bin/blacksmith && sudo chmod +x /var/vcap/packages/blacksmith/bin/blacksmith"
+	@bosh -d $(DEPLOYMENT) ssh $(INSTANCE) -c "sudo /var/vcap/bosh/bin/monit restart blacksmith"
+	@echo "$(GREEN)✓ Full deployment complete$(RESET)"
+
 ##@ Dependencies
 
 .PHONY: deps
