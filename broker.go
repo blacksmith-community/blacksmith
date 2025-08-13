@@ -246,13 +246,23 @@ func (b *Broker) Provision(
 	deploymentName := fmt.Sprintf("%s-%s", details.PlanID, instanceID)
 	l.Debug("deployment name: %s", deploymentName)
 
-	// Store at the new path with deployment name
+	// Store details at the deployment name path
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
-	l.Debug("storing all details at Vault path: %s", vaultPath)
+	l.Debug("storing details at Vault path: %s", vaultPath)
 	
-	// Build complete data structure with all details
-	vaultData := map[string]interface{}{
-		"details":           details,
+	// Store only the details object at the deployment path
+	err = b.Vault.Put(vaultPath, map[string]interface{}{
+		"details": details,
+	})
+	if err != nil {
+		l.Error("failed to store details in the vault at path %s: %s", vaultPath, err)
+		// Remove from index since we're failing
+		b.Vault.Index(instanceID, nil)
+		return spec, fmt.Errorf("Failed to store service metadata")
+	}
+	
+	// Build deployment info to store at instance level
+	deploymentInfo := map[string]interface{}{
 		"requested_at":      time.Now().Format(time.RFC3339),
 		"organization_guid": details.OrganizationGUID,
 		"space_guid":        details.SpaceGUID,
@@ -268,27 +278,26 @@ func (b *Broker) Provision(
 		if err := json.Unmarshal(details.RawContext, &contextData); err == nil {
 			// Add context fields if they exist
 			if orgName, ok := contextData["organization_name"].(string); ok {
-				vaultData["organization_name"] = orgName
+				deploymentInfo["organization_name"] = orgName
 			}
 			if spaceName, ok := contextData["space_name"].(string); ok {
-				vaultData["space_name"] = spaceName
+				deploymentInfo["space_name"] = spaceName
 			}
 			if instanceName, ok := contextData["instance_name"].(string); ok {
-				vaultData["instance_name"] = instanceName
+				deploymentInfo["instance_name"] = instanceName
 			}
 			if platform, ok := contextData["platform"].(string); ok {
-				vaultData["platform"] = platform
+				deploymentInfo["platform"] = platform
 			}
 		}
 	}
 	
-	// Store everything at the single path
-	err = b.Vault.Put(vaultPath, vaultData)
+	// Store deployment info at instance level
+	l.Debug("storing deployment info at instance level: %s/deployment", instanceID)
+	err = b.Vault.Put(fmt.Sprintf("%s/deployment", instanceID), deploymentInfo)
 	if err != nil {
-		l.Error("failed to store data in the vault at path %s: %s", vaultPath, err)
-		// Remove from index since we're failing
-		b.Vault.Index(instanceID, nil)
-		return spec, fmt.Errorf("Failed to store service metadata")
+		l.Error("failed to store deployment info at instance level: %s", err)
+		// Continue anyway, this is not fatal
 	}
 
 	// Write data files for debugging/audit
