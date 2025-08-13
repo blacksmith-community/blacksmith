@@ -299,6 +299,17 @@ func (b *Broker) Provision(
 		l.Error("failed to store deployment info at instance level: %s", err)
 		// Continue anyway, this is not fatal
 	}
+	
+	// Also store basic metadata at root instance path for backward compatibility
+	l.Debug("storing basic metadata at root instance path: %s", instanceID)
+	err = b.Vault.Put(instanceID, map[string]interface{}{
+		"details": details,
+		"requested_at": time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		l.Error("failed to store metadata at root instance path: %s", err)
+		// Continue anyway, this is not fatal
+	}
 
 	// Write data files for debugging/audit
 	if len(details.RawParameters) > 0 {
@@ -356,18 +367,18 @@ func (b *Broker) Deprovision(
 	l.Debug("storing delete_requested_at timestamp in Vault")
 	deleteRequestedAt := time.Now()
 
-	// Get existing timestamps
-	var timestamps map[string]interface{}
-	exists, err = b.Vault.Get(fmt.Sprintf("%s/timestamps", instanceID), &timestamps)
+	// Get existing metadata
+	var metadata map[string]interface{}
+	exists, err = b.Vault.Get(fmt.Sprintf("%s/metadata", instanceID), &metadata)
 	if err != nil || !exists {
-		timestamps = make(map[string]interface{})
+		metadata = make(map[string]interface{})
 	}
 
 	// Add delete_requested_at
-	timestamps["delete_requested_at"] = deleteRequestedAt.Format(time.RFC3339)
+	metadata["delete_requested_at"] = deleteRequestedAt.Format(time.RFC3339)
 
-	// Store updated timestamps
-	err = b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), timestamps)
+	// Store updated metadata
+	err = b.Vault.Put(fmt.Sprintf("%s/metadata", instanceID), metadata)
 	if err != nil {
 		l.Error("failed to store delete_requested_at timestamp: %s", err)
 		// Continue anyway, this is non-fatal
@@ -398,7 +409,7 @@ func (b *Broker) OnProvisionCompleted(
 	// First, update the instance with created_at timestamp
 	l.Debug("updating instance with created_at timestamp")
 	createdAt := time.Now()
-	err := b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), map[string]interface{}{
+	err := b.Vault.Put(fmt.Sprintf("%s/metadata", instanceID), map[string]interface{}{
 		"created_at": createdAt.Format(time.RFC3339),
 	})
 	if err != nil {
@@ -669,18 +680,18 @@ func (b *Broker) LastOperation(
 			l.Debug("storing deleted_at timestamp in Vault")
 			deletedAt := time.Now()
 
-			// Get existing timestamps
-			var timestamps map[string]interface{}
-			exists2, err := b.Vault.Get(fmt.Sprintf("%s/timestamps", instanceID), &timestamps)
+			// Get existing metadata
+			var metadata map[string]interface{}
+			exists2, err := b.Vault.Get(fmt.Sprintf("%s/metadata", instanceID), &metadata)
 			if err != nil || !exists2 {
-				timestamps = make(map[string]interface{})
+				metadata = make(map[string]interface{})
 			}
 
 			// Add deleted_at
-			timestamps["deleted_at"] = deletedAt.Format(time.RFC3339)
+			metadata["deleted_at"] = deletedAt.Format(time.RFC3339)
 
-			// Store updated timestamps
-			err = b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), timestamps)
+			// Store updated metadata
+			err = b.Vault.Put(fmt.Sprintf("%s/metadata", instanceID), metadata)
 			if err != nil {
 				l.Error("failed to store deleted_at timestamp: %s", err)
 				// Continue anyway, this is non-fatal

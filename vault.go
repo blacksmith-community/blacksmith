@@ -330,33 +330,33 @@ func (vault *Vault) AppendHistory(instanceID, action, description string) error 
 	l := Logger.Wrap("vault history %s", instanceID)
 	l.Debug("appending to history: %s - %s", action, description)
 
-	historyPath := fmt.Sprintf("%s/history", instanceID)
+	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
 
-	// Get existing history
-	var historyData map[string]interface{}
-	exists, err := vault.Get(historyPath, &historyData)
+	// Get existing metadata
+	var metadata map[string]interface{}
+	exists, err := vault.Get(metadataPath, &metadata)
 	if err != nil {
-		l.Error("failed to get history: %s", err)
+		l.Error("failed to get metadata: %s", err)
 		// Start fresh if there's an error
-		historyData = map[string]interface{}{"entries": []map[string]interface{}{}}
+		metadata = map[string]interface{}{}
 	}
 	if !exists {
-		historyData = map[string]interface{}{"entries": []map[string]interface{}{}}
+		metadata = map[string]interface{}{}
 	}
 
-	// Extract the entries array
+	// Extract the history array from metadata
 	var history []map[string]interface{}
-	if entries, ok := historyData["entries"].([]interface{}); ok {
+	if historyData, ok := metadata["history"].([]interface{}); ok {
 		// Convert []interface{} to []map[string]interface{}
-		for _, entry := range entries {
+		for _, entry := range historyData {
 			if entryMap, ok := entry.(map[string]interface{}); ok {
 				history = append(history, entryMap)
 			}
 		}
-	} else if entries, ok := historyData["entries"].([]map[string]interface{}); ok {
-		history = entries
+	} else if historyData, ok := metadata["history"].([]map[string]interface{}); ok {
+		history = historyData
 	} else {
-		// If entries doesn't exist or is wrong type, start fresh
+		// If history doesn't exist or is wrong type, start fresh
 		history = []map[string]interface{}{}
 	}
 
@@ -373,9 +373,9 @@ func (vault *Vault) AppendHistory(instanceID, action, description string) error 
 		history = history[len(history)-50:]
 	}
 
-	// Store history wrapped in a map
-	historyData = map[string]interface{}{"entries": history}
-	return vault.Put(historyPath, historyData)
+	// Store history back in metadata
+	metadata["history"] = history
+	return vault.Put(metadataPath, metadata)
 }
 
 func (vault *Vault) Index(instanceID string, data interface{}) error {
