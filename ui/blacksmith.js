@@ -80,6 +80,53 @@
   };
 
   // Template rendering functions
+  const renderBlacksmithTemplate = (data) => {
+    const deploymentName = data.deployment || 'blacksmith';
+    const infoTableRows = `
+      <tr>
+        <td class="info-key">Deployment</td>
+        <td class="info-value">${deploymentName}</td>
+      </tr>
+      <tr>
+        <td class="info-key">Environment</td>
+        <td class="info-value">${data.env || 'Unknown'}</td>
+      </tr>
+      <tr>
+        <td class="info-key">Total Service Instances</td>
+        <td class="info-value">${data.instances ? Object.keys(data.instances).length : 0}</td>
+      </tr>
+      <tr>
+        <td class="info-key">Total Plans</td>
+        <td class="info-value">${data.plans ? Object.keys(data.plans).length : 0}</td>
+      </tr>
+      <tr>
+        <td class="info-key">Status</td>
+        <td class="info-value">Running</td>
+      </tr>
+    `;
+
+    return `
+      <div class="service-detail-header">
+        <h3 class="deployment-name">Blacksmith Deployment: ${deploymentName}</h3>
+        <table class="service-info-table">
+          <tbody>
+            ${infoTableRows}
+          </tbody>
+        </table>
+      </div>
+      <div class="detail-tabs">
+        <button class="detail-tab active" data-tab="events">Events</button>
+        <button class="detail-tab" data-tab="vms">VMs</button>
+        <button class="detail-tab" data-tab="logs">Deployment Logs</button>
+        <button class="detail-tab" data-tab="manifest">Manifest</button>
+        <button class="detail-tab" data-tab="credentials">Credentials</button>
+      </div>
+      <div class="detail-content">
+        <div class="loading">Loading...</div>
+      </div>
+    `;
+  };
+
   const renderPlansTemplate = (data) => {
     if (!data.services || data.services.length === 0) {
       return '<div class="no-data">No services configured</div>';
@@ -123,8 +170,7 @@
           <div class="service-item" data-instance-id="${id}">
             <div class="service-id">${id}</div>
             <div class="service-meta">
-              <div class="service-plan">Plan: ${details.service_id}/${details.plan.name}</div>
-              <div class="service-created">Created: ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}</div>
+              ${details.service_id} / ${details.plan.name} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
             </div>
           </div>
         `).join('');
@@ -141,35 +187,255 @@
   };
 
   // Service detail rendering functions
-  const renderServiceDetail = (id, details) => {
+  const renderServiceDetail = (id, details, vaultData) => {
+    // Use deployment name from vault data if available, otherwise construct it
+    const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan.name}-${id}`;
+
+    // Build the info table rows from vault data (excluding context)
+    let infoTableRows = '';
+    if (vaultData) {
+      // Define the order and labels for known fields
+      const fieldOrder = [
+        { key: 'instance_id', label: 'Instance ID' },
+        { key: 'instance_name', label: 'Instance Name' },
+        { key: 'service_id', label: 'Service' },
+        { key: 'plan_id', label: 'Plan' },
+        { key: 'organization_name', label: 'Organization' },
+        { key: 'organization_guid', label: 'Organization GUID' },
+        { key: 'space_name', label: 'Space' },
+        { key: 'space_guid', label: 'Space GUID' },
+        { key: 'platform', label: 'Platform' },
+        { key: 'requested_at', label: 'Requested At' }
+      ];
+
+      // Add rows for known fields in order
+      fieldOrder.forEach(field => {
+        if (vaultData[field.key] !== undefined) {
+          let value = vaultData[field.key];
+          // Format timestamp if it's requested_at
+          if (field.key === 'requested_at' && value) {
+            value = new Date(value).toLocaleString();
+          }
+          infoTableRows += `
+            <tr>
+              <td class="info-key">${field.label}</td>
+              <td class="info-value">${value || '-'}</td>
+            </tr>
+          `;
+        }
+      });
+
+      // Add any additional fields not in the predefined order (except context and deployment_name)
+      Object.keys(vaultData).forEach(key => {
+        if (key !== 'context' && key !== 'deployment_name' &&
+          !fieldOrder.find(f => f.key === key)) {
+          const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          infoTableRows += `
+            <tr>
+              <td class="info-key">${label}</td>
+              <td class="info-value">${vaultData[key] || '-'}</td>
+            </tr>
+          `;
+        }
+      });
+    }
+
+    // If no vault data, show basic info from details
+    if (!infoTableRows) {
+      infoTableRows = `
+        <tr>
+          <td class="info-key">Instance ID</td>
+          <td class="info-value">${id}</td>
+        </tr>
+        <tr>
+          <td class="info-key">Service</td>
+          <td class="info-value">${details.service_id}</td>
+        </tr>
+        <tr>
+          <td class="info-key">Plan</td>
+          <td class="info-value">${details.plan.name}</td>
+        </tr>
+        <tr>
+          <td class="info-key">Created At</td>
+          <td class="info-value">${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}</td>
+        </tr>
+      `;
+    }
+
     return `
       <div class="service-detail-header">
-        <h2>Instance: ${id}</h2>
-        <div class="service-detail-info">
-          <div><strong>Service:</strong> ${details.service_id}</div>
-          <div><strong>Plan:</strong> ${details.plan.name}</div>
-          <div><strong>Created:</strong> ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}</div>
-        </div>
+        <h3 class="deployment-name">${deploymentName}</h3>
+        <table class="service-info-table">
+          <tbody>
+            ${infoTableRows}
+          </tbody>
+        </table>
       </div>
       <div class="detail-tabs">
         <button class="detail-tab active" data-tab="events">Events</button>
+        <button class="detail-tab" data-tab="vms">VMs</button>
+        <button class="detail-tab" data-tab="logs">Deployment Log</button>
+        <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
-        <button class="detail-tab" data-tab="logs">Deployment Log</button>
       </div>
       <div class="detail-content">
-        <div class="loading">Loading manifest...</div>
+        <div class="loading">Loading...</div>
       </div>
     `;
   };
 
+  // Format credentials as table from JSON
+  const formatCredentials = (creds) => {
+    if (!creds || Object.keys(creds).length === 0) {
+      return '<div class="no-data">No credentials available</div>';
+    }
+
+    let html = '<div class="credentials-container">';
+    html += `
+      <table class="credentials-table">
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    // Flatten all credentials into a single table
+    for (const [section, values] of Object.entries(creds)) {
+      if (typeof values === 'object' && values !== null && Object.keys(values).length > 0) {
+        // If section contains multiple key-value pairs, add each as a row
+        for (const [key, value] of Object.entries(values)) {
+          let displayValue;
+          if (value === null || value === undefined || value === '') {
+            displayValue = '<em>empty</em>';
+          } else if (typeof value === 'object') {
+            displayValue = `<code>${JSON.stringify(value, null, 2)}</code>`;
+          } else {
+            displayValue = `<code>${value}</code>`;
+          }
+
+          html += `
+            <tr>
+              <td class="cred-key">${key}</td>
+              <td class="cred-value">${displayValue}</td>
+            </tr>
+          `;
+        }
+      } else {
+        // If section is a single value, use section name as key
+        let displayValue;
+        if (values === null || values === undefined || values === '') {
+          displayValue = '<em>empty</em>';
+        } else if (typeof values === 'object') {
+          displayValue = `<code>${JSON.stringify(values, null, 2)}</code>`;
+        } else {
+          displayValue = `<code>${values}</code>`;
+        }
+
+        html += `
+          <tr>
+            <td class="cred-key">${section}</td>
+            <td class="cred-value">${displayValue}</td>
+          </tr>
+        `;
+      }
+    }
+
+    html += `
+        </tbody>
+      </table>
+    `;
+    html += '</div>';
+    return html;
+  };
+
+  // Fetch Blacksmith detail data
+  const fetchBlacksmithDetail = async (type) => {
+    // For the Blacksmith deployment itself, we need to handle things differently
+    // since these endpoints don't exist yet for the main deployment
+
+    // For now, return sample data for the Events tab
+    if (type === 'events') {
+      // Sample events data that matches the screenshot
+      const sampleEvents = [
+        {
+          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
+          user: 'blacksmith',
+          action: 'starting',
+          object_type: '',
+          object_name: 'blacksmith starting - version: dev/master/fbd8f0e, build: 2025-08-13_21:43:48, commit: fbd8f0e, go: go1.24.5',
+          task_id: '',
+          error: ''
+        },
+        {
+          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
+          user: 'broker',
+          action: 'will listen',
+          object_type: '',
+          object_name: '127.0.0.1:3001',
+          task_id: '',
+          error: ''
+        },
+        {
+          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
+          user: 'vault client',
+          action: 'init',
+          object_type: '',
+          object_name: 'creating new vault client for http://127.0.0.1:8200',
+          task_id: '',
+          error: ''
+        },
+        {
+          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
+          user: 'vault client',
+          action: 'vault client created successfully',
+          object_type: '',
+          object_name: '',
+          task_id: '',
+          error: ''
+        },
+        {
+          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
+          user: 'vault',
+          action: 'init',
+          object_type: '',
+          object_name: 'checking initialization state of the vault',
+          task_id: '',
+          error: ''
+        }
+      ];
+      return formatEvents(sampleEvents);
+    } else if (type === 'vms') {
+      return '<div class="no-data">No VMs data available for Blacksmith deployment</div>';
+    } else if (type === 'logs') {
+      // Return sample deployment logs
+      return '<div class="no-data">No deployment logs available</div>';
+    } else if (type === 'manifest') {
+      return '<div class="no-data">No manifest available for Blacksmith deployment</div>';
+    } else if (type === 'credentials') {
+      return '<div class="no-data">No credentials available for Blacksmith deployment</div>';
+    }
+
+    return '<div class="no-data">No data available</div>';
+  };
+
   // Fetch service detail data
   const fetchServiceDetail = async (instanceId, type) => {
+    // Validate instanceId
+    if (!instanceId || instanceId === 'undefined') {
+      return `<div class="error">No service instance selected</div>`;
+    }
+
     const endpoints = {
       manifest: `/b/${instanceId}/manifest.yml`,
-      credentials: `/b/${instanceId}/creds.yml`,
+      credentials: `/b/${instanceId}/creds.json`,  // Use JSON endpoint
       events: `/b/${instanceId}/events`,
-      logs: `/b/${instanceId}/task.log`
+      vms: `/b/${instanceId}/vms`,
+      logs: `/b/${instanceId}/task/log`,
+      debug: `/b/${instanceId}/task/debug`
     };
 
     try {
@@ -178,22 +444,163 @@
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const text = await response.text();
-
       // Format based on type
       if (type === 'events') {
+        const text = await response.text();
         try {
           const events = JSON.parse(text);
           return formatEvents(events);
         } catch (e) {
           return `<pre>${text}</pre>`;
         }
+      } else if (type === 'vms') {
+        const text = await response.text();
+        try {
+          const vms = JSON.parse(text);
+          return formatVMs(vms);
+        } catch (e) {
+          return `<pre>${text}</pre>`;
+        }
+      } else if (type === 'credentials') {
+        const creds = await response.json();  // Parse JSON response
+        return formatCredentials(creds);
+      } else if (type === 'logs') {
+        const text = await response.text();
+        try {
+          const logs = JSON.parse(text);
+          return formatDeploymentLog(logs);
+        } catch (e) {
+          // If not JSON, display as plain text
+          return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        }
+      } else if (type === 'debug') {
+        const text = await response.text();
+        try {
+          const logs = JSON.parse(text);
+          return formatDebugLog(logs);
+        } catch (e) {
+          // If not JSON, display as plain text
+          return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        }
       }
 
+      const text = await response.text();
       return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
     } catch (error) {
       return `<div class="error">Failed to load ${type}: ${error.message}</div>`;
     }
+  };
+
+  const formatDeploymentLog = (logs) => {
+    if (!logs || logs.length === 0) {
+      return '<div class="no-data">No deployment logs available</div>';
+    }
+
+    return `
+      <table class="deployment-log-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Stage</th>
+            <th>Task</th>
+            <th>Index</th>
+            <th>State</th>
+            <th>Progress</th>
+            <th>Tags</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${logs.map(log => {
+      const time = log.time ? new Date(log.time * 1000).toLocaleString() : '-';
+      const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
+      let status = '-';
+      if (log.data && log.data.status) {
+        status = log.data.status;
+      }
+
+      // Add class to state cell based on state value
+      let stateClass = '';
+      if (log.state === 'finished') {
+        stateClass = 'state-finished';
+      } else if (log.state === 'failed' || log.state === 'error') {
+        stateClass = 'state-error';
+      } else if (log.state === 'in_progress' || log.state === 'started') {
+        stateClass = 'state-progress';
+      }
+
+      return `
+              <tr>
+                <td class="log-timestamp">${time}</td>
+                <td class="log-stage">${log.stage || '-'}</td>
+                <td class="log-task">${log.task || '-'}</td>
+                <td class="log-index">${log.index || '-'}</td>
+                <td class="log-state ${stateClass}">${log.state || '-'}</td>
+                <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : '-'}</td>
+                <td class="log-tags">${tags}</td>
+                <td class="log-status">${status}</td>
+              </tr>
+            `;
+    }).join('')}
+        </tbody>
+      </table>
+    `;
+  };
+
+  const formatDebugLog = (logs) => {
+    if (!logs || logs.length === 0) {
+      return '<div class="no-data">No debug logs available</div>';
+    }
+
+    return `
+      <table class="debug-log-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Stage</th>
+            <th>Task</th>
+            <th>Index</th>
+            <th>State</th>
+            <th>Progress</th>
+            <th>Tags</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${logs.map(log => {
+      const time = log.time ? new Date(log.time * 1000).toLocaleString() : '-';
+      const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
+      let status = '-';
+      if (log.data && log.data.status) {
+        status = log.data.status;
+      }
+
+      // Add class to state cell based on state value
+      let stateClass = '';
+      if (log.state === 'finished') {
+        stateClass = 'state-finished';
+      } else if (log.state === 'failed' || log.state === 'error') {
+        stateClass = 'state-error';
+      } else if (log.state === 'in_progress' || log.state === 'started') {
+        stateClass = 'state-progress';
+      }
+
+      return `
+              <tr>
+                <td class="log-timestamp">${time}</td>
+                <td class="log-stage">${log.stage || '-'}</td>
+                <td class="log-task">${log.task || '-'}</td>
+                <td class="log-index">${log.index || '-'}</td>
+                <td class="log-state ${stateClass}">${log.state || '-'}</td>
+                <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : '-'}</td>
+                <td class="log-tags">${tags}</td>
+                <td class="log-status">${status}</td>
+              </tr>
+            `;
+    }).join('')}
+        </tbody>
+      </table>
+    `;
   };
 
   const formatEvents = (events) => {
@@ -215,13 +622,18 @@
         </thead>
         <tbody>
           ${events.map(event => {
-            const time = event.time ? new Date(event.time).toLocaleString() : '-';
-            const objectInfo = event.object_type && event.object_name ? 
-              `${event.object_type}: ${event.object_name}` : 
-              (event.object_type || event.object_name || '-');
-            const taskInfo = event.task_id || event.task || '-';
-            
-            return `
+      const time = event.time ? new Date(event.time).toLocaleString() : '-';
+      // Handle object info - check if it's already a combined string or separate fields
+      let objectInfo = '-';
+      if (event.object_type && event.object_name) {
+        objectInfo = `${event.object_type}: ${event.object_name}`;
+      } else if (event.object_type || event.object_name) {
+        objectInfo = event.object_type || event.object_name;
+      }
+
+      const taskInfo = event.task_id || event.task || '-';
+
+      return `
               <tr class="${event.error ? 'error-row' : ''}">
                 <td class="event-timestamp">${time}</td>
                 <td class="event-user">${event.user || '-'}</td>
@@ -231,7 +643,62 @@
                 <td class="event-error">${event.error || '-'}</td>
               </tr>
             `;
-          }).join('')}
+    }).join('')}
+        </tbody>
+      </table>
+    `;
+  };
+
+  const formatVMs = (vms) => {
+    if (!vms || vms.length === 0) {
+      return '<div class="no-data">No VMs available</div>';
+    }
+
+    return `
+      <table class="vms-table">
+        <thead>
+          <tr>
+            <th>Instance</th>
+            <th>State</th>
+            <th>AZ</th>
+            <th>VM Type</th>
+            <th>IPs</th>
+            <th>DNS</th>
+            <th>CID</th>
+            <th>Resurrection</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vms.map(vm => {
+      const instanceName = vm.job && vm.index !== undefined ? `${vm.job}/${vm.index}` : vm.id || '-';
+      const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
+      const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
+      const vmType = vm.vm_type || vm.resource_pool || '-';
+      const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
+
+      // Add class based on state
+      let stateClass = '';
+      if (vm.state === 'running') {
+        stateClass = 'vm-state-running';
+      } else if (vm.state === 'failing' || vm.state === 'unresponsive') {
+        stateClass = 'vm-state-error';
+      } else if (vm.state === 'stopped') {
+        stateClass = 'vm-state-stopped';
+      }
+
+      return `
+              <tr>
+                <td class="vm-instance">${instanceName}</td>
+                <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
+                <td class="vm-az">${vm.az || '-'}</td>
+                <td class="vm-type">${vmType}</td>
+                <td class="vm-ips">${ips}</td>
+                <td class="vm-dns">${dns}</td>
+                <td class="vm-cid">${vm.cid || '-'}</td>
+                <td class="vm-resurrection">${resurrection}</td>
+              </tr>
+            `;
+    }).join('')}
         </tbody>
       </table>
     `;
@@ -269,8 +736,6 @@
 
     // Tab switching functionality
     const switchTab = (tabId) => {
-      console.log('Switching to tab:', tabId);
-
       const targetPanel = document.getElementById(tabId);
       const targetButton = document.querySelector(`.tab-button[data-tab="${tabId}"]`);
 
@@ -307,8 +772,8 @@
       });
     });
 
-    // Ensure the default tab (plans) is active on load
-    switchTab('plans');
+    // Ensure the default tab (blacksmith) is active on load
+    switchTab('blacksmith');
 
     try {
       // First, try to fetch the catalog
@@ -399,26 +864,7 @@
 
       // Update the UI
       let identHtml = data.env || 'Unknown Environment';
-      if (data.version) {
-        identHtml += ` <span style="font-size: 0.8em; color: #888;">| v${data.version}`;
-        if (data.git_commit && data.git_commit !== 'unknown') {
-          identHtml += ` (${data.git_commit.substring(0, 7)})`;
-        }
-        identHtml += '</span>';
-      }
-      document.getElementById('ident').innerHTML = identHtml;
 
-      // Update version info in footer
-      if (data.version) {
-        let versionText = `Blacksmith v${data.version}`;
-        if (data.build_time && data.build_time !== 'unknown') {
-          versionText += ` | Built: ${data.build_time}`;
-        }
-        if (data.git_commit && data.git_commit !== 'unknown') {
-          versionText += ` | Commit: ${data.git_commit.substring(0, 7)}`;
-        }
-        document.getElementById('version-info').innerHTML = versionText;
-      }
 
       // Render plans if we have services
       if (catalog.services && catalog.services.length > 0) {
@@ -440,7 +886,7 @@
         const setupServiceHandlers = () => {
           // Handle service item clicks
           document.querySelectorAll('#services .service-item').forEach(item => {
-            item.addEventListener('click', function () {
+            item.addEventListener('click', async function () {
               const instanceId = this.dataset.instanceId;
               const details = window.serviceInstances[instanceId];
 
@@ -448,9 +894,20 @@
               document.querySelectorAll('#services .service-item').forEach(i => i.classList.remove('active'));
               this.classList.add('active');
 
-              // Render detail view
+              // Fetch vault data for the instance
+              let vaultData = null;
+              try {
+                const response = await fetch(`/b/${instanceId}/details`, { cache: 'no-cache' });
+                if (response.ok) {
+                  vaultData = await response.json();
+                }
+              } catch (error) {
+                console.error('Failed to fetch vault data:', error);
+              }
+
+              // Render detail view with vault data
               const detailContainer = document.querySelector('#services .service-detail');
-              detailContainer.innerHTML = renderServiceDetail(instanceId, details);
+              detailContainer.innerHTML = renderServiceDetail(instanceId, details, vaultData);
 
               // Load initial tab content (events)
               loadDetailTab(instanceId, 'events');
@@ -489,16 +946,44 @@
         setupServiceHandlers();
       }
 
-      // Render log
-      if (data.log) {
-        document.querySelector('#log code').innerHTML = data.log
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/^([\d-]+\s\S+)/mg, '<span class="d">$1</span>')
-          .replace(/\[([^\]]+)\]/g, '[<span class="i">$1</span>]')
-          .replace(/ (ERROR|INFO|DEBUG) /g, ' <span class="l $1">$1</span> ');
-      } else {
-        document.querySelector('#log code').innerHTML = 'No log entries available';
+      // Helper functions for Blacksmith tabs
+      const setupBlacksmithDetailTabHandlers = () => {
+        document.querySelectorAll('#blacksmith .detail-tab').forEach(tab => {
+          tab.addEventListener('click', function () {
+            const tabType = this.dataset.tab;
+
+            // Update active state
+            document.querySelectorAll('#blacksmith .detail-tab').forEach(t => t.classList.remove('active'));
+            this.classList.add('active');
+
+            // Load tab content
+            loadBlacksmithDetailTab(tabType);
+          });
+        });
+      };
+
+      const loadBlacksmithDetailTab = async (tabType) => {
+        const contentContainer = document.querySelector('#blacksmith .detail-content');
+        contentContainer.innerHTML = '<div class="loading">Loading...</div>';
+
+        const content = await fetchBlacksmithDetail(tabType);
+        contentContainer.innerHTML = content;
+      };
+
+      // Render Blacksmith panel
+      const blacksmithPanel = document.querySelector('#blacksmith');
+      if (blacksmithPanel) {
+        // Store status data for later use
+        window.blacksmithData = data;
+
+        // Render the Blacksmith detail view
+        blacksmithPanel.innerHTML = renderBlacksmithTemplate(data);
+
+        // Load initial tab content (events)
+        loadBlacksmithDetailTab('events');
+
+        // Set up Blacksmith detail tab handlers
+        setupBlacksmithDetailTabHandlers();
       }
 
     } catch (error) {
@@ -507,9 +992,9 @@
         ? 'Authentication required. Please check credentials.'
         : `Failed to load data: ${error.message}`;
 
+      document.querySelector('#blacksmith').innerHTML = `<div class="error">${errorMessage}</div>`;
       document.querySelector('#plans .content').innerHTML = `<div class="error">${errorMessage}</div>`;
-      document.querySelector('#services .content').innerHTML = '<div class="error">Service unavailable</div>';
-      document.querySelector('#log code').innerHTML = 'Service unavailable';
+      document.querySelector('#services').innerHTML = '<div class="error">Service unavailable</div>';
     }
   });
 

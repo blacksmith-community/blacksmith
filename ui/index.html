@@ -23,17 +23,21 @@
     <div class="wrap">
       <!-- Tab navigation -->
       <div class="tabs" role="tablist" aria-label="Main navigation">
-        <button class="tab-button active" data-tab="plans" role="tab" aria-selected="true"
+        <button class="tab-button active" data-tab="blacksmith" role="tab" aria-selected="true"
+          aria-controls="blacksmith">Blacksmith</button>
+        <button class="tab-button" data-tab="plans" role="tab" aria-selected="false"
           aria-controls="plans">Plans</button>
         <button class="tab-button" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service
           Instances</button>
-        <button class="tab-button" data-tab="log" role="tab" aria-selected="false" aria-controls="log">Blacksmith
-          Log</button>
       </div>
 
       <!-- Tab content panels -->
       <div class="tab-content">
-        <div id="plans" class="tab-panel active" role="tabpanel" aria-hidden="false">
+        <div id="blacksmith" class="tab-panel active" role="tabpanel" aria-hidden="false">
+          <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
+        </div>
+
+        <div id="plans" class="tab-panel" role="tabpanel" aria-hidden="true">
           <div class="card">
             <h1>Plans</h1>
             <div class="content">loading, please wait...</div>
@@ -43,13 +47,6 @@
         <div id="services" class="tab-panel" role="tabpanel" aria-hidden="true">
           <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
         </div>
-
-        <div id="log" class="tab-panel" role="tabpanel" aria-hidden="true">
-          <div class="card">
-            <h1>Blacksmith Broker Log</h1>
-            <pre><code>loading, please wait...</code></pre>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -58,7 +55,7 @@
     <div class="wrap">
       <p>
         <img src="/blacksmith.svg" alt="Blacksmith" style="height: 20px; width: 20px; vertical-align: middle; margin-right: 4px;">
-        Copyright &copy; 2025 Blacksmith Community | <span id="version-info">Blacksmith</span>
+        Copyright &copy; 2025 Blacksmith Community
       </p>
     </div>
   </footer>

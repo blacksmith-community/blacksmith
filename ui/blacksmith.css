@@ -341,10 +341,9 @@ td a {
 #services .service-item .service-meta {
   font-size: 10pt;
   color: #666;
-}
-
-#services .service-item .service-plan {
-  margin-bottom: 0.3em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #services .service-detail {
@@ -360,17 +359,84 @@ td a {
   border-bottom: 1px solid #ddd;
 }
 
-#services .service-detail-header h2 {
-  margin: 0 0 0.5em 0;
-  font-size: 14pt;
-  font-weight: bold;
+/* Deployment name header */
+.deployment-name {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1a202c;
+  margin: 0 0 1rem 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e2e8f0;
 }
 
-#services .service-detail-info {
-  display: flex;
-  gap: 2em;
-  font-size: 10pt;
-  color: #666;
+/* Service info table with key-value format */
+.service-info-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.5rem;
+  background: white;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.service-info-table th {
+  background: #f7fafc;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #4a5568;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.service-info-table .info-key {
+  font-weight: 500;
+  color: #4a5568;
+  width: 30%;
+  padding: 0.5rem 1rem;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
+}
+
+.service-info-table .info-value {
+  padding: 0.5rem 1rem;
+  color: #2d3748;
+  border-bottom: 1px solid #e2e8f0;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+}
+
+.service-info-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.service-info-table tbody tr:hover {
+  background: #f7fafc;
+}
+
+/* Keep old table styles for backward compatibility */
+.service-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.service-detail-table th {
+  padding: 8px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid #dee2e6;
+  background-color: #f8f9fa;
+}
+
+.service-detail-table td {
+  padding: 8px;
+  border-bottom: 1px solid #e9ecef;
+  color: #495057;
 }
 
 #services .detail-tabs {
@@ -428,6 +494,157 @@ td a {
   color: #999;
   font-style: italic;
   font-size: 12pt;
+}
+
+/* Credentials table styling */
+.credentials-container {
+  padding: 1em 0;
+}
+
+.credentials-container h3 {
+  font-size: 14pt;
+  font-weight: bold;
+  margin: 1em 0 0.5em 0;
+  color: #333;
+  border-bottom: 2px solid #008edb;
+  padding-bottom: 0.3em;
+}
+
+.credentials-container h3:first-child {
+  margin-top: 0;
+}
+
+.credentials-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+}
+
+.credentials-table thead {
+  background-color: #f8f9fa;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.credentials-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid #dee2e6;
+  background-color: #f8f9fa;
+}
+
+.credentials-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.credentials-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.credentials-table .cred-key {
+  font-weight: 500;
+  color: #495057;
+  width: auto;
+  min-width: 100px;
+  max-width: 200px;
+}
+
+.credentials-table .cred-value {
+  color: #212529;
+  font-family: monospace;
+  font-size: 9pt;
+}
+
+.credentials-table .cred-value code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-family: monospace;
+  font-size: 9pt;
+  color: #0071bc;
+  word-break: break-all;
+}
+
+.credentials-table .cred-value em {
+  color: #6c757d;
+  font-style: italic;
+}
+
+.cred-single {
+  margin: 0.5em 0;
+  padding: 0.75em;
+  background-color: #f8f9fa;
+  border-left: 3px solid #008edb;
+}
+
+.cred-single code {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 10pt;
+  color: #d73502;
+}
+
+/* Special styling for Blacksmith tab panel - same structure as service detail */
+#blacksmith.tab-panel.active {
+  display: flex !important;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  background-color: #fff;
+}
+
+#blacksmith .service-detail-header {
+  flex-shrink: 0;
+}
+
+#blacksmith .detail-tabs {
+  display: flex;
+  background-color: #f5f5f5;
+  border-bottom: 1px solid #ddd;
+  flex-shrink: 0;
+}
+
+#blacksmith .detail-tab {
+  padding: 0.8em 1.5em;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 11pt;
+  color: #666;
+  transition: all 0.2s;
+}
+
+#blacksmith .detail-tab:hover {
+  background-color: rgba(0, 113, 188, 0.05);
+  color: #333;
+}
+
+#blacksmith .detail-tab.active {
+  color: #0071bc;
+  border-bottom-color: #0071bc;
+  font-weight: 600;
+}
+
+#blacksmith .detail-content {
+  flex: 1;
+  padding: 1em 2em;
+  overflow-y: auto;
+  overflow-x: auto;
+  background-color: #fff;
+}
+
+#blacksmith .detail-content pre {
+  background-color: #f5f5f5;
+  padding: 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: monospace;
+  font-size: 10pt;
+  line-height: 1.4;
+  max-width: 100%;
 }
 
 /* Special styling for log panel */
@@ -571,4 +788,198 @@ td a {
 .event-message {
   word-wrap: break-word;
   max-width: 600px;
+}
+
+/* VMs table styles - similar to events table */
+.vms-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+}
+
+.vms-table thead {
+  background-color: #f8f9fa;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.vms-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid #dee2e6;
+  background-color: #f8f9fa;
+}
+
+.vms-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.vms-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.vm-instance {
+  font-weight: 500;
+  color: #0071bc;
+}
+
+.vm-state {
+  font-weight: 500;
+}
+
+.vm-state.vm-state-running {
+  color: #28a745;
+}
+
+.vm-state.vm-state-error {
+  color: #dc3545;
+}
+
+.vm-state.vm-state-stopped {
+  color: #6c757d;
+}
+
+.vm-az {
+  font-size: 9pt;
+  color: #555;
+}
+
+.vm-type {
+  font-size: 9pt;
+  color: #555;
+}
+
+.vm-ips {
+  font-family: monospace;
+  font-size: 9pt;
+  color: #495057;
+}
+
+.vm-dns {
+  font-family: monospace;
+  font-size: 9pt;
+  color: #495057;
+  word-break: break-all;
+}
+
+.vm-cid {
+  font-family: monospace;
+  font-size: 9pt;
+  color: #6c757d;
+}
+
+.vm-resurrection {
+  font-size: 9pt;
+  color: #555;
+}
+
+/* Deployment Log table styles */
+.deployment-log-table,
+.debug-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+}
+
+.deployment-log-table thead,
+.debug-log-table thead {
+  background-color: #f8f9fa;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.deployment-log-table th,
+.debug-log-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid #dee2e6;
+  background-color: #f8f9fa;
+}
+
+.deployment-log-table td,
+.debug-log-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.deployment-log-table tbody tr:hover,
+.debug-log-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.log-timestamp {
+  font-family: monospace;
+  font-size: 9pt;
+  white-space: nowrap;
+  color: #6c757d;
+}
+
+.log-stage {
+  font-weight: 500;
+  color: #0071bc;
+}
+
+.log-task {
+  font-size: 9pt;
+  color: #555;
+  max-width: 400px;
+  word-wrap: break-word;
+}
+
+.log-index {
+  text-align: center;
+  font-family: monospace;
+  font-size: 9pt;
+  color: #6c757d;
+}
+
+.log-state {
+  font-weight: 500;
+  text-transform: lowercase;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 9pt;
+  display: inline-block;
+}
+
+.log-state.state-finished {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.log-state.state-error,
+.log-state.state-failed {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.log-state.state-progress,
+.log-state.state-started {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.log-progress {
+  font-family: monospace;
+  font-size: 9pt;
+  text-align: right;
+  min-width: 60px;
+  color: #6c757d;
+}
+
+.log-tags {
+  font-size: 9pt;
+  color: #666;
+  font-family: monospace;
+}
+
+.log-status {
+  font-size: 9pt;
+  color: #555;
+  font-style: italic;
 }
