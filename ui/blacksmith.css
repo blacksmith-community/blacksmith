@@ -395,7 +395,8 @@ td a {
 .service-info-table .info-key {
   font-weight: 500;
   color: #4a5568;
-  width: 30%;
+  width: auto;
+  white-space: nowrap;
   padding: 0.5rem 1rem;
   background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
@@ -408,6 +409,7 @@ td a {
   border-bottom: 1px solid #e2e8f0;
   font-family: 'SF Mono', Monaco, Consolas, monospace;
   font-size: 0.875rem;
+  width: 100%;
 }
 
 .service-info-table tbody tr:last-child td {
@@ -550,12 +552,14 @@ td a {
   width: auto;
   min-width: 100px;
   max-width: 200px;
+  white-space: nowrap;
 }
 
 .credentials-table .cred-value {
   color: #212529;
   font-family: monospace;
   font-size: 9pt;
+  width: 100%;
 }
 
 .credentials-table .cred-value code {
@@ -982,4 +986,113 @@ td a {
   font-size: 9pt;
   color: #555;
   font-style: italic;
+}
+
+/* Copy button styles */
+.copy-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.copy-btn-inline {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0.25rem;
+  cursor: pointer;
+  color: #718096;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+}
+
+.copy-btn-inline:hover {
+  background: #f7fafc;
+  color: #0071bc;
+  border-color: #0071bc;
+}
+
+.copy-btn-inline.copied {
+  background: #48bb78;
+  color: white;
+  border-color: #48bb78;
+}
+
+.copy-btn-inline svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Manifest copy button */
+.manifest-container {
+  position: relative;
+}
+
+.manifest-header {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 10;
+}
+
+.copy-btn-manifest {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  color: #4a5568;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.copy-btn-manifest:hover {
+  background: #f7fafc;
+  color: #0071bc;
+  border-color: #0071bc;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+}
+
+.copy-btn-manifest.copied {
+  background: #48bb78;
+  color: white;
+  border-color: #48bb78;
+}
+
+.copy-btn-manifest svg {
+  width: 16px;
+  height: 16px;
+}
+
+.manifest-container pre {
+  padding-top: 3rem;
+}
+
+/* Adjust VMs table for copy buttons */
+.vms-table .vm-ips .copy-wrapper,
+.vms-table .vm-cid .copy-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.vms-table .copy-btn-inline {
+  padding: 0.125rem;
+  min-width: 20px;
+  height: 20px;
+}
+
+.vms-table .copy-btn-inline svg {
+  width: 12px;
+  height: 12px;
 }

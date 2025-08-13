@@ -14,6 +14,52 @@
     return true;
   };
 
+  // Copy to clipboard helper
+  const copyToClipboard = async (text, button) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Visual feedback
+      const originalTitle = button.title;
+      button.classList.add('copied');
+      button.title = 'Copied!';
+      setTimeout(() => {
+        button.classList.remove('copied');
+        button.title = originalTitle;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        button.classList.add('copied');
+        setTimeout(() => button.classList.remove('copied'), 2000);
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+      document.body.removeChild(textarea);
+    }
+  };
+
+  // Create copy button element
+  const createCopyButton = (text, className = 'copy-btn') => {
+    const button = document.createElement('button');
+    button.className = className;
+    button.title = 'Copy to clipboard';
+    button.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+    button.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      copyToClipboard(text, button);
+    };
+    return button;
+  };
+
   // Strftime implementation
   const strftime = (fmt, d) => {
     if (!(d instanceof Date)) {
@@ -82,26 +128,71 @@
   // Template rendering functions
   const renderBlacksmithTemplate = (data) => {
     const deploymentName = data.deployment || 'blacksmith';
+    const environment = data.env || 'Unknown';
+    const totalInstances = data.instances ? Object.keys(data.instances).length : 0;
+    const totalPlans = data.plans ? Object.keys(data.plans).length : 0;
+    const status = 'Running';
+    
     const infoTableRows = `
       <tr>
         <td class="info-key">Deployment</td>
-        <td class="info-value">${deploymentName}</td>
+        <td class="info-value">
+          <span class="copy-wrapper">
+            <button class="copy-btn-inline" onclick="window.copyValue(event, '${deploymentName}')"
+                    title="Copy to clipboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <span>${deploymentName}</span>
+          </span>
+        </td>
       </tr>
       <tr>
         <td class="info-key">Environment</td>
-        <td class="info-value">${data.env || 'Unknown'}</td>
+        <td class="info-value">
+          <span class="copy-wrapper">
+            <button class="copy-btn-inline" onclick="window.copyValue(event, '${environment}')"
+                    title="Copy to clipboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <span>${environment}</span>
+          </span>
+        </td>
       </tr>
       <tr>
         <td class="info-key">Total Service Instances</td>
-        <td class="info-value">${data.instances ? Object.keys(data.instances).length : 0}</td>
+        <td class="info-value">
+          <span class="copy-wrapper">
+            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalInstances}')"
+                    title="Copy to clipboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <span>${totalInstances}</span>
+          </span>
+        </td>
       </tr>
       <tr>
         <td class="info-key">Total Plans</td>
-        <td class="info-value">${data.plans ? Object.keys(data.plans).length : 0}</td>
+        <td class="info-value">
+          <span class="copy-wrapper">
+            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalPlans}')"
+                    title="Copy to clipboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <span>${totalPlans}</span>
+          </span>
+        </td>
       </tr>
       <tr>
         <td class="info-key">Status</td>
-        <td class="info-value">Running</td>
+        <td class="info-value">
+          <span class="copy-wrapper">
+            <button class="copy-btn-inline" onclick="window.copyValue(event, '${status}')"
+                    title="Copy to clipboard">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+            <span>${status}</span>
+          </span>
+        </td>
       </tr>
     `;
 
@@ -219,7 +310,15 @@
           infoTableRows += `
             <tr>
               <td class="info-key">${field.label}</td>
-              <td class="info-value">${value || '-'}</td>
+              <td class="info-value">
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
+                          title="Copy to clipboard">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <span>${value || '-'}</span>
+                </span>
+              </td>
             </tr>
           `;
         }
@@ -230,10 +329,19 @@
         if (key !== 'context' && key !== 'deployment_name' &&
           !fieldOrder.find(f => f.key === key)) {
           const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          const value = vaultData[key];
           infoTableRows += `
             <tr>
               <td class="info-key">${label}</td>
-              <td class="info-value">${vaultData[key] || '-'}</td>
+              <td class="info-value">
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
+                          title="Copy to clipboard">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <span>${value || '-'}</span>
+                </span>
+              </td>
             </tr>
           `;
         }
@@ -242,22 +350,55 @@
 
     // If no vault data, show basic info from details
     if (!infoTableRows) {
+      const createdAt = details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown';
       infoTableRows = `
         <tr>
           <td class="info-key">Instance ID</td>
-          <td class="info-value">${id}</td>
+          <td class="info-value">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')"
+                      title="Copy to clipboard">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${id}</span>
+            </span>
+          </td>
         </tr>
         <tr>
           <td class="info-key">Service</td>
-          <td class="info-value">${details.service_id}</td>
+          <td class="info-value">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')"
+                      title="Copy to clipboard">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${details.service_id}</span>
+            </span>
+          </td>
         </tr>
         <tr>
           <td class="info-key">Plan</td>
-          <td class="info-value">${details.plan.name}</td>
+          <td class="info-value">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')"
+                      title="Copy to clipboard">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${details.plan.name}</span>
+            </span>
+          </td>
         </tr>
         <tr>
           <td class="info-key">Created At</td>
-          <td class="info-value">${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}</td>
+          <td class="info-value">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')"
+                      title="Copy to clipboard">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${createdAt}</span>
+            </span>
+          </td>
         </tr>
       `;
     }
@@ -317,10 +458,19 @@
             displayValue = `<code>${value}</code>`;
           }
 
+          const copyValue = typeof value === 'object' ? JSON.stringify(value, null, 2) : (value || '');
           html += `
             <tr>
               <td class="cred-key">${key}</td>
-              <td class="cred-value">${displayValue}</td>
+              <td class="cred-value">
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+                          title="Copy to clipboard">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <span>${displayValue}</span>
+                </span>
+              </td>
             </tr>
           `;
         }
@@ -335,10 +485,19 @@
           displayValue = `<code>${values}</code>`;
         }
 
+        const copyValue = typeof values === 'object' ? JSON.stringify(values, null, 2) : (values || '');
         html += `
           <tr>
             <td class="cred-key">${section}</td>
-            <td class="cred-value">${displayValue}</td>
+            <td class="cred-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${displayValue}</span>
+              </span>
+            </td>
           </tr>
         `;
       }
@@ -409,7 +568,23 @@
       ];
       return formatEvents(sampleEvents);
     } else if (type === 'vms') {
-      return '<div class="no-data">No VMs data available for Blacksmith deployment</div>';
+      // Fetch VMs for the blacksmith deployment using the new endpoint
+      try {
+        const response = await fetch('/b/blacksmith/vms', { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const text = await response.text();
+        try {
+          const vms = JSON.parse(text);
+          return formatVMs(vms);
+        } catch (e) {
+          return `<pre>${text}</pre>`;
+        }
+      } catch (error) {
+        return `<div class="error">Failed to load VMs: ${error.message}</div>`;
+      }
     } else if (type === 'logs') {
       // Return sample deployment logs
       return '<div class="no-data">No deployment logs available</div>';
@@ -485,6 +660,26 @@
       }
 
       const text = await response.text();
+      // Add copy button for manifest
+      if (type === 'manifest') {
+        // Store the manifest text in a data attribute or use a different approach
+        const manifestId = `manifest-${instanceId}-${Date.now()}`;
+        window.manifestTexts = window.manifestTexts || {};
+        window.manifestTexts[manifestId] = text;
+        
+        return `
+          <div class="manifest-container">
+            <div class="manifest-header">
+              <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
+                      title="Copy manifest to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+          </div>
+        `;
+      }
       return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
     } catch (error) {
       return `<div class="error">Failed to load ${type}: ${error.message}</div>`;
@@ -692,9 +887,29 @@
                 <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
                 <td class="vm-az">${vm.az || '-'}</td>
                 <td class="vm-type">${vmType}</td>
-                <td class="vm-ips">${ips}</td>
+                <td class="vm-ips">
+                  ${ips !== '-' ? `
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <span>${ips}</span>
+                    </span>
+                  ` : '-'}
+                </td>
                 <td class="vm-dns">${dns}</td>
-                <td class="vm-cid">${vm.cid || '-'}</td>
+                <td class="vm-cid">
+                  ${vm.cid ? `
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.cid}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <span>${vm.cid}</span>
+                    </span>
+                  ` : '-'}
+                </td>
                 <td class="vm-resurrection">${resurrection}</td>
               </tr>
             `;
@@ -727,6 +942,90 @@
       document.addEventListener('DOMContentLoaded', fn);
     } else {
       fn();
+    }
+  };
+
+  // Export copy function to window for onclick handlers
+  window.copyValue = async (event, text) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.currentTarget;
+    try {
+      await navigator.clipboard.writeText(text);
+      // Visual feedback
+      button.classList.add('copied');
+      const originalTitle = button.title;
+      button.title = 'Copied!';
+      setTimeout(() => {
+        button.classList.remove('copied');
+        button.title = originalTitle;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        button.classList.add('copied');
+        setTimeout(() => button.classList.remove('copied'), 2000);
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+      document.body.removeChild(textarea);
+    }
+  };
+
+  // Copy manifest function
+  window.copyManifest = async (manifestId, event) => {
+    const text = window.manifestTexts[manifestId];
+    if (!text) {
+      console.error('Manifest text not found for ID:', manifestId);
+      return;
+    }
+    
+    const button = event.currentTarget;
+    try {
+      await navigator.clipboard.writeText(text);
+      // Visual feedback
+      button.classList.add('copied');
+      const originalTitle = button.title;
+      button.title = 'Copied!';
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Copied!';
+      setTimeout(() => {
+        button.classList.remove('copied');
+        button.title = originalTitle;
+        spanElement.textContent = originalText;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy manifest:', err);
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        button.classList.add('copied');
+        const spanElement = button.querySelector('span');
+        const originalText = spanElement.textContent;
+        spanElement.textContent = 'Copied!';
+        setTimeout(() => {
+          button.classList.remove('copied');
+          spanElement.textContent = originalText;
+        }, 2000);
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+      document.body.removeChild(textarea);
     }
   };
 
@@ -973,6 +1272,22 @@
       // Render Blacksmith panel
       const blacksmithPanel = document.querySelector('#blacksmith');
       if (blacksmithPanel) {
+        // Fetch blacksmith instance details to get deployment name
+        try {
+          const instanceResponse = await fetch('/b/instance', { cache: 'no-cache' });
+          if (instanceResponse.ok) {
+            const instanceData = await instanceResponse.json();
+            // Merge instance data with status data
+            data.deployment = instanceData.deployment || 'blacksmith';
+            data.az = instanceData.az;
+            data.instanceId = instanceData.id;
+            data.instanceName = instanceData.name;
+          }
+        } catch (error) {
+          console.error('Failed to fetch blacksmith instance details:', error);
+          data.deployment = 'blacksmith'; // Fallback
+        }
+        
         // Store status data for later use
         window.blacksmithData = data;
 

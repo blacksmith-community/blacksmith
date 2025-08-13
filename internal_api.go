@@ -317,20 +317,35 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	pattern = regexp.MustCompile("^/b/([^/]+)/vms$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		l := Logger.Wrap("vms")
-		instanceID := m[1]
-		l.Debug("looking up VMs for %s", instanceID)
+		param := m[1]
+		l.Debug("looking up VMs for %s", param)
 
-		// Get instance data to construct deployment name
-		inst, exists, err := api.Vault.FindInstance(instanceID)
-		if err != nil || !exists {
-			l.Error("unable to find service instance %s in vault index", instanceID)
-			w.WriteHeader(404)
-			return
+		var deploymentName string
+		
+		// Check if this is the blacksmith deployment itself
+		if param == "blacksmith" {
+			// For the blacksmith deployment, get the deployment name from the instance files
+			if data, err := os.ReadFile("/var/vcap/instance/deployment"); err == nil {
+				deploymentName = strings.TrimSpace(string(data))
+				l.Debug("using blacksmith deployment name from instance file: %s", deploymentName)
+			} else {
+				// Fallback to "blacksmith" if we can't read the file
+				deploymentName = "blacksmith"
+				l.Debug("using default blacksmith deployment name: %s", deploymentName)
+			}
+		} else {
+			// For service instances, construct deployment name from vault data
+			inst, exists, err := api.Vault.FindInstance(param)
+			if err != nil || !exists {
+				l.Error("unable to find service instance %s in vault index", param)
+				w.WriteHeader(404)
+				return
+			}
+			
+			// Construct deployment name from plan_id and instance_id
+			deploymentName = inst.PlanID + "-" + param
+			l.Debug("fetching VMs for service deployment %s", deploymentName)
 		}
-
-		// Construct deployment name from plan_id and instance_id
-		deploymentName := inst.PlanID + "-" + instanceID
-		l.Debug("fetching VMs for deployment %s", deploymentName)
 
 		// Get VMs from BOSH
 		vms, err := api.Broker.BOSH.GetDeploymentVMs(deploymentName)
