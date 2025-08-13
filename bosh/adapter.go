@@ -8,7 +8,7 @@ import (
 // Director defines the interface for BOSH operations
 // This provides a clean abstraction over the BOSH CLI director client
 type Director interface {
-	// Info operations
+	// Director operations
 	GetInfo() (*Info, error)
 
 	// Deployment operations
@@ -30,6 +30,9 @@ type Director interface {
 	GetTask(id int) (*Task, error)
 	GetTaskOutput(id int, outputType string) (string, error)
 	GetTaskEvents(id int) ([]TaskEvent, error)
+
+	// Event operations
+	GetEvents(deployment string) ([]Event, error)
 
 	// Config operations
 	UpdateCloudConfig(config string) error
@@ -130,6 +133,22 @@ type TaskEvent struct {
 	Progress int                    `json:"progress"`
 	Data     map[string]interface{} `json:"data"`
 	Error    *TaskEventError        `json:"error,omitempty"`
+}
+
+// Event represents a BOSH event
+type Event struct {
+	ID         string    `json:"id"`
+	Time       time.Time `json:"time"`
+	User       string    `json:"user"`
+	Action     string    `json:"action"`
+	ObjectType string    `json:"object_type"`
+	ObjectName string    `json:"object_name"`
+	Task       string    `json:"task"`
+	TaskID     string    `json:"task_id"`
+	Deployment string    `json:"deployment"`
+	Instance   string    `json:"instance"`
+	Context    string    `json:"context"`
+	Error      string    `json:"error"`
 }
 
 // TaskEventError represents an error in a task event

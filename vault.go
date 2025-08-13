@@ -261,29 +261,21 @@ func (vault *Vault) Track(instanceID, action string, taskID int, params interfac
 	l := Logger.Wrap("vault track %s", instanceID)
 	l.Debug("tracking action '%s', task %d", action, taskID)
 
-	// Determine the state description based on task ID
-	var state string
-	switch taskID {
-	case -1:
-		state = "failed"
-	case 0:
-		state = "initializing"
-	default:
-		state = "in_progress"
-	}
+	// Note: We're deprecating storing task IDs in vault
+	// This function is kept for backward compatibility but will be removed
+	// Task IDs are now retrieved from BOSH deployment events
 
+	// Store minimal tracking info for audit purposes
 	task := struct {
 		Action      string      `json:"action"`
-		Task        int         `json:"task"`
 		State       string      `json:"state"`
 		Description string      `json:"description"`
 		UpdatedAt   int64       `json:"updated_at"`
 		Params      interface{} `json:"params"`
 	}{
 		Action:      action,
-		Task:        taskID,
-		State:       state,
-		Description: "",
+		State:       "in_progress",
+		Description: fmt.Sprintf("Operation %s in progress", action),
 		UpdatedAt:   time.Now().Unix(),
 		Params:      deinterface(params),
 	}
@@ -339,7 +331,7 @@ func (vault *Vault) AppendHistory(instanceID, action, description string) error 
 	l.Debug("appending to history: %s - %s", action, description)
 
 	historyPath := fmt.Sprintf("%s/history", instanceID)
-	
+
 	// Get existing history
 	var historyData map[string]interface{}
 	exists, err := vault.Get(historyPath, &historyData)
@@ -351,7 +343,7 @@ func (vault *Vault) AppendHistory(instanceID, action, description string) error 
 	if !exists {
 		historyData = map[string]interface{}{"entries": []map[string]interface{}{}}
 	}
-	
+
 	// Extract the entries array
 	var history []map[string]interface{}
 	if entries, ok := historyData["entries"].([]interface{}); ok {

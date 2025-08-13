@@ -1,9 +1,9 @@
 package bosh
 
 import (
-	"os"
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"

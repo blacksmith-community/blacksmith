@@ -110,16 +110,10 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 
 	l.Info("Deployment started successfully, BOSH task ID: %d", task.ID)
 
-	// Update tracking with actual task ID
-	err = b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", task.ID), task.ID, params)
+	// Update tracking with deployment status (no longer storing task ID)
+	err = b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", task.ID), 0, params)
 	if err != nil {
 		l.Error("failed to store service status in the vault: %s", err)
-	}
-	
-	// Also update the main task record with the actual task ID
-	err = b.Vault.Track(instanceID, "provision", task.ID, params)
-	if err != nil {
-		l.Error("failed to update task ID in vault: %s", err)
 	}
 
 	l.Info("Async provisioning handed off to BOSH for instance %s", instanceID)
@@ -147,13 +141,13 @@ func (b *Broker) deprovisionAsync(instanceID string, instance *Instance) {
 	if err != nil || manifest.Manifest == "" {
 		l.Info("Deployment %s not found, marking as deleted", deploymentName)
 		b.Vault.TrackProgress(instanceID, "deprovision", "Deployment not found, cleanup only", 0, nil)
-		
+
 		// Remove from index
 		b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", 0, nil)
 		if err := b.Vault.Index(instanceID, nil); err != nil {
 			l.Error("failed to remove service from vault index: %s", err)
 		}
-		
+
 		// Mark as completed
 		b.Vault.TrackProgress(instanceID, "deprovision", "Deprovisioning completed (no deployment)", 0, nil)
 		b.Vault.Track(instanceID, "deprovision", 0, nil)
@@ -171,20 +165,14 @@ func (b *Broker) deprovisionAsync(instanceID string, instance *Instance) {
 
 	l.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
 
-	// Update tracking with actual task ID
-	err = b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), task.ID, nil)
+	// Update tracking with deployment status (no longer storing task ID)
+	err = b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), 0, nil)
 	if err != nil {
 		l.Error("failed to store deprovision status in the vault: %s", err)
 	}
-	
-	// Also update the main task record with the actual task ID
-	err = b.Vault.Track(instanceID, "deprovision", task.ID, nil)
-	if err != nil {
-		l.Error("failed to update task ID in vault: %s", err)
-	}
 
 	// Remove from index (will be cleaned up when task completes)
-	b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", task.ID, nil)
+	b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", 0, nil)
 	if err := b.Vault.Index(instanceID, nil); err != nil {
 		l.Error("failed to remove service from vault index: %s", err)
 	}

@@ -134,11 +134,11 @@ func UploadReleasesFromManifest(raw string, director bosh.Director, l *Log) erro
 			have[releaseID] = true
 		}
 	}
-	
+
 	// Log all releases as a single JSON object
 	if len(releases) > 0 {
 		releasesJSON, _ := json.Marshal(map[string]interface{}{
-			"count": len(releases),
+			"count":    len(releases),
 			"releases": releases,
 		})
 		l.Debug("found BOSH releases: %s", string(releasesJSON))

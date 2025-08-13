@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -310,17 +311,17 @@ func (b *Broker) Deprovision(
 	// Store delete_requested_at timestamp
 	l.Debug("storing delete_requested_at timestamp in Vault")
 	deleteRequestedAt := time.Now()
-	
+
 	// Get existing timestamps
 	var timestamps map[string]interface{}
 	exists, err = b.Vault.Get(fmt.Sprintf("%s/timestamps", instanceID), &timestamps)
 	if err != nil || !exists {
 		timestamps = make(map[string]interface{})
 	}
-	
+
 	// Add delete_requested_at
 	timestamps["delete_requested_at"] = deleteRequestedAt.Format(time.RFC3339)
-	
+
 	// Store updated timestamps
 	err = b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), timestamps)
 	if err != nil {
@@ -453,8 +454,39 @@ func (b *Broker) LastOperation(
 	l := Logger.Wrap("%s", instanceID)
 	l.Debug("last-operation check received; checking state of service deployment")
 
-	typ, taskID, _, _ := b.Vault.State(instanceID)
-	l.Debug("instance was last in '%s' state, BOSH task %d", typ, taskID)
+	// Get the deployment name for this instance
+	instance, exists, err := b.Vault.FindInstance(instanceID)
+	if err != nil {
+		l.Error("could not find instance details: %s", err)
+		return domain.LastOperation{}, err
+	}
+	if !exists {
+		l.Error("instance %s not found in vault index", instanceID)
+		return domain.LastOperation{}, fmt.Errorf("instance not found")
+	}
+
+	deploymentName := instance.PlanID + "-" + instanceID
+	l.Debug("checking deployment: %s", deploymentName)
+
+	// Get the latest task for this deployment from BOSH events
+	latestTask, operationType, err := b.GetLatestDeploymentTask(deploymentName)
+	if err != nil {
+		l.Error("failed to get latest task for deployment %s: %s", deploymentName, err)
+		// If we can't get task info, check if deployment exists
+		_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
+		if deploymentErr != nil {
+			// Deployment doesn't exist, assume in progress or failed
+			l.Debug("deployment %s does not exist", deploymentName)
+			return domain.LastOperation{State: domain.InProgress}, nil
+		}
+		// Deployment exists but no tasks found - assume succeeded
+		l.Debug("deployment %s exists but no recent tasks found", deploymentName)
+		return domain.LastOperation{State: domain.Succeeded}, nil
+	}
+
+	taskID := latestTask.ID
+	typ := operationType
+	l.Debug("latest task for deployment %s: task %d, type '%s', state '%s'", deploymentName, taskID, typ, latestTask.State)
 
 	// Handle special task IDs
 	if taskID == 0 {
@@ -462,17 +494,17 @@ func (b *Broker) LastOperation(
 		// This can happen with old deployments before the fix
 		// Check if the deployment actually exists to determine success
 		l.Debug("task ID is 0, checking if deployment exists")
-		
+
 		// Get instance details from vault to find plan ID
 		instance, exists, err := b.Vault.FindInstance(instanceID)
 		if err != nil || !exists {
 			l.Error("could not find instance details for task ID 0")
 			return domain.LastOperation{State: domain.Failed}, nil
 		}
-		
+
 		deploymentName := instance.PlanID + "-" + instanceID
 		l.Debug("checking for deployment: %s", deploymentName)
-		
+
 		// Check if deployment exists
 		_, err = b.BOSH.GetDeployment(deploymentName)
 		if err != nil {
@@ -480,10 +512,10 @@ func (b *Broker) LastOperation(
 			l.Debug("deployment %s does not exist, operation still in progress", deploymentName)
 			return domain.LastOperation{State: domain.InProgress}, nil
 		}
-		
+
 		// Deployment exists with task ID 0 - this is a completed deployment from before the fix
 		l.Info("deployment %s exists with task ID 0, marking as succeeded", deploymentName)
-		
+
 		// Run post-provision hook if this was a provision operation
 		if typ == "provision" {
 			if err := b.OnProvisionCompleted(l, instanceID); err != nil {
@@ -491,7 +523,7 @@ func (b *Broker) LastOperation(
 				// Don't fail the operation, just log the error
 			}
 		}
-		
+
 		return domain.LastOperation{State: domain.Succeeded}, nil
 	}
 	if taskID == -1 {
@@ -568,17 +600,17 @@ func (b *Broker) LastOperation(
 			// Store deleted_at timestamp
 			l.Debug("storing deleted_at timestamp in Vault")
 			deletedAt := time.Now()
-			
+
 			// Get existing timestamps
 			var timestamps map[string]interface{}
 			exists2, err := b.Vault.Get(fmt.Sprintf("%s/timestamps", instanceID), &timestamps)
 			if err != nil || !exists2 {
 				timestamps = make(map[string]interface{})
 			}
-			
+
 			// Add deleted_at
 			timestamps["deleted_at"] = deletedAt.Format(time.RFC3339)
-			
+
 			// Store updated timestamps
 			err = b.Vault.Put(fmt.Sprintf("%s/timestamps", instanceID), timestamps)
 			if err != nil {
@@ -958,6 +990,66 @@ func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID
 	l.Debug("Returning success immediately as async bindings are not supported")
 	// Not implemented - return successful immediately since we don't support async bindings
 	return domain.LastOperation{State: domain.Succeeded}, nil
+}
+
+// GetLatestDeploymentTask retrieves the most recent task for a deployment from BOSH
+func (b *Broker) GetLatestDeploymentTask(deploymentName string) (*bosh.Task, string, error) {
+	l := Logger.Wrap("GetLatestDeploymentTask %s", deploymentName)
+
+	// Get events for this deployment to find task IDs
+	events, err := b.BOSH.GetEvents(deploymentName)
+	if err != nil {
+		l.Error("failed to get events for deployment %s: %s", deploymentName, err)
+		return nil, "", fmt.Errorf("failed to get events for deployment %s: %w", deploymentName, err)
+	}
+
+	// Extract unique task IDs from events and determine the latest one
+	taskIDs := make(map[int]bool)
+	var maxTaskID int
+
+	for _, event := range events {
+		if event.TaskID != "" {
+			// Parse task ID from string to int
+			if taskID, err := strconv.Atoi(event.TaskID); err == nil {
+				taskIDs[taskID] = true
+				if taskID > maxTaskID {
+					maxTaskID = taskID
+				}
+			}
+		}
+	}
+
+	if maxTaskID == 0 {
+		l.Debug("no task IDs found in events for deployment %s", deploymentName)
+		return nil, "", fmt.Errorf("no tasks found for deployment %s", deploymentName)
+	}
+
+	l.Debug("found %d unique task IDs in events, latest is %d", len(taskIDs), maxTaskID)
+
+	// Get the latest task details
+	latestTask, err := b.BOSH.GetTask(maxTaskID)
+	if err != nil {
+		l.Error("failed to get task %d: %s", maxTaskID, err)
+		return nil, "", fmt.Errorf("failed to get task %d: %w", maxTaskID, err)
+	}
+
+	// Determine operation type from task description
+	desc := strings.ToLower(latestTask.Description)
+	var operationType string
+	if strings.Contains(desc, "delet") || strings.Contains(desc, "deprovision") {
+		operationType = "deprovision"
+	} else if strings.Contains(desc, "creat") || strings.Contains(desc, "deploy") || strings.Contains(desc, "provision") {
+		operationType = "provision"
+	} else if strings.Contains(desc, "update") {
+		operationType = "update"
+	} else {
+		// Default to provision for other operations
+		operationType = "provision"
+	}
+
+	l.Debug("latest task for deployment %s: task %d (%s) - %s", deploymentName, latestTask.ID, operationType, latestTask.Description)
+
+	return latestTask, operationType, nil
 }
 
 func (b *Broker) serviceWithNoDeploymentCheck() (

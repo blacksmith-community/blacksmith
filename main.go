@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -16,7 +17,11 @@ import (
 )
 
 // Version gets edited during a release build
-var Version = "(development version)"
+var (
+	Version   = "(development version)"
+	BuildTime = "unknown"
+	GitCommit = "unknown"
+)
 
 func main() {
 	showVersion := flag.Bool("v", false, "Display the version of Blacksmith")
@@ -25,6 +30,9 @@ func main() {
 
 	if *showVersion {
 		fmt.Printf("blacksmith %s\n", Version)
+		fmt.Printf("  Build Time: %s\n", BuildTime)
+		fmt.Printf("  Git Commit: %s\n", GitCommit)
+		fmt.Printf("  Go Version: %s\n", runtime.Version())
 		os.Exit(0)
 	}
 
@@ -37,6 +45,10 @@ func main() {
 	}
 
 	l := Logger.Wrap("*")
+
+	// Log build version information at startup
+	l.Info("blacksmith starting - version: %s, build: %s, commit: %s, go: %s",
+		Version, BuildTime, GitCommit, runtime.Version())
 
 	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.Port)
 	l.Info("broker will listen on %s", bind)
@@ -242,9 +254,9 @@ func main() {
 	if config.Broker.IdleTimeout > 0 {
 		idleTimeout = config.Broker.IdleTimeout
 	}
-	
+
 	l.Info("HTTP server timeouts - Read: %ds, Write: %ds, Idle: %ds", readTimeout, writeTimeout, idleTimeout)
-	
+
 	server := &http.Server{
 		Addr:         bind,
 		Handler:      nil, // Uses http.DefaultServeMux

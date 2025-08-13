@@ -14,9 +14,10 @@ import (
 // VaultClient wraps the HashiCorp Vault API client
 type VaultClient struct {
 	*api.Client
-	URL      string
-	Token    string
-	Insecure bool
+	URL       string
+	Token     string
+	Insecure  bool
+	KVVersion string // "1" or "2" - defaults to "2"
 }
 
 // NewVaultClient creates a new vault client using the HashiCorp API
@@ -57,10 +58,11 @@ func NewVaultClient(url, token string, insecure bool) (*VaultClient, error) {
 
 	l.Debug("vault client created successfully")
 	return &VaultClient{
-		Client:   client,
-		URL:      url,
-		Token:    token,
-		Insecure: insecure,
+		Client:    client,
+		URL:       url,
+		Token:     token,
+		Insecure:  insecure,
+		KVVersion: "2", // Default to KV v2, will be updated by VerifyMount
 	}, nil
 }
 
@@ -146,7 +148,7 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 
 	// Normalize mount path - always add trailing slash for comparison
 	mountPath := strings.Trim(mount, "/") + "/"
-	
+
 	// Debug: log all mounts
 	l.Debug("Current mounts:")
 	for path, mountInfo := range mounts {
@@ -162,11 +164,48 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 				version = v
 			}
 			l.Debug("Found KV mount at %s (version %s)", mount, version)
-			
-			// If it's KV v2, we might need to handle it differently
-			if version != "1" {
-				l.Info("WARNING: Mount %s is KV version %s, expected version 1", mount, version)
-				// For now, continue - the API should handle both versions
+
+			// Check if we need to upgrade from KV v1 to KV v2
+			if version == "1" {
+				l.Info("Detected KV v1 mount at %s, upgrading to KV v2", mount)
+
+				// Create the tune configuration for upgrading to KV v2
+				tuneConfig := api.MountConfigInput{
+					Options: map[string]string{
+						"version": "2",
+					},
+				}
+
+				// Perform the upgrade
+				err = vc.Sys().TuneMount(mount, tuneConfig)
+				if err != nil {
+					l.Error("Failed to upgrade mount %s from KV v1 to KV v2: %s", mount, err)
+					// Don't fail entirely - KV v1 can still work
+					l.Info("WARNING: Continuing with KV v1 mount at %s", mount)
+					vc.KVVersion = "1"
+					return nil
+				}
+
+				l.Info("Successfully upgraded mount %s from KV v1 to KV v2", mount)
+				vc.KVVersion = "2"
+
+				// Verify the upgrade
+				mounts, err = vc.Sys().ListMounts()
+				if err != nil {
+					l.Info("WARNING: Failed to verify mount upgrade: %s", err)
+				} else if mountInfo, exists := mounts[mountPath]; exists {
+					if v, ok := mountInfo.Options["version"]; ok && v == "2" {
+						l.Debug("Verified mount %s is now KV v2", mount)
+					} else {
+						l.Info("WARNING: Mount %s upgrade verification failed, version is %v", mount, mountInfo.Options["version"])
+					}
+				}
+			} else if version == "2" {
+				l.Debug("Mount %s is already KV v2", mount)
+				vc.KVVersion = "2"
+			} else {
+				l.Info("WARNING: Mount %s has unexpected KV version %s", mount, version)
+				vc.KVVersion = version
 			}
 		} else {
 			l.Info("WARNING: Mount %s exists but is type %s, not KV", mount, mountInfo.Type)
@@ -180,13 +219,13 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 		return err
 	}
 
-	// Create the mount
-	l.Info("creating KV v1 mount at %s", mount)
+	// Create the mount as KV v2 directly
+	l.Info("creating KV v2 mount at %s", mount)
 	mountInput := &api.MountInput{
 		Type:        "kv",
-		Description: "KV v1 secrets engine for Blacksmith",
+		Description: "KV v2 secrets engine for Blacksmith",
 		Options: map[string]string{
-			"version": "1",
+			"version": "2",
 		},
 	}
 
@@ -201,8 +240,9 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 		return err
 	}
 
-	l.Info("mount %s created successfully as KV v1", mount)
-	
+	l.Info("mount %s created successfully as KV v2", mount)
+	vc.KVVersion = "2"
+
 	// Verify the mount was created
 	mounts, err = vc.Sys().ListMounts()
 	if err != nil {
@@ -210,15 +250,22 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 	} else if _, exists := mounts[mountPath]; !exists {
 		l.Error("mount %s was created but not found in list", mount)
 	}
-	
+
 	return nil
 }
 
 // GetSecret reads a secret from vault
 func (vc *VaultClient) GetSecret(path string) (map[string]interface{}, bool, error) {
 	l := Logger.Wrap("vault get")
-	fullPath := "secret/" + path
-	l.Debug("reading secret at %s", fullPath)
+
+	var fullPath string
+	if vc.KVVersion == "2" {
+		fullPath = "secret/data/" + path
+		l.Debug("reading secret at %s (KV v2)", fullPath)
+	} else {
+		fullPath = "secret/" + path
+		l.Debug("reading secret at %s (KV v1)", fullPath)
+	}
 
 	secret, err := vc.Logical().Read(fullPath)
 	if err != nil {
@@ -231,6 +278,16 @@ func (vc *VaultClient) GetSecret(path string) (map[string]interface{}, bool, err
 		return nil, false, nil
 	}
 
+	// For KV v2, the actual data is nested under "data" key
+	if vc.KVVersion == "2" {
+		if data, ok := secret.Data["data"].(map[string]interface{}); ok {
+			l.Debug("secret found at %s", fullPath)
+			return data, true, nil
+		}
+		l.Debug("secret found but no data field at %s", fullPath)
+		return nil, false, nil
+	}
+
 	l.Debug("secret found at %s", fullPath)
 	return secret.Data, true, nil
 }
@@ -238,11 +295,26 @@ func (vc *VaultClient) GetSecret(path string) (map[string]interface{}, bool, err
 // PutSecret writes a secret to vault
 func (vc *VaultClient) PutSecret(path string, data map[string]interface{}) error {
 	l := Logger.Wrap("vault put")
-	l.Debug("writing secret to secret/%s", path)
 
-	_, err := vc.Logical().Write("secret/"+path, data)
+	var fullPath string
+	var writeData map[string]interface{}
+
+	if vc.KVVersion == "2" {
+		fullPath = "secret/data/" + path
+		// For KV v2, wrap the data in a "data" field
+		writeData = map[string]interface{}{
+			"data": data,
+		}
+		l.Debug("writing secret to %s (KV v2)", fullPath)
+	} else {
+		fullPath = "secret/" + path
+		writeData = data
+		l.Debug("writing secret to %s (KV v1)", fullPath)
+	}
+
+	_, err := vc.Logical().Write(fullPath, writeData)
 	if err != nil {
-		l.Error("failed to write secret to %s: %s", path, err)
+		l.Error("failed to write secret to %s: %s", fullPath, err)
 		return err
 	}
 
@@ -253,8 +325,16 @@ func (vc *VaultClient) PutSecret(path string, data map[string]interface{}) error
 // DeleteSecret deletes a secret from vault
 func (vc *VaultClient) DeleteSecret(path string) error {
 	l := Logger.Wrap("vault delete")
-	fullPath := "secret/" + path
-	l.Debug("deleting secret at %s", fullPath)
+
+	var fullPath string
+	if vc.KVVersion == "2" {
+		// For KV v2, delete from data path
+		fullPath = "secret/data/" + path
+		l.Debug("deleting secret at %s (KV v2)", fullPath)
+	} else {
+		fullPath = "secret/" + path
+		l.Debug("deleting secret at %s (KV v1)", fullPath)
+	}
 
 	_, err := vc.Logical().Delete(fullPath)
 	if err != nil {
@@ -274,16 +354,25 @@ func (vc *VaultClient) DeleteSecret(path string) error {
 // ListSecrets lists secrets at a given path
 func (vc *VaultClient) ListSecrets(path string) ([]string, error) {
 	l := Logger.Wrap("vault list")
-	l.Debug("listing secrets at secret/%s", path)
 
-	secret, err := vc.Logical().List("secret/" + path)
+	var fullPath string
+	if vc.KVVersion == "2" {
+		// For KV v2, list from metadata path
+		fullPath = "secret/metadata/" + path
+		l.Debug("listing secrets at %s (KV v2)", fullPath)
+	} else {
+		fullPath = "secret/" + path
+		l.Debug("listing secrets at %s (KV v1)", fullPath)
+	}
+
+	secret, err := vc.Logical().List(fullPath)
 	if err != nil {
 		// Don't error on 404s - just return empty list
 		if strings.Contains(err.Error(), "404") {
 			l.Debug("no secrets found at %s", path)
 			return []string{}, nil
 		}
-		l.Error("failed to list secrets at %s: %s", path, err)
+		l.Error("failed to list secrets at %s: %s", fullPath, err)
 		return nil, err
 	}
 

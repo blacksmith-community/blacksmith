@@ -243,20 +243,20 @@ func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 	// In BOSH, deployments are created/updated through the same API endpoint.
 	// The director will create the deployment if it doesn't exist.
 	// However, the bosh-cli library requires a deployment object to call Update.
-	
+
 	// Try to find existing deployment
 	dep, err := d.director.FindDeployment(deploymentName)
 	if err != nil {
 		// Deployment doesn't exist - we need to work around the bosh-cli limitation
 		d.log.Debug("Deployment %s not found, attempting to create via manifest deployment", deploymentName)
-		
+
 		// Since the bosh-cli library doesn't provide a way to create deployments directly,
 		// and the deployment object's Update method just calls client.UpdateDeployment,
 		// we have a few options:
 		// 1. Use reflection to access the unexported client (fragile)
 		// 2. Create a fake deployment object (what we'll do)
 		// 3. Return a placeholder task and let the async process handle it
-		
+
 		// For now, return a placeholder task with ID 1 (non-zero to avoid triggering failures)
 		// The async provisioning process will need to handle the actual deployment creation
 		d.log.Info("Deployment %s does not exist yet, returning placeholder task for async creation", deploymentName)
@@ -269,7 +269,7 @@ func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 			StartedAt:   time.Now(),
 		}, nil
 	}
-	
+
 	// Update existing deployment
 	d.log.Debug("Updating existing deployment %s", deploymentName)
 	err = dep.Update([]byte(manifest), updateOpts)
@@ -396,8 +396,7 @@ func (d *DirectorAdapter) GetReleases() ([]Release, error) {
 		if info.Auth.Type == "uaa" {
 			if uaaURL, ok := info.Auth.Options["url"].(string); ok {
 				d.log.Debug("Director is configured for UAA authentication at: %s", uaaURL)
-				d.log.Error("ERROR: Director is configured for UAA authentication but we're using basic auth credentials")
-				d.log.Error("The director expects UAA client credentials, not basic username/password")
+				d.log.Debug("Using UAA client credentials for authentication")
 			}
 		} else if info.Auth.Type == "basic" {
 			d.log.Debug("Director is configured for basic authentication")
@@ -655,6 +654,45 @@ func (d *DirectorAdapter) GetTaskEvents(id int) ([]TaskEvent, error) {
 	return events, nil
 }
 
+// GetEvents retrieves events for a specific deployment
+func (d *DirectorAdapter) GetEvents(deployment string) ([]Event, error) {
+	d.log.Info("Getting events for deployment: %s", deployment)
+	d.log.Debug("Fetching events from BOSH director")
+
+	// Use the BOSH director's Events method to get deployment events
+	filter := boshdirector.EventsFilter{
+		Deployment: deployment,
+	}
+
+	directorEvents, err := d.director.Events(filter)
+	if err != nil {
+		d.log.Error("Failed to get events for deployment %s: %v", deployment, err)
+		return nil, fmt.Errorf("failed to get events for deployment %s: %w", deployment, err)
+	}
+
+	// Convert director events to our Event type
+	events := make([]Event, 0, len(directorEvents))
+	for _, dirEvent := range directorEvents {
+		event := Event{
+			ID:         dirEvent.ID(),
+			Time:       dirEvent.Timestamp(),
+			User:       dirEvent.User(),
+			Action:     dirEvent.Action(),
+			ObjectType: dirEvent.ObjectType(),
+			ObjectName: dirEvent.ObjectName(),
+			TaskID:     dirEvent.TaskID(),
+			Deployment: dirEvent.DeploymentName(),
+			Instance:   dirEvent.Instance(),
+			Context:    fmt.Sprintf("%v", dirEvent.Context()),
+			Error:      dirEvent.Error(),
+		}
+		events = append(events, event)
+	}
+
+	d.log.Info("Successfully retrieved %d events for deployment %s", len(events), deployment)
+	return events, nil
+}
+
 // UpdateCloudConfig updates the cloud config
 func (d *DirectorAdapter) UpdateCloudConfig(config string) error {
 	d.log.Info("Updating cloud config")
@@ -780,7 +818,7 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 				// Extract UAA URL from auth options
 				if uaaURL, ok := info.Auth.Options["url"].(string); ok {
 					if config.Logger != nil {
-						config.Logger.Info("Director uses UAA authentication, configuring UAA client")
+						config.Logger.Info("Director uses UAA authentication, using provided credentials as UAA client ID and secret")
 						config.Logger.Debug("UAA URL: %s", uaaURL)
 					}
 
