@@ -200,3 +200,20 @@ td a {
 }
 #log pre .l.INFO { color: skyblue; }
 #log pre .l.ERROR { color: red; }
+
+
+.error {
+  color: #ff0000;
+  padding: 1em;
+  background-color: #ffeeee;
+  border: 1px solid #ffcccc;
+  margin: 1em 0;
+  font-weight: bold;
+}
+
+.no-data {
+  color: #666;
+  padding: 1em;
+  font-style: italic;
+  text-align: center;
+}

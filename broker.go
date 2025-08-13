@@ -249,7 +249,7 @@ func (b *Broker) Provision(
 	// Store details at the deployment name path
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
 	l.Debug("storing details at Vault path: %s", vaultPath)
-	
+
 	// Store only the details object at the deployment path
 	err = b.Vault.Put(vaultPath, map[string]interface{}{
 		"details": details,
@@ -260,7 +260,7 @@ func (b *Broker) Provision(
 		b.Vault.Index(instanceID, nil)
 		return spec, fmt.Errorf("Failed to store service metadata")
 	}
-	
+
 	// Build deployment info to store at instance level
 	deploymentInfo := map[string]interface{}{
 		"requested_at":      time.Now().Format(time.RFC3339),
@@ -271,7 +271,7 @@ func (b *Broker) Provision(
 		"deployment_name":   deploymentName,
 		"instance_id":       instanceID,
 	}
-	
+
 	// Parse context if available to get additional details
 	if len(details.RawContext) > 0 {
 		var contextData map[string]interface{}
@@ -291,7 +291,7 @@ func (b *Broker) Provision(
 			}
 		}
 	}
-	
+
 	// Store deployment info at instance level
 	l.Debug("storing deployment info at instance level: %s/deployment", instanceID)
 	err = b.Vault.Put(fmt.Sprintf("%s/deployment", instanceID), deploymentInfo)
@@ -299,7 +299,7 @@ func (b *Broker) Provision(
 		l.Error("failed to store deployment info at instance level: %s", err)
 		// Continue anyway, this is not fatal
 	}
-	
+
 	// Also store flattened data at root instance path for backward compatibility
 	l.Debug("storing flattened data at root instance path: %s", instanceID)
 	rootData := map[string]interface{}{
@@ -311,7 +311,7 @@ func (b *Broker) Provision(
 		"deployment_name":   deploymentName,
 		"instance_id":       instanceID,
 	}
-	
+
 	// Add context fields if available
 	if len(details.RawContext) > 0 {
 		var contextData map[string]interface{}
@@ -331,7 +331,7 @@ func (b *Broker) Provision(
 		}
 		rootData["context"] = contextData
 	}
-	
+
 	// Add raw parameters if present
 	if len(details.RawParameters) > 0 {
 		var paramsData interface{}
@@ -339,7 +339,7 @@ func (b *Broker) Provision(
 			rootData["parameters"] = paramsData
 		}
 	}
-	
+
 	err = b.Vault.Put(instanceID, rootData)
 	if err != nil {
 		l.Error("failed to store data at root instance path: %s", err)
@@ -444,17 +444,17 @@ func (b *Broker) OnProvisionCompleted(
 	// First, update the instance with created_at timestamp
 	l.Debug("updating instance with created_at timestamp")
 	createdAt := time.Now()
-	
+
 	// Get existing metadata to preserve history and other fields
 	var metadata map[string]interface{}
 	exists, err := b.Vault.Get(fmt.Sprintf("%s/metadata", instanceID), &metadata)
 	if err != nil || !exists {
 		metadata = make(map[string]interface{})
 	}
-	
+
 	// Add created_at to existing metadata
 	metadata["created_at"] = createdAt.Format(time.RFC3339)
-	
+
 	// Store updated metadata
 	err = b.Vault.Put(fmt.Sprintf("%s/metadata", instanceID), metadata)
 	if err != nil {
@@ -481,11 +481,11 @@ func (b *Broker) OnProvisionCompleted(
 		l.Error("could not find instance in vault index: %s", err)
 		return fmt.Errorf("could not find instance in vault index")
 	}
-	
+
 	// Construct the vault path with deployment name
 	deploymentName := instance.PlanID + "-" + instanceID
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
-	
+
 	var detailsMetadata map[string]interface{}
 	exists, err = b.Vault.Get(vaultPath, &detailsMetadata)
 	if err != nil {
@@ -547,7 +547,7 @@ func (b *Broker) OnProvisionCompleted(
 	if err != nil {
 		return err
 	}
-	
+
 	// Store credentials in vault
 	l.Debug("storing credentials in vault at %s/credentials", instanceID)
 	err = b.Vault.Put(fmt.Sprintf("%s/credentials", instanceID), creds)

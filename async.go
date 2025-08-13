@@ -68,14 +68,14 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 		b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Service initialization failed: %s", err), -1, params)
 		return
 	}
-	
+
 	// Store init script output in vault if script was run
 	if _, err := os.Stat(plan.InitScriptPath); err == nil {
 		l.Debug("storing init script in vault at %s/init", instanceID)
 		initScriptContent, readErr := os.ReadFile(plan.InitScriptPath)
 		if readErr == nil {
 			err = b.Vault.Put(fmt.Sprintf("%s/init", instanceID), map[string]interface{}{
-				"script": string(initScriptContent),
+				"script":      string(initScriptContent),
 				"executed_at": time.Now().Format(time.RFC3339),
 			})
 			if err != nil {
