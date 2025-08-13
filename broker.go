@@ -242,15 +242,50 @@ func (b *Broker) Provision(
 		return spec, fmt.Errorf("Failed to track new service in Vault")
 	}
 
-	// Store metadata for later use with timestamp
-	l.Debug("storing metadata details in Vault with requested_at timestamp")
-	metadata := map[string]interface{}{
-		"details":      details,
-		"requested_at": time.Now().Format(time.RFC3339),
+	// Create deployment name
+	deploymentName := fmt.Sprintf("%s-%s", details.PlanID, instanceID)
+	l.Debug("deployment name: %s", deploymentName)
+
+	// Store at the new path with deployment name
+	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
+	l.Debug("storing all details at Vault path: %s", vaultPath)
+	
+	// Build complete data structure with all details
+	vaultData := map[string]interface{}{
+		"details":           details,
+		"requested_at":      time.Now().Format(time.RFC3339),
+		"organization_guid": details.OrganizationGUID,
+		"space_guid":        details.SpaceGUID,
+		"service_id":        details.ServiceID,
+		"plan_id":           details.PlanID,
+		"deployment_name":   deploymentName,
+		"instance_id":       instanceID,
 	}
-	err = b.Vault.Put(instanceID, metadata)
+	
+	// Parse context if available to get additional details
+	if len(details.RawContext) > 0 {
+		var contextData map[string]interface{}
+		if err := json.Unmarshal(details.RawContext, &contextData); err == nil {
+			// Add context fields if they exist
+			if orgName, ok := contextData["organization_name"].(string); ok {
+				vaultData["organization_name"] = orgName
+			}
+			if spaceName, ok := contextData["space_name"].(string); ok {
+				vaultData["space_name"] = spaceName
+			}
+			if instanceName, ok := contextData["instance_name"].(string); ok {
+				vaultData["instance_name"] = instanceName
+			}
+			if platform, ok := contextData["platform"].(string); ok {
+				vaultData["platform"] = platform
+			}
+		}
+	}
+	
+	// Store everything at the single path
+	err = b.Vault.Put(vaultPath, vaultData)
 	if err != nil {
-		l.Error("failed to store metadata in the vault: %s", err)
+		l.Error("failed to store data in the vault at path %s: %s", vaultPath, err)
 		// Remove from index since we're failing
 		b.Vault.Index(instanceID, nil)
 		return spec, fmt.Errorf("Failed to store service metadata")
@@ -375,14 +410,30 @@ func (b *Broker) OnProvisionCompleted(
 	}
 
 	// Get the metadata which now includes details wrapped
+	// First try to get details from index to construct the deployment name
+	instance, exists, err := b.Vault.FindInstance(instanceID)
+	if err != nil || !exists {
+		l.Error("could not find instance in vault index: %s", err)
+		return fmt.Errorf("could not find instance in vault index")
+	}
+	
+	// Construct the vault path with deployment name
+	deploymentName := instance.PlanID + "-" + instanceID
+	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
+	
 	var metadata map[string]interface{}
-	exists, err := b.Vault.Get(instanceID, &metadata)
+	exists, err = b.Vault.Get(vaultPath, &metadata)
 	if err != nil {
-		l.Error("failed to fetch instance metadata from Vault: %s", err)
-		return err
+		// Try legacy path for backward compatibility
+		l.Debug("failed to fetch from new path, trying legacy path")
+		exists, err = b.Vault.Get(instanceID, &metadata)
+		if err != nil {
+			l.Error("failed to fetch instance metadata from Vault: %s", err)
+			return err
+		}
 	}
 	if !exists {
-		return fmt.Errorf("could not find instance metadata in Vault (key: %s)", instanceID)
+		return fmt.Errorf("could not find instance metadata in Vault (path: %s)", vaultPath)
 	}
 
 	// Extract the details from metadata
