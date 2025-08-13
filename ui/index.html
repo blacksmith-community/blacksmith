@@ -3,133 +3,67 @@
 
 <head>
   <title>Blacksmith Management Console</title>
-  <link rel="stylesheet" type="text/css" href="/blacksmith.css">
+  <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=6">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
 </head>
 
 <body>
 
   <header>
     <div class="wrap">
-      <span id="logo">blacksmith</span>
+      <span id="logo">
+        <img src="/blacksmith.svg" alt="Blacksmith" style="height: 32px; width: 32px; vertical-align: middle; margin-right: 8px;">
+        blacksmith
+      </span>
       <span id="ident"></span>
-      <nav>
-        <li><a href="#log">blacksmith broker log</a></li>
-        <li><a href="#services">services</a></li>
-        <li><a href="#plans">plans</a></li>
-      </nav>
     </div>
   </header>
 
-  <div class="wrap">
-    <div id="plans" class="wedge">
-      <div class="card">
-        <h1>Plans</h1>
-        <div class="content">loading, please wait...</div>
+  <div class="main-content">
+    <div class="wrap">
+      <!-- Tab navigation -->
+      <div class="tabs" role="tablist" aria-label="Main navigation">
+        <button class="tab-button active" data-tab="plans" role="tab" aria-selected="true"
+          aria-controls="plans">Plans</button>
+        <button class="tab-button" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service
+          Instances</button>
+        <button class="tab-button" data-tab="log" role="tab" aria-selected="false" aria-controls="log">Blacksmith
+          Log</button>
       </div>
-    </div>
 
-    <div id="services" class="wedge">
-      <div class="card">
-        <h1>Service Instances</h1>
-        <div class="content">loading, please wait...
+      <!-- Tab content panels -->
+      <div class="tab-content">
+        <div id="plans" class="tab-panel active" role="tabpanel" aria-hidden="false">
+          <div class="card">
+            <h1>Plans</h1>
+            <div class="content">loading, please wait...</div>
+          </div>
+        </div>
+
+        <div id="services" class="tab-panel" role="tabpanel" aria-hidden="true">
+          <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
+        </div>
+
+        <div id="log" class="tab-panel" role="tabpanel" aria-hidden="true">
+          <div class="card">
+            <h1>Blacksmith Broker Log</h1>
+            <pre><code>loading, please wait...</code></pre>
+          </div>
         </div>
       </div>
-
-      <div id="log" class="wedge">
-        <div class="card">
-          <h1>Blacksmith Broker Log</h1>
-          <pre><code>loading, please wait...</code></pre>
-        </div>
-      </div>
-
     </div>
+  </div>
 
-    <footer>
-      <div class="wrap">
-        <p>Copyright &copy; 2025 Blacksmmith Community | <span id="version-info">Blacksmith</span></p>
-      </div>
-    </footer>
-
-    <script type="text/html" id="template:plans"><!-- {{{ -->
-    [[#
-        {plans}
-
-        Displays services and plans from the Blacksmith
-        broker catalog.
-    ]]
-    [[ $.each(_.services, function (i, service) { ]]
-    <h2>[[= service.name ]]</h2>
-    <ul class="tags">[[ $.each(service.tags, function (j, tag) { ]]<li>[[= tag ]]</li>[[ }); ]]</ul>
-    <div class="desc">
-      <p>[[= service.description ]]</p>
+  <footer>
+    <div class="wrap">
+      <p>
+        <img src="/blacksmith.svg" alt="Blacksmith" style="height: 20px; width: 20px; vertical-align: middle; margin-right: 4px;">
+        Copyright &copy; 2025 Blacksmith Community | <span id="version-info">Blacksmith</span>
+      </p>
     </div>
+  </footer>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Plan</th>
-          <th>Description</th>
-          <th># Instances</th>
-        </tr>
-      </thead>
-      <tbody>
-        [[ $.each(service.plans, function (j, plan) { ]]
-        <tr>
-          <td>[[= plan.name ]]</td>
-          <td>[[= plan.description ]]</td>
-          <td>[[= plan.blacksmith.instances ]] / [[= (plan.blacksmith.limit > 0) ? plan.blacksmith.limit :
-            ((plan.blacksmith.limit == 0) ? ('&infin;') : ('&#8209;')) ]]</td>
-        </tr>
-        [[ }); ]]
-      </tbody>
-    </table>
-    [[ }); ]]
-    </script><!-- }}} -->
-    <script type="text/html" id="template:services"><!-- {{{ -->
-    [[#
-        {services}
-
-        Displays service instances from the Blacksmith Index.
-    ]]
-    [[ if ($.empty(_)) { ]]
-    <div class="no-data">No services have been provisioned yet.</div>
-    [[ } else { ]]
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Service/Plan</th>
-          <th>Created at</th>
-          <th>BOSH Manifest</th>
-          <th>Credentials</th>
-          <th>Events</th>
-          <th>Deployment Log</th>
-        </tr>
-      </thead>
-      <tbody>
-        [[ $.each(_, function (id, details) { ]]
-        <tr>
-          <td class="uuid">[[= id ]]</td>
-          <td>[[= details.service_id ]]/[[= details.plan.name ]]</td>
-          <td>[[ if (details.created) { ]]
-            [[= strftime("%Y-%m-%d %H:%M:%S", details.created) ]]
-            [[ }else { ]]
-            <em>-</em>
-            [[ } ]]
-          </td>
-          <td><a href="/b/[[= id ]]/manifest.yml">manifest.yml</a></td>
-          <td><a href="/b/[[= id ]]/creds.yml">creds.yml</a></td>
-          <td><a href="/b/[[= id ]]/events">events</a></td>
-          <td><a href="/b/[[= id ]]/task.log">task.log</a></td>
-        </tr>
-        [[ }); ]]
-      </tbody>
-    </table>
-    [[ } ]]
-    </script><!-- }}} -->
-    <script type="text/javascript" src="/jquery.js"></script>
-    <script type="text/javascript" src="/lens.js"></script>
-    <script type="text/javascript" src="/blacksmith.js?v=2"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=6"></script>
 </body>
 
 </html>
