@@ -226,6 +226,7 @@ func main() {
 			Env:    config.Env,
 			Vault:  vault,
 			Broker: broker,
+			Config: config,
 		},
 		Primary: brokerapi.New(
 			broker,

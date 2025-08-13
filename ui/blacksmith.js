@@ -209,6 +209,7 @@
         <button class="detail-tab active" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="vms">VMs</button>
         <button class="detail-tab" data-tab="logs">Deployment Logs</button>
+        <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
       </div>
@@ -511,91 +512,170 @@
     return html;
   };
 
-  // Fetch Blacksmith detail data
-  const fetchBlacksmithDetail = async (type) => {
-    // For the Blacksmith deployment itself, we need to handle things differently
-    // since these endpoints don't exist yet for the main deployment
+  // Helper function to extract the latest deployment task ID from events
+  const getLatestDeploymentTaskId = (events) => {
+    if (!events || events.length === 0) {
+      return null;
+    }
+    
+    // Sort events by time to ensure we get the most recent
+    // Some APIs return oldest first, some newest first
+    const sortedEvents = [...events].sort((a, b) => {
+      // Parse times and sort descending (newest first)
+      const timeA = a.time ? (typeof a.time === 'string' ? new Date(a.time).getTime() : a.time) : 0;
+      const timeB = b.time ? (typeof b.time === 'string' ? new Date(b.time).getTime() : b.time) : 0;
+      return timeB - timeA;
+    });
+    
+    // First priority: Find most recent non-'hm' user 'update' or 'create' event
+    for (const event of sortedEvents) {
+      // Skip events without task IDs
+      if (!event.task_id || event.task_id === '') {
+        continue;
+      }
+      
+      // Skip 'hm' user events
+      if (event.user === 'hm') {
+        continue;
+      }
+      
+      // Look for 'update' or 'create' actions
+      if (event.action === 'create' || event.action === 'update') {
+        console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} event at ${event.time}`);
+        return event.task_id;
+      }
+    }
+    
+    // Second priority: Any non-'hm' deployment-related event
+    for (const event of sortedEvents) {
+      // Skip events without task IDs
+      if (!event.task_id || event.task_id === '') {
+        continue;
+      }
+      
+      // Skip 'hm' user events
+      if (event.user === 'hm') {
+        continue;
+      }
+      
+      // Skip lock acquisition/release events
+      if (event.action === 'acquire' || event.action === 'release') {
+        continue;
+      }
+      
+      // Look for deployment-related events
+      if (event.object_type === 'deployment' || event.action === 'deploy') {
+        console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} deployment event at ${event.time}`);
+        return event.task_id;
+      }
+    }
+    
+    // Fallback: Any non-'hm', non-lock task
+    for (const event of sortedEvents) {
+      if (event.task_id && event.task_id !== '' && 
+          event.user !== 'hm' &&
+          event.action !== 'acquire' && event.action !== 'release') {
+        console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} event (fallback) at ${event.time}`);
+        return event.task_id;
+      }
+    }
+    
+    console.log('No suitable task found in events');
+    return null;
+  };
 
-    // For now, return sample data for the Events tab
-    if (type === 'events') {
-      // Sample events data that matches the screenshot
-      const sampleEvents = [
-        {
-          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
-          user: 'blacksmith',
-          action: 'starting',
-          object_type: '',
-          object_name: 'blacksmith starting - version: dev/master/fbd8f0e, build: 2025-08-13_21:43:48, commit: fbd8f0e, go: go1.24.5',
-          task_id: '',
-          error: ''
-        },
-        {
-          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
-          user: 'broker',
-          action: 'will listen',
-          object_type: '',
-          object_name: '127.0.0.1:3001',
-          task_id: '',
-          error: ''
-        },
-        {
-          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
-          user: 'vault client',
-          action: 'init',
-          object_type: '',
-          object_name: 'creating new vault client for http://127.0.0.1:8200',
-          task_id: '',
-          error: ''
-        },
-        {
-          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
-          user: 'vault client',
-          action: 'vault client created successfully',
-          object_type: '',
-          object_name: '',
-          task_id: '',
-          error: ''
-        },
-        {
-          time: new Date('2025-08-13T21:44:04.423Z').toISOString(),
-          user: 'vault',
-          action: 'init',
-          object_type: '',
-          object_name: 'checking initialization state of the vault',
-          task_id: '',
-          error: ''
-        }
-      ];
-      return formatEvents(sampleEvents);
-    } else if (type === 'vms') {
-      // Fetch VMs for the blacksmith deployment using the new endpoint
-      try {
-        const response = await fetch('/b/blacksmith/vms', { cache: 'no-cache' });
+  // Fetch Blacksmith detail data
+  const fetchBlacksmithDetail = async (deploymentName, type) => {
+    // Validate deploymentName
+    if (!deploymentName || deploymentName === 'undefined') {
+      return `<div class="error">No deployment name specified</div>`;
+    }
+
+    try {
+      if (type === 'events') {
+        // Direct fetch for events
+        const response = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
+        const events = await response.json();
+        return formatEvents(events);
         
-        const text = await response.text();
-        try {
-          const vms = JSON.parse(text);
-          return formatVMs(vms);
-        } catch (e) {
-          return `<pre>${text}</pre>`;
+      } else if (type === 'logs' || type === 'debug') {
+        // First fetch events to get task ID
+        const eventsResponse = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
+        if (!eventsResponse.ok) {
+          throw new Error(`Failed to fetch events: HTTP ${eventsResponse.status}`);
         }
-      } catch (error) {
-        return `<div class="error">Failed to load VMs: ${error.message}</div>`;
+        const events = await eventsResponse.json();
+        
+        // Extract latest deployment task ID
+        const taskId = getLatestDeploymentTaskId(events);
+        if (!taskId) {
+          return '<div class="no-data">No deployment task found in events</div>';
+        }
+        
+        // Fetch the appropriate log type
+        const logType = type === 'logs' ? 'log' : 'debug';
+        const logResponse = await fetch(`/b/deployments/${deploymentName}/tasks/${taskId}/${logType}`, { cache: 'no-cache' });
+        if (!logResponse.ok) {
+          throw new Error(`HTTP ${logResponse.status}: ${logResponse.statusText}`);
+        }
+        
+        const logs = await logResponse.json();
+        return type === 'logs' ? formatDeploymentLog(logs) : formatDebugLog(logs);
+        
+      } else if (type === 'vms') {
+        // Use existing VMs endpoint
+        const response = await fetch(`/b/blacksmith/vms`, { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const vms = await response.json();
+        return formatVMs(vms);
+        
+      } else if (type === 'manifest') {
+        // Fetch manifest for blacksmith deployment
+        const response = await fetch(`/b/deployments/${deploymentName}/manifest`, { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const text = await response.text();
+        
+        // Store the manifest text for copy functionality
+        const manifestId = `manifest-blacksmith-${Date.now()}`;
+        window.manifestTexts = window.manifestTexts || {};
+        window.manifestTexts[manifestId] = text;
+        
+        return `
+          <div class="manifest-container">
+            <div class="manifest-header">
+              <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
+                      title="Copy manifest to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+          </div>
+        `;
+        
+      } else if (type === 'credentials') {
+        // Fetch blacksmith credentials
+        const response = await fetch('/b/blacksmith/credentials');
+        if (!response.ok) {
+          throw new Error(`Failed to load credentials: ${response.statusText}`);
+        }
+        const creds = await response.json();
+        return formatCredentials(creds);
       }
-    } else if (type === 'logs') {
-      // Return sample deployment logs
-      return '<div class="no-data">No deployment logs available</div>';
-    } else if (type === 'manifest') {
-      return '<div class="no-data">No manifest available for Blacksmith deployment</div>';
-    } else if (type === 'credentials') {
-      return '<div class="no-data">No credentials available for Blacksmith deployment</div>';
+      
+      return `<div class="error">Unknown tab type: ${type}</div>`;
+    } catch (error) {
+      return `<div class="error">Failed to load ${type}: ${error.message}</div>`;
     }
-
-    return '<div class="no-data">No data available</div>';
   };
+
 
   // Fetch service detail data
   const fetchServiceDetail = async (instanceId, type) => {
@@ -1264,9 +1344,17 @@
       const loadBlacksmithDetailTab = async (tabType) => {
         const contentContainer = document.querySelector('#blacksmith .detail-content');
         contentContainer.innerHTML = '<div class="loading">Loading...</div>';
-
-        const content = await fetchBlacksmithDetail(tabType);
-        contentContainer.innerHTML = content;
+        
+        try {
+          // Get deployment name from the blacksmith instance data
+          // This should already be available from the initial blacksmith status load
+          const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+          
+          const content = await fetchBlacksmithDetail(deploymentName, tabType);
+          contentContainer.innerHTML = content;
+        } catch (error) {
+          contentContainer.innerHTML = `<div class="error">Failed to load tab: ${error.message}</div>`;
+        }
       };
 
       // Render Blacksmith panel
@@ -1282,10 +1370,13 @@
             data.az = instanceData.az;
             data.instanceId = instanceData.id;
             data.instanceName = instanceData.name;
+            // Store deployment name globally for tab handlers to use
+            window.blacksmithDeploymentName = instanceData.deployment || 'blacksmith';
           }
         } catch (error) {
           console.error('Failed to fetch blacksmith instance details:', error);
           data.deployment = 'blacksmith'; // Fallback
+          window.blacksmithDeploymentName = 'blacksmith';
         }
         
         // Store status data for later use
