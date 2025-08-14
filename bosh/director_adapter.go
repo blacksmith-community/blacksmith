@@ -1,10 +1,14 @@
 package bosh
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -972,6 +976,113 @@ func extractDeploymentName(manifest string) string {
 		}
 	}
 	return ""
+}
+
+// FetchLogs fetches logs from a specific job in a deployment
+func (d *DirectorAdapter) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
+	d.log.Info("Fetching logs for deployment: %s, job: %s/%s", deployment, jobName, jobIndex)
+	d.log.Debug("Finding deployment %s", deployment)
+
+	dep, err := d.director.FindDeployment(deployment)
+	if err != nil {
+		d.log.Error("Failed to find deployment %s: %v", deployment, err)
+		return "", fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+	}
+
+	// Create the slug for the specific job instance
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(jobName, jobIndex)
+
+	// Fetch logs (empty filters means all logs, "job" means only job logs)
+	logsResult, err := dep.FetchLogs(slug, []string{}, "job")
+	if err != nil {
+		d.log.Error("Failed to fetch logs for %s/%s in deployment %s: %v", jobName, jobIndex, deployment, err)
+		return "", fmt.Errorf("failed to fetch logs: %w", err)
+	}
+
+	d.log.Info("Successfully fetched logs for %s/%s (blobstore ID: %s)", jobName, jobIndex, logsResult.BlobstoreID)
+	
+	// Download the logs from blobstore
+	var logBuffer bytes.Buffer
+	err = d.director.DownloadResourceUnchecked(logsResult.BlobstoreID, &logBuffer)
+	if err != nil {
+		d.log.Error("Failed to download logs from blobstore %s: %v", logsResult.BlobstoreID, err)
+		return "", fmt.Errorf("failed to download logs: %w", err)
+	}
+	
+	d.log.Debug("Downloaded log archive, size: %d bytes", logBuffer.Len())
+	
+	// Extract the tar.gz archive
+	logs, err := extractLogsFromTarGz(&logBuffer)
+	if err != nil {
+		d.log.Error("Failed to extract logs from archive: %v", err)
+		return "", fmt.Errorf("failed to extract logs: %w", err)
+	}
+	
+	return logs, nil
+}
+
+// extractLogsFromTarGz extracts log files from a tar.gz archive
+func extractLogsFromTarGz(data io.Reader) (string, error) {
+	// Create gzip reader
+	gzReader, err := gzip.NewReader(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	// Create tar reader
+	tarReader := tar.NewReader(gzReader)
+	
+	logContents := make(map[string]string)
+	
+	// Read through the tar archive
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to read tar archive: %w", err)
+		}
+		
+		// Skip directories
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+		
+		// Only process .log files or files in log directories
+		if strings.HasSuffix(header.Name, ".log") || strings.Contains(header.Name, "/log/") {
+			// Read file contents
+			var buf bytes.Buffer
+			// Limit read size to prevent memory issues
+			limitReader := io.LimitReader(tarReader, 10*1024*1024) // 10MB limit per file
+			_, err := io.Copy(&buf, limitReader)
+			if err != nil {
+				return "", fmt.Errorf("failed to read file %s: %w", header.Name, err)
+			}
+			
+			// Store with cleaned path as key
+			cleanPath := filepath.Clean(header.Name)
+			logContents[cleanPath] = buf.String()
+		}
+	}
+	
+	// Format the logs for display
+	if len(logContents) == 0 {
+		return "No log files found in archive", nil
+	}
+	
+	var result strings.Builder
+	for path, content := range logContents {
+		result.WriteString(fmt.Sprintf("=== %s ===\n", path))
+		result.WriteString(content)
+		if !strings.HasSuffix(content, "\n") {
+			result.WriteString("\n")
+		}
+		result.WriteString("\n")
+	}
+	
+	return result.String(), nil
 }
 
 // Ensure DirectorAdapter implements Director interface

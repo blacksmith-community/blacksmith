@@ -34,6 +34,9 @@ type Director interface {
 	// Event operations
 	GetEvents(deployment string) ([]Event, error)
 
+	// Log operations
+	FetchLogs(deployment string, jobName string, jobIndex string) (string, error)
+
 	// Config operations
 	UpdateCloudConfig(config string) error
 	GetCloudConfig() (string, error)

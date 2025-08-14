@@ -795,6 +795,154 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Service Instance Logs endpoint
+	pattern = regexp.MustCompile("^/b/([^/]+)/instance-logs$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("instance-logs")
+		instanceID := m[1]
+		l.Debug("fetching instance logs for instance %s", instanceID)
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s", err)
+			return
+		}
+
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		l.Debug("fetching logs for deployment %s", deploymentName)
+
+		// Get the manifest to determine the job name
+		var manifestData struct {
+			Manifest string `json:"manifest"`
+		}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/manifest", instanceID), &manifestData)
+		if err != nil || !exists {
+			l.Error("unable to find manifest for instance %s", instanceID)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: unable to find manifest")
+			return
+		}
+
+		// Parse the manifest to find job names
+		var manifest map[string]interface{}
+		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifest); err != nil {
+			l.Error("unable to parse manifest: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: unable to parse manifest")
+			return
+		}
+
+		// Extract instance groups/jobs from manifest
+		instanceGroups, ok := manifest["instance_groups"].([]interface{})
+		if !ok {
+			l.Error("unable to find instance_groups in manifest")
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: unable to find instance groups")
+			return
+		}
+
+		// Collect all logs from all instance groups
+		allLogs := make(map[string]interface{})
+		
+		for _, ig := range instanceGroups {
+			group, ok := ig.(map[interface{}]interface{})
+			if !ok {
+				continue
+			}
+			
+			jobName, ok := group["name"].(string)
+			if !ok {
+				continue
+			}
+			
+			instances := 1
+			if instCount, ok := group["instances"].(int); ok {
+				instances = instCount
+			}
+			
+			// Fetch logs for each instance in the group
+			for i := 0; i < instances; i++ {
+				jobIndex := strconv.Itoa(i)
+				logKey := fmt.Sprintf("%s/%s", jobName, jobIndex)
+				
+				l.Debug("fetching logs for job %s/%s", jobName, jobIndex)
+				
+				// Call FetchLogs on the BOSH director
+				logs, err := api.Broker.BOSH.FetchLogs(deploymentName, jobName, jobIndex)
+				if err != nil {
+					l.Error("failed to fetch logs for %s/%s: %s", jobName, jobIndex, err)
+					allLogs[logKey] = map[string]interface{}{
+						"error": fmt.Sprintf("Failed to fetch logs: %s", err),
+					}
+				} else {
+					// Parse the logs to extract individual files if structured
+					// The logs string contains content like "=== filename ===\ncontent\n"
+					logFiles := make(map[string]string)
+					if strings.Contains(logs, "===") {
+						// Parse structured logs using a more robust approach
+						// Split by the delimiter pattern to handle files with special characters
+						lines := strings.Split(logs, "\n")
+						var currentFile string
+						var currentContent strings.Builder
+						
+						for _, line := range lines {
+							if strings.HasPrefix(line, "===") && strings.HasSuffix(line, "===") {
+								// Save previous file if exists
+								if currentFile != "" {
+									logFiles[currentFile] = strings.TrimSpace(currentContent.String())
+								}
+								// Extract new filename
+								currentFile = strings.TrimSpace(strings.Trim(line, "="))
+								currentContent.Reset()
+							} else if currentFile != "" {
+								// Append to current file content
+								if currentContent.Len() > 0 {
+									currentContent.WriteString("\n")
+								}
+								currentContent.WriteString(line)
+							}
+						}
+						// Save last file if exists
+						if currentFile != "" {
+							logFiles[currentFile] = strings.TrimSpace(currentContent.String())
+						}
+					} else {
+						// Single log content
+						logFiles["combined.log"] = logs
+					}
+					
+					allLogs[logKey] = map[string]interface{}{
+						"logs":  logs,  // Keep full logs for compatibility
+						"files": logFiles, // Structured log files
+					}
+				}
+			}
+		}
+
+		// Convert to JSON
+		b, err := json.MarshalIndent(allLogs, "", "  ")
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling logs: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
 	// Credentials endpoint
 	pattern = regexp.MustCompile("^/b/([^/]+)/creds\\.json$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {

@@ -483,8 +483,10 @@
     // Use deployment name from vault data if available, otherwise construct it
     const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan.name}-${id}`;
 
-    // Build the info table rows from vault data (excluding context)
-    let infoTableRows = '';
+    // Build the horizontal table with two rows: headers and values
+    let tableHeaders = [];
+    let tableValues = [];
+    
     if (vaultData) {
       // Define the order and labels for known fields
       const fieldOrder = [
@@ -500,7 +502,7 @@
         { key: 'requested_at', label: 'Requested At' }
       ];
 
-      // Add rows for known fields in order
+      // Add columns for known fields in order
       fieldOrder.forEach(field => {
         if (vaultData[field.key] !== undefined) {
           let value = vaultData[field.key];
@@ -508,20 +510,20 @@
           if (field.key === 'requested_at' && value) {
             value = new Date(value).toLocaleString();
           }
-          infoTableRows += `
-            <tr>
-              <td class="info-key">${field.label}</td>
-              <td class="info-value">
-                <span class="copy-wrapper">
-                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
-                          title="Copy to clipboard">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                  <span>${value || '-'}</span>
-                </span>
-              </td>
-            </tr>
-          `;
+          tableHeaders.push(`
+            <th class="info-key-horizontal">
+              ${field.label}
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')" 
+                      title="Copy ${field.label}">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+            </th>
+          `);
+          tableValues.push(`
+            <td class="info-value-horizontal">
+              ${value || '-'}
+            </td>
+          `);
         }
       });
 
@@ -531,87 +533,76 @@
           !fieldOrder.find(f => f.key === key)) {
           const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
           const value = vaultData[key];
-          infoTableRows += `
-            <tr>
-              <td class="info-key">${label}</td>
-              <td class="info-value">
-                <span class="copy-wrapper">
-                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
-                          title="Copy to clipboard">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  </button>
-                  <span>${value || '-'}</span>
-                </span>
-              </td>
-            </tr>
-          `;
+          tableHeaders.push(`
+            <th class="info-key-horizontal">
+              ${label}
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')" 
+                      title="Copy ${label}">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+            </th>
+          `);
+          tableValues.push(`
+            <td class="info-value-horizontal">
+              ${value || '-'}
+            </td>
+          `);
         }
       });
-    }
-
-    // If no vault data, show basic info from details
-    if (!infoTableRows) {
+    } else {
+      // If no vault data, show basic info from details
       const createdAt = details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown';
-      infoTableRows = `
-        <tr>
-          <td class="info-key">Instance ID</td>
-          <td class="info-value">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')"
-                      title="Copy to clipboard">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${id}</span>
-            </span>
-          </td>
-        </tr>
-        <tr>
-          <td class="info-key">Service</td>
-          <td class="info-value">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')"
-                      title="Copy to clipboard">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${details.service_id}</span>
-            </span>
-          </td>
-        </tr>
-        <tr>
-          <td class="info-key">Plan</td>
-          <td class="info-value">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')"
-                      title="Copy to clipboard">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${details.plan.name}</span>
-            </span>
-          </td>
-        </tr>
-        <tr>
-          <td class="info-key">Created At</td>
-          <td class="info-value">
-            <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')"
-                      title="Copy to clipboard">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-              <span>${createdAt}</span>
-            </span>
-          </td>
-        </tr>
-      `;
+      tableHeaders = [
+        `<th class="info-key-horizontal">
+          Instance ID
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')" 
+                  title="Copy Instance ID">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </th>`,
+        `<th class="info-key-horizontal">
+          Service
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')" 
+                  title="Copy Service">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </th>`,
+        `<th class="info-key-horizontal">
+          Plan
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')" 
+                  title="Copy Plan">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </th>`,
+        `<th class="info-key-horizontal">
+          Created At
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')" 
+                  title="Copy Created At">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </th>`
+      ];
+      tableValues = [
+        `<td class="info-value-horizontal">${id}</td>`,
+        `<td class="info-value-horizontal">${details.service_id}</td>`,
+        `<td class="info-value-horizontal">${details.plan.name}</td>`,
+        `<td class="info-value-horizontal">${createdAt}</td>`
+      ];
     }
 
     return `
       <div class="service-detail-header">
         <h3 class="deployment-name">${deploymentName}</h3>
-        <table class="service-info-table">
-          <tbody>
-            ${infoTableRows}
-          </tbody>
-        </table>
+        <div class="service-info-table-wrapper">
+          <table class="service-info-table service-info-table-horizontal">
+            <thead>
+              <tr>${tableHeaders.join('')}</tr>
+            </thead>
+            <tbody>
+              <tr>${tableValues.join('')}</tr>
+            </tbody>
+          </table>
+        </div>
       </div>
       <div class="detail-tabs">
         <button class="detail-tab active" data-tab="events">Events</button>
@@ -620,6 +611,7 @@
         <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
+        <button class="detail-tab" data-tab="instance-logs">Logs</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>
@@ -899,7 +891,8 @@
       events: `/b/${instanceId}/events`,
       vms: `/b/${instanceId}/vms`,
       logs: `/b/${instanceId}/task/log`,
-      debug: `/b/${instanceId}/task/debug`
+      debug: `/b/${instanceId}/task/debug`,
+      'instance-logs': `/b/${instanceId}/instance-logs`
     };
 
     try {
@@ -942,6 +935,15 @@
         try {
           const logs = JSON.parse(text);
           return formatDebugLog(logs);
+        } catch (e) {
+          // If not JSON, display as plain text
+          return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        }
+      } else if (type === 'instance-logs') {
+        const text = await response.text();
+        try {
+          const logsData = JSON.parse(text);
+          return formatInstanceLogs(logsData);
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -1085,6 +1087,161 @@
         </tbody>
       </table>
     `;
+  };
+
+  const formatInstanceLogs = (logsData) => {
+    if (!logsData || Object.keys(logsData).length === 0) {
+      return '<div class="no-data">No logs available</div>';
+    }
+
+    // Store all log data globally for handlers
+    window.instanceLogsData = logsData;
+    
+    // Get list of jobs
+    const jobsList = Object.keys(logsData);
+    const firstJob = jobsList[0];
+    
+    // Generate job tabs
+    const jobTabs = jobsList.map((job, index) => `
+      <button class="instance-log-job-tab ${index === 0 ? 'active' : ''}" 
+              data-job="${job}"
+              onclick="window.selectInstanceJob('${job}')">
+        ${job}
+      </button>
+    `).join('');
+    
+    // Generate initial content for first job
+    const initialContent = formatJobLogContent(firstJob, logsData[firstJob]);
+    
+    return `
+      <div class="instance-logs-wrapper">
+        <div class="instance-log-job-tabs">
+          ${jobTabs}
+        </div>
+        <div class="instance-logs-content" id="instance-logs-content">
+          ${initialContent}
+        </div>
+      </div>
+    `;
+  };
+  
+  // Helper function to format job log content with dropdown and content
+  const formatJobLogContent = (jobKey, jobData) => {
+    if (!jobData) {
+      return '<div class="no-data">No data available for this job</div>';
+    }
+    
+    if (jobData.error) {
+      return `<div class="error">${jobData.error}</div>`;
+    }
+    
+    const files = jobData.files || {};
+    const logs = jobData.logs || 'No logs available';
+    
+    // If no structured files, show raw logs
+    if (typeof files !== 'object' || Object.keys(files).length === 0) {
+      return `
+        <div class="job-logs-single">
+          <pre class="log-data">${escapeHtml(typeof logs === 'string' ? logs : JSON.stringify(logs, null, 2))}</pre>
+        </div>
+      `;
+    }
+    
+    // Create layout with dropdown selector and content
+    const filesList = Object.keys(files);
+    const firstFile = filesList[0];
+    
+    // Store files for this job
+    if (!window.instanceLogFiles) window.instanceLogFiles = {};
+    window.instanceLogFiles[jobKey] = files;
+    
+    const fileOptions = filesList.map(filename => {
+      // Show more of the path to distinguish similar filenames
+      let displayName = filename;
+      
+      // Handle different types of log files
+      if (filename.includes('@') && filename.includes('.bosh.log')) {
+        // For RabbitMQ or other services with @ in the name (e.g., rabbit@hostname.bosh.log)
+        // Keep the full filename as it contains important service identity information
+        displayName = filename;
+      } else if (filename.includes('.bosh.log')) {
+        // For other BOSH logs without @, try to simplify but preserve important parts
+        const parts = filename.split('.');
+        const boshIndex = parts.findIndex(p => p === 'bosh');
+        if (boshIndex > 0) {
+          // Keep the last part before .bosh and everything after
+          displayName = parts.slice(boshIndex - 1).join('.');
+        }
+      } else {
+        // For other files (non-BOSH logs), show the last 2-3 path components for context
+        const parts = filename.split('/');
+        if (parts.length > 2) {
+          displayName = parts.slice(-3).join('/');
+        } else if (parts.length > 1) {
+          displayName = parts.slice(-2).join('/');
+        }
+      }
+      
+      // Escape any HTML entities in filenames for security
+      const escapedFilename = filename.replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const escapedDisplay = displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      
+      return `<option value="${escapedFilename}" title="${escapedFilename}">${escapedDisplay}</option>`;
+    }).join('');
+    
+    return `
+      <div class="job-logs-container">
+        <div class="log-file-selector">
+          <label for="log-select-${jobKey.replace(/\//g, '-')}" class="log-select-label">Log File:</label>
+          <select id="log-select-${jobKey.replace(/\//g, '-')}" 
+                  class="log-file-dropdown" 
+                  onchange="window.selectLogFileForJob('${jobKey}', this.value)">
+            ${fileOptions}
+          </select>
+        </div>
+        <div class="log-file-display" id="log-display-${jobKey.replace(/\//g, '-')}">
+          <pre class="log-file-content">${escapeHtml(files[firstFile] || 'No content')}</pre>
+        </div>
+      </div>
+    `;
+  };
+
+  // Helper function to escape HTML
+  const escapeHtml = (text) => {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  };
+
+  // Handler for job tab selection
+  window.selectInstanceJob = (job) => {
+    const logsData = window.instanceLogsData;
+    if (!logsData || !logsData[job]) return;
+    
+    // Update active tab
+    document.querySelectorAll('.instance-log-job-tab').forEach(tab => {
+      tab.classList.remove('active');
+    });
+    document.querySelector(`.instance-log-job-tab[data-job="${job}"]`).classList.add('active');
+    
+    // Update content area
+    const contentArea = document.getElementById('instance-logs-content');
+    if (contentArea) {
+      contentArea.innerHTML = formatJobLogContent(job, logsData[job]);
+    }
+  };
+  
+  // Handler for log file selection from dropdown
+  window.selectLogFileForJob = (job, filename) => {
+    const files = window.instanceLogFiles && window.instanceLogFiles[job];
+    if (!files || !files[filename]) return;
+    
+    // Update content display
+    const displayEl = document.getElementById(`log-display-${job.replace(/\//g, '-')}`);
+    if (displayEl) {
+      displayEl.innerHTML = `<pre class="log-file-content">${escapeHtml(files[filename] || 'No content')}</pre>`;
+    }
   };
 
   const formatEvents = (events) => {

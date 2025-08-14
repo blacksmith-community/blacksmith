@@ -1,16 +1,84 @@
-html, body, div, span, applet, object, iframe,
-h1, h2, h3, h4, h5, h6, p, blockquote, pre,
-a, abbr, acronym, address, big, cite, code,
-del, dfn, em, img, ins, kbd, q, s, samp,
-small, strike, strong, sub, sup, tt, var,
-b, u, i, center,
-dl, dt, dd, ol, ul, li,
-fieldset, form, label, legend,
-table, caption, tbody, tfoot, thead, tr, th, td,
-article, aside, canvas, details, embed, 
-figure, figcaption, footer, header, hgroup, 
-menu, nav, output, ruby, section, summary,
-time, mark, audio, video {
+html,
+body,
+div,
+span,
+applet,
+object,
+iframe,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote,
+pre,
+a,
+abbr,
+acronym,
+address,
+big,
+cite,
+code,
+del,
+dfn,
+em,
+img,
+ins,
+kbd,
+q,
+s,
+samp,
+small,
+strike,
+strong,
+sub,
+sup,
+tt,
+var,
+b,
+u,
+i,
+center,
+dl,
+dt,
+dd,
+ol,
+ul,
+li,
+fieldset,
+form,
+label,
+legend,
+table,
+caption,
+tbody,
+tfoot,
+thead,
+tr,
+th,
+td,
+article,
+aside,
+canvas,
+details,
+embed,
+figure,
+figcaption,
+footer,
+header,
+hgroup,
+menu,
+nav,
+output,
+ruby,
+section,
+summary,
+time,
+mark,
+audio,
+video {
   margin: 0;
   padding: 0;
   border: 0;
@@ -18,28 +86,186 @@ time, mark, audio, video {
   font: inherit;
   vertical-align: baseline;
 }
+
 /* HTML5 display-role reset for older browsers */
-article, aside, details, figcaption, figure, 
-footer, header, hgroup, menu, nav, section {
+article,
+aside,
+details,
+figcaption,
+figure,
+footer,
+header,
+hgroup,
+menu,
+nav,
+section {
   display: block;
 }
+
 body {
   line-height: 1;
 }
-nav, ol, ul {
+
+nav,
+ol,
+ul {
   list-style: none;
 }
-blockquote, q {
+
+blockquote,
+q {
   quotes: none;
 }
-blockquote:before, blockquote:after,
-q:before, q:after {
+
+blockquote:before,
+blockquote:after,
+q:before,
+q:after {
   content: '';
   content: none;
 }
+
 table {
   border-collapse: collapse;
   border-spacing: 0;
+}
+
+/* Instance Logs Styles */
+.instance-logs-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.instance-log-job-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #ddd;
+  background: #f5f5f5;
+}
+
+.instance-log-job-tab {
+  padding: 10px 20px;
+  background: #f5f5f5;
+  border: none;
+  border-right: 1px solid #ddd;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.instance-log-job-tab:hover {
+  background: #e8e8e8;
+}
+
+.instance-log-job-tab.active {
+  background: white;
+  border-bottom: 2px solid white;
+  margin-bottom: -2px;
+  color: #0066cc;
+}
+
+.instance-log-job-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #0066cc;
+}
+
+.instance-logs-content {
+  flex: 1;
+  background: white;
+  overflow: hidden;
+}
+
+.job-logs-container {
+  display: flex;
+  flex-direction: column;
+  height: 600px;
+  padding: 20px;
+}
+
+.log-file-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 15px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #ddd;
+}
+
+.log-select-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #333;
+}
+
+.log-file-dropdown {
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  min-width: 400px;
+  max-width: 700px;
+  text-overflow: ellipsis;
+}
+
+.log-file-dropdown option {
+  padding: 4px 8px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+.log-file-dropdown:hover {
+  border-color: #999;
+}
+
+.log-file-dropdown:focus {
+  outline: none;
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+}
+
+.log-file-display {
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.log-file-content {
+  height: 100%;
+  padding: 15px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-y: auto;
+  background: white;
+  margin: 0;
+}
+
+.job-logs-single {
+  padding: 20px;
+  height: 600px;
+  overflow-y: auto;
+}
+
+.job-logs-single pre {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 
@@ -56,7 +282,7 @@ table {
   --bg-table-header: #f8f9fa;
   --bg-table-hover: #f8f9fa;
   --bg-sidebar: #f9f9f9;
-  
+
   --text-primary: #333;
   --text-secondary: #666;
   --text-tertiary: #999;
@@ -68,18 +294,18 @@ table {
   --text-error: #ff0000;
   --text-warning: yellow;
   --text-info: skyblue;
-  
+
   --border-primary: #ddd;
   --border-secondary: #e0e0e0;
   --border-tertiary: #ccc;
   --border-active: #0071bc;
   --border-table: #dee2e6;
   --border-table-row: #e9ecef;
-  
+
   --shadow-primary: 3px 3px 3px #777;
   --shadow-secondary: 0 2px 4px rgba(0, 0, 0, 0.1);
   --shadow-hover: 0 2px 5px rgba(0, 0, 0, 0.15);
-  
+
   --log-bg: #000;
   --log-text: #eee;
 }
@@ -96,7 +322,7 @@ table {
   --bg-table-header: #2a2a2a;
   --bg-table-hover: #3a3a3a;
   --bg-sidebar: #252525;
-  
+
   --text-primary: #e0e0e0;
   --text-secondary: #b0b0b0;
   --text-tertiary: #808080;
@@ -108,18 +334,18 @@ table {
   --text-error: #ff6b6b;
   --text-warning: #ffdd00;
   --text-info: #87ceeb;
-  
+
   --border-primary: #444;
   --border-secondary: #404040;
   --border-tertiary: #555;
   --border-active: #66b2ff;
   --border-table: #444;
   --border-table-row: #3a3a3a;
-  
+
   --shadow-primary: 3px 3px 3px #000;
   --shadow-secondary: 0 2px 4px rgba(0, 0, 0, 0.3);
   --shadow-hover: 0 2px 5px rgba(0, 0, 0, 0.4);
-  
+
   --log-bg: #0a0a0a;
   --log-text: #e0e0e0;
 }
@@ -135,11 +361,13 @@ body {
   flex-direction: column;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
+
 .wrap {
   width: calc(100% - 40px);
   margin: 0 20px;
   padding: 0;
 }
+
 header {
   background-color: var(--bg-header);
   color: var(--text-header);
@@ -149,23 +377,29 @@ header {
   flex-shrink: 0;
   position: relative;
 }
+
 header a {
   color: var(--text-header);
   text-decoration: none;
   border-bottom: 1px dotted var(--text-header);
 }
-header span, header nav li {
+
+header span,
+header nav li {
   height: 30px;
   line-height: 30px;
 }
+
 header span {
   float: left;
   padding-right: 1ex;
 }
+
 header nav li {
   float: right;
   padding-left: 1em;
 }
+
 header span#ident {
   color: var(--text-success);
 }
@@ -288,6 +522,7 @@ header span#ident {
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -297,17 +532,20 @@ header span#ident {
 .wedge {
   padding-top: 20px;
 }
+
 .tab-panel .card {
   background-color: var(--bg-secondary);
   box-shadow: var(--shadow-primary);
   padding: 1em;
   margin: 2em 0;
 }
+
 .card h1 {
   font-size: 16pt;
   font-weight: bold;
   color: var(--text-primary);
 }
+
 .card .content {
   padding: 1em;
 }
@@ -333,6 +571,7 @@ footer {
   flex-shrink: 0;
   border-top: 1px solid var(--border-primary);
 }
+
 footer p {
   text-align: center;
   font-size: 9pt;
@@ -345,21 +584,25 @@ footer p {
 table {
   width: 100%;
 }
+
 thead th {
   font-weight: bold;
   text-align: left;
-font-size: 10pt;
+  font-size: 10pt;
   border-bottom: 1px dashed var(--border-tertiary);
   padding: 4px;
   color: var(--text-primary);
 }
+
 td {
   padding: 4px;
   color: var(--text-primary);
 }
+
 td.uuid {
   font-family: monospace;
 }
+
 td a {
   text-decoration: none;
   color: var(--text-link);
@@ -580,6 +823,7 @@ td a {
   overflow: hidden;
   margin: 1rem 0;
 }
+
 #plans ul.tags li {
   font-size: 8pt;
   font-family: monospace;
@@ -788,7 +1032,6 @@ td a {
   padding: 0.75rem 1rem;
   text-align: left;
   font-weight: 600;
-  font-size: 0.875rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-secondary);
@@ -811,7 +1054,7 @@ td a {
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-primary);
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 0.875rem;
+  font-size: 10pt;
   width: 100%;
 }
 
@@ -821,6 +1064,93 @@ td a {
 
 .service-info-table tbody tr:hover {
   background: var(--bg-table-hover);
+}
+
+/* Horizontal table layout for service instances */
+.service-info-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin-bottom: 0.5rem;
+  /* Add custom scrollbar styling for better visibility */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-primary) var(--bg-secondary);
+}
+
+/* Webkit browsers scrollbar styling */
+.service-info-table-wrapper::-webkit-scrollbar {
+  height: 8px;
+}
+
+.service-info-table-wrapper::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+.service-info-table-wrapper::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 4px;
+}
+
+.service-info-table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+.service-info-table-horizontal {
+  width: 100%;
+  min-width: 800px; /* Ensure minimum width to prevent column compression */
+  table-layout: auto;
+  /* Font sizes set on individual elements */
+}
+
+.service-info-table-horizontal .info-key-horizontal {
+  background: var(--bg-table-header);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 10px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  border-right: 1px solid var(--border-primary);
+  white-space: nowrap;
+  position: relative;
+}
+
+.service-info-table-horizontal .info-value-horizontal {
+  padding: 0.4rem 0.6rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary);
+  border-right: 1px solid var(--border-primary);
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 11px !important;
+  white-space: nowrap;
+}
+
+.service-info-table-horizontal th:last-child,
+.service-info-table-horizontal td:last-child {
+  border-right: none;
+}
+
+.service-info-table-horizontal .copy-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.service-info-table-horizontal th .copy-btn-inline {
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+
+.service-info-table-horizontal .copy-btn-inline {
+  width: 12px;
+  height: 12px;
+}
+
+.service-info-table-horizontal .copy-btn-inline svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Keep old table styles for backward compatibility */
@@ -1096,17 +1426,26 @@ td a {
   overflow-x: auto;
   height: calc(100vh - 280px);
 }
+
 #log pre .d {
   color: var(--text-success);
 }
+
 #log pre .i {
   color: var(--text-warning);
 }
+
 #log pre .l {
   font-weight: bold;
 }
-#log pre .l.INFO { color: var(--text-info); }
-#log pre .l.ERROR { color: var(--text-error); }
+
+#log pre .l.INFO {
+  color: var(--text-info);
+}
+
+#log pre .l.ERROR {
+  color: var(--text-error);
+}
 
 
 .error {
@@ -1630,10 +1969,21 @@ td a {
   white-space: nowrap;
 }
 
-.log-col-date { width: 100px; }
-.log-col-time { width: 110px; }
-.log-col-level { width: 80px; }
-.log-col-message { width: auto; }
+.log-col-date {
+  width: 100px;
+}
+
+.log-col-time {
+  width: 110px;
+}
+
+.log-col-level {
+  width: 80px;
+}
+
+.log-col-message {
+  width: auto;
+}
 
 .logs-table tbody tr {
   border-bottom: 1px solid var(--border-secondary);
@@ -1649,7 +1999,8 @@ td a {
   vertical-align: top;
 }
 
-.log-date, .log-time {
+.log-date,
+.log-time {
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -1670,7 +2021,8 @@ td a {
   border: 1px solid #fdd;
 }
 
-.log-level-warning .level-badge, .log-level-warn .level-badge {
+.log-level-warning .level-badge,
+.log-level-warn .level-badge {
   background: #fff8e6;
   color: #e36209;
   border: 1px solid #ffeaa7;
@@ -1739,7 +2091,8 @@ td a {
   border-radius: 3px;
 }
 
-.function-call, .method-call {
+.function-call,
+.method-call {
   color: #6f42c1;
   font-weight: 500;
 }
@@ -1814,7 +2167,7 @@ td a {
   border: 1px solid #3d1212;
 }
 
-[data-theme="dark"] .log-level-warning .level-badge, 
+[data-theme="dark"] .log-level-warning .level-badge,
 [data-theme="dark"] .log-level-warn .level-badge {
   background: #3d2f0f;
   color: #ffab70;
