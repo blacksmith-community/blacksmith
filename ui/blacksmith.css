@@ -44,8 +44,88 @@ table {
 
 
 
+:root {
+  --bg-primary: #efefef;
+  --bg-secondary: #fff;
+  --bg-tertiary: #f5f5f5;
+  --bg-hover: #f0f8ff;
+  --bg-active: #e8f4ff;
+  --bg-code: #f5f5f5;
+  --bg-header: #000;
+  --bg-footer: #f5f5f5;
+  --bg-table-header: #f8f9fa;
+  --bg-table-hover: #f8f9fa;
+  --bg-sidebar: #f9f9f9;
+  
+  --text-primary: #333;
+  --text-secondary: #666;
+  --text-tertiary: #999;
+  --text-muted: #777;
+  --text-code: #212529;
+  --text-header: #fff;
+  --text-link: #0071bc;
+  --text-success: lime;
+  --text-error: #ff0000;
+  --text-warning: yellow;
+  --text-info: skyblue;
+  
+  --border-primary: #ddd;
+  --border-secondary: #e0e0e0;
+  --border-tertiary: #ccc;
+  --border-active: #0071bc;
+  --border-table: #dee2e6;
+  --border-table-row: #e9ecef;
+  
+  --shadow-primary: 3px 3px 3px #777;
+  --shadow-secondary: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --shadow-hover: 0 2px 5px rgba(0, 0, 0, 0.15);
+  
+  --log-bg: #000;
+  --log-text: #eee;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #1a1a1a;
+  --bg-secondary: #2d2d2d;
+  --bg-tertiary: #252525;
+  --bg-hover: #3a3a3a;
+  --bg-active: #3d4d5d;
+  --bg-code: #1e1e1e;
+  --bg-header: #0a0a0a;
+  --bg-footer: #252525;
+  --bg-table-header: #2a2a2a;
+  --bg-table-hover: #3a3a3a;
+  --bg-sidebar: #252525;
+  
+  --text-primary: #e0e0e0;
+  --text-secondary: #b0b0b0;
+  --text-tertiary: #808080;
+  --text-muted: #999;
+  --text-code: #d0d0d0;
+  --text-header: #fff;
+  --text-link: #66b2ff;
+  --text-success: #90ff90;
+  --text-error: #ff6b6b;
+  --text-warning: #ffdd00;
+  --text-info: #87ceeb;
+  
+  --border-primary: #444;
+  --border-secondary: #404040;
+  --border-tertiary: #555;
+  --border-active: #66b2ff;
+  --border-table: #444;
+  --border-table-row: #3a3a3a;
+  
+  --shadow-primary: 3px 3px 3px #000;
+  --shadow-secondary: 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-hover: 0 2px 5px rgba(0, 0, 0, 0.4);
+  
+  --log-bg: #0a0a0a;
+  --log-text: #e0e0e0;
+}
+
 body {
-  background-color: #efefef;
+  background-color: var(--bg-primary);
   font-family: sans-serif;
   height: 100vh;
   overflow: hidden;
@@ -53,6 +133,7 @@ body {
   padding: 0;
   display: flex;
   flex-direction: column;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 .wrap {
   width: calc(100% - 40px);
@@ -60,17 +141,18 @@ body {
   padding: 0;
 }
 header {
-  background-color: #000;
-  color: #fff;
-  box-shadow: 3px 3px 3px #777;
-  overflow: hidden;
+  background-color: var(--bg-header);
+  color: var(--text-header);
+  box-shadow: var(--shadow-primary);
+  overflow: visible;
   height: 30px;
   flex-shrink: 0;
+  position: relative;
 }
 header a {
-  color: #fff;
+  color: var(--text-header);
   text-decoration: none;
-  border-bottom: 1px dotted #fff;
+  border-bottom: 1px dotted var(--text-header);
 }
 header span, header nav li {
   height: 30px;
@@ -85,17 +167,52 @@ header nav li {
   padding-left: 1em;
 }
 header span#ident {
-  color: lime;
+  color: var(--text-success);
+}
+
+/* Theme toggle button */
+.theme-toggle {
+  float: right;
+  background: none;
+  border: 1px solid var(--text-header);
+  border-radius: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: var(--text-header);
+  font-size: 12px;
+  transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  line-height: 20px;
+  margin-top: 3px;
+}
+
+.theme-toggle:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--text-success);
+}
+
+.theme-toggle svg {
+  width: 14px;
+  height: 14px;
+  fill: var(--text-header);
+  transition: transform 0.3s ease;
+}
+
+.theme-toggle:hover svg {
+  transform: rotate(20deg);
 }
 
 /* Tab navigation styles */
 .tabs {
   display: flex;
-  background-color: #f5f5f5;
+  background-color: var(--bg-tertiary);
   border-radius: 4px 4px 0 0;
   margin-top: 40px;
   overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-secondary);
 }
 
 .tab-button {
@@ -107,22 +224,22 @@ header span#ident {
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  color: #666;
+  color: var(--text-secondary);
   transition: all 0.3s ease;
   position: relative;
 }
 
 .tab-button:hover {
-  background-color: rgba(0, 113, 188, 0.05);
-  color: #333;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .tab-button.active {
-  background-color: #fff;
-  border-bottom: 3px solid #0071bc;
-  color: #0071bc;
+  background-color: var(--bg-secondary);
+  border-bottom: 3px solid var(--border-active);
+  color: var(--text-link);
   font-weight: 600;
-  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-secondary);
 }
 
 .tab-button.active::after {
@@ -132,15 +249,15 @@ header span#ident {
   right: 0;
   bottom: -1px;
   height: 1px;
-  background-color: #fff;
+  background-color: var(--bg-secondary);
 }
 
 /* Tab content styles */
 .tab-content {
   margin-top: 0;
-  background-color: #fff;
+  background-color: var(--bg-secondary);
   border-radius: 0 0 4px 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-secondary);
   position: relative;
   flex: 1;
   overflow: hidden;
@@ -181,14 +298,15 @@ header span#ident {
   padding-top: 20px;
 }
 .tab-panel .card {
-  background-color: #fff;
-  box-shadow: 3px 3px 3px #777;
+  background-color: var(--bg-secondary);
+  box-shadow: var(--shadow-primary);
   padding: 1em;
   margin: 2em 0;
 }
 .card h1 {
   font-size: 16pt;
   font-weight: bold;
+  color: var(--text-primary);
 }
 .card .content {
   padding: 1em;
@@ -210,15 +328,15 @@ header span#ident {
 }
 
 footer {
-  background-color: #f5f5f5;
+  background-color: var(--bg-footer);
   padding: 10px 0;
   flex-shrink: 0;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--border-primary);
 }
 footer p {
   text-align: center;
   font-size: 9pt;
-  color: #777;
+  color: var(--text-muted);
   margin: 0;
 }
 
@@ -231,57 +349,247 @@ thead th {
   font-weight: bold;
   text-align: left;
 font-size: 10pt;
-  border-bottom: 1px dashed #ccc;
+  border-bottom: 1px dashed var(--border-tertiary);
   padding: 4px;
+  color: var(--text-primary);
 }
 td {
   padding: 4px;
+  color: var(--text-primary);
 }
 td.uuid {
   font-family: monospace;
 }
 td a {
   text-decoration: none;
-  color: #0071bc;
+  color: var(--text-link);
 }
 
 .no-data {
   font-size: 14pt;
-  color: #ccc;
+  color: var(--text-tertiary);
   font-style: italic;
   margin: 2em;
   text-align: center;
 }
 
-#plans h2 {
+/* Plans Panel Layout - similar to Service Instances */
+#plans.tab-panel.active {
+  display: flex !important;
+  flex-direction: row;
+  height: 100%;
+  padding: 0;
+}
+
+#plans .plans-list {
+  width: 350px;
+  border-right: 1px solid var(--border-primary);
+  overflow-y: auto;
+  background-color: var(--bg-sidebar);
+  flex-shrink: 0;
+}
+
+#plans .plans-list h2 {
+  padding: 1em;
+  margin: 0;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
   font-size: 14pt;
   font-weight: bold;
-  margin-top: 3em;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  color: var(--text-primary);
 }
-#plans h2:first-child {
-  margin-top: 1em;
+
+#plans .plan-item {
+  padding: 1em;
+  border-bottom: 1px solid var(--border-secondary);
+  cursor: pointer;
+  transition: background-color 0.2s;
+  background-color: var(--bg-secondary);
 }
-#plans .desc {
-  margin: 2em 0.5em;
-  width: 35em;
+
+#plans .plan-item:hover {
+  background-color: var(--bg-hover);
 }
-#plan .desc p {
-  margin: 1em;
+
+#plans .plan-item.active {
+  background-color: var(--bg-active);
+  border-left: 3px solid var(--border-active);
 }
+
+#plans .plan-item .plan-name {
+  font-family: monospace;
+  font-size: 10pt;
+  color: var(--text-primary);
+  margin-bottom: 0.5em;
+  word-break: break-all;
+  line-height: 1.2;
+}
+
+#plans .plan-item .plan-meta {
+  font-size: 10pt;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#plans .plan-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#plans .service-detail-header {
+  padding: 1em;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+#plans .service-detail-content {
+  flex: 1;
+  padding: 1em 2em;
+  overflow-y: auto;
+  overflow-x: auto;
+  background-color: var(--bg-secondary);
+}
+
+#plans .no-selection {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-tertiary);
+  font-style: italic;
+  font-size: 12pt;
+}
+
+/* Plan details table - similar to events table */
+.plan-details-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+  margin-bottom: 2rem;
+}
+
+.plan-details-table thead {
+  background-color: var(--bg-table-header);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.plan-details-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
+}
+
+.plan-details-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
+}
+
+.plan-details-table tbody tr:hover {
+  background-color: var(--bg-table-hover);
+}
+
+.plan-details-table .info-key {
+  font-weight: 500;
+  color: var(--text-secondary);
+  width: auto;
+  white-space: nowrap;
+  padding: 0.5rem 1rem;
+  background: var(--bg-table-header);
+  border-bottom: 1px solid var(--border-table-row);
+  border-right: 1px solid var(--border-table-row);
+}
+
+.plan-details-table .info-value {
+  padding: 0.5rem 1rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-table-row);
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+/* Plan VMs table - similar to events table */
+.plan-vms-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+  margin-bottom: 2rem;
+}
+
+.plan-vms-table thead {
+  background-color: var(--bg-table-header);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.plan-vms-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
+}
+
+.plan-vms-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
+}
+
+.plan-vms-table tbody tr:hover {
+  background-color: var(--bg-table-hover);
+}
+
+/* Service description in plan details */
+#plans .service-description {
+  margin-top: 2rem;
+}
+
+#plans .service-description h3 {
+  font-size: 14pt;
+  font-weight: bold;
+  margin-bottom: 1em;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--text-link);
+  padding-bottom: 0.3em;
+}
+
+#plans .service-description p {
+  margin: 1em 0;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Tags styling - keep existing */
 #plans ul.tags {
   overflow: hidden;
+  margin: 1rem 0;
 }
 #plans ul.tags li {
   font-size: 8pt;
   font-family: monospace;
-  border: 1px solid #2d5072;
-  border: 1px solid #66b2ff;
+  border: 1px solid var(--text-link);
   border-radius: 3px;
-  background-color: #66b2ff;
-  background-color: #9eceff;
+  background-color: var(--bg-hover);
   display: inline-block;
   padding: 3px;
   margin: 2px;
+  color: var(--text-primary);
 }
 
 /* Service Instances Panel Layout */
@@ -294,45 +602,46 @@ td a {
 
 #services .services-list {
   width: 350px;
-  border-right: 1px solid #ddd;
+  border-right: 1px solid var(--border-primary);
   overflow-y: auto;
-  background-color: #f9f9f9;
+  background-color: var(--bg-sidebar);
   flex-shrink: 0;
 }
 
 #services .services-list h2 {
   padding: 1em;
   margin: 0;
-  background-color: #fff;
-  border-bottom: 1px solid #ddd;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
   font-size: 14pt;
   font-weight: bold;
   position: sticky;
   top: 0;
   z-index: 10;
+  color: var(--text-primary);
 }
 
 #services .service-item {
   padding: 1em;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-secondary);
   cursor: pointer;
   transition: background-color 0.2s;
-  background-color: #fff;
+  background-color: var(--bg-secondary);
 }
 
 #services .service-item:hover {
-  background-color: #f0f8ff;
+  background-color: var(--bg-hover);
 }
 
 #services .service-item.active {
-  background-color: #e8f4ff;
-  border-left: 3px solid #0071bc;
+  background-color: var(--bg-active);
+  border-left: 3px solid var(--border-active);
 }
 
 #services .service-item .service-id {
   font-family: monospace;
   font-size: 10pt;
-  color: #333;
+  color: var(--text-primary);
   margin-bottom: 0.5em;
   word-break: break-all;
   line-height: 1.2;
@@ -340,7 +649,7 @@ td a {
 
 #services .service-item .service-meta {
   font-size: 10pt;
-  color: #666;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -355,18 +664,18 @@ td a {
 
 #services .service-detail-header {
   padding: 1em;
-  background-color: #fff;
-  border-bottom: 1px solid #ddd;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 /* Deployment name header */
 .deployment-name {
   font-size: 1.5rem;
   font-weight: 600;
-  color: #1a202c;
+  color: var(--text-primary);
   margin: 0 0 1rem 0;
-  padding-bottom: 0.5rem;
-  border-bottom: 2px solid #e2e8f0;
+  padding: 1rem 1rem 0.5rem 1rem;
+  border-bottom: 2px solid var(--border-primary);
 }
 
 /* Service info table with key-value format */
@@ -374,39 +683,39 @@ td a {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 1.5rem;
-  background: white;
+  background: var(--bg-secondary);
   border-radius: 4px;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-secondary);
 }
 
 .service-info-table th {
-  background: #f7fafc;
+  background: var(--bg-table-header);
   padding: 0.75rem 1rem;
   text-align: left;
   font-weight: 600;
   font-size: 0.875rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #4a5568;
-  border-bottom: 1px solid #e2e8f0;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .service-info-table .info-key {
   font-weight: 500;
-  color: #4a5568;
+  color: var(--text-secondary);
   width: auto;
   white-space: nowrap;
   padding: 0.5rem 1rem;
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
-  border-right: 1px solid #e2e8f0;
+  background: var(--bg-table-header);
+  border-bottom: 1px solid var(--border-primary);
+  border-right: 1px solid var(--border-primary);
 }
 
 .service-info-table .info-value {
   padding: 0.5rem 1rem;
-  color: #2d3748;
-  border-bottom: 1px solid #e2e8f0;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-primary);
   font-family: 'SF Mono', Monaco, Consolas, monospace;
   font-size: 0.875rem;
   width: 100%;
@@ -417,7 +726,7 @@ td a {
 }
 
 .service-info-table tbody tr:hover {
-  background: #f7fafc;
+  background: var(--bg-table-hover);
 }
 
 /* Keep old table styles for backward compatibility */
@@ -443,8 +752,8 @@ td a {
 
 #services .detail-tabs {
   display: flex;
-  background-color: #f5f5f5;
-  border-bottom: 1px solid #ddd;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 #services .detail-tab {
@@ -454,18 +763,18 @@ td a {
   border-bottom: 2px solid transparent;
   cursor: pointer;
   font-size: 11pt;
-  color: #666;
+  color: var(--text-secondary);
   transition: all 0.2s;
 }
 
 #services .detail-tab:hover {
-  background-color: rgba(0, 113, 188, 0.05);
-  color: #333;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 #services .detail-tab.active {
-  color: #0071bc;
-  border-bottom-color: #0071bc;
+  color: var(--text-link);
+  border-bottom-color: var(--border-active);
   font-weight: 600;
 }
 
@@ -474,11 +783,11 @@ td a {
   padding: 1em 2em;
   overflow-y: auto;
   overflow-x: auto;
-  background-color: #fff;
+  background-color: var(--bg-secondary);
 }
 
 #services .detail-content pre {
-  background-color: #f5f5f5;
+  background-color: var(--bg-code);
   padding: 1em;
   border-radius: 4px;
   overflow-x: auto;
@@ -486,6 +795,7 @@ td a {
   font-size: 10pt;
   line-height: 1.4;
   max-width: 100%;
+  color: var(--text-code);
 }
 
 #services .no-selection {
@@ -493,7 +803,7 @@ td a {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #999;
+  color: var(--text-tertiary);
   font-style: italic;
   font-size: 12pt;
 }
@@ -507,8 +817,8 @@ td a {
   font-size: 14pt;
   font-weight: bold;
   margin: 1em 0 0.5em 0;
-  color: #333;
-  border-bottom: 2px solid #008edb;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--text-link);
   padding-bottom: 0.3em;
 }
 
@@ -523,7 +833,7 @@ td a {
 }
 
 .credentials-table thead {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-header);
   position: sticky;
   top: 0;
   z-index: 5;
@@ -533,22 +843,23 @@ td a {
   padding: 10px;
   text-align: left;
   font-weight: 600;
-  border-bottom: 2px solid #dee2e6;
-  background-color: #f8f9fa;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
 }
 
 .credentials-table td {
   padding: 8px 10px;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border-table-row);
 }
 
 .credentials-table tbody tr:hover {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-hover);
 }
 
 .credentials-table .cred-key {
   font-weight: 500;
-  color: #495057;
+  color: var(--text-secondary);
   width: auto;
   min-width: 100px;
   max-width: 200px;
@@ -556,7 +867,7 @@ td a {
 }
 
 .credentials-table .cred-value {
-  color: #212529;
+  color: var(--text-primary);
   font-family: monospace;
   font-size: 9pt;
   width: 100%;
@@ -568,26 +879,26 @@ td a {
   border-radius: 0;
   font-family: monospace;
   font-size: 9pt;
-  color: #0071bc;
+  color: var(--text-link);
   word-break: break-all;
 }
 
 .credentials-table .cred-value em {
-  color: #6c757d;
+  color: var(--text-secondary);
   font-style: italic;
 }
 
 .cred-single {
   margin: 0.5em 0;
   padding: 0.75em;
-  background-color: #f8f9fa;
-  border-left: 3px solid #008edb;
+  background-color: var(--bg-table-header);
+  border-left: 3px solid var(--text-link);
 }
 
 .cred-single code {
   font-family: 'Courier New', Courier, monospace;
   font-size: 10pt;
-  color: #d73502;
+  color: var(--text-link);
 }
 
 /* Special styling for Blacksmith tab panel - same structure as service detail */
@@ -596,7 +907,7 @@ td a {
   flex-direction: column;
   height: 100%;
   padding: 0;
-  background-color: #fff;
+  background-color: var(--bg-secondary);
 }
 
 #blacksmith .service-detail-header {
@@ -605,8 +916,8 @@ td a {
 
 #blacksmith .detail-tabs {
   display: flex;
-  background-color: #f5f5f5;
-  border-bottom: 1px solid #ddd;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
   flex-shrink: 0;
 }
 
@@ -617,18 +928,18 @@ td a {
   border-bottom: 2px solid transparent;
   cursor: pointer;
   font-size: 11pt;
-  color: #666;
+  color: var(--text-secondary);
   transition: all 0.2s;
 }
 
 #blacksmith .detail-tab:hover {
-  background-color: rgba(0, 113, 188, 0.05);
-  color: #333;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 #blacksmith .detail-tab.active {
-  color: #0071bc;
-  border-bottom-color: #0071bc;
+  color: var(--text-link);
+  border-bottom-color: var(--border-active);
   font-weight: 600;
 }
 
@@ -637,11 +948,11 @@ td a {
   padding: 1em 2em;
   overflow-y: auto;
   overflow-x: auto;
-  background-color: #fff;
+  background-color: var(--bg-secondary);
 }
 
 #blacksmith .detail-content pre {
-  background-color: #f5f5f5;
+  background-color: var(--bg-code);
   padding: 1em;
   border-radius: 4px;
   overflow-x: auto;
@@ -649,6 +960,7 @@ td a {
   font-size: 10pt;
   line-height: 1.4;
   max-width: 100%;
+  color: var(--text-code);
 }
 
 /* Special styling for log panel */
@@ -671,14 +983,15 @@ td a {
   flex-shrink: 0;
   padding: 1em;
   margin: 0;
-  background-color: #fff;
-  border-bottom: 1px solid #ddd;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  color: var(--text-primary);
 }
 
 #log pre {
   flex: 1;
-  color: #eee;
-  background-color: #000;
+  color: var(--log-text);
+  background-color: var(--log-bg);
   font-family: monospace;
   padding: 1em;
   line-height: 1.4em;
@@ -690,29 +1003,29 @@ td a {
   height: calc(100vh - 280px);
 }
 #log pre .d {
-  color: lime;
+  color: var(--text-success);
 }
 #log pre .i {
-  color: yellow;
+  color: var(--text-warning);
 }
 #log pre .l {
   font-weight: bold;
 }
-#log pre .l.INFO { color: skyblue; }
-#log pre .l.ERROR { color: red; }
+#log pre .l.INFO { color: var(--text-info); }
+#log pre .l.ERROR { color: var(--text-error); }
 
 
 .error {
-  color: #ff0000;
+  color: var(--text-error);
   padding: 1em;
-  background-color: #ffeeee;
-  border: 1px solid #ffcccc;
+  background-color: rgba(255, 0, 0, 0.1);
+  border: 1px solid var(--text-error);
   margin: 1em 0;
   font-weight: bold;
 }
 
 .no-data {
-  color: #666;
+  color: var(--text-secondary);
   padding: 1em;
   font-style: italic;
   text-align: center;
@@ -726,7 +1039,7 @@ td a {
 }
 
 .events-table thead {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-header);
   position: sticky;
   top: 0;
   z-index: 5;
@@ -736,24 +1049,26 @@ td a {
   padding: 10px;
   text-align: left;
   font-weight: 600;
-  border-bottom: 2px solid #dee2e6;
-  background-color: #f8f9fa;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
 }
 
 .events-table td {
   padding: 8px 10px;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
 }
 
 .events-table tbody tr:hover {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-hover);
 }
 
 .event-timestamp {
   font-family: monospace;
   font-size: 9pt;
   white-space: nowrap;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .event-user {
@@ -762,31 +1077,31 @@ td a {
 
 .event-action {
   font-weight: 500;
-  color: #0071bc;
+  color: var(--text-link);
 }
 
 .event-object {
   font-size: 9pt;
-  color: #555;
+  color: var(--text-secondary);
 }
 
 .event-task {
   font-family: monospace;
   font-size: 9pt;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .event-error {
-  color: #dc3545;
+  color: var(--text-error);
   font-size: 9pt;
 }
 
 .events-table tr.error-row {
-  background-color: #fff5f5;
+  background-color: rgba(255, 0, 0, 0.05);
 }
 
 .events-table tr.error-row:hover {
-  background-color: #ffe0e0;
+  background-color: rgba(255, 0, 0, 0.1);
 }
 
 .event-message {
@@ -802,7 +1117,7 @@ td a {
 }
 
 .vms-table thead {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-header);
   position: sticky;
   top: 0;
   z-index: 5;
@@ -812,13 +1127,15 @@ td a {
   padding: 10px;
   text-align: left;
   font-weight: 600;
-  border-bottom: 2px solid #dee2e6;
-  background-color: #f8f9fa;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
 }
 
 .vms-table td {
   padding: 8px 10px;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
 }
 
 .vms-table tbody tr:hover {

@@ -1,6 +1,78 @@
 (function (document, window) {
   'use strict';
 
+  // Theme Management
+  const initTheme = () => {
+    // Check for saved theme preference or default to system preference
+    const savedTheme = localStorage.getItem('theme');
+    const systemPrefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    // Set initial theme
+    const theme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
+    setTheme(theme);
+
+    // Listen for system theme changes
+    if (window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+        if (!localStorage.getItem('theme')) {
+          setTheme(e.matches ? 'dark' : 'light');
+        }
+      });
+    }
+  };
+
+  const setTheme = (theme) => {
+    if (theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      updateThemeToggle('light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      updateThemeToggle('dark');
+    }
+  };
+
+  const updateThemeToggle = (nextTheme) => {
+    const themeText = document.getElementById('themeText');
+    const sunIcon = document.querySelector('.sun-icon');
+    const moonIcon = document.querySelector('.moon-icon');
+
+    if (themeText) {
+      themeText.textContent = nextTheme === 'dark' ? 'Dark' : 'Light';
+    }
+
+    if (sunIcon && moonIcon) {
+      if (nextTheme === 'dark') {
+        // Currently in light mode, show moon icon for switching to dark
+        sunIcon.style.display = 'none';
+        moonIcon.style.display = 'block';
+      } else {
+        // Currently in dark mode, show sun icon for switching to light
+        sunIcon.style.display = 'block';
+        moonIcon.style.display = 'none';
+      }
+    }
+  };
+
+  const toggleTheme = () => {
+    const currentTheme = document.documentElement.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+    // Save preference
+    localStorage.setItem('theme', newTheme);
+    setTheme(newTheme);
+  };
+
+  // Initialize theme on page load
+  document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
+
+    // Add click handler to theme toggle button
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+      themeToggle.addEventListener('click', toggleTheme);
+    }
+  });
+
   // Helper functions
   const isEmpty = (obj) => {
     if (obj == null) return true;
@@ -132,7 +204,7 @@
     const totalInstances = data.instances ? Object.keys(data.instances).length : 0;
     const totalPlans = data.plans ? Object.keys(data.plans).length : 0;
     const status = 'Running';
-    
+
     const infoTableRows = `
       <tr>
         <td class="info-key">Deployment</td>
@@ -198,7 +270,7 @@
 
     return `
       <div class="service-detail-header">
-        <h3 class="deployment-name">Blacksmith Deployment: ${deploymentName}</h3>
+        <h3 class="deployment-name">${deploymentName}</h3>
         <table class="service-info-table">
           <tbody>
             ${infoTableRows}
@@ -224,33 +296,119 @@
       return '<div class="no-data">No services configured</div>';
     }
 
-    return data.services.map(service => `
-      <h2>${service.name}</h2>
-      <ul class="tags">${service.tags.map(tag => `<li>${tag}</li>`).join('')}</ul>
-      <div class="desc">
-        <p>${service.description}</p>
+    // Build the plans list for the left column
+    const plansList = [];
+    data.services.forEach(service => {
+      service.plans.forEach(plan => {
+        plansList.push({
+          service: service,
+          plan: plan,
+          id: `${service.name}-${plan.name}`
+        });
+      });
+    });
+
+    const listHtml = plansList.map(item => `
+      <div class="plan-item" data-plan-id="${item.id}">
+        <div class="plan-name">${item.service.name} / ${item.plan.name}</div>
+        <div class="plan-meta">
+          Instances: ${item.plan.blacksmith.instances} / ${item.plan.blacksmith.limit > 0 ? item.plan.blacksmith.limit : item.plan.blacksmith.limit == 0 ? '∞' : '‑'}
+        </div>
       </div>
-      <table>
+    `).join('');
+
+    return `
+      <div class="plans-list">
+        <h2>Service Plans</h2>
+        ${listHtml}
+      </div>
+      <div class="plan-detail">
+        <div class="no-selection">Select a plan to view details</div>
+      </div>
+    `;
+  };
+
+  const renderPlanDetail = (service, plan) => {
+    const planName = `${service.name} / ${plan.name}`;
+
+    // Build the plan details table
+    const detailsTable = `
+      <table class="plan-details-table">
         <thead>
           <tr>
-            <th>Plan</th>
-            <th>Description</th>
-            <th># Instances</th>
+            <th colspan="2">Plan Information</th>
           </tr>
         </thead>
         <tbody>
-          ${service.plans.map(plan => `
-            <tr>
-              <td>${plan.name}</td>
-              <td>${plan.description}</td>
-              <td>${plan.blacksmith.instances} / ${plan.blacksmith.limit > 0 ? plan.blacksmith.limit :
-        plan.blacksmith.limit == 0 ? '∞' : '‑'
-      }</td>
-            </tr>
-          `).join('')}
+          <tr>
+            <td class="info-key">Service</td>
+            <td class="info-value">${service.name}</td>
+          </tr>
+          <tr>
+            <td class="info-key">Plan</td>
+            <td class="info-value">${plan.name}</td>
+          </tr>
+          <tr>
+            <td class="info-key">Description</td>
+            <td class="info-value">${plan.description || '-'}</td>
+          </tr>
+          <tr>
+            <td class="info-key">Current Instances</td>
+            <td class="info-value">${plan.blacksmith.instances}</td>
+          </tr>
+          <tr>
+            <td class="info-key">Instance Limit</td>
+            <td class="info-value">${plan.blacksmith.limit > 0 ? plan.blacksmith.limit : plan.blacksmith.limit == 0 ? 'Unlimited' : 'Not Set'}</td>
+          </tr>
         </tbody>
       </table>
-    `).join('');
+    `;
+
+    // Build service tags
+    const tagsHtml = service.tags && service.tags.length > 0
+      ? `<ul class="tags">${service.tags.map(tag => `<li>${tag}</li>`).join('')}</ul>`
+      : '';
+
+    // Build VM configurations table if available
+    let vmsTable = '';
+    if (plan.vms && plan.vms.length > 0) {
+      vmsTable = `
+        <table class="plan-vms-table">
+          <thead>
+            <tr>
+              <th>VM Name</th>
+              <th>Count</th>
+              <th>Type</th>
+              <th>Persistent Disk</th>
+              <th>Properties</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${plan.vms.map(vm => `
+              <tr>
+                <td>${vm.name || '-'}</td>
+                <td>${vm.instances || 1}</td>
+                <td>${vm.vm_type || '-'}</td>
+                <td>${vm.persistent_disk_type || '-'}</td>
+                <td>${vm.properties ? JSON.stringify(vm.properties, null, 2) : '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    return `
+      <div class="service-detail-header">
+        <h2 class="deployment-name">${planName}</h2>
+        ${tagsHtml}
+      </div>
+      <div class="service-detail-content">
+        ${detailsTable}
+        ${vmsTable ? '<h3>VM Configuration</h3>' + vmsTable : ''}
+        ${service.description ? `<div class="service-description"><h3>Service Description</h3><p>${service.description}</p></div>` : ''}
+      </div>
+    `;
   };
 
   const renderServicesTemplate = (instances) => {
@@ -517,7 +675,7 @@
     if (!events || events.length === 0) {
       return null;
     }
-    
+
     // Sort events by time to ensure we get the most recent
     // Some APIs return oldest first, some newest first
     const sortedEvents = [...events].sort((a, b) => {
@@ -526,60 +684,60 @@
       const timeB = b.time ? (typeof b.time === 'string' ? new Date(b.time).getTime() : b.time) : 0;
       return timeB - timeA;
     });
-    
+
     // First priority: Find most recent non-'hm' user 'update' or 'create' event
     for (const event of sortedEvents) {
       // Skip events without task IDs
       if (!event.task_id || event.task_id === '') {
         continue;
       }
-      
+
       // Skip 'hm' user events
       if (event.user === 'hm') {
         continue;
       }
-      
+
       // Look for 'update' or 'create' actions
       if (event.action === 'create' || event.action === 'update') {
         console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} event at ${event.time}`);
         return event.task_id;
       }
     }
-    
+
     // Second priority: Any non-'hm' deployment-related event
     for (const event of sortedEvents) {
       // Skip events without task IDs
       if (!event.task_id || event.task_id === '') {
         continue;
       }
-      
+
       // Skip 'hm' user events
       if (event.user === 'hm') {
         continue;
       }
-      
+
       // Skip lock acquisition/release events
       if (event.action === 'acquire' || event.action === 'release') {
         continue;
       }
-      
+
       // Look for deployment-related events
       if (event.object_type === 'deployment' || event.action === 'deploy') {
         console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} deployment event at ${event.time}`);
         return event.task_id;
       }
     }
-    
+
     // Fallback: Any non-'hm', non-lock task
     for (const event of sortedEvents) {
-      if (event.task_id && event.task_id !== '' && 
-          event.user !== 'hm' &&
-          event.action !== 'acquire' && event.action !== 'release') {
+      if (event.task_id && event.task_id !== '' &&
+        event.user !== 'hm' &&
+        event.action !== 'acquire' && event.action !== 'release') {
         console.log(`Selected task ${event.task_id} from ${event.user} ${event.action} event (fallback) at ${event.time}`);
         return event.task_id;
       }
     }
-    
+
     console.log('No suitable task found in events');
     return null;
   };
@@ -600,7 +758,7 @@
         }
         const events = await response.json();
         return formatEvents(events);
-        
+
       } else if (type === 'logs' || type === 'debug') {
         // First fetch events to get task ID
         const eventsResponse = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
@@ -608,23 +766,23 @@
           throw new Error(`Failed to fetch events: HTTP ${eventsResponse.status}`);
         }
         const events = await eventsResponse.json();
-        
+
         // Extract latest deployment task ID
         const taskId = getLatestDeploymentTaskId(events);
         if (!taskId) {
           return '<div class="no-data">No deployment task found in events</div>';
         }
-        
+
         // Fetch the appropriate log type
         const logType = type === 'logs' ? 'log' : 'debug';
         const logResponse = await fetch(`/b/deployments/${deploymentName}/tasks/${taskId}/${logType}`, { cache: 'no-cache' });
         if (!logResponse.ok) {
           throw new Error(`HTTP ${logResponse.status}: ${logResponse.statusText}`);
         }
-        
+
         const logs = await logResponse.json();
         return type === 'logs' ? formatDeploymentLog(logs) : formatDebugLog(logs);
-        
+
       } else if (type === 'vms') {
         // Use existing VMs endpoint
         const response = await fetch(`/b/blacksmith/vms`, { cache: 'no-cache' });
@@ -633,7 +791,7 @@
         }
         const vms = await response.json();
         return formatVMs(vms);
-        
+
       } else if (type === 'manifest') {
         // Fetch manifest for blacksmith deployment
         const response = await fetch(`/b/deployments/${deploymentName}/manifest`, { cache: 'no-cache' });
@@ -641,12 +799,12 @@
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         const text = await response.text();
-        
+
         // Store the manifest text for copy functionality
         const manifestId = `manifest-blacksmith-${Date.now()}`;
         window.manifestTexts = window.manifestTexts || {};
         window.manifestTexts[manifestId] = text;
-        
+
         return `
           <div class="manifest-container">
             <div class="manifest-header">
@@ -659,7 +817,7 @@
             <pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
           </div>
         `;
-        
+
       } else if (type === 'credentials') {
         // Fetch blacksmith credentials
         const response = await fetch('/b/blacksmith/credentials');
@@ -669,7 +827,7 @@
         const creds = await response.json();
         return formatCredentials(creds);
       }
-      
+
       return `<div class="error">Unknown tab type: ${type}</div>`;
     } catch (error) {
       return `<div class="error">Failed to load ${type}: ${error.message}</div>`;
@@ -746,7 +904,7 @@
         const manifestId = `manifest-${instanceId}-${Date.now()}`;
         window.manifestTexts = window.manifestTexts || {};
         window.manifestTexts[manifestId] = text;
-        
+
         return `
           <div class="manifest-container">
             <div class="manifest-header">
@@ -1067,7 +1225,7 @@
       console.error('Manifest text not found for ID:', manifestId);
       return;
     }
-    
+
     const button = event.currentTarget;
     try {
       await navigator.clipboard.writeText(text);
@@ -1246,10 +1404,46 @@
 
 
       // Render plans if we have services
-      if (catalog.services && catalog.services.length > 0) {
-        document.querySelector('#plans .content').innerHTML = renderPlansTemplate(catalog);
-      } else {
-        document.querySelector('#plans .content').innerHTML = '<div class="no-data">No services configured</div>';
+      const plansPanel = document.querySelector('#plans');
+      if (plansPanel) {
+        if (catalog.services && catalog.services.length > 0) {
+          plansPanel.innerHTML = renderPlansTemplate(catalog);
+
+          // Store plans data for later use
+          window.plansData = catalog;
+
+          // Set up plan click handlers
+          document.querySelectorAll('#plans .plan-item').forEach(item => {
+            item.addEventListener('click', function () {
+              const planId = this.dataset.planId;
+
+              // Find the service and plan from the stored data
+              let selectedService = null;
+              let selectedPlan = null;
+
+              catalog.services.forEach(service => {
+                service.plans.forEach(plan => {
+                  if (`${service.name}-${plan.name}` === planId) {
+                    selectedService = service;
+                    selectedPlan = plan;
+                  }
+                });
+              });
+
+              if (selectedService && selectedPlan) {
+                // Update active state
+                document.querySelectorAll('#plans .plan-item').forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+
+                // Render plan details
+                const detailContainer = document.querySelector('#plans .plan-detail');
+                detailContainer.innerHTML = renderPlanDetail(selectedService, selectedPlan);
+              }
+            });
+          });
+        } else {
+          plansPanel.innerHTML = '<div class="no-data">No services configured</div>';
+        }
       }
 
       // Render services
@@ -1344,12 +1538,12 @@
       const loadBlacksmithDetailTab = async (tabType) => {
         const contentContainer = document.querySelector('#blacksmith .detail-content');
         contentContainer.innerHTML = '<div class="loading">Loading...</div>';
-        
+
         try {
           // Get deployment name from the blacksmith instance data
           // This should already be available from the initial blacksmith status load
           const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
-          
+
           const content = await fetchBlacksmithDetail(deploymentName, tabType);
           contentContainer.innerHTML = content;
         } catch (error) {
@@ -1378,7 +1572,7 @@
           data.deployment = 'blacksmith'; // Fallback
           window.blacksmithDeploymentName = 'blacksmith';
         }
-        
+
         // Store status data for later use
         window.blacksmithData = data;
 
