@@ -269,7 +269,6 @@
 
     return `
       <div class="service-detail-header">
-        <h3 class="deployment-name">${deploymentName}</h3>
       </div>
       <div class="detail-tabs">
         <button class="detail-tab active" data-tab="details">Details</button>
@@ -2055,7 +2054,7 @@
             contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
             return;
           }
-          
+
           // Get deployment name from the blacksmith instance data
           // This should already be available from the initial blacksmith status load
           const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
@@ -2082,7 +2081,7 @@
             data.instanceName = instanceData.name;
             // Store deployment name globally for tab handlers to use
             window.blacksmithDeploymentName = instanceData.deployment || 'blacksmith';
-            
+
             // Update the header with deployment name
             const deploymentNameEl = document.getElementById('deployment-name');
             if (deploymentNameEl) {
