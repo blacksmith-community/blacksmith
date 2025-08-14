@@ -1439,6 +1439,94 @@ td a {
   height: 14px;
 }
 
+/* Logs container and styles */
+.logs-container {
+  position: relative;
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.logs-header h3 {
+  margin: 0;
+  font-size: 1.2em;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.copy-btn-logs {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  color: #4a5568;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.copy-btn-logs:hover {
+  background: #f7fafc;
+  color: #0071bc;
+  border-color: #0071bc;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+}
+
+.copy-btn-logs.copied {
+  background: #48bb78;
+  color: white;
+  border-color: #48bb78;
+}
+
+.copy-btn-logs svg {
+  width: 16px;
+  height: 16px;
+}
+
+.logs-content {
+  padding: 15px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 600px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+}
+
+.log-error {
+  color: #d73a49;
+  font-weight: bold;
+}
+
+.log-warning {
+  color: #e36209;
+}
+
+.log-info {
+  color: var(--text-primary);
+}
+
+.log-debug {
+  color: #6a737d;
+  opacity: 0.8;
+}
+
 /* Manifest copy button */
 .manifest-container {
   position: relative;
@@ -1506,4 +1594,249 @@ td a {
 .vms-table .copy-btn-inline svg {
   width: 12px;
   height: 12px;
+}
+
+/* Logs table styles */
+.logs-table-container {
+  margin-top: 10px;
+  max-height: 600px;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.logs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 0.85em;
+}
+
+.logs-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--bg-tertiary);
+  z-index: 1;
+  border-bottom: 2px solid var(--border-primary);
+}
+
+.logs-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.log-col-date { width: 100px; }
+.log-col-time { width: 110px; }
+.log-col-level { width: 80px; }
+.log-col-message { width: auto; }
+
+.logs-table tbody tr {
+  border-bottom: 1px solid var(--border-secondary);
+  transition: background-color 0.1s ease;
+}
+
+.logs-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.logs-table td {
+  padding: 8px 12px;
+  vertical-align: top;
+}
+
+.log-date, .log-time {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Level badges */
+.level-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 0.85em;
+  text-transform: uppercase;
+}
+
+.log-level-error .level-badge {
+  background: #fee;
+  color: #d73a49;
+  border: 1px solid #fdd;
+}
+
+.log-level-warning .level-badge, .log-level-warn .level-badge {
+  background: #fff8e6;
+  color: #e36209;
+  border: 1px solid #ffeaa7;
+}
+
+.log-level-info .level-badge {
+  background: #e6f3ff;
+  color: #0366d6;
+  border: 1px solid #c8e1ff;
+}
+
+.log-level-debug .level-badge {
+  background: #f6f8fa;
+  color: #6a737d;
+  border: 1px solid #e1e4e8;
+}
+
+/* Message formatting */
+.log-message {
+  color: var(--text-primary);
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+.log-context {
+  color: #0366d6;
+  font-weight: 600;
+  background: #f0f8ff;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* Syntax highlighting for messages */
+.http-method {
+  color: #22863a;
+  font-weight: 600;
+}
+
+.http-status {
+  color: #005cc5;
+  font-weight: 600;
+  background: #f0f8ff;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.url {
+  color: #0366d6;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.url:hover {
+  color: #0056b3;
+}
+
+.file-path {
+  color: #6f42c1;
+  font-style: italic;
+}
+
+.ip-address {
+  color: #e36209;
+  background: #fff8f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.function-call, .method-call {
+  color: #6f42c1;
+  font-weight: 500;
+}
+
+.uuid {
+  color: #032f62;
+  font-family: monospace;
+  background: #f6f8fa;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.version {
+  color: #22863a;
+  background: #f0fff4;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.key {
+  color: #d73a49;
+  font-weight: 500;
+}
+
+.value {
+  color: #032f62;
+}
+
+.task-id {
+  color: #005cc5;
+  font-weight: 600;
+}
+
+.deployment-name {
+  color: #6f42c1;
+  font-weight: 500;
+}
+
+/* Dark theme adjustments for logs table */
+[data-theme="dark"] .logs-table {
+  background: var(--bg-primary);
+}
+
+[data-theme="dark"] .log-context {
+  background: #1a2332;
+  color: #79b8ff;
+}
+
+[data-theme="dark"] .http-status {
+  background: #1a2332;
+  color: #79b8ff;
+}
+
+[data-theme="dark"] .ip-address {
+  background: #2b1f15;
+  color: #ffab70;
+}
+
+[data-theme="dark"] .uuid {
+  background: #1e1e1e;
+  color: #e1e4e8;
+}
+
+[data-theme="dark"] .version {
+  background: #0f2d0f;
+  color: #85e89d;
+}
+
+[data-theme="dark"] .log-level-error .level-badge {
+  background: #4a1a1a;
+  color: #ff6b6b;
+  border: 1px solid #3d1212;
+}
+
+[data-theme="dark"] .log-level-warning .level-badge, 
+[data-theme="dark"] .log-level-warn .level-badge {
+  background: #3d2f0f;
+  color: #ffab70;
+  border: 1px solid #2d1f0a;
+}
+
+[data-theme="dark"] .log-level-info .level-badge {
+  background: #0f2432;
+  color: #79b8ff;
+  border: 1px solid #081a28;
+}
+
+[data-theme="dark"] .log-level-debug .level-badge {
+  background: #1e1e1e;
+  color: #8b949e;
+  border: 1px solid #30363d;
+}
+
+/* Hidden source container */
+.logs-source-hidden {
+  display: none !important;
+  visibility: hidden;
+  position: absolute;
+  left: -9999px;
 }

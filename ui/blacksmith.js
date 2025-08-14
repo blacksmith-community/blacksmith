@@ -257,13 +257,7 @@
       <tr>
         <td class="info-key">Status</td>
         <td class="info-value">
-          <span class="copy-wrapper">
-            <button class="copy-btn-inline" onclick="window.copyValue(event, '${status}')"
-                    title="Copy to clipboard">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-            <span>${status}</span>
-          </span>
+          <span>${status}</span>
         </td>
       </tr>
     `;
@@ -278,7 +272,8 @@
         </table>
       </div>
       <div class="detail-tabs">
-        <button class="detail-tab active" data-tab="events">Events</button>
+        <button class="detail-tab active" data-tab="blacksmith-logs">Logs</button>
+        <button class="detail-tab" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="vms">VMs</button>
         <button class="detail-tab" data-tab="logs">Deployment Logs</button>
         <button class="detail-tab" data-tab="debug">Debug Log</button>
@@ -797,7 +792,16 @@
     }
 
     try {
-      if (type === 'events') {
+      if (type === 'blacksmith-logs') {
+        // Fetch blacksmith logs
+        const response = await fetch('/b/blacksmith/logs', { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return formatBlacksmithLogs(data.logs);
+        
+      } else if (type === 'events') {
         // Direct fetch for events
         const response = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
         if (!response.ok) {
@@ -1129,6 +1133,133 @@
     `;
   };
 
+  // Log parsing and rendering functions
+  const parseLogLine = (line) => {
+    // Regex pattern to match: YYYY-MM-DD HH:MM:SS.mmm LEVEL [context] message
+    const logPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(.*)$/;
+    const match = line.match(logPattern);
+    
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim(),
+        message: match[4]
+      };
+    }
+    
+    // Handle lines that don't match the pattern (continuation lines, etc.)
+    return {
+      date: '',
+      time: '',
+      level: '',
+      message: line
+    };
+  };
+
+  const highlightPatterns = (text) => {
+    // Much simpler approach - only highlight very specific, safe patterns
+    
+    // URLs (avoid any with < or > that might be part of HTML)
+    text = text.replace(/https?:\/\/[^\s<>&]+/g, '<span class="url">$&</span>');
+    
+    // Version strings (very specific format)
+    text = text.replace(/\bversion: ([\w.-]+)/gi, 'version: <span class="version">$1</span>');
+    text = text.replace(/\bcommit: ([a-f0-9]+)/gi, 'commit: <span class="version">$1</span>');
+    
+    // HTTP methods (standalone)
+    text = text.replace(/\b(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b/g, '<span class="http-method">$1</span>');
+    
+    // HTTP status codes (3 digits at word boundary)
+    text = text.replace(/\b(\d{3})\b(?=\s|$)/g, '<span class="http-status">$1</span>');
+    
+    // Task IDs
+    text = text.replace(/\b(task|Task|TASK) (\d+)\b/g, '$1 <span class="task-id">$2</span>');
+    
+    return text;
+  };
+
+  const formatLogMessage = (message) => {
+    // First escape HTML characters to prevent XSS (& must be escaped first)
+    let escaped = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    
+    // Then apply our formatting to the escaped text
+    // Bold context markers like [instance-details], [vault init], etc.
+    let formatted = escaped.replace(/\[([^\]]+)\]/g, '<strong class="log-context">[$1]</strong>');
+    
+    // Highlight specific patterns
+    formatted = highlightPatterns(formatted);
+    
+    return formatted;
+  };
+
+  const renderLogRow = (logEntry) => {
+    const levelClass = `log-level-${logEntry.level.toLowerCase()}`;
+    const formattedMessage = formatLogMessage(logEntry.message);
+    
+    return `
+      <tr class="log-row ${levelClass}">
+        <td class="log-date">${logEntry.date}</td>
+        <td class="log-time">${logEntry.time}</td>
+        <td class="log-level">
+          <span class="level-badge ${levelClass}">${logEntry.level}</span>
+        </td>
+        <td class="log-message">${formattedMessage}</td>
+      </tr>
+    `;
+  };
+
+  const renderLogsTable = (logs) => {
+    const lines = logs.split('\n').filter(line => line.trim());
+    const rows = lines.map(line => parseLogLine(line));
+    
+    const tableHTML = `
+      <table class="logs-table">
+        <thead>
+          <tr>
+            <th class="log-col-date">Date</th>
+            <th class="log-col-time">Time</th>
+            <th class="log-col-level">Level</th>
+            <th class="log-col-message">Message</th>
+          </tr>
+        </thead>
+        <tbody id="logs-table-body">
+          ${rows.map(row => renderLogRow(row)).join('')}
+        </tbody>
+      </table>
+    `;
+    
+    return tableHTML;
+  };
+
+  const formatBlacksmithLogs = (logs) => {
+    if (!logs || logs === '') {
+      return '<div class="no-data">No logs available</div>';
+    }
+
+    const tableHTML = renderLogsTable(logs);
+    
+    return `
+      <div class="logs-container">
+        <div class="logs-header">
+          <h3>Blacksmith Logs</h3>
+          <button class="copy-btn-logs" onclick="window.copyLogs(event)"
+                  title="Copy logs to clipboard">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+        <div class="logs-table-container">
+          ${tableHTML}
+        </div>
+        <!-- Hidden source logs for copy functionality -->
+        <div class="logs-source-hidden" id="blacksmith-logs-source" style="display: none;">
+          ${logs}
+        </div>
+      </div>
+    `;
+  };
+
   const formatVMs = (vms) => {
     if (!vms || vms.length === 0) {
       return '<div class="no-data">No VMs available</div>';
@@ -1258,6 +1389,58 @@
         document.execCommand('copy');
         button.classList.add('copied');
         setTimeout(() => button.classList.remove('copied'), 2000);
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+      }
+      document.body.removeChild(textarea);
+    }
+  };
+
+  // Copy logs function
+  window.copyLogs = async (event) => {
+    // Get the hidden source logs instead of table content
+    const logsSource = document.getElementById('blacksmith-logs-source');
+    if (!logsSource) {
+      console.error('Logs source not found');
+      return;
+    }
+
+    const text = logsSource.textContent || logsSource.innerText;
+    const button = event.currentTarget;
+    
+    try {
+      await navigator.clipboard.writeText(text);
+      // Visual feedback
+      button.classList.add('copied');
+      const originalTitle = button.title;
+      button.title = 'Copied!';
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Copied!';
+      setTimeout(() => {
+        button.classList.remove('copied');
+        button.title = originalTitle;
+        spanElement.textContent = originalText;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy logs:', err);
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        button.classList.add('copied');
+        const spanElement = button.querySelector('span');
+        const originalText = spanElement.textContent;
+        spanElement.textContent = 'Copied!';
+        setTimeout(() => {
+          button.classList.remove('copied');
+          spanElement.textContent = originalText;
+        }, 2000);
       } catch (err) {
         console.error('Fallback copy failed:', err);
       }
@@ -1722,8 +1905,8 @@
         // Render the Blacksmith detail view
         blacksmithPanel.innerHTML = renderBlacksmithTemplate(data);
 
-        // Load initial tab content (events)
-        loadBlacksmithDetailTab('events');
+        // Load initial tab content (blacksmith logs)
+        loadBlacksmithDetailTab('blacksmith-logs');
 
         // Set up Blacksmith detail tab handlers
         setupBlacksmithDetailTabHandlers();

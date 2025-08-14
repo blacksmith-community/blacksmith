@@ -296,6 +296,33 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s\n", string(js))
 		return
 	}
+	if req.URL.Path == "/b/blacksmith/logs" {
+		l := Logger.Wrap("blacksmith-logs")
+		l.Debug("fetching blacksmith logs")
+
+		// Get the logs from the Logger
+		logs := Logger.String()
+
+		// Return as JSON with the logs
+		response := struct {
+			Logs string `json:"logs"`
+		}{
+			Logs: logs,
+		}
+
+		b, err := json.Marshal(response)
+		if err != nil {
+			l.Error("failed to marshal blacksmith logs: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "%s\n", string(b))
+		return
+	}
 	if req.URL.Path == "/b/blacksmith/credentials" {
 		l := Logger.Wrap("blacksmith-credentials")
 		l.Debug("fetching blacksmith credentials")
