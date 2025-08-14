@@ -621,6 +621,100 @@ td a {
   color: var(--text-primary);
 }
 
+/* Filter section styles */
+#services .services-filter-section {
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  padding: 1em;
+  position: sticky;
+  top: 53px;
+  z-index: 9;
+}
+
+#services .filter-controls {
+  display: flex;
+  gap: 1em;
+  align-items: flex-end;
+  margin-bottom: 0.5em;
+}
+
+#services .filter-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+#services .filter-group label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#services .filter-select {
+  padding: 6px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: sans-serif;
+}
+
+#services .filter-select:hover:not(:disabled) {
+  border-color: var(--border-active);
+  background-color: var(--bg-hover);
+}
+
+#services .filter-select:focus {
+  outline: none;
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
+}
+
+#services .filter-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: var(--bg-tertiary);
+}
+
+#services .clear-filters-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+
+#services .clear-filters-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-active);
+}
+
+#services .clear-filters-btn:active {
+  transform: translateY(1px);
+}
+
+#services .filter-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+#services .services-items-container {
+  overflow-y: auto;
+  max-height: calc(100vh - 250px);
+}
+
 #services .service-item {
   padding: 1em;
   border-bottom: 1px solid var(--border-secondary);

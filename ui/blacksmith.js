@@ -414,10 +414,54 @@
   const renderServicesTemplate = (instances) => {
     const instancesList = isEmpty(instances) ? [] : Object.entries(instances);
 
+    // Extract unique services and plans for filter dropdowns
+    const services = new Set();
+    const plansPerService = {};
+    
+    instancesList.forEach(([id, details]) => {
+      if (details.service_id) {
+        services.add(details.service_id);
+        if (!plansPerService[details.service_id]) {
+          plansPerService[details.service_id] = new Set();
+        }
+        if (details.plan && details.plan.name) {
+          plansPerService[details.service_id].add(details.plan.name);
+        }
+      }
+    });
+
+    const serviceOptions = Array.from(services).sort().map(s => 
+      `<option value="${s}">${s}</option>`
+    ).join('');
+
+    const filterSection = `
+      <div class="services-filter-section">
+        <div class="filter-controls">
+          <div class="filter-group">
+            <label for="service-filter">Service:</label>
+            <select id="service-filter" class="filter-select">
+              <option value="">All Services</option>
+              ${serviceOptions}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="plan-filter">Plan:</label>
+            <select id="plan-filter" class="filter-select" disabled>
+              <option value="">All Plans</option>
+            </select>
+          </div>
+          <button id="clear-filters" class="clear-filters-btn">Clear Filters</button>
+        </div>
+        <div class="filter-status">
+          <span id="filter-count">Showing ${instancesList.length} of ${instancesList.length} instances</span>
+        </div>
+      </div>
+    `;
+
     const listHtml = instancesList.length === 0
       ? '<div class="no-data">No services have been provisioned yet.</div>'
       : instancesList.map(([id, details]) => `
-          <div class="service-item" data-instance-id="${id}">
+          <div class="service-item" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
             <div class="service-id">${id}</div>
             <div class="service-meta">
               ${details.service_id} / ${details.plan.name} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
@@ -428,7 +472,10 @@
     return `
       <div class="services-list">
         <h2>Service Instances</h2>
-        ${listHtml}
+        ${filterSection}
+        <div class="services-items-container">
+          ${listHtml}
+        </div>
       </div>
       <div class="service-detail">
         <div class="no-selection">Select a service instance to view details</div>
@@ -1489,6 +1536,102 @@
               setupDetailTabHandlers(instanceId);
             });
           });
+
+          // Set up filter handlers
+          setupFilterHandlers();
+        };
+
+        // Filter functionality
+        const setupFilterHandlers = () => {
+          const serviceFilter = document.getElementById('service-filter');
+          const planFilter = document.getElementById('plan-filter');
+          const clearFiltersBtn = document.getElementById('clear-filters');
+          const filterCount = document.getElementById('filter-count');
+
+          if (!serviceFilter || !planFilter) return;
+
+          // Build plans per service map for the filter
+          const plansPerService = {};
+          const instancesList = Object.entries(window.serviceInstances || {});
+          
+          instancesList.forEach(([id, details]) => {
+            if (details.service_id) {
+              if (!plansPerService[details.service_id]) {
+                plansPerService[details.service_id] = new Set();
+              }
+              if (details.plan && details.plan.name) {
+                plansPerService[details.service_id].add(details.plan.name);
+              }
+            }
+          });
+
+          // Apply filters function
+          const applyFilters = () => {
+            const selectedService = serviceFilter.value;
+            const selectedPlan = planFilter.value;
+            const allItems = document.querySelectorAll('#services .service-item');
+            let visibleCount = 0;
+
+            allItems.forEach(item => {
+              const itemService = item.dataset.service;
+              const itemPlan = item.dataset.plan;
+
+              const matchesService = !selectedService || itemService === selectedService;
+              const matchesPlan = !selectedPlan || itemPlan === selectedPlan;
+
+              if (matchesService && matchesPlan) {
+                item.style.display = '';
+                visibleCount++;
+              } else {
+                item.style.display = 'none';
+              }
+            });
+
+            // Update count
+            if (filterCount) {
+              filterCount.textContent = `Showing ${visibleCount} of ${allItems.length} instances`;
+            }
+          };
+
+          // Service filter change handler
+          serviceFilter.addEventListener('change', (e) => {
+            const selectedService = e.target.value;
+            
+            // Update plan filter options
+            planFilter.innerHTML = '<option value="">All Plans</option>';
+            
+            if (selectedService && plansPerService[selectedService]) {
+              const plans = Array.from(plansPerService[selectedService]).sort();
+              plans.forEach(plan => {
+                const option = document.createElement('option');
+                option.value = plan;
+                option.textContent = plan;
+                planFilter.appendChild(option);
+              });
+              planFilter.disabled = false;
+            } else {
+              planFilter.disabled = !selectedService;
+            }
+            
+            // Apply filters
+            applyFilters();
+          });
+
+          // Plan filter change handler
+          planFilter.addEventListener('change', () => {
+            applyFilters();
+          });
+
+          // Clear filters button
+          if (clearFiltersBtn) {
+            clearFiltersBtn.addEventListener('click', () => {
+              serviceFilter.value = '';
+              planFilter.value = '';
+              planFilter.disabled = true;
+              planFilter.innerHTML = '<option value="">All Plans</option>';
+              applyFilters();
+            });
+          }
         };
 
         // Set up detail tab handlers
