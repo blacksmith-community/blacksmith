@@ -183,13 +183,23 @@ table {
   flex: 1;
   background: var(--bg-secondary);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
 }
 
 .job-logs-container {
   display: flex;
   flex-direction: column;
-  height: 600px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   padding: 20px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .log-file-selector {
@@ -241,21 +251,21 @@ table {
 
 .log-file-display {
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid var(--border-primary);
   border-radius: 4px;
   background: var(--bg-tertiary);
+  min-height: 0;
 }
 
 .log-file-content {
-  height: 100%;
   padding: 15px;
+  padding-bottom: 30px;
   font-family: 'SF Mono', Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
-  overflow-y: auto;
   background: var(--bg-code);
   color: var(--text-code);
   margin: 0;
@@ -1218,9 +1228,13 @@ td a {
 #services .detail-content {
   flex: 1;
   padding: 1em 2em;
-  overflow-y: auto;
-  overflow-x: auto;
+  overflow: hidden;
   background-color: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  height: 100%;
 }
 
 #services .detail-content pre {
@@ -1248,6 +1262,9 @@ td a {
 /* Credentials table styling */
 .credentials-container {
   padding: 1em 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .credentials-container h3 {
@@ -1643,6 +1660,15 @@ td a {
   color: #555;
 }
 
+/* Table containers */
+.log-table-container,
+.vms-table-container {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding-bottom: 2em;
+}
+
 /* Deployment Log table styles */
 .deployment-log-table,
 .debug-log-table {
@@ -1882,6 +1908,12 @@ td a {
 /* Manifest copy button */
 .manifest-container {
   position: relative;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding-bottom: 2em;
+  display: flex;
+  flex-direction: column;
 }
 
 .manifest-header {
@@ -1927,6 +1959,9 @@ td a {
 
 .manifest-container pre {
   padding-top: 3rem;
+  flex: 1;
+  margin: 0;
+  overflow: auto;
 }
 
 /* Adjust VMs table for copy buttons */

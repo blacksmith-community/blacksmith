@@ -205,75 +205,76 @@
     const totalPlans = data.plans ? Object.keys(data.plans).length : 0;
     const status = 'Running';
 
-    const infoTableRows = `
-      <tr>
-        <td class="info-key">Deployment</td>
-        <td class="info-value">
-          <span class="copy-wrapper">
-            <button class="copy-btn-inline" onclick="window.copyValue(event, '${deploymentName}')"
-                    title="Copy to clipboard">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-            <span>${deploymentName}</span>
-          </span>
-        </td>
-      </tr>
-      <tr>
-        <td class="info-key">Environment</td>
-        <td class="info-value">
-          <span class="copy-wrapper">
-            <button class="copy-btn-inline" onclick="window.copyValue(event, '${environment}')"
-                    title="Copy to clipboard">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-            <span>${environment}</span>
-          </span>
-        </td>
-      </tr>
-      <tr>
-        <td class="info-key">Total Service Instances</td>
-        <td class="info-value">
-          <span class="copy-wrapper">
-            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalInstances}')"
-                    title="Copy to clipboard">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-            <span>${totalInstances}</span>
-          </span>
-        </td>
-      </tr>
-      <tr>
-        <td class="info-key">Total Plans</td>
-        <td class="info-value">
-          <span class="copy-wrapper">
-            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalPlans}')"
-                    title="Copy to clipboard">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            </button>
-            <span>${totalPlans}</span>
-          </span>
-        </td>
-      </tr>
-      <tr>
-        <td class="info-key">Status</td>
-        <td class="info-value">
-          <span>${status}</span>
-        </td>
-      </tr>
+    // Store the details table content for the Details tab
+    window.blacksmithDetailsContent = `
+      <table class="service-info-table">
+        <tbody>
+          <tr>
+            <td class="info-key">Deployment</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${deploymentName}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${deploymentName}</span>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td class="info-key">Environment</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${environment}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${environment}</span>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td class="info-key">Total Service Instances</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalInstances}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${totalInstances}</span>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td class="info-key">Total Plans</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalPlans}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${totalPlans}</span>
+              </span>
+            </td>
+          </tr>
+          <tr>
+            <td class="info-key">Status</td>
+            <td class="info-value">
+              <span>${status}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     `;
 
     return `
       <div class="service-detail-header">
         <h3 class="deployment-name">${deploymentName}</h3>
-        <table class="service-info-table">
-          <tbody>
-            ${infoTableRows}
-          </tbody>
-        </table>
       </div>
       <div class="detail-tabs">
-        <button class="detail-tab active" data-tab="blacksmith-logs">Logs</button>
+        <button class="detail-tab active" data-tab="details">Details</button>
         <button class="detail-tab" data-tab="events">Events</button>
+        <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
         <button class="detail-tab" data-tab="vms">VMs</button>
         <button class="detail-tab" data-tab="logs">Deployment Logs</button>
         <button class="detail-tab" data-tab="debug">Debug Log</button>
@@ -483,9 +484,8 @@
     // Use deployment name from vault data if available, otherwise construct it
     const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan.name}-${id}`;
 
-    // Build the horizontal table with two rows: headers and values
-    let tableHeaders = [];
-    let tableValues = [];
+    // Build the vertical table content for the Details tab
+    let tableRows = [];
 
     if (vaultData) {
       // Define the order and labels for known fields
@@ -502,7 +502,7 @@
         { key: 'requested_at', label: 'Requested At' }
       ];
 
-      // Add columns for known fields in order
+      // Add rows for known fields in order
       fieldOrder.forEach(field => {
         if (vaultData[field.key] !== undefined) {
           let value = vaultData[field.key];
@@ -510,19 +510,19 @@
           if (field.key === 'requested_at' && value) {
             value = new Date(value).toLocaleString();
           }
-          tableHeaders.push(`
-            <th class="info-key-horizontal">
-              ${field.label}
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
-                      title="Copy ${field.label}">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-            </th>
-          `);
-          tableValues.push(`
-            <td class="info-value-horizontal">
-              ${value || '-'}
-            </td>
+          tableRows.push(`
+            <tr>
+              <td class="info-key" style="font-size: 16px;">${field.label}</td>
+              <td class="info-value" style="font-size: 16px;">
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
+                          title="Copy ${field.label}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <span>${value || '-'}</span>
+                </span>
+              </td>
+            </tr>
           `);
         }
       });
@@ -533,79 +533,94 @@
           !fieldOrder.find(f => f.key === key)) {
           const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
           const value = vaultData[key];
-          tableHeaders.push(`
-            <th class="info-key-horizontal">
-              ${label}
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
-                      title="Copy ${label}">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              </button>
-            </th>
-          `);
-          tableValues.push(`
-            <td class="info-value-horizontal">
-              ${value || '-'}
-            </td>
+          tableRows.push(`
+            <tr>
+              <td class="info-key" style="font-size: 16px;">${label}</td>
+              <td class="info-value" style="font-size: 16px;">
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
+                          title="Copy ${label}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <span>${value || '-'}</span>
+                </span>
+              </td>
+            </tr>
           `);
         }
       });
     } else {
       // If no vault data, show basic info from details
       const createdAt = details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown';
-      tableHeaders = [
-        `<th class="info-key-horizontal">
-          Instance ID
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')"
-                  title="Copy Instance ID">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          </button>
-        </th>`,
-        `<th class="info-key-horizontal">
-          Service
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')"
-                  title="Copy Service">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          </button>
-        </th>`,
-        `<th class="info-key-horizontal">
-          Plan
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')"
-                  title="Copy Plan">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          </button>
-        </th>`,
-        `<th class="info-key-horizontal">
-          Created At
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')"
-                  title="Copy Created At">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          </button>
-        </th>`
-      ];
-      tableValues = [
-        `<td class="info-value-horizontal">${id}</td>`,
-        `<td class="info-value-horizontal">${details.service_id}</td>`,
-        `<td class="info-value-horizontal">${details.plan.name}</td>`,
-        `<td class="info-value-horizontal">${createdAt}</td>`
+      tableRows = [
+        `<tr>
+          <td class="info-key" style="font-size: 16px;">Instance ID</td>
+          <td class="info-value" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')"
+                      title="Copy Instance ID">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${id}</span>
+            </span>
+          </td>
+        </tr>`,
+        `<tr>
+          <td class="info-key" style="font-size: 16px;">Service</td>
+          <td class="info-value" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')"
+                      title="Copy Service">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${details.service_id}</span>
+            </span>
+          </td>
+        </tr>`,
+        `<tr>
+          <td class="info-key" style="font-size: 16px;">Plan</td>
+          <td class="info-value" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')"
+                      title="Copy Plan">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${details.plan.name}</span>
+            </span>
+          </td>
+        </tr>`,
+        `<tr>
+          <td class="info-key" style="font-size: 16px;">Created At</td>
+          <td class="info-value" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')"
+                      title="Copy Created At">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${createdAt}</span>
+            </span>
+          </td>
+        </tr>`
       ];
     }
+
+    // Store the details content for the Details tab
+    window.serviceInstanceDetailsContent = window.serviceInstanceDetailsContent || {};
+    window.serviceInstanceDetailsContent[id] = `
+      <table class="service-info-table">
+        <tbody>
+          ${tableRows.join('')}
+        </tbody>
+      </table>
+    `;
 
     return `
       <div class="service-detail-header">
         <h3 class="deployment-name">${deploymentName}</h3>
-        <div class="service-info-table-wrapper">
-          <table class="service-info-table service-info-table-horizontal">
-            <thead>
-              <tr>${tableHeaders.join('')}</tr>
-            </thead>
-            <tbody>
-              <tr>${tableValues.join('')}</tr>
-            </tbody>
-          </table>
-        </div>
       </div>
       <div class="detail-tabs">
-        <button class="detail-tab active" data-tab="events">Events</button>
+        <button class="detail-tab active" data-tab="details">Details</button>
+        <button class="detail-tab" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="vms">VMs</button>
         <button class="detail-tab" data-tab="logs">Deployment Log</button>
         <button class="detail-tab" data-tab="debug">Debug Log</button>
@@ -983,7 +998,8 @@
     }
 
     return `
-      <table class="deployment-log-table">
+      <div class="log-table-container">
+        <table class="deployment-log-table">
         <thead>
           <tr>
             <th>Time</th>
@@ -1030,6 +1046,7 @@
     }).join('')}
         </tbody>
       </table>
+      </div>
     `;
   };
 
@@ -1039,7 +1056,8 @@
     }
 
     return `
-      <table class="debug-log-table">
+      <div class="log-table-container">
+        <table class="debug-log-table">
         <thead>
           <tr>
             <th>Time</th>
@@ -1086,6 +1104,7 @@
     }).join('')}
         </tbody>
       </table>
+      </div>
     `;
   };
 
@@ -1423,7 +1442,8 @@
     }
 
     return `
-      <table class="vms-table">
+      <div class="vms-table-container">
+        <table class="vms-table">
         <thead>
           <tr>
             <th>Instance</th>
@@ -1489,6 +1509,7 @@
     }).join('')}
         </tbody>
       </table>
+      </div>
     `;
   };
 
@@ -1869,8 +1890,8 @@
               const detailContainer = document.querySelector('#services .service-detail');
               detailContainer.innerHTML = renderServiceDetail(instanceId, details, vaultData);
 
-              // Load initial tab content (events)
-              loadDetailTab(instanceId, 'events');
+              // Load initial tab content (details)
+              loadDetailTab(instanceId, 'details');
 
               // Set up detail tab handlers
               setupDetailTabHandlers(instanceId);
@@ -1995,6 +2016,12 @@
           const contentContainer = document.querySelector('#services .detail-content');
           contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
+          // Handle the Details tab
+          if (tabType === 'details') {
+            contentContainer.innerHTML = window.serviceInstanceDetailsContent[instanceId] || '<div class="no-data">No details available</div>';
+            return;
+          }
+
           const content = await fetchServiceDetail(instanceId, tabType);
           contentContainer.innerHTML = content;
         };
@@ -2023,6 +2050,12 @@
         contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
         try {
+          // Handle the Details tab
+          if (tabType === 'details') {
+            contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
+            return;
+          }
+          
           // Get deployment name from the blacksmith instance data
           // This should already be available from the initial blacksmith status load
           const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
@@ -2049,6 +2082,14 @@
             data.instanceName = instanceData.name;
             // Store deployment name globally for tab handlers to use
             window.blacksmithDeploymentName = instanceData.deployment || 'blacksmith';
+            
+            // Update the header with deployment name
+            const deploymentNameEl = document.getElementById('deployment-name');
+            if (deploymentNameEl) {
+              deploymentNameEl.textContent = data.deployment;
+              deploymentNameEl.style.marginLeft = '10px';
+              deploymentNameEl.style.fontWeight = 'normal';
+            }
           }
         } catch (error) {
           console.error('Failed to fetch blacksmith instance details:', error);
@@ -2062,8 +2103,8 @@
         // Render the Blacksmith detail view
         blacksmithPanel.innerHTML = renderBlacksmithTemplate(data);
 
-        // Load initial tab content (blacksmith logs)
-        loadBlacksmithDetailTab('blacksmith-logs');
+        // Load initial tab content (details)
+        loadBlacksmithDetailTab('details');
 
         // Set up Blacksmith detail tab handlers
         setupBlacksmithDetailTabHandlers();
