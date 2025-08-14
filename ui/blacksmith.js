@@ -412,7 +412,7 @@
     // Extract unique services and plans for filter dropdowns
     const services = new Set();
     const plansPerService = {};
-    
+
     instancesList.forEach(([id, details]) => {
       if (details.service_id) {
         services.add(details.service_id);
@@ -425,7 +425,7 @@
       }
     });
 
-    const serviceOptions = Array.from(services).sort().map(s => 
+    const serviceOptions = Array.from(services).sort().map(s =>
       `<option value="${s}">${s}</option>`
     ).join('');
 
@@ -445,7 +445,7 @@
               <option value="">All Plans</option>
             </select>
           </div>
-          <button id="clear-filters" class="clear-filters-btn">Clear Filters</button>
+          <button id="clear-filters" class="clear-filters-btn">Clear</button>
         </div>
         <div class="filter-status">
           <span id="filter-count">Showing ${instancesList.length} of ${instancesList.length} instances</span>
@@ -486,7 +486,7 @@
     // Build the horizontal table with two rows: headers and values
     let tableHeaders = [];
     let tableValues = [];
-    
+
     if (vaultData) {
       // Define the order and labels for known fields
       const fieldOrder = [
@@ -513,7 +513,7 @@
           tableHeaders.push(`
             <th class="info-key-horizontal">
               ${field.label}
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')" 
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
                       title="Copy ${field.label}">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
@@ -536,7 +536,7 @@
           tableHeaders.push(`
             <th class="info-key-horizontal">
               ${label}
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')" 
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
                       title="Copy ${label}">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
@@ -555,28 +555,28 @@
       tableHeaders = [
         `<th class="info-key-horizontal">
           Instance ID
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')" 
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')"
                   title="Copy Instance ID">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
         </th>`,
         `<th class="info-key-horizontal">
           Service
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')" 
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')"
                   title="Copy Service">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
         </th>`,
         `<th class="info-key-horizontal">
           Plan
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')" 
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')"
                   title="Copy Plan">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
         </th>`,
         `<th class="info-key-horizontal">
           Created At
-          <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')" 
+          <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')"
                   title="Copy Created At">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
@@ -792,7 +792,7 @@
         }
         const data = await response.json();
         return formatBlacksmithLogs(data.logs);
-        
+
       } else if (type === 'events') {
         // Direct fetch for events
         const response = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
@@ -1096,23 +1096,23 @@
 
     // Store all log data globally for handlers
     window.instanceLogsData = logsData;
-    
+
     // Get list of jobs
     const jobsList = Object.keys(logsData);
     const firstJob = jobsList[0];
-    
+
     // Generate job tabs
     const jobTabs = jobsList.map((job, index) => `
-      <button class="instance-log-job-tab ${index === 0 ? 'active' : ''}" 
+      <button class="instance-log-job-tab ${index === 0 ? 'active' : ''}"
               data-job="${job}"
               onclick="window.selectInstanceJob('${job}')">
         ${job}
       </button>
     `).join('');
-    
+
     // Generate initial content for first job
     const initialContent = formatJobLogContent(firstJob, logsData[firstJob]);
-    
+
     return `
       <div class="instance-logs-wrapper">
         <div class="instance-log-job-tabs">
@@ -1124,20 +1124,20 @@
       </div>
     `;
   };
-  
+
   // Helper function to format job log content with dropdown and content
   const formatJobLogContent = (jobKey, jobData) => {
     if (!jobData) {
       return '<div class="no-data">No data available for this job</div>';
     }
-    
+
     if (jobData.error) {
       return `<div class="error">${jobData.error}</div>`;
     }
-    
+
     const files = jobData.files || {};
     const logs = jobData.logs || 'No logs available';
-    
+
     // If no structured files, show raw logs
     if (typeof files !== 'object' || Object.keys(files).length === 0) {
       return `
@@ -1146,19 +1146,19 @@
         </div>
       `;
     }
-    
+
     // Create layout with dropdown selector and content
     const filesList = Object.keys(files);
     const firstFile = filesList[0];
-    
+
     // Store files for this job
     if (!window.instanceLogFiles) window.instanceLogFiles = {};
     window.instanceLogFiles[jobKey] = files;
-    
+
     const fileOptions = filesList.map(filename => {
       // Show more of the path to distinguish similar filenames
       let displayName = filename;
-      
+
       // Handle different types of log files
       if (filename.includes('@') && filename.includes('.bosh.log')) {
         // For RabbitMQ or other services with @ in the name (e.g., rabbit@hostname.bosh.log)
@@ -1181,20 +1181,20 @@
           displayName = parts.slice(-2).join('/');
         }
       }
-      
+
       // Escape any HTML entities in filenames for security
       const escapedFilename = filename.replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const escapedDisplay = displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      
+
       return `<option value="${escapedFilename}" title="${escapedFilename}">${escapedDisplay}</option>`;
     }).join('');
-    
+
     return `
       <div class="job-logs-container">
         <div class="log-file-selector">
           <label for="log-select-${jobKey.replace(/\//g, '-')}" class="log-select-label">Log File:</label>
-          <select id="log-select-${jobKey.replace(/\//g, '-')}" 
-                  class="log-file-dropdown" 
+          <select id="log-select-${jobKey.replace(/\//g, '-')}"
+                  class="log-file-dropdown"
                   onchange="window.selectLogFileForJob('${jobKey}', this.value)">
             ${fileOptions}
           </select>
@@ -1218,25 +1218,25 @@
   window.selectInstanceJob = (job) => {
     const logsData = window.instanceLogsData;
     if (!logsData || !logsData[job]) return;
-    
+
     // Update active tab
     document.querySelectorAll('.instance-log-job-tab').forEach(tab => {
       tab.classList.remove('active');
     });
     document.querySelector(`.instance-log-job-tab[data-job="${job}"]`).classList.add('active');
-    
+
     // Update content area
     const contentArea = document.getElementById('instance-logs-content');
     if (contentArea) {
       contentArea.innerHTML = formatJobLogContent(job, logsData[job]);
     }
   };
-  
+
   // Handler for log file selection from dropdown
   window.selectLogFileForJob = (job, filename) => {
     const files = window.instanceLogFiles && window.instanceLogFiles[job];
     if (!files || !files[filename]) return;
-    
+
     // Update content display
     const displayEl = document.getElementById(`log-display-${job.replace(/\//g, '-')}`);
     if (displayEl) {
@@ -1295,7 +1295,7 @@
     // Regex pattern to match: YYYY-MM-DD HH:MM:SS.mmm LEVEL [context] message
     const logPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(.*)$/;
     const match = line.match(logPattern);
-    
+
     if (match) {
       return {
         date: match[1],
@@ -1304,7 +1304,7 @@
         message: match[4]
       };
     }
-    
+
     // Handle lines that don't match the pattern (continuation lines, etc.)
     return {
       date: '',
@@ -1316,44 +1316,44 @@
 
   const highlightPatterns = (text) => {
     // Much simpler approach - only highlight very specific, safe patterns
-    
+
     // URLs (avoid any with < or > that might be part of HTML)
     text = text.replace(/https?:\/\/[^\s<>&]+/g, '<span class="url">$&</span>');
-    
+
     // Version strings (very specific format)
     text = text.replace(/\bversion: ([\w.-]+)/gi, 'version: <span class="version">$1</span>');
     text = text.replace(/\bcommit: ([a-f0-9]+)/gi, 'commit: <span class="version">$1</span>');
-    
+
     // HTTP methods (standalone)
     text = text.replace(/\b(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b/g, '<span class="http-method">$1</span>');
-    
+
     // HTTP status codes (3 digits at word boundary)
     text = text.replace(/\b(\d{3})\b(?=\s|$)/g, '<span class="http-status">$1</span>');
-    
+
     // Task IDs
     text = text.replace(/\b(task|Task|TASK) (\d+)\b/g, '$1 <span class="task-id">$2</span>');
-    
+
     return text;
   };
 
   const formatLogMessage = (message) => {
     // First escape HTML characters to prevent XSS (& must be escaped first)
     let escaped = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    
+
     // Then apply our formatting to the escaped text
     // Bold context markers like [instance-details], [vault init], etc.
     let formatted = escaped.replace(/\[([^\]]+)\]/g, '<strong class="log-context">[$1]</strong>');
-    
+
     // Highlight specific patterns
     formatted = highlightPatterns(formatted);
-    
+
     return formatted;
   };
 
   const renderLogRow = (logEntry) => {
     const levelClass = `log-level-${logEntry.level.toLowerCase()}`;
     const formattedMessage = formatLogMessage(logEntry.message);
-    
+
     return `
       <tr class="log-row ${levelClass}">
         <td class="log-date">${logEntry.date}</td>
@@ -1369,7 +1369,7 @@
   const renderLogsTable = (logs) => {
     const lines = logs.split('\n').filter(line => line.trim());
     const rows = lines.map(line => parseLogLine(line));
-    
+
     const tableHTML = `
       <table class="logs-table">
         <thead>
@@ -1385,7 +1385,7 @@
         </tbody>
       </table>
     `;
-    
+
     return tableHTML;
   };
 
@@ -1395,7 +1395,7 @@
     }
 
     const tableHTML = renderLogsTable(logs);
-    
+
     return `
       <div class="logs-container">
         <div class="logs-header">
@@ -1564,7 +1564,7 @@
 
     const text = logsSource.textContent || logsSource.innerText;
     const button = event.currentTarget;
-    
+
     try {
       await navigator.clipboard.writeText(text);
       // Visual feedback
@@ -1893,7 +1893,7 @@
           // Build plans per service map for the filter
           const plansPerService = {};
           const instancesList = Object.entries(window.serviceInstances || {});
-          
+
           instancesList.forEach(([id, details]) => {
             if (details.service_id) {
               if (!plansPerService[details.service_id]) {
@@ -1936,10 +1936,10 @@
           // Service filter change handler
           serviceFilter.addEventListener('change', (e) => {
             const selectedService = e.target.value;
-            
+
             // Update plan filter options
             planFilter.innerHTML = '<option value="">All Plans</option>';
-            
+
             if (selectedService && plansPerService[selectedService]) {
               const plans = Array.from(plansPerService[selectedService]).sort();
               plans.forEach(plan => {
@@ -1952,7 +1952,7 @@
             } else {
               planFilter.disabled = !selectedService;
             }
-            
+
             // Apply filters
             applyFilters();
           });
