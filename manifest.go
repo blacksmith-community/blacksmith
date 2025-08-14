@@ -186,6 +186,8 @@ func GetCreds(id string, plan Plan, director bosh.Director, l *Log) (interface{}
 	byType := make(map[string]*Job)
 
 	network := os.Getenv("BOSH_NETWORK")
+	// Remove dots from network component for valid DNS names (matching the pattern in env.rb)
+	networkDNS := strings.ReplaceAll(network, ".", "")
 
 	for _, vm := range vms {
 		l.Debug("vm.id: %s, vm.CID: %s", vm.ID, vm.CID)
@@ -195,7 +197,7 @@ func GetCreds(id string, plan Plan, director bosh.Director, l *Log) (interface{}
 			vm.ID,
 			plan.ID,
 			plan.Name,
-			vm.ID + "." + plan.Type + "." + network + "." + deployment + ".bosh",
+			vm.ID + "." + plan.Type + "." + networkDNS + "." + deployment + ".bosh",
 			vm.IPs,
 			vm.DNS,
 		}
