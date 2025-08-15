@@ -27,6 +27,7 @@ type Broker struct {
 	BOSH    bosh.Director
 	Vault   *Vault
 	Shield  shield.Client
+	Config  *Config
 }
 
 type Job struct {
@@ -350,6 +351,14 @@ func (b *Broker) Provision(
 	if len(details.RawParameters) > 0 {
 		WriteDataFile(instanceID, details.RawParameters)
 		WriteYamlFile(instanceID, details.RawParameters)
+	}
+
+	// Store plan file SHA256 references for this instance
+	l.Debug("storing plan file references for instance %s", instanceID)
+	planStorage := NewPlanStorage(b.Vault, b.Config)
+	if err := planStorage.StorePlanReferences(instanceID, plan.Service.ID, plan.ID); err != nil {
+		l.Error("failed to store plan references: %s", err)
+		// Continue anyway, this is not fatal for provisioning
 	}
 
 	// Convert details to a map for the async function

@@ -65,6 +65,13 @@ func main() {
 	if err = vault.VerifyMount("secret", true); err != nil {
 		log.Fatal(err)
 	}
+
+	// Store blacksmith plans to Vault after ensuring KVv2
+	planStorage := NewPlanStorage(vault, &config)
+	if err = planStorage.StorePlans(); err != nil {
+		l.Error("Failed to store blacksmith plans to Vault: %s", err)
+		// Don't fail startup if plan storage fails
+	}
 	// Set BOSH environment variables for CLI compatibility
 	if err := os.Setenv("BOSH_CLIENT", config.BOSH.Username); err != nil {
 		l.Error("Failed to set BOSH_CLIENT env var: %s", err)
@@ -205,6 +212,7 @@ func main() {
 		Vault:  vault,
 		BOSH:   boshDirector,
 		Shield: shieldClient,
+		Config: &config,
 	}
 
 	l.Info("reading services from %s", strings.Join(os.Args[3:], ", "))

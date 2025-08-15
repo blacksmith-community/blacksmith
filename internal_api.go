@@ -854,30 +854,30 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Collect all logs from all instance groups
 		allLogs := make(map[string]interface{})
-		
+
 		for _, ig := range instanceGroups {
 			group, ok := ig.(map[interface{}]interface{})
 			if !ok {
 				continue
 			}
-			
+
 			jobName, ok := group["name"].(string)
 			if !ok {
 				continue
 			}
-			
+
 			instances := 1
 			if instCount, ok := group["instances"].(int); ok {
 				instances = instCount
 			}
-			
+
 			// Fetch logs for each instance in the group
 			for i := 0; i < instances; i++ {
 				jobIndex := strconv.Itoa(i)
 				logKey := fmt.Sprintf("%s/%s", jobName, jobIndex)
-				
+
 				l.Debug("fetching logs for job %s/%s", jobName, jobIndex)
-				
+
 				// Call FetchLogs on the BOSH director
 				logs, err := api.Broker.BOSH.FetchLogs(deploymentName, jobName, jobIndex)
 				if err != nil {
@@ -895,7 +895,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 						lines := strings.Split(logs, "\n")
 						var currentFile string
 						var currentContent strings.Builder
-						
+
 						for _, line := range lines {
 							if strings.HasPrefix(line, "===") && strings.HasSuffix(line, "===") {
 								// Save previous file if exists
@@ -921,9 +921,9 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 						// Single log content
 						logFiles["combined.log"] = logs
 					}
-					
+
 					allLogs[logKey] = map[string]interface{}{
-						"logs":  logs,  // Keep full logs for compatibility
+						"logs":  logs,     // Keep full logs for compatibility
 						"files": logFiles, // Structured log files
 					}
 				}
@@ -1081,7 +1081,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					if logType == "debug" {
 						outputType = "debug"
 					}
-					
+
 					// Get task output from BOSH using the appropriate output type
 					output, err := api.Broker.BOSH.GetTaskOutput(tid, outputType)
 					if err != nil {
@@ -1091,7 +1091,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					} else {
 						if output != "" {
 							var taskEvents []bosh.TaskEvent
-							
+
 							// Parse output based on type
 							if logType == "debug" {
 								// Use debug parser for debug output
