@@ -19,6 +19,10 @@ type Plan struct {
 	Manifest       map[interface{}]interface{} `json:"-"`
 	Credentials    map[interface{}]interface{} `json:"-"`
 	InitScriptPath string                      `json:"-"`
+	
+	// Store the actual file paths for SHA256 calculation
+	ManifestPath    string `json:"-"`
+	CredentialsPath string `json:"-"`
 
 	Service *Service `yaml:"service" json:"service"`
 }
@@ -137,6 +141,9 @@ func ReadPlan(path string) (p Plan, err error) {
 		return
 	}
 	l.Debug("Successfully merged manifest files for plan %s", p.Name)
+	
+	// Store the manifest file path for later SHA256 calculation
+	p.ManifestPath = manifestFile
 
 	credsFile := fmt.Sprintf("%s/credentials.yml", path)
 	l.Debug("Checking for credentials file: %s", credsFile)
@@ -153,12 +160,15 @@ func ReadPlan(path string) (p Plan, err error) {
 			return
 		}
 		l.Debug("Successfully loaded credentials for plan %s", p.Name)
+		// Store the credentials file path for later SHA256 calculation
+		p.CredentialsPath = credsFile
 	} else if err != nil {
 		l.Error("Error checking credentials file %s: %s", credsFile, err)
 		return
 	} else {
 		l.Debug("No credentials file found for plan %s, using empty credentials", p.Name)
 		p.Credentials = make(map[interface{}]interface{})
+		// No credentials file path to store
 	}
 
 	p.InitScriptPath = fmt.Sprintf("%s/init", path)

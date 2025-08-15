@@ -285,64 +285,37 @@ func calculateSHA256(filePath string) (string, error) {
 }
 
 // StorePlanReferences stores the SHA256 references of plan files for a service instance
-func (ps *PlanStorage) StorePlanReferences(instanceID string, serviceID string, planID string) error {
+func (ps *PlanStorage) StorePlanReferences(instanceID string, plan Plan) error {
 	l := Logger.Wrap("Plan Storage")
-	l.Info("Storing plan references for instance %s (serviceID: %s, planID: %s)", instanceID, serviceID, planID)
-
-	// The planID comes in the form "serviceID-planName"
-	// We need to extract the actual plan name
-	planName := strings.TrimPrefix(planID, serviceID+"-")
-	l.Debug("Extracted plan name: %s from planID: %s", planName, planID)
-
-	// Search for the plan directory in common locations
-	// First, look for service-specific blacksmith plans directory
-	possiblePaths := []string{
-		fmt.Sprintf("/var/vcap/jobs/%s-blacksmith-plans/plans/%s", serviceID, planName),
-	}
-
-	// Also check for variations in the job name
-	// Sometimes the service ID might not exactly match the job directory name
-	jobsDir := "/var/vcap/jobs"
-	if entries, err := os.ReadDir(jobsDir); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() && strings.HasSuffix(entry.Name(), "-blacksmith-plans") {
-				// Check if this might be our service
-				jobServiceName := strings.TrimSuffix(entry.Name(), "-blacksmith-plans")
-				// Check for exact match or similar names
-				if strings.Contains(jobServiceName, serviceID) || strings.Contains(serviceID, jobServiceName) {
-					planPath := filepath.Join(jobsDir, entry.Name(), "plans", planName)
-					possiblePaths = append(possiblePaths, planPath)
-				}
-			}
-		}
-	}
-
-	// Find the actual plan directory
-	var planDir string
-	for _, path := range possiblePaths {
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
-			planDir = path
-			l.Debug("Found plan directory: %s", planDir)
-			break
-		}
-	}
-
-	if planDir == "" {
-		l.Error("Could not find plan directory for service %s, plan %s", serviceID, planName)
-		l.Debug("Searched paths: %v", possiblePaths)
-		// Don't fail provisioning because of this
-		return nil
-	}
+	l.Info("Storing plan references for instance %s (plan: %s)", instanceID, plan.Name)
 
 	type planRef struct {
 		fileType string
 		filePath string
 	}
 
-	refs := []planRef{
-		{fileType: "manifest", filePath: filepath.Join(planDir, "manifest.yml")},
-		{fileType: "credentials", filePath: filepath.Join(planDir, "credentials.yml")},
-		{fileType: "init", filePath: filepath.Join(planDir, "init")},
+	refs := []planRef{}
+	
+	// Add manifest file if path is set
+	if plan.ManifestPath != "" {
+		refs = append(refs, planRef{fileType: "manifest", filePath: plan.ManifestPath})
+	}
+	
+	// Add credentials file if path is set
+	if plan.CredentialsPath != "" {
+		refs = append(refs, planRef{fileType: "credentials", filePath: plan.CredentialsPath})
+	}
+	
+	// Add init script if path is set and file exists
+	if plan.InitScriptPath != "" {
+		if _, err := os.Stat(plan.InitScriptPath); err == nil {
+			refs = append(refs, planRef{fileType: "init", filePath: plan.InitScriptPath})
+		}
+	}
+
+	if len(refs) == 0 {
+		l.Info("No plan files found to store references for instance %s", instanceID)
+		return nil
 	}
 
 	shaRefs := make(map[string]string)
@@ -366,6 +339,11 @@ func (ps *PlanStorage) StorePlanReferences(instanceID string, serviceID string, 
 
 		shaRefs[ref.fileType] = shasum
 		l.Debug("Calculated SHA256 for %s: %s", ref.fileType, shasum)
+	}
+
+	if len(shaRefs) == 0 {
+		l.Info("No SHA256 references calculated for instance %s", instanceID)
+		return nil
 	}
 
 	// Store the SHA references in Vault at the instance path

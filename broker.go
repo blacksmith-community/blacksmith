@@ -356,7 +356,7 @@ func (b *Broker) Provision(
 	// Store plan file SHA256 references for this instance
 	l.Debug("storing plan file references for instance %s", instanceID)
 	planStorage := NewPlanStorage(b.Vault, b.Config)
-	if err := planStorage.StorePlanReferences(instanceID, plan.Service.ID, plan.ID); err != nil {
+	if err := planStorage.StorePlanReferences(instanceID, plan); err != nil {
 		l.Error("failed to store plan references: %s", err)
 		// Continue anyway, this is not fatal for provisioning
 	}
