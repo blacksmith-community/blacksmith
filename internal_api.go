@@ -1076,67 +1076,90 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 						return
 					}
 
-					// Determine output type based on logType
-					outputType := "result"
+					// Handle output based on logType
+					var output string
 					if logType == "debug" {
-						outputType = "debug"
+						// For debug, get debug output directly
+						debugOutput, err := api.Broker.BOSH.GetTaskOutput(tid, "debug")
+						if err != nil {
+							l.Error("failed to get task debug output for task %d: %s", tid, err)
+							// Return empty logs array rather than error
+							logs = []interface{}{}
+						} else {
+							output = debugOutput
+						}
+					} else {
+						// For deployment log, try "event" output first, then fall back to "result"
+						eventOutput, err := api.Broker.BOSH.GetTaskOutput(tid, "event")
+						if err != nil {
+							l.Debug("unable to get task event output for task %d: %s", tid, err)
+							eventOutput = ""
+						}
+
+						if eventOutput != "" {
+							l.Debug("using event output for task %d (size: %d bytes)", tid, len(eventOutput))
+							output = eventOutput
+						} else {
+							// Fall back to result output
+							resultOutput, err := api.Broker.BOSH.GetTaskOutput(tid, "result")
+							if err != nil {
+								l.Error("unable to get task result output for task %d: %s", tid, err)
+								// Return empty logs array rather than error
+								logs = []interface{}{}
+							} else {
+								l.Debug("using result output for task %d (size: %d bytes)", tid, len(resultOutput))
+								output = resultOutput
+							}
+						}
 					}
 
-					// Get task output from BOSH using the appropriate output type
-					output, err := api.Broker.BOSH.GetTaskOutput(tid, outputType)
-					if err != nil {
-						l.Error("failed to get task %s output for task %d: %s", outputType, tid, err)
-						// Return empty logs array rather than error
-						logs = []interface{}{}
-					} else {
-						if output != "" {
-							var taskEvents []bosh.TaskEvent
+					if output != "" {
+						var taskEvents []bosh.TaskEvent
 
-							// Parse output based on type
-							if logType == "debug" {
-								// Use debug parser for debug output
-								taskEvents = parseDebugLogToEvents(output)
-							} else {
-								// Use result parser for deployment log
-								taskEvents = parseResultOutputToEvents(output)
+						// Parse output based on type
+						if logType == "debug" {
+							// Use debug parser for debug output
+							taskEvents = parseDebugLogToEvents(output)
+						} else {
+							// Use result parser for deployment log
+							taskEvents = parseResultOutputToEvents(output)
+						}
+
+						// Convert task events to log format expected by frontend
+						for _, event := range taskEvents {
+							logEntry := map[string]interface{}{
+								"time":     event.Time.Unix(),
+								"stage":    event.Stage,
+								"task":     event.Task,
+								"index":    event.Index,
+								"total":    event.Total,
+								"state":    event.State,
+								"progress": event.Progress,
+								"tags":     event.Tags,
+								"data":     event.Data,
 							}
+							logs = append(logs, logEntry)
+						}
 
-							// Convert task events to log format expected by frontend
-							for _, event := range taskEvents {
-								logEntry := map[string]interface{}{
-									"time":     event.Time.Unix(),
-									"stage":    event.Stage,
-									"task":     event.Task,
-									"index":    event.Index,
-									"total":    event.Total,
-									"state":    event.State,
-									"progress": event.Progress,
-									"tags":     event.Tags,
-									"data":     event.Data,
-								}
-								logs = append(logs, logEntry)
-							}
-
-							// If no events were parsed, treat as plain text
-							if len(logs) == 0 {
-								lines := strings.Split(output, "\n")
-								for i, line := range lines {
-									if line != "" {
-										logEntry := map[string]interface{}{
-											"time":     time.Now().Unix() - int64(len(lines)-i),
-											"stage":    "Task " + taskID,
-											"task":     line,
-											"index":    i + 1,
-											"total":    len(lines),
-											"state":    "finished",
-											"progress": 100,
-											"tags":     []string{deploymentName},
-											"data": map[string]interface{}{
-												"status": "done",
-											},
-										}
-										logs = append(logs, logEntry)
+						// If no events were parsed, treat as plain text
+						if len(logs) == 0 {
+							lines := strings.Split(output, "\n")
+							for i, line := range lines {
+								if line != "" {
+									logEntry := map[string]interface{}{
+										"time":     time.Now().Unix() - int64(len(lines)-i),
+										"stage":    "Task " + taskID,
+										"task":     line,
+										"index":    i + 1,
+										"total":    len(lines),
+										"state":    "finished",
+										"progress": 100,
+										"tags":     []string{deploymentName},
+										"data": map[string]interface{}{
+											"status": "done",
+										},
 									}
+									logs = append(logs, logEntry)
 								}
 							}
 						}

@@ -595,7 +595,12 @@ func (b *Broker) LastOperation(
 	}
 	if !exists {
 		l.Error("instance %s not found in vault index", instanceID)
-		return domain.LastOperation{}, fmt.Errorf("instance not found")
+		// Return "gone" status for instances that no longer exist
+		// This tells CF the operation is complete and the instance is gone
+		return domain.LastOperation{
+			State:       domain.Succeeded,
+			Description: "Instance has been deleted",
+		}, nil
 	}
 
 	deploymentName := instance.PlanID + "-" + instanceID

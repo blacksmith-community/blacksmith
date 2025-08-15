@@ -295,17 +295,17 @@ func (ps *PlanStorage) StorePlanReferences(instanceID string, plan Plan) error {
 	}
 
 	refs := []planRef{}
-	
+
 	// Add manifest file if path is set
 	if plan.ManifestPath != "" {
 		refs = append(refs, planRef{fileType: "manifest", filePath: plan.ManifestPath})
 	}
-	
+
 	// Add credentials file if path is set
 	if plan.CredentialsPath != "" {
 		refs = append(refs, planRef{fileType: "credentials", filePath: plan.CredentialsPath})
 	}
-	
+
 	// Add init script if path is set and file exists
 	if plan.InitScriptPath != "" {
 		if _, err := os.Stat(plan.InitScriptPath); err == nil {

@@ -19,7 +19,7 @@ type Plan struct {
 	Manifest       map[interface{}]interface{} `json:"-"`
 	Credentials    map[interface{}]interface{} `json:"-"`
 	InitScriptPath string                      `json:"-"`
-	
+
 	// Store the actual file paths for SHA256 calculation
 	ManifestPath    string `json:"-"`
 	CredentialsPath string `json:"-"`
@@ -141,7 +141,7 @@ func ReadPlan(path string) (p Plan, err error) {
 		return
 	}
 	l.Debug("Successfully merged manifest files for plan %s", p.Name)
-	
+
 	// Store the manifest file path for later SHA256 calculation
 	p.ManifestPath = manifestFile
 
