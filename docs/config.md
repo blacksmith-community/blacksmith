@@ -1,0 +1,468 @@
+# Blacksmith Configuration Reference
+
+This document provides comprehensive documentation for all Blacksmith configuration file options. The configuration file is in YAML format and defines how Blacksmith connects to external services and operates.
+
+## Configuration File Structure
+
+The main configuration file contains the following top-level sections:
+
+```yaml
+broker:      # HTTP server and authentication settings
+vault:       # Vault integration configuration
+shield:      # SHIELD backup integration (optional)
+bosh:        # BOSH director configuration
+debug:       # Enable debug logging
+web-root:    # Static web content directory
+env:         # Environment identifier
+shareable:   # Enable shareable service instances
+forges:      # Service template discovery configuration
+```
+
+## Top-Level Configuration Options
+
+### `debug` (boolean, optional)
+**Default:** `false`
+
+Enable debug logging for detailed troubleshooting information.
+
+```yaml
+debug: true
+```
+
+### `web-root` (string, optional)
+**Default:** `""` (disabled)
+
+Path to directory containing static web content to serve via the web UI. If not specified, web UI assets are served from embedded files.
+
+```yaml
+web-root: "/path/to/web/assets"
+```
+
+### `env` (string, optional)
+**Default:** `""`
+
+Environment identifier used for labeling and organization purposes. Displayed in the web UI and used for internal identification.
+
+```yaml
+env: "production"
+```
+
+### `shareable` (boolean, optional)
+**Default:** `false`
+
+Enable shareable service instances, allowing multiple applications to bind to the same service instance.
+
+```yaml
+shareable: true
+```
+
+## Broker Configuration (`broker`)
+
+The `broker` section configures the HTTP server, authentication, and operational timeouts.
+
+```yaml
+broker:
+  username: "blacksmith"        # HTTP basic auth username
+  password: "blacksmith"        # HTTP basic auth password
+  port: "3000"                  # HTTP server port
+  bind_ip: "0.0.0.0"           # IP address to bind to
+  read_timeout: 120             # HTTP read timeout (seconds)
+  write_timeout: 120            # HTTP write timeout (seconds)
+  idle_timeout: 300             # HTTP idle timeout (seconds)
+  tls:                          # TLS configuration (see TLS section)
+    enabled: true
+    port: "443"
+    certificate: "/path/to/cert.pem"
+    key: "/path/to/key.pem"
+```
+
+### Required Fields
+- None (all fields have defaults)
+
+### Optional Fields
+
+#### `username` (string)
+**Default:** `"blacksmith"`
+
+Username for HTTP basic authentication. Used by Cloud Foundry to authenticate with the service broker.
+
+#### `password` (string)
+**Default:** `"blacksmith"`
+
+Password for HTTP basic authentication. Should be changed from default in production environments.
+
+#### `port` (string)
+**Default:** `"3000"`
+
+Port number for the HTTP server to listen on.
+
+#### `bind_ip` (string)
+**Default:** `"0.0.0.0"`
+
+IP address for the HTTP server to bind to. Use `"127.0.0.1"` to restrict to localhost only.
+
+#### `read_timeout` (integer)
+**Default:** `120`
+
+HTTP server read timeout in seconds. Maximum time allowed for reading the entire request, including the body.
+
+#### `write_timeout` (integer)
+**Default:** `120`
+
+HTTP server write timeout in seconds. Maximum time allowed for writing the response.
+
+#### `idle_timeout` (integer)
+**Default:** `300`
+
+HTTP server idle timeout in seconds. Maximum time to wait for the next request when keep-alives are enabled.
+
+#### `tls` (TLSConfig)
+**Default:** See TLS Configuration section
+
+TLS/HTTPS configuration for secure connections. For detailed TLS configuration options, see [docs/tls.md](./tls.md).
+
+## Vault Configuration (`vault`)
+
+The `vault` section configures integration with HashiCorp Vault for secrets management.
+
+```yaml
+vault:
+  address: "https://vault.example.com:8200"  # Required
+  token: "vault-token"                       # Optional if using credentials file
+  skip_ssl_validation: false                 # Optional
+  credentials: "/path/to/vault/creds"        # Optional
+```
+
+### Required Fields
+
+#### `address` (string)
+**Required**
+
+URL of the Vault server including protocol and port.
+
+```yaml
+vault:
+  address: "https://vault.example.com:8200"
+```
+
+### Optional Fields
+
+#### `token` (string)
+**Default:** `""` (uses credentials file or environment)
+
+Vault authentication token. If not provided, Blacksmith will attempt to read credentials from the file specified in the `credentials` field.
+
+#### `skip_ssl_validation` (boolean)
+**Default:** `false`
+
+Skip SSL certificate validation when connecting to Vault. Should only be used in development environments.
+
+#### `credentials` (string)
+**Default:** `""`
+
+Path to file containing Vault credentials. Used when `token` is not provided directly in the configuration.
+
+## BOSH Configuration (`bosh`)
+
+The `bosh` section configures integration with the BOSH director for service deployment management.
+
+```yaml
+bosh:
+  address: "https://bosh.example.com:25555"  # Required
+  username: "admin"                          # Required
+  password: "admin-password"                 # Required
+  skip_ssl_validation: false                 # Optional
+  cacert: "/path/to/ca.pem"                 # Optional
+  cloud-config: "/path/to/cloud-config.yml" # Optional
+  network: "blacksmith"                      # Optional
+  stemcells:                                 # Optional
+    - name: "bosh-warden-boshlite-ubuntu-trusty-go_agent"
+      version: "3468.21"
+      url: "https://bosh.io/d/stemcells/bosh-warden-boshlite-ubuntu-trusty-go_agent"
+      sha1: "1234567890abcdef"
+  releases:                                  # Optional
+    - name: "redis"
+      version: "14.0.1"
+      url: "https://bosh.io/d/github.com/cloudfoundry-community/redis-boshrelease"
+      sha1: "abcdef1234567890"
+```
+
+### Required Fields
+
+#### `address` (string)
+**Required**
+
+URL of the BOSH director including protocol and port.
+
+#### `username` (string)
+**Required**
+
+Username for BOSH director authentication.
+
+#### `password` (string)
+**Required**
+
+Password for BOSH director authentication.
+
+### Optional Fields
+
+#### `skip_ssl_validation` (boolean)
+**Default:** `false`
+
+Skip SSL certificate validation when connecting to BOSH director. Should only be used in development environments.
+
+#### `cacert` (string)
+**Default:** `""`
+
+Path to CA certificate file for validating the BOSH director's SSL certificate.
+
+#### `cloud-config` (string)
+**Default:** `""`
+
+Path to BOSH cloud config file. If provided, Blacksmith will upload this cloud config to the BOSH director at startup.
+
+#### `network` (string)
+**Default:** `"blacksmith"`
+
+Default network name to use for deployed services. This network must be defined in the BOSH cloud config.
+
+#### `stemcells` (array of Uploadable)
+**Default:** `[]`
+
+List of stemcells to automatically upload to the BOSH director at startup. See [Uploadable Configuration](#uploadable-configuration) for field details.
+
+#### `releases` (array of Uploadable)
+**Default:** `[]`
+
+List of BOSH releases to automatically upload to the BOSH director at startup. See [Uploadable Configuration](#uploadable-configuration) for field details.
+
+## SHIELD Configuration (`shield`)
+
+The `shield` section configures optional integration with SHIELD for backup and restore functionality.
+
+```yaml
+shield:
+  enabled: true                              # Required to enable SHIELD
+  address: "https://shield.example.com"      # Required when enabled
+  skip_ssl_validation: false                 # Optional
+  agent: "shield-agent"                      # Required when enabled
+  auth_method: "token"                       # Required: "token" or "local"
+  token: "shield-token"                      # Required for token auth
+  username: "shield-user"                    # Required for local auth
+  password: "shield-password"                # Required for local auth
+  tenant: "tenant-uuid-or-name"              # Required when enabled
+  store: "store-uuid-or-name"                # Required when enabled
+  schedule: "daily 6am"                      # Optional
+  retain: "7d"                               # Optional
+  enabled_on_targets: ["redis", "postgres"] # Optional
+```
+
+### Required Fields (when enabled)
+
+#### `enabled` (boolean)
+**Required**
+
+Enable SHIELD integration. Must be `true` to use SHIELD features.
+
+#### `address` (string)
+**Required when enabled**
+
+URL of the SHIELD server.
+
+#### `agent` (string)
+**Required when enabled**
+
+SHIELD agent identifier for backup operations.
+
+#### `auth_method` (string)
+**Required when enabled**
+
+Authentication method: `"token"` or `"local"`.
+
+#### `tenant` (string)
+**Required when enabled**
+
+SHIELD tenant UUID or exact name.
+
+#### `store` (string)
+**Required when enabled**
+
+SHIELD store UUID or exact name where backups will be stored.
+
+### Authentication Fields
+
+For token authentication (`auth_method: "token"`):
+
+#### `token` (string)
+**Required for token auth**
+
+SHIELD authentication token.
+
+For local authentication (`auth_method: "local"`):
+
+#### `username` (string)
+**Required for local auth**
+
+SHIELD username.
+
+#### `password` (string)
+**Required for local auth**
+
+SHIELD password.
+
+### Optional Fields
+
+#### `skip_ssl_validation` (boolean)
+**Default:** `false`
+
+Skip SSL certificate validation when connecting to SHIELD.
+
+#### `schedule` (string)
+**Default:** `"daily 6am"`
+
+Backup schedule specification (e.g., "daily", "weekly", "daily at 11:00").
+
+#### `retain` (string)
+**Default:** `"7d"`
+
+Backup retention policy (e.g., "7d", "4w", "6m").
+
+#### `enabled_on_targets` (array of strings)
+**Default:** `[]`
+
+List of service types that should have backup enabled automatically (e.g., `["redis", "postgres", "mysql"]`).
+
+## Forges Configuration (`forges`)
+
+The `forges` section configures automatic discovery of service templates (forges).
+
+```yaml
+forges:
+  auto-scan: true                            # Enable automatic scanning
+  scan-paths: ["/path/to/forges"]           # Directories to scan
+  scan-patterns: ["*-forge", "*-service"]   # Directory name patterns
+```
+
+### Optional Fields
+
+#### `auto-scan` (boolean)
+**Default:** `false`
+
+Enable automatic scanning for service forge directories.
+
+#### `scan-paths` (array of strings)
+**Default:** `[]`
+
+List of directory paths to scan for service forges when auto-scan is enabled.
+
+#### `scan-patterns` (array of strings)
+**Default:** `[]`
+
+List of directory name patterns to match when scanning for service forges (supports shell-style wildcards).
+
+## Uploadable Configuration
+
+The `Uploadable` type is used for both stemcells and releases in the BOSH configuration:
+
+```yaml
+- name: "resource-name"           # Required
+  version: "1.0.0"               # Required
+  url: "https://example.com/..."  # Required
+  sha1: "abc123..."              # Required
+```
+
+### Required Fields
+
+#### `name` (string)
+**Required**
+
+Name of the stemcell or release.
+
+#### `version` (string)
+**Required**
+
+Version of the stemcell or release.
+
+#### `url` (string)
+**Required**
+
+Download URL for the stemcell or release.
+
+#### `sha1` (string)
+**Required**
+
+SHA1 checksum for integrity verification.
+
+## TLS Configuration
+
+For detailed TLS configuration options including certificates, protocols, and ciphers, see [docs/tls.md](./tls.md).
+
+## Environment Variables
+
+Blacksmith sets the following environment variables based on configuration:
+
+- `BOSH_NETWORK`: Set to the value of `bosh.network`
+- `VAULT_ADDR`: Set to the value of `vault.address`
+- `BOSH_CLIENT`: Set to the value of `bosh.username`
+- `BOSH_CLIENT_SECRET`: Set to the value of `bosh.password`
+
+## Example Configuration
+
+```yaml
+debug: false
+env: "production"
+web-root: "./ui"
+shareable: true
+
+broker:
+  username: "cf-broker"
+  password: "secure-password"
+  port: "3000"
+  bind_ip: "0.0.0.0"
+  read_timeout: 120
+  write_timeout: 120
+  idle_timeout: 300
+  tls:
+    enabled: true
+    port: "443"
+    certificate: "/etc/ssl/certs/blacksmith.pem"
+    key: "/etc/ssl/private/blacksmith.key"
+
+vault:
+  address: "https://vault.example.com:8200"
+  skip_ssl_validation: false
+  credentials: "/etc/blacksmith/vault-creds"
+
+bosh:
+  address: "https://bosh.example.com:25555"
+  username: "blacksmith"
+  password: "bosh-password"
+  skip_ssl_validation: false
+  network: "services"
+  stemcells:
+    - name: "bosh-aws-xen-hvm-ubuntu-jammy-go_agent"
+      version: "1.181"
+      url: "https://bosh.io/d/stemcells/bosh-aws-xen-hvm-ubuntu-jammy-go_agent"
+      sha1: "example-sha1-hash"
+
+shield:
+  enabled: true
+  address: "https://shield.example.com"
+  agent: "blacksmith-agent"
+  auth_method: "token"
+  token: "shield-auth-token"
+  tenant: "blacksmith-tenant"
+  store: "s3-backup-store"
+  schedule: "daily 2am"
+  retain: "30d"
+  enabled_on_targets: ["redis", "postgres"]
+
+forges:
+  auto-scan: true
+  scan-paths:
+    - "/var/vcap/jobs"
+    - "/var/vcap/data/blacksmith"
+  scan-patterns:
+    - "*-forge/templates"
+    - "*-forge"    
+```
