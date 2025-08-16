@@ -337,11 +337,27 @@
         <tbody>
           <tr>
             <td class="info-key">Service</td>
-            <td class="info-value">${service.name}</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${service.name}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${service.name}</span>
+              </span>
+            </td>
           </tr>
           <tr>
             <td class="info-key">Plan</td>
-            <td class="info-value">${plan.name}</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${plan.name}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${plan.name}</span>
+              </span>
+            </td>
           </tr>
           <tr>
             <td class="info-key">Description</td>
@@ -431,20 +447,24 @@
 
     const filterSection = `
       <div class="services-filter-section">
-        <div class="filter-controls">
-          <div class="filter-group">
-            <label for="service-filter">Service:</label>
-            <select id="service-filter" class="filter-select">
-              <option value="">All Services</option>
-              ${serviceOptions}
-            </select>
-          </div>
-          <div class="filter-group">
-            <label for="plan-filter">Plan:</label>
-            <select id="plan-filter" class="filter-select" disabled>
-              <option value="">All Plans</option>
-            </select>
-          </div>
+        <div class="filter-row">
+          <label for="service-filter">Service:</label>
+          <select id="service-filter" class="filter-select">
+            <option value="">All Services</option>
+            ${serviceOptions}
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="plan-filter">Plan:</label>
+          <select id="plan-filter" class="filter-select" disabled>
+            <option value="">All Plans</option>
+          </select>
+        </div>
+        <div class="filter-buttons">
+          <button id="copy-deployment-names" class="copy-deployment-names-btn" title="Copy Service Instance Deployment Names">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy Deployments</span>
+          </button>
           <button id="clear-filters" class="clear-filters-btn">Clear</button>
         </div>
         <div class="filter-status">
@@ -1906,6 +1926,7 @@
           const serviceFilter = document.getElementById('service-filter');
           const planFilter = document.getElementById('plan-filter');
           const clearFiltersBtn = document.getElementById('clear-filters');
+          const copyDeploymentNamesBtn = document.getElementById('copy-deployment-names');
           const filterCount = document.getElementById('filter-count');
 
           if (!serviceFilter || !planFilter) return;
@@ -1990,6 +2011,77 @@
               planFilter.disabled = true;
               planFilter.innerHTML = '<option value="">All Plans</option>';
               applyFilters();
+            });
+          }
+
+          // Copy deployment names button
+          if (copyDeploymentNamesBtn) {
+            copyDeploymentNamesBtn.addEventListener('click', async (e) => {
+              e.preventDefault();
+
+              // Get all visible service items
+              const visibleItems = Array.from(document.querySelectorAll('#services .service-item'))
+                .filter(item => item.style.display !== 'none');
+
+              // Extract deployment names
+              const deploymentNames = visibleItems.map(item => {
+                const instanceId = item.dataset.instanceId;
+                const details = window.serviceInstances[instanceId];
+                if (details) {
+                  // Use the same pattern as in renderServiceDetail function
+                  return `${details.service_id}-${details.plan.name}-${instanceId}`;
+                }
+                return instanceId; // fallback
+              });
+
+              if (deploymentNames.length === 0) {
+                console.warn('No deployment names to copy');
+                return;
+              }
+
+              const text = deploymentNames.join('\n');
+
+              try {
+                await navigator.clipboard.writeText(text);
+                // Visual feedback
+                const button = e.currentTarget;
+                button.classList.add('copied');
+                const originalTitle = button.title;
+                button.title = 'Copied!';
+                const spanElement = button.querySelector('span');
+                const originalText = spanElement.textContent;
+                spanElement.textContent = 'Copied!';
+
+                setTimeout(() => {
+                  button.classList.remove('copied');
+                  button.title = originalTitle;
+                  spanElement.textContent = originalText;
+                }, 2000);
+              } catch (err) {
+                console.error('Failed to copy deployment names:', err);
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                  document.execCommand('copy');
+                  const button = e.currentTarget;
+                  button.classList.add('copied');
+                  const spanElement = button.querySelector('span');
+                  const originalText = spanElement.textContent;
+                  spanElement.textContent = 'Copied!';
+                  setTimeout(() => {
+                    button.classList.remove('copied');
+                    spanElement.textContent = originalText;
+                  }, 2000);
+                } catch (err) {
+                  console.error('Fallback copy failed:', err);
+                }
+                document.body.removeChild(textarea);
+              }
             });
           }
         };

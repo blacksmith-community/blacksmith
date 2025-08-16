@@ -111,10 +111,20 @@ gosec: ## Run security scanner on source code
 	@echo "$(GREEN)Running security scan...$(RESET)"
 	@command -v gosec >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing gosec...$(RESET)"; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
+		go install github.com/secureco/gosec/v2/cmd/gosec@latest; \
 	}
 	@gosec -fmt text $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Security scan complete$(RESET)"
+
+.PHONY: staticcheck
+staticcheck: ## Run staticcheck static analysis
+	@echo "$(GREEN)Running staticcheck...$(RESET)"
+	@command -v staticcheck >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing staticcheck...$(RESET)"; \
+		go install honnef.co/go/tools/cmd/staticcheck@latest; \
+	}
+	@staticcheck $(shell go list ./... | grep -v vendor)
+	@echo "$(GREEN)✓ Staticcheck analysis complete$(RESET)"
 
 .PHONY: trivy
 trivy: ## Run Trivy container and dependency scanner
@@ -134,7 +144,7 @@ security: govulncheck gosec trivy ## Run all security scans (govulncheck, gosec,
 	@echo "$(GREEN)✓ All security scans complete$(RESET)"
 
 .PHONY: check
-check: lint vet test ## Run basic checks (lint, vet, test)
+check: lint vet staticcheck test ## Run basic checks (lint, vet, staticcheck, test)
 	@echo "$(GREEN)✓ Basic checks passed$(RESET)"
 
 .PHONY: check-all
@@ -223,4 +233,4 @@ deps-tidy: ## Clean up go.mod and go.sum
 
 # Include all phony targets
 .PHONY: build linux dev test test-short test-all coverage coverage-html report fmt vet lint \
-        govulncheck gosec trivy security check check-all clean shipit version deps deps-update deps-tidy help
+        govulncheck gosec staticcheck trivy security check check-all clean shipit version deps deps-update deps-tidy help

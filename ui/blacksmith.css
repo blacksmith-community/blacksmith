@@ -898,38 +898,51 @@ td a {
   z-index: 9;
 }
 
-#services .filter-controls {
-  display: flex;
-  gap: 1em;
-  align-items: flex-end;
-  margin-bottom: 0.5em;
+#services .services-filter-section {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
 }
 
-#services .filter-group {
+#services .filter-row {
   display: flex;
-  flex-direction: column;
-  flex: 1;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  gap: 1rem;
 }
 
-#services .filter-group label {
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin-bottom: 4px;
+#services .filter-row:last-of-type {
+  margin-bottom: 1rem;
+}
+
+#services .filter-row label {
+  font-size: 14px;
+  color: var(--text-primary);
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+#services .filter-buttons {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 #services .filter-select {
-  padding: 6px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--border-primary);
   border-radius: 4px;
-  background-color: var(--bg-tertiary);
+  background-color: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
   font-family: sans-serif;
+  flex: 1;
+  min-width: 200px;
 }
 
 #services .filter-select:hover:not(:disabled) {
@@ -950,16 +963,16 @@ td a {
 }
 
 #services .clear-filters-btn {
-  padding: 6px 12px;
+  padding: 8px 16px;
   border: 1px solid var(--border-primary);
   border-radius: 4px;
-  background-color: var(--bg-tertiary);
+  background-color: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
-  align-self: flex-end;
+  font-weight: 500;
 }
 
 #services .clear-filters-btn:hover {
@@ -971,10 +984,50 @@ td a {
   transform: translateY(1px);
 }
 
+#services .copy-deployment-names-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+
+#services .copy-deployment-names-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-active);
+  color: var(--text-link);
+}
+
+#services .copy-deployment-names-btn:active {
+  transform: translateY(1px);
+}
+
+#services .copy-deployment-names-btn.copied {
+  background: var(--text-success);
+  color: var(--bg-secondary);
+  border-color: var(--text-success);
+}
+
+#services .copy-deployment-names-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 #services .filter-status {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-secondary);
   font-style: italic;
+  border-top: 1px solid var(--border-secondary);
+  padding-top: 0.75rem;
+  margin-top: 0.5rem;
 }
 
 #services .services-items-container {
