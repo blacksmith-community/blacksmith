@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"blacksmith/bosh"
@@ -22,6 +26,97 @@ var (
 	BuildTime = "unknown"
 	GitCommit = "unknown"
 )
+
+// createHTTPSRedirectHandler creates an HTTP handler that redirects all requests to HTTPS
+func createHTTPSRedirectHandler(httpsPort string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if strings.Contains(host, ":") {
+			host = strings.Split(host, ":")[0]
+		}
+		
+		redirectURL := fmt.Sprintf("https://%s:%s%s", host, httpsPort, r.RequestURI)
+		http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
+	}
+}
+
+// startHTTPServer starts an HTTP server, either for redirects (when TLS enabled) or normal operation
+func startHTTPServer(config *Config, handler http.Handler, l *Log) *http.Server {
+	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.Port)
+	
+	readTimeout := 120
+	if config.Broker.ReadTimeout > 0 {
+		readTimeout = config.Broker.ReadTimeout
+	}
+	writeTimeout := 120
+	if config.Broker.WriteTimeout > 0 {
+		writeTimeout = config.Broker.WriteTimeout
+	}
+	idleTimeout := 300
+	if config.Broker.IdleTimeout > 0 {
+		idleTimeout = config.Broker.IdleTimeout
+	}
+	
+	var httpHandler http.Handler
+	if config.Broker.TLS.Enabled {
+		// When TLS is enabled, HTTP server only handles redirects
+		httpHandler = createHTTPSRedirectHandler(config.Broker.TLS.Port)
+		l.Info("HTTP server on %s will redirect to HTTPS port %s", bind, config.Broker.TLS.Port)
+	} else {
+		// When TLS is disabled, HTTP server handles normal traffic
+		httpHandler = handler
+		l.Info("HTTP server will listen on %s", bind)
+	}
+	
+	server := &http.Server{
+		Addr:         bind,
+		Handler:      httpHandler,
+		ReadTimeout:  time.Duration(readTimeout) * time.Second,
+		WriteTimeout: time.Duration(writeTimeout) * time.Second,
+		IdleTimeout:  time.Duration(idleTimeout) * time.Second,
+	}
+	
+	return server
+}
+
+// startHTTPSServer starts an HTTPS server with TLS configuration
+func startHTTPSServer(config *Config, handler http.Handler, l *Log) (*http.Server, error) {
+	if !config.Broker.TLS.Enabled {
+		return nil, nil
+	}
+	
+	tlsConfig, err := CreateTLSConfig(config.Broker.TLS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TLS configuration: %w", err)
+	}
+	
+	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.TLS.Port)
+	l.Info("HTTPS server will listen on %s", bind)
+	
+	readTimeout := 120
+	if config.Broker.ReadTimeout > 0 {
+		readTimeout = config.Broker.ReadTimeout
+	}
+	writeTimeout := 120
+	if config.Broker.WriteTimeout > 0 {
+		writeTimeout = config.Broker.WriteTimeout
+	}
+	idleTimeout := 300
+	if config.Broker.IdleTimeout > 0 {
+		idleTimeout = config.Broker.IdleTimeout
+	}
+	
+	server := &http.Server{
+		Addr:         bind,
+		Handler:      handler,
+		TLSConfig:    tlsConfig,
+		ReadTimeout:  time.Duration(readTimeout) * time.Second,
+		WriteTimeout: time.Duration(writeTimeout) * time.Second,
+		IdleTimeout:  time.Duration(idleTimeout) * time.Second,
+	}
+	
+	return server, nil
+}
 
 func main() {
 	showVersion := flag.Bool("v", false, "Display the version of Blacksmith")
@@ -50,8 +145,14 @@ func main() {
 	l.Info("blacksmith starting - version: %s, build: %s, commit: %s, go: %s",
 		Version, BuildTime, GitCommit, runtime.Version())
 
-	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.Port)
-	l.Info("broker will listen on %s", bind)
+	// TLS configuration validation
+	if config.Broker.TLS.Enabled {
+		if err := ValidateCertificateFiles(config.Broker.TLS.Certificate, config.Broker.TLS.Key); err != nil {
+			l.Error("TLS configuration error: %s", err)
+			os.Exit(2)
+		}
+		l.Info("TLS enabled - certificate: %s, key: %s", config.Broker.TLS.Certificate, config.Broker.TLS.Key)
+	}
 
 	vault := &Vault{
 		URL:      config.Vault.Address,
@@ -239,7 +340,15 @@ func main() {
 	if config.WebRoot != "" {
 		ui = http.FileServer(http.Dir(config.WebRoot))
 	}
-	http.Handle("/", &API{
+
+	l.Info("blacksmith service broker v%s starting up...", Version)
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Create the main API handler
+	apiHandler := &API{
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,
 		WebRoot:  ui,
@@ -257,64 +366,94 @@ func main() {
 				Password: config.Broker.Password,
 			},
 		),
-	})
-
-	l.Info("blacksmith service broker v%s starting up...", Version)
-
-	// Create HTTP server with proper timeouts for service broker operations
-	// Service provisioning can take longer due to BOSH operations (manifest generation, release uploads, etc.)
-	// Default timeouts if not specified in config
-	readTimeout := 120
-	if config.Broker.ReadTimeout > 0 {
-		readTimeout = config.Broker.ReadTimeout
-	}
-	writeTimeout := 120
-	if config.Broker.WriteTimeout > 0 {
-		writeTimeout = config.Broker.WriteTimeout
-	}
-	idleTimeout := 300
-	if config.Broker.IdleTimeout > 0 {
-		idleTimeout = config.Broker.IdleTimeout
 	}
 
-	l.Info("HTTP server timeouts - Read: %ds, Write: %ds, Idle: %ds", readTimeout, writeTimeout, idleTimeout)
-
-	server := &http.Server{
-		Addr:         bind,
-		Handler:      nil, // Uses http.DefaultServeMux
-		ReadTimeout:  time.Duration(readTimeout) * time.Second,
-		WriteTimeout: time.Duration(writeTimeout) * time.Second,
-		IdleTimeout:  time.Duration(idleTimeout) * time.Second, // Increased from 60s for long-running connections
+	// Create HTTP server 
+	httpServer := startHTTPServer(&config, apiHandler, l)
+	
+	// Create HTTPS server if TLS is enabled
+	httpsServer, err := startHTTPSServer(&config, apiHandler, l)
+	if err != nil {
+		l.Error("Failed to create HTTPS server: %s", err)
+		os.Exit(2)
 	}
 
+	// Start servers
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start HTTP server
+	wg.Add(1)
 	go func() {
-		err := server.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
-			l.Error("blacksmith service broker failed to start up: %s", err)
-			os.Exit(2)
+		defer wg.Done()
+		l.Info("Starting HTTP server...")
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			l.Error("HTTP server failed: %s", err)
+			cancel()
 		}
-		l.Info("shutting down blacksmith service broker")
 	}()
 
-	BoshMaintenanceLoop := time.NewTicker(1 * time.Hour)
-	//TODO set task to -1 or something out here and check to make sure the cleanup is finished before you run another one
-	for {
-		select {
-		case <-BoshMaintenanceLoop.C:
-			vaultDB, err := vault.getVaultDB()
-			if err != nil {
-				l.Error("error grabbing vaultdb for debugging: %s", err)
+	// Start HTTPS server if enabled
+	if httpsServer != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l.Info("Starting HTTPS server...")
+			if err := httpsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				l.Error("HTTPS server failed: %s", err)
+				cancel()
 			}
-			l.Info("current vault db looks like: %v", vaultDB.Data)
-			if _, err := broker.serviceWithNoDeploymentCheck(); err != nil {
-				l.Error("service with no deployment check failed: %s", err)
+		}()
+	}
+
+	// Start BOSH maintenance loop
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		boshMaintenanceLoop := time.NewTicker(1 * time.Hour)
+		defer boshMaintenanceLoop.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-boshMaintenanceLoop.C:
+				vaultDB, err := vault.getVaultDB()
+				if err != nil {
+					l.Error("error grabbing vaultdb for debugging: %s", err)
+				}
+				l.Info("current vault db looks like: %v", vaultDB.Data)
+				if _, err := broker.serviceWithNoDeploymentCheck(); err != nil {
+					l.Error("service with no deployment check failed: %s", err)
+				}
 			}
-			//			Disable cleanup process, using external bosh director
-			//			task, err := bosh.Cleanup(false)
-			//			l.Info("taskid for the bosh cleanup is %v", task.ID)
-			//			if err != nil {
-			//				l.Error("bosh cleanup failed to run properly: %s", err)
-			//			}
+		}
+	}()
+
+	// Wait for shutdown signal
+	select {
+	case sig := <-sigChan:
+		l.Info("Received signal %s, shutting down gracefully...", sig)
+	case <-ctx.Done():
+		l.Info("Context cancelled, shutting down...")
+	}
+
+	// Graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		l.Error("Error shutting down HTTP server: %s", err)
+	}
+
+	if httpsServer != nil {
+		if err := httpsServer.Shutdown(shutdownCtx); err != nil {
+			l.Error("Error shutting down HTTPS server: %s", err)
 		}
 	}
+
+	cancel() // Cancel context to stop other goroutines
+	wg.Wait() // Wait for all goroutines to finish
+
+	l.Info("Blacksmith service broker shut down complete")
 }

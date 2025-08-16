@@ -25,14 +25,25 @@ type ForgesConfig struct {
 	ScanPatterns []string `yaml:"scan-patterns"`
 }
 
+type TLSConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	Port        string `yaml:"port"`
+	Certificate string `yaml:"certificate"`
+	Key         string `yaml:"key"`
+	Protocols   string `yaml:"protocols"`
+	Ciphers     string `yaml:"ciphers"`
+	ReuseAfter  int    `yaml:"reuse_after"`
+}
+
 type BrokerConfig struct {
-	Username     string `yaml:"username"`
-	Password     string `yaml:"password"`
-	Port         string `yaml:"port"`
-	BindIP       string `yaml:"bind_ip"`
-	ReadTimeout  int    `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
-	WriteTimeout int    `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
-	IdleTimeout  int    `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
+	Username     string    `yaml:"username"`
+	Password     string    `yaml:"password"`
+	Port         string    `yaml:"port"`
+	BindIP       string    `yaml:"bind_ip"`
+	ReadTimeout  int       `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
+	WriteTimeout int       `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
+	IdleTimeout  int       `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
+	TLS          TLSConfig `yaml:"tls"`
 }
 
 type VaultConfig struct {
@@ -105,6 +116,24 @@ func ReadConfig(path string) (c Config, err error) {
 
 	if c.Broker.Port == "" {
 		c.Broker.Port = "3000"
+	}
+
+	if c.Broker.BindIP == "" {
+		c.Broker.BindIP = "0.0.0.0"
+	}
+
+	// TLS configuration defaults
+	if c.Broker.TLS.Port == "" {
+		c.Broker.TLS.Port = "443"
+	}
+	if c.Broker.TLS.Protocols == "" {
+		c.Broker.TLS.Protocols = "TLSv1.2 TLSv1.3"
+	}
+	if c.Broker.TLS.Ciphers == "" {
+		c.Broker.TLS.Ciphers = "ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:HIGH:!MD5:!aNULL:!EDH"
+	}
+	if c.Broker.TLS.ReuseAfter == 0 {
+		c.Broker.TLS.ReuseAfter = 2
 	}
 
 	if c.Vault.Address == "" {
