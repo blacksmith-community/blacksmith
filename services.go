@@ -109,7 +109,7 @@ func ReadPlan(path string) (p Plan, err error) {
 	l.Debug("Reading plan from path: %s", path)
 	planFile := fmt.Sprintf("%s/plan.yml", path)
 	l.Debug("Reading plan file: %s", planFile)
-	b, err := os.ReadFile(planFile)
+	b, err := safeReadFile(planFile)
 	if err != nil {
 		l.Error("Failed to read plan file %s: %s", planFile, err)
 		return
@@ -219,7 +219,7 @@ func ReadService(path string) (Service, error) {
 	file := fmt.Sprintf("%s/service.yml", path)
 	l.Debug("Reading service file: %s", file)
 
-	b, err := os.ReadFile(file)
+	b, err := safeReadFile(file)
 	if err != nil {
 		l.Error("Failed to read service file %s: %s", file, err)
 		return s, fmt.Errorf("%s: %s", file, err)

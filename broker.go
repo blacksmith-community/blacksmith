@@ -48,7 +48,7 @@ func WriteDataFile(
 	l := Logger.Wrap("WriteDataFile")
 	filename := GetWorkDir() + instanceID + ".json"
 	l.Debug("Writing data file for instance %s to %s (size: %d bytes)", instanceID, filename, len(data))
-	err := os.WriteFile(filename, data, 0644)
+	err := os.WriteFile(filename, data, 0600)
 	if err != nil {
 		l.Error("Failed to write data file %s: %s", filename, err)
 	} else {
@@ -81,7 +81,7 @@ func WriteYamlFile(
 
 	filename := GetWorkDir() + instanceID + ".yml"
 	l.Debug("Writing YAML to file: %s (size: %d bytes)", filename, len(b))
-	err = os.WriteFile(filename, b, 0644)
+	err = os.WriteFile(filename, b, 0600)
 	if err != nil {
 		l.Error("Failed to write YAML file %s: %s", filename, err)
 	} else {

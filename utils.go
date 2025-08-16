@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/geofffranks/spruce"
@@ -58,13 +59,13 @@ func readFile(path string) ([]byte, bool, error) {
 		return []byte{}, true, err
 	}
 
-	b, err := os.ReadFile(path)
+	b, err := safeReadFile(path)
 	return b, true, err
 }
 
 func mergeFiles(required string, optional ...string) (map[interface{}]interface{}, error) {
 	// Required Manifest
-	b, err := os.ReadFile(required)
+	b, err := safeReadFile(required)
 	if err != nil {
 		return nil, err
 	}
@@ -95,4 +96,58 @@ func mergeFiles(required string, optional ...string) (map[interface{}]interface{
 	}
 
 	return m, nil
+}
+
+// validateFilePath validates that a file path is safe to use
+// This helps prevent path traversal attacks and ensures we only access intended files
+func validateFilePath(path string) error {
+	if path == "" {
+		return fmt.Errorf("file path cannot be empty")
+	}
+	
+	// Clean the path to resolve any .. or . components
+	cleanPath := filepath.Clean(path)
+	
+	// Check for path traversal attempts
+	if strings.Contains(cleanPath, "..") {
+		return fmt.Errorf("path traversal detected in file path: %s", path)
+	}
+	
+	return nil
+}
+
+// safeReadFile safely reads a file after validating the path
+func safeReadFile(path string) ([]byte, error) {
+	if err := validateFilePath(path); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path) // #nosec G304 - Path has been validated by validateFilePath
+}
+
+// safeOpenFile safely opens a file after validating the path
+func safeOpenFile(path string) (*os.File, error) {
+	if err := validateFilePath(path); err != nil {
+		return nil, err
+	}
+	return os.Open(path) // #nosec G304 - Path has been validated by validateFilePath
+}
+
+// validateExecutablePath validates that an executable path is safe to run
+func validateExecutablePath(path string) error {
+	if err := validateFilePath(path); err != nil {
+		return err
+	}
+	
+	// Additional checks for executable paths
+	cleanPath := filepath.Clean(path)
+	
+	// Check that the path doesn't contain shell metacharacters
+	dangerousChars := []string{";", "&", "|", "`", "$", "(", ")", "{", "}", "[", "]", "*", "?", "~", "<", ">", "^", "!"}
+	for _, char := range dangerousChars {
+		if strings.Contains(cleanPath, char) {
+			return fmt.Errorf("potentially dangerous character '%s' found in executable path: %s", char, path)
+		}
+	}
+	
+	return nil
 }

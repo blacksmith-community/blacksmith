@@ -113,7 +113,7 @@ gosec: ## Run security scanner on source code
 		echo "$(YELLOW)Installing gosec...$(RESET)"; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
 	}
-	@gosec -fmt text $(shell go list ./... | grep -v vendor)
+	@gosec -fmt text ./...
 	@echo "$(GREEN)✓ Security scan complete$(RESET)"
 
 .PHONY: staticcheck

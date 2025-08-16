@@ -188,7 +188,7 @@ func (ps *PlanStorage) storePlanFiles(planDir, service, planName string) error {
 		l.Debug("Processing file: %s", filePath)
 
 		// Read file content
-		content, err := os.ReadFile(filePath)
+		content, err := safeReadFile(filePath)
 		if err != nil {
 			l.Error("Failed to read file %s: %s", filePath, err)
 			continue
@@ -238,7 +238,7 @@ func (ps *PlanStorage) storePlanFiles(planDir, service, planName string) error {
 
 // calculateSHA256 calculates the SHA256 hash of a file
 func calculateSHA256(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+	file, err := safeOpenFile(filePath)
 	if err != nil {
 		return "", err
 	}

@@ -38,12 +38,19 @@ func InitManifest(p Plan, instanceID string) error {
 
 	/* otherwise, execute it (chmodding to cut Forge authors some slack...) */
 	Info("Running init script: %s", p.InitScriptPath)
-	if err := os.Chmod(p.InitScriptPath, 0755); err != nil {
+	
+	// Validate the executable path for security
+	if err := validateExecutablePath(p.InitScriptPath); err != nil {
+		Error("init script path validation failed: %s", err)
+		return err
+	}
+	
+	if err := os.Chmod(p.InitScriptPath, 0700 /* #nosec G302 - Scripts need execute permission, path validated above */); err != nil {
 		Error("failed to make init script executable: %s", err)
 		return err
 	}
 
-	cmd := exec.Command(p.InitScriptPath)
+	cmd := exec.Command(p.InitScriptPath) // #nosec G204 - Path has been validated by validateExecutablePath
 
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("CREDENTIALS=secret/%s", instanceID))

@@ -95,7 +95,7 @@ type BOSHConfig struct {
 }
 
 func ReadConfig(path string) (c Config, err error) {
-	b, err := os.ReadFile(path)
+	b, err := safeReadFile(path)
 	if err != nil {
 		return
 	}
@@ -154,7 +154,7 @@ func ReadConfig(path string) (c Config, err error) {
 
 	if c.BOSH.CCPath != "" {
 		/* cloud-config provided; try to read it. */
-		b, err := os.ReadFile(c.BOSH.CCPath)
+		b, err := safeReadFile(c.BOSH.CCPath)
 		if err != nil {
 			return c, fmt.Errorf("BOSH cloud-config file '%s': %s", c.BOSH.CCPath, err)
 		}

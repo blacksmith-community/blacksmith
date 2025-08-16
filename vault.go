@@ -169,7 +169,7 @@ func (vault *Vault) Init(store string) error {
 	if initResp == nil {
 		// Vault was already initialized, read existing credentials
 		l.Debug("reading credentials files from %s", store)
-		b, err := os.ReadFile(store)
+		b, err := safeReadFile(store)
 		if err != nil {
 			l.Error("failed to read vault credentials from %s: %s", store, err)
 			return err
@@ -614,7 +614,7 @@ func (vault *Vault) updateHomeDirs() {
 	if err != nil {
 		l.Error("failed to marshal new ~/.saferc: %s", err)
 	} else {
-		err = os.WriteFile(path, b, 0666)
+		err = os.WriteFile(path, b, 0600)
 		if err != nil {
 			l.Error("failed to write new ~/.saferc: %s", err)
 		}
@@ -634,7 +634,7 @@ func (vault *Vault) updateHomeDirs() {
 	if err != nil {
 		l.Error("failed to marshal new ~/.svtoken: %s", err)
 	} else {
-		err = os.WriteFile(path, b, 0666)
+		err = os.WriteFile(path, b, 0600)
 		if err != nil {
 			l.Error("failed to write new ~/.svtoken: %s", err)
 		}
@@ -643,7 +643,7 @@ func (vault *Vault) updateHomeDirs() {
 	/* ~/.vault-token */
 	path = fmt.Sprintf("%s/.vault-token", home)
 	l.Debug("writing ~/.vault-token file to %s", path)
-	err = os.WriteFile(path, []byte(vault.Token), 0666)
+	err = os.WriteFile(path, []byte(vault.Token), 0600)
 	if err != nil {
 		l.Error("failed to write new ~/.vault-token: %s", err)
 	}

@@ -8,8 +8,6 @@ import (
 
 // TLS version mapping from string to Go constants
 var tlsVersionMap = map[string]uint16{
-	"TLSv1.0": tls.VersionTLS10,
-	"TLSv1.1": tls.VersionTLS11,
 	"TLSv1.2": tls.VersionTLS12,
 	"TLSv1.3": tls.VersionTLS13,
 }
@@ -163,6 +161,11 @@ func CreateTLSConfig(tlsConfig TLSConfig) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse TLS protocols: %w", err)
 	}
+	
+	// Enforce minimum TLS 1.2 for security
+	if minVersion < tls.VersionTLS12 {
+		minVersion = tls.VersionTLS12
+	}
 
 	// Parse cipher suites
 	cipherSuites, err := ParseCipherSuites(tlsConfig.Ciphers)
@@ -176,7 +179,7 @@ func CreateTLSConfig(tlsConfig TLSConfig) (*tls.Config, error) {
 		return nil, fmt.Errorf("failed to load certificate: %w", err)
 	}
 
-	config := &tls.Config{
+	config := &tls.Config{ // #nosec G402 - MinVersion is enforced to be >= TLS 1.2 above
 		MinVersion:               minVersion,
 		MaxVersion:               maxVersion,
 		PreferServerCipherSuites: true,
