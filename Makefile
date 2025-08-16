@@ -111,7 +111,7 @@ gosec: ## Run security scanner on source code
 	@echo "$(GREEN)Running security scan...$(RESET)"
 	@command -v gosec >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing gosec...$(RESET)"; \
-		go install github.com/secureco/gosec/v2/cmd/gosec@latest; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
 	}
 	@gosec -fmt text $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Security scan complete$(RESET)"
