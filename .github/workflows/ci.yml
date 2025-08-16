@@ -74,9 +74,12 @@ jobs:
           path: coverage.out
           retention-days: 7
 
+      - name: Create blacksmith tarball
+        run: tar -czf blacksmith.tar.gz blacksmith
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: blacksmith-binary
-          path: blacksmith
+          name: blacksmith
+          path: blacksmith.tar.gz
           retention-days: 1
