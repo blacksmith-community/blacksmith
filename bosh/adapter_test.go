@@ -95,6 +95,9 @@ func (m *mockDirector) GetTask(id int) (*bosh.Task, error)                      
 func (m *mockDirector) GetTaskOutput(id int, outputType string) (string, error)   { return "", nil }
 func (m *mockDirector) GetTaskEvents(id int) ([]bosh.TaskEvent, error)            { return nil, nil }
 func (m *mockDirector) GetEvents(deployment string) ([]bosh.Event, error)         { return nil, nil }
-func (m *mockDirector) UpdateCloudConfig(config string) error                     { return nil }
-func (m *mockDirector) GetCloudConfig() (string, error)                           { return "", nil }
-func (m *mockDirector) Cleanup(removeAll bool) (*bosh.Task, error)                { return nil, nil }
+func (m *mockDirector) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
+	return "", nil
+}
+func (m *mockDirector) UpdateCloudConfig(config string) error      { return nil }
+func (m *mockDirector) GetCloudConfig() (string, error)            { return "", nil }
+func (m *mockDirector) Cleanup(removeAll bool) (*bosh.Task, error) { return nil, nil }

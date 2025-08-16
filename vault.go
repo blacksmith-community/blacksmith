@@ -65,7 +65,9 @@ func (vault *Vault) Init(store string) error {
 		vault.Token = creds.RootToken
 		vault.client.Token = creds.RootToken
 		vault.client.SetToken(creds.RootToken)
-		os.Setenv("VAULT_TOKEN", vault.Token)
+		if err := os.Setenv("VAULT_TOKEN", vault.Token); err != nil {
+			l.Error("failed to set VAULT_TOKEN environment variable: %s", err)
+		}
 		vault.updateHomeDirs()
 		return vault.Unseal(creds.SealKey)
 	}
@@ -102,7 +104,9 @@ func (vault *Vault) Init(store string) error {
 	vault.Token = creds.RootToken
 	vault.client.Token = creds.RootToken
 	vault.client.SetToken(creds.RootToken)
-	os.Setenv("VAULT_TOKEN", vault.Token)
+	if err := os.Setenv("VAULT_TOKEN", vault.Token); err != nil {
+		l.Error("failed to set VAULT_TOKEN environment variable: %s", err)
+	}
 	vault.updateHomeDirs()
 	return vault.Unseal(creds.SealKey)
 }

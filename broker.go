@@ -258,7 +258,9 @@ func (b *Broker) Provision(
 	if err != nil {
 		l.Error("failed to store details in the vault at path %s: %s", vaultPath, err)
 		// Remove from index since we're failing
-		b.Vault.Index(instanceID, nil)
+		if err := b.Vault.Index(instanceID, nil); err != nil {
+			l.Error("failed to remove instance from index: %s", err)
+		}
 		return spec, fmt.Errorf("Failed to store service metadata")
 	}
 
@@ -349,8 +351,12 @@ func (b *Broker) Provision(
 
 	// Write data files for debugging/audit
 	if len(details.RawParameters) > 0 {
-		WriteDataFile(instanceID, details.RawParameters)
-		WriteYamlFile(instanceID, details.RawParameters)
+		if err := WriteDataFile(instanceID, details.RawParameters); err != nil {
+			l.Error("failed to write data file for debugging: %s", err)
+		}
+		if err := WriteYamlFile(instanceID, details.RawParameters); err != nil {
+			l.Error("failed to write YAML file for debugging: %s", err)
+		}
 	}
 
 	// Store plan file SHA256 references for this instance
@@ -478,7 +484,9 @@ func (b *Broker) OnProvisionCompleted(
 		if raw, err := idx.Lookup(instanceID); err == nil {
 			if data, ok := raw.(map[string]interface{}); ok {
 				data["created_at"] = createdAt.Format(time.RFC3339)
-				b.Vault.Index(instanceID, data)
+				if err := b.Vault.Index(instanceID, data); err != nil {
+					l.Error("failed to index service instance: %s", err)
+				}
 			}
 		}
 	}
@@ -764,7 +772,9 @@ func (b *Broker) LastOperation(
 					if data, ok := raw.(map[string]interface{}); ok {
 						data["deleted_at"] = deletedAt.Format(time.RFC3339)
 						data["deleted"] = true // Mark as deleted but keep in index
-						b.Vault.Index(instanceID, data)
+						if err := b.Vault.Index(instanceID, data); err != nil {
+							l.Error("failed to update index with deleted status: %s", err)
+						}
 					}
 				}
 			}

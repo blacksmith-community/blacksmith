@@ -293,7 +293,9 @@ func main() {
 				l.Error("error grabbing vaultdb for debugging: %s", err)
 			}
 			l.Info("current vault db looks like: %v", vaultDB.Data)
-			broker.serviceWithNoDeploymentCheck()
+			if _, err := broker.serviceWithNoDeploymentCheck(); err != nil {
+				l.Error("service with no deployment check failed: %s", err)
+			}
 			//			Disable cleanup process, using external bosh director
 			//			task, err := bosh.Cleanup(false)
 			//			l.Info("taskid for the bosh cleanup is %v", task.ID)

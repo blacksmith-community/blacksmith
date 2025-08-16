@@ -25,7 +25,9 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 	}
 
 	// Parse parameters if available
-	b.Vault.TrackProgress(instanceID, "provision", "Parsing service parameters", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Parsing service parameters", 0, params); err != nil {
+		l.Error("failed to track progress (parsing parameters): %s", err)
+	}
 	if detailsMap, ok := details.(map[string]interface{}); ok {
 		if rawParams, ok := detailsMap["raw_parameters"].([]byte); ok {
 			if err := yaml.Unmarshal(rawParams, &params); err != nil {
@@ -35,19 +37,25 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 	}
 
 	// Setup defaults
-	b.Vault.TrackProgress(instanceID, "provision", "Setting up deployment defaults", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Setting up deployment defaults", 0, params); err != nil {
+		l.Error("failed to track progress (setup defaults): %s", err)
+	}
 	defaults := make(map[interface{}]interface{})
 	defaults["name"] = plan.ID + "-" + instanceID
 	params["instance_id"] = instanceID
 
 	// Get BOSH director UUID
 	l.Debug("querying BOSH director for director UUID")
-	b.Vault.TrackProgress(instanceID, "provision", "Connecting to BOSH director", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Connecting to BOSH director", 0, params); err != nil {
+		l.Error("failed to track progress (connecting to BOSH): %s", err)
+	}
 	info, err := b.BOSH.GetInfo()
 	if err != nil {
 		l.Error("failed to get information about BOSH director: %s", err)
 		// Mark as failed
-		b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Failed to connect to BOSH: %s", err), -1, params)
+		if trackErr := b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Failed to connect to BOSH: %s", err), -1, params); trackErr != nil {
+			l.Error("failed to track progress (BOSH connection failed): %s", trackErr)
+		}
 		return
 	}
 	defaults["director_uuid"] = info.UUID
@@ -55,17 +63,23 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 	// Set credentials environment variable
 	if err := os.Setenv("CREDENTIALS", fmt.Sprintf("secret/%s", instanceID)); err != nil {
 		l.Error("failed to set CREDENTIALS environment variable: %s", err)
-		b.Vault.TrackProgress(instanceID, "provision", "Failed to set environment variables", -1, params)
+		if trackErr := b.Vault.TrackProgress(instanceID, "provision", "Failed to set environment variables", -1, params); trackErr != nil {
+			l.Error("failed to track progress (env vars failed): %s", trackErr)
+		}
 		return
 	}
 
 	// Run init script
 	l.Debug("running service init script")
-	b.Vault.TrackProgress(instanceID, "provision", "Initializing service deployment", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Initializing service deployment", 0, params); err != nil {
+		l.Error("failed to track progress (init script): %s", err)
+	}
 	err = InitManifest(plan, instanceID)
 	if err != nil {
 		l.Error("service deployment initialization script failed: %s", err)
-		b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Service initialization failed: %s", err), -1, params)
+		if trackErr := b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Service initialization failed: %s", err), -1, params); trackErr != nil {
+			l.Error("failed to track progress (init script failed): %s", trackErr)
+		}
 		return
 	}
 
@@ -87,16 +101,22 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 
 	// Generate manifest
 	l.Info("Generating BOSH deployment manifest for %s", defaults["name"])
-	b.Vault.TrackProgress(instanceID, "provision", "Generating BOSH deployment manifest", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Generating BOSH deployment manifest", 0, params); err != nil {
+		l.Error("failed to track progress (generating manifest): %s", err)
+	}
 	manifest, err := GenManifest(plan, defaults, wrap("meta.params", params))
 	if err != nil {
 		l.Error("Failed to generate service deployment manifest: %s", err)
-		b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Manifest generation failed: %s", err), -1, params)
+		if trackErr := b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Manifest generation failed: %s", err), -1, params); trackErr != nil {
+			l.Error("failed to track progress (manifest generation failed): %s", trackErr)
+		}
 		return
 	}
 
 	// Store manifest in vault
-	b.Vault.TrackProgress(instanceID, "provision", "Storing deployment manifest in Vault", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Storing deployment manifest in Vault", 0, params); err != nil {
+		l.Error("failed to track progress (storing manifest): %s", err)
+	}
 	err = b.Vault.Put(fmt.Sprintf("%s/manifest", instanceID), map[string]interface{}{
 		"manifest": manifest,
 	})
@@ -107,21 +127,29 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 
 	// Upload releases
 	l.Debug("uploading releases (if necessary) to BOSH director")
-	b.Vault.TrackProgress(instanceID, "provision", "Uploading BOSH releases", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Uploading BOSH releases", 0, params); err != nil {
+		l.Error("failed to track progress (uploading releases): %s", err)
+	}
 	err = UploadReleasesFromManifest(manifest, b.BOSH, l)
 	if err != nil {
 		l.Error("failed to upload service deployment releases: %s", err)
-		b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Release upload failed: %s", err), -1, params)
+		if trackErr := b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Release upload failed: %s", err), -1, params); trackErr != nil {
+			l.Error("failed to track progress (release upload failed): %s", trackErr)
+		}
 		return
 	}
 
 	// Create deployment
 	l.Info("Deploying service instance to BOSH director")
-	b.Vault.TrackProgress(instanceID, "provision", "Creating BOSH deployment", 0, params)
+	if err := b.Vault.TrackProgress(instanceID, "provision", "Creating BOSH deployment", 0, params); err != nil {
+		l.Error("failed to track progress (creating deployment): %s", err)
+	}
 	task, err := b.BOSH.CreateDeployment(manifest)
 	if err != nil {
 		l.Error("Failed to create service deployment: %s", err)
-		b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Deployment creation failed: %s", err), -1, params)
+		if trackErr := b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("Deployment creation failed: %s", err), -1, params); trackErr != nil {
+			l.Error("failed to track progress (deployment creation failed): %s", trackErr)
+		}
 		return
 	}
 
@@ -153,30 +181,44 @@ func (b *Broker) deprovisionAsync(instanceID string, instance *Instance) {
 	l.Info("Deleting BOSH deployment %s", deploymentName)
 
 	// Check if deployment exists
-	b.Vault.TrackProgress(instanceID, "deprovision", "Checking BOSH deployment status", 0, nil)
+	if err := b.Vault.TrackProgress(instanceID, "deprovision", "Checking BOSH deployment status", 0, nil); err != nil {
+		l.Error("failed to track progress (checking deployment): %s", err)
+	}
 	manifest, err := b.BOSH.GetDeployment(deploymentName)
 	if err != nil || manifest.Manifest == "" {
 		l.Info("Deployment %s not found, marking as deleted", deploymentName)
-		b.Vault.TrackProgress(instanceID, "deprovision", "Deployment not found, cleanup only", 0, nil)
+		if err := b.Vault.TrackProgress(instanceID, "deprovision", "Deployment not found, cleanup only", 0, nil); err != nil {
+			l.Error("failed to track progress (deployment not found): %s", err)
+		}
 
 		// Remove from index
-		b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", 0, nil)
+		if err := b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", 0, nil); err != nil {
+			l.Error("failed to track progress (removing from index): %s", err)
+		}
 		if err := b.Vault.Index(instanceID, nil); err != nil {
 			l.Error("failed to remove service from vault index: %s", err)
 		}
 
 		// Mark as completed
-		b.Vault.TrackProgress(instanceID, "deprovision", "Deprovisioning completed (no deployment)", 0, nil)
-		b.Vault.Track(instanceID, "deprovision", 0, nil)
+		if err := b.Vault.TrackProgress(instanceID, "deprovision", "Deprovisioning completed (no deployment)", 0, nil); err != nil {
+			l.Error("failed to track progress (completed): %s", err)
+		}
+		if err := b.Vault.Track(instanceID, "deprovision", 0, nil); err != nil {
+			l.Error("failed to track completion: %s", err)
+		}
 		return
 	}
 
 	// Delete deployment
-	b.Vault.TrackProgress(instanceID, "deprovision", "Initiating BOSH deployment deletion", 0, nil)
+	if err := b.Vault.TrackProgress(instanceID, "deprovision", "Initiating BOSH deployment deletion", 0, nil); err != nil {
+		l.Error("failed to track progress (initiating deletion): %s", err)
+	}
 	task, err := b.BOSH.DeleteDeployment(deploymentName)
 	if err != nil {
 		l.Error("Failed to delete BOSH deployment %s: %s", deploymentName, err)
-		b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed: %s", err), -1, nil)
+		if trackErr := b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed: %s", err), -1, nil); trackErr != nil {
+			l.Error("failed to track progress (deletion failed): %s", trackErr)
+		}
 		return
 	}
 
@@ -189,7 +231,9 @@ func (b *Broker) deprovisionAsync(instanceID string, instance *Instance) {
 	}
 
 	// Remove from index (will be cleaned up when task completes)
-	b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", 0, nil)
+	if err := b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", 0, nil); err != nil {
+		l.Error("failed to track progress (removing from index): %s", err)
+	}
 	if err := b.Vault.Index(instanceID, nil); err != nil {
 		l.Error("failed to remove service from vault index: %s", err)
 	}

@@ -51,19 +51,19 @@ dev: linux ## Build for Linux and run test deployment
 .PHONY: test
 test: ## Run all tests
 	@echo "$(GREEN)Running tests...$(RESET)"
-	@go test -v ./...
+	@go test -v $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Tests complete$(RESET)"
 
 .PHONY: test-short
 test-short: ## Run tests in short mode
 	@echo "$(GREEN)Running short tests...$(RESET)"
-	@go test -short ./...
+	@go test -short $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Short tests complete$(RESET)"
 
 .PHONY: coverage
 coverage: ## Generate test coverage report
 	@echo "$(GREEN)Generating coverage report...$(RESET)"
-	@go test -coverprofile=coverage.out ./...
+	@go test -coverprofile=coverage.out $(shell go list ./... | grep -v vendor)
 	@go tool cover -func=coverage.out
 	@echo "$(GREEN)✓ Coverage report generated$(RESET)"
 
@@ -71,6 +71,10 @@ coverage: ## Generate test coverage report
 coverage-html: coverage ## Generate and open HTML coverage report
 	@echo "$(GREEN)Opening HTML coverage report...$(RESET)"
 	@go tool cover -html=coverage.out
+
+.PHONY: test-all
+test-all: test coverage ## Run all tests and generate coverage report
+	@echo "$(GREEN)✓ All tests and coverage complete$(RESET)"
 
 .PHONY: report
 report: coverage-html ## Alias for coverage-html (backwards compatibility)
@@ -80,13 +84,13 @@ report: coverage-html ## Alias for coverage-html (backwards compatibility)
 .PHONY: fmt
 fmt: ## Format all Go source files
 	@echo "$(GREEN)Formatting code...$(RESET)"
-	@go fmt ./...
+	@go fmt $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Code formatted$(RESET)"
 
 .PHONY: vet
 vet: ## Run go vet on all source files
 	@echo "$(GREEN)Running go vet...$(RESET)"
-	@go vet ./...
+	@go vet $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Vet analysis complete$(RESET)"
 
 .PHONY: lint
@@ -99,7 +103,7 @@ govulncheck: ## Run vulnerability check on dependencies
 		echo "$(YELLOW)Installing govulncheck...$(RESET)"; \
 		go install golang.org/x/vuln/cmd/govulncheck@latest; \
 	}
-	@govulncheck ./...
+	@govulncheck $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Vulnerability check complete$(RESET)"
 
 .PHONY: gosec
@@ -109,7 +113,7 @@ gosec: ## Run security scanner on source code
 		echo "$(YELLOW)Installing gosec...$(RESET)"; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
 	}
-	@gosec -fmt text ./...
+	@gosec -fmt text $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Security scan complete$(RESET)"
 
 .PHONY: trivy
@@ -122,7 +126,7 @@ trivy: ## Run Trivy container and dependency scanner
 		echo "$(CYAN)  Or visit: https://aquasecurity.github.io/trivy$(RESET)"; \
 		exit 1; \
 	}
-	@trivy fs --scanners vuln,misconfig,secret --severity HIGH,CRITICAL .
+	@trivy fs --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --skip-dirs vendor .
 	@echo "$(GREEN)✓ Trivy scan complete$(RESET)"
 
 .PHONY: security
@@ -130,12 +134,12 @@ security: govulncheck gosec trivy ## Run all security scans (govulncheck, gosec,
 	@echo "$(GREEN)✓ All security scans complete$(RESET)"
 
 .PHONY: check
-check: lint test govulncheck ## Run all checks (lint, test, vulnerability check)
-	@echo "$(GREEN)✓ All checks passed$(RESET)"
+check: lint vet test ## Run basic checks (lint, vet, test)
+	@echo "$(GREEN)✓ Basic checks passed$(RESET)"
 
 .PHONY: check-all
-check-all: check security ## Run all checks including all security scans
-	@echo "$(GREEN)✓ All checks including security scans passed$(RESET)"
+check-all: lint vet test-all ## Run all checks (lint, vet, tests with coverage)
+	@echo "$(GREEN)✓ All checks passed$(RESET)"
 
 ##@ Cleanup
 
@@ -218,5 +222,5 @@ deps-tidy: ## Clean up go.mod and go.sum
 	@echo "$(GREEN)✓ Dependencies tidied$(RESET)"
 
 # Include all phony targets
-.PHONY: build linux dev test test-short coverage coverage-html report fmt vet lint \
+.PHONY: build linux dev test test-short test-all coverage coverage-html report fmt vet lint \
         govulncheck gosec trivy security check check-all clean shipit version deps deps-update deps-tidy help

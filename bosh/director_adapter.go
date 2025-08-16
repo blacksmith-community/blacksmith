@@ -798,8 +798,12 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 	if os.Getenv("BLACKSMITH_TEST_MODE") == "true" {
 		// Just set up basic auth without trying to connect
 		if config.Username != "" && config.Password != "" {
-			os.Setenv("BOSH_CLIENT", config.Username)
-			os.Setenv("BOSH_CLIENT_SECRET", config.Password)
+			if err := os.Setenv("BOSH_CLIENT", config.Username); err != nil {
+				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
+			}
+			if err := os.Setenv("BOSH_CLIENT_SECRET", config.Password); err != nil {
+				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
+			}
 			factoryConfig.Client = config.Username
 			factoryConfig.ClientSecret = config.Password
 		}
@@ -875,8 +879,12 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 					factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
 
 					// Also set environment variables for compatibility
-					os.Setenv("BOSH_CLIENT", config.Username)
-					os.Setenv("BOSH_CLIENT_SECRET", config.Password)
+					if err := os.Setenv("BOSH_CLIENT", config.Username); err != nil {
+						logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
+					}
+					if err := os.Setenv("BOSH_CLIENT_SECRET", config.Password); err != nil {
+						logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
+					}
 
 					return factoryConfig, nil
 				}
@@ -888,8 +896,12 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 	if config.UAA == nil {
 		if config.Username != "" && config.Password != "" {
 			// Set environment variables for BOSH CLI
-			os.Setenv("BOSH_CLIENT", config.Username)
-			os.Setenv("BOSH_CLIENT_SECRET", config.Password)
+			if err := os.Setenv("BOSH_CLIENT", config.Username); err != nil {
+				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
+			}
+			if err := os.Setenv("BOSH_CLIENT_SECRET", config.Password); err != nil {
+				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
+			}
 
 			// Also set in factory config for direct usage
 			if config.Logger != nil {

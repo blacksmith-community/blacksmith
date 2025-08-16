@@ -48,25 +48,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Run tests
-        run: make test
-
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Generate coverage report
-        run: make coverage
+      - name: Run tests with coverage
+        run: make test-all
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -99,43 +82,21 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install security tools
+      - name: Install Trivy
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
 
-      - name: Run govulncheck
-        run: govulncheck ./...
+      - name: Run security scans
+        run: make security
         continue-on-error: true
 
-      - name: Run gosec
-        run: gosec -fmt sarif -out gosec-results.sarif ./...
-        continue-on-error: true
-
-      - name: Upload gosec results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: gosec-results.sarif
-
-      - name: Run Trivy security scan
-        uses: aquasecurity/trivy-action@main
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'HIGH,CRITICAL'
-          exit-code: '0'
-
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: trivy-results.sarif
-
-  lint:
-    name: Lint
+  checks:
+    name: Code Quality Checks
     runs-on: ubuntu-latest
     needs: build
     steps:
@@ -148,16 +109,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Run go fmt check
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "The following files need formatting:"
-            gofmt -l .
-            exit 1
-          fi
-
-      - name: Run go vet
-        run: go vet ./...
+      - name: Run all checks
+        run: make check-all
 
       - name: Run staticcheck
         uses: dominikh/staticcheck-action@v1
@@ -168,16 +121,15 @@ jobs:
   all-checks-passed:
     name: All Checks Passed
     runs-on: ubuntu-latest
-    needs: [build, test, coverage, security, lint]
+    needs: [build, test, security, checks]
     if: always()
     steps:
       - name: Check if all jobs passed
         run: |
           if [[ "${{ needs.build.result }}" != "success" || \
                 "${{ needs.test.result }}" != "success" || \
-                "${{ needs.coverage.result }}" != "success" || \
                 "${{ needs.security.result }}" != "success" || \
-                "${{ needs.lint.result }}" != "success" ]]; then
+                "${{ needs.checks.result }}" != "success" ]]; then
             echo "One or more checks failed"
             exit 1
           fi

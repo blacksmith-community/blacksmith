@@ -372,7 +372,9 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(manifest.Manifest + "\n"))
+		if _, err := w.Write([]byte(manifest.Manifest + "\n")); err != nil {
+			l.Error("failed to write manifest response: %s", err)
+		}
 		return
 	}
 
@@ -1046,7 +1048,9 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 					// Return the manifest as plain text
 					w.Header().Set("Content-Type", "text/plain")
-					w.Write([]byte(deployment.Manifest))
+					if _, err := w.Write([]byte(deployment.Manifest)); err != nil {
+						l.Error("failed to write deployment manifest response: %s", err)
+					}
 					return
 				}
 
