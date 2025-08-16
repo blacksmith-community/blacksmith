@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pivotal-cf/brokerapi/v8"
+	"github.com/pivotal-cf/brokerapi/v8/domain"
 	"gopkg.in/yaml.v2"
 )
 
@@ -56,7 +56,7 @@ func min(a, b int) int {
 func CheckNames(names ...string) error {
 	for _, s := range names {
 		if !ValidName.MatchString(s) {
-			return fmt.Errorf("'%s' is invalid; names should only contain letters, numbers and hyphens.", s)
+			return fmt.Errorf("'%s' is invalid; names should only contain letters, numbers and hyphens", s)
 		}
 	}
 	return nil
@@ -419,14 +419,14 @@ func hasServiceDefinitions(path string) bool {
 	return false
 }
 
-func Catalog(ss []Service) []brokerapi.Service {
+func Catalog(ss []Service) []domain.Service {
 	l := Logger.Wrap("Catalog")
 	l.Info("Creating broker catalog from %d services", len(ss))
 
-	bb := make([]brokerapi.Service, len(ss))
+	bb := make([]domain.Service, len(ss))
 	for i, s := range ss {
 		l.Debug("Processing service %d/%d - ID: %s, Name: %s", i+1, len(ss), s.ID, s.Name)
-		var md brokerapi.ServiceMetadata
+		var md domain.ServiceMetadata
 		bb[i].ID = s.ID
 		bb[i].Name = s.Name
 		bb[i].Description = s.Description
@@ -436,7 +436,7 @@ func Catalog(ss []Service) []brokerapi.Service {
 		copy(bb[i].Tags, s.Tags)
 		l.Debug("Service %s - Bindable: %v, Tags: %v", s.Name, s.Bindable, s.Tags)
 
-		bb[i].Plans = make([]brokerapi.ServicePlan, len(s.Plans))
+		bb[i].Plans = make([]domain.ServicePlan, len(s.Plans))
 		l.Debug("Processing %d plans for service %s", len(s.Plans), s.Name)
 		for j, p := range s.Plans {
 			bb[i].Plans[j].ID = p.ID

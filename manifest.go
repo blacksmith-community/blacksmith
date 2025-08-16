@@ -207,12 +207,8 @@ func GetCreds(id string, plan Plan, director bosh.Director, l *Log) (interface{}
 		jobs = append(jobs, &job)
 
 		if typ, ok := byType[vm.Job]; ok {
-			for _, ip := range vm.IPs {
-				typ.IPs = append(typ.IPs, ip)
-			}
-			for _, dns := range vm.DNS {
-				typ.DNS = append(typ.DNS, dns)
-			}
+			typ.IPs = append(typ.IPs, vm.IPs...)
+			typ.DNS = append(typ.DNS, vm.DNS...)
 		} else {
 			byType[vm.Job] = &Job{
 				vm.Job,

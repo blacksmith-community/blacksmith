@@ -214,7 +214,7 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 	}
 
 	if !createIfMissing {
-		err = fmt.Errorf("Secret mount %s is missing", mount)
+		err = fmt.Errorf("secret mount %s is missing", mount)
 		l.Error("%s", err)
 		return err
 	}

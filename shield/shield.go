@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pivotal-cf/brokerapi/v8"
+	"github.com/pivotal-cf/brokerapi/v8/domain"
 	"github.com/shieldproject/shield/client/v2/shield"
 )
 
@@ -28,8 +28,8 @@ var (
 type Client interface {
 	io.Closer
 
-	CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error
-	DeleteSchedule(instance string, details brokerapi.DeprovisionDetails) error
+	CreateSchedule(instance string, details domain.ProvisionDetails, url string, creds interface{}) error
+	DeleteSchedule(instance string, details domain.DeprovisionDetails) error
 }
 
 // Package-level logger that mimics the main package logger
@@ -79,11 +79,11 @@ func (cli *NoopClient) Close() error {
 	logger.Debug("NoopClient.Close() called - no-op")
 	return nil
 }
-func (cli *NoopClient) CreateSchedule(instance string, details brokerapi.ProvisionDetails, url string, creds interface{}) error {
+func (cli *NoopClient) CreateSchedule(instance string, details domain.ProvisionDetails, url string, creds interface{}) error {
 	logger.Debug("NoopClient.CreateSchedule() called for instance %s - no-op", instance)
 	return nil
 }
-func (cli *NoopClient) DeleteSchedule(instance string, details brokerapi.DeprovisionDetails) error {
+func (cli *NoopClient) DeleteSchedule(instance string, details domain.DeprovisionDetails) error {
 	logger.Debug("NoopClient.DeleteSchedule() called for instance %s - no-op", instance)
 	return nil
 }
@@ -189,7 +189,7 @@ func join(s ...string) string {
 	return strings.Join(s, ":")
 }
 
-func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.ProvisionDetails, host string, creds interface{}) error {
+func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.ProvisionDetails, host string, creds interface{}) error {
 	logger.Info("Creating Shield schedule for instance %s (service: %s, plan: %s)",
 		instanceID, details.ServiceID, details.PlanID)
 	logger.Debug("Instance details - Org: %s, Space: %s, Host: %s",
@@ -297,7 +297,7 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details brokerapi.Pr
 	return nil
 }
 
-func (cli *NetworkClient) DeleteSchedule(instanceID string, details brokerapi.DeprovisionDetails) error {
+func (cli *NetworkClient) DeleteSchedule(instanceID string, details domain.DeprovisionDetails) error {
 	logger.Info("Deleting Shield schedule for instance %s (service: %s, plan: %s)",
 		instanceID, details.ServiceID, details.PlanID)
 

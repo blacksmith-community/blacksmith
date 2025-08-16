@@ -24,11 +24,11 @@ func wrap(key string, data map[interface{}]interface{}) map[interface{}]interfac
 }
 
 func deinterface(o interface{}) interface{} {
-	switch o.(type) {
+	switch o := o.(type) {
 	case map[interface{}]interface{}:
-		return deinterfaceMap(o.(map[interface{}]interface{}))
+		return deinterfaceMap(o)
 	case []interface{}:
-		return deinterfaceList(o.([]interface{}))
+		return deinterfaceList(o)
 	default:
 		return o
 	}

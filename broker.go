@@ -16,13 +16,13 @@ import (
 	"blacksmith/bosh"
 	"blacksmith/shield"
 	"github.com/google/uuid"
-	"github.com/pivotal-cf/brokerapi/v8"
 	"github.com/pivotal-cf/brokerapi/v8/domain"
+	"github.com/pivotal-cf/brokerapi/v8/domain/apiresponses"
 	"gopkg.in/yaml.v2"
 )
 
 type Broker struct {
-	Catalog []brokerapi.Service
+	Catalog []domain.Service
 	Plans   map[string]Plan
 	BOSH    bosh.Director
 	Vault   *Vault
@@ -225,7 +225,7 @@ func (b *Broker) Provision(
 	// Check if async is allowed
 	if !asyncAllowed {
 		l.Error("Async operations required but not allowed by client")
-		return spec, fmt.Errorf("This service broker requires async operations")
+		return spec, fmt.Errorf("this service broker requires async operations")
 	}
 
 	l.Info("Looking up plan %s for service %s", details.PlanID, details.ServiceID)
@@ -247,7 +247,7 @@ func (b *Broker) Provision(
 	l.Info("Checking service limits for plan %s", plan.Name)
 	if plan.OverLimit(db) {
 		l.Error("Service limit exceeded for %s/%s (limit: %d)", plan.Service.Name, plan.Name, plan.Limit)
-		return spec, brokerapi.ErrPlanQuotaExceeded
+		return spec, apiresponses.ErrPlanQuotaExceeded
 	}
 	l.Debug("Service limit check passed")
 
@@ -262,7 +262,7 @@ func (b *Broker) Provision(
 	})
 	if err != nil {
 		l.Error("failed to track new service in the vault index: %s", err)
-		return spec, fmt.Errorf("Failed to track new service in Vault")
+		return spec, fmt.Errorf("failed to track new service in Vault")
 	}
 
 	// Create deployment name
@@ -283,7 +283,7 @@ func (b *Broker) Provision(
 		if err := b.Vault.Index(instanceID, nil); err != nil {
 			l.Error("failed to remove instance from index: %s", err)
 		}
-		return spec, fmt.Errorf("Failed to store service metadata")
+		return spec, fmt.Errorf("failed to store service metadata")
 	}
 
 	// Build deployment info to store at instance level
@@ -420,7 +420,7 @@ func (b *Broker) Deprovision(
 	// Check if async is allowed
 	if !asyncAllowed {
 		l.Error("Async operations required but not allowed by client")
-		return domain.DeprovisionServiceSpec{}, fmt.Errorf("This service broker requires async operations")
+		return domain.DeprovisionServiceSpec{}, fmt.Errorf("this service broker requires async operations")
 	}
 
 	// Check if instance exists
@@ -432,7 +432,7 @@ func (b *Broker) Deprovision(
 	if !exists {
 		l.Debug("Instance not found in vault index")
 		/* return a 410 Gone to the caller */
-		return domain.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
+		return domain.DeprovisionServiceSpec{}, apiresponses.ErrInstanceDoesNotExist
 	}
 
 	// Store delete_requested_at timestamp
@@ -541,7 +541,7 @@ func (b *Broker) OnProvisionCompleted(
 	}
 
 	// Extract the details from metadata
-	var details brokerapi.ProvisionDetails
+	var details domain.ProvisionDetails
 	if detailsData, ok := detailsMetadata["details"]; ok {
 		// Convert the details back to ProvisionDetails struct
 		if detailsMap, ok := detailsData.(map[string]interface{}); ok {
@@ -599,7 +599,7 @@ func (b *Broker) OnProvisionCompleted(
 	err = b.Shield.CreateSchedule(instanceID, details, vms[0].IPs[0], creds)
 	if err != nil {
 		l.Error("failed to schedule S.H.I.E.L.D. backup: %s", err)
-		return fmt.Errorf("Failed to schedule S.H.I.E.L.D. backup")
+		return fmt.Errorf("failed to schedule S.H.I.E.L.D. backup")
 	}
 
 	l.Debug("scheduling of S.H.I.E.L.D. backup for instance '%s' succesfully completed", instanceID)

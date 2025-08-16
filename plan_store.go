@@ -235,38 +235,6 @@ func (ps *PlanStorage) storePlanFiles(planDir, service, planName string) error {
 	return nil
 }
 
-// checkIfUpdateNeeded checks if the file needs to be updated based on SHA256
-func (ps *PlanStorage) checkIfUpdateNeeded(vaultPath, newShasum string) (bool, error) {
-	l := Logger.Wrap("Plan Storage")
-	// Get existing secret from Vault
-	var existing map[string]interface{}
-	l.Debug("Getting existing secret from Vault: %s", vaultPath)
-	exists, err := ps.vault.Get(vaultPath, &existing)
-	if err != nil {
-		l.Debug("Error getting secret: %s", err)
-		return false, err
-	}
-
-	// If secret doesn't exist, we need to create it
-	if !exists {
-		l.Debug("Secret does not exist, needs creation")
-		return true, nil
-	}
-
-	// Check if SHA256 exists and matches
-	if existingShasum, ok := existing["sha256"].(string); ok {
-		l.Debug("Existing SHA256: %s, New SHA256: %s", existingShasum, newShasum)
-		if existingShasum == newShasum {
-			l.Debug("SHA256 matches, no update needed")
-			return false, nil // No update needed
-		}
-		l.Debug("SHA256 differs, update needed")
-	} else {
-		l.Debug("No SHA256 in existing secret, update needed")
-	}
-
-	return true, nil // Update needed
-}
 
 // calculateSHA256 calculates the SHA256 hash of a file
 func calculateSHA256(filePath string) (string, error) {

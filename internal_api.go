@@ -291,6 +291,11 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Cleanups: cleanups,
 		}
 		js, err := json.Marshal(out)
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		fmt.Fprintf(w, "%s\n", string(js))
@@ -358,7 +363,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pattern := regexp.MustCompile("^/b/([^/]+)/manifest\\.yml$")
+	pattern := regexp.MustCompile(`^/b/([^/]+)/manifest\.yml$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		l := Logger.Wrap("manifest.yml")
 		l.Debug("looking up BOSH manifest for %s", m[1])
@@ -946,7 +951,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Credentials endpoint
-	pattern = regexp.MustCompile("^/b/([^/]+)/creds\\.json$")
+	pattern = regexp.MustCompile(`^/b/([^/]+)/creds\.json$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		l := Logger.Wrap("credentials")
 		instanceID := m[1]
