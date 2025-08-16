@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/vault/api"
 )
 
 type Vault struct {
@@ -26,6 +28,122 @@ func (vault *Vault) ensureClient() error {
 		vault.client = client
 	}
 	return nil
+}
+
+// WaitForVaultReady checks if Vault is ready and available before proceeding
+func (vault *Vault) WaitForVaultReady() error {
+	l := Logger.Wrap("vault readiness")
+
+	// Log that we're waiting for Vault to be available
+	l.Info("waiting for Vault to become available at %s", vault.URL)
+
+	// Retry for up to 20 seconds with 1-second intervals
+	maxRetries := 20
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		l.Debug("checking Vault availability (attempt %d/%d)", attempt, maxRetries)
+
+		// Try to create a vault client for this check
+		client, err := NewVaultClient(vault.URL, "", vault.Insecure) // No token needed for health check
+		if err != nil {
+			l.Debug("failed to create vault client (attempt %d/%d): %s", attempt, maxRetries, err)
+		} else {
+			// Use the official Vault API health check
+			health, healthErr := client.Sys().Health()
+			if healthErr != nil {
+				l.Debug("vault health check failed (attempt %d/%d): %s", attempt, maxRetries, healthErr)
+			} else {
+				// Vault is responding and we got health info
+				l.Debug("vault health check successful - initialized: %t, sealed: %t", health.Initialized, health.Sealed)
+				l.Info("Vault is ready and available")
+				return nil
+			}
+		}
+
+		// Don't sleep after the last attempt
+		if attempt < maxRetries {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	return fmt.Errorf("Vault is not available after %d seconds", maxRetries)
+}
+
+// HealthCheck performs a comprehensive health check using the official Vault API
+func (vault *Vault) HealthCheck() (*api.HealthResponse, error) {
+	l := Logger.Wrap("vault health")
+
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
+		return nil, err
+	}
+
+	l.Debug("performing health check")
+	health, err := vault.client.Sys().Health()
+	if err != nil {
+		l.Debug("health check failed: %s", err)
+		return nil, err
+	}
+
+	l.Debug("health check results - initialized: %t, sealed: %t, standby: %t",
+		health.Initialized, health.Sealed, health.Standby)
+	return health, nil
+}
+
+// IsInitialized checks if Vault is initialized using the official API
+func (vault *Vault) IsInitialized() (bool, error) {
+	l := Logger.Wrap("vault init status")
+
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
+		return false, err
+	}
+
+	l.Debug("checking initialization status")
+	initialized, err := vault.client.Sys().InitStatus()
+	if err != nil {
+		l.Debug("failed to check initialization status: %s", err)
+		return false, err
+	}
+
+	l.Debug("vault initialized: %t", initialized)
+	return initialized, nil
+}
+
+// GetSealStatus returns the current seal status using the official API
+func (vault *Vault) GetSealStatus() (*api.SealStatusResponse, error) {
+	l := Logger.Wrap("vault seal status")
+
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
+		return nil, err
+	}
+
+	l.Debug("checking seal status")
+	sealStatus, err := vault.client.Sys().SealStatus()
+	if err != nil {
+		l.Debug("failed to check seal status: %s", err)
+		return nil, err
+	}
+
+	l.Debug("vault sealed: %t, progress: %d/%d", sealStatus.Sealed, sealStatus.Progress, sealStatus.T)
+	return sealStatus, nil
+}
+
+// IsReady checks if Vault is ready for operations (initialized and unsealed)
+func (vault *Vault) IsReady() (bool, error) {
+	l := Logger.Wrap("vault readiness check")
+
+	health, err := vault.HealthCheck()
+	if err != nil {
+		return false, err
+	}
+
+	ready := health.Initialized && !health.Sealed
+	l.Debug("vault ready: %t (initialized: %t, sealed: %t)", ready, health.Initialized, health.Sealed)
+	return ready, nil
 }
 
 type VaultCreds struct {

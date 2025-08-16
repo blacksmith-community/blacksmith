@@ -58,6 +58,13 @@ func main() {
 		Token:    "", // will be supplied soon.
 		Insecure: config.Vault.Insecure,
 	}
+
+	// Wait for Vault to be ready before proceeding
+	if err = vault.WaitForVaultReady(); err != nil {
+		l.Error("Vault readiness check failed: %s", err)
+		log.Fatal(err)
+	}
+
 	// TLS configuration is now handled by VaultClient internally
 	if err = vault.Init(config.Vault.CredPath); err != nil {
 		log.Fatal(err)
