@@ -154,10 +154,10 @@ jobs:
                   desc="Linux AMD64"
                   ;;
                 *.tar.gz)
-                  desc="Linux Server Distribution (includes UI, gzip)"
+                  desc="Server Distribution (includes UI and all platform binaries, gzip)"
                   ;;
                 *.tar.bz2)
-                  desc="Linux Server Distribution (includes UI, bzip2)"
+                  desc="Server Distribution (includes UI and all platform binaries, bzip2)"
                   ;;
                 *)
                   desc="Binary"
@@ -170,7 +170,7 @@ jobs:
             echo ""
             echo "### 📋 Installation"
             echo ""
-            echo "#### Linux Server"
+            echo "#### Server Distribution"
             echo '```bash'
             echo "# Download gzip version (smaller, faster decompression)"
             echo "wget https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-${VERSION}.tar.gz"
@@ -180,9 +180,14 @@ jobs:
             echo "wget https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-${VERSION}.tar.bz2"
             echo "tar -xjf blacksmith-${VERSION}.tar.bz2"
             echo ""
-            echo "# Then run"
+            echo "# Extract contains platform-specific binaries:"
             echo "cd blacksmith-${VERSION}/"
-            echo "./blacksmith --version"
+            echo "ls blacksmith-*  # Shows: blacksmith-linux-amd64, blacksmith-darwin-amd64, blacksmith-darwin-arm64"
+            echo ""
+            echo "# Use the appropriate binary for your platform:"
+            echo "./blacksmith-linux-amd64 --version    # For Linux"
+            echo "./blacksmith-darwin-amd64 --version   # For macOS Intel" 
+            echo "./blacksmith-darwin-arm64 --version   # For macOS Apple Silicon"
             echo '```'
             echo ""
             echo "#### macOS/Linux Binary"
