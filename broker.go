@@ -155,11 +155,33 @@ func (b *Broker) ReadServices(dir ...string) error {
 	l.Info("Starting to read and build service catalog")
 	l.Debug("Service directories provided: %v", dir)
 
-	l.Debug("Calling ReadServices to read service definitions")
-	ss, err := ReadServices(dir...)
+	var serviceDirs []string
+	var err error
+
+	// If no directories provided and auto-scan is enabled, scan for forge directories
+	if len(dir) == 0 && b.Config.Forges.AutoScan {
+		l.Info("No service directories provided, using auto-scan for forge directories")
+		serviceDirs, err = AutoScanForgeDirectories(b.Config)
+		if err != nil {
+			l.Error("Auto-scan failed: %s", err)
+			return fmt.Errorf("failed to auto-scan forge directories: %s", err)
+		}
+		if len(serviceDirs) == 0 {
+			l.Error("Auto-scan found no forge directories")
+			return fmt.Errorf("no forge directories found via auto-scan")
+		}
+	} else if len(dir) == 0 {
+		l.Error("No service directories provided and auto-scan is disabled")
+		return fmt.Errorf("no service directories provided")
+	} else {
+		serviceDirs = dir
+	}
+
+	l.Debug("Calling ReadServices to read service definitions from %d directories", len(serviceDirs))
+	ss, err := ReadServices(serviceDirs...)
 	if err != nil {
 		l.Error("Failed to read services: %s", err)
-		l.Debug("Error occurred while reading from directories: %v", dir)
+		l.Debug("Error occurred while reading from directories: %v", serviceDirs)
 		return err
 	}
 	l.Info("Successfully read %d services", len(ss))

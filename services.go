@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/pivotal-cf/brokerapi/v8"
 	"gopkg.in/yaml.v2"
@@ -298,6 +300,123 @@ func ReadServices(dirs ...string) ([]Service, error) {
 		l.Debug("Service summary - ID: %s, Name: %s, Plans: %d", s.ID, s.Name, len(s.Plans))
 	}
 	return ss, nil
+}
+
+func AutoScanForgeDirectories(config *Config) ([]string, error) {
+	l := Logger.Wrap("AutoScanForgeDirectories")
+	l.Info("Starting auto-scan for forge directories")
+
+	var forgeDirs []string
+
+	// Default scan paths if none configured
+	scanPaths := config.Forges.ScanPaths
+	if len(scanPaths) == 0 {
+		scanPaths = []string{
+			"/var/vcap/jobs",
+			"/var/vcap/data/blacksmith",
+		}
+	}
+
+	// Default scan patterns if none configured
+	scanPatterns := config.Forges.ScanPatterns
+	if len(scanPatterns) == 0 {
+		scanPatterns = []string{
+			"*-forge/templates",
+			"*-forge",
+		}
+	}
+
+	l.Debug("Scanning paths: %v", scanPaths)
+	l.Debug("Using patterns: %v", scanPatterns)
+
+	for _, basePath := range scanPaths {
+		l.Debug("Scanning base path: %s", basePath)
+
+		// Check if base path exists
+		if _, err := os.Stat(basePath); os.IsNotExist(err) {
+			l.Debug("Skipping non-existent path: %s", basePath)
+			continue
+		}
+
+		// Read directory entries
+		entries, err := os.ReadDir(basePath)
+		if err != nil {
+			l.Error("Failed to read directory %s: %s", basePath, err)
+			continue
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+
+			entryPath := fmt.Sprintf("%s/%s", basePath, entry.Name())
+			l.Debug("Checking directory: %s", entryPath)
+
+			// Check against scan patterns
+			for _, pattern := range scanPatterns {
+				matched, err := filepath.Match(pattern, entry.Name())
+				if err != nil {
+					l.Error("Error matching pattern %s against %s: %s", pattern, entry.Name(), err)
+					continue
+				}
+
+				if matched {
+					l.Debug("Found forge directory matching pattern %s: %s", pattern, entryPath)
+
+					// For template paths, check if they contain service definitions
+					if strings.Contains(pattern, "templates") {
+						if hasServiceDefinitions(entryPath) {
+							l.Info("Adding forge templates directory: %s", entryPath)
+							forgeDirs = append(forgeDirs, entryPath)
+						}
+					} else {
+						// For data paths, check if they contain service definitions
+						if hasServiceDefinitions(entryPath) {
+							l.Info("Adding forge data directory: %s", entryPath)
+							forgeDirs = append(forgeDirs, entryPath)
+						}
+					}
+					break // Stop checking other patterns for this entry
+				}
+			}
+		}
+	}
+
+	l.Info("Auto-scan completed. Found %d forge directories", len(forgeDirs))
+	for i, dir := range forgeDirs {
+		l.Debug("Forge directory %d: %s", i+1, dir)
+	}
+
+	return forgeDirs, nil
+}
+
+func hasServiceDefinitions(path string) bool {
+	l := Logger.Wrap("hasServiceDefinitions")
+	l.Debug("Checking for service definitions in: %s", path)
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		l.Debug("Could not read directory %s: %s", path, err)
+		return false
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		servicePath := fmt.Sprintf("%s/%s", path, entry.Name())
+		serviceFile := fmt.Sprintf("%s/service.yml", servicePath)
+
+		if _, err := os.Stat(serviceFile); err == nil {
+			l.Debug("Found service definition at: %s", serviceFile)
+			return true
+		}
+	}
+
+	l.Debug("No service definitions found in: %s", path)
+	return false
 }
 
 func Catalog(ss []Service) []brokerapi.Service {

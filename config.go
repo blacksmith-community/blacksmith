@@ -16,6 +16,13 @@ type Config struct {
 	WebRoot   string       `yaml:"web-root"`
 	Env       string       `yaml:"env"`
 	Shareable bool         `yaml:"shareable"`
+	Forges    ForgesConfig `yaml:"forges"`
+}
+
+type ForgesConfig struct {
+	AutoScan     bool     `yaml:"auto-scan"`
+	ScanPaths    []string `yaml:"scan-paths"`
+	ScanPatterns []string `yaml:"scan-patterns"`
 }
 
 type BrokerConfig struct {

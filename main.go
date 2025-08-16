@@ -222,8 +222,14 @@ func main() {
 		Config: &config,
 	}
 
-	l.Info("reading services from %s", strings.Join(os.Args[3:], ", "))
-	err = broker.ReadServices(os.Args[3:]...)
+	// Read services from CLI args or auto-scan
+	if len(os.Args) > 3 {
+		l.Info("reading services from CLI arguments: %s", strings.Join(os.Args[3:], ", "))
+		err = broker.ReadServices(os.Args[3:]...)
+	} else {
+		l.Info("no CLI arguments provided, using configuration-based service discovery")
+		err = broker.ReadServices()
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to read SERVICE directories: %s\n", err)
 		os.Exit(2)
