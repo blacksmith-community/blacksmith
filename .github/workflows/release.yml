@@ -73,7 +73,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.tar.bz2 blacksmith-* > checksums.sha256
+          sha256sum *.tar.gz *.tar.bz2 blacksmith-darwin-* blacksmith-linux-* > checksums.sha256
           echo "Checksums:"
           cat checksums.sha256
 
@@ -153,8 +153,11 @@ jobs:
                 blacksmith-linux-amd64)
                   desc="Linux AMD64"
                   ;;
+                *.tar.gz)
+                  desc="Linux Server Distribution (includes UI, gzip)"
+                  ;;
                 *.tar.bz2)
-                  desc="Linux Server Distribution (includes UI)"
+                  desc="Linux Server Distribution (includes UI, bzip2)"
                   ;;
                 *)
                   desc="Binary"
@@ -169,8 +172,15 @@ jobs:
             echo ""
             echo "#### Linux Server"
             echo '```bash'
+            echo "# Download gzip version (smaller, faster decompression)"
+            echo "wget https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-${VERSION}.tar.gz"
+            echo "tar -xzf blacksmith-${VERSION}.tar.gz"
+            echo ""
+            echo "# OR download bzip2 version (better compression)"
             echo "wget https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-${VERSION}.tar.bz2"
             echo "tar -xjf blacksmith-${VERSION}.tar.bz2"
+            echo ""
+            echo "# Then run"
             echo "cd blacksmith-${VERSION}/"
             echo "./blacksmith --version"
             echo '```'
@@ -212,8 +222,11 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            artifacts/blacksmith-*
-            artifacts/*.tar.bz2
+            artifacts/blacksmith-darwin-arm64
+            artifacts/blacksmith-darwin-amd64
+            artifacts/blacksmith-linux-amd64
+            artifacts/blacksmith-*.tar.gz
+            artifacts/blacksmith-*.tar.bz2
             artifacts/checksums.sha256
           fail_on_unmatched_files: true
           generate_release_notes: false

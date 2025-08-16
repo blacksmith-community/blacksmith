@@ -180,11 +180,12 @@ shipit: ## Build release artifacts (requires VERSION env var)
 	@GOOS=linux  GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o artifacts/blacksmith-linux-amd64  .
 
 	@echo "$(GREEN)Assembling Linux Server Distribution...$(RESET)"
-	@rm -f artifacts/*.tar.gz
+	@rm -f artifacts/*.tar.gz artifacts/*.tar.bz2
 	@rm -rf blacksmith-$(VERSION)
 	@mkdir -p blacksmith-$(VERSION)
 	@cp artifacts/blacksmith-linux-amd64 blacksmith-$(VERSION)/blacksmith
 	@cp -a ui blacksmith-$(VERSION)
+	@tar -cf - blacksmith-$(VERSION)/ | gzip -9 > artifacts/blacksmith-$(VERSION).tar.gz
 	@tar -cjf artifacts/blacksmith-$(VERSION).tar.bz2 blacksmith-$(VERSION)/
 	@rm -rf blacksmith-$(VERSION)
 	@echo "$(GREEN)✓ Release artifacts built successfully$(RESET)"
