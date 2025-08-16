@@ -112,13 +112,30 @@ gosec: ## Run security scanner on source code
 	@gosec -fmt text ./...
 	@echo "$(GREEN)✓ Security scan complete$(RESET)"
 
+.PHONY: trivy
+trivy: ## Run Trivy container and dependency scanner
+	@echo "$(GREEN)Running Trivy scan...$(RESET)"
+	@command -v trivy >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Trivy not found. Please install it:$(RESET)"; \
+		echo "$(CYAN)  brew install trivy$(RESET) (macOS)"; \
+		echo "$(CYAN)  apt-get install trivy$(RESET) (Debian/Ubuntu)"; \
+		echo "$(CYAN)  Or visit: https://aquasecurity.github.io/trivy$(RESET)"; \
+		exit 1; \
+	}
+	@trivy fs --scanners vuln,misconfig,secret --severity HIGH,CRITICAL .
+	@echo "$(GREEN)✓ Trivy scan complete$(RESET)"
+
+.PHONY: security
+security: govulncheck gosec trivy ## Run all security scans (govulncheck, gosec, trivy)
+	@echo "$(GREEN)✓ All security scans complete$(RESET)"
+
 .PHONY: check
 check: lint test govulncheck ## Run all checks (lint, test, vulnerability check)
 	@echo "$(GREEN)✓ All checks passed$(RESET)"
 
 .PHONY: check-all
-check-all: check gosec ## Run all checks including security scan
-	@echo "$(GREEN)✓ All checks including security scan passed$(RESET)"
+check-all: check security ## Run all checks including all security scans
+	@echo "$(GREEN)✓ All checks including security scans passed$(RESET)"
 
 ##@ Cleanup
 
@@ -202,4 +219,4 @@ deps-tidy: ## Clean up go.mod and go.sum
 
 # Include all phony targets
 .PHONY: build linux dev test test-short coverage coverage-html report fmt vet lint \
-        govulncheck gosec check check-all clean shipit version deps deps-update deps-tidy help
+        govulncheck gosec trivy security check check-all clean shipit version deps deps-update deps-tidy help

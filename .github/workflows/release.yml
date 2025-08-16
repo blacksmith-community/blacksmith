@@ -2,68 +2,281 @@ name: Release
 
 on:
   push:
-    tags: [ 'v*' ]
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+env:
+  GO_VERSION: '1.21'
 
 jobs:
-  build:
-    name: Create Release
+  validate-tag:
+    name: Validate Tag
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - name: Determine Version
-        id:   version
-        uses: frabert/replace-string-action@v1.1
-        with:
-          pattern:      '^refs.tags.v'
-          string:       ${{ github.ref }}
-          replace-with: ''
-
-      - name: Build Blacksmith
+      - name: Get version from tag
+        id: get_version
         run: |
-          make VERSION=${{ steps.version.outputs.replaced }} shipit
+          if [[ "${GITHUB_REF}" =~ ^refs/tags/v?(.+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            # Remove 'v' prefix if present
+            VERSION="${VERSION#v}"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "Releasing version: ${VERSION}"
+          else
+            echo "Invalid tag format: ${GITHUB_REF}"
+            exit 1
+          fi
 
-      - name: Create Release
-        id:   release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate tag is on main branch
+        run: |
+          # Fetch main branch
+          git fetch origin main
 
+          # Check if the tag is reachable from main
+          if ! git merge-base --is-ancestor ${GITHUB_SHA} origin/main; then
+            echo "Error: Tag is not on main branch"
+            exit 1
+          fi
+          echo "Tag is on main branch ✓"
+
+  run-checks:
+    name: Run CI Checks
+    uses: ./.github/workflows/ci.yml
+    needs: validate-tag
+
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: [validate-tag, run-checks]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          tag_name:     ${{ github.ref }}
-          release_name: Blacksmith ${{ github.ref }}
-          draft:        false
-          prerelease:   false
-          body: |
-            _one of the Blacksmith devs really ought to update these release notes..._
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
-      - name: Upload Release Tarball
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ./artifacts/blacksmith-${{ steps.version.outputs.replaced }}.tar.bz2
-          asset_name: blacksmith-${{ steps.version.outputs.replaced }}.tar.bz2
-          asset_content_type: application/octet-stream
+      - name: Build release artifacts
+        run: |
+          VERSION=${{ needs.validate-tag.outputs.version }}
+          echo "Building release artifacts for version ${VERSION}"
+          make shipit VERSION=${VERSION}
 
-      - name: Upload Blacksmith for Linux
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ./artifacts/blacksmith-linux-amd64
-          asset_name: blacksmith-linux-amd64
-          asset_content_type: application/octet-stream
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.tar.bz2 blacksmith-* > checksums.sha256
+          echo "Checksums:"
+          cat checksums.sha256
 
-      - name: Upload Blacksmith for Linux
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ./artifacts/blacksmith-darwin-amd64
-          asset_name: blacksmith-darwin-amd64
-          asset_content_type: application/octet-stream
+          name: release-artifacts
+          path: artifacts/
+          retention-days: 1
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-tag, build-release]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION=${{ needs.validate-tag.outputs.version }}
+
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # Generate release notes
+          {
+            echo "## Release v${VERSION}"
+            echo ""
+            echo "### 🚀 What's New"
+            echo ""
+
+            if [ -n "${PREV_TAG}" ]; then
+              echo "### 📝 Commits since ${PREV_TAG}"
+              echo ""
+              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%an)" --no-merges
+              echo ""
+              echo ""
+              echo "### 📊 Statistics"
+              echo ""
+              echo "- **Commits**: $(git rev-list --count ${PREV_TAG}..HEAD)"
+              echo "- **Contributors**: $(git log ${PREV_TAG}..HEAD --pretty=format:"%an" | sort -u | wc -l | tr -d ' ')"
+              echo "- **Changed files**: $(git diff --name-only ${PREV_TAG}..HEAD | wc -l | tr -d ' ')"
+            else
+              echo "Initial release"
+            fi
+
+            echo ""
+            echo "### 📦 Release Artifacts"
+            echo ""
+            echo "| File | Description | SHA256 |"
+            echo "|------|-------------|--------|"
+
+            # Add descriptions for each artifact
+            while IFS= read -r line; do
+              checksum=$(echo "$line" | awk '{print $1}')
+              filename=$(echo "$line" | awk '{print $2}')
+
+              case "$filename" in
+                blacksmith-darwin-arm64)
+                  desc="macOS Apple Silicon (M1/M2/M3)"
+                  ;;
+                blacksmith-darwin-amd64)
+                  desc="macOS Intel"
+                  ;;
+                blacksmith-linux-amd64)
+                  desc="Linux AMD64"
+                  ;;
+                *.tar.bz2)
+                  desc="Linux Server Distribution (includes UI)"
+                  ;;
+                *)
+                  desc="Binary"
+                  ;;
+              esac
+
+              echo "| \`${filename}\` | ${desc} | \`${checksum:0:8}...\` |"
+            done < artifacts/checksums.sha256
+
+            echo ""
+            echo "### 📋 Installation"
+            echo ""
+            echo "#### Linux Server"
+            echo '```bash'
+            echo "wget https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-${VERSION}.tar.bz2"
+            echo "tar -xjf blacksmith-${VERSION}.tar.bz2"
+            echo "cd blacksmith-${VERSION}/"
+            echo "./blacksmith --version"
+            echo '```'
+            echo ""
+            echo "#### macOS/Linux Binary"
+            echo '```bash'
+            echo "# Download the appropriate binary for your system"
+            echo "# macOS Apple Silicon"
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-darwin-arm64"
+            echo ""
+            echo "# macOS Intel"
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-darwin-amd64"
+            echo ""
+            echo "# Linux AMD64"
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/v${VERSION}/blacksmith-linux-amd64"
+            echo ""
+            echo "# Make executable and verify"
+            echo "chmod +x blacksmith-*"
+            echo "./blacksmith-* --version"
+            echo '```'
+            echo ""
+            echo "### 🔒 Verification"
+            echo ""
+            echo "Download the checksums file and verify your download:"
+            echo '```bash'
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/v${VERSION}/checksums.sha256"
+            echo "sha256sum -c checksums.sha256"
+            echo '```'
+          } > release_notes.md
+
+          # Save to output
+          echo "notes_file=release_notes.md" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Blacksmith v${{ needs.validate-tag.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/blacksmith-*
+            artifacts/*.tar.bz2
+            artifacts/checksums.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+
+  docker-build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [validate-tag, build-release]
+    if: vars.DOCKER_REGISTRY != ''
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.validate-tag.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.validate-tag.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.validate-tag.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.validate-tag.outputs.version }}
+
+  notify-success:
+    name: Notify Success
+    runs-on: ubuntu-latest
+    needs: [validate-tag, create-release]
+    if: success()
+    steps:
+      - name: Send success notification
+        run: |
+          echo "🎉 Release v${{ needs.validate-tag.outputs.version }} created successfully!"
+          echo "View release: https://github.com/${{ github.repository }}/releases/tag/v${{ needs.validate-tag.outputs.version }}"
