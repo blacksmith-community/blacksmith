@@ -11,8 +11,8 @@ env:
   GO_VERSION: '1.25'
 
 jobs:
-  build:
-    name: Build
+  ci:
+    name: Continuous Integration
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,32 +24,38 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Build binary
+      - name: Build
         run: make build
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: blacksmith-binary
-          path: blacksmith
-          retention-days: 1
+      - name: Lint (fmt + vet)
+        run: make lint
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Staticcheck
+        run: make staticcheck
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+      - name: Test
+        run: make test
 
-      - name: Run tests with coverage
-        run: make test-all
+      - name: Coverage
+        run: make coverage
+
+      - name: Govulncheck
+        run: make govulncheck
+
+      - name: Gosec
+        run: make gosec
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy
+
+      - name: Trivy
+        run: make trivy
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -68,69 +74,9 @@ jobs:
           path: coverage.out
           retention-days: 7
 
-  security:
-    name: Security Checks
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update
-          sudo apt-get install trivy
-
-      - name: Run security scans
-        run: make security
-        continue-on-error: true
-
-  checks:
-    name: Code Quality Checks
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Run all checks
-        run: make check-all
-
-      - name: Run staticcheck
-        uses: dominikh/staticcheck-action@v1
-        with:
-          version: "latest"
-          install-go: false
-
-  all-checks-passed:
-    name: All Checks Passed
-    runs-on: ubuntu-latest
-    needs: [build, test, security, checks]
-    if: always()
-    steps:
-      - name: Check if all jobs passed
-        run: |
-          if [[ "${{ needs.build.result }}" != "success" || \
-                "${{ needs.test.result }}" != "success" || \
-                "${{ needs.security.result }}" != "success" || \
-                "${{ needs.checks.result }}" != "success" ]]; then
-            echo "One or more checks failed"
-            exit 1
-          fi
-          echo "All checks passed successfully!"
+          name: blacksmith-binary
+          path: blacksmith
+          retention-days: 1
