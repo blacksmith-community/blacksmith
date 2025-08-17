@@ -341,6 +341,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Debug("fetching logs from file: %s", logFile)
 
 			// Read the log file
+			// #nosec G304 - logFile is validated against whitelist above
 			content, err := os.ReadFile(logFile)
 			if err != nil {
 				if os.IsNotExist(err) {
