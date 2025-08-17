@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -228,6 +231,22 @@ func (b *Broker) Provision(
 		return spec, fmt.Errorf("this service broker requires async operations")
 	}
 
+	// Immediately record the request in vault to track that it was received
+	l.Debug("recording service request in vault immediately")
+	now := time.Now()
+	err := b.Vault.Index(instanceID, map[string]interface{}{
+		"service_id":   details.ServiceID,
+		"plan_id":      details.PlanID,
+		"created":      now.Unix(), // Keep for backward compatibility
+		"requested_at": now.Format(time.RFC3339),
+		"status":       "request_received",
+	})
+	if err != nil {
+		l.Error("failed to record service request in vault: %s", err)
+		return spec, fmt.Errorf("failed to track service request in Vault")
+	}
+	l.Debug("service request recorded in vault with status 'request_received'")
+
 	l.Info("Looking up plan %s for service %s", details.PlanID, details.ServiceID)
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
 	if err != nil {
@@ -251,18 +270,18 @@ func (b *Broker) Provision(
 	}
 	l.Debug("Service limit check passed")
 
-	// Store instance in index immediately with requested_at timestamp
-	l.Debug("tracking service instance in the vault 'db' index")
-	now := time.Now()
+	// Update instance status in index to show validation passed
+	l.Debug("updating service instance status in vault 'db' index to 'validated'")
 	err = b.Vault.Index(instanceID, map[string]interface{}{
 		"service_id":   details.ServiceID,
 		"plan_id":      plan.ID,
 		"created":      now.Unix(), // Keep for backward compatibility
 		"requested_at": now.Format(time.RFC3339),
+		"status":       "validated",
 	})
 	if err != nil {
-		l.Error("failed to track new service in the vault index: %s", err)
-		return spec, fmt.Errorf("failed to track new service in Vault")
+		l.Error("failed to update service status in vault index: %s", err)
+		return spec, fmt.Errorf("failed to update service status in Vault")
 	}
 
 	// Create deployment name
@@ -398,6 +417,20 @@ func (b *Broker) Provision(
 		"raw_parameters":    details.RawParameters,
 	}
 
+	// Update status to show provisioning is starting
+	l.Debug("updating service instance status to 'provisioning_started'")
+	err = b.Vault.Index(instanceID, map[string]interface{}{
+		"service_id":   details.ServiceID,
+		"plan_id":      plan.ID,
+		"created":      now.Unix(), // Keep for backward compatibility
+		"requested_at": now.Format(time.RFC3339),
+		"status":       "provisioning_started",
+	})
+	if err != nil {
+		l.Error("failed to update service status to 'provisioning_started': %s", err)
+		// Continue anyway, this is non-fatal
+	}
+
 	// Launch async provisioning in background
 	go b.provisionAsync(instanceID, detailsMap, plan)
 
@@ -421,6 +454,20 @@ func (b *Broker) Deprovision(
 	if !asyncAllowed {
 		l.Error("Async operations required but not allowed by client")
 		return domain.DeprovisionServiceSpec{}, fmt.Errorf("this service broker requires async operations")
+	}
+
+	// Immediately record deprovision request in vault
+	l.Debug("recording deprovision request in vault immediately")
+	now := time.Now()
+	err := b.Vault.Index(instanceID, map[string]interface{}{
+		"service_id":               details.ServiceID,
+		"plan_id":                  details.PlanID,
+		"deprovision_requested_at": now.Format(time.RFC3339),
+		"status":                   "deprovision_requested",
+	})
+	if err != nil {
+		l.Error("failed to record deprovision request in vault: %s", err)
+		// Continue anyway, this is non-fatal for existing instances
 	}
 
 	// Check if instance exists
@@ -747,6 +794,20 @@ func (b *Broker) LastOperation(
 		}
 		if task.State == "error" {
 			l.Error("provision operation failed!")
+
+			// Clean up failed deployment if it exists
+			l.Debug("checking if failed deployment exists and needs cleanup")
+			_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
+			if deploymentErr == nil {
+				l.Info("Failed deployment %s still exists, attempting cleanup", deploymentName)
+				// Attempt to delete the failed deployment (best effort)
+				if cleanupTask, cleanupErr := b.BOSH.DeleteDeployment(deploymentName); cleanupErr != nil {
+					l.Error("Failed to initiate cleanup of failed deployment %s: %s", deploymentName, cleanupErr)
+				} else {
+					l.Info("Initiated cleanup of failed deployment %s (task %d)", deploymentName, cleanupTask.ID)
+				}
+			}
+
 			return domain.LastOperation{State: domain.Failed}, nil
 		}
 
@@ -763,7 +824,16 @@ func (b *Broker) LastOperation(
 		}
 
 		if task.State == "done" {
-			l.Debug("deprovision operation succeeded")
+			l.Debug("deprovision operation succeeded, verifying deployment is actually deleted")
+
+			// Verify deployment is actually gone before declaring success
+			_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
+			if deploymentErr == nil {
+				l.Error("Deprovision task succeeded but deployment %s still exists", deploymentName)
+				return domain.LastOperation{State: domain.Failed}, nil
+			}
+
+			l.Info("Deployment %s has been successfully deleted, removing from Blacksmith index", deploymentName)
 
 			// Store deleted_at timestamp
 			l.Debug("storing deleted_at timestamp in Vault")
@@ -786,19 +856,11 @@ func (b *Broker) LastOperation(
 				// Continue anyway, this is non-fatal
 			}
 
-			// Update the index with deleted_at (but don't remove it)
-			l.Debug("updating index with deleted_at timestamp")
-			idx, err := b.Vault.GetIndex("db")
-			if err == nil {
-				if raw, err := idx.Lookup(instanceID); err == nil {
-					if data, ok := raw.(map[string]interface{}); ok {
-						data["deleted_at"] = deletedAt.Format(time.RFC3339)
-						data["deleted"] = true // Mark as deleted but keep in index
-						if err := b.Vault.Index(instanceID, data); err != nil {
-							l.Error("failed to update index with deleted status: %s", err)
-						}
-					}
-				}
+			// NOW remove from index since BOSH deletion was confirmed successful
+			l.Debug("removing instance from service index after confirmed deletion")
+			if err := b.Vault.Index(instanceID, nil); err != nil {
+				l.Error("failed to remove service from vault index: %s", err)
+				// Continue anyway, the deployment is gone
 			}
 
 			l.Debug("keeping secrets in vault for audit purposes")
@@ -808,10 +870,18 @@ func (b *Broker) LastOperation(
 		}
 
 		if task.State == "error" {
-			l.Debug("deprovision operation failed!")
-			l.Debug("keeping secrets in vault for audit purposes")
-			// Note: We intentionally do NOT call b.Vault.Clear(instanceID) here
-			// to preserve secrets for auditing purposes
+			l.Error("deprovision operation failed!")
+
+			// Check if deployment still exists after failed deletion
+			_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
+			if deploymentErr == nil {
+				l.Error("Deployment %s still exists after failed deletion task", deploymentName)
+			} else {
+				l.Info("Deployment %s does not exist despite failed deletion task", deploymentName)
+			}
+
+			l.Debug("keeping instance in index and secrets in vault due to deletion failure")
+			// Do NOT remove from index if deletion failed - instance may still be recoverable
 			return domain.LastOperation{State: domain.Failed}, nil
 		}
 
@@ -870,7 +940,7 @@ func (b *Broker) Bind(
 
 			l.Info("Creating dynamic RabbitMQ user for binding %s", bindingID)
 			l.Debug("Creating user %s in RabbitMQ at %s", usernameDynamic, apiUrl)
-			err := CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl.(string))
+			err := CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl.(string), b.Config, creds.(map[string]interface{}))
 			if err != nil {
 				l.Error("Failed to create RabbitMQ user: %s", err)
 				return binding, err
@@ -878,7 +948,7 @@ func (b *Broker) Bind(
 			l.Debug("Successfully created RabbitMQ user %s", usernameDynamic)
 
 			l.Debug("Granting permissions to user %s for vhost %s", usernameDynamic, vhost)
-			err = GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl.(string))
+			err = GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl.(string), b.Config, creds.(map[string]interface{}))
 			if err != nil {
 				l.Error("Failed to grant permissions to RabbitMQ user %s: %s", usernameDynamic, err)
 				return binding, err
@@ -945,7 +1015,118 @@ func yamlGsub(
 	return deinterfaceMap(data), nil
 }
 
-func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl string) error {
+// createHTTPClientForService creates an HTTP client with optional TLS verification skip
+func createHTTPClientForService(serviceName string, config *Config) *http.Client {
+	if config != nil && config.Services.ShouldSkipTLSVerify(serviceName) {
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 - intentionally skipping TLS verification when configured
+		}
+		return &http.Client{Transport: tr}
+	}
+	return http.DefaultClient
+}
+
+// tryServiceRequest attempts HTTP request with BOSH DNS first, then falls back to IP
+func tryServiceRequest(req *http.Request, httpClient *http.Client, creds map[string]interface{}, l *Log) (*http.Response, error) {
+	originalURL := req.URL.String()
+	l.Debug("Original request URL: %s", originalURL)
+
+	// Extract hostname and IPs from credentials
+	var hostname string
+	var ips []string
+
+	if h, ok := creds["hostname"].(string); ok && h != "" {
+		hostname = h
+		l.Debug("Found BOSH DNS hostname in credentials: %s", hostname)
+	}
+
+	// Try to get IPs from jobs array
+	if jobsData, ok := creds["jobs"]; ok {
+		if jobsArray, ok := jobsData.([]interface{}); ok && len(jobsArray) > 0 {
+			if firstJob, ok := jobsArray[0].(map[string]interface{}); ok {
+				if jobIPs, ok := firstJob["ips"].([]interface{}); ok {
+					for _, ip := range jobIPs {
+						if ipStr, ok := ip.(string); ok {
+							ips = append(ips, ipStr)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	l.Debug("Available IPs for fallback: %v", ips)
+
+	// Try BOSH DNS hostname first
+	if hostname != "" {
+		hostnameURL := replaceHostInURL(originalURL, hostname)
+		if hostnameURL != originalURL {
+			l.Info("Attempting connection via BOSH DNS: %s", hostnameURL)
+			req.URL, _ = url.Parse(hostnameURL)
+
+			resp, err := httpClient.Do(req)
+			if err == nil {
+				l.Info("Successfully connected via BOSH DNS hostname")
+				return resp, nil
+			}
+
+			l.Debug("BOSH DNS connection failed: %s", err)
+
+			// Check if this is a TLS certificate error that might be resolved with IP
+			if isTLSError(err) {
+				l.Info("TLS certificate error detected, will try IP fallback")
+			}
+		}
+	}
+
+	// Fallback to IP addresses
+	for i, ip := range ips {
+		l.Info("Attempting connection via IP (%d/%d): %s", i+1, len(ips), ip)
+		ipURL := replaceHostInURL(originalURL, ip)
+		req.URL, _ = url.Parse(ipURL)
+
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			l.Info("Successfully connected via IP address: %s", ip)
+			return resp, nil
+		}
+
+		l.Debug("IP connection failed for %s: %s", ip, err)
+	}
+
+	// If all attempts failed, return the original URL and try once more for error reporting
+	req.URL, _ = url.Parse(originalURL)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect via BOSH DNS (%s) and all IP addresses (%v): %w",
+			hostname, ips, err)
+	}
+
+	return resp, nil
+}
+
+// replaceHostInURL replaces the hostname/IP in a URL with a new host
+func replaceHostInURL(originalURL, newHost string) string {
+	if u, err := url.Parse(originalURL); err == nil {
+		// Preserve the port if it exists
+		if _, port, err := net.SplitHostPort(u.Host); err == nil {
+			u.Host = net.JoinHostPort(newHost, port)
+		} else {
+			u.Host = newHost
+		}
+		return u.String()
+	}
+	return originalURL
+}
+
+// isTLSError checks if the error is related to TLS certificate verification
+func isTLSError(err error) bool {
+	return strings.Contains(err.Error(), "tls:") ||
+		strings.Contains(err.Error(), "certificate") ||
+		strings.Contains(err.Error(), "x509:")
+}
+
+func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl string, config *Config, creds map[string]interface{}) error {
 	l := Logger.Wrap("CreateUserPassRabbitMQ")
 	l.Info("Creating RabbitMQ user: %s", usernameDynamic)
 	l.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
@@ -974,8 +1155,9 @@ func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adm
 	request.SetBasicAuth(adminUsername, adminPassword)
 	request.Header.Set("content-type", "application/json")
 
-	l.Debug("Sending PUT request to create user")
-	resp, err := http.DefaultClient.Do(request)
+	httpClient := createHTTPClientForService("rabbitmq", config)
+	l.Debug("Attempting user creation with BOSH DNS fallback to IP")
+	resp, err := tryServiceRequest(request, httpClient, creds, l)
 	if err != nil {
 		l.Error("HTTP request failed for user creation: %s", err)
 		return err
@@ -992,11 +1174,12 @@ func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adm
 	return nil
 }
 
-func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl string) error {
+func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiUrl string, config *Config, creds map[string]interface{}) error {
 	l := Logger.Wrap("GrantUserPermissionsRabbitMQ")
-	l.Info("Granting permissions to user %s on vhost %s", usernameDynamic, vhost)
-	l.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
+	l.Debug("Granting permissions to RabbitMQ user: %s", usernameDynamic)
+	l.Debug("API URL: %s, Admin user: %s, vhost: %s", apiUrl, adminUsername, vhost)
 
+	// Create permissions payload
 	payload := struct {
 		Configure string `json:"configure"`
 		Write     string `json:"write"`
@@ -1010,7 +1193,9 @@ func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword,
 	}
 	l.Debug("Permissions payload: %s", string(data))
 
-	permUrl := apiUrl + "/permissions/" + vhost + "/" + usernameDynamic
+	// URL encode vhost for API call
+	encodedVhost := url.QueryEscape(vhost)
+	permUrl := apiUrl + "/permissions/" + encodedVhost + "/" + usernameDynamic
 	l.Debug("Setting permissions at URL: %s", permUrl)
 
 	request, err := http.NewRequest(http.MethodPut, permUrl, bytes.NewBuffer(data))
@@ -1022,25 +1207,26 @@ func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword,
 	request.SetBasicAuth(adminUsername, adminPassword)
 	request.Header.Set("content-type", "application/json")
 
-	l.Debug("Sending PUT request to grant permissions")
-	resp, err := http.DefaultClient.Do(request)
+	httpClient := createHTTPClientForService("rabbitmq", config)
+	l.Debug("Attempting permissions grant with BOSH DNS fallback to IP")
+	resp, err := tryServiceRequest(request, httpClient, creds, l)
 	if err != nil {
-		l.Error("HTTP request failed for granting permissions: %s", err)
+		l.Error("HTTP request failed for permissions: %s", err)
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		l.Error("Failed to grant permissions - Status: %d, Response: %s", resp.StatusCode, string(body))
+		l.Error("Failed to set permissions - Status: %d, Response: %s", resp.StatusCode, string(body))
 		return fmt.Errorf("failed to grant RabbitMQ permissions, status code: %d, response: %s", resp.StatusCode, string(body))
 	}
 
-	l.Info("Successfully granted permissions to user %s on vhost %s", usernameDynamic, vhost)
+	l.Debug("Successfully granted permissions to RabbitMQ user: %s", usernameDynamic)
 	return nil
 }
 
-func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string) error {
+func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string, config *Config, creds map[string]interface{}) error {
 	l := Logger.Wrap("DeleteUserRabbitMQ")
 	l.Info("Deleting RabbitMQ user: %s", bindingID)
 	l.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
@@ -1057,8 +1243,9 @@ func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string)
 	request.SetBasicAuth(adminUsername, adminPassword)
 	request.Header.Set("content-type", "application/json")
 
-	l.Debug("Sending DELETE request to remove user")
-	resp, err := http.DefaultClient.Do(request)
+	httpClient := createHTTPClientForService("rabbitmq", config)
+	l.Debug("Attempting user deletion with BOSH DNS fallback to IP")
+	resp, err := tryServiceRequest(request, httpClient, creds, l)
 	if err != nil {
 		l.Error("HTTP request failed for user deletion: %s", err)
 		return err
@@ -1105,7 +1292,7 @@ func (b *Broker) Unbind(
 			apiUrl := m["api_url"].(string)
 			l.Info("Deleting dynamic RabbitMQ user %s", bindingID)
 			l.Debug("Calling RabbitMQ API at %s to delete user", apiUrl)
-			err = DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl)
+			err = DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl, b.Config, creds.(map[string]interface{}))
 			if err != nil {
 				l.Error("Failed to delete RabbitMQ user %s: %s", bindingID, err)
 				return domain.UnbindSpec{}, err

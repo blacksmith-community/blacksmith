@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"blacksmith/bosh"
 	"gopkg.in/yaml.v2"
 )
 
@@ -153,12 +154,32 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 		return
 	}
 
-	l.Info("Deployment started successfully, BOSH task ID: %d", task.ID)
+	l.Info("Deployment started successfully, initial task ID: %d", task.ID)
 
-	// Update tracking with deployment status (no longer storing task ID)
-	err = b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", task.ID), task.ID, params)
+	// Get the actual task ID from BOSH events if the returned task ID is a placeholder
+	deploymentName := plan.ID + "-" + instanceID
+	var actualTaskID int = task.ID
+
+	if task.ID <= 1 {
+		// This is a placeholder task ID (0 or 1), get the real one from BOSH events
+		l.Debug("Task ID is placeholder (%d), retrieving real task ID from BOSH events", task.ID)
+		latestTask, _, err := b.GetLatestDeploymentTask(deploymentName)
+		if err != nil {
+			l.Info("Could not get latest task ID immediately, will use placeholder: %s", err)
+			// Continue with placeholder ID - the LastOperation will pick up the real one later
+		} else {
+			actualTaskID = latestTask.ID
+			l.Info("Retrieved actual task ID from BOSH events: %d (was %d)", actualTaskID, task.ID)
+		}
+	}
+
+	// Update tracking with deployment status - store the actual task ID
+	l.Debug("about to store task ID %d in vault for instance %s", actualTaskID, instanceID)
+	err = b.Vault.TrackProgress(instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", actualTaskID), actualTaskID, params)
 	if err != nil {
-		l.Error("failed to store service status in the vault: %s", err)
+		l.Error("CRITICAL: failed to store service status in the vault: %s", err)
+	} else {
+		l.Info("Successfully stored task ID %d in vault for instance %s", actualTaskID, instanceID)
 	}
 
 	l.Info("Async provisioning handed off to BOSH for instance %s", instanceID)
@@ -209,34 +230,90 @@ func (b *Broker) deprovisionAsync(instanceID string, instance *Instance) {
 		return
 	}
 
-	// Delete deployment
-	if err := b.Vault.TrackProgress(instanceID, "deprovision", "Initiating BOSH deployment deletion", 0, nil); err != nil {
+	// Delete deployment with retry logic
+	if err := b.Vault.TrackProgress(instanceID, "deprovision", "Initiating BOSH deployment deletion with retry", 0, nil); err != nil {
 		l.Error("failed to track progress (initiating deletion): %s", err)
 	}
-	task, err := b.BOSH.DeleteDeployment(deploymentName)
+
+	task, err := b.retryDeleteDeployment(deploymentName, instanceID, 3)
 	if err != nil {
-		l.Error("Failed to delete BOSH deployment %s: %s", deploymentName, err)
-		if trackErr := b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed: %s", err), -1, nil); trackErr != nil {
+		l.Error("Failed to delete BOSH deployment %s after retries: %s", deploymentName, err)
+		if trackErr := b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed after retries: %s", err), -1, nil); trackErr != nil {
 			l.Error("failed to track progress (deletion failed): %s", trackErr)
+		}
+		return
+	}
+
+	if task.ID == 0 {
+		// Deployment was already gone during retry
+		l.Info("Deployment %s was cleaned up during retry attempts", deploymentName)
+
+		// Remove from index since deployment is confirmed gone
+		if err := b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index after cleanup", 0, nil); err != nil {
+			l.Error("failed to track progress (removing from index): %s", err)
+		}
+		if err := b.Vault.Index(instanceID, nil); err != nil {
+			l.Error("failed to remove service from vault index: %s", err)
+		}
+
+		// Mark as completed
+		if err := b.Vault.TrackProgress(instanceID, "deprovision", "Deprovisioning completed (cleanup during retry)", 0, nil); err != nil {
+			l.Error("failed to track progress (completed): %s", err)
+		}
+		if err := b.Vault.Track(instanceID, "deprovision", 0, nil); err != nil {
+			l.Error("failed to track completion: %s", err)
 		}
 		return
 	}
 
 	l.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
 
-	// Update tracking with deployment status (no longer storing task ID)
+	// Update tracking with deployment status (store the task ID for monitoring)
 	err = b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), task.ID, nil)
 	if err != nil {
 		l.Error("failed to store deprovision status in the vault: %s", err)
 	}
 
-	// Remove from index (will be cleaned up when task completes)
-	if err := b.Vault.TrackProgress(instanceID, "deprovision", "Removing from service index", 0, nil); err != nil {
-		l.Error("failed to track progress (removing from index): %s", err)
-	}
-	if err := b.Vault.Index(instanceID, nil); err != nil {
-		l.Error("failed to remove service from vault index: %s", err)
+	// DO NOT remove from index here - wait for LastOperation to confirm deletion success
+	// The index removal will happen in LastOperation when task.State == "done"
+	l.Info("Async deprovisioning handed off to BOSH for instance %s, will be removed from index when deletion completes", instanceID)
+}
+
+// retryDeleteDeployment attempts to delete a BOSH deployment with retry logic
+func (b *Broker) retryDeleteDeployment(deploymentName string, instanceID string, maxRetries int) (*bosh.Task, error) {
+	l := Logger.Wrap("retryDeleteDeployment %s", deploymentName)
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		l.Debug("Deletion attempt %d/%d for deployment %s", attempt, maxRetries, deploymentName)
+
+		// Check if deployment still exists
+		_, err := b.BOSH.GetDeployment(deploymentName)
+		if err != nil {
+			l.Info("Deployment %s no longer exists, deletion successful", deploymentName)
+			return &bosh.Task{ID: 0, State: "done"}, nil
+		}
+
+		// Attempt deletion
+		task, err := b.BOSH.DeleteDeployment(deploymentName)
+		if err == nil {
+			l.Info("Deletion task started on attempt %d for deployment %s (task %d)", attempt, deploymentName, task.ID)
+			return task, nil
+		}
+
+		l.Error("Deletion attempt %d failed for deployment %s: %s", attempt, deploymentName, err)
+
+		// Track retry attempt
+		if trackErr := b.Vault.TrackProgress(instanceID, "deprovision", fmt.Sprintf("Deletion retry %d/%d failed: %s", attempt, maxRetries, err), -1, nil); trackErr != nil {
+			l.Error("failed to track retry attempt: %s", trackErr)
+		}
+
+		// Wait before retry (except on last attempt)
+		if attempt < maxRetries {
+			waitTime := time.Duration(attempt) * 5 * time.Second
+			l.Debug("Waiting %v before retry attempt %d", waitTime, attempt+1)
+			time.Sleep(waitTime)
+		}
 	}
 
-	l.Info("Async deprovisioning handed off to BOSH for instance %s", instanceID)
+	return nil, fmt.Errorf("failed to delete deployment %s after %d attempts", deploymentName, maxRetries)
 }

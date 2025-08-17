@@ -76,13 +76,13 @@ func (l *Log) printf(lvl, f string, args ...interface{}) {
 		m = fmt.Sprintf("%s %-5s  [%s] %s\n", now, lvl, strings.Join(l.ctx, " / "), m)
 	}
 
-	// Route debug logs to STDERR, info logs to STDOUT
+	// Route all logs to STDERR to keep separate from program output
 	if lvl == "DEBUG" {
 		fmt.Fprintf(os.Stderr, "%s", m)
 	} else if lvl == "INFO" {
-		fmt.Fprintf(os.Stdout, "%s", m)
+		fmt.Fprintf(os.Stderr, "%s", m)
 	} else {
-		// Error and other levels still go to STDERR
+		// Error and other levels go to STDERR
 		fmt.Fprintf(os.Stderr, "%s", m)
 	}
 	l.Audit(m)

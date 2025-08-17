@@ -8,15 +8,31 @@ import (
 )
 
 type Config struct {
-	Broker    BrokerConfig `yaml:"broker"`
-	Vault     VaultConfig  `yaml:"vault"`
-	Shield    ShieldConfig `yaml:"shield"`
-	BOSH      BOSHConfig   `yaml:"bosh"`
-	Debug     bool         `yaml:"debug"`
-	WebRoot   string       `yaml:"web-root"`
-	Env       string       `yaml:"env"`
-	Shareable bool         `yaml:"shareable"`
-	Forges    ForgesConfig `yaml:"forges"`
+	Broker    BrokerConfig   `yaml:"broker"`
+	Vault     VaultConfig    `yaml:"vault"`
+	Shield    ShieldConfig   `yaml:"shield"`
+	BOSH      BOSHConfig     `yaml:"bosh"`
+	Services  ServicesConfig `yaml:"services"`
+	Debug     bool           `yaml:"debug"`
+	WebRoot   string         `yaml:"web-root"`
+	Env       string         `yaml:"env"`
+	Shareable bool           `yaml:"shareable"`
+	Forges    ForgesConfig   `yaml:"forges"`
+}
+
+// ServicesConfig configures service-specific behavior
+type ServicesConfig struct {
+	SkipTLSVerify []string `yaml:"skip_tls_verify"` // List of services to skip TLS verification for (e.g., ["rabbitmq", "redis"] or ["all"])
+}
+
+// ShouldSkipTLSVerify checks if TLS verification should be skipped for the given service
+func (s *ServicesConfig) ShouldSkipTLSVerify(serviceName string) bool {
+	for _, service := range s.SkipTLSVerify {
+		if service == "all" || service == serviceName {
+			return true
+		}
+	}
+	return false
 }
 
 type ForgesConfig struct {

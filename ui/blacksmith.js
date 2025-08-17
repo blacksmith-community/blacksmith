@@ -461,9 +461,13 @@
           </select>
         </div>
         <div class="filter-buttons">
+          <button id="refresh-services" class="copy-deployment-names-btn" title="Refresh Service Instances">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span></span>
+          </button>
           <button id="copy-deployment-names" class="copy-deployment-names-btn" title="Copy Service Instance Deployment Names">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy Deployments</span>
+            <span>Deployments</span>
           </button>
           <button id="clear-filters" class="clear-filters-btn">Clear</button>
         </div>
@@ -635,7 +639,13 @@
 
     return `
       <div class="service-detail-header">
-        <h3 class="deployment-name">${deploymentName}</h3>
+        <h3 class="deployment-name">
+          <button class="copy-btn-inline deployment-name-copy" onclick="window.copyValue(event, '${deploymentName.replace(/'/g, "\\'")}')"
+                  title="Copy deployment name to clipboard">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+          ${deploymentName}
+        </h3>
       </div>
       <div class="detail-tabs">
         <button class="detail-tab active" data-tab="details">Details</button>
@@ -1993,6 +2003,7 @@
           const planFilter = document.getElementById('plan-filter');
           const clearFiltersBtn = document.getElementById('clear-filters');
           const copyDeploymentNamesBtn = document.getElementById('copy-deployment-names');
+          const refreshServicesBtn = document.getElementById('refresh-services');
           const filterCount = document.getElementById('filter-count');
 
           if (!serviceFilter || !planFilter) return;
@@ -2147,6 +2158,159 @@
                   console.error('Fallback copy failed:', err);
                 }
                 document.body.removeChild(textarea);
+              }
+            });
+          }
+
+          // Refresh services button
+          if (refreshServicesBtn) {
+            refreshServicesBtn.addEventListener('click', async (e) => {
+              e.preventDefault();
+
+              const button = e.currentTarget;
+              const spanElement = button.querySelector('span');
+              const originalText = spanElement.textContent;
+
+              // Show loading state
+              spanElement.textContent = 'Refreshing...';
+              button.disabled = true;
+
+              try {
+                // Re-fetch the catalog and status data
+                const [catalogResponse, statusResponse] = await Promise.all([
+                  fetchWithHeaders('/v2/catalog'),
+                  fetchWithHeaders('/b/status')
+                ]);
+
+                if (!catalogResponse.ok) {
+                  throw new Error(`Catalog HTTP ${catalogResponse.status}: ${catalogResponse.statusText}`);
+                }
+                if (!statusResponse.ok) {
+                  throw new Error(`Status HTTP ${statusResponse.status}: ${statusResponse.statusText}`);
+                }
+
+                const catalog = await catalogResponse.json();
+                const data = await statusResponse.json();
+                console.log('Refreshed catalog and status response:', { catalog, data });
+
+                // Process the data to merge catalog and status info (same logic as initial load)
+                const instances = {};
+                if (data.instances && typeof data.instances === 'object') {
+                  Object.values(data.instances).forEach(instance => {
+                    if (instance && instance.plan_id) {
+                      instances[instance.plan_id] = (instances[instance.plan_id] || 0) + 1;
+                    }
+                  });
+                }
+
+                // Build plan mapping and add blacksmith data to catalog
+                const plans = {};
+                if (catalog.services && catalog.services.length > 0) {
+                  catalog.services.forEach((service, i) => {
+                    if (service && service.plans) {
+                      service.plans.forEach((plan, j) => {
+                        if (plan && plan.id) {
+                          const key = service.id + '/' + plan.id;
+                          plans[plan.id] = key;
+
+                          // Add blacksmith-specific data
+                          const planData = {
+                            instances: instances[plan.id] || 0,
+                            limit: 0
+                          };
+
+                          if (data.plans && typeof data.plans === 'object' && data.plans[key]) {
+                            planData.limit = data.plans[key].limit || 0;
+                          }
+
+                          catalog.services[i].plans[j].blacksmith = planData;
+                        }
+                      });
+                    }
+                  });
+                }
+
+                // Process instances and attach plan data
+                if (data.instances && typeof data.instances === 'object') {
+                  Object.keys(data.instances).forEach(i => {
+                    const instance = data.instances[i];
+                    if (instance && instance.plan_id && plans[instance.plan_id]) {
+                      const planKey = plans[instance.plan_id];
+                      if (data.plans && data.plans[planKey]) {
+                        data.instances[i].plan = data.plans[planKey];
+                      } else {
+                        // Provide minimal plan data to prevent errors
+                        data.instances[i].plan = { name: instance.plan_id };
+                      }
+                    }
+                  });
+                }
+
+                // Update the global instances data
+                window.serviceInstances = data.instances;
+
+                // Update plans data as well
+                window.plansData = catalog;
+
+                // Re-render the services template (which includes the dropdowns)
+                const servicesPanel = document.querySelector('#services');
+                if (servicesPanel) {
+                  servicesPanel.innerHTML = renderServicesTemplate(data.instances);
+
+                  // Re-setup handlers
+                  setupServiceHandlers();
+                }
+
+                // Also refresh the plans panel if needed
+                const plansPanel = document.querySelector('#plans');
+                if (plansPanel && catalog.services && catalog.services.length > 0) {
+                  plansPanel.innerHTML = renderPlansTemplate(catalog);
+
+                  // Re-setup plan click handlers
+                  document.querySelectorAll('#plans .plan-item').forEach(item => {
+                    item.addEventListener('click', function () {
+                      const planId = this.dataset.planId;
+
+                      // Find the service and plan from the stored data
+                      let selectedService = null;
+                      let selectedPlan = null;
+
+                      catalog.services.forEach(service => {
+                        service.plans.forEach(plan => {
+                          if (`${service.name}-${plan.name}` === planId) {
+                            selectedService = service;
+                            selectedPlan = plan;
+                          }
+                        });
+                      });
+
+                      if (selectedService && selectedPlan) {
+                        // Update active state
+                        document.querySelectorAll('#plans .plan-item').forEach(i => i.classList.remove('active'));
+                        this.classList.add('active');
+
+                        // Render plan details
+                        const detailContainer = document.querySelector('#plans .plan-detail');
+                        detailContainer.innerHTML = renderPlanDetail(selectedService, selectedPlan);
+                      }
+                    });
+                  });
+                }
+
+                // Show success feedback
+                spanElement.textContent = 'Refreshed!';
+                setTimeout(() => {
+                  spanElement.textContent = originalText;
+                }, 2000);
+
+              } catch (error) {
+                console.error('Failed to refresh services:', error);
+                spanElement.textContent = 'Error';
+                setTimeout(() => {
+                  spanElement.textContent = originalText;
+                }, 2000);
+              } finally {
+                button.disabled = false;
               }
             });
           }

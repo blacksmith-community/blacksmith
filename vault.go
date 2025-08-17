@@ -408,7 +408,7 @@ func (vault *Vault) Track(instanceID, action string, taskID int, params interfac
 // TrackProgress updates the progress of an async operation with a description
 func (vault *Vault) TrackProgress(instanceID, action, description string, taskID int, params interface{}) error {
 	l := Logger.Wrap("vault track progress %s", instanceID)
-	l.Debug("tracking progress for '%s': %s", action, description)
+	l.Debug("tracking progress for '%s': %s (taskID: %d)", action, description, taskID)
 
 	// Determine the state based on task ID
 	var state string
@@ -437,11 +437,17 @@ func (vault *Vault) TrackProgress(instanceID, action, description string, taskID
 		Params:      deinterface(params),
 	}
 
+	// Log the task being stored for debugging
+	l.Debug("storing task with ID %d, state '%s' at path %s/task", taskID, state, instanceID)
+
 	// Store current state
 	err := vault.Put(fmt.Sprintf("%s/task", instanceID), task)
 	if err != nil {
+		l.Error("failed to store task progress: %s", err)
 		return err
 	}
+
+	l.Debug("successfully stored task progress with ID %d", taskID)
 
 	// Append to history
 	return vault.AppendHistory(instanceID, action, description)

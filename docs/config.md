@@ -11,6 +11,7 @@ broker:      # HTTP server and authentication settings
 vault:       # Vault integration configuration
 shield:      # SHIELD backup integration (optional)
 bosh:        # BOSH director configuration
+services:    # Service-specific behavior configuration
 debug:       # Enable debug logging
 web-root:    # Static web content directory
 env:         # Environment identifier
@@ -55,6 +56,53 @@ Enable shareable service instances, allowing multiple applications to bind to th
 ```yaml
 shareable: true
 ```
+
+## Services Configuration (`services`)
+
+The `services` section configures service-specific behavior and operational settings.
+
+```yaml
+services:
+  skip_tls_verify:
+    - rabbitmq
+    - redis
+```
+
+### Optional Fields
+
+#### `skip_tls_verify` (array of strings)
+**Default:** `[]`
+
+List of service types for which TLS certificate verification should be skipped when Blacksmith connects to service APIs. This is useful when services are deployed with self-signed certificates or certificates that don't include proper IP Subject Alternative Names (SANs).
+
+**Supported values:**
+- Service names: `"rabbitmq"`, `"redis"`, `"postgres"`, etc.
+- `"all"`: Skip TLS verification for all services
+
+**Security Warning:** Only use this setting in development environments or when you understand the security implications. Skipping TLS verification makes connections vulnerable to man-in-the-middle attacks.
+
+**Examples:**
+
+Skip TLS verification for specific services:
+```yaml
+services:
+  skip_tls_verify:
+    - rabbitmq
+    - redis
+```
+
+Skip TLS verification for all services (not recommended for production):
+```yaml
+services:
+  skip_tls_verify:
+    - all
+```
+
+**Use Cases:**
+- RabbitMQ deployments with IP-based certificates that lack proper IP SANs
+- Redis deployments with self-signed certificates
+- Development environments with locally generated certificates
+- Services behind load balancers that terminate TLS with different certificates
 
 ## Broker Configuration (`broker`)
 
@@ -413,6 +461,10 @@ debug: false
 env: "production"
 web-root: "./ui"
 shareable: true
+
+services:
+  skip_tls_verify:
+    - rabbitmq
 
 broker:
   username: "cf-broker"

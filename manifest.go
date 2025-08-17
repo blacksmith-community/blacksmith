@@ -50,9 +50,19 @@ func InitManifest(p Plan, instanceID string) error {
 		return err
 	}
 
-	cmd := exec.Command(p.InitScriptPath) // #nosec G204 - Path has been validated by validateExecutablePath
+	cmd := exec.Command("/bin/bash", p.InitScriptPath) // #nosec G204 - Path has been validated by validateExecutablePath
 
 	cmd.Env = os.Environ()
+	/* TODO: put more environment variables here, as needed */
+
+	// Add safe binary to PATH for init scripts
+	for i, env := range cmd.Env {
+		if strings.HasPrefix(env, "PATH=") {
+			cmd.Env[i] = env + ":/var/vcap/packages/safe/bin"
+			break
+		}
+	}
+
 	cmd.Env = append(cmd.Env, fmt.Sprintf("CREDENTIALS=secret/%s", instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("RAWJSONFILE=%s%s.json", GetWorkDir(), instanceID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("YAMLFILE=%s%s.yml", GetWorkDir(), instanceID))
@@ -61,7 +71,11 @@ func InitManifest(p Plan, instanceID string) error {
 	cmd.Env = append(cmd.Env, fmt.Sprintf("BLACKSMITH_PLAN=%s", p.ID))
 	// NOTE: BOSH_NETWORK is set in the env in config.go
 
-	/* TODO: put more environment variables here, as needed */
+	Debug("Executing init script command: bash %s", p.InitScriptPath)
+	Debug("Init script environment variables:")
+	for _, env := range cmd.Env {
+		Debug("  %s", env)
+	}
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
