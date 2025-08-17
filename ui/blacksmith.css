@@ -273,7 +273,7 @@ table {
 
 .job-logs-single {
   padding: 20px;
-  height: 600px;
+  flex: 1;
   overflow-y: auto;
   background: var(--bg-secondary);
 }
@@ -1716,7 +1716,7 @@ td a {
 /* Table containers */
 .log-table-container,
 .vms-table-container {
-  height: 100%;
+  flex: 1;
   overflow-y: auto;
   overflow-x: auto;
   padding-bottom: 2em;
@@ -1873,6 +1873,9 @@ td a {
 /* Logs container and styles */
 .logs-container {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .logs-header {
@@ -1882,6 +1885,7 @@ td a {
   padding: 10px 0;
   border-bottom: 1px solid var(--border-primary);
   margin-bottom: 10px;
+  flex-shrink: 0;
 }
 
 .logs-header h3 {
@@ -1935,7 +1939,7 @@ td a {
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
-  max-height: 600px;
+  flex: 1;
   overflow-y: auto;
   border: 1px solid var(--border-primary);
 }
@@ -2039,7 +2043,7 @@ td a {
 /* Logs table styles */
 .logs-table-container {
   margin-top: 10px;
-  max-height: 600px;
+  flex: 1;
   overflow-y: auto;
   overflow-x: auto;
   border: 1px solid var(--border-primary);
