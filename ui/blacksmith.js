@@ -1427,24 +1427,47 @@
     return tableHTML;
   };
 
-  const formatBlacksmithLogs = (logs) => {
+  const formatBlacksmithLogs = (logs, logFile = 'blacksmith.stdout.log') => {
     if (!logs || logs === '') {
       return '<div class="no-data">No logs available</div>';
     }
 
     const tableHTML = renderLogsTable(logs);
 
+    // Available log files for selection
+    const logFiles = [
+      { path: '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log', name: 'Blacksmith stdout' },
+      { path: '/var/vcap/sys/log/blacksmith/blacksmith.stderr.log', name: 'Blacksmith stderr' },
+      { path: '/var/vcap/sys/log/blacksmith/vault.stdout.log', name: 'Vault stdout' },
+      { path: '/var/vcap/sys/log/blacksmith/vault.stderr.log', name: 'Vault stderr' },
+      { path: '/var/vcap/sys/log/blacksmith.vault/bpm.log', name: 'Vault BPM log' },
+      { path: '/var/vcap/sys/log/blacksmith/bpm.log', name: 'Blacksmith BPM log' },
+      { path: '/var/vcap/sys/log/blacksmith/pre-start.stdout.log', name: 'Pre-start stdout' },
+      { path: '/var/vcap/sys/log/blacksmith/pre-start.stderr.log', name: 'Pre-start stderr' }
+    ];
+
+    const logFileOptions = logFiles.map(file => {
+      const selected = file.path.includes(logFile) ? 'selected' : '';
+      return `<option value="${file.path}" ${selected}>${file.name}</option>`;
+    }).join('');
+
     return `
       <div class="logs-container">
         <div class="logs-header">
           <h3>Blacksmith Logs</h3>
+          <div class="log-file-selector">
+            <label for="blacksmith-log-select" class="log-select-label">Log File:</label>
+            <select id="blacksmith-log-select" class="log-file-dropdown" onchange="window.selectBlacksmithLogFile(this.value)">
+              ${logFileOptions}
+            </select>
+          </div>
           <button class="copy-btn-logs" onclick="window.copyLogs(event)"
                   title="Copy logs to clipboard">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             <span>Copy</span>
           </button>
         </div>
-        <div class="logs-table-container">
+        <div class="logs-table-container" id="blacksmith-logs-display">
           ${tableHTML}
         </div>
         <!-- Hidden source logs for copy functionality -->
@@ -1691,6 +1714,49 @@
         console.error('Fallback copy failed:', err);
       }
       document.body.removeChild(textarea);
+    }
+  };
+
+  // Handler for blacksmith log file selection
+  window.selectBlacksmithLogFile = async (logFilePath) => {
+    const displayContainer = document.getElementById('blacksmith-logs-display');
+    const sourceContainer = document.getElementById('blacksmith-logs-source');
+
+    if (!displayContainer || !sourceContainer) {
+      console.error('Log display containers not found');
+      return;
+    }
+
+    // Show loading state
+    displayContainer.innerHTML = '<div class="loading">Loading...</div>';
+
+    try {
+      // Fetch the logs for the selected file
+      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(logFilePath)}`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const logs = data.logs;
+
+      if (!logs || logs === '') {
+        displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
+        sourceContainer.textContent = '';
+        return;
+      }
+
+      // Update the display with formatted logs
+      const tableHTML = renderLogsTable(logs);
+      displayContainer.innerHTML = tableHTML;
+
+      // Update the hidden source for copy functionality
+      sourceContainer.textContent = logs;
+
+    } catch (error) {
+      console.error('Failed to fetch log file:', error);
+      displayContainer.innerHTML = `<div class="error">Failed to load log file: ${error.message}</div>`;
+      sourceContainer.textContent = '';
     }
   };
 

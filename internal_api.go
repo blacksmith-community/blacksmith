@@ -305,8 +305,60 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		l := Logger.Wrap("blacksmith-logs")
 		l.Debug("fetching blacksmith logs")
 
-		// Get the logs from the Logger
-		logs := Logger.String()
+		// Check if a specific log file is requested
+		logFile := req.URL.Query().Get("file")
+		var logs string
+
+		if logFile != "" {
+			// Validate the requested log file path for security
+			allowedLogFiles := []string{
+				"/var/vcap/sys/log/blacksmith/blacksmith.stdout.log",
+				"/var/vcap/sys/log/blacksmith/blacksmith.stderr.log",
+				"/var/vcap/sys/log/blacksmith/vault.stdout.log",
+				"/var/vcap/sys/log/blacksmith/vault.stderr.log",
+				"/var/vcap/sys/log/blacksmith.vault/bpm.log",
+				"/var/vcap/sys/log/blacksmith/bpm.log",
+				"/var/vcap/sys/log/blacksmith/pre-start.stdout.log",
+				"/var/vcap/sys/log/blacksmith/pre-start.stderr.log",
+			}
+
+			// Check if the requested file is in the allowed list
+			isAllowed := false
+			for _, allowedFile := range allowedLogFiles {
+				if logFile == allowedFile {
+					isAllowed = true
+					break
+				}
+			}
+
+			if !isAllowed {
+				l.Error("unauthorized log file access attempt: %s", logFile)
+				w.WriteHeader(403)
+				fmt.Fprintf(w, "error: unauthorized log file access\n")
+				return
+			}
+
+			l.Debug("fetching logs from file: %s", logFile)
+
+			// Read the log file
+			content, err := os.ReadFile(logFile)
+			if err != nil {
+				if os.IsNotExist(err) {
+					l.Debug("log file does not exist: %s", logFile)
+					logs = "" // Empty logs if file doesn't exist
+				} else {
+					l.Error("failed to read log file %s: %s", logFile, err)
+					w.WriteHeader(500)
+					fmt.Fprintf(w, "error: failed to read log file: %s\n", err)
+					return
+				}
+			} else {
+				logs = string(content)
+			}
+		} else {
+			// Default behavior: get logs from the Logger
+			logs = Logger.String()
+		}
 
 		// Return as JSON with the logs
 		response := struct {

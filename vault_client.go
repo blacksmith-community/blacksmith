@@ -24,7 +24,7 @@ type VaultClient struct {
 func NewVaultClient(url, token string, insecure bool) (*VaultClient, error) {
 	l := Logger.Wrap("vault client init")
 	l.Debug("creating new vault client for %s", url)
-	
+
 	if insecure {
 		Info("vault client configured with InsecureSkipVerify=true - TLS certificate verification will be bypassed")
 	}
@@ -34,10 +34,10 @@ func NewVaultClient(url, token string, insecure bool) (*VaultClient, error) {
 
 	// Configure HTTP client with secure TLS and redirect handling
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: insecure, // #nosec G402 - This is configurable by user for development/testing
+		InsecureSkipVerify: insecure,         // #nosec G402 - This is configurable by user for development/testing
 		MinVersion:         tls.VersionTLS12, // Enforce TLS 1.2 minimum
 	}
-	
+
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{

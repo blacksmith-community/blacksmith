@@ -34,7 +34,7 @@ func createHTTPSRedirectHandler(httpsPort string) http.HandlerFunc {
 		if strings.Contains(host, ":") {
 			host = strings.Split(host, ":")[0]
 		}
-		
+
 		redirectURL := fmt.Sprintf("https://%s:%s%s", host, httpsPort, r.RequestURI)
 		http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
 	}
@@ -43,7 +43,7 @@ func createHTTPSRedirectHandler(httpsPort string) http.HandlerFunc {
 // startHTTPServer starts an HTTP server, either for redirects (when TLS enabled) or normal operation
 func startHTTPServer(config *Config, handler http.Handler, l *Log) *http.Server {
 	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.Port)
-	
+
 	readTimeout := 120
 	if config.Broker.ReadTimeout > 0 {
 		readTimeout = config.Broker.ReadTimeout
@@ -56,7 +56,7 @@ func startHTTPServer(config *Config, handler http.Handler, l *Log) *http.Server 
 	if config.Broker.IdleTimeout > 0 {
 		idleTimeout = config.Broker.IdleTimeout
 	}
-	
+
 	var httpHandler http.Handler
 	if config.Broker.TLS.Enabled {
 		// When TLS is enabled, HTTP server only handles redirects
@@ -67,7 +67,7 @@ func startHTTPServer(config *Config, handler http.Handler, l *Log) *http.Server 
 		httpHandler = handler
 		l.Info("HTTP server will listen on %s", bind)
 	}
-	
+
 	server := &http.Server{
 		Addr:         bind,
 		Handler:      httpHandler,
@@ -75,7 +75,7 @@ func startHTTPServer(config *Config, handler http.Handler, l *Log) *http.Server 
 		WriteTimeout: time.Duration(writeTimeout) * time.Second,
 		IdleTimeout:  time.Duration(idleTimeout) * time.Second,
 	}
-	
+
 	return server
 }
 
@@ -84,15 +84,15 @@ func startHTTPSServer(config *Config, handler http.Handler, l *Log) (*http.Serve
 	if !config.Broker.TLS.Enabled {
 		return nil, nil
 	}
-	
+
 	tlsConfig, err := CreateTLSConfig(config.Broker.TLS)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TLS configuration: %w", err)
 	}
-	
+
 	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.TLS.Port)
 	l.Info("HTTPS server will listen on %s", bind)
-	
+
 	readTimeout := 120
 	if config.Broker.ReadTimeout > 0 {
 		readTimeout = config.Broker.ReadTimeout
@@ -105,7 +105,7 @@ func startHTTPSServer(config *Config, handler http.Handler, l *Log) (*http.Serve
 	if config.Broker.IdleTimeout > 0 {
 		idleTimeout = config.Broker.IdleTimeout
 	}
-	
+
 	server := &http.Server{
 		Addr:         bind,
 		Handler:      handler,
@@ -114,7 +114,7 @@ func startHTTPSServer(config *Config, handler http.Handler, l *Log) (*http.Serve
 		WriteTimeout: time.Duration(writeTimeout) * time.Second,
 		IdleTimeout:  time.Duration(idleTimeout) * time.Second,
 	}
-	
+
 	return server, nil
 }
 
@@ -368,9 +368,9 @@ func main() {
 		),
 	}
 
-	// Create HTTP server 
+	// Create HTTP server
 	httpServer := startHTTPServer(&config, apiHandler, l)
-	
+
 	// Create HTTPS server if TLS is enabled
 	httpsServer, err := startHTTPSServer(&config, apiHandler, l)
 	if err != nil {
@@ -452,7 +452,7 @@ func main() {
 		}
 	}
 
-	cancel() // Cancel context to stop other goroutines
+	cancel()  // Cancel context to stop other goroutines
 	wg.Wait() // Wait for all goroutines to finish
 
 	l.Info("Blacksmith service broker shut down complete")

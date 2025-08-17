@@ -104,15 +104,15 @@ func validateFilePath(path string) error {
 	if path == "" {
 		return fmt.Errorf("file path cannot be empty")
 	}
-	
+
 	// Clean the path to resolve any .. or . components
 	cleanPath := filepath.Clean(path)
-	
+
 	// Check for path traversal attempts
 	if strings.Contains(cleanPath, "..") {
 		return fmt.Errorf("path traversal detected in file path: %s", path)
 	}
-	
+
 	return nil
 }
 
@@ -137,10 +137,10 @@ func validateExecutablePath(path string) error {
 	if err := validateFilePath(path); err != nil {
 		return err
 	}
-	
+
 	// Additional checks for executable paths
 	cleanPath := filepath.Clean(path)
-	
+
 	// Check that the path doesn't contain shell metacharacters
 	dangerousChars := []string{";", "&", "|", "`", "$", "(", ")", "{", "}", "[", "]", "*", "?", "~", "<", ">", "^", "!"}
 	for _, char := range dangerousChars {
@@ -148,6 +148,6 @@ func validateExecutablePath(path string) error {
 			return fmt.Errorf("potentially dangerous character '%s' found in executable path: %s", char, path)
 		}
 	}
-	
+
 	return nil
 }

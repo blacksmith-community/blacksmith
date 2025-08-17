@@ -235,7 +235,6 @@ func (ps *PlanStorage) storePlanFiles(planDir, service, planName string) error {
 	return nil
 }
 
-
 // calculateSHA256 calculates the SHA256 hash of a file
 func calculateSHA256(filePath string) (string, error) {
 	file, err := safeOpenFile(filePath)
