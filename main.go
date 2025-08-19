@@ -347,6 +347,27 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Initialize the deployment reconciler
+	reconciler := NewReconcilerAdapter(&config, broker, vault, boshDirector)
+
+	// Create context for server and reconciler lifecycle
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start the reconciler
+	if err := reconciler.Start(ctx); err != nil {
+		l.Error("Failed to start deployment reconciler: %s", err)
+		// Non-fatal error - continue without reconciler
+	} else {
+		l.Info("Deployment reconciler started successfully")
+		// Ensure reconciler is stopped on shutdown
+		defer func() {
+			if err := reconciler.Stop(); err != nil {
+				l.Error("Error stopping reconciler: %s", err)
+			}
+		}()
+	}
+
 	// Create the main API handler
 	apiHandler := &API{
 		Username: config.Broker.Username,
@@ -380,7 +401,6 @@ func main() {
 
 	// Start servers
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
 
 	// Start HTTP server
 	wg.Add(1)
