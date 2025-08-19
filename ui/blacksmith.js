@@ -86,6 +86,82 @@
     return true;
   };
 
+  // Table search filter functionality
+  const createSearchFilter = (tableId, placeholder = 'Search...') => {
+    return `
+      <div class="table-search-container">
+        <input type="text"
+               class="table-search-input"
+               id="search-${tableId}"
+               placeholder="${placeholder}"
+               autocomplete="off">
+        <button class="clear-search-btn"
+                id="clear-${tableId}"
+                title="Clear search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    `;
+  };
+
+  const attachSearchFilter = (tableId) => {
+    const searchInput = document.getElementById(`search-${tableId}`);
+    const clearBtn = document.getElementById(`clear-${tableId}`);
+
+    if (!searchInput) return;
+
+    const filterTable = () => {
+      const filter = searchInput.value.toLowerCase();
+      const table = document.querySelector(`.${tableId}`);
+      if (!table) return;
+
+      const rows = table.querySelectorAll('tbody tr');
+      let visibleCount = 0;
+
+      rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        if (text.includes(filter)) {
+          row.style.display = '';
+          visibleCount++;
+        } else {
+          row.style.display = 'none';
+        }
+      });
+
+      // Show/hide clear button
+      if (clearBtn) {
+        clearBtn.style.display = filter ? 'block' : 'none';
+      }
+
+      // Add no results message if needed
+      const existingMsg = table.parentElement.querySelector('.no-results-msg');
+      if (existingMsg) {
+        existingMsg.remove();
+      }
+
+      if (visibleCount === 0 && filter) {
+        const msg = document.createElement('div');
+        msg.className = 'no-results-msg';
+        msg.textContent = 'No matching results found';
+        table.parentElement.appendChild(msg);
+      }
+    };
+
+    searchInput.addEventListener('input', filterTable);
+    searchInput.addEventListener('keyup', filterTable);
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        filterTable();
+        searchInput.focus();
+      });
+    }
+  };
+
   // Copy to clipboard helper
   const copyToClipboard = async (text, button) => {
     try {
@@ -117,6 +193,551 @@
       document.body.removeChild(textarea);
     }
   };
+
+  // Table Sorting and Filtering Utilities
+
+  // Global state for table sorting
+  const tableSortStates = new Map();
+  const tableOriginalData = new Map();
+
+  // Cycle through sort states: null -> asc -> desc -> null
+  const cycleSortState = (currentState) => {
+    if (!currentState || currentState === null) return 'asc';
+    if (currentState === 'asc') return 'desc';
+    return null;
+  };
+
+  // Get nested object value by path (e.g., "data.status")
+  const getNestedValue = (obj, path) => {
+    if (!obj || !path) return null;
+    const keys = path.split('.');
+    let value = obj;
+    for (const key of keys) {
+      value = value?.[key];
+      if (value === undefined) return null;
+    }
+    return value;
+  };
+
+  // Determine data type for sorting
+  const detectDataType = (value) => {
+    if (value === null || value === undefined || value === '-') return 'null';
+
+    // Check if it's a date
+    const datePatterns = [
+      /^\d{4}-\d{2}-\d{2}$/,  // YYYY-MM-DD
+      /^\d{2}:\d{2}:\d{2}/,   // HH:MM:SS
+      /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/  // Full datetime
+    ];
+
+    if (typeof value === 'string') {
+      for (const pattern of datePatterns) {
+        if (pattern.test(value)) return 'date';
+      }
+
+      // Check if it's a number
+      if (/^-?\d+(\.\d+)?%?$/.test(value)) return 'number';
+
+      // Check if it's an IP address
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(value)) return 'ip';
+    }
+
+    if (typeof value === 'number') return 'number';
+
+    return 'string';
+  };
+
+  // Compare values based on data type
+  const compareValues = (a, b, dataType, direction) => {
+    // Handle null/undefined/'-' values
+    if (a === null || a === undefined || a === '-') a = null;
+    if (b === null || b === undefined || b === '-') b = null;
+
+    if (a === null && b === null) return 0;
+    if (a === null) return direction === 'asc' ? 1 : -1;
+    if (b === null) return direction === 'asc' ? -1 : 1;
+
+    let result = 0;
+
+    switch (dataType) {
+      case 'date':
+        const dateA = new Date(a);
+        const dateB = new Date(b);
+        result = dateA - dateB;
+        break;
+
+      case 'number':
+        const numA = parseFloat(String(a).replace('%', ''));
+        const numB = parseFloat(String(b).replace('%', ''));
+        result = numA - numB;
+        break;
+
+      case 'ip':
+        const ipA = a.split('.').map(n => parseInt(n)).reduce((acc, n, i) => acc + n * Math.pow(256, 3 - i), 0);
+        const ipB = b.split('.').map(n => parseInt(n)).reduce((acc, n, i) => acc + n * Math.pow(256, 3 - i), 0);
+        result = ipA - ipB;
+        break;
+
+      default:
+        // String comparison
+        const strA = String(a).toLowerCase();
+        const strB = String(b).toLowerCase();
+        result = strA.localeCompare(strB);
+    }
+
+    return direction === 'desc' ? -result : result;
+  };
+
+  // Sort array of objects by key
+  const sortData = (data, key, direction) => {
+    if (!data || !Array.isArray(data) || data.length === 0) return data;
+    if (!direction || direction === null) return data;
+
+    // Detect data type from first non-null value
+    let dataType = 'string';
+    for (const item of data) {
+      const value = getNestedValue(item, key);
+      if (value !== null && value !== undefined && value !== '-') {
+        dataType = detectDataType(value);
+        break;
+      }
+    }
+
+    // Special handling for certain columns
+    if (key === 'level') {
+      // Log level priority ordering
+      const levelPriority = { 'ERROR': 0, 'WARN': 1, 'WARNING': 1, 'INFO': 2, 'DEBUG': 3 };
+      return [...data].sort((a, b) => {
+        const aLevel = (getNestedValue(a, key) || '').toUpperCase();
+        const bLevel = (getNestedValue(b, key) || '').toUpperCase();
+        const aPriority = levelPriority[aLevel] ?? 999;
+        const bPriority = levelPriority[bLevel] ?? 999;
+        const result = aPriority - bPriority;
+        return direction === 'desc' ? -result : result;
+      });
+    }
+
+    if (key === 'state') {
+      // State priority ordering
+      const statePriority = {
+        'running': 0, 'finished': 1, 'in_progress': 2, 'started': 2,
+        'stopped': 3, 'failing': 4, 'failed': 4, 'error': 5, 'unresponsive': 5
+      };
+      return [...data].sort((a, b) => {
+        const aState = (getNestedValue(a, key) || '').toLowerCase();
+        const bState = (getNestedValue(b, key) || '').toLowerCase();
+        const aPriority = statePriority[aState] ?? 999;
+        const bPriority = statePriority[bState] ?? 999;
+        const result = aPriority - bPriority;
+        return direction === 'desc' ? -result : result;
+      });
+    }
+
+    // General sorting
+    return [...data].sort((a, b) => {
+      const aVal = getNestedValue(a, key);
+      const bVal = getNestedValue(b, key);
+      return compareValues(aVal, bVal, dataType, direction);
+    });
+  };
+
+  // Create sort indicator element
+  const createSortIndicator = (column, currentSort) => {
+    const indicator = document.createElement('span');
+    indicator.className = 'sort-icon';
+    indicator.setAttribute('data-column', column);
+
+    if (currentSort && currentSort.column === column) {
+      indicator.classList.add('active');
+      indicator.classList.add(currentSort.direction);
+    } else {
+      indicator.classList.add('unsorted');
+    }
+
+    return indicator;
+  };
+
+  // Update sort indicators after re-render
+  const updateSortIndicators = (tableClass, sortState) => {
+    const table = document.querySelector(`.${tableClass}`);
+    if (!table) return;
+
+    const indicators = table.querySelectorAll('.sort-icon');
+    indicators.forEach(indicator => {
+      const column = indicator.getAttribute('data-column');
+      indicator.className = 'sort-icon';
+
+      if (sortState && sortState.column === column && sortState.direction) {
+        indicator.classList.add('active', sortState.direction);
+      } else {
+        indicator.classList.add('unsorted');
+      }
+    });
+  };
+
+  // Get table column configuration
+  const getTableColumns = (tableClass) => {
+    const columnConfigs = {
+      'events-table': [
+        { key: 'time', sortable: true },
+        { key: 'user', sortable: true },
+        { key: 'action', sortable: true },
+        { key: 'object_type', sortable: true },
+        { key: 'task_id', sortable: true },
+        { key: 'error', sortable: true }
+      ],
+      'vms-table': [
+        { key: 'job', sortable: true },
+        { key: 'state', sortable: true },
+        { key: 'az', sortable: true },
+        { key: 'vm_type', sortable: true },
+        { key: 'ips', sortable: true },
+        { key: 'dns', sortable: true },
+        { key: 'cid', sortable: true },
+        { key: 'resurrection_paused', sortable: true }
+      ],
+      'logs-table': [
+        { key: 'date', sortable: true },
+        { key: 'time', sortable: true },
+        { key: 'level', sortable: true },
+        { key: 'message', sortable: true }
+      ],
+      'deployment-log-table': [
+        { key: 'time', sortable: true },
+        { key: 'stage', sortable: true },
+        { key: 'task', sortable: true },
+        { key: 'index', sortable: true },
+        { key: 'state', sortable: true },
+        { key: 'progress', sortable: true },
+        { key: 'tags', sortable: false },
+        { key: 'data.status', sortable: true }
+      ],
+      'debug-log-table': [
+        { key: 'time', sortable: true },
+        { key: 'stage', sortable: true },
+        { key: 'task', sortable: true },
+        { key: 'index', sortable: true },
+        { key: 'state', sortable: true },
+        { key: 'progress', sortable: true },
+        { key: 'tags', sortable: false },
+        { key: 'data.status', sortable: true }
+      ]
+    };
+
+    return columnConfigs[tableClass] || [];
+  };
+
+  // Filtering utilities
+
+  // Debounce function for filter input
+  const debounce = (func, wait) => {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  };
+
+  // Filter table rows
+  const filterTableRows = (tableClass, filterText) => {
+    const table = document.querySelector(`.${tableClass}`);
+    if (!table) return;
+
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    const rows = tbody.querySelectorAll('tr');
+    const searchText = filterText.toLowerCase().trim();
+
+    if (!searchText) {
+      // Show all rows if filter is empty
+      rows.forEach(row => {
+        row.style.display = '';
+        row.classList.remove('filtered-out');
+      });
+      updateFilteredCount(tableClass, rows.length, rows.length);
+      return;
+    }
+
+    let visibleCount = 0;
+    rows.forEach(row => {
+      const cells = row.querySelectorAll('td');
+      let matches = false;
+
+      for (const cell of cells) {
+        const text = cell.textContent.toLowerCase();
+        if (text.includes(searchText)) {
+          matches = true;
+          break;
+        }
+      }
+
+      if (matches) {
+        row.style.display = '';
+        row.classList.remove('filtered-out');
+        visibleCount++;
+      } else {
+        row.style.display = 'none';
+        row.classList.add('filtered-out');
+      }
+    });
+
+    updateFilteredCount(tableClass, visibleCount, rows.length);
+  };
+
+  // Update filtered count display
+  const updateFilteredCount = (tableClass, visible, total) => {
+    const container = document.querySelector(`.${tableClass}`).closest('.logs-container, .log-table-container');
+    if (!container) return;
+
+    let countDisplay = container.querySelector('.filter-count');
+    if (!countDisplay) {
+      countDisplay = document.createElement('span');
+      countDisplay.className = 'filter-count';
+      const filterContainer = container.querySelector('.filter-container');
+      if (filterContainer) {
+        filterContainer.appendChild(countDisplay);
+      }
+    }
+
+    if (visible < total) {
+      countDisplay.textContent = `(${visible}/${total})`;
+      countDisplay.style.display = 'inline';
+    } else {
+      countDisplay.style.display = 'none';
+    }
+  };
+
+  // Create filter input element with magnifying glass icon
+  const createFilterInput = (tableClass) => {
+    const container = document.createElement('div');
+    container.className = 'filter-container';
+    container.innerHTML = `
+      <span class="filter-icon" title="Filter logs">🔍</span>
+      <input type="text" class="filter-input" placeholder="Filter..." />
+      <span class="filter-count" style="display: none;"></span>
+    `;
+
+    const input = container.querySelector('.filter-input');
+    const debouncedFilter = debounce((value) => filterTableRows(tableClass, value), 300);
+
+    input.addEventListener('input', (e) => {
+      debouncedFilter(e.target.value);
+    });
+
+    // Add keyboard shortcut (Escape to clear)
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        input.value = '';
+        filterTableRows(tableClass, '');
+      }
+    });
+
+    return container;
+  };
+
+  // Initialize sorting on a table
+  const initializeSorting = (tableClass) => {
+    const table = document.querySelector(`.${tableClass}`);
+    if (!table) return;
+
+    const headers = table.querySelectorAll('thead th');
+    const columns = getTableColumns(tableClass);
+    const sortState = tableSortStates.get(tableClass) || { column: null, direction: null };
+
+    headers.forEach((header, index) => {
+      if (index >= columns.length) return;
+
+      const column = columns[index];
+      if (!column.sortable) return;
+
+      // Skip if already initialized
+      if (header.querySelector('.sort-icon')) return;
+
+      // Add sort indicator
+      const indicator = createSortIndicator(column.key, sortState);
+      header.appendChild(indicator);
+      header.style.cursor = 'pointer';
+
+      // Add click handler
+      header.addEventListener('click', () => {
+        handleTableSort(tableClass, column.key);
+      });
+    });
+  };
+
+  // Simplified handle sort for internal use
+  const handleTableSort = (tableClass, columnKey) => {
+    const currentState = tableSortStates.get(tableClass) || { column: null, direction: null };
+
+    let newDirection;
+    if (currentState.column !== columnKey) {
+      newDirection = 'asc';
+    } else {
+      newDirection = cycleSortState(currentState.direction);
+    }
+
+    const newState = { column: columnKey, direction: newDirection };
+    tableSortStates.set(tableClass, newState);
+
+    // Get the data key based on table class
+    const dataKeyMap = {
+      'events-table': 'events',
+      'vms-table': 'vms',
+      'logs-table': 'blacksmith-logs',
+      'deployment-log-table': 'deployment-logs',
+      'debug-log-table': 'debug-logs'
+    };
+
+    // Check if this is a service events table (uses different dataKey)
+    if (tableClass === 'events-table' && tableOriginalData.has('service-events')) {
+      dataKeyMap['events-table'] = 'service-events';
+    }
+
+    const dataKey = dataKeyMap[tableClass];
+    const originalData = tableOriginalData.get(dataKey);
+
+    if (!originalData) return;
+
+    const sortedData = newDirection ? sortData(originalData, columnKey, newDirection) : [...originalData];
+
+    // Re-render the table body
+    updateTableBody(tableClass, sortedData);
+
+    // Update indicators
+    updateSortIndicators(tableClass, newState);
+  };
+
+  // Update table body with sorted data
+  const updateTableBody = (tableClass, data) => {
+    const table = document.querySelector(`.${tableClass}`);
+    if (!table) return;
+
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    // Re-render based on table type
+    if (tableClass === 'events-table') {
+      tbody.innerHTML = data.map(event => {
+        const time = event.time ? new Date(event.time).toLocaleString() : '-';
+        let objectInfo = '-';
+        if (event.object_type && event.object_name) {
+          objectInfo = `${event.object_type}: ${event.object_name}`;
+        } else if (event.object_type || event.object_name) {
+          objectInfo = event.object_type || event.object_name;
+        }
+        const taskInfo = event.task_id || event.task || '-';
+
+        return `
+          <tr class="${event.error ? 'error-row' : ''}">
+            <td class="event-timestamp">${time}</td>
+            <td class="event-user">${event.user || '-'}</td>
+            <td class="event-action">${event.action || '-'}</td>
+            <td class="event-object">${objectInfo}</td>
+            <td class="event-task">${taskInfo}</td>
+            <td class="event-error">${event.error || '-'}</td>
+          </tr>
+        `;
+      }).join('');
+    } else if (tableClass === 'logs-table') {
+      tbody.innerHTML = data.map(row => renderLogRow(row)).join('');
+    } else if (tableClass === 'vms-table') {
+      tbody.innerHTML = data.map(vm => {
+        const instanceName = vm.job && vm.index !== undefined ? `${vm.job}/${vm.index}` : vm.id || '-';
+        const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
+        const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
+        const vmType = vm.vm_type || vm.resource_pool || '-';
+        const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
+
+        let stateClass = '';
+        if (vm.state === 'running') {
+          stateClass = 'vm-state-running';
+        } else if (vm.state === 'failing' || vm.state === 'unresponsive') {
+          stateClass = 'vm-state-error';
+        } else if (vm.state === 'stopped') {
+          stateClass = 'vm-state-stopped';
+        }
+
+        return `
+          <tr>
+            <td class="vm-instance">${instanceName}</td>
+            <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
+            <td class="vm-az">${vm.az || '-'}</td>
+            <td class="vm-type">${vmType}</td>
+            <td class="vm-ips">${ips}</td>
+            <td class="vm-dns">${dns}</td>
+            <td class="vm-cid">${vm.cid || '-'}</td>
+            <td class="vm-resurrection">${resurrection}</td>
+          </tr>
+        `;
+      }).join('');
+    } else if (tableClass === 'deployment-log-table' || tableClass === 'debug-log-table') {
+      tbody.innerHTML = data.map(log => {
+        const time = log.time ? new Date(log.time * 1000).toLocaleString() : '-';
+        const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
+        let status = '-';
+        if (log.data && log.data.status) {
+          status = log.data.status;
+        }
+
+        let stateClass = '';
+        if (log.state === 'finished') {
+          stateClass = 'state-finished';
+        } else if (log.state === 'failed' || log.state === 'error') {
+          stateClass = 'state-error';
+        } else if (log.state === 'in_progress' || log.state === 'started') {
+          stateClass = 'state-progress';
+        }
+
+        return `
+          <tr>
+            <td class="log-timestamp">${time}</td>
+            <td class="log-stage">${log.stage || '-'}</td>
+            <td class="log-task">${log.task || '-'}</td>
+            <td class="log-index">${log.index || '-'}</td>
+            <td class="log-state ${stateClass}">${log.state || '-'}</td>
+            <td class="log-progress">${log.progress !== undefined ? log.progress + '%' : '-'}</td>
+            <td class="log-tags">${tags}</td>
+            <td class="log-status">${status}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+  };
+
+  // Initialize filtering on log tables
+  const initializeFiltering = (tableClass) => {
+    const table = document.querySelector(`.${tableClass}`);
+    if (!table) return;
+
+    const container = table.closest('.logs-container, .log-table-container');
+    if (!container) return;
+
+    // Check if filter already exists
+    if (container.querySelector('.filter-container')) return;
+
+    // Find header element
+    const header = container.querySelector('.logs-header, h3');
+    if (!header) return;
+
+    // Create filter container
+    const filterContainer = createFilterInput(tableClass);
+
+    // Insert before copy button or append to header
+    const copyBtn = container.querySelector('.copy-btn-logs');
+    if (copyBtn) {
+      copyBtn.parentElement.insertBefore(filterContainer, copyBtn);
+    } else if (header.parentElement === container) {
+      header.appendChild(filterContainer);
+    } else {
+      container.insertBefore(filterContainer, container.firstChild);
+    }
+  };
+
 
   // Create copy button element
   const createCopyButton = (text, className = 'copy-btn') => {
@@ -950,7 +1571,7 @@
         const text = await response.text();
         try {
           const events = JSON.parse(text);
-          return formatEvents(events);
+          return formatEvents(events, 'service-events');
         } catch (e) {
           return `<pre>${text}</pre>`;
         }
@@ -1026,8 +1647,12 @@
       return '<div class="no-data">No deployment logs available</div>';
     }
 
+    // Store original data for sorting
+    tableOriginalData.set('deployment-logs', [...logs]);
+
     return `
-      <div class="log-table-container">
+      ${createSearchFilter('deployment-log-table', 'Search deployment logs...')}
+      <div class="deployment-log-table-container">
         <table class="deployment-log-table">
         <thead>
           <tr>
@@ -1074,7 +1699,7 @@
             `;
     }).join('')}
         </tbody>
-      </table>
+        </table>
       </div>
     `;
   };
@@ -1084,8 +1709,12 @@
       return '<div class="no-data">No debug logs available</div>';
     }
 
+    // Store original data for sorting
+    tableOriginalData.set('debug-logs', [...logs]);
+
     return `
-      <div class="log-table-container">
+      ${createSearchFilter('debug-log-table', 'Search debug logs...')}
+      <div class="debug-log-table-container">
         <table class="debug-log-table">
         <thead>
           <tr>
@@ -1132,7 +1761,7 @@
             `;
     }).join('')}
         </tbody>
-      </table>
+        </table>
       </div>
     `;
   };
@@ -1292,49 +1921,58 @@
     }
   };
 
-  const formatEvents = (events) => {
+  const formatEvents = (events, dataKey = 'events') => {
     if (!events || events.length === 0) {
       return '<div class="no-data">No events recorded</div>';
     }
 
+    // Store original data for sorting with appropriate key
+    tableOriginalData.set(dataKey, [...events]);
+
+    // Add unique identifier for this table instance
+    const tableId = `events-table-${dataKey}`;
+
     return `
-      <table class="events-table">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>User</th>
-            <th>Action</th>
-            <th>Object</th>
-            <th>Task</th>
-            <th>Error</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${events.map(event => {
-      const time = event.time ? new Date(event.time).toLocaleString() : '-';
-      // Handle object info - check if it's already a combined string or separate fields
-      let objectInfo = '-';
-      if (event.object_type && event.object_name) {
-        objectInfo = `${event.object_type}: ${event.object_name}`;
-      } else if (event.object_type || event.object_name) {
-        objectInfo = event.object_type || event.object_name;
-      }
+      ${createSearchFilter(tableId, 'Search events...')}
+      <div class="events-table-container">
+        <table class="${tableId} events-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User</th>
+              <th>Action</th>
+              <th>Object</th>
+              <th>Task</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${events.map(event => {
+        const time = event.time ? new Date(event.time).toLocaleString() : '-';
+        // Handle object info - check if it's already a combined string or separate fields
+        let objectInfo = '-';
+        if (event.object_type && event.object_name) {
+          objectInfo = `${event.object_type}: ${event.object_name}`;
+        } else if (event.object_type || event.object_name) {
+          objectInfo = event.object_type || event.object_name;
+        }
 
-      const taskInfo = event.task_id || event.task || '-';
+        const taskInfo = event.task_id || event.task || '-';
 
-      return `
-              <tr class="${event.error ? 'error-row' : ''}">
-                <td class="event-timestamp">${time}</td>
-                <td class="event-user">${event.user || '-'}</td>
-                <td class="event-action">${event.action || '-'}</td>
-                <td class="event-object">${objectInfo}</td>
-                <td class="event-task">${taskInfo}</td>
-                <td class="event-error">${event.error || '-'}</td>
-              </tr>
-            `;
-    }).join('')}
-        </tbody>
-      </table>
+        return `
+                <tr class="${event.error ? 'error-row' : ''}">
+                  <td class="event-timestamp">${time}</td>
+                  <td class="event-user">${event.user || '-'}</td>
+                  <td class="event-action">${event.action || '-'}</td>
+                  <td class="event-object">${objectInfo}</td>
+                  <td class="event-task">${taskInfo}</td>
+                  <td class="event-error">${event.error || '-'}</td>
+                </tr>
+              `;
+      }).join('')}
+          </tbody>
+        </table>
+      </div>
     `;
   };
 
@@ -1414,11 +2052,14 @@
     `;
   };
 
-  const renderLogsTable = (logs) => {
-    const lines = logs.split('\n').filter(line => line.trim());
-    const rows = lines.map(line => parseLogLine(line));
+  const renderLogsTable = (logs, parsedRows = null) => {
+    // If parsedRows is provided, use it; otherwise parse the logs
+    const rows = parsedRows || (typeof logs === 'string'
+      ? logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line))
+      : logs);
 
     const tableHTML = `
+      ${createSearchFilter('logs-table', 'Search logs...')}
       <table class="logs-table">
         <thead>
           <tr>
@@ -1442,7 +2083,9 @@
       return '<div class="no-data">No logs available</div>';
     }
 
-    const tableHTML = renderLogsTable(logs);
+    // Parse logs and store for sorting
+    const parsedLogs = logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+    tableOriginalData.set('blacksmith-logs', parsedLogs);
 
     // Available log files for selection
     const logFiles = [
@@ -1465,24 +2108,41 @@
       <div class="logs-container">
         <div class="logs-header">
           <h3>Blacksmith Logs</h3>
+        </div>
+        <div class="logs-controls-row">
+          <div class="search-filter-container">
+            ${createSearchFilter('logs-table', 'Search logs...')}
+          </div>
           <div class="log-file-selector">
-            <label for="blacksmith-log-select" class="log-select-label">Log File:</label>
             <select id="blacksmith-log-select" class="log-file-dropdown" onchange="window.selectBlacksmithLogFile(this.value)">
               ${logFileOptions}
             </select>
           </div>
-          <button class="copy-btn-logs" onclick="window.copyLogs(event)"
-                  title="Copy logs to clipboard">
+          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.logs-table', event)"
+                  title="Copy filtered table rows">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             <span>Copy</span>
           </button>
+          <button class="refresh-btn-logs" onclick="window.refreshBlacksmithLogs(event)"
+                  title="Refresh logs">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span>Refresh</span>
+          </button>
         </div>
         <div class="logs-table-container" id="blacksmith-logs-display">
-          ${tableHTML}
-        </div>
-        <!-- Hidden source logs for copy functionality -->
-        <div class="logs-source-hidden" id="blacksmith-logs-source" style="display: none;">
-          ${logs}
+          <table class="logs-table">
+            <thead>
+              <tr>
+                <th class="log-col-date">Date</th>
+                <th class="log-col-time">Time</th>
+                <th class="log-col-level">Level</th>
+                <th class="log-col-message">Message</th>
+              </tr>
+            </thead>
+            <tbody id="logs-table-body">
+              ${parsedLogs.map(row => renderLogRow(row)).join('')}
+            </tbody>
+          </table>
         </div>
       </div>
     `;
@@ -1493,8 +2153,12 @@
       return '<div class="no-data">No VMs available</div>';
     }
 
+    // Store original data for sorting
+    tableOriginalData.set('vms', [...vms]);
+
     return `
       <div class="vms-table-container">
+        ${createSearchFilter('vms-table', 'Search VMs...')}
         <table class="vms-table">
         <thead>
           <tr>
@@ -1626,34 +2290,65 @@
     }
   };
 
-  // Copy logs function
-  window.copyLogs = async (event) => {
-    // Get the hidden source logs instead of table content
-    const logsSource = document.getElementById('blacksmith-logs-source');
-    if (!logsSource) {
-      console.error('Logs source not found');
-      return;
-    }
-
-    const text = logsSource.textContent || logsSource.innerText;
+  // Reusable function to copy table rows as text
+  window.copyTableRowsAsText = async (tableSelector, event) => {
     const button = event.currentTarget;
-
+    
     try {
+      // Find the table
+      const table = document.querySelector(tableSelector);
+      if (!table) {
+        console.error(`Table ${tableSelector} not found`);
+        return;
+      }
+
+      // Get all visible rows (not hidden by filter)
+      const rows = table.querySelectorAll('tbody tr:not([style*="display: none"])');
+      let textContent = [];
+
+      // Extract headers first
+      const headers = table.querySelectorAll('thead th');
+      const headerTexts = Array.from(headers).map(h => h.textContent.trim());
+      if (headerTexts.length > 0) {
+        textContent.push(headerTexts.join('\t'));
+      }
+
+      // Extract visible row data
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const rowData = Array.from(cells).map(cell => {
+          // Get text content, stripping HTML
+          const text = cell.textContent || cell.innerText || '';
+          return text.trim();
+        });
+        if (rowData.length > 0) {
+          textContent.push(rowData.join('\t'));
+        }
+      });
+
+      const text = textContent.join('\n');
+      
+      // Copy to clipboard
       await navigator.clipboard.writeText(text);
+      
       // Visual feedback
       button.classList.add('copied');
       const originalTitle = button.title;
       button.title = 'Copied!';
       const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Copied!';
+      const originalText = spanElement ? spanElement.textContent : '';
+      if (spanElement) {
+        spanElement.textContent = 'Copied!';
+      }
       setTimeout(() => {
         button.classList.remove('copied');
         button.title = originalTitle;
-        spanElement.textContent = originalText;
+        if (spanElement) {
+          spanElement.textContent = originalText;
+        }
       }, 2000);
     } catch (err) {
-      console.error('Failed to copy logs:', err);
+      console.error('Failed to copy table rows:', err);
       // Fallback for older browsers
       const textarea = document.createElement('textarea');
       textarea.value = text;
@@ -1665,11 +2360,15 @@
         document.execCommand('copy');
         button.classList.add('copied');
         const spanElement = button.querySelector('span');
-        const originalText = spanElement.textContent;
-        spanElement.textContent = 'Copied!';
+        const originalText = spanElement ? spanElement.textContent : '';
+        if (spanElement) {
+          spanElement.textContent = 'Copied!';
+        }
         setTimeout(() => {
           button.classList.remove('copied');
-          spanElement.textContent = originalText;
+          if (spanElement) {
+            spanElement.textContent = originalText;
+          }
         }, 2000);
       } catch (err) {
         console.error('Fallback copy failed:', err);
@@ -1730,10 +2429,9 @@
   // Handler for blacksmith log file selection
   window.selectBlacksmithLogFile = async (logFilePath) => {
     const displayContainer = document.getElementById('blacksmith-logs-display');
-    const sourceContainer = document.getElementById('blacksmith-logs-source');
 
-    if (!displayContainer || !sourceContainer) {
-      console.error('Log display containers not found');
+    if (!displayContainer) {
+      console.error('Log display container not found');
       return;
     }
 
@@ -1752,7 +2450,6 @@
 
       if (!logs || logs === '') {
         displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
-        sourceContainer.textContent = '';
         return;
       }
 
@@ -1760,13 +2457,77 @@
       const tableHTML = renderLogsTable(logs);
       displayContainer.innerHTML = tableHTML;
 
-      // Update the hidden source for copy functionality
-      sourceContainer.textContent = logs;
+      // Attach search filter to the new table
+      setTimeout(() => {
+        attachSearchFilter('logs-table');
+      }, 100);
 
     } catch (error) {
       console.error('Failed to fetch log file:', error);
       displayContainer.innerHTML = `<div class="error">Failed to load log file: ${error.message}</div>`;
-      sourceContainer.textContent = '';
+    }
+  };
+
+  // Handler for refreshing blacksmith logs
+  window.refreshBlacksmithLogs = async (event) => {
+    const button = event.currentTarget;
+    const logFileDropdown = document.getElementById('blacksmith-log-select');
+    const displayContainer = document.getElementById('blacksmith-logs-display');
+    
+    if (!logFileDropdown || !displayContainer) {
+      console.error('Required elements not found');
+      return;
+    }
+
+    // Get currently selected log file
+    const currentLogFile = logFileDropdown.value || '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log';
+    
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+    
+    try {
+      // Fetch the logs for the current file
+      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(currentLogFile)}`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const logs = data.logs;
+
+      if (!logs || logs === '') {
+        displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
+      } else {
+        // Update the display with formatted logs
+        const tableHTML = renderLogsTable(logs);
+        displayContainer.innerHTML = tableHTML;
+
+        // Attach search filter to the new table
+        setTimeout(() => {
+          attachSearchFilter('logs-table');
+        }, 100);
+      }
+      
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      setTimeout(() => {
+        button.classList.remove('success');
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Failed to refresh logs:', error);
+      displayContainer.innerHTML = `<div class="error">Failed to refresh logs: ${error.message}</div>`;
+      
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
     }
   };
 
@@ -2345,6 +3106,20 @@
 
           const content = await fetchServiceDetail(instanceId, tabType);
           contentContainer.innerHTML = content;
+
+          // Initialize sorting and filtering for tables
+          setTimeout(() => {
+            if (tabType === 'events') {
+              initializeSorting('events-table');
+              attachSearchFilter('events-table-service-events');
+            } else if (tabType === 'vms') {
+              attachSearchFilter('vms-table');
+            } else if (tabType === 'logs') {
+              attachSearchFilter('deployment-log-table');
+            } else if (tabType === 'debug') {
+              attachSearchFilter('debug-log-table');
+            }
+          }, 100);
         };
 
         setupServiceHandlers();
@@ -2383,6 +3158,26 @@
 
           const content = await fetchBlacksmithDetail(deploymentName, tabType);
           contentContainer.innerHTML = content;
+
+          // Initialize sorting and filtering for tables
+          setTimeout(() => {
+            if (tabType === 'events') {
+              initializeSorting('events-table');
+              attachSearchFilter('events-table-events');
+            } else if (tabType === 'vms') {
+              initializeSorting('vms-table');
+              attachSearchFilter('vms-table');
+            } else if (tabType === 'blacksmith-logs') {
+              initializeSorting('logs-table');
+              attachSearchFilter('logs-table');
+            } else if (tabType === 'logs') {
+              attachSearchFilter('deployment-log-table');
+              initializeSorting('deployment-log-table');
+            } else if (tabType === 'debug') {
+              attachSearchFilter('debug-log-table');
+              initializeSorting('debug-log-table');
+            }
+          }, 100);
         } catch (error) {
           contentContainer.innerHTML = `<div class="error">Failed to load tab: ${error.message}</div>`;
         }
