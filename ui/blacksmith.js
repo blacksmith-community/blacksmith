@@ -1085,20 +1085,22 @@
     // Build the plans list for the left column
     const plansList = [];
     data.services.forEach(service => {
+      if (!service || !service.plans) return;
       service.plans.forEach(plan => {
+        if (!plan) return;
         plansList.push({
           service: service,
           plan: plan,
-          id: `${service.name}-${plan.name}`
+          id: `${service.name || service.id || 'unknown'}-${plan.name || plan.id || 'unknown'}`
         });
       });
     });
 
     const listHtml = plansList.map(item => `
       <div class="plan-item" data-plan-id="${item.id}">
-        <div class="plan-name">${item.service.name} / ${item.plan.name}</div>
+        <div class="plan-name">${item.service.name || item.service.id || 'unknown'} / ${item.plan.name || item.plan.id || 'unknown'}</div>
         <div class="plan-meta">
-          Instances: ${item.plan.blacksmith.instances} / ${item.plan.blacksmith.limit > 0 ? item.plan.blacksmith.limit : item.plan.blacksmith.limit == 0 ? '∞' : '‑'}
+          Instances: ${item.plan.blacksmith?.instances || 0} / ${item.plan.blacksmith?.limit > 0 ? item.plan.blacksmith.limit : item.plan.blacksmith?.limit == 0 ? '∞' : '‑'}
         </div>
       </div>
     `).join('');
@@ -1115,7 +1117,7 @@
   };
 
   const renderPlanDetail = (service, plan) => {
-    const planName = `${service.name} / ${plan.name}`;
+    const planName = `${service?.name || service?.id || 'unknown'} / ${plan?.name || plan?.id || 'unknown'}`;
 
     // Build the plan details table
     const detailsTable = `
@@ -1130,11 +1132,11 @@
             <td class="info-key">Service</td>
             <td class="info-value">
               <span class="copy-wrapper">
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${service.name}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${service?.name || service?.id || 'unknown'}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${service.name}</span>
+                <span>${service?.name || service?.id || 'unknown'}</span>
               </span>
             </td>
           </tr>
@@ -1142,11 +1144,11 @@
             <td class="info-key">Plan</td>
             <td class="info-value">
               <span class="copy-wrapper">
-                <button class="copy-btn-inline" onclick="window.copyValue(event, '${plan.name}')"
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${plan?.name || plan?.id || 'unknown'}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${plan.name}</span>
+                <span>${plan?.name || plan?.id || 'unknown'}</span>
               </span>
             </td>
           </tr>
@@ -1274,7 +1276,7 @@
           <div class="service-item" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
             <div class="service-id">${id}</div>
             <div class="service-meta">
-              ${details.service_id} / ${details.plan.name} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
+              ${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
             </div>
           </div>
         `).join('');
@@ -1296,7 +1298,7 @@
   // Service detail rendering functions
   const renderServiceDetail = (id, details, vaultData) => {
     // Use deployment name from vault data if available, otherwise construct it
-    const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan.name}-${id}`;
+    const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${id}`;
 
     // Build the vertical table content for the Details tab
     let tableRows = [];
@@ -1395,11 +1397,11 @@
           <td class="info-key" style="font-size: 16px;">Plan</td>
           <td class="info-value" style="font-size: 16px;">
             <span class="copy-wrapper">
-              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan.name}')"
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan?.name || details.plan_id || 'unknown'}')"
                       title="Copy Plan">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
-              <span>${details.plan.name}</span>
+              <span>${details.plan?.name || details.plan_id || 'unknown'}</span>
             </span>
           </td>
         </tr>`,
@@ -4649,8 +4651,10 @@
               let selectedPlan = null;
 
               catalog.services.forEach(service => {
+                if (!service || !service.plans) return;
                 service.plans.forEach(plan => {
-                  if (`${service.name}-${plan.name}` === planId) {
+                  if (!plan) return;
+                  if (`${service.name || service.id || 'unknown'}-${plan.name || plan.id || 'unknown'}` === planId) {
                     selectedService = service;
                     selectedPlan = plan;
                   }
@@ -4837,7 +4841,7 @@
                 const details = window.serviceInstances[instanceId];
                 if (details) {
                   // Use the same pattern as in renderServiceDetail function
-                  return `${details.service_id}-${details.plan.name}-${instanceId}`;
+                  return `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${instanceId}`;
                 }
                 return instanceId; // fallback
               });
@@ -5007,8 +5011,10 @@
                       let selectedPlan = null;
 
                       catalog.services.forEach(service => {
+                        if (!service || !service.plans) return;
                         service.plans.forEach(plan => {
-                          if (`${service.name}-${plan.name}` === planId) {
+                          if (!plan) return;
+                          if (`${service.name || service.id || 'unknown'}-${plan.name || plan.id || 'unknown'}` === planId) {
                             selectedService = service;
                             selectedPlan = plan;
                           }

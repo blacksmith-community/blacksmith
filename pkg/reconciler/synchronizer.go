@@ -113,17 +113,41 @@ func (s *indexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 		}
 	}
 
-	// Clean up very old orphaned entries (optional)
+	// Mark very old orphaned entries but NEVER delete service instances
 	cleanupCount := 0
 	for id, data := range idx {
 		if dataMap, ok := data.(map[string]interface{}); ok {
 			if orphaned, ok := dataMap["orphaned"].(bool); ok && orphaned {
 				if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
 					if t, err := time.Parse(time.RFC3339, orphanedAt); err == nil {
-						// Remove entries orphaned for more than 30 days
-						if time.Since(t) > 30*24*time.Hour {
-							s.logInfo("Removing long-orphaned instance %s (orphaned since %s)", id, orphanedAt)
-							delete(idx, id)
+						daysSinceOrphaned := int(time.Since(t).Hours() / 24)
+
+						// After 30 days, mark as stale but DO NOT DELETE
+						if daysSinceOrphaned > 30 {
+							// Check if it's a service instance - these should NEVER be deleted
+							if _, hasService := dataMap["service_id"]; hasService {
+								if _, hasPlan := dataMap["plan_id"]; hasPlan {
+									// Mark as stale but keep in vault for historical purposes
+									dataMap["stale"] = true
+									dataMap["stale_since"] = orphanedAt
+									dataMap["days_orphaned"] = daysSinceOrphaned
+									dataMap["preservation_reason"] = "service_instance_historical_data"
+									idx[id] = dataMap
+
+									s.logInfo("Instance %s marked as stale (orphaned for %d days) but preserved for historical purposes", id, daysSinceOrphaned)
+									cleanupCount++
+									continue
+								}
+							}
+
+							// Only non-service instances can potentially be cleaned up
+							// But for now, we'll also preserve these with a warning
+							dataMap["stale"] = true
+							dataMap["stale_since"] = orphanedAt
+							dataMap["days_orphaned"] = daysSinceOrphaned
+							idx[id] = dataMap
+
+							s.logWarning("Non-service entry %s has been orphaned for %d days - marked as stale but preserved", id, daysSinceOrphaned)
 							cleanupCount++
 						}
 					}
@@ -138,7 +162,7 @@ func (s *indexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 		return fmt.Errorf("failed to save index: %w", err)
 	}
 
-	s.logInfo("Index synchronized successfully: initial=%d, updated=%d, added=%d, orphaned=%d, cleaned=%d, final=%d",
+	s.logInfo("Index synchronized successfully: initial=%d, updated=%d, added=%d, orphaned=%d, stale=%d, final=%d",
 		startCount, updateCount, addCount, orphanCount, cleanupCount, len(idx))
 
 	// Validate the index after sync
@@ -299,8 +323,9 @@ func (s *indexSynchronizer) isLegacyDeploymentName(deploymentName, planID, insta
 
 // isValidInstanceID validates instance ID format
 func isValidInstanceID(id string) bool {
-	// Standard UUID format
-	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	// Standard UUID format (v1-v5 and nil UUID)
+	// Accepts any valid UUID format
+	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	return uuidRegex.MatchString(id)
 }
 

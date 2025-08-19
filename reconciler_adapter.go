@@ -125,10 +125,25 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 			Metadata:    make(map[string]interface{}),
 		}
 
-		// Convert metadata if present
-		// Note: svc.Metadata is likely a struct, not a map
-		// For now, we'll just use an empty map
-		// TODO: Convert actual metadata fields if needed
+		// Convert brokerapi.ServiceMetadata to map
+		if svc.Metadata != nil {
+			service.Metadata = map[string]interface{}{
+				"displayName":         svc.Metadata.DisplayName,
+				"imageUrl":            svc.Metadata.ImageUrl,
+				"longDescription":     svc.Metadata.LongDescription,
+				"providerDisplayName": svc.Metadata.ProviderDisplayName,
+				"documentationUrl":    svc.Metadata.DocumentationUrl,
+				"supportUrl":          svc.Metadata.SupportUrl,
+			}
+			// Add shareable if set
+			if svc.Metadata.Shareable != nil {
+				service.Metadata["shareable"] = *svc.Metadata.Shareable
+			}
+			// Add any additional metadata
+			for k, v := range svc.Metadata.AdditionalMetadata {
+				service.Metadata[k] = v
+			}
+		}
 
 		// Convert plans
 		for _, p := range svc.Plans {
@@ -146,10 +161,28 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 				Metadata:    make(map[string]interface{}),
 			}
 
-			// Convert plan metadata if present
-			// Note: p.Metadata is likely a struct, not a map
-			// For now, we'll just use an empty map
-			// TODO: Convert actual metadata fields if needed
+			// Convert brokerapi.ServicePlanMetadata to map
+			if p.Metadata != nil {
+				plan.Metadata = map[string]interface{}{
+					"displayName": p.Metadata.DisplayName,
+					"bullets":     p.Metadata.Bullets,
+				}
+				// Convert costs if present
+				if len(p.Metadata.Costs) > 0 {
+					costs := make([]map[string]interface{}, len(p.Metadata.Costs))
+					for i, cost := range p.Metadata.Costs {
+						costs[i] = map[string]interface{}{
+							"amount": cost.Amount,
+							"unit":   cost.Unit,
+						}
+					}
+					plan.Metadata["costs"] = costs
+				}
+				// Add any additional metadata
+				for k, v := range p.Metadata.AdditionalMetadata {
+					plan.Metadata[k] = v
+				}
+			}
 
 			service.Plans = append(service.Plans, plan)
 		}
@@ -176,8 +209,34 @@ func (v *vaultWrapper) Delete(path string) error {
 	return v.vault.Delete(path)
 }
 
-func (v *vaultWrapper) GetIndex(name string) (*VaultIndex, error) {
-	return v.vault.GetIndex(name)
+func (v *vaultWrapper) GetIndex(name string) (*reconciler.VaultIndex, error) {
+	// Get the actual vault index
+	vaultIdx, err := v.vault.GetIndex(name)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to reconciler.VaultIndex with a SaveFunc closure
+	return &reconciler.VaultIndex{
+		Data: vaultIdx.Data,
+		SaveFunc: func() error {
+			return vaultIdx.Save()
+		},
+	}, nil
+}
+
+func (v *vaultWrapper) UpdateIndex(name string, instanceID string, data interface{}) error {
+	// Get the vault index
+	idx, err := v.vault.GetIndex(name)
+	if err != nil {
+		return err
+	}
+
+	// Update the data
+	idx.Data[instanceID] = data
+
+	// Save the index
+	return idx.Save()
 }
 
 // loggerWrapper wraps the Log for use by the reconciler

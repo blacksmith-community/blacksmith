@@ -20,6 +20,7 @@ type reconcilerManager struct {
 	vault        interface{} // Will be replaced with actual Vault type
 	bosh         bosh.Director
 	logger       Logger
+	services     []Service // Cached service catalog
 
 	status   Status
 	statusMu sync.RWMutex
@@ -109,6 +110,15 @@ func (r *reconcilerManager) runReconciliation() {
 	defer func() {
 		r.metrics.ReconciliationCompleted(time.Since(startTime))
 	}()
+
+	// Get service catalog from broker
+	if broker, ok := r.broker.(BrokerInterface); ok {
+		r.services = broker.GetServices()
+		r.logDebug("Loaded %d services from broker", len(r.services))
+	} else {
+		r.logWarning("Broker does not implement GetServices, proceeding without service catalog")
+		r.services = []Service{}
+	}
 
 	// Phase 1: Scan BOSH deployments
 	r.logDebug("Phase 1: Scanning BOSH deployments")
@@ -241,7 +251,7 @@ func (r *reconcilerManager) processBatch(ctx context.Context, deployments []Depl
 			defer func() { <-semaphore }()
 
 			// Try to match even without details first
-			matchResult, err := r.matcher.MatchDeployment(deployment, nil)
+			matchResult, err := r.matcher.MatchDeployment(deployment, r.services)
 			if err != nil {
 				r.logError("Failed to match deployment %s: %s", deployment.Name, err)
 				return
@@ -314,6 +324,21 @@ func (r *reconcilerManager) updateVault(ctx context.Context, matches []MatchedDe
 
 // buildInstanceData builds instance data from a matched deployment
 func (r *reconcilerManager) buildInstanceData(match MatchedDeployment) *InstanceData {
+	// Find the service and plan names from the catalog
+	var serviceName, planName string
+	for _, svc := range r.services {
+		if svc.ID == match.Match.ServiceID {
+			serviceName = svc.Name
+			for _, plan := range svc.Plans {
+				if plan.ID == match.Match.PlanID {
+					planName = plan.Name
+					break
+				}
+			}
+			break
+		}
+	}
+
 	return &InstanceData{
 		ID:             match.Match.InstanceID,
 		ServiceID:      match.Match.ServiceID,
@@ -321,6 +346,8 @@ func (r *reconcilerManager) buildInstanceData(match MatchedDeployment) *Instance
 		DeploymentName: match.Deployment.Name,
 		Manifest:       match.Deployment.Manifest,
 		Metadata: map[string]interface{}{
+			"service_name":     serviceName,
+			"plan_name":        planName,
 			"releases":         match.Deployment.Releases,
 			"stemcells":        match.Deployment.Stemcells,
 			"vms":              match.Deployment.VMs,
@@ -342,11 +369,41 @@ func (r *reconcilerManager) mergeInstanceData(existing, new *InstanceData) *Inst
 	// Keep existing creation time
 	new.CreatedAt = existing.CreatedAt
 
+	// List of fields to always preserve from existing
+	preserveFields := []string{
+		"history",
+		"dashboard_url",
+		"context",
+		"maintenance_info",
+		"bindings_count",
+		"binding_ids",
+		"provision_params",
+		"update_params",
+		"organization_id",
+		"space_id",
+		"parameters",
+		"has_credentials",
+		"has_bindings",
+		"original_request",
+		"created_by",
+	}
+
 	// Merge metadata
 	if existing.Metadata != nil {
+		if new.Metadata == nil {
+			new.Metadata = make(map[string]interface{})
+		}
+
+		// Preserve listed fields
+		for _, field := range preserveFields {
+			if v, ok := existing.Metadata[field]; ok && v != nil {
+				new.Metadata[field] = v
+			}
+		}
+
+		// Also preserve any fields starting with "original_" or "provision_"
 		for k, v := range existing.Metadata {
-			// Preserve certain fields
-			if k == "history" {
+			if v != nil && (strings.HasPrefix(k, "original_") || strings.HasPrefix(k, "provision_")) {
 				new.Metadata[k] = v
 			}
 		}
@@ -411,6 +468,14 @@ func (r *reconcilerManager) logInfo(format string, args ...interface{}) {
 		r.logger.Info(format, args...)
 	} else {
 		fmt.Printf("[INFO] reconciler: "+format+"\n", args...)
+	}
+}
+
+func (r *reconcilerManager) logWarning(format string, args ...interface{}) {
+	if r.logger != nil {
+		r.logger.Warning(format, args...)
+	} else {
+		fmt.Printf("[WARN] reconciler: "+format+"\n", args...)
 	}
 }
 

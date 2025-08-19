@@ -179,13 +179,46 @@ type Plan struct {
 	Metadata    map[string]interface{}
 }
 
-// NotFoundError indicates a resource was not found
+// VaultInterface defines the Vault operations interface
+type VaultInterface interface {
+	Put(path string, data interface{}) error
+	Get(path string, out interface{}) (bool, error)
+	Delete(path string) error
+	GetIndex(name string) (*VaultIndex, error)
+	UpdateIndex(name string, instanceID string, data interface{}) error
+}
+
+// VaultIndex represents a vault index
+type VaultIndex struct {
+	Data     map[string]interface{}
+	SaveFunc func() error // Function to save the index back to vault
+}
+
+// Save saves the index
+func (idx *VaultIndex) Save() error {
+	if idx.SaveFunc != nil {
+		return idx.SaveFunc()
+	}
+	return nil
+}
+
+// Lookup looks up a value in the index
+func (idx *VaultIndex) Lookup(key string) (interface{}, bool) {
+	val, exists := idx.Data[key]
+	return val, exists
+}
+
 // Logger defines the logging interface
 type Logger interface {
 	Debug(format string, args ...interface{})
 	Info(format string, args ...interface{})
 	Warning(format string, args ...interface{})
 	Error(format string, args ...interface{})
+}
+
+// BrokerInterface defines the broker operations interface
+type BrokerInterface interface {
+	GetServices() []Service
 }
 
 type NotFoundError struct {
