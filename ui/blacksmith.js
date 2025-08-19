@@ -86,6 +86,176 @@
     return true;
   };
 
+  // Log Selection Management Utilities
+  const LogSelectionManager = {
+    // Storage keys
+    BLACKSMITH_LOGS_KEY: 'blacksmith.logs.lastSelected',
+    INSTANCE_LOGS_PREFIX: 'blacksmith.logs.instance',
+
+    // Get last selected blacksmith log
+    getLastBlacksmithLog: function () {
+      try {
+        return localStorage.getItem(this.BLACKSMITH_LOGS_KEY);
+      } catch (e) {
+        console.warn('Failed to read from localStorage:', e);
+        return null;
+      }
+    },
+
+    // Save selected blacksmith log
+    saveBlacksmithLog: function (logPath) {
+      try {
+        localStorage.setItem(this.BLACKSMITH_LOGS_KEY, logPath);
+      } catch (e) {
+        console.warn('Failed to save to localStorage:', e);
+      }
+    },
+
+    // Get last selected instance log
+    getLastInstanceLog: function (instanceId, jobName) {
+      try {
+        const key = `${this.INSTANCE_LOGS_PREFIX}.${instanceId}.${jobName}`;
+        return localStorage.getItem(key);
+      } catch (e) {
+        console.warn('Failed to read from localStorage:', e);
+        return null;
+      }
+    },
+
+    // Save selected instance log
+    saveInstanceLog: function (instanceId, jobName, logPath) {
+      try {
+        const key = `${this.INSTANCE_LOGS_PREFIX}.${instanceId}.${jobName}`;
+        localStorage.setItem(key, logPath);
+      } catch (e) {
+        console.warn('Failed to save to localStorage:', e);
+      }
+    },
+
+    // Get default blacksmith log
+    getDefaultBlacksmithLog: function (availableFiles) {
+      // Check for last selection
+      const lastSelected = this.getLastBlacksmithLog();
+      if (lastSelected && availableFiles.some(f => f.path === lastSelected)) {
+        return lastSelected;
+      }
+
+      // Default to blacksmith stdout log
+      const defaultLog = '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log';
+      if (availableFiles.some(f => f.path === defaultLog)) {
+        return defaultLog;
+      }
+
+      // Fallback to first available
+      return availableFiles[0]?.path;
+    },
+
+    // Get smart default for service instance logs
+    getSmartDefault: function (files, serviceName, servicePlan, instanceId, jobName) {
+      // Check for last selection first
+      if (instanceId && jobName) {
+        const lastSelected = this.getLastInstanceLog(instanceId, jobName);
+        if (lastSelected && files.includes(lastSelected)) {
+          return lastSelected;
+        }
+      }
+
+      // Normalize service name for matching
+      const normalizedService = serviceName ? serviceName.toLowerCase() : '';
+
+      // RabbitMQ specific
+      if (normalizedService.includes('rabbitmq') || normalizedService.includes('rabbit')) {
+        // Look for logs starting with rabbitmq@ or rabbit@
+        const rabbitLog = files.find(f => {
+          const filename = f.split('/').pop().toLowerCase();
+          return filename.startsWith('rabbitmq@') || filename.startsWith('rabbit@');
+        });
+        if (rabbitLog) return rabbitLog;
+
+        // Fallback to any rabbitmq log
+        const anyRabbitLog = files.find(f => f.toLowerCase().includes('rabbitmq'));
+        if (anyRabbitLog) return anyRabbitLog;
+      }
+
+      // Redis specific
+      if (normalizedService.includes('redis')) {
+        // Look for standalone or cluster stdout logs (but not pre-start)
+        const redisLog = files.find(f => {
+          const lowerFile = f.toLowerCase();
+          if (lowerFile.includes('pre-start')) return false;
+
+          // For Redis, look for standalone-N/standalone-N.stdout.log pattern
+          const filename = f.split('/').pop();
+          if (filename.includes('standalone') && filename.endsWith('.stdout.log')) {
+            // Check if it's the main service log (e.g., standalone-6.stdout.log)
+            const parts = filename.split('.');
+            if (parts[0].includes('standalone') && !parts[0].includes('pre-start')) {
+              return true;
+            }
+          }
+
+          return (lowerFile.includes('standalone') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start')) ||
+            (lowerFile.includes('cluster') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start')) ||
+            (lowerFile.includes('redis') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start'));
+        });
+        if (redisLog) return redisLog;
+
+        // Fallback to any redis stdout log (excluding pre-start)
+        const anyRedisStdout = files.find(f => {
+          const lowerFile = f.toLowerCase();
+          return lowerFile.includes('redis') && lowerFile.includes('stdout') && !lowerFile.includes('pre-start');
+        });
+        if (anyRedisStdout) return anyRedisStdout;
+      }
+
+      // General service logic
+      // Try to match job name with stdout first (e.g., standalone-6/standalone-6.stdout.log)
+      if (jobName) {
+        const jobBaseName = jobName.split('/')[0]; // Get "standalone-6" from "standalone-6/0"
+        const jobLog = files.find(f => {
+          const filename = f.split('/').pop();
+          return filename.toLowerCase().startsWith(jobBaseName.toLowerCase()) &&
+            filename.endsWith('.stdout.log') &&
+            !filename.includes('pre-start');
+        });
+        if (jobLog) return jobLog;
+      }
+
+      // Try to match service name with stdout (excluding pre-start)
+      if (serviceName) {
+        const serviceLog = files.find(f => {
+          const lowerFile = f.toLowerCase();
+          return lowerFile.includes(normalizedService) &&
+            lowerFile.includes('stdout') &&
+            !lowerFile.includes('pre-start');
+        });
+        if (serviceLog) return serviceLog;
+      }
+
+      // Try to match service plan with stdout (excluding pre-start)
+      if (servicePlan) {
+        const normalizedPlan = servicePlan.toLowerCase();
+        const planLog = files.find(f => {
+          const lowerFile = f.toLowerCase();
+          return lowerFile.includes(normalizedPlan) &&
+            lowerFile.includes('stdout') &&
+            !lowerFile.includes('pre-start');
+        });
+        if (planLog) return planLog;
+      }
+
+      // Try to find any stdout log (excluding pre-start)
+      const stdoutLog = files.find(f => {
+        const lowerFile = f.toLowerCase();
+        return lowerFile.includes('stdout') && !lowerFile.includes('pre-start');
+      });
+      if (stdoutLog) return stdoutLog;
+
+      // Fallback to first file
+      return files[0];
+    }
+  };
+
   // Table search filter functionality
   const createSearchFilter = (tableId, placeholder = 'Search...') => {
     return `
@@ -1501,30 +1671,14 @@
         return formatVMs(vms);
 
       } else if (type === 'manifest') {
-        // Fetch manifest for blacksmith deployment
-        const response = await fetch(`/b/deployments/${deploymentName}/manifest`, { cache: 'no-cache' });
+        // Fetch manifest details for blacksmith deployment
+        const response = await fetch(`/b/deployments/${deploymentName}/manifest-details`, { cache: 'no-cache' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        const text = await response.text();
+        const manifestData = await response.json();
 
-        // Store the manifest text for copy functionality
-        const manifestId = `manifest-blacksmith-${Date.now()}`;
-        window.manifestTexts = window.manifestTexts || {};
-        window.manifestTexts[manifestId] = text;
-
-        return `
-          <div class="manifest-container">
-            <div class="manifest-header">
-              <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
-                      title="Copy manifest to clipboard">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                <span>Copy</span>
-              </button>
-            </div>
-            <pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-          </div>
-        `;
+        return formatManifestDetails(manifestData, `blacksmith-${deploymentName}`);
 
       } else if (type === 'credentials') {
         // Fetch blacksmith credentials
@@ -1551,7 +1705,7 @@
     }
 
     const endpoints = {
-      manifest: `/b/${instanceId}/manifest.yml`,
+      manifest: `/b/${instanceId}/manifest-details`,
       credentials: `/b/${instanceId}/creds.json`,  // Use JSON endpoint
       events: `/b/${instanceId}/events`,
       vms: `/b/${instanceId}/vms`,
@@ -1571,7 +1725,7 @@
         const text = await response.text();
         try {
           const events = JSON.parse(text);
-          return formatEvents(events, 'service-events');
+          return formatEvents(events, 'service-events', instanceId);
         } catch (e) {
           return `<pre>${text}</pre>`;
         }
@@ -1579,7 +1733,7 @@
         const text = await response.text();
         try {
           const vms = JSON.parse(text);
-          return formatVMs(vms);
+          return formatVMs(vms, instanceId);
         } catch (e) {
           return `<pre>${text}</pre>`;
         }
@@ -1590,7 +1744,7 @@
         const text = await response.text();
         try {
           const logs = JSON.parse(text);
-          return formatDeploymentLog(logs);
+          return formatDeploymentLog(logs, instanceId);
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -1599,7 +1753,7 @@
         const text = await response.text();
         try {
           const logs = JSON.parse(text);
-          return formatDebugLog(logs);
+          return formatDebugLog(logs, instanceId);
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -1615,34 +1769,20 @@
         }
       }
 
-      const text = await response.text();
-      // Add copy button for manifest
+      // Handle manifest separately since it returns JSON
       if (type === 'manifest') {
-        // Store the manifest text in a data attribute or use a different approach
-        const manifestId = `manifest-${instanceId}-${Date.now()}`;
-        window.manifestTexts = window.manifestTexts || {};
-        window.manifestTexts[manifestId] = text;
-
-        return `
-          <div class="manifest-container">
-            <div class="manifest-header">
-              <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
-                      title="Copy manifest to clipboard">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                <span>Copy</span>
-              </button>
-            </div>
-            <pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-          </div>
-        `;
+        const manifestData = await response.json();
+        return formatManifestDetails(manifestData, instanceId);
       }
+
+      const text = await response.text();
       return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
     } catch (error) {
       return `<div class="error">Failed to load ${type}: ${error.message}</div>`;
     }
   };
 
-  const formatDeploymentLog = (logs) => {
+  const formatDeploymentLog = (logs, instanceId = null) => {
     if (!logs || logs.length === 0) {
       return '<div class="no-data">No deployment logs available</div>';
     }
@@ -1650,9 +1790,29 @@
     // Store original data for sorting
     tableOriginalData.set('deployment-logs', [...logs]);
 
+    // Determine the refresh function based on whether this is for blacksmith or service instance
+    const refreshFunction = instanceId
+      ? `window.refreshServiceInstanceDeploymentLog('${instanceId}', event)`
+      : `window.refreshBlacksmithDeploymentLog(event)`;
+
     return `
-      ${createSearchFilter('deployment-log-table', 'Search deployment logs...')}
-      <div class="deployment-log-table-container">
+      <div class="deployment-log-wrapper">
+        <div class="table-controls-container">
+          <div class="search-filter-container">
+            ${createSearchFilter('deployment-log-table', 'Search deployment logs...')}
+          </div>
+          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.deployment-log-table', event)"
+                  title="Copy filtered table rows">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy</span>
+          </button>
+          <button class="refresh-btn-logs" onclick="${refreshFunction}"
+                  title="Refresh deployment logs">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span>Refresh</span>
+          </button>
+        </div>
+        <div class="deployment-log-table-container">
         <table class="deployment-log-table">
         <thead>
           <tr>
@@ -1699,12 +1859,13 @@
             `;
     }).join('')}
         </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     `;
   };
 
-  const formatDebugLog = (logs) => {
+  const formatDebugLog = (logs, instanceId = null) => {
     if (!logs || logs.length === 0) {
       return '<div class="no-data">No debug logs available</div>';
     }
@@ -1712,9 +1873,29 @@
     // Store original data for sorting
     tableOriginalData.set('debug-logs', [...logs]);
 
+    // Determine the refresh function based on whether this is for blacksmith or service instance
+    const refreshFunction = instanceId
+      ? `window.refreshServiceInstanceDebugLog('${instanceId}', event)`
+      : `window.refreshBlacksmithDebugLog(event)`;
+
     return `
-      ${createSearchFilter('debug-log-table', 'Search debug logs...')}
-      <div class="debug-log-table-container">
+      <div class="debug-log-wrapper">
+        <div class="table-controls-container">
+          <div class="search-filter-container">
+            ${createSearchFilter('debug-log-table', 'Search debug logs...')}
+          </div>
+          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.debug-log-table', event)"
+                  title="Copy filtered table rows">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy</span>
+          </button>
+          <button class="refresh-btn-logs" onclick="${refreshFunction}"
+                  title="Refresh debug logs">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span>Refresh</span>
+          </button>
+        </div>
+        <div class="debug-log-table-container">
         <table class="debug-log-table">
         <thead>
           <tr>
@@ -1761,7 +1942,8 @@
             `;
     }).join('')}
         </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     `;
   };
@@ -1817,20 +1999,79 @@
 
     // If no structured files, show raw logs
     if (typeof files !== 'object' || Object.keys(files).length === 0) {
+      // Parse and render as table even for single logs
+      const parsedLogs = typeof logs === 'string'
+        ? logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line))
+        : [];
+
+      // Store for sorting
+      const tableKey = `instance-logs-${jobKey}`;
+      tableOriginalData.set(tableKey, parsedLogs);
+
+      // Store original text for copy
+      if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
+      window.instanceLogOriginalText[jobKey] = typeof logs === 'string' ? logs : JSON.stringify(logs, null, 2);
+
       return `
-        <div class="job-logs-single">
-          <pre class="log-data">${escapeHtml(typeof logs === 'string' ? logs : JSON.stringify(logs, null, 2))}</pre>
+        <div class="job-logs-container">
+          <div class="logs-table-container" id="log-display-${jobKey.replace(/\//g, '-')}">
+            <table class="instance-logs-table instance-logs-table-${jobKey.replace(/\//g, '-')}" data-job="${jobKey}">
+              <thead>
+                <tr class="table-controls-row">
+                  <th colspan="4" class="table-controls-header">
+                    <div class="table-controls-container">
+                      <div class="search-filter-container">
+                        ${createSearchFilter(`instance-logs-table-${jobKey.replace(/\//g, '-')}`, 'Search logs...')}
+                      </div>
+                      <button class="copy-btn-logs" onclick="window.copyInstanceLogs('${jobKey}', event)"
+                              title="Copy filtered table rows">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        <span>Copy</span>
+                      </button>
+                      <button class="refresh-btn-logs" onclick="window.refreshInstanceLogs('${jobKey}', event)"
+                              title="Refresh logs">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                        <span>Refresh</span>
+                      </button>
+                    </div>
+                  </th>
+                </tr>
+                <tr>
+                  <th class="log-col-date">Date</th>
+                  <th class="log-col-time">Time</th>
+                  <th class="log-col-level">Level</th>
+                  <th class="log-col-message">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${parsedLogs.map(row => renderLogRow(row)).join('')}
+              </tbody>
+            </table>
+          </div>
         </div>
       `;
     }
 
     // Create layout with dropdown selector and content
     const filesList = Object.keys(files);
-    const firstFile = filesList[0];
+
+    // Get smart default file selection
+    const instanceInfo = window.currentInstanceInfo || {};
+    const defaultFile = LogSelectionManager.getSmartDefault(
+      filesList,
+      instanceInfo.service,
+      instanceInfo.plan,
+      instanceInfo.id,
+      jobKey
+    );
 
     // Store files for this job
     if (!window.instanceLogFiles) window.instanceLogFiles = {};
     window.instanceLogFiles[jobKey] = files;
+
+    // Store original text for copy - use the selected default file
+    if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
+    window.instanceLogOriginalText[jobKey] = files[defaultFile] || 'No content';
 
     const fileOptions = filesList.map(filename => {
       // Show more of the path to distinguish similar filenames
@@ -1863,21 +2104,61 @@
       const escapedFilename = filename.replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const escapedDisplay = displayName.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-      return `<option value="${escapedFilename}" title="${escapedFilename}">${escapedDisplay}</option>`;
+      // Mark the selected file
+      const selected = filename === defaultFile ? 'selected' : '';
+      return `<option value="${escapedFilename}" ${selected} title="${escapedFilename}">${escapedDisplay}</option>`;
     }).join('');
+
+    // Parse logs for the selected default file
+    const logContent = files[defaultFile] || 'No content';
+    const parsedLogs = logContent.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+
+    // Store for sorting
+    const tableKey = `instance-logs-${jobKey}`;
+    tableOriginalData.set(tableKey, parsedLogs);
 
     return `
       <div class="job-logs-container">
-        <div class="log-file-selector">
-          <label for="log-select-${jobKey.replace(/\//g, '-')}" class="log-select-label">Log File:</label>
-          <select id="log-select-${jobKey.replace(/\//g, '-')}"
-                  class="log-file-dropdown"
-                  onchange="window.selectLogFileForJob('${jobKey}', this.value)">
-            ${fileOptions}
-          </select>
-        </div>
-        <div class="log-file-display" id="log-display-${jobKey.replace(/\//g, '-')}">
-          <pre class="log-file-content">${escapeHtml(files[firstFile] || 'No content')}</pre>
+        <div class="logs-table-container" id="log-display-${jobKey.replace(/\//g, '-')}">
+          <table class="instance-logs-table instance-logs-table-${jobKey.replace(/\//g, '-')}" data-job="${jobKey}">
+            <thead>
+              <tr class="table-controls-row">
+                <th colspan="4" class="table-controls-header">
+                  <div class="table-controls-container">
+                    <div class="search-filter-container">
+                      ${createSearchFilter(`instance-logs-table-${jobKey.replace(/\//g, '-')}`, 'Search logs...')}
+                    </div>
+                    <div class="log-file-selector">
+                      <select id="log-select-${jobKey.replace(/\//g, '-')}"
+                              class="log-file-dropdown"
+                              onchange="window.selectLogFileForJob('${jobKey}', this.value)">
+                        ${fileOptions}
+                      </select>
+                    </div>
+                    <button class="copy-btn-logs" onclick="window.copyInstanceLogs('${jobKey}', event)"
+                            title="Copy filtered table rows">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      <span>Copy</span>
+                    </button>
+                    <button class="refresh-btn-logs" onclick="window.refreshInstanceLogs('${jobKey}', event)"
+                            title="Refresh logs">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                      <span>Refresh</span>
+                    </button>
+                  </div>
+                </th>
+              </tr>
+              <tr>
+                <th class="log-col-date">Date</th>
+                <th class="log-col-time">Time</th>
+                <th class="log-col-level">Level</th>
+                <th class="log-col-message">Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${parsedLogs.map(row => renderLogRow(row)).join('')}
+            </tbody>
+          </table>
         </div>
       </div>
     `;
@@ -1914,14 +2195,231 @@
     const files = window.instanceLogFiles && window.instanceLogFiles[job];
     if (!files || !files[filename]) return;
 
-    // Update content display
-    const displayEl = document.getElementById(`log-display-${job.replace(/\//g, '-')}`);
-    if (displayEl) {
-      displayEl.innerHTML = `<pre class="log-file-content">${escapeHtml(files[filename] || 'No content')}</pre>`;
+    // Save the selected log file to localStorage
+    const instanceInfo = window.currentInstanceInfo || {};
+    if (instanceInfo.id) {
+      LogSelectionManager.saveInstanceLog(instanceInfo.id, job, filename);
+    }
+
+    // Parse the selected log file
+    const logContent = files[filename] || 'No content';
+    const parsedLogs = logContent.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+
+    // Store for sorting
+    const tableKey = `instance-logs-${job}`;
+    tableOriginalData.set(tableKey, parsedLogs);
+
+    // Store original text for copy
+    if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
+    window.instanceLogOriginalText[job] = logContent;
+
+    // Update table body
+    const tableEl = document.querySelector(`#log-display-${job.replace(/\//g, '-')} tbody`);
+    if (tableEl) {
+      tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+
+      // Re-initialize sorting and filtering
+      const tableClass = `instance-logs-table-${job.replace(/\//g, '-')}`;
+      initializeSorting(tableClass);
+      attachSearchFilter(tableClass);
     }
   };
 
-  const formatEvents = (events, dataKey = 'events') => {
+  // Copy instance logs to clipboard - copies the original raw text
+  window.copyInstanceLogs = async (jobKey, event) => {
+    const button = event.currentTarget;
+
+    // Get the original log text - moved outside try block to be accessible in catch
+    const originalText = window.instanceLogOriginalText && window.instanceLogOriginalText[jobKey];
+    if (!originalText) {
+      console.error('No original log text found for job:', jobKey);
+      return;
+    }
+
+    try {
+      // Copy to clipboard
+      await navigator.clipboard.writeText(originalText);
+
+      // Visual feedback
+      button.classList.add('copied');
+      const originalTitle = button.title;
+      button.title = 'Copied!';
+      const spanElement = button.querySelector('span');
+      const originalButtonText = spanElement ? spanElement.textContent : '';
+      if (spanElement) {
+        spanElement.textContent = 'Copied!';
+      }
+      setTimeout(() => {
+        button.classList.remove('copied');
+        button.title = originalTitle;
+        if (spanElement) {
+          spanElement.textContent = originalButtonText;
+        }
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy logs:', err);
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = originalText;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        button.classList.add('copied');
+        const spanElement = button.querySelector('span');
+        const originalButtonText = spanElement ? spanElement.textContent : '';
+        if (spanElement) {
+          spanElement.textContent = 'Copied!';
+        }
+        setTimeout(() => {
+          button.classList.remove('copied');
+          if (spanElement) {
+            spanElement.textContent = originalButtonText;
+          }
+        }, 2000);
+      } catch (err) {
+        console.error('Failed to copy using fallback:', err);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+  };
+
+  // Refresh instance logs - re-fetches logs from server
+  window.refreshInstanceLogs = async (jobKey, event) => {
+    const button = event.currentTarget;
+
+    // Get the current instance ID from the active service instance
+    const activeInstanceItem = document.querySelector('.service-instance-item.active');
+    if (!activeInstanceItem) {
+      console.error('No active service instance selected');
+      return;
+    }
+
+    const instanceId = activeInstanceItem.dataset.id;
+    if (!instanceId) {
+      console.error('No instance ID found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Fetch fresh logs data
+      const response = await fetch(`/b/${instanceId}/instance-logs`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      const logsData = JSON.parse(text);
+
+      // Update the global logs data
+      window.instanceLogsData = logsData;
+
+      // Check if the current job still exists in the new data
+      if (!logsData[jobKey]) {
+        console.error('Job not found in refreshed data:', jobKey);
+        return;
+      }
+
+      // Update the files for this job
+      const jobData = logsData[jobKey];
+      const files = jobData.files || {};
+
+      if (Object.keys(files).length === 0) {
+        // Handle case with no files
+        const logs = jobData.logs || 'No logs available';
+
+        // Store original text
+        if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
+        window.instanceLogOriginalText[jobKey] = typeof logs === 'string' ? logs : JSON.stringify(logs, null, 2);
+
+        // Parse and update table
+        const parsedLogs = typeof logs === 'string'
+          ? logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line))
+          : [];
+
+        const tableKey = `instance-logs-${jobKey}`;
+        tableOriginalData.set(tableKey, parsedLogs);
+
+        // Update table body
+        const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
+        if (tableEl) {
+          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+        }
+      } else {
+        // Update files data
+        if (!window.instanceLogFiles) window.instanceLogFiles = {};
+        window.instanceLogFiles[jobKey] = files;
+
+        // Get currently selected file from dropdown
+        const dropdownEl = document.getElementById(`log-select-${jobKey.replace(/\//g, '-')}`);
+        const currentFile = dropdownEl ? dropdownEl.value : Object.keys(files)[0];
+
+        // Use the selected file or first file
+        const fileToShow = files[currentFile] ? currentFile : Object.keys(files)[0];
+        const logContent = files[fileToShow] || 'No content';
+
+        // Store original text
+        if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
+        window.instanceLogOriginalText[jobKey] = logContent;
+
+        // Parse and update table
+        const parsedLogs = logContent.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+
+        const tableKey = `instance-logs-${jobKey}`;
+        tableOriginalData.set(tableKey, parsedLogs);
+
+        // Update table body
+        const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
+        if (tableEl) {
+          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+        }
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalButtonText = spanElement ? spanElement.textContent : '';
+      if (spanElement) {
+        spanElement.textContent = 'Refreshed!';
+      }
+      setTimeout(() => {
+        button.classList.remove('success');
+        if (spanElement) {
+          spanElement.textContent = originalButtonText;
+        }
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh instance logs:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      const spanElement = button.querySelector('span');
+      const originalButtonText = spanElement ? spanElement.textContent : '';
+      if (spanElement) {
+        spanElement.textContent = 'Error';
+      }
+      setTimeout(() => {
+        button.classList.remove('error');
+        if (spanElement) {
+          spanElement.textContent = originalButtonText;
+        }
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  const formatEvents = (events, dataKey = 'events', instanceId = null) => {
     if (!events || events.length === 0) {
       return '<div class="no-data">No events recorded</div>';
     }
@@ -1932,8 +2430,27 @@
     // Add unique identifier for this table instance
     const tableId = `events-table-${dataKey}`;
 
+    // Determine the refresh function based on whether this is for blacksmith or service instance
+    const refreshFunction = instanceId
+      ? `window.refreshServiceInstanceEvents('${instanceId}', event)`
+      : `window.refreshBlacksmithEvents(event)`;
+
     return `
-      ${createSearchFilter(tableId, 'Search events...')}
+      <div class="table-controls-container">
+        <div class="search-filter-container">
+          ${createSearchFilter(tableId, 'Search events...')}
+        </div>
+        <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
+                title="Copy filtered table rows">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <span>Copy</span>
+        </button>
+        <button class="refresh-btn-logs" onclick="${refreshFunction}"
+                title="Refresh events">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          <span>Refresh</span>
+        </button>
+      </div>
       <div class="events-table-container">
         <table class="${tableId} events-table">
           <thead>
@@ -1948,18 +2465,18 @@
           </thead>
           <tbody>
             ${events.map(event => {
-        const time = event.time ? new Date(event.time).toLocaleString() : '-';
-        // Handle object info - check if it's already a combined string or separate fields
-        let objectInfo = '-';
-        if (event.object_type && event.object_name) {
-          objectInfo = `${event.object_type}: ${event.object_name}`;
-        } else if (event.object_type || event.object_name) {
-          objectInfo = event.object_type || event.object_name;
-        }
+      const time = event.time ? new Date(event.time).toLocaleString() : '-';
+      // Handle object info - check if it's already a combined string or separate fields
+      let objectInfo = '-';
+      if (event.object_type && event.object_name) {
+        objectInfo = `${event.object_type}: ${event.object_name}`;
+      } else if (event.object_type || event.object_name) {
+        objectInfo = event.object_type || event.object_name;
+      }
 
-        const taskInfo = event.task_id || event.task || '-';
+      const taskInfo = event.task_id || event.task || '-';
 
-        return `
+      return `
                 <tr class="${event.error ? 'error-row' : ''}">
                   <td class="event-timestamp">${time}</td>
                   <td class="event-user">${event.user || '-'}</td>
@@ -1969,7 +2486,7 @@
                   <td class="event-error">${event.error || '-'}</td>
                 </tr>
               `;
-      }).join('')}
+    }).join('')}
           </tbody>
         </table>
       </div>
@@ -1978,20 +2495,281 @@
 
   // Log parsing and rendering functions
   const parseLogLine = (line) => {
-    // Regex pattern to match: YYYY-MM-DD HH:MM:SS.mmm LEVEL [context] message
-    const logPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(.*)$/;
-    const match = line.match(logPattern);
+    // Try different log formats in order of specificity
 
+    // JSON format - check first as it's easy to detect
+    if (line.startsWith('{') && line.endsWith('}')) {
+      try {
+        const json = JSON.parse(line);
+
+        // Extract timestamp and convert if needed
+        let date = '';
+        let time = '';
+        if (json.timestamp) {
+          // Check if it's Unix timestamp (numeric or string of numbers with optional decimal)
+          if (/^\d+(\.\d+)?$/.test(json.timestamp.toString())) {
+            const ts = new Date(parseFloat(json.timestamp) * 1000);
+            date = ts.toISOString().split('T')[0];
+            time = ts.toISOString().split('T')[1].replace('Z', '');
+          } else if (json.timestamp.includes('T')) {
+            // ISO format
+            const parts = json.timestamp.split('T');
+            date = parts[0];
+            time = parts[1].replace('Z', '').split('+')[0].split('-')[0];
+          }
+        }
+
+        // Extract level (could be level, log_level, severity, etc.)
+        let level = json.level || json.log_level || json.severity || 'INFO';
+        if (typeof level === 'number') {
+          // Convert numeric levels (0=debug, 1=info, 2=warn, 3=error, 4=fatal)
+          const levelMap = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'];
+          level = levelMap[level] || 'INFO';
+        }
+        level = level.toString().toUpperCase();
+
+        // Build message from various fields
+        let message = json.message || json.msg || '';
+        if (json.source) {
+          message = `[${json.source}] ${message}`;
+        }
+        if (json.data) {
+          // Append data as formatted JSON
+          message += ' ' + JSON.stringify(json.data);
+        }
+
+        return {
+          date: date,
+          time: time,
+          level: level,
+          message: message
+        };
+      } catch (e) {
+        // If JSON parsing fails, continue to other formats
+      }
+    }
+
+    // Prometheus/Go-kit format: ts=TIMESTAMP caller=file:line level=LEVEL key=value...
+    const prometheusPattern = /^ts=(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(.*)$/;
+    let match = line.match(prometheusPattern);
+    if (match) {
+      // Parse key=value pairs
+      const kvPairs = match[3];
+      const pairs = {};
+
+      // Match key=value or key="quoted value"
+      const kvPattern = /(\w+)=("(?:[^"\\]|\\.)*"|[^\s]+)/g;
+      let kvMatch;
+      while ((kvMatch = kvPattern.exec(kvPairs)) !== null) {
+        const key = kvMatch[1];
+        let value = kvMatch[2];
+        // Remove quotes if present
+        if (value.startsWith('"') && value.endsWith('"')) {
+          value = value.slice(1, -1);
+        }
+        pairs[key] = value;
+      }
+
+      const level = (pairs.level || 'info').toUpperCase();
+
+      // Build message from remaining key-value pairs
+      let message = '';
+      if (pairs.msg) {
+        message = pairs.msg;
+      }
+      if (pairs.caller) {
+        message = `[${pairs.caller}] ${message}`;
+      }
+      if (pairs.collector) {
+        message = `[collector:${pairs.collector}] ${message}`;
+      }
+
+      // Add other important fields
+      for (const [key, value] of Object.entries(pairs)) {
+        if (!['ts', 'level', 'msg', 'caller', 'collector'].includes(key)) {
+          message += ` ${key}=${value}`;
+        }
+      }
+
+      return {
+        date: match[1],
+        time: match[2],
+        level: level,
+        message: message.trim()
+      };
+    }
+
+    // Component-prefixed format: [Component] YYYY-MM-DDTHH:MM:SS.mmmZ LEVEL - message
+    const componentPattern = /^\[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(\w+)\s+-\s+(.*)$/;
+    match = line.match(componentPattern);
+    if (match) {
+      return {
+        date: match[2],
+        time: match[3],
+        level: match[4].toUpperCase(),
+        message: `[${match[1]}] ${match[5]}`
+      };
+    }
+
+    // Bracketed timestamp with path: [YYYY-MM-DDTHH:MM:SS.mmmZ] path message
+    const bracketTimestampPattern = /^\[(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\]\s+(.*)$/;
+    match = line.match(bracketTimestampPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
-        level: match[3].trim(),
+        level: 'INFO',
+        message: match[3]
+      };
+    }
+
+    // RabbitMQ format: YYYY-MM-DD HH:MM:SS.mmm+TZ [level] <pid> message
+    const rabbitMQPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+[+-]\d{2}:\d{2})\s+\[(\w+)\]\s+<[^>]+>\s+(.*)$/;
+    match = line.match(rabbitMQPattern);
+    if (match) {
+      // Extract just the time portion without timezone for consistency
+      const timeMatch = match[2].match(/(\d{2}:\d{2}:\d{2}\.\d+)/);
+      return {
+        date: match[1],
+        time: timeMatch ? timeMatch[1] : match[2].split('+')[0].split('-')[0],
+        level: match[3].toUpperCase(),
         message: match[4]
       };
     }
 
-    // Handle lines that don't match the pattern (continuation lines, etc.)
+    // Redis format: PID:TYPE DD Mon YYYY HH:MM:SS.mmm # message
+    const redisPattern = /^(\d+):([A-Z])\s+(\d{2})\s+(\w{3})\s+(\d{4})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+([#*-])\s+(.*)$/;
+    match = line.match(redisPattern);
+    if (match) {
+      // Convert Redis type to level
+      const typeToLevel = {
+        'C': 'CONFIG',
+        'M': 'MASTER',
+        'S': 'SLAVE',
+        'X': 'SENTINEL',
+        'N': 'NO_TYPE'
+      };
+      const level = typeToLevel[match[2]] || 'INFO';
+
+      // Convert month abbreviation to number
+      const months = {
+        'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+        'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
+        'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+      };
+      const month = months[match[4]] || '01';
+      const date = `${match[5]}-${month}-${match[3]}`;
+
+      return {
+        date: date,
+        time: match[6],
+        level: level,
+        message: `[${match[1]}] ${match[8]}`
+      };
+    }
+
+    // PostgreSQL format: YYYY-MM-DD HH:MM:SS.mmm TZ [PID] LEVEL: message
+    const postgresPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+\w+\s+\[\d+\]\s+(\w+):\s+(.*)$/;
+    match = line.match(postgresPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].toUpperCase(),
+        message: match[4]
+      };
+    }
+
+    // MySQL/MariaDB format: YYYY-MM-DD HH:MM:SS PID [Level] message
+    const mysqlPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\d+\s+\[(\w+)\]\s+(.*)$/;
+    match = line.match(mysqlPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].toUpperCase(),
+        message: match[4]
+      };
+    }
+
+    // MongoDB format: YYYY-MM-DDTHH:MM:SS.mmm+TZ LEVEL [component] message
+    const mongoPattern = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)[+-]\d{4}\s+([A-Z])\s+(\w+)\s+\[([^\]]+)\]\s+(.*)$/;
+    match = line.match(mongoPattern);
+    if (match) {
+      const levelMap = {
+        'F': 'FATAL',
+        'E': 'ERROR',
+        'W': 'WARNING',
+        'I': 'INFO',
+        'D': 'DEBUG'
+      };
+      return {
+        date: match[1],
+        time: match[2],
+        level: levelMap[match[3]] || match[3],
+        message: `[${match[5]}] ${match[6]}`
+      };
+    }
+
+    // Original Blacksmith format: YYYY-MM-DD HH:MM:SS.mmm LEVEL [context] message
+    const blacksmithPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(.*)$/;
+    match = line.match(blacksmithPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim().toUpperCase(),
+        message: match[4]
+      };
+    }
+
+    // Syslog-style format: Mon DD HH:MM:SS hostname process[pid]: message
+    const syslogPattern = /^(\w{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+\S+\s+([^[]+)(?:\[\d+\])?: (.*)$/;
+    match = line.match(syslogPattern);
+    if (match) {
+      const months = {
+        'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+        'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
+        'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+      };
+      const currentYear = new Date().getFullYear();
+      const month = months[match[1]] || '01';
+      const day = match[2].padStart(2, '0');
+      const date = `${currentYear}-${month}-${day}`;
+
+      return {
+        date: date,
+        time: match[3],
+        level: 'INFO',
+        message: `[${match[4]}] ${match[5]}`
+      };
+    }
+
+    // Simple timestamp format: [YYYY-MM-DD HH:MM:SS] message
+    const simpleTimestampPattern = /^\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]\s+(.*)$/;
+    match = line.match(simpleTimestampPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: 'INFO',
+        message: match[3]
+      };
+    }
+
+    // ISO 8601 format: YYYY-MM-DDTHH:MM:SS.mmmZ message
+    const isoPattern = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)[Z+-][\d:]*\s+(.*)$/;
+    match = line.match(isoPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: 'INFO',
+        message: match[3]
+      };
+    }
+
+    // Handle lines that don't match any pattern (continuation lines, etc.)
     return {
       date: '',
       time: '',
@@ -2052,14 +2830,16 @@
     `;
   };
 
-  const renderLogsTable = (logs, parsedRows = null) => {
+  const renderLogsTable = (logs, parsedRows = null, includeSearchFilter = true) => {
     // If parsedRows is provided, use it; otherwise parse the logs
     const rows = parsedRows || (typeof logs === 'string'
       ? logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line))
       : logs);
 
+    const searchFilterHTML = includeSearchFilter ? createSearchFilter('logs-table', 'Search logs...') : '';
+
     const tableHTML = `
-      ${createSearchFilter('logs-table', 'Search logs...')}
+      ${searchFilterHTML}
       <table class="logs-table">
         <thead>
           <tr>
@@ -2078,7 +2858,7 @@
     return tableHTML;
   };
 
-  const formatBlacksmithLogs = (logs, logFile = 'blacksmith.stdout.log') => {
+  const formatBlacksmithLogs = (logs, logFile = null) => {
     if (!logs || logs === '') {
       return '<div class="no-data">No logs available</div>';
     }
@@ -2099,16 +2879,16 @@
       { path: '/var/vcap/sys/log/blacksmith/pre-start.stderr.log', name: 'Pre-start stderr' }
     ];
 
+    // Determine which log file to select
+    const selectedLogPath = logFile || LogSelectionManager.getDefaultBlacksmithLog(logFiles);
+
     const logFileOptions = logFiles.map(file => {
-      const selected = file.path.includes(logFile) ? 'selected' : '';
+      const selected = file.path === selectedLogPath ? 'selected' : '';
       return `<option value="${file.path}" ${selected}>${file.name}</option>`;
     }).join('');
 
     return `
       <div class="logs-container">
-        <div class="logs-header">
-          <h3>Blacksmith Logs</h3>
-        </div>
         <div class="logs-controls-row">
           <div class="search-filter-container">
             ${createSearchFilter('logs-table', 'Search logs...')}
@@ -2148,7 +2928,7 @@
     `;
   };
 
-  const formatVMs = (vms) => {
+  const formatVMs = (vms, instanceId = null) => {
     if (!vms || vms.length === 0) {
       return '<div class="no-data">No VMs available</div>';
     }
@@ -2156,10 +2936,30 @@
     // Store original data for sorting
     tableOriginalData.set('vms', [...vms]);
 
+    // Determine the refresh function based on whether this is for blacksmith or service instance
+    const refreshFunction = instanceId
+      ? `window.refreshServiceInstanceVMs('${instanceId}', event)`
+      : `window.refreshBlacksmithVMs(event)`;
+
     return `
-      <div class="vms-table-container">
-        ${createSearchFilter('vms-table', 'Search VMs...')}
-        <table class="vms-table">
+      <div class="vms-table-wrapper">
+        <div class="table-controls-container">
+          <div class="search-filter-container">
+            ${createSearchFilter('vms-table', 'Search VMs...')}
+          </div>
+          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.vms-table', event)"
+                  title="Copy filtered table rows">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy</span>
+          </button>
+          <button class="refresh-btn-logs" onclick="${refreshFunction}"
+                  title="Refresh VMs">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            <span>Refresh</span>
+          </button>
+        </div>
+        <div class="vms-table-container">
+          <table class="vms-table">
         <thead>
           <tr>
             <th>Instance</th>
@@ -2224,7 +3024,8 @@
             `;
     }).join('')}
         </tbody>
-      </table>
+          </table>
+        </div>
       </div>
     `;
   };
@@ -2293,7 +3094,7 @@
   // Reusable function to copy table rows as text
   window.copyTableRowsAsText = async (tableSelector, event) => {
     const button = event.currentTarget;
-    
+
     try {
       // Find the table
       const table = document.querySelector(tableSelector);
@@ -2327,10 +3128,10 @@
       });
 
       const text = textContent.join('\n');
-      
+
       // Copy to clipboard
       await navigator.clipboard.writeText(text);
-      
+
       // Visual feedback
       button.classList.add('copied');
       const originalTitle = button.title;
@@ -2375,6 +3176,585 @@
       }
       document.body.removeChild(textarea);
     }
+  };
+
+  // Format manifest details with tabbed view
+  const formatManifestDetails = (manifestData, instanceId) => {
+    if (!manifestData || !manifestData.text || !manifestData.parsed) {
+      return '<div class="error">Failed to load manifest details</div>';
+    }
+
+    const manifestId = `manifest-${instanceId}-${Date.now()}`;
+    window.manifestTexts = window.manifestTexts || {};
+    window.manifestTexts[manifestId] = manifestData.text;
+
+    // Create unique IDs for this manifest's tabs
+    const tabGroupId = `manifest-tabs-${manifestId}`;
+
+    // Helper function to flatten nested objects into dot notation
+    const flattenObject = (obj, prefix = '') => {
+      const result = {};
+      for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+          const newKey = prefix ? `${prefix}.${key}` : key;
+          if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+            Object.assign(result, flattenObject(obj[key], newKey));
+          } else {
+            result[newKey] = obj[key];
+          }
+        }
+      }
+      return result;
+    };
+
+    // Helper function to format value for display
+    const formatValue = (value) => {
+      if (value === null || value === undefined) return '<em>null</em>';
+      if (typeof value === 'boolean') return `<span class="boolean-value">${value}</span>`;
+      if (typeof value === 'number') return `<span class="number-value">${value}</span>`;
+      if (Array.isArray(value)) {
+        if (value.length === 0) return '<em>[]</em>';
+        if (typeof value[0] === 'string') return value.join(', ');
+        return `<em>[${value.length} items]</em>`;
+      }
+      if (typeof value === 'object') return '<em>[object]</em>';
+      if (typeof value === 'string' && value.includes('\n')) {
+        return `<pre style="margin: 0; white-space: pre-wrap;">${value.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+      }
+      return value.toString().replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    };
+
+    // Extract data from parsed manifest
+    const parsed = manifestData.parsed;
+    const directorUuid = parsed.director_uuid || 'Not specified';
+    const instanceGroups = parsed.instance_groups || [];
+    const releases = parsed.releases || [];
+    const stemcells = parsed.stemcells || [];
+    const features = parsed.features || {};
+    const update = parsed.update || {};
+    const variables = parsed.variables || [];
+    const addons = parsed.addons || [];
+
+    // Create HTML for tabs
+    let html = `
+      <div class="manifest-details-container">
+        <div class="manifest-tabs-nav">
+          <button class="manifest-tab-btn active" data-tab="global" data-group="${tabGroupId}">Global</button>
+          ${instanceGroups.length > 0 ? `<button class="manifest-tab-btn" data-tab="instance-groups" data-group="${tabGroupId}">Instance Groups</button>` : ''}
+          ${releases.length > 0 ? `<button class="manifest-tab-btn" data-tab="releases" data-group="${tabGroupId}">Releases</button>` : ''}
+          ${stemcells.length > 0 ? `<button class="manifest-tab-btn" data-tab="stemcells" data-group="${tabGroupId}">Stemcells</button>` : ''}
+          ${Object.keys(features).length > 0 ? `<button class="manifest-tab-btn" data-tab="features" data-group="${tabGroupId}">Features</button>` : ''}
+          ${Object.keys(update).length > 0 ? `<button class="manifest-tab-btn" data-tab="update" data-group="${tabGroupId}">Update</button>` : ''}
+          ${variables.length > 0 ? `<button class="manifest-tab-btn" data-tab="variables" data-group="${tabGroupId}">Variables</button>` : ''}
+          ${addons.length > 0 ? `<button class="manifest-tab-btn" data-tab="addons" data-group="${tabGroupId}">Addons</button>` : ''}
+          <button class="manifest-tab-btn" data-tab="manifest" data-group="${tabGroupId}">YAML</button>
+        </div>
+
+        <div class="manifest-tab-content">
+          <!-- Global Tab -->
+          <div class="manifest-tab-pane active" data-tab="global" data-group="${tabGroupId}">
+            <table class="manifest-table">
+              <thead>
+                <tr>
+                  <th>Property</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Director UUID</td>
+                  <td>
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${directorUuid.replace(/'/g, "\\'")}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <code>${directorUuid}</code>
+                    </span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Name</td>
+                  <td>
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${(parsed.name || 'Not specified').replace(/'/g, "\\'")}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <code>${parsed.name || 'Not specified'}</code>
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Instance Groups Tab -->
+          ${instanceGroups.length > 0 ? `
+          <div class="manifest-tab-pane" data-tab="instance-groups" data-group="${tabGroupId}" style="display: none;">
+            <div class="instance-groups-container">
+              <div class="instance-group-selector">
+                <label for="instance-group-select-${manifestId}">Select Instance Group:</label>
+                <select id="instance-group-select-${manifestId}" class="instance-group-select">
+                  ${instanceGroups.map((ig, idx) =>
+      `<option value="${idx}">${ig.name} (${ig.instances || 1} instance${(ig.instances || 1) > 1 ? 's' : ''})</option>`
+    ).join('')}
+                </select>
+              </div>
+
+              <div class="instance-group-details">
+                ${instanceGroups.map((ig, idx) => {
+      const jobs = ig.jobs || [];
+      return `
+                    <div class="instance-group-pane ${idx === 0 ? 'active' : ''}" data-group-index="${idx}">
+                      <h4>Instance Group: ${ig.name}</h4>
+                      <table class="manifest-table">
+                        <thead>
+                          <tr>
+                            <th>Property</th>
+                            <th>Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>Instances</td>
+                            <td>
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ig.instances || 1}')"
+                                        title="Copy to clipboard">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                                <span>${ig.instances || 1}</span>
+                              </span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>AZs</td>
+                            <td>
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.azs || []).join(', ') || 'None').replace(/'/g, "\\'")}')"
+                                        title="Copy to clipboard">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                                <span>${(ig.azs || []).join(', ') || 'None'}</span>
+                              </span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Networks</td>
+                            <td>
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${((ig.networks || []).map(n => n.name || n).join(', ') || 'None').replace(/'/g, "\\'")}')"
+                                        title="Copy to clipboard">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                                <span>${(ig.networks || []).map(n => n.name || n).join(', ') || 'None'}</span>
+                              </span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>VM Type</td>
+                            <td>
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.vm_type || 'Not specified').replace(/'/g, "\\'")}')"
+                                        title="Copy to clipboard">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                                <span>${ig.vm_type || 'Not specified'}</span>
+                              </span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Persistent Disk Type</td>
+                            <td>
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.persistent_disk_type || 'None').replace(/'/g, "\\'")}')"
+                                        title="Copy to clipboard">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                                <span>${ig.persistent_disk_type || 'None'}</span>
+                              </span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Stemcell</td>
+                            <td>
+                              <span class="copy-wrapper">
+                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${(ig.stemcell || 'default').replace(/'/g, "\\'")}')"
+                                        title="Copy to clipboard">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                </button>
+                                <span>${ig.stemcell || 'default'}</span>
+                              </span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                      ${jobs.length > 0 ? `
+                        <h5>Jobs</h5>
+                        <div class="jobs-container">
+                          <div class="job-selector">
+                            <label for="job-select-${manifestId}-${idx}">Select Job:</label>
+                            <select id="job-select-${manifestId}-${idx}" class="job-select" data-group-index="${idx}">
+                              ${jobs.map((job, jidx) =>
+        `<option value="${jidx}">${job.name} (${job.release || 'unknown release'})</option>`
+      ).join('')}
+                            </select>
+                          </div>
+
+                          <div class="job-details">
+                            ${jobs.map((job, jidx) => {
+        const properties = job.properties || {};
+        const flatProps = flattenObject(properties);
+        const propKeys = Object.keys(flatProps).sort();
+
+        return `
+                                <div class="job-pane ${jidx === 0 ? 'active' : ''}" data-job-index="${jidx}" data-group-index="${idx}">
+                                  <h6>Job: ${job.name}</h6>
+                                  <table class="manifest-table">
+                                    <thead>
+                                      <tr>
+                                        <th>Property</th>
+                                        <th>Value</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      <tr>
+                                        <td>Release</td>
+                                        <td>
+                                          <span class="copy-wrapper">
+                                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${(job.release || 'Not specified').replace(/'/g, "\\'")}')"
+                                                    title="Copy to clipboard">
+                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                            </button>
+                                            <span>${job.release || 'Not specified'}</span>
+                                          </span>
+                                        </td>
+                                      </tr>
+                                      ${propKeys.length > 0 ? propKeys.map(key => {
+          const value = flatProps[key];
+          const copyValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+          return `
+                                        <tr>
+                                          <td><code>${key}</code></td>
+                                          <td>
+                                            <span class="copy-wrapper">
+                                              <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+                                                      title="Copy to clipboard">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                              </button>
+                                              <span>${formatValue(value)}</span>
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      `;
+        }).join('') : '<tr><td colspan="2"><em>No properties defined</em></td></tr>'}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              `;
+      }).join('')}
+                          </div>
+                        </div>
+                      ` : ''}
+                    </div>
+                  `;
+    }).join('')}
+              </div>
+            </div>
+          </div>
+          ` : ''}
+
+          <!-- Releases Tab -->
+          ${releases.length > 0 ? `
+          <div class="manifest-tab-pane" data-tab="releases" data-group="${tabGroupId}" style="display: none;">
+            <table class="manifest-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Version</th>
+                  <th>URL</th>
+                  <th>SHA1</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${releases.map(release => `
+                  <tr>
+                    <td>
+                      <span class="copy-wrapper">
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.name.replace(/'/g, "\\'")}')"
+                                title="Copy to clipboard">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <span>${release.name}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <span class="copy-wrapper">
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(release.version || 'latest').replace(/'/g, "\\'")}')"
+                                title="Copy to clipboard">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <span>${release.version || 'latest'}</span>
+                      </span>
+                    </td>
+                    <td>
+                      ${release.url ? `
+                        <span class="copy-wrapper">
+                          <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.url.replace(/'/g, "\\'")}')"
+                                  title="Copy URL">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          </button>
+                          <a href="${release.url}" target="_blank" style="word-break: break-all;">${release.url}</a>
+                        </span>
+                      ` : 'N/A'}
+                    </td>
+                    <td>
+                      ${release.sha1 && release.sha1 !== 'N/A' ? `
+                        <span class="copy-wrapper">
+                          <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.sha1.replace(/'/g, "\\'")}')"
+                                  title="Copy SHA1">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          </button>
+                          <code style="font-size: 0.8em;">${release.sha1}</code>
+                        </span>
+                      ` : '<code style="font-size: 0.8em;">N/A</code>'}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          ` : ''}
+
+          <!-- Stemcells Tab -->
+          ${stemcells.length > 0 ? `
+          <div class="manifest-tab-pane" data-tab="stemcells" data-group="${tabGroupId}" style="display: none;">
+            <table class="manifest-table">
+              <thead>
+                <tr>
+                  <th>Alias</th>
+                  <th>OS</th>
+                  <th>Version</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${stemcells.map(stemcell => `
+                  <tr>
+                    <td>
+                      <span class="copy-wrapper">
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.alias || 'default').replace(/'/g, "\\'")}')"
+                                title="Copy to clipboard">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <span>${stemcell.alias || 'default'}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <span class="copy-wrapper">
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.os || 'Not specified').replace(/'/g, "\\'")}')"
+                                title="Copy to clipboard">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <span>${stemcell.os || 'Not specified'}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <span class="copy-wrapper">
+                        <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
+                                title="Copy to clipboard">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                        <span>${stemcell.version || 'latest'}</span>
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          ` : ''}
+
+          <!-- Features Tab -->
+          ${Object.keys(features).length > 0 ? `
+          <div class="manifest-tab-pane" data-tab="features" data-group="${tabGroupId}" style="display: none;">
+            <table class="manifest-table">
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Object.entries(features).map(([key, value]) => `
+                  <tr>
+                    <td>${key}</td>
+                    <td>${formatValue(value)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          ` : ''}
+
+          <!-- Update Tab -->
+          ${Object.keys(update).length > 0 ? `
+          <div class="manifest-tab-pane" data-tab="update" data-group="${tabGroupId}" style="display: none;">
+            <table class="manifest-table">
+              <thead>
+                <tr>
+                  <th>Property</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Object.entries(update).map(([key, value]) => `
+                  <tr>
+                    <td>${key}</td>
+                    <td>${formatValue(value)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          ` : ''}
+
+          <!-- Variables Tab -->
+          ${variables.length > 0 ? `
+          <div class="manifest-tab-pane" data-tab="variables" data-group="${tabGroupId}" style="display: none;">
+            <table class="manifest-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>Options</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${variables.map(variable => `
+                  <tr>
+                    <td>${variable.name}</td>
+                    <td>${variable.type || 'Not specified'}</td>
+                    <td>${variable.options ? `<pre style="margin: 0;">${JSON.stringify(variable.options, null, 2)}</pre>` : 'None'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          ` : ''}
+
+          <!-- Addons Tab -->
+          ${addons.length > 0 ? `
+          <div class="manifest-tab-pane" data-tab="addons" data-group="${tabGroupId}" style="display: none;">
+            <div class="addons-list">
+              ${addons.map((addon, idx) => `
+                <div class="addon-item">
+                  <h5>Addon ${idx + 1}: ${addon.name || 'Unnamed'}</h5>
+                  ${addon.jobs ? `
+                    <table class="manifest-table">
+                      <thead>
+                        <tr>
+                          <th>Job Name</th>
+                          <th>Release</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${addon.jobs.map(job => `
+                          <tr>
+                            <td>${job.name}</td>
+                            <td>${job.release || 'Not specified'}</td>
+                          </tr>
+                        `).join('')}
+                      </tbody>
+                    </table>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : ''}
+
+          <!-- Manifest Tab -->
+          <div class="manifest-tab-pane" data-tab="manifest" data-group="${tabGroupId}" style="display: none;">
+            <div class="manifest-container">
+              <div class="manifest-header">
+                <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
+                        title="Copy manifest to clipboard">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+              <pre>${manifestData.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Set up event handlers after the HTML is added to the DOM
+    setTimeout(() => {
+      // Tab switching
+      const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
+      const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+
+      tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          const tabName = button.dataset.tab;
+
+          // Update active states
+          tabButtons.forEach(btn => btn.classList.remove('active'));
+          button.classList.add('active');
+
+          tabPanes.forEach(pane => {
+            if (pane.dataset.tab === tabName) {
+              pane.style.display = 'block';
+            } else {
+              pane.style.display = 'none';
+            }
+          });
+        });
+      });
+
+      // Instance group selector
+      const instanceGroupSelect = document.getElementById(`instance-group-select-${manifestId}`);
+      if (instanceGroupSelect) {
+        instanceGroupSelect.addEventListener('change', (e) => {
+          const index = e.target.value;
+          const panes = document.querySelectorAll('.instance-group-pane');
+          panes.forEach(pane => {
+            if (pane.dataset.groupIndex === index) {
+              pane.classList.add('active');
+              pane.style.display = 'block';
+            } else {
+              pane.classList.remove('active');
+              pane.style.display = 'none';
+            }
+          });
+        });
+      }
+
+      // Job selectors
+      const jobSelects = document.querySelectorAll('.job-select');
+      jobSelects.forEach(select => {
+        select.addEventListener('change', (e) => {
+          const jobIndex = e.target.value;
+          const groupIndex = e.target.dataset.groupIndex;
+          const panes = document.querySelectorAll(`.job-pane[data-group-index="${groupIndex}"]`);
+          panes.forEach(pane => {
+            if (pane.dataset.jobIndex === jobIndex) {
+              pane.classList.add('active');
+              pane.style.display = 'block';
+            } else {
+              pane.classList.remove('active');
+              pane.style.display = 'none';
+            }
+          });
+        });
+      });
+    }, 100);
+
+    return html;
   };
 
   // Copy manifest function
@@ -2453,18 +3833,602 @@
         return;
       }
 
+      // Save the selected log file to localStorage
+      LogSelectionManager.saveBlacksmithLog(logFilePath);
+
       // Update the display with formatted logs
-      const tableHTML = renderLogsTable(logs);
+      // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
+      const tableHTML = renderLogsTable(logs, null, false);
       displayContainer.innerHTML = tableHTML;
 
-      // Attach search filter to the new table
-      setTimeout(() => {
-        attachSearchFilter('logs-table');
-      }, 100);
+      // Re-attach the search filter functionality to the existing search filter
+      attachSearchFilter('logs-table');
 
     } catch (error) {
       console.error('Failed to fetch log file:', error);
       displayContainer.innerHTML = `<div class="error">Failed to load log file: ${error.message}</div>`;
+    }
+  };
+
+  // Handler for refreshing blacksmith events
+  window.refreshBlacksmithEvents = async (event) => {
+    const button = event.currentTarget;
+    const displayContainer = document.querySelector('.events-table-container');
+
+    if (!displayContainer) {
+      console.error('Events container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Use the stored deployment name
+      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+
+      // Fetch events
+      const response = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const events = await response.json();
+
+      if (!events || events.length === 0) {
+        // Find the detail-content container and update it
+        const detailContent = document.querySelector('#blacksmith .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = '<div class="no-data">No events recorded</div>';
+        }
+      } else {
+        // Update the detail-content with formatted events
+        const detailContent = document.querySelector('#blacksmith .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = formatEvents(events);
+          // Re-initialize sorting and filtering
+          setTimeout(() => {
+            initializeSorting('events-table');
+            attachSearchFilter('events-table-events');
+          }, 100);
+        }
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh events:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  // Handler for refreshing blacksmith VMs
+  window.refreshBlacksmithVMs = async (event) => {
+    const button = event.currentTarget;
+    const displayContainer = document.querySelector('.vms-table-container');
+
+    if (!displayContainer) {
+      console.error('VMs container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Use the stored deployment name
+      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+
+      // Fetch VMs
+      const response = await fetch(`/b/deployments/${deploymentName}/vms`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const vms = await response.json();
+
+      if (!vms || vms.length === 0) {
+        // Find the detail-content container and update it
+        const detailContent = document.querySelector('#blacksmith .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = '<div class="no-data">No VMs available</div>';
+        }
+      } else {
+        // Update the detail-content with formatted VMs
+        const detailContent = document.querySelector('#blacksmith .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = formatVMs(vms);
+          // Re-initialize sorting and filtering
+          setTimeout(() => {
+            initializeSorting('vms-table');
+            attachSearchFilter('vms-table');
+          }, 100);
+        }
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh VMs:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  // Handler for refreshing service instance VMs
+  window.refreshServiceInstanceVMs = async (instanceId, event) => {
+    const button = event.currentTarget;
+    const displayContainer = document.querySelector('.vms-table-container');
+
+    if (!displayContainer) {
+      console.error('Service VMs container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Fetch VMs for the service instance
+      const response = await fetch(`/b/${instanceId}/vms`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      let vms;
+      try {
+        vms = JSON.parse(text);
+      } catch (e) {
+        displayContainer.parentElement.parentElement.innerHTML = `<pre>${text}</pre>`;
+        return;
+      }
+
+      if (!vms || vms.length === 0) {
+        // Find the detail-content container and update it
+        const detailContent = document.querySelector('#services .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = '<div class="no-data">No VMs available</div>';
+        }
+      } else {
+        // Update the detail-content with formatted VMs
+        const detailContent = document.querySelector('#services .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = formatVMs(vms, instanceId);
+          // Re-initialize sorting and filtering
+          setTimeout(() => {
+            attachSearchFilter('vms-table');
+          }, 100);
+        }
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh service VMs:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  // Handler for refreshing blacksmith deployment logs
+  window.refreshBlacksmithDeploymentLog = async (event) => {
+    const button = event.currentTarget;
+
+    // Find the detail-content container - this is what we need to update
+    const detailContent = document.querySelector('#blacksmith .detail-content');
+    if (!detailContent) {
+      console.error('Detail content container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Use the stored deployment name
+      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+
+      // First fetch events to get task ID
+      const eventsResponse = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
+      if (!eventsResponse.ok) {
+        throw new Error(`Failed to fetch events: HTTP ${eventsResponse.status}`);
+      }
+      const events = await eventsResponse.json();
+
+      // Extract latest deployment task ID
+      const taskId = getLatestDeploymentTaskId(events);
+      if (!taskId) {
+        detailContent.innerHTML = '<div class="no-data">No deployment logs available</div>';
+        return;
+      }
+
+      // Fetch the deployment log using task ID
+      const logResponse = await fetch(`/b/deployments/${deploymentName}/tasks/${taskId}/log`, { cache: 'no-cache' });
+      if (!logResponse.ok) {
+        throw new Error(`HTTP ${logResponse.status}: ${logResponse.statusText}`);
+      }
+
+      const logs = await logResponse.json();
+
+      if (!logs || logs.length === 0) {
+        detailContent.innerHTML = '<div class="no-data">No deployment logs available</div>';
+      } else {
+        // Update the detail-content with formatted logs
+        detailContent.innerHTML = formatDeploymentLog(logs);
+        // Re-initialize sorting and filtering
+        setTimeout(() => {
+          attachSearchFilter('deployment-log-table');
+          initializeSorting('deployment-log-table');
+        }, 100);
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh deployment logs:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  // Handler for refreshing service instance deployment logs
+  window.refreshServiceInstanceDeploymentLog = async (instanceId, event) => {
+    const button = event.currentTarget;
+
+    // Find the detail-content container - this is what we need to update
+    const detailContent = document.querySelector('#services .detail-content');
+    if (!detailContent) {
+      console.error('Detail content container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Fetch deployment logs for the service instance
+      const response = await fetch(`/b/${instanceId}/task/log`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      let logs;
+      try {
+        logs = JSON.parse(text);
+      } catch (e) {
+        detailContent.innerHTML = `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        return;
+      }
+
+      if (!logs || logs.length === 0) {
+        detailContent.innerHTML = '<div class="no-data">No deployment logs available</div>';
+      } else {
+        // Update the detail-content with formatted logs
+        detailContent.innerHTML = formatDeploymentLog(logs, instanceId);
+        // Re-initialize sorting and filtering
+        setTimeout(() => {
+          attachSearchFilter('deployment-log-table');
+          initializeSorting('deployment-log-table');
+        }, 100);
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh service deployment logs:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  // Handler for refreshing blacksmith debug logs
+  window.refreshBlacksmithDebugLog = async (event) => {
+    const button = event.currentTarget;
+
+    // Find the detail-content container - this is what we need to update
+    const detailContent = document.querySelector('#blacksmith .detail-content');
+    if (!detailContent) {
+      console.error('Detail content container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Use the stored deployment name
+      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
+
+      // First fetch events to get task ID
+      const eventsResponse = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
+      if (!eventsResponse.ok) {
+        throw new Error(`Failed to fetch events: HTTP ${eventsResponse.status}`);
+      }
+      const events = await eventsResponse.json();
+
+      // Extract latest deployment task ID
+      const taskId = getLatestDeploymentTaskId(events);
+      if (!taskId) {
+        detailContent.innerHTML = '<div class="no-data">No debug logs available</div>';
+        return;
+      }
+
+      // Fetch the debug log using task ID
+      const logResponse = await fetch(`/b/deployments/${deploymentName}/tasks/${taskId}/debug`, { cache: 'no-cache' });
+      if (!logResponse.ok) {
+        throw new Error(`HTTP ${logResponse.status}: ${logResponse.statusText}`);
+      }
+
+      const logs = await logResponse.json();
+
+      if (!logs || logs.length === 0) {
+        detailContent.innerHTML = '<div class="no-data">No debug logs available</div>';
+      } else {
+        // Update the detail-content with formatted logs
+        detailContent.innerHTML = formatDebugLog(logs);
+        // Re-initialize sorting and filtering
+        setTimeout(() => {
+          attachSearchFilter('debug-log-table');
+          initializeSorting('debug-log-table');
+        }, 100);
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh debug logs:', error);
+
+      // Show error in UI
+      detailContent.innerHTML = `<div class="error">Failed to refresh debug logs: ${error.message}</div>`;
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  // Handler for refreshing service instance debug logs
+  window.refreshServiceInstanceDebugLog = async (instanceId, event) => {
+    const button = event.currentTarget;
+
+    // Find the detail-content container - this is what we need to update
+    const detailContent = document.querySelector('#services .detail-content');
+    if (!detailContent) {
+      console.error('Detail content container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Fetch debug logs for the service instance
+      const response = await fetch(`/b/${instanceId}/task/debug`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      let logs;
+      try {
+        logs = JSON.parse(text);
+      } catch (e) {
+        detailContent.innerHTML = `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        return;
+      }
+
+      if (!logs || logs.length === 0) {
+        detailContent.innerHTML = '<div class="no-data">No debug logs available</div>';
+      } else {
+        // Update the detail-content with formatted logs
+        detailContent.innerHTML = formatDebugLog(logs, instanceId);
+        // Re-initialize sorting and filtering
+        setTimeout(() => {
+          attachSearchFilter('debug-log-table');
+          initializeSorting('debug-log-table');
+        }, 100);
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh service debug logs:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
+    }
+  };
+
+  // Handler for refreshing service instance events
+  window.refreshServiceInstanceEvents = async (instanceId, event) => {
+    const button = event.currentTarget;
+    const displayContainer = document.querySelector('#services .detail-content .events-table-container');
+
+    if (!displayContainer) {
+      console.error('Service events container not found');
+      return;
+    }
+
+    // Add spinning animation to refresh button
+    button.classList.add('refreshing');
+    button.disabled = true;
+
+    try {
+      // Fetch events for the service instance
+      const response = await fetch(`/b/${instanceId}/events`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      let events;
+      try {
+        events = JSON.parse(text);
+      } catch (e) {
+        displayContainer.parentElement.innerHTML = `<pre>${text}</pre>`;
+        return;
+      }
+
+      if (!events || events.length === 0) {
+        // Find the detail-content container and update it
+        const detailContent = document.querySelector('#services .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = '<div class="no-data">No events recorded</div>';
+        }
+      } else {
+        // Update the detail-content with formatted events
+        const detailContent = document.querySelector('#services .detail-content');
+        if (detailContent) {
+          detailContent.innerHTML = formatEvents(events, 'service-events', instanceId);
+          // Re-initialize sorting and filtering
+          setTimeout(() => {
+            initializeSorting('events-table');
+            attachSearchFilter('events-table-service-events');
+          }, 100);
+        }
+      }
+
+      // Visual feedback for successful refresh
+      button.classList.add('success');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement.textContent;
+      spanElement.textContent = 'Refreshed!';
+      setTimeout(() => {
+        button.classList.remove('success');
+        spanElement.textContent = originalText;
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to refresh service events:', error);
+
+      // Visual feedback for error
+      button.classList.add('error');
+      setTimeout(() => {
+        button.classList.remove('error');
+      }, 2000);
+    } finally {
+      // Remove spinning animation
+      button.classList.remove('refreshing');
+      button.disabled = false;
     }
   };
 
@@ -2473,7 +4437,7 @@
     const button = event.currentTarget;
     const logFileDropdown = document.getElementById('blacksmith-log-select');
     const displayContainer = document.getElementById('blacksmith-logs-display');
-    
+
     if (!logFileDropdown || !displayContainer) {
       console.error('Required elements not found');
       return;
@@ -2481,11 +4445,11 @@
 
     // Get currently selected log file
     const currentLogFile = logFileDropdown.value || '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log';
-    
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
-    
+
     try {
       // Fetch the logs for the current file
       const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(currentLogFile)}`, { cache: 'no-cache' });
@@ -2500,25 +4464,24 @@
         displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
       } else {
         // Update the display with formatted logs
-        const tableHTML = renderLogsTable(logs);
+        // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
+        const tableHTML = renderLogsTable(logs, null, false);
         displayContainer.innerHTML = tableHTML;
 
-        // Attach search filter to the new table
-        setTimeout(() => {
-          attachSearchFilter('logs-table');
-        }, 100);
+        // Re-attach the search filter functionality to the existing search filter
+        attachSearchFilter('logs-table');
       }
-      
+
       // Visual feedback for successful refresh
       button.classList.add('success');
       setTimeout(() => {
         button.classList.remove('success');
       }, 1000);
-      
+
     } catch (error) {
       console.error('Failed to refresh logs:', error);
       displayContainer.innerHTML = `<div class="error">Failed to refresh logs: ${error.message}</div>`;
-      
+
       // Visual feedback for error
       button.classList.add('error');
       setTimeout(() => {
@@ -2726,6 +4689,13 @@
             item.addEventListener('click', async function () {
               const instanceId = this.dataset.instanceId;
               const details = window.serviceInstances[instanceId];
+
+              // Store current instance info globally for log selection
+              window.currentInstanceInfo = {
+                id: instanceId,
+                service: details.service_id,
+                plan: details.plan?.name
+              };
 
               // Update active state
               document.querySelectorAll('#services .service-item').forEach(i => i.classList.remove('active'));
@@ -3118,6 +5088,16 @@
               attachSearchFilter('deployment-log-table');
             } else if (tabType === 'debug') {
               attachSearchFilter('debug-log-table');
+            } else if (tabType === 'instance-logs') {
+              // Initialize sorting and filtering for each job table
+              const logsData = window.instanceLogsData;
+              if (logsData) {
+                Object.keys(logsData).forEach(job => {
+                  const tableClass = `instance-logs-table-${job.replace(/\//g, '-')}`;
+                  initializeSorting(tableClass);
+                  attachSearchFilter(tableClass);
+                });
+              }
             }
           }, 100);
         };

@@ -181,6 +181,27 @@ func parseDebugLogToEvents(debugOutput string) []bosh.TaskEvent {
 	return events
 }
 
+// convertToJSONCompatible converts map[interface{}]interface{} to map[string]interface{}
+// This is necessary because YAML unmarshaling creates map[interface{}]interface{} which
+// cannot be directly marshaled to JSON
+func convertToJSONCompatible(v interface{}) interface{} {
+	switch x := v.(type) {
+	case map[interface{}]interface{}:
+		m := make(map[string]interface{})
+		for k, v := range x {
+			m[fmt.Sprint(k)] = convertToJSONCompatible(v)
+		}
+		return m
+	case []interface{}:
+		for i, v := range x {
+			x[i] = convertToJSONCompatible(v)
+		}
+		return x
+	default:
+		return v
+	}
+}
+
 func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.URL.Path == "/b/instance" {
 		l := Logger.Wrap("instance-details")
@@ -432,6 +453,53 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		if _, err := w.Write([]byte(manifest.Manifest + "\n")); err != nil {
 			l.Error("failed to write manifest response: %s", err)
+		}
+		return
+	}
+
+	// New endpoint for manifest details (returns both YAML text and parsed JSON)
+	pattern = regexp.MustCompile(`^/b/([^/]+)/manifest-details$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("manifest-details")
+		l.Debug("looking up BOSH manifest details for %s", m[1])
+		manifestData := struct {
+			Manifest string `json:"manifest"`
+		}{}
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/manifest", m[1]), &manifestData)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", m[1])
+			w.WriteHeader(404)
+			return
+		}
+
+		// Parse the YAML manifest into a generic structure
+		var manifestParsed interface{}
+		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifestParsed); err != nil {
+			l.Error("unable to parse manifest YAML: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "unable to parse manifest"}`)
+			return
+		}
+
+		// Convert map[interface{}]interface{} to map[string]interface{} for JSON compatibility
+		manifestParsed = convertToJSONCompatible(manifestParsed)
+
+		// Create response with both text and parsed JSON
+		response := map[string]interface{}{
+			"text":   manifestData.Manifest,
+			"parsed": manifestParsed,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		b, err := json.Marshal(response)
+		if err != nil {
+			l.Error("unable to marshal manifest details: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "unable to marshal response"}`)
+			return
+		}
+		if _, err := w.Write(b); err != nil {
+			l.Error("failed to write manifest details response: %s", err)
 		}
 		return
 	}
@@ -1114,6 +1182,58 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 				w.WriteHeader(500)
 				fmt.Fprintf(w, "BOSH director not available")
+				return
+			}
+
+			// For manifest-details endpoint (returns both YAML text and parsed JSON)
+			if len(parts) == 2 && parts[1] == "manifest-details" {
+				l := Logger.Wrap("deployment-manifest-details")
+				l.Debug("fetching manifest details for deployment %s", deploymentName)
+
+				if api.Broker != nil && api.Broker.BOSH != nil {
+					// Get deployment manifest from BOSH director
+					deployment, err := api.Broker.BOSH.GetDeployment(deploymentName)
+					if err != nil {
+						l.Error("failed to get deployment %s: %s", deploymentName, err)
+						w.WriteHeader(404)
+						fmt.Fprintf(w, `{"error": "deployment not found"}`)
+						return
+					}
+
+					// Parse the YAML manifest into a generic structure
+					var manifestParsed interface{}
+					if err := yaml.Unmarshal([]byte(deployment.Manifest), &manifestParsed); err != nil {
+						l.Error("unable to parse deployment manifest YAML: %s", err)
+						w.WriteHeader(500)
+						fmt.Fprintf(w, `{"error": "unable to parse manifest"}`)
+						return
+					}
+
+					// Convert map[interface{}]interface{} to map[string]interface{} for JSON compatibility
+					manifestParsed = convertToJSONCompatible(manifestParsed)
+
+					// Create response with both text and parsed JSON
+					response := map[string]interface{}{
+						"text":   deployment.Manifest,
+						"parsed": manifestParsed,
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					b, err := json.Marshal(response)
+					if err != nil {
+						l.Error("unable to marshal manifest details: %s", err)
+						w.WriteHeader(500)
+						fmt.Fprintf(w, `{"error": "unable to marshal response"}`)
+						return
+					}
+					if _, err := w.Write(b); err != nil {
+						l.Error("failed to write manifest details response: %s", err)
+					}
+					return
+				}
+
+				w.WriteHeader(500)
+				fmt.Fprintf(w, `{"error": "BOSH director not available"}`)
 				return
 			}
 

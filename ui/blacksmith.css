@@ -2686,3 +2686,462 @@ th[style*="cursor: pointer"]:hover {
   background: #0d1117;
   color: #8b949e;
 }
+
+/* Instance logs table styles */
+.instance-logs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 0.85em;
+}
+
+.instance-logs-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--bg-tertiary);
+  z-index: 1;
+}
+
+.instance-logs-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.instance-logs-table tbody tr {
+  border-bottom: 1px solid var(--border-secondary);
+  transition: background-color 0.1s ease;
+}
+
+.instance-logs-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.instance-logs-table td {
+  padding: 8px 12px;
+  vertical-align: top;
+}
+
+/* Table controls header row */
+.table-controls-row {
+  border-bottom: 2px solid var(--border-primary);
+}
+
+.table-controls-header {
+  padding: 0 !important;
+  background: var(--bg-secondary) !important;
+}
+
+.table-controls-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  min-height: 48px;
+}
+
+.table-controls-container .search-filter-container {
+  flex: 1;
+  max-width: 300px;
+}
+
+.table-controls-container .log-file-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.table-controls-container .log-file-dropdown {
+  min-width: 200px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.table-controls-container .log-file-dropdown:hover {
+  border-color: var(--accent-color);
+}
+
+.table-controls-container .copy-btn-logs,
+.table-controls-container .refresh-btn-logs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.table-controls-container .copy-btn-logs:hover,
+.table-controls-container .refresh-btn-logs:hover {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.table-controls-container .copy-btn-logs.copied {
+  background: #28a745;
+  color: white;
+  border-color: #28a745;
+}
+
+.table-controls-container .refresh-btn-logs.refreshing {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.table-controls-container .refresh-btn-logs.refreshing svg {
+  animation: spin 1s linear infinite;
+}
+
+.table-controls-container .refresh-btn-logs.success {
+  background: #28a745;
+  color: white;
+  border-color: #28a745;
+}
+
+.table-controls-container .refresh-btn-logs.error {
+  background: #dc3545;
+  color: white;
+  border-color: #dc3545;
+}
+
+/* Dark theme adjustments for instance logs table */
+[data-theme="dark"] .instance-logs-table {
+  background: var(--bg-primary);
+}
+
+[data-theme="dark"] .table-controls-header {
+  background: #0d1117 !important;
+}
+
+[data-theme="dark"] .table-controls-container {
+  background: #0d1117;
+}
+
+[data-theme="dark"] .table-controls-container .log-file-dropdown {
+  background: #161b22;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .table-controls-container .log-file-dropdown:hover {
+  border-color: #58a6ff;
+}
+
+[data-theme="dark"] .table-controls-container .copy-btn-logs,
+[data-theme="dark"] .table-controls-container .refresh-btn-logs {
+  background: #161b22;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .table-controls-container .copy-btn-logs:hover,
+[data-theme="dark"] .table-controls-container .refresh-btn-logs:hover {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: white;
+}
+
+/* Manifest Details Styles */
+.manifest-details-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 20px);
+  margin-bottom: 10px;
+}
+
+.manifest-tabs-nav {
+  display: flex;
+  gap: 2px;
+  background: #f0f2f4;
+  padding: 4px;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid #e2e8f0;
+  border-bottom: none;
+  overflow-x: auto;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.manifest-tab-btn {
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  cursor: pointer;
+  color: #4a5568;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.manifest-tab-btn:hover {
+  background: rgba(255, 255, 255, 0.5);
+  color: #2d3748;
+}
+
+.manifest-tab-btn.active {
+  background: white;
+  color: #1a202c;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.manifest-tab-content {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 0 0 8px 8px;
+  padding: 20px;
+  min-height: 300px;
+  overflow-y: auto;
+  overflow-x: auto;
+  flex: 1;
+  max-height: calc(100vh - 400px);
+}
+
+.manifest-tab-pane {
+  display: none;
+}
+
+.manifest-tab-pane.active {
+  display: block;
+}
+
+.manifest-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.manifest-table thead {
+  background: #f7fafc;
+}
+
+.manifest-table th {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 2px solid #e2e8f0;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #4a5568;
+}
+
+.manifest-table td {
+  padding: 10px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 13px;
+  color: #2d3748;
+}
+
+.manifest-table tbody tr:hover {
+  background: #f7fafc;
+}
+
+.manifest-table code {
+  background: #f0f2f4;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.copy-btn-small {
+  background: #4299e1;
+  color: white;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.2s;
+}
+
+.copy-btn-small:hover {
+  background: #3182ce;
+}
+
+.instance-groups-container,
+.jobs-container {
+  margin-top: 20px;
+}
+
+.instance-group-selector,
+.job-selector {
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.instance-group-selector label,
+.job-selector label {
+  font-weight: 500;
+  color: #4a5568;
+  font-size: 13px;
+}
+
+.instance-group-select,
+.job-select {
+  padding: 6px 12px;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  background: white;
+  font-size: 13px;
+  color: #2d3748;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.instance-group-select:hover,
+.job-select:hover {
+  border-color: #4299e1;
+}
+
+.instance-group-pane,
+.job-pane {
+  display: none;
+}
+
+.instance-group-pane.active,
+.job-pane.active {
+  display: block;
+}
+
+.instance-group-pane h4,
+.job-pane h6 {
+  color: #2d3748;
+  margin-bottom: 15px;
+  font-weight: 600;
+}
+
+.instance-group-pane h5 {
+  color: #4a5568;
+  margin: 20px 0 10px 0;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 5px;
+}
+
+.job-details {
+  margin-top: 15px;
+}
+
+.boolean-value {
+  color: #805ad5;
+  font-weight: 500;
+}
+
+.number-value {
+  color: #38a169;
+  font-weight: 500;
+}
+
+.addons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.addon-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 15px;
+  background: #f7fafc;
+}
+
+.addon-item h5 {
+  margin: 0 0 10px 0;
+  color: #2d3748;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Dark mode support for manifest details */
+[data-theme="dark"] .manifest-tabs-nav {
+  background: #161b22;
+  border-color: #30363d;
+}
+
+[data-theme="dark"] .manifest-tab-btn {
+  color: #8b949e;
+}
+
+[data-theme="dark"] .manifest-tab-btn:hover {
+  background: rgba(48, 54, 61, 0.5);
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .manifest-tab-btn.active {
+  background: #0d1117;
+  color: #f0f6fc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .manifest-tab-content {
+  background: #0d1117;
+  border-color: #30363d;
+}
+
+[data-theme="dark"] .manifest-table thead {
+  background: #161b22;
+}
+
+[data-theme="dark"] .manifest-table th {
+  border-color: #30363d;
+  color: #8b949e;
+}
+
+[data-theme="dark"] .manifest-table td {
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .manifest-table tbody tr:hover {
+  background: #161b22;
+}
+
+[data-theme="dark"] .manifest-table code {
+  background: #161b22;
+  color: #79c0ff;
+}
+
+[data-theme="dark"] .instance-group-select,
+[data-theme="dark"] .job-select {
+  background: #161b22;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .instance-group-select:hover,
+[data-theme="dark"] .job-select:hover {
+  border-color: #58a6ff;
+}
+
+[data-theme="dark"] .addon-item {
+  background: #161b22;
+  border-color: #30363d;
+}
+
+[data-theme="dark"] .addon-item h5,
+[data-theme="dark"] .instance-group-pane h4,
+[data-theme="dark"] .instance-group-pane h5,
+[data-theme="dark"] .job-pane h6 {
+  color: #f0f6fc;
+}
