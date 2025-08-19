@@ -63,16 +63,16 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		u.logDebug("Instance %s has %d existing bindings - preserving", instance.ID, len(existingBindings))
 	}
 
-	// Prepare data for vault storage
+	// Prepare data for vault storage using Unix timestamps (seconds) like the main broker
 	vaultData := map[string]interface{}{
 		"service_id":      instance.ServiceID,
 		"plan_id":         instance.PlanID,
 		"deployment_name": instance.DeploymentName,
-		"created_at":      instance.CreatedAt.Format(time.RFC3339),
-		"updated_at":      instance.UpdatedAt.Format(time.RFC3339),
-		"last_synced_at":  instance.LastSyncedAt.Format(time.RFC3339),
+		"created":         instance.CreatedAt.Unix(),    // Use Unix timestamp for UI compatibility
+		"updated":         instance.UpdatedAt.Unix(),    // Use Unix timestamp for UI compatibility
+		"last_synced_at":  instance.LastSyncedAt.Unix(), // Use Unix timestamp for UI compatibility
 		"reconciled":      true,
-		"reconciled_at":   time.Now().Format(time.RFC3339),
+		"reconciled_at":   time.Now().Unix(),
 	}
 
 	// Add plan object with name if available in metadata
@@ -99,7 +99,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		manifestPath := fmt.Sprintf("%s/manifest", instance.ID)
 		manifestData := map[string]interface{}{
 			"manifest":      instance.Manifest,
-			"updated_at":    time.Now().Format(time.RFC3339),
+			"updated_at":    time.Now().Unix(), // Use Unix timestamp
 			"reconciled":    true,
 			"reconciled_by": "reconciler",
 		}
@@ -178,18 +178,35 @@ func (u *vaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 		instance.DeploymentName = v
 	}
 
-	// Parse timestamps
-	if v, ok := indexData["created_at"].(string); ok {
+	// Parse Unix timestamps - handle both old RFC3339 strings and new Unix timestamps
+	if v, ok := indexData["created"].(float64); ok {
+		instance.CreatedAt = time.Unix(int64(v), 0)
+	} else if v, ok := indexData["created"].(int64); ok {
+		instance.CreatedAt = time.Unix(v, 0)
+	} else if v, ok := indexData["created_at"].(string); ok {
+		// Fallback to RFC3339 for backward compatibility
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			instance.CreatedAt = t
 		}
 	}
-	if v, ok := indexData["updated_at"].(string); ok {
+
+	if v, ok := indexData["updated"].(float64); ok {
+		instance.UpdatedAt = time.Unix(int64(v), 0)
+	} else if v, ok := indexData["updated"].(int64); ok {
+		instance.UpdatedAt = time.Unix(v, 0)
+	} else if v, ok := indexData["updated_at"].(string); ok {
+		// Fallback to RFC3339 for backward compatibility
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			instance.UpdatedAt = t
 		}
 	}
-	if v, ok := indexData["last_synced_at"].(string); ok {
+
+	if v, ok := indexData["last_synced_at"].(float64); ok {
+		instance.LastSyncedAt = time.Unix(int64(v), 0)
+	} else if v, ok := indexData["last_synced_at"].(int64); ok {
+		instance.LastSyncedAt = time.Unix(v, 0)
+	} else if v, ok := indexData["last_synced_at"].(string); ok {
+		// Fallback to RFC3339 for backward compatibility
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			instance.LastSyncedAt = t
 		}

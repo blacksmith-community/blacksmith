@@ -117,6 +117,11 @@ func parseDebugLogToEvents(debugOutput string) []bosh.TaskEvent {
 			Index: i + 1,
 		}
 
+		// Try to parse timestamp from various log formats
+		if parsedTime := parseTimestampFromLogLine(line); !parsedTime.IsZero() {
+			event.Time = parsedTime
+		}
+
 		// Try to parse task format: "Task 123 | HH:MM:SS | Stage: Description (duration)"
 		if strings.HasPrefix(line, "Task ") {
 			parts := strings.Split(line, " | ")
@@ -179,6 +184,84 @@ func parseDebugLogToEvents(debugOutput string) []bosh.TaskEvent {
 	}
 
 	return events
+}
+
+// parseTimestampFromLogLine attempts to parse timestamps from various log line formats
+func parseTimestampFromLogLine(line string) time.Time {
+	// Common timestamp formats found in BOSH logs
+	timestampFormats := []string{
+		// BOSH director log format: "I, [2024-01-15T10:30:45.123456 #123]"
+		"2006-01-02T15:04:05.000000",
+		"2006-01-02T15:04:05",
+		// ISO 8601 formats
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05-07:00",
+		"2006-01-02T15:04:05.000-07:00",
+		// Standard formats
+		"2006-01-02 15:04:05",
+		"2006/01/02 15:04:05",
+		// Time-only format for task logs: "10:30:45"
+		"15:04:05",
+	}
+
+	// Extract timestamp from bracketed format: [YYYY-MM-DDTHH:MM:SS.mmmmmm #pid]
+	if strings.Contains(line, "[") && strings.Contains(line, "]") {
+		start := strings.Index(line, "[") + 1
+		end := strings.Index(line, "]")
+		if start < end {
+			bracket := line[start:end]
+			// Remove PID part if present: "2024-01-15T10:30:45.123456 #123" -> "2024-01-15T10:30:45.123456"
+			if spaceIdx := strings.Index(bracket, " "); spaceIdx > 0 {
+				bracket = bracket[:spaceIdx]
+			}
+			
+			for _, format := range timestampFormats {
+				if t, err := time.Parse(format, bracket); err == nil {
+					return t
+				}
+			}
+		}
+	}
+
+	// Try to find timestamp at the beginning of the line
+	words := strings.Fields(line)
+	if len(words) > 0 {
+		// Try first word
+		for _, format := range timestampFormats {
+			if t, err := time.Parse(format, words[0]); err == nil {
+				return t
+			}
+		}
+		
+		// Try first two words combined (date + time)
+		if len(words) > 1 {
+			combined := words[0] + " " + words[1]
+			for _, format := range timestampFormats {
+				if t, err := time.Parse(format, combined); err == nil {
+					return t
+				}
+			}
+		}
+	}
+
+	// For time-only formats in task logs (e.g., "Task 123 | 10:30:45 |"), 
+	// use today's date with the parsed time
+	if strings.Contains(line, "|") {
+		parts := strings.Split(line, "|")
+		if len(parts) >= 2 {
+			timeStr := strings.TrimSpace(parts[1])
+			if t, err := time.Parse("15:04:05", timeStr); err == nil {
+				// Use today's date with the parsed time
+				now := time.Now()
+				return time.Date(now.Year(), now.Month(), now.Day(), 
+					t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location())
+			}
+		}
+	}
+
+	// Return zero time if no timestamp could be parsed
+	return time.Time{}
 }
 
 // convertToJSONCompatible converts map[interface{}]interface{} to map[string]interface{}

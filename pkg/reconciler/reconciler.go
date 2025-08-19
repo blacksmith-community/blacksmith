@@ -339,28 +339,37 @@ func (r *reconcilerManager) buildInstanceData(match MatchedDeployment) *Instance
 		}
 	}
 
+	metadata := map[string]interface{}{
+		"service_name":     serviceName,
+		"plan_name":        planName,
+		"releases":         match.Deployment.Releases,
+		"stemcells":        match.Deployment.Stemcells,
+		"vms":              match.Deployment.VMs,
+		"teams":            match.Deployment.Teams,
+		"variables":        match.Deployment.Variables,
+		"properties":       match.Deployment.Properties,
+		"match_confidence": match.Match.Confidence,
+		"match_reason":     match.Match.MatchReason,
+		"reconciled_at":    time.Now().Format(time.RFC3339),
+	}
+
+	// Add latest task ID if available from deployment properties
+	if match.Deployment.Properties != nil {
+		if taskID, ok := match.Deployment.Properties["latest_task_id"].(string); ok && taskID != "" {
+			metadata["latest_task_id"] = taskID
+		}
+	}
+
 	return &InstanceData{
 		ID:             match.Match.InstanceID,
 		ServiceID:      match.Match.ServiceID,
 		PlanID:         match.Match.PlanID,
 		DeploymentName: match.Deployment.Name,
 		Manifest:       match.Deployment.Manifest,
-		Metadata: map[string]interface{}{
-			"service_name":     serviceName,
-			"plan_name":        planName,
-			"releases":         match.Deployment.Releases,
-			"stemcells":        match.Deployment.Stemcells,
-			"vms":              match.Deployment.VMs,
-			"teams":            match.Deployment.Teams,
-			"variables":        match.Deployment.Variables,
-			"properties":       match.Deployment.Properties,
-			"match_confidence": match.Match.Confidence,
-			"match_reason":     match.Match.MatchReason,
-			"reconciled_at":    time.Now().Format(time.RFC3339),
-		},
-		CreatedAt:    match.Deployment.CreatedAt,
-		UpdatedAt:    match.Deployment.UpdatedAt,
-		LastSyncedAt: time.Now(),
+		Metadata:       metadata,
+		CreatedAt:      match.Deployment.CreatedAt,
+		UpdatedAt:      match.Deployment.UpdatedAt,
+		LastSyncedAt:   time.Now(),
 	}
 }
 

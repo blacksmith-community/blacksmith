@@ -793,7 +793,7 @@
     // Re-render based on table type
     if (tableClass === 'events-table') {
       tbody.innerHTML = data.map(event => {
-        const time = event.time ? new Date(event.time).toLocaleString() : '-';
+        const time = formatTimestamp(event.time);
         let objectInfo = '-';
         if (event.object_type && event.object_name) {
           objectInfo = `${event.object_type}: ${event.object_name}`;
@@ -847,7 +847,7 @@
       }).join('');
     } else if (tableClass === 'deployment-log-table' || tableClass === 'debug-log-table') {
       tbody.innerHTML = data.map(log => {
-        const time = log.time ? new Date(log.time * 1000).toLocaleString() : '-';
+        const time = formatTimestamp(log.time);
         const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
         let status = '-';
         if (log.data && log.data.status) {
@@ -921,6 +921,44 @@
       copyToClipboard(text, button);
     };
     return button;
+  };
+
+  // Helper function to safely format timestamps
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp && timestamp !== 0) {
+      return '-';
+    }
+
+    try {
+      let date;
+      
+      if (typeof timestamp === 'number') {
+        // Handle Unix timestamps - if it's a reasonable Unix timestamp (after year 2000)
+        // then multiply by 1000 to convert to milliseconds
+        if (timestamp > 946684800) { // Jan 1, 2000 in Unix seconds
+          date = new Date(timestamp * 1000);
+        } else {
+          // Already in milliseconds or invalid
+          date = new Date(timestamp);
+        }
+      } else if (typeof timestamp === 'string') {
+        // Handle string timestamps (ISO format, etc.)
+        date = new Date(timestamp);
+      } else {
+        // Handle other formats
+        date = new Date(timestamp);
+      }
+      
+      // Check if the date is valid
+      if (isNaN(date.getTime())) {
+        return '-';
+      }
+      
+      return date.toLocaleString();
+    } catch (error) {
+      console.warn('Error formatting timestamp:', timestamp, error);
+      return '-';
+    }
   };
 
   // Strftime implementation
@@ -1324,7 +1362,7 @@
           let value = vaultData[field.key];
           // Format timestamp if it's requested_at
           if (field.key === 'requested_at' && value) {
-            value = new Date(value).toLocaleString();
+            value = formatTimestamp(value);
           }
           tableRows.push(`
             <tr>
@@ -1830,7 +1868,7 @@
         </thead>
         <tbody>
           ${logs.map(log => {
-      const time = log.time ? new Date(log.time * 1000).toLocaleString() : '-';
+      const time = formatTimestamp(log.time);
       const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
       let status = '-';
       if (log.data && log.data.status) {
@@ -1913,7 +1951,7 @@
         </thead>
         <tbody>
           ${logs.map(log => {
-      const time = log.time ? new Date(log.time * 1000).toLocaleString() : '-';
+      const time = formatTimestamp(log.time);
       const tags = log.tags && log.tags.length > 0 ? log.tags.join(', ') : '-';
       let status = '-';
       if (log.data && log.data.status) {
@@ -2467,7 +2505,7 @@
           </thead>
           <tbody>
             ${events.map(event => {
-      const time = event.time ? new Date(event.time).toLocaleString() : '-';
+      const time = formatTimestamp(event.time);
       // Handle object info - check if it's already a combined string or separate fields
       let objectInfo = '-';
       if (event.object_type && event.object_name) {

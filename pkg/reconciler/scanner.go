@@ -110,13 +110,33 @@ func (s *boshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 		return nil, fmt.Errorf("failed to get deployment %s: %w", name, err)
 	}
 
+	// Try to get deployment timestamps and latest task ID from events
+	createdAt, updatedAt, latestTaskID, err := s.getDeploymentTimestamps(name)
+	if err != nil {
+		s.logError("Failed to get deployment timestamps for %s: %s", name, err)
+		// Fall back to current time if events are unavailable
+		createdAt = time.Now()
+		updatedAt = time.Now()
+		latestTaskID = ""
+	} else {
+		// Ensure we never have zero times even if events parsing succeeds
+		if createdAt.IsZero() {
+			s.logDebug("Got zero created time for %s, using current time", name)
+			createdAt = time.Now()
+		}
+		if updatedAt.IsZero() {
+			s.logDebug("Got zero updated time for %s, using created time", name)
+			updatedAt = createdAt
+		}
+	}
+
 	// Create detail with basic info from deployment
 	detail := &DeploymentDetail{
 		DeploymentInfo: DeploymentInfo{
 			Name:      dep.Name,
 			Manifest:  dep.Manifest,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
 		},
 		Variables:  make(map[string]interface{}),
 		Properties: make(map[string]interface{}),
@@ -240,10 +260,65 @@ func (s *boshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 		}
 	}
 
+	// Store the latest task ID in properties for use by the reconciler
+	if latestTaskID != "" {
+		if detail.Properties == nil {
+			detail.Properties = make(map[string]interface{})
+		}
+		detail.Properties["latest_task_id"] = latestTaskID
+	}
+
 	// Cache the result
 	s.cache.set(name, detail)
 
 	return detail, nil
+}
+
+// getDeploymentTimestamps extracts creation/update timestamps and latest task ID from deployment events
+func (s *boshScanner) getDeploymentTimestamps(deploymentName string) (createdAt, updatedAt time.Time, latestTaskID string, err error) {
+	events, err := s.director.GetEvents(deploymentName)
+	if err != nil {
+		return time.Time{}, time.Time{}, "", fmt.Errorf("failed to get events for deployment %s: %w", deploymentName, err)
+	}
+
+	// Track the earliest create event and latest update/deploy event
+	var earliestCreate time.Time
+	var latestUpdate time.Time
+	var taskID string
+
+	for _, event := range events {
+		// Skip events not related to this deployment
+		if event.Deployment != deploymentName {
+			continue
+		}
+
+		// Look for deployment-related actions
+		isCreateAction := event.Action == "create" || event.Action == "deploy" || event.Action == "create_deployment"
+		isUpdateAction := event.Action == "update" || event.Action == "deploy" || event.Action == "update_deployment"
+
+		// Track the earliest creation event
+		if isCreateAction && (earliestCreate.IsZero() || event.Time.Before(earliestCreate)) {
+			earliestCreate = event.Time
+		}
+
+		// Track the latest update/deploy event and its task ID
+		if (isCreateAction || isUpdateAction) && (latestUpdate.IsZero() || event.Time.After(latestUpdate)) {
+			latestUpdate = event.Time
+			if event.TaskID != "" {
+				taskID = event.TaskID
+			}
+		}
+	}
+
+	// Set defaults if no events found
+	if earliestCreate.IsZero() {
+		earliestCreate = time.Now()
+	}
+	if latestUpdate.IsZero() {
+		latestUpdate = earliestCreate
+	}
+
+	return earliestCreate, latestUpdate, taskID, nil
 }
 
 // parseManifestProperties extracts properties from a manifest
