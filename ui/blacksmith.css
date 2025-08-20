@@ -328,15 +328,15 @@ table {
 
 [data-theme="dark"] {
   --bg-primary: #1a1a1a;
-  --bg-secondary: #2d2d2d;
+  --bg-secondary: #000000;
   --bg-tertiary: #252525;
   --bg-hover: #3a3a3a;
   --bg-active: #3d4d5d;
   --bg-code: #1e1e1e;
   --bg-header: #0a0a0a;
   --bg-footer: #252525;
-  --bg-table-header: #2a2a2a;
-  --bg-table-hover: #3a3a3a;
+  --bg-table-header: #000000;
+  --bg-table-hover: #1a1a1a;
   --bg-sidebar: #252525;
 
   --text-primary: #e0e0e0;
@@ -1437,6 +1437,77 @@ td a {
   color: var(--text-link);
 }
 
+/* Config table styles - similar to credentials table */
+.config-container {
+  padding: 0;
+  overflow-x: auto;
+}
+
+.config-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+}
+
+.config-table thead {
+  background-color: var(--bg-table-header);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.config-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
+}
+
+.config-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-table-row);
+}
+
+.config-table tbody tr:hover {
+  background-color: var(--bg-table-hover);
+}
+
+.config-table .config-key {
+  font-weight: 500;
+  color: var(--text-secondary);
+  width: auto;
+  min-width: 150px;
+  max-width: 300px;
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 9pt;
+}
+
+.config-table .config-value {
+  color: var(--text-primary);
+  font-family: monospace;
+  font-size: 9pt;
+  width: 100%;
+}
+
+.config-table .config-value code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-family: monospace;
+  font-size: 9pt;
+  color: var(--text-link);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.config-table .config-value em {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 /* Special styling for Blacksmith tab panel - same structure as service detail */
 #blacksmith.tab-panel.active {
   display: flex !important;
@@ -1695,12 +1766,12 @@ td a {
 }
 
 .vms-table tbody tr:hover {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-hover);
 }
 
 .vm-instance {
   font-weight: 500;
-  color: #0071bc;
+  color: var(--text-link);
 }
 
 .vm-state {
@@ -1721,36 +1792,36 @@ td a {
 
 .vm-az {
   font-size: 9pt;
-  color: #555;
+  color: var(--text-secondary);
 }
 
 .vm-type {
   font-size: 9pt;
-  color: #555;
+  color: var(--text-secondary);
 }
 
 .vm-ips {
   font-family: monospace;
   font-size: 9pt;
-  color: #495057;
+  color: var(--text-primary);
 }
 
 .vm-dns {
   font-family: monospace;
   font-size: 9pt;
-  color: #495057;
+  color: var(--text-primary);
   word-break: break-all;
 }
 
 .vm-cid {
   font-family: monospace;
   font-size: 9pt;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .vm-resurrection {
   font-size: 9pt;
-  color: #555;
+  color: var(--text-secondary);
 }
 
 /* Table containers */
@@ -1784,7 +1855,7 @@ td a {
 
 .deployment-log-table thead,
 .debug-log-table thead {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-header);
   position: sticky;
   top: 0;
   z-index: 5;
@@ -1795,36 +1866,38 @@ td a {
   padding: 10px;
   text-align: left;
   font-weight: 600;
-  border-bottom: 2px solid #dee2e6;
-  background-color: #f8f9fa;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
 }
 
 .deployment-log-table td,
 .debug-log-table td {
   padding: 8px 10px;
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
 }
 
 .deployment-log-table tbody tr:hover,
 .debug-log-table tbody tr:hover {
-  background-color: #f8f9fa;
+  background-color: var(--bg-table-hover);
 }
 
 .log-timestamp {
   font-family: monospace;
   font-size: 9pt;
   white-space: nowrap;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .log-stage {
   font-weight: 500;
-  color: #0071bc;
+  color: var(--text-link);
 }
 
 .log-task {
   font-size: 9pt;
-  color: #555;
+  color: var(--text-secondary);
   max-width: 400px;
   word-wrap: break-word;
 }
@@ -1833,7 +1906,7 @@ td a {
   text-align: center;
   font-family: monospace;
   font-size: 9pt;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .log-state {
@@ -1867,18 +1940,18 @@ td a {
   font-size: 9pt;
   text-align: right;
   min-width: 60px;
-  color: #6c757d;
+  color: var(--text-secondary);
 }
 
 .log-tags {
   font-size: 9pt;
-  color: #666;
+  color: var(--text-secondary);
   font-family: monospace;
 }
 
 .log-status {
   font-size: 9pt;
-  color: #555;
+  color: var(--text-secondary);
   font-style: italic;
 }
 
@@ -2868,10 +2941,10 @@ th[style*="cursor: pointer"]:hover {
 .manifest-tabs-nav {
   display: flex;
   gap: 2px;
-  background: #f0f2f4;
+  background: var(--bg-table-header);
   padding: 4px;
   border-radius: 8px 8px 0 0;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-table);
   border-bottom: none;
   overflow-x: auto;
   flex-wrap: wrap;
@@ -2883,7 +2956,7 @@ th[style*="cursor: pointer"]:hover {
   border: none;
   padding: 8px 16px;
   cursor: pointer;
-  color: #4a5568;
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 500;
   border-radius: 6px;
@@ -2892,19 +2965,19 @@ th[style*="cursor: pointer"]:hover {
 }
 
 .manifest-tab-btn:hover {
-  background: rgba(255, 255, 255, 0.5);
-  color: #2d3748;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .manifest-tab-btn.active {
-  background: white;
-  color: #1a202c;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
 }
 
 .manifest-tab-content {
-  background: white;
-  border: 1px solid #e2e8f0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-table);
   border-radius: 0 0 8px 8px;
   padding: 20px;
   min-height: 300px;
@@ -2929,41 +3002,42 @@ th[style*="cursor: pointer"]:hover {
 }
 
 .manifest-table thead {
-  background: #f7fafc;
+  background: var(--bg-table-header);
 }
 
 .manifest-table th {
   text-align: left;
   padding: 10px;
-  border-bottom: 2px solid #e2e8f0;
+  border-bottom: 2px solid var(--border-table);
   font-weight: 600;
   font-size: 12px;
   text-transform: uppercase;
-  color: #4a5568;
+  color: var(--text-secondary);
 }
 
 .manifest-table td {
   padding: 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-table-row);
   font-size: 13px;
-  color: #2d3748;
+  color: var(--text-primary);
 }
 
 .manifest-table tbody tr:hover {
-  background: #f7fafc;
+  background: var(--bg-table-hover);
 }
 
 .manifest-table code {
-  background: #f0f2f4;
+  background: var(--bg-code);
   padding: 2px 6px;
   border-radius: 3px;
   font-family: 'Monaco', 'Courier New', monospace;
   font-size: 12px;
+  color: var(--text-code);
 }
 
 .copy-btn-small {
-  background: #4299e1;
-  color: white;
+  background: var(--text-link);
+  color: var(--bg-secondary);
   border: none;
   padding: 4px 12px;
   border-radius: 4px;
@@ -2973,7 +3047,7 @@ th[style*="cursor: pointer"]:hover {
 }
 
 .copy-btn-small:hover {
-  background: #3182ce;
+  background: var(--border-active);
 }
 
 .instance-groups-container,
@@ -2992,25 +3066,25 @@ th[style*="cursor: pointer"]:hover {
 .instance-group-selector label,
 .job-selector label {
   font-weight: 500;
-  color: #4a5568;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
 .instance-group-select,
 .job-select {
   padding: 6px 12px;
-  border: 1px solid #cbd5e0;
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
-  background: white;
+  background: var(--bg-secondary);
   font-size: 13px;
-  color: #2d3748;
+  color: var(--text-primary);
   cursor: pointer;
   min-width: 200px;
 }
 
 .instance-group-select:hover,
 .job-select:hover {
-  border-color: #4299e1;
+  border-color: var(--text-link);
 }
 
 .instance-group-pane,
@@ -3025,17 +3099,17 @@ th[style*="cursor: pointer"]:hover {
 
 .instance-group-pane h4,
 .job-pane h6 {
-  color: #2d3748;
+  color: var(--text-primary);
   margin-bottom: 15px;
   font-weight: 600;
 }
 
 .instance-group-pane h5 {
-  color: #4a5568;
+  color: var(--text-secondary);
   margin: 20px 0 10px 0;
   font-size: 14px;
   font-weight: 600;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border-table);
   padding-bottom: 5px;
 }
 
@@ -3060,88 +3134,88 @@ th[style*="cursor: pointer"]:hover {
 }
 
 .addon-item {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border-table);
   border-radius: 6px;
   padding: 15px;
-  background: #f7fafc;
+  background: var(--bg-table-header);
 }
 
 .addon-item h5 {
   margin: 0 0 10px 0;
-  color: #2d3748;
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 600;
 }
 
 /* Dark mode support for manifest details */
 [data-theme="dark"] .manifest-tabs-nav {
-  background: #161b22;
-  border-color: #30363d;
+  background: var(--bg-table-header);
+  border-color: var(--border-table);
 }
 
 [data-theme="dark"] .manifest-tab-btn {
-  color: #8b949e;
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .manifest-tab-btn:hover {
-  background: rgba(48, 54, 61, 0.5);
-  color: #c9d1d9;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .manifest-tab-btn.active {
-  background: #0d1117;
-  color: #f0f6fc;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
 }
 
 [data-theme="dark"] .manifest-tab-content {
-  background: #0d1117;
-  border-color: #30363d;
+  background: var(--bg-secondary);
+  border-color: var(--border-table);
 }
 
 [data-theme="dark"] .manifest-table thead {
-  background: #161b22;
+  background: var(--bg-table-header);
 }
 
 [data-theme="dark"] .manifest-table th {
-  border-color: #30363d;
-  color: #8b949e;
+  border-color: var(--border-table);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .manifest-table td {
-  border-color: #30363d;
-  color: #c9d1d9;
+  border-color: var(--border-table-row);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .manifest-table tbody tr:hover {
-  background: #161b22;
+  background: var(--bg-table-hover);
 }
 
 [data-theme="dark"] .manifest-table code {
-  background: #161b22;
-  color: #79c0ff;
+  background: var(--bg-code);
+  color: var(--text-code);
 }
 
 [data-theme="dark"] .instance-group-select,
 [data-theme="dark"] .job-select {
-  background: #161b22;
-  border-color: #30363d;
-  color: #c9d1d9;
+  background: var(--bg-secondary);
+  border-color: var(--border-table);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .instance-group-select:hover,
 [data-theme="dark"] .job-select:hover {
-  border-color: #58a6ff;
+  border-color: var(--text-link);
 }
 
 [data-theme="dark"] .addon-item {
-  background: #161b22;
-  border-color: #30363d;
+  background: var(--bg-table-header);
+  border-color: var(--border-table);
 }
 
 [data-theme="dark"] .addon-item h5,
 [data-theme="dark"] .instance-group-pane h4,
 [data-theme="dark"] .instance-group-pane h5,
 [data-theme="dark"] .job-pane h6 {
-  color: #f0f6fc;
+  color: var(--text-primary);
 }

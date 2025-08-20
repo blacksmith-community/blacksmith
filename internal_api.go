@@ -215,7 +215,7 @@ func parseTimestampFromLogLine(line string) time.Time {
 			if spaceIdx := strings.Index(bracket, " "); spaceIdx > 0 {
 				bracket = bracket[:spaceIdx]
 			}
-			
+
 			for _, format := range timestampFormats {
 				if t, err := time.Parse(format, bracket); err == nil {
 					return t
@@ -233,7 +233,7 @@ func parseTimestampFromLogLine(line string) time.Time {
 				return t
 			}
 		}
-		
+
 		// Try first two words combined (date + time)
 		if len(words) > 1 {
 			combined := words[0] + " " + words[1]
@@ -245,7 +245,7 @@ func parseTimestampFromLogLine(line string) time.Time {
 		}
 	}
 
-	// For time-only formats in task logs (e.g., "Task 123 | 10:30:45 |"), 
+	// For time-only formats in task logs (e.g., "Task 123 | 10:30:45 |"),
 	// use today's date with the parsed time
 	if strings.Contains(line, "|") {
 		parts := strings.Split(line, "|")
@@ -254,7 +254,7 @@ func parseTimestampFromLogLine(line string) time.Time {
 			if t, err := time.Parse("15:04:05", timeStr); err == nil {
 				// Use today's date with the parsed time
 				now := time.Now()
-				return time.Date(now.Year(), now.Month(), now.Day(), 
+				return time.Date(now.Year(), now.Month(), now.Day(),
 					t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location())
 			}
 		}
@@ -283,6 +283,46 @@ func convertToJSONCompatible(v interface{}) interface{} {
 	default:
 		return v
 	}
+}
+
+// getBoshDNSFromHosts reads the BOSH DNS entry from /etc/hosts for a given instance ID
+func (api *InternalApi) getBoshDNSFromHosts(instanceID string) string {
+	l := Logger.Wrap("bosh-dns")
+	
+	// Read /etc/hosts
+	data, err := os.ReadFile("/etc/hosts")
+	if err != nil {
+		l.Debug("unable to read /etc/hosts: %s", err)
+		return ""
+	}
+	
+	// Parse each line looking for the instance ID
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		// Skip comments and empty lines
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		
+		// Split by whitespace
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		
+		// Check each hostname for our instance ID and .bosh suffix
+		for i := 1; i < len(parts); i++ {
+			hostname := parts[i]
+			if strings.Contains(hostname, instanceID) && strings.HasSuffix(hostname, ".bosh") {
+				l.Debug("found BOSH DNS entry for instance %s: %s", instanceID, hostname)
+				return hostname
+			}
+		}
+	}
+	
+	l.Debug("no BOSH DNS entry found in /etc/hosts for instance %s", instanceID)
+	return ""
 }
 
 func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -314,7 +354,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			instanceDetails["id"] = strings.TrimSpace(string(data))
 		} else {
 			l.Debug("unable to read instance ID file: %s", err)
-			instanceDetails["id"] = ""
+			// Use a default ID for blacksmith
+			instanceDetails["id"] = "0"
 		}
 
 		// Read Instance Name
@@ -322,7 +363,19 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			instanceDetails["name"] = strings.TrimSpace(string(data))
 		} else {
 			l.Debug("unable to read instance name file: %s", err)
-			instanceDetails["name"] = ""
+			// Use "blacksmith" as default instance group name
+			instanceDetails["name"] = "blacksmith"
+		}
+		
+		// Get BOSH DNS from /etc/hosts if we have an instance ID
+		if instanceDetails["id"] != "" {
+			boshDNS := api.getBoshDNSFromHosts(instanceDetails["id"])
+			if boshDNS != "" {
+				instanceDetails["bosh_dns"] = boshDNS
+				l.Debug("using BOSH DNS from /etc/hosts: %s", boshDNS)
+			} else {
+				l.Debug("no BOSH DNS found in /etc/hosts for instance %s", instanceDetails["id"])
+			}
 		}
 
 		// Convert to JSON
@@ -519,6 +572,25 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
+	if req.URL.Path == "/b/blacksmith/config" {
+		l := Logger.Wrap("blacksmith-config")
+		l.Debug("fetching blacksmith configuration")
+
+		// Convert the entire config struct to JSON
+		// The config is already loaded in api.Config
+		b, err := json.Marshal(api.Config)
+		if err != nil {
+			l.Error("failed to marshal blacksmith config: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "%s\n", string(b))
+		return
+	}
 
 	pattern := regexp.MustCompile(`^/b/([^/]+)/manifest\.yml$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
@@ -628,6 +700,9 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			fmt.Fprintf(w, "error: %s", err)
 			return
 		}
+		
+		// Note: We don't compute BOSH DNS for VMs here since it's already displayed in the VMs tab
+		// The DNS field remains as provided by BOSH (typically empty)
 
 		// Convert VMs to JSON
 		b, err := json.MarshalIndent(vms, "", "  ")

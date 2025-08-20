@@ -90,7 +90,12 @@ func (l *MockLogger) Error(format string, args ...interface{}) {
 func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 	vault := NewMockVault()
 	logger := &MockLogger{}
-	updater := NewVaultUpdater(VaultInterface(vault), logger)
+	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
+		Enabled:   true,
+		Retention: 10,
+		Cleanup:   true,
+		Path:      "backups",
+	})
 
 	// Setup existing credentials
 	credPath := "test-instance/credentials"
@@ -162,7 +167,12 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 func TestVaultUpdater_PreservesBindings(t *testing.T) {
 	vault := NewMockVault()
 	logger := &MockLogger{}
-	updater := NewVaultUpdater(VaultInterface(vault), logger)
+	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
+		Enabled:   true,
+		Retention: 10,
+		Cleanup:   true,
+		Path:      "backups",
+	})
 
 	// Setup existing bindings
 	bindingsPath := "test-instance/bindings"
@@ -240,7 +250,12 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 func TestVaultUpdater_CreatesBackup(t *testing.T) {
 	vault := NewMockVault()
 	logger := &MockLogger{}
-	updater := NewVaultUpdater(VaultInterface(vault), logger)
+	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
+		Enabled:   true,
+		Retention: 10,
+		Cleanup:   true,
+		Path:      "backups",
+	})
 
 	// Setup existing instance data
 	vault.index["test-instance"] = map[string]interface{}{
@@ -315,7 +330,12 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 func TestVaultUpdater_PreservesHistory(t *testing.T) {
 	vault := NewMockVault()
 	logger := &MockLogger{}
-	updater := NewVaultUpdater(VaultInterface(vault), logger)
+	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
+		Enabled:   true,
+		Retention: 10,
+		Cleanup:   true,
+		Path:      "backups",
+	})
 
 	// Setup existing metadata with history
 	existingHistory := []interface{}{

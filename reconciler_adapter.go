@@ -24,16 +24,41 @@ type ReconcilerAdapter struct {
 func NewReconcilerAdapter(config *Config, broker *Broker, vault *Vault, boshDir bosh.Director) *ReconcilerAdapter {
 	logger := Logger.Wrap("reconciler")
 
-	// Build reconciler config from main config
+	// Build reconciler config from main config and environment variables
+	// Configuration precedence: env vars > config file > defaults
+
+	// Parse config file duration strings
+	var configInterval, configRetryDelay, configCacheTTL time.Duration
+	if config.Reconciler.Interval != "" {
+		if d, err := time.ParseDuration(config.Reconciler.Interval); err == nil {
+			configInterval = d
+		}
+	}
+	if config.Reconciler.RetryDelay != "" {
+		if d, err := time.ParseDuration(config.Reconciler.RetryDelay); err == nil {
+			configRetryDelay = d
+		}
+	}
+	if config.Reconciler.CacheTTL != "" {
+		if d, err := time.ParseDuration(config.Reconciler.CacheTTL); err == nil {
+			configCacheTTL = d
+		}
+	}
+
 	reconcilerConfig := reconciler.ReconcilerConfig{
-		Enabled:        getEnvBool("BLACKSMITH_RECONCILER_ENABLED", true),
-		Interval:       getEnvDuration("BLACKSMITH_RECONCILER_INTERVAL", 1*time.Hour),
-		MaxConcurrency: getEnvInt("BLACKSMITH_RECONCILER_MAX_CONCURRENCY", 5),
-		BatchSize:      getEnvInt("BLACKSMITH_RECONCILER_BATCH_SIZE", 10),
-		RetryAttempts:  getEnvInt("BLACKSMITH_RECONCILER_RETRY_ATTEMPTS", 3),
-		RetryDelay:     getEnvDuration("BLACKSMITH_RECONCILER_RETRY_DELAY", 10*time.Second),
-		CacheTTL:       getEnvDuration("BLACKSMITH_RECONCILER_CACHE_TTL", 5*time.Minute),
-		Debug:          config.Debug || Debugging,
+		Enabled:        getEnvBoolWithDefault("BLACKSMITH_RECONCILER_ENABLED", config.Reconciler.Enabled, true),
+		Interval:       getEnvDurationWithDefault("BLACKSMITH_RECONCILER_INTERVAL", configInterval, 1*time.Hour),
+		MaxConcurrency: getEnvIntWithDefault("BLACKSMITH_RECONCILER_MAX_CONCURRENCY", config.Reconciler.MaxConcurrency, 5),
+		BatchSize:      getEnvIntWithDefault("BLACKSMITH_RECONCILER_BATCH_SIZE", config.Reconciler.BatchSize, 10),
+		RetryAttempts:  getEnvIntWithDefault("BLACKSMITH_RECONCILER_RETRY_ATTEMPTS", config.Reconciler.RetryAttempts, 3),
+		RetryDelay:     getEnvDurationWithDefault("BLACKSMITH_RECONCILER_RETRY_DELAY", configRetryDelay, 10*time.Second),
+		CacheTTL:       getEnvDurationWithDefault("BLACKSMITH_RECONCILER_CACHE_TTL", configCacheTTL, 5*time.Minute),
+		Debug:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_DEBUG", config.Reconciler.Debug, config.Debug || Debugging),
+		// Backup configuration
+		BackupEnabled:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ENABLED", config.Reconciler.Backup.Enabled, true),
+		BackupRetention: getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION", config.Reconciler.Backup.Retention, 10),
+		BackupCleanup:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_CLEANUP", config.Reconciler.Backup.Cleanup, true),
+		BackupPath:      getEnvStringWithDefault("BLACKSMITH_RECONCILER_BACKUP_PATH", config.Reconciler.Backup.Path, "backups"),
 	}
 
 	return &ReconcilerAdapter{
@@ -261,35 +286,53 @@ func (l *loggerWrapper) Error(format string, args ...interface{}) {
 	l.logger.Error(format, args...)
 }
 
-// Helper functions for environment variable parsing
+// Helper functions for environment variable parsing with config file fallback
 
-func getEnvBool(key string, defaultValue bool) bool {
+func getEnvBoolWithDefault(key string, configValue bool, defaultValue bool) bool {
 	val := os.Getenv(key)
-	if val == "" {
-		return defaultValue
+	if val != "" {
+		return val == "true" || val == "1" || val == "yes"
 	}
-	return val == "true" || val == "1" || val == "yes"
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	val := os.Getenv(key)
-	if val == "" {
-		return defaultValue
-	}
-	var intVal int
-	if _, err := fmt.Sscanf(val, "%d", &intVal); err == nil {
-		return intVal
+	if configValue {
+		return configValue
 	}
 	return defaultValue
 }
 
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+func getEnvIntWithDefault(key string, configValue int, defaultValue int) int {
 	val := os.Getenv(key)
-	if val == "" {
-		return defaultValue
+	if val != "" {
+		var intVal int
+		if _, err := fmt.Sscanf(val, "%d", &intVal); err == nil {
+			return intVal
+		}
 	}
-	if duration, err := time.ParseDuration(val); err == nil {
-		return duration
+	if configValue != 0 {
+		return configValue
+	}
+	return defaultValue
+}
+
+func getEnvDurationWithDefault(key string, configValue time.Duration, defaultValue time.Duration) time.Duration {
+	val := os.Getenv(key)
+	if val != "" {
+		if duration, err := time.ParseDuration(val); err == nil {
+			return duration
+		}
+	}
+	if configValue != 0 {
+		return configValue
+	}
+	return defaultValue
+}
+
+func getEnvStringWithDefault(key string, configValue string, defaultValue string) string {
+	val := os.Getenv(key)
+	if val != "" {
+		return val
+	}
+	if configValue != "" {
+		return configValue
 	}
 	return defaultValue
 }

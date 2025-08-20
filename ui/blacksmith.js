@@ -557,14 +557,14 @@
         { key: 'error', sortable: true }
       ],
       'vms-table': [
-        { key: 'job', sortable: true },
+        { key: 'instance', sortable: true },
         { key: 'state', sortable: true },
         { key: 'az', sortable: true },
         { key: 'vm_type', sortable: true },
         { key: 'ips', sortable: true },
         { key: 'dns', sortable: true },
         { key: 'cid', sortable: true },
-        { key: 'resurrection_paused', sortable: true }
+        { key: 'resurrection', sortable: true }
       ],
       'logs-table': [
         { key: 'date', sortable: true },
@@ -580,7 +580,7 @@
         { key: 'state', sortable: true },
         { key: 'progress', sortable: true },
         { key: 'tags', sortable: false },
-        { key: 'data.status', sortable: true }
+        { key: 'status', sortable: true }
       ],
       'debug-log-table': [
         { key: 'time', sortable: true },
@@ -590,9 +590,25 @@
         { key: 'state', sortable: true },
         { key: 'progress', sortable: true },
         { key: 'tags', sortable: false },
-        { key: 'data.status', sortable: true }
+        { key: 'status', sortable: true }
+      ],
+      'manifest-table': [
+        { key: 'name', sortable: true },
+        { key: 'version', sortable: true },
+        { key: 'url', sortable: true },
+        { key: 'sha1', sortable: true }
       ]
     };
+
+    // Check if this is an instance logs table (dynamic class name)
+    if (tableClass.startsWith('instance-logs-table-')) {
+      return [
+        { key: 'date', sortable: true },
+        { key: 'time', sortable: true },
+        { key: 'level', sortable: true },
+        { key: 'message', sortable: true }
+      ];
+    }
 
     return columnConfigs[tableClass] || [];
   };
@@ -715,7 +731,20 @@
     const table = document.querySelector(`.${tableClass}`);
     if (!table) return;
 
-    const headers = table.querySelectorAll('thead th');
+    // For instance logs tables, skip the control row and get the actual header row
+    let headers;
+    if (tableClass.startsWith('instance-logs-table-')) {
+      // Find the row with actual column headers (not the controls row)
+      const headerRows = table.querySelectorAll('thead tr');
+      const headerRow = Array.from(headerRows).find(row => {
+        const firstTh = row.querySelector('th');
+        return firstTh && !firstTh.classList.contains('table-controls-header');
+      });
+      headers = headerRow ? headerRow.querySelectorAll('th') : [];
+    } else {
+      headers = table.querySelectorAll('thead th');
+    }
+
     const columns = getTableColumns(tableClass);
     const sortState = tableSortStates.get(tableClass) || { column: null, direction: null };
 
@@ -725,16 +754,28 @@
       const column = columns[index];
       if (!column.sortable) return;
 
-      // Skip if already initialized
-      if (header.querySelector('.sort-icon')) return;
+      // Remove existing sort icon if present (to handle re-initialization)
+      const existingIcon = header.querySelector('.sort-icon');
+      if (existingIcon) {
+        existingIcon.remove();
+      }
 
       // Add sort indicator
       const indicator = createSortIndicator(column.key, sortState);
       header.appendChild(indicator);
       header.style.cursor = 'pointer';
 
-      // Add click handler
-      header.addEventListener('click', () => {
+      // Remove old event listeners and add new one
+      // Clone the header to remove all existing event listeners
+      const cleanHeader = header.cloneNode(false);
+      cleanHeader.innerHTML = header.innerHTML;
+      cleanHeader.style.cursor = header.style.cursor;
+      
+      // Replace the old header with the clean one
+      header.parentNode.replaceChild(cleanHeader, header);
+      
+      // Add click handler to the clean header
+      cleanHeader.addEventListener('click', () => {
         handleTableSort(tableClass, column.key);
       });
     });
@@ -768,7 +809,14 @@
       dataKeyMap['events-table'] = 'service-events';
     }
 
-    const dataKey = dataKeyMap[tableClass];
+    // For instance logs tables, the data key is stored with the job name
+    let dataKey = dataKeyMap[tableClass];
+    if (tableClass.startsWith('instance-logs-table-')) {
+      // Extract job name from the table class (e.g., 'instance-logs-table-redis-0' -> 'redis/0')
+      const jobPart = tableClass.replace('instance-logs-table-', '').replace(/-/g, '/');
+      dataKey = `instance-logs-${jobPart}`;
+    }
+
     const originalData = tableOriginalData.get(dataKey);
 
     if (!originalData) return;
@@ -876,6 +924,9 @@
           </tr>
         `;
       }).join('');
+    } else if (tableClass.startsWith('instance-logs-table-')) {
+      // Instance logs tables use the same format as regular logs
+      tbody.innerHTML = data.map(row => renderLogRow(row)).join('');
     }
   };
 
@@ -1092,6 +1143,20 @@
               <span>${status}</span>
             </td>
           </tr>
+          ${data.boshDNS ? `
+          <tr>
+            <td class="info-key">BOSH DNS</td>
+            <td class="info-value">
+              <span class="copy-wrapper">
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${data.boshDNS}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+                <span>${data.boshDNS}</span>
+              </span>
+            </td>
+          </tr>
+          ` : ''}
         </tbody>
       </table>
     `;
@@ -1108,6 +1173,7 @@
         <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
+        <button class="detail-tab" data-tab="config">Config</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>
@@ -1579,6 +1645,99 @@
     return html;
   };
 
+  // Format config as a hierarchical table similar to credentials
+  const formatConfig = (config) => {
+    if (!config || Object.keys(config).length === 0) {
+      return '<div class="no-data">No configuration available</div>';
+    }
+
+    let html = '<div class="config-container">';
+    html += `
+      <table class="config-table">
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    // Recursive function to flatten nested objects with hierarchical keys
+    const flattenConfig = (obj, prefix = '') => {
+      const result = [];
+      
+      for (const [key, value] of Object.entries(obj)) {
+        const fullKey = prefix ? `${prefix}.${key}` : key;
+        
+        if (value === null || value === undefined) {
+          result.push({ key: fullKey, value: '' });
+        } else if (typeof value === 'object' && !Array.isArray(value)) {
+          // Recursively flatten nested objects
+          result.push(...flattenConfig(value, fullKey));
+        } else if (Array.isArray(value)) {
+          // Handle arrays - display as JSON string
+          result.push({ key: fullKey, value: JSON.stringify(value) });
+        } else {
+          // Handle primitive values
+          result.push({ key: fullKey, value: value.toString() });
+        }
+      }
+      
+      return result;
+    };
+
+    // Flatten the config and create table rows
+    const flatConfig = flattenConfig(config);
+    
+    for (const item of flatConfig) {
+      let displayValue;
+      if (item.value === '' || item.value === null || item.value === undefined) {
+        displayValue = '<em>empty</em>';
+      } else if (item.value.startsWith('[') || item.value.startsWith('{')) {
+        // Format JSON strings with code styling
+        try {
+          const parsed = JSON.parse(item.value);
+          displayValue = `<code>${JSON.stringify(parsed, null, 2)}</code>`;
+        } catch {
+          displayValue = `<code>${item.value}</code>`;
+        }
+      } else if (item.value === 'true' || item.value === 'false') {
+        // Boolean values
+        displayValue = `<code>${item.value}</code>`;
+      } else if (!isNaN(item.value) && item.value !== '') {
+        // Numeric values
+        displayValue = `<code>${item.value}</code>`;
+      } else {
+        // String values
+        displayValue = `<code>${item.value}</code>`;
+      }
+
+      const copyValue = item.value || '';
+      html += `
+        <tr>
+          <td class="config-key">${item.key}</td>
+          <td class="config-value">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
+                      title="Copy to clipboard">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>${displayValue}</span>
+            </span>
+          </td>
+        </tr>
+      `;
+    }
+
+    html += `
+        </tbody>
+      </table>
+    `;
+    html += '</div>';
+    return html;
+  };
+
   // Helper function to extract the latest deployment task ID from events
   const getLatestDeploymentTaskId = (events) => {
     if (!events || events.length === 0) {
@@ -1728,6 +1887,14 @@
         }
         const creds = await response.json();
         return formatCredentials(creds);
+      } else if (type === 'config') {
+        // Fetch blacksmith configuration
+        const response = await fetch('/b/blacksmith/config');
+        if (!response.ok) {
+          throw new Error(`Failed to load config: ${response.statusText}`);
+        }
+        const config = await response.json();
+        return formatConfig(config);
       }
 
       return `<div class="error">Unknown tab type: ${type}</div>`;
@@ -2227,6 +2394,12 @@
     const contentArea = document.getElementById('instance-logs-content');
     if (contentArea) {
       contentArea.innerHTML = formatJobLogContent(job, logsData[job]);
+      // Re-initialize sorting and filtering for the new job table
+      setTimeout(() => {
+        const tableClass = `instance-logs-table-${job.replace(/\//g, '-')}`;
+        initializeSorting(tableClass);
+        attachSearchFilter(tableClass);
+      }, 100);
     }
   };
 
@@ -2924,7 +3097,7 @@
 
     const logFileOptions = logFiles.map(file => {
       const selected = file.path === selectedLogPath ? 'selected' : '';
-      return `<option value="${file.path}" ${selected}>${file.name}</option>`;
+      return `<option value="${file.path}" ${selected}>${file.path}</option>`;
     }).join('');
 
     return `
@@ -3792,6 +3965,12 @@
           });
         });
       });
+
+      // Initialize manifest table sorting
+      // Just call once as initializeSorting handles all tables with this class
+      if (document.querySelector('.manifest-table')) {
+        initializeSorting('manifest-table');
+      }
     }, 100);
 
     return html;
@@ -3882,6 +4061,8 @@
       displayContainer.innerHTML = tableHTML;
 
       // Re-attach the search filter functionality to the existing search filter
+      // and initialize sorting
+      initializeSorting('logs-table');
       attachSearchFilter('logs-table');
 
     } catch (error) {
@@ -4073,6 +4254,7 @@
           detailContent.innerHTML = formatVMs(vms, instanceId);
           // Re-initialize sorting and filtering
           setTimeout(() => {
+            initializeSorting('vms-table');
             attachSearchFilter('vms-table');
           }, 100);
         }
@@ -5127,11 +5309,19 @@
               initializeSorting('events-table');
               attachSearchFilter('events-table-service-events');
             } else if (tabType === 'vms') {
+              initializeSorting('vms-table');
               attachSearchFilter('vms-table');
             } else if (tabType === 'logs') {
+              initializeSorting('deployment-log-table');
               attachSearchFilter('deployment-log-table');
             } else if (tabType === 'debug') {
+              initializeSorting('debug-log-table');
               attachSearchFilter('debug-log-table');
+            } else if (tabType === 'manifest') {
+              // Initialize sorting for manifest tables
+              document.querySelectorAll('.manifest-table').forEach((table, index) => {
+                initializeSorting('manifest-table');
+              });
             } else if (tabType === 'instance-logs') {
               // Initialize sorting and filtering for each job table
               const logsData = window.instanceLogsData;
@@ -5220,6 +5410,7 @@
             data.az = instanceData.az;
             data.instanceId = instanceData.id;
             data.instanceName = instanceData.name;
+            data.boshDNS = instanceData.bosh_dns;
             // Store deployment name globally for tab handlers to use
             window.blacksmithDeploymentName = instanceData.deployment || 'blacksmith';
 

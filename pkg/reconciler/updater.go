@@ -7,15 +7,17 @@ import (
 )
 
 type vaultUpdater struct {
-	vault  interface{} // Will be replaced with actual Vault type
-	logger Logger
+	vault        interface{} // Will be replaced with actual Vault type
+	logger       Logger
+	backupConfig BackupConfig
 }
 
 // NewVaultUpdater creates a new vault updater
-func NewVaultUpdater(vault interface{}, logger Logger) Updater {
+func NewVaultUpdater(vault interface{}, logger Logger, backupConfig BackupConfig) Updater {
 	return &vaultUpdater{
-		vault:  vault,
-		logger: logger,
+		vault:        vault,
+		logger:       logger,
+		backupConfig: backupConfig,
 	}
 }
 
@@ -27,9 +29,11 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 
 	u.logDebug("Updating instance %s in vault", instance.ID)
 
-	// Create backup of existing instance data before any updates
-	if err := u.backupInstance(instance.ID); err != nil {
-		u.logWarning("Failed to create backup for instance %s: %s (continuing anyway)", instance.ID, err)
+	// Create backup of existing instance data before any updates if enabled
+	if u.backupConfig.Enabled {
+		if err := u.backupInstance(instance.ID); err != nil {
+			u.logWarning("Failed to create backup for instance %s: %s (continuing anyway)", instance.ID, err)
+		}
 	}
 
 	// Check for existing credentials - NEVER overwrite
@@ -502,9 +506,9 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 		allData["manifest"] = manifest
 	}
 
-	// Store backup with timestamp
+	// Store backup with timestamp using configured path
 	timestamp := time.Now().Unix()
-	backupPath := fmt.Sprintf("%s/backups/%d", instanceID, timestamp)
+	backupPath := fmt.Sprintf("%s/%s/%d", instanceID, u.backupConfig.Path, timestamp)
 
 	allData["backup_timestamp"] = timestamp
 	allData["backup_date"] = time.Now().Format(time.RFC3339)
@@ -517,18 +521,91 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 
 	u.logDebug("Created backup for instance %s at %s", instanceID, backupPath)
 
-	// Clean old backups (keep last 10)
-	u.cleanOldBackups(instanceID, 10)
+	// Clean old backups if cleanup is enabled
+	if u.backupConfig.Cleanup {
+		u.cleanOldBackups(instanceID, u.backupConfig.Retention)
+	}
 
 	return nil
 }
 
 // cleanOldBackups removes old backup entries, keeping only the most recent N backups
 func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
-	// This would require listing vault paths which isn't directly supported
-	// For now, we'll just log that we would clean backups
-	// In a real implementation, we'd need to track backup timestamps separately
-	u.logDebug("Backup cleanup for %s - keeping last %d backups", instanceID, keepCount)
+	if keepCount <= 0 {
+		u.logDebug("Backup cleanup disabled for %s (keepCount: %d)", instanceID, keepCount)
+		return
+	}
+
+	// Get backup index to track backup timestamps
+	backupIndexPath := fmt.Sprintf("%s/%s/index", instanceID, u.backupConfig.Path)
+
+	var backupIndex map[string]interface{}
+	exists, err := u.vault.(VaultInterface).Get(backupIndexPath, &backupIndex)
+	if err != nil || !exists {
+		// Create new backup index
+		backupIndex = make(map[string]interface{})
+		backupIndex["backups"] = []int64{}
+	}
+
+	// Get current backup list
+	var backups []int64
+	if backupList, ok := backupIndex["backups"].([]interface{}); ok {
+		for _, b := range backupList {
+			if timestamp, ok := b.(float64); ok {
+				backups = append(backups, int64(timestamp))
+			} else if timestamp, ok := b.(int64); ok {
+				backups = append(backups, timestamp)
+			}
+		}
+	}
+
+	// Add current timestamp if not already present
+	currentTime := time.Now().Unix()
+	found := false
+	for _, timestamp := range backups {
+		if timestamp == currentTime {
+			found = true
+			break
+		}
+	}
+	if !found {
+		backups = append(backups, currentTime)
+	}
+
+	// Sort timestamps (newest first)
+	for i := 0; i < len(backups)-1; i++ {
+		for j := i + 1; j < len(backups); j++ {
+			if backups[i] < backups[j] {
+				backups[i], backups[j] = backups[j], backups[i]
+			}
+		}
+	}
+
+	// Remove old backups if we exceed keepCount
+	if len(backups) > keepCount {
+		toDelete := backups[keepCount:]
+		for _, timestamp := range toDelete {
+			backupPath := fmt.Sprintf("%s/%s/%d", instanceID, u.backupConfig.Path, timestamp)
+			if err := u.vault.(VaultInterface).Delete(backupPath); err != nil {
+				u.logWarning("Failed to delete old backup %s: %s", backupPath, err)
+			} else {
+				u.logDebug("Deleted old backup %s", backupPath)
+			}
+		}
+
+		// Keep only the recent backups
+		backups = backups[:keepCount]
+	}
+
+	// Update backup index
+	backupIndex["backups"] = backups
+	backupIndex["last_cleanup"] = time.Now().Unix()
+
+	if err := u.vault.(VaultInterface).Put(backupIndexPath, backupIndex); err != nil {
+		u.logWarning("Failed to update backup index for %s: %s", instanceID, err)
+	} else {
+		u.logDebug("Backup cleanup for %s completed - keeping %d of %d backups", instanceID, len(backups), len(backups)+len(backups)-keepCount)
+	}
 }
 
 func (u *vaultUpdater) logError(format string, args ...interface{}) {

@@ -8,16 +8,17 @@ import (
 )
 
 type Config struct {
-	Broker    BrokerConfig   `yaml:"broker"`
-	Vault     VaultConfig    `yaml:"vault"`
-	Shield    ShieldConfig   `yaml:"shield"`
-	BOSH      BOSHConfig     `yaml:"bosh"`
-	Services  ServicesConfig `yaml:"services"`
-	Debug     bool           `yaml:"debug"`
-	WebRoot   string         `yaml:"web-root"`
-	Env       string         `yaml:"env"`
-	Shareable bool           `yaml:"shareable"`
-	Forges    ForgesConfig   `yaml:"forges"`
+	Broker     BrokerConfig     `yaml:"broker"`
+	Vault      VaultConfig      `yaml:"vault"`
+	Shield     ShieldConfig     `yaml:"shield"`
+	BOSH       BOSHConfig       `yaml:"bosh"`
+	Services   ServicesConfig   `yaml:"services"`
+	Reconciler ReconcilerConfig `yaml:"reconciler"`
+	Debug      bool             `yaml:"debug"`
+	WebRoot    string           `yaml:"web-root"`
+	Env        string           `yaml:"env"`
+	Shareable  bool             `yaml:"shareable"`
+	Forges     ForgesConfig     `yaml:"forges"`
 }
 
 // ServicesConfig configures service-specific behavior
@@ -39,6 +40,27 @@ type ForgesConfig struct {
 	AutoScan     bool     `yaml:"auto-scan"`
 	ScanPaths    []string `yaml:"scan-paths"`
 	ScanPatterns []string `yaml:"scan-patterns"`
+}
+
+// ReconcilerBackupConfig holds backup configuration for the reconciler
+type ReconcilerBackupConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Retention int    `yaml:"retention"`
+	Cleanup   bool   `yaml:"cleanup"`
+	Path      string `yaml:"path"`
+}
+
+// ReconcilerConfig holds configuration for the deployment reconciler
+type ReconcilerConfig struct {
+	Enabled        bool                   `yaml:"enabled"`
+	Interval       string                 `yaml:"interval"`
+	MaxConcurrency int                    `yaml:"max_concurrency"`
+	BatchSize      int                    `yaml:"batch_size"`
+	RetryAttempts  int                    `yaml:"retry_attempts"`
+	RetryDelay     string                 `yaml:"retry_delay"`
+	CacheTTL       string                 `yaml:"cache_ttl"`
+	Debug          bool                   `yaml:"debug"`
+	Backup         ReconcilerBackupConfig `yaml:"backup"`
 }
 
 type TLSConfig struct {

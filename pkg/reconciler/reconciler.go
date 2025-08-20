@@ -36,6 +36,14 @@ type reconcilerManager struct {
 func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault interface{}, boshDir bosh.Director, logger Logger) Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Convert ReconcilerConfig backup settings to BackupConfig
+	backupConfig := BackupConfig{
+		Enabled:   config.BackupEnabled,
+		Retention: config.BackupRetention,
+		Cleanup:   config.BackupCleanup,
+		Path:      config.BackupPath,
+	}
+
 	return &reconcilerManager{
 		config:       config,
 		broker:       broker,
@@ -46,7 +54,7 @@ func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault int
 		cancel:       cancel,
 		scanner:      NewBOSHScanner(boshDir, logger),
 		matcher:      NewServiceMatcher(broker, logger),
-		updater:      NewVaultUpdater(vault, logger),
+		updater:      NewVaultUpdater(vault, logger, backupConfig),
 		synchronizer: NewIndexSynchronizer(vault, logger),
 		metrics:      NewMetricsCollector(),
 	}

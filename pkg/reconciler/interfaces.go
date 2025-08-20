@@ -158,6 +158,19 @@ type ReconcilerConfig struct {
 	RetryDelay     time.Duration
 	CacheTTL       time.Duration
 	Debug          bool
+	// Backup configuration
+	BackupEnabled   bool
+	BackupRetention int
+	BackupCleanup   bool
+	BackupPath      string
+}
+
+// BackupConfig holds backup configuration settings
+type BackupConfig struct {
+	Enabled   bool
+	Retention int
+	Cleanup   bool
+	Path      string
 }
 
 // Service represents a service from the broker

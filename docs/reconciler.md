@@ -53,33 +53,115 @@ The reconciler is implemented as a modular system with clean separation of conce
 
 ## Configuration
 
-The reconciler is configured through environment variables:
+The reconciler can be configured through both the `blacksmith.conf` file and environment variables (environment variables take precedence):
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `BLACKSMITH_RECONCILER_ENABLED` | `true` | Enable/disable the reconciler |
-| `BLACKSMITH_RECONCILER_INTERVAL` | `1h` | Time between reconciliation runs |
-| `BLACKSMITH_RECONCILER_MAX_CONCURRENCY` | `5` | Maximum concurrent deployment processing |
-| `BLACKSMITH_RECONCILER_BATCH_SIZE` | `10` | Number of deployments to process per batch |
-| `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `3` | Number of retry attempts for failed operations |
-| `BLACKSMITH_RECONCILER_RETRY_DELAY` | `10s` | Delay between retry attempts |
-| `BLACKSMITH_RECONCILER_CACHE_TTL` | `5m` | Cache time-to-live for deployment details |
+### Configuration Options
 
-### Example Configuration
+| Environment Variable | Config File | Default | Description |
+|---------------------|-------------|---------|-------------|
+| `BLACKSMITH_RECONCILER_ENABLED` | `reconciler.enabled` | `true` | Enable/disable the reconciler |
+| `BLACKSMITH_RECONCILER_INTERVAL` | `reconciler.interval` | `1h` | Time between reconciliation runs |
+| `BLACKSMITH_RECONCILER_MAX_CONCURRENCY` | `reconciler.max_concurrency` | `5` | Maximum concurrent deployment processing |
+| `BLACKSMITH_RECONCILER_BATCH_SIZE` | `reconciler.batch_size` | `10` | Number of deployments to process per batch |
+| `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `reconciler.retry_attempts` | `3` | Number of retry attempts for failed operations |
+| `BLACKSMITH_RECONCILER_RETRY_DELAY` | `reconciler.retry_delay` | `10s` | Delay between retry attempts |
+| `BLACKSMITH_RECONCILER_CACHE_TTL` | `reconciler.cache_ttl` | `5m` | Cache time-to-live for deployment details |
+| `BLACKSMITH_RECONCILER_BACKUP_ENABLED` | `reconciler.backup.enabled` | `true` | Enable/disable instance backups |
+| `BLACKSMITH_RECONCILER_BACKUP_RETENTION` | `reconciler.backup.retention` | `10` | Number of backups to keep per instance |
+| `BLACKSMITH_RECONCILER_BACKUP_CLEANUP` | `reconciler.backup.cleanup` | `true` | Enable automatic cleanup of old backups |
+| `BLACKSMITH_RECONCILER_BACKUP_PATH` | `reconciler.backup.path` | `backups` | Vault path for storing backups |
+
+### Backup Configuration
+
+The reconciler automatically creates backups of instance data before performing updates. This provides a safety net for recovery in case of issues.
+
+#### Backup Features
+- **Automatic Backups**: Created before each reconciliation update
+- **Configurable Retention**: Keep a specified number of backups per instance
+- **Smart Cleanup**: Automatically removes old backups beyond retention limit
+- **Timestamped Storage**: Each backup stored with Unix timestamp for easy identification
+
+#### What Gets Backed Up
+- Instance index data (service ID, plan ID, timestamps)
+- Instance metadata (releases, stemcells, VMs, properties)
+- Instance manifest (full BOSH deployment manifest)
+- Reconciliation history
+
+#### Backup Storage Location
+Backups are stored in Vault at: `{instanceID}/{backup_path}/{unix_timestamp}`
+
+Example: `abc-123-def-456/backups/1704397200`
+
+### Configuration File Example
+
+```yaml
+# blacksmith.conf
+reconciler:
+  enabled: true
+  interval: "30m"
+  max_concurrency: 10
+  batch_size: 20
+  retry_attempts: 5
+  retry_delay: "15s"
+  cache_ttl: "10m"
+  backup:
+    enabled: true
+    retention: 20
+    cleanup: true
+    path: "reconciler-backups"
+```
+
+### Environment Variable Example
 
 ```bash
-# Disable reconciler
-export BLACKSMITH_RECONCILER_ENABLED=false
-
-# Run reconciliation every 30 minutes
+# Basic reconciler configuration
+export BLACKSMITH_RECONCILER_ENABLED=true
 export BLACKSMITH_RECONCILER_INTERVAL=30m
 
-# Increase concurrency for large deployments
+# Performance tuning
 export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=10
 export BLACKSMITH_RECONCILER_BATCH_SIZE=20
 
-# Reduce cache time for more frequent updates
-export BLACKSMITH_RECONCILER_CACHE_TTL=1m
+# Backup configuration
+export BLACKSMITH_RECONCILER_BACKUP_ENABLED=true
+export BLACKSMITH_RECONCILER_BACKUP_RETENTION=20
+export BLACKSMITH_RECONCILER_BACKUP_CLEANUP=true
+export BLACKSMITH_RECONCILER_BACKUP_PATH=backups
+```
+
+### Configuration Precedence
+
+Configuration values are applied in the following order (highest precedence first):
+1. Environment variables
+2. Configuration file (`blacksmith.conf`)
+3. Default values
+
+### Disabling Backups
+
+To disable backup creation entirely:
+
+```bash
+export BLACKSMITH_RECONCILER_BACKUP_ENABLED=false
+```
+
+Or in `blacksmith.conf`:
+```yaml
+reconciler:
+  backup:
+    enabled: false
+```
+
+### Unlimited Backup Retention
+
+To keep all backups without automatic cleanup:
+
+```bash
+export BLACKSMITH_RECONCILER_BACKUP_CLEANUP=false
+```
+
+Or set retention to 0:
+```bash
+export BLACKSMITH_RECONCILER_BACKUP_RETENTION=0
 ```
 
 ## Matching Strategies
