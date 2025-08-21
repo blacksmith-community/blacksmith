@@ -304,17 +304,21 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 			backupCreated = true
 			// Verify backup contains the data
 			if backupData, exists := vault.data[call]; exists {
-				if _, hasIndex := backupData["index"]; !hasIndex {
-					t.Error("Backup should contain index data")
+				if data, hasData := backupData["data"]; !hasData {
+					t.Error("Backup should contain data field")
+				} else if dataMap, ok := data.(map[string]interface{}); ok {
+					if _, hasIndex := dataMap["index"]; !hasIndex {
+						t.Error("Backup data should contain index data")
+					}
+					if _, hasMetadata := dataMap["metadata"]; !hasMetadata {
+						t.Error("Backup data should contain metadata")
+					}
 				}
-				if _, hasMetadata := backupData["metadata"]; !hasMetadata {
-					t.Error("Backup should contain metadata")
-				}
-				if _, hasTimestamp := backupData["backup_timestamp"]; !hasTimestamp {
+				if _, hasTimestamp := backupData["timestamp"]; !hasTimestamp {
 					t.Error("Backup should contain timestamp")
 				}
-				if reason, ok := backupData["backup_reason"].(string); !ok || reason != "pre_reconciliation_backup" {
-					t.Error("Backup should have correct reason")
+				if _, hasSHA256 := backupData["sha256"]; !hasSHA256 {
+					t.Error("Backup should contain SHA256")
 				}
 			} else {
 				t.Error("Backup data was not saved")

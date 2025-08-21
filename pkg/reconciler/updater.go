@@ -2,6 +2,9 @@ package reconciler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -485,7 +488,7 @@ func (u *vaultUpdater) logInfo(format string, args ...interface{}) {
 
 // backupInstance creates a timestamped backup of instance data before updates
 func (u *vaultUpdater) backupInstance(instanceID string) error {
-	// Get all current instance data
+	// Get all current instance data (exclude backups path itself)
 	allData := make(map[string]interface{})
 
 	// Get main instance data from index
@@ -525,27 +528,101 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 		u.logDebug("Backed up bindings for instance %s", instanceID)
 	}
 
-	// Store backup with timestamp using configured path
+	// Calculate SHA256 hash of the data
+	dataBytes, err := json.Marshal(allData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal backup data: %w", err)
+	}
+
+	hash := sha256.Sum256(dataBytes)
+	sha256Sum := hex.EncodeToString(hash[:])
+
+	// Check if backup with this SHA256 already exists
+	backupPath := fmt.Sprintf("%s/backups/%s", instanceID, sha256Sum)
+	existing, err := u.getFromVault(backupPath)
+	if err == nil && len(existing) > 0 {
+		u.logDebug("Backup with SHA256 %s already exists for instance %s - skipping", sha256Sum, instanceID)
+		return nil
+	}
+
+	// Add backup metadata
 	timestamp := time.Now().Unix()
-	backupPath := fmt.Sprintf("%s/%s/%d", instanceID, u.backupConfig.Path, timestamp)
+	backupData := map[string]interface{}{
+		"data":       allData,
+		"timestamp":  timestamp,
+		"created_at": time.Now().Format(time.RFC3339),
+		"sha256":     sha256Sum,
+	}
 
-	allData["backup_timestamp"] = timestamp
-	allData["backup_date"] = time.Now().Format(time.RFC3339)
-	allData["backup_reason"] = "pre_reconciliation_backup"
-
-	err = u.putToVault(backupPath, allData)
+	// Store the backup
+	err = u.putToVault(backupPath, backupData)
 	if err != nil {
 		return fmt.Errorf("failed to store backup: %w", err)
 	}
 
-	u.logDebug("Created backup for instance %s at %s", instanceID, backupPath)
+	u.logDebug("Created backup for instance %s with SHA256 %s at %s", instanceID, sha256Sum, backupPath)
+
+	// Update backup index with new backup info
+	err = u.updateBackupIndex(instanceID, sha256Sum, timestamp)
+	if err != nil {
+		u.logWarning("Failed to update backup index for instance %s: %s", instanceID, err)
+	}
 
 	// Clean old backups if cleanup is enabled
 	if u.backupConfig.Cleanup {
-		u.cleanOldBackups(instanceID, u.backupConfig.Retention)
+		retention := u.backupConfig.Retention
+		if retention <= 0 {
+			retention = 5 // Default retention of 5 backups
+		}
+		u.cleanOldBackups(instanceID, retention)
 	}
 
 	return nil
+}
+
+// updateBackupIndex updates the backup index with new backup information
+func (u *vaultUpdater) updateBackupIndex(instanceID, sha256Sum string, timestamp int64) error {
+	backupIndexPath := fmt.Sprintf("%s/backups/index", instanceID)
+
+	var backupIndex map[string]interface{}
+	exists, err := u.vault.(VaultInterface).Get(backupIndexPath, &backupIndex)
+	if err != nil || !exists {
+		// Create new backup index
+		backupIndex = make(map[string]interface{})
+		backupIndex["backups"] = []map[string]interface{}{}
+	}
+
+	// Get current backup list
+	var backups []map[string]interface{}
+	if backupList, ok := backupIndex["backups"].([]interface{}); ok {
+		for _, b := range backupList {
+			if backup, ok := b.(map[string]interface{}); ok {
+				backups = append(backups, backup)
+			}
+		}
+	}
+
+	// Check if this SHA256 already exists
+	for _, backup := range backups {
+		if sha256, ok := backup["sha256"].(string); ok && sha256 == sha256Sum {
+			// Already exists, don't add duplicate
+			return nil
+		}
+	}
+
+	// Add new backup entry
+	newBackup := map[string]interface{}{
+		"sha256":    sha256Sum,
+		"timestamp": timestamp,
+		"created":   time.Now().Format(time.RFC3339),
+	}
+	backups = append(backups, newBackup)
+
+	// Update index
+	backupIndex["backups"] = backups
+	backupIndex["last_updated"] = timestamp
+
+	return u.vault.(VaultInterface).Put(backupIndexPath, backupIndex)
 }
 
 // cleanOldBackups removes old backup entries, keeping only the most recent N backups
@@ -555,60 +632,67 @@ func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
 		return
 	}
 
-	// Get backup index to track backup timestamps
-	backupIndexPath := fmt.Sprintf("%s/%s/index", instanceID, u.backupConfig.Path)
-
+	// Get backup index
+	backupIndexPath := fmt.Sprintf("%s/backups/index", instanceID)
+	
 	var backupIndex map[string]interface{}
 	exists, err := u.vault.(VaultInterface).Get(backupIndexPath, &backupIndex)
 	if err != nil || !exists {
-		// Create new backup index
-		backupIndex = make(map[string]interface{})
-		backupIndex["backups"] = []int64{}
+		u.logDebug("No backup index found for %s", instanceID)
+		return
 	}
 
 	// Get current backup list
-	var backups []int64
+	var backups []map[string]interface{}
 	if backupList, ok := backupIndex["backups"].([]interface{}); ok {
 		for _, b := range backupList {
-			if timestamp, ok := b.(float64); ok {
-				backups = append(backups, int64(timestamp))
-			} else if timestamp, ok := b.(int64); ok {
-				backups = append(backups, timestamp)
+			if backup, ok := b.(map[string]interface{}); ok {
+				backups = append(backups, backup)
 			}
 		}
+	} else if backupList, ok := backupIndex["backups"].([]map[string]interface{}); ok {
+		backups = backupList
 	}
 
-	// Add current timestamp if not already present
-	currentTime := time.Now().Unix()
-	found := false
-	for _, timestamp := range backups {
-		if timestamp == currentTime {
-			found = true
-			break
-		}
-	}
-	if !found {
-		backups = append(backups, currentTime)
+	if len(backups) <= keepCount {
+		u.logDebug("No cleanup needed for %s - have %d backups, keeping %d", instanceID, len(backups), keepCount)
+		return
 	}
 
-	// Sort timestamps (newest first)
+	// Sort backups by timestamp (newest first)
 	for i := 0; i < len(backups)-1; i++ {
 		for j := i + 1; j < len(backups); j++ {
-			if backups[i] < backups[j] {
+			var timestamp1, timestamp2 int64
+			
+			if ts, ok := backups[i]["timestamp"].(float64); ok {
+				timestamp1 = int64(ts)
+			} else if ts, ok := backups[i]["timestamp"].(int64); ok {
+				timestamp1 = ts
+			}
+			
+			if ts, ok := backups[j]["timestamp"].(float64); ok {
+				timestamp2 = int64(ts)
+			} else if ts, ok := backups[j]["timestamp"].(int64); ok {
+				timestamp2 = ts
+			}
+			
+			if timestamp1 < timestamp2 {
 				backups[i], backups[j] = backups[j], backups[i]
 			}
 		}
 	}
 
-	// Remove old backups if we exceed keepCount
+	// Delete old backups (keep only the most recent keepCount)
 	if len(backups) > keepCount {
 		toDelete := backups[keepCount:]
-		for _, timestamp := range toDelete {
-			backupPath := fmt.Sprintf("%s/%s/%d", instanceID, u.backupConfig.Path, timestamp)
-			if err := u.vault.(VaultInterface).Delete(backupPath); err != nil {
-				u.logWarning("Failed to delete old backup %s: %s", backupPath, err)
-			} else {
-				u.logDebug("Deleted old backup %s", backupPath)
+		for _, backup := range toDelete {
+			if sha256Sum, ok := backup["sha256"].(string); ok {
+				backupPath := fmt.Sprintf("%s/backups/%s", instanceID, sha256Sum)
+				if err := u.vault.(VaultInterface).Delete(backupPath); err != nil {
+					u.logWarning("Failed to delete old backup %s: %s", backupPath, err)
+				} else {
+					u.logDebug("Deleted old backup %s", backupPath)
+				}
 			}
 		}
 
@@ -623,7 +707,7 @@ func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
 	if err := u.vault.(VaultInterface).Put(backupIndexPath, backupIndex); err != nil {
 		u.logWarning("Failed to update backup index for %s: %s", instanceID, err)
 	} else {
-		u.logDebug("Backup cleanup for %s completed - keeping %d of %d backups", instanceID, len(backups), len(backups)+len(backups)-keepCount)
+		u.logDebug("Backup cleanup for %s completed - keeping %d backups", instanceID, len(backups))
 	}
 }
 
