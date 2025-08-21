@@ -3736,13 +3736,19 @@
         </div>
       `;
     } else if (serviceType === 'rabbitmq') {
-      const userOptions = connectionInfo.users.map(user =>
-        `<option value="${user}">${user}</option>`
-      ).join('');
+      const userOptions = connectionInfo.users.map(user => {
+        // Default to binding.user if available, otherwise select the first option
+        const isSelected = user === 'binding.user' || 
+                          (connectionInfo.users.indexOf('binding.user') === -1 && user === connectionInfo.users[0]);
+        return `<option value="${user}"${isSelected ? ' selected' : ''}>${user}</option>`;
+      }).join('');
 
-      const vhostOptions = connectionInfo.vhosts.map(vhost =>
-        `<option value="${vhost}">${vhost}</option>`
-      ).join('');
+      const vhostOptions = connectionInfo.vhosts.map(vhost => {
+        // Default to binding.vhost if available, otherwise select the first option
+        const isSelected = vhost === 'binding.vhost' || 
+                          (connectionInfo.vhosts.indexOf('binding.vhost') === -1 && vhost === connectionInfo.vhosts[0]);
+        return `<option value="${vhost}"${isSelected ? ' selected' : ''}>${vhost}</option>`;
+      }).join('');
 
       return `
         <div class="connection-field">
