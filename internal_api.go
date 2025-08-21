@@ -398,6 +398,33 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
+		// Enrich instance data with instance names from vault
+		enrichedInstances := make(map[string]interface{})
+		for instanceID, instanceData := range idx.Data {
+			enrichedInstance := instanceData
+			
+			// Create a copy of the instance data to avoid modifying the original
+			if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+				enrichedInstanceMap := make(map[string]interface{})
+				for k, v := range instanceMap {
+					enrichedInstanceMap[k] = v
+				}
+				
+				// Try to get instance_name from vault data
+				var vaultData map[string]interface{}
+				exists, err := api.Vault.Get(instanceID, &vaultData)
+				if err == nil && exists {
+					if instanceName, ok := vaultData["instance_name"].(string); ok && instanceName != "" {
+						enrichedInstanceMap["instance_name"] = instanceName
+					}
+				}
+				
+				enrichedInstance = enrichedInstanceMap
+			}
+			
+			enrichedInstances[instanceID] = enrichedInstance
+		}
+
 		out := struct {
 			Env       string      `json:"env"`
 			Version   string      `json:"version"`
@@ -411,7 +438,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Version:   Version,
 			BuildTime: BuildTime,
 			GitCommit: GitCommit,
-			Instances: idx.Data,
+			Instances: enrichedInstances,
 			Plans:     deinterface(api.Broker.Plans),
 			Log:       Logger.String(),
 		}
@@ -699,6 +726,23 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(500)
 			fmt.Fprintf(w, "error: %s", err)
 			return
+		}
+
+		// Cache VM data in vault at secret/<instance-id>/vms
+		if param != "blacksmith" {
+			// Only cache for service instances, not for blacksmith deployment itself
+			l.Debug("caching VM data in vault for instance %s", param)
+			err = api.Vault.Put(fmt.Sprintf("%s/vms", param), map[string]interface{}{
+				"vms":        vms,
+				"cached_at":  time.Now().Format(time.RFC3339),
+				"deployment": deploymentName,
+			})
+			if err != nil {
+				l.Error("failed to cache VM data in vault for instance %s: %s", param, err)
+				// Continue anyway - caching failure shouldn't break the API
+			} else {
+				l.Debug("successfully cached VM data for instance %s", param)
+			}
 		}
 		
 		// Note: We don't compute BOSH DNS for VMs here since it's already displayed in the VMs tab

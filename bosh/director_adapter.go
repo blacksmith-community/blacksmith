@@ -345,7 +345,7 @@ func (d *DirectorAdapter) DeleteDeployment(name string) (*Task, error) {
 	return nil, fmt.Errorf("no task found for deployment deletion")
 }
 
-// GetDeploymentVMs retrieves VMs for a deployment
+// GetDeploymentVMs retrieves VMs for a deployment with full details (format=full)
 func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 	d.log.Info("Getting VMs for deployment: %s", deployment)
 	d.log.Debug("Finding deployment %s", deployment)
@@ -356,7 +356,7 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
 	}
 
-	d.log.Debug("Retrieving VM information for deployment %s", deployment)
+	d.log.Debug("Retrieving detailed VM information for deployment %s (format=full)", deployment)
 	vmInfos, err := dep.VMInfos()
 	if err != nil {
 		d.log.Error("Failed to get VMs for deployment %s: %v", deployment, err)
@@ -365,18 +365,112 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 
 	vms := make([]VM, len(vmInfos))
 	for i, vmInfo := range vmInfos {
+		// Parse VM creation time
+		var vmCreatedAt time.Time
+		if vmInfo.VMCreatedAtRaw != "" {
+			if parsed, err := time.Parse(time.RFC3339, vmInfo.VMCreatedAtRaw); err == nil {
+				vmCreatedAt = parsed
+			}
+		}
+
+		// Convert processes
+		processes := make([]VMProcess, len(vmInfo.Processes))
+		for j, proc := range vmInfo.Processes {
+			processes[j] = VMProcess{
+				Name:  proc.Name,
+				State: proc.State,
+				CPU: VMVitalsCPU{
+					Total: proc.CPU.Total,
+					Sys:   proc.CPU.Sys,
+					User:  proc.CPU.User,
+					Wait:  proc.CPU.Wait,
+				},
+				Memory: VMVitalsMemory{
+					KB:      proc.Mem.KB,
+					Percent: proc.Mem.Percent,
+				},
+				Uptime: VMVitalsUptime{
+					Seconds: proc.Uptime.Seconds,
+				},
+			}
+		}
+
+		// Convert vitals
+		vitals := VMVitals{
+			CPU: VMVitalsCPU{
+				Sys:  vmInfo.Vitals.CPU.Sys,
+				User: vmInfo.Vitals.CPU.User,
+				Wait: vmInfo.Vitals.CPU.Wait,
+			},
+			Memory: VMVitalsMemory{
+				KB:      parseStringToUint64(vmInfo.Vitals.Mem.KB),
+				Percent: parseStringToFloat64(vmInfo.Vitals.Mem.Percent),
+			},
+			Swap: VMVitalsMemory{
+				KB:      parseStringToUint64(vmInfo.Vitals.Swap.KB),
+				Percent: parseStringToFloat64(vmInfo.Vitals.Swap.Percent),
+			},
+			Load: vmInfo.Vitals.Load,
+			Uptime: VMVitalsUptime{
+				Seconds: vmInfo.Vitals.Uptime.Seconds,
+			},
+		}
+
+		// Convert disk vitals
+		vitals.Disk = make(map[string]VMVitalsDisk)
+		for diskName, diskVitals := range vmInfo.Vitals.Disk {
+			vitals.Disk[diskName] = VMVitalsDisk{
+				InodePercent: diskVitals.InodePercent,
+				Percent:      diskVitals.Percent,
+			}
+		}
+
+		// Convert stemcell info
+		stemcell := VMStemcell{
+			Name:       vmInfo.Stemcell.Name,
+			Version:    vmInfo.Stemcell.Version,
+			ApiVersion: vmInfo.Stemcell.ApiVersion,
+		}
+
 		vms[i] = VM{
-			ID:                 vmInfo.ID,
-			CID:                vmInfo.AgentID, // Using AgentID as CID approximation
-			Job:                vmInfo.JobName,
-			Index:              *vmInfo.Index, // Dereference pointer
-			State:              vmInfo.ProcessState,
-			IPs:                vmInfo.IPs,
-			DNS:                []string{}, // DNS not directly available
-			AZ:                 vmInfo.AZ,
-			VMType:             vmInfo.VMType,
-			ResourcePool:       vmInfo.ResourcePool,
+			// Core VM identity
+			ID:      vmInfo.ID,
+			AgentID: vmInfo.AgentID,
+			CID:     vmInfo.VMID, // vm_cid from BOSH API
+
+			// Job information  
+			Job:      vmInfo.JobName, // job_name from BOSH API
+			Index:    *vmInfo.Index,  // Dereference pointer
+			JobState: vmInfo.ProcessState, // job_state from BOSH API
+
+			// VM state and properties
+			State:              vmInfo.State,
+			Active:             vmInfo.Active,
+			Bootstrap:          vmInfo.Bootstrap,
+			Ignore:             vmInfo.Ignore,
 			ResurrectionPaused: vmInfo.ResurrectionPaused,
+
+			// Network and placement
+			IPs: vmInfo.IPs,
+			DNS: []string{}, // DNS not directly available in BOSH CLI
+			AZ:  vmInfo.AZ,
+
+			// Resource allocation
+			VMType:       vmInfo.VMType,
+			ResourcePool: vmInfo.ResourcePool,
+
+			// Disk information
+			DiskCID:  vmInfo.DiskID,
+			DiskCIDs: vmInfo.DiskIDs,
+
+			// Timestamps
+			VMCreatedAt: vmCreatedAt,
+
+			// Complex data structures
+			CloudProperties: vmInfo.CloudProperties,
+			Processes:       processes,
+			Vitals:          vitals,
+			Stemcell:        stemcell,
 		}
 	}
 
@@ -988,6 +1082,28 @@ func extractDeploymentName(manifest string) string {
 		}
 	}
 	return ""
+}
+
+// Helper functions for converting string values to numeric types
+
+func parseStringToUint64(s string) *uint64 {
+	if s == "" {
+		return nil
+	}
+	if val, err := strconv.ParseUint(s, 10, 64); err == nil {
+		return &val
+	}
+	return nil
+}
+
+func parseStringToFloat64(s string) *float64 {
+	if s == "" {
+		return nil
+	}
+	if val, err := strconv.ParseFloat(s, 64); err == nil {
+		return &val
+	}
+	return nil
 }
 
 // FetchLogs fetches logs from a specific job in a deployment

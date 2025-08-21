@@ -332,6 +332,23 @@
     }
   };
 
+  // Search filter state persistence utilities
+  const captureSearchFilterState = (tableId) => {
+    const searchInput = document.getElementById(`search-${tableId}`);
+    return searchInput ? searchInput.value : '';
+  };
+
+  const restoreSearchFilterState = (tableId, searchValue) => {
+    if (!searchValue) return;
+    
+    const searchInput = document.getElementById(`search-${tableId}`);
+    if (searchInput) {
+      searchInput.value = searchValue;
+      // Trigger the filter function
+      searchInput.dispatchEvent(new Event('input'));
+    }
+  };
+
   // Copy to clipboard helper
   const copyToClipboard = async (text, button) => {
     try {
@@ -559,11 +576,17 @@
       'vms-table': [
         { key: 'instance', sortable: true },
         { key: 'state', sortable: true },
+        { key: 'job_state', sortable: true },
         { key: 'az', sortable: true },
         { key: 'vm_type', sortable: true },
+        { key: 'active', sortable: true },
+        { key: 'bootstrap', sortable: true },
         { key: 'ips', sortable: true },
         { key: 'dns', sortable: true },
-        { key: 'cid', sortable: true },
+        { key: 'vm_cid', sortable: true },
+        { key: 'agent_id', sortable: true },
+        { key: 'vm_created_at', sortable: true },
+        { key: 'disk_cids', sortable: true },
         { key: 'resurrection', sortable: true }
       ],
       'logs-table': [
@@ -865,11 +888,17 @@
       tbody.innerHTML = data.map(row => renderLogRow(row)).join('');
     } else if (tableClass === 'vms-table') {
       tbody.innerHTML = data.map(vm => {
-        const instanceName = vm.job && vm.index !== undefined ? `${vm.job}/${vm.index}` : vm.id || '-';
+        // Use the correct field names from our enhanced VM struct
+        const instanceName = vm.job_name && vm.index !== undefined ? `${vm.job_name}/${vm.index}` : vm.id || '-';
         const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
         const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
         const vmType = vm.vm_type || vm.resource_pool || '-';
         const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
+        const agentId = vm.agent_id || '-';
+        const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : '-';
+        const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : '-';
+        const bootstrap = vm.bootstrap ? 'Yes' : 'No';
+        const diskCids = vm.disk_cids && vm.disk_cids.length > 0 ? vm.disk_cids.join(', ') : (vm.disk_cid || '-');
 
         let stateClass = '';
         if (vm.state === 'running') {
@@ -880,15 +909,30 @@
           stateClass = 'vm-state-stopped';
         }
 
+        let jobStateClass = '';
+        if (vm.job_state === 'running') {
+          jobStateClass = 'vm-state-running';
+        } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive') {
+          jobStateClass = 'vm-state-error';
+        } else if (vm.job_state === 'stopped') {
+          jobStateClass = 'vm-state-stopped';
+        }
+
         return `
           <tr>
             <td class="vm-instance">${instanceName}</td>
             <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
+            <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
             <td class="vm-az">${vm.az || '-'}</td>
             <td class="vm-type">${vmType}</td>
+            <td class="vm-active">${active}</td>
+            <td class="vm-bootstrap">${bootstrap}</td>
             <td class="vm-ips">${ips}</td>
             <td class="vm-dns">${dns}</td>
-            <td class="vm-cid">${vm.cid || '-'}</td>
+            <td class="vm-cid">${vm.vm_cid || '-'}</td>
+            <td class="vm-agent-id">${agentId}</td>
+            <td class="vm-created-at">${vmCreatedAt}</td>
+            <td class="vm-disk-cids">${diskCids}</td>
             <td class="vm-resurrection">${resurrection}</td>
           </tr>
         `;
@@ -1379,6 +1423,7 @@
       : instancesList.map(([id, details]) => `
           <div class="service-item" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
             <div class="service-id">${id}</div>
+            ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
             <div class="service-meta">
               ${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
             </div>
@@ -2517,6 +2562,10 @@
       return;
     }
 
+    // Capture current search filter state
+    const tableId = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
+    const currentSearchFilter = captureSearchFilterState(tableId);
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -2564,6 +2613,10 @@
         const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
         if (tableEl) {
           tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+          // Restore search filter state after updating table
+          setTimeout(() => {
+            restoreSearchFilterState(tableId, currentSearchFilter);
+          }, 100);
         }
       } else {
         // Update files data
@@ -2592,6 +2645,10 @@
         const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
         if (tableEl) {
           tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+          // Restore search filter state after updating table
+          setTimeout(() => {
+            restoreSearchFilterState(tableId, currentSearchFilter);
+          }, 100);
         }
       }
 
@@ -3176,22 +3233,34 @@
         <thead>
           <tr>
             <th>Instance</th>
-            <th>State</th>
+            <th>VM State</th>
+            <th>Job State</th>
             <th>AZ</th>
             <th>VM Type</th>
+            <th>Active</th>
+            <th>Bootstrap</th>
             <th>IPs</th>
             <th>DNS</th>
-            <th>CID</th>
+            <th>VM CID</th>
+            <th>Agent ID</th>
+            <th>Created At</th>
+            <th>Disk CIDs</th>
             <th>Resurrection</th>
           </tr>
         </thead>
         <tbody>
           ${vms.map(vm => {
-      const instanceName = vm.job && vm.index !== undefined ? `${vm.job}/${vm.index}` : vm.id || '-';
+      // Use the correct field names from our enhanced VM struct
+      const instanceName = vm.job_name && vm.index !== undefined ? `${vm.job_name}/${vm.index}` : vm.id || '-';
       const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
       const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
       const vmType = vm.vm_type || vm.resource_pool || '-';
       const resurrection = vm.resurrection_paused ? 'Paused' : 'Active';
+      const agentId = vm.agent_id || '-';
+      const vmCreatedAt = vm.vm_created_at ? new Date(vm.vm_created_at).toLocaleString() : '-';
+      const active = vm.active !== undefined ? (vm.active ? 'Yes' : 'No') : '-';
+      const bootstrap = vm.bootstrap ? 'Yes' : 'No';
+      const diskCids = vm.disk_cids && vm.disk_cids.length > 0 ? vm.disk_cids.join(', ') : (vm.disk_cid || '-');
 
       // Add class based on state
       let stateClass = '';
@@ -3203,12 +3272,25 @@
         stateClass = 'vm-state-stopped';
       }
 
+      // Add class based on job_state as well
+      let jobStateClass = '';
+      if (vm.job_state === 'running') {
+        jobStateClass = 'vm-state-running';
+      } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive') {
+        jobStateClass = 'vm-state-error';
+      } else if (vm.job_state === 'stopped') {
+        jobStateClass = 'vm-state-stopped';
+      }
+
       return `
               <tr>
                 <td class="vm-instance">${instanceName}</td>
                 <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
+                <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
                 <td class="vm-az">${vm.az || '-'}</td>
                 <td class="vm-type">${vmType}</td>
+                <td class="vm-active">${active}</td>
+                <td class="vm-bootstrap">${bootstrap}</td>
                 <td class="vm-ips">
                   ${ips !== '-' ? `
                     <span class="copy-wrapper">
@@ -3222,13 +3304,36 @@
                 </td>
                 <td class="vm-dns">${dns}</td>
                 <td class="vm-cid">
-                  ${vm.cid ? `
+                  ${vm.vm_cid ? `
                     <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.cid}')"
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.vm_cid}')"
                               title="Copy to clipboard">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
-                      <span>${vm.cid}</span>
+                      <span>${vm.vm_cid}</span>
+                    </span>
+                  ` : '-'}
+                </td>
+                <td class="vm-agent-id">
+                  ${agentId !== '-' ? `
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${agentId}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <span>${agentId}</span>
+                    </span>
+                  ` : '-'}
+                </td>
+                <td class="vm-created-at">${vmCreatedAt}</td>
+                <td class="vm-disk-cids">
+                  ${diskCids !== '-' ? `
+                    <span class="copy-wrapper">
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${diskCids}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <span>${diskCids}</span>
                     </span>
                   ` : '-'}
                 </td>
@@ -4081,6 +4186,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('events-table-events');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4112,6 +4220,8 @@
           setTimeout(() => {
             initializeSorting('events-table');
             attachSearchFilter('events-table-events');
+            // Restore search filter state
+            restoreSearchFilterState('events-table-events', currentSearchFilter);
           }, 100);
         }
       }
@@ -4151,6 +4261,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('vms-table');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4182,6 +4295,8 @@
           setTimeout(() => {
             initializeSorting('vms-table');
             attachSearchFilter('vms-table');
+            // Restore search filter state
+            restoreSearchFilterState('vms-table', currentSearchFilter);
           }, 100);
         }
       }
@@ -4221,6 +4336,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('vms-table');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4256,6 +4374,8 @@
           setTimeout(() => {
             initializeSorting('vms-table');
             attachSearchFilter('vms-table');
+            // Restore search filter state
+            restoreSearchFilterState('vms-table', currentSearchFilter);
           }, 100);
         }
       }
@@ -4296,6 +4416,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('deployment-log-table');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4333,8 +4456,10 @@
         detailContent.innerHTML = formatDeploymentLog(logs);
         // Re-initialize sorting and filtering
         setTimeout(() => {
-          attachSearchFilter('deployment-log-table');
           initializeSorting('deployment-log-table');
+          attachSearchFilter('deployment-log-table');
+          // Restore search filter state
+          restoreSearchFilterState('deployment-log-table', currentSearchFilter);
         }, 100);
       }
 
@@ -4374,6 +4499,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('deployment-log-table');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4401,8 +4529,10 @@
         detailContent.innerHTML = formatDeploymentLog(logs, instanceId);
         // Re-initialize sorting and filtering
         setTimeout(() => {
-          attachSearchFilter('deployment-log-table');
           initializeSorting('deployment-log-table');
+          attachSearchFilter('deployment-log-table');
+          // Restore search filter state
+          restoreSearchFilterState('deployment-log-table', currentSearchFilter);
         }, 100);
       }
 
@@ -4442,6 +4572,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('debug-log-table');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4479,8 +4612,10 @@
         detailContent.innerHTML = formatDebugLog(logs);
         // Re-initialize sorting and filtering
         setTimeout(() => {
-          attachSearchFilter('debug-log-table');
           initializeSorting('debug-log-table');
+          attachSearchFilter('debug-log-table');
+          // Restore search filter state
+          restoreSearchFilterState('debug-log-table', currentSearchFilter);
         }, 100);
       }
 
@@ -4523,6 +4658,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('debug-log-table');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4550,8 +4688,10 @@
         detailContent.innerHTML = formatDebugLog(logs, instanceId);
         // Re-initialize sorting and filtering
         setTimeout(() => {
-          attachSearchFilter('debug-log-table');
           initializeSorting('debug-log-table');
+          attachSearchFilter('debug-log-table');
+          // Restore search filter state
+          restoreSearchFilterState('debug-log-table', currentSearchFilter);
         }, 100);
       }
 
@@ -4590,6 +4730,9 @@
       return;
     }
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('events-table-service-events');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4625,6 +4768,8 @@
           setTimeout(() => {
             initializeSorting('events-table');
             attachSearchFilter('events-table-service-events');
+            // Restore search filter state
+            restoreSearchFilterState('events-table-service-events', currentSearchFilter);
           }, 100);
         }
       }
@@ -4668,6 +4813,9 @@
     // Get currently selected log file
     const currentLogFile = logFileDropdown.value || '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log';
 
+    // Capture current search filter state
+    const currentSearchFilter = captureSearchFilterState('logs-table');
+
     // Add spinning animation to refresh button
     button.classList.add('refreshing');
     button.disabled = true;
@@ -4692,6 +4840,8 @@
 
         // Re-attach the search filter functionality to the existing search filter
         attachSearchFilter('logs-table');
+        // Restore search filter state
+        restoreSearchFilterState('logs-table', currentSearchFilter);
       }
 
       // Visual feedback for successful refresh
@@ -5131,6 +5281,12 @@
               button.disabled = true;
 
               try {
+                // Capture current filter state before refreshing
+                const serviceFilter = document.getElementById('service-filter');
+                const planFilter = document.getElementById('plan-filter');
+                const currentServiceFilter = serviceFilter ? serviceFilter.value : '';
+                const currentPlanFilter = planFilter ? planFilter.value : '';
+
                 // Re-fetch the catalog and status data
                 const [catalogResponse, statusResponse] = await Promise.all([
                   fetchWithHeaders('/v2/catalog'),
@@ -5214,6 +5370,27 @@
 
                   // Re-setup handlers
                   setupServiceHandlers();
+
+                  // Restore filter state after rendering
+                  const newServiceFilter = document.getElementById('service-filter');
+                  const newPlanFilter = document.getElementById('plan-filter');
+                  
+                  if (newServiceFilter && currentServiceFilter) {
+                    newServiceFilter.value = currentServiceFilter;
+                    // Trigger change event to update plan filter options
+                    newServiceFilter.dispatchEvent(new Event('change'));
+                    
+                    // Restore plan filter if it was set
+                    if (newPlanFilter && currentPlanFilter) {
+                      // Wait for plan options to be populated, then set the value
+                      setTimeout(() => {
+                        if (newPlanFilter.querySelector(`option[value="${currentPlanFilter}"]`)) {
+                          newPlanFilter.value = currentPlanFilter;
+                          newPlanFilter.dispatchEvent(new Event('change'));
+                        }
+                      }, 0);
+                    }
+                  }
                 }
 
                 // Also refresh the plans panel if needed

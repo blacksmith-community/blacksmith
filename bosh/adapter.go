@@ -72,17 +72,93 @@ type DeploymentDetail struct {
 
 // VM represents a BOSH VM
 type VM struct {
-	ID                 string   `json:"id"`
-	CID                string   `json:"cid"`
-	Job                string   `json:"job"`
-	Index              int      `json:"index"`
-	State              string   `json:"state"`
-	IPs                []string `json:"ips"`
-	DNS                []string `json:"dns"`
-	AZ                 string   `json:"az"`
-	VMType             string   `json:"vm_type"`
-	ResourcePool       string   `json:"resource_pool"`
-	ResurrectionPaused bool     `json:"resurrection_paused"`
+	// Core VM identity
+	ID      string `json:"id"`
+	AgentID string `json:"agent_id"`
+	CID     string `json:"vm_cid"` // Cloud ID of the VM
+
+	// Job information
+	Job      string `json:"job_name"`   // Name of the job
+	Index    int    `json:"index"`      // Numeric job index
+	JobState string `json:"job_state"`  // Aggregate state of job (running, etc.)
+
+	// VM state and properties
+	State              string    `json:"state"`                 // State of the VM
+	Active             *bool     `json:"active"`                // Whether the VM is active
+	Bootstrap          bool      `json:"bootstrap"`             // Bootstrap property of VM
+	Ignore             bool      `json:"ignore"`                // Ignore this VM if set to true
+	ResurrectionPaused bool      `json:"resurrection_paused"`   // Resurrection state
+	VMCreatedAt        time.Time `json:"vm_created_at"`         // Time when the VM was created
+
+	// Network and placement
+	IPs []string `json:"ips"` // List of IPs
+	DNS []string `json:"dns"` // DNS entries (often empty)
+	AZ  string   `json:"az"`  // Name of availability zone
+
+	// Resource allocation
+	VMType       string `json:"vm_type"`       // Name of VM type
+	ResourcePool string `json:"resource_pool"` // Name of the resource pool used for the VM
+
+	// Disk information
+	DiskCID  string   `json:"disk_cid"`  // Cloud ID of the associated persistent disk
+	DiskCIDs []string `json:"disk_cids"` // List of Cloud IDs of the VM's disks
+
+	// Complex data structures
+	CloudProperties interface{}   `json:"cloud_properties"` // Cloud properties of the VM
+	Processes       []VMProcess   `json:"processes"`        // List of processes running as part of the job
+	Vitals          VMVitals      `json:"vitals"`           // VM vitals
+	Stemcell        VMStemcell    `json:"stemcell"`         // Information of the Stemcell used for the VM
+}
+
+// VMProcess represents a process running on a VM
+type VMProcess struct {
+	Name   string         `json:"name"`
+	State  string         `json:"state"`
+	CPU    VMVitalsCPU    `json:"cpu"`
+	Memory VMVitalsMemory `json:"mem"`
+	Uptime VMVitalsUptime `json:"uptime"`
+}
+
+// VMVitals represents VM vital statistics
+type VMVitals struct {
+	CPU    VMVitalsCPU               `json:"cpu"`
+	Memory VMVitalsMemory            `json:"mem"`
+	Swap   VMVitalsMemory            `json:"swap"`
+	Load   []string                  `json:"load"`
+	Disk   map[string]VMVitalsDisk   `json:"disk"`
+	Uptime VMVitalsUptime            `json:"uptime"`
+}
+
+// VMVitalsCPU represents CPU vitals
+type VMVitalsCPU struct {
+	Total *float64 `json:"total,omitempty"` // used by VMProcess
+	Sys   string   `json:"sys"`
+	User  string   `json:"user"`
+	Wait  string   `json:"wait"`
+}
+
+// VMVitalsMemory represents memory vitals
+type VMVitalsMemory struct {
+	KB      *uint64  `json:"kb,omitempty"`
+	Percent *float64 `json:"percent,omitempty"`
+}
+
+// VMVitalsDisk represents disk vitals
+type VMVitalsDisk struct {
+	InodePercent string `json:"inode_percent"`
+	Percent      string `json:"percent"`
+}
+
+// VMVitalsUptime represents uptime vitals
+type VMVitalsUptime struct {
+	Seconds *uint64 `json:"secs,omitempty"`
+}
+
+// VMStemcell represents stemcell information for a VM
+type VMStemcell struct {
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	ApiVersion int    `json:"api_version"`
 }
 
 // Release represents a BOSH release
