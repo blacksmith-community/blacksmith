@@ -7,16 +7,18 @@ This document provides comprehensive documentation for all Blacksmith configurat
 The main configuration file contains the following top-level sections:
 
 ```yaml
-broker:      # HTTP server and authentication settings
-vault:       # Vault integration configuration
-shield:      # SHIELD backup integration (optional)
-bosh:        # BOSH director configuration
-services:    # Service-specific behavior configuration
-debug:       # Enable debug logging
-web-root:    # Static web content directory
-env:         # Environment identifier
-shareable:   # Enable shareable service instances
-forges:      # Service template discovery configuration
+broker:       # HTTP server and authentication settings
+vault:        # Vault integration configuration
+shield:       # SHIELD backup integration (optional)
+bosh:         # BOSH director configuration
+services:     # Service-specific behavior configuration
+vm_monitoring: # VM monitoring and status tracking (optional)
+reconciler:   # Deployment reconciler configuration (optional)
+debug:        # Enable debug logging
+web-root:     # Static web content directory
+env:          # Environment identifier
+shareable:    # Enable shareable service instances
+forges:       # Service template discovery configuration
 ```
 
 ## Top-Level Configuration Options
@@ -103,6 +105,70 @@ services:
 - Redis deployments with self-signed certificates
 - Development environments with locally generated certificates
 - Services behind load balancers that terminate TLS with different certificates
+
+## VM Monitoring Configuration (`vm_monitoring`)
+
+The `vm_monitoring` section configures automatic monitoring of BOSH VM health for service instances, providing real-time status visibility in the Blacksmith web UI.
+
+```yaml
+vm_monitoring:
+  enabled: true              # Enable VM monitoring
+  normal_interval: 3600      # Check healthy deployments every hour
+  failed_interval: 300       # Check unhealthy deployments every 5 minutes
+  max_retries: 3            # Maximum retry attempts
+  timeout: 30               # BOSH command timeout (seconds)
+  max_concurrent: 3         # Maximum concurrent VM checks
+```
+
+### Optional Fields
+
+#### `enabled` (boolean)
+**Default:** `true`
+
+Enable or disable VM monitoring. When enabled, Blacksmith will periodically fetch VM status from BOSH and display color-coded status badges in the service instance list.
+
+#### `normal_interval` (integer)
+**Default:** `3600` (1 hour)
+
+Interval in seconds between VM health checks for deployments with all VMs running normally. This helps minimize BOSH API load for healthy services.
+
+#### `failed_interval` (integer)
+**Default:** `300` (5 minutes)
+
+Interval in seconds between VM health checks for deployments with failing or unhealthy VMs. Faster checking enables quicker detection of recovery.
+
+#### `max_retries` (integer)
+**Default:** `3`
+
+Maximum number of retry attempts for failed BOSH API calls before marking a service as having an error state.
+
+#### `timeout` (integer)
+**Default:** `30`
+
+Timeout in seconds for individual BOSH CLI commands when fetching VM information.
+
+#### `max_concurrent` (integer)
+**Default:** `3`
+
+Maximum number of concurrent VM health checks to prevent overwhelming the BOSH director with simultaneous API calls.
+
+### VM Status Display
+
+When VM monitoring is enabled, the Blacksmith web UI displays color-coded status badges for each service instance:
+
+- **Green (running)**: All VMs are running normally
+- **Red (failing/unresponsive)**: One or more VMs are failing or unresponsive
+- **Yellow (starting/stopping)**: VMs are in transition states
+- **Gray (stopped/unknown)**: VMs are stopped or status cannot be determined
+
+Status badges show VM health ratios (e.g., "3/4" indicating 3 healthy VMs out of 4 total) and are clickable to view detailed VM information.
+
+### Performance Considerations
+
+- VM status data is cached in Vault to provide fast UI response times
+- Monitoring intervals can be adjusted based on environment needs and BOSH director capacity
+- The background worker uses controlled concurrency to prevent API overload
+- Failed checks automatically use shorter intervals for faster recovery detection
 
 ## Broker Configuration (`broker`)
 
@@ -465,6 +531,14 @@ shareable: true
 services:
   skip_tls_verify:
     - rabbitmq
+
+vm_monitoring:
+  enabled: true
+  normal_interval: 3600
+  failed_interval: 300
+  max_retries: 3
+  timeout: 30
+  max_concurrent: 3
 
 broker:
   username: "cf-broker"

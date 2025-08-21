@@ -438,9 +438,9 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 			AgentID: vmInfo.AgentID,
 			CID:     vmInfo.VMID, // vm_cid from BOSH API
 
-			// Job information  
-			Job:      vmInfo.JobName, // job_name from BOSH API
-			Index:    *vmInfo.Index,  // Dereference pointer
+			// Job information
+			Job:      vmInfo.JobName,      // job_name from BOSH API
+			Index:    *vmInfo.Index,       // Dereference pointer
 			JobState: vmInfo.ProcessState, // job_state from BOSH API
 
 			// VM state and properties

@@ -16,10 +16,11 @@ import (
 )
 
 type InternalApi struct {
-	Env    string
-	Vault  *Vault
-	Broker *Broker
-	Config Config
+	Env       string
+	Vault     *Vault
+	Broker    *Broker
+	Config    Config
+	VMMonitor *VMMonitor
 }
 
 // parseResultOutputToEvents converts BOSH task result output (JSON lines) into TaskEvent array for the frontend
@@ -288,14 +289,14 @@ func convertToJSONCompatible(v interface{}) interface{} {
 // getBoshDNSFromHosts reads the BOSH DNS entry from /etc/hosts for a given instance ID
 func (api *InternalApi) getBoshDNSFromHosts(instanceID string) string {
 	l := Logger.Wrap("bosh-dns")
-	
+
 	// Read /etc/hosts
 	data, err := os.ReadFile("/etc/hosts")
 	if err != nil {
 		l.Debug("unable to read /etc/hosts: %s", err)
 		return ""
 	}
-	
+
 	// Parse each line looking for the instance ID
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
@@ -304,13 +305,13 @@ func (api *InternalApi) getBoshDNSFromHosts(instanceID string) string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Split by whitespace
 		parts := strings.Fields(line)
 		if len(parts) < 2 {
 			continue
 		}
-		
+
 		// Check each hostname for our instance ID and .bosh suffix
 		for i := 1; i < len(parts); i++ {
 			hostname := parts[i]
@@ -320,7 +321,7 @@ func (api *InternalApi) getBoshDNSFromHosts(instanceID string) string {
 			}
 		}
 	}
-	
+
 	l.Debug("no BOSH DNS entry found in /etc/hosts for instance %s", instanceID)
 	return ""
 }
@@ -366,7 +367,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Use "blacksmith" as default instance group name
 			instanceDetails["name"] = "blacksmith"
 		}
-		
+
 		// Get BOSH DNS from /etc/hosts if we have an instance ID
 		if instanceDetails["id"] != "" {
 			boshDNS := api.getBoshDNSFromHosts(instanceDetails["id"])
@@ -402,14 +403,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		enrichedInstances := make(map[string]interface{})
 		for instanceID, instanceData := range idx.Data {
 			enrichedInstance := instanceData
-			
+
 			// Create a copy of the instance data to avoid modifying the original
 			if instanceMap, ok := instanceData.(map[string]interface{}); ok {
 				enrichedInstanceMap := make(map[string]interface{})
 				for k, v := range instanceMap {
 					enrichedInstanceMap[k] = v
 				}
-				
+
 				// Try to get instance_name from vault data
 				var vaultData map[string]interface{}
 				exists, err := api.Vault.Get(instanceID, &vaultData)
@@ -418,10 +419,20 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 						enrichedInstanceMap["instance_name"] = instanceName
 					}
 				}
-				
+
+				// Add VM status if VMMonitor is available
+				if api.VMMonitor != nil {
+					if vmStatus, err := api.VMMonitor.GetServiceVMStatus(instanceID); err == nil && vmStatus != nil {
+						enrichedInstanceMap["vm_status"] = vmStatus.Status
+						enrichedInstanceMap["vm_count"] = vmStatus.VMCount
+						enrichedInstanceMap["vm_healthy"] = vmStatus.HealthyVMs
+						enrichedInstanceMap["vm_last_updated"] = vmStatus.LastUpdated.Unix()
+					}
+				}
+
 				enrichedInstance = enrichedInstanceMap
 			}
-			
+
 			enrichedInstances[instanceID] = enrichedInstance
 		}
 
@@ -744,7 +755,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				l.Debug("successfully cached VM data for instance %s", param)
 			}
 		}
-		
+
 		// Note: We don't compute BOSH DNS for VMs here since it's already displayed in the VMs tab
 		// The DNS field remains as provided by BOSH (typically empty)
 

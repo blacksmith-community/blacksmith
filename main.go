@@ -350,6 +350,9 @@ func main() {
 	// Initialize the deployment reconciler
 	reconciler := NewReconcilerAdapter(&config, broker, vault, boshDirector)
 
+	// Initialize the VM monitor
+	vmMonitor := NewVMMonitor(vault, boshDirector, &config)
+
 	// Create context for server and reconciler lifecycle
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -368,16 +371,31 @@ func main() {
 		}()
 	}
 
+	// Start the VM monitor
+	if err := vmMonitor.Start(); err != nil {
+		l.Error("Failed to start VM monitor: %s", err)
+		// Non-fatal error - continue without VM monitoring
+	} else {
+		l.Info("VM monitor started successfully")
+		// Ensure VM monitor is stopped on shutdown
+		defer func() {
+			if err := vmMonitor.Stop(); err != nil {
+				l.Error("Error stopping VM monitor: %s", err)
+			}
+		}()
+	}
+
 	// Create the main API handler
 	apiHandler := &API{
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,
 		WebRoot:  ui,
 		Internal: &InternalApi{
-			Env:    config.Env,
-			Vault:  vault,
-			Broker: broker,
-			Config: config,
+			Env:       config.Env,
+			Vault:     vault,
+			Broker:    broker,
+			Config:    config,
+			VMMonitor: vmMonitor,
 		},
 		Primary: brokerapi.New(
 			broker,

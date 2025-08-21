@@ -3219,3 +3219,129 @@ th[style*="cursor: pointer"]:hover {
 [data-theme="dark"] .job-pane h6 {
   color: var(--text-primary);
 }
+
+/* VM Status Badge Styles */
+.vm-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-top: 8px;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.vm-status-badge:hover {
+  opacity: 0.8;
+}
+
+.vm-status-icon::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.vm-status-running {
+  background-color: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.vm-status-running .vm-status-icon::before {
+  background-color: #28a745;
+}
+
+.vm-status-failing {
+  background-color: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.vm-status-failing .vm-status-icon::before {
+  background-color: #dc3545;
+}
+
+.vm-status-unresponsive {
+  background-color: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.vm-status-unresponsive .vm-status-icon::before {
+  background-color: #dc3545;
+}
+
+.vm-status-starting,
+.vm-status-stopping {
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
+}
+
+.vm-status-starting .vm-status-icon::before,
+.vm-status-stopping .vm-status-icon::before {
+  background-color: #ffc107;
+}
+
+.vm-status-stopped {
+  background-color: #e2e3e5;
+  color: #383d41;
+  border: 1px solid #d6d8db;
+}
+
+.vm-status-stopped .vm-status-icon::before {
+  background-color: #6c757d;
+}
+
+.vm-status-unknown,
+.vm-status-error {
+  background-color: #e2e3e5;
+  color: #383d41;
+  border: 1px solid #d6d8db;
+}
+
+.vm-status-unknown .vm-status-icon::before,
+.vm-status-error .vm-status-icon::before {
+  background-color: #6c757d;
+}
+
+.vm-count {
+  font-size: 11px;
+  opacity: 0.8;
+  margin-left: 4px;
+}
+
+/* Dark theme support for VM status badges */
+[data-theme="dark"] .vm-status-running {
+  background-color: #155724;
+  color: #d4edda;
+  border-color: #28a745;
+}
+
+[data-theme="dark"] .vm-status-failing,
+[data-theme="dark"] .vm-status-unresponsive {
+  background-color: #721c24;
+  color: #f8d7da;
+  border-color: #dc3545;
+}
+
+[data-theme="dark"] .vm-status-starting,
+[data-theme="dark"] .vm-status-stopping {
+  background-color: #856404;
+  color: #fff3cd;
+  border-color: #ffc107;
+}
+
+[data-theme="dark"] .vm-status-stopped,
+[data-theme="dark"] .vm-status-unknown,
+[data-theme="dark"] .vm-status-error {
+  background-color: #383d41;
+  color: #e2e3e5;
+  border-color: #6c757d;
+}

@@ -1420,15 +1420,26 @@
 
     const listHtml = instancesList.length === 0
       ? '<div class="no-data">No services have been provisioned yet.</div>'
-      : instancesList.map(([id, details]) => `
-          <div class="service-item" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
-            <div class="service-id">${id}</div>
-            ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
-            <div class="service-meta">
-              ${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
+      : instancesList.map(([id, details]) => {
+          const vmStatusHtml = details.vm_status ? `
+            <div class="vm-status-badge vm-status-${details.vm_status}" title="VM Status: ${details.vm_status}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}" onclick="selectInstance('${id}', 'vms')">
+              <span class="vm-status-icon"></span>
+              <span class="vm-status-text">${details.vm_status}</span>
+              ${details.vm_count ? `<span class="vm-count">${details.vm_healthy || 0}/${details.vm_count}</span>` : ''}
             </div>
-          </div>
-        `).join('');
+          ` : '';
+          
+          return `
+            <div class="service-item" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
+              <div class="service-id">${id}</div>
+              ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
+              <div class="service-meta">
+                ${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
+              </div>
+              ${vmStatusHtml}
+            </div>
+          `;
+      }).join('');
 
     return `
       <div class="services-list">

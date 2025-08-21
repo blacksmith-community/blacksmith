@@ -8,17 +8,18 @@ import (
 )
 
 type Config struct {
-	Broker     BrokerConfig     `yaml:"broker"`
-	Vault      VaultConfig      `yaml:"vault"`
-	Shield     ShieldConfig     `yaml:"shield"`
-	BOSH       BOSHConfig       `yaml:"bosh"`
-	Services   ServicesConfig   `yaml:"services"`
-	Reconciler ReconcilerConfig `yaml:"reconciler"`
-	Debug      bool             `yaml:"debug"`
-	WebRoot    string           `yaml:"web-root"`
-	Env        string           `yaml:"env"`
-	Shareable  bool             `yaml:"shareable"`
-	Forges     ForgesConfig     `yaml:"forges"`
+	Broker       BrokerConfig       `yaml:"broker"`
+	Vault        VaultConfig        `yaml:"vault"`
+	Shield       ShieldConfig       `yaml:"shield"`
+	BOSH         BOSHConfig         `yaml:"bosh"`
+	Services     ServicesConfig     `yaml:"services"`
+	Reconciler   ReconcilerConfig   `yaml:"reconciler"`
+	VMMonitoring VMMonitoringConfig `yaml:"vm_monitoring"`
+	Debug        bool               `yaml:"debug"`
+	WebRoot      string             `yaml:"web-root"`
+	Env          string             `yaml:"env"`
+	Shareable    bool               `yaml:"shareable"`
+	Forges       ForgesConfig       `yaml:"forges"`
 }
 
 // ServicesConfig configures service-specific behavior
@@ -61,6 +62,16 @@ type ReconcilerConfig struct {
 	CacheTTL       string                 `yaml:"cache_ttl"`
 	Debug          bool                   `yaml:"debug"`
 	Backup         ReconcilerBackupConfig `yaml:"backup"`
+}
+
+// VMMonitoringConfig holds configuration for VM monitoring
+type VMMonitoringConfig struct {
+	Enabled        *bool `yaml:"enabled"`         // Pointer to distinguish between false and unset
+	NormalInterval int   `yaml:"normal_interval"` // Seconds between checks for healthy deployments
+	FailedInterval int   `yaml:"failed_interval"` // Seconds between checks for unhealthy deployments
+	MaxRetries     int   `yaml:"max_retries"`
+	Timeout        int   `yaml:"timeout"`
+	MaxConcurrent  int   `yaml:"max_concurrent"`
 }
 
 type TLSConfig struct {
@@ -209,6 +220,28 @@ func ReadConfig(path string) (c Config, err error) {
 
 	if err := os.Setenv("VAULT_ADDR", c.Vault.Address); err != nil {
 		return Config{}, fmt.Errorf("failed to set VAULT_ADDR environment variable: %s", err)
+	}
+
+	// VM monitoring defaults
+	if c.VMMonitoring.NormalInterval == 0 {
+		c.VMMonitoring.NormalInterval = 3600 // 1 hour
+	}
+	if c.VMMonitoring.FailedInterval == 0 {
+		c.VMMonitoring.FailedInterval = 300 // 5 minutes
+	}
+	if c.VMMonitoring.MaxRetries == 0 {
+		c.VMMonitoring.MaxRetries = 3
+	}
+	if c.VMMonitoring.Timeout == 0 {
+		c.VMMonitoring.Timeout = 30
+	}
+	if c.VMMonitoring.MaxConcurrent == 0 {
+		c.VMMonitoring.MaxConcurrent = 3
+	}
+	// VM monitoring is enabled by default
+	if c.VMMonitoring.Enabled == nil {
+		enabled := true
+		c.VMMonitoring.Enabled = &enabled
 	}
 
 	return

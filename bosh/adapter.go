@@ -78,17 +78,17 @@ type VM struct {
 	CID     string `json:"vm_cid"` // Cloud ID of the VM
 
 	// Job information
-	Job      string `json:"job_name"`   // Name of the job
-	Index    int    `json:"index"`      // Numeric job index
-	JobState string `json:"job_state"`  // Aggregate state of job (running, etc.)
+	Job      string `json:"job_name"`  // Name of the job
+	Index    int    `json:"index"`     // Numeric job index
+	JobState string `json:"job_state"` // Aggregate state of job (running, etc.)
 
 	// VM state and properties
-	State              string    `json:"state"`                 // State of the VM
-	Active             *bool     `json:"active"`                // Whether the VM is active
-	Bootstrap          bool      `json:"bootstrap"`             // Bootstrap property of VM
-	Ignore             bool      `json:"ignore"`                // Ignore this VM if set to true
-	ResurrectionPaused bool      `json:"resurrection_paused"`   // Resurrection state
-	VMCreatedAt        time.Time `json:"vm_created_at"`         // Time when the VM was created
+	State              string    `json:"state"`               // State of the VM
+	Active             *bool     `json:"active"`              // Whether the VM is active
+	Bootstrap          bool      `json:"bootstrap"`           // Bootstrap property of VM
+	Ignore             bool      `json:"ignore"`              // Ignore this VM if set to true
+	ResurrectionPaused bool      `json:"resurrection_paused"` // Resurrection state
+	VMCreatedAt        time.Time `json:"vm_created_at"`       // Time when the VM was created
 
 	// Network and placement
 	IPs []string `json:"ips"` // List of IPs
@@ -104,10 +104,10 @@ type VM struct {
 	DiskCIDs []string `json:"disk_cids"` // List of Cloud IDs of the VM's disks
 
 	// Complex data structures
-	CloudProperties interface{}   `json:"cloud_properties"` // Cloud properties of the VM
-	Processes       []VMProcess   `json:"processes"`        // List of processes running as part of the job
-	Vitals          VMVitals      `json:"vitals"`           // VM vitals
-	Stemcell        VMStemcell    `json:"stemcell"`         // Information of the Stemcell used for the VM
+	CloudProperties interface{} `json:"cloud_properties"` // Cloud properties of the VM
+	Processes       []VMProcess `json:"processes"`        // List of processes running as part of the job
+	Vitals          VMVitals    `json:"vitals"`           // VM vitals
+	Stemcell        VMStemcell  `json:"stemcell"`         // Information of the Stemcell used for the VM
 }
 
 // VMProcess represents a process running on a VM
@@ -121,12 +121,12 @@ type VMProcess struct {
 
 // VMVitals represents VM vital statistics
 type VMVitals struct {
-	CPU    VMVitalsCPU               `json:"cpu"`
-	Memory VMVitalsMemory            `json:"mem"`
-	Swap   VMVitalsMemory            `json:"swap"`
-	Load   []string                  `json:"load"`
-	Disk   map[string]VMVitalsDisk   `json:"disk"`
-	Uptime VMVitalsUptime            `json:"uptime"`
+	CPU    VMVitalsCPU             `json:"cpu"`
+	Memory VMVitalsMemory          `json:"mem"`
+	Swap   VMVitalsMemory          `json:"swap"`
+	Load   []string                `json:"load"`
+	Disk   map[string]VMVitalsDisk `json:"disk"`
+	Uptime VMVitalsUptime          `json:"uptime"`
 }
 
 // VMVitalsCPU represents CPU vitals
