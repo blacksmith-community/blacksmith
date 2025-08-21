@@ -94,6 +94,13 @@ func (m *VMMonitor) Start() error {
 	m.wg.Add(1)
 	go m.monitorLoop()
 
+	// Trigger initial check for all services
+	go func() {
+		time.Sleep(2 * time.Second) // Give the monitor loop time to start
+		l.Info("Triggering initial VM check for all services")
+		m.TriggerRefreshAll()
+	}()
+
 	return nil
 }
 
@@ -251,7 +258,8 @@ func (m *VMMonitor) checkService(svc *ServiceMonitor) {
 	if err := m.storeVMStatus(svc.ServiceID, vmStatus); err != nil {
 		l.Error("Failed to store VM status: %s", err)
 	} else {
-		l.Debug("Updated VM status: %s (%d/%d healthy)", status, healthyCount, len(vms))
+		l.Info("Stored VM status for %s: status=%s, healthy=%d, total=%d", 
+			svc.ServiceID, status, healthyCount, len(vms))
 	}
 
 	// Update service monitor
@@ -325,14 +333,17 @@ func (m *VMMonitor) calculateOverallStatus(vms []bosh.VM) string {
 
 // countHealthyVMs counts VMs in running state
 func (m *VMMonitor) countHealthyVMs(vms []bosh.VM) int {
+	l := Logger.Wrap("vm-monitor")
 	count := 0
 	for _, vm := range vms {
 		// Check JobState which represents the aggregate state of the job
 		// This is what indicates if the job/service is "running" properly
+		l.Debug("VM %s/%d - JobState: %s, State: %s", vm.Job, vm.Index, vm.JobState, vm.State)
 		if vm.JobState == "running" {
 			count++
 		}
 	}
+	l.Debug("Counted %d healthy VMs out of %d total", count, len(vms))
 	return count
 }
 
@@ -397,4 +408,19 @@ func (m *VMMonitor) TriggerRefresh(serviceID string) error {
 	svc.NextCheck = time.Now()
 
 	return nil
+}
+
+// TriggerRefreshAll forces an immediate refresh of all services
+func (m *VMMonitor) TriggerRefreshAll() {
+	l := Logger.Wrap("vm-monitor")
+	l.Info("Triggering refresh for all services")
+	
+	m.mu.Lock()
+	for _, svc := range m.services {
+		svc.NextCheck = time.Now()
+	}
+	m.mu.Unlock()
+	
+	// Force an immediate check
+	m.checkScheduledServices()
 }

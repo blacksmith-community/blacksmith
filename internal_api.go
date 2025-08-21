@@ -423,10 +423,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				// Add VM status if VMMonitor is available
 				if api.VMMonitor != nil {
 					if vmStatus, err := api.VMMonitor.GetServiceVMStatus(instanceID); err == nil && vmStatus != nil {
+						Logger.Wrap("internal-api").Debug("VM status for %s: status=%s, healthy=%d, total=%d",
+							instanceID, vmStatus.Status, vmStatus.HealthyVMs, vmStatus.VMCount)
 						enrichedInstanceMap["vm_status"] = vmStatus.Status
 						enrichedInstanceMap["vm_count"] = vmStatus.VMCount
 						enrichedInstanceMap["vm_healthy"] = vmStatus.HealthyVMs
 						enrichedInstanceMap["vm_last_updated"] = vmStatus.LastUpdated.Unix()
+					} else if err != nil {
+						Logger.Wrap("internal-api").Debug("No VM status for %s: %v", instanceID, err)
 					}
 				}
 
