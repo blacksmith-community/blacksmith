@@ -420,6 +420,18 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					}
 				}
 
+				// Check for deletion request metadata
+				var metadata map[string]interface{}
+				metadataExists, metadataErr := api.Vault.Get(fmt.Sprintf("%s/metadata", instanceID), &metadata)
+				if metadataErr == nil && metadataExists {
+					if deleteRequestedAt, ok := metadata["delete_requested_at"].(string); ok && deleteRequestedAt != "" {
+						enrichedInstanceMap["delete_requested_at"] = deleteRequestedAt
+						// Mark the instance as being deleted
+						enrichedInstanceMap["deletion_in_progress"] = true
+						Logger.Wrap("internal-api").Debug("Instance %s marked for deletion at %s", instanceID, deleteRequestedAt)
+					}
+				}
+
 				// Add VM status if VMMonitor is available
 				if api.VMMonitor != nil {
 					if vmStatus, err := api.VMMonitor.GetServiceVMStatus(instanceID); err == nil && vmStatus != nil {

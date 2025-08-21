@@ -1429,13 +1429,24 @@
             </div>
           ` : '';
           
+          // Check if instance is marked for deletion
+          const deletionStatusHtml = details.deletion_in_progress || details.status === 'deprovision_requested' ? `
+            <div class="deletion-status-badge" title="Delete requested at ${details.delete_requested_at || details.deprovision_requested_at || 'Unknown'}">
+              <span class="deletion-status-icon"></span>
+              <span class="deletion-status-text">Deleting...</span>
+            </div>
+          ` : '';
+          
+          const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
+          
           return `
-            <div class="service-item" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
+            <div class="service-item ${isDeleting ? 'deleting' : ''}" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
               <div class="service-id">${id}</div>
               ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
               <div class="service-meta">
                 ${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
               </div>
+              ${deletionStatusHtml}
               ${vmStatusHtml}
             </div>
           `;
@@ -1475,15 +1486,17 @@
         { key: 'space_name', label: 'Space' },
         { key: 'space_guid', label: 'Space GUID' },
         { key: 'platform', label: 'Platform' },
-        { key: 'requested_at', label: 'Requested At' }
+        { key: 'requested_at', label: 'Requested At' },
+        { key: 'delete_requested_at', label: 'Delete Requested At' },
+        { key: 'deprovision_requested_at', label: 'Deprovision Requested At' }
       ];
 
       // Add rows for known fields in order
       fieldOrder.forEach(field => {
         if (vaultData[field.key] !== undefined) {
           let value = vaultData[field.key];
-          // Format timestamp if it's requested_at
-          if (field.key === 'requested_at' && value) {
+          // Format timestamp fields
+          if ((field.key === 'requested_at' || field.key === 'delete_requested_at' || field.key === 'deprovision_requested_at') && value) {
             value = formatTimestamp(value);
           }
           tableRows.push(`

@@ -3345,3 +3345,96 @@ th[style*="cursor: pointer"]:hover {
   color: #e2e3e5;
   border-color: #6c757d;
 }
+
+/* Deletion status badge styles */
+.deletion-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin-top: 8px;
+  margin-right: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffecc0;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.deletion-status-badge:hover {
+  background-color: #ffe8a1;
+}
+
+.deletion-status-icon::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #f0ad4e;
+  animation: blink 1.5s ease-in-out infinite;
+}
+
+.deletion-status-text {
+  font-weight: 500;
+}
+
+/* Service item deleting state */
+.service-item.deleting {
+  opacity: 0.7;
+  background: linear-gradient(135deg, transparent 45%, rgba(255, 193, 7, 0.1) 50%, transparent 55%);
+  background-size: 20px 20px;
+  animation: stripe-animation 1s linear infinite;
+}
+
+/* Animations for deletion status */
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+@keyframes blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes stripe-animation {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 20px 20px;
+  }
+}
+
+/* Dark theme support for deletion status badge */
+[data-theme="dark"] .deletion-status-badge {
+  background-color: #856404;
+  color: #fff3cd;
+  border-color: #ffc107;
+}
+
+[data-theme="dark"] .deletion-status-badge:hover {
+  background-color: #997404;
+}
+
+[data-theme="dark"] .deletion-status-icon::before {
+  background-color: #ffc107;
+}
+
+[data-theme="dark"] .service-item.deleting {
+  background: linear-gradient(135deg, transparent 45%, rgba(255, 193, 7, 0.2) 50%, transparent 55%);
+  background-size: 20px 20px;
+}
