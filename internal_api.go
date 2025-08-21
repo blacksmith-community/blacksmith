@@ -708,6 +708,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		switch operation {
 		case "test":
 			useTLS := req.URL.Query().Get("use_tls") == "true"
+			connectionType := req.URL.Query().Get("connection_type")
+
+			// Handle connection type parameter from frontend
+			if connectionType == "tls" {
+				useTLS = true
+			}
+
 			opts := common.ConnectionOptions{
 				UseTLS:  useTLS,
 				Timeout: 30 * time.Second,
@@ -850,9 +857,22 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		switch operation {
 		case "test":
 			useAMQPS := req.URL.Query().Get("use_amqps") == "true"
+			connectionType := req.URL.Query().Get("connection_type")
+			connectionUser := req.URL.Query().Get("connection_user")
+			connectionVHost := req.URL.Query().Get("connection_vhost")
+			connectionPassword := req.URL.Query().Get("connection_password")
+
+			// Handle connection type parameter from frontend
+			if connectionType == "amqps" {
+				useAMQPS = true
+			}
+
 			opts := common.ConnectionOptions{
-				UseAMQPS: useAMQPS,
-				Timeout:  30 * time.Second,
+				UseAMQPS:         useAMQPS,
+				Timeout:          30 * time.Second,
+				OverrideUser:     connectionUser,
+				OverridePassword: connectionPassword,
+				OverrideVHost:    connectionVHost,
 			}
 			result, err := api.Services.RabbitMQ.TestConnection(ctx, common.Credentials(creds), opts)
 			api.handleJSONResponse(w, result, err)
@@ -865,7 +885,17 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			pubReq.InstanceID = instanceID
-			result, err := api.Services.RabbitMQ.HandlePublish(ctx, instanceID, common.Credentials(creds), &pubReq)
+
+			// Create connection options with overrides if provided
+			opts := common.ConnectionOptions{
+				UseAMQPS:         pubReq.UseAMQPS,
+				Timeout:          30 * time.Second,
+				OverrideUser:     pubReq.ConnectionUser,
+				OverridePassword: pubReq.ConnectionPassword,
+				OverrideVHost:    pubReq.ConnectionVHost,
+			}
+
+			result, err := api.Services.RabbitMQ.HandlePublishWithOptions(ctx, instanceID, common.Credentials(creds), &pubReq, opts)
 			api.handleJSONResponse(w, result, err)
 
 		case "consume":
@@ -876,7 +906,17 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			consReq.InstanceID = instanceID
-			result, err := api.Services.RabbitMQ.HandleConsume(ctx, instanceID, common.Credentials(creds), &consReq)
+
+			// Create connection options with overrides if provided
+			opts := common.ConnectionOptions{
+				UseAMQPS:         consReq.UseAMQPS,
+				Timeout:          30 * time.Second,
+				OverrideUser:     consReq.ConnectionUser,
+				OverridePassword: consReq.ConnectionPassword,
+				OverrideVHost:    consReq.ConnectionVHost,
+			}
+
+			result, err := api.Services.RabbitMQ.HandleConsumeWithOptions(ctx, instanceID, common.Credentials(creds), &consReq, opts)
 			api.handleJSONResponse(w, result, err)
 
 		case "queues":
@@ -886,7 +926,17 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				queueReq.UseAMQPS = req.URL.Query().Get("use_amqps") == "true"
 			}
 			queueReq.InstanceID = instanceID
-			result, err := api.Services.RabbitMQ.HandleQueueInfo(ctx, instanceID, common.Credentials(creds), &queueReq)
+
+			// Create connection options with overrides if provided
+			opts := common.ConnectionOptions{
+				UseAMQPS:         queueReq.UseAMQPS,
+				Timeout:          30 * time.Second,
+				OverrideUser:     queueReq.ConnectionUser,
+				OverridePassword: queueReq.ConnectionPassword,
+				OverrideVHost:    queueReq.ConnectionVHost,
+			}
+
+			result, err := api.Services.RabbitMQ.HandleQueueInfoWithOptions(ctx, instanceID, common.Credentials(creds), &queueReq, opts)
 			api.handleJSONResponse(w, result, err)
 
 		case "queue-ops":
@@ -897,7 +947,17 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			queueOpsReq.InstanceID = instanceID
-			result, err := api.Services.RabbitMQ.HandleQueueOps(ctx, instanceID, common.Credentials(creds), &queueOpsReq)
+
+			// Create connection options with overrides if provided
+			opts := common.ConnectionOptions{
+				UseAMQPS:         queueOpsReq.UseAMQPS,
+				Timeout:          30 * time.Second,
+				OverrideUser:     queueOpsReq.ConnectionUser,
+				OverridePassword: queueOpsReq.ConnectionPassword,
+				OverrideVHost:    queueOpsReq.ConnectionVHost,
+			}
+
+			result, err := api.Services.RabbitMQ.HandleQueueOpsWithOptions(ctx, instanceID, common.Credentials(creds), &queueOpsReq, opts)
 			api.handleJSONResponse(w, result, err)
 
 		case "management":
@@ -908,7 +968,17 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			mgmtReq.InstanceID = instanceID
-			result, err := api.Services.RabbitMQ.HandleManagement(ctx, instanceID, common.Credentials(creds), &mgmtReq)
+
+			// Create connection options with overrides if provided
+			opts := common.ConnectionOptions{
+				UseAMQPS:         !mgmtReq.UseSSL, // Management API uses HTTP/HTTPS, not AMQP/AMQPS
+				Timeout:          30 * time.Second,
+				OverrideUser:     mgmtReq.ConnectionUser,
+				OverridePassword: mgmtReq.ConnectionPassword,
+				OverrideVHost:    mgmtReq.ConnectionVHost,
+			}
+
+			result, err := api.Services.RabbitMQ.HandleManagementWithOptions(ctx, instanceID, common.Credentials(creds), &mgmtReq, opts)
 			api.handleJSONResponse(w, result, err)
 
 		default:

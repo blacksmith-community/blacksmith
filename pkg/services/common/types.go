@@ -52,10 +52,13 @@ func (c Credentials) GetMap(key string) map[string]interface{} {
 
 // ConnectionOptions contains options for service connections
 type ConnectionOptions struct {
-	UseTLS     bool          `json:"use_tls"`
-	UseAMQPS   bool          `json:"use_amqps"`
-	Timeout    time.Duration `json:"timeout"`
-	MaxRetries int           `json:"max_retries"`
+	UseTLS           bool          `json:"use_tls"`
+	UseAMQPS         bool          `json:"use_amqps"`
+	Timeout          time.Duration `json:"timeout"`
+	MaxRetries       int           `json:"max_retries"`
+	OverrideUser     string        `json:"override_user,omitempty"`     // For RabbitMQ user selection
+	OverridePassword string        `json:"override_password,omitempty"` // For RabbitMQ user password
+	OverrideVHost    string        `json:"override_vhost,omitempty"`    // For RabbitMQ vhost selection
 }
 
 // TestResult represents the result of a service test operation

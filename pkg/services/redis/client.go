@@ -98,7 +98,7 @@ func (cm *ClientManager) GetClient(instanceID string, creds *Credentials, useTLS
 	if err := client.Ping(ctx).Err(); err != nil {
 		client.Close()
 		return nil, common.NewRetryableError(
-			fmt.Errorf("Redis connection failed: %w", err),
+			fmt.Errorf("redis connection failed: %w", err),
 			true,
 			5*time.Second,
 		)

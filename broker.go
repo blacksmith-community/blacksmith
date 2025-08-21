@@ -638,8 +638,31 @@ func (b *Broker) OnProvisionCompleted(
 	l.Debug("storing credentials in vault at %s/credentials", instanceID)
 	err = b.Vault.Put(fmt.Sprintf("%s/credentials", instanceID), creds)
 	if err != nil {
-		l.Error("failed to store credentials in vault: %s", err)
-		// Continue anyway as this is non-fatal
+		l.Error("CRITICAL: failed to store credentials in vault: %s", err)
+		return fmt.Errorf("failed to store credentials in vault: %w", err)
+	}
+
+	// Verify credentials were actually stored
+	l.Debug("verifying credential storage at %s/credentials", instanceID)
+	var verifyCreds map[string]interface{}
+	exists, verifyErr := b.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &verifyCreds)
+	if !exists || verifyErr != nil {
+		l.Error("CRITICAL: Failed to verify credential storage - exists: %v, error: %s", exists, verifyErr)
+		// Attempt to re-fetch and store credentials
+		l.Info("Attempting to re-fetch credentials from BOSH")
+		creds2, err2 := GetCreds(instanceID, plan, b.BOSH, l)
+		if err2 == nil {
+			err2 = b.Vault.Put(fmt.Sprintf("%s/credentials", instanceID), creds2)
+			if err2 == nil {
+				l.Info("Successfully stored credentials on retry")
+			} else {
+				return fmt.Errorf("failed to store credentials after retry: %w", err2)
+			}
+		} else {
+			return fmt.Errorf("failed to verify credential storage and unable to re-fetch: %w", verifyErr)
+		}
+	} else {
+		l.Info("Successfully verified credentials stored for instance %s", instanceID)
 	}
 
 	l.Debug("scheduling S.H.I.E.L.D. backup for instance '%s'", instanceID)

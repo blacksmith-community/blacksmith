@@ -44,14 +44,32 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 		}, nil
 	}
 
-	err = h.connManager.TestConnection(creds, opts.UseAMQPS)
-	if err != nil {
+	// Use override parameters if provided
+	var testErr error
+	if opts.OverrideUser != "" || opts.OverridePassword != "" || opts.OverrideVHost != "" {
+		testErr = h.connManager.TestConnectionWithOverrides(creds, opts.UseAMQPS, opts.OverrideUser, opts.OverridePassword, opts.OverrideVHost)
+	} else {
+		testErr = h.connManager.TestConnection(creds, opts.UseAMQPS)
+	}
+
+	if testErr != nil {
 		return &common.TestResult{
 			Success:   false,
-			Error:     err.Error(),
+			Error:     testErr.Error(),
 			Timestamp: start.Unix(),
 			Duration:  time.Since(start),
 		}, nil
+	}
+
+	// Determine which user and vhost were actually used for the connection
+	actualUser := creds.Username
+	actualVHost := creds.VHost
+
+	if opts.OverrideUser != "" {
+		actualUser = opts.OverrideUser
+	}
+	if opts.OverrideVHost != "" {
+		actualVHost = opts.OverrideVHost
 	}
 
 	return &common.TestResult{
@@ -60,7 +78,8 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 			"connection": map[string]interface{}{
 				"host":  creds.Host,
 				"port":  creds.Port,
-				"vhost": creds.VHost,
+				"vhost": actualVHost,
+				"user":  actualUser,
 				"amqps": opts.UseAMQPS,
 			},
 		},
@@ -88,12 +107,23 @@ func (h *Handler) Close() error {
 
 // HandlePublish publishes a message to RabbitMQ
 func (h *Handler) HandlePublish(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *PublishRequest) (*PublishResult, error) {
+	// Create default connection options for backward compatibility
+	opts := common.ConnectionOptions{
+		UseAMQPS: req.UseAMQPS,
+		Timeout:  30 * time.Second,
+	}
+	return h.HandlePublishWithOptions(ctx, instanceID, vaultCreds, req, opts)
+}
+
+// HandlePublishWithOptions publishes a message to RabbitMQ with connection options
+func (h *Handler) HandlePublishWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *PublishRequest, opts common.ConnectionOptions) (*PublishResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	_, ch, err := h.connManager.GetConnection(instanceID, creds, req.UseAMQPS)
+	// Get connection with override support
+	_, ch, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -158,12 +188,23 @@ func (h *Handler) HandlePublish(ctx context.Context, instanceID string, vaultCre
 
 // HandleConsume consumes messages from RabbitMQ
 func (h *Handler) HandleConsume(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ConsumeRequest) (*ConsumeResult, error) {
+	// Create default connection options for backward compatibility
+	opts := common.ConnectionOptions{
+		UseAMQPS: req.UseAMQPS,
+		Timeout:  30 * time.Second,
+	}
+	return h.HandleConsumeWithOptions(ctx, instanceID, vaultCreds, req, opts)
+}
+
+// HandleConsumeWithOptions consumes messages from RabbitMQ with connection options
+func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ConsumeRequest, opts common.ConnectionOptions) (*ConsumeResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	_, ch, err := h.connManager.GetConnection(instanceID, creds, req.UseAMQPS)
+	// Get connection with override support
+	_, ch, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -247,14 +288,39 @@ done:
 
 // HandleQueueInfo retrieves information about queues
 func (h *Handler) HandleQueueInfo(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueInfoRequest) (*QueueInfoResult, error) {
+	// Create default connection options for backward compatibility
+	opts := common.ConnectionOptions{
+		UseAMQPS: req.UseAMQPS,
+		Timeout:  30 * time.Second,
+	}
+	return h.HandleQueueInfoWithOptions(ctx, instanceID, vaultCreds, req, opts)
+}
+
+// HandleQueueInfoWithOptions retrieves information about queues with connection options
+func (h *Handler) HandleQueueInfoWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueInfoRequest, opts common.ConnectionOptions) (*QueueInfoResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
+	// Apply overrides to credentials for management API if provided
+	if opts.OverrideUser != "" || opts.OverridePassword != "" || opts.OverrideVHost != "" {
+		testCreds := *creds
+		if opts.OverrideUser != "" {
+			testCreds.Username = opts.OverrideUser
+		}
+		if opts.OverridePassword != "" {
+			testCreds.Password = opts.OverridePassword
+		}
+		if opts.OverrideVHost != "" {
+			testCreds.VHost = opts.OverrideVHost
+		}
+		creds = &testCreds
+	}
+
 	// Try to get queue info via Management API first
 	if h.managementClient != nil {
-		queues, err := h.managementClient.GetQueues(creds, req.UseAMQPS)
+		queues, err := h.managementClient.GetQueues(creds, opts.UseAMQPS)
 		if err == nil {
 			return &QueueInfoResult{
 				Success: true,
@@ -274,12 +340,23 @@ func (h *Handler) HandleQueueInfo(ctx context.Context, instanceID string, vaultC
 
 // HandleQueueOps performs queue operations (create, delete, purge)
 func (h *Handler) HandleQueueOps(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueOpsRequest) (*QueueOpsResult, error) {
+	// Create default connection options for backward compatibility
+	opts := common.ConnectionOptions{
+		UseAMQPS: req.UseAMQPS,
+		Timeout:  30 * time.Second,
+	}
+	return h.HandleQueueOpsWithOptions(ctx, instanceID, vaultCreds, req, opts)
+}
+
+// HandleQueueOpsWithOptions performs queue operations with connection options
+func (h *Handler) HandleQueueOpsWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueOpsRequest, opts common.ConnectionOptions) (*QueueOpsResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	_, ch, err := h.connManager.GetConnection(instanceID, creds, req.UseAMQPS)
+	// Get connection with override support
+	_, ch, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -331,9 +408,38 @@ func (h *Handler) HandleQueueOps(ctx context.Context, instanceID string, vaultCr
 
 // HandleManagement handles management API requests
 func (h *Handler) HandleManagement(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ManagementRequest) (*ManagementResult, error) {
+	// Create default connection options for backward compatibility
+	opts := common.ConnectionOptions{
+		UseAMQPS: false, // Management API doesn't use AMQP
+		Timeout:  30 * time.Second,
+	}
+	return h.HandleManagementWithOptions(ctx, instanceID, vaultCreds, req, opts)
+}
+
+// HandleManagementWithOptions handles management API requests with connection options
+func (h *Handler) HandleManagementWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ManagementRequest, opts common.ConnectionOptions) (*ManagementResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
+	}
+
+	// Apply overrides to credentials for management API if provided
+	if opts.OverrideUser != "" || opts.OverridePassword != "" || opts.OverrideVHost != "" {
+		testCreds := *creds
+		if opts.OverrideUser != "" {
+			// For management API, set both regular and management-specific credentials
+			testCreds.Username = opts.OverrideUser
+			testCreds.ManagementUsername = opts.OverrideUser
+		}
+		if opts.OverridePassword != "" {
+			// For management API, set both regular and management-specific credentials
+			testCreds.Password = opts.OverridePassword
+			testCreds.ManagementPassword = opts.OverridePassword
+		}
+		if opts.OverrideVHost != "" {
+			testCreds.VHost = opts.OverrideVHost
+		}
+		creds = &testCreds
 	}
 
 	if h.managementClient == nil {

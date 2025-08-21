@@ -47,6 +47,9 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	instance.Metadata["has_credentials"] = hasCredentials
 	if hasCredentials {
 		u.logDebug("Instance %s has existing credentials - preserving", instance.ID)
+	} else {
+		u.logWarning("Instance %s is missing credentials - will attempt to fetch from BOSH", instance.ID)
+		instance.Metadata["needs_credential_recovery"] = true
 	}
 
 	// Check for existing bindings
@@ -504,6 +507,22 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 	manifestPath := fmt.Sprintf("%s/manifest", instanceID)
 	if manifest, err := u.getFromVault(manifestPath); err == nil {
 		allData["manifest"] = manifest
+	}
+
+	// Get credentials if exists - CRITICAL for service recovery
+	credsPath := fmt.Sprintf("%s/credentials", instanceID)
+	if creds, err := u.getFromVault(credsPath); err == nil {
+		allData["credentials"] = creds
+		u.logDebug("Backed up credentials for instance %s", instanceID)
+	} else {
+		u.logDebug("No credentials found to backup for instance %s", instanceID)
+	}
+
+	// Get bindings if exists
+	bindingsPath := fmt.Sprintf("%s/bindings", instanceID)
+	if bindings, err := u.getFromVault(bindingsPath); err == nil {
+		allData["bindings"] = bindings
+		u.logDebug("Backed up bindings for instance %s", instanceID)
 	}
 
 	// Store backup with timestamp using configured path

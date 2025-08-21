@@ -34,7 +34,18 @@ func NewConnectionManager(ttl time.Duration) *ConnectionManager {
 
 // GetConnection retrieves or creates a RabbitMQ connection and channel for the given instance
 func (cm *ConnectionManager) GetConnection(instanceID string, creds *Credentials, useAMQPS bool) (*amqp.Connection, *amqp.Channel, error) {
-	key := fmt.Sprintf("%s-%v", instanceID, useAMQPS)
+	// Create default connection options for backward compatibility
+	opts := common.ConnectionOptions{
+		UseAMQPS: useAMQPS,
+		Timeout:  30 * time.Second,
+	}
+	return cm.GetConnectionWithOptions(instanceID, creds, opts)
+}
+
+// GetConnectionWithOptions retrieves or creates a RabbitMQ connection with connection options
+func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *Credentials, opts common.ConnectionOptions) (*amqp.Connection, *amqp.Channel, error) {
+	// Create key that includes override parameters to separate different connection types
+	key := fmt.Sprintf("%s-%v-%s-%s", instanceID, opts.UseAMQPS, opts.OverrideUser, opts.OverrideVHost)
 
 	cm.mu.RLock()
 	if conn, exists := cm.connections[key]; exists {
@@ -60,8 +71,28 @@ func (cm *ConnectionManager) GetConnection(instanceID string, creds *Credentials
 	}
 	cm.mu.Unlock()
 
-	// Build connection URI
-	uri := cm.buildURI(creds, useAMQPS)
+	// Build connection URI with overrides if provided
+	var uri string
+	if opts.OverrideUser != "" || opts.OverridePassword != "" || opts.OverrideVHost != "" {
+		// Create a copy of credentials with overrides applied
+		testCreds := *creds
+		if opts.OverrideUser != "" {
+			testCreds.Username = opts.OverrideUser
+		}
+		if opts.OverridePassword != "" {
+			testCreds.Password = opts.OverridePassword
+		}
+		if opts.OverrideVHost != "" {
+			testCreds.VHost = opts.OverrideVHost
+		}
+		// Clear protocol URIs when using overrides to force manual URI building
+		testCreds.Protocols = nil
+		testCreds.URI = ""
+		testCreds.TLSURI = ""
+		uri = cm.buildURI(&testCreds, opts.UseAMQPS)
+	} else {
+		uri = cm.buildURI(creds, opts.UseAMQPS)
+	}
 
 	// Connect
 	conn, err := amqp.Dial(uri)
@@ -95,6 +126,62 @@ func (cm *ConnectionManager) GetConnection(instanceID string, creds *Credentials
 // TestConnection tests the connection without caching
 func (cm *ConnectionManager) TestConnection(creds *Credentials, useAMQPS bool) error {
 	uri := cm.buildURI(creds, useAMQPS)
+
+	conn, err := amqp.Dial(uri)
+	if err != nil {
+		return fmt.Errorf("connection failed: %w", err)
+	}
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("failed to open channel: %w", err)
+	}
+	defer ch.Close()
+
+	// Test basic operation
+	err = ch.ExchangeDeclare(
+		"blacksmith.test", // name
+		"direct",          // type
+		false,             // durable
+		true,              // auto-delete
+		false,             // internal
+		false,             // no-wait
+		nil,               // arguments
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare test exchange: %w", err)
+	}
+
+	return nil
+}
+
+// TestConnectionWithOverrides tests connection with optional user/vhost overrides
+func (cm *ConnectionManager) TestConnectionWithOverrides(creds *Credentials, useAMQPS bool, overrideUser, overridePassword, overrideVHost string) error {
+	// Create a copy of credentials with overrides applied
+	testCreds := *creds
+
+	if overrideUser != "" {
+		testCreds.Username = overrideUser
+	}
+
+	if overridePassword != "" {
+		testCreds.Password = overridePassword
+	}
+
+	if overrideVHost != "" {
+		testCreds.VHost = overrideVHost
+	}
+
+	// CRITICAL: Clear protocol URIs when using overrides to force manual URI building
+	// Otherwise buildURI will use the original protocol URI and ignore our overrides
+	if overrideUser != "" || overridePassword != "" || overrideVHost != "" {
+		testCreds.Protocols = nil
+		testCreds.URI = ""
+		testCreds.TLSURI = ""
+	}
+
+	uri := cm.buildURI(&testCreds, useAMQPS)
 
 	conn, err := amqp.Dial(uri)
 	if err != nil {

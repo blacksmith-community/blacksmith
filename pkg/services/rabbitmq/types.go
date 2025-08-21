@@ -8,30 +8,34 @@ import (
 
 // Credentials represents RabbitMQ credentials from Vault
 type Credentials struct {
-	Host      string                            `json:"host"`
-	Hostname  string                            `json:"hostname"`
-	Port      int                               `json:"port"`
-	TLSPort   int                               `json:"tls_port"`
-	Username  string                            `json:"username"`
-	Password  string                            `json:"password"`
-	VHost     string                            `json:"vhost"`
-	URI       string                            `json:"uri"`
-	TLSURI    string                            `json:"tls_uri"`
-	Protocols map[string]map[string]interface{} `json:"protocols"`
+	Host               string                            `json:"host"`
+	Hostname           string                            `json:"hostname"`
+	Port               int                               `json:"port"`
+	TLSPort            int                               `json:"tls_port"`
+	Username           string                            `json:"username"`
+	Password           string                            `json:"password"`
+	ManagementUsername string                            `json:"management_username"`
+	ManagementPassword string                            `json:"management_password"`
+	VHost              string                            `json:"vhost"`
+	URI                string                            `json:"uri"`
+	TLSURI             string                            `json:"tls_uri"`
+	Protocols          map[string]map[string]interface{} `json:"protocols"`
 }
 
 // NewCredentials creates RabbitMQ credentials from Vault data
 func NewCredentials(vaultData common.Credentials) (*Credentials, error) {
 	creds := &Credentials{
-		Host:     vaultData.GetString("host"),
-		Hostname: vaultData.GetString("hostname"),
-		Port:     vaultData.GetInt("port"),
-		TLSPort:  vaultData.GetInt("tls_port"),
-		Username: vaultData.GetString("username"),
-		Password: vaultData.GetString("password"),
-		VHost:    vaultData.GetString("vhost"),
-		URI:      vaultData.GetString("uri"),
-		TLSURI:   vaultData.GetString("tls_uri"),
+		Host:               vaultData.GetString("host"),
+		Hostname:           vaultData.GetString("hostname"),
+		Port:               vaultData.GetInt("port"),
+		TLSPort:            vaultData.GetInt("tls_port"),
+		Username:           vaultData.GetString("username"),
+		Password:           vaultData.GetString("password"),
+		ManagementUsername: vaultData.GetString("management_username"),
+		ManagementPassword: vaultData.GetString("management_password"),
+		VHost:              vaultData.GetString("vhost"),
+		URI:                vaultData.GetString("uri"),
+		TLSURI:             vaultData.GetString("tls_uri"),
 	}
 
 	// Handle protocols map
@@ -70,12 +74,15 @@ func NewCredentials(vaultData common.Credentials) (*Credentials, error) {
 
 // PublishRequest represents a RabbitMQ publish operation request
 type PublishRequest struct {
-	InstanceID string `json:"instance_id"`
-	Queue      string `json:"queue"`
-	Exchange   string `json:"exchange"`
-	Message    string `json:"message"`
-	Persistent bool   `json:"persistent"`
-	UseAMQPS   bool   `json:"use_amqps"`
+	InstanceID         string `json:"instance_id"`
+	Queue              string `json:"queue"`
+	Exchange           string `json:"exchange"`
+	Message            string `json:"message"`
+	Persistent         bool   `json:"persistent"`
+	UseAMQPS           bool   `json:"use_amqps"`
+	ConnectionUser     string `json:"connection_user"`
+	ConnectionPassword string `json:"connection_password"`
+	ConnectionVHost    string `json:"connection_vhost"`
 }
 
 // PublishResult represents a RabbitMQ publish operation result
@@ -89,12 +96,15 @@ type PublishResult struct {
 
 // ConsumeRequest represents a RabbitMQ consume operation request
 type ConsumeRequest struct {
-	InstanceID string `json:"instance_id"`
-	Queue      string `json:"queue"`
-	Count      int    `json:"count"`
-	Timeout    int    `json:"timeout"` // milliseconds
-	AutoAck    bool   `json:"auto_ack"`
-	UseAMQPS   bool   `json:"use_amqps"`
+	InstanceID         string `json:"instance_id"`
+	Queue              string `json:"queue"`
+	Count              int    `json:"count"`
+	Timeout            int    `json:"timeout"` // milliseconds
+	AutoAck            bool   `json:"auto_ack"`
+	UseAMQPS           bool   `json:"use_amqps"`
+	ConnectionUser     string `json:"connection_user"`
+	ConnectionPassword string `json:"connection_password"`
+	ConnectionVHost    string `json:"connection_vhost"`
 }
 
 // ConsumeResult represents a RabbitMQ consume operation result
@@ -116,8 +126,11 @@ type Message struct {
 
 // QueueInfoRequest represents a queue information request
 type QueueInfoRequest struct {
-	InstanceID string `json:"instance_id"`
-	UseAMQPS   bool   `json:"use_amqps"`
+	InstanceID         string `json:"instance_id"`
+	UseAMQPS           bool   `json:"use_amqps"`
+	ConnectionUser     string `json:"connection_user"`
+	ConnectionPassword string `json:"connection_password"`
+	ConnectionVHost    string `json:"connection_vhost"`
 }
 
 // QueueInfoResult represents queue information
@@ -138,11 +151,14 @@ type Queue struct {
 
 // QueueOpsRequest represents queue operations request
 type QueueOpsRequest struct {
-	InstanceID string `json:"instance_id"`
-	Queue      string `json:"queue"`
-	Operation  string `json:"operation"` // create, delete, purge
-	Durable    bool   `json:"durable"`
-	UseAMQPS   bool   `json:"use_amqps"`
+	InstanceID         string `json:"instance_id"`
+	Queue              string `json:"queue"`
+	Operation          string `json:"operation"` // create, delete, purge
+	Durable            bool   `json:"durable"`
+	UseAMQPS           bool   `json:"use_amqps"`
+	ConnectionUser     string `json:"connection_user"`
+	ConnectionPassword string `json:"connection_password"`
+	ConnectionVHost    string `json:"connection_vhost"`
 }
 
 // QueueOpsResult represents queue operations result
@@ -154,10 +170,13 @@ type QueueOpsResult struct {
 
 // ManagementRequest represents a management API request
 type ManagementRequest struct {
-	InstanceID string `json:"instance_id"`
-	Path       string `json:"path"`
-	Method     string `json:"method"`
-	UseSSL     bool   `json:"use_ssl"`
+	InstanceID         string `json:"instance_id"`
+	Path               string `json:"path"`
+	Method             string `json:"method"`
+	UseSSL             bool   `json:"use_ssl"`
+	ConnectionUser     string `json:"connection_user"`
+	ConnectionPassword string `json:"connection_password"`
+	ConnectionVHost    string `json:"connection_vhost"`
 }
 
 // ManagementResult represents a management API result

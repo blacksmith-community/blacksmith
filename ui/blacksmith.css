@@ -3543,10 +3543,9 @@ select[id*="connection-vhost"] {
 
 .operation-content {
   background: var(--bg-secondary);
-  padding: 20px;
+  padding: 8px;
   border-radius: 0;
   border: none;
-  min-height: 200px;
   border-top: 1px solid var(--border-primary);
 }
 

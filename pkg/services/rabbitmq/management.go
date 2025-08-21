@@ -43,7 +43,9 @@ func (mc *ManagementClient) GetQueues(creds *Credentials, useSSL bool) ([]Queue,
 		return nil, err
 	}
 
-	req.SetBasicAuth(creds.Username, creds.Password)
+	// Use management credentials if available, otherwise fallback to AMQP credentials
+	mgmtUser, mgmtPass := mc.getManagementCredentials(creds)
+	req.SetBasicAuth(mgmtUser, mgmtPass)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := mc.client.Do(req)
@@ -92,7 +94,9 @@ func (mc *ManagementClient) Request(creds *Credentials, method, path string, use
 		return 0, nil, err
 	}
 
-	req.SetBasicAuth(creds.Username, creds.Password)
+	// Use management credentials if available, otherwise fallback to AMQP credentials
+	mgmtUser, mgmtPass := mc.getManagementCredentials(creds)
+	req.SetBasicAuth(mgmtUser, mgmtPass)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := mc.client.Do(req)
@@ -136,6 +140,28 @@ func (mc *ManagementClient) getManagementURL(creds *Credentials, useSSL bool) st
 	}
 
 	return fmt.Sprintf("%s://%s:%d", protocol, creds.Host, port)
+}
+
+// getManagementCredentials returns the appropriate credentials for management API
+func (mc *ManagementClient) getManagementCredentials(creds *Credentials) (string, string) {
+	// First, check if management credentials are explicitly provided
+	if creds.ManagementUsername != "" && creds.ManagementPassword != "" {
+		return creds.ManagementUsername, creds.ManagementPassword
+	}
+
+	// Second, check protocols map for management credentials
+	if creds.Protocols != nil {
+		if mgmt, ok := creds.Protocols["management"]; ok {
+			if username, ok := mgmt["username"].(string); ok && username != "" {
+				if password, ok := mgmt["password"].(string); ok && password != "" {
+					return username, password
+				}
+			}
+		}
+	}
+
+	// Fallback to AMQP credentials
+	return creds.Username, creds.Password
 }
 
 // Helper functions to safely extract values from interface{} maps

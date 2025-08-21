@@ -3553,68 +3553,177 @@
     return enhanced;
   };
 
-  // Helper function to extract user/vhost info from credentials with fallbacks
-  const extractConnectionInfo = (creds, serviceType) => {
-    const info = { users: [], vhosts: [] };
+  // Helper function to extract user/vhost info from credentials with sophisticated mapping
+  const extractConnectionInfo = (creds, serviceType, manifestData = null) => {
+    console.log('Debug: extractConnectionInfo called with:', {
+      serviceType,
+      credsKeys: Object.keys(creds),
+      hasManifestData: !!manifestData
+    });
+    
+    const info = {
+      users: [],
+      vhosts: [],
+      userCredentials: {},    // Maps display name -> {username, password}
+      vhostCredentials: {}    // Maps display name -> actual vhost
+    };
 
     if (serviceType === 'rabbitmq') {
-      // Extract users from credentials
-      if (creds.username) {
-        info.users.push(creds.username);
-      }
 
-      // Look for common credential keys for additional users
-      Object.keys(creds).forEach(key => {
-        if (key.includes('user') && key !== 'username' && creds[key]) {
-          info.users.push(creds[key]);
+      // === MANIFEST-BASED CREDENTIALS ===
+      if (manifestData) {
+        console.log('Debug: Manifest data available:', Object.keys(manifestData));
+        
+        const searchManifestValue = (path) => {
+          const keys = path.split('.');
+          let current = manifestData;
+          for (const key of keys) {
+            if (current && typeof current === 'object' && current[key] !== undefined) {
+              current = current[key];
+            } else {
+              return null;
+            }
+          }
+          return current;
+        };
+
+        // Search in job properties for RabbitMQ credentials
+        const findInJobProperties = (path) => {
+          if (!manifestData.instance_groups) return null;
+          
+          // Look for rabbitmq job in instance groups
+          for (const ig of manifestData.instance_groups) {
+            if (ig.jobs) {
+              for (const job of ig.jobs) {
+                if (job.name === 'rabbitmq' && job.properties) {
+                  const keys = path.split('.');
+                  let current = job.properties;
+                  for (const key of keys) {
+                    if (current && typeof current === 'object' && current[key] !== undefined) {
+                      current = current[key];
+                    } else {
+                      return null;
+                    }
+                  }
+                  return current;
+                }
+              }
+            }
+          }
+          return null;
+        };
+
+        // Extract manifest admin user from job properties
+        const adminUser = findInJobProperties('rabbitmq.admin.user');
+        const adminPass = findInJobProperties('rabbitmq.admin.pass');
+        console.log('Debug: Found manifest admin user/pass:', adminUser, adminPass ? '[REDACTED]' : null);
+        if (adminUser && adminPass) {
+          info.users.push('manifest.admin.user');
+          info.userCredentials['manifest.admin.user'] = {
+            username: adminUser,
+            password: adminPass
+          };
         }
-      });
 
-      // Extract admin user from manifest fallback patterns
-      if (creds.admin_user) {
-        info.users.push(creds.admin_user);
+        // Extract manifest app user from job properties
+        const appUser = findInJobProperties('rabbitmq.app.user');
+        const appPass = findInJobProperties('rabbitmq.app.pass');
+        console.log('Debug: Found manifest app user/pass:', appUser, appPass ? '[REDACTED]' : null);
+        if (appUser && appPass) {
+          info.users.push('manifest.app.user');
+          info.userCredentials['manifest.app.user'] = {
+            username: appUser,
+            password: appPass
+          };
+        }
+
+        // Extract manifest monitoring user from job properties
+        const monitoringUser = findInJobProperties('rabbitmq.monitoring.user');
+        const monitoringPass = findInJobProperties('rabbitmq.monitoring.pass');
+        console.log('Debug: Found manifest monitoring user/pass:', monitoringUser, monitoringPass ? '[REDACTED]' : null);
+        if (monitoringUser && monitoringPass) {
+          info.users.push('manifest.monitoring.user');
+          info.userCredentials['manifest.monitoring.user'] = {
+            username: monitoringUser,
+            password: monitoringPass
+          };
+        }
+
+        // Extract manifest vhost from job properties
+        const manifestVhost = findInJobProperties('rabbitmq.vhost');
+        console.log('Debug: Found manifest vhost:', manifestVhost);
+        if (manifestVhost) {
+          info.vhosts.push('manifest.vhost');
+          info.vhostCredentials['manifest.vhost'] = manifestVhost;
+        }
       }
 
-      // Remove duplicates
-      info.users = [...new Set(info.users)];
+      // === BINDING CREDENTIALS ===
 
-      // Extract vhosts
+      // Binding user (username/password)
+      if (creds.username && creds.password) {
+        info.users.push('binding.user');
+        info.userCredentials['binding.user'] = {
+          username: creds.username,
+          password: creds.password
+        };
+      }
+
+      // Binding admin (admin_username/admin_password)
+      if (creds.admin_username && creds.admin_password) {
+        info.users.push('binding.admin');
+        info.userCredentials['binding.admin'] = {
+          username: creds.admin_username,
+          password: creds.admin_password
+        };
+      }
+
+      // Binding vhost
       if (creds.vhost) {
-        info.vhosts.push(creds.vhost);
+        info.vhosts.push('binding.vhost');
+        info.vhostCredentials['binding.vhost'] = creds.vhost;
       }
 
-      // Look for vhost in other credential structures
-      Object.keys(creds).forEach(key => {
-        if (key.includes('vhost') && creds[key]) {
-          info.vhosts.push(creds[key]);
-        }
-      });
+      // Note: Protocol-based credentials are not exposed as user options
+      // They're used internally by the backend but users should select manifest/binding credentials
 
-      // Always include '/' as default vhost option
-      info.vhosts.push('/');
+      // === DEFAULT VHOST ===
+      // Always include default vhost
+      if (!info.vhosts.includes('/')) {
+        info.vhosts.unshift('/');  // Add at beginning
+        info.vhostCredentials['/'] = '/';
+      }
 
-      // Remove duplicates
-      info.vhosts = [...new Set(info.vhosts)];
-
-      // If no users found, add fallback options
+      // === FALLBACKS ===
+      // If no users found from any source, add basic fallbacks
       if (info.users.length === 0) {
-        info.users = ['admin', 'guest'];
-      }
-
-      // If no vhosts found except '/', ensure it's there
-      if (info.vhosts.length === 1 && info.vhosts[0] === '/') {
-        // Keep just the default
-      } else if (info.vhosts.length === 0) {
-        info.vhosts = ['/'];
+        if (creds.username) {
+          info.users.push('fallback.user');
+          info.userCredentials['fallback.user'] = {
+            username: creds.username,
+            password: creds.password || ''
+          };
+        } else {
+          // Last resort fallbacks
+          info.users.push('fallback.admin', 'fallback.guest');
+          info.userCredentials['fallback.admin'] = { username: 'admin', password: 'admin' };
+          info.userCredentials['fallback.guest'] = { username: 'guest', password: 'guest' };
+        }
       }
     }
 
+    console.log('Debug: Final extracted connection info:', {
+      users: info.users,
+      vhosts: info.vhosts,
+      userCredMappings: Object.keys(info.userCredentials),
+      vhostCredMappings: Object.keys(info.vhostCredentials)
+    });
     return info;
   };
 
   // Generate connection fields based on service type
-  const generateConnectionFields = (instanceId, serviceType, creds) => {
-    const connectionInfo = extractConnectionInfo(creds, serviceType);
+  const generateConnectionFields = (instanceId, serviceType, creds, manifestData = null) => {
+    const connectionInfo = extractConnectionInfo(creds, serviceType, manifestData);
 
     if (serviceType === 'redis') {
       return `
@@ -3724,14 +3833,10 @@
   // Redis Operation Renderers
   const renderRedisTestOperation = (instanceId) => {
     const testingInstance = window.currentTestingInstance;
-    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials) : '';
+    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials, testingInstance.manifestData) : '';
 
     return `
       <table class="operation-form">
-        <tr>
-          <th>Connection Configuration</th>
-          <th>Status</th>
-        </tr>
         <tr>
           <td>
             <div class="connection-selector">
@@ -3850,14 +3955,10 @@
   // RabbitMQ Operation Renderers
   const renderRabbitMQTestOperation = (instanceId) => {
     const testingInstance = window.currentTestingInstance;
-    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials) : '';
+    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials, testingInstance.manifestData) : '';
 
     return `
       <table class="operation-form">
-        <tr>
-          <th>Connection Configuration</th>
-          <th>Status</th>
-        </tr>
         <tr>
           <td>
             <div class="connection-selector">
@@ -4081,7 +4182,18 @@
   };
 
   const executeServiceOperation = async (instanceId, serviceType, operation, params = {}) => {
-    const connectionInfo = getConnectionInfo(instanceId);
+    // Use stored connection parameters if available, otherwise read from DOM
+    const connectionState = window.serviceConnections && window.serviceConnections[instanceId];
+    const connectionInfo = (connectionState && connectionState.connected && connectionState.connectionParams) 
+      ? connectionState.connectionParams 
+      : getConnectionInfo(instanceId);
+
+    // Debug logging to show which connection parameters are being used
+    if (connectionState && connectionState.connected && connectionState.connectionParams) {
+      console.log(`Using stored connection parameters for ${serviceType}:`, connectionInfo);
+    } else {
+      console.log(`Using DOM connection parameters for ${serviceType}:`, connectionInfo);
+    }
 
     // Add connection information to params
     if (serviceType === 'redis') {
@@ -4090,12 +4202,34 @@
     } else if (serviceType === 'rabbitmq') {
       params.use_amqps = connectionInfo.type === 'amqps';
       params.connection_type = connectionInfo.type;
-      params.connection_user = connectionInfo.user;
-      params.connection_vhost = connectionInfo.vhost;
+
+      // Resolve display names to actual credentials
+      const testingInstance = window.currentTestingInstance;
+      if (testingInstance && testingInstance.credentials) {
+        const connInfo = extractConnectionInfo(testingInstance.credentials, serviceType, testingInstance.manifestData);
+
+        // Resolve user credentials (username and password)
+        if (connInfo.userCredentials && connInfo.userCredentials[connectionInfo.user]) {
+          const userCreds = connInfo.userCredentials[connectionInfo.user];
+          params.connection_user = userCreds.username;
+          params.connection_password = userCreds.password;
+        } else {
+          // Fallback to display name if not found in mapping
+          params.connection_user = connectionInfo.user;
+        }
+
+        // Resolve vhost
+        if (connInfo.vhostCredentials && connInfo.vhostCredentials[connectionInfo.vhost]) {
+          params.connection_vhost = connInfo.vhostCredentials[connectionInfo.vhost];
+        } else {
+          // Fallback to display name if not found in mapping
+          params.connection_vhost = connectionInfo.vhost;
+        }
+      }
     }
 
     try {
-      const url = `/b/${instanceId}/${serviceType}/${operation}`;
+      let url = `/b/${instanceId}/${serviceType}/${operation}`;
       const method = operation === 'test' || operation === 'info' || operation === 'queues' ? 'GET' : 'POST';
 
       const fetchOptions = {
