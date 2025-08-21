@@ -258,7 +258,7 @@ func (m *VMMonitor) checkService(svc *ServiceMonitor) {
 	if err := m.storeVMStatus(svc.ServiceID, vmStatus); err != nil {
 		l.Error("Failed to store VM status: %s", err)
 	} else {
-		l.Info("Stored VM status for %s: status=%s, healthy=%d, total=%d", 
+		l.Info("Stored VM status for %s: status=%s, healthy=%d, total=%d",
 			svc.ServiceID, status, healthyCount, len(vms))
 	}
 
@@ -414,13 +414,13 @@ func (m *VMMonitor) TriggerRefresh(serviceID string) error {
 func (m *VMMonitor) TriggerRefreshAll() {
 	l := Logger.Wrap("vm-monitor")
 	l.Info("Triggering refresh for all services")
-	
+
 	m.mu.Lock()
 	for _, svc := range m.services {
 		svc.NextCheck = time.Now()
 	}
 	m.mu.Unlock()
-	
+
 	// Force an immediate check
 	m.checkScheduledServices()
 }

@@ -433,9 +433,9 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 		}
 
 		// Log the state values for debugging
-		d.log.Debug("VM %s/%d - ProcessState: %s, State: %s", 
+		d.log.Debug("VM %s/%d - ProcessState: %s, State: %s",
 			vmInfo.JobName, *vmInfo.Index, vmInfo.ProcessState, vmInfo.State)
-		
+
 		vms[i] = VM{
 			// Core VM identity
 			ID:      vmInfo.ID,

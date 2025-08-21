@@ -340,7 +340,7 @@
 
   const restoreSearchFilterState = (tableId, searchValue) => {
     if (!searchValue) return;
-    
+
     const searchInput = document.getElementById(`search-${tableId}`);
     if (searchInput) {
       searchInput.value = searchValue;
@@ -793,10 +793,10 @@
       const cleanHeader = header.cloneNode(false);
       cleanHeader.innerHTML = header.innerHTML;
       cleanHeader.style.cursor = header.style.cursor;
-      
+
       // Replace the old header with the clean one
       header.parentNode.replaceChild(cleanHeader, header);
-      
+
       // Add click handler to the clean header
       cleanHeader.addEventListener('click', () => {
         handleTableSort(tableClass, column.key);
@@ -1026,7 +1026,7 @@
 
     try {
       let date;
-      
+
       if (typeof timestamp === 'number') {
         // Handle Unix timestamps - if it's a reasonable Unix timestamp (after year 2000)
         // then multiply by 1000 to convert to milliseconds
@@ -1043,12 +1043,12 @@
         // Handle other formats
         date = new Date(timestamp);
       }
-      
+
       // Check if the date is valid
       if (isNaN(date.getTime())) {
         return '-';
       }
-      
+
       return date.toLocaleString();
     } catch (error) {
       console.warn('Error formatting timestamp:', timestamp, error);
@@ -1421,25 +1421,25 @@
     const listHtml = instancesList.length === 0
       ? '<div class="no-data">No services have been provisioned yet.</div>'
       : instancesList.map(([id, details]) => {
-          const vmStatusHtml = details.vm_status ? `
+        const vmStatusHtml = details.vm_status ? `
             <div class="vm-status-badge vm-status-${details.vm_status}" title="VM Status: ${details.vm_status}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}" onclick="selectInstance('${id}', 'vms')">
               <span class="vm-status-icon"></span>
               <span class="vm-status-text">${details.vm_status}</span>
               ${details.vm_count ? `<span class="vm-count">${details.vm_healthy || 0}/${details.vm_count}</span>` : ''}
             </div>
           ` : '';
-          
-          // Check if instance is marked for deletion
-          const deletionStatusHtml = details.deletion_in_progress || details.status === 'deprovision_requested' ? `
+
+        // Check if instance is marked for deletion
+        const deletionStatusHtml = details.deletion_in_progress || details.status === 'deprovision_requested' ? `
             <div class="deletion-status-badge" title="Delete requested at ${details.delete_requested_at || details.deprovision_requested_at || 'Unknown'}">
               <span class="deletion-status-icon"></span>
               <span class="deletion-status-text">Deleting...</span>
             </div>
           ` : '';
-          
-          const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
-          
-          return `
+
+        const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
+
+        return `
             <div class="service-item ${isDeleting ? 'deleting' : ''}" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
               <div class="service-id">${id}</div>
               ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
@@ -1622,6 +1622,7 @@
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
         <button class="detail-tab" data-tab="instance-logs">Logs</button>
+        <button class="detail-tab" data-tab="testing">Testing</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>
@@ -1735,10 +1736,10 @@
     // Recursive function to flatten nested objects with hierarchical keys
     const flattenConfig = (obj, prefix = '') => {
       const result = [];
-      
+
       for (const [key, value] of Object.entries(obj)) {
         const fullKey = prefix ? `${prefix}.${key}` : key;
-        
+
         if (value === null || value === undefined) {
           result.push({ key: fullKey, value: '' });
         } else if (typeof value === 'object' && !Array.isArray(value)) {
@@ -1752,13 +1753,13 @@
           result.push({ key: fullKey, value: value.toString() });
         }
       }
-      
+
       return result;
     };
 
     // Flatten the config and create table rows
     const flatConfig = flattenConfig(config);
-    
+
     for (const item of flatConfig) {
       let displayValue;
       if (item.value === '' || item.value === null || item.value === undefined) {
@@ -1980,6 +1981,11 @@
       return `<div class="error">No service instance selected</div>`;
     }
 
+    // Handle special cases that don't use endpoints
+    if (type === 'testing') {
+      return await renderServiceTesting(instanceId);
+    }
+
     const endpoints = {
       manifest: `/b/${instanceId}/manifest-details`,
       credentials: `/b/${instanceId}/creds.json`,  // Use JSON endpoint
@@ -1987,8 +1993,14 @@
       vms: `/b/${instanceId}/vms`,
       logs: `/b/${instanceId}/task/log`,
       debug: `/b/${instanceId}/task/debug`,
-      'instance-logs': `/b/${instanceId}/instance-logs`
+      'instance-logs': `/b/${instanceId}/instance-logs`,
+      config: `/b/${instanceId}/config`
     };
+
+    // Check if the endpoint exists
+    if (!endpoints[type]) {
+      return `<div class="error">Unknown tab type: ${type}</div>`;
+    }
 
     try {
       const response = await fetch(endpoints[type], { cache: 'no-cache' });
@@ -2039,6 +2051,15 @@
         try {
           const logsData = JSON.parse(text);
           return formatInstanceLogs(logsData);
+        } catch (e) {
+          // If not JSON, display as plain text
+          return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        }
+      } else if (type === 'config') {
+        const text = await response.text();
+        try {
+          const config = JSON.parse(text);
+          return formatConfig(config);
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -3387,6 +3408,1144 @@
       headers,
       cache: 'no-cache'
     });
+  };
+
+  // Service Testing Functions
+  const renderServiceTesting = async (instanceId) => {
+    try {
+      // Get both credentials and config/manifest for fallback information
+      const [credsResponse, configResponse] = await Promise.all([
+        fetch(`/b/${instanceId}/creds.json`, { cache: 'no-cache' }),
+        fetch(`/b/${instanceId}/config`, { cache: 'no-cache' }).catch(() => null)
+      ]);
+
+      if (!credsResponse.ok) {
+        return `<div class="error">Unable to fetch credentials for service testing</div>`;
+      }
+
+      const creds = await credsResponse.json();
+
+      // Get config/manifest data for fallbacks if available
+      let manifestData = null;
+      if (configResponse && configResponse.ok) {
+        try {
+          const configText = await configResponse.text();
+          manifestData = JSON.parse(configText);
+        } catch (e) {
+          console.warn('Failed to parse config data for fallbacks:', e);
+        }
+      }
+
+      // Determine service type
+      const isRedis = isRedisService(creds);
+      const isRabbitMQ = isRabbitMQService(creds);
+
+      if (!isRedis && !isRabbitMQ) {
+        return `<div class="no-data">Service testing not available for this service type</div>`;
+      }
+
+      const serviceType = isRedis ? 'redis' : 'rabbitmq';
+
+      // Merge credentials with manifest fallbacks
+      const enhancedCreds = enhanceCredentialsWithManifestFallbacks(creds, manifestData, serviceType);
+
+      // Store the service type and credentials globally for testing functions
+      window.currentTestingInstance = {
+        id: instanceId,
+        serviceType: serviceType,
+        credentials: enhancedCreds,
+        manifestData: manifestData
+      };
+
+      // Initialize connection state management
+      if (!window.serviceConnections) {
+        window.serviceConnections = {};
+      }
+
+      // Initialize connection state for this instance
+      window.serviceConnections[instanceId] = {
+        connected: false,
+        connectionParams: null,
+        connectedAt: null,
+        timeout: null
+      };
+
+      return renderServiceTestingInterface(instanceId, serviceType, enhancedCreds);
+    } catch (error) {
+      console.error('Error rendering service testing:', error);
+      return `<div class="error">Failed to load service testing: ${error.message}</div>`;
+    }
+  };
+
+  const isRedisService = (creds) => {
+    // Check for Redis-specific patterns
+    if (creds.uri && (creds.uri.startsWith('redis://') || creds.uri.startsWith('rediss://'))) {
+      return true;
+    }
+    if (creds.port === 6379 || creds.tls_port === 6380) {
+      return true;
+    }
+    if (creds.password && (creds.host || creds.hostname) && !creds.username) {
+      return true; // Redis typically doesn't use username
+    }
+    return false;
+  };
+
+  const isRabbitMQService = (creds) => {
+    // Check for RabbitMQ-specific patterns
+    if (creds.uri && (creds.uri.startsWith('amqp://') || creds.uri.startsWith('amqps://'))) {
+      return true;
+    }
+    if (creds.protocols && (creds.protocols.amqp || creds.protocols.amqps)) {
+      return true;
+    }
+    if (creds.port === 5672 || creds.port === 5671) {
+      return true;
+    }
+    if (creds.vhost !== undefined || creds.username) {
+      return true; // RabbitMQ uses vhost and username
+    }
+    return false;
+  };
+
+  // Enhance credentials with manifest fallback data
+  const enhanceCredentialsWithManifestFallbacks = (creds, manifestData, serviceType) => {
+    const enhanced = { ...creds };
+
+    if (serviceType === 'rabbitmq' && manifestData) {
+      // Look for RabbitMQ-specific manifest data
+      const searchManifestValue = (path) => {
+        const keys = path.split('.');
+        let current = manifestData;
+        for (const key of keys) {
+          if (current && typeof current === 'object' && current[key] !== undefined) {
+            current = current[key];
+          } else {
+            return null;
+          }
+        }
+        return current;
+      };
+
+      // Look for admin_user/admin_password patterns
+      if (!enhanced.admin_user) {
+        enhanced.admin_user = searchManifestValue('rabbitmq.admin_user') ||
+          searchManifestValue('admin_user') ||
+          searchManifestValue('properties.rabbitmq.admin_user');
+      }
+
+      // Look for username/password patterns
+      if (!enhanced.username) {
+        enhanced.username = searchManifestValue('rabbitmq.username') ||
+          searchManifestValue('username') ||
+          searchManifestValue('properties.rabbitmq.username') ||
+          enhanced.admin_user;
+      }
+
+      // Look for vhost patterns
+      if (!enhanced.vhost) {
+        enhanced.vhost = searchManifestValue('rabbitmq.vhost') ||
+          searchManifestValue('vhost') ||
+          searchManifestValue('properties.rabbitmq.vhost');
+      }
+    }
+
+    return enhanced;
+  };
+
+  // Helper function to extract user/vhost info from credentials with fallbacks
+  const extractConnectionInfo = (creds, serviceType) => {
+    const info = { users: [], vhosts: [] };
+
+    if (serviceType === 'rabbitmq') {
+      // Extract users from credentials
+      if (creds.username) {
+        info.users.push(creds.username);
+      }
+
+      // Look for common credential keys for additional users
+      Object.keys(creds).forEach(key => {
+        if (key.includes('user') && key !== 'username' && creds[key]) {
+          info.users.push(creds[key]);
+        }
+      });
+
+      // Extract admin user from manifest fallback patterns
+      if (creds.admin_user) {
+        info.users.push(creds.admin_user);
+      }
+
+      // Remove duplicates
+      info.users = [...new Set(info.users)];
+
+      // Extract vhosts
+      if (creds.vhost) {
+        info.vhosts.push(creds.vhost);
+      }
+
+      // Look for vhost in other credential structures
+      Object.keys(creds).forEach(key => {
+        if (key.includes('vhost') && creds[key]) {
+          info.vhosts.push(creds[key]);
+        }
+      });
+
+      // Always include '/' as default vhost option
+      info.vhosts.push('/');
+
+      // Remove duplicates
+      info.vhosts = [...new Set(info.vhosts)];
+
+      // If no users found, add fallback options
+      if (info.users.length === 0) {
+        info.users = ['admin', 'guest'];
+      }
+
+      // If no vhosts found except '/', ensure it's there
+      if (info.vhosts.length === 1 && info.vhosts[0] === '/') {
+        // Keep just the default
+      } else if (info.vhosts.length === 0) {
+        info.vhosts = ['/'];
+      }
+    }
+
+    return info;
+  };
+
+  // Generate connection fields based on service type
+  const generateConnectionFields = (instanceId, serviceType, creds) => {
+    const connectionInfo = extractConnectionInfo(creds, serviceType);
+
+    if (serviceType === 'redis') {
+      return `
+        <div class="connection-field">
+          <label for="connection-type-${instanceId}">Type</label>
+          <select id="connection-type-${instanceId}" name="connection-type">
+            <option value="standard">Standard</option>
+            <option value="tls">TLS</option>
+          </select>
+        </div>
+      `;
+    } else if (serviceType === 'rabbitmq') {
+      const userOptions = connectionInfo.users.map(user =>
+        `<option value="${user}">${user}</option>`
+      ).join('');
+
+      const vhostOptions = connectionInfo.vhosts.map(vhost =>
+        `<option value="${vhost}">${vhost}</option>`
+      ).join('');
+
+      return `
+        <div class="connection-field">
+          <label for="connection-type-${instanceId}">Type</label>
+          <select id="connection-type-${instanceId}" name="connection-type">
+            <option value="amqp">AMQP</option>
+            <option value="amqps">AMQPS</option>
+          </select>
+        </div>
+        <div class="connection-field">
+          <label for="connection-user-${instanceId}">User</label>
+          <select id="connection-user-${instanceId}" name="connection-user">
+            ${userOptions}
+          </select>
+        </div>
+        <div class="connection-field">
+          <label for="connection-vhost-${instanceId}">VHost</label>
+          <select id="connection-vhost-${instanceId}" name="connection-vhost">
+            ${vhostOptions}
+          </select>
+        </div>
+      `;
+    }
+
+    return '';
+  };
+
+  const renderServiceTestingInterface = (instanceId, serviceType, creds) => {
+    return `
+      <div class="service-testing-container">
+        <div class="testing-operations">
+          <div class="operation-tabs">
+            ${getOperationTabs(serviceType, instanceId)}
+          </div>
+
+          <div class="operation-content" id="operation-content-${instanceId}">
+            ${getDefaultOperationContent(serviceType, instanceId)}
+          </div>
+        </div>
+
+        <div class="testing-history">
+          <div class="history-header">
+            <h5>Response History</h5>
+            <button class="clear-history-btn" onclick="clearTestingHistory('${instanceId}')">Clear History</button>
+          </div>
+          <div class="history-entries" id="history-entries-${instanceId}">
+            <div class="no-data">No operations performed yet</div>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  const getOperationTabs = (serviceType, instanceId) => {
+    if (serviceType === 'redis') {
+      return `
+        <button class="operation-tab active" data-operation="test" data-instance="${instanceId}">Connection</button>
+        <button class="operation-tab" data-operation="info" data-instance="${instanceId}">INFO</button>
+        <button class="operation-tab" data-operation="set" data-instance="${instanceId}">SET</button>
+        <button class="operation-tab" data-operation="get" data-instance="${instanceId}">GET</button>
+        <button class="operation-tab" data-operation="delete" data-instance="${instanceId}">DELETE</button>
+        <button class="operation-tab" data-operation="keys" data-instance="${instanceId}">KEYS</button>
+        <button class="operation-tab" data-operation="command" data-instance="${instanceId}">COMMAND</button>
+        <button class="operation-tab" data-operation="flush" data-instance="${instanceId}">FLUSH</button>
+      `;
+    } else if (serviceType === 'rabbitmq') {
+      return `
+        <button class="operation-tab active" data-operation="test" data-instance="${instanceId}">Connection</button>
+        <button class="operation-tab" data-operation="publish" data-instance="${instanceId}">PUBLISH</button>
+        <button class="operation-tab" data-operation="consume" data-instance="${instanceId}">CONSUME</button>
+        <button class="operation-tab" data-operation="queues" data-instance="${instanceId}">QUEUE INFO</button>
+        <button class="operation-tab" data-operation="queue-ops" data-instance="${instanceId}">QUEUE OPS</button>
+        <button class="operation-tab" data-operation="management" data-instance="${instanceId}">MANAGEMENT</button>
+      `;
+    }
+    return '';
+  };
+
+  const getDefaultOperationContent = (serviceType, instanceId) => {
+    if (serviceType === 'redis') {
+      return renderRedisTestOperation(instanceId);
+    } else if (serviceType === 'rabbitmq') {
+      return renderRabbitMQTestOperation(instanceId);
+    }
+    return '<div class="no-data">No operations available</div>';
+  };
+
+  // Redis Operation Renderers
+  const renderRedisTestOperation = (instanceId) => {
+    const testingInstance = window.currentTestingInstance;
+    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials) : '';
+
+    return `
+      <table class="operation-form">
+        <tr>
+          <th>Connection Configuration</th>
+          <th>Status</th>
+        </tr>
+        <tr>
+          <td>
+            <div class="connection-selector">
+              ${connectionFields}
+            </div>
+          </td>
+          <td>
+            <button class="execute-btn" id="connect-btn-${instanceId}" onclick="executeRedisTest('${instanceId}')">Connect</button>
+          </td>
+        </tr>
+      </table>
+    `;
+  };
+
+  const renderRedisInfoOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Redis INFO</h5>
+        <p>Get Redis server information and statistics.</p>
+        <button class="execute-btn" onclick="executeRedisInfo('${instanceId}')">Get Server Info</button>
+      </div>
+    `;
+  };
+
+  const renderRedisSetOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Redis SET</h5>
+        <div class="form-row">
+          <label for="redis-key-${instanceId}">Key:</label>
+          <input type="text" id="redis-key-${instanceId}" placeholder="Enter key name" />
+        </div>
+        <div class="form-row">
+          <label for="redis-value-${instanceId}">Value:</label>
+          <textarea id="redis-value-${instanceId}" placeholder="Enter value" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="redis-ttl-${instanceId}">TTL (seconds, optional):</label>
+          <input type="number" id="redis-ttl-${instanceId}" placeholder="0 for no expiration" min="0" />
+        </div>
+        <button class="execute-btn" onclick="executeRedisSet('${instanceId}')">SET</button>
+      </div>
+    `;
+  };
+
+  const renderRedisGetOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Redis GET</h5>
+        <div class="form-row">
+          <label for="redis-get-key-${instanceId}">Key:</label>
+          <input type="text" id="redis-get-key-${instanceId}" placeholder="Enter key name" />
+        </div>
+        <button class="execute-btn" onclick="executeRedisGet('${instanceId}')">GET</button>
+      </div>
+    `;
+  };
+
+  const renderRedisDeleteOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Redis DELETE</h5>
+        <div class="form-row">
+          <label for="redis-delete-keys-${instanceId}">Keys (one per line):</label>
+          <textarea id="redis-delete-keys-${instanceId}" placeholder="Enter key names, one per line" rows="3"></textarea>
+        </div>
+        <button class="execute-btn" onclick="executeRedisDelete('${instanceId}')">DELETE</button>
+      </div>
+    `;
+  };
+
+  const renderRedisKeysOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Redis KEYS</h5>
+        <div class="form-row">
+          <label for="redis-pattern-${instanceId}">Pattern:</label>
+          <input type="text" id="redis-pattern-${instanceId}" placeholder="* (default)" value="*" />
+        </div>
+        <button class="execute-btn" onclick="executeRedisKeys('${instanceId}')">List Keys</button>
+      </div>
+    `;
+  };
+
+  const renderRedisCommandOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Redis COMMAND</h5>
+        <div class="form-row">
+          <label for="redis-cmd-${instanceId}">Command:</label>
+          <input type="text" id="redis-cmd-${instanceId}" placeholder="e.g., PING, DBSIZE, TYPE" />
+        </div>
+        <div class="form-row">
+          <label for="redis-args-${instanceId}">Arguments (JSON array, optional):</label>
+          <textarea id="redis-args-${instanceId}" placeholder='["arg1", "arg2"]' rows="2"></textarea>
+        </div>
+        <button class="execute-btn" onclick="executeRedisCommand('${instanceId}')">Execute</button>
+      </div>
+    `;
+  };
+
+  const renderRedisFlushOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Redis FLUSH</h5>
+        <p><strong>Warning:</strong> This will delete all data in the database!</p>
+        <div class="form-row">
+          <label for="redis-flush-db-${instanceId}">Database:</label>
+          <input type="number" id="redis-flush-db-${instanceId}" value="0" min="0" />
+        </div>
+        <button class="execute-btn warning" onclick="executeRedisFlush('${instanceId}')">FLUSH DATABASE</button>
+      </div>
+    `;
+  };
+
+  // RabbitMQ Operation Renderers
+  const renderRabbitMQTestOperation = (instanceId) => {
+    const testingInstance = window.currentTestingInstance;
+    const connectionFields = testingInstance ? generateConnectionFields(instanceId, testingInstance.serviceType, testingInstance.credentials) : '';
+
+    return `
+      <table class="operation-form">
+        <tr>
+          <th>Connection Configuration</th>
+          <th>Status</th>
+        </tr>
+        <tr>
+          <td>
+            <div class="connection-selector">
+              ${connectionFields}
+            </div>
+          </td>
+          <td>
+            <button class="execute-btn" id="connect-btn-${instanceId}" onclick="executeRabbitMQTest('${instanceId}')">Connect</button>
+          </td>
+        </tr>
+      </table>
+    `;
+  };
+
+  const renderRabbitMQPublishOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Publish Message</h5>
+        <div class="form-row">
+          <label for="rabbitmq-queue-${instanceId}">Queue Name:</label>
+          <input type="text" id="rabbitmq-queue-${instanceId}" placeholder="test-queue" />
+        </div>
+        <div class="form-row">
+          <label for="rabbitmq-exchange-${instanceId}">Exchange (optional):</label>
+          <input type="text" id="rabbitmq-exchange-${instanceId}" placeholder="Leave empty for default exchange" />
+        </div>
+        <div class="form-row">
+          <label for="rabbitmq-message-${instanceId}">Message:</label>
+          <textarea id="rabbitmq-message-${instanceId}" placeholder="Enter message content" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rabbitmq-persistent-${instanceId}" />
+            <span>Persistent Message</span>
+          </label>
+        </div>
+        <button class="execute-btn" onclick="executeRabbitMQPublish('${instanceId}')">Publish</button>
+      </div>
+    `;
+  };
+
+  const renderRabbitMQConsumeOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Consume Messages</h5>
+        <div class="form-row">
+          <label for="rabbitmq-consume-queue-${instanceId}">Queue Name:</label>
+          <input type="text" id="rabbitmq-consume-queue-${instanceId}" placeholder="test-queue" />
+        </div>
+        <div class="form-row">
+          <label for="rabbitmq-count-${instanceId}">Message Count:</label>
+          <input type="number" id="rabbitmq-count-${instanceId}" value="5" min="1" max="100" />
+        </div>
+        <div class="form-row">
+          <label for="rabbitmq-timeout-${instanceId}">Timeout (ms):</label>
+          <input type="number" id="rabbitmq-timeout-${instanceId}" value="5000" min="1000" max="30000" />
+        </div>
+        <div class="form-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rabbitmq-auto-ack-${instanceId}" checked />
+            <span>Auto Acknowledge</span>
+          </label>
+        </div>
+        <button class="execute-btn" onclick="executeRabbitMQConsume('${instanceId}')">Consume</button>
+      </div>
+    `;
+  };
+
+  const renderRabbitMQQueuesOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Queue Information</h5>
+        <p>List all queues and their current status.</p>
+        <button class="execute-btn" onclick="executeRabbitMQQueues('${instanceId}')">Get Queue Info</button>
+      </div>
+    `;
+  };
+
+  const renderRabbitMQQueueOpsOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Queue Operations</h5>
+        <div class="form-row">
+          <label for="rabbitmq-queue-ops-name-${instanceId}">Queue Name:</label>
+          <input type="text" id="rabbitmq-queue-ops-name-${instanceId}" placeholder="queue-name" />
+        </div>
+        <div class="form-row">
+          <label for="rabbitmq-operation-${instanceId}">Operation:</label>
+          <select id="rabbitmq-operation-${instanceId}">
+            <option value="create">Create Queue</option>
+            <option value="delete">Delete Queue</option>
+            <option value="purge">Purge Queue</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rabbitmq-durable-${instanceId}" checked />
+            <span>Durable (for create operation)</span>
+          </label>
+        </div>
+        <button class="execute-btn" onclick="executeRabbitMQQueueOps('${instanceId}')">Execute</button>
+      </div>
+    `;
+  };
+
+  const renderRabbitMQManagementOperation = (instanceId) => {
+    return `
+      <div class="operation-form">
+        <h5>Management API</h5>
+        <div class="form-row">
+          <label for="rabbitmq-mgmt-path-${instanceId}">API Path:</label>
+          <input type="text" id="rabbitmq-mgmt-path-${instanceId}" placeholder="/api/overview" />
+        </div>
+        <div class="form-row">
+          <label for="rabbitmq-mgmt-method-${instanceId}">Method:</label>
+          <select id="rabbitmq-mgmt-method-${instanceId}">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rabbitmq-mgmt-ssl-${instanceId}" />
+            <span>Use SSL</span>
+          </label>
+        </div>
+        <button class="execute-btn" onclick="executeRabbitMQManagement('${instanceId}')">Execute</button>
+      </div>
+    `;
+  };
+
+  // Service Testing Execution Functions
+
+  // Global history storage
+  window.serviceTestingHistory = window.serviceTestingHistory || {};
+
+  const addToTestingHistory = (instanceId, operation, params, result, success) => {
+    if (!window.serviceTestingHistory[instanceId]) {
+      window.serviceTestingHistory[instanceId] = [];
+    }
+
+    const entry = {
+      timestamp: Date.now(),
+      operation: operation,
+      params: params,
+      result: result,
+      success: success
+    };
+
+    window.serviceTestingHistory[instanceId].unshift(entry);
+
+    // Limit history to 50 entries
+    if (window.serviceTestingHistory[instanceId].length > 50) {
+      window.serviceTestingHistory[instanceId] = window.serviceTestingHistory[instanceId].slice(0, 50);
+    }
+
+    updateTestingHistoryDisplay(instanceId);
+  };
+
+  const updateTestingHistoryDisplay = (instanceId) => {
+    const historyContainer = document.getElementById(`history-entries-${instanceId}`);
+    if (!historyContainer) return;
+
+    const history = window.serviceTestingHistory[instanceId] || [];
+    if (history.length === 0) {
+      historyContainer.innerHTML = '<div class="no-data">No operations performed yet</div>';
+      return;
+    }
+
+    const historyHtml = history.map(entry => {
+      const timestamp = new Date(entry.timestamp).toLocaleString();
+      const statusClass = entry.success ? 'success' : 'error';
+      const statusIcon = entry.success ? '✓' : '✗';
+
+      return `
+        <div class="history-entry ${statusClass}">
+          <div class="history-entry-header">
+            <span class="history-operation">${statusIcon} ${entry.operation.toUpperCase()}</span>
+            <span class="history-timestamp">${timestamp}</span>
+          </div>
+          <div class="history-entry-body">
+            <div class="history-params">
+              <strong>Request:</strong>
+              <pre>${JSON.stringify(entry.params, null, 2)}</pre>
+            </div>
+            <div class="history-result">
+              <strong>Response:</strong>
+              <pre>${JSON.stringify(entry.result, null, 2)}</pre>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    historyContainer.innerHTML = historyHtml;
+  };
+
+  const clearTestingHistory = (instanceId) => {
+    window.serviceTestingHistory[instanceId] = [];
+    updateTestingHistoryDisplay(instanceId);
+  };
+
+  // Updated to get connection info from dropdowns
+  const getConnectionInfo = (instanceId) => {
+    const connectionType = document.getElementById(`connection-type-${instanceId}`)?.value;
+    const connectionUser = document.getElementById(`connection-user-${instanceId}`)?.value;
+    const connectionVhost = document.getElementById(`connection-vhost-${instanceId}`)?.value;
+
+    return {
+      type: connectionType || 'standard',
+      user: connectionUser || '',
+      vhost: connectionVhost || '/'
+    };
+  };
+
+  // Backward compatibility
+  const getConnectionType = (instanceId) => {
+    return getConnectionInfo(instanceId).type;
+  };
+
+  const executeServiceOperation = async (instanceId, serviceType, operation, params = {}) => {
+    const connectionInfo = getConnectionInfo(instanceId);
+
+    // Add connection information to params
+    if (serviceType === 'redis') {
+      params.use_tls = connectionInfo.type === 'tls';
+      params.connection_type = connectionInfo.type;
+    } else if (serviceType === 'rabbitmq') {
+      params.use_amqps = connectionInfo.type === 'amqps';
+      params.connection_type = connectionInfo.type;
+      params.connection_user = connectionInfo.user;
+      params.connection_vhost = connectionInfo.vhost;
+    }
+
+    try {
+      const url = `/b/${instanceId}/${serviceType}/${operation}`;
+      const method = operation === 'test' || operation === 'info' || operation === 'queues' ? 'GET' : 'POST';
+
+      const fetchOptions = {
+        method: method,
+        cache: 'no-cache'
+      };
+
+      if (method === 'POST') {
+        fetchOptions.headers = { 'Content-Type': 'application/json' };
+        fetchOptions.body = JSON.stringify(params);
+      } else if (Object.keys(params).length > 0) {
+        // Add query parameters for GET requests
+        const queryParams = new URLSearchParams();
+        Object.entries(params).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && value !== '') {
+            queryParams.append(key, value.toString());
+          }
+        });
+        if (queryParams.toString()) {
+          url += '?' + queryParams.toString();
+        }
+      }
+
+      const response = await fetch(url, fetchOptions);
+      const result = await response.json();
+
+      addToTestingHistory(instanceId, operation, params, result, response.ok);
+
+      if (!response.ok) {
+        throw new Error(result.error || `HTTP ${response.status}`);
+      }
+
+      return result;
+    } catch (error) {
+      const errorResult = { success: false, error: error.message };
+      addToTestingHistory(instanceId, operation, params, errorResult, false);
+      throw error;
+    }
+  };
+
+  // Redis Execution Functions
+  // Connection state management functions
+  const connectToService = (instanceId) => {
+    const connectionParams = getConnectionInfo(instanceId);
+    const connectionState = window.serviceConnections[instanceId];
+
+    connectionState.connected = true;
+    connectionState.connectionParams = connectionParams;
+    connectionState.connectedAt = Date.now();
+
+    // Set 10-minute timeout
+    if (connectionState.timeout) {
+      clearTimeout(connectionState.timeout);
+    }
+
+    connectionState.timeout = setTimeout(() => {
+      disconnectFromService(instanceId);
+    }, 10 * 60 * 1000); // 10 minutes
+
+    updateConnectionUI(instanceId, true);
+    updateConnectionStatus(instanceId, true);
+  };
+
+  const disconnectFromService = (instanceId) => {
+    const connectionState = window.serviceConnections[instanceId];
+
+    if (connectionState.timeout) {
+      clearTimeout(connectionState.timeout);
+      connectionState.timeout = null;
+    }
+
+    connectionState.connected = false;
+    connectionState.connectionParams = null;
+    connectionState.connectedAt = null;
+
+    updateConnectionUI(instanceId, false);
+    updateConnectionStatus(instanceId, false);
+  };
+
+  const updateConnectionUI = (instanceId, connected) => {
+    const connectBtn = document.getElementById(`connect-btn-${instanceId}`);
+    if (connectBtn) {
+      connectBtn.textContent = connected ? 'Disconnect' : 'Connect';
+      connectBtn.onclick = connected ?
+        () => handleDisconnect(instanceId) :
+        () => handleConnect(instanceId);
+    }
+  };
+
+  const updateConnectionStatus = (instanceId, connected) => {
+    // Find the Connection tab and add status indicator
+    const connectionTab = document.querySelector(`.operation-tab[data-operation="test"][data-instance="${instanceId}"]`);
+    if (connectionTab) {
+      // Remove existing status indicators
+      const existingIndicator = connectionTab.querySelector('.connection-status-indicator');
+      if (existingIndicator) {
+        existingIndicator.remove();
+      }
+
+      // Add new status indicator
+      const indicator = document.createElement('span');
+      indicator.className = 'connection-status-indicator';
+      indicator.style.cssText = `
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background-color: ${connected ? '#28a745' : '#dc3545'};
+      `;
+
+      connectionTab.insertBefore(indicator, connectionTab.firstChild);
+    }
+  };
+
+  const handleConnect = async (instanceId) => {
+    try {
+      const testingInstance = window.currentTestingInstance;
+      if (!testingInstance || testingInstance.id !== instanceId) {
+        throw new Error('Testing instance not found');
+      }
+
+      const result = await executeServiceOperation(instanceId, testingInstance.serviceType, 'test');
+
+      if (result && !result.error) {
+        connectToService(instanceId);
+        console.log('Service connected successfully:', result);
+      } else {
+        throw new Error(result.error || 'Connection failed');
+      }
+    } catch (error) {
+      console.error('Connection failed:', error);
+      updateConnectionStatus(instanceId, false);
+    }
+  };
+
+  const handleDisconnect = (instanceId) => {
+    disconnectFromService(instanceId);
+    console.log('Service disconnected');
+  };
+
+  window.executeRedisTest = async (instanceId) => {
+    const connectionState = window.serviceConnections[instanceId];
+
+    if (connectionState && connectionState.connected) {
+      handleDisconnect(instanceId);
+    } else {
+      await handleConnect(instanceId);
+    }
+  };
+
+  window.executeRedisInfo = async (instanceId) => {
+    try {
+      const result = await executeServiceOperation(instanceId, 'redis', 'info');
+      console.log('Redis info result:', result);
+    } catch (error) {
+      console.error('Redis info failed:', error);
+    }
+  };
+
+  window.executeRedisSet = async (instanceId) => {
+    const key = document.getElementById(`redis-key-${instanceId}`)?.value;
+    const value = document.getElementById(`redis-value-${instanceId}`)?.value;
+    const ttl = parseInt(document.getElementById(`redis-ttl-${instanceId}`)?.value) || 0;
+
+    if (!key || !value) {
+      alert('Please provide both key and value');
+      return;
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'redis', 'set', { key, value, ttl });
+      console.log('Redis SET result:', result);
+    } catch (error) {
+      console.error('Redis SET failed:', error);
+    }
+  };
+
+  window.executeRedisGet = async (instanceId) => {
+    const key = document.getElementById(`redis-get-key-${instanceId}`)?.value;
+
+    if (!key) {
+      alert('Please provide a key');
+      return;
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'redis', 'get', { key });
+      console.log('Redis GET result:', result);
+    } catch (error) {
+      console.error('Redis GET failed:', error);
+    }
+  };
+
+  window.executeRedisDelete = async (instanceId) => {
+    const keysText = document.getElementById(`redis-delete-keys-${instanceId}`)?.value;
+
+    if (!keysText) {
+      alert('Please provide keys to delete');
+      return;
+    }
+
+    const keys = keysText.split('\n').map(k => k.trim()).filter(k => k);
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'redis', 'delete', { keys });
+      console.log('Redis DELETE result:', result);
+    } catch (error) {
+      console.error('Redis DELETE failed:', error);
+    }
+  };
+
+  window.executeRedisKeys = async (instanceId) => {
+    const pattern = document.getElementById(`redis-pattern-${instanceId}`)?.value || '*';
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'redis', 'keys', { pattern });
+      console.log('Redis KEYS result:', result);
+    } catch (error) {
+      console.error('Redis KEYS failed:', error);
+    }
+  };
+
+  window.executeRedisCommand = async (instanceId) => {
+    const command = document.getElementById(`redis-cmd-${instanceId}`)?.value;
+    const argsText = document.getElementById(`redis-args-${instanceId}`)?.value;
+
+    if (!command) {
+      alert('Please provide a command');
+      return;
+    }
+
+    let args = [];
+    if (argsText) {
+      try {
+        args = JSON.parse(argsText);
+      } catch (e) {
+        alert('Invalid JSON in arguments field');
+        return;
+      }
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'redis', 'command', { command, args });
+      console.log('Redis COMMAND result:', result);
+    } catch (error) {
+      console.error('Redis COMMAND failed:', error);
+    }
+  };
+
+  window.executeRedisFlush = async (instanceId) => {
+    const database = parseInt(document.getElementById(`redis-flush-db-${instanceId}`)?.value) || 0;
+
+    if (!confirm('Are you sure you want to flush the database? This will delete all data!')) {
+      return;
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'redis', 'flush', { database });
+      console.log('Redis FLUSH result:', result);
+    } catch (error) {
+      console.error('Redis FLUSH failed:', error);
+    }
+  };
+
+  // RabbitMQ Execution Functions
+  window.executeRabbitMQTest = async (instanceId) => {
+    const connectionState = window.serviceConnections[instanceId];
+
+    if (connectionState && connectionState.connected) {
+      handleDisconnect(instanceId);
+    } else {
+      await handleConnect(instanceId);
+    }
+  };
+
+  window.executeRabbitMQPublish = async (instanceId) => {
+    const queue = document.getElementById(`rabbitmq-queue-${instanceId}`)?.value;
+    const exchange = document.getElementById(`rabbitmq-exchange-${instanceId}`)?.value || '';
+    const message = document.getElementById(`rabbitmq-message-${instanceId}`)?.value;
+    const persistent = document.getElementById(`rabbitmq-persistent-${instanceId}`)?.checked || false;
+
+    if (!queue || !message) {
+      alert('Please provide both queue name and message');
+      return;
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'publish', {
+        queue, exchange, message, persistent
+      });
+      console.log('RabbitMQ PUBLISH result:', result);
+    } catch (error) {
+      console.error('RabbitMQ PUBLISH failed:', error);
+    }
+  };
+
+  window.executeRabbitMQConsume = async (instanceId) => {
+    const queue = document.getElementById(`rabbitmq-consume-queue-${instanceId}`)?.value;
+    const count = parseInt(document.getElementById(`rabbitmq-count-${instanceId}`)?.value) || 5;
+    const timeout = parseInt(document.getElementById(`rabbitmq-timeout-${instanceId}`)?.value) || 5000;
+    const autoAck = document.getElementById(`rabbitmq-auto-ack-${instanceId}`)?.checked || false;
+
+    if (!queue) {
+      alert('Please provide a queue name');
+      return;
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'consume', {
+        queue, count, timeout, auto_ack: autoAck
+      });
+      console.log('RabbitMQ CONSUME result:', result);
+    } catch (error) {
+      console.error('RabbitMQ CONSUME failed:', error);
+    }
+  };
+
+  window.executeRabbitMQQueues = async (instanceId) => {
+    try {
+      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'queues');
+      console.log('RabbitMQ QUEUES result:', result);
+    } catch (error) {
+      console.error('RabbitMQ QUEUES failed:', error);
+    }
+  };
+
+  window.executeRabbitMQQueueOps = async (instanceId) => {
+    const queue = document.getElementById(`rabbitmq-queue-ops-name-${instanceId}`)?.value;
+    const operation = document.getElementById(`rabbitmq-operation-${instanceId}`)?.value;
+    const durable = document.getElementById(`rabbitmq-durable-${instanceId}`)?.checked || false;
+
+    if (!queue) {
+      alert('Please provide a queue name');
+      return;
+    }
+
+    if (operation === 'delete' && !confirm(`Are you sure you want to delete queue "${queue}"?`)) {
+      return;
+    }
+
+    if (operation === 'purge' && !confirm(`Are you sure you want to purge all messages from queue "${queue}"?`)) {
+      return;
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'queue-ops', {
+        queue, operation, durable
+      });
+      console.log('RabbitMQ QUEUE-OPS result:', result);
+    } catch (error) {
+      console.error('RabbitMQ QUEUE-OPS failed:', error);
+    }
+  };
+
+  window.executeRabbitMQManagement = async (instanceId) => {
+    const path = document.getElementById(`rabbitmq-mgmt-path-${instanceId}`)?.value;
+    const method = document.getElementById(`rabbitmq-mgmt-method-${instanceId}`)?.value || 'GET';
+    const useSSL = document.getElementById(`rabbitmq-mgmt-ssl-${instanceId}`)?.checked || false;
+
+    if (!path) {
+      alert('Please provide an API path');
+      return;
+    }
+
+    try {
+      const result = await executeServiceOperation(instanceId, 'rabbitmq', 'management', {
+        path, method, use_ssl: useSSL
+      });
+      console.log('RabbitMQ MANAGEMENT result:', result);
+    } catch (error) {
+      console.error('RabbitMQ MANAGEMENT failed:', error);
+    }
+  };
+
+  // Operation Tab Switching
+  window.switchTestingOperation = (instanceId, operation) => {
+    // Update active tab
+    document.querySelectorAll(`.operation-tab[data-instance="${instanceId}"]`).forEach(tab => {
+      tab.classList.remove('active');
+    });
+    document.querySelector(`.operation-tab[data-operation="${operation}"][data-instance="${instanceId}"]`).classList.add('active');
+
+    // Get service type from global storage
+    const testingInstance = window.currentTestingInstance;
+    if (!testingInstance || testingInstance.id !== instanceId) {
+      console.error('Testing instance not found');
+      return;
+    }
+
+    // Update operation content
+    const contentContainer = document.getElementById(`operation-content-${instanceId}`);
+    if (contentContainer) {
+      contentContainer.innerHTML = getOperationContent(testingInstance.serviceType, operation, instanceId);
+
+      // After content is loaded, restore connection state for connection tab
+      setTimeout(() => {
+        const connectionState = window.serviceConnections && window.serviceConnections[instanceId];
+        if (connectionState) {
+          // Update connection status indicator
+          updateConnectionStatus(instanceId, connectionState.connected);
+
+          // If on connection tab, restore connection UI state
+          if (operation === 'test') {
+            updateConnectionUI(instanceId, connectionState.connected);
+
+            // Restore connection parameters if connected
+            if (connectionState.connected && connectionState.connectionParams) {
+              restoreConnectionParams(instanceId, connectionState.connectionParams);
+            }
+          }
+        }
+      }, 50);
+    }
+  };
+
+  // Function to restore connection parameters to the UI
+  const restoreConnectionParams = (instanceId, params) => {
+    Object.keys(params).forEach(key => {
+      const element = document.getElementById(`${key}-${instanceId}`);
+      if (element) {
+        element.value = params[key];
+      }
+    });
+  };
+
+  const getOperationContent = (serviceType, operation, instanceId) => {
+    if (serviceType === 'redis') {
+      switch (operation) {
+        case 'test': return renderRedisTestOperation(instanceId);
+        case 'info': return renderRedisInfoOperation(instanceId);
+        case 'set': return renderRedisSetOperation(instanceId);
+        case 'get': return renderRedisGetOperation(instanceId);
+        case 'delete': return renderRedisDeleteOperation(instanceId);
+        case 'keys': return renderRedisKeysOperation(instanceId);
+        case 'command': return renderRedisCommandOperation(instanceId);
+        case 'flush': return renderRedisFlushOperation(instanceId);
+      }
+    } else if (serviceType === 'rabbitmq') {
+      switch (operation) {
+        case 'test': return renderRabbitMQTestOperation(instanceId);
+        case 'publish': return renderRabbitMQPublishOperation(instanceId);
+        case 'consume': return renderRabbitMQConsumeOperation(instanceId);
+        case 'queues': return renderRabbitMQQueuesOperation(instanceId);
+        case 'queue-ops': return renderRabbitMQQueueOpsOperation(instanceId);
+        case 'management': return renderRabbitMQManagementOperation(instanceId);
+      }
+    }
+
+    return '<div class="no-data">Operation not found</div>';
   };
 
   // DOM ready function
@@ -5398,12 +6557,12 @@
                   // Restore filter state after rendering
                   const newServiceFilter = document.getElementById('service-filter');
                   const newPlanFilter = document.getElementById('plan-filter');
-                  
+
                   if (newServiceFilter && currentServiceFilter) {
                     newServiceFilter.value = currentServiceFilter;
                     // Trigger change event to update plan filter options
                     newServiceFilter.dispatchEvent(new Event('change'));
-                    
+
                     // Restore plan filter if it was set
                     if (newPlanFilter && currentPlanFilter) {
                       // Wait for plan options to be populated, then set the value
@@ -5533,6 +6692,19 @@
                   attachSearchFilter(tableClass);
                 });
               }
+            } else if (tabType === 'testing') {
+              // Set up operation tab switching for service testing
+              setTimeout(() => {
+                document.querySelectorAll('.operation-tab').forEach(tab => {
+                  tab.addEventListener('click', function () {
+                    const operation = this.dataset.operation;
+                    const instanceId = this.dataset.instance;
+                    if (operation && instanceId) {
+                      window.switchTestingOperation(instanceId, operation);
+                    }
+                  });
+                });
+              }, 50);
             }
           }, 100);
         };

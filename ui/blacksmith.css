@@ -3438,3 +3438,436 @@ th[style*="cursor: pointer"]:hover {
   background: linear-gradient(135deg, transparent 45%, rgba(255, 193, 7, 0.2) 50%, transparent 55%);
   background-size: 20px 20px;
 }
+
+/* Service Testing Styles */
+.service-testing-container {
+  padding: 20px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+}
+
+
+/* Updated connection selector to use single row with dropdowns */
+.connection-selector {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.connection-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 120px;
+}
+
+.connection-field label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.connection-field select {
+  padding: 8px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: sans-serif;
+}
+
+.connection-field select:hover {
+  border-color: var(--border-active);
+  background: var(--bg-hover);
+}
+
+.connection-field select:focus {
+  outline: none;
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
+}
+
+/* Max width for user and vhost dropdowns with full-width options */
+#connection-user option,
+#connection-vhost option,
+select[id*="connection-user"] option,
+select[id*="connection-vhost"] option {
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+select[id*="connection-user"],
+select[id*="connection-vhost"] {
+  max-width: 200px;
+  text-overflow: ellipsis;
+}
+
+.testing-operations {
+  margin-bottom: 30px;
+}
+
+/* Operation tabs - consistent with detail tabs */
+.operation-tabs {
+  display: flex;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 0;
+}
+
+.operation-tab {
+  padding: 0.8em 1.5em;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 11pt;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.operation-tab:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.operation-tab.active {
+  color: var(--text-link);
+  border-bottom-color: var(--border-active);
+  font-weight: 600;
+}
+
+.operation-content {
+  background: var(--bg-secondary);
+  padding: 20px;
+  border-radius: 0;
+  border: none;
+  min-height: 200px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.operation-form {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.operation-form th {
+  text-align: left;
+  padding: 10px;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.operation-form td {
+  padding: 15px 10px;
+  border-bottom: 1px solid var(--border-primary);
+  vertical-align: top;
+}
+
+.operation-form h5 {
+  margin: 0 0 10px 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+}
+
+.operation-form p {
+  margin: 0 0 15px 0;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.form-row {
+  margin-bottom: 15px;
+}
+
+.form-row label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 0.9em;
+}
+
+.form-row input,
+.form-row textarea,
+.form-row select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.9em;
+  font-family: inherit;
+}
+
+.form-row input:focus,
+.form-row textarea:focus,
+.form-row select:focus {
+  outline: none;
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
+}
+
+.form-row textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+/* Execute buttons - consistent with service listing buttons */
+.execute-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.execute-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-active);
+  color: var(--text-link);
+}
+
+.execute-btn:active {
+  transform: translateY(1px);
+}
+
+.execute-btn.warning {
+  background: var(--text-error);
+  color: var(--bg-secondary);
+  border-color: var(--text-error);
+}
+
+.execute-btn.warning:hover {
+  background: #c82333;
+  border-color: #c82333;
+}
+
+.testing-history {
+  border-top: 2px solid var(--border-primary);
+  padding-top: 20px;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.history-header h5 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+}
+
+.clear-history-btn {
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8em;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+.clear-history-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.history-entries {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+}
+
+.history-entry {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-primary);
+  transition: background-color 0.2s ease;
+}
+
+.history-entry:last-child {
+  border-bottom: none;
+}
+
+.history-entry:hover {
+  background: var(--bg-hover);
+}
+
+.history-entry.success {
+  border-left: 3px solid #28a745;
+}
+
+.history-entry.error {
+  border-left: 3px solid #dc3545;
+}
+
+.history-entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.history-operation {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.9em;
+}
+
+.history-timestamp {
+  font-size: 0.8em;
+  color: var(--text-secondary);
+}
+
+.history-entry-body {
+  margin-top: 8px;
+}
+
+.history-params,
+.history-result {
+  margin-bottom: 8px;
+}
+
+.history-params strong,
+.history-result strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.history-entry-body pre {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 0.8em;
+  color: var(--text-primary);
+  margin: 0;
+  overflow-x: auto;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+/* Responsive design for service testing */
+@media (max-width: 768px) {
+  .connection-selector {
+    flex-direction: column;
+    gap: 10px;
+    align-items: stretch;
+  }
+  
+  .operation-tabs {
+    flex-direction: column;
+    gap: 4px;
+  }
+  
+  .operation-tab {
+    border-radius: 4px;
+    border-bottom: 3px solid transparent;
+  }
+  
+  .history-entry-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+}
+
+/* Status indicators for operations */
+.status-indicator {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.status-indicator.success {
+  background: #28a745;
+}
+
+.status-indicator.error {
+  background: #dc3545;
+}
+
+.status-indicator.pending {
+  background: #ffc107;
+  animation: pulse 1s infinite;
+}
+
+/* Service testing specific dark theme adjustments */
+[data-theme="dark"] .service-testing-container {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .connection-field select {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .connection-field select:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-active);
+}
+
+[data-theme="dark"] .operation-content {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .form-row input,
+[data-theme="dark"] .form-row textarea,
+[data-theme="dark"] .form-row select {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .history-entries {
+  background: var(--bg-primary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .history-entry-body pre {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+  color: var(--text-primary);
+}

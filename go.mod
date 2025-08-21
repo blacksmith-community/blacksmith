@@ -7,11 +7,13 @@ require (
 	github.com/cloudfoundry/bosh-cli/v7 v7.9.8
 	github.com/cloudfoundry/bosh-utils v0.0.552
 	github.com/geofffranks/spruce v1.31.1
+	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/vault/api v1.20.0
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.38.0
 	github.com/pivotal-cf/brokerapi/v8 v8.2.3
+	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/smallfish/simpleyaml v0.1.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -23,12 +25,14 @@ require (
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charlievieth/fs v0.0.3 // indirect
 	github.com/cloudfoundry-community/vaultkv v0.7.0 // indirect
 	github.com/cloudfoundry/go-socks5 v0.0.0-20250423223041-4ad5fea42851 // indirect
 	github.com/cloudfoundry/socks5-proxy v0.2.156 // indirect
 	github.com/cppforlife/go-semi-semantic v0.0.0-20160921010311-576b6af77ae4 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/geofffranks/simpleyaml v0.0.0-20161109204137-c9320f076de5 // indirect
 	github.com/geofffranks/yaml v0.0.0-20161117152608-9f2fe4b6f295 // indirect

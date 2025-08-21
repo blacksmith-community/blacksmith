@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,10 @@ import (
 	"time"
 
 	"blacksmith/bosh"
+	"blacksmith/pkg/services"
+	"blacksmith/pkg/services/common"
+	"blacksmith/pkg/services/rabbitmq"
+	"blacksmith/pkg/services/redis"
 	"gopkg.in/yaml.v2"
 )
 
@@ -21,6 +26,7 @@ type InternalApi struct {
 	Broker    *Broker
 	Config    Config
 	VMMonitor *VMMonitor
+	Services  *services.Manager
 }
 
 // parseResultOutputToEvents converts BOSH task result output (JSON lines) into TaskEvent array for the frontend
@@ -646,7 +652,274 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pattern := regexp.MustCompile(`^/b/([^/]+)/manifest\.yml$`)
+	// Redis testing endpoints
+	pattern := regexp.MustCompile(`^/b/([^/]+)/redis/(.+)$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+		operation := m[2]
+
+		l := Logger.Wrap("redis-testing")
+		l.Debug("Redis operation %s for instance %s", operation, instanceID)
+
+		// Get credentials from vault
+		var creds map[string]interface{}
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		if err != nil || !exists {
+			l.Debug("Credentials not found at %s/creds, trying alternate path", instanceID)
+			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
+			if err != nil || !exists {
+				l.Error("Unable to find credentials for instance %s", instanceID)
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "credentials not found"}`)
+				return
+			}
+		}
+
+		// Check if this is a Redis instance
+		if !services.IsRedisInstance(common.Credentials(creds)) {
+			l.Debug("Instance %s is not identified as Redis", instanceID)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "not a Redis instance"}`)
+			return
+		}
+
+		// Security validation
+		params := map[string]interface{}{
+			"operation":   operation,
+			"instance_id": instanceID,
+		}
+		if err := api.Services.Security.ValidateRequest(instanceID, operation, params); err != nil {
+			if api.Services.Security.HandleSecurityError(w, err) {
+				return
+			}
+		}
+
+		// Add rate limit headers
+		if headers := api.Services.Security.GetRateLimitHeaders(instanceID, operation); headers != nil {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
+		}
+
+		// Handle Redis operations
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		switch operation {
+		case "test":
+			useTLS := req.URL.Query().Get("use_tls") == "true"
+			opts := common.ConnectionOptions{
+				UseTLS:  useTLS,
+				Timeout: 30 * time.Second,
+			}
+			result, err := api.Services.Redis.TestConnection(ctx, common.Credentials(creds), opts)
+			api.handleJSONResponse(w, result, err)
+
+		case "info":
+			useTLS := req.URL.Query().Get("use_tls") == "true"
+			result, err := api.Services.Redis.HandleInfo(ctx, instanceID, common.Credentials(creds), useTLS)
+			api.handleJSONResponse(w, result, err)
+
+		case "set":
+			var setReq redis.SetRequest
+			if err := json.NewDecoder(req.Body).Decode(&setReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			setReq.InstanceID = instanceID
+			result, err := api.Services.Redis.HandleSet(ctx, instanceID, common.Credentials(creds), &setReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "get":
+			var getReq redis.GetRequest
+			if err := json.NewDecoder(req.Body).Decode(&getReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			getReq.InstanceID = instanceID
+			result, err := api.Services.Redis.HandleGet(ctx, instanceID, common.Credentials(creds), &getReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "delete":
+			var delReq redis.DeleteRequest
+			if err := json.NewDecoder(req.Body).Decode(&delReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			delReq.InstanceID = instanceID
+			result, err := api.Services.Redis.HandleDelete(ctx, instanceID, common.Credentials(creds), &delReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "command":
+			var cmdReq redis.CommandRequest
+			if err := json.NewDecoder(req.Body).Decode(&cmdReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			cmdReq.InstanceID = instanceID
+			result, err := api.Services.Redis.HandleCommand(ctx, instanceID, common.Credentials(creds), &cmdReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "keys":
+			var keysReq redis.KeysRequest
+			if err := json.NewDecoder(req.Body).Decode(&keysReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			keysReq.InstanceID = instanceID
+			result, err := api.Services.Redis.HandleKeys(ctx, instanceID, common.Credentials(creds), &keysReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "flush":
+			var flushReq redis.FlushRequest
+			if err := json.NewDecoder(req.Body).Decode(&flushReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			flushReq.InstanceID = instanceID
+			result, err := api.Services.Redis.HandleFlush(ctx, instanceID, common.Credentials(creds), &flushReq)
+			api.handleJSONResponse(w, result, err)
+
+		default:
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "unknown Redis operation: %s"}`, operation)
+		}
+
+		return
+	}
+
+	// RabbitMQ testing endpoints
+	pattern = regexp.MustCompile(`^/b/([^/]+)/rabbitmq/(.+)$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+		operation := m[2]
+
+		l := Logger.Wrap("rabbitmq-testing")
+		l.Debug("RabbitMQ operation %s for instance %s", operation, instanceID)
+
+		// Get credentials from vault
+		var creds map[string]interface{}
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		if err != nil || !exists {
+			l.Debug("Credentials not found at %s/creds, trying alternate path", instanceID)
+			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
+			if err != nil || !exists {
+				l.Error("Unable to find credentials for instance %s", instanceID)
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "credentials not found"}`)
+				return
+			}
+		}
+
+		// Check if this is a RabbitMQ instance
+		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
+			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			return
+		}
+
+		// Security validation
+		params := map[string]interface{}{
+			"operation":   operation,
+			"instance_id": instanceID,
+		}
+		if err := api.Services.Security.ValidateRequest(instanceID, operation, params); err != nil {
+			if api.Services.Security.HandleSecurityError(w, err) {
+				return
+			}
+		}
+
+		// Add rate limit headers
+		if headers := api.Services.Security.GetRateLimitHeaders(instanceID, operation); headers != nil {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
+		}
+
+		// Handle RabbitMQ operations
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		switch operation {
+		case "test":
+			useAMQPS := req.URL.Query().Get("use_amqps") == "true"
+			opts := common.ConnectionOptions{
+				UseAMQPS: useAMQPS,
+				Timeout:  30 * time.Second,
+			}
+			result, err := api.Services.RabbitMQ.TestConnection(ctx, common.Credentials(creds), opts)
+			api.handleJSONResponse(w, result, err)
+
+		case "publish":
+			var pubReq rabbitmq.PublishRequest
+			if err := json.NewDecoder(req.Body).Decode(&pubReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			pubReq.InstanceID = instanceID
+			result, err := api.Services.RabbitMQ.HandlePublish(ctx, instanceID, common.Credentials(creds), &pubReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "consume":
+			var consReq rabbitmq.ConsumeRequest
+			if err := json.NewDecoder(req.Body).Decode(&consReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			consReq.InstanceID = instanceID
+			result, err := api.Services.RabbitMQ.HandleConsume(ctx, instanceID, common.Credentials(creds), &consReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "queues":
+			var queueReq rabbitmq.QueueInfoRequest
+			if err := json.NewDecoder(req.Body).Decode(&queueReq); err != nil {
+				// For GET requests, use query parameters
+				queueReq.UseAMQPS = req.URL.Query().Get("use_amqps") == "true"
+			}
+			queueReq.InstanceID = instanceID
+			result, err := api.Services.RabbitMQ.HandleQueueInfo(ctx, instanceID, common.Credentials(creds), &queueReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "queue-ops":
+			var queueOpsReq rabbitmq.QueueOpsRequest
+			if err := json.NewDecoder(req.Body).Decode(&queueOpsReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			queueOpsReq.InstanceID = instanceID
+			result, err := api.Services.RabbitMQ.HandleQueueOps(ctx, instanceID, common.Credentials(creds), &queueOpsReq)
+			api.handleJSONResponse(w, result, err)
+
+		case "management":
+			var mgmtReq rabbitmq.ManagementRequest
+			if err := json.NewDecoder(req.Body).Decode(&mgmtReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+			mgmtReq.InstanceID = instanceID
+			result, err := api.Services.RabbitMQ.HandleManagement(ctx, instanceID, common.Credentials(creds), &mgmtReq)
+			api.handleJSONResponse(w, result, err)
+
+		default:
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "unknown RabbitMQ operation: %s"}`, operation)
+		}
+
+		return
+	}
+
+	pattern = regexp.MustCompile(`^/b/([^/]+)/manifest\.yml$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		l := Logger.Wrap("manifest.yml")
 		l.Debug("looking up BOSH manifest for %s", m[1])
@@ -1592,4 +1865,32 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.WriteHeader(404)
+}
+
+// handleJSONResponse is a helper method to handle JSON responses consistently
+func (api *InternalApi) handleJSONResponse(w http.ResponseWriter, result interface{}, err error) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if err != nil {
+		w.WriteHeader(500)
+		errorResponse := map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		}
+
+		if jsonData, jsonErr := json.Marshal(errorResponse); jsonErr == nil {
+			w.Write(jsonData)
+		} else {
+			fmt.Fprintf(w, `{"success": false, "error": "internal error"}`)
+		}
+		return
+	}
+
+	if jsonData, jsonErr := json.Marshal(result); jsonErr == nil {
+		w.WriteHeader(200)
+		w.Write(jsonData)
+	} else {
+		w.WriteHeader(500)
+		fmt.Fprintf(w, `{"success": false, "error": "failed to marshal response"}`)
+	}
 }

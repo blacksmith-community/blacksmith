@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"blacksmith/bosh"
+	"blacksmith/pkg/services"
 	"blacksmith/shield"
 	"code.cloudfoundry.org/lager"
 	"github.com/pivotal-cf/brokerapi/v8"
@@ -396,6 +397,7 @@ func main() {
 			Broker:    broker,
 			Config:    config,
 			VMMonitor: vmMonitor,
+			Services:  services.NewManager(Logger.Wrap("services").Debug),
 		},
 		Primary: brokerapi.New(
 			broker,
