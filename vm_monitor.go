@@ -311,9 +311,10 @@ func (m *VMMonitor) calculateOverallStatus(vms []bosh.VM) string {
 	worstPriority := statusPriority["running"]
 
 	for _, vm := range vms {
-		if priority, exists := statusPriority[vm.State]; exists {
+		// Use JobState which represents the aggregate state of the job
+		if priority, exists := statusPriority[vm.JobState]; exists {
 			if priority < worstPriority {
-				worstStatus = vm.State
+				worstStatus = vm.JobState
 				worstPriority = priority
 			}
 		}
@@ -326,7 +327,9 @@ func (m *VMMonitor) calculateOverallStatus(vms []bosh.VM) string {
 func (m *VMMonitor) countHealthyVMs(vms []bosh.VM) int {
 	count := 0
 	for _, vm := range vms {
-		if vm.State == "running" {
+		// Check JobState which represents the aggregate state of the job
+		// This is what indicates if the job/service is "running" properly
+		if vm.JobState == "running" {
 			count++
 		}
 	}
