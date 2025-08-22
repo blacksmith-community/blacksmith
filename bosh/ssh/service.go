@@ -2,7 +2,6 @@ package ssh
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 )
@@ -69,12 +68,6 @@ func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) 
 
 	// Use the timeout from the request or default config timeout
 
-	// Prepare command arguments
-	fullCommand := request.Command
-	if len(request.Args) > 0 {
-		fullCommand += " " + strings.Join(request.Args, " ")
-	}
-
 	// Prepare options
 	options := make(map[string]interface{})
 	if request.Options != nil {
@@ -94,7 +87,7 @@ func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) 
 		request.Deployment,
 		request.Instance,
 		request.Index,
-		fullCommand,
+		request.Command,
 		request.Args,
 		options,
 	)

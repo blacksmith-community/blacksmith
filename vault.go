@@ -30,6 +30,14 @@ func (vault *Vault) ensureClient() error {
 	return nil
 }
 
+// GetAPIClient returns the underlying HashiCorp Vault API client
+func (vault *Vault) GetAPIClient() (*api.Client, error) {
+	if err := vault.ensureClient(); err != nil {
+		return nil, err
+	}
+	return vault.client.Client, nil
+}
+
 // WaitForVaultReady checks if Vault is ready and available before proceeding
 func (vault *Vault) WaitForVaultReady() error {
 	l := Logger.Wrap("vault readiness")

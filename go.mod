@@ -9,6 +9,7 @@ require (
 	github.com/geofffranks/spruce v1.31.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.4.2
 	github.com/hashicorp/vault/api v1.20.0
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.38.0
@@ -16,6 +17,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/smallfish/simpleyaml v0.1.0
+	golang.org/x/crypto v0.40.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -39,7 +41,6 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/hashicorp/cap v0.7.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
@@ -68,7 +69,6 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be // indirect
 	github.com/ziutek/utils v0.0.0-20190626152656-eb2a3b364d6c // indirect
-	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/text v0.27.0 // indirect

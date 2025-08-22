@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -86,13 +87,38 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 	sshResp, err := r.sshService.ExecuteCommand(sshReq)
 	if err != nil {
 		r.logger.Error("SSH command failed: %v", err)
+		
+		// Extract output from error message if it contains "output:" 
+		errorMsg := err.Error()
+		var extractedOutput string
+		var exitCode int = 1
+		
+		// Parse error message to extract output and exit code
+		if strings.Contains(errorMsg, "output:") {
+			parts := strings.SplitN(errorMsg, "output:", 2)
+			if len(parts) == 2 {
+				extractedOutput = strings.TrimSpace(parts[1])
+			}
+		}
+		
+		// Extract exit code if present
+		if strings.Contains(errorMsg, "status") {
+			re := regexp.MustCompile(`status (\d+)`)
+			if matches := re.FindStringSubmatch(errorMsg); len(matches) > 1 {
+				if code, parseErr := strconv.Atoi(matches[1]); parseErr == nil {
+					exitCode = code
+				}
+			}
+		}
+		
 		return &RabbitMQCommandResult{
 			Success:   false,
 			Command:   cmd.Name,
-			Error:     err.Error(),
-			ExitCode:  1,
+			Output:    extractedOutput,
+			Error:     errorMsg,
+			ExitCode:  exitCode,
 			Timestamp: time.Now(),
-		}, err
+		}, nil // Don't return error, return result with Success=false
 	}
 
 	// Create RabbitMQ command result
@@ -104,6 +130,33 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 		ExitCode:  sshResp.ExitCode,
 		Duration:  sshResp.Duration,
 		Timestamp: sshResp.Timestamp,
+	}
+
+	// If the command failed, ensure error information is available to the user
+	if !result.Success {
+		var errorParts []string
+		
+		// Include the original SSH error if available
+		if result.Error != "" {
+			errorParts = append(errorParts, result.Error)
+		}
+		
+		// Include stdout if available (rabbitmq often sends errors to stdout)
+		if result.Output != "" {
+			errorParts = append(errorParts, fmt.Sprintf("Command Output:\n%s", result.Output))
+		}
+		
+		// Include stderr if available
+		if sshResp.Stderr != "" {
+			errorParts = append(errorParts, fmt.Sprintf("Stderr:\n%s", sshResp.Stderr))
+		}
+		
+		// If we have any error information, combine it
+		if len(errorParts) > 0 {
+			result.Error = strings.Join(errorParts, "\n\n")
+		} else {
+			result.Error = fmt.Sprintf("Command failed with exit code %d", result.ExitCode)
+		}
 	}
 
 	// Parse output if command was successful
@@ -213,14 +266,22 @@ func (r *SSHService) Environment(deployment, instance string, index int) (*Rabbi
 
 // buildRabbitMQCtlCommand builds the full rabbitmqctl command with arguments
 func (r *SSHService) buildRabbitMQCtlCommand(cmd RabbitMQCommand) []string {
-	// Base command
-	fullCmd := []string{"sudo", "-u", "vcap", "/var/vcap/packages/rabbitmq-server/bin/rabbitmqctl"}
+	// Build the rabbitmqctl command with environment sourcing
+	// Must run as user vcap and use --longnames option before the command
+	
+	// Build rabbitmqctl command parts
+	var cmdParts []string
+	cmdParts = append(cmdParts, "source /var/vcap/jobs/rabbitmq/env &&")
+	cmdParts = append(cmdParts, "rabbitmqctl")
+	cmdParts = append(cmdParts, "--longnames")
+	cmdParts = append(cmdParts, cmd.Name)
+	cmdParts = append(cmdParts, cmd.Args...)
 
-	// Add the command name
-	fullCmd = append(fullCmd, cmd.Name)
+	// Create the inner command that will be run as vcap user
+	innerCommand := strings.Join(cmdParts, " ")
 
-	// Add command arguments
-	fullCmd = append(fullCmd, cmd.Args...)
+	// Wrap with su - vcap -c to run as vcap user
+	fullCmd := []string{"/bin/sudo", "su", "-", "vcap", "-c", innerCommand}
 
 	r.logger.Debug("Built RabbitMQ command: %v", fullCmd)
 	return fullCmd

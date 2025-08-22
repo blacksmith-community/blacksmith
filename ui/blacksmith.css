@@ -4576,6 +4576,78 @@ select[id*="connection-vhost"] {
   margin-top: 16px;
 }
 
+/* Load certificate button styling */
+.load-cert-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--accent-primary);
+  color: var(--accent-text);
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 140px;
+  justify-content: center;
+}
+
+.load-cert-btn:hover:not(:disabled) {
+  background: var(--accent-secondary);
+  transform: translateY(-1px);
+}
+
+.load-cert-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Certificate file content styling */
+.cert-file-content {
+  margin-top: 12px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+}
+
+.cert-loading-placeholder {
+  color: var(--text-secondary);
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+
+/* Spinning animation for loading states */
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Certificate files header styling */
+.cert-files-header h6 {
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.cert-files-header p {
+  margin: 0 0 16px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
 /* Responsive adjustments for file list */
 @media (max-width: 768px) {
   .cert-file-header {
@@ -4953,4 +5025,656 @@ select[id*="connection-vhost"] {
 [data-theme="dark"] .registration-card:hover {
   border-color: var(--border-hover);
   box-shadow: var(--shadow-primary);
+}
+
+/* RabbitMQ rabbitmqctl Styles */
+.rabbitmqctl-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 100%;
+}
+
+.rabbitmqctl-layout {
+  display: flex;
+  gap: 20px;
+  min-height: 400px;
+}
+
+.rabbitmqctl-categories {
+  flex: 0 0 300px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.rabbitmqctl-categories h5 {
+  margin: 0 0 15px 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 10px;
+}
+
+.categories-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.category-item {
+  padding: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.category-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-active);
+}
+
+.category-item.active {
+  background: var(--text-link);
+  color: white;
+  border-color: var(--text-link);
+}
+
+.category-item.active .category-description,
+.category-item.active .category-command-count {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.category-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.category-description {
+  font-size: 0.8em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.category-command-count {
+  font-size: 0.75em;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.rabbitmqctl-command-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.command-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  min-height: 200px;
+}
+
+.category-info h6 {
+  margin: 0 0 10px 0;
+  color: var(--text-primary);
+  font-size: 1.2em;
+  font-weight: 600;
+}
+
+.category-info p {
+  margin: 0 0 15px 0;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.commands-table {
+  overflow-x: auto;
+}
+
+.commands-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.commands-table th {
+  text-align: left;
+  padding: 10px;
+  background-color: var(--bg-tertiary);
+  border-bottom: 2px solid var(--border-primary);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.commands-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-primary);
+  vertical-align: top;
+}
+
+.command-row {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.command-row:hover {
+  background-color: var(--bg-hover);
+}
+
+.command-name {
+  font-weight: 600;
+  color: var(--text-link);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.command-desc {
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+
+.command-args {
+  color: var(--text-tertiary);
+  font-size: 0.85em;
+  text-align: center;
+}
+
+.execution-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+}
+
+.command-help {
+  margin: 10px 0;
+}
+
+.command-help-content {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 0.9em;
+}
+
+.command-usage {
+  margin-bottom: 10px;
+}
+
+.command-usage code,
+.command-examples code {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85em;
+}
+
+.command-description {
+  margin-bottom: 10px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.command-examples {
+  margin-top: 10px;
+}
+
+.warning {
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid #ffc107;
+  color: #856404;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-top: 10px;
+  font-size: 0.85em;
+}
+
+[data-theme="dark"] .warning {
+  background: rgba(255, 193, 7, 0.15);
+  color: #fff3cd;
+  border-color: #ffc107;
+}
+
+.arguments-section {
+  margin: 15px 0;
+}
+
+.arguments-form h6 {
+  margin: 0 0 15px 0;
+  color: var(--text-primary);
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.arguments-form .form-row {
+  margin-bottom: 15px;
+}
+
+.arguments-form .form-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 0.8em;
+  line-height: 1.3;
+}
+
+.no-args {
+  color: var(--text-tertiary);
+  font-style: italic;
+  text-align: center;
+  padding: 10px;
+}
+
+.execute-btn.secondary {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  color: var(--text-secondary);
+}
+
+.execute-btn.secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* RabbitMQ Command Table Styles */
+.command-execution-table {
+  margin-top: 20px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border-primary);
+}
+
+.rabbitmqctl-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rabbitmqctl-table th {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.rabbitmqctl-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-secondary);
+  vertical-align: middle;
+}
+
+.command-base {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+.command-name-cell {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.command-args-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+}
+
+.command-args-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.2);
+}
+
+
+.arguments-help {
+  margin-top: 15px;
+  padding: 15px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  border: 1px solid var(--border-secondary);
+}
+
+.arguments-help h6 {
+  margin: 0 0 10px 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.arguments-list {
+  display: grid;
+  gap: 10px;
+}
+
+.argument-help {
+  padding: 8px;
+  background: var(--bg-primary);
+  border-radius: 3px;
+  border: 1px solid var(--border-secondary);
+}
+
+.argument-help strong {
+  color: var(--text-primary);
+}
+
+.argument-help small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.rabbitmqctl-output-container {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  min-height: 300px;
+}
+
+.output-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.output-header h5 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.output-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.clear-btn, .history-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.clear-btn:hover, .history-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.command-output {
+  min-height: 200px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.command-result {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
+.command-result.success .result-status {
+  color: var(--text-success);
+}
+
+.command-result.error .result-status {
+  color: var(--text-error);
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+}
+
+.result-status {
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+.result-command {
+  color: var(--text-link);
+  font-weight: 600;
+}
+
+.result-time {
+  color: var(--text-tertiary);
+  font-size: 0.8em;
+  margin-left: auto;
+}
+
+.result-output {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 10px;
+  margin: 10px 0;
+}
+
+.result-output pre {
+  margin: 0;
+  color: var(--text-primary);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.result-error {
+  color: var(--text-error);
+  background: rgba(220, 53, 69, 0.1);
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-top: 10px;
+}
+
+[data-theme="dark"] .result-error {
+  background: rgba(220, 53, 69, 0.15);
+}
+
+.stream-output {
+  margin: 0;
+  color: var(--text-primary);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85em;
+}
+
+.rabbitmqctl-history {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.rabbitmqctl-history h5 {
+  margin: 0 0 15px 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 10px;
+}
+
+.history-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-entry {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.history-command {
+  color: var(--text-link);
+  font-weight: 600;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.history-time {
+  color: var(--text-tertiary);
+  font-size: 0.8em;
+  margin-left: auto;
+}
+
+.history-status {
+  font-weight: bold;
+  font-size: 1.1em;
+}
+
+.history-status.success {
+  color: var(--text-success);
+}
+
+.history-status.error {
+  color: var(--text-error);
+}
+
+.history-args {
+  color: var(--text-secondary);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85em;
+  margin-bottom: 8px;
+}
+
+.history-output {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.history-output pre {
+  margin: 0;
+  color: var(--text-primary);
+  line-height: 1.3;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8em;
+}
+
+.loading {
+  text-align: center;
+  color: var(--text-tertiary);
+  padding: 20px;
+  font-style: italic;
+}
+
+.error {
+  text-align: center;
+  color: var(--text-error);
+  padding: 20px;
+  font-weight: 600;
+}
+
+/* Responsive design for mobile */
+@media (max-width: 768px) {
+  .rabbitmqctl-layout {
+    flex-direction: column;
+  }
+  
+  .rabbitmqctl-categories {
+    flex: none;
+    max-height: 300px;
+  }
+  
+  .commands-table {
+    font-size: 0.8em;
+  }
+  
+  .commands-table th,
+  .commands-table td {
+    padding: 8px;
+  }
+  
+  .output-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .output-controls {
+    align-self: flex-end;
+  }
+}
+
+/* Dark theme specific overrides */
+[data-theme="dark"] .rabbitmqctl-container {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .rabbitmqctl-categories,
+[data-theme="dark"] .command-section,
+[data-theme="dark"] .execution-section,
+[data-theme="dark"] .rabbitmqctl-output-container,
+[data-theme="dark"] .rabbitmqctl-history {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .category-item {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .commands-table th {
+  background: var(--bg-tertiary);
+}
+
+[data-theme="dark"] .command-help-content,
+[data-theme="dark"] .command-output,
+[data-theme="dark"] .history-entry {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
 }

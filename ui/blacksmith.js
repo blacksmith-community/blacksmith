@@ -3921,6 +3921,7 @@
         <button class="operation-tab" data-operation="queues" data-instance="${instanceId}">QUEUE INFO</button>
         <button class="operation-tab" data-operation="queue-ops" data-instance="${instanceId}">QUEUE OPS</button>
         <button class="operation-tab" data-operation="management" data-instance="${instanceId}">MANAGEMENT</button>
+        <button class="operation-tab" data-operation="rabbitmqctl" data-instance="${instanceId}">RABBITMQCTL</button>
       `;
     }
     return '';
@@ -4193,6 +4194,61 @@
           </label>
         </div>
         <button class="execute-btn" onclick="executeRabbitMQManagement('${instanceId}')">Execute</button>
+      </div>
+    `;
+  };
+
+  const renderRabbitMQCtlOperation = (instanceId) => {
+    // Initialize the rabbitmqctl state for this instance if it doesn't exist
+    window.rabbitmqCtl = window.rabbitmqCtl || {};
+    window.rabbitmqCtl[instanceId] = window.rabbitmqCtl[instanceId] || {
+      categories: [],
+      selectedCategory: null,
+      selectedCommand: null,
+      commandHistory: [],
+      activeExecution: null,
+      websocket: null
+    };
+
+    return `
+      <div class="rabbitmqctl-container">
+        <div class="rabbitmqctl-layout">
+          <div class="rabbitmqctl-categories">
+            <h5>Command Categories</h5>
+            <div id="rabbitmqctl-categories-${instanceId}" class="categories-list">
+              <div class="loading">Loading categories...</div>
+            </div>
+          </div>
+          <div class="rabbitmqctl-command-details">
+            <div id="rabbitmqctl-command-section-${instanceId}" class="command-section">
+              <div class="no-data">Select a category to view available commands</div>
+            </div>
+            <div id="rabbitmqctl-execution-section-${instanceId}" class="execution-section">
+              <div id="rabbitmqctl-command-help-${instanceId}" class="command-help"></div>
+              <div id="rabbitmqctl-command-table-${instanceId}" class="command-table-container">
+                <div class="no-data">Select a category and command to configure execution</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rabbitmqctl-output-container">
+          <div class="output-header">
+            <h5>Command Output</h5>
+            <div class="output-controls">
+              <button onclick="clearRabbitMQCtlOutput('${instanceId}')" class="clear-btn">Clear</button>
+              <button onclick="showRabbitMQCtlHistory('${instanceId}')" class="history-btn">History</button>
+            </div>
+          </div>
+          <div id="rabbitmqctl-output-${instanceId}" class="command-output">
+            <div class="no-data">No command executed yet</div>
+          </div>
+        </div>
+        <div id="rabbitmqctl-history-${instanceId}" class="rabbitmqctl-history" style="display: none;">
+          <h5>Command History</h5>
+          <div class="history-content">
+            <div class="no-data">No command history available</div>
+          </div>
+        </div>
       </div>
     `;
   };
@@ -4710,6 +4766,365 @@
     }
   };
 
+  // RabbitMQCtl Functions
+  window.loadRabbitMQCtlCategories = async (instanceId) => {
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/categories`);
+      const categories = await response.json();
+      
+      window.rabbitmqCtl[instanceId].categories = categories;
+      
+      const container = document.getElementById(`rabbitmqctl-categories-${instanceId}`);
+      if (container) {
+        container.innerHTML = categories.map(category => 
+          `<div class="category-item" onclick="selectRabbitMQCtlCategory('${instanceId}', '${category.name}')">
+            <div class="category-name">${category.display_name}</div>
+            <div class="category-description">${category.description}</div>
+            <div class="category-command-count">${category.commands.length} commands</div>
+          </div>`
+        ).join('');
+      }
+    } catch (error) {
+      console.error('Failed to load rabbitmqctl categories:', error);
+      const container = document.getElementById(`rabbitmqctl-categories-${instanceId}`);
+      if (container) {
+        container.innerHTML = '<div class="error">Failed to load categories</div>';
+      }
+    }
+  };
+
+  window.selectRabbitMQCtlCategory = async (instanceId, categoryName) => {
+    const state = window.rabbitmqCtl[instanceId];
+    state.selectedCategory = categoryName;
+    state.selectedCommand = null;
+    
+    // Update category selection
+    document.querySelectorAll(`#rabbitmqctl-categories-${instanceId} .category-item`).forEach(item => {
+      item.classList.remove('active');
+    });
+    event.target.closest('.category-item').classList.add('active');
+    
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/category/${categoryName}`);
+      const category = await response.json();
+      
+      // Update command selector
+      const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
+      if (commandSelect) {
+        commandSelect.innerHTML = '<option value="">Select a command...</option>' +
+          category.commands.map(cmd => 
+            `<option value="${cmd.name}">${cmd.name} - ${cmd.description}</option>`
+          ).join('');
+      }
+      
+      // Update command details section
+      const commandSection = document.getElementById(`rabbitmqctl-command-section-${instanceId}`);
+      if (commandSection) {
+        commandSection.innerHTML = `
+          <div class="category-info">
+            <h6>${category.display_name}</h6>
+            <p>${category.description}</p>
+            <div class="commands-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Command</th>
+                    <th>Description</th>
+                    <th>Arguments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${category.commands.map(cmd => `
+                    <tr class="command-row" onclick="selectRabbitMQCtlCommandFromTable('${instanceId}', '${cmd.name}')">
+                      <td class="command-name">${cmd.name}</td>
+                      <td class="command-desc">${cmd.description}</td>
+                      <td class="command-args">${cmd.arguments.length} args</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+    } catch (error) {
+      console.error('Failed to load category commands:', error);
+    }
+  };
+
+  window.selectRabbitMQCtlCommand = async (instanceId) => {
+    const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
+    const commandName = commandSelect.value;
+    
+    if (!commandName) return;
+    
+    await loadRabbitMQCtlCommandDetails(instanceId, commandName);
+  };
+
+  window.selectRabbitMQCtlCommandFromTable = async (instanceId, commandName) => {
+    const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
+    if (commandSelect) {
+      commandSelect.value = commandName;
+    }
+    
+    await loadRabbitMQCtlCommandDetails(instanceId, commandName);
+  };
+
+  const loadRabbitMQCtlCommandDetails = async (instanceId, commandName) => {
+    const state = window.rabbitmqCtl[instanceId];
+    const categoryName = state.selectedCategory;
+    
+    if (!categoryName) return;
+    
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/category/${categoryName}/command/${commandName}`);
+      const command = await response.json();
+      
+      state.selectedCommand = command;
+      
+      // Update command help
+      const helpContainer = document.getElementById(`rabbitmqctl-command-help-${instanceId}`);
+      if (helpContainer) {
+        helpContainer.innerHTML = `
+          <div class="command-help-content">
+            <div class="command-usage">
+              <strong>Usage:</strong> <code>${command.usage}</code>
+            </div>
+            <div class="command-description">
+              <strong>Description:</strong> ${command.description}
+            </div>
+            ${command.examples.length > 0 ? `
+              <div class="command-examples">
+                <strong>Examples:</strong>
+                ${command.examples.map(ex => `<code>${ex}</code>`).join('<br>')}
+              </div>
+            ` : ''}
+            ${command.dangerous ? '<div class="warning">⚠️ This is a dangerous command that may affect the system</div>' : ''}
+          </div>
+        `;
+      }
+      
+      // Update command table section
+      const tableContainer = document.getElementById(`rabbitmqctl-command-table-${instanceId}`);
+      if (tableContainer) {
+        tableContainer.innerHTML = `
+          <div class="command-execution-table">
+            <table class="rabbitmqctl-table">
+              <thead>
+                <tr>
+                  <th>rabbitmqctl</th>
+                  <th>Command</th>
+                  <th>Command Arguments</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="command-base">rabbitmqctl</td>
+                  <td class="command-name-cell">${command.name}</td>
+                  <td>
+                    <input type="text" 
+                           id="rabbitmqctl-command-args-${instanceId}" 
+                           placeholder="${command.arguments.map(arg => arg.required ? `<${arg.name}>` : `[${arg.name}]`).join(' ')}" 
+                           class="command-args-input" />
+                  </td>
+                  <td>
+                    <button id="rabbitmqctl-execute-btn-${instanceId}" 
+                            class="execute-btn" 
+                            onclick="executeRabbitMQCtlCommand('${instanceId}')">
+                      Run
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          ${command.arguments.length > 0 ? `
+            <div class="arguments-help">
+              <h6>Available Arguments:</h6>
+              <div class="arguments-list">
+                ${command.arguments.map(arg => `
+                  <div class="argument-help">
+                    <strong>${arg.name}</strong> (${arg.type})${arg.required ? ' - Required' : ' - Optional'}
+                    <br><small>${arg.description}${arg.default ? ` (default: ${arg.default})` : ''}</small>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        `;
+      }
+      
+    } catch (error) {
+      console.error('Failed to load command details:', error);
+    }
+  };
+
+  window.executeRabbitMQCtlCommand = async (instanceId) => {
+    const state = window.rabbitmqCtl[instanceId];
+    const command = state.selectedCommand;
+    
+    if (!command) return;
+    
+    // Gather command arguments
+    const commandArgs = document.getElementById(`rabbitmqctl-command-args-${instanceId}`)?.value || '';
+    
+    // Build arguments array from command arguments
+    const args = [];
+    if (commandArgs.trim()) {
+      args.push(...commandArgs.trim().split(/\s+/));
+    }
+    
+    try {
+      const executeBtn = document.getElementById(`rabbitmqctl-execute-btn-${instanceId}`);
+      executeBtn.disabled = true;
+      executeBtn.textContent = 'Executing...';
+      
+      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          category: state.selectedCategory,
+          command: command.name,
+          arguments: args
+        })
+      });
+      
+      const result = await response.json();
+      
+      displayRabbitMQCtlResult(instanceId, result);
+      
+    } catch (error) {
+      console.error('Command execution failed:', error);
+      displayRabbitMQCtlError(instanceId, error.message);
+    } finally {
+      const executeBtn = document.getElementById(`rabbitmqctl-execute-btn-${instanceId}`);
+      executeBtn.disabled = false;
+      executeBtn.textContent = 'Run';
+    }
+  };
+
+  // Streaming functionality removed as requested
+
+  const displayRabbitMQCtlResult = (instanceId, result) => {
+    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
+    if (outputContainer) {
+      outputContainer.innerHTML = `
+        <div class="command-result ${result.success ? 'success' : 'error'}">
+          <div class="result-header">
+            <span class="result-status">${result.success ? '✓' : '✗'}</span>
+            <span class="result-command">${result.command}</span>
+            <span class="result-time">${new Date(result.timestamp * 1000).toLocaleString()}</span>
+            <span class="result-exit-code">Exit Code: ${result.exit_code}</span>
+          </div>
+          <div class="result-output">
+            <pre>${result.output || 'No output'}</pre>
+          </div>
+        </div>
+      `;
+    }
+  };
+
+  const displayRabbitMQCtlError = (instanceId, error) => {
+    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
+    if (outputContainer) {
+      outputContainer.innerHTML = `
+        <div class="command-result error">
+          <div class="result-header">
+            <span class="result-status">✗</span>
+            <span class="result-error">Execution Error</span>
+          </div>
+          <div class="result-error">${error}</div>
+        </div>
+      `;
+    }
+  };
+
+  window.clearRabbitMQCtlOutput = (instanceId) => {
+    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
+    if (outputContainer) {
+      outputContainer.innerHTML = '<div class="no-data">Output cleared</div>';
+    }
+  };
+
+  const appendRabbitMQCtlOutput = (instanceId, text) => {
+    const outputContainer = document.getElementById(`rabbitmqctl-output-${instanceId}`);
+    if (outputContainer) {
+      if (outputContainer.querySelector('.no-data')) {
+        outputContainer.innerHTML = '<pre class="stream-output"></pre>';
+      }
+      const pre = outputContainer.querySelector('.stream-output');
+      if (pre) {
+        pre.textContent += text;
+        pre.scrollTop = pre.scrollHeight;
+      }
+    }
+  };
+
+  window.showRabbitMQCtlHistory = async (instanceId) => {
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/history`);
+      const history = await response.json();
+      
+      const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
+      if (historyContainer) {
+        if (history.length > 0) {
+          historyContainer.innerHTML = `
+            <h5>Command History</h5>
+            <div class="history-content">
+              ${history.map(entry => `
+                <div class="history-entry">
+                  <div class="history-header">
+                    <span class="history-command">${entry.category}.${entry.command}</span>
+                    <span class="history-time">${new Date(entry.timestamp * 1000).toLocaleString()}</span>
+                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</span>
+                  </div>
+                  <div class="history-args">${entry.arguments.join(' ')}</div>
+                  <div class="history-output">
+                    <pre>${entry.output.substring(0, 200)}${entry.output.length > 200 ? '...' : ''}</pre>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+            <button onclick="clearRabbitMQCtlHistory('${instanceId}')" class="clear-btn">Clear History</button>
+          `;
+        } else {
+          historyContainer.innerHTML = `
+            <h5>Command History</h5>
+            <div class="no-data">No command history available</div>
+          `;
+        }
+        historyContainer.style.display = 'block';
+      }
+    } catch (error) {
+      console.error('Failed to load history:', error);
+    }
+  };
+
+  window.clearRabbitMQCtlHistory = async (instanceId) => {
+    if (!confirm('Are you sure you want to clear all command history?')) {
+      return;
+    }
+    
+    try {
+      await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/history`, {
+        method: 'DELETE'
+      });
+      
+      const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
+      if (historyContainer) {
+        historyContainer.innerHTML = `
+          <h5>Command History</h5>
+          <div class="no-data">Command history cleared</div>
+        `;
+      }
+    } catch (error) {
+      console.error('Failed to clear history:', error);
+    }
+  };
+
   // Operation Tab Switching
   window.switchTestingOperation = (instanceId, operation) => {
     // Update active tab
@@ -4747,6 +5162,11 @@
             }
           }
         }
+
+        // Initialize rabbitmqctl tab
+        if (operation === 'rabbitmqctl') {
+          loadRabbitMQCtlCategories(instanceId);
+        }
       }, 50);
     }
   };
@@ -4781,6 +5201,7 @@
         case 'queues': return renderRabbitMQQueuesOperation(instanceId);
         case 'queue-ops': return renderRabbitMQQueueOpsOperation(instanceId);
         case 'management': return renderRabbitMQManagementOperation(instanceId);
+        case 'rabbitmqctl': return renderRabbitMQCtlOperation(instanceId);
       }
     }
 
@@ -8123,11 +8544,11 @@
     }
 
     try {
-      listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Loading VM certificates...</div>';
+      listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Listing certificate files on service VM...</div>';
       resultsContainer.style.display = 'block';
 
-      // Use the trusted certificates endpoint but with service context
-      const response = await fetch(`/b/certificates/trusted?service=${instanceId}`, {
+      // First, get the list of certificate files via SSH
+      const response = await fetch(`/b/${instanceId}/certificates/trusted`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -8141,14 +8562,139 @@
       const data = await response.json();
 
       if (!data.success) {
-        throw new Error(data.error || 'Failed to fetch VM certificates');
+        throw new Error(data.error || 'Failed to list VM certificate files');
       }
 
-      renderCertificateList(listContainer, data.data.certificates, 'vm-trusted');
+      // If no certificate files found
+      if (!data.data.files || data.data.files.length === 0) {
+        listContainer.innerHTML = '<div class="cert-error">No trusted certificate files found on the service VM</div>';
+        return;
+      }
+
+      // Display the certificate files list for user selection
+      renderCertificateFilesList(listContainer, data.data.files, instanceId);
 
     } catch (error) {
-      console.error('Failed to fetch VM certificates:', error);
-      listContainer.innerHTML = `<div class="cert-error">Failed to load VM certificates: ${error.message}</div>`;
+      console.error('Failed to fetch VM certificate files:', error);
+      listContainer.innerHTML = `<div class="cert-error">Failed to list VM certificate files: ${error.message}</div>`;
+    }
+  };
+
+  // Render certificate files list for selection
+  const renderCertificateFilesList = (container, files, instanceId) => {
+    const filesHtml = files.map(file => `
+      <div class="cert-file-item" data-file-path="${file.path}">
+        <div class="cert-file-header" onclick="toggleCertificateFile(this, '${instanceId}', '${file.path}')">
+          <div class="cert-file-name">${file.name}</div>
+          <div class="cert-file-path">${file.path}</div>
+          <button class="load-cert-btn" onclick="loadCertificateFile(event, '${instanceId}', '${file.path}', '${file.name}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14,2 14,8 20,8"/>
+            </svg>
+            Load Certificate
+          </button>
+        </div>
+        <div class="cert-file-content" style="display: none;">
+          <div class="cert-loading-placeholder">Click "Load Certificate" to fetch certificate content...</div>
+        </div>
+      </div>
+    `).join('');
+
+    container.innerHTML = `
+      <div class="cert-files-list">
+        <div class="cert-files-header">
+          <h6>Certificate Files (${files.length})</h6>
+          <p>Select a certificate file to load its content and details</p>
+        </div>
+        ${filesHtml}
+      </div>
+    `;
+  };
+
+  // Toggle certificate file expansion
+  window.toggleCertificateFile = function(header, instanceId, filePath) {
+    const fileItem = header.closest('.cert-file-item');
+    const content = fileItem.querySelector('.cert-file-content');
+    
+    if (content.style.display === 'none') {
+      content.style.display = 'block';
+    } else {
+      content.style.display = 'none';
+    }
+  };
+
+  // Load certificate file content via SSH
+  window.loadCertificateFile = async function(event, instanceId, filePath, fileName) {
+    event.stopPropagation(); // Prevent header click
+    
+    const button = event.target.closest('.load-cert-btn');
+    const fileItem = button.closest('.cert-file-item');
+    const contentDiv = fileItem.querySelector('.cert-file-content');
+
+    try {
+      // Show loading state
+      button.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spinning">
+          <path d="M21 12a9 9 0 11-6.219-8.56"/>
+        </svg>
+        Loading...
+      `;
+      button.disabled = true;
+
+      contentDiv.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Loading certificate content via SSH...</div>';
+      contentDiv.style.display = 'block';
+
+      // Fetch the certificate content via SSH
+      const response = await fetch(`/b/${instanceId}/certificates/trusted/file`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          filePath: filePath
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to load certificate file');
+      }
+
+      // Render the certificate details
+      if (data.data.certificates && data.data.certificates.length > 0) {
+        renderCertificateList(contentDiv, data.data.certificates, 'vm-trusted');
+      } else {
+        contentDiv.innerHTML = '<div class="cert-error">No certificate data found in file</div>';
+      }
+
+      // Update button state
+      button.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20,6 9,17 4,12"/>
+        </svg>
+        Loaded
+      `;
+
+    } catch (error) {
+      console.error('Failed to load certificate file:', error);
+      contentDiv.innerHTML = `<div class="cert-error">Failed to load certificate: ${error.message}</div>`;
+      
+      // Reset button state
+      button.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14,2 14,8 20,8"/>
+        </svg>
+        Load Certificate
+      `;
+    } finally {
+      button.disabled = false;
     }
   };
 

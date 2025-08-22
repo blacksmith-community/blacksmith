@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,20 +22,24 @@ import (
 	"blacksmith/pkg/services/redis"
 	rabbitmqssh "blacksmith/services/rabbitmq"
 	"blacksmith/websocket"
+	gorillawebsocket "github.com/gorilla/websocket"
 	"gopkg.in/yaml.v2"
 )
 
 type InternalApi struct {
-	Env                string
-	Vault              *Vault
-	Broker             *Broker
-	Config             Config
-	VMMonitor          *VMMonitor
-	Services           *services.Manager
-	SSHService         ssh.SSHService
-	RabbitMQSSHService *rabbitmqssh.SSHService
-	WebSocketHandler   *websocket.SSHHandler
-	SecurityMiddleware *services.SecurityMiddleware
+	Env                     string
+	Vault                   *Vault
+	Broker                  *Broker
+	Config                  Config
+	VMMonitor               *VMMonitor
+	Services                *services.Manager
+	SSHService              ssh.SSHService
+	RabbitMQSSHService      *rabbitmqssh.SSHService
+	RabbitMQMetadataService *rabbitmqssh.MetadataService
+	RabbitMQExecutorService *rabbitmqssh.ExecutorService
+	RabbitMQAuditService    *rabbitmqssh.AuditService
+	WebSocketHandler        *websocket.SSHHandler
+	SecurityMiddleware      *services.SecurityMiddleware
 }
 
 // parseResultOutputToEvents converts BOSH task result output (JSON lines) into TaskEvent array for the frontend
@@ -649,6 +654,52 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
+
+	// Instance config endpoint
+	pattern := regexp.MustCompile(`^/b/([^/]+)/config$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+
+		l := Logger.Wrap("instance-config")
+		l.Debug("fetching config for instance %s", instanceID)
+
+		// Get instance data
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the manifest for this instance
+		var manifestData map[string]interface{}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/manifest", instanceID), &manifestData)
+		if err != nil || !exists {
+			l.Debug("manifest not found for instance %s, returning minimal config", instanceID)
+			// Return minimal config if manifest not available
+			config := map[string]interface{}{
+				"instance_id": instanceID,
+				"service_id":  inst.ServiceID,
+				"plan_id":     inst.PlanID,
+				"available":   false,
+			}
+			api.handleJSONResponse(w, config, nil)
+			return
+		}
+
+		// Return the manifest data as config
+		config := map[string]interface{}{
+			"instance_id": instanceID,
+			"service_id":  inst.ServiceID,
+			"plan_id":     inst.PlanID,
+			"manifest":    manifestData,
+			"available":   true,
+		}
+		api.handleJSONResponse(w, config, nil)
+		return
+	}
+
 	if req.URL.Path == "/b/blacksmith/config" {
 		l := Logger.Wrap("blacksmith-config")
 		l.Debug("fetching blacksmith configuration")
@@ -676,7 +727,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Redis testing endpoints
-	pattern := regexp.MustCompile(`^/b/([^/]+)/redis/(.+)$`)
+	pattern = regexp.MustCompile(`^/b/([^/]+)/redis/(.+)$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		instanceID := m[1]
 		operation := m[2]
@@ -819,6 +870,256 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		default:
 			w.WriteHeader(404)
 			fmt.Fprintf(w, `{"error": "unknown Redis operation: %s"}`, operation)
+		}
+
+		return
+	}
+
+	// RabbitMQ rabbitmqctl management endpoints
+	pattern = regexp.MustCompile(`^/b/([^/]+)/rabbitmq/rabbitmqctl/(.+)$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+		operation := m[2]
+
+		l := Logger.Wrap("rabbitmqctl")
+		l.Debug("RabbitMQctl operation %s for instance %s", operation, instanceID)
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			return
+		}
+
+		// Check if this is a RabbitMQ instance
+		var creds map[string]interface{}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		if err != nil || !exists {
+			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
+			if err != nil || !exists {
+				l.Error("Unable to find credentials for instance %s", instanceID)
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "credentials not found"}`)
+				return
+			}
+		}
+
+		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
+			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			return
+		}
+
+		// Construct deployment name from plan and instance
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		
+		// Get the manifest to find the actual instance group name
+		var manifestData struct {
+			Manifest string `json:"manifest"`
+		}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/manifest", instanceID), &manifestData)
+		if err != nil || !exists {
+			l.Error("unable to find manifest for instance %s: %v", instanceID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "manifest not found for instance"}`)
+			return
+		}
+
+		// Parse the manifest to extract the first instance group name
+		var manifest map[interface{}]interface{}
+		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifest); err != nil {
+			l.Error("failed to parse manifest YAML: %v", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "failed to parse manifest"}`)
+			return
+		}
+
+		// Get the first instance group name from the manifest
+		instanceName := ""
+		if instanceGroups, ok := manifest["instance_groups"].([]interface{}); ok && len(instanceGroups) > 0 {
+			if firstGroup, ok := instanceGroups[0].(map[interface{}]interface{}); ok {
+				if name, ok := firstGroup["name"].(string); ok {
+					instanceName = name
+					l.Debug("Found instance group name from manifest: %s", instanceName)
+				}
+			}
+		}
+
+		// Fallback to plan name if we couldn't find instance group
+		if instanceName == "" {
+			instanceName = plan.Name
+			l.Debug("Using plan name as fallback instance name: %s", instanceName)
+		}
+		
+		instanceIndex := 0
+
+		// Handle different rabbitmqctl operations
+		switch operation {
+		case "categories":
+			// GET /b/{instance_id}/rabbitmq/rabbitmqctl/categories - Returns all command categories
+			if req.Method != "GET" {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+				return
+			}
+
+			if api.RabbitMQMetadataService != nil {
+				categories := api.RabbitMQMetadataService.GetCategories()
+				api.handleJSONResponse(w, categories, nil)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ metadata service not available"))
+			}
+
+		case "history":
+			// GET /b/{instance_id}/rabbitmq/rabbitmqctl/history - Returns command execution history
+			// DELETE /b/{instance_id}/rabbitmq/rabbitmqctl/history - Clears command execution history
+			if req.Method == "GET" {
+				if api.RabbitMQAuditService != nil {
+					history, err := api.RabbitMQAuditService.GetAuditHistory(req.Context(), instanceID, 100)
+					api.handleJSONResponse(w, history, err)
+				} else {
+					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ audit service not available"))
+				}
+			} else if req.Method == "DELETE" {
+				if api.RabbitMQAuditService != nil {
+					err := api.RabbitMQAuditService.ClearAuditHistory(req.Context(), instanceID)
+					if err != nil {
+						api.handleJSONResponse(w, nil, err)
+					} else {
+						api.handleJSONResponse(w, map[string]interface{}{"status": "history cleared"}, nil)
+					}
+				} else {
+					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ audit service not available"))
+				}
+			} else {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or DELETE."}`)
+			}
+
+		case "execute":
+			// POST /b/{instance_id}/rabbitmq/rabbitmqctl/execute - Executes command synchronously
+			if req.Method != "POST" {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+				return
+			}
+
+			var executeReq struct {
+				Category  string   `json:"category"`
+				Command   string   `json:"command"`
+				Arguments []string `json:"arguments"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&executeReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+
+			if executeReq.Category == "" || executeReq.Command == "" {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "category and command are required"}`)
+				return
+			}
+
+			if api.RabbitMQExecutorService != nil {
+				// Create execution context
+				ctx := rabbitmqssh.ExecutionContext{
+					Context:    req.Context(),
+					InstanceID: instanceID,
+					User:       "api-user", // TODO: get from auth
+					ClientIP:   req.RemoteAddr,
+				}
+
+				// Execute command synchronously
+				execution, err := api.RabbitMQExecutorService.ExecuteCommandSync(ctx, deploymentName, instanceName, instanceIndex, executeReq.Category, executeReq.Command, executeReq.Arguments)
+				if err != nil {
+					api.handleJSONResponse(w, nil, err)
+				} else {
+					// Log to audit
+					if api.RabbitMQAuditService != nil {
+						if err := api.RabbitMQAuditService.LogExecution(req.Context(), execution, ctx.User, ctx.ClientIP, fmt.Sprintf("sync-%d", time.Now().Unix()), execution.Duration); err != nil {
+							l.Error("Failed to log audit entry: %v", err)
+						}
+					}
+					api.handleJSONResponse(w, execution, nil)
+				}
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ executor service not available"))
+			}
+
+		case "stream":
+			// WebSocket streaming endpoint for rabbitmqctl commands
+			if req.Method != "GET" {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
+				return
+			}
+
+			// Check for WebSocket upgrade headers
+			if req.Header.Get("Upgrade") != "websocket" {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "WebSocket upgrade required"}`)
+				return
+			}
+
+			// Handle WebSocket upgrade and streaming
+			api.handleRabbitMQStreamingWebSocket(w, req, instanceID, deploymentName, instanceName, instanceIndex)
+
+		default:
+			// Handle category/{category} and command/{category}/{command} endpoints
+			parts := strings.Split(operation, "/")
+			if len(parts) >= 2 && parts[0] == "category" {
+				categoryName := parts[1]
+
+				if len(parts) == 2 {
+					// GET /b/{instance_id}/rabbitmq/rabbitmqctl/category/{category} - Returns commands for category
+					if req.Method != "GET" {
+						w.WriteHeader(405)
+						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						return
+					}
+
+					if api.RabbitMQMetadataService != nil {
+						category, err := api.RabbitMQMetadataService.GetCategory(categoryName)
+						api.handleJSONResponse(w, category, err)
+					} else {
+						api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ metadata service not available"))
+					}
+				} else if len(parts) >= 4 && parts[2] == "command" {
+					commandName := parts[3]
+					// GET /b/{instance_id}/rabbitmq/rabbitmqctl/category/{category}/command/{command} - Returns command help
+					if req.Method != "GET" {
+						w.WriteHeader(405)
+						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						return
+					}
+
+					if api.RabbitMQMetadataService != nil {
+						command, err := api.RabbitMQMetadataService.GetCommand(categoryName, commandName)
+						api.handleJSONResponse(w, command, err)
+					} else {
+						api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ metadata service not available"))
+					}
+				} else {
+					w.WriteHeader(404)
+					fmt.Fprintf(w, `{"error": "unknown rabbitmqctl operation: %s"}`, operation)
+				}
+			} else {
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "unknown rabbitmqctl operation: %s"}`, operation)
+			}
 		}
 
 		return
@@ -1183,7 +1484,45 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Construct deployment name from plan and instance
 		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
-		instanceName := plan.Name
+		
+		// Get the manifest to find the actual instance group name
+		var manifestData struct {
+			Manifest string `json:"manifest"`
+		}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/manifest", instanceID), &manifestData)
+		if err != nil || !exists {
+			l.Error("unable to find manifest for instance %s: %v", instanceID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "manifest not found for instance"}`)
+			return
+		}
+
+		// Parse the manifest to extract the first instance group name
+		var manifest map[interface{}]interface{}
+		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifest); err != nil {
+			l.Error("failed to parse manifest YAML: %v", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "failed to parse manifest"}`)
+			return
+		}
+
+		// Get the first instance group name from the manifest
+		instanceName := ""
+		if instanceGroups, ok := manifest["instance_groups"].([]interface{}); ok && len(instanceGroups) > 0 {
+			if firstGroup, ok := instanceGroups[0].(map[interface{}]interface{}); ok {
+				if name, ok := firstGroup["name"].(string); ok {
+					instanceName = name
+					l.Debug("Found instance group name from manifest: %s", instanceName)
+				}
+			}
+		}
+
+		// Fallback to plan name if we couldn't find instance group
+		if instanceName == "" {
+			instanceName = plan.Name
+			l.Debug("Using plan name as fallback instance name: %s", instanceName)
+		}
+		
 		instanceIndex := 0
 
 		// Handle different RabbitMQ SSH operations
@@ -1375,6 +1714,379 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		api.handleJSONResponse(w, status, nil)
+		return
+	}
+
+	// Service instance certificate SSH endpoints
+	pattern = regexp.MustCompile(`^/b/([^/]+)/certificates/trusted$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+
+		l := Logger.Wrap("ssh-certificates-trusted")
+		l.Debug("SSH certificate listing for instance %s", instanceID)
+
+		// Only allow GET method
+		if req.Method != "GET" {
+			w.WriteHeader(405)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+			return
+		}
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			return
+		}
+
+		// Construct deployment name
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+
+		// Get the manifest to find the actual instance group name
+		var manifestData struct {
+			Manifest string `json:"manifest"`
+		}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/manifest", instanceID), &manifestData)
+		if err != nil || !exists {
+			l.Error("unable to find manifest for instance %s: %v", instanceID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "manifest not found for instance"}`)
+			return
+		}
+
+		// Parse the manifest to extract the first instance group name
+		var manifest map[interface{}]interface{}
+		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifest); err != nil {
+			l.Error("failed to parse manifest YAML: %v", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "failed to parse manifest"}`)
+			return
+		}
+
+		// Get the first instance group name from the manifest
+		instanceName := ""
+		if instanceGroups, ok := manifest["instance_groups"].([]interface{}); ok && len(instanceGroups) > 0 {
+			if firstGroup, ok := instanceGroups[0].(map[interface{}]interface{}); ok {
+				if name, ok := firstGroup["name"].(string); ok {
+					instanceName = name
+					l.Debug("Found instance group name from manifest: %s", instanceName)
+				}
+			}
+		}
+
+		// Fallback to plan name if we couldn't find instance group
+		if instanceName == "" {
+			instanceName = plan.Name
+			l.Debug("Using plan name as fallback instance name: %s", instanceName)
+		}
+
+		instanceIndex := 0
+
+		// Create SSH request to list certificate files
+		sshReq := ssh.SSHRequest{
+			Deployment: deploymentName,
+			Instance:   instanceName,
+			Index:      instanceIndex,
+			Command:    "/bin/bash",
+			Args:       []string{"-c", "/bin/ls /etc/ssl/certs/bosh-trusted-cert-*.pem"},
+			Timeout:    30,
+		}
+
+		l.Debug("Listing certificates via SSH command '%s' with args %v on %s/%s/%d", sshReq.Command, sshReq.Args, sshReq.Deployment, sshReq.Instance, sshReq.Index)
+
+		// Execute the SSH command
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+
+		// Create SSH response channel
+		responseChan := make(chan *ssh.SSHResponse, 1)
+		errorChan := make(chan error, 1)
+
+		// Execute SSH command in goroutine
+		go func() {
+			if api.SSHService != nil {
+				response, err := api.SSHService.ExecuteCommand(&sshReq)
+				if err != nil {
+					errorChan <- err
+					return
+				}
+				responseChan <- response
+			} else {
+				errorChan <- fmt.Errorf("SSH service not available")
+			}
+		}()
+
+		// Wait for result or timeout
+		select {
+		case response := <-responseChan:
+			l.Debug("SSH certificate listing completed successfully")
+
+			// Parse the certificate file paths from SSH output
+			var files []CertificateFileItem
+			if response.Success && response.Stdout != "" {
+				lines := strings.Split(strings.TrimSpace(response.Stdout), "\n")
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if line != "" && !strings.Contains(line, "No certificates found") && strings.HasSuffix(line, ".pem") {
+						fileName := filepath.Base(line)
+						files = append(files, CertificateFileItem{
+							Name: fileName,
+							Path: line,
+						})
+					}
+				}
+			}
+
+			certResponse := CertificateFileResponse{
+				Success: true,
+				Data: CertificateFileData{
+					Files: files,
+					Metadata: CertificateMetadata{
+						Source:    "service-trusted",
+						Timestamp: time.Now(),
+						Count:     len(files),
+					},
+				},
+			}
+
+			api.handleJSONResponse(w, certResponse, nil)
+
+		case err := <-errorChan:
+			l.Error("SSH certificate listing failed: %v", err)
+			api.handleJSONResponse(w, CertificateFileResponse{
+				Success: false,
+				Data: CertificateFileData{
+					Files: []CertificateFileItem{},
+					Metadata: CertificateMetadata{
+						Source:    "service-trusted",
+						Timestamp: time.Now(),
+						Count:     0,
+					},
+				},
+			}, err)
+
+		case <-ctx.Done():
+			l.Error("SSH certificate listing timed out")
+			timeoutResponse := CertificateFileResponse{
+				Success: false,
+				Data: CertificateFileData{
+					Files: []CertificateFileItem{},
+					Metadata: CertificateMetadata{
+						Source:    "service-trusted",
+						Timestamp: time.Now(),
+						Count:     0,
+					},
+				},
+			}
+			api.handleJSONResponse(w, timeoutResponse, nil)
+		}
+
+		return
+	}
+
+	// Service instance certificate file SSH endpoint
+	pattern = regexp.MustCompile(`^/b/([^/]+)/certificates/trusted/file$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+
+		l := Logger.Wrap("ssh-certificates-trusted-file")
+		l.Debug("SSH certificate file fetch for instance %s", instanceID)
+
+		// Only allow POST method
+		if req.Method != "POST" {
+			w.WriteHeader(405)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+			return
+		}
+
+		// Parse request body
+		var requestData struct {
+			FilePath string `json:"filePath"`
+		}
+
+		if err := json.NewDecoder(req.Body).Decode(&requestData); err != nil {
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+			return
+		}
+
+		if requestData.FilePath == "" {
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "filePath is required"}`)
+			return
+		}
+
+		// Security validation: ensure the file path is in /etc/ssl/certs and matches the expected pattern
+		if !strings.HasPrefix(requestData.FilePath, "/etc/ssl/certs/bosh-trusted-cert-") ||
+			!strings.HasSuffix(requestData.FilePath, ".pem") {
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "invalid file path: must be a BOSH trusted certificate"}`)
+			return
+		}
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			return
+		}
+
+		// Construct deployment name
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+
+		// Get the manifest to find the actual instance group name
+		var manifestData struct {
+			Manifest string `json:"manifest"`
+		}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/manifest", instanceID), &manifestData)
+		if err != nil || !exists {
+			l.Error("unable to find manifest for instance %s: %v", instanceID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "manifest not found for instance"}`)
+			return
+		}
+
+		// Parse the manifest to extract the first instance group name
+		var manifest map[interface{}]interface{}
+		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifest); err != nil {
+			l.Error("failed to parse manifest YAML: %v", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "failed to parse manifest"}`)
+			return
+		}
+
+		// Get the first instance group name from the manifest
+		instanceName := ""
+		if instanceGroups, ok := manifest["instance_groups"].([]interface{}); ok && len(instanceGroups) > 0 {
+			if firstGroup, ok := instanceGroups[0].(map[interface{}]interface{}); ok {
+				if name, ok := firstGroup["name"].(string); ok {
+					instanceName = name
+					l.Debug("Found instance group name from manifest: %s", instanceName)
+				}
+			}
+		}
+
+		// Fallback to plan name if we couldn't find instance group
+		if instanceName == "" {
+			instanceName = plan.Name
+			l.Debug("Using plan name as fallback instance name: %s", instanceName)
+		}
+
+		instanceIndex := 0
+
+		// Create SSH request to read certificate file
+		sshReq := ssh.SSHRequest{
+			Deployment: deploymentName,
+			Instance:   instanceName,
+			Index:      instanceIndex,
+			Command:    "/bin/bash",
+			Args:       []string{"-c", fmt.Sprintf("cat %s", requestData.FilePath)},
+			Timeout:    30,
+		}
+
+		l.Debug("Reading certificate file via SSH command '%s' with args %v on %s/%s/%d", sshReq.Command, sshReq.Args, sshReq.Deployment, sshReq.Instance, sshReq.Index)
+
+		// Execute the SSH command
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+
+		// Create SSH response channel
+		responseChan := make(chan *ssh.SSHResponse, 1)
+		errorChan := make(chan error, 1)
+
+		// Execute SSH command in goroutine
+		go func() {
+			if api.SSHService != nil {
+				response, err := api.SSHService.ExecuteCommand(&sshReq)
+				if err != nil {
+					errorChan <- err
+					return
+				}
+				responseChan <- response
+			} else {
+				errorChan <- fmt.Errorf("SSH service not available")
+			}
+		}()
+
+		// Wait for result or timeout
+		select {
+		case response := <-responseChan:
+			l.Debug("SSH certificate file read completed successfully")
+
+			if response.Success && response.Stdout != "" {
+				// Parse the certificate content
+				certInfo, err := ParseCertificateFromPEM(response.Stdout)
+				if err != nil {
+					l.Error("failed to parse certificate: %v", err)
+					api.handleJSONResponse(w, nil, fmt.Errorf("failed to parse certificate: %v", err))
+					return
+				}
+
+				certificates := []CertificateListItem{
+					{
+						Name:    filepath.Base(requestData.FilePath),
+						Path:    requestData.FilePath,
+						Details: *certInfo,
+					},
+				}
+
+				certResponse := CertificateResponse{
+					Success: true,
+					Data: CertificateResponseData{
+						Certificates: certificates,
+						Metadata: CertificateMetadata{
+							Source:    "service-trusted-file",
+							Timestamp: time.Now(),
+							Count:     len(certificates),
+						},
+					},
+				}
+
+				api.handleJSONResponse(w, certResponse, nil)
+			} else {
+				l.Error("SSH command failed or returned no output: success=%v, stdout='%s', stderr='%s'", response.Success, response.Stdout, response.Stderr)
+				errorMsg := response.Error
+				if errorMsg == "" && response.Stderr != "" {
+					errorMsg = response.Stderr
+				}
+				if errorMsg == "" {
+					errorMsg = "No output returned from certificate file"
+				}
+				api.handleJSONResponse(w, nil, fmt.Errorf("failed to read certificate file: %s", errorMsg))
+			}
+
+		case err := <-errorChan:
+			l.Error("SSH certificate file read failed: %v", err)
+			api.handleJSONResponse(w, nil, err)
+
+		case <-ctx.Done():
+			l.Error("SSH certificate file read timed out")
+			timeoutErr := fmt.Errorf("certificate file read operation timed out")
+			api.handleJSONResponse(w, nil, timeoutErr)
+		}
+
 		return
 	}
 
@@ -3114,4 +3826,180 @@ func (api *InternalApi) handleJSONResponse(w http.ResponseWriter, result interfa
 		w.WriteHeader(500)
 		fmt.Fprintf(w, `{"success": false, "error": "failed to marshal response"}`)
 	}
+}
+
+// handleRabbitMQStreamingWebSocket handles WebSocket connections for rabbitmqctl command streaming
+func (api *InternalApi) handleRabbitMQStreamingWebSocket(w http.ResponseWriter, r *http.Request, instanceID, deploymentName, instanceName string, instanceIndex int) {
+	l := Logger.Wrap("rabbitmqctl-websocket")
+	l.Info("WebSocket connection request for rabbitmqctl streaming on instance %s", instanceID)
+
+	// Upgrade to WebSocket
+	upgrader := gorillawebsocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true // TODO: implement proper origin checking
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		l.Error("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	l.Info("WebSocket connection established for instance %s", instanceID)
+
+	// Set up message handling
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Handle incoming messages
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			var message struct {
+				Type      string   `json:"type"`
+				Category  string   `json:"category"`
+				Command   string   `json:"command"`
+				Arguments []string `json:"arguments"`
+			}
+
+			// Read message from WebSocket
+			err := conn.ReadJSON(&message)
+			if err != nil {
+				if gorillawebsocket.IsUnexpectedCloseError(err, gorillawebsocket.CloseGoingAway, gorillawebsocket.CloseAbnormalClosure) {
+					l.Error("WebSocket read error: %v", err)
+				}
+				return
+			}
+
+			// Handle different message types
+			switch message.Type {
+			case "execute":
+				api.handleStreamingExecution(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message.Category, message.Command, message.Arguments, l)
+			case "ping":
+				// Respond to ping
+				response := map[string]interface{}{
+					"type": "pong",
+				}
+				if err := conn.WriteJSON(response); err != nil {
+					l.Error("Failed to send pong: %v", err)
+					return
+				}
+			default:
+				// Send error for unknown message type
+				response := map[string]interface{}{
+					"type":  "error",
+					"error": fmt.Sprintf("unknown message type: %s", message.Type),
+				}
+				if err := conn.WriteJSON(response); err != nil {
+					l.Error("Failed to send error response: %v", err)
+					return
+				}
+			}
+		}
+	}
+}
+
+// handleStreamingExecution handles the execution of a rabbitmqctl command with streaming output
+func (api *InternalApi) handleStreamingExecution(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, category, command string, arguments []string, l *Log) {
+	if api.RabbitMQExecutorService == nil {
+		response := map[string]interface{}{
+			"type":  "error",
+			"error": "RabbitMQ executor service not available",
+		}
+		if err := conn.WriteJSON(response); err != nil {
+			l.Error("Failed to send WebSocket error response: %v", err)
+		}
+		return
+	}
+
+	// Create execution context
+	execCtx := rabbitmqssh.ExecutionContext{
+		Context:    ctx,
+		InstanceID: instanceID,
+		User:       "websocket-user", // TODO: get from auth
+		ClientIP:   "websocket",      // TODO: get actual client IP
+	}
+
+	// Execute command with streaming
+	result, err := api.RabbitMQExecutorService.ExecuteCommand(execCtx, deploymentName, instanceName, instanceIndex, category, command, arguments)
+	if err != nil {
+		response := map[string]interface{}{
+			"type":  "error",
+			"error": err.Error(),
+		}
+		if err := conn.WriteJSON(response); err != nil {
+			l.Error("Failed to send WebSocket error response: %v", err)
+		}
+		return
+	}
+
+	// Send initial response
+	response := map[string]interface{}{
+		"type":         "execution_started",
+		"execution_id": result.ExecutionID,
+		"category":     result.Category,
+		"command":      result.Command,
+		"arguments":    result.Arguments,
+		"status":       result.Status,
+	}
+	if err := conn.WriteJSON(response); err != nil {
+		l.Error("Failed to send execution started response: %v", err)
+		return
+	}
+
+	// Stream output from the execution
+	go func() {
+		defer func() {
+			// Send final status
+			finalResponse := map[string]interface{}{
+				"type":         "execution_completed",
+				"execution_id": result.ExecutionID,
+				"status":       result.Status,
+				"success":      result.Success,
+				"exit_code":    result.ExitCode,
+			}
+			if result.Error != "" {
+				finalResponse["error"] = result.Error
+			}
+			if err := conn.WriteJSON(finalResponse); err != nil {
+				l.Error("Failed to send final WebSocket response: %v", err)
+			}
+
+			// Log to audit if available
+			if api.RabbitMQAuditService != nil {
+				if err := api.RabbitMQAuditService.LogStreamingExecution(ctx, result, execCtx.User, execCtx.ClientIP); err != nil {
+					l.Error("Failed to log streaming execution audit: %v", err)
+				}
+			}
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case outputLine, ok := <-result.Output:
+				if !ok {
+					// Output channel closed, execution finished
+					return
+				}
+
+				// Send output line
+				outputResponse := map[string]interface{}{
+					"type":         "output",
+					"execution_id": result.ExecutionID,
+					"data":         outputLine,
+				}
+				if err := conn.WriteJSON(outputResponse); err != nil {
+					l.Error("Failed to send output: %v", err)
+					return
+				}
+			}
+		}
+	}()
 }

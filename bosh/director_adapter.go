@@ -18,6 +18,7 @@ import (
 	boshuaa "github.com/cloudfoundry/bosh-cli/v7/uaa"
 	boshlog "github.com/cloudfoundry/bosh-utils/logger"
 	boshuuid "github.com/cloudfoundry/bosh-utils/uuid"
+	"golang.org/x/crypto/ssh"
 )
 
 // DirectorAdapter wraps bosh-cli director to implement Director interface
@@ -1256,15 +1257,116 @@ func (d *DirectorAdapter) SSHCommand(deployment, instance string, index int, com
 		}
 	}()
 
-	// For now, return SSH setup information
-	// TODO: Implement actual command execution via SSH client
-	d.log.Info("SSH session established successfully for %d hosts", len(sshResult.Hosts))
-	result := fmt.Sprintf("SSH setup successful. Command execution not yet implemented. Hosts: %d", len(sshResult.Hosts))
+	// Check if we got hosts
+	if len(sshResult.Hosts) == 0 {
+		d.log.Error("No hosts returned from SSH setup")
+		return "", fmt.Errorf("no hosts available for SSH connection")
+	}
 
-	// Log the private key for debugging (remove in production)
+	d.log.Info("SSH session established successfully for %d hosts", len(sshResult.Hosts))
 	d.log.Debug("Generated SSH private key length: %d bytes", len(privateKey))
 
-	return result, nil
+	// Use the first host for command execution
+	host := sshResult.Hosts[0]
+
+	// Parse the private key
+	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
+	if err != nil {
+		d.log.Error("Failed to parse private key: %v", err)
+		return "", fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	// Create SSH client configuration
+	config := &ssh.ClientConfig{
+		User: host.Username,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Consider using proper host key verification
+		Timeout:         30 * time.Second,
+	}
+
+	// Connect via the gateway if present
+	var client *ssh.Client
+	if sshResult.GatewayHost != "" {
+		// Connect to gateway first
+		gatewayAddr := fmt.Sprintf("%s:22", sshResult.GatewayHost)
+		gatewayConfig := &ssh.ClientConfig{
+			User: sshResult.GatewayUsername,
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeys(signer),
+			},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout:         30 * time.Second,
+		}
+
+		gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
+		if err != nil {
+			d.log.Error("Failed to connect to gateway %s: %v", gatewayAddr, err)
+			return "", fmt.Errorf("failed to connect to gateway: %w", err)
+		}
+		defer gatewayClient.Close()
+
+		// Connect to target host through gateway
+		targetAddr := fmt.Sprintf("%s:22", host.Host)
+		conn, err := gatewayClient.Dial("tcp", targetAddr)
+		if err != nil {
+			d.log.Error("Failed to connect to target host %s through gateway: %v", targetAddr, err)
+			return "", fmt.Errorf("failed to connect to target host through gateway: %w", err)
+		}
+
+		nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
+		if err != nil {
+			d.log.Error("Failed to establish SSH connection to %s: %v", targetAddr, err)
+			return "", fmt.Errorf("failed to establish SSH connection: %w", err)
+		}
+		client = ssh.NewClient(nconn, chans, reqs)
+	} else {
+		// Direct connection
+		addr := fmt.Sprintf("%s:22", host.Host)
+		client, err = ssh.Dial("tcp", addr, config)
+		if err != nil {
+			d.log.Error("Failed to connect to %s: %v", addr, err)
+			return "", fmt.Errorf("failed to connect to host: %w", err)
+		}
+	}
+	defer client.Close()
+
+	// Create a session
+	session, err := client.NewSession()
+	if err != nil {
+		d.log.Error("Failed to create SSH session: %v", err)
+		return "", fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	defer session.Close()
+
+	// Build the full command with arguments
+	fullCommand := command
+	if len(args) > 0 {
+		// Properly quote arguments if needed
+		quotedArgs := make([]string, len(args))
+		for i, arg := range args {
+			// Simple quoting - might need enhancement for complex cases
+			if strings.Contains(arg, " ") || strings.Contains(arg, "*") || strings.Contains(arg, "?") {
+				quotedArgs[i] = fmt.Sprintf("'%s'", arg)
+			} else {
+				quotedArgs[i] = arg
+			}
+		}
+		fullCommand = fmt.Sprintf("%s %s", command, strings.Join(quotedArgs, " "))
+	}
+
+	// Execute the command
+	d.log.Debug("Executing command: %s", fullCommand)
+	output, err := session.CombinedOutput(fullCommand)
+	if err != nil {
+		d.log.Error("Failed to execute command: %v, output: %s", err, string(output))
+		// Return output even on error (might contain useful error messages)
+		return string(output), fmt.Errorf("command execution failed: %w", err)
+	}
+
+	d.log.Info("Command executed successfully")
+	return string(output), nil
 }
 
 // SSHSession creates an interactive SSH session for streaming
