@@ -4210,6 +4210,14 @@
       websocket: null
     };
 
+    // When switching to rabbitmqctl tab, hide the regular response history
+    setTimeout(() => {
+      const regularHistory = document.querySelector('.testing-history');
+      if (regularHistory) {
+        regularHistory.style.display = 'none';
+      }
+    }, 0);
+
     return `
       <div class="rabbitmqctl-container">
         <div class="rabbitmqctl-layout">
@@ -4229,24 +4237,33 @@
                 <div class="no-data">Select a category and command to configure execution</div>
               </div>
             </div>
-          </div>
-        </div>
-        <div class="rabbitmqctl-output-container">
-          <div class="output-header">
-            <h5>Command Output</h5>
-            <div class="output-controls">
-              <button onclick="clearRabbitMQCtlOutput('${instanceId}')" class="clear-btn">Clear</button>
-              <button onclick="showRabbitMQCtlHistory('${instanceId}')" class="history-btn">History</button>
+            <div class="rabbitmqctl-output-container">
+              <div class="output-header">
+                <h5>Command Output</h5>
+                <div class="output-controls">
+                  <button onclick="clearRabbitMQCtlOutput('${instanceId}')" class="clear-btn">Clear</button>
+                  <button onclick="toggleRabbitMQCtlHistory('${instanceId}')" class="history-btn">History</button>
+                </div>
+              </div>
+              <div id="rabbitmqctl-output-${instanceId}" class="command-output">
+                <div class="no-data">No command executed yet</div>
+              </div>
+            </div>
+            <div id="rabbitmqctl-history-${instanceId}" class="rabbitmqctl-history" style="display: none;">
+              <h5>Command History</h5>
+              <div id="rabbitmqctl-history-content-${instanceId}" class="history-content">
+                <div class="no-data">No command history available</div>
+              </div>
             </div>
           </div>
-          <div id="rabbitmqctl-output-${instanceId}" class="command-output">
-            <div class="no-data">No command executed yet</div>
-          </div>
         </div>
-        <div id="rabbitmqctl-history-${instanceId}" class="rabbitmqctl-history" style="display: none;">
-          <h5>Command History</h5>
-          <div class="history-content">
-            <div class="no-data">No command history available</div>
+        <div class="testing-history" id="rabbitmqctl-response-history-${instanceId}">
+          <div class="history-header">
+            <h5>Response History</h5>
+            <button class="clear-history-btn" onclick="clearRabbitMQCtlResponseHistory('${instanceId}');">Clear History</button>
+          </div>
+          <div class="history-entries" id="history-entries-rabbitmqctl-${instanceId}">
+            <div class="no-data">No commands executed yet</div>
           </div>
         </div>
       </div>
@@ -5025,6 +5042,33 @@
         </div>
       `;
     }
+    
+    // Add to command history
+    const state = window.rabbitmqCtl[instanceId];
+    if (state) {
+      const historyEntry = {
+        category: state.selectedCategory,
+        command: result.command,
+        arguments: result.arguments || [],
+        timestamp: result.timestamp,
+        success: result.success,
+        exit_code: result.exit_code,
+        output: result.output || 'No output'
+      };
+      
+      state.commandHistory.unshift(historyEntry);
+      
+      // Keep only last 20 entries
+      if (state.commandHistory.length > 20) {
+        state.commandHistory = state.commandHistory.slice(0, 20);
+      }
+      
+      // Update history display if visible
+      updateRabbitMQCtlHistory(instanceId);
+      
+      // Also update the response history section
+      updateRabbitMQCtlResponseHistory(instanceId, historyEntry);
+    }
   };
 
   const displayRabbitMQCtlError = (instanceId, error) => {
@@ -5063,7 +5107,114 @@
     }
   };
 
+  window.toggleRabbitMQCtlHistory = (instanceId) => {
+    const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
+    if (historyContainer) {
+      if (historyContainer.style.display === 'none') {
+        historyContainer.style.display = 'block';
+        updateRabbitMQCtlHistory(instanceId);
+      } else {
+        historyContainer.style.display = 'none';
+      }
+    }
+  };
+  
+  const updateRabbitMQCtlHistory = (instanceId) => {
+    const state = window.rabbitmqCtl[instanceId];
+    const historyContent = document.getElementById(`rabbitmqctl-history-content-${instanceId}`);
+    
+    if (historyContent && state) {
+      const history = state.commandHistory;
+      
+      if (history.length > 0) {
+        historyContent.innerHTML = `
+          ${history.map(entry => `
+            <div class="history-entry">
+              <div class="history-header">
+                <span class="history-command">${entry.category}.${entry.command}</span>
+                <span class="history-time">${new Date(entry.timestamp * 1000).toLocaleString()}</span>
+                <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</span>
+              </div>
+              ${entry.arguments.length > 0 ? `<div class="history-args">Args: ${entry.arguments.join(' ')}</div>` : ''}
+              <div class="history-output">
+                <pre>${entry.output.substring(0, 200)}${entry.output.length > 200 ? '...' : ''}</pre>
+              </div>
+            </div>
+          `).join('')}
+          <button onclick="clearRabbitMQCtlHistory('${instanceId}')" class="clear-btn">Clear History</button>
+        `;
+      } else {
+        historyContent.innerHTML = '<div class="no-data">No command history available</div>';
+      }
+    }
+  };
+  
   window.showRabbitMQCtlHistory = async (instanceId) => {
+    // Now just toggle the history visibility
+    toggleRabbitMQCtlHistory(instanceId);
+  };
+  
+  window.clearRabbitMQCtlHistory = (instanceId) => {
+    const state = window.rabbitmqCtl[instanceId];
+    if (state) {
+      state.commandHistory = [];
+      updateRabbitMQCtlHistory(instanceId);
+    }
+  };
+  
+  // Functions for the Response History section in rabbitmqctl
+  const updateRabbitMQCtlResponseHistory = (instanceId, entry) => {
+    const historyContainer = document.getElementById(`history-entries-rabbitmqctl-${instanceId}`);
+    if (!historyContainer) return;
+    
+    const timestamp = new Date(entry.timestamp * 1000).toLocaleString();
+    const statusClass = entry.success ? 'success' : 'error';
+    const statusIcon = entry.success ? '✓' : '✗';
+    
+    const newEntry = document.createElement('div');
+    newEntry.className = `history-entry ${statusClass}`;
+    newEntry.innerHTML = `
+      <div class="history-entry-header">
+        <span class="history-operation">${statusIcon} ${entry.category}.${entry.command}</span>
+        <span class="history-timestamp">${timestamp}</span>
+      </div>
+      <div class="history-entry-body">
+        <div class="history-params">
+          <strong>Arguments:</strong>
+          <pre>${entry.arguments.length > 0 ? entry.arguments.join(' ') : 'None'}</pre>
+        </div>
+        <div class="history-result">
+          <strong>Output:</strong>
+          <pre>${entry.output}</pre>
+        </div>
+      </div>
+    `;
+    
+    // Remove "no data" message if present
+    const noData = historyContainer.querySelector('.no-data');
+    if (noData) {
+      noData.remove();
+    }
+    
+    // Insert at the beginning
+    historyContainer.insertBefore(newEntry, historyContainer.firstChild);
+    
+    // Keep only last 20 entries
+    const entries = historyContainer.querySelectorAll('.history-entry');
+    if (entries.length > 20) {
+      entries[entries.length - 1].remove();
+    }
+  };
+  
+  window.clearRabbitMQCtlResponseHistory = (instanceId) => {
+    const historyContainer = document.getElementById(`history-entries-rabbitmqctl-${instanceId}`);
+    if (historyContainer) {
+      historyContainer.innerHTML = '<div class="no-data">No commands executed yet</div>';
+    }
+  };
+  
+  // Legacy function for compatibility
+  window.showRabbitMQCtlHistoryOld = async (instanceId) => {
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/history`);
       const history = await response.json();
@@ -5200,8 +5351,24 @@
         case 'consume': return renderRabbitMQConsumeOperation(instanceId);
         case 'queues': return renderRabbitMQQueuesOperation(instanceId);
         case 'queue-ops': return renderRabbitMQQueueOpsOperation(instanceId);
-        case 'management': return renderRabbitMQManagementOperation(instanceId);
-        case 'rabbitmqctl': return renderRabbitMQCtlOperation(instanceId);
+        case 'management': 
+        // Show regular history for non-rabbitmqctl tabs
+        setTimeout(() => {
+          const regularHistory = document.querySelector('.testing-history');
+          if (regularHistory && !regularHistory.id?.includes('rabbitmqctl')) {
+            regularHistory.style.display = 'block';
+          }
+        }, 0);
+        return renderRabbitMQManagementOperation(instanceId);
+        case 'rabbitmqctl': 
+          // Show regular history for other tabs
+          setTimeout(() => {
+            const regularHistory = document.querySelector('.testing-history');
+            if (regularHistory && !regularHistory.id?.includes('rabbitmqctl')) {
+              regularHistory.style.display = 'block';
+            }
+          }, 0);
+          return renderRabbitMQCtlOperation(instanceId);
       }
     }
 

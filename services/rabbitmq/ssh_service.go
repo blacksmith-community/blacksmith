@@ -87,12 +87,12 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 	sshResp, err := r.sshService.ExecuteCommand(sshReq)
 	if err != nil {
 		r.logger.Error("SSH command failed: %v", err)
-		
-		// Extract output from error message if it contains "output:" 
+
+		// Extract output from error message if it contains "output:"
 		errorMsg := err.Error()
 		var extractedOutput string
 		var exitCode int = 1
-		
+
 		// Parse error message to extract output and exit code
 		if strings.Contains(errorMsg, "output:") {
 			parts := strings.SplitN(errorMsg, "output:", 2)
@@ -100,7 +100,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 				extractedOutput = strings.TrimSpace(parts[1])
 			}
 		}
-		
+
 		// Extract exit code if present
 		if strings.Contains(errorMsg, "status") {
 			re := regexp.MustCompile(`status (\d+)`)
@@ -110,7 +110,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 				}
 			}
 		}
-		
+
 		return &RabbitMQCommandResult{
 			Success:   false,
 			Command:   cmd.Name,
@@ -135,22 +135,22 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 	// If the command failed, ensure error information is available to the user
 	if !result.Success {
 		var errorParts []string
-		
+
 		// Include the original SSH error if available
 		if result.Error != "" {
 			errorParts = append(errorParts, result.Error)
 		}
-		
+
 		// Include stdout if available (rabbitmq often sends errors to stdout)
 		if result.Output != "" {
 			errorParts = append(errorParts, fmt.Sprintf("Command Output:\n%s", result.Output))
 		}
-		
+
 		// Include stderr if available
 		if sshResp.Stderr != "" {
 			errorParts = append(errorParts, fmt.Sprintf("Stderr:\n%s", sshResp.Stderr))
 		}
-		
+
 		// If we have any error information, combine it
 		if len(errorParts) > 0 {
 			result.Error = strings.Join(errorParts, "\n\n")
@@ -268,7 +268,7 @@ func (r *SSHService) Environment(deployment, instance string, index int) (*Rabbi
 func (r *SSHService) buildRabbitMQCtlCommand(cmd RabbitMQCommand) []string {
 	// Build the rabbitmqctl command with environment sourcing
 	// Must run as user vcap and use --longnames option before the command
-	
+
 	// Build rabbitmqctl command parts
 	var cmdParts []string
 	cmdParts = append(cmdParts, "source /var/vcap/jobs/rabbitmq/env &&")

@@ -924,7 +924,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Construct deployment name from plan and instance
 		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
-		
+
 		// Get the manifest to find the actual instance group name
 		var manifestData struct {
 			Manifest string `json:"manifest"`
@@ -962,7 +962,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			instanceName = plan.Name
 			l.Debug("Using plan name as fallback instance name: %s", instanceName)
 		}
-		
+
 		instanceIndex := 0
 
 		// Handle different rabbitmqctl operations
@@ -1484,7 +1484,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Construct deployment name from plan and instance
 		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
-		
+
 		// Get the manifest to find the actual instance group name
 		var manifestData struct {
 			Manifest string `json:"manifest"`
@@ -1522,7 +1522,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			instanceName = plan.Name
 			l.Debug("Using plan name as fallback instance name: %s", instanceName)
 		}
-		
+
 		instanceIndex := 0
 
 		// Handle different RabbitMQ SSH operations

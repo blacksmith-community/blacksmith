@@ -139,7 +139,7 @@ func (e *ExecutorService) ExecuteCommandSync(ctx ExecutionContext, deployment, i
 		errorMsg := err.Error()
 		var extractedOutput string
 		var exitCode int = 1
-		
+
 		// Parse error message to extract output and exit code
 		if strings.Contains(errorMsg, "output:") {
 			parts := strings.SplitN(errorMsg, "output:", 2)
@@ -147,7 +147,7 @@ func (e *ExecutorService) ExecuteCommandSync(ctx ExecutionContext, deployment, i
 				extractedOutput = strings.TrimSpace(parts[1])
 			}
 		}
-		
+
 		// Extract exit code if present
 		if strings.Contains(errorMsg, "status") {
 			re := regexp.MustCompile(`status (\d+)`)
@@ -157,7 +157,7 @@ func (e *ExecutorService) ExecuteCommandSync(ctx ExecutionContext, deployment, i
 				}
 			}
 		}
-		
+
 		// Create execution record with extracted information
 		execution := &RabbitMQCtlExecution{
 			InstanceID: ctx.InstanceID,
@@ -171,10 +171,10 @@ func (e *ExecutorService) ExecuteCommandSync(ctx ExecutionContext, deployment, i
 			Duration:   time.Since(startTime).Milliseconds(),
 			User:       ctx.User,
 		}
-		
+
 		return execution, nil // Return the execution result, not an error
 	}
-	
+
 	// Check if command execution was successful at the rabbitmq level
 	if !result.Success {
 		e.logger.Debug("RabbitMQ command failed: %s", result.Error)
@@ -301,7 +301,7 @@ func (e *ExecutorService) generateExecutionID(instanceID, category, command stri
 func (e *ExecutorService) BuildRabbitMQCtlCommand(command string, args []string) []string {
 	// Build the rabbitmqctl command with environment sourcing
 	// Must run as user vcap and use --longnames option before the command
-	
+
 	// Build rabbitmqctl command parts
 	var cmdParts []string
 	cmdParts = append(cmdParts, "source /var/vcap/jobs/rabbitmq/env &&")

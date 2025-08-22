@@ -3441,10 +3441,13 @@ th[style*="cursor: pointer"]:hover {
 
 /* Service Testing Styles */
 .service-testing-container {
-  padding: 20px;
+  padding: 20px 20px 10px 20px;
   background: var(--bg-secondary);
   border-radius: 8px;
   border: 1px solid var(--border-primary);
+  height: calc(100% - 20px);
+  overflow-y: auto;
+  margin-bottom: 10px;
 }
 
 
@@ -5047,7 +5050,8 @@ select[id*="connection-vhost"] {
   border: 1px solid var(--border-primary);
   border-radius: 4px;
   padding: 15px;
-  max-height: 500px;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
 }
 
@@ -5064,6 +5068,8 @@ select[id*="connection-vhost"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .category-item {
@@ -5431,13 +5437,15 @@ select[id*="connection-vhost"] {
 }
 
 .command-output {
-  min-height: 200px;
-  max-height: 400px;
+  flex: 1;
+  min-height: 150px;
+  max-height: 250px;
   overflow-y: auto;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-primary);
   border-radius: 4px;
   padding: 12px;
+  margin-top: 10px;
 }
 
 .command-result {
