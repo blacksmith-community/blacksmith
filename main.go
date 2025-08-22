@@ -454,6 +454,18 @@ func main() {
 	}
 	rabbitmqAuditService := rabbitmq.NewAuditService(vaultAPIClient, Logger.Wrap("rabbitmq-audit"))
 
+	// Create RabbitMQ plugins metadata service
+	l.Info("Creating RabbitMQ plugins metadata service")
+	rabbitmqPluginsMetadataService := rabbitmq.NewPluginsMetadataService(Logger.Wrap("rabbitmq-plugins-metadata"))
+
+	// Create RabbitMQ plugins executor service
+	l.Info("Creating RabbitMQ plugins executor service")
+	rabbitmqPluginsExecutorService := rabbitmq.NewPluginsExecutorService(rabbitmqSSHService, rabbitmqPluginsMetadataService, Logger.Wrap("rabbitmq-plugins-executor"))
+
+	// Create RabbitMQ plugins audit service
+	l.Info("Creating RabbitMQ plugins audit service")
+	rabbitmqPluginsAuditService := rabbitmq.NewPluginsAuditService(vaultAPIClient, Logger.Wrap("rabbitmq-plugins-audit"))
+
 	// Create WebSocket SSH handler
 	l.Info("Creating WebSocket SSH handler")
 	wsConfig := websocket.Config{
@@ -515,19 +527,22 @@ func main() {
 		Password: config.Broker.Password,
 		WebRoot:  ui,
 		Internal: &InternalApi{
-			Env:                     config.Env,
-			Vault:                   vault,
-			Broker:                  broker,
-			Config:                  config,
-			VMMonitor:               vmMonitor,
-			Services:                services.NewManagerWithCFConfig(Logger.Wrap("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
-			SSHService:              sshService,
-			RabbitMQSSHService:      rabbitmqSSHService,
-			RabbitMQMetadataService: rabbitmqMetadataService,
-			RabbitMQExecutorService: rabbitmqExecutorService,
-			RabbitMQAuditService:    rabbitmqAuditService,
-			WebSocketHandler:        webSocketHandler,
-			SecurityMiddleware:      services.NewSecurityMiddleware(Logger.Wrap("security").Debug),
+			Env:                            config.Env,
+			Vault:                          vault,
+			Broker:                         broker,
+			Config:                         config,
+			VMMonitor:                      vmMonitor,
+			Services:                       services.NewManagerWithCFConfig(Logger.Wrap("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
+			SSHService:                     sshService,
+			RabbitMQSSHService:             rabbitmqSSHService,
+			RabbitMQMetadataService:        rabbitmqMetadataService,
+			RabbitMQExecutorService:        rabbitmqExecutorService,
+			RabbitMQAuditService:           rabbitmqAuditService,
+			RabbitMQPluginsMetadataService: rabbitmqPluginsMetadataService,
+			RabbitMQPluginsExecutorService: rabbitmqPluginsExecutorService,
+			RabbitMQPluginsAuditService:    rabbitmqPluginsAuditService,
+			WebSocketHandler:               webSocketHandler,
+			SecurityMiddleware:             services.NewSecurityMiddleware(Logger.Wrap("security").Debug),
 		},
 		Primary: brokerapi.New(
 			broker,

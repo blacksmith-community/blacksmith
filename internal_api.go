@@ -27,19 +27,22 @@ import (
 )
 
 type InternalApi struct {
-	Env                     string
-	Vault                   *Vault
-	Broker                  *Broker
-	Config                  Config
-	VMMonitor               *VMMonitor
-	Services                *services.Manager
-	SSHService              ssh.SSHService
-	RabbitMQSSHService      *rabbitmqssh.SSHService
-	RabbitMQMetadataService *rabbitmqssh.MetadataService
-	RabbitMQExecutorService *rabbitmqssh.ExecutorService
-	RabbitMQAuditService    *rabbitmqssh.AuditService
-	WebSocketHandler        *websocket.SSHHandler
-	SecurityMiddleware      *services.SecurityMiddleware
+	Env                            string
+	Vault                          *Vault
+	Broker                         *Broker
+	Config                         Config
+	VMMonitor                      *VMMonitor
+	Services                       *services.Manager
+	SSHService                     ssh.SSHService
+	RabbitMQSSHService             *rabbitmqssh.SSHService
+	RabbitMQMetadataService        *rabbitmqssh.MetadataService
+	RabbitMQExecutorService        *rabbitmqssh.ExecutorService
+	RabbitMQAuditService           *rabbitmqssh.AuditService
+	RabbitMQPluginsMetadataService *rabbitmqssh.PluginsMetadataService
+	RabbitMQPluginsExecutorService *rabbitmqssh.PluginsExecutorService
+	RabbitMQPluginsAuditService    *rabbitmqssh.PluginsAuditService
+	WebSocketHandler               *websocket.SSHHandler
+	SecurityMiddleware             *services.SecurityMiddleware
 }
 
 // parseResultOutputToEvents converts BOSH task result output (JSON lines) into TaskEvent array for the frontend
@@ -655,6 +658,27 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Check for blacksmith config endpoint first (before generic pattern)
+	if req.URL.Path == "/b/blacksmith/config" {
+		l := Logger.Wrap("blacksmith-config")
+		l.Debug("fetching blacksmith configuration")
+
+		// Convert the entire config struct to JSON
+		// The config is already loaded in api.Config
+		b, err := json.Marshal(api.Config)
+		if err != nil {
+			l.Error("failed to marshal blacksmith config: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "%s\n", string(b))
+		return
+	}
+
 	// Instance config endpoint
 	pattern := regexp.MustCompile(`^/b/([^/]+)/config$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
@@ -697,26 +721,6 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			"available":   true,
 		}
 		api.handleJSONResponse(w, config, nil)
-		return
-	}
-
-	if req.URL.Path == "/b/blacksmith/config" {
-		l := Logger.Wrap("blacksmith-config")
-		l.Debug("fetching blacksmith configuration")
-
-		// Convert the entire config struct to JSON
-		// The config is already loaded in api.Config
-		b, err := json.Marshal(api.Config)
-		if err != nil {
-			l.Error("failed to marshal blacksmith config: %s", err)
-			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(200)
-		fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
 
@@ -1119,6 +1123,265 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			} else {
 				w.WriteHeader(404)
 				fmt.Fprintf(w, `{"error": "unknown rabbitmqctl operation: %s"}`, operation)
+			}
+		}
+
+		return
+	}
+
+	// RabbitMQ rabbitmq-plugins management endpoints
+	pattern = regexp.MustCompile(`^/b/([^/]+)/rabbitmq/plugins/(.+)$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+		operation := m[2]
+
+		l := Logger.Wrap("rabbitmq-plugins")
+		l.Debug("RabbitMQ-plugins operation %s for instance %s", operation, instanceID)
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			return
+		}
+
+		// Check if this is a RabbitMQ instance
+		var creds map[string]interface{}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		if err != nil || !exists {
+			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
+			if err != nil || !exists {
+				l.Error("Unable to find credentials for instance %s", instanceID)
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "credentials not found"}`)
+				return
+			}
+		}
+
+		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
+			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			return
+		}
+
+		// Construct deployment name from plan and instance
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+
+		// Get the manifest to find the actual instance group name
+		var manifestData struct {
+			Manifest string `json:"manifest"`
+		}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/manifest", instanceID), &manifestData)
+		if err != nil || !exists {
+			l.Error("unable to find manifest for instance %s: %v", instanceID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "manifest not found for instance"}`)
+			return
+		}
+
+		// Parse the manifest to extract the first instance group name
+		var manifest map[interface{}]interface{}
+		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifest); err != nil {
+			l.Error("failed to parse manifest YAML: %v", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "failed to parse manifest"}`)
+			return
+		}
+
+		// Get the first instance group name from the manifest
+		instanceName := ""
+		if instanceGroups, ok := manifest["instance_groups"].([]interface{}); ok && len(instanceGroups) > 0 {
+			if firstGroup, ok := instanceGroups[0].(map[interface{}]interface{}); ok {
+				if name, ok := firstGroup["name"].(string); ok {
+					instanceName = name
+					l.Debug("Found instance group name from manifest: %s", instanceName)
+				}
+			}
+		}
+
+		// Fallback to plan name if we couldn't find instance group
+		if instanceName == "" {
+			instanceName = plan.Name
+			l.Debug("Using plan name as fallback instance name: %s", instanceName)
+		}
+
+		instanceIndex := 0
+
+		// Handle different rabbitmq-plugins operations
+		switch operation {
+		case "categories":
+			// GET /b/{instance_id}/rabbitmq/plugins/categories - Returns all command categories
+			if req.Method != "GET" {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+				return
+			}
+
+			if api.RabbitMQPluginsMetadataService != nil {
+				categories := api.RabbitMQPluginsMetadataService.GetCategories()
+				api.handleJSONResponse(w, categories, nil)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins metadata service not available"))
+			}
+
+		case "history":
+			// GET /b/{instance_id}/rabbitmq/plugins/history - Returns command execution history
+			// DELETE /b/{instance_id}/rabbitmq/plugins/history - Clears command execution history
+			if req.Method == "GET" {
+				if api.RabbitMQPluginsAuditService != nil {
+					history, err := api.RabbitMQPluginsAuditService.GetHistory(req.Context(), instanceID, 100)
+					api.handleJSONResponse(w, history, err)
+				} else {
+					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins audit service not available"))
+				}
+			} else if req.Method == "DELETE" {
+				if api.RabbitMQPluginsAuditService != nil {
+					err := api.RabbitMQPluginsAuditService.ClearHistory(req.Context(), instanceID)
+					if err != nil {
+						api.handleJSONResponse(w, nil, err)
+					} else {
+						api.handleJSONResponse(w, map[string]string{"status": "success", "message": "History cleared"}, nil)
+					}
+				} else {
+					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins audit service not available"))
+				}
+			} else {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or DELETE."}`)
+			}
+
+		case "execute":
+			// POST /b/{instance_id}/rabbitmq/plugins/execute - Executes command synchronously
+			if req.Method != "POST" {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+				return
+			}
+
+			var reqData struct {
+				Category  string   `json:"category"`
+				Command   string   `json:"command"`
+				Arguments []string `json:"arguments"`
+			}
+
+			decoder := json.NewDecoder(req.Body)
+			if err := decoder.Decode(&reqData); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "Invalid JSON: %s"}`, err.Error())
+				return
+			}
+
+			if reqData.Category == "" || reqData.Command == "" {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "category and command are required"}`)
+				return
+			}
+
+			if api.RabbitMQPluginsExecutorService != nil {
+				ctx := rabbitmqssh.PluginsExecutionContext{
+					Context:    req.Context(),
+					InstanceID: instanceID,
+					User:       "web-user",
+					ClientIP:   req.RemoteAddr,
+				}
+
+				output, exitCode, err := api.RabbitMQPluginsExecutorService.ExecuteCommandSync(ctx, deploymentName, instanceName, instanceIndex, reqData.Category, reqData.Command, reqData.Arguments)
+
+				response := map[string]interface{}{
+					"output":    output,
+					"exit_code": exitCode,
+					"success":   err == nil && exitCode == 0,
+				}
+
+				if err != nil {
+					response["error"] = err.Error()
+				}
+
+				// Log to audit
+				if api.RabbitMQPluginsAuditService != nil {
+					execution := &rabbitmqssh.RabbitMQPluginsExecution{
+						InstanceID: instanceID,
+						Category:   reqData.Category,
+						Command:    reqData.Command,
+						Arguments:  reqData.Arguments,
+						Timestamp:  time.Now().UnixNano() / int64(time.Millisecond),
+						Output:     output,
+						ExitCode:   exitCode,
+						Success:    err == nil && exitCode == 0,
+					}
+
+					_ = api.RabbitMQPluginsAuditService.LogExecution(req.Context(), execution, "web-user", req.RemoteAddr, fmt.Sprintf("sync-%d", time.Now().UnixNano()), 0)
+				}
+
+				api.handleJSONResponse(w, response, nil)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins executor service not available"))
+			}
+
+		case "stream":
+			// WebSocket streaming endpoint for rabbitmq-plugins commands
+			if req.Method != "GET" {
+				w.WriteHeader(405)
+				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
+				return
+			}
+
+			api.handleRabbitMQPluginsStreamingWebSocket(w, req, instanceID, deploymentName, instanceName, instanceIndex)
+
+		default:
+			// Handle category-specific operations
+			parts := strings.Split(operation, "/")
+			if len(parts) >= 2 && parts[0] == "category" {
+				categoryName := parts[1]
+
+				if len(parts) == 2 {
+					// GET /b/{instance_id}/rabbitmq/plugins/category/{category} - Returns commands for category
+					if req.Method != "GET" {
+						w.WriteHeader(405)
+						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						return
+					}
+
+					if api.RabbitMQPluginsMetadataService != nil {
+						category, err := api.RabbitMQPluginsMetadataService.GetCategory(categoryName)
+						api.handleJSONResponse(w, category, err)
+					} else {
+						api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins metadata service not available"))
+					}
+				} else if len(parts) >= 4 && parts[2] == "command" {
+					commandName := parts[3]
+					// GET /b/{instance_id}/rabbitmq/plugins/category/{category}/command/{command} - Returns command help
+					if req.Method != "GET" {
+						w.WriteHeader(405)
+						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						return
+					}
+
+					if api.RabbitMQPluginsMetadataService != nil {
+						command, err := api.RabbitMQPluginsMetadataService.GetCommand(commandName)
+						api.handleJSONResponse(w, command, err)
+					} else {
+						api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins metadata service not available"))
+					}
+				} else {
+					w.WriteHeader(404)
+					fmt.Fprintf(w, `{"error": "unknown rabbitmq-plugins operation: %s"}`, operation)
+				}
+			} else {
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "unknown rabbitmq-plugins operation: %s"}`, operation)
 			}
 		}
 
@@ -3974,6 +4237,204 @@ func (api *InternalApi) handleStreamingExecution(ctx context.Context, conn *gori
 			// Log to audit if available
 			if api.RabbitMQAuditService != nil {
 				if err := api.RabbitMQAuditService.LogStreamingExecution(ctx, result, execCtx.User, execCtx.ClientIP); err != nil {
+					l.Error("Failed to log streaming execution audit: %v", err)
+				}
+			}
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case outputLine, ok := <-result.Output:
+				if !ok {
+					// Output channel closed, execution finished
+					return
+				}
+
+				// Send output line
+				outputResponse := map[string]interface{}{
+					"type":         "output",
+					"execution_id": result.ExecutionID,
+					"data":         outputLine,
+				}
+				if err := conn.WriteJSON(outputResponse); err != nil {
+					l.Error("Failed to send output: %v", err)
+					return
+				}
+			}
+		}
+	}()
+}
+
+// handleRabbitMQPluginsStreamingWebSocket handles WebSocket connections for rabbitmq-plugins command streaming
+func (api *InternalApi) handleRabbitMQPluginsStreamingWebSocket(w http.ResponseWriter, r *http.Request, instanceID, deploymentName, instanceName string, instanceIndex int) {
+	l := Logger.Wrap("rabbitmq-plugins-websocket")
+	l.Info("WebSocket connection request for rabbitmq-plugins streaming on instance %s", instanceID)
+
+	// Upgrade to WebSocket
+	upgrader := gorillawebsocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true // TODO: implement proper origin checking
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		l.Error("WebSocket upgrade failed: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	l.Info("WebSocket connection established for instance %s", instanceID)
+
+	// Set up message handling
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Handle incoming messages
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			var message struct {
+				Type      string   `json:"type"`
+				Category  string   `json:"category"`
+				Command   string   `json:"command"`
+				Arguments []string `json:"arguments"`
+			}
+
+			// Read message from WebSocket
+			err := conn.ReadJSON(&message)
+			if err != nil {
+				if gorillawebsocket.IsUnexpectedCloseError(err, gorillawebsocket.CloseGoingAway, gorillawebsocket.CloseAbnormalClosure) {
+					l.Error("WebSocket read error: %v", err)
+				}
+				return
+			}
+
+			// Handle different message types
+			switch message.Type {
+			case "execute":
+				l.Info("Executing rabbitmq-plugins command: %s.%s with args %v", message.Category, message.Command, message.Arguments)
+				api.handlePluginsStreamingExecution(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message.Category, message.Command, message.Arguments, l)
+
+			case "ping":
+				response := map[string]interface{}{
+					"type": "pong",
+				}
+				if err := conn.WriteJSON(response); err != nil {
+					l.Error("Failed to send pong response: %v", err)
+					return
+				}
+
+			default:
+				response := map[string]interface{}{
+					"type":  "error",
+					"error": fmt.Sprintf("unknown message type: %s", message.Type),
+				}
+				if err := conn.WriteJSON(response); err != nil {
+					l.Error("Failed to send error response: %v", err)
+					return
+				}
+			}
+		}
+	}
+}
+
+// handlePluginsStreamingExecution handles the execution of a rabbitmq-plugins command with streaming output
+func (api *InternalApi) handlePluginsStreamingExecution(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, category, command string, arguments []string, l *Log) {
+	if api.RabbitMQPluginsExecutorService == nil {
+		response := map[string]interface{}{
+			"type":  "error",
+			"error": "RabbitMQ plugins executor service not available",
+		}
+		if err := conn.WriteJSON(response); err != nil {
+			l.Error("Failed to send WebSocket error response: %v", err)
+		}
+		return
+	}
+
+	// Create execution context
+	execCtx := rabbitmqssh.PluginsExecutionContext{
+		Context:    ctx,
+		InstanceID: instanceID,
+		User:       "websocket-user", // TODO: get from auth
+		ClientIP:   "websocket",      // TODO: get actual client IP
+	}
+
+	// Execute command with streaming
+	result, err := api.RabbitMQPluginsExecutorService.ExecuteCommand(execCtx, deploymentName, instanceName, instanceIndex, category, command, arguments)
+	if err != nil {
+		response := map[string]interface{}{
+			"type":  "error",
+			"error": err.Error(),
+		}
+		if err := conn.WriteJSON(response); err != nil {
+			l.Error("Failed to send WebSocket error response: %v", err)
+		}
+		return
+	}
+
+	// Send initial response
+	response := map[string]interface{}{
+		"type":         "execution_started",
+		"execution_id": result.ExecutionID,
+		"instance_id":  instanceID,
+		"category":     category,
+		"command":      command,
+		"arguments":    arguments,
+		"start_time":   result.StartTime,
+	}
+	if err := conn.WriteJSON(response); err != nil {
+		l.Error("Failed to send initial WebSocket response: %v", err)
+		return
+	}
+
+	// Start streaming output in a goroutine
+	go func() {
+		defer func() {
+			// Send final status when execution completes
+			finalResponse := map[string]interface{}{
+				"type":         "execution_completed",
+				"execution_id": result.ExecutionID,
+				"status":       result.Status,
+				"success":      result.Success,
+				"exit_code":    result.ExitCode,
+			}
+			if result.EndTime != nil {
+				finalResponse["end_time"] = *result.EndTime
+				finalResponse["duration"] = result.EndTime.Sub(result.StartTime).Milliseconds()
+			}
+			if result.Error != "" {
+				finalResponse["error"] = result.Error
+			}
+			if err := conn.WriteJSON(finalResponse); err != nil {
+				l.Error("Failed to send final WebSocket response: %v", err)
+			}
+
+			// Log to audit if available
+			if api.RabbitMQPluginsAuditService != nil {
+				execution := &rabbitmqssh.RabbitMQPluginsExecution{
+					InstanceID: instanceID,
+					Category:   category,
+					Command:    command,
+					Arguments:  arguments,
+					Timestamp:  result.StartTime.UnixNano() / int64(time.Millisecond),
+					Output:     "", // Will be populated during streaming
+					ExitCode:   result.ExitCode,
+					Success:    result.Success,
+				}
+
+				duration := int64(0)
+				if result.EndTime != nil {
+					duration = result.EndTime.Sub(result.StartTime).Milliseconds()
+				}
+
+				if err := api.RabbitMQPluginsAuditService.LogExecution(ctx, execution, execCtx.User, execCtx.ClientIP, result.ExecutionID, duration); err != nil {
 					l.Error("Failed to log streaming execution audit: %v", err)
 				}
 			}

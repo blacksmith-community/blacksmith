@@ -59,8 +59,19 @@ func NewRabbitMQSSHService(sshService ssh.SSHService, logger Logger) *SSHService
 func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd RabbitMQCommand) (*RabbitMQCommandResult, error) {
 	r.logger.Info("Executing RabbitMQ command '%s' on %s/%s/%d", cmd.Name, deployment, instance, index)
 
-	// Build the full rabbitmqctl command
-	fullCommand := r.buildRabbitMQCtlCommand(cmd)
+	// Check if this is a rabbitmq-plugins command (already has full command built)
+	var fullCommand []string
+	if strings.Contains(cmd.Name, "rabbitmq-plugins") || strings.Contains(cmd.Name, "/var/vcap/jobs/rabbitmq/env") {
+		// This is a pre-built rabbitmq-plugins command, use it directly
+		r.logger.Debug("Detected pre-built rabbitmq-plugins command, using directly")
+
+		// The command is already built with environment sourcing, wrap it with su
+		innerCommand := cmd.Name
+		fullCommand = []string{"/bin/sudo", "su", "-", "vcap", "-c", innerCommand}
+	} else {
+		// This is a regular rabbitmqctl command, build it normally
+		fullCommand = r.buildRabbitMQCtlCommand(cmd)
+	}
 
 	// Create SSH request
 	sshReq := &ssh.SSHRequest{
@@ -161,10 +172,13 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 
 	// Parse output if command was successful
 	if result.Success && result.Output != "" {
-		if parsedData, parseErr := r.parseCommandOutput(cmd.Name, result.Output); parseErr == nil {
-			result.ParsedData = parsedData
-		} else {
-			r.logger.Debug("Failed to parse output for command %s: %v", cmd.Name, parseErr)
+		// Skip parsing for rabbitmq-plugins commands as they have their own processing
+		if !strings.Contains(cmd.Name, "rabbitmq-plugins") {
+			if parsedData, parseErr := r.parseCommandOutput(cmd.Name, result.Output); parseErr == nil {
+				result.ParsedData = parsedData
+			} else {
+				r.logger.Debug("Failed to parse output for command %s: %v", cmd.Name, parseErr)
+			}
 		}
 	}
 

@@ -1,0 +1,505 @@
+package rabbitmq
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/hashicorp/vault/api"
+)
+
+func TestNewPluginsAuditService(t *testing.T) {
+	logger := &MockLogger{}
+
+	// Test with nil vault client
+	service := NewPluginsAuditService(nil, logger)
+	if service == nil {
+		t.Fatal("NewPluginsAuditService returned nil")
+	}
+
+	if service.logger != logger {
+		t.Error("Logger not set correctly")
+	}
+
+	// Test with nil logger
+	service2 := NewPluginsAuditService(nil, nil)
+	if service2 == nil {
+		t.Fatal("NewPluginsAuditService with nil logger returned nil")
+	}
+}
+
+func TestPluginsAuditService_GenerateVaultKey(t *testing.T) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	instanceID := "test-instance"
+	timestamp := time.Now().Unix() * 1000 // milliseconds
+
+	key1 := service.generateVaultKey(instanceID, timestamp)
+	key2 := service.generateVaultKey(instanceID, timestamp+1)
+
+	// Keys should be different for different timestamps
+	if key1 == key2 {
+		t.Error("Expected different vault keys for different timestamps")
+	}
+
+	// Key should contain instance ID
+	expectedPrefix := "secret/data/test-instance/rabbitmq-plugins/audit/"
+	if len(key1) < len(expectedPrefix) || key1[:len(expectedPrefix)] != expectedPrefix {
+		t.Errorf("Expected key to start with %s, got %s", expectedPrefix, key1)
+	}
+}
+
+func TestPluginsAuditService_EntryToMap(t *testing.T) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	entry := &PluginsAuditEntry{
+		Timestamp:   time.Now().UnixNano() / int64(time.Millisecond),
+		InstanceID:  "test-instance",
+		User:        "test-user",
+		ClientIP:    "192.168.1.1",
+		Category:    "Plugin Management",
+		Command:     "enable",
+		Arguments:   []string{"rabbitmq_management"},
+		Success:     true,
+		ExitCode:    0,
+		Duration:    150,
+		Output:      "Plugin enabled successfully",
+		ExecutionID: "exec-123",
+	}
+
+	entryMap, err := service.entryToMap(entry)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// Check all required fields are present
+	requiredFields := []string{
+		"timestamp", "instance_id", "user", "client_ip", "category",
+		"command", "arguments", "success", "exit_code", "duration_ms",
+		"output", "execution_id",
+	}
+
+	for _, field := range requiredFields {
+		if _, exists := entryMap[field]; !exists {
+			t.Errorf("Expected entry map to contain field %s", field)
+		}
+	}
+
+	// Check specific values
+	if entryMap["instance_id"] != entry.InstanceID {
+		t.Errorf("Expected instance_id %s, got %v", entry.InstanceID, entryMap["instance_id"])
+	}
+
+	if entryMap["command"] != entry.Command {
+		t.Errorf("Expected command %s, got %v", entry.Command, entryMap["command"])
+	}
+
+	if entryMap["success"] != entry.Success {
+		t.Errorf("Expected success %v, got %v", entry.Success, entryMap["success"])
+	}
+}
+
+func TestPluginsAuditService_MapToHistoryEntry(t *testing.T) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	timestamp := time.Now().UnixNano() / int64(time.Millisecond)
+	dataMap := map[string]interface{}{
+		"timestamp":    json.Number(fmt.Sprintf("%d", timestamp)),
+		"category":     "Plugin Management",
+		"command":      "enable",
+		"arguments":    []interface{}{"rabbitmq_management"},
+		"success":      true,
+		"duration_ms":  json.Number("150"),
+		"user":         "test-user",
+		"execution_id": "exec-123",
+		"output":       "Plugin enabled successfully",
+	}
+
+	historyEntry := service.mapToHistoryEntry(dataMap)
+
+	if historyEntry == nil {
+		t.Fatal("Expected history entry but got nil")
+	}
+
+	if historyEntry.Timestamp != timestamp {
+		t.Errorf("Expected timestamp %d, got %d", timestamp, historyEntry.Timestamp)
+	}
+
+	if historyEntry.Category != "Plugin Management" {
+		t.Errorf("Expected category 'Plugin Management', got %s", historyEntry.Category)
+	}
+
+	if historyEntry.Command != "enable" {
+		t.Errorf("Expected command 'enable', got %s", historyEntry.Command)
+	}
+
+	if !historyEntry.Success {
+		t.Error("Expected success to be true")
+	}
+
+	if len(historyEntry.Arguments) != 1 || historyEntry.Arguments[0] != "rabbitmq_management" {
+		t.Errorf("Expected arguments [rabbitmq_management], got %v", historyEntry.Arguments)
+	}
+}
+
+func TestPluginsAuditService_ExtractTimestampFromKey(t *testing.T) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	tests := []struct {
+		name     string
+		key      string
+		expected int64
+	}{
+		{
+			name:     "Valid key with timestamp",
+			key:      "1640995200000",
+			expected: 1640995200000,
+		},
+		{
+			name:     "Invalid key",
+			key:      "invalid",
+			expected: 0,
+		},
+		{
+			name:     "Empty key",
+			key:      "",
+			expected: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := service.extractTimestampFromKey(test.key)
+			if result != test.expected {
+				t.Errorf("Expected %d, got %d", test.expected, result)
+			}
+		})
+	}
+}
+
+func TestPluginsAuditService_FormatHistoryEntry(t *testing.T) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	entry := &PluginsHistoryEntry{
+		Timestamp:   time.Now().UnixNano() / int64(time.Millisecond),
+		Category:    "Plugin Management",
+		Command:     "enable",
+		Arguments:   []string{"rabbitmq_management"},
+		Success:     true,
+		Duration:    150,
+		User:        "test-user",
+		ExecutionID: "exec-123",
+	}
+
+	formatted := service.FormatHistoryEntry(entry)
+
+	if formatted == "" {
+		t.Error("Expected formatted string but got empty")
+	}
+
+	// Check that it contains key information (adjust for actual format)
+	expectedSubstrings := []string{
+		"enable",
+		"rabbitmq_management",
+		"test-user",
+		"✅", // Success emoji instead of "SUCCESS"
+	}
+
+	for _, substring := range expectedSubstrings {
+		if !contains(formatted, substring) {
+			t.Errorf("Expected formatted string to contain '%s', but it didn't. Got: %s", substring, formatted)
+		}
+	}
+}
+
+func TestPluginsAuditService_LogExecution_WithoutVault(t *testing.T) {
+	// Test behavior when vault client is nil
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	execution := &RabbitMQPluginsExecution{
+		InstanceID: "test-instance",
+		Category:   "Plugin Management",
+		Command:    "enable",
+		Arguments:  []string{"rabbitmq_management"},
+		Timestamp:  time.Now().UnixNano() / int64(time.Millisecond),
+		Output:     "Plugin enabled successfully",
+		ExitCode:   0,
+		Success:    true,
+	}
+
+	err := service.LogExecution(context.Background(), execution, "test-user", "192.168.1.1", "exec-123", 150)
+
+	// Should return error when vault client is not configured
+	if err == nil {
+		t.Error("Expected error when vault client is nil, but got none")
+	}
+}
+
+func TestPluginsAuditService_GetHistory_WithoutVault(t *testing.T) {
+	// Test behavior when vault client is nil
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	_, err := service.GetHistory(context.Background(), "test-instance", 10)
+
+	// Should return error when vault client is not configured
+	if err == nil {
+		t.Error("Expected error when vault client is nil, but got none")
+	}
+}
+
+func TestPluginsAuditService_ClearHistory_WithoutVault(t *testing.T) {
+	// Test behavior when vault client is nil
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	err := service.ClearHistory(context.Background(), "test-instance")
+
+	// Should return error when vault client is not configured
+	if err == nil {
+		t.Error("Expected error when vault client is nil, but got none")
+	}
+}
+
+func TestPluginsAuditService_IsHealthy(t *testing.T) {
+	// Test with nil vault client
+	service := NewPluginsAuditService(nil, &MockLogger{})
+
+	err := service.IsHealthy(context.Background())
+
+	// Should return error when vault client is not configured
+	if err == nil {
+		t.Error("Expected error when vault client is nil, but got none")
+	}
+
+	// Test with configured vault client (would need real vault for full test)
+	config := api.DefaultConfig()
+	client, _ := api.NewClient(config)
+	serviceWithVault := NewPluginsAuditService(client, &MockLogger{})
+
+	// This will likely fail due to no vault server, but tests the code path
+	_ = serviceWithVault.IsHealthy(context.Background())
+}
+
+func TestPluginsAuditEntry_Structure(t *testing.T) {
+	entry := &PluginsAuditEntry{
+		Timestamp:   time.Now().UnixNano() / int64(time.Millisecond),
+		InstanceID:  "test-instance",
+		User:        "test-user",
+		ClientIP:    "192.168.1.1",
+		Category:    "Plugin Management",
+		Command:     "enable",
+		Arguments:   []string{"rabbitmq_management"},
+		Success:     true,
+		ExitCode:    0,
+		Duration:    150,
+		Output:      "Plugin enabled successfully",
+		ExecutionID: "exec-123",
+		Metadata: map[string]interface{}{
+			"test": "value",
+		},
+	}
+
+	// Test that all fields are accessible
+	if entry.Timestamp <= 0 {
+		t.Error("Expected positive timestamp")
+	}
+
+	if entry.InstanceID == "" {
+		t.Error("Expected non-empty instance ID")
+	}
+
+	if entry.User == "" {
+		t.Error("Expected non-empty user")
+	}
+
+	if entry.Category == "" {
+		t.Error("Expected non-empty category")
+	}
+
+	if entry.Command == "" {
+		t.Error("Expected non-empty command")
+	}
+
+	if len(entry.Arguments) == 0 {
+		t.Error("Expected non-empty arguments")
+	}
+
+	if entry.Duration <= 0 {
+		t.Error("Expected positive duration")
+	}
+
+	if entry.ExecutionID == "" {
+		t.Error("Expected non-empty execution ID")
+	}
+
+	if entry.Metadata == nil {
+		t.Error("Expected non-nil metadata")
+	}
+}
+
+func TestPluginsHistoryEntry_Structure(t *testing.T) {
+	entry := &PluginsHistoryEntry{
+		Timestamp:    time.Now().UnixNano() / int64(time.Millisecond),
+		Category:     "Plugin Management",
+		Command:      "enable",
+		Arguments:    []string{"rabbitmq_management"},
+		Success:      true,
+		Duration:     150,
+		User:         "test-user",
+		ExecutionID:  "exec-123",
+		OutputSample: "Plugin enabled successfully",
+	}
+
+	// Test that all fields are accessible
+	if entry.Timestamp <= 0 {
+		t.Error("Expected positive timestamp")
+	}
+
+	if entry.Category == "" {
+		t.Error("Expected non-empty category")
+	}
+
+	if entry.Command == "" {
+		t.Error("Expected non-empty command")
+	}
+
+	if len(entry.Arguments) == 0 {
+		t.Error("Expected non-empty arguments")
+	}
+
+	if entry.Duration <= 0 {
+		t.Error("Expected positive duration")
+	}
+
+	if entry.User == "" {
+		t.Error("Expected non-empty user")
+	}
+
+	if entry.ExecutionID == "" {
+		t.Error("Expected non-empty execution ID")
+	}
+
+	if entry.OutputSample == "" {
+		t.Error("Expected non-empty output sample")
+	}
+}
+
+func TestPluginsAuditSummary_Structure(t *testing.T) {
+	summary := &PluginsAuditSummary{
+		TotalEntries:   10,
+		SuccessfulCmds: 8,
+		FailedCmds:     2,
+		Categories: map[string]int{
+			"Plugin Management": 6,
+			"Monitoring":        4,
+		},
+		Commands: map[string]int{
+			"enable": 4,
+			"list":   3,
+			"help":   3,
+		},
+		Users: map[string]int{
+			"admin": 7,
+			"user1": 3,
+		},
+		TimeRange: map[string]int64{
+			"start": 1640995200000,
+			"end":   1640995800000,
+		},
+		LastExecution:  1640995800000,
+		FirstExecution: 1640995200000,
+	}
+
+	// Test that all fields are accessible and reasonable
+	if summary.TotalEntries != summary.SuccessfulCmds+summary.FailedCmds {
+		t.Error("Total entries should equal successful + failed commands")
+	}
+
+	if summary.TotalEntries <= 0 {
+		t.Error("Expected positive total entries")
+	}
+
+	if len(summary.Categories) == 0 {
+		t.Error("Expected non-empty categories")
+	}
+
+	if len(summary.Commands) == 0 {
+		t.Error("Expected non-empty commands")
+	}
+
+	if len(summary.Users) == 0 {
+		t.Error("Expected non-empty users")
+	}
+
+	if summary.LastExecution <= summary.FirstExecution {
+		t.Error("Last execution should be after first execution")
+	}
+}
+
+// Helper function to check if string contains substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) &&
+		(len(substr) == 0 ||
+			func() bool {
+				for i := 0; i <= len(s)-len(substr); i++ {
+					if s[i:i+len(substr)] == substr {
+						return true
+					}
+				}
+				return false
+			}())
+}
+
+// Benchmark tests
+func BenchmarkEntryToMap(b *testing.B) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+	entry := &PluginsAuditEntry{
+		Timestamp:   time.Now().UnixNano() / int64(time.Millisecond),
+		InstanceID:  "bench-instance",
+		User:        "bench-user",
+		ClientIP:    "127.0.0.1",
+		Category:    "Plugin Management",
+		Command:     "enable",
+		Arguments:   []string{"rabbitmq_management"},
+		Success:     true,
+		ExitCode:    0,
+		Duration:    150,
+		Output:      "Plugin enabled successfully",
+		ExecutionID: "bench-exec",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = service.entryToMap(entry)
+	}
+}
+
+func BenchmarkGenerateVaultKey(b *testing.B) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+	timestamp := time.Now().Unix() * 1000
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = service.generateVaultKey("bench-instance", timestamp+int64(i))
+	}
+}
+
+func BenchmarkFormatHistoryEntry(b *testing.B) {
+	service := NewPluginsAuditService(nil, &MockLogger{})
+	entry := &PluginsHistoryEntry{
+		Timestamp:   time.Now().UnixNano() / int64(time.Millisecond),
+		Category:    "Plugin Management",
+		Command:     "enable",
+		Arguments:   []string{"rabbitmq_management"},
+		Success:     true,
+		Duration:    150,
+		User:        "bench-user",
+		ExecutionID: "bench-exec",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = service.FormatHistoryEntry(entry)
+	}
+}

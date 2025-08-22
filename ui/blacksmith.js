@@ -3922,6 +3922,7 @@
         <button class="operation-tab" data-operation="queue-ops" data-instance="${instanceId}">QUEUE OPS</button>
         <button class="operation-tab" data-operation="management" data-instance="${instanceId}">MANAGEMENT</button>
         <button class="operation-tab" data-operation="rabbitmqctl" data-instance="${instanceId}">RABBITMQCTL</button>
+        <button class="operation-tab" data-operation="plugins" data-instance="${instanceId}">PLUGINS</button>
       `;
     }
     return '';
@@ -4263,6 +4264,78 @@
             <button class="clear-history-btn" onclick="clearRabbitMQCtlResponseHistory('${instanceId}');">Clear History</button>
           </div>
           <div class="history-entries" id="history-entries-rabbitmqctl-${instanceId}">
+            <div class="no-data">No commands executed yet</div>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderRabbitMQPluginsOperation = (instanceId) => {
+    // Initialize the rabbitmq-plugins state for this instance if it doesn't exist
+    window.rabbitmqPlugins = window.rabbitmqPlugins || {};
+    window.rabbitmqPlugins[instanceId] = window.rabbitmqPlugins[instanceId] || {
+      categories: [],
+      selectedCategory: null,
+      selectedCommand: null,
+      commandHistory: [],
+      activeExecution: null,
+      websocket: null
+    };
+
+    // When switching to plugins tab, hide the regular response history
+    setTimeout(() => {
+      const regularHistory = document.querySelector('.testing-history');
+      if (regularHistory) {
+        regularHistory.style.display = 'none';
+      }
+    }, 0);
+
+    return `
+      <div class="plugins-container">
+        <div class="plugins-layout">
+          <div class="plugins-categories">
+            <h5>Plugin Categories</h5>
+            <div id="plugins-categories-${instanceId}" class="categories-list">
+              <div class="loading">Loading categories...</div>
+            </div>
+          </div>
+          <div class="plugins-command-details">
+            <div id="plugins-command-section-${instanceId}" class="command-section">
+              <div class="no-data">Select a category to view available commands</div>
+            </div>
+            <div id="plugins-execution-section-${instanceId}" class="execution-section">
+              <div id="plugins-command-help-${instanceId}" class="command-help"></div>
+              <div id="plugins-command-table-${instanceId}" class="command-table-container">
+                <div class="no-data">Select a category and command to configure execution</div>
+              </div>
+            </div>
+            <div class="plugins-output-container">
+              <div class="output-header">
+                <h5>Command Output</h5>
+                <div class="output-controls">
+                  <button onclick="clearRabbitMQPluginsOutput('${instanceId}')" class="clear-btn">Clear</button>
+                  <button onclick="toggleRabbitMQPluginsHistory('${instanceId}')" class="history-btn">History</button>
+                </div>
+              </div>
+              <div id="plugins-output-${instanceId}" class="command-output">
+                <div class="no-data">No command executed yet</div>
+              </div>
+            </div>
+            <div id="plugins-history-${instanceId}" class="plugins-history" style="display: none;">
+              <h5>Command History</h5>
+              <div id="plugins-history-content-${instanceId}" class="history-content">
+                <div class="no-data">No command history available</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="testing-history" id="plugins-response-history-${instanceId}">
+          <div class="history-header">
+            <h5>Response History</h5>
+            <button class="clear-history-btn" onclick="clearRabbitMQPluginsResponseHistory('${instanceId}');">Clear History</button>
+          </div>
+          <div class="history-entries" id="history-entries-plugins-${instanceId}">
             <div class="no-data">No commands executed yet</div>
           </div>
         </div>
@@ -5276,6 +5349,600 @@
     }
   };
 
+  // RabbitMQ Plugins Functions
+  window.loadRabbitMQPluginsCategories = async (instanceId) => {
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/categories`);
+      const categories = await response.json();
+      
+      window.rabbitmqPlugins[instanceId].categories = categories;
+      
+      const container = document.getElementById(`plugins-categories-${instanceId}`);
+      if (container) {
+        container.innerHTML = categories.map(category => 
+          `<div class="category-item" onclick="selectRabbitMQPluginsCategory('${instanceId}', '${category.name}')">
+            <div class="category-name">${category.display_name}</div>
+            <div class="category-description">${category.description}</div>
+            <div class="category-command-count">${category.commands.length} commands</div>
+          </div>`
+        ).join('');
+      }
+    } catch (error) {
+      console.error('Failed to load plugins categories:', error);
+      const container = document.getElementById(`plugins-categories-${instanceId}`);
+      if (container) {
+        container.innerHTML = '<div class="error">Failed to load categories</div>';
+      }
+    }
+  };
+
+  window.selectRabbitMQPluginsCategory = async (instanceId, categoryName) => {
+    const state = window.rabbitmqPlugins[instanceId];
+    state.selectedCategory = categoryName;
+    state.selectedCommand = null;
+    
+    // Update category selection
+    document.querySelectorAll(`#plugins-categories-${instanceId} .category-item`).forEach(item => {
+      item.classList.remove('active');
+    });
+    event.target.closest('.category-item').classList.add('active');
+    
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/category/${categoryName}`);
+      const category = await response.json();
+      
+      // Check if response is valid and has commands
+      if (!category || !category.commands || !Array.isArray(category.commands)) {
+        throw new Error(`Invalid category response: ${JSON.stringify(category)}`);
+      }
+      
+      // Update command section
+      const commandSection = document.getElementById(`plugins-command-section-${instanceId}`);
+      if (commandSection) {
+        commandSection.innerHTML = `
+          <div class="category-info">
+            <h6>${category.display_name}</h6>
+            <p>${category.description}</p>
+            <div class="commands-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Command</th>
+                    <th>Description</th>
+                    <th>Arguments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${category.commands.map(cmd => `
+                    <tr class="command-row" onclick="selectRabbitMQPluginsCommandFromTable('${instanceId}', '${cmd.name}')">
+                      <td class="command-name">${cmd.name}</td>
+                      <td class="command-desc">${cmd.description}</td>
+                      <td class="command-args">${cmd.arguments ? cmd.arguments.length : 0} args</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+    } catch (error) {
+      console.error('Failed to load plugins commands:', error);
+      // Show error in UI
+      const commandSection = document.getElementById(`plugins-command-section-${instanceId}`);
+      if (commandSection) {
+        commandSection.innerHTML = `
+          <div class="error-message">
+            <p>Failed to load commands for category "${categoryName}". Please try again.</p>
+          </div>
+        `;
+      }
+    }
+  };
+
+  window.selectRabbitMQPluginsCommand = async (instanceId) => {
+    const select = document.getElementById(`plugins-command-select-${instanceId}`);
+    const commandName = select.value;
+    
+    if (!commandName) return;
+    
+    selectRabbitMQPluginsCommandFromTable(instanceId, commandName);
+  };
+
+  window.selectRabbitMQPluginsCommandFromTable = async (instanceId, commandName) => {
+    const state = window.rabbitmqPlugins[instanceId];
+    state.selectedCommand = commandName;
+    
+    await loadRabbitMQPluginsCommandDetails(instanceId, commandName);
+  };
+
+  const loadRabbitMQPluginsCommandDetails = async (instanceId, commandName) => {
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/category/${window.rabbitmqPlugins[instanceId].selectedCategory}/command/${commandName}`);
+      const command = await response.json();
+      
+      // Display command help
+      const helpContainer = document.getElementById(`plugins-command-help-${instanceId}`);
+      if (helpContainer) {
+        helpContainer.innerHTML = `
+          <div class="command-help-content">
+            <h6>${command.name}</h6>
+            <p>${command.description}</p>
+            <div class="command-usage">
+              <strong>Usage:</strong> <code>${command.usage}</code>
+            </div>
+            ${command.examples && command.examples.length > 0 ? `
+              <div class="command-examples">
+                <strong>Examples:</strong>
+                <ul>
+                  ${command.examples.map(ex => `<li><code>${ex}</code></li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            ${command.dangerous ? '<div class="warning">⚠️ This is a dangerous command. Use with caution.</div>' : ''}
+          </div>
+        `;
+      }
+      
+      // Update command table section
+      const tableContainer = document.getElementById(`plugins-command-table-${instanceId}`);
+      if (tableContainer) {
+        tableContainer.innerHTML = `
+          <div class="command-execution-table">
+            <table class="plugins-table">
+              <thead>
+                <tr>
+                  <th>rabbitmq-plugins</th>
+                  <th>Command</th>
+                  <th>Arguments</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr id="plugins-command-row-${instanceId}">
+                  <td>rabbitmq-plugins</td>
+                  <td>${command.name}</td>
+                  <td>
+                    <div class="argument-inputs">
+                      ${command.arguments ? command.arguments.map(arg => `
+                        <div class="argument-group">
+                          <label>${arg.name}${arg.required ? '*' : ''}:</label>
+                          <input type="${arg.type === 'string[]' ? 'text' : 'text'}" 
+                                 id="plugins-arg-${arg.name}-${instanceId}" 
+                                 placeholder="${arg.description}"
+                                 ${arg.required ? 'required' : ''}>
+                          ${arg.type === 'string[]' ? '<small>Space-separated for multiple values</small>' : ''}
+                        </div>
+                      `).join('') : ''}
+                      ${command.options ? command.options.map(opt => `
+                        <div class="option-group">
+                          <label>
+                            <input type="checkbox" 
+                                   id="plugins-opt-${opt.name}-${instanceId}" 
+                                   value="${opt.name}">
+                            --${opt.name}${opt.short ? ` (-${opt.short})` : ''}
+                          </label>
+                          <small>${opt.description}</small>
+                        </div>
+                      `).join('') : ''}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="command-actions">
+                      <button onclick="executeRabbitMQPluginsCommand('${instanceId}')" class="btn btn-primary">Run</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+    } catch (error) {
+      console.error('Failed to load plugins command details:', error);
+    }
+  };
+
+  window.executeRabbitMQPluginsCommand = async (instanceId) => {
+    const state = window.rabbitmqPlugins[instanceId];
+    if (!state.selectedCommand) {
+      alert('Please select a command first');
+      return;
+    }
+
+    // Collect arguments
+    const command = state.categories
+      .find(cat => cat.name === state.selectedCategory)
+      ?.commands.find(cmd => cmd.name === state.selectedCommand);
+    
+    const cmdArguments = [];
+    
+    // Collect argument inputs
+    if (command.arguments) {
+      for (const arg of command.arguments) {
+        const input = document.getElementById(`plugins-arg-${arg.name}-${instanceId}`);
+        if (input && input.value) {
+          if (arg.type === 'string[]') {
+            cmdArguments.push(...input.value.split(/\s+/).filter(v => v));
+          } else {
+            cmdArguments.push(input.value);
+          }
+        } else if (arg.required) {
+          alert(`${arg.name} is required`);
+          return;
+        }
+      }
+    }
+    
+    // Collect option checkboxes
+    if (command.options) {
+      for (const opt of command.options) {
+        const checkbox = document.getElementById(`plugins-opt-${opt.name}-${instanceId}`);
+        if (checkbox && checkbox.checked) {
+          cmdArguments.push(`--${opt.name}`);
+        }
+      }
+    }
+
+    try {
+      displayRabbitMQPluginsResult(instanceId, { 
+        output: 'Executing command...', 
+        success: true, 
+        loading: true 
+      });
+
+      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          category: state.selectedCategory,
+          command: state.selectedCommand,
+          arguments: cmdArguments
+        })
+      });
+
+      const result = await response.json();
+      displayRabbitMQPluginsResult(instanceId, result);
+      
+      // Add to response history
+      updateRabbitMQPluginsResponseHistory(instanceId, {
+        category: state.selectedCategory,
+        command: state.selectedCommand,
+        arguments: cmdArguments,
+        result: result,
+        timestamp: Date.now()
+      });
+
+    } catch (error) {
+      displayRabbitMQPluginsError(instanceId, error.message);
+    }
+  };
+
+  const displayRabbitMQPluginsResult = (instanceId, result) => {
+    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
+    if (outputContainer) {
+      if (result.loading) {
+        outputContainer.innerHTML = `
+          <div class="loading-output">
+            <div class="loading-spinner"></div>
+            <span>Executing command...</span>
+          </div>
+        `;
+      } else {
+        const statusClass = result.success ? 'success' : 'error';
+        const statusIcon = result.success ? '✅' : '❌';
+        
+        outputContainer.innerHTML = `
+          <div class="command-result ${statusClass}">
+            <div class="result-header">
+              <span class="status">${statusIcon} ${result.success ? 'Success' : 'Failed'}</span>
+              ${result.exit_code !== undefined ? `<span class="exit-code">Exit Code: ${result.exit_code}</span>` : ''}
+            </div>
+            <div class="result-output">
+              <pre>${result.output || (result.error || 'No output')}</pre>
+            </div>
+          </div>
+        `;
+      }
+      
+      outputContainer.scrollTop = outputContainer.scrollHeight;
+    }
+  };
+
+  const displayRabbitMQPluginsError = (instanceId, error) => {
+    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
+    if (outputContainer) {
+      outputContainer.innerHTML = `
+        <div class="command-result error">
+          <div class="result-header">
+            <span class="status">❌ Error</span>
+          </div>
+          <div class="result-output">
+            <pre>${error}</pre>
+          </div>
+        </div>
+      `;
+    }
+  };
+
+  window.clearRabbitMQPluginsOutput = (instanceId) => {
+    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
+    if (outputContainer) {
+      outputContainer.innerHTML = '<div class="no-data">No command executed yet</div>';
+    }
+  };
+
+  window.toggleRabbitMQPluginsHistory = (instanceId) => {
+    const historyContainer = document.getElementById(`plugins-history-${instanceId}`);
+    
+    if (historyContainer) {
+      const isVisible = historyContainer.style.display !== 'none';
+      historyContainer.style.display = isVisible ? 'none' : 'block';
+      
+      if (!isVisible) {
+        showRabbitMQPluginsHistory(instanceId);
+      }
+    }
+  };
+
+  window.showRabbitMQPluginsHistory = async (instanceId) => {
+    try {
+      const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/history`);
+      const history = await response.json();
+      
+      const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
+      if (historyContent) {
+        if (history && history.length > 0) {
+          historyContent.innerHTML = `
+            <div class="history-entries">
+              ${history.map(entry => `
+                <div class="history-entry">
+                  <div class="history-header">
+                    <span class="history-command">${entry.category}.${entry.command}</span>
+                    <span class="history-time">${new Date(entry.timestamp).toLocaleString()}</span>
+                    <span class="history-status ${entry.success ? 'success' : 'error'}">${entry.success ? '✓' : '✗'}</span>
+                  </div>
+                  <div class="history-args">${(entry.arguments || []).join(' ')}</div>
+                  <div class="history-output">
+                    <pre>${(entry.output_sample || '').substring(0, 200)}${(entry.output_sample || '').length > 200 ? '...' : ''}</pre>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+            <button onclick="clearRabbitMQPluginsHistory('${instanceId}')" class="clear-btn">Clear History</button>
+          `;
+        } else {
+          historyContent.innerHTML = '<div class="no-data">No command history available</div>';
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load plugins history:', error);
+      const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
+      if (historyContent) {
+        historyContent.innerHTML = '<div class="error">Failed to load history</div>';
+      }
+    }
+  };
+
+  window.clearRabbitMQPluginsHistory = async (instanceId) => {
+    if (confirm('Are you sure you want to clear the plugins command history?')) {
+      try {
+        await fetch(`/b/${instanceId}/rabbitmq/plugins/history`, {
+          method: 'DELETE'
+        });
+        
+        const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
+        if (historyContent) {
+          historyContent.innerHTML = '<div class="no-data">No command history available</div>';
+        }
+      } catch (error) {
+        console.error('Failed to clear plugins history:', error);
+      }
+    }
+  };
+
+  const updateRabbitMQPluginsResponseHistory = (instanceId, entry) => {
+    const historyContainer = document.getElementById(`history-entries-plugins-${instanceId}`);
+    if (!historyContainer) return;
+
+    // Remove no-data message if present
+    const noData = historyContainer.querySelector('.no-data');
+    if (noData) {
+      historyContainer.innerHTML = '';
+    }
+
+    const timestamp = new Date(entry.timestamp).toLocaleString();
+    const statusClass = entry.result?.success ? 'success' : 'error';
+    const statusIcon = entry.result?.success ? '✅' : '❌';
+    
+    const entryElement = document.createElement('div');
+    entryElement.className = 'response-entry';
+    entryElement.innerHTML = `
+      <div class="response-header">
+        <span class="response-command">${entry.category}.${entry.command}</span>
+        <span class="response-time">${timestamp}</span>
+        <span class="response-status ${statusClass}">${statusIcon}</span>
+      </div>
+      <div class="response-args">Arguments: ${entry.arguments.join(' ') || 'none'}</div>
+      <div class="response-output">
+        <pre>${(entry.result?.output || entry.result?.error || 'No output').substring(0, 300)}${((entry.result?.output || entry.result?.error || '').length > 300) ? '...' : ''}</pre>
+      </div>
+    `;
+    
+    historyContainer.insertBefore(entryElement, historyContainer.firstChild);
+    
+    // Keep only last 50 entries
+    const entries = historyContainer.querySelectorAll('.response-entry');
+    if (entries.length > 50) {
+      for (let i = 50; i < entries.length; i++) {
+        entries[i].remove();
+      }
+    }
+  };
+  
+  window.clearRabbitMQPluginsResponseHistory = (instanceId) => {
+    const historyContainer = document.getElementById(`history-entries-plugins-${instanceId}`);
+    if (historyContainer) {
+      historyContainer.innerHTML = '<div class="no-data">No commands executed yet</div>';
+    }
+  };
+
+  window.streamRabbitMQPluginsCommand = async (instanceId) => {
+    const state = window.rabbitmqPlugins[instanceId];
+    if (!state.selectedCommand) {
+      alert('Please select a command first');
+      return;
+    }
+
+    // Collect arguments (same as execute)
+    const command = state.categories
+      .find(cat => cat.name === state.selectedCategory)
+      ?.commands.find(cmd => cmd.name === state.selectedCommand);
+    
+    const cmdArguments = [];
+    
+    // Collect argument inputs
+    if (command.arguments) {
+      for (const arg of command.arguments) {
+        const input = document.getElementById(`plugins-arg-${arg.name}-${instanceId}`);
+        if (input && input.value) {
+          if (arg.type === 'string[]') {
+            cmdArguments.push(...input.value.split(/\s+/).filter(v => v));
+          } else {
+            cmdArguments.push(input.value);
+          }
+        } else if (arg.required) {
+          alert(`${arg.name} is required`);
+          return;
+        }
+      }
+    }
+    
+    // Collect option checkboxes
+    if (command.options) {
+      for (const opt of command.options) {
+        const checkbox = document.getElementById(`plugins-opt-${opt.name}-${instanceId}`);
+        if (checkbox && checkbox.checked) {
+          cmdArguments.push(`--${opt.name}`);
+        }
+      }
+    }
+
+    // Clear output and show connecting message
+    const outputContainer = document.getElementById(`plugins-output-${instanceId}`);
+    if (outputContainer) {
+      outputContainer.innerHTML = `
+        <div class="streaming-output">
+          <div class="streaming-header">
+            <span>🔄 Connecting to stream...</span>
+          </div>
+          <pre class="streaming-content"></pre>
+        </div>
+      `;
+    }
+
+    // Close existing websocket if any
+    if (state.websocket) {
+      state.websocket.close();
+    }
+
+    try {
+      // Create WebSocket connection
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/b/${instanceId}/rabbitmq/plugins/stream`;
+      state.websocket = new WebSocket(wsUrl);
+
+      state.websocket.onopen = () => {
+        console.log('Plugins WebSocket connected');
+        const headerElement = outputContainer.querySelector('.streaming-header span');
+        if (headerElement) {
+          headerElement.textContent = '🔴 Streaming...';
+        }
+        
+        // Send execute command
+        state.websocket.send(JSON.stringify({
+          type: 'execute',
+          category: state.selectedCategory,
+          command: state.selectedCommand,
+          arguments: cmdArguments
+        }));
+      };
+
+      state.websocket.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        const contentElement = outputContainer.querySelector('.streaming-content');
+        
+        switch (message.type) {
+          case 'execution_started':
+            if (contentElement) {
+              contentElement.textContent += `Starting execution: ${message.command}\n`;
+            }
+            break;
+          case 'output':
+            if (contentElement) {
+              contentElement.textContent += message.data;
+              contentElement.scrollTop = contentElement.scrollHeight;
+            }
+            break;
+          case 'execution_completed':
+            const headerElement = outputContainer.querySelector('.streaming-header span');
+            if (headerElement) {
+              const statusIcon = message.success ? '✅' : '❌';
+              headerElement.textContent = `${statusIcon} Completed (exit code: ${message.exit_code})`;
+            }
+            if (contentElement) {
+              contentElement.textContent += `\n--- Execution completed ---\n`;
+            }
+            // Add to response history
+            updateRabbitMQPluginsResponseHistory(instanceId, {
+              category: state.selectedCategory,
+              command: state.selectedCommand,
+              arguments: cmdArguments,
+              result: {
+                success: message.success,
+                exit_code: message.exit_code,
+                output: contentElement?.textContent || ''
+              },
+              timestamp: Date.now()
+            });
+            break;
+          case 'error':
+            if (contentElement) {
+              contentElement.textContent += `\nError: ${message.error}\n`;
+            }
+            const errorHeaderElement = outputContainer.querySelector('.streaming-header span');
+            if (errorHeaderElement) {
+              errorHeaderElement.textContent = '❌ Error occurred';
+            }
+            break;
+        }
+      };
+
+      state.websocket.onerror = (error) => {
+        console.error('Plugins WebSocket error:', error);
+        const headerElement = outputContainer.querySelector('.streaming-header span');
+        if (headerElement) {
+          headerElement.textContent = '❌ Connection error';
+        }
+      };
+
+      state.websocket.onclose = () => {
+        console.log('Plugins WebSocket connection closed');
+        const headerElement = outputContainer.querySelector('.streaming-header span');
+        if (headerElement && headerElement.textContent.includes('Connecting')) {
+          headerElement.textContent = '❌ Connection failed';
+        }
+        state.websocket = null;
+      };
+
+    } catch (error) {
+      console.error('Failed to create plugins WebSocket:', error);
+      displayRabbitMQPluginsError(instanceId, 'Failed to establish streaming connection');
+    }
+  };
+
   // Operation Tab Switching
   window.switchTestingOperation = (instanceId, operation) => {
     // Update active tab
@@ -5317,6 +5984,11 @@
         // Initialize rabbitmqctl tab
         if (operation === 'rabbitmqctl') {
           loadRabbitMQCtlCategories(instanceId);
+        }
+
+        // Initialize plugins tab
+        if (operation === 'plugins') {
+          loadRabbitMQPluginsCategories(instanceId);
         }
       }, 50);
     }
@@ -5369,6 +6041,15 @@
             }
           }, 0);
           return renderRabbitMQCtlOperation(instanceId);
+        case 'plugins':
+          // Hide regular history for plugins tab
+          setTimeout(() => {
+            const regularHistory = document.querySelector('.testing-history');
+            if (regularHistory && !regularHistory.id?.includes('plugins')) {
+              regularHistory.style.display = 'none';
+            }
+          }, 0);
+          return renderRabbitMQPluginsOperation(instanceId);
       }
     }
 

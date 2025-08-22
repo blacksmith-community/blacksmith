@@ -5128,7 +5128,6 @@ select[id*="connection-vhost"] {
   border: 1px solid var(--border-primary);
   border-radius: 4px;
   padding: 15px;
-  min-height: 200px;
 }
 
 .category-info h6 {
@@ -5683,6 +5682,740 @@ select[id*="connection-vhost"] {
 [data-theme="dark"] .command-help-content,
 [data-theme="dark"] .command-output,
 [data-theme="dark"] .history-entry {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+}
+
+/* RabbitMQ Plugins Styles */
+.plugins-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 100%;
+}
+
+.plugins-layout {
+  display: flex;
+  gap: 20px;
+  min-height: 400px;
+}
+
+.plugins-categories {
+  flex: 0 0 300px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.plugins-categories h5 {
+  margin: 0 0 15px 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-secondary);
+  padding-bottom: 8px;
+}
+
+.plugins-categories .category-item {
+  padding: 1em;
+  border-bottom: 1px solid var(--border-secondary);
+  cursor: pointer;
+  transition: background-color 0.2s;
+  background-color: var(--bg-secondary);
+}
+
+.plugins-categories .category-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.plugins-categories .category-item.active {
+  background-color: var(--bg-active);
+  border-left: 3px solid var(--border-active);
+}
+
+.plugins-categories .category-item .category-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.plugins-categories .category-item .category-description {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.plugins-categories .category-item.active .category-description,
+.plugins-categories .category-item.active .category-command-count {
+  color: var(--text-primary);
+}
+
+.plugins-categories .category-item .category-command-count {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.plugins-command-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.plugins-command-details .command-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+}
+
+.plugins-command-details .command-selector label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plugins-command-details .command-selector select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.plugins-command-details .execution-section {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.plugins-command-details .command-help {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  min-height: 100px;
+}
+
+.plugins-command-details .command-help-content h6 {
+  margin: 0 0 8px 0;
+  color: var(--primary-color);
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.plugins-command-details .command-help-content p {
+  margin: 0 0 12px 0;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.plugins-command-details .command-help-content .command-usage {
+  margin-bottom: 12px;
+}
+
+.plugins-command-details .command-help-content .command-usage strong {
+  color: var(--text-primary);
+}
+
+.plugins-command-details .command-help-content .command-usage code {
+  background: var(--bg-hover);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 0.9em;
+  color: var(--primary-color);
+}
+
+.plugins-command-details .command-help-content .command-examples {
+  margin-bottom: 12px;
+}
+
+.plugins-command-details .command-help-content .command-examples ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.plugins-command-details .command-help-content .command-examples li {
+  margin-bottom: 4px;
+}
+
+.plugins-command-details .command-help-content .command-examples code {
+  background: var(--bg-hover);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 0.9em;
+  color: var(--primary-color);
+}
+
+.plugins-command-details .command-help-content .warning {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  padding: 8px 12px;
+  border-radius: 4px;
+  border-left: 4px solid var(--warning-color);
+  font-weight: 500;
+}
+
+.plugins-command-details .command-table-container {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  min-height: 200px;
+}
+
+.plugins-command-details .command-execution-table {
+  background: var(--bg-primary);
+  border-radius: 4px;
+  padding: 15px;
+  border: 1px solid var(--border-primary);
+}
+
+.plugins-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.plugins-table th {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.plugins-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-secondary);
+  vertical-align: middle;
+}
+
+.plugins-table .argument-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.plugins-table .argument-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plugins-table .argument-group label {
+  font-size: 0.9em;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.plugins-table .argument-group input {
+  padding: 6px 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.9em;
+}
+
+.plugins-table .argument-group small {
+  color: var(--text-muted);
+  font-size: 0.8em;
+}
+
+.plugins-table .option-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plugins-table .option-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9em;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.plugins-table .option-group small {
+  color: var(--text-muted);
+  font-size: 0.8em;
+  margin-left: 20px;
+}
+
+.plugins-table .command-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.plugins-table .execute-btn,
+.plugins-table .stream-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.plugins-table .execute-btn {
+  background: var(--success-color);
+  color: white;
+}
+
+.plugins-table .execute-btn:hover {
+  background: var(--success-hover);
+  transform: translateY(-1px);
+}
+
+.plugins-table .stream-btn {
+  background: var(--primary-color);
+  color: white;
+}
+
+.plugins-table .stream-btn:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.plugins-table .execute-btn:active,
+.plugins-table .stream-btn:active {
+  transform: translateY(0);
+}
+
+.plugins-output-container {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  min-height: 250px;
+}
+
+.plugins-output-container .output-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.plugins-output-container .output-header h5 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.plugins-output-container .output-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.plugins-output-container .clear-btn,
+.plugins-output-container .history-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.plugins-output-container .clear-btn:hover,
+.plugins-output-container .history-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+
+.plugins-output-container .command-output {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  padding: 12px;
+  min-height: 180px;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 0.9em;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.plugins-output-container .command-result {
+  margin-bottom: 15px;
+}
+
+.plugins-output-container .command-result.success {
+  border-left: 4px solid var(--success-color);
+}
+
+.plugins-output-container .command-result.error {
+  border-left: 4px solid var(--error-color);
+}
+
+.plugins-output-container .result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.plugins-output-container .result-header .status {
+  font-weight: 500;
+}
+
+.plugins-output-container .result-header .exit-code {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
+
+.plugins-output-container .result-output {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  padding: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.plugins-output-container .result-output pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 0.85em;
+}
+
+.plugins-output-container .loading-output {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+  justify-content: center;
+}
+
+.plugins-output-container .loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-secondary);
+  border-top: 2px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.plugins-output-container .streaming-output {
+  height: 100%;
+}
+
+.plugins-output-container .streaming-header {
+  background: var(--bg-hover);
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.plugins-output-container .streaming-content {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  padding: 12px;
+  height: 200px;
+  overflow-y: auto;
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.plugins-history {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 15px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.plugins-history h5 {
+  margin: 0 0 15px 0;
+  color: var(--text-primary);
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.plugins-history .history-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plugins-history .history-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plugins-history .history-entry {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  padding: 12px;
+  transition: all 0.2s ease;
+}
+
+.plugins-history .history-entry:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+
+.plugins-history .history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.plugins-history .history-command {
+  font-weight: 600;
+  color: var(--primary-color);
+}
+
+.plugins-history .history-time {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
+
+.plugins-history .history-status {
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.8em;
+}
+
+.plugins-history .history-status.success {
+  color: var(--success-color);
+}
+
+.plugins-history .history-status.error {
+  color: var(--error-color);
+}
+
+.plugins-history .history-args {
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.plugins-history .history-output {
+  background: var(--bg-hover);
+  border-radius: 4px;
+  padding: 8px;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.plugins-history .history-output pre {
+  margin: 0;
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+}
+
+.plugins-history .clear-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  background: var(--warning-color);
+  color: white;
+  font-size: 0.9em;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 10px;
+}
+
+.plugins-history .clear-btn:hover {
+  background: var(--warning-hover);
+  transform: translateY(-1px);
+}
+
+/* Plugin Status Indicators */
+.plugin-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plugin-status.enabled {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.plugin-status.disabled {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.plugin-status.running {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.plugin-status.implicitly_enabled {
+  background: var(--primary-bg);
+  color: var(--primary-text);
+}
+
+/* Response History for Plugins */
+.testing-history#plugins-response-history {
+  margin-top: 20px;
+}
+
+.testing-history#plugins-response-history .response-entry {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: all 0.2s ease;
+}
+
+.testing-history#plugins-response-history .response-entry:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-primary);
+}
+
+.testing-history#plugins-response-history .response-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.testing-history#plugins-response-history .response-command {
+  font-weight: 600;
+  color: var(--primary-color);
+}
+
+.testing-history#plugins-response-history .response-time {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
+
+.testing-history#plugins-response-history .response-status {
+  font-weight: 500;
+}
+
+.testing-history#plugins-response-history .response-status.success {
+  color: var(--success-color);
+}
+
+.testing-history#plugins-response-history .response-status.error {
+  color: var(--error-color);
+}
+
+.testing-history#plugins-response-history .response-args {
+  font-size: 0.9em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.testing-history#plugins-response-history .response-output {
+  background: var(--bg-hover);
+  border-radius: 4px;
+  padding: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.testing-history#plugins-response-history .response-output pre {
+  margin: 0;
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+}
+
+/* Responsive design for mobile */
+@media (max-width: 768px) {
+  .plugins-layout {
+    flex-direction: column;
+  }
+  
+  .plugins-categories {
+    flex: none;
+    max-height: 300px;
+  }
+  
+  .plugins-command-details {
+    gap: 10px;
+  }
+  
+  .plugins-table .argument-inputs {
+    min-width: unset;
+  }
+  
+  .plugins-table .command-actions {
+    flex-direction: column;
+    gap: 4px;
+  }
+  
+  .plugins-output-container .output-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  
+  .plugins-output-container .output-controls {
+    justify-content: flex-end;
+  }
+}
+
+/* Dark theme specific overrides */
+[data-theme="dark"] .plugins-container {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .plugins-categories,
+[data-theme="dark"] .command-section,
+[data-theme="dark"] .execution-section,
+[data-theme="dark"] .plugins-output-container,
+[data-theme="dark"] .plugins-history {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .plugins-categories .category-item {
+  background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .plugins-table th {
+  background: var(--bg-tertiary);
+}
+
+[data-theme="dark"] .plugins-command-details .command-help-content,
+[data-theme="dark"] .plugins-output-container .command-output,
+[data-theme="dark"] .plugins-history .history-entry {
   background: var(--bg-tertiary);
   border-color: var(--border-primary);
 }

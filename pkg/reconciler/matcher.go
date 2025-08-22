@@ -434,7 +434,7 @@ func (m *serviceMatcher) getExpectedInstanceGroups(service Service, plan Plan) [
 		},
 		"rabbitmq": {
 			"standalone": {"rabbitmq"},
-			"cluster":    {"rabbitmq-server"},
+			"cluster":    {"rabbitmq"},
 		},
 		"vault": {
 			"small":  {"vault"},

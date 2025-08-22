@@ -1378,13 +1378,13 @@ func (d *DirectorAdapter) createSecureHostKeyCallback(hostname string) ssh.HostK
 		// Calculate and log the key fingerprint for security auditing
 		fingerprint := ssh.FingerprintSHA256(key)
 		d.log.Info("SSH connection to %s with host key fingerprint: %s", hostname, fingerprint)
-		
+
 		// In a more secure implementation, you would:
 		// 1. Check against a known_hosts file
 		// 2. Prompt for user verification on first connection
 		// 3. Store accepted keys for future verification
 		// For now, we accept all keys but log them for auditing
-		
+
 		return nil
 	}
 }
