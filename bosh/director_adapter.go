@@ -1420,13 +1420,24 @@ func (d *DirectorAdapter) SSHSession(deployment, instance string, index int, opt
 
 	d.log.Info("SSH session created successfully for %d hosts", len(sshResult.Hosts))
 
+	// Convert hosts to interface slice for proper type assertion in SessionImpl
+	hosts := make([]interface{}, len(sshResult.Hosts))
+	for i, host := range sshResult.Hosts {
+		hosts[i] = map[string]interface{}{
+			"Host":          host.Host,
+			"HostPublicKey": host.HostPublicKey,
+			"Username":      host.Username,
+			"Job":           host.Job,
+			"IndexOrID":     host.IndexOrID,
+		}
+	}
+
 	// Return SSH session information
-	// TODO: Implement proper session management
 	sessionInfo := map[string]interface{}{
 		"deployment":   deployment,
 		"instance":     instance,
 		"index":        index,
-		"hosts":        len(sshResult.Hosts),
+		"hosts":        hosts,
 		"gateway_host": sshResult.GatewayHost,
 		"gateway_user": sshResult.GatewayUsername,
 		"private_key":  privateKey,

@@ -391,18 +391,20 @@ func main() {
 
 	// Initialize SSH service
 	sshConfig := ssh.Config{
-		Timeout:        time.Duration(config.BOSH.SSH.Timeout) * time.Second,
-		ConnectTimeout: time.Duration(config.BOSH.SSH.ConnectTimeout) * time.Second,
-		MaxConcurrent:  config.BOSH.SSH.MaxConcurrent,
-		MaxOutputSize:  config.BOSH.SSH.MaxOutputSize,
-		KeepAlive:      time.Duration(config.BOSH.SSH.KeepAlive) * time.Second,
-		RetryAttempts:  config.BOSH.SSH.RetryAttempts,
-		RetryDelay:     time.Duration(config.BOSH.SSH.RetryDelay) * time.Second,
+		Timeout:               time.Duration(config.BOSH.SSH.Timeout) * time.Second,
+		ConnectTimeout:        time.Duration(config.BOSH.SSH.ConnectTimeout) * time.Second,
+		MaxConcurrent:         config.BOSH.SSH.MaxConcurrent,
+		MaxOutputSize:         config.BOSH.SSH.MaxOutputSize,
+		KeepAlive:             time.Duration(config.BOSH.SSH.KeepAlive) * time.Second,
+		RetryAttempts:         config.BOSH.SSH.RetryAttempts,
+		RetryDelay:            time.Duration(config.BOSH.SSH.RetryDelay) * time.Second,
+		InsecureIgnoreHostKey: config.BOSH.SSH.InsecureIgnoreHostKey,
+		KnownHostsFile:        config.BOSH.SSH.KnownHostsFile,
 	}
 
 	// Set default values if not configured
 	if sshConfig.Timeout == 0 {
-		sshConfig.Timeout = 30 * time.Second
+		sshConfig.Timeout = 10 * time.Minute // Default to 10 minutes instead of 30 seconds
 	}
 	if sshConfig.ConnectTimeout == 0 {
 		sshConfig.ConnectTimeout = 10 * time.Second
@@ -423,8 +425,21 @@ func main() {
 		sshConfig.RetryDelay = 5 * time.Second
 	}
 
+	// Set security defaults - secure by default, with BOSH director auto-discovery
+	if sshConfig.KnownHostsFile == "" {
+		sshConfig.KnownHostsFile = "/home/vcap/.ssh/known_hosts"
+	}
+
 	l.Info("Creating SSH service with timeout=%v, maxConcurrent=%d", sshConfig.Timeout, sshConfig.MaxConcurrent)
 	sshService := ssh.NewSSHService(broker.BOSH, sshConfig, Logger.Wrap("ssh"))
+
+	// SSH security configuration
+	if config.BOSH.SSH.InsecureIgnoreHostKey {
+		l.Info("SSH security: Using insecure host key verification (not recommended for production)")
+	} else {
+		l.Info("SSH security: Using known_hosts file at %s with auto-discovery", sshConfig.KnownHostsFile)
+		l.Info("SSH host keys will be automatically added to known_hosts on first connection")
+	}
 
 	// Ensure SSH service is closed on shutdown
 	defer func() {

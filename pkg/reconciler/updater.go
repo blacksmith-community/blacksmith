@@ -127,9 +127,12 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		}
 	}
 
-	// Add service name if available
+	// Add service name and type if available
 	if serviceName, ok := instance.Metadata["service_name"].(string); ok && serviceName != "" {
 		vaultData["service_name"] = serviceName
+	}
+	if serviceType, ok := instance.Metadata["service_type"].(string); ok && serviceType != "" {
+		vaultData["service_type"] = serviceType
 	}
 
 	// Store manifest separately if present

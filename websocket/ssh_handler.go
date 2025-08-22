@@ -279,7 +279,7 @@ func (h *SSHHandler) handleSession(session *SSHStreamSession) {
 
 // handleMessage processes incoming WebSocket messages
 func (h *SSHHandler) handleMessage(session *SSHStreamSession, msg WSMessage) error {
-	h.logger.Debug("Handling WebSocket message type: %s", msg.Type)
+	// Debug logging removed to reduce noise for input messages
 
 	switch msg.Type {
 	case MsgTypeControl:

@@ -3376,6 +3376,7 @@
           <table class="vms-table">
         <thead>
           <tr>
+            <th>SSH</th>
             <th>Instance</th>
             <th>VM State</th>
             <th>Job State</th>
@@ -3426,8 +3427,25 @@
         jobStateClass = 'vm-state-stopped';
       }
 
+      // Determine if this is a blacksmith or service instance context
+      const isBlacksmith = !instanceId;
+      const deploymentName = isBlacksmith ? 'blacksmith' : instanceId;
+      const sshButtonClass = isBlacksmith ? 'blacksmith-ssh' : 'service-instance-ssh';
+      const deploymentType = isBlacksmith ? 'blacksmith' : 'service-instance';
+      
       return `
               <tr>
+                <td class="vm-ssh">
+                  <button class="ssh-btn ${sshButtonClass}" 
+                          onclick="window.openTerminal('${deploymentType}', '${deploymentName}', '${instanceName}', event)"
+                          title="SSH to ${instanceName}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                      <line x1="8" y1="21" x2="16" y2="21"></line>
+                      <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                  </button>
+                </td>
                 <td class="vm-instance">${instanceName}</td>
                 <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
                 <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
@@ -3512,10 +3530,11 @@
   // Service Testing Functions
   const renderServiceTesting = async (instanceId) => {
     try {
-      // Get both credentials and config/manifest for fallback information
-      const [credsResponse, configResponse] = await Promise.all([
+      // Get credentials, config/manifest, and vault data for service detection
+      const [credsResponse, configResponse, vaultResponse] = await Promise.all([
         fetch(`/b/${instanceId}/creds.json`, { cache: 'no-cache' }),
-        fetch(`/b/${instanceId}/config`, { cache: 'no-cache' }).catch(() => null)
+        fetch(`/b/${instanceId}/config`, { cache: 'no-cache' }).catch(() => null),
+        fetch(`/b/${instanceId}/details`, { cache: 'no-cache' }).catch(() => null)
       ]);
 
       if (!credsResponse.ok) {
@@ -3535,9 +3554,19 @@
         }
       }
 
-      // Determine service type
-      const isRedis = isRedisService(creds);
-      const isRabbitMQ = isRabbitMQService(creds);
+      // Get vault data for service type detection
+      let vaultData = null;
+      if (vaultResponse && vaultResponse.ok) {
+        try {
+          vaultData = await vaultResponse.json();
+        } catch (e) {
+          console.warn('Failed to parse vault data:', e);
+        }
+      }
+
+      // Determine service type using vault data first, then credentials
+      const isRedis = isRedisService(creds, vaultData);
+      const isRabbitMQ = isRabbitMQService(creds, vaultData);
 
       if (!isRedis && !isRabbitMQ) {
         return `<div class="no-data">Service testing not available for this service type</div>`;
@@ -3576,8 +3605,18 @@
     }
   };
 
-  const isRedisService = (creds) => {
-    // Check for Redis-specific patterns
+  const isRedisService = (creds, vaultData) => {
+    // First check vault data for service_name
+    if (vaultData?.service_name === 'redis') {
+      return true;
+    }
+    
+    // Then check for explicit service_type
+    if (vaultData?.service_type === 'redis') {
+      return true;
+    }
+    
+    // Finally fall back to credential patterns for older instances
     if (creds.uri && (creds.uri.startsWith('redis://') || creds.uri.startsWith('rediss://'))) {
       return true;
     }
@@ -3590,8 +3629,18 @@
     return false;
   };
 
-  const isRabbitMQService = (creds) => {
-    // Check for RabbitMQ-specific patterns
+  const isRabbitMQService = (creds, vaultData) => {
+    // First check vault data for service_name
+    if (vaultData?.service_name === 'rabbitmq') {
+      return true;
+    }
+    
+    // Then check for explicit service_type
+    if (vaultData?.service_type === 'rabbitmq') {
+      return true;
+    }
+    
+    // Finally fall back to credential patterns for older instances
     if (creds.uri && (creds.uri.startsWith('amqp://') || creds.uri.startsWith('amqps://'))) {
       return true;
     }
@@ -8330,11 +8379,11 @@
               initializeSorting('logs-table');
               attachSearchFilter('logs-table');
             } else if (tabType === 'logs') {
-              attachSearchFilter('deployment-log-table');
               initializeSorting('deployment-log-table');
+              attachSearchFilter('deployment-log-table');
             } else if (tabType === 'debug') {
-              attachSearchFilter('debug-log-table');
               initializeSorting('debug-log-table');
+              attachSearchFilter('debug-log-table');
             } else if (tabType === 'certificates') {
               // Initialize certificate functionality
               initializeCertificatesTab();
@@ -11033,5 +11082,487 @@
   // Make ModalManager and CertificateInspector available globally for debugging
   window.ModalManager = ModalManager;
   window.CertificateInspector = CertificateInspector;
+
+  // Terminal Manager Implementation
+  const TerminalManager = {
+    sessions: new Map(),
+    activeSession: null,
+    maxSessions: 10,
+
+    openWithContext(deploymentType, deploymentName, instanceId) {
+      const sessionKey = `${deploymentType}-${deploymentName}-${instanceId}`;
+      
+      // Check if session already exists
+      if (this.sessions.has(sessionKey)) {
+        this.switchToSession(sessionKey);
+        return;
+      }
+
+      // Check session limit
+      if (this.sessions.size >= this.maxSessions) {
+        alert(`Maximum number of terminal sessions (${this.maxSessions}) reached. Please close some sessions.`);
+        return;
+      }
+
+      // Create new session
+      this.createSession(sessionKey, {
+        deploymentType,
+        deploymentName,
+        instanceId
+      });
+    },
+
+    createSession(sessionKey, context) {
+      // Show modal
+      const modal = document.getElementById('terminal-modal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('active');
+      }
+
+      // Create terminal instance
+      const terminal = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        theme: {
+          background: '#000000',
+          foreground: '#d4d4d4',
+          cursor: '#d4d4d4',
+          selection: 'rgba(255, 255, 255, 0.3)',
+          black: '#000000',
+          red: '#cd3131',
+          green: '#0dbc79',
+          yellow: '#e5e510',
+          blue: '#2472c8',
+          magenta: '#bc3fbc',
+          cyan: '#11a8cd',
+          white: '#e5e5e5',
+          brightBlack: '#666666',
+          brightRed: '#f14c4c',
+          brightGreen: '#23d18b',
+          brightYellow: '#f5f543',
+          brightBlue: '#3b8eea',
+          brightMagenta: '#d670d6',
+          brightCyan: '#29b8db',
+          brightWhite: '#e5e5e5'
+        }
+      });
+
+      // Create container for this terminal
+      const terminalContainer = document.getElementById('terminal-container');
+      const terminalDiv = document.createElement('div');
+      terminalDiv.className = 'terminal-instance';
+      terminalDiv.id = `terminal-${sessionKey}`;
+      terminalContainer.appendChild(terminalDiv);
+
+      // Open terminal in the div
+      terminal.open(terminalDiv);
+
+      // Fit terminal to container size
+      const fitTerminal = () => {
+        const containerWidth = terminalDiv.clientWidth;
+        const containerHeight = terminalDiv.clientHeight;
+        
+        if (containerWidth > 0 && containerHeight > 0) {
+          // Calculate cols and rows based on character size
+          const charWidth = 9; // approximate character width
+          const charHeight = 18; // approximate character height
+          const cols = Math.floor(containerWidth / charWidth);
+          const rows = Math.floor(containerHeight / charHeight);
+          
+          if (cols > 0 && rows > 0) {
+            terminal.resize(cols, rows);
+          }
+        }
+      };
+
+      // Initial fit
+      setTimeout(fitTerminal, 100);
+
+      // Resize on window resize
+      window.addEventListener('resize', fitTerminal);
+
+      // Create tab
+      this.createTab(sessionKey, context);
+
+      // Create WebSocket connection
+      const wsUrl = this.buildWebSocketUrl(context);
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        terminal.writeln(`Connecting to ${context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${context.deploymentName} :: ${context.instanceId}`);
+        
+        // Send start control message
+        ws.send(JSON.stringify({
+          type: 'control',
+          meta: {
+            action: 'start',
+            width: terminal.cols,
+            height: terminal.rows,
+            term: 'xterm-256color'
+          },
+          timestamp: new Date().toISOString()
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        
+        switch (msg.type) {
+          case 'output':
+            terminal.write(msg.data);
+            break;
+          case 'error':
+            terminal.writeln(`\r\n[ERROR] ${msg.data}`);
+            break;
+          case 'status':
+            if (msg.meta && msg.meta.status === 'connected') {
+              terminal.writeln('\r\n[Connected]\r\n');
+            }
+            break;
+        }
+      };
+
+      ws.onerror = (error) => {
+        terminal.writeln(`\r\n[Connection Error] ${error.message || 'WebSocket connection failed'}`);
+      };
+
+      ws.onclose = () => {
+        terminal.writeln('\r\n[Disconnected]');
+      };
+
+      // Handle terminal input
+      terminal.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'input',
+            data: data,
+            timestamp: new Date().toISOString()
+          }));
+        }
+      });
+
+      // Handle terminal resize
+      terminal.onResize((size) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'control',
+            meta: {
+              action: 'resize',
+              width: size.cols,
+              height: size.rows
+            },
+            timestamp: new Date().toISOString()
+          }));
+        }
+      });
+
+      // Store session
+      this.sessions.set(sessionKey, {
+        terminal,
+        websocket: ws,
+        context,
+        element: terminalDiv
+      });
+
+      // Make this the active session
+      this.switchToSession(sessionKey);
+    },
+
+    buildWebSocketUrl(context) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      
+      if (context.deploymentType === 'blacksmith') {
+        // For blacksmith VMs, we need a different endpoint structure
+        // The backend expects the deployment to be "blacksmith"
+        return `${protocol}//${host}/b/blacksmith/ssh/stream`;
+      } else {
+        // For service instances
+        return `${protocol}//${host}/b/${context.deploymentName}/ssh/stream`;
+      }
+    },
+
+    createTab(sessionKey, context) {
+      const tabsContainer = document.getElementById('terminal-tabs');
+      const tab = document.createElement('button');
+      tab.className = `terminal-tab ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
+      tab.id = `tab-${sessionKey}`;
+      tab.innerHTML = `
+        ${context.deploymentName}/${context.instanceId}
+        <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
+      `;
+      tab.onclick = (e) => {
+        if (!e.target.classList.contains('tab-close')) {
+          this.switchToSession(sessionKey);
+        }
+      };
+      tabsContainer.appendChild(tab);
+    },
+
+    switchToSession(sessionKey) {
+      // Hide all terminals
+      document.querySelectorAll('.terminal-instance').forEach(el => {
+        el.classList.remove('active');
+      });
+
+      // Deactivate all tabs
+      document.querySelectorAll('.terminal-tab').forEach(el => {
+        el.classList.remove('active');
+      });
+
+      // Show selected terminal
+      const session = this.sessions.get(sessionKey);
+      if (session) {
+        session.element.classList.add('active');
+        document.getElementById(`tab-${sessionKey}`).classList.add('active');
+        this.activeSession = sessionKey;
+      }
+    },
+
+    closeSession(sessionKey, event) {
+      if (event) {
+        event.stopPropagation();
+      }
+
+      const session = this.sessions.get(sessionKey);
+      if (session) {
+        // Close WebSocket
+        if (session.websocket) {
+          session.websocket.close();
+        }
+
+        // Dispose terminal
+        if (session.terminal) {
+          session.terminal.dispose();
+        }
+
+        // Remove elements
+        if (session.element) {
+          session.element.remove();
+        }
+        const tab = document.getElementById(`tab-${sessionKey}`);
+        if (tab) {
+          tab.remove();
+        }
+
+        // Remove from sessions
+        this.sessions.delete(sessionKey);
+
+        // Switch to another session if this was active
+        if (this.activeSession === sessionKey) {
+          const remainingSessions = Array.from(this.sessions.keys());
+          if (remainingSessions.length > 0) {
+            this.switchToSession(remainingSessions[0]);
+          } else {
+            // No more sessions, hide modal
+            const modal = document.getElementById('terminal-modal');
+            if (modal) {
+              modal.classList.remove('active');
+              setTimeout(() => {
+                modal.style.display = 'none';
+              }, 300);
+            }
+          }
+        }
+      }
+    },
+
+    closeAll() {
+      // Close all sessions
+      Array.from(this.sessions.keys()).forEach(key => {
+        this.closeSession(key);
+      });
+
+      // Hide modal
+      const modal = document.getElementById('terminal-modal');
+      if (modal) {
+        modal.classList.remove('active');
+        setTimeout(() => {
+          modal.style.display = 'none';
+        }, 300);
+      }
+
+      // Hide minimized bar
+      this.hideMinimizedBar();
+    },
+
+    minimizeAll() {
+      // Hide the main terminal modal
+      const modal = document.getElementById('terminal-modal');
+      if (modal) {
+        modal.classList.remove('active');
+        setTimeout(() => {
+          modal.style.display = 'none';
+        }, 300);
+      }
+
+      // Show minimized bar with all sessions
+      this.showMinimizedBar();
+    },
+
+    restoreAll() {
+      // Show the main terminal modal
+      const modal = document.getElementById('terminal-modal');
+      if (modal && this.sessions.size > 0) {
+        modal.style.display = 'flex';
+        setTimeout(() => {
+          modal.classList.add('active');
+        }, 10);
+      }
+
+      // Hide minimized bar
+      this.hideMinimizedBar();
+    },
+
+    showMinimizedBar() {
+      const minimizedBar = document.getElementById('minimized-terminal-bar');
+      const minimizedTabs = document.getElementById('minimized-terminal-tabs');
+      
+      if (minimizedBar && minimizedTabs) {
+        // Add body class for layout adjustment
+        document.body.classList.add('terminal-minimized');
+        
+        // Clear existing tabs
+        minimizedTabs.innerHTML = '';
+
+        // Create minimized tabs for each session
+        this.sessions.forEach((session, sessionKey) => {
+          const tab = document.createElement('div');
+          tab.className = `minimized-terminal-tab ${sessionKey === this.activeSession ? 'active' : ''}`;
+          tab.innerHTML = `
+            <span class="${session.context.deploymentType === 'blacksmith' ? 'blacksmith-prefix' : 'service-prefix'}">[${session.context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}]</span>
+            ${session.context.deploymentName}/${session.context.instanceId}
+            <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
+          `;
+          
+          // Click to activate session and restore
+          tab.onclick = (e) => {
+            if (!e.target.classList.contains('tab-close')) {
+              this.switchToSession(sessionKey);
+              this.restoreAll();
+            }
+          };
+
+          minimizedTabs.appendChild(tab);
+        });
+
+        // Show the bar
+        minimizedBar.classList.add('active');
+      }
+    },
+
+    hideMinimizedBar() {
+      const minimizedBar = document.getElementById('minimized-terminal-bar');
+      if (minimizedBar) {
+        minimizedBar.classList.remove('active');
+        document.body.classList.remove('terminal-minimized');
+      }
+    },
+
+    reconnectActive() {
+      if (!this.activeSession) return;
+
+      const session = this.sessions.get(this.activeSession);
+      if (!session) return;
+
+      // Close existing websocket
+      if (session.websocket) {
+        session.websocket.close();
+      }
+
+      // Clear terminal and show reconnecting message
+      session.terminal.clear();
+      session.terminal.writeln('Reconnecting...');
+
+      // Create new WebSocket connection
+      const wsUrl = this.buildWebSocketUrl(session.context);
+      const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        session.terminal.writeln(`Reconnecting to ${session.context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${session.context.deploymentName} :: ${session.context.instanceId}`);
+        
+        // Send start control message
+        ws.send(JSON.stringify({
+          type: 'control',
+          meta: {
+            action: 'start',
+            width: session.terminal.cols,
+            height: session.terminal.rows,
+            term: 'xterm-256color'
+          },
+          timestamp: new Date().toISOString()
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        
+        switch (msg.type) {
+          case 'output':
+            session.terminal.write(msg.data);
+            break;
+          case 'error':
+            session.terminal.writeln(`\r\n[ERROR] ${msg.data}`);
+            break;
+          case 'status':
+            if (msg.meta && msg.meta.status === 'connected') {
+              session.terminal.writeln('\r\n[Reconnected]\r\n');
+            }
+            break;
+        }
+      };
+
+      ws.onerror = (error) => {
+        session.terminal.writeln(`\r\n[Reconnection Error] ${error.message || 'WebSocket connection failed'}`);
+      };
+
+      ws.onclose = () => {
+        session.terminal.writeln('\r\n[Disconnected]');
+      };
+
+      // Handle terminal input
+      session.terminal.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'input',
+            data: data,
+            timestamp: new Date().toISOString()
+          }));
+        }
+      });
+
+      // Handle terminal resize
+      session.terminal.onResize((size) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'control',
+            meta: {
+              action: 'resize',
+              width: size.cols,
+              height: size.rows
+            },
+            timestamp: new Date().toISOString()
+          }));
+        }
+      });
+
+      // Update session with new websocket
+      session.websocket = ws;
+    }
+  };
+
+  // Global function for SSH button onclick
+  window.openTerminal = function(deploymentType, deploymentName, instanceId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    TerminalManager.openWithContext(deploymentType, deploymentName, instanceId);
+  };
+
+  // Make TerminalManager available globally
+  window.TerminalManager = TerminalManager;
 
 })(document, window);

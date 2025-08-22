@@ -350,10 +350,27 @@ func (r *reconcilerManager) updateVault(ctx context.Context, matches []MatchedDe
 // buildInstanceData builds instance data from a matched deployment
 func (r *reconcilerManager) buildInstanceData(match MatchedDeployment) *InstanceData {
 	// Find the service and plan names from the catalog
-	var serviceName, planName string
+	var serviceName, planName, serviceType string
 	for _, svc := range r.services {
 		if svc.ID == match.Match.ServiceID {
 			serviceName = svc.Name
+			// Try to get service type from metadata if available
+			if svc.Metadata != nil {
+				if stype, ok := svc.Metadata["type"].(string); ok {
+					serviceType = stype
+				}
+			}
+			// Fallback: infer service type from service name for common services
+			if serviceType == "" {
+				switch serviceName {
+				case "redis":
+					serviceType = "redis"
+				case "rabbitmq":
+					serviceType = "rabbitmq"
+				default:
+					serviceType = serviceName // Use service name as fallback
+				}
+			}
 			for _, plan := range svc.Plans {
 				if plan.ID == match.Match.PlanID {
 					planName = plan.Name
@@ -366,6 +383,7 @@ func (r *reconcilerManager) buildInstanceData(match MatchedDeployment) *Instance
 
 	metadata := map[string]interface{}{
 		"service_name":     serviceName,
+		"service_type":     serviceType,
 		"plan_name":        planName,
 		"releases":         match.Deployment.Releases,
 		"stemcells":        match.Deployment.Stemcells,

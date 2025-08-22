@@ -3907,9 +3907,10 @@ select[id*="connection-vhost"] {
   border: 1px solid var(--border-primary);
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  max-width: 90vw;
+  width: 90vw;
+  max-width: 1200px;
   max-height: 90vh;
-  width: 800px;
+  margin: 20px;
   display: flex;
   flex-direction: column;
   transform: scale(0.8);
@@ -6418,4 +6419,322 @@ select[id*="connection-vhost"] {
 [data-theme="dark"] .plugins-history .history-entry {
   background: var(--bg-tertiary);
   border-color: var(--border-primary);
+}
+
+/* Terminal Modal Styles */
+.terminal-modal-content {
+  width: 95vw;
+  max-width: 95vw;
+  height: 90vh;
+  margin: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-header {
+  padding: 15px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.terminal-tabs {
+  display: flex;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+  overflow-x: auto;
+  min-height: 40px;
+}
+
+.terminal-tab {
+  padding: 8px 16px;
+  background: var(--bg-tertiary);
+  border: none;
+  border-right: 1px solid var(--border-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 14px;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-tab:hover {
+  background: var(--bg-secondary);
+}
+
+.terminal-tab.active {
+  background: var(--bg-primary);
+  font-weight: 600;
+}
+
+.terminal-tab .tab-close {
+  margin-left: 8px;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.terminal-tab .tab-close:hover {
+  opacity: 1;
+}
+
+/* Tab prefixes for differentiation */
+.terminal-tab.blacksmith-tab::before {
+  content: '[BK]';
+  color: #4a9eff;
+  font-weight: bold;
+  margin-right: 4px;
+}
+
+.terminal-tab.service-instance-tab::before {
+  content: '[SI]';
+  color: #28a745;
+  font-weight: bold;
+  margin-right: 4px;
+}
+
+.terminal-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  background: #000;
+  padding: 0;
+}
+
+.terminal-instance {
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+.terminal-instance.active {
+  display: block;
+}
+
+/* Ensure xterm elements fill the container */
+.terminal-instance .xterm,
+.terminal-instance .xterm-screen,
+.terminal-instance .xterm-viewport {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* SSH Button Styles */
+.ssh-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ssh-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.ssh-btn.blacksmith-ssh {
+  border-color: #4a9eff;
+}
+
+.ssh-btn.blacksmith-ssh:hover {
+  background: rgba(74, 158, 255, 0.1);
+  border-color: #4a9eff;
+}
+
+.ssh-btn.service-instance-ssh {
+  border-color: #28a745;
+}
+
+.ssh-btn.service-instance-ssh:hover {
+  background: rgba(40, 167, 69, 0.1);
+  border-color: #28a745;
+}
+
+.ssh-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Terminal header controls */
+.terminal-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-control-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-control-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.terminal-control-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Minimized terminal header bar */
+.minimized-terminal-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  z-index: 9999;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-100%);
+  transition: all 0.3s ease;
+}
+
+.minimized-terminal-bar.active {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.minimized-terminal-bar .left-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.minimized-terminal-bar .right-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.minimized-terminal-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.minimized-terminal-tab {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.minimized-terminal-tab:hover {
+  background: var(--bg-hover);
+}
+
+.minimized-terminal-tab.active {
+  background: var(--bg-primary);
+  border-color: var(--border-secondary);
+}
+
+.minimized-terminal-tab .tab-close {
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.minimized-terminal-tab .tab-close:hover {
+  opacity: 1;
+}
+
+.minimized-terminal-tab .blacksmith-prefix {
+  color: #4a9eff;
+  font-weight: bold;
+}
+
+.minimized-terminal-tab .service-prefix {
+  color: #28a745;
+  font-weight: bold;
+}
+
+/* Hide main tabs when minimized bar is active */
+body.terminal-minimized .tabs {
+  margin-top: 40px;
+}
+
+/* Dark theme adjustments */
+[data-theme="dark"] .terminal-modal-content {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .terminal-header {
+  background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .terminal-tabs {
+  background: var(--bg-tertiary);
+}
+
+[data-theme="dark"] .terminal-tab {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .terminal-tab.active {
+  background: var(--bg-primary);
+}
+
+[data-theme="dark"] .ssh-btn {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .terminal-control-btn {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .terminal-control-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .minimized-terminal-bar {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .minimized-terminal-tab {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .minimized-terminal-tab.active {
+  background: var(--bg-primary);
 }
