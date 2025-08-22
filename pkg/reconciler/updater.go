@@ -634,7 +634,7 @@ func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
 
 	// Get backup index
 	backupIndexPath := fmt.Sprintf("%s/backups/index", instanceID)
-	
+
 	var backupIndex map[string]interface{}
 	exists, err := u.vault.(VaultInterface).Get(backupIndexPath, &backupIndex)
 	if err != nil || !exists {
@@ -663,19 +663,19 @@ func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
 	for i := 0; i < len(backups)-1; i++ {
 		for j := i + 1; j < len(backups); j++ {
 			var timestamp1, timestamp2 int64
-			
+
 			if ts, ok := backups[i]["timestamp"].(float64); ok {
 				timestamp1 = int64(ts)
 			} else if ts, ok := backups[i]["timestamp"].(int64); ok {
 				timestamp1 = ts
 			}
-			
+
 			if ts, ok := backups[j]["timestamp"].(float64); ok {
 				timestamp2 = int64(ts)
 			} else if ts, ok := backups[j]["timestamp"].(int64); ok {
 				timestamp2 = ts
 			}
-			
+
 			if timestamp1 < timestamp2 {
 				backups[i], backups[j] = backups[j], backups[i]
 			}

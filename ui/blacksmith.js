@@ -1216,6 +1216,7 @@
         <button class="detail-tab" data-tab="logs">Deployment Logs</button>
         <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
+        <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
         <button class="detail-tab" data-tab="config">Config</button>
       </div>
@@ -1620,6 +1621,7 @@
         <button class="detail-tab" data-tab="logs">Deployment Log</button>
         <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
+        <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
         <button class="detail-tab" data-tab="instance-logs">Logs</button>
         <button class="detail-tab" data-tab="testing">Testing</button>
@@ -1965,6 +1967,9 @@
         }
         const config = await response.json();
         return formatConfig(config);
+      } else if (type === 'certificates') {
+        // Render certificates tab content
+        return renderCertificatesTab();
       }
 
       return `<div class="error">Unknown tab type: ${type}</div>`;
@@ -1984,6 +1989,10 @@
     // Handle special cases that don't use endpoints
     if (type === 'testing') {
       return await renderServiceTesting(instanceId);
+    }
+
+    if (type === 'certificates') {
+      return renderServiceCertificatesTab(instanceId);
     }
 
     const endpoints = {
@@ -3560,7 +3569,7 @@
       credsKeys: Object.keys(creds),
       hasManifestData: !!manifestData
     });
-    
+
     const info = {
       users: [],
       vhosts: [],
@@ -3573,7 +3582,7 @@
       // === MANIFEST-BASED CREDENTIALS ===
       if (manifestData) {
         console.log('Debug: Manifest data available:', Object.keys(manifestData));
-        
+
         const searchManifestValue = (path) => {
           const keys = path.split('.');
           let current = manifestData;
@@ -3590,7 +3599,7 @@
         // Search in job properties for RabbitMQ credentials
         const findInJobProperties = (path) => {
           if (!manifestData.instance_groups) return null;
-          
+
           // Look for rabbitmq job in instance groups
           for (const ig of manifestData.instance_groups) {
             if (ig.jobs) {
@@ -3738,15 +3747,15 @@
     } else if (serviceType === 'rabbitmq') {
       const userOptions = connectionInfo.users.map(user => {
         // Default to binding.user if available, otherwise select the first option
-        const isSelected = user === 'binding.user' || 
-                          (connectionInfo.users.indexOf('binding.user') === -1 && user === connectionInfo.users[0]);
+        const isSelected = user === 'binding.user' ||
+          (connectionInfo.users.indexOf('binding.user') === -1 && user === connectionInfo.users[0]);
         return `<option value="${user}"${isSelected ? ' selected' : ''}>${user}</option>`;
       }).join('');
 
       const vhostOptions = connectionInfo.vhosts.map(vhost => {
         // Default to binding.vhost if available, otherwise select the first option
-        const isSelected = vhost === 'binding.vhost' || 
-                          (connectionInfo.vhosts.indexOf('binding.vhost') === -1 && vhost === connectionInfo.vhosts[0]);
+        const isSelected = vhost === 'binding.vhost' ||
+          (connectionInfo.vhosts.indexOf('binding.vhost') === -1 && vhost === connectionInfo.vhosts[0]);
         return `<option value="${vhost}"${isSelected ? ' selected' : ''}>${vhost}</option>`;
       }).join('');
 
@@ -4076,7 +4085,7 @@
         <h5>Management API</h5>
         <div class="form-row">
           <label for="rabbitmq-mgmt-path-${instanceId}">API Path:</label>
-          <input type="text" id="rabbitmq-mgmt-path-${instanceId}" placeholder="/api/overview" />
+          <input type="text" id="rabbitmq-mgmt-path-${instanceId}" placeholder="/b/overview" />
         </div>
         <div class="form-row">
           <label for="rabbitmq-mgmt-method-${instanceId}">Method:</label>
@@ -4190,8 +4199,8 @@
   const executeServiceOperation = async (instanceId, serviceType, operation, params = {}) => {
     // Use stored connection parameters if available, otherwise read from DOM
     const connectionState = window.serviceConnections && window.serviceConnections[instanceId];
-    const connectionInfo = (connectionState && connectionState.connected && connectionState.connectionParams) 
-      ? connectionState.connectionParams 
+    const connectionInfo = (connectionState && connectionState.connected && connectionState.connectionParams)
+      ? connectionState.connectionParams
       : getConnectionInfo(instanceId);
 
     // Debug logging to show which connection parameters are being used
@@ -6845,6 +6854,33 @@
                   });
                 });
               }, 50);
+            } else if (tabType === 'certificates') {
+              // Set up tab switching for service instance certificates
+              setTimeout(() => {
+                const tabGroupId = `service-cert-tabs-${instanceId}`;
+                const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
+                const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+
+                tabButtons.forEach(button => {
+                  button.addEventListener('click', () => {
+                    const tabName = button.dataset.tab;
+
+                    // Update active states
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    button.classList.add('active');
+
+                    tabPanes.forEach(pane => {
+                      if (pane.dataset.tab === tabName) {
+                        pane.classList.add('active');
+                        pane.style.display = 'block';
+                      } else {
+                        pane.classList.remove('active');
+                        pane.style.display = 'none';
+                      }
+                    });
+                  });
+                });
+              }, 100);
             }
           }, 100);
         };
@@ -6903,6 +6939,9 @@
             } else if (tabType === 'debug') {
               attachSearchFilter('debug-log-table');
               initializeSorting('debug-log-table');
+            } else if (tabType === 'certificates') {
+              // Initialize certificate functionality
+              initializeCertificatesTab();
             }
           }, 100);
         } catch (error) {
@@ -6965,5 +7004,1657 @@
       document.querySelector('#services').innerHTML = '<div class="error">Service unavailable</div>';
     }
   });
+
+  // ================================================================
+  // BLACKSMITH CERTIFICATES TAB FUNCTIONALITY
+  // ================================================================
+
+  // Render the main certificates tab content
+  const renderCertificatesTab = () => {
+    const tabGroupId = 'cert-main-tabs';
+    return `
+      <div class="service-testing-container">
+        <div class="manifest-details-container">
+          <div class="manifest-tabs-nav">
+            <button class="manifest-tab-btn active" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
+            <button class="manifest-tab-btn" data-tab="config" data-group="${tabGroupId}">Config</button>
+            <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
+          </div>
+
+          <div class="manifest-tab-content">
+            <!-- Trusted Certificates Tab -->
+            <div class="manifest-tab-pane active" data-tab="trusted" data-group="${tabGroupId}">
+              <div class="operation-content">
+                <table class="operation-form">
+                  <tr>
+                    <td>
+                      <div class="form-row">
+                        <button class="execute-btn" onclick="fetchTrustedCertificates()">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                            <polyline points="3.27,6.96 12,12.01 20.73,6.96"/>
+                            <line x1="12" y1="22.08" x2="12" y2="12"/>
+                          </svg>
+                          Fetch Trusted Certificates
+                        </button>
+                        <p>Inspect certificates from the VM's trusted certificate store (/etc/ssl/certs/bosh-trusted-cert-*.pem</p>
+                      </div>
+                      <div id="trusted-certificates-results" class="testing-history" style="display: none;">
+                        <div id="trusted-certificates-list" class="cert-list-container">
+                          <!-- Certificate list will be populated here -->
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+
+            <!-- Configuration Certificates Tab -->
+            <div class="manifest-tab-pane" data-tab="config" data-group="${tabGroupId}">
+              <div class="operation-content">
+                <table class="operation-form">
+                  <tr>
+                    <td>
+                      <div class="form-row">
+                        <button class="execute-btn" onclick="fetchBlacksmithCertificates()">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                          </svg>
+                          Fetch Configuration Certificates
+                        </button>
+                        Configuration Certificates
+                      </div>
+                      <div id="blacksmith-certificates-results" class="testing-history" style="display: none;">
+                        <div id="blacksmith-certificates-list" class="cert-list-container">
+                          <!-- Certificate list will be populated here -->
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+
+            <!-- Endpoint Certificate Tab -->
+            <div class="manifest-tab-pane" data-tab="endpoint" data-group="${tabGroupId}">
+              <div class="operation-content">
+                <table class="operation-form">
+                  <tr>
+                    <td>
+                      <h5>Network Endpoint Certificate</h5>
+                      <p>Connect to a network endpoint and retrieve its SSL/TLS certificate.</p>
+                      <div class="form-row">
+                        <label>Endpoint Address:</label>
+                        <input type="text" id="endpoint-address" placeholder="example.com:443 or https://example.com"
+                               value="" />
+                      </div>
+                      <div class="form-row">
+                        <button class="execute-btn" onclick="fetchEndpointCertificate()">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+                            <path d="M12 11h4"/>
+                            <path d="M12 16h4"/>
+                            <path d="M8 11h.01"/>
+                            <path d="M8 16h.01"/>
+                          </svg>
+                          Fetch Certificate
+                        </button>
+                      </div>
+                      <div id="endpoint-certificate-results" class="testing-history" style="display: none;">
+                        <div class="history-header">
+                          <h5>Endpoint Certificate</h5>
+                        </div>
+                        <div id="endpoint-certificate-details" class="cert-list-container">
+                          <!-- Certificate details will be populated here -->
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  // Initialize certificates tab functionality
+  const initializeCertificatesTab = () => {
+    // Clear any existing state
+    console.log('Certificates tab initialized');
+
+    // Reset form fields
+    const endpointInput = document.getElementById('endpoint-address');
+    if (endpointInput) {
+      endpointInput.value = '';
+    }
+
+    // Hide result sections
+    ['trusted-certificates-results', 'blacksmith-certificates-results', 'endpoint-certificate-results'].forEach(id => {
+      const element = document.getElementById(id);
+      if (element) {
+        element.style.display = 'none';
+      }
+    });
+
+    // Set up tab switching for certificates tabs
+    setTimeout(() => {
+      const tabGroupId = 'cert-main-tabs';
+      const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
+      const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+
+      tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          const tabName = button.dataset.tab;
+
+          // Update active states
+          tabButtons.forEach(btn => btn.classList.remove('active'));
+          button.classList.add('active');
+
+          tabPanes.forEach(pane => {
+            if (pane.dataset.tab === tabName) {
+              pane.classList.add('active');
+              pane.style.display = 'block';
+            } else {
+              pane.classList.remove('active');
+              pane.style.display = 'none';
+            }
+          });
+        });
+      });
+    }, 100);
+  };
+
+  // Fetch trusted certificates from VM certificate store
+  window.fetchTrustedCertificates = async function () {
+    const resultsContainer = document.getElementById('trusted-certificates-results');
+    const listContainer = document.getElementById('trusted-certificates-list');
+    const button = document.querySelector('[onclick="fetchTrustedCertificates()"]');
+
+    if (!resultsContainer || !listContainer) {
+      console.error('Trusted certificates containers not found');
+      return;
+    }
+
+    // Disable button and show loading state
+    const originalText = button ? button.textContent : '';
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+      button.textContent = 'Loading...';
+    }
+
+    try {
+      listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Loading BOSH trusted certificate files...</div>';
+      resultsContainer.style.display = 'block';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch('/b/certificates/trusted', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Authentication required. Please check your credentials.');
+        } else if (response.status === 403) {
+          throw new Error('Access denied. Insufficient permissions.');
+        } else if (response.status === 404) {
+          throw new Error('Certificates API not available.');
+        } else if (response.status >= 500) {
+          throw new Error(`Server error (${response.status}). Please try again later.`);
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch trusted certificate files');
+      }
+
+      if (!data.data || !data.data.files) {
+        throw new Error('Invalid response format received from server');
+      }
+
+      renderTrustedCertificateFileList(listContainer, data.data.files);
+
+      // Success feedback
+      if (button) {
+        button.classList.add('success');
+        button.textContent = 'Loaded!';
+      }
+
+    } catch (error) {
+      console.error('Failed to fetch trusted certificate files:', error);
+
+      const errorMessage = error.name === 'AbortError'
+        ? 'Request timed out. The server may be busy.'
+        : error.message;
+
+      listContainer.innerHTML = `
+        <div class="cert-error">
+          <h4>Failed to Load Trusted Certificate Files</h4>
+          <p>${errorMessage}</p>
+          <button class="execute-btn" onclick="fetchTrustedCertificates()" style="margin-top: 10px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 4v6h6"/>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            Retry
+          </button>
+        </div>
+      `;
+
+      // Error feedback on button
+      if (button) {
+        button.classList.add('error');
+        button.textContent = 'Failed';
+      }
+    } finally {
+      // Always restore button state
+      if (button) {
+        setTimeout(() => {
+          button.disabled = false;
+          button.classList.remove('loading', 'success', 'error');
+          button.textContent = originalText;
+        }, 2000);
+      }
+    }
+  };
+
+  // Render file list for trusted certificates
+  const renderTrustedCertificateFileList = (container, files) => {
+    if (!files || files.length === 0) {
+      container.innerHTML = '<div class="cert-error">No BOSH trusted certificate files found</div>';
+      return;
+    }
+
+    const fileListHTML = `
+      <div class="cert-list-header">
+        <h4>BOSH Trusted Certificate Files</h4>
+        <span class="cert-list-count">${files.length} file${files.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="cert-file-list">
+        ${files.map((file, index) => `
+          <div class="cert-file-item" data-index="${index}">
+            <div class="cert-file-header">
+              <div class="cert-file-name">${file.name}</div>
+              <button class="cert-file-load-btn" onclick="loadTrustedCertificateFile('${file.path}', '${file.name}', ${index})">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14,2 14,8 20,8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                  <line x1="10" y1="9" x2="8" y2="9"/>
+                </svg>
+                Load Certificate
+              </button>
+            </div>
+            <div class="cert-file-path">${file.path}</div>
+            <div class="cert-file-details" id="cert-file-details-${index}" style="display: none;"></div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    container.innerHTML = fileListHTML;
+  };
+
+  // Load individual certificate file details
+  window.loadTrustedCertificateFile = async function (filePath, fileName, index) {
+    const button = document.querySelector(`.cert-file-item[data-index="${index}"] .cert-file-load-btn`);
+    const detailsContainer = document.getElementById(`cert-file-details-${index}`);
+
+    if (!button || !detailsContainer) {
+      console.error('Certificate file elements not found');
+      return;
+    }
+
+    // Show loading state
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<div class="cert-loading-spinner"></div>Loading...';
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      const response = await fetch('/b/certificates/trusted/file', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ filePath }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Authentication required. Please check your credentials.');
+        } else if (response.status === 403) {
+          throw new Error('Access denied. Insufficient permissions.');
+        } else if (response.status === 404) {
+          throw new Error('Certificate file not found.');
+        } else if (response.status >= 500) {
+          throw new Error(`Server error (${response.status}). Please try again later.`);
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to load certificate file');
+      }
+
+      if (!data.data || !data.data.certificates || data.data.certificates.length === 0) {
+        throw new Error('No certificate data received');
+      }
+
+      // Display certificate details
+      const certificate = data.data.certificates[0];
+      detailsContainer.innerHTML = `
+        <div class="cert-details-summary">
+          <div class="cert-detail-row">
+            <span class="cert-detail-label">Subject:</span>
+            <span class="cert-detail-value">${formatCertificateSubject(certificate.details.subject)}</span>
+          </div>
+          <div class="cert-detail-row">
+            <span class="cert-detail-label">Issuer:</span>
+            <span class="cert-detail-value">${formatCertificateSubject(certificate.details.issuer)}</span>
+          </div>
+          <div class="cert-detail-row">
+            <span class="cert-detail-label">Valid Until:</span>
+            <span class="cert-detail-value">${new Date(certificate.details.notAfter).toLocaleDateString()}</span>
+          </div>
+          <div class="cert-actions">
+            <button class="cert-inspect-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+              Inspect Certificate
+            </button>
+          </div>
+        </div>
+      `;
+      detailsContainer.style.display = 'block';
+
+      // Add event listener to the inspect button
+      const inspectButton = detailsContainer.querySelector('.cert-inspect-btn');
+      if (inspectButton) {
+        inspectButton.addEventListener('click', () => {
+          console.log('Trusted cert inspect button clicked', certificate);
+          window.inspectCertificateFromList(certificate);
+        });
+      } else {
+        console.error('Could not find inspect button in details container');
+      }
+
+      // Update button to success state
+      button.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="20,6 9,17 4,12"/>
+        </svg>
+        Loaded
+      `;
+      button.classList.add('success');
+
+    } catch (error) {
+      console.error('Failed to load certificate file:', error);
+
+      const errorMessage = error.name === 'AbortError'
+        ? 'Request timed out. The server may be busy.'
+        : error.message;
+
+      detailsContainer.innerHTML = `
+        <div class="cert-error">
+          <h5>Failed to Load Certificate</h5>
+          <p>${errorMessage}</p>
+          <button class="execute-btn cert-retry-button" style="margin-top: 10px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 4v6h6"/>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            Retry
+          </button>
+        </div>
+      `;
+      detailsContainer.style.display = 'block';
+
+      // Add event listener to retry button
+      const retryButton = detailsContainer.querySelector('.cert-retry-button');
+      if (retryButton) {
+        retryButton.addEventListener('click', () => {
+          window.loadTrustedCertificateFile(filePath, fileName, index);
+        });
+      }
+
+      // Update button to error state
+      button.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+        Failed
+      `;
+      button.classList.add('error');
+
+    } finally {
+      // Restore button after delay
+      setTimeout(() => {
+        button.disabled = false;
+        button.classList.remove('success', 'error');
+        button.innerHTML = originalText;
+      }, 3000);
+    }
+  };
+
+  // Fetch blacksmith configuration certificates
+  window.fetchBlacksmithCertificates = async function () {
+    const resultsContainer = document.getElementById('blacksmith-certificates-results');
+    const listContainer = document.getElementById('blacksmith-certificates-list');
+    const button = document.querySelector('[onclick="fetchBlacksmithCertificates()"]');
+
+    if (!resultsContainer || !listContainer) {
+      console.error('Blacksmith certificates containers not found');
+      return;
+    }
+
+    // Disable button and show loading state
+    const originalText = button ? button.textContent : '';
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+      button.textContent = 'Loading...';
+    }
+
+    try {
+      listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Loading configuration certificates...</div>';
+      resultsContainer.style.display = 'block';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch('/b/certificates/blacksmith', {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch blacksmith certificates');
+      }
+
+      renderCertificateList(listContainer, data.data.certificates, 'blacksmith');
+
+      // Success feedback
+      if (button) {
+        button.classList.add('success');
+        button.textContent = 'Loaded!';
+
+        // Reset button state after 3 seconds
+        setTimeout(() => {
+          button.classList.remove('success', 'loading');
+          button.disabled = false;
+          button.textContent = originalText;
+        }, 3000);
+      }
+
+    } catch (error) {
+      console.error('Failed to fetch blacksmith certificates:', error);
+      listContainer.innerHTML = `<div class="cert-error">Failed to load configuration certificates: ${error.message}</div>`;
+
+      // Error feedback
+      if (button) {
+        button.classList.add('error');
+        button.textContent = 'Failed';
+
+        // Reset button state after 3 seconds
+        setTimeout(() => {
+          button.classList.remove('error', 'loading');
+          button.disabled = false;
+          button.textContent = originalText;
+        }, 3000);
+      }
+    }
+  };
+
+  // Fetch certificate from network endpoint
+  window.fetchEndpointCertificate = async function () {
+    const endpointInput = document.getElementById('endpoint-address');
+    const resultsContainer = document.getElementById('endpoint-certificate-results');
+    const detailsContainer = document.getElementById('endpoint-certificate-details');
+    const button = document.querySelector('[onclick="fetchEndpointCertificate()"]');
+
+    if (!endpointInput || !resultsContainer || !detailsContainer) {
+      console.error('Endpoint certificate containers not found');
+      return;
+    }
+
+    const endpoint = endpointInput.value.trim();
+    if (!endpoint) {
+      // Enhanced validation
+      endpointInput.classList.add('error');
+      endpointInput.focus();
+      setTimeout(() => endpointInput.classList.remove('error'), 3000);
+
+      detailsContainer.innerHTML = `
+        <div class="cert-error">
+          <h4>Invalid Input</h4>
+          <p>Please enter a valid endpoint address (e.g., example.com:443 or https://example.com)</p>
+        </div>
+      `;
+      resultsContainer.style.display = 'block';
+      return;
+    }
+
+    // Validate endpoint format
+    const endpointPattern = /^(https?:\/\/)?([-\w\.]+)(:(\d+))?\/?.*$/;
+    if (!endpointPattern.test(endpoint)) {
+      endpointInput.classList.add('error');
+      detailsContainer.innerHTML = `
+        <div class="cert-error">
+          <h4>Invalid Endpoint Format</h4>
+          <p>Please use format: hostname:port or https://hostname</p>
+        </div>
+      `;
+      resultsContainer.style.display = 'block';
+      return;
+    }
+
+    // Disable button and show loading state
+    const originalText = button ? button.textContent : '';
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+      button.textContent = 'Connecting...';
+    }
+
+    try {
+      detailsContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Connecting to endpoint...</div>';
+      resultsContainer.style.display = 'block';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000); // Longer timeout for network connections
+
+      const response = await fetch('/b/certificates/endpoint', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          endpoint: endpoint,
+          timeout: 30
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        if (response.status === 400) {
+          throw new Error('Invalid endpoint address or connection parameters.');
+        } else if (response.status === 401) {
+          throw new Error('Authentication required.');
+        } else if (response.status === 403) {
+          throw new Error('Access denied.');
+        } else if (response.status === 404) {
+          throw new Error('Endpoint certificates API not available.');
+        } else if (response.status === 408) {
+          throw new Error('Connection timeout. The endpoint may be unreachable.');
+        } else if (response.status >= 500) {
+          throw new Error(`Server error (${response.status}). Please try again later.`);
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch endpoint certificate');
+      }
+
+      // For endpoint certificates, we get a single certificate, not a list
+      if (data.data && data.data.certificates && data.data.certificates.length > 0) {
+        renderCertificateList(detailsContainer, data.data.certificates, 'endpoint');
+
+        // Success feedback
+        if (button) {
+          button.classList.add('success');
+          button.textContent = 'Connected!';
+        }
+      } else {
+        detailsContainer.innerHTML = `
+          <div class="cert-error">
+            <h4>No Certificate Found</h4>
+            <p>The endpoint did not present a certificate or is not using TLS.</p>
+          </div>
+        `;
+      }
+
+    } catch (error) {
+      console.error('Failed to fetch endpoint certificate:', error);
+
+      const errorMessage = error.name === 'AbortError'
+        ? 'Connection timed out. The endpoint may be unreachable.'
+        : error.message;
+
+      detailsContainer.innerHTML = `
+        <div class="cert-error">
+          <h4>Connection Failed</h4>
+          <p>${errorMessage}</p>
+          <button class="execute-btn" onclick="fetchEndpointCertificate()" style="margin-top: 10px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 4v6h6"/>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+            Retry
+          </button>
+        </div>
+      `;
+
+      // Error feedback on button
+      if (button) {
+        button.classList.add('error');
+        button.textContent = 'Failed';
+      }
+    } finally {
+      // Always restore button state
+      if (button) {
+        setTimeout(() => {
+          button.disabled = false;
+          button.classList.remove('loading', 'success', 'error');
+          button.textContent = originalText;
+        }, 2000);
+      }
+    }
+  };
+
+  // Render a list of certificates
+  const renderCertificateList = (container, certificates, source) => {
+    if (!certificates || certificates.length === 0) {
+      container.innerHTML = '<div class="cert-error">No certificates found</div>';
+      return;
+    }
+
+    const sourceLabel = source === 'trusted' ? 'Trusted Store' :
+      source === 'blacksmith' ? 'Configuration' :
+        source === 'manifest' ? 'Manifest' :
+          source === 'vm-trusted' ? 'VM Trusted Store' :
+            source === 'service-endpoint' ? 'Service Endpoint' : 'Endpoint';
+
+    const html = `
+      <div class="cert-list-header">
+        <h4 class="cert-list-title">${sourceLabel} Certificates</h4>
+        <span class="cert-list-count">${certificates.length} certificate${certificates.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="cert-list">
+        ${certificates.map((cert, index) => `
+          <div class="cert-list-item">
+            <div class="cert-item-info">
+              <div class="cert-item-name">${cert.name || `Certificate ${index + 1}`}</div>
+              ${cert.details && cert.details.subject ? `
+                <div class="cert-item-subject">${formatCertificateSubject(cert.details.subject)}</div>
+              ` : ''}
+              ${cert.path ? `
+                <div class="cert-item-path">${cert.path}</div>
+              ` : ''}
+            </div>
+            <button class="cert-inspect-btn" data-cert-index="${index}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                <circle cx="11" cy="11" r="8"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+              Inspect
+            </button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    container.innerHTML = html;
+
+    // Store certificate data for reference and add event listeners
+    container.certificateData = certificates;
+
+    // Add event listeners to all inspect buttons
+    const inspectButtons = container.querySelectorAll('.cert-inspect-btn');
+
+    // Validate that buttons were created
+    if (inspectButtons.length !== certificates.length) {
+      console.error(`Expected ${certificates.length} inspect buttons, but found ${inspectButtons.length}`);
+    }
+
+    inspectButtons.forEach((button, index) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const cert = certificates[index];
+        console.log(`Inspect button clicked for certificate ${index}:`, cert);
+        if (cert) {
+          window.inspectCertificateFromList(cert);
+        } else {
+          console.error('No certificate found at index:', index);
+        }
+      });
+    });
+  };
+
+  // Format certificate subject for display
+  const formatCertificateSubject = (subject) => {
+    if (typeof subject === 'string') return subject;
+    if (!subject) return 'N/A';
+
+    const parts = [];
+    if (subject.commonName) parts.push(`CN=${subject.commonName}`);
+    if (subject.organization && subject.organization.length > 0) parts.push(`O=${subject.organization.join(', ')}`);
+    if (subject.country && subject.country.length > 0) parts.push(`C=${subject.country.join(', ')}`);
+
+    return parts.length > 0 ? parts.join(', ') : 'N/A';
+  };
+
+  // Handle certificate inspection from list
+  window.inspectCertificateFromList = function (certificateData) {
+    if (!certificateData) {
+      console.error('No certificate data to inspect');
+      return;
+    }
+
+    console.log('Inspecting certificate data:', certificateData);
+
+    // Use the certificate details if available, otherwise use the whole object
+    let certToInspect = certificateData.details || certificateData;
+
+    // If certToInspect still doesn't have the required fields, try to extract them
+    if (!certToInspect.subject && !certToInspect.issuer && !certToInspect.pemEncoded) {
+      // If we have a raw certificate object, try to find the parsed details
+      if (certificateData.parsed) {
+        certToInspect = certificateData.parsed;
+      } else if (certificateData.certificate) {
+        certToInspect = certificateData.certificate;
+      } else if (certificateData.raw) {
+        certToInspect = certificateData.raw;
+      }
+    }
+
+    // Validate that we have usable certificate data
+    if (!certToInspect || typeof certToInspect !== 'object') {
+      console.error('Invalid certificate data structure:', certToInspect);
+      alert('Certificate data is not in the expected format and cannot be inspected.');
+      return;
+    }
+
+    console.log('Certificate to inspect:', certToInspect);
+
+    // Use the global certificate inspector function
+    window.inspectCertificate(certToInspect);
+  };
+
+  // Render certificates tab for service instances
+  const renderServiceCertificatesTab = (instanceId) => {
+    const tabGroupId = `service-cert-tabs-${instanceId}`;
+    return `
+      <div class="service-testing-container">
+        <div class="manifest-details-container">
+          <div class="manifest-tabs-nav">
+            <button class="manifest-tab-btn active" data-tab="manifest" data-group="${tabGroupId}">Manifest</button>
+            <button class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
+            <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
+          </div>
+
+          <div class="manifest-tab-content">
+            <!-- Manifest Certificates Tab -->
+            <div class="manifest-tab-pane active" data-tab="manifest" data-group="${tabGroupId}">
+
+              <div class="operation-content">
+                <table class="operation-form">
+                  <tr>
+                    <td>
+                      <h5>Deployment Manifest Certificates</h5>
+                      <p>Scan the deployment manifest for certificate references and TLS configurations.</p>
+                      <div class="form-row">
+                        <button class="execute-btn" onclick="fetchManifestCertificates('${instanceId}')">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14,2 14,8 20,8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10,9 9,9 8,9"/>
+                          </svg>
+                          Scan Manifest
+                        </button>
+                      </div>
+                      <div id="manifest-certificates-results-${instanceId}" class="testing-history" style="display: none;">
+                        <div class="history-header">
+                          <h5>Manifest Certificates</h5>
+                        </div>
+                        <div id="manifest-certificates-list-${instanceId}" class="cert-list-container">
+                          <!-- Certificate list will be populated here -->
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+
+            <!-- Trusted Certificates Tab -->
+            <div class="manifest-tab-pane" data-tab="trusted" data-group="${tabGroupId}">
+              <div class="operation-content">
+                <table class="operation-form">
+                  <tr>
+                    <td>
+                      <h5>Service VM Certificate Store</h5>
+                      <p>Access the trusted certificate store on service instance virtual machines.</p>
+                      <div class="form-row">
+                        <button class="execute-btn" onclick="fetchServiceVMCertificates('${instanceId}')">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                          </svg>
+                          Fetch VM Certificates
+                        </button>
+                      </div>
+                      <div id="vm-certificates-results-${instanceId}" class="testing-history" style="display: none;">
+                        <div class="history-header">
+                          <h5>VM Certificates</h5>
+                        </div>
+                        <div id="vm-certificates-list-${instanceId}" class="cert-list-container">
+                          <!-- Certificate list will be populated here -->
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+
+            <!-- Service Endpoint Certificate Tab -->
+            <div class="manifest-tab-pane" data-tab="endpoint" data-group="${tabGroupId}">
+
+              <div class="operation-content">
+                <table class="operation-form">
+                  <tr>
+                    <td>
+                      <h5>Service Endpoint Certificate</h5>
+                      <p>Connect to the service instance endpoint and retrieve its certificate.</p>
+                      <div class="form-row">
+                        <label>Service Endpoint:</label>
+                        <input type="text" id="service-endpoint-address-${instanceId}"
+                               placeholder="service-ip:port or service.domain.com:443"
+                               value="" />
+                      </div>
+                      <div class="form-row">
+                        <button class="execute-btn" onclick="fetchServiceEndpointCertificate('${instanceId}')">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                          </svg>
+                          Fetch Service Certificate
+                        </button>
+                      </div>
+                      <div id="service-endpoint-results-${instanceId}" class="testing-history" style="display: none;">
+                        <div class="history-header">
+                          <h5>Service Endpoint Certificate</h5>
+                        </div>
+                        <div id="service-endpoint-details-${instanceId}" class="cert-list-container">
+                          <!-- Certificate details will be populated here -->
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  // ================================================================
+  // SERVICE INSTANCE CERTIFICATE FUNCTIONS
+  // ================================================================
+
+  // Fetch certificates from service instance manifest
+  window.fetchManifestCertificates = async function (instanceId) {
+    const resultsContainer = document.getElementById(`manifest-certificates-results-${instanceId}`);
+    const listContainer = document.getElementById(`manifest-certificates-list-${instanceId}`);
+
+    if (!resultsContainer || !listContainer) {
+      console.error('Manifest certificates containers not found');
+      return;
+    }
+
+    try {
+      listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Scanning manifest for certificates...</div>';
+      resultsContainer.style.display = 'block';
+
+      const response = await fetch(`/b/certificates/services/${instanceId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch manifest certificates');
+      }
+
+      renderCertificateList(listContainer, data.data.certificates, 'manifest');
+
+    } catch (error) {
+      console.error('Failed to fetch manifest certificates:', error);
+      listContainer.innerHTML = `<div class="cert-error">Failed to scan manifest certificates: ${error.message}</div>`;
+    }
+  };
+
+  // Fetch trusted certificates from service instance VMs
+  window.fetchServiceVMCertificates = async function (instanceId) {
+    const resultsContainer = document.getElementById(`vm-certificates-results-${instanceId}`);
+    const listContainer = document.getElementById(`vm-certificates-list-${instanceId}`);
+
+    if (!resultsContainer || !listContainer) {
+      console.error('VM certificates containers not found');
+      return;
+    }
+
+    try {
+      listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Loading VM certificates...</div>';
+      resultsContainer.style.display = 'block';
+
+      // Use the trusted certificates endpoint but with service context
+      const response = await fetch(`/b/certificates/trusted?service=${instanceId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch VM certificates');
+      }
+
+      renderCertificateList(listContainer, data.data.certificates, 'vm-trusted');
+
+    } catch (error) {
+      console.error('Failed to fetch VM certificates:', error);
+      listContainer.innerHTML = `<div class="cert-error">Failed to load VM certificates: ${error.message}</div>`;
+    }
+  };
+
+  // Fetch certificate from service instance endpoint
+  window.fetchServiceEndpointCertificate = async function (instanceId) {
+    const endpointInput = document.getElementById(`service-endpoint-address-${instanceId}`);
+    const resultsContainer = document.getElementById(`service-endpoint-results-${instanceId}`);
+    const detailsContainer = document.getElementById(`service-endpoint-details-${instanceId}`);
+
+    if (!endpointInput || !resultsContainer || !detailsContainer) {
+      console.error('Service endpoint certificate containers not found');
+      return;
+    }
+
+    const endpoint = endpointInput.value.trim();
+    if (!endpoint) {
+      alert('Please enter a service endpoint address');
+      return;
+    }
+
+    try {
+      detailsContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Connecting to service endpoint...</div>';
+      resultsContainer.style.display = 'block';
+
+      const response = await fetch('/b/certificates/endpoint', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          endpoint: endpoint,
+          timeout: 30,
+          serviceInstanceId: instanceId
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to fetch service endpoint certificate');
+      }
+
+      // For service endpoint certificates, we get a single certificate, not a list
+      if (data.data && data.data.certificates && data.data.certificates.length > 0) {
+        renderCertificateList(detailsContainer, data.data.certificates, 'service-endpoint');
+      } else {
+        detailsContainer.innerHTML = '<div class="cert-error">No certificate found for service endpoint</div>';
+      }
+
+    } catch (error) {
+      console.error('Failed to fetch service endpoint certificate:', error);
+      detailsContainer.innerHTML = `<div class="cert-error">Failed to connect to service endpoint: ${error.message}</div>`;
+    }
+  };
+
+  // ================================================================
+  // CERTIFICATE INSPECTOR MODAL FUNCTIONALITY
+  // ================================================================
+
+  // Modal Manager for handling certificate inspector and other modals
+  const ModalManager = {
+    currentModal: null,
+    modalStack: [],
+
+    // Open a modal with optional configuration
+    openModal: function (modalElement, config = {}) {
+      if (!modalElement) {
+        console.error('ModalManager.openModal: modalElement is required');
+        return false;
+      }
+
+      console.log('Opening modal:', modalElement);
+
+      // Close existing modal if any
+      if (this.currentModal) {
+        this.closeModal(this.currentModal, false);
+      }
+
+      // Add to modal stack
+      this.modalStack.push(modalElement);
+      this.currentModal = modalElement;
+
+      // Add modal to DOM if not already in the document
+      if (!document.body.contains(modalElement)) {
+        document.body.appendChild(modalElement);
+        console.log('Modal added to DOM');
+      }
+
+      // Prevent body scroll
+      document.body.style.overflow = 'hidden';
+
+      // Force reflow to ensure CSS transitions work
+      modalElement.offsetHeight;
+
+      // Show modal with animation
+      modalElement.classList.add('active');
+      console.log('Modal active class added');
+
+      // Focus management
+      this.trapFocus(modalElement);
+
+      // Add event listeners
+      this.addModalListeners(modalElement);
+
+      return true;
+    },
+
+    // Close a modal
+    closeModal: function (modalElement, removeFromStack = true) {
+      if (!modalElement) {
+        modalElement = this.currentModal;
+      }
+
+      if (!modalElement) {
+        return false;
+      }
+
+      // Remove from modal stack if requested
+      if (removeFromStack) {
+        const index = this.modalStack.indexOf(modalElement);
+        if (index > -1) {
+          this.modalStack.splice(index, 1);
+        }
+      }
+
+      // Update current modal
+      this.currentModal = this.modalStack.length > 0 ? this.modalStack[this.modalStack.length - 1] : null;
+
+      // Remove active class to trigger close animation
+      modalElement.classList.remove('active');
+
+      // Remove modal from DOM after animation completes
+      setTimeout(() => {
+        if (modalElement.parentNode) {
+          modalElement.parentNode.removeChild(modalElement);
+        }
+      }, 300); // Match CSS transition duration
+
+      // Restore body scroll if no modals remaining
+      if (this.modalStack.length === 0) {
+        document.body.style.overflow = '';
+      }
+
+      // Remove event listeners
+      this.removeModalListeners(modalElement);
+
+      return true;
+    },
+
+    // Close all modals
+    closeAllModals: function () {
+      while (this.modalStack.length > 0) {
+        this.closeModal(this.modalStack[this.modalStack.length - 1]);
+      }
+    },
+
+    // Add event listeners to modal
+    addModalListeners: function (modalElement) {
+      // Close on overlay click
+      modalElement.addEventListener('click', this.handleOverlayClick.bind(this));
+
+      // Close on close button click
+      const closeButton = modalElement.querySelector('.modal-close');
+      if (closeButton) {
+        closeButton.addEventListener('click', () => this.closeModal(modalElement));
+      }
+
+      // Keyboard navigation
+      document.addEventListener('keydown', this.handleKeydown.bind(this));
+    },
+
+    // Remove event listeners from modal
+    removeModalListeners: function (modalElement) {
+      modalElement.removeEventListener('click', this.handleOverlayClick.bind(this));
+      document.removeEventListener('keydown', this.handleKeydown.bind(this));
+    },
+
+    // Handle overlay click (close modal if clicked outside content)
+    handleOverlayClick: function (event) {
+      if (event.target.classList.contains('modal-overlay')) {
+        this.closeModal(event.target);
+      }
+    },
+
+    // Handle keyboard navigation
+    handleKeydown: function (event) {
+      if (!this.currentModal) return;
+
+      switch (event.key) {
+        case 'Escape':
+          event.preventDefault();
+          this.closeModal(this.currentModal);
+          break;
+        case 'Tab':
+          this.handleTabKey(event);
+          break;
+      }
+    },
+
+    // Handle tab key for focus trapping
+    handleTabKey: function (event) {
+      if (!this.currentModal) return;
+
+      const focusableElements = this.currentModal.querySelectorAll(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+
+      if (focusableElements.length === 0) return;
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (event.shiftKey) {
+        // Shift + Tab
+        if (document.activeElement === firstElement) {
+          event.preventDefault();
+          lastElement.focus();
+        }
+      } else {
+        // Tab
+        if (document.activeElement === lastElement) {
+          event.preventDefault();
+          firstElement.focus();
+        }
+      }
+    },
+
+    // Trap focus within modal
+    trapFocus: function (modalElement) {
+      const focusableElements = modalElement.querySelectorAll(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+
+      if (focusableElements.length > 0) {
+        focusableElements[0].focus();
+      }
+    }
+  };
+
+  // Certificate Inspector Modal functionality
+  const CertificateInspector = {
+    // Create and show certificate inspector modal
+    inspect: function (certificateData, options = {}) {
+      if (!certificateData) {
+        throw new Error('No certificate data provided');
+      }
+
+      console.log('CertificateInspector.inspect called with:', certificateData);
+
+      // Validate that we have some certificate information to display
+      if (!certificateData.subject && !certificateData.issuer && !certificateData.pemEncoded && !certificateData.textDetails) {
+        console.warn('Certificate data missing expected fields:', certificateData);
+        // Still try to create the modal, but with limited data
+      }
+
+      const modal = this.createModal(certificateData, options);
+      console.log('Modal created:', modal);
+      return ModalManager.openModal(modal);
+    },
+
+    // Create modal HTML structure
+    createModal: function (certificateData, options) {
+      const modalId = `cert-modal-${Date.now()}`;
+
+      const modalHtml = `
+        <div class="modal-overlay" id="${modalId}">
+          <div class="modal">
+            <div class="modal-header">
+              <h2 class="modal-title">Certificate Inspector</h2>
+              <button class="modal-close" aria-label="Close modal">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                </svg>
+              </button>
+            </div>
+            <div class="modal-body">
+              <div class="cert-tabs-nav">
+                <button class="cert-tab-btn active" data-tab="details" data-group="cert-tabs-${modalId}">Details</button>
+                <button class="cert-tab-btn" data-tab="pem" data-group="cert-tabs-${modalId}">PEM</button>
+                <button class="cert-tab-btn" data-tab="text" data-group="cert-tabs-${modalId}">Text</button>
+              </div>
+              <div class="cert-tab-content">
+                <div class="cert-tab-pane active" data-tab="details" data-group="cert-tabs-${modalId}">
+                  ${this.renderCertificateDetails(certificateData)}
+                </div>
+                <div class="cert-tab-pane" data-tab="pem" data-group="cert-tabs-${modalId}" style="display: none;">
+                  ${this.renderCertificatePEM(certificateData)}
+                </div>
+                <div class="cert-tab-pane" data-tab="text" data-group="cert-tabs-${modalId}" style="display: none;">
+                  ${this.renderCertificateText(certificateData)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Create modal element
+      const modalElement = document.createElement('div');
+      modalElement.innerHTML = modalHtml;
+      const modal = modalElement.firstElementChild;
+
+      // Add tab switching functionality
+      this.setupTabSwitching(modal, modalId);
+
+      return modal;
+    },
+
+    // Setup tab switching within the modal
+    setupTabSwitching: function (modal, modalId) {
+      const tabGroupId = `cert-tabs-${modalId}`;
+      const tabs = modal.querySelectorAll(`.cert-tab-btn[data-group="${tabGroupId}"]`);
+      const panes = modal.querySelectorAll(`.cert-tab-pane[data-group="${tabGroupId}"]`);
+
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          const targetTab = tab.dataset.tab;
+
+          // Update tab states
+          tabs.forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+
+          // Update pane states
+          panes.forEach(pane => {
+            pane.classList.remove('active');
+            pane.style.display = 'none';
+          });
+
+          const targetPane = modal.querySelector(`.cert-tab-pane[data-tab="${targetTab}"][data-group="${tabGroupId}"]`);
+          if (targetPane) {
+            targetPane.classList.add('active');
+            targetPane.style.display = 'block';
+          }
+        });
+      });
+    },
+
+    // Render certificate details tab
+    renderCertificateDetails: function (cert) {
+      if (!cert) return '<div class="cert-error">No certificate data available</div>';
+
+      // Check if we have minimal required data
+      const hasBasicData = cert.subject || cert.issuer || cert.serialNumber || cert.version;
+      if (!hasBasicData) {
+        return `
+          <div class="cert-error">
+            <h4>Certificate Data Unavailable</h4>
+            <p>The certificate data structure is not in the expected format.</p>
+            <details>
+              <summary>Raw Certificate Data</summary>
+              <pre>${JSON.stringify(cert, null, 2)}</pre>
+            </details>
+          </div>
+        `;
+      }
+
+      return `
+        <table class="cert-details-table">
+          <tr>
+            <th>Version</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${cert.version || 'N/A'}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.version || ''}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <th>Serial Number</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${cert.serialNumber || 'N/A'}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.serialNumber || ''}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <th>Subject</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${this.formatSubject(cert.subject)}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(this.formatSubject(cert.subject))}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <th>Issuer</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${this.formatSubject(cert.issuer)}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(this.formatSubject(cert.issuer))}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <th>Valid From</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${this.formatDate(cert.notBefore)}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${this.formatDate(cert.notBefore)}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <th>Valid To</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${this.formatDate(cert.notAfter)}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${this.formatDate(cert.notAfter)}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <th>Signature Algorithm</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${cert.signatureAlgorithm || 'N/A'}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.signatureAlgorithm || ''}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          ${cert.subjectAltNames && cert.subjectAltNames.length > 0 ? `
+          <tr>
+            <th>Subject Alt Names</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text">${cert.subjectAltNames.join(', ')}</span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.subjectAltNames.join(', ')}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
+          ${cert.fingerprints ? `
+          <tr>
+            <th>SHA256 Fingerprint</th>
+            <td>
+              <div class="cert-field-value">
+                <span class="cert-field-text"><code>${cert.fingerprints.sha256 || 'N/A'}</code></span>
+                <button class="cert-copy-btn" onclick="copyToClipboard('${cert.fingerprints.sha256 || ''}', this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+                  </svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          ` : ''}
+        </table>
+      `;
+    },
+
+    // Render certificate PEM tab
+    renderCertificatePEM: function (cert) {
+      if (!cert || !cert.pemEncoded) {
+        return '<div class="cert-error">No PEM data available</div>';
+      }
+
+      return `
+        <div class="cert-pem-container">
+          <div class="cert-pem-header">
+            <h3 class="cert-pem-title">PEM Encoded Certificate</h3>
+            <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(cert.pemEncoded)}', this)">
+              Copy PEM
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+              </svg>
+            </button>
+          </div>
+          <div class="cert-pem-content">
+            <pre class="cert-pem-text">${cert.pemEncoded}</pre>
+          </div>
+        </div>
+      `;
+    },
+
+    // Render certificate text tab
+    renderCertificateText: function (cert) {
+      if (!cert || !cert.textDetails) {
+        return '<div class="cert-error">No text details available</div>';
+      }
+
+      return `
+        <div class="cert-text-container">
+          <div class="cert-text-header">
+            <h3 class="cert-text-title">OpenSSL Text Output</h3>
+            <button class="cert-copy-btn" onclick="copyToClipboard('${this.escapeQuotes(cert.textDetails)}', this)">
+              Copy Text
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+              </svg>
+            </button>
+          </div>
+          <div class="cert-text-content">
+            <pre class="cert-text-output">${cert.textDetails}</pre>
+          </div>
+        </div>
+      `;
+    },
+
+    // Helper functions
+    formatSubject: function (subject) {
+      if (!subject) return 'N/A';
+      if (typeof subject === 'string') return subject;
+
+      const parts = [];
+      if (subject.commonName) parts.push(`CN=${subject.commonName}`);
+      if (subject.organization && subject.organization.length > 0) parts.push(`O=${subject.organization.join(', ')}`);
+      if (subject.organizationalUnit && subject.organizationalUnit.length > 0) parts.push(`OU=${subject.organizationalUnit.join(', ')}`);
+      if (subject.country && subject.country.length > 0) parts.push(`C=${subject.country.join(', ')}`);
+      if (subject.locality && subject.locality.length > 0) parts.push(`L=${subject.locality.join(', ')}`);
+      if (subject.province && subject.province.length > 0) parts.push(`ST=${subject.province.join(', ')}`);
+
+      return parts.length > 0 ? parts.join(', ') : 'N/A';
+    },
+
+    formatDate: function (dateStr) {
+      if (!dateStr) return 'N/A';
+      try {
+        const date = new Date(dateStr);
+        return date.toLocaleString();
+      } catch (e) {
+        return dateStr;
+      }
+    },
+
+    escapeQuotes: function (str) {
+      if (!str) return '';
+      return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+    }
+  };
+
+  // Copy to clipboard functionality
+  window.copyToClipboard = function (text, buttonElement) {
+    if (!text) {
+      console.warn('No text to copy');
+      return;
+    }
+
+    navigator.clipboard.writeText(text).then(() => {
+      // Visual feedback
+      if (buttonElement) {
+        const originalText = buttonElement.textContent;
+        const originalClass = buttonElement.className;
+
+        buttonElement.classList.add('copied');
+        buttonElement.textContent = 'Copied!';
+
+        setTimeout(() => {
+          buttonElement.classList.remove('copied');
+          buttonElement.className = originalClass;
+          buttonElement.textContent = originalText;
+        }, 1000);
+      }
+    }).catch(err => {
+      console.error('Failed to copy to clipboard:', err);
+
+      // Fallback for older browsers
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+
+        if (buttonElement) {
+          buttonElement.classList.add('copied');
+          setTimeout(() => buttonElement.classList.remove('copied'), 1000);
+        }
+      } catch (fallbackErr) {
+        console.error('Clipboard fallback failed:', fallbackErr);
+      }
+    });
+  };
+
+  // Global functions for certificate inspection
+  window.inspectCertificate = function (certificateData) {
+    try {
+      console.log('Opening certificate inspector with data:', certificateData);
+      const result = CertificateInspector.inspect(certificateData);
+      console.log('Certificate inspector result:', result);
+      return result;
+    } catch (error) {
+      console.error('Error in CertificateInspector.inspect:', error, error.stack);
+      alert('Failed to open certificate inspector: ' + error.message);
+      return false;
+    }
+  };
+
+  window.closeAllModals = function () {
+    return ModalManager.closeAllModals();
+  };
+
+  // Make ModalManager and CertificateInspector available globally for debugging
+  window.ModalManager = ModalManager;
+  window.CertificateInspector = CertificateInspector;
 
 })(document, window);

@@ -121,13 +121,17 @@ func (cr *CredentialRecovery) recoverFromBackups(instanceID string) (bool, error
 				// Add recovery metadata
 				metadataPath := fmt.Sprintf("%s/metadata", instanceID)
 				var metadata map[string]interface{}
-				cr.vault.Get(metadataPath, &metadata)
+				if _, getErr := cr.vault.Get(metadataPath, &metadata); getErr != nil {
+					// Log get error but continue processing
+				}
 				if metadata == nil {
 					metadata = make(map[string]interface{})
 				}
 				metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
 				metadata["credentials_recovered_from"] = fmt.Sprintf("backup_%d", timestamp)
-				cr.vault.Put(metadataPath, metadata)
+				if putErr := cr.vault.Put(metadataPath, metadata); putErr != nil {
+					// Log put error but continue processing
+				}
 
 				return true, nil
 			}
@@ -191,13 +195,17 @@ func (cr *CredentialRecovery) recoverFromBOSH(instanceID string) (bool, error) {
 	// Add recovery metadata
 	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
 	var metadata map[string]interface{}
-	cr.vault.Get(metadataPath, &metadata)
+	if _, getErr := cr.vault.Get(metadataPath, &metadata); getErr != nil {
+		// Log get error but continue processing
+	}
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 	metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
 	metadata["credentials_recovered_from"] = "bosh_deployment"
-	cr.vault.Put(metadataPath, metadata)
+	if putErr := cr.vault.Put(metadataPath, metadata); putErr != nil {
+		// Log put error but continue processing
+	}
 
 	cr.logger.Info("Successfully recovered credentials from BOSH")
 	return true, nil

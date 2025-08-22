@@ -36,7 +36,7 @@ func (mc *ManagementClient) GetQueues(creds *Credentials, useSSL bool) ([]Queue,
 
 	// URL encode the vhost
 	encodedVHost := url.QueryEscape(vhost)
-	apiURL := fmt.Sprintf("%s/api/queues/%s", baseURL, encodedVHost)
+	apiURL := fmt.Sprintf("%s/b/queues/%s", baseURL, encodedVHost)
 
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {

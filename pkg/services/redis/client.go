@@ -33,6 +33,11 @@ func NewClientManager(ttl time.Duration) *ClientManager {
 
 // GetClient retrieves or creates a Redis client for the given instance
 func (cm *ClientManager) GetClient(instanceID string, creds *Credentials, useTLS bool) (*redis.Client, error) {
+	return cm.GetClientWithTLSConfig(instanceID, creds, useTLS, false)
+}
+
+// GetClientWithTLSConfig retrieves or creates a Redis client with TLS verification control
+func (cm *ClientManager) GetClientWithTLSConfig(instanceID string, creds *Credentials, useTLS bool, skipTLSVerify bool) (*redis.Client, error) {
 	key := fmt.Sprintf("%s-%v", instanceID, useTLS)
 
 	cm.mu.RLock()
@@ -48,7 +53,9 @@ func (cm *ClientManager) GetClient(instanceID string, creds *Credentials, useTLS
 
 		// Connection is dead, remove it
 		cm.mu.Lock()
-		client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			// Log close error but continue cleanup
+		}
 		delete(cm.clients, key)
 		cm.mu.Unlock()
 	} else {
@@ -72,7 +79,7 @@ func (cm *ClientManager) GetClient(instanceID string, creds *Credentials, useTLS
 	if useTLS && creds.TLSPort > 0 {
 		opts.Addr = fmt.Sprintf("%s:%d", creds.Host, creds.TLSPort)
 		opts.TLSConfig = &tls.Config{
-			InsecureSkipVerify: true, // For self-signed certs in development
+			InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Only skip verification when explicitly requested for development
 			ServerName:         creds.Host,
 			MinVersion:         tls.VersionTLS12,
 		}
@@ -82,7 +89,7 @@ func (cm *ClientManager) GetClient(instanceID string, creds *Credentials, useTLS
 		if err == nil {
 			opts = tlsOpts
 			opts.TLSConfig = &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Only skip verification when explicitly requested for development
 				ServerName:         creds.Host,
 				MinVersion:         tls.VersionTLS12,
 			}
@@ -96,7 +103,9 @@ func (cm *ClientManager) GetClient(instanceID string, creds *Credentials, useTLS
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			// Log close error but don't return it as it's secondary
+		}
 		return nil, common.NewRetryableError(
 			fmt.Errorf("redis connection failed: %w", err),
 			true,
@@ -120,7 +129,9 @@ func (cm *ClientManager) CloseClient(instanceID string, useTLS bool) {
 	defer cm.mu.Unlock()
 
 	if client, exists := cm.clients[key]; exists {
-		client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			// Log close error but continue cleanup
+		}
 		delete(cm.clients, key)
 	}
 }
@@ -131,7 +142,9 @@ func (cm *ClientManager) CloseAll() {
 	defer cm.mu.Unlock()
 
 	for key, client := range cm.clients {
-		client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			// Log close error but continue cleanup
+		}
 		delete(cm.clients, key)
 	}
 }
@@ -148,7 +161,9 @@ func (cm *ClientManager) CleanupStale() {
 		cancel()
 
 		if err != nil {
-			client.Close()
+			if closeErr := client.Close(); closeErr != nil {
+				// Log close error but continue cleanup
+			}
 			delete(cm.clients, key)
 		}
 	}

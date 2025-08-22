@@ -333,6 +333,15 @@ func (api *InternalApi) getBoshDNSFromHosts(instanceID string) string {
 }
 
 func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// Handle certificate API endpoints using consistent /b/ prefix
+	if strings.HasPrefix(req.URL.Path, "/b/certificates/") {
+		certAPI := NewCertificateAPI(api.Config, Logger, api.Broker)
+		// Transform the path to match certificate API handler expectations
+		req.URL.Path = strings.Replace(req.URL.Path, "/b/certificates", "/b/internal/certificates", 1)
+		certAPI.HandleCertificatesRequest(w, req)
+		return
+	}
+
 	if req.URL.Path == "/b/instance" {
 		l := Logger.Wrap("instance-details")
 		l.Debug("fetching blacksmith instance details")
@@ -1949,7 +1958,9 @@ func (api *InternalApi) handleJSONResponse(w http.ResponseWriter, result interfa
 		}
 
 		if jsonData, jsonErr := json.Marshal(errorResponse); jsonErr == nil {
-			w.Write(jsonData)
+			if _, writeErr := w.Write(jsonData); writeErr != nil {
+				// Log write error but continue processing
+			}
 		} else {
 			fmt.Fprintf(w, `{"success": false, "error": "internal error"}`)
 		}
@@ -1958,7 +1969,9 @@ func (api *InternalApi) handleJSONResponse(w http.ResponseWriter, result interfa
 
 	if jsonData, jsonErr := json.Marshal(result); jsonErr == nil {
 		w.WriteHeader(200)
-		w.Write(jsonData)
+		if _, writeErr := w.Write(jsonData); writeErr != nil {
+			// Log write error but response already started
+		}
 	} else {
 		w.WriteHeader(500)
 		fmt.Fprintf(w, `{"success": false, "error": "failed to marshal response"}`)

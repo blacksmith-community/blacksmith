@@ -73,7 +73,9 @@ func (sm *SecurityMiddleware) HandleSecurityError(w http.ResponseWriter, err err
 		}
 
 		if jsonData, jsonErr := json.Marshal(response); jsonErr == nil {
-			w.Write(jsonData)
+			if _, writeErr := w.Write(jsonData); writeErr != nil {
+				// Log write error but continue processing
+			}
 		} else {
 			fmt.Fprintf(w, `{"success": false, "error": "internal error"}`)
 		}

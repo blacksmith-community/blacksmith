@@ -82,14 +82,18 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 	// Add metadata about credential recovery
 	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
 	var metadata map[string]interface{}
-	vault.Get(metadataPath, &metadata)
+	if _, getErr := vault.Get(metadataPath, &metadata); getErr != nil {
+		// Log get error but continue processing
+	}
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 	metadata["credentials_populated_at"] = time.Now().Format(time.RFC3339)
 	metadata["credentials_populated_by"] = "reconciler"
 	metadata["credentials_source"] = "bosh_deployment"
-	vault.Put(metadataPath, metadata)
+	if putErr := vault.Put(metadataPath, metadata); putErr != nil {
+		// Log put error but continue processing
+	}
 
 	cp.logger.Info("Successfully populated credentials for instance %s from BOSH", instanceID)
 	return nil

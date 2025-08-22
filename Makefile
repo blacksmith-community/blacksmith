@@ -83,13 +83,13 @@ report: coverage-html ## Alias for coverage-html (backwards compatibility)
 
 .PHONY: fmt
 fmt: ## Format all Go source files
-	@echo "$(GREEN)Formatting code...$(RESET)"
+	@echo "$(GREEN)Formatting code (go fmt ./...)...$(RESET)"
 	@go fmt $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Code formatted$(RESET)"
 
 .PHONY: vet
 vet: ## Run go vet on all source files
-	@echo "$(GREEN)Running go vet...$(RESET)"
+	@echo "$(GREEN)Vetting Code (go vet ./...)...$(RESET)"
 	@go vet $(shell go list ./... | grep -v vendor)
 	@echo "$(GREEN)✓ Vet analysis complete$(RESET)"
 
@@ -108,7 +108,7 @@ govulncheck: ## Run vulnerability check on dependencies
 
 .PHONY: gosec
 gosec: ## Run security scanner on source code
-	@echo "$(GREEN)Running security scan...$(RESET)"
+	@echo "$(GREEN)Running security scan (gosec) ...$(RESET)"
 	@command -v gosec >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing gosec...$(RESET)"; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest; \

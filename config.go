@@ -100,6 +100,7 @@ type VaultConfig struct {
 	Token    string `yaml:"token"`
 	Insecure bool   `yaml:"skip_ssl_validation"`
 	CredPath string `yaml:"credentials"`
+	CACert   string `yaml:"cacert"`
 }
 
 type ShieldConfig struct {
