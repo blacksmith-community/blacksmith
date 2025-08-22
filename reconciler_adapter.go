@@ -217,6 +217,30 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 	return services
 }
 
+// GetBindingCredentials reconstructs binding credentials using the broker
+func (b *brokerWrapper) GetBindingCredentials(instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
+	credentials, err := b.broker.GetBindingCredentials(instanceID, bindingID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert broker.BindingCredentials to reconciler.BindingCredentials
+	return &reconciler.BindingCredentials{
+		Host:            credentials.Host,
+		Port:            credentials.Port,
+		Username:        credentials.Username,
+		Password:        credentials.Password,
+		URI:             credentials.URI,
+		APIURL:          credentials.APIURL,
+		Vhost:           credentials.Vhost,
+		Database:        credentials.Database,
+		Scheme:          credentials.Scheme,
+		CredentialType:  credentials.CredentialType,
+		ReconstructedAt: credentials.ReconstructedAt,
+		Raw:             credentials.Raw,
+	}, nil
+}
+
 // vaultWrapper wraps the Vault for use by the reconciler
 type vaultWrapper struct {
 	vault *Vault

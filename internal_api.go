@@ -13,20 +13,28 @@ import (
 	"time"
 
 	"blacksmith/bosh"
+	"blacksmith/bosh/ssh"
 	"blacksmith/pkg/services"
+	"blacksmith/pkg/services/cf"
 	"blacksmith/pkg/services/common"
 	"blacksmith/pkg/services/rabbitmq"
 	"blacksmith/pkg/services/redis"
+	rabbitmqssh "blacksmith/services/rabbitmq"
+	"blacksmith/websocket"
 	"gopkg.in/yaml.v2"
 )
 
 type InternalApi struct {
-	Env       string
-	Vault     *Vault
-	Broker    *Broker
-	Config    Config
-	VMMonitor *VMMonitor
-	Services  *services.Manager
+	Env                string
+	Vault              *Vault
+	Broker             *Broker
+	Config             Config
+	VMMonitor          *VMMonitor
+	Services           *services.Manager
+	SSHService         ssh.SSHService
+	RabbitMQSSHService *rabbitmqssh.SSHService
+	WebSocketHandler   *websocket.SSHHandler
+	SecurityMiddleware *services.SecurityMiddleware
 }
 
 // parseResultOutputToEvents converts BOSH task result output (JSON lines) into TaskEvent array for the frontend
@@ -661,6 +669,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// CF Registration Management Endpoints
+	if strings.HasPrefix(req.URL.Path, "/b/cf/") {
+		api.handleCFRegistrationEndpoints(w, req)
+		return
+	}
+
 	// Redis testing endpoints
 	pattern := regexp.MustCompile(`^/b/([^/]+)/redis/(.+)$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
@@ -995,6 +1009,372 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			fmt.Fprintf(w, `{"error": "unknown RabbitMQ operation: %s"}`, operation)
 		}
 
+		return
+	}
+
+	// SSH command execution endpoints
+	pattern = regexp.MustCompile(`^/b/([^/]+)/ssh/execute$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+
+		l := Logger.Wrap("ssh-execute")
+		l.Debug("SSH execute command for instance %s", instanceID)
+
+		// Only allow POST method
+		if req.Method != "POST" {
+			w.WriteHeader(405)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+			return
+		}
+
+		// Parse request body
+		var sshReq ssh.SSHRequest
+		if err := json.NewDecoder(req.Body).Decode(&sshReq); err != nil {
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+			return
+		}
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			return
+		}
+
+		// Construct deployment name from plan and instance
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+
+		// Set deployment information from instance data
+		sshReq.Deployment = deploymentName
+		if sshReq.Instance == "" {
+			// Default to the plan name if instance name not specified
+			sshReq.Instance = plan.Name
+		}
+		if sshReq.Index == 0 && sshReq.Index != 0 {
+			// Default to index 0 if not specified
+			sshReq.Index = 0
+		}
+
+		// Validate required fields
+		if sshReq.Command == "" {
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "command is required"}`)
+			return
+		}
+
+		// Set default timeout if not specified (30 seconds)
+		if sshReq.Timeout == 0 {
+			sshReq.Timeout = 30
+		}
+
+		l.Debug("Executing SSH command '%s' on %s/%s/%d", sshReq.Command, sshReq.Deployment, sshReq.Instance, sshReq.Index)
+
+		// Execute the SSH command
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(sshReq.Timeout+5)*time.Second)
+		defer cancel()
+
+		// Create SSH response channel
+		responseChan := make(chan *ssh.SSHResponse, 1)
+		errorChan := make(chan error, 1)
+
+		// Execute SSH command in goroutine to handle timeout
+		go func() {
+			if api.SSHService != nil {
+				response, err := api.SSHService.ExecuteCommand(&sshReq)
+				if err != nil {
+					errorChan <- err
+					return
+				}
+				responseChan <- response
+			} else {
+				errorChan <- fmt.Errorf("SSH service not available")
+			}
+		}()
+
+		// Wait for result or timeout
+		select {
+		case response := <-responseChan:
+			l.Debug("SSH command completed successfully")
+			api.handleJSONResponse(w, response, nil)
+
+		case err := <-errorChan:
+			l.Error("SSH command failed: %v", err)
+			api.handleJSONResponse(w, nil, err)
+
+		case <-ctx.Done():
+			l.Error("SSH command timed out")
+			timeoutResponse := &ssh.SSHResponse{
+				Success:   false,
+				ExitCode:  124, // Standard timeout exit code
+				Error:     "Command execution timed out",
+				Timestamp: time.Now(),
+			}
+			api.handleJSONResponse(w, timeoutResponse, nil)
+		}
+
+		return
+	}
+
+	// RabbitMQ SSH endpoints
+	pattern = regexp.MustCompile(`^/b/([^/]+)/rabbitmq/ssh/(.+)$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+		operation := m[2]
+
+		l := Logger.Wrap("rabbitmq-ssh")
+		l.Debug("RabbitMQ SSH operation %s for instance %s", operation, instanceID)
+
+		// Only allow POST method for SSH operations
+		if req.Method != "POST" {
+			w.WriteHeader(405)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+			return
+		}
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			return
+		}
+
+		// Check if this is a RabbitMQ instance
+		var creds map[string]interface{}
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		if err != nil || !exists {
+			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
+			if err != nil || !exists {
+				l.Error("Unable to find credentials for instance %s", instanceID)
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "credentials not found"}`)
+				return
+			}
+		}
+
+		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
+			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			return
+		}
+
+		// Construct deployment name from plan and instance
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		instanceName := plan.Name
+		instanceIndex := 0
+
+		// Handle different RabbitMQ SSH operations
+
+		switch operation {
+		case "list_queues":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.ListQueues(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "list_connections":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.ListConnections(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "list_channels":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.ListChannels(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "list_users":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.ListUsers(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "cluster_status":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.ClusterStatus(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "node_health":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.NodeHealth(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "status":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.Status(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "environment":
+			if api.RabbitMQSSHService != nil {
+				result, err := api.RabbitMQSSHService.Environment(deploymentName, instanceName, instanceIndex)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		case "custom":
+			// Handle custom commands
+			var customReq struct {
+				Command string   `json:"command"`
+				Args    []string `json:"args"`
+				Timeout int      `json:"timeout"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&customReq); err != nil {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				return
+			}
+
+			if customReq.Command == "" {
+				w.WriteHeader(400)
+				fmt.Fprintf(w, `{"error": "command is required"}`)
+				return
+			}
+
+			if api.RabbitMQSSHService != nil {
+				cmd := rabbitmqssh.RabbitMQCommand{
+					Name:        customReq.Command,
+					Args:        customReq.Args,
+					Description: "Custom RabbitMQ command",
+					Timeout:     customReq.Timeout,
+				}
+				result, err := api.RabbitMQSSHService.ExecuteCommand(deploymentName, instanceName, instanceIndex, cmd)
+				api.handleJSONResponse(w, result, err)
+			} else {
+				api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ SSH service not available"))
+			}
+
+		default:
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "unknown RabbitMQ SSH operation: %s"}`, operation)
+		}
+
+		return
+	}
+
+	// WebSocket SSH endpoints
+	pattern = regexp.MustCompile(`^/b/([^/]+)/ssh/stream$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		instanceID := m[1]
+
+		l := Logger.Wrap("websocket-ssh")
+		l.Debug("WebSocket SSH connection request for instance %s", instanceID)
+
+		// Only allow GET method for WebSocket upgrade
+		if req.Method != "GET" {
+			w.WriteHeader(405)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
+			return
+		}
+
+		// Check for WebSocket upgrade headers
+		if req.Header.Get("Upgrade") != "websocket" {
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "WebSocket upgrade required"}`)
+			return
+		}
+
+		// Get instance data to construct deployment name
+		inst, exists, err := api.Vault.FindInstance(instanceID)
+		if err != nil || !exists {
+			l.Error("unable to find service instance %s in vault index", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			return
+		}
+
+		// Get the plan which contains service information
+		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		if err != nil {
+			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			return
+		}
+
+		// Construct deployment name from plan and instance
+		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		instanceName := plan.Name
+		instanceIndex := 0
+
+		l.Info("Establishing WebSocket SSH connection to %s/%s/%d", deploymentName, instanceName, instanceIndex)
+
+		// Handle WebSocket SSH connection
+		if api.WebSocketHandler != nil {
+			api.WebSocketHandler.HandleWebSocket(w, req, deploymentName, instanceName, instanceIndex)
+		} else {
+			l.Error("WebSocket handler not available")
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "WebSocket SSH service not available"}`)
+		}
+
+		return
+	}
+
+	// WebSocket SSH status endpoint
+	pattern = regexp.MustCompile(`^/b/ssh/status$`)
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
+		l := Logger.Wrap("websocket-ssh-status")
+		l.Debug("WebSocket SSH status request")
+
+		if req.Method != "GET" {
+			w.WriteHeader(405)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+			return
+		}
+
+		status := map[string]interface{}{
+			"websocket_enabled": api.WebSocketHandler != nil,
+			"active_sessions":   0,
+			"timestamp":         time.Now().Format(time.RFC3339),
+		}
+
+		if api.WebSocketHandler != nil {
+			status["active_sessions"] = api.WebSocketHandler.GetActiveSessions()
+		}
+
+		api.handleJSONResponse(w, status, nil)
 		return
 	}
 
@@ -1944,6 +2324,764 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.WriteHeader(404)
+}
+
+// handleCFRegistrationEndpoints handles all CF registration related endpoints
+func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req *http.Request) {
+	l := Logger.Wrap("cf-registration-api")
+
+	// Remove the /b/cf prefix to get the actual path
+	path := strings.TrimPrefix(req.URL.Path, "/b/cf")
+	l.Debug("handling CF registration endpoint: %s %s", req.Method, path)
+
+	switch {
+	// GET /b/cf/registrations - List all registrations
+	case path == "/registrations" && req.Method == "GET":
+		api.listCFRegistrations(w, req)
+
+	// POST /b/cf/registrations - Create new registration
+	case path == "/registrations" && req.Method == "POST":
+		api.createCFRegistration(w, req)
+
+	// GET /b/cf/registrations/{id} - Get specific registration
+	case strings.HasPrefix(path, "/registrations/") && req.Method == "GET":
+		parts := strings.Split(strings.TrimPrefix(path, "/registrations/"), "/")
+		if len(parts) == 1 && parts[0] != "" {
+			api.getCFRegistration(w, req, parts[0])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "registration not found"}`)
+		}
+
+	// PUT /b/cf/registrations/{id} - Update registration
+	case strings.HasPrefix(path, "/registrations/") && req.Method == "PUT":
+		parts := strings.Split(strings.TrimPrefix(path, "/registrations/"), "/")
+		if len(parts) == 1 && parts[0] != "" {
+			api.updateCFRegistration(w, req, parts[0])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "registration not found"}`)
+		}
+
+	// DELETE /b/cf/registrations/{id} - Delete registration
+	case strings.HasPrefix(path, "/registrations/") && req.Method == "DELETE":
+		parts := strings.Split(strings.TrimPrefix(path, "/registrations/"), "/")
+		if len(parts) == 1 && parts[0] != "" {
+			api.deleteCFRegistration(w, req, parts[0])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "registration not found"}`)
+		}
+
+	// POST /b/cf/test-connection - Test CF connection
+	case path == "/test-connection" && req.Method == "POST":
+		api.testCFConnection(w, req)
+
+	// GET /b/cf/registrations/{id}/stream - Progress streaming endpoint
+	case regexp.MustCompile(`^/registrations/([^/]+)/stream$`).MatchString(path) && req.Method == "GET":
+		parts := regexp.MustCompile(`^/registrations/([^/]+)/stream$`).FindStringSubmatch(path)
+		if len(parts) == 2 {
+			api.streamCFRegistrationProgress(w, req, parts[1])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid stream endpoint"}`)
+		}
+
+	// POST /b/cf/registrations/{id}/sync - Sync registration
+	case regexp.MustCompile(`^/registrations/([^/]+)/sync$`).MatchString(path) && req.Method == "POST":
+		parts := regexp.MustCompile(`^/registrations/([^/]+)/sync$`).FindStringSubmatch(path)
+		if len(parts) == 2 {
+			api.syncCFRegistration(w, req, parts[1])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid sync endpoint"}`)
+		}
+
+	// POST /b/cf/registrations/{id}/register - Start registration process
+	case regexp.MustCompile(`^/registrations/([^/]+)/register$`).MatchString(path) && req.Method == "POST":
+		parts := regexp.MustCompile(`^/registrations/([^/]+)/register$`).FindStringSubmatch(path)
+		if len(parts) == 2 {
+			api.startCFRegistrationProcess(w, req, parts[1])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid registration endpoint"}`)
+		}
+
+	default:
+		l.Debug("unknown CF registration endpoint: %s %s", req.Method, path)
+		w.WriteHeader(404)
+		fmt.Fprintf(w, `{"error": "endpoint not found"}`)
+	}
+}
+
+// listCFRegistrations handles GET /b/cf/registrations
+func (api *InternalApi) listCFRegistrations(w http.ResponseWriter, req *http.Request) {
+	l := Logger.Wrap("cf-list-registrations")
+	l.Debug("listing CF registrations")
+
+	registrations, err := api.Vault.ListCFRegistrations()
+	if err != nil {
+		l.Error("failed to list CF registrations: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to list registrations: %w", err))
+		return
+	}
+
+	l.Debug("found %d CF registrations", len(registrations))
+	api.handleJSONResponse(w, map[string]interface{}{
+		"registrations": registrations,
+		"count":         len(registrations),
+	}, nil)
+}
+
+// createCFRegistration handles POST /b/cf/registrations
+func (api *InternalApi) createCFRegistration(w http.ResponseWriter, req *http.Request) {
+	l := Logger.Wrap("cf-create-registration")
+	l.Debug("creating CF registration")
+
+	// Apply rate limiting and security validation
+	if err := api.SecurityMiddleware.ValidateRequest("cf-registrations", "create", nil); err != nil {
+		l.Error("rate limit exceeded for CF registration creation: %s", err)
+		if api.SecurityMiddleware.HandleSecurityError(w, err) {
+			return // Error was handled by middleware
+		}
+		api.handleJSONResponse(w, nil, fmt.Errorf("security validation failed: %w", err))
+		return
+	}
+
+	var regReq cf.RegistrationRequest
+	if err := json.NewDecoder(req.Body).Decode(&regReq); err != nil {
+		l.Error("invalid registration request: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	// Sanitize input data
+	cf.SanitizeRegistrationRequest(&regReq)
+
+	// Validate input data
+	if err := cf.ValidateRegistrationRequest(&regReq); err != nil {
+		l.Error("registration request validation failed: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("validation failed: %w", err))
+		return
+	}
+
+	// Generate registration ID
+	registrationID := generateID()
+
+	// Create CF registration object
+	registration := map[string]interface{}{
+		"id":          registrationID,
+		"name":        regReq.Name,
+		"api_url":     regReq.APIURL,
+		"username":    regReq.Username,
+		"broker_name": regReq.BrokerName,
+		"status":      "created",
+		"created_at":  time.Now().Format(time.RFC3339),
+		"updated_at":  time.Now().Format(time.RFC3339),
+	}
+
+	// Save to Vault
+	if err := api.Vault.SaveCFRegistration(registration); err != nil {
+		l.Error("failed to save CF registration: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to save registration: %w", err))
+		return
+	}
+
+	l.Info("created CF registration %s (%s)", registrationID, regReq.Name)
+
+	// Audit log the registration creation
+	api.SecurityMiddleware.LogOperation("system", registrationID, "cf", "create_registration",
+		map[string]interface{}{
+			"name":          regReq.Name,
+			"api_url":       regReq.APIURL,
+			"username":      regReq.Username,
+			"auto_register": regReq.AutoRegister,
+		}, registration, nil)
+
+	// Start async registration process if requested
+	if regReq.AutoRegister {
+		go api.performAsyncCFRegistration(registrationID, &regReq)
+	}
+
+	api.handleJSONResponse(w, registration, nil)
+}
+
+// getCFRegistration handles GET /b/cf/registrations/{id}
+func (api *InternalApi) getCFRegistration(w http.ResponseWriter, req *http.Request, registrationID string) {
+	l := Logger.Wrap("cf-get-registration")
+	l.Debug("getting CF registration %s", registrationID)
+
+	var registration map[string]interface{}
+	exists, err := api.Vault.GetCFRegistration(registrationID, &registration)
+	if err != nil {
+		l.Error("failed to get CF registration %s: %s", registrationID, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get registration: %w", err))
+		return
+	}
+
+	if !exists {
+		l.Debug("CF registration %s not found", registrationID)
+		w.WriteHeader(404)
+		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		return
+	}
+
+	l.Debug("found CF registration %s", registrationID)
+	api.handleJSONResponse(w, registration, nil)
+}
+
+// updateCFRegistration handles PUT /b/cf/registrations/{id}
+func (api *InternalApi) updateCFRegistration(w http.ResponseWriter, req *http.Request, registrationID string) {
+	l := Logger.Wrap("cf-update-registration")
+	l.Debug("updating CF registration %s", registrationID)
+
+	// Get existing registration
+	var existingReg map[string]interface{}
+	exists, err := api.Vault.GetCFRegistration(registrationID, &existingReg)
+	if err != nil {
+		l.Error("failed to get existing registration %s: %s", registrationID, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get existing registration: %w", err))
+		return
+	}
+
+	if !exists {
+		l.Debug("CF registration %s not found for update", registrationID)
+		w.WriteHeader(404)
+		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		return
+	}
+
+	// Parse update request
+	var updateReq map[string]interface{}
+	if err := json.NewDecoder(req.Body).Decode(&updateReq); err != nil {
+		l.Error("invalid update request: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	// Update allowed fields with validation
+	allowedFields := []string{"name", "api_url", "username", "broker_name", "metadata"}
+	for _, field := range allowedFields {
+		if value, exists := updateReq[field]; exists {
+			// Validate each field being updated
+			if err := api.validateRegistrationField(field, value); err != nil {
+				l.Error("validation failed for field %s: %s", field, err)
+				api.handleJSONResponse(w, nil, fmt.Errorf("validation failed for %s: %w", field, err))
+				return
+			}
+			existingReg[field] = value
+		}
+	}
+
+	// Update timestamp
+	existingReg["updated_at"] = time.Now().Format(time.RFC3339)
+
+	// Save updated registration
+	if err := api.Vault.SaveCFRegistration(existingReg); err != nil {
+		l.Error("failed to update CF registration %s: %s", registrationID, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to update registration: %w", err))
+		return
+	}
+
+	l.Info("updated CF registration %s", registrationID)
+
+	// Audit log the registration update
+	api.SecurityMiddleware.LogOperation("system", registrationID, "cf", "update_registration",
+		updateReq, existingReg, nil)
+
+	api.handleJSONResponse(w, existingReg, nil)
+}
+
+// deleteCFRegistration handles DELETE /b/cf/registrations/{id}
+func (api *InternalApi) deleteCFRegistration(w http.ResponseWriter, req *http.Request, registrationID string) {
+	l := Logger.Wrap("cf-delete-registration")
+	l.Debug("deleting CF registration %s", registrationID)
+
+	// Check if registration exists
+	var registration map[string]interface{}
+	exists, err := api.Vault.GetCFRegistration(registrationID, &registration)
+	if err != nil {
+		l.Error("failed to check CF registration %s: %s", registrationID, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to check registration: %w", err))
+		return
+	}
+
+	if !exists {
+		l.Debug("CF registration %s not found for deletion", registrationID)
+		w.WriteHeader(404)
+		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		return
+	}
+
+	// Delete from Vault
+	if err := api.Vault.DeleteCFRegistration(registrationID); err != nil {
+		l.Error("failed to delete CF registration %s: %s", registrationID, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to delete registration: %w", err))
+		return
+	}
+
+	l.Info("deleted CF registration %s", registrationID)
+
+	// Audit log the registration deletion
+	api.SecurityMiddleware.LogOperation("system", registrationID, "cf", "delete_registration",
+		nil, map[string]interface{}{"id": registrationID}, nil)
+
+	api.handleJSONResponse(w, map[string]interface{}{
+		"message": "registration deleted successfully",
+		"id":      registrationID,
+	}, nil)
+}
+
+// validateRegistrationField validates individual registration fields during updates
+func (api *InternalApi) validateRegistrationField(fieldName string, value interface{}) error {
+	strValue, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("field value must be a string")
+	}
+
+	switch fieldName {
+	case "name":
+		return cf.ValidateName(strValue)
+	case "api_url":
+		return cf.ValidateURL(strValue)
+	case "username":
+		return cf.ValidateUsername(strValue)
+	case "broker_name":
+		if strValue != "" {
+			return cf.ValidateBrokerName(strValue)
+		}
+		return nil
+	case "metadata":
+		// Metadata validation handled separately
+		return nil
+	default:
+		return fmt.Errorf("field %s is not allowed for updates", fieldName)
+	}
+}
+
+// validateTestConnectionRequest validates CF connection test requests
+func (api *InternalApi) validateTestConnectionRequest(testReq *cf.RegistrationTest) error {
+	if testReq == nil {
+		return fmt.Errorf("test request cannot be nil")
+	}
+
+	// Validate required fields
+	if strings.TrimSpace(testReq.APIURL) == "" {
+		return fmt.Errorf("API URL is required")
+	}
+
+	if strings.TrimSpace(testReq.Username) == "" {
+		return fmt.Errorf("username is required")
+	}
+
+	if strings.TrimSpace(testReq.Password) == "" {
+		return fmt.Errorf("password is required")
+	}
+
+	// Validate URL format
+	if err := cf.ValidateURL(testReq.APIURL); err != nil {
+		return fmt.Errorf("invalid API URL: %w", err)
+	}
+
+	// Validate username format
+	if err := cf.ValidateUsername(testReq.Username); err != nil {
+		return fmt.Errorf("invalid username: %w", err)
+	}
+
+	// Validate password
+	if err := cf.ValidatePassword(testReq.Password); err != nil {
+		return fmt.Errorf("invalid password: %w", err)
+	}
+
+	return nil
+}
+
+// testCFConnection handles POST /b/cf/test-connection
+func (api *InternalApi) testCFConnection(w http.ResponseWriter, req *http.Request) {
+	l := Logger.Wrap("cf-test-connection")
+	l.Debug("testing CF connection")
+
+	// Apply rate limiting for connection tests (more restrictive)
+	if err := api.SecurityMiddleware.ValidateRequest("cf-connections", "test", nil); err != nil {
+		l.Error("rate limit exceeded for CF connection test: %s", err)
+		if api.SecurityMiddleware.HandleSecurityError(w, err) {
+			return // Error was handled by middleware
+		}
+		api.handleJSONResponse(w, nil, fmt.Errorf("security validation failed: %w", err))
+		return
+	}
+
+	var testReq cf.RegistrationTest
+	if err := json.NewDecoder(req.Body).Decode(&testReq); err != nil {
+		l.Error("invalid test request: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	// Validate test connection request
+	if err := api.validateTestConnectionRequest(&testReq); err != nil {
+		l.Error("test connection request validation failed: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("validation failed: %w", err))
+		return
+	}
+
+	// Use CF handler to test connection
+	result, err := api.Services.CF.TestConnection(&testReq)
+	if err != nil {
+		l.Error("CF connection test failed: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("connection test failed: %w", err))
+		return
+	}
+
+	l.Debug("CF connection test completed: success=%t", result.Success)
+	api.handleJSONResponse(w, result, nil)
+}
+
+// streamCFRegistrationProgress handles GET /b/cf/registrations/{id}/stream
+func (api *InternalApi) streamCFRegistrationProgress(w http.ResponseWriter, req *http.Request, registrationID string) {
+	l := Logger.Wrap("cf-stream-progress")
+	l.Debug("streaming progress for CF registration %s", registrationID)
+
+	// Set headers for Server-Sent Events
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Get flusher for streaming
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		l.Error("streaming not supported")
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Check if registration exists
+	var registration map[string]interface{}
+	exists, err := api.Vault.GetCFRegistration(registrationID, &registration)
+	if err != nil || !exists {
+		l.Debug("CF registration %s not found", registrationID)
+		http.Error(w, "registration not found", http.StatusNotFound)
+		return
+	}
+
+	// Get current registration status
+	status := getStringFromMap(registration, "status")
+	lastError := getStringFromMap(registration, "last_error")
+
+	// Send initial status
+	initialEvent := map[string]interface{}{
+		"step":      "status",
+		"status":    status,
+		"message":   fmt.Sprintf("Current status: %s", status),
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	if lastError != "" {
+		initialEvent["error"] = lastError
+	}
+
+	eventData, _ := json.Marshal(initialEvent)
+	fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+	flusher.Flush()
+
+	// If registration is completed or failed, send final event and close
+	if status == "active" || status == "failed" {
+		finalEvent := map[string]interface{}{
+			"step":      "completed",
+			"status":    status,
+			"message":   fmt.Sprintf("Registration %s", status),
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+		if status == "failed" && lastError != "" {
+			finalEvent["error"] = lastError
+		}
+
+		eventData, _ := json.Marshal(finalEvent)
+		fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+		flusher.Flush()
+
+		l.Debug("completed streaming for CF registration %s (final status: %s)", registrationID, status)
+		return
+	}
+
+	// For in-progress registrations, stream updates by polling
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	timeout := time.After(30 * time.Second) // 30 second timeout
+
+	for {
+		select {
+		case <-ticker.C:
+			// Check for updated status
+			exists, err := api.Vault.GetCFRegistration(registrationID, &registration)
+			if err != nil || !exists {
+				l.Debug("registration %s no longer exists, ending stream", registrationID)
+				return
+			}
+
+			currentStatus := getStringFromMap(registration, "status")
+			if currentStatus != status {
+				// Status changed, send update
+				status = currentStatus
+				statusEvent := map[string]interface{}{
+					"step":      "status_update",
+					"status":    status,
+					"message":   fmt.Sprintf("Status changed to: %s", status),
+					"timestamp": time.Now().Format(time.RFC3339),
+				}
+
+				eventData, _ := json.Marshal(statusEvent)
+				fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+				flusher.Flush()
+
+				// If completed, send final event and close
+				if status == "active" || status == "failed" {
+					finalEvent := map[string]interface{}{
+						"step":      "completed",
+						"status":    status,
+						"message":   fmt.Sprintf("Registration %s", status),
+						"timestamp": time.Now().Format(time.RFC3339),
+					}
+					if status == "failed" {
+						finalEvent["error"] = getStringFromMap(registration, "last_error")
+					}
+
+					eventData, _ := json.Marshal(finalEvent)
+					fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+					flusher.Flush()
+
+					l.Debug("completed streaming for CF registration %s (final status: %s)", registrationID, status)
+					return
+				}
+			}
+
+		case <-timeout:
+			// Timeout reached
+			timeoutEvent := map[string]interface{}{
+				"step":      "timeout",
+				"status":    "timeout",
+				"message":   "Stream timeout reached",
+				"timestamp": time.Now().Format(time.RFC3339),
+			}
+
+			eventData, _ := json.Marshal(timeoutEvent)
+			fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+			flusher.Flush()
+
+			l.Debug("stream timeout for CF registration %s", registrationID)
+			return
+
+		case <-req.Context().Done():
+			// Client disconnected
+			l.Debug("client disconnected from CF registration %s stream", registrationID)
+			return
+		}
+	}
+}
+
+// syncCFRegistration handles POST /b/cf/registrations/{id}/sync
+func (api *InternalApi) syncCFRegistration(w http.ResponseWriter, req *http.Request, registrationID string) {
+	l := Logger.Wrap("cf-sync-registration")
+	l.Debug("syncing CF registration %s", registrationID)
+
+	// Get existing registration
+	var registration map[string]interface{}
+	exists, err := api.Vault.GetCFRegistration(registrationID, &registration)
+	if err != nil {
+		l.Error("failed to get CF registration %s: %s", registrationID, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get registration: %w", err))
+		return
+	}
+
+	if !exists {
+		l.Debug("CF registration %s not found for sync", registrationID)
+		w.WriteHeader(404)
+		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		return
+	}
+
+	// Convert to CF registration object
+	cfReg := &cf.CFRegistration{
+		ID:         registrationID,
+		APIURL:     getStringFromMap(registration, "api_url"),
+		Username:   getStringFromMap(registration, "username"),
+		BrokerName: getStringFromMap(registration, "broker_name"),
+	}
+
+	// Create sync request
+	syncReq := &cf.SyncRequest{
+		RegistrationID: registrationID,
+	}
+
+	// Perform sync using CF handler
+	result, err := api.Services.CF.SyncRegistration(syncReq, cfReg)
+	if err != nil {
+		l.Error("CF registration sync failed: %s", err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("sync failed: %w", err))
+		return
+	}
+
+	// Update registration status based on sync result
+	if result.Success {
+		err = api.Vault.UpdateCFRegistrationStatus(registrationID, "active", "")
+	} else {
+		err = api.Vault.UpdateCFRegistrationStatus(registrationID, "error", result.Error)
+	}
+
+	if err != nil {
+		l.Error("failed to update registration status: %s", err)
+		// Don't fail the request, just log the error
+	}
+
+	l.Debug("CF registration sync completed: success=%t", result.Success)
+	api.handleJSONResponse(w, result, nil)
+}
+
+// startCFRegistrationProcess handles POST /b/cf/registrations/{id}/register
+func (api *InternalApi) startCFRegistrationProcess(w http.ResponseWriter, req *http.Request, registrationID string) {
+	l := Logger.Wrap("cf-start-registration")
+	l.Debug("starting CF registration process for %s", registrationID)
+
+	// Get existing registration
+	var registration map[string]interface{}
+	exists, err := api.Vault.GetCFRegistration(registrationID, &registration)
+	if err != nil {
+		l.Error("failed to get CF registration %s: %s", registrationID, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get registration: %w", err))
+		return
+	}
+
+	if !exists {
+		l.Debug("CF registration %s not found", registrationID)
+		w.WriteHeader(404)
+		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		return
+	}
+
+	// Check current status
+	status := getStringFromMap(registration, "status")
+	if status == "registering" || status == "active" {
+		l.Debug("CF registration %s already in progress or completed (status: %s)", registrationID, status)
+		api.handleJSONResponse(w, map[string]interface{}{
+			"message": fmt.Sprintf("Registration already %s", status),
+			"status":  status,
+		}, nil)
+		return
+	}
+
+	// Convert to CF registration request for processing
+	regReq := &cf.RegistrationRequest{
+		ID:         registrationID,
+		Name:       getStringFromMap(registration, "name"),
+		APIURL:     getStringFromMap(registration, "api_url"),
+		Username:   getStringFromMap(registration, "username"),
+		BrokerName: getStringFromMap(registration, "broker_name"),
+	}
+
+	// Parse optional request body for password
+	var requestData map[string]interface{}
+	if req.Body != nil {
+		if err := json.NewDecoder(req.Body).Decode(&requestData); err == nil {
+			if password, ok := requestData["password"].(string); ok {
+				regReq.Password = password
+			}
+		}
+	}
+
+	// Start async registration process
+	go api.performAsyncCFRegistration(registrationID, regReq)
+
+	// Update status to registering
+	err = api.Vault.UpdateCFRegistrationStatus(registrationID, "registering", "")
+	if err != nil {
+		l.Error("failed to update registration status: %s", err)
+	}
+
+	l.Info("started CF registration process for %s", registrationID)
+	api.handleJSONResponse(w, map[string]interface{}{
+		"message": "Registration process started",
+		"status":  "registering",
+		"id":      registrationID,
+	}, nil)
+}
+
+// performAsyncCFRegistration performs the actual CF registration in the background
+func (api *InternalApi) performAsyncCFRegistration(registrationID string, regReq *cf.RegistrationRequest) {
+	l := Logger.Wrap("cf-async-registration")
+	l.Info("starting async CF registration for %s", registrationID)
+
+	// Update status to registering
+	err := api.Vault.UpdateCFRegistrationStatus(registrationID, "registering", "")
+	if err != nil {
+		l.Error("failed to update status to registering: %s", err)
+	}
+
+	// Create progress channel for tracking
+	progressChan := make(chan cf.RegistrationProgress, 100)
+
+	// Start progress tracking in a separate goroutine
+	go api.trackRegistrationProgress(registrationID, progressChan)
+
+	// Perform the registration
+	err = api.Services.CF.PerformRegistration(regReq, progressChan)
+
+	// Update final status based on result
+	if err != nil {
+		l.Error("CF registration failed for %s: %s", registrationID, err)
+		statusErr := api.Vault.UpdateCFRegistrationStatus(registrationID, "failed", err.Error())
+		if statusErr != nil {
+			l.Error("failed to update registration status to failed: %s", statusErr)
+		}
+	} else {
+		l.Info("CF registration completed successfully for %s", registrationID)
+		statusErr := api.Vault.UpdateCFRegistrationStatus(registrationID, "active", "")
+		if statusErr != nil {
+			l.Error("failed to update registration status to active: %s", statusErr)
+		}
+	}
+}
+
+// trackRegistrationProgress tracks the registration progress and stores it
+func (api *InternalApi) trackRegistrationProgress(registrationID string, progressChan <-chan cf.RegistrationProgress) {
+	l := Logger.Wrap("cf-progress-tracker")
+	l.Debug("starting progress tracking for registration %s", registrationID)
+
+	// Store progress updates in Vault for streaming
+	progressPath := fmt.Sprintf("secret/blacksmith/registrations/%s/progress", registrationID)
+
+	for progress := range progressChan {
+		l.Debug("registration %s progress: %s - %s", registrationID, progress.Step, progress.Message)
+
+		// Store progress in Vault
+		progressData := map[string]interface{}{
+			"step":      progress.Step,
+			"status":    progress.Status,
+			"message":   progress.Message,
+			"timestamp": progress.Timestamp.Format(time.RFC3339),
+		}
+
+		err := api.Vault.Put(progressPath, progressData)
+		if err != nil {
+			l.Error("failed to store progress for registration %s: %s", registrationID, err)
+		}
+	}
+
+	l.Debug("completed progress tracking for registration %s", registrationID)
+}
+
+// Helper function to safely get string values from map
+func getStringFromMap(m map[string]interface{}, key string) string {
+	if value, exists := m[key]; exists {
+		if str, ok := value.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+// generateID generates a unique ID for registrations
+func generateID() string {
+	return fmt.Sprintf("cf-reg-%d", time.Now().UnixNano())
 }
 
 // handleJSONResponse is a helper method to handle JSON responses consistently

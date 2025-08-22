@@ -85,14 +85,24 @@ type TLSConfig struct {
 }
 
 type BrokerConfig struct {
-	Username     string    `yaml:"username"`
-	Password     string    `yaml:"password"`
-	Port         string    `yaml:"port"`
-	BindIP       string    `yaml:"bind_ip"`
-	ReadTimeout  int       `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
-	WriteTimeout int       `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
-	IdleTimeout  int       `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
-	TLS          TLSConfig `yaml:"tls"`
+	Username     string         `yaml:"username"`
+	Password     string         `yaml:"password"`
+	Port         string         `yaml:"port"`
+	BindIP       string         `yaml:"bind_ip"`
+	ReadTimeout  int            `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
+	WriteTimeout int            `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
+	IdleTimeout  int            `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
+	TLS          TLSConfig      `yaml:"tls"`
+	CF           CFBrokerConfig `yaml:"cf"` // CF registration configuration
+}
+
+// CFBrokerConfig holds configuration for CF broker registration
+type CFBrokerConfig struct {
+	Enabled     bool   `yaml:"enabled"`      // Whether CF registration is enabled
+	BrokerURL   string `yaml:"broker_url"`   // Public URL for this broker that CF can reach
+	BrokerUser  string `yaml:"broker_user"`  // Username for CF to authenticate with this broker
+	BrokerPass  string `yaml:"broker_pass"`  // Password for CF to authenticate with this broker
+	DefaultName string `yaml:"default_name"` // Default broker name for registrations
 }
 
 type VaultConfig struct {
@@ -141,7 +151,35 @@ type BOSHConfig struct {
 	Releases          []Uploadable `yaml:"releases"`
 	CCPath            string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???
 	CloudConfig       string
-	Network           string `yaml:"network"`
+	Network           string    `yaml:"network"`
+	SSH               SSHConfig `yaml:"ssh"`
+}
+
+// SSHConfig holds SSH-related configuration
+type SSHConfig struct {
+	Enabled        bool            `yaml:"enabled"`
+	Timeout        int             `yaml:"timeout"`         // Default timeout for SSH commands in seconds
+	ConnectTimeout int             `yaml:"connect_timeout"` // SSH connection timeout in seconds
+	MaxConcurrent  int             `yaml:"max_concurrent"`  // Maximum concurrent SSH sessions
+	MaxOutputSize  int             `yaml:"max_output_size"` // Maximum output size in bytes
+	KeepAlive      int             `yaml:"keep_alive"`      // Keep-alive interval in seconds
+	RetryAttempts  int             `yaml:"retry_attempts"`  // Number of retry attempts for failed operations
+	RetryDelay     int             `yaml:"retry_delay"`     // Delay between retries in seconds
+	WebSocket      WebSocketConfig `yaml:"websocket"`       // WebSocket configuration
+}
+
+// WebSocketConfig holds WebSocket-specific configuration
+type WebSocketConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	ReadBufferSize    int  `yaml:"read_buffer_size"`
+	WriteBufferSize   int  `yaml:"write_buffer_size"`
+	HandshakeTimeout  int  `yaml:"handshake_timeout"` // In seconds
+	MaxMessageSize    int  `yaml:"max_message_size"`  // In bytes
+	PingInterval      int  `yaml:"ping_interval"`     // In seconds
+	PongTimeout       int  `yaml:"pong_timeout"`      // In seconds
+	MaxSessions       int  `yaml:"max_sessions"`
+	SessionTimeout    int  `yaml:"session_timeout"` // In seconds
+	EnableCompression bool `yaml:"enable_compression"`
 }
 
 func ReadConfig(path string) (c Config, err error) {

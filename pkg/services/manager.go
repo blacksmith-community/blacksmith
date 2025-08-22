@@ -1,6 +1,7 @@
 package services
 
 import (
+	"blacksmith/pkg/services/cf"
 	"blacksmith/pkg/services/common"
 	"blacksmith/pkg/services/rabbitmq"
 	"blacksmith/pkg/services/redis"
@@ -10,6 +11,7 @@ import (
 type Manager struct {
 	Redis    *redis.Handler
 	RabbitMQ *rabbitmq.Handler
+	CF       *cf.Handler
 	Security *SecurityMiddleware
 	logger   func(string, ...interface{})
 }
@@ -23,6 +25,22 @@ func NewManager(logger func(string, ...interface{})) *Manager {
 	return &Manager{
 		Redis:    redis.NewHandler(logger),
 		RabbitMQ: rabbitmq.NewHandler(logger),
+		CF:       cf.NewHandler("", "", "", logger), // Will be configured later
+		Security: NewSecurityMiddleware(logger),
+		logger:   logger,
+	}
+}
+
+// NewManagerWithCFConfig creates a new service testing manager with CF broker configuration
+func NewManagerWithCFConfig(logger func(string, ...interface{}), brokerURL, brokerUser, brokerPass string) *Manager {
+	if logger == nil {
+		logger = func(string, ...interface{}) {} // No-op logger
+	}
+
+	return &Manager{
+		Redis:    redis.NewHandler(logger),
+		RabbitMQ: rabbitmq.NewHandler(logger),
+		CF:       cf.NewHandler(brokerURL, brokerUser, brokerPass, logger),
 		Security: NewSecurityMiddleware(logger),
 		logger:   logger,
 	}
@@ -40,6 +58,7 @@ func (m *Manager) Close() error {
 			return err
 		}
 	}
+	// CF handler doesn't need explicit closing
 	return nil
 }
 

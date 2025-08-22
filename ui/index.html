@@ -44,7 +44,21 @@
       <!-- Tab content panels -->
       <div class="tab-content">
         <div id="blacksmith" class="tab-panel active" role="tabpanel" aria-hidden="false">
-          <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
+          <!-- Blacksmith sub-tabs -->
+          <div class="detail-tabs">
+            <button class="detail-tab active" data-tab="details">Details</button>
+            <button class="detail-tab" data-tab="events">Events</button>
+            <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
+            <button class="detail-tab" data-tab="vms">VMs</button>
+            <button class="detail-tab" data-tab="logs">Deployment Logs</button>
+            <button class="detail-tab" data-tab="debug">Debug Log</button>
+            <button class="detail-tab" data-tab="broker">Broker</button>
+          </div>
+          
+          <!-- Blacksmith detail content -->
+          <div class="detail-content">
+            <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
+          </div>
         </div>
 
         <div id="plans" class="tab-panel" role="tabpanel" aria-hidden="true">
@@ -54,6 +68,7 @@
         <div id="services" class="tab-panel" role="tabpanel" aria-hidden="true">
           <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
         </div>
+
       </div>
     </div>
   </div>
@@ -66,6 +81,106 @@
       </p>
     </div>
   </footer>
+
+  <!-- CF Registration Modal -->
+  <div id="registration-modal" class="modal" style="display: none;" role="dialog" aria-labelledby="registration-modal-title" aria-hidden="true">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="registration-modal-title">New CF Registration</h3>
+        <button class="modal-close" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="registration-form">
+          <div class="form-group">
+            <label for="reg-name">Registration Name:</label>
+            <input type="text" id="reg-name" name="name" required>
+            <small>Friendly name for this registration</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="reg-api-url">CF API URL:</label>
+            <input type="url" id="reg-api-url" name="api_url" required placeholder="https://api.cf.example.com">
+            <small>Cloud Foundry API endpoint URL</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="reg-username">Username:</label>
+            <input type="text" id="reg-username" name="username" required>
+            <small>CF user with admin privileges</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="reg-password">Password:</label>
+            <input type="password" id="reg-password" name="password" required>
+            <small>CF user password</small>
+          </div>
+          
+          <div class="form-group">
+            <label for="reg-broker-name">Broker Name:</label>
+            <input type="text" id="reg-broker-name" name="broker_name" placeholder="blacksmith">
+            <small>Name for the service broker in CF (optional)</small>
+          </div>
+          
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="reg-auto-register" name="auto_register">
+              <span class="checkmark"></span>
+              Auto-register immediately
+            </label>
+            <small>Start registration process immediately after creation</small>
+          </div>
+        </form>
+        
+        <div id="registration-progress" class="progress-container" style="display: none;">
+          <div class="progress-header">
+            <h4>Registration Progress</h4>
+          </div>
+          <div class="progress-steps">
+            <div class="progress-step" id="step-validating">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Validating</div>
+                <div class="step-message">Validating registration request</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-connecting">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Connecting</div>
+                <div class="step-message">Connecting to Cloud Foundry</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-authenticating">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Authenticating</div>
+                <div class="step-message">Authenticating with Cloud Foundry</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-creating-broker">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Creating Broker</div>
+                <div class="step-message">Creating service broker</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-enabling-services">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Enabling Services</div>
+                <div class="step-message">Enabling service access</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="cancel-registration">Cancel</button>
+        <button type="button" class="btn btn-primary" id="test-connection-btn">Test Connection</button>
+        <button type="submit" class="btn btn-success" id="save-registration-btn" form="registration-form">Save Registration</button>
+      </div>
+    </div>
+  </div>
 
   <script type="text/javascript" src="/blacksmith.js?v=20250119"></script>
 </body>

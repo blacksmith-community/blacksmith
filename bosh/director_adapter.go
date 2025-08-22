@@ -17,6 +17,7 @@ import (
 	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
 	boshuaa "github.com/cloudfoundry/bosh-cli/v7/uaa"
 	boshlog "github.com/cloudfoundry/bosh-utils/logger"
+	boshuuid "github.com/cloudfoundry/bosh-utils/uuid"
 )
 
 // DirectorAdapter wraps bosh-cli director to implement Director interface
@@ -1215,6 +1216,105 @@ func extractLogsFromTarGz(data io.Reader) (string, error) {
 	}
 
 	return result.String(), nil
+}
+
+// SSHCommand executes a one-off command on a BOSH VM via SSH
+func (d *DirectorAdapter) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
+	d.log.Info("Executing SSH command on deployment %s, instance %s/%d", deployment, instance, index)
+	d.log.Debug("Command: %s, Args: %v", command, args)
+
+	// Find the deployment
+	boshDeployment, err := d.director.FindDeployment(deployment)
+	if err != nil {
+		d.log.Error("Failed to find deployment %s: %v", deployment, err)
+		return "", fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+	}
+
+	// Create SSH options
+	sshOpts, privateKey, err := boshdirector.NewSSHOpts(boshuuid.NewGenerator())
+	if err != nil {
+		d.log.Error("Failed to create SSH options: %v", err)
+		return "", fmt.Errorf("failed to create SSH options: %w", err)
+	}
+
+	// Create slug for targeting the specific instance
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(instance, strconv.Itoa(index))
+
+	// Set up SSH session
+	d.log.Debug("Setting up SSH session")
+	sshResult, err := boshDeployment.SetUpSSH(slug, sshOpts)
+	if err != nil {
+		d.log.Error("Failed to set up SSH: %v", err)
+		return "", fmt.Errorf("failed to set up SSH: %w", err)
+	}
+
+	// Clean up SSH session when done
+	defer func() {
+		d.log.Debug("Cleaning up SSH session")
+		if cleanupErr := boshDeployment.CleanUpSSH(slug, sshOpts); cleanupErr != nil {
+			d.log.Error("Failed to clean up SSH: %v", cleanupErr)
+		}
+	}()
+
+	// For now, return SSH setup information
+	// TODO: Implement actual command execution via SSH client
+	d.log.Info("SSH session established successfully for %d hosts", len(sshResult.Hosts))
+	result := fmt.Sprintf("SSH setup successful. Command execution not yet implemented. Hosts: %d", len(sshResult.Hosts))
+
+	// Log the private key for debugging (remove in production)
+	d.log.Debug("Generated SSH private key length: %d bytes", len(privateKey))
+
+	return result, nil
+}
+
+// SSHSession creates an interactive SSH session for streaming
+func (d *DirectorAdapter) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+	d.log.Info("Creating SSH session for deployment %s, instance %s/%d", deployment, instance, index)
+
+	// Find the deployment
+	boshDeployment, err := d.director.FindDeployment(deployment)
+	if err != nil {
+		d.log.Error("Failed to find deployment %s: %v", deployment, err)
+		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+	}
+
+	// Create SSH options
+	sshOpts, privateKey, err := boshdirector.NewSSHOpts(boshuuid.NewGenerator())
+	if err != nil {
+		d.log.Error("Failed to create SSH options: %v", err)
+		return nil, fmt.Errorf("failed to create SSH options: %w", err)
+	}
+
+	// Create slug for targeting the specific instance
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(instance, strconv.Itoa(index))
+
+	// Set up SSH session
+	d.log.Debug("Setting up SSH session")
+	sshResult, err := boshDeployment.SetUpSSH(slug, sshOpts)
+	if err != nil {
+		d.log.Error("Failed to set up SSH: %v", err)
+		return nil, fmt.Errorf("failed to set up SSH: %w", err)
+	}
+
+	d.log.Info("SSH session created successfully for %d hosts", len(sshResult.Hosts))
+
+	// Return SSH session information
+	// TODO: Implement proper session management
+	sessionInfo := map[string]interface{}{
+		"deployment":   deployment,
+		"instance":     instance,
+		"index":        index,
+		"hosts":        len(sshResult.Hosts),
+		"gateway_host": sshResult.GatewayHost,
+		"gateway_user": sshResult.GatewayUsername,
+		"private_key":  privateKey,
+		"ssh_opts":     sshOpts,
+		"cleanup_func": func() error {
+			return boshDeployment.CleanUpSSH(slug, sshOpts)
+		},
+	}
+
+	return sessionInfo, nil
 }
 
 // Ensure DirectorAdapter implements Director interface

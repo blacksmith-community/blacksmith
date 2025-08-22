@@ -232,6 +232,24 @@ type Logger interface {
 // BrokerInterface defines the broker operations interface
 type BrokerInterface interface {
 	GetServices() []Service
+	GetBindingCredentials(instanceID, bindingID string) (*BindingCredentials, error)
+}
+
+// BindingCredentials represents the reconstructed binding credentials
+// This struct should match the one defined in the broker
+type BindingCredentials struct {
+	Host            string                 `json:"host,omitempty"`
+	Port            int                    `json:"port,omitempty"`
+	Username        string                 `json:"username,omitempty"`
+	Password        string                 `json:"password,omitempty"`
+	URI             string                 `json:"uri,omitempty"`
+	APIURL          string                 `json:"api_url,omitempty"`
+	Vhost           string                 `json:"vhost,omitempty"`
+	Database        string                 `json:"database,omitempty"`
+	Scheme          string                 `json:"scheme,omitempty"`
+	CredentialType  string                 `json:"credential_type,omitempty"`
+	ReconstructedAt string                 `json:"reconstructed_at,omitempty"`
+	Raw             map[string]interface{} `json:"-"`
 }
 
 type NotFoundError struct {

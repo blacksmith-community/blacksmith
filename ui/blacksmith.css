@@ -4617,3 +4617,340 @@ select[id*="connection-vhost"] {
   background: var(--bg-secondary);
   border-color: var(--border-table);
 }
+
+/* Sub-tabs styling for Broker tab */
+.sub-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 20px;
+  gap: 0;
+}
+
+.sub-tab-button {
+  background: none;
+  border: none;
+  padding: 12px 24px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  border-bottom: 3px solid transparent;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.sub-tab-button:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.sub-tab-button.active {
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
+  background: var(--bg-secondary);
+}
+
+.sub-tab-content {
+  min-height: 400px;
+}
+
+.sub-tab-panel {
+  display: none;
+}
+
+.sub-tab-panel.active {
+  display: block;
+}
+
+/* CF Registrations styling */
+.registrations-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.registrations-header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.registrations-list {
+  display: grid;
+  gap: 16px;
+}
+
+.registration-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  padding: 20px;
+  transition: all 0.2s ease;
+}
+
+.registration-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-primary);
+}
+
+.registration-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.registration-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.registration-status {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.registration-status.created {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.registration-status.registering {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.registration-status.active {
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.registration-status.failed {
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.registration-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.registration-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.registration-detail-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.registration-detail-value {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.registration-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.registration-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-secondary);
+}
+
+.registration-empty h3 {
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+}
+
+.registration-empty p {
+  margin: 0 0 20px 0;
+}
+
+/* Registration form styling */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.form-group input[type="text"],
+.form-group input[type="url"],
+.form-group input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-primary)20;
+}
+
+.form-group small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: normal;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin: 0;
+}
+
+/* Progress display styling */
+.progress-container {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.progress-header h4 {
+  margin: 0 0 16px 0;
+  color: var(--text-primary);
+}
+
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.progress-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+}
+
+.step-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  position: relative;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.progress-step.running .step-icon {
+  background: var(--warning-bg);
+  animation: pulse 2s infinite;
+}
+
+.progress-step.success .step-icon {
+  background: var(--success-bg);
+}
+
+.progress-step.success .step-icon::after {
+  content: "✓";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--success-text);
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.progress-step.error .step-icon {
+  background: var(--error-bg);
+}
+
+.progress-step.error .step-icon::after {
+  content: "✗";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--error-text);
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.step-content {
+  flex: 1;
+}
+
+.step-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.step-message {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Dark theme adjustments */
+[data-theme="dark"] .sub-tab-button {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .sub-tab-button:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+[data-theme="dark"] .sub-tab-button.active {
+  color: var(--accent-primary);
+  background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .registration-card {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+}
+
+[data-theme="dark"] .registration-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-primary);
+}

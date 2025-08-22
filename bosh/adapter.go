@@ -43,6 +43,10 @@ type Director interface {
 
 	// Cleanup operations
 	Cleanup(removeAll bool) (*Task, error)
+
+	// SSH operations
+	SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
+	SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
 }
 
 // Info represents BOSH director information

@@ -66,30 +66,30 @@ func (m *MockVault) UpdateIndex(name string, instanceID string, data interface{}
 	return nil
 }
 
-// MockLogger implements Logger interface for testing
-type MockLogger struct {
+// MockTestLogger implements Logger interface for testing
+type MockTestLogger struct {
 	messages []string
 }
 
-func (l *MockLogger) Debug(format string, args ...interface{}) {
+func (l *MockTestLogger) Debug(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[DEBUG] "+format, args...))
 }
 
-func (l *MockLogger) Info(format string, args ...interface{}) {
+func (l *MockTestLogger) Info(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[INFO] "+format, args...))
 }
 
-func (l *MockLogger) Warning(format string, args ...interface{}) {
+func (l *MockTestLogger) Warning(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[WARN] "+format, args...))
 }
 
-func (l *MockLogger) Error(format string, args ...interface{}) {
+func (l *MockTestLogger) Error(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[ERROR] "+format, args...))
 }
 
 func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 	vault := NewMockVault()
-	logger := &MockLogger{}
+	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
 		Enabled:   true,
 		Retention: 10,
@@ -166,7 +166,7 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 
 func TestVaultUpdater_PreservesBindings(t *testing.T) {
 	vault := NewMockVault()
-	logger := &MockLogger{}
+	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
 		Enabled:   true,
 		Retention: 10,
@@ -249,7 +249,7 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 
 func TestVaultUpdater_CreatesBackup(t *testing.T) {
 	vault := NewMockVault()
-	logger := &MockLogger{}
+	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
 		Enabled:   true,
 		Retention: 10,
@@ -333,7 +333,7 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 
 func TestVaultUpdater_PreservesHistory(t *testing.T) {
 	vault := NewMockVault()
-	logger := &MockLogger{}
+	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
 		Enabled:   true,
 		Retention: 10,
@@ -430,7 +430,7 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 
 func TestVaultUpdater_DetectsChanges(t *testing.T) {
 	vault := NewMockVault()
-	logger := &MockLogger{}
+	logger := &MockTestLogger{}
 	updater := &vaultUpdater{vault: VaultInterface(vault), logger: logger}
 
 	oldMetadata := map[string]interface{}{
@@ -476,7 +476,7 @@ func TestVaultUpdater_DetectsChanges(t *testing.T) {
 
 func TestVaultUpdater_MergesMetadataCorrectly(t *testing.T) {
 	vault := NewMockVault()
-	logger := &MockLogger{}
+	logger := &MockTestLogger{}
 	updater := &vaultUpdater{vault: VaultInterface(vault), logger: logger}
 
 	existing := map[string]interface{}{

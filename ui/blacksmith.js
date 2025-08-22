@@ -480,6 +480,67 @@
     if (!data || !Array.isArray(data) || data.length === 0) return data;
     if (!direction || direction === null) return data;
 
+    // Special handling for timestamp column in log tables
+    if (key === 'timestamp') {
+      return [...data].sort((a, b) => {
+        // Construct full timestamp from date and time fields if available
+        let aTimestamp = '';
+        let bTimestamp = '';
+        
+        if (a.timestamp) {
+          aTimestamp = a.timestamp;
+        } else if (a.date && a.time) {
+          aTimestamp = `${a.date} ${a.time}`;
+        } else if (a.date) {
+          aTimestamp = a.date;
+        } else if (a.time) {
+          aTimestamp = a.time;
+        }
+        
+        if (b.timestamp) {
+          bTimestamp = b.timestamp;
+        } else if (b.date && b.time) {
+          bTimestamp = `${b.date} ${b.time}`;
+        } else if (b.date) {
+          bTimestamp = b.date;
+        } else if (b.time) {
+          bTimestamp = b.time;
+        }
+        
+        // Parse as dates and compare
+        const dateA = new Date(aTimestamp);
+        const dateB = new Date(bTimestamp);
+        
+        // Handle invalid dates
+        if (isNaN(dateA.getTime()) && isNaN(dateB.getTime())) return 0;
+        if (isNaN(dateA.getTime())) return direction === 'asc' ? 1 : -1;
+        if (isNaN(dateB.getTime())) return direction === 'asc' ? -1 : 1;
+        
+        const result = dateA - dateB;
+        return direction === 'desc' ? -result : result;
+      });
+    }
+
+    // Special handling for time column in events table
+    if (key === 'time') {
+      return [...data].sort((a, b) => {
+        const aTime = a.time || '';
+        const bTime = b.time || '';
+        
+        // Parse as dates and compare (these should be Unix timestamps or ISO strings)
+        const dateA = new Date(aTime);
+        const dateB = new Date(bTime);
+        
+        // Handle invalid dates
+        if (isNaN(dateA.getTime()) && isNaN(dateB.getTime())) return 0;
+        if (isNaN(dateA.getTime())) return direction === 'asc' ? 1 : -1;
+        if (isNaN(dateB.getTime())) return direction === 'asc' ? -1 : 1;
+        
+        const result = dateA - dateB;
+        return direction === 'desc' ? -result : result;
+      });
+    }
+
     // Detect data type from first non-null value
     let dataType = 'string';
     for (const item of data) {
@@ -590,13 +651,12 @@
         { key: 'resurrection', sortable: true }
       ],
       'logs-table': [
-        { key: 'date', sortable: true },
-        { key: 'time', sortable: true },
+        { key: 'timestamp', sortable: true },
         { key: 'level', sortable: true },
         { key: 'message', sortable: true }
       ],
       'deployment-log-table': [
-        { key: 'time', sortable: true },
+        { key: 'timestamp', sortable: true },
         { key: 'stage', sortable: true },
         { key: 'task', sortable: true },
         { key: 'index', sortable: true },
@@ -606,7 +666,7 @@
         { key: 'status', sortable: true }
       ],
       'debug-log-table': [
-        { key: 'time', sortable: true },
+        { key: 'timestamp', sortable: true },
         { key: 'stage', sortable: true },
         { key: 'task', sortable: true },
         { key: 'index', sortable: true },
@@ -626,8 +686,7 @@
     // Check if this is an instance logs table (dynamic class name)
     if (tableClass.startsWith('instance-logs-table-')) {
       return [
-        { key: 'date', sortable: true },
-        { key: 'time', sortable: true },
+        { key: 'timestamp', sortable: true },
         { key: 'level', sortable: true },
         { key: 'message', sortable: true }
       ];
@@ -749,10 +808,22 @@
     return container;
   };
 
+  // Store event listeners for cleanup
+  const tableHeaderListeners = new Map();
+
   // Initialize sorting on a table
   const initializeSorting = (tableClass) => {
     const table = document.querySelector(`.${tableClass}`);
     if (!table) return;
+
+    // Clean up existing listeners for this table
+    if (tableHeaderListeners.has(tableClass)) {
+      const listeners = tableHeaderListeners.get(tableClass);
+      listeners.forEach(({ element, handler }) => {
+        element.removeEventListener('click', handler);
+      });
+      tableHeaderListeners.delete(tableClass);
+    }
 
     // For instance logs tables, skip the control row and get the actual header row
     let headers;
@@ -770,6 +841,7 @@
 
     const columns = getTableColumns(tableClass);
     const sortState = tableSortStates.get(tableClass) || { column: null, direction: null };
+    const listeners = [];
 
     headers.forEach((header, index) => {
       if (index >= columns.length) return;
@@ -787,21 +859,25 @@
       const indicator = createSortIndicator(column.key, sortState);
       header.appendChild(indicator);
       header.style.cursor = 'pointer';
+      header.classList.add('sortable-header');
 
-      // Remove old event listeners and add new one
-      // Clone the header to remove all existing event listeners
-      const cleanHeader = header.cloneNode(false);
-      cleanHeader.innerHTML = header.innerHTML;
-      cleanHeader.style.cursor = header.style.cursor;
-
-      // Replace the old header with the clean one
-      header.parentNode.replaceChild(cleanHeader, header);
-
-      // Add click handler to the clean header
-      cleanHeader.addEventListener('click', () => {
+      // Create click handler
+      const clickHandler = () => {
         handleTableSort(tableClass, column.key);
-      });
+      };
+
+      // Remove any existing click listeners and add new one
+      header.removeEventListener('click', clickHandler); // Remove if exists
+      header.addEventListener('click', clickHandler);
+      
+      // Store reference for cleanup
+      listeners.push({ element: header, handler: clickHandler });
     });
+
+    // Store listeners for this table
+    if (listeners.length > 0) {
+      tableHeaderListeners.set(tableClass, listeners);
+    }
   };
 
   // Simplified handle sort for internal use
@@ -2122,7 +2198,7 @@
         <table class="deployment-log-table">
         <thead>
           <tr>
-            <th>Time</th>
+            <th>Timestamp</th>
             <th>Stage</th>
             <th>Task</th>
             <th>Index</th>
@@ -2205,7 +2281,7 @@
         <table class="debug-log-table">
         <thead>
           <tr>
-            <th>Time</th>
+            <th>Timestamp</th>
             <th>Stage</th>
             <th>Task</th>
             <th>Index</th>
@@ -2324,7 +2400,7 @@
             <table class="instance-logs-table instance-logs-table-${jobKey.replace(/\//g, '-')}" data-job="${jobKey}">
               <thead>
                 <tr class="table-controls-row">
-                  <th colspan="4" class="table-controls-header">
+                  <th colspan="3" class="table-controls-header">
                     <div class="table-controls-container">
                       <div class="search-filter-container">
                         ${createSearchFilter(`instance-logs-table-${jobKey.replace(/\//g, '-')}`, 'Search logs...')}
@@ -2343,8 +2419,7 @@
                   </th>
                 </tr>
                 <tr>
-                  <th class="log-col-date">Date</th>
-                  <th class="log-col-time">Time</th>
+                  <th class="log-col-timestamp">Timestamp</th>
                   <th class="log-col-level">Level</th>
                   <th class="log-col-message">Message</th>
                 </tr>
@@ -2429,7 +2504,7 @@
           <table class="instance-logs-table instance-logs-table-${jobKey.replace(/\//g, '-')}" data-job="${jobKey}">
             <thead>
               <tr class="table-controls-row">
-                <th colspan="4" class="table-controls-header">
+                <th colspan="3" class="table-controls-header">
                   <div class="table-controls-container">
                     <div class="search-filter-container">
                       ${createSearchFilter(`instance-logs-table-${jobKey.replace(/\//g, '-')}`, 'Search logs...')}
@@ -2455,8 +2530,7 @@
                 </th>
               </tr>
               <tr>
-                <th class="log-col-date">Date</th>
-                <th class="log-col-time">Time</th>
+                <th class="log-col-timestamp">Timestamp</th>
                 <th class="log-col-level">Level</th>
                 <th class="log-col-message">Message</th>
               </tr>
@@ -2667,8 +2741,10 @@
         const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
         if (tableEl) {
           tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
-          // Restore search filter state after updating table
+          // Re-initialize sorting and restore search filter state after updating table
           setTimeout(() => {
+            const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
+            initializeSorting(tableClass);
             restoreSearchFilterState(tableId, currentSearchFilter);
           }, 100);
         }
@@ -2699,8 +2775,10 @@
         const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
         if (tableEl) {
           tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
-          // Restore search filter state after updating table
+          // Re-initialize sorting and restore search filter state after updating table
           setTimeout(() => {
+            const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
+            initializeSorting(tableClass);
             restoreSearchFilterState(tableId, currentSearchFilter);
           }, 100);
         }
@@ -2779,7 +2857,7 @@
         <table class="${tableId} events-table">
           <thead>
             <tr>
-              <th>Time</th>
+              <th>Timestamp</th>
               <th>User</th>
               <th>Action</th>
               <th>Object</th>
@@ -3086,8 +3164,7 @@
     match = line.match(isoPattern);
     if (match) {
       return {
-        date: match[1],
-        time: match[2],
+        timestamp: `${match[1]} ${match[2]}`,
         level: 'INFO',
         message: match[3]
       };
@@ -3142,10 +3219,25 @@
     const levelClass = `log-level-${logEntry.level.toLowerCase()}`;
     const formattedMessage = formatLogMessage(logEntry.message);
 
+    // Handle different timestamp formats
+    let displayTimestamp = '-';
+    if (logEntry.timestamp) {
+      // Use timestamp if available (ISO format)
+      displayTimestamp = logEntry.timestamp;
+    } else if (logEntry.date && logEntry.time) {
+      // Combine date and time if separate
+      displayTimestamp = `${logEntry.date} ${logEntry.time}`;
+    } else if (logEntry.date) {
+      // Use just date if only date is available
+      displayTimestamp = logEntry.date;
+    } else if (logEntry.time) {
+      // Use just time if only time is available
+      displayTimestamp = logEntry.time;
+    }
+
     return `
       <tr class="log-row ${levelClass}">
-        <td class="log-date">${logEntry.date}</td>
-        <td class="log-time">${logEntry.time}</td>
+        <td class="log-timestamp">${displayTimestamp}</td>
         <td class="log-level">
           <span class="level-badge ${levelClass}">${logEntry.level}</span>
         </td>
@@ -3167,8 +3259,7 @@
       <table class="logs-table">
         <thead>
           <tr>
-            <th class="log-col-date">Date</th>
-            <th class="log-col-time">Time</th>
+            <th class="log-col-timestamp">Timestamp</th>
             <th class="log-col-level">Level</th>
             <th class="log-col-message">Message</th>
           </tr>
@@ -3237,8 +3328,7 @@
           <table class="logs-table">
             <thead>
               <tr>
-                <th class="log-col-date">Date</th>
-                <th class="log-col-time">Time</th>
+                <th class="log-col-timestamp">Timestamp</th>
                 <th class="log-col-level">Level</th>
                 <th class="log-col-message">Message</th>
               </tr>
@@ -6170,7 +6260,8 @@
         const tableHTML = renderLogsTable(logs, null, false);
         displayContainer.innerHTML = tableHTML;
 
-        // Re-attach the search filter functionality to the existing search filter
+        // Re-attach the search filter functionality and initialize sorting
+        initializeSorting('logs-table');
         attachSearchFilter('logs-table');
         // Restore search filter state
         restoreSearchFilterState('logs-table', currentSearchFilter);
@@ -6227,6 +6318,23 @@
       targetButton.setAttribute('aria-selected', 'true');
       targetPanel.classList.add('active');
       targetPanel.setAttribute('aria-hidden', 'false');
+
+      // Tab-specific initialization
+      // (broker now handled as a sub-tab under blacksmith)
+
+      // Re-initialize sorting for any tables in the newly activated tab
+      setTimeout(() => {
+        const tables = targetPanel.querySelectorAll('table[class*="table"]');
+        tables.forEach(table => {
+          // Extract table class name(s) that contain "table"
+          const classList = Array.from(table.classList);
+          const tableClass = classList.find(cls => cls.includes('table'));
+          if (tableClass) {
+            // Re-initialize sorting to ensure click handlers are properly attached
+            initializeSorting(tableClass);
+          }
+        });
+      }, 10);
     };
 
     // Set up click handlers for tabs
@@ -6912,6 +7020,25 @@
           // Handle the Details tab
           if (tabType === 'details') {
             contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
+            return;
+          }
+
+          // Handle the Broker tab (CF Registrations)
+          if (tabType === 'broker') {
+            contentContainer.innerHTML = `
+              <div class="registrations-header">
+                <h2>Cloud Foundry Registrations</h2>
+                <button class="btn btn-primary" id="new-registration-btn">New Registration</button>
+              </div>
+              <div class="registrations-content">
+                <div class="loading" style="padding: 2em; text-align: center;">Loading registrations...</div>
+              </div>
+            `;
+            
+            // Initialize broker functionality after content is rendered
+            setTimeout(() => {
+              initBrokerTab();
+            }, 50);
             return;
           }
 
@@ -8586,6 +8713,862 @@
     escapeQuotes: function (str) {
       if (!str) return '';
       return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+    }
+  };
+
+  // CF Registration Management
+  const CFRegistrationManager = {
+    registrations: [],
+    
+    // Load all registrations
+    async loadRegistrations() {
+      try {
+        const response = await fetch('/b/cf/registrations');
+        const data = await response.json();
+        
+        if (data.registrations) {
+          this.registrations = data.registrations;
+          this.renderRegistrationsList();
+        } else {
+          console.error('Failed to load registrations:', data.error);
+          this.showError('Failed to load registrations: ' + (data.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Error loading registrations:', error);
+        this.showError('Failed to load registrations: ' + error.message);
+      }
+    },
+    
+    // Render registrations list
+    renderRegistrationsList() {
+      const container = document.querySelector('.registrations-content');
+      if (!container) return;
+      
+      if (this.registrations.length === 0) {
+        container.innerHTML = `
+          <div class="registration-empty">
+            <h3>No CF Registrations</h3>
+            <p>No Cloud Foundry registrations have been created yet.</p>
+            <button class="btn btn-primary" id="empty-new-registration-btn">Create First Registration</button>
+          </div>
+        `;
+        
+        // Add event listener to empty state button
+        const emptyBtn = document.getElementById('empty-new-registration-btn');
+        if (emptyBtn) {
+          emptyBtn.addEventListener('click', () => this.showRegistrationModal());
+        }
+        return;
+      }
+      
+      const html = `
+        <div class="registrations-list">
+          ${this.registrations.map(reg => this.renderRegistrationCard(reg)).join('')}
+        </div>
+      `;
+      
+      container.innerHTML = html;
+      this.setupRegistrationHandlers();
+    },
+    
+    // Render individual registration card
+    renderRegistrationCard(registration) {
+      const statusClass = (registration.status || 'created').toLowerCase();
+      const createdDate = registration.created_at ? new Date(registration.created_at).toLocaleDateString() : 'Unknown';
+      
+      return `
+        <div class="registration-card" data-registration-id="${registration.id}">
+          <div class="registration-card-header">
+            <h3 class="registration-name">${this.escapeHtml(registration.name || 'Unnamed')}</h3>
+            <span class="registration-status ${statusClass}">${registration.status || 'created'}</span>
+          </div>
+          
+          <div class="registration-details">
+            <div class="registration-detail">
+              <div class="registration-detail-label">API URL</div>
+              <div class="registration-detail-value">${this.escapeHtml(registration.api_url || 'N/A')}</div>
+            </div>
+            <div class="registration-detail">
+              <div class="registration-detail-label">Username</div>
+              <div class="registration-detail-value">${this.escapeHtml(registration.username || 'N/A')}</div>
+            </div>
+            <div class="registration-detail">
+              <div class="registration-detail-label">Broker Name</div>
+              <div class="registration-detail-value">${this.escapeHtml(registration.broker_name || 'blacksmith')}</div>
+            </div>
+            <div class="registration-detail">
+              <div class="registration-detail-label">Created</div>
+              <div class="registration-detail-value">${createdDate}</div>
+            </div>
+          </div>
+          
+          <div class="registration-actions">
+            <button class="btn btn-sm btn-primary sync-registration-btn" data-id="${registration.id}">Sync</button>
+            <button class="btn btn-sm btn-success register-btn" data-id="${registration.id}" 
+              ${statusClass === 'registering' ? 'disabled' : ''}>
+              ${statusClass === 'active' ? 'Re-register' : 'Register'}
+            </button>
+            <button class="btn btn-sm btn-info stream-btn" data-id="${registration.id}">View Progress</button>
+            <button class="btn btn-sm btn-secondary edit-btn" data-id="${registration.id}">Edit</button>
+            <button class="btn btn-sm btn-danger delete-btn" data-id="${registration.id}">Delete</button>
+          </div>
+          
+          ${registration.last_error ? `
+            <div class="registration-error" style="margin-top: 12px; padding: 8px; background: var(--error-bg); color: var(--error-text); border-radius: 4px; font-size: 12px;">
+              <strong>Last Error:</strong> ${this.escapeHtml(registration.last_error)}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    },
+    
+    // Setup event handlers for registration cards
+    setupRegistrationHandlers() {
+      // Sync buttons
+      document.querySelectorAll('.sync-registration-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const registrationId = e.target.dataset.id;
+          this.syncRegistration(registrationId);
+        });
+      });
+      
+      // Register buttons
+      document.querySelectorAll('.register-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const registrationId = e.target.dataset.id;
+          this.startRegistration(registrationId);
+        });
+      });
+      
+      // Stream buttons
+      document.querySelectorAll('.stream-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const registrationId = e.target.dataset.id;
+          this.showProgressStream(registrationId);
+        });
+      });
+      
+      // Edit buttons
+      document.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const registrationId = e.target.dataset.id;
+          this.editRegistration(registrationId);
+        });
+      });
+      
+      // Delete buttons
+      document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const registrationId = e.target.dataset.id;
+          this.deleteRegistration(registrationId);
+        });
+      });
+    },
+    
+    // Show registration modal
+    showRegistrationModal(registration = null) {
+      const modal = document.getElementById('registration-modal');
+      const form = document.getElementById('registration-form');
+      const title = document.getElementById('registration-modal-title');
+      
+      if (!modal || !form) return;
+      
+      // Reset form and progress
+      form.reset();
+      document.getElementById('registration-progress').style.display = 'none';
+      
+      // Set title and populate form if editing
+      if (registration) {
+        title.textContent = 'Edit CF Registration';
+        document.getElementById('reg-name').value = registration.name || '';
+        document.getElementById('reg-api-url').value = registration.api_url || '';
+        document.getElementById('reg-username').value = registration.username || '';
+        document.getElementById('reg-broker-name').value = registration.broker_name || '';
+        document.getElementById('reg-auto-register').checked = false; // Don't auto-register on edit
+      } else {
+        title.textContent = 'New CF Registration';
+      }
+      
+      // Show modal
+      modal.style.display = 'block';
+      modal.setAttribute('aria-hidden', 'false');
+      
+      // Focus first input
+      setTimeout(() => {
+        document.getElementById('reg-name').focus();
+      }, 100);
+    },
+    
+    // Hide registration modal with proper cleanup
+    hideRegistrationModal() {
+      const modal = document.getElementById('registration-modal');
+      if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+        
+        // Cleanup any active streaming connections
+        if (this.cleanupStreaming) {
+          this.cleanupStreaming();
+        }
+        
+        // Reset modal content to default state
+        const progressContainer = document.getElementById('registration-progress');
+        if (progressContainer) {
+          progressContainer.style.display = 'none';
+        }
+        
+        const form = document.getElementById('registration-form');
+        if (form) {
+          form.reset();
+          form.style.display = 'block';
+        }
+      }
+    },
+    
+    // Test CF connection
+    async testConnection() {
+      const form = document.getElementById('registration-form');
+      const formData = new FormData(form);
+      
+      const testData = {
+        api_url: formData.get('api_url'),
+        username: formData.get('username'),
+        password: formData.get('password')
+      };
+      
+      try {
+        const response = await fetch('/b/cf/test-connection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testData)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          this.showSuccess('Connection test successful');
+        } else {
+          this.showError('Connection test failed: ' + (result.error || result.message));
+        }
+      } catch (error) {
+        console.error('Connection test error:', error);
+        this.showError('Connection test failed: ' + error.message);
+      }
+    },
+    
+    // Save registration
+    async saveRegistration() {
+      const form = document.getElementById('registration-form');
+      const formData = new FormData(form);
+      
+      const registrationData = {
+        name: formData.get('name'),
+        api_url: formData.get('api_url'),
+        username: formData.get('username'),
+        password: formData.get('password'),
+        broker_name: formData.get('broker_name') || 'blacksmith',
+        auto_register: formData.get('auto_register') === 'on'
+      };
+      
+      try {
+        const response = await fetch('/b/cf/registrations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(registrationData)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          this.showSuccess('Registration created successfully');
+          this.hideRegistrationModal();
+          this.loadRegistrations();
+          
+          // If auto-register was enabled, show progress
+          if (registrationData.auto_register) {
+            setTimeout(() => {
+              this.showProgressStream(result.id);
+            }, 500);
+          }
+        } else {
+          this.showError('Failed to create registration: ' + (result.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Save registration error:', error);
+        this.showError('Failed to save registration: ' + error.message);
+      }
+    },
+    
+    // Start registration process
+    async startRegistration(registrationId) {
+      if (!registrationId) return;
+      
+      // Prompt for password
+      const password = prompt('Enter CF password to start registration:');
+      if (!password) return;
+      
+      try {
+        const response = await fetch(`/b/cf/registrations/${registrationId}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          this.showSuccess('Registration process started');
+          this.loadRegistrations(); // Refresh list
+          this.showProgressStream(registrationId);
+        } else {
+          this.showError('Failed to start registration: ' + (result.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Start registration error:', error);
+        this.showError('Failed to start registration: ' + error.message);
+      }
+    },
+    
+    // Sync registration with CF
+    async syncRegistration(registrationId) {
+      if (!registrationId) return;
+      
+      try {
+        const response = await fetch(`/b/cf/registrations/${registrationId}/sync`, {
+          method: 'POST'
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success) {
+          this.showSuccess('Registration synced successfully');
+          this.loadRegistrations(); // Refresh list
+        } else {
+          this.showError('Sync failed: ' + (result.error || result.message || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Sync registration error:', error);
+        this.showError('Failed to sync registration: ' + error.message);
+      }
+    },
+    
+    // Show progress stream in modal
+    showProgressStream(registrationId) {
+      if (!registrationId) return;
+      
+      const modal = document.getElementById('registration-modal');
+      const title = document.getElementById('registration-modal-title');
+      const modalBody = modal.querySelector('.modal-body');
+      const modalFooter = modal.querySelector('.modal-footer');
+      
+      // Update modal content
+      title.textContent = 'Registration Progress';
+      modalBody.innerHTML = `
+        <div id="registration-progress" class="progress-container">
+          <div class="progress-header">
+            <h4>Registration Progress</h4>
+          </div>
+          <div class="progress-steps">
+            <div class="progress-step" id="step-validating">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Validating</div>
+                <div class="step-message">Validating registration request</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-connecting">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Connecting</div>
+                <div class="step-message">Connecting to Cloud Foundry</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-authenticating">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Authenticating</div>
+                <div class="step-message">Authenticating with Cloud Foundry</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-creating-broker">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Creating Broker</div>
+                <div class="step-message">Creating service broker</div>
+              </div>
+            </div>
+            <div class="progress-step" id="step-enabling-services">
+              <div class="step-icon"></div>
+              <div class="step-content">
+                <div class="step-title">Enabling Services</div>
+                <div class="step-message">Enabling service access</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      modalFooter.innerHTML = `
+        <button type="button" class="btn btn-secondary" onclick="CFRegistrationManager.hideRegistrationModal()">Close</button>
+      `;
+      
+      // Show modal
+      modal.style.display = 'block';
+      modal.setAttribute('aria-hidden', 'false');
+      
+      // Start streaming progress
+      this.streamProgress(registrationId);
+    },
+    
+    // Stream progress updates
+    streamProgress(registrationId) {
+      let eventSource = null;
+      let reconnectAttempts = 0;
+      let maxReconnectAttempts = 3;
+      let reconnectDelay = 2000; // Start with 2 seconds
+      let pollingFallback = false;
+      let pollingInterval = null;
+      
+      const connectEventSource = () => {
+        try {
+          eventSource = new EventSource(`/b/cf/registrations/${registrationId}/stream`);
+          
+          eventSource.onopen = () => {
+            console.log('SSE connection opened for registration:', registrationId);
+            reconnectAttempts = 0; // Reset on successful connection
+            reconnectDelay = 2000; // Reset delay
+          };
+          
+          eventSource.onmessage = (event) => {
+            try {
+              const progress = JSON.parse(event.data);
+              this.updateProgressStep(progress);
+              
+              // Close stream when completed
+              if (progress.step === 'completed' || progress.status === 'timeout') {
+                this.cleanupStreaming();
+                
+                // Refresh registrations list after completion
+                setTimeout(() => {
+                  this.loadRegistrations();
+                }, 1000);
+              }
+            } catch (error) {
+              console.error('Error parsing progress event:', error);
+              this.showError('Failed to parse progress update');
+            }
+          };
+          
+          eventSource.onerror = (error) => {
+            console.error('EventSource error:', error);
+            
+            if (eventSource.readyState === EventSource.CLOSED) {
+              // Connection closed, attempt reconnection
+              if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectAttempts++;
+                console.log(`Attempting SSE reconnection ${reconnectAttempts}/${maxReconnectAttempts}`);
+                
+                setTimeout(() => {
+                  connectEventSource();
+                }, reconnectDelay);
+                
+                // Exponential backoff
+                reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+              } else {
+                console.log('Max SSE reconnection attempts reached, falling back to polling');
+                this.fallbackToPolling(registrationId);
+              }
+            }
+          };
+          
+        } catch (error) {
+          console.error('Failed to create EventSource:', error);
+          this.fallbackToPolling(registrationId);
+        }
+      };
+      
+      // Cleanup function
+      this.cleanupStreaming = () => {
+        if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+          eventSource.close();
+          eventSource = null;
+        }
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
+      };
+      
+      // Start SSE connection
+      connectEventSource();
+      
+      // Overall timeout (2 minutes)
+      setTimeout(() => {
+        this.cleanupStreaming();
+        this.showError('Progress monitoring timed out');
+      }, 120000);
+    },
+    
+    // Polling fallback when SSE fails
+    fallbackToPolling(registrationId) {
+      console.log('Starting polling fallback for registration:', registrationId);
+      
+      const pollProgress = async () => {
+        try {
+          const response = await fetch(`/b/cf/registrations/${registrationId}`);
+          if (response.ok) {
+            const registration = await response.json();
+            
+            // Create a progress event similar to SSE format
+            const progress = {
+              step: 'status_update',
+              status: registration.status,
+              message: `Status: ${registration.status}`,
+              timestamp: new Date().toISOString()
+            };
+            
+            if (registration.last_error) {
+              progress.error = registration.last_error;
+            }
+            
+            this.updateProgressStep(progress);
+            
+            // Stop polling if completed
+            if (registration.status === 'active' || registration.status === 'failed') {
+              if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+              }
+              
+              // Send completion event
+              const completionProgress = {
+                step: 'completed',
+                status: registration.status,
+                message: `Registration ${registration.status}`,
+                timestamp: new Date().toISOString()
+              };
+              
+              if (registration.status === 'failed' && registration.last_error) {
+                completionProgress.error = registration.last_error;
+              }
+              
+              this.updateProgressStep(completionProgress);
+              
+              // Refresh registrations list after completion
+              setTimeout(() => {
+                this.loadRegistrations();
+              }, 1000);
+            }
+          } else {
+            console.error('Failed to poll registration status:', response.status);
+          }
+        } catch (error) {
+          console.error('Polling error:', error);
+        }
+      };
+      
+      // Poll every 3 seconds
+      pollingInterval = setInterval(pollProgress, 3000);
+      
+      // Initial poll
+      pollProgress();
+    },
+    
+    // Enhanced progress step UI updates
+    updateProgressStep(progress) {
+      // Handle different progress step types
+      if (progress.step === 'status' || progress.step === 'status_update') {
+        this.updateOverallStatus(progress);
+        return;
+      }
+      
+      if (progress.step === 'completed') {
+        this.handleProgressCompletion(progress);
+        return;
+      }
+      
+      if (progress.step === 'timeout') {
+        this.handleProgressTimeout(progress);
+        return;
+      }
+      
+      // Handle specific registration steps
+      const stepId = `step-${progress.step.replace('_', '-')}`;
+      const stepElement = document.getElementById(stepId);
+      
+      if (stepElement) {
+        const statusClass = progress.status.toLowerCase();
+        
+        // Remove existing status classes
+        stepElement.classList.remove('running', 'success', 'error');
+        
+        // Add new status class
+        if (statusClass === 'running' || statusClass === 'registering') {
+          stepElement.classList.add('running');
+        } else if (statusClass === 'success' || statusClass === 'active') {
+          stepElement.classList.add('success');
+        } else if (statusClass === 'error' || statusClass === 'failed') {
+          stepElement.classList.add('error');
+        }
+        
+        // Update message
+        const messageElement = stepElement.querySelector('.step-message');
+        if (messageElement) {
+          messageElement.textContent = progress.message;
+          
+          // Add error details if available
+          if (progress.error && statusClass === 'error') {
+            messageElement.textContent += ` (${progress.error})`;
+          }
+        }
+      }
+    },
+    
+    // Update overall status display
+    updateOverallStatus(progress) {
+      const progressContainer = document.getElementById('registration-progress');
+      if (!progressContainer) return;
+      
+      const header = progressContainer.querySelector('.progress-header h4');
+      if (header) {
+        header.textContent = `Registration Progress - ${progress.status.toUpperCase()}`;
+      }
+      
+      // Add status indicator to progress container
+      progressContainer.className = `progress-container status-${progress.status.toLowerCase()}`;
+      
+      // Update all steps to show current status
+      const allSteps = progressContainer.querySelectorAll('.progress-step');
+      allSteps.forEach(step => {
+        step.classList.remove('running', 'success', 'error');
+        
+        if (progress.status === 'registering') {
+          step.classList.add('running');
+        } else if (progress.status === 'active') {
+          step.classList.add('success');
+        } else if (progress.status === 'failed') {
+          step.classList.add('error');
+        }
+      });
+    },
+    
+    // Handle progress completion
+    handleProgressCompletion(progress) {
+      const progressContainer = document.getElementById('registration-progress');
+      if (!progressContainer) return;
+      
+      const header = progressContainer.querySelector('.progress-header h4');
+      if (header) {
+        const statusText = progress.status === 'active' ? 'COMPLETED' : 'FAILED';
+        header.textContent = `Registration ${statusText}`;
+      }
+      
+      // Update all steps to final status
+      const allSteps = progressContainer.querySelectorAll('.progress-step');
+      allSteps.forEach(step => {
+        step.classList.remove('running');
+        if (progress.status === 'active') {
+          step.classList.add('success');
+        } else {
+          step.classList.add('error');
+        }
+      });
+      
+      // Show completion message
+      if (progress.error) {
+        this.showError(`Registration failed: ${progress.error}`);
+      } else if (progress.status === 'active') {
+        this.showSuccess('Registration completed successfully!');
+      }
+    },
+    
+    // Handle progress timeout
+    handleProgressTimeout(progress) {
+      const progressContainer = document.getElementById('registration-progress');
+      if (!progressContainer) return;
+      
+      const header = progressContainer.querySelector('.progress-header h4');
+      if (header) {
+        header.textContent = 'Registration Progress - TIMEOUT';
+      }
+      
+      this.showError('Registration progress monitoring timed out. Please check status manually.');
+    },
+    
+    // Show success message
+    showSuccess(message) {
+      // Create or update success notification
+      let notification = document.querySelector('.success-notification');
+      if (!notification) {
+        notification = document.createElement('div');
+        notification.className = 'success-notification';
+        notification.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: var(--text-success);
+          color: var(--bg-secondary);
+          padding: 12px 20px;
+          border-radius: 6px;
+          z-index: 10000;
+          font-weight: 500;
+          box-shadow: var(--shadow-primary);
+        `;
+        document.body.appendChild(notification);
+      }
+      
+      notification.textContent = message;
+      notification.style.display = 'block';
+      
+      // Auto-hide after 5 seconds
+      setTimeout(() => {
+        if (notification && notification.parentNode) {
+          notification.parentNode.removeChild(notification);
+        }
+      }, 5000);
+    },
+    
+    // Delete registration
+    async deleteRegistration(registrationId) {
+      if (!registrationId) return;
+      
+      const registration = this.registrations.find(r => r.id === registrationId);
+      const name = registration ? registration.name : 'this registration';
+      
+      if (!confirm(`Are you sure you want to delete ${name}?`)) {
+        return;
+      }
+      
+      try {
+        const response = await fetch(`/b/cf/registrations/${registrationId}`, {
+          method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          this.showSuccess('Registration deleted successfully');
+          this.loadRegistrations(); // Refresh list
+        } else {
+          this.showError('Failed to delete registration: ' + (result.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Delete registration error:', error);
+        this.showError('Failed to delete registration: ' + error.message);
+      }
+    },
+    
+    // Edit registration (opens modal with existing data)
+    editRegistration(registrationId) {
+      const registration = this.registrations.find(r => r.id === registrationId);
+      if (registration) {
+        this.showRegistrationModal(registration);
+      }
+    },
+    
+    // Utility functions
+    escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    },
+    
+    showSuccess(message) {
+      // Simple alert for now - could be enhanced with toast notifications
+      alert('Success: ' + message);
+    },
+    
+    showError(message) {
+      // Simple alert for now - could be enhanced with toast notifications
+      alert('Error: ' + message);
+    }
+  };
+
+  // Initialize broker tab when it's selected
+  const initBrokerTab = () => {
+    // Setup sub-tab switching for broker tab
+    document.querySelectorAll('.sub-tab-button').forEach(button => {
+      button.addEventListener('click', (e) => {
+        e.preventDefault();
+        const subtabId = button.dataset.subtab;
+        if (subtabId) {
+          switchSubTab(subtabId);
+        }
+      });
+    });
+    
+    // Setup registration modal handlers
+    const newRegistrationBtn = document.getElementById('new-registration-btn');
+    if (newRegistrationBtn) {
+      newRegistrationBtn.addEventListener('click', () => {
+        CFRegistrationManager.showRegistrationModal();
+      });
+    }
+    
+    const cancelBtn = document.getElementById('cancel-registration');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        CFRegistrationManager.hideRegistrationModal();
+      });
+    }
+    
+    const testConnectionBtn = document.getElementById('test-connection-btn');
+    if (testConnectionBtn) {
+      testConnectionBtn.addEventListener('click', () => {
+        CFRegistrationManager.testConnection();
+      });
+    }
+    
+    const saveBtn = document.getElementById('save-registration-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        CFRegistrationManager.saveRegistration();
+      });
+    }
+    
+    // Setup modal close on overlay click
+    const modal = document.getElementById('registration-modal');
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          CFRegistrationManager.hideRegistrationModal();
+        }
+      });
+      
+      const closeBtn = modal.querySelector('.modal-close');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+          CFRegistrationManager.hideRegistrationModal();
+        });
+      }
+    }
+    
+    // Load initial registrations
+    CFRegistrationManager.loadRegistrations();
+  };
+  
+  // Sub-tab switching for broker tab
+  const switchSubTab = (subtabId) => {
+    // Remove active class from all sub-tab buttons and panels
+    document.querySelectorAll('.sub-tab-button').forEach(btn => {
+      btn.classList.remove('active');
+      btn.setAttribute('aria-selected', 'false');
+    });
+    document.querySelectorAll('.sub-tab-panel').forEach(panel => {
+      panel.classList.remove('active');
+      panel.setAttribute('aria-hidden', 'true');
+    });
+    
+    // Add active class to target button and panel
+    const targetButton = document.querySelector(`[data-subtab="${subtabId}"]`);
+    const targetPanel = document.getElementById(subtabId);
+    
+    if (targetButton && targetPanel) {
+      targetButton.classList.add('active');
+      targetButton.setAttribute('aria-selected', 'true');
+      targetPanel.classList.add('active');
+      targetPanel.setAttribute('aria-hidden', 'false');
     }
   };
 

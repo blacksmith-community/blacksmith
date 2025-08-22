@@ -654,3 +654,97 @@ func (vault *Vault) updateHomeDirs() {
 		l.Error("failed to write new ~/.vault-token: %s", err)
 	}
 }
+
+// CF Registration Storage Methods
+
+// SaveCFRegistration stores a CF registration in Vault
+func (vault *Vault) SaveCFRegistration(registration map[string]interface{}) error {
+	l := Logger.Wrap("vault cf registration")
+
+	registrationID, ok := registration["id"].(string)
+	if !ok {
+		return fmt.Errorf("registration ID is required")
+	}
+
+	path := fmt.Sprintf("secret/blacksmith/registrations/%s", registrationID)
+	l.Debug("saving CF registration to %s", path)
+
+	return vault.Put(path, registration)
+}
+
+// GetCFRegistration retrieves a CF registration from Vault
+func (vault *Vault) GetCFRegistration(registrationID string, out interface{}) (bool, error) {
+	path := fmt.Sprintf("secret/blacksmith/registrations/%s", registrationID)
+	return vault.Get(path, out)
+}
+
+// ListCFRegistrations retrieves all CF registrations from Vault
+func (vault *Vault) ListCFRegistrations() ([]map[string]interface{}, error) {
+	l := Logger.Wrap("vault cf registrations list")
+
+	// Ensure client is initialized
+	if err := vault.ensureClient(); err != nil {
+		l.Error("failed to ensure vault client: %s", err)
+		return nil, err
+	}
+
+	// List all registration keys
+	keys, err := vault.client.ListSecrets("secret/blacksmith/registrations/")
+	if err != nil {
+		l.Debug("failed to list CF registrations (may not exist yet): %s", err)
+		return []map[string]interface{}{}, nil
+	}
+
+	var registrations []map[string]interface{}
+	for _, key := range keys {
+		var registration map[string]interface{}
+		path := fmt.Sprintf("secret/blacksmith/registrations/%s", key)
+		exists, err := vault.Get(path, &registration)
+		if err != nil {
+			l.Error("failed to get registration %s: %s", key, err)
+			continue
+		}
+		if exists {
+			registrations = append(registrations, registration)
+		}
+	}
+
+	return registrations, nil
+}
+
+// DeleteCFRegistration removes a CF registration from Vault
+func (vault *Vault) DeleteCFRegistration(registrationID string) error {
+	l := Logger.Wrap("vault cf registration delete")
+
+	path := fmt.Sprintf("secret/blacksmith/registrations/%s", registrationID)
+	l.Debug("deleting CF registration at %s", path)
+
+	return vault.Delete(path)
+}
+
+// UpdateCFRegistrationStatus updates the status of a CF registration
+func (vault *Vault) UpdateCFRegistrationStatus(registrationID, status, errorMsg string) error {
+	l := Logger.Wrap("vault cf registration status")
+
+	// Get existing registration
+	var registration map[string]interface{}
+	exists, err := vault.GetCFRegistration(registrationID, &registration)
+	if err != nil {
+		return fmt.Errorf("failed to get registration: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("registration %s not found", registrationID)
+	}
+
+	// Update status and timestamp
+	registration["status"] = status
+	registration["updated_at"] = time.Now().Format(time.RFC3339)
+	if errorMsg != "" {
+		registration["last_error"] = errorMsg
+	} else {
+		delete(registration, "last_error")
+	}
+
+	l.Debug("updating CF registration %s status to %s", registrationID, status)
+	return vault.SaveCFRegistration(registration)
+}

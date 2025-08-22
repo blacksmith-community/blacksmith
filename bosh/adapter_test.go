@@ -101,3 +101,9 @@ func (m *mockDirector) FetchLogs(deployment string, jobName string, jobIndex str
 func (m *mockDirector) UpdateCloudConfig(config string) error      { return nil }
 func (m *mockDirector) GetCloudConfig() (string, error)            { return "", nil }
 func (m *mockDirector) Cleanup(removeAll bool) (*bosh.Task, error) { return nil, nil }
+func (m *mockDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
+	return "SSH command executed successfully", nil
+}
+func (m *mockDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+	return map[string]interface{}{"session_id": "mock-session"}, nil
+}

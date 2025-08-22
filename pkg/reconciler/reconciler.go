@@ -318,7 +318,24 @@ func (r *reconcilerManager) updateVault(ctx context.Context, matches []MatchedDe
 			r.logInfo("Adding new instance %s to vault", instance.ID)
 		}
 
-		err = r.updater.UpdateInstance(ctx, instance)
+		// Use binding repair-aware update if broker is available
+		if broker, ok := r.broker.(BrokerInterface); ok {
+			// Try to use the enhanced update method that includes binding repair
+			if updaterWithRepair, ok := r.updater.(interface {
+				UpdateInstanceWithBindingRepair(ctx context.Context, instance *InstanceData, broker BrokerInterface) error
+			}); ok {
+				err = updaterWithRepair.UpdateInstanceWithBindingRepair(ctx, instance, broker)
+			} else {
+				// Fallback to regular update
+				r.logDebug("Enhanced updater not available, using standard update for instance %s", instance.ID)
+				err = r.updater.UpdateInstance(ctx, instance)
+			}
+		} else {
+			// Broker not available or doesn't implement interface, use standard update
+			r.logDebug("Broker not available for binding repair, using standard update for instance %s", instance.ID)
+			err = r.updater.UpdateInstance(ctx, instance)
+		}
+
 		if err != nil {
 			r.logError("Failed to update instance %s: %s", instance.ID, err)
 			continue

@@ -1364,6 +1364,250 @@ func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string, d
 	return domain.GetBindingSpec{}, fmt.Errorf("GetBinding not implemented")
 }
 
+// BindingCredentials represents the complete credential structure for a service binding
+type BindingCredentials struct {
+	// Core credentials from GetCreds
+	Host     string `json:"host,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+
+	// Service-specific fields
+	URI    string `json:"uri,omitempty"`     // For databases
+	APIURL string `json:"api_url,omitempty"` // For RabbitMQ
+	Vhost  string `json:"vhost,omitempty"`   // For RabbitMQ
+
+	// Additional dynamic fields
+	Database string `json:"database,omitempty"`
+	Scheme   string `json:"scheme,omitempty"`
+
+	// Metadata
+	CredentialType  string `json:"credential_type,omitempty"`  // "static" or "dynamic"
+	ReconstructedAt string `json:"reconstructed_at,omitempty"` // RFC3339 timestamp
+
+	// Store the raw credential map for services with custom fields
+	Raw map[string]interface{} `json:"-"`
+}
+
+// GetBindingCredentials reconstructs the binding credentials for a given instance and binding
+// This function is used by the reconciler to restore missing or corrupted binding data
+func (b *Broker) GetBindingCredentials(instanceID, bindingID string) (*BindingCredentials, error) {
+	l := Logger.Wrap("GetBindingCredentials %s %s", instanceID, bindingID)
+	l.Info("Starting credential reconstruction for instance %s, binding %s", instanceID, bindingID)
+
+	// Phase 1.2A: Retrieve service and plan information from Vault
+	l.Debug("Retrieving service and plan information from Vault")
+	serviceID, planID, err := b.getServiceAndPlanFromVault(instanceID)
+	if err != nil {
+		l.Error("Failed to retrieve service/plan information: %s", err)
+		return nil, fmt.Errorf("failed to get service/plan info: %w", err)
+	}
+	l.Debug("Found service %s, plan %s", serviceID, planID)
+
+	// Find the plan details
+	plan, err := b.FindPlan(serviceID, planID)
+	if err != nil {
+		l.Error("Failed to find plan %s/%s: %s", serviceID, planID, err)
+		return nil, fmt.Errorf("failed to find plan: %w", err)
+	}
+	l.Debug("Retrieved plan: %s", plan.Name)
+
+	// Phase 1.2B: Get base credentials using existing GetCreds function
+	l.Debug("Retrieving base credentials using GetCreds")
+	creds, err := GetCreds(instanceID, plan, b.BOSH, l)
+	if err != nil {
+		l.Error("Failed to retrieve base credentials: %s", err)
+		return nil, fmt.Errorf("failed to get base credentials: %w", err)
+	}
+	l.Debug("Successfully retrieved base credentials")
+
+	// Phase 1.2C: Handle dynamic credential creation if needed
+	binding := &BindingCredentials{
+		CredentialType:  "static",
+		ReconstructedAt: time.Now().Format(time.RFC3339),
+	}
+
+	// Convert credentials to map for processing
+	var credsMap map[string]interface{}
+	if m, ok := creds.(map[string]interface{}); ok {
+		credsMap = m
+		binding.Raw = make(map[string]interface{})
+		for k, v := range m {
+			binding.Raw[k] = v
+		}
+	} else {
+		l.Error("Credentials are not in expected map format")
+		return nil, fmt.Errorf("credentials not in expected format")
+	}
+
+	// Check if this service supports dynamic credentials (RabbitMQ case)
+	if _, hasAPI := credsMap["api_url"]; hasAPI {
+		l.Info("Service supports dynamic credentials, processing RabbitMQ user for binding %s", bindingID)
+		err = b.handleDynamicRabbitMQCredentials(credsMap, bindingID, l)
+		if err != nil {
+			l.Error("Failed to handle dynamic RabbitMQ credentials: %s", err)
+			return nil, fmt.Errorf("failed to handle dynamic credentials: %w", err)
+		}
+		binding.CredentialType = "dynamic"
+		l.Debug("Successfully processed dynamic RabbitMQ credentials")
+	}
+
+	// Phase 1.2D: Populate the structured credential fields
+	b.populateBindingCredentials(binding, credsMap)
+
+	l.Info("Successfully reconstructed credentials for binding %s", bindingID)
+	return binding, nil
+}
+
+// getServiceAndPlanFromVault retrieves service and plan IDs from vault storage
+func (b *Broker) getServiceAndPlanFromVault(instanceID string) (serviceID, planID string, err error) {
+	// Try the deployment path first (newer format)
+	deploymentPath := fmt.Sprintf("%s/deployment", instanceID)
+	var deploymentData map[string]interface{}
+	exists, err := b.Vault.Get(deploymentPath, &deploymentData)
+	if err == nil && exists && deploymentData != nil {
+		if sid, ok := deploymentData["service_id"].(string); ok {
+			serviceID = sid
+		}
+		if pid, ok := deploymentData["plan_id"].(string); ok {
+			planID = pid
+		}
+		if serviceID != "" && planID != "" {
+			return serviceID, planID, nil
+		}
+	}
+
+	// Fallback to root instance path (backward compatibility)
+	var instanceData map[string]interface{}
+	exists, err = b.Vault.Get(instanceID, &instanceData)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get instance data from vault: %w", err)
+	}
+
+	if !exists || instanceData == nil {
+		return "", "", fmt.Errorf("no data found for instance %s", instanceID)
+	}
+
+	if sid, ok := instanceData["service_id"].(string); ok {
+		serviceID = sid
+	}
+	if pid, ok := instanceData["plan_id"].(string); ok {
+		planID = pid
+	}
+
+	if serviceID == "" || planID == "" {
+		return "", "", fmt.Errorf("missing service_id or plan_id in vault data")
+	}
+
+	return serviceID, planID, nil
+}
+
+// handleDynamicRabbitMQCredentials processes dynamic RabbitMQ user creation for bindings
+func (b *Broker) handleDynamicRabbitMQCredentials(credsMap map[string]interface{}, bindingID string, l *Log) error {
+	apiURL, ok := credsMap["api_url"].(string)
+	if !ok {
+		return fmt.Errorf("api_url not found or not a string")
+	}
+
+	adminUsername, ok := credsMap["admin_username"].(string)
+	if !ok {
+		return fmt.Errorf("admin_username not found or not a string")
+	}
+
+	adminPassword, ok := credsMap["admin_password"].(string)
+	if !ok {
+		return fmt.Errorf("admin_password not found or not a string")
+	}
+
+	vhost, ok := credsMap["vhost"].(string)
+	if !ok {
+		return fmt.Errorf("vhost not found or not a string")
+	}
+
+	// Dynamic credentials use bindingID as username
+	usernameDynamic := bindingID
+	passwordDynamic := uuid.New().String()
+	usernameStatic := credsMap["username"].(string)
+	passwordStatic := credsMap["password"].(string)
+
+	l.Debug("Creating dynamic RabbitMQ user %s", usernameDynamic)
+	err := CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiURL, b.Config, credsMap)
+	if err != nil {
+		return fmt.Errorf("failed to create RabbitMQ user: %w", err)
+	}
+
+	l.Debug("Granting permissions to user %s for vhost %s", usernameDynamic, vhost)
+	err = GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword, vhost, apiURL, b.Config, credsMap)
+	if err != nil {
+		return fmt.Errorf("failed to grant permissions: %w", err)
+	}
+
+	// Update credentials with dynamic values
+	updatedCreds, err := yamlGsub(credsMap, usernameStatic, usernameDynamic)
+	if err != nil {
+		return fmt.Errorf("failed to substitute username: %w", err)
+	}
+
+	updatedCreds, err = yamlGsub(updatedCreds, passwordStatic, passwordDynamic)
+	if err != nil {
+		return fmt.Errorf("failed to substitute password: %w", err)
+	}
+
+	// Update the credentials map
+	if updatedMap, ok := updatedCreds.(map[string]interface{}); ok {
+		for k, v := range updatedMap {
+			credsMap[k] = v
+		}
+	}
+
+	credsMap["username"] = usernameDynamic
+	credsMap["password"] = passwordDynamic
+	credsMap["credential_type"] = "dynamic"
+
+	return nil
+}
+
+// populateBindingCredentials fills the structured fields from the raw credential map
+func (b *Broker) populateBindingCredentials(binding *BindingCredentials, credsMap map[string]interface{}) {
+	// Populate standard fields
+	if host, ok := credsMap["host"].(string); ok {
+		binding.Host = host
+	}
+	if port, ok := credsMap["port"].(float64); ok {
+		binding.Port = int(port)
+	} else if port, ok := credsMap["port"].(int); ok {
+		binding.Port = port
+	}
+	if username, ok := credsMap["username"].(string); ok {
+		binding.Username = username
+	}
+	if password, ok := credsMap["password"].(string); ok {
+		binding.Password = password
+	}
+	if uri, ok := credsMap["uri"].(string); ok {
+		binding.URI = uri
+	}
+	if apiURL, ok := credsMap["api_url"].(string); ok {
+		binding.APIURL = apiURL
+	}
+	if vhost, ok := credsMap["vhost"].(string); ok {
+		binding.Vhost = vhost
+	}
+	if database, ok := credsMap["database"].(string); ok {
+		binding.Database = database
+	}
+	if scheme, ok := credsMap["scheme"].(string); ok {
+		binding.Scheme = scheme
+	}
+	if credType, ok := credsMap["credential_type"].(string); ok {
+		binding.CredentialType = credType
+	}
+
+	// Remove admin credentials from the map (they shouldn't be in binding responses)
+	delete(credsMap, "admin_username")
+	delete(credsMap, "admin_password")
+}
+
 func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
 	l := Logger.Wrap("LastBindingOperation")
 	l.Debug("LastBindingOperation called for instanceID: %s, bindingID: %s", instanceID, bindingID)

@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"blacksmith/bosh"
+	"blacksmith/bosh/ssh"
 	"blacksmith/pkg/services"
+	"blacksmith/services/rabbitmq"
 	"blacksmith/shield"
+	"blacksmith/websocket"
 	"code.cloudfoundry.org/lager"
 	"github.com/pivotal-cf/brokerapi/v8"
 )
@@ -386,18 +389,125 @@ func main() {
 		}()
 	}
 
+	// Initialize SSH service
+	sshConfig := ssh.Config{
+		Timeout:        time.Duration(config.BOSH.SSH.Timeout) * time.Second,
+		ConnectTimeout: time.Duration(config.BOSH.SSH.ConnectTimeout) * time.Second,
+		MaxConcurrent:  config.BOSH.SSH.MaxConcurrent,
+		MaxOutputSize:  config.BOSH.SSH.MaxOutputSize,
+		KeepAlive:      time.Duration(config.BOSH.SSH.KeepAlive) * time.Second,
+		RetryAttempts:  config.BOSH.SSH.RetryAttempts,
+		RetryDelay:     time.Duration(config.BOSH.SSH.RetryDelay) * time.Second,
+	}
+
+	// Set default values if not configured
+	if sshConfig.Timeout == 0 {
+		sshConfig.Timeout = 30 * time.Second
+	}
+	if sshConfig.ConnectTimeout == 0 {
+		sshConfig.ConnectTimeout = 10 * time.Second
+	}
+	if sshConfig.MaxConcurrent == 0 {
+		sshConfig.MaxConcurrent = 10
+	}
+	if sshConfig.MaxOutputSize == 0 {
+		sshConfig.MaxOutputSize = 1024 * 1024 // 1MB
+	}
+	if sshConfig.KeepAlive == 0 {
+		sshConfig.KeepAlive = 30 * time.Second
+	}
+	if sshConfig.RetryAttempts == 0 {
+		sshConfig.RetryAttempts = 3
+	}
+	if sshConfig.RetryDelay == 0 {
+		sshConfig.RetryDelay = 5 * time.Second
+	}
+
+	l.Info("Creating SSH service with timeout=%v, maxConcurrent=%d", sshConfig.Timeout, sshConfig.MaxConcurrent)
+	sshService := ssh.NewSSHService(broker.BOSH, sshConfig, Logger.Wrap("ssh"))
+
+	// Ensure SSH service is closed on shutdown
+	defer func() {
+		if err := sshService.Close(); err != nil {
+			l.Error("Error closing SSH service: %s", err)
+		}
+	}()
+
+	// Create RabbitMQ SSH service
+	l.Info("Creating RabbitMQ SSH service")
+	rabbitmqSSHService := rabbitmq.NewRabbitMQSSHService(sshService, Logger.Wrap("rabbitmq-ssh"))
+
+	// Create WebSocket SSH handler
+	l.Info("Creating WebSocket SSH handler")
+	wsConfig := websocket.Config{
+		ReadBufferSize:    config.BOSH.SSH.WebSocket.ReadBufferSize,
+		WriteBufferSize:   config.BOSH.SSH.WebSocket.WriteBufferSize,
+		HandshakeTimeout:  time.Duration(config.BOSH.SSH.WebSocket.HandshakeTimeout) * time.Second,
+		MaxMessageSize:    int64(config.BOSH.SSH.WebSocket.MaxMessageSize),
+		PingInterval:      time.Duration(config.BOSH.SSH.WebSocket.PingInterval) * time.Second,
+		PongTimeout:       time.Duration(config.BOSH.SSH.WebSocket.PongTimeout) * time.Second,
+		MaxSessions:       config.BOSH.SSH.WebSocket.MaxSessions,
+		SessionTimeout:    time.Duration(config.BOSH.SSH.WebSocket.SessionTimeout) * time.Second,
+		EnableCompression: config.BOSH.SSH.WebSocket.EnableCompression,
+	}
+
+	// Set default WebSocket configuration values
+	if wsConfig.ReadBufferSize == 0 {
+		wsConfig.ReadBufferSize = 4096
+	}
+	if wsConfig.WriteBufferSize == 0 {
+		wsConfig.WriteBufferSize = 4096
+	}
+	if wsConfig.HandshakeTimeout == 0 {
+		wsConfig.HandshakeTimeout = 10 * time.Second
+	}
+	if wsConfig.MaxMessageSize == 0 {
+		wsConfig.MaxMessageSize = 32 * 1024 // 32KB
+	}
+	if wsConfig.PingInterval == 0 {
+		wsConfig.PingInterval = 30 * time.Second
+	}
+	if wsConfig.PongTimeout == 0 {
+		wsConfig.PongTimeout = 10 * time.Second
+	}
+	if wsConfig.MaxSessions == 0 {
+		wsConfig.MaxSessions = 50
+	}
+	if wsConfig.SessionTimeout == 0 {
+		wsConfig.SessionTimeout = 30 * time.Minute
+	}
+
+	var webSocketHandler *websocket.SSHHandler
+	if config.BOSH.SSH.WebSocket.Enabled {
+		webSocketHandler = websocket.NewSSHHandler(sshService, wsConfig, Logger.Wrap("websocket-ssh"))
+		l.Info("WebSocket SSH handler created successfully")
+
+		// Ensure WebSocket handler is closed on shutdown
+		defer func() {
+			if err := webSocketHandler.Close(); err != nil {
+				l.Error("Error closing WebSocket handler: %s", err)
+			}
+		}()
+	} else {
+		l.Info("WebSocket SSH is disabled in configuration")
+	}
+
 	// Create the main API handler
 	apiHandler := &API{
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,
 		WebRoot:  ui,
 		Internal: &InternalApi{
-			Env:       config.Env,
-			Vault:     vault,
-			Broker:    broker,
-			Config:    config,
-			VMMonitor: vmMonitor,
-			Services:  services.NewManager(Logger.Wrap("services").Debug),
+			Env:                config.Env,
+			Vault:              vault,
+			Broker:             broker,
+			Config:             config,
+			VMMonitor:          vmMonitor,
+			Services:           services.NewManagerWithCFConfig(Logger.Wrap("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
+			SSHService:         sshService,
+			RabbitMQSSHService: rabbitmqSSHService,
+			WebSocketHandler:   webSocketHandler,
+			SecurityMiddleware: services.NewSecurityMiddleware(Logger.Wrap("security").Debug),
 		},
 		Primary: brokerapi.New(
 			broker,

@@ -107,6 +107,14 @@ func (d *mockDirector) Cleanup(removeAll bool) (*bosh.Task, error) {
 	return nil, errors.New("not implemented")
 }
 
+func (d *mockDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func (d *mockDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+	return nil, errors.New("not implemented")
+}
+
 func TestBOSHScanner_ScanDeployments(t *testing.T) {
 	director := &mockDirector{
 		deployments: []bosh.Deployment{

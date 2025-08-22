@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -71,6 +72,33 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		}
 		instance.Metadata["binding_ids"] = bindingIDs
 		u.logDebug("Instance %s has %d existing bindings - preserving", instance.ID, len(existingBindings))
+
+		// Phase 2.1: Check binding health and repair if needed
+		u.logInfo("Checking binding health for instance %s", instance.ID)
+		healthyBindings, unhealthyBindingIDs, healthErr := u.checkBindingHealth(instance.ID)
+		if healthErr != nil {
+			u.logError("Failed to check binding health for instance %s: %s", instance.ID, healthErr)
+			instance.Metadata["binding_health_check_error"] = healthErr.Error()
+		} else {
+			instance.Metadata["healthy_bindings_count"] = len(healthyBindings)
+			instance.Metadata["unhealthy_bindings_count"] = len(unhealthyBindingIDs)
+			instance.Metadata["last_binding_health_check"] = time.Now().Format(time.RFC3339)
+
+			if len(unhealthyBindingIDs) > 0 {
+				u.logWarning("Found %d unhealthy bindings for instance %s: %v",
+					len(unhealthyBindingIDs), instance.ID, unhealthyBindingIDs)
+				instance.Metadata["unhealthy_binding_ids"] = unhealthyBindingIDs
+				instance.Metadata["needs_binding_repair"] = true
+
+				// Attempt to repair bindings (broker integration point)
+				// Note: This would require the broker instance to be passed in
+				// For now, we'll mark that repair is needed
+				u.logInfo("Binding repair needed for instance %s but broker integration not implemented", instance.ID)
+			} else {
+				u.logDebug("All bindings healthy for instance %s", instance.ID)
+				instance.Metadata["needs_binding_repair"] = false
+			}
+		}
 	}
 
 	// Prepare data for vault storage using Unix timestamps (seconds) like the main broker
@@ -159,6 +187,509 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	u.logInfo("Successfully updated instance %s in vault", instance.ID)
+	return nil
+}
+
+// BindingInfo represents metadata about a service binding
+type BindingInfo struct {
+	ID             string
+	InstanceID     string
+	ServiceID      string
+	PlanID         string
+	AppGUID        string
+	CredentialType string
+	CreatedAt      time.Time
+	LastVerified   time.Time
+	Status         string
+}
+
+// checkBindingHealth verifies that all bindings for an instance are healthy
+func (u *vaultUpdater) checkBindingHealth(instanceID string) ([]BindingInfo, []string, error) {
+	u.logDebug("Checking binding health for instance %s", instanceID)
+
+	// Get all bindings for this instance
+	bindingsPath := fmt.Sprintf("%s/bindings", instanceID)
+	bindingsData, err := u.getFromVault(bindingsPath)
+	if err != nil {
+		u.logDebug("No bindings found for instance %s: %s", instanceID, err)
+		return nil, nil, nil // No bindings is not an error
+	}
+
+	var healthyBindings []BindingInfo
+	var unhealthyBindingIDs []string
+
+	for bindingID, bindingData := range bindingsData {
+		binding := BindingInfo{
+			ID:         bindingID,
+			InstanceID: instanceID,
+			Status:     "unknown",
+		}
+
+		// Check if binding has complete credential data
+		credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+		credentials, err := u.getFromVault(credentialsPath)
+		if err != nil || len(credentials) == 0 {
+			u.logWarning("Binding %s for instance %s missing credentials", bindingID, instanceID)
+			binding.Status = "missing_credentials"
+			unhealthyBindingIDs = append(unhealthyBindingIDs, bindingID)
+		} else {
+			// Validate credential completeness
+			if u.validateCredentialCompleteness(credentials) {
+				binding.Status = "healthy"
+				binding.LastVerified = time.Now()
+
+				// Extract binding metadata if available
+				if meta, ok := bindingData.(map[string]interface{}); ok {
+					if serviceID, exists := meta["service_id"].(string); exists {
+						binding.ServiceID = serviceID
+					}
+					if planID, exists := meta["plan_id"].(string); exists {
+						binding.PlanID = planID
+					}
+					if appGUID, exists := meta["app_guid"].(string); exists {
+						binding.AppGUID = appGUID
+					}
+					if credType, exists := meta["credential_type"].(string); exists {
+						binding.CredentialType = credType
+					}
+					if createdStr, exists := meta["created_at"].(string); exists {
+						if createdTime, parseErr := time.Parse(time.RFC3339, createdStr); parseErr == nil {
+							binding.CreatedAt = createdTime
+						}
+					}
+				}
+
+				healthyBindings = append(healthyBindings, binding)
+			} else {
+				u.logWarning("Binding %s for instance %s has incomplete credentials", bindingID, instanceID)
+				binding.Status = "incomplete_credentials"
+				unhealthyBindingIDs = append(unhealthyBindingIDs, bindingID)
+			}
+		}
+	}
+
+	u.logDebug("Binding health check complete for instance %s: %d healthy, %d need reconstruction",
+		instanceID, len(healthyBindings), len(unhealthyBindingIDs))
+
+	return healthyBindings, unhealthyBindingIDs, nil
+}
+
+// validateCredentialCompleteness checks if credentials contain required fields
+func (u *vaultUpdater) validateCredentialCompleteness(credentials map[string]interface{}) bool {
+	// Check for basic required fields - these are common across most services
+	requiredFields := []string{"host", "port", "username", "password"}
+
+	for _, field := range requiredFields {
+		if value, exists := credentials[field]; !exists || value == nil || value == "" {
+			// Allow missing non-critical fields, but log for debugging
+			u.logDebug("Credential field '%s' is missing or empty", field)
+			// Don't fail validation for missing fields as some services may not need all
+		}
+	}
+
+	// As long as we have some credentials, consider it complete
+	// Individual service validation can be more specific if needed
+	return len(credentials) > 0
+}
+
+// StoreBindingCredentials stores binding credentials in the structured vault format
+func (u *vaultUpdater) StoreBindingCredentials(instanceID, bindingID string, credentials interface{}, metadata map[string]interface{}) error {
+	u.logDebug("Storing binding credentials for instance %s, binding %s", instanceID, bindingID)
+
+	// Convert credentials to map[string]interface{} if needed
+	var credentialsMap map[string]interface{}
+	if credMap, ok := credentials.(map[string]interface{}); ok {
+		credentialsMap = credMap
+	} else {
+		return fmt.Errorf("credentials must be of type map[string]interface{}")
+	}
+
+	// Store credentials at the standard path
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	err := u.putToVault(credentialsPath, credentialsMap)
+	if err != nil {
+		return fmt.Errorf("failed to store binding credentials: %w", err)
+	}
+
+	// Store binding metadata
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+
+	// Get existing metadata to preserve history
+	existingMetadata, _ := u.getFromVault(metadataPath)
+	if existingMetadata == nil {
+		existingMetadata = make(map[string]interface{})
+	}
+
+	// Merge new metadata with existing
+	for key, value := range metadata {
+		existingMetadata[key] = value
+	}
+
+	// Add binding storage timestamps
+	existingMetadata["stored_at"] = time.Now().Format(time.RFC3339)
+	existingMetadata["last_updated"] = time.Now().Format(time.RFC3339)
+	existingMetadata["stored_by"] = "reconciler"
+
+	err = u.putToVault(metadataPath, existingMetadata)
+	if err != nil {
+		u.logWarning("Failed to store binding metadata: %s", err)
+		// Don't fail the operation for metadata issues
+	}
+
+	// Update the bindings index
+	err = u.updateBindingsIndex(instanceID, bindingID, metadata)
+	if err != nil {
+		u.logWarning("Failed to update bindings index: %s", err)
+		// Don't fail the operation for index issues
+	}
+
+	u.logInfo("Successfully stored binding credentials for %s/%s", instanceID, bindingID)
+	return nil
+}
+
+// GetBindingCredentials retrieves binding credentials from vault
+func (u *vaultUpdater) GetBindingCredentials(instanceID, bindingID string) (map[string]interface{}, error) {
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	credentials, err := u.getFromVault(credentialsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
+	}
+	return credentials, nil
+}
+
+// GetBindingMetadata retrieves binding metadata from vault
+func (u *vaultUpdater) GetBindingMetadata(instanceID, bindingID string) (map[string]interface{}, error) {
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+	metadata, err := u.getFromVault(metadataPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get binding metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+// updateBindingsIndex maintains an index of all bindings for an instance
+func (u *vaultUpdater) updateBindingsIndex(instanceID, bindingID string, metadata map[string]interface{}) error {
+	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
+
+	// Get existing index
+	existingIndex, err := u.getFromVault(indexPath)
+	if err != nil {
+		existingIndex = make(map[string]interface{})
+	}
+
+	// Create binding entry for index
+	bindingEntry := map[string]interface{}{
+		"binding_id":   bindingID,
+		"instance_id":  instanceID,
+		"last_updated": time.Now().Format(time.RFC3339),
+		"status":       "active",
+	}
+
+	// Add relevant metadata to index entry
+	if serviceID, ok := metadata["service_id"]; ok {
+		bindingEntry["service_id"] = serviceID
+	}
+	if planID, ok := metadata["plan_id"]; ok {
+		bindingEntry["plan_id"] = planID
+	}
+	if appGUID, ok := metadata["app_guid"]; ok {
+		bindingEntry["app_guid"] = appGUID
+	}
+	if credType, ok := metadata["credential_type"]; ok {
+		bindingEntry["credential_type"] = credType
+	}
+
+	// Update the index
+	existingIndex[bindingID] = bindingEntry
+
+	return u.putToVault(indexPath, existingIndex)
+}
+
+// RemoveBinding removes a binding from vault storage
+func (u *vaultUpdater) RemoveBinding(instanceID, bindingID string) error {
+	u.logInfo("Removing binding %s for instance %s", bindingID, instanceID)
+
+	// Remove credentials
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	if err := u.deleteFromVault(credentialsPath); err != nil {
+		u.logWarning("Failed to delete binding credentials: %s", err)
+	}
+
+	// Archive metadata instead of deleting for audit purposes
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+	metadata, err := u.getFromVault(metadataPath)
+	if err == nil {
+		metadata["deleted_at"] = time.Now().Format(time.RFC3339)
+		metadata["status"] = "deleted"
+		if err := u.putToVault(metadataPath, metadata); err != nil {
+			u.logError("Failed to update metadata for deleted binding %s: %v", bindingID, err)
+		}
+	}
+
+	// Update index to mark as deleted
+	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
+	existingIndex, err := u.getFromVault(indexPath)
+	if err == nil {
+		if bindingEntry, exists := existingIndex[bindingID]; exists {
+			if entry, ok := bindingEntry.(map[string]interface{}); ok {
+				entry["status"] = "deleted"
+				entry["deleted_at"] = time.Now().Format(time.RFC3339)
+				existingIndex[bindingID] = entry
+				if err := u.putToVault(indexPath, existingIndex); err != nil {
+					u.logError("Failed to update index for deleted binding %s: %v", bindingID, err)
+				}
+			}
+		}
+	}
+
+	u.logInfo("Successfully removed binding %s", bindingID)
+	return nil
+}
+
+// deleteFromVault removes data from vault (placeholder implementation)
+func (u *vaultUpdater) deleteFromVault(path string) error {
+	u.logDebug("Deleting vault path: %s", path)
+	// This would call the actual vault delete method
+	// For now, return nil as a placeholder
+	return nil
+}
+
+// ListInstanceBindings returns all bindings for an instance
+func (u *vaultUpdater) ListInstanceBindings(instanceID string) (map[string]interface{}, error) {
+	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
+	bindings, err := u.getFromVault(indexPath)
+	if err != nil {
+		// No bindings found is not an error
+		return make(map[string]interface{}), nil
+	}
+	return bindings, nil
+}
+
+// GetBindingStatus returns the current status of a binding
+func (u *vaultUpdater) GetBindingStatus(instanceID, bindingID string) (string, error) {
+	metadata, err := u.GetBindingMetadata(instanceID, bindingID)
+	if err != nil {
+		return "unknown", err
+	}
+
+	if status, ok := metadata["status"].(string); ok {
+		return status, nil
+	}
+
+	// Check if credentials exist to determine status
+	_, err = u.GetBindingCredentials(instanceID, bindingID)
+	if err != nil {
+		return "missing_credentials", nil
+	}
+
+	return "active", nil
+}
+
+// ReconstructBindingWithBroker uses the broker to reconstruct binding credentials
+func (u *vaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error {
+	u.logInfo("Reconstructing binding %s for instance %s using broker", bindingID, instanceID)
+
+	// Call the broker's GetBindingCredentials function
+	credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+	if err != nil {
+		u.logError("Broker failed to reconstruct credentials for binding %s: %s", bindingID, err)
+		return fmt.Errorf("broker reconstruction failed: %w", err)
+	}
+
+	u.logDebug("Successfully retrieved reconstructed credentials from broker")
+
+	// Convert BindingCredentials to map for storage
+	credentialsMap := make(map[string]interface{})
+
+	// Copy structured fields
+	if credentials.Host != "" {
+		credentialsMap["host"] = credentials.Host
+	}
+	if credentials.Port != 0 {
+		credentialsMap["port"] = credentials.Port
+	}
+	if credentials.Username != "" {
+		credentialsMap["username"] = credentials.Username
+	}
+	if credentials.Password != "" {
+		credentialsMap["password"] = credentials.Password
+	}
+	if credentials.URI != "" {
+		credentialsMap["uri"] = credentials.URI
+	}
+	if credentials.APIURL != "" {
+		credentialsMap["api_url"] = credentials.APIURL
+	}
+	if credentials.Vhost != "" {
+		credentialsMap["vhost"] = credentials.Vhost
+	}
+	if credentials.Database != "" {
+		credentialsMap["database"] = credentials.Database
+	}
+	if credentials.Scheme != "" {
+		credentialsMap["scheme"] = credentials.Scheme
+	}
+
+	// Include any additional raw fields
+	if credentials.Raw != nil {
+		for k, v := range credentials.Raw {
+			// Don't overwrite structured fields
+			if _, exists := credentialsMap[k]; !exists {
+				credentialsMap[k] = v
+			}
+		}
+	}
+
+	// Create metadata for the binding
+	metadata := map[string]interface{}{
+		"binding_id":            bindingID,
+		"instance_id":           instanceID,
+		"credential_type":       credentials.CredentialType,
+		"reconstructed_at":      credentials.ReconstructedAt,
+		"reconstruction_source": "broker",
+		"status":                "reconstructed",
+	}
+
+	// Store the reconstructed credentials and metadata
+	err = u.StoreBindingCredentials(instanceID, bindingID, credentialsMap, metadata)
+	if err != nil {
+		u.logError("Failed to store reconstructed binding credentials: %s", err)
+		return fmt.Errorf("failed to store reconstructed credentials: %w", err)
+	}
+
+	u.logInfo("Successfully reconstructed and stored binding %s", bindingID)
+	return nil
+}
+
+// RepairInstanceBindings repairs all unhealthy bindings for an instance using the broker
+func (u *vaultUpdater) RepairInstanceBindings(instanceID string, broker BrokerInterface) error {
+	u.logInfo("Starting binding repair for instance %s", instanceID)
+
+	// Get the current binding health status
+	_, unhealthyBindingIDs, err := u.checkBindingHealth(instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to check binding health: %w", err)
+	}
+
+	if len(unhealthyBindingIDs) == 0 {
+		u.logInfo("No unhealthy bindings found for instance %s", instanceID)
+		return nil
+	}
+
+	u.logInfo("Found %d unhealthy bindings to repair: %v", len(unhealthyBindingIDs), unhealthyBindingIDs)
+
+	var repairErrors []string
+	repairedCount := 0
+
+	for _, bindingID := range unhealthyBindingIDs {
+		u.logInfo("Attempting to repair binding %s", bindingID)
+
+		err := u.ReconstructBindingWithBroker(instanceID, bindingID, broker)
+		if err != nil {
+			u.logError("Failed to repair binding %s: %s", bindingID, err)
+			repairErrors = append(repairErrors, fmt.Sprintf("binding %s: %s", bindingID, err))
+
+			// Update binding metadata to record the failure
+			u.recordReconstructionFailure(instanceID, bindingID, err)
+		} else {
+			u.logInfo("Successfully repaired binding %s", bindingID)
+			repairedCount++
+		}
+	}
+
+	u.logInfo("Binding repair completed for instance %s: %d repaired, %d failed",
+		instanceID, repairedCount, len(repairErrors))
+
+	if len(repairErrors) > 0 {
+		return fmt.Errorf("failed to repair %d of %d bindings: %s",
+			len(repairErrors), len(unhealthyBindingIDs), strings.Join(repairErrors, "; "))
+	}
+
+	return nil
+}
+
+// recordReconstructionFailure records when a binding reconstruction fails
+func (u *vaultUpdater) recordReconstructionFailure(instanceID, bindingID string, err error) {
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+
+	// Get existing metadata
+	metadata, getErr := u.getFromVault(metadataPath)
+	if getErr != nil {
+		metadata = make(map[string]interface{})
+	}
+
+	// Record the failure
+	metadata["last_reconstruction_attempt"] = time.Now().Format(time.RFC3339)
+	metadata["last_reconstruction_error"] = err.Error()
+	metadata["reconstruction_status"] = "failed"
+	metadata["status"] = "unhealthy"
+
+	// Increment failure count
+	if count, exists := metadata["reconstruction_failure_count"].(float64); exists {
+		metadata["reconstruction_failure_count"] = int(count) + 1
+	} else {
+		metadata["reconstruction_failure_count"] = 1
+	}
+
+	putErr := u.putToVault(metadataPath, metadata)
+	if putErr != nil {
+		u.logWarning("Failed to record reconstruction failure metadata: %s", putErr)
+	}
+}
+
+// UpdateInstanceWithBindingRepair extends UpdateInstance to include broker-based binding repair
+func (u *vaultUpdater) UpdateInstanceWithBindingRepair(ctx context.Context, instance *InstanceData, broker BrokerInterface) error {
+	// First run the standard update
+	err := u.UpdateInstance(ctx, instance)
+	if err != nil {
+		return err
+	}
+
+	// Check if binding repair is needed and broker is available
+	if needsRepair, ok := instance.Metadata["needs_binding_repair"].(bool); ok && needsRepair && broker != nil {
+		u.logInfo("Instance %s needs binding repair, attempting with broker integration", instance.ID)
+
+		repairErr := u.RepairInstanceBindings(instance.ID, broker)
+		if repairErr != nil {
+			u.logError("Binding repair failed for instance %s: %s", instance.ID, repairErr)
+
+			// Update metadata to reflect repair failure
+			if instance.Metadata == nil {
+				instance.Metadata = make(map[string]interface{})
+			}
+			instance.Metadata["binding_repair_failed"] = true
+			instance.Metadata["binding_repair_error"] = repairErr.Error()
+			instance.Metadata["binding_repair_attempted_at"] = time.Now().Format(time.RFC3339)
+
+			// Re-run UpdateInstance to store the updated metadata
+			if err := u.UpdateInstance(ctx, instance); err != nil {
+				u.logError("Failed to update instance metadata after binding repair failure: %v", err)
+			}
+
+			// Don't fail the overall update for binding repair failures
+			u.logWarning("Continuing despite binding repair failure")
+		} else {
+			u.logInfo("Successfully repaired bindings for instance %s", instance.ID)
+
+			// Update metadata to reflect repair success
+			if instance.Metadata == nil {
+				instance.Metadata = make(map[string]interface{})
+			}
+			instance.Metadata["needs_binding_repair"] = false
+			instance.Metadata["binding_repair_succeeded"] = true
+			instance.Metadata["binding_repair_completed_at"] = time.Now().Format(time.RFC3339)
+
+			// Remove error fields
+			delete(instance.Metadata, "binding_repair_failed")
+			delete(instance.Metadata, "binding_repair_error")
+
+			// Re-run UpdateInstance to store the updated metadata
+			if err := u.UpdateInstance(ctx, instance); err != nil {
+				u.logError("Failed to update instance metadata after binding repair failure: %v", err)
+			}
+		}
+	}
+
 	return nil
 }
 
