@@ -396,7 +396,10 @@ func (c *CertificateAPI) handleServiceCertificates(w http.ResponseWriter, req *h
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			l.Error("Failed to encode certificate response: %v", err)
+		}
 		return
 	}
 
