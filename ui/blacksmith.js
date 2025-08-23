@@ -486,7 +486,7 @@
         // Construct full timestamp from date and time fields if available
         let aTimestamp = '';
         let bTimestamp = '';
-        
+
         if (a.timestamp) {
           aTimestamp = a.timestamp;
         } else if (a.date && a.time) {
@@ -496,7 +496,7 @@
         } else if (a.time) {
           aTimestamp = a.time;
         }
-        
+
         if (b.timestamp) {
           bTimestamp = b.timestamp;
         } else if (b.date && b.time) {
@@ -506,16 +506,16 @@
         } else if (b.time) {
           bTimestamp = b.time;
         }
-        
+
         // Parse as dates and compare
         const dateA = new Date(aTimestamp);
         const dateB = new Date(bTimestamp);
-        
+
         // Handle invalid dates
         if (isNaN(dateA.getTime()) && isNaN(dateB.getTime())) return 0;
         if (isNaN(dateA.getTime())) return direction === 'asc' ? 1 : -1;
         if (isNaN(dateB.getTime())) return direction === 'asc' ? -1 : 1;
-        
+
         const result = dateA - dateB;
         return direction === 'desc' ? -result : result;
       });
@@ -526,16 +526,16 @@
       return [...data].sort((a, b) => {
         const aTime = a.time || '';
         const bTime = b.time || '';
-        
+
         // Parse as dates and compare (these should be Unix timestamps or ISO strings)
         const dateA = new Date(aTime);
         const dateB = new Date(bTime);
-        
+
         // Handle invalid dates
         if (isNaN(dateA.getTime()) && isNaN(dateB.getTime())) return 0;
         if (isNaN(dateA.getTime())) return direction === 'asc' ? 1 : -1;
         if (isNaN(dateB.getTime())) return direction === 'asc' ? -1 : 1;
-        
+
         const result = dateA - dateB;
         return direction === 'desc' ? -result : result;
       });
@@ -680,6 +680,18 @@
         { key: 'version', sortable: true },
         { key: 'url', sortable: true },
         { key: 'sha1', sortable: true }
+      ],
+      'service-instances-table': [
+        { key: 'name', sortable: true },
+        { key: 'type', sortable: true },
+        { key: 'status', sortable: true },
+        { key: 'bindings', sortable: true }
+      ],
+      'marketplace-services-table': [
+        { key: 'service', sortable: true },
+        { key: 'description', sortable: true },
+        { key: 'plans', sortable: true },
+        { key: 'available', sortable: true }
       ]
     };
 
@@ -869,7 +881,7 @@
       // Remove any existing click listeners and add new one
       header.removeEventListener('click', clickHandler); // Remove if exists
       header.addEventListener('click', clickHandler);
-      
+
       // Store reference for cleanup
       listeners.push({ element: header, handler: clickHandler });
     });
@@ -1291,6 +1303,7 @@
         <button class="detail-tab" data-tab="vms">VMs</button>
         <button class="detail-tab" data-tab="logs">Deployment Logs</button>
         <button class="detail-tab" data-tab="debug">Debug Log</button>
+        <button class="detail-tab" data-tab="broker">Broker</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
@@ -2046,6 +2059,9 @@
       } else if (type === 'certificates') {
         // Render certificates tab content
         return renderCertificatesTab();
+      } else if (type === 'broker') {
+        // Render broker tab content with CF endpoints management
+        return renderBrokerTab();
       }
 
       return `<div class="error">Unknown tab type: ${type}</div>`;
@@ -3355,7 +3371,7 @@
       ? `window.refreshServiceInstanceVMs('${instanceId}', event)`
       : `window.refreshBlacksmithVMs(event)`;
 
-    return `
+    const result = `
       <div class="vms-table-wrapper">
         <div class="table-controls-container">
           <div class="search-filter-container">
@@ -3371,6 +3387,17 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
             <span>Refresh</span>
           </button>
+          <div class="resurrection-toggle-container">
+            <label class="resurrection-toggle-label">
+              <span class="resurrection-label-text">Resurrection:</span>
+              <div class="toggle-switch" onclick="window.toggleResurrection('${instanceId || 'blacksmith'}', event)">
+                <div class="toggle-slider" id="resurrection-slider-${instanceId || 'blacksmith'}">
+                  <span class="toggle-text-off">Off</span>
+                  <span class="toggle-text-on">On</span>
+                </div>
+              </div>
+            </label>
+          </div>
         </div>
         <div class="vms-table-container">
           <table class="vms-table">
@@ -3432,11 +3459,11 @@
       const deploymentName = isBlacksmith ? 'blacksmith' : instanceId;
       const sshButtonClass = isBlacksmith ? 'blacksmith-ssh' : 'service-instance-ssh';
       const deploymentType = isBlacksmith ? 'blacksmith' : 'service-instance';
-      
+
       return `
               <tr>
                 <td class="vm-ssh">
-                  <button class="ssh-btn ${sshButtonClass}" 
+                  <button class="ssh-btn ${sshButtonClass}"
                           onclick="window.openTerminal('${deploymentType}', '${deploymentName}', '${instanceName}', event)"
                           title="SSH to ${instanceName}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3508,6 +3535,13 @@
         </div>
       </div>
     `;
+
+    // Initialize resurrection toggle state after a short delay to ensure DOM is ready
+    setTimeout(() => {
+      window.initializeResurrectionToggle(instanceId || 'blacksmith', vms);
+    }, 100);
+
+    return result;
   };
 
   // Fetch with API version header
@@ -3610,12 +3644,12 @@
     if (vaultData?.service_name === 'redis') {
       return true;
     }
-    
+
     // Then check for explicit service_type
     if (vaultData?.service_type === 'redis') {
       return true;
     }
-    
+
     // Finally fall back to credential patterns for older instances
     if (creds.uri && (creds.uri.startsWith('redis://') || creds.uri.startsWith('rediss://'))) {
       return true;
@@ -3634,12 +3668,12 @@
     if (vaultData?.service_name === 'rabbitmq') {
       return true;
     }
-    
+
     // Then check for explicit service_type
     if (vaultData?.service_type === 'rabbitmq') {
       return true;
     }
-    
+
     // Finally fall back to credential patterns for older instances
     if (creds.uri && (creds.uri.startsWith('amqp://') || creds.uri.startsWith('amqps://'))) {
       return true;
@@ -4910,12 +4944,12 @@
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/categories`);
       const categories = await response.json();
-      
+
       window.rabbitmqCtl[instanceId].categories = categories;
-      
+
       const container = document.getElementById(`rabbitmqctl-categories-${instanceId}`);
       if (container) {
-        container.innerHTML = categories.map(category => 
+        container.innerHTML = categories.map(category =>
           `<div class="category-item" onclick="selectRabbitMQCtlCategory('${instanceId}', '${category.name}')">
             <div class="category-name">${category.display_name}</div>
             <div class="category-description">${category.description}</div>
@@ -4936,26 +4970,26 @@
     const state = window.rabbitmqCtl[instanceId];
     state.selectedCategory = categoryName;
     state.selectedCommand = null;
-    
+
     // Update category selection
     document.querySelectorAll(`#rabbitmqctl-categories-${instanceId} .category-item`).forEach(item => {
       item.classList.remove('active');
     });
     event.target.closest('.category-item').classList.add('active');
-    
+
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/category/${categoryName}`);
       const category = await response.json();
-      
+
       // Update command selector
       const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
       if (commandSelect) {
         commandSelect.innerHTML = '<option value="">Select a command...</option>' +
-          category.commands.map(cmd => 
+          category.commands.map(cmd =>
             `<option value="${cmd.name}">${cmd.name} - ${cmd.description}</option>`
           ).join('');
       }
-      
+
       // Update command details section
       const commandSection = document.getElementById(`rabbitmqctl-command-section-${instanceId}`);
       if (commandSection) {
@@ -4994,9 +5028,9 @@
   window.selectRabbitMQCtlCommand = async (instanceId) => {
     const commandSelect = document.getElementById(`rabbitmqctl-command-select-${instanceId}`);
     const commandName = commandSelect.value;
-    
+
     if (!commandName) return;
-    
+
     await loadRabbitMQCtlCommandDetails(instanceId, commandName);
   };
 
@@ -5005,22 +5039,22 @@
     if (commandSelect) {
       commandSelect.value = commandName;
     }
-    
+
     await loadRabbitMQCtlCommandDetails(instanceId, commandName);
   };
 
   const loadRabbitMQCtlCommandDetails = async (instanceId, commandName) => {
     const state = window.rabbitmqCtl[instanceId];
     const categoryName = state.selectedCategory;
-    
+
     if (!categoryName) return;
-    
+
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/category/${categoryName}/command/${commandName}`);
       const command = await response.json();
-      
+
       state.selectedCommand = command;
-      
+
       // Update command help
       const helpContainer = document.getElementById(`rabbitmqctl-command-help-${instanceId}`);
       if (helpContainer) {
@@ -5042,7 +5076,7 @@
           </div>
         `;
       }
-      
+
       // Update command table section
       const tableContainer = document.getElementById(`rabbitmqctl-command-table-${instanceId}`);
       if (tableContainer) {
@@ -5062,14 +5096,14 @@
                   <td class="command-base">rabbitmqctl</td>
                   <td class="command-name-cell">${command.name}</td>
                   <td>
-                    <input type="text" 
-                           id="rabbitmqctl-command-args-${instanceId}" 
-                           placeholder="${command.arguments.map(arg => arg.required ? `<${arg.name}>` : `[${arg.name}]`).join(' ')}" 
+                    <input type="text"
+                           id="rabbitmqctl-command-args-${instanceId}"
+                           placeholder="${command.arguments.map(arg => arg.required ? `<${arg.name}>` : `[${arg.name}]`).join(' ')}"
                            class="command-args-input" />
                   </td>
                   <td>
-                    <button id="rabbitmqctl-execute-btn-${instanceId}" 
-                            class="execute-btn" 
+                    <button id="rabbitmqctl-execute-btn-${instanceId}"
+                            class="execute-btn"
                             onclick="executeRabbitMQCtlCommand('${instanceId}')">
                       Run
                     </button>
@@ -5093,7 +5127,7 @@
           ` : ''}
         `;
       }
-      
+
     } catch (error) {
       console.error('Failed to load command details:', error);
     }
@@ -5102,23 +5136,23 @@
   window.executeRabbitMQCtlCommand = async (instanceId) => {
     const state = window.rabbitmqCtl[instanceId];
     const command = state.selectedCommand;
-    
+
     if (!command) return;
-    
+
     // Gather command arguments
     const commandArgs = document.getElementById(`rabbitmqctl-command-args-${instanceId}`)?.value || '';
-    
+
     // Build arguments array from command arguments
     const args = [];
     if (commandArgs.trim()) {
       args.push(...commandArgs.trim().split(/\s+/));
     }
-    
+
     try {
       const executeBtn = document.getElementById(`rabbitmqctl-execute-btn-${instanceId}`);
       executeBtn.disabled = true;
       executeBtn.textContent = 'Executing...';
-      
+
       const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/execute`, {
         method: 'POST',
         headers: {
@@ -5130,11 +5164,11 @@
           arguments: args
         })
       });
-      
+
       const result = await response.json();
-      
+
       displayRabbitMQCtlResult(instanceId, result);
-      
+
     } catch (error) {
       console.error('Command execution failed:', error);
       displayRabbitMQCtlError(instanceId, error.message);
@@ -5164,7 +5198,7 @@
         </div>
       `;
     }
-    
+
     // Add to command history
     const state = window.rabbitmqCtl[instanceId];
     if (state) {
@@ -5177,17 +5211,17 @@
         exit_code: result.exit_code,
         output: result.output || 'No output'
       };
-      
+
       state.commandHistory.unshift(historyEntry);
-      
+
       // Keep only last 20 entries
       if (state.commandHistory.length > 20) {
         state.commandHistory = state.commandHistory.slice(0, 20);
       }
-      
+
       // Update history display if visible
       updateRabbitMQCtlHistory(instanceId);
-      
+
       // Also update the response history section
       updateRabbitMQCtlResponseHistory(instanceId, historyEntry);
     }
@@ -5240,14 +5274,14 @@
       }
     }
   };
-  
+
   const updateRabbitMQCtlHistory = (instanceId) => {
     const state = window.rabbitmqCtl[instanceId];
     const historyContent = document.getElementById(`rabbitmqctl-history-content-${instanceId}`);
-    
+
     if (historyContent && state) {
       const history = state.commandHistory;
-      
+
       if (history.length > 0) {
         historyContent.innerHTML = `
           ${history.map(entry => `
@@ -5270,12 +5304,12 @@
       }
     }
   };
-  
+
   window.showRabbitMQCtlHistory = async (instanceId) => {
     // Now just toggle the history visibility
     toggleRabbitMQCtlHistory(instanceId);
   };
-  
+
   window.clearRabbitMQCtlHistory = (instanceId) => {
     const state = window.rabbitmqCtl[instanceId];
     if (state) {
@@ -5283,16 +5317,16 @@
       updateRabbitMQCtlHistory(instanceId);
     }
   };
-  
+
   // Functions for the Response History section in rabbitmqctl
   const updateRabbitMQCtlResponseHistory = (instanceId, entry) => {
     const historyContainer = document.getElementById(`history-entries-rabbitmqctl-${instanceId}`);
     if (!historyContainer) return;
-    
+
     const timestamp = new Date(entry.timestamp * 1000).toLocaleString();
     const statusClass = entry.success ? 'success' : 'error';
     const statusIcon = entry.success ? '✓' : '✗';
-    
+
     const newEntry = document.createElement('div');
     newEntry.className = `history-entry ${statusClass}`;
     newEntry.innerHTML = `
@@ -5311,36 +5345,36 @@
         </div>
       </div>
     `;
-    
+
     // Remove "no data" message if present
     const noData = historyContainer.querySelector('.no-data');
     if (noData) {
       noData.remove();
     }
-    
+
     // Insert at the beginning
     historyContainer.insertBefore(newEntry, historyContainer.firstChild);
-    
+
     // Keep only last 20 entries
     const entries = historyContainer.querySelectorAll('.history-entry');
     if (entries.length > 20) {
       entries[entries.length - 1].remove();
     }
   };
-  
+
   window.clearRabbitMQCtlResponseHistory = (instanceId) => {
     const historyContainer = document.getElementById(`history-entries-rabbitmqctl-${instanceId}`);
     if (historyContainer) {
       historyContainer.innerHTML = '<div class="no-data">No commands executed yet</div>';
     }
   };
-  
+
   // Legacy function for compatibility
   window.showRabbitMQCtlHistoryOld = async (instanceId) => {
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/history`);
       const history = await response.json();
-      
+
       const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
       if (historyContainer) {
         if (history.length > 0) {
@@ -5380,12 +5414,12 @@
     if (!confirm('Are you sure you want to clear all command history?')) {
       return;
     }
-    
+
     try {
       await fetch(`/b/${instanceId}/rabbitmq/rabbitmqctl/history`, {
         method: 'DELETE'
       });
-      
+
       const historyContainer = document.getElementById(`rabbitmqctl-history-${instanceId}`);
       if (historyContainer) {
         historyContainer.innerHTML = `
@@ -5403,12 +5437,12 @@
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/categories`);
       const categories = await response.json();
-      
+
       window.rabbitmqPlugins[instanceId].categories = categories;
-      
+
       const container = document.getElementById(`plugins-categories-${instanceId}`);
       if (container) {
-        container.innerHTML = categories.map(category => 
+        container.innerHTML = categories.map(category =>
           `<div class="category-item" onclick="selectRabbitMQPluginsCategory('${instanceId}', '${category.name}')">
             <div class="category-name">${category.display_name}</div>
             <div class="category-description">${category.description}</div>
@@ -5429,22 +5463,22 @@
     const state = window.rabbitmqPlugins[instanceId];
     state.selectedCategory = categoryName;
     state.selectedCommand = null;
-    
+
     // Update category selection
     document.querySelectorAll(`#plugins-categories-${instanceId} .category-item`).forEach(item => {
       item.classList.remove('active');
     });
     event.target.closest('.category-item').classList.add('active');
-    
+
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/category/${categoryName}`);
       const category = await response.json();
-      
+
       // Check if response is valid and has commands
       if (!category || !category.commands || !Array.isArray(category.commands)) {
         throw new Error(`Invalid category response: ${JSON.stringify(category)}`);
       }
-      
+
       // Update command section
       const commandSection = document.getElementById(`plugins-command-section-${instanceId}`);
       if (commandSection) {
@@ -5492,16 +5526,16 @@
   window.selectRabbitMQPluginsCommand = async (instanceId) => {
     const select = document.getElementById(`plugins-command-select-${instanceId}`);
     const commandName = select.value;
-    
+
     if (!commandName) return;
-    
+
     selectRabbitMQPluginsCommandFromTable(instanceId, commandName);
   };
 
   window.selectRabbitMQPluginsCommandFromTable = async (instanceId, commandName) => {
     const state = window.rabbitmqPlugins[instanceId];
     state.selectedCommand = commandName;
-    
+
     await loadRabbitMQPluginsCommandDetails(instanceId, commandName);
   };
 
@@ -5509,7 +5543,7 @@
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/category/${window.rabbitmqPlugins[instanceId].selectedCategory}/command/${commandName}`);
       const command = await response.json();
-      
+
       // Display command help
       const helpContainer = document.getElementById(`plugins-command-help-${instanceId}`);
       if (helpContainer) {
@@ -5532,7 +5566,7 @@
           </div>
         `;
       }
-      
+
       // Update command table section
       const tableContainer = document.getElementById(`plugins-command-table-${instanceId}`);
       if (tableContainer) {
@@ -5556,8 +5590,8 @@
                       ${command.arguments ? command.arguments.map(arg => `
                         <div class="argument-group">
                           <label>${arg.name}${arg.required ? '*' : ''}:</label>
-                          <input type="${arg.type === 'string[]' ? 'text' : 'text'}" 
-                                 id="plugins-arg-${arg.name}-${instanceId}" 
+                          <input type="${arg.type === 'string[]' ? 'text' : 'text'}"
+                                 id="plugins-arg-${arg.name}-${instanceId}"
                                  placeholder="${arg.description}"
                                  ${arg.required ? 'required' : ''}>
                           ${arg.type === 'string[]' ? '<small>Space-separated for multiple values</small>' : ''}
@@ -5566,8 +5600,8 @@
                       ${command.options ? command.options.map(opt => `
                         <div class="option-group">
                           <label>
-                            <input type="checkbox" 
-                                   id="plugins-opt-${opt.name}-${instanceId}" 
+                            <input type="checkbox"
+                                   id="plugins-opt-${opt.name}-${instanceId}"
                                    value="${opt.name}">
                             --${opt.name}${opt.short ? ` (-${opt.short})` : ''}
                           </label>
@@ -5603,9 +5637,9 @@
     const command = state.categories
       .find(cat => cat.name === state.selectedCategory)
       ?.commands.find(cmd => cmd.name === state.selectedCommand);
-    
+
     const cmdArguments = [];
-    
+
     // Collect argument inputs
     if (command.arguments) {
       for (const arg of command.arguments) {
@@ -5622,7 +5656,7 @@
         }
       }
     }
-    
+
     // Collect option checkboxes
     if (command.options) {
       for (const opt of command.options) {
@@ -5634,10 +5668,10 @@
     }
 
     try {
-      displayRabbitMQPluginsResult(instanceId, { 
-        output: 'Executing command...', 
-        success: true, 
-        loading: true 
+      displayRabbitMQPluginsResult(instanceId, {
+        output: 'Executing command...',
+        success: true,
+        loading: true
       });
 
       const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/execute`, {
@@ -5654,7 +5688,7 @@
 
       const result = await response.json();
       displayRabbitMQPluginsResult(instanceId, result);
-      
+
       // Add to response history
       updateRabbitMQPluginsResponseHistory(instanceId, {
         category: state.selectedCategory,
@@ -5682,7 +5716,7 @@
       } else {
         const statusClass = result.success ? 'success' : 'error';
         const statusIcon = result.success ? '✅' : '❌';
-        
+
         outputContainer.innerHTML = `
           <div class="command-result ${statusClass}">
             <div class="result-header">
@@ -5695,7 +5729,7 @@
           </div>
         `;
       }
-      
+
       outputContainer.scrollTop = outputContainer.scrollHeight;
     }
   };
@@ -5725,11 +5759,11 @@
 
   window.toggleRabbitMQPluginsHistory = (instanceId) => {
     const historyContainer = document.getElementById(`plugins-history-${instanceId}`);
-    
+
     if (historyContainer) {
       const isVisible = historyContainer.style.display !== 'none';
       historyContainer.style.display = isVisible ? 'none' : 'block';
-      
+
       if (!isVisible) {
         showRabbitMQPluginsHistory(instanceId);
       }
@@ -5740,7 +5774,7 @@
     try {
       const response = await fetch(`/b/${instanceId}/rabbitmq/plugins/history`);
       const history = await response.json();
-      
+
       const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
       if (historyContent) {
         if (history && history.length > 0) {
@@ -5781,7 +5815,7 @@
         await fetch(`/b/${instanceId}/rabbitmq/plugins/history`, {
           method: 'DELETE'
         });
-        
+
         const historyContent = document.getElementById(`plugins-history-content-${instanceId}`);
         if (historyContent) {
           historyContent.innerHTML = '<div class="no-data">No command history available</div>';
@@ -5805,7 +5839,7 @@
     const timestamp = new Date(entry.timestamp).toLocaleString();
     const statusClass = entry.result?.success ? 'success' : 'error';
     const statusIcon = entry.result?.success ? '✅' : '❌';
-    
+
     const entryElement = document.createElement('div');
     entryElement.className = 'response-entry';
     entryElement.innerHTML = `
@@ -5819,9 +5853,9 @@
         <pre>${(entry.result?.output || entry.result?.error || 'No output').substring(0, 300)}${((entry.result?.output || entry.result?.error || '').length > 300) ? '...' : ''}</pre>
       </div>
     `;
-    
+
     historyContainer.insertBefore(entryElement, historyContainer.firstChild);
-    
+
     // Keep only last 50 entries
     const entries = historyContainer.querySelectorAll('.response-entry');
     if (entries.length > 50) {
@@ -5830,7 +5864,7 @@
       }
     }
   };
-  
+
   window.clearRabbitMQPluginsResponseHistory = (instanceId) => {
     const historyContainer = document.getElementById(`history-entries-plugins-${instanceId}`);
     if (historyContainer) {
@@ -5849,9 +5883,9 @@
     const command = state.categories
       .find(cat => cat.name === state.selectedCategory)
       ?.commands.find(cmd => cmd.name === state.selectedCommand);
-    
+
     const cmdArguments = [];
-    
+
     // Collect argument inputs
     if (command.arguments) {
       for (const arg of command.arguments) {
@@ -5868,7 +5902,7 @@
         }
       }
     }
-    
+
     // Collect option checkboxes
     if (command.options) {
       for (const opt of command.options) {
@@ -5909,7 +5943,7 @@
         if (headerElement) {
           headerElement.textContent = '🔴 Streaming...';
         }
-        
+
         // Send execute command
         state.websocket.send(JSON.stringify({
           type: 'execute',
@@ -5922,7 +5956,7 @@
       state.websocket.onmessage = (event) => {
         const message = JSON.parse(event.data);
         const contentElement = outputContainer.querySelector('.streaming-content');
-        
+
         switch (message.type) {
           case 'execution_started':
             if (contentElement) {
@@ -6072,16 +6106,16 @@
         case 'consume': return renderRabbitMQConsumeOperation(instanceId);
         case 'queues': return renderRabbitMQQueuesOperation(instanceId);
         case 'queue-ops': return renderRabbitMQQueueOpsOperation(instanceId);
-        case 'management': 
-        // Show regular history for non-rabbitmqctl tabs
-        setTimeout(() => {
-          const regularHistory = document.querySelector('.testing-history');
-          if (regularHistory && !regularHistory.id?.includes('rabbitmqctl')) {
-            regularHistory.style.display = 'block';
-          }
-        }, 0);
-        return renderRabbitMQManagementOperation(instanceId);
-        case 'rabbitmqctl': 
+        case 'management':
+          // Show regular history for non-rabbitmqctl tabs
+          setTimeout(() => {
+            const regularHistory = document.querySelector('.testing-history');
+            if (regularHistory && !regularHistory.id?.includes('rabbitmqctl')) {
+              regularHistory.style.display = 'block';
+            }
+          }, 0);
+          return renderRabbitMQManagementOperation(instanceId);
+        case 'rabbitmqctl':
           // Show regular history for other tabs
           setTimeout(() => {
             const regularHistory = document.querySelector('.testing-history');
@@ -6993,7 +7027,7 @@
 
   // Handler for refreshing blacksmith VMs
   window.refreshBlacksmithVMs = async (event) => {
-    const button = event.currentTarget;
+    const button = event && event.currentTarget || null;
     const displayContainer = document.querySelector('.vms-table-container');
 
     if (!displayContainer) {
@@ -7004,9 +7038,11 @@
     // Capture current search filter state
     const currentSearchFilter = captureSearchFilterState('vms-table');
 
-    // Add spinning animation to refresh button
-    button.classList.add('refreshing');
-    button.disabled = true;
+    // Add spinning animation to refresh button (if button exists)
+    if (button) {
+      button.classList.add('refreshing');
+      button.disabled = true;
+    }
 
     try {
       // Use the stored deployment name
@@ -7041,34 +7077,42 @@
         }
       }
 
-      // Visual feedback for successful refresh
-      button.classList.add('success');
-      const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
-      setTimeout(() => {
-        button.classList.remove('success');
-        spanElement.textContent = originalText;
-      }, 1000);
+      // Visual feedback for successful refresh (if button exists)
+      if (button) {
+        button.classList.add('success');
+        const spanElement = button.querySelector('span');
+        if (spanElement) {
+          const originalText = spanElement.textContent;
+          spanElement.textContent = 'Refreshed!';
+          setTimeout(() => {
+            button.classList.remove('success');
+            spanElement.textContent = originalText;
+          }, 1000);
+        }
+      }
 
     } catch (error) {
       console.error('Failed to refresh VMs:', error);
 
-      // Visual feedback for error
-      button.classList.add('error');
-      setTimeout(() => {
-        button.classList.remove('error');
-      }, 2000);
+      // Visual feedback for error (if button exists)
+      if (button) {
+        button.classList.add('error');
+        setTimeout(() => {
+          button.classList.remove('error');
+        }, 2000);
+      }
     } finally {
-      // Remove spinning animation
-      button.classList.remove('refreshing');
-      button.disabled = false;
+      // Remove spinning animation (if button exists)
+      if (button) {
+        button.classList.remove('refreshing');
+        button.disabled = false;
+      }
     }
   };
 
   // Handler for refreshing service instance VMs
   window.refreshServiceInstanceVMs = async (instanceId, event) => {
-    const button = event.currentTarget;
+    const button = event && event.currentTarget || null;
     const displayContainer = document.querySelector('.vms-table-container');
 
     if (!displayContainer) {
@@ -7079,9 +7123,11 @@
     // Capture current search filter state
     const currentSearchFilter = captureSearchFilterState('vms-table');
 
-    // Add spinning animation to refresh button
-    button.classList.add('refreshing');
-    button.disabled = true;
+    // Add spinning animation to refresh button if available
+    if (button) {
+      button.classList.add('refreshing');
+      button.disabled = true;
+    }
 
     try {
       // Fetch VMs for the service instance
@@ -7120,28 +7166,36 @@
         }
       }
 
-      // Visual feedback for successful refresh
-      button.classList.add('success');
-      const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
-      setTimeout(() => {
-        button.classList.remove('success');
-        spanElement.textContent = originalText;
-      }, 1000);
+      // Visual feedback for successful refresh (if button exists)
+      if (button) {
+        button.classList.add('success');
+        const spanElement = button.querySelector('span');
+        if (spanElement) {
+          const originalText = spanElement.textContent;
+          spanElement.textContent = 'Refreshed!';
+          setTimeout(() => {
+            button.classList.remove('success');
+            spanElement.textContent = originalText;
+          }, 1000);
+        }
+      }
 
     } catch (error) {
       console.error('Failed to refresh service VMs:', error);
 
-      // Visual feedback for error
-      button.classList.add('error');
-      setTimeout(() => {
-        button.classList.remove('error');
-      }, 2000);
+      // Visual feedback for error (if button exists)
+      if (button) {
+        button.classList.add('error');
+        setTimeout(() => {
+          button.classList.remove('error');
+        }, 2000);
+      }
     } finally {
-      // Remove spinning animation
-      button.classList.remove('refreshing');
-      button.disabled = false;
+      // Remove spinning animation (if button exists)
+      if (button) {
+        button.classList.remove('refreshing');
+        button.disabled = false;
+      }
     }
   };
 
@@ -8341,18 +8395,10 @@
             return;
           }
 
-          // Handle the Broker tab (CF Registrations)
+          // Handle the Broker tab (CF Endpoints Management)
           if (tabType === 'broker') {
-            contentContainer.innerHTML = `
-              <div class="registrations-header">
-                <h2>Cloud Foundry Registrations</h2>
-                <button class="btn btn-primary" id="new-registration-btn">New Registration</button>
-              </div>
-              <div class="registrations-content">
-                <div class="loading" style="padding: 2em; text-align: center;">Loading registrations...</div>
-              </div>
-            `;
-            
+            contentContainer.innerHTML = renderBrokerTab();
+
             // Initialize broker functionality after content is rendered
             setTimeout(() => {
               initBrokerTab();
@@ -9388,6 +9434,202 @@
   };
 
   // ================================================================
+  // BROKER TAB FUNCTIONALITY - CF ENDPOINTS MANAGEMENT
+  // ================================================================
+
+  // Render the main broker tab content with CF endpoints management (matching Manifest view styling)
+  const renderBrokerTab = () => {
+    return `
+      <div class="broker-details-container">
+        <!-- CF Endpoint Selection Header Table -->
+        <div class="broker-endpoint-header">
+          <table class="endpoint-selector-table">
+            <tbody>
+              <tr>
+                <td class="endpoint-label">Endpoint:</td>
+                <td class="endpoint-dropdown-cell">
+                  <select id="cf-endpoint-select" class="cf-endpoint-dropdown">
+                    <option value="">Loading endpoints...</option>
+                  </select>
+                </td>
+                <td class="connection-status-cell">
+                  <div class="connection-status" id="connection-status">
+                    <span class="status-indicator" id="status-indicator"></span>
+                    <button class="btn btn-sm btn-secondary" id="connection-btn" onclick="CFEndpointManager.toggleConnection()">Connect</button>
+                  </div>
+                </td>
+                <td class="endpoint-controls">
+                  <button class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh Endpoints">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                  </button>
+                  <button class="btn btn-icon btn-sm" onclick="showCFEndpointForm()" title="Add Endpoint">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                  </button>
+                  <button class="btn btn-sm btn-primary" onclick="CFEndpointManager.showRegistrationModal()" title="Register Broker" id="register-btn" style="display: none; margin-left: 8px;">
+                    Register
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- CF Detail Tabs (matching Manifest styling) -->
+        <div class="broker-tabs-nav">
+          <button class="broker-tab-btn active" data-cftab="details">Details</button>
+          <button class="broker-tab-btn" data-cftab="marketplace">Marketplace</button>
+          <button class="broker-tab-btn" data-cftab="services">Services</button>
+        </div>
+
+        <!-- CF Detail Content -->
+        <div class="broker-tab-content">
+          <div class="cf-detail-panel active" data-panel="details">
+            <div class="cf-endpoint-details" id="cf-endpoint-details">
+              <div class="empty-state">
+                <p>Select an endpoint from the dropdown above to view details.</p>
+              </div>
+            </div>
+          </div>
+          
+          <div class="cf-detail-panel" data-panel="register" style="display: none;">
+            <div class="cf-registration-content" id="cf-registration-content">
+              <div class="empty-state">
+                <p>Select an endpoint from the dropdown above to manage broker registration.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="cf-detail-panel" data-panel="marketplace" style="display: none;">
+            <div class="cf-marketplace-content" id="cf-marketplace-content">
+              <div class="empty-state">
+                <p>Select an endpoint from the dropdown above to view the service marketplace.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="cf-detail-panel" data-panel="services" style="display: none;">
+            <div class="cf-services-content" id="cf-services-content">
+              <div class="empty-state">
+                <p>Select an endpoint from the dropdown above to view service instances.</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    `;
+  };
+
+  // Show CF endpoint form for adding/editing endpoints
+  const showCFEndpointForm = (endpoint = null) => {
+    const modal = document.getElementById('cf-endpoint-modal');
+    if (!modal) {
+      // Create modal if it doesn't exist
+      const modalHTML = `
+        <div id="cf-endpoint-modal" class="modal-overlay" style="display: none;" role="dialog" aria-labelledby="cf-endpoint-modal-title" aria-hidden="true">
+          <div class="modal">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h3 id="cf-endpoint-modal-title">${endpoint ? 'Edit' : 'Add'} CF Endpoint</h3>
+                <button class="modal-close" onclick="hideCFEndpointForm()" aria-label="Close modal">&times;</button>
+              </div>
+            <div class="modal-body">
+              <form id="cf-endpoint-form">
+                <div class="form-group">
+                  <label for="cf-endpoint-name">Name:</label>
+                  <input type="text" id="cf-endpoint-name" name="name" required>
+                </div>
+                <div class="form-group">
+                  <label for="cf-endpoint-url">CF API URL:</label>
+                  <input type="url" id="cf-endpoint-url" name="endpoint" required>
+                </div>
+                <div class="form-group">
+                  <label for="cf-endpoint-username">Username:</label>
+                  <input type="text" id="cf-endpoint-username" name="username" required>
+                </div>
+                <div class="form-group">
+                  <label for="cf-endpoint-password">Password:</label>
+                  <input type="password" id="cf-endpoint-password" name="password" required>
+                </div>
+              </form>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" onclick="hideCFEndpointForm()">Cancel</button>
+              <button type="button" class="btn btn-primary" onclick="saveCFEndpoint()">${endpoint ? 'Update' : 'Add'} Endpoint</button>
+            </div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.insertAdjacentHTML('beforeend', modalHTML);
+    }
+
+    // Show the modal with proper overlay
+    const newModal = document.getElementById('cf-endpoint-modal');
+    newModal.style.display = 'flex';
+    newModal.setAttribute('aria-hidden', 'false');
+
+    // Pre-fill form if editing
+    if (endpoint) {
+      document.getElementById('cf-endpoint-name').value = endpoint.name || '';
+      document.getElementById('cf-endpoint-url').value = endpoint.endpoint || '';
+      document.getElementById('cf-endpoint-username').value = endpoint.username || '';
+    }
+  };
+
+  // Hide CF endpoint form
+  const hideCFEndpointForm = () => {
+    const modal = document.getElementById('cf-endpoint-modal');
+    if (modal) {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+    }
+  };
+
+  // Save CF endpoint
+  const saveCFEndpoint = async () => {
+    const form = document.getElementById('cf-endpoint-form');
+    const formData = new FormData(form);
+
+    const endpointData = {
+      name: formData.get('name'),
+      endpoint: formData.get('endpoint'),
+      username: formData.get('username'),
+      password: formData.get('password')
+    };
+
+    try {
+      const response = await fetch('/b/cf/endpoints', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(endpointData)
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Reload endpoints list
+      await CFEndpointManager.loadEndpoints();
+      hideCFEndpointForm();
+
+      // Show success notification
+      if (window.showNotification) {
+        window.showNotification('CF endpoint saved successfully', 'success');
+      }
+    } catch (error) {
+      console.error('Failed to save CF endpoint:', error);
+      alert('Failed to save CF endpoint: ' + error.message);
+    }
+  };
+
+  // ================================================================
   // SERVICE INSTANCE CERTIFICATE FUNCTIONS
   // ================================================================
 
@@ -9510,10 +9752,10 @@
   };
 
   // Toggle certificate file expansion
-  window.toggleCertificateFile = function(header, instanceId, filePath) {
+  window.toggleCertificateFile = function (header, instanceId, filePath) {
     const fileItem = header.closest('.cert-file-item');
     const content = fileItem.querySelector('.cert-file-content');
-    
+
     if (content.style.display === 'none') {
       content.style.display = 'block';
     } else {
@@ -9522,9 +9764,9 @@
   };
 
   // Load certificate file content via SSH
-  window.loadCertificateFile = async function(event, instanceId, filePath, fileName) {
+  window.loadCertificateFile = async function (event, instanceId, filePath, fileName) {
     event.stopPropagation(); // Prevent header click
-    
+
     const button = event.target.closest('.load-cert-btn');
     const fileItem = button.closest('.cert-file-item');
     const contentDiv = fileItem.querySelector('.cert-file-content');
@@ -9581,7 +9823,7 @@
     } catch (error) {
       console.error('Failed to load certificate file:', error);
       contentDiv.innerHTML = `<div class="cert-error">Failed to load certificate: ${error.message}</div>`;
-      
+
       // Reset button state
       button.innerHTML = `
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -10162,13 +10404,13 @@
   // CF Registration Management
   const CFRegistrationManager = {
     registrations: [],
-    
+
     // Load all registrations
     async loadRegistrations() {
       try {
         const response = await fetch('/b/cf/registrations');
         const data = await response.json();
-        
+
         if (data.registrations) {
           this.registrations = data.registrations;
           this.renderRegistrationsList();
@@ -10181,12 +10423,12 @@
         this.showError('Failed to load registrations: ' + error.message);
       }
     },
-    
+
     // Render registrations list
     renderRegistrationsList() {
       const container = document.querySelector('.registrations-content');
       if (!container) return;
-      
+
       if (this.registrations.length === 0) {
         container.innerHTML = `
           <div class="registration-empty">
@@ -10195,7 +10437,7 @@
             <button class="btn btn-primary" id="empty-new-registration-btn">Create First Registration</button>
           </div>
         `;
-        
+
         // Add event listener to empty state button
         const emptyBtn = document.getElementById('empty-new-registration-btn');
         if (emptyBtn) {
@@ -10203,29 +10445,29 @@
         }
         return;
       }
-      
+
       const html = `
         <div class="registrations-list">
           ${this.registrations.map(reg => this.renderRegistrationCard(reg)).join('')}
         </div>
       `;
-      
+
       container.innerHTML = html;
       this.setupRegistrationHandlers();
     },
-    
+
     // Render individual registration card
     renderRegistrationCard(registration) {
       const statusClass = (registration.status || 'created').toLowerCase();
       const createdDate = registration.created_at ? new Date(registration.created_at).toLocaleDateString() : 'Unknown';
-      
+
       return `
         <div class="registration-card" data-registration-id="${registration.id}">
           <div class="registration-card-header">
             <h3 class="registration-name">${this.escapeHtml(registration.name || 'Unnamed')}</h3>
             <span class="registration-status ${statusClass}">${registration.status || 'created'}</span>
           </div>
-          
+
           <div class="registration-details">
             <div class="registration-detail">
               <div class="registration-detail-label">API URL</div>
@@ -10244,10 +10486,10 @@
               <div class="registration-detail-value">${createdDate}</div>
             </div>
           </div>
-          
+
           <div class="registration-actions">
             <button class="btn btn-sm btn-primary sync-registration-btn" data-id="${registration.id}">Sync</button>
-            <button class="btn btn-sm btn-success register-btn" data-id="${registration.id}" 
+            <button class="btn btn-sm btn-success register-btn" data-id="${registration.id}"
               ${statusClass === 'registering' ? 'disabled' : ''}>
               ${statusClass === 'active' ? 'Re-register' : 'Register'}
             </button>
@@ -10255,7 +10497,7 @@
             <button class="btn btn-sm btn-secondary edit-btn" data-id="${registration.id}">Edit</button>
             <button class="btn btn-sm btn-danger delete-btn" data-id="${registration.id}">Delete</button>
           </div>
-          
+
           ${registration.last_error ? `
             <div class="registration-error" style="margin-top: 12px; padding: 8px; background: var(--error-bg); color: var(--error-text); border-radius: 4px; font-size: 12px;">
               <strong>Last Error:</strong> ${this.escapeHtml(registration.last_error)}
@@ -10264,7 +10506,7 @@
         </div>
       `;
     },
-    
+
     // Setup event handlers for registration cards
     setupRegistrationHandlers() {
       // Sync buttons
@@ -10274,7 +10516,7 @@
           this.syncRegistration(registrationId);
         });
       });
-      
+
       // Register buttons
       document.querySelectorAll('.register-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -10282,7 +10524,7 @@
           this.startRegistration(registrationId);
         });
       });
-      
+
       // Stream buttons
       document.querySelectorAll('.stream-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -10290,7 +10532,7 @@
           this.showProgressStream(registrationId);
         });
       });
-      
+
       // Edit buttons
       document.querySelectorAll('.edit-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -10298,7 +10540,7 @@
           this.editRegistration(registrationId);
         });
       });
-      
+
       // Delete buttons
       document.querySelectorAll('.delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -10307,19 +10549,19 @@
         });
       });
     },
-    
+
     // Show registration modal
     showRegistrationModal(registration = null) {
       const modal = document.getElementById('registration-modal');
       const form = document.getElementById('registration-form');
       const title = document.getElementById('registration-modal-title');
-      
+
       if (!modal || !form) return;
-      
+
       // Reset form and progress
       form.reset();
       document.getElementById('registration-progress').style.display = 'none';
-      
+
       // Set title and populate form if editing
       if (registration) {
         title.textContent = 'Edit CF Registration';
@@ -10331,35 +10573,35 @@
       } else {
         title.textContent = 'New CF Registration';
       }
-      
+
       // Show modal
       modal.style.display = 'block';
       modal.setAttribute('aria-hidden', 'false');
-      
+
       // Focus first input
       setTimeout(() => {
         document.getElementById('reg-name').focus();
       }, 100);
     },
-    
+
     // Hide registration modal with proper cleanup
     hideRegistrationModal() {
       const modal = document.getElementById('registration-modal');
       if (modal) {
         modal.style.display = 'none';
         modal.setAttribute('aria-hidden', 'true');
-        
+
         // Cleanup any active streaming connections
         if (this.cleanupStreaming) {
           this.cleanupStreaming();
         }
-        
+
         // Reset modal content to default state
         const progressContainer = document.getElementById('registration-progress');
         if (progressContainer) {
           progressContainer.style.display = 'none';
         }
-        
+
         const form = document.getElementById('registration-form');
         if (form) {
           form.reset();
@@ -10367,27 +10609,27 @@
         }
       }
     },
-    
+
     // Test CF connection
     async testConnection() {
       const form = document.getElementById('registration-form');
       const formData = new FormData(form);
-      
+
       const testData = {
         api_url: formData.get('api_url'),
         username: formData.get('username'),
         password: formData.get('password')
       };
-      
+
       try {
         const response = await fetch('/b/cf/test-connection', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(testData)
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success) {
           this.showSuccess('Connection test successful');
         } else {
@@ -10398,12 +10640,12 @@
         this.showError('Connection test failed: ' + error.message);
       }
     },
-    
+
     // Save registration
     async saveRegistration() {
       const form = document.getElementById('registration-form');
       const formData = new FormData(form);
-      
+
       const registrationData = {
         name: formData.get('name'),
         api_url: formData.get('api_url'),
@@ -10412,21 +10654,21 @@
         broker_name: formData.get('broker_name') || 'blacksmith',
         auto_register: formData.get('auto_register') === 'on'
       };
-      
+
       try {
         const response = await fetch('/b/cf/registrations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(registrationData)
         });
-        
+
         const result = await response.json();
-        
+
         if (response.ok) {
           this.showSuccess('Registration created successfully');
           this.hideRegistrationModal();
           this.loadRegistrations();
-          
+
           // If auto-register was enabled, show progress
           if (registrationData.auto_register) {
             setTimeout(() => {
@@ -10441,24 +10683,24 @@
         this.showError('Failed to save registration: ' + error.message);
       }
     },
-    
+
     // Start registration process
     async startRegistration(registrationId) {
       if (!registrationId) return;
-      
+
       // Prompt for password
       const password = prompt('Enter CF password to start registration:');
       if (!password) return;
-      
+
       try {
         const response = await fetch(`/b/cf/registrations/${registrationId}/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password })
         });
-        
+
         const result = await response.json();
-        
+
         if (response.ok) {
           this.showSuccess('Registration process started');
           this.loadRegistrations(); // Refresh list
@@ -10471,18 +10713,18 @@
         this.showError('Failed to start registration: ' + error.message);
       }
     },
-    
+
     // Sync registration with CF
     async syncRegistration(registrationId) {
       if (!registrationId) return;
-      
+
       try {
         const response = await fetch(`/b/cf/registrations/${registrationId}/sync`, {
           method: 'POST'
         });
-        
+
         const result = await response.json();
-        
+
         if (response.ok && result.success) {
           this.showSuccess('Registration synced successfully');
           this.loadRegistrations(); // Refresh list
@@ -10494,16 +10736,16 @@
         this.showError('Failed to sync registration: ' + error.message);
       }
     },
-    
+
     // Show progress stream in modal
     showProgressStream(registrationId) {
       if (!registrationId) return;
-      
+
       const modal = document.getElementById('registration-modal');
       const title = document.getElementById('registration-modal-title');
       const modalBody = modal.querySelector('.modal-body');
       const modalFooter = modal.querySelector('.modal-footer');
-      
+
       // Update modal content
       title.textContent = 'Registration Progress';
       modalBody.innerHTML = `
@@ -10550,19 +10792,19 @@
           </div>
         </div>
       `;
-      
+
       modalFooter.innerHTML = `
         <button type="button" class="btn btn-secondary" onclick="CFRegistrationManager.hideRegistrationModal()">Close</button>
       `;
-      
+
       // Show modal
       modal.style.display = 'block';
       modal.setAttribute('aria-hidden', 'false');
-      
+
       // Start streaming progress
       this.streamProgress(registrationId);
     },
-    
+
     // Stream progress updates
     streamProgress(registrationId) {
       let eventSource = null;
@@ -10571,26 +10813,26 @@
       let reconnectDelay = 2000; // Start with 2 seconds
       let pollingFallback = false;
       let pollingInterval = null;
-      
+
       const connectEventSource = () => {
         try {
           eventSource = new EventSource(`/b/cf/registrations/${registrationId}/stream`);
-          
+
           eventSource.onopen = () => {
             console.log('SSE connection opened for registration:', registrationId);
             reconnectAttempts = 0; // Reset on successful connection
             reconnectDelay = 2000; // Reset delay
           };
-          
+
           eventSource.onmessage = (event) => {
             try {
               const progress = JSON.parse(event.data);
               this.updateProgressStep(progress);
-              
+
               // Close stream when completed
               if (progress.step === 'completed' || progress.status === 'timeout') {
                 this.cleanupStreaming();
-                
+
                 // Refresh registrations list after completion
                 setTimeout(() => {
                   this.loadRegistrations();
@@ -10601,20 +10843,20 @@
               this.showError('Failed to parse progress update');
             }
           };
-          
+
           eventSource.onerror = (error) => {
             console.error('EventSource error:', error);
-            
+
             if (eventSource.readyState === EventSource.CLOSED) {
               // Connection closed, attempt reconnection
               if (reconnectAttempts < maxReconnectAttempts) {
                 reconnectAttempts++;
                 console.log(`Attempting SSE reconnection ${reconnectAttempts}/${maxReconnectAttempts}`);
-                
+
                 setTimeout(() => {
                   connectEventSource();
                 }, reconnectDelay);
-                
+
                 // Exponential backoff
                 reconnectDelay = Math.min(reconnectDelay * 2, 10000);
               } else {
@@ -10623,13 +10865,13 @@
               }
             }
           };
-          
+
         } catch (error) {
           console.error('Failed to create EventSource:', error);
           this.fallbackToPolling(registrationId);
         }
       };
-      
+
       // Cleanup function
       this.cleanupStreaming = () => {
         if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
@@ -10641,27 +10883,27 @@
           pollingInterval = null;
         }
       };
-      
+
       // Start SSE connection
       connectEventSource();
-      
+
       // Overall timeout (2 minutes)
       setTimeout(() => {
         this.cleanupStreaming();
         this.showError('Progress monitoring timed out');
       }, 120000);
     },
-    
+
     // Polling fallback when SSE fails
     fallbackToPolling(registrationId) {
       console.log('Starting polling fallback for registration:', registrationId);
-      
+
       const pollProgress = async () => {
         try {
           const response = await fetch(`/b/cf/registrations/${registrationId}`);
           if (response.ok) {
             const registration = await response.json();
-            
+
             // Create a progress event similar to SSE format
             const progress = {
               step: 'status_update',
@@ -10669,20 +10911,20 @@
               message: `Status: ${registration.status}`,
               timestamp: new Date().toISOString()
             };
-            
+
             if (registration.last_error) {
               progress.error = registration.last_error;
             }
-            
+
             this.updateProgressStep(progress);
-            
+
             // Stop polling if completed
             if (registration.status === 'active' || registration.status === 'failed') {
               if (pollingInterval) {
                 clearInterval(pollingInterval);
                 pollingInterval = null;
               }
-              
+
               // Send completion event
               const completionProgress = {
                 step: 'completed',
@@ -10690,13 +10932,13 @@
                 message: `Registration ${registration.status}`,
                 timestamp: new Date().toISOString()
               };
-              
+
               if (registration.status === 'failed' && registration.last_error) {
                 completionProgress.error = registration.last_error;
               }
-              
+
               this.updateProgressStep(completionProgress);
-              
+
               // Refresh registrations list after completion
               setTimeout(() => {
                 this.loadRegistrations();
@@ -10709,14 +10951,14 @@
           console.error('Polling error:', error);
         }
       };
-      
+
       // Poll every 3 seconds
       pollingInterval = setInterval(pollProgress, 3000);
-      
+
       // Initial poll
       pollProgress();
     },
-    
+
     // Enhanced progress step UI updates
     updateProgressStep(progress) {
       // Handle different progress step types
@@ -10724,27 +10966,27 @@
         this.updateOverallStatus(progress);
         return;
       }
-      
+
       if (progress.step === 'completed') {
         this.handleProgressCompletion(progress);
         return;
       }
-      
+
       if (progress.step === 'timeout') {
         this.handleProgressTimeout(progress);
         return;
       }
-      
+
       // Handle specific registration steps
       const stepId = `step-${progress.step.replace('_', '-')}`;
       const stepElement = document.getElementById(stepId);
-      
+
       if (stepElement) {
         const statusClass = progress.status.toLowerCase();
-        
+
         // Remove existing status classes
         stepElement.classList.remove('running', 'success', 'error');
-        
+
         // Add new status class
         if (statusClass === 'running' || statusClass === 'registering') {
           stepElement.classList.add('running');
@@ -10753,12 +10995,12 @@
         } else if (statusClass === 'error' || statusClass === 'failed') {
           stepElement.classList.add('error');
         }
-        
+
         // Update message
         const messageElement = stepElement.querySelector('.step-message');
         if (messageElement) {
           messageElement.textContent = progress.message;
-          
+
           // Add error details if available
           if (progress.error && statusClass === 'error') {
             messageElement.textContent += ` (${progress.error})`;
@@ -10766,25 +11008,25 @@
         }
       }
     },
-    
+
     // Update overall status display
     updateOverallStatus(progress) {
       const progressContainer = document.getElementById('registration-progress');
       if (!progressContainer) return;
-      
+
       const header = progressContainer.querySelector('.progress-header h4');
       if (header) {
         header.textContent = `Registration Progress - ${progress.status.toUpperCase()}`;
       }
-      
+
       // Add status indicator to progress container
       progressContainer.className = `progress-container status-${progress.status.toLowerCase()}`;
-      
+
       // Update all steps to show current status
       const allSteps = progressContainer.querySelectorAll('.progress-step');
       allSteps.forEach(step => {
         step.classList.remove('running', 'success', 'error');
-        
+
         if (progress.status === 'registering') {
           step.classList.add('running');
         } else if (progress.status === 'active') {
@@ -10794,18 +11036,18 @@
         }
       });
     },
-    
+
     // Handle progress completion
     handleProgressCompletion(progress) {
       const progressContainer = document.getElementById('registration-progress');
       if (!progressContainer) return;
-      
+
       const header = progressContainer.querySelector('.progress-header h4');
       if (header) {
         const statusText = progress.status === 'active' ? 'COMPLETED' : 'FAILED';
         header.textContent = `Registration ${statusText}`;
       }
-      
+
       // Update all steps to final status
       const allSteps = progressContainer.querySelectorAll('.progress-step');
       allSteps.forEach(step => {
@@ -10816,7 +11058,7 @@
           step.classList.add('error');
         }
       });
-      
+
       // Show completion message
       if (progress.error) {
         this.showError(`Registration failed: ${progress.error}`);
@@ -10824,20 +11066,20 @@
         this.showSuccess('Registration completed successfully!');
       }
     },
-    
+
     // Handle progress timeout
     handleProgressTimeout(progress) {
       const progressContainer = document.getElementById('registration-progress');
       if (!progressContainer) return;
-      
+
       const header = progressContainer.querySelector('.progress-header h4');
       if (header) {
         header.textContent = 'Registration Progress - TIMEOUT';
       }
-      
+
       this.showError('Registration progress monitoring timed out. Please check status manually.');
     },
-    
+
     // Show success message
     showSuccess(message) {
       // Create or update success notification
@@ -10859,10 +11101,10 @@
         `;
         document.body.appendChild(notification);
       }
-      
+
       notification.textContent = message;
       notification.style.display = 'block';
-      
+
       // Auto-hide after 5 seconds
       setTimeout(() => {
         if (notification && notification.parentNode) {
@@ -10870,25 +11112,25 @@
         }
       }, 5000);
     },
-    
+
     // Delete registration
     async deleteRegistration(registrationId) {
       if (!registrationId) return;
-      
+
       const registration = this.registrations.find(r => r.id === registrationId);
       const name = registration ? registration.name : 'this registration';
-      
+
       if (!confirm(`Are you sure you want to delete ${name}?`)) {
         return;
       }
-      
+
       try {
         const response = await fetch(`/b/cf/registrations/${registrationId}`, {
           method: 'DELETE'
         });
-        
+
         const result = await response.json();
-        
+
         if (response.ok) {
           this.showSuccess('Registration deleted successfully');
           this.loadRegistrations(); // Refresh list
@@ -10900,7 +11142,7 @@
         this.showError('Failed to delete registration: ' + error.message);
       }
     },
-    
+
     // Edit registration (opens modal with existing data)
     editRegistration(registrationId) {
       const registration = this.registrations.find(r => r.id === registrationId);
@@ -10908,19 +11150,19 @@
         this.showRegistrationModal(registration);
       }
     },
-    
+
     // Utility functions
     escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     },
-    
+
     showSuccess(message) {
       // Simple alert for now - could be enhanced with toast notifications
       alert('Success: ' + message);
     },
-    
+
     showError(message) {
       // Simple alert for now - could be enhanced with toast notifications
       alert('Error: ' + message);
@@ -10929,68 +11171,725 @@
 
   // Initialize broker tab when it's selected
   const initBrokerTab = () => {
-    // Setup sub-tab switching for broker tab
-    document.querySelectorAll('.sub-tab-button').forEach(button => {
+    // Setup broker tab switching (using new broker-tab-btn class)
+    document.querySelectorAll('.broker-tab-btn').forEach(button => {
       button.addEventListener('click', (e) => {
         e.preventDefault();
-        const subtabId = button.dataset.subtab;
-        if (subtabId) {
-          switchSubTab(subtabId);
+        const tabName = button.dataset.cftab;
+        if (tabName) {
+          switchCFDetailTab(tabName);
         }
       });
     });
-    
-    // Setup registration modal handlers
-    const newRegistrationBtn = document.getElementById('new-registration-btn');
-    if (newRegistrationBtn) {
-      newRegistrationBtn.addEventListener('click', () => {
-        CFRegistrationManager.showRegistrationModal();
-      });
-    }
-    
-    const cancelBtn = document.getElementById('cancel-registration');
-    if (cancelBtn) {
-      cancelBtn.addEventListener('click', () => {
-        CFRegistrationManager.hideRegistrationModal();
-      });
-    }
-    
-    const testConnectionBtn = document.getElementById('test-connection-btn');
-    if (testConnectionBtn) {
-      testConnectionBtn.addEventListener('click', () => {
-        CFRegistrationManager.testConnection();
-      });
-    }
-    
-    const saveBtn = document.getElementById('save-registration-btn');
-    if (saveBtn) {
-      saveBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        CFRegistrationManager.saveRegistration();
-      });
-    }
-    
-    // Setup modal close on overlay click
-    const modal = document.getElementById('registration-modal');
-    if (modal) {
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-          CFRegistrationManager.hideRegistrationModal();
+
+    // Load CF endpoints from configuration
+    CFEndpointManager.loadEndpoints();
+  };
+
+  // Switch between CF detail tabs
+  const switchCFDetailTab = (tabName) => {
+    // Remove active class from all broker tab buttons
+    document.querySelectorAll('.broker-tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+
+    // Hide all detail panels
+    document.querySelectorAll('.cf-detail-panel').forEach(panel => {
+      panel.classList.remove('active');
+      panel.style.display = 'none';
+    });
+
+    // Add active class to target button and show target panel
+    const targetButton = document.querySelector(`[data-cftab="${tabName}"]`);
+    const targetPanel = document.querySelector(`[data-panel="${tabName}"]`);
+
+    if (targetButton && targetPanel) {
+      targetButton.classList.add('active');
+      targetPanel.classList.add('active');
+      targetPanel.style.display = 'block';
+
+      // Load content for the selected tab if endpoint is connected
+      const selectedEndpoint = CFEndpointManager.selectedEndpoint;
+      if (selectedEndpoint && tabName !== 'details') {
+        const connectionState = CFEndpointManager.connectionStates[selectedEndpoint] || { connected: false };
+        if (connectionState.connected) {
+          CFEndpointManager.loadTabContent(tabName, selectedEndpoint);
+        } else {
+          // Show message that connection is required
+          targetPanel.innerHTML = `
+            <div class="empty-state">
+              <h3>Connection Required</h3>
+              <p>Please connect to the ${selectedEndpoint} endpoint to view ${tabName} data.</p>
+              <button class="btn btn-primary" onclick="CFEndpointManager.toggleConnection()">Connect Now</button>
+            </div>
+          `;
         }
-      });
-      
-      const closeBtn = modal.querySelector('.modal-close');
-      if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-          CFRegistrationManager.hideRegistrationModal();
-        });
       }
     }
-    
-    // Load initial registrations
-    CFRegistrationManager.loadRegistrations();
   };
-  
+
+  // CF Endpoint Management
+  const CFEndpointManager = {
+    endpoints: {},
+    selectedEndpoint: null,
+    connectionStates: {}, // Persist connection status
+
+    // Load CF endpoints from configuration
+    async loadEndpoints() {
+      // Load persistent connection states first
+      this.loadConnectionStates();
+      
+      try {
+        const response = await fetch('/b/cf/endpoints');
+        const data = await response.json();
+
+        if (data.endpoints) {
+          this.endpoints = data.endpoints;
+          this.renderEndpointsList();
+          
+          // Auto-select first endpoint if none selected
+          const endpointNames = Object.keys(this.endpoints);
+          if (endpointNames.length > 0 && !this.selectedEndpoint) {
+            this.selectEndpoint(endpointNames[0]);
+          }
+        } else {
+          console.error('Failed to load CF endpoints:', data.error);
+          this.showError('Failed to load CF endpoints: ' + (data.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Error loading CF endpoints:', error);
+        this.showError('Failed to load CF endpoints: ' + error.message);
+      }
+    },
+
+    // Refresh CF endpoints list
+    async refreshEndpoints() {
+      // Show loading in dropdown
+      const dropdown = document.getElementById('cf-endpoint-select');
+      if (dropdown) {
+        dropdown.innerHTML = '<option value="">Refreshing endpoints...</option>';
+      }
+      
+      // Reload endpoints from server
+      await this.loadEndpoints();
+    },
+
+    // Render CF endpoints in the dropdown selector
+    renderEndpointsList() {
+      const dropdown = document.getElementById('cf-endpoint-select');
+      if (!dropdown) return;
+
+      const endpointNames = Object.keys(this.endpoints);
+
+      if (endpointNames.length === 0) {
+        dropdown.innerHTML = '<option value="">No CF endpoints configured</option>';
+        return;
+      }
+
+      const options = ['<option value="">Select an endpoint...</option>'];
+      endpointNames.forEach(name => {
+        const endpoint = this.endpoints[name];
+        const displayName = endpoint.name || name;
+        const isSelected = this.selectedEndpoint === name ? 'selected' : '';
+        options.push(`<option value="${name}" ${isSelected}>${displayName} (${endpoint.endpoint})</option>`);
+      });
+
+      dropdown.innerHTML = options.join('');
+
+      // Setup change handler for dropdown
+      dropdown.onchange = (event) => {
+        const selectedEndpoint = event.target.value;
+        if (selectedEndpoint) {
+          this.selectEndpoint(selectedEndpoint);
+        } else {
+          this.clearSelection();
+        }
+      };
+    },
+
+    // Render a single endpoint item
+    renderEndpointItem(endpointName) {
+      const endpoint = this.endpoints[endpointName];
+      const isSelected = this.selectedEndpoint === endpointName;
+
+      return `
+        <div class="endpoint-item ${isSelected ? 'selected' : ''}" data-endpoint="${endpointName}">
+          <div class="endpoint-info">
+            <h4>${endpoint.name || endpointName}</h4>
+            <p class="endpoint-url">${endpoint.endpoint}</p>
+            <small class="endpoint-user">User: ${endpoint.username}</small>
+          </div>
+        </div>
+      `;
+    },
+
+    // Setup click handlers for endpoint selection
+    setupEndpointClickHandlers() {
+      document.querySelectorAll('.endpoint-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const endpointName = item.dataset.endpoint;
+          this.selectEndpoint(endpointName);
+        });
+      });
+    },
+
+    // Select an endpoint and load its details
+    selectEndpoint(endpointName) {
+      // Update selection state
+      this.selectedEndpoint = endpointName;
+
+      // Update dropdown selection
+      const dropdown = document.getElementById('cf-endpoint-select');
+      if (dropdown) {
+        dropdown.value = endpointName;
+      }
+
+      // Load details for the selected endpoint
+      this.loadEndpointDetails(endpointName);
+      
+      // Update connection status display
+      this.updateConnectionStatus(endpointName);
+      
+      // Show/hide register button based on endpoint selection
+      this.updateRegisterButtonVisibility(endpointName);
+
+      // Auto-connect if not already connected
+      const connectionState = this.connectionStates[endpointName] || { connected: false, testing: false };
+      if (!connectionState.connected && !connectionState.testing) {
+        this.toggleConnection();
+      }
+
+      // Reset to details tab
+      this.switchToBrokerTab('details');
+    },
+
+    // Clear endpoint selection
+    clearSelection() {
+      this.selectedEndpoint = null;
+
+      // Clear all detail panels
+      document.querySelectorAll('.cf-detail-panel').forEach(panel => {
+        const contentDiv = panel.querySelector('div[id*="cf-"]');
+        if (contentDiv) {
+          contentDiv.innerHTML = `
+            <div class="empty-state">
+              <h3>Select an endpoint</h3>
+              <p>Choose a Cloud Foundry endpoint from the dropdown above to view its details and manage services.</p>
+            </div>
+          `;
+        }
+      });
+
+      // Reset to details tab
+      this.switchToBrokerTab('details');
+      
+      // Hide register button
+      this.updateRegisterButtonVisibility(null);
+    },
+
+    // Update register button visibility based on endpoint selection
+    updateRegisterButtonVisibility(endpointName) {
+      const registerBtn = document.getElementById('register-btn');
+      if (registerBtn) {
+        if (endpointName) {
+          registerBtn.style.display = 'inline-block';
+        } else {
+          registerBtn.style.display = 'none';
+        }
+      }
+    },
+
+    // Show registration modal (delegate to CFRegistrationManager)
+    async showRegistrationModal() {
+      if (!this.selectedEndpoint) {
+        alert('Please select a CF endpoint first.');
+        return;
+      }
+
+      // First prefill the form with broker defaults
+      await this.prefillRegistrationForm();
+      
+      // Then show the existing registration modal
+      CFRegistrationManager.showRegistrationModal();
+    },
+
+    // Pre-fill registration form with broker defaults
+    async prefillRegistrationForm() {
+      try {
+        // Get broker info from the blacksmith status
+        const response = await fetch('/status');
+        const data = await response.json();
+        
+        const endpoint = this.endpoints[this.selectedEndpoint];
+        if (endpoint && data) {
+          // Pre-fill name field
+          const nameInput = document.getElementById('reg-name');
+          if (nameInput) {
+            nameInput.value = `blacksmith-${this.selectedEndpoint.toLowerCase()}`;
+          }
+          
+          // Pre-fill API URL if we can extract it from the endpoint
+          const apiInput = document.getElementById('reg-api-url');
+          if (apiInput && endpoint.endpoint) {
+            apiInput.value = endpoint.endpoint;
+          }
+          
+          // Pre-fill broker name
+          const brokerNameInput = document.getElementById('reg-broker-name');
+          if (brokerNameInput) {
+            brokerNameInput.value = 'blacksmith';
+          }
+          
+          // Check auto-register by default
+          const autoRegisterInput = document.getElementById('reg-auto-register');
+          if (autoRegisterInput) {
+            autoRegisterInput.checked = true;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to prefill registration form:', error);
+      }
+    },
+
+    // Switch to a specific broker tab
+    switchToBrokerTab(tabName) {
+      switchCFDetailTab(tabName);
+    },
+
+    // Load endpoint details
+    loadEndpointDetails(endpointName) {
+      const endpoint = this.endpoints[endpointName];
+      const detailsPanel = document.getElementById('cf-endpoint-details');
+
+      if (!detailsPanel) return;
+
+      const html = `
+        <div class="endpoint-details">
+          <h4>Configuration Details</h4>
+          <table class="details-table">
+            <tbody>
+              <tr>
+                <td><strong>Name:</strong></td>
+                <td>${endpoint.name || endpointName}</td>
+              </tr>
+              <tr>
+                <td><strong>Endpoint:</strong></td>
+                <td><a href="${endpoint.endpoint}" target="_blank">${endpoint.endpoint}</a></td>
+              </tr>
+              <tr>
+                <td><strong>Username:</strong></td>
+                <td>${endpoint.username}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      detailsPanel.innerHTML = html;
+    },
+
+    // Load content for specific tabs
+    async loadTabContent(tabName, endpointName) {
+      const panel = document.querySelector(`[data-panel="${tabName}"]`);
+      if (!panel) return;
+
+      // Show loading
+      panel.innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        switch (tabName) {
+          case 'marketplace':
+            await this.loadMarketplaceTab(panel, endpointName);
+            break;
+          case 'services':
+            await this.loadServicesTab(panel, endpointName);
+            break;
+        }
+      } catch (error) {
+        panel.innerHTML = `<div class="error">Failed to load ${tabName}: ${error.message}</div>`;
+      }
+    },
+
+
+    // Load marketplace tab
+    async loadMarketplaceTab(panel, endpointName) {
+      const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/marketplace`);
+      const data = await response.json();
+
+      if (data.services) {
+        const html = `
+          <div class="marketplace-content">
+            <h4>Marketplace Services</h4>
+            <div class="marketplace-services-table-container">
+              <div class="logs-table-container">
+                <table class="marketplace-services-table">
+                  <thead>
+                    <tr class="table-controls-row">
+                      <th colspan="4" class="table-controls-header">
+                        <div class="table-controls-container">
+                          <div class="search-filter-container">
+                            ${createSearchFilter('marketplace-services-table', 'Search marketplace...')}
+                          </div>
+                          <button class="copy-btn-logs" onclick="window.copyMarketplaceServicesTable(event)"
+                                  title="Copy table data">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            <span>Copy</span>
+                          </button>
+                          <button class="refresh-btn-logs" onclick="window.refreshMarketplaceServices('${endpointName}', event)"
+                                  title="Refresh marketplace services">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                            <span>Refresh</span>
+                          </button>
+                        </div>
+                      </th>
+                    </tr>
+                    <tr>
+                      <th>Service</th>
+                      <th>Description</th>
+                      <th>Plans</th>
+                      <th>Available</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${data.services.map(service => `
+                      <tr>
+                        <td><strong>${service.name}</strong></td>
+                        <td>${service.description || 'N/A'}</td>
+                        <td>${service.plans.length} plan(s)</td>
+                        <td>${service.available ? 'Yes' : 'No'}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        `;
+        panel.innerHTML = html;
+        
+        // Initialize table features
+        attachSearchFilter('marketplace-services-table');
+        initializeSorting('marketplace-services-table');
+      } else {
+        throw new Error(data.error || 'Failed to load marketplace services');
+      }
+    },
+
+    // Load services tab
+    async loadServicesTab(panel, endpointName) {
+      panel.innerHTML = `
+        <div class="services-content">
+          <h4>Service Instances</h4>
+          <div class="org-space-selector">
+            <div class="selector-row">
+              <label>Organization:</label>
+              <select id="org-selector">
+                <option value="">Loading organizations...</option>
+              </select>
+            </div>
+            <div class="selector-row">
+              <label>Space:</label>
+              <select id="space-selector" disabled>
+                <option value="">Select organization first</option>
+              </select>
+            </div>
+          </div>
+          <div id="services-results">
+            <p>Select an organization and space to view service instances.</p>
+          </div>
+        </div>
+      `;
+
+      // Load organizations
+      this.loadOrganizations(endpointName);
+    },
+
+
+    // Test connection to a CF endpoint
+    async testConnection(endpointName) {
+      try {
+        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/test`, {
+          method: 'POST'
+        });
+        const result = await response.json();
+
+        if (result.success) {
+          alert(`Connection test successful!\n\nEndpoint: ${result.endpoint}\nDuration: ${result.duration_ms}ms\nCF Version: ${result.cf_info?.version || 'Unknown'}\nCF Name: ${result.cf_info?.name || 'Unknown'}`);
+        } else {
+          alert(`Connection test failed:\n\n${result.error}`);
+        }
+      } catch (error) {
+        alert(`Connection test failed: ${error.message}`);
+      }
+    },
+
+    // Load organizations for services tab
+    async loadOrganizations(endpointName) {
+      try {
+        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs`);
+        const data = await response.json();
+
+        const orgSelector = document.getElementById('org-selector');
+        if (orgSelector && data.organizations) {
+          orgSelector.innerHTML = '<option value="">Select organization...</option>' +
+            data.organizations.map(org => `<option value="${org.guid}">${org.name}</option>`).join('');
+
+          // Setup org selector change handler
+          orgSelector.addEventListener('change', (e) => {
+            const orgGuid = e.target.value;
+            if (orgGuid) {
+              this.loadSpaces(endpointName, orgGuid);
+            } else {
+              const spaceSelector = document.getElementById('space-selector');
+              spaceSelector.innerHTML = '<option value="">Select organization first</option>';
+              spaceSelector.disabled = true;
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load organizations:', error);
+      }
+    },
+
+    // Load spaces for selected organization
+    async loadSpaces(endpointName, orgGuid) {
+      try {
+        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces`);
+        const data = await response.json();
+
+        const spaceSelector = document.getElementById('space-selector');
+        if (spaceSelector && data.spaces) {
+          spaceSelector.innerHTML = '<option value="">Select space...</option>' +
+            data.spaces.map(space => `<option value="${space.guid}">${space.name}</option>`).join('');
+          spaceSelector.disabled = false;
+
+          // Setup space selector change handler
+          spaceSelector.addEventListener('change', (e) => {
+            const spaceGuid = e.target.value;
+            if (spaceGuid) {
+              this.loadServiceInstances(endpointName, orgGuid, spaceGuid);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load spaces:', error);
+      }
+    },
+
+    // Load service instances for selected space
+    async loadServiceInstances(endpointName, orgGuid, spaceGuid) {
+      try {
+        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces/${spaceGuid}/services`);
+        const data = await response.json();
+
+        const resultsContainer = document.getElementById('services-results');
+        if (resultsContainer && data.services) {
+          const html = `
+            <div class="service-instances-table-container">
+              <div class="logs-table-container">
+                <table class="service-instances-table">
+                  <thead>
+                    <tr class="table-controls-row">
+                      <th colspan="4" class="table-controls-header">
+                        <div class="table-controls-container">
+                          <div class="search-filter-container">
+                            ${createSearchFilter('service-instances-table', 'Search services...')}
+                          </div>
+                          <button class="copy-btn-logs" onclick="window.copyServiceInstancesTable(event)"
+                                  title="Copy table data">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            <span>Copy</span>
+                          </button>
+                          <button class="refresh-btn-logs" onclick="window.refreshServiceInstances('${endpointName}', '${orgGuid}', '${spaceGuid}', event)"
+                                  title="Refresh service instances">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                            <span>Refresh</span>
+                          </button>
+                        </div>
+                      </th>
+                    </tr>
+                    <tr>
+                      <th>Name</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Bindings</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${data.services.map(service => `
+                      <tr>
+                        <td><strong>${service.name}</strong></td>
+                        <td>${service.type || 'N/A'}</td>
+                        <td>${service.last_operation?.state || 'Unknown'}</td>
+                        <td>
+                          <span class="bindings-count" id="bindings-${service.guid}">Loading...</span>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          `;
+          resultsContainer.innerHTML = html;
+          
+          // Initialize table features
+          attachSearchFilter('service-instances-table');
+          initializeSorting('service-instances-table');
+          
+          // Load bindings for each service instance
+          data.services.forEach(service => {
+            this.loadServiceBindings(endpointName, orgGuid, spaceGuid, service.guid);
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load service instances:', error);
+        document.getElementById('services-results').innerHTML = `<div class="error">Failed to load services: ${error.message}</div>`;
+      }
+    },
+
+    // Load bindings for a specific service instance
+    async loadServiceBindings(endpointName, orgGuid, spaceGuid, serviceGuid) {
+      try {
+        const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces/${spaceGuid}/service_instances/${serviceGuid}/bindings`);
+        const data = await response.json();
+        
+        const bindingsElement = document.getElementById(`bindings-${serviceGuid}`);
+        if (bindingsElement) {
+          const bindings = data.bindings || [];
+          
+          if (bindings.length > 0) {
+            // Show binding names, preferring app binding names
+            const bindingNames = bindings.map(binding => {
+              if (binding.name) {
+                return binding.name;
+              } else if (binding.app_guid) {
+                return `App:${binding.app_guid.substring(0, 8)}`;
+              } else {
+                return 'Service Binding';
+              }
+            });
+            
+            bindingsElement.innerHTML = bindingNames.join(', ');
+            bindingsElement.title = `Service bindings: ${bindingNames.join(', ')}`;
+          } else {
+            bindingsElement.innerHTML = `<span class="text-muted">No Bindings</span>`;
+            bindingsElement.title = 'No service bindings found';
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to load bindings for service ${serviceGuid}:`, error);
+        const bindingsElement = document.getElementById(`bindings-${serviceGuid}`);
+        if (bindingsElement) {
+          bindingsElement.innerHTML = `<span class="badge badge-warning">Error</span>`;
+          bindingsElement.title = 'Failed to load binding information';
+        }
+      }
+    },
+
+    // Update connection status display
+    updateConnectionStatus(endpointName) {
+      const statusIndicator = document.getElementById('status-indicator');
+      const connectionBtn = document.getElementById('connection-btn');
+      
+      if (!statusIndicator || !connectionBtn) return;
+      
+      const connectionState = this.connectionStates[endpointName] || { connected: false, testing: false };
+      
+      // Update status indicator
+      statusIndicator.className = 'status-indicator';
+      if (connectionState.testing) {
+        statusIndicator.classList.add('status-connecting');
+      } else if (connectionState.connected) {
+        statusIndicator.classList.add('status-connected');
+      } else {
+        statusIndicator.classList.add('status-disconnected');
+      }
+      
+      // Update button
+      connectionBtn.textContent = connectionState.connected ? 'Disconnect' : 'Connect';
+      connectionBtn.disabled = connectionState.testing;
+    },
+
+    // Toggle connection status
+    async toggleConnection() {
+      if (!this.selectedEndpoint) return;
+      
+      const currentState = this.connectionStates[this.selectedEndpoint] || { connected: false, testing: false };
+      
+      if (currentState.connected) {
+        // Disconnect
+        this.connectionStates[this.selectedEndpoint] = { connected: false, testing: false };
+        this.updateConnectionStatus(this.selectedEndpoint);
+        // Save state to localStorage
+        this.saveConnectionStates();
+      } else {
+        // Connect - start testing
+        this.connectionStates[this.selectedEndpoint] = { connected: false, testing: true };
+        this.updateConnectionStatus(this.selectedEndpoint);
+        
+        try {
+          const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(this.selectedEndpoint)}/connect`, {
+            method: 'POST'
+          });
+          const result = await response.json();
+          
+          this.connectionStates[this.selectedEndpoint] = { 
+            connected: response.ok && result.success, 
+            testing: false 
+          };
+        } catch (error) {
+          this.connectionStates[this.selectedEndpoint] = { connected: false, testing: false };
+        }
+        
+        this.updateConnectionStatus(this.selectedEndpoint);
+        // Save state to localStorage
+        this.saveConnectionStates();
+        
+        // Refresh current tab if it was showing connection required message
+        this.refreshCurrentTab();
+      }
+    },
+
+    // Refresh current tab after connection state change
+    refreshCurrentTab() {
+      const activeTab = document.querySelector('.broker-tab-btn.active');
+      if (activeTab) {
+        const tabName = activeTab.dataset.cftab;
+        if (tabName && tabName !== 'details') {
+          // Re-trigger the tab switching to reload content
+          switchCFDetailTab(tabName);
+        }
+      }
+    },
+
+    // Save connection states to localStorage for persistence
+    saveConnectionStates() {
+      try {
+        localStorage.setItem('cf-connection-states', JSON.stringify(this.connectionStates));
+      } catch (error) {
+        console.warn('Failed to save connection states:', error);
+      }
+    },
+
+    // Load connection states from localStorage
+    loadConnectionStates() {
+      try {
+        const saved = localStorage.getItem('cf-connection-states');
+        if (saved) {
+          this.connectionStates = JSON.parse(saved);
+        }
+      } catch (error) {
+        console.warn('Failed to load connection states:', error);
+        this.connectionStates = {};
+      }
+    },
+
+    showError(message) {
+      alert('Error: ' + message);
+    }
+  };
+
   // Sub-tab switching for broker tab
   const switchSubTab = (subtabId) => {
     // Remove active class from all sub-tab buttons and panels
@@ -11002,11 +11901,11 @@
       panel.classList.remove('active');
       panel.setAttribute('aria-hidden', 'true');
     });
-    
+
     // Add active class to target button and panel
     const targetButton = document.querySelector(`[data-subtab="${subtabId}"]`);
     const targetPanel = document.getElementById(subtabId);
-    
+
     if (targetButton && targetPanel) {
       targetButton.classList.add('active');
       targetButton.setAttribute('aria-selected', 'true');
@@ -11091,7 +11990,7 @@
 
     openWithContext(deploymentType, deploymentName, instanceId) {
       const sessionKey = `${deploymentType}-${deploymentName}-${instanceId}`;
-      
+
       // Check if session already exists
       if (this.sessions.has(sessionKey)) {
         this.switchToSession(sessionKey);
@@ -11163,14 +12062,14 @@
       const fitTerminal = () => {
         const containerWidth = terminalDiv.clientWidth;
         const containerHeight = terminalDiv.clientHeight;
-        
+
         if (containerWidth > 0 && containerHeight > 0) {
           // Calculate cols and rows based on character size
           const charWidth = 9; // approximate character width
           const charHeight = 18; // approximate character height
           const cols = Math.floor(containerWidth / charWidth);
           const rows = Math.floor(containerHeight / charHeight);
-          
+
           if (cols > 0 && rows > 0) {
             terminal.resize(cols, rows);
           }
@@ -11192,7 +12091,7 @@
 
       ws.onopen = () => {
         terminal.writeln(`Connecting to ${context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${context.deploymentName} :: ${context.instanceId}`);
-        
+
         // Send start control message
         ws.send(JSON.stringify({
           type: 'control',
@@ -11208,7 +12107,7 @@
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
-        
+
         switch (msg.type) {
           case 'output':
             terminal.write(msg.data);
@@ -11273,7 +12172,7 @@
     buildWebSocketUrl(context) {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      
+
       if (context.deploymentType === 'blacksmith') {
         // For blacksmith VMs, we need a different endpoint structure
         // The backend expects the deployment to be "blacksmith"
@@ -11419,11 +12318,11 @@
     showMinimizedBar() {
       const minimizedBar = document.getElementById('minimized-terminal-bar');
       const minimizedTabs = document.getElementById('minimized-terminal-tabs');
-      
+
       if (minimizedBar && minimizedTabs) {
         // Add body class for layout adjustment
         document.body.classList.add('terminal-minimized');
-        
+
         // Clear existing tabs
         minimizedTabs.innerHTML = '';
 
@@ -11436,7 +12335,7 @@
             ${session.context.deploymentName}/${session.context.instanceId}
             <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
           `;
-          
+
           // Click to activate session and restore
           tab.onclick = (e) => {
             if (!e.target.classList.contains('tab-close')) {
@@ -11482,7 +12381,7 @@
 
       ws.onopen = () => {
         session.terminal.writeln(`Reconnecting to ${session.context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${session.context.deploymentName} :: ${session.context.instanceId}`);
-        
+
         // Send start control message
         ws.send(JSON.stringify({
           type: 'control',
@@ -11498,7 +12397,7 @@
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
-        
+
         switch (msg.type) {
           case 'output':
             session.terminal.write(msg.data);
@@ -11554,7 +12453,7 @@
   };
 
   // Global function for SSH button onclick
-  window.openTerminal = function(deploymentType, deploymentName, instanceId, event) {
+  window.openTerminal = function (deploymentType, deploymentName, instanceId, event) {
     if (event) {
       event.preventDefault();
       event.stopPropagation();
@@ -11564,5 +12463,242 @@
 
   // Make TerminalManager available globally
   window.TerminalManager = TerminalManager;
+
+  // Toggle resurrection for a service instance or blacksmith deployment
+  window.toggleResurrection = async function (instanceId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    const slider = document.getElementById(`resurrection-slider-${instanceId}`);
+    if (!slider) {
+      console.error('Resurrection toggle slider not found for:', instanceId);
+      return;
+    }
+
+    // Determine current state based on toggle appearance
+    const isCurrentlyEnabled = slider.classList.contains('toggle-on');
+    const newState = !isCurrentlyEnabled;
+
+    // Show loading state
+    slider.classList.add('toggle-loading');
+
+    try {
+      const response = await fetch(`/b/${instanceId}/resurrection`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: newState
+        }),
+        cache: 'no-cache'
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        // Update toggle state
+        if (newState) {
+          slider.classList.add('toggle-on');
+          slider.classList.remove('toggle-off');
+        } else {
+          slider.classList.add('toggle-off');
+          slider.classList.remove('toggle-on');
+        }
+
+        // Show success message
+        showNotification(`Resurrection ${newState ? 'enabled' : 'disabled'} successfully`, 'success');
+
+        // Refresh VMs view to show updated resurrection status
+        // No delay needed since we check config directly instead of waiting for VM field updates
+        if (instanceId === 'blacksmith') {
+          if (window.refreshBlacksmithVMs) {
+            window.refreshBlacksmithVMs(event);
+          }
+        } else {
+          if (window.refreshServiceInstanceVMs) {
+            window.refreshServiceInstanceVMs(instanceId, event);
+          }
+        }
+      } else {
+        throw new Error(result.error || 'Failed to toggle resurrection');
+      }
+    } catch (error) {
+      console.error('Error toggling resurrection:', error);
+      showNotification(`Failed to toggle resurrection: ${error.message}`, 'error');
+    } finally {
+      // Remove loading state
+      slider.classList.remove('toggle-loading');
+    }
+  };
+
+  // Initialize resurrection toggle state based on VM data
+  window.initializeResurrectionToggle = function (instanceId, vms) {
+    const slider = document.getElementById(`resurrection-slider-${instanceId}`);
+    if (!slider || !vms || !vms.length) {
+      console.log('initializeResurrectionToggle: early return', { slider: !!slider, vms: vms?.length });
+      return;
+    }
+
+    // Debug: Log resurrection status for each VM
+    console.log('initializeResurrectionToggle: VM data', vms.map(vm => ({
+      id: vm.id,
+      resurrection_paused: vm.resurrection_paused
+    })));
+
+    // Check if any VM has resurrection paused
+    const anyPaused = vms.some(vm => vm.resurrection_paused);
+    const allPaused = vms.every(vm => vm.resurrection_paused);
+
+    console.log('initializeResurrectionToggle: analysis', {
+      instanceId,
+      anyPaused,
+      allPaused,
+      vmCount: vms.length
+    });
+
+    if (allPaused) {
+      // All VMs have resurrection paused - toggle should be OFF
+      slider.classList.add('toggle-off');
+      slider.classList.remove('toggle-on');
+      console.log('initializeResurrectionToggle: set to OFF (all paused)');
+    } else if (!anyPaused) {
+      // No VMs have resurrection paused - toggle should be ON
+      slider.classList.add('toggle-on');
+      slider.classList.remove('toggle-off');
+      console.log('initializeResurrectionToggle: set to ON (none paused)');
+    } else {
+      // Mixed state - default to OFF for safety
+      slider.classList.add('toggle-off');
+      slider.classList.remove('toggle-on');
+      console.log('initializeResurrectionToggle: set to OFF (mixed state)');
+    }
+  };
+
+  // Helper function to show notifications
+  function showNotification(message, type = 'info') {
+    // Create notification element if it doesn't exist
+    let notification = document.querySelector('.notification');
+    if (!notification) {
+      notification = document.createElement('div');
+      notification.className = 'notification';
+      document.body.appendChild(notification);
+    }
+
+    // Set message and type
+    notification.textContent = message;
+    notification.className = `notification notification-${type} notification-show`;
+
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      notification.classList.remove('notification-show');
+    }, 3000);
+  }
+
+  // Copy service instances table to clipboard
+  window.copyServiceInstancesTable = async (event) => {
+    const button = event.currentTarget;
+    const table = document.querySelector('.service-instances-table');
+    if (!table) return;
+
+    try {
+      const rows = table.querySelectorAll('tbody tr:not([style*="display: none"])');
+      const headers = ['Name', 'Type', 'Status', 'Bindings'];
+      let text = headers.join('\t') + '\n';
+      
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const rowData = Array.from(cells).map(cell => cell.textContent.trim());
+        text += rowData.join('\t') + '\n';
+      });
+
+      await copyToClipboard(text, button);
+    } catch (error) {
+      console.error('Failed to copy service instances table:', error);
+    }
+  };
+
+  // Copy marketplace services table to clipboard
+  window.copyMarketplaceServicesTable = async (event) => {
+    const button = event.currentTarget;
+    const table = document.querySelector('.marketplace-services-table');
+    if (!table) return;
+
+    try {
+      const rows = table.querySelectorAll('tbody tr:not([style*="display: none"])');
+      const headers = ['Service', 'Description', 'Plans', 'Available'];
+      let text = headers.join('\t') + '\n';
+      
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const rowData = Array.from(cells).map(cell => cell.textContent.trim());
+        text += rowData.join('\t') + '\n';
+      });
+
+      await copyToClipboard(text, button);
+    } catch (error) {
+      console.error('Failed to copy marketplace services table:', error);
+    }
+  };
+
+  // Refresh service instances
+  window.refreshServiceInstances = async (endpointName, orgGuid, spaceGuid, event) => {
+    const button = event.currentTarget;
+    try {
+      // Visual feedback
+      button.classList.add('refreshing');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement ? spanElement.textContent : '';
+      if (spanElement) {
+        spanElement.textContent = 'Refreshing...';
+      }
+
+      await CFEndpointManager.loadServiceInstances(endpointName, orgGuid, spaceGuid);
+    } catch (error) {
+      console.error('Failed to refresh service instances:', error);
+    } finally {
+      button.classList.remove('refreshing');
+      const spanElement = button.querySelector('span');
+      if (spanElement) {
+        spanElement.textContent = 'Refresh';
+      }
+    }
+  };
+
+  // Refresh marketplace services
+  window.refreshMarketplaceServices = async (endpointName, event) => {
+    const button = event.currentTarget;
+    try {
+      // Visual feedback
+      button.classList.add('refreshing');
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement ? spanElement.textContent : '';
+      if (spanElement) {
+        spanElement.textContent = 'Refreshing...';
+      }
+
+      // Find the marketplace panel and reload it
+      const brokerTabContent = document.querySelector('.broker-tab-content[data-cftab="marketplace"]');
+      if (brokerTabContent) {
+        await CFEndpointManager.loadMarketplaceTab(brokerTabContent, endpointName);
+      }
+    } catch (error) {
+      console.error('Failed to refresh marketplace services:', error);
+    } finally {
+      button.classList.remove('refreshing');
+      const spanElement = button.querySelector('span');
+      if (spanElement) {
+        spanElement.textContent = 'Refresh';
+      }
+    }
+  };
+
+  // Make CF endpoint management functions available globally
+  window.CFEndpointManager = CFEndpointManager;
+  window.showCFEndpointForm = showCFEndpointForm;
+  window.hideCFEndpointForm = hideCFEndpointForm;
+  window.saveCFEndpoint = saveCFEndpoint;
 
 })(document, window);

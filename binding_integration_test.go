@@ -491,6 +491,10 @@ func (imb *IntegrationMockBOSH) SSHCommand(deployment, instance string, index in
 func (imb *IntegrationMockBOSH) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return nil, nil
 }
+func (imb *IntegrationMockBOSH) GetConfig(configType, configName string) (interface{}, error) {
+	return nil, nil
+}
+func (imb *IntegrationMockBOSH) EnableResurrection(deployment string, enabled bool) error { return nil }
 
 // IntegrationMockLogger implements reconciler.Logger interface for testing
 type IntegrationMockLogger struct{}

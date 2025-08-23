@@ -20,9 +20,38 @@ import (
 	boshlog "github.com/cloudfoundry/bosh-utils/logger"
 	boshuuid "github.com/cloudfoundry/bosh-utils/uuid"
 	"golang.org/x/crypto/ssh"
+	"gopkg.in/yaml.v2"
 )
 
 // DirectorAdapter wraps bosh-cli director to implement Director interface
+// GetConfig retrieves a configuration by type and name from BOSH director
+func (da *DirectorAdapter) GetConfig(configType, configName string) (interface{}, error) {
+	da.log.Debug("Getting config type=%s name=%s", configType, configName)
+
+	// Get the config using the BOSH director
+	config, err := da.director.LatestConfig(configType, configName)
+	if err != nil {
+		// Check if it's a "not found" error
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
+			da.log.Debug("Config %s/%s not found", configType, configName)
+			return nil, nil
+		}
+		da.log.Error("Failed to get config %s/%s: %v", configType, configName, err)
+		return nil, fmt.Errorf("failed to get config %s/%s: %v", configType, configName, err)
+	}
+
+	da.log.Debug("Retrieved config %s/%s successfully", configType, configName)
+
+	// Parse the YAML content to return as a map
+	var configData map[string]interface{}
+	if err := yaml.Unmarshal([]byte(config.Content), &configData); err != nil {
+		da.log.Error("Failed to parse config YAML for %s/%s: %v", configType, configName, err)
+		return nil, fmt.Errorf("failed to parse config YAML: %v", err)
+	}
+
+	return configData, nil
+}
+
 type DirectorAdapter struct {
 	director boshdirector.Director
 	logger   boshlog.Logger
@@ -1448,6 +1477,36 @@ func (d *DirectorAdapter) SSHSession(deployment, instance string, index int, opt
 	}
 
 	return sessionInfo, nil
+}
+
+// EnableResurrection toggles resurrection for a deployment using resurrection config
+func (da *DirectorAdapter) EnableResurrection(deployment string, enabled bool) error {
+	da.log.Info("Setting resurrection to %v for deployment %s", enabled, deployment)
+
+	// Create resurrection configuration YAML according to BOSH documentation
+	configYAML := fmt.Sprintf(`rules:
+- enabled: %v
+  include:
+    deployments:
+    - %s
+`, enabled, deployment)
+
+	// Generate a unique config name for this deployment
+	configName := fmt.Sprintf("blacksmith-%s-resurrection", deployment)
+
+	da.log.Debug("Updating resurrection config %s with content: %s", configName, configYAML)
+
+	// Update the resurrection config using the BOSH director
+	config, err := da.director.UpdateConfig("resurrection", configName, "", []byte(configYAML))
+	if err != nil {
+		da.log.Error("Failed to update resurrection config for deployment %s: %v", deployment, err)
+		return fmt.Errorf("failed to update resurrection config for deployment %s: %v", deployment, err)
+	}
+
+	da.log.Debug("Updated resurrection config: %+v", config)
+
+	da.log.Info("Successfully updated resurrection config for deployment %s to %v", deployment, enabled)
+	return nil
 }
 
 // Ensure DirectorAdapter implements Director interface

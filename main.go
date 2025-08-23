@@ -351,8 +351,18 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Initialize CF connection manager
+	var cfManager *CFConnectionManager
+	if len(config.Broker.CF.APIs) > 0 {
+		l.Info("initializing CF connection manager with %d endpoint(s)", len(config.Broker.CF.APIs))
+		cfManager = NewCFConnectionManager(config.Broker.CF.APIs, Logger.Wrap("cf-manager"))
+		l.Info("CF connection manager initialized successfully")
+	} else {
+		l.Info("CF reconciliation disabled: no CF API endpoints configured")
+	}
+
 	// Initialize the deployment reconciler
-	reconciler := NewReconcilerAdapter(&config, broker, vault, boshDirector)
+	reconciler := NewReconcilerAdapter(&config, broker, vault, boshDirector, cfManager)
 
 	// Initialize the VM monitor
 	vmMonitor := NewVMMonitor(vault, boshDirector, &config)
@@ -360,6 +370,12 @@ func main() {
 	// Create context for server and reconciler lifecycle
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start CF health check loop if CF manager is initialized
+	if cfManager != nil {
+		cfManager.StartHealthCheckLoop(ctx)
+		l.Info("CF health check loop started")
+	}
 
 	// Start the reconciler
 	if err := reconciler.Start(ctx); err != nil {
@@ -522,7 +538,7 @@ func main() {
 	}
 
 	var webSocketHandler *websocket.SSHHandler
-	if config.BOSH.SSH.WebSocket.Enabled {
+	if config.BOSH.SSH.WebSocket.Enabled != nil && *config.BOSH.SSH.WebSocket.Enabled {
 		webSocketHandler = websocket.NewSSHHandler(sshService, wsConfig, Logger.Wrap("websocket-ssh"))
 		l.Info("WebSocket SSH handler created successfully")
 
@@ -548,6 +564,7 @@ func main() {
 			Config:                         config,
 			VMMonitor:                      vmMonitor,
 			Services:                       services.NewManagerWithCFConfig(Logger.Wrap("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
+			CFManager:                      cfManager,
 			SSHService:                     sshService,
 			RabbitMQSSHService:             rabbitmqSSHService,
 			RabbitMQMetadataService:        rabbitmqMetadataService,

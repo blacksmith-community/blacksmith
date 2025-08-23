@@ -20,7 +20,8 @@ type reconcilerManager struct {
 	vault        interface{} // Will be replaced with actual Vault type
 	bosh         bosh.Director
 	logger       Logger
-	services     []Service // Cached service catalog
+	services     []Service   // Cached service catalog
+	cfManager    interface{} // CF connection manager for service enrichment
 
 	status   Status
 	statusMu sync.RWMutex
@@ -33,7 +34,7 @@ type reconcilerManager struct {
 }
 
 // NewReconcilerManager creates a new reconciler manager
-func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault interface{}, boshDir bosh.Director, logger Logger) Manager {
+func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault interface{}, boshDir bosh.Director, logger Logger, cfManager interface{}) Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Convert ReconcilerConfig backup settings to BackupConfig
@@ -50,6 +51,7 @@ func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault int
 		vault:        vault,
 		bosh:         boshDir,
 		logger:       logger,
+		cfManager:    cfManager,
 		ctx:          ctx,
 		cancel:       cancel,
 		scanner:      NewBOSHScanner(boshDir, logger),
@@ -401,6 +403,26 @@ func (r *reconcilerManager) buildInstanceData(match MatchedDeployment) *Instance
 		if taskID, ok := match.Deployment.Properties["latest_task_id"].(string); ok && taskID != "" {
 			metadata["latest_task_id"] = taskID
 		}
+	}
+
+	// Enrich with CF metadata if CF manager is available and configured
+	if r.cfManager != nil {
+		// Type assert to get the actual CF manager interface
+		if cfMgr, ok := r.cfManager.(interface {
+			EnrichServiceInstanceWithCF(instanceID, serviceName string) interface{}
+		}); ok {
+			cfMetadata := cfMgr.EnrichServiceInstanceWithCF(match.Match.InstanceID, serviceName)
+			if cfMetadata != nil {
+				metadata["cf"] = cfMetadata
+				r.logInfo("successfully enriched service instance %s with CF metadata", match.Match.InstanceID)
+			} else {
+				r.logDebug("no CF metadata found for service instance %s", match.Match.InstanceID)
+			}
+		} else {
+			r.logDebug("CF manager does not support service enrichment")
+		}
+	} else {
+		r.logDebug("CF manager not available for service instance enrichment")
 	}
 
 	return &InstanceData{

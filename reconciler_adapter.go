@@ -12,16 +12,17 @@ import (
 
 // ReconcilerAdapter adapts the reconciler to work with the existing Blacksmith types
 type ReconcilerAdapter struct {
-	manager reconciler.Manager
-	broker  *Broker
-	vault   *Vault
-	bosh    bosh.Director
-	logger  *Log
-	config  reconciler.ReconcilerConfig
+	manager   reconciler.Manager
+	broker    *Broker
+	vault     *Vault
+	bosh      bosh.Director
+	logger    *Log
+	config    reconciler.ReconcilerConfig
+	cfManager interface{} // CF connection manager as interface for package compatibility
 }
 
 // NewReconcilerAdapter creates a new reconciler adapter
-func NewReconcilerAdapter(config *Config, broker *Broker, vault *Vault, boshDir bosh.Director) *ReconcilerAdapter {
+func NewReconcilerAdapter(config *Config, broker *Broker, vault *Vault, boshDir bosh.Director, cfManager interface{}) *ReconcilerAdapter {
 	logger := Logger.Wrap("reconciler")
 
 	// Build reconciler config from main config and environment variables
@@ -62,11 +63,12 @@ func NewReconcilerAdapter(config *Config, broker *Broker, vault *Vault, boshDir 
 	}
 
 	return &ReconcilerAdapter{
-		broker: broker,
-		vault:  vault,
-		bosh:   boshDir,
-		logger: logger,
-		config: reconcilerConfig,
+		broker:    broker,
+		vault:     vault,
+		bosh:      boshDir,
+		logger:    logger,
+		config:    reconcilerConfig,
+		cfManager: cfManager,
 	}
 }
 
@@ -84,13 +86,14 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 	wrappedVault := &vaultWrapper{vault: r.vault}
 	wrappedLogger := &loggerWrapper{logger: r.logger}
 
-	// Create the reconciler manager
+	// Create the reconciler manager with CF manager (as interface{})
 	r.manager = reconciler.NewReconcilerManager(
 		r.config,
 		wrappedBroker,
 		wrappedVault,
 		r.bosh,
 		wrappedLogger,
+		r.cfManager,
 	)
 
 	// Start the reconciler

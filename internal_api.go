@@ -22,6 +22,7 @@ import (
 	"blacksmith/pkg/services/redis"
 	rabbitmqssh "blacksmith/services/rabbitmq"
 	"blacksmith/websocket"
+	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 	gorillawebsocket "github.com/gorilla/websocket"
 	"gopkg.in/yaml.v2"
 )
@@ -33,6 +34,7 @@ type InternalApi struct {
 	Config                         Config
 	VMMonitor                      *VMMonitor
 	Services                       *services.Manager
+	CFManager                      *CFConnectionManager
 	SSHService                     ssh.SSHService
 	RabbitMQSSHService             *rabbitmqssh.SSHService
 	RabbitMQMetadataService        *rabbitmqssh.MetadataService
@@ -2609,6 +2611,54 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
+		// Check if resurrection config exists for this deployment and determine status
+		configName := fmt.Sprintf("blacksmith-%s-resurrection", deploymentName)
+		l.Debug("Checking for resurrection config: %s (deployment: %s)", configName, deploymentName)
+
+		resurrectionPaused := false // Default: resurrection active (BOSH default)
+
+		resurrectionConfig, err := api.Broker.BOSH.GetConfig("resurrection", configName)
+		if err != nil {
+			l.Debug("Error getting resurrection config: %v", err)
+		}
+
+		if err == nil && resurrectionConfig != nil {
+			l.Debug("Resurrection config found, analyzing content: %+v", resurrectionConfig)
+
+			// Parse the config to determine if resurrection is enabled or disabled
+			// The config should contain YAML with rules that specify enabled: true/false
+			if configMap, ok := resurrectionConfig.(map[string]interface{}); ok {
+				l.Debug("Config parsed as map: %+v", configMap)
+				if rules, ok := configMap["rules"].([]interface{}); ok && len(rules) > 0 {
+					l.Debug("Found rules: %+v", rules)
+					if rule, ok := rules[0].(map[string]interface{}); ok {
+						l.Debug("First rule: %+v", rule)
+						if enabled, ok := rule["enabled"].(bool); ok {
+							// If enabled=false in config, then resurrection is paused
+							resurrectionPaused = !enabled
+							l.Debug("Resurrection config rule enabled=%v, setting paused=%v", enabled, resurrectionPaused)
+						} else {
+							l.Debug("No 'enabled' field found in rule")
+						}
+					} else {
+						l.Debug("First rule is not a map")
+					}
+				} else {
+					l.Debug("No rules found in config")
+				}
+			} else {
+				l.Debug("Config is not a map: %T", resurrectionConfig)
+			}
+		} else {
+			l.Debug("No resurrection config found (config: %v, err: %v), using BOSH default (resurrection active)", resurrectionConfig, err)
+		}
+
+		// Override resurrection status for all VMs based on deployment-level config
+		for i := range vms {
+			vms[i].ResurrectionPaused = resurrectionPaused
+			l.Debug("VM %d (%s): resurrection_paused set to %v", i, vms[i].ID, vms[i].ResurrectionPaused)
+		}
+
 		// Cache VM data in vault at secret/<instance-id>/vms
 		if param != "blacksmith" {
 			// Only cache for service instances, not for blacksmith deployment itself
@@ -2639,6 +2689,84 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		w.Header().Set("Content-type", "application/json")
 		fmt.Fprintf(w, "%s ", string(b))
+		return
+	}
+
+	// Resurrection toggle endpoint - PUT /b/{instance_id}/resurrection
+	pattern = regexp.MustCompile("^/b/([^/]+)/resurrection$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "PUT" {
+		l := Logger.Wrap("resurrection-toggle")
+		param := m[1]
+		l.Debug("toggling resurrection for %s", param)
+
+		var requestBody map[string]interface{}
+		if err := json.NewDecoder(req.Body).Decode(&requestBody); err != nil {
+			l.Error("failed to decode request body: %s", err)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "invalid JSON in request body"}`)
+			return
+		}
+
+		enabled, ok := requestBody["enabled"].(bool)
+		if !ok {
+			l.Error("missing or invalid 'enabled' field in request body")
+			w.WriteHeader(400)
+			fmt.Fprintf(w, `{"error": "missing or invalid 'enabled' field"}`)
+			return
+		}
+
+		var deploymentName string
+
+		// Check if this is the blacksmith deployment itself
+		if param == "blacksmith" {
+			// For the blacksmith deployment, get the deployment name from the instance files
+			if data, err := os.ReadFile("/var/vcap/instance/deployment"); err == nil {
+				deploymentName = strings.TrimSpace(string(data))
+				l.Debug("using blacksmith deployment name from instance file: %s", deploymentName)
+			} else {
+				// Fallback to "blacksmith" if we can't read the file
+				deploymentName = "blacksmith"
+				l.Debug("using default blacksmith deployment name: %s", deploymentName)
+			}
+		} else {
+			// For service instances, construct deployment name from vault data
+			inst, exists, err := api.Vault.FindInstance(param)
+			if err != nil || !exists {
+				l.Error("unable to find service instance %s in vault index", param)
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "service instance not found"}`)
+				return
+			}
+
+			// Construct deployment name from plan_id and instance_id
+			deploymentName = inst.PlanID + "-" + param
+			l.Debug("toggling resurrection for service deployment %s", deploymentName)
+		}
+
+		// Toggle resurrection via BOSH
+		err := api.Broker.BOSH.EnableResurrection(deploymentName, enabled)
+		if err != nil {
+			l.Error("unable to toggle resurrection for deployment %s: %s", deploymentName, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "failed to toggle resurrection: %s"}`, err)
+			return
+		}
+
+		// Return success response
+		action := "enabled"
+		if !enabled {
+			action = "disabled"
+		}
+		response := map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Resurrection %s for deployment %s", action, deploymentName),
+			"enabled": enabled,
+		}
+
+		w.Header().Set("Content-type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			l.Error("failed to encode response: %s", err)
+		}
 		return
 	}
 
@@ -3561,6 +3689,72 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			fmt.Fprintf(w, `{"error": "invalid registration endpoint"}`)
 		}
 
+	// --- CF API Endpoints Management ---
+
+	// GET /b/cf/endpoints - List configured CF API endpoints
+	case path == "/endpoints" && req.Method == "GET":
+		api.listCFEndpoints(w, req)
+
+	// POST /b/cf/endpoints/{name}/connect - Connect to CF endpoint
+	case regexp.MustCompile(`^/endpoints/([^/]+)/connect$`).MatchString(path) && req.Method == "POST":
+		parts := regexp.MustCompile(`^/endpoints/([^/]+)/connect$`).FindStringSubmatch(path)
+		if len(parts) == 2 {
+			api.connectCFEndpoint(w, req, parts[1])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+		}
+
+	// GET /b/cf/endpoints/{name}/marketplace - Get marketplace services for a CF endpoint
+	case regexp.MustCompile(`^/endpoints/([^/]+)/marketplace$`).MatchString(path) && req.Method == "GET":
+		parts := regexp.MustCompile(`^/endpoints/([^/]+)/marketplace$`).FindStringSubmatch(path)
+		if len(parts) == 2 {
+			api.getCFMarketplace(w, req, parts[1])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+		}
+
+	// GET /b/cf/endpoints/{name}/orgs - Get organizations for a CF endpoint
+	case regexp.MustCompile(`^/endpoints/([^/]+)/orgs$`).MatchString(path) && req.Method == "GET":
+		parts := regexp.MustCompile(`^/endpoints/([^/]+)/orgs$`).FindStringSubmatch(path)
+		if len(parts) == 2 {
+			api.getCFOrganizations(w, req, parts[1])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+		}
+
+	// GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces - Get spaces for a CF org
+	case regexp.MustCompile(`^/endpoints/([^/]+)/orgs/([^/]+)/spaces$`).MatchString(path) && req.Method == "GET":
+		parts := regexp.MustCompile(`^/endpoints/([^/]+)/orgs/([^/]+)/spaces$`).FindStringSubmatch(path)
+		if len(parts) == 3 {
+			api.getCFSpaces(w, req, parts[1], parts[2])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+		}
+
+	// GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/services - Get services for a CF space
+	case regexp.MustCompile(`^/endpoints/([^/]+)/orgs/([^/]+)/spaces/([^/]+)/services$`).MatchString(path) && req.Method == "GET":
+		parts := regexp.MustCompile(`^/endpoints/([^/]+)/orgs/([^/]+)/spaces/([^/]+)/services$`).FindStringSubmatch(path)
+		if len(parts) == 4 {
+			api.getCFServices(w, req, parts[1], parts[2], parts[3])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+		}
+
+	// GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/service_instances/{service_guid}/bindings - Get bindings for a service instance
+	case regexp.MustCompile(`^/endpoints/([^/]+)/orgs/([^/]+)/spaces/([^/]+)/service_instances/([^/]+)/bindings$`).MatchString(path) && req.Method == "GET":
+		parts := regexp.MustCompile(`^/endpoints/([^/]+)/orgs/([^/]+)/spaces/([^/]+)/service_instances/([^/]+)/bindings$`).FindStringSubmatch(path)
+		if len(parts) == 5 {
+			api.getCFServiceBindings(w, req, parts[1], parts[2], parts[3], parts[4])
+		} else {
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+		}
+
 	default:
 		l.Debug("unknown CF registration endpoint: %s %s", req.Method, path)
 		w.WriteHeader(404)
@@ -4221,6 +4415,383 @@ func (api *InternalApi) trackRegistrationProgress(registrationID string, progres
 	}
 
 	l.Debug("completed progress tracking for registration %s", registrationID)
+}
+
+// --- CF API Endpoints Management Methods ---
+
+// listCFEndpoints handles GET /b/cf/endpoints
+func (api *InternalApi) listCFEndpoints(w http.ResponseWriter, req *http.Request) {
+	l := Logger.Wrap("cf-list-endpoints")
+	l.Debug("listing CF API endpoints")
+
+	// Check if CF manager is initialized
+	if api.CFManager == nil {
+		api.handleJSONResponse(w, map[string]interface{}{
+			"endpoints": map[string]interface{}{},
+			"message":   "CF functionality disabled - no CF endpoints configured",
+		}, nil)
+		return
+	}
+
+	// Get CF API endpoints from configuration
+	endpoints := make(map[string]interface{})
+	for name, config := range api.Config.Broker.CF.APIs {
+		endpoints[name] = map[string]interface{}{
+			"name":     config.Name,
+			"endpoint": config.Endpoint,
+			"username": config.Username,
+			// Don't expose password in the response
+		}
+	}
+
+	// Get health status from CF manager
+	status := api.CFManager.GetStatus()
+
+	api.handleJSONResponse(w, map[string]interface{}{
+		"endpoints": endpoints,
+		"status":    status,
+	}, nil)
+}
+
+// getCFMarketplace handles GET /b/cf/endpoints/{name}/marketplace
+func (api *InternalApi) getCFMarketplace(w http.ResponseWriter, req *http.Request, endpointName string) {
+	l := Logger.Wrap("cf-get-marketplace")
+	l.Debug("getting marketplace services for CF endpoint %s", endpointName)
+
+	// Check if CF manager is initialized
+	if api.CFManager == nil {
+		api.handleJSONResponse(w, nil, fmt.Errorf("CF functionality disabled - no CF endpoints configured"))
+		return
+	}
+
+	// Get CF client through CF manager (handles health checks and retries)
+	client, err := api.CFManager.GetClient(endpointName)
+	if err != nil {
+		l.Error("failed to get CF client for endpoint %s: %s", endpointName, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to connect to CF endpoint '%s': %w", endpointName, err))
+		return
+	}
+
+	// Get service offerings (marketplace services)
+	ctx := context.Background()
+	params := capi.NewQueryParams().WithPerPage(100)
+	response, err := client.ServiceOfferings().List(ctx, params)
+	if err != nil {
+		l.Error("failed to get service offerings from CF endpoint %s: %s", endpointName, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get marketplace services from CF: %w", err))
+		return
+	}
+
+	// Convert to interface{} for JSON response
+	services := make([]interface{}, len(response.Resources))
+	for i, service := range response.Resources {
+		// Get service plans for this service
+		planParams := capi.NewQueryParams().WithFilter("service_offering_guids", service.GUID)
+		plansResponse, err := client.ServicePlans().List(ctx, planParams)
+		if err != nil {
+			l.Error("failed to get plans for service %s: %s", service.Name, err)
+			plansResponse = &capi.ListResponse[capi.ServicePlan]{Resources: make([]capi.ServicePlan, 0)} // Continue with empty plans
+		}
+
+		plansList := make([]interface{}, len(plansResponse.Resources))
+		for j, plan := range plansResponse.Resources {
+			plansList[j] = map[string]interface{}{
+				"name":        plan.Name,
+				"description": plan.Description,
+				"free":        plan.Free,
+				"guid":        plan.GUID,
+			}
+		}
+
+		services[i] = map[string]interface{}{
+			"name":        service.Name,
+			"description": service.Description,
+			"guid":        service.GUID,
+			"plans":       plansList,
+			"available":   service.Available,
+			"shareable":   service.Shareable,
+			"tags":        service.Tags,
+		}
+	}
+
+	api.handleJSONResponse(w, map[string]interface{}{
+		"endpoint": endpointName,
+		"services": services,
+	}, nil)
+}
+
+// getCFOrganizations handles GET /b/cf/endpoints/{name}/orgs
+func (api *InternalApi) getCFOrganizations(w http.ResponseWriter, req *http.Request, endpointName string) {
+	l := Logger.Wrap("cf-get-organizations")
+	l.Debug("getting organizations for CF endpoint %s", endpointName)
+
+	// Check if CF manager is initialized
+	if api.CFManager == nil {
+		api.handleJSONResponse(w, nil, fmt.Errorf("CF functionality disabled - no CF endpoints configured"))
+		return
+	}
+
+	// Get CF client through CF manager (handles health checks and retries)
+	client, err := api.CFManager.GetClient(endpointName)
+	if err != nil {
+		l.Error("failed to get CF client for endpoint %s: %s", endpointName, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to connect to CF endpoint '%s': %w", endpointName, err))
+		return
+	}
+
+	// Get organizations
+	ctx := context.Background()
+	params := capi.NewQueryParams().WithPerPage(100)
+	response, err := client.Organizations().List(ctx, params)
+	if err != nil {
+		l.Error("failed to get organizations from CF endpoint %s: %s", endpointName, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get organizations from CF: %w", err))
+		return
+	}
+
+	// Convert to interface{} for JSON response
+	orgs := make([]interface{}, len(response.Resources))
+	for i, org := range response.Resources {
+		orgs[i] = map[string]interface{}{
+			"guid": org.GUID,
+			"name": org.Name,
+		}
+	}
+
+	api.handleJSONResponse(w, map[string]interface{}{
+		"endpoint":      endpointName,
+		"organizations": orgs,
+	}, nil)
+}
+
+// getCFSpaces handles GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces
+func (api *InternalApi) getCFSpaces(w http.ResponseWriter, req *http.Request, endpointName string, orgGuid string) {
+	l := Logger.Wrap("cf-get-spaces")
+	l.Debug("getting spaces for CF endpoint %s, org %s", endpointName, orgGuid)
+
+	// Check if CF manager is initialized
+	if api.CFManager == nil {
+		api.handleJSONResponse(w, nil, fmt.Errorf("CF functionality disabled - no CF endpoints configured"))
+		return
+	}
+
+	// Get CF client through CF manager (handles health checks and retries)
+	client, err := api.CFManager.GetClient(endpointName)
+	if err != nil {
+		l.Error("failed to get CF client for endpoint %s: %s", endpointName, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to connect to CF endpoint '%s': %w", endpointName, err))
+		return
+	}
+
+	// Get spaces for the organization
+	ctx := context.Background()
+	params := capi.NewQueryParams().WithFilter("organization_guids", orgGuid).WithPerPage(100)
+	response, err := client.Spaces().List(ctx, params)
+	if err != nil {
+		l.Error("failed to get spaces from CF endpoint %s for org %s: %s", endpointName, orgGuid, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get spaces from CF: %w", err))
+		return
+	}
+
+	// Convert to interface{} for JSON response
+	spaces := make([]interface{}, len(response.Resources))
+	for i, space := range response.Resources {
+		spaces[i] = map[string]interface{}{
+			"guid": space.GUID,
+			"name": space.Name,
+		}
+	}
+
+	api.handleJSONResponse(w, map[string]interface{}{
+		"endpoint": endpointName,
+		"org_guid": orgGuid,
+		"spaces":   spaces,
+	}, nil)
+}
+
+// getCFServices handles GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/services
+func (api *InternalApi) getCFServices(w http.ResponseWriter, req *http.Request, endpointName string, orgGuid string, spaceGuid string) {
+	l := Logger.Wrap("cf-get-services")
+	l.Debug("getting services for CF endpoint %s, org %s, space %s", endpointName, orgGuid, spaceGuid)
+
+	// Check if CF manager is initialized
+	if api.CFManager == nil {
+		api.handleJSONResponse(w, nil, fmt.Errorf("CF functionality disabled - no CF endpoints configured"))
+		return
+	}
+
+	// Get CF client through CF manager (handles health checks and retries)
+	client, err := api.CFManager.GetClient(endpointName)
+	if err != nil {
+		l.Error("failed to get CF client for endpoint %s: %s", endpointName, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to connect to CF endpoint '%s': %w", endpointName, err))
+		return
+	}
+
+	// Get service instances for the space
+	ctx := context.Background()
+	params := capi.NewQueryParams().WithFilter("space_guids", spaceGuid).WithPerPage(100)
+	response, err := client.ServiceInstances().List(ctx, params)
+	if err != nil {
+		l.Error("failed to get service instances from CF endpoint %s for space %s: %s", endpointName, spaceGuid, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get service instances from CF: %w", err))
+		return
+	}
+
+	// Convert to interface{} for JSON response
+	services := make([]interface{}, len(response.Resources))
+	for i, si := range response.Resources {
+		services[i] = map[string]interface{}{
+			"guid":       si.GUID,
+			"name":       si.Name,
+			"space_guid": si.Relationships.Space.Data.GUID,
+			"type":       si.Type,
+			"last_operation": map[string]interface{}{
+				"type":        si.LastOperation.Type,
+				"state":       si.LastOperation.State,
+				"description": si.LastOperation.Description,
+			},
+		}
+	}
+
+	api.handleJSONResponse(w, map[string]interface{}{
+		"endpoint":   endpointName,
+		"org_guid":   orgGuid,
+		"space_guid": spaceGuid,
+		"services":   services,
+	}, nil)
+}
+
+// getCFServiceBindings handles GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/service_instances/{service_guid}/bindings
+func (api *InternalApi) getCFServiceBindings(w http.ResponseWriter, req *http.Request, endpointName string, orgGuid string, spaceGuid string, serviceGuid string) {
+	l := Logger.Wrap("cf-get-service-bindings")
+	l.Debug("getting service bindings for CF endpoint %s, org %s, space %s, service %s", endpointName, orgGuid, spaceGuid, serviceGuid)
+
+	// Check if CF manager is initialized
+	if api.CFManager == nil {
+		api.handleJSONResponse(w, nil, fmt.Errorf("CF functionality disabled - no CF endpoints configured"))
+		return
+	}
+
+	// Get CF client through CF manager (handles health checks and retries)
+	client, err := api.CFManager.GetClient(endpointName)
+	if err != nil {
+		l.Error("failed to get CF client for endpoint %s: %s", endpointName, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to connect to CF endpoint '%s': %w", endpointName, err))
+		return
+	}
+
+	// Get service credential bindings for the service instance
+	ctx := context.Background()
+	params := capi.NewQueryParams().WithFilter("service_instance_guids", serviceGuid).WithPerPage(100)
+	response, err := client.ServiceCredentialBindings().List(ctx, params)
+	if err != nil {
+		l.Error("failed to get service bindings from CF endpoint %s for service %s: %s", endpointName, serviceGuid, err)
+		api.handleJSONResponse(w, nil, fmt.Errorf("failed to get service bindings from CF: %w", err))
+		return
+	}
+
+	// Convert to interface{} for JSON response
+	bindings := make([]interface{}, len(response.Resources))
+	for i, binding := range response.Resources {
+		bindingData := map[string]interface{}{
+			"guid":                  binding.GUID,
+			"name":                  binding.Name,
+			"service_instance_guid": binding.Relationships.ServiceInstance.Data.GUID,
+			"type":                  binding.Type,
+			"last_operation": map[string]interface{}{
+				"type":        binding.LastOperation.Type,
+				"state":       binding.LastOperation.State,
+				"description": binding.LastOperation.Description,
+			},
+		}
+
+		// Add app information if available
+		if binding.Relationships.App != nil {
+			bindingData["app_guid"] = binding.Relationships.App.Data.GUID
+		}
+
+		bindings[i] = bindingData
+	}
+
+	api.handleJSONResponse(w, map[string]interface{}{
+		"endpoint":     endpointName,
+		"org_guid":     orgGuid,
+		"space_guid":   spaceGuid,
+		"service_guid": serviceGuid,
+		"bindings":     bindings,
+	}, nil)
+}
+
+// --- CF API Client Helper Methods ---
+
+// connectCFEndpoint handles POST /b/cf/endpoints/{name}/connect
+func (api *InternalApi) connectCFEndpoint(w http.ResponseWriter, req *http.Request, endpointName string) {
+	l := Logger.Wrap("cf-connect-endpoint")
+	l.Debug("connecting to CF endpoint %s", endpointName)
+
+	// Check if CF manager is initialized
+	if api.CFManager == nil {
+		api.handleJSONResponse(w, map[string]interface{}{
+			"success": false,
+			"error":   "CF functionality disabled - no CF endpoints configured",
+		}, nil)
+		return
+	}
+
+	// Apply rate limiting for connection tests
+	if err := api.SecurityMiddleware.ValidateRequest("cf-endpoint-test", "test", nil); err != nil {
+		l.Error("rate limit exceeded for CF endpoint test: %s", err)
+		api.handleJSONResponse(w, map[string]interface{}{
+			"success": false,
+			"error":   "rate limit exceeded for connection tests",
+		}, nil)
+		return
+	}
+
+	// Test the connection
+	start := time.Now()
+	client, err := api.CFManager.GetClient(endpointName)
+	if err != nil {
+		l.Error("CF endpoint %s connection test failed: %s", endpointName, err)
+		api.handleJSONResponse(w, map[string]interface{}{
+			"success":     false,
+			"error":       err.Error(),
+			"endpoint":    endpointName,
+			"duration_ms": time.Since(start).Milliseconds(),
+		}, nil)
+		return
+	}
+
+	// Test API call to verify connection
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	info, err := client.GetInfo(ctx)
+	if err != nil {
+		l.Error("CF endpoint %s API test failed: %s", endpointName, err)
+		api.handleJSONResponse(w, map[string]interface{}{
+			"success":     false,
+			"error":       fmt.Sprintf("API test failed: %v", err),
+			"endpoint":    endpointName,
+			"duration_ms": time.Since(start).Milliseconds(),
+		}, nil)
+		return
+	}
+
+	l.Info("CF endpoint %s connection test successful", endpointName)
+	api.handleJSONResponse(w, map[string]interface{}{
+		"success":     true,
+		"endpoint":    endpointName,
+		"duration_ms": time.Since(start).Milliseconds(),
+		"cf_info": map[string]interface{}{
+			"name":        info.Name,
+			"build":       info.Build,
+			"version":     info.Version,
+			"description": info.Description,
+			"cf_on_k8s":   info.CFOnK8s,
+		},
+	}, nil)
 }
 
 // Helper function to safely get string values from map

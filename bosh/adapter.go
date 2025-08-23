@@ -40,6 +40,7 @@ type Director interface {
 	// Config operations
 	UpdateCloudConfig(config string) error
 	GetCloudConfig() (string, error)
+	GetConfig(configType, configName string) (interface{}, error)
 
 	// Cleanup operations
 	Cleanup(removeAll bool) (*Task, error)
@@ -47,6 +48,9 @@ type Director interface {
 	// SSH operations
 	SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
 	SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
+
+	// Resurrection operations
+	EnableResurrection(deployment string, enabled bool) error
 }
 
 // Info represents BOSH director information

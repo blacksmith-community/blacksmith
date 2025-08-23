@@ -98,11 +98,20 @@ type BrokerConfig struct {
 
 // CFBrokerConfig holds configuration for CF broker registration
 type CFBrokerConfig struct {
-	Enabled     bool   `yaml:"enabled"`      // Whether CF registration is enabled
-	BrokerURL   string `yaml:"broker_url"`   // Public URL for this broker that CF can reach
-	BrokerUser  string `yaml:"broker_user"`  // Username for CF to authenticate with this broker
-	BrokerPass  string `yaml:"broker_pass"`  // Password for CF to authenticate with this broker
-	DefaultName string `yaml:"default_name"` // Default broker name for registrations
+	Enabled     bool                   `yaml:"enabled"`      // Whether CF registration is enabled
+	BrokerURL   string                 `yaml:"broker_url"`   // Public URL for this broker that CF can reach
+	BrokerUser  string                 `yaml:"broker_user"`  // Username for CF to authenticate with this broker
+	BrokerPass  string                 `yaml:"broker_pass"`  // Password for CF to authenticate with this broker
+	DefaultName string                 `yaml:"default_name"` // Default broker name for registrations
+	APIs        map[string]CFAPIConfig `yaml:"apis"`         // CF API endpoints configuration
+}
+
+// CFAPIConfig represents a Cloud Foundry API endpoint configuration
+type CFAPIConfig struct {
+	Name     string `yaml:"name"`     // Display name for the CF endpoint
+	Endpoint string `yaml:"endpoint"` // CF API endpoint URL
+	Username string `yaml:"username"` // CF API username
+	Password string `yaml:"password"` // CF API password
 }
 
 type VaultConfig struct {
@@ -172,16 +181,16 @@ type SSHConfig struct {
 
 // WebSocketConfig holds WebSocket-specific configuration
 type WebSocketConfig struct {
-	Enabled           bool `yaml:"enabled"`
-	ReadBufferSize    int  `yaml:"read_buffer_size"`
-	WriteBufferSize   int  `yaml:"write_buffer_size"`
-	HandshakeTimeout  int  `yaml:"handshake_timeout"` // In seconds
-	MaxMessageSize    int  `yaml:"max_message_size"`  // In bytes
-	PingInterval      int  `yaml:"ping_interval"`     // In seconds
-	PongTimeout       int  `yaml:"pong_timeout"`      // In seconds
-	MaxSessions       int  `yaml:"max_sessions"`
-	SessionTimeout    int  `yaml:"session_timeout"` // In seconds
-	EnableCompression bool `yaml:"enable_compression"`
+	Enabled           *bool `yaml:"enabled"` // Pointer to distinguish between false and unset
+	ReadBufferSize    int   `yaml:"read_buffer_size"`
+	WriteBufferSize   int   `yaml:"write_buffer_size"`
+	HandshakeTimeout  int   `yaml:"handshake_timeout"` // In seconds
+	MaxMessageSize    int   `yaml:"max_message_size"`  // In bytes
+	PingInterval      int   `yaml:"ping_interval"`     // In seconds
+	PongTimeout       int   `yaml:"pong_timeout"`      // In seconds
+	MaxSessions       int   `yaml:"max_sessions"`
+	SessionTimeout    int   `yaml:"session_timeout"` // In seconds
+	EnableCompression bool  `yaml:"enable_compression"`
 }
 
 func ReadConfig(path string) (c Config, err error) {
@@ -285,9 +294,25 @@ func ReadConfig(path string) (c Config, err error) {
 		c.VMMonitoring.Enabled = &enabled
 	}
 
+	// Reconciler is enabled by default
+	if !c.Reconciler.Enabled {
+		c.Reconciler.Enabled = true
+	}
+
+	// Reconciler backup is enabled by default
+	if !c.Reconciler.Backup.Enabled {
+		c.Reconciler.Backup.Enabled = true
+	}
+
+	// SSH is enabled by default
+	if !c.BOSH.SSH.Enabled {
+		c.BOSH.SSH.Enabled = true
+	}
+
 	// SSH WebSocket is enabled by default
-	if !c.BOSH.SSH.WebSocket.Enabled {
-		c.BOSH.SSH.WebSocket.Enabled = true
+	if c.BOSH.SSH.WebSocket.Enabled == nil {
+		enabled := true
+		c.BOSH.SSH.WebSocket.Enabled = &enabled
 	}
 
 	return

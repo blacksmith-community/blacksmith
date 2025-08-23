@@ -1,0 +1,40 @@
+# Example CF API endpoints configuration for Blacksmith
+# Add this to your broker configuration under broker.cf.apis
+
+broker:
+  cf:
+    # Existing CF broker registration settings
+    enabled: true
+    broker_url: "https://blacksmith.example.com"
+    broker_user: "blacksmith"
+    broker_pass: "secret-broker-password"
+    default_name: "blacksmith"
+    
+    # New CF API endpoints configuration
+    apis:
+      production:
+        name: "Production CF"
+        endpoint: "https://api.cf.example.com"
+        username: "cf-admin"
+        password: "cf-admin-password"
+      
+      staging:
+        name: "Staging CF"
+        endpoint: "https://api.staging.cf.example.com"
+        username: "cf-admin"
+        password: "cf-staging-password"
+      
+      development:
+        name: "Development CF"
+        endpoint: "https://api.dev.cf.example.com"
+        username: "cf-admin"
+        password: "cf-dev-password"
+
+# Features enabled with this configuration:
+# 1. CF endpoint management UI with left/right panel layout
+# 2. Connection testing with health monitoring and exponential backoff
+# 3. Marketplace services browsing per endpoint
+# 4. Service instances browsing by org/space
+# 5. Service bindings inspection
+# 6. Automatic service instance enrichment in Vault via reconciler
+# 7. Resilient error handling with circuit breaker pattern

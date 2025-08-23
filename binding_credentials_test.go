@@ -412,11 +412,14 @@ func (mb *MockBOSHDirector) GetEvents(deployment string) ([]bosh.Event, error) {
 }
 
 // Additional methods to implement bosh.Director interface
-func (mb *MockBOSHDirector) GetReleases() ([]bosh.Release, error)                    { return nil, nil }
-func (mb *MockBOSHDirector) UploadRelease(url, sha1 string) (*bosh.Task, error)      { return nil, nil }
-func (mb *MockBOSHDirector) GetStemcells() ([]bosh.Stemcell, error)                  { return nil, nil }
-func (mb *MockBOSHDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error)     { return nil, nil }
-func (mb *MockBOSHDirector) GetTaskOutput(taskID int, typ string) (string, error)    { return "", nil }
+func (mb *MockBOSHDirector) GetReleases() ([]bosh.Release, error)                 { return nil, nil }
+func (mb *MockBOSHDirector) UploadRelease(url, sha1 string) (*bosh.Task, error)   { return nil, nil }
+func (mb *MockBOSHDirector) GetStemcells() ([]bosh.Stemcell, error)               { return nil, nil }
+func (mb *MockBOSHDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error)  { return nil, nil }
+func (mb *MockBOSHDirector) GetTaskOutput(taskID int, typ string) (string, error) { return "", nil }
+func (mb *MockBOSHDirector) GetConfig(configType, configName string) (interface{}, error) {
+	return nil, nil
+}
 func (mb *MockBOSHDirector) GetTaskEvents(taskID int) ([]bosh.TaskEvent, error)      { return nil, nil }
 func (mb *MockBOSHDirector) FetchLogs(deployment, job, index string) (string, error) { return "", nil }
 func (mb *MockBOSHDirector) UpdateCloudConfig(yaml string) error                     { return nil }
@@ -428,3 +431,4 @@ func (mb *MockBOSHDirector) SSHCommand(deployment, instance string, index int, c
 func (mb *MockBOSHDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return nil, nil
 }
+func (mb *MockBOSHDirector) EnableResurrection(deployment string, enabled bool) error { return nil }

@@ -51,6 +51,10 @@ func (d *mockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
 	return []bosh.VM{}, nil
 }
 
+func (d *mockDirector) GetConfig(configType, configName string) (interface{}, error) {
+	return nil, nil
+}
+
 func (d *mockDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
 	return nil, errors.New("not implemented")
 }
@@ -113,6 +117,9 @@ func (d *mockDirector) SSHCommand(deployment, instance string, index int, comman
 
 func (d *mockDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return nil, errors.New("not implemented")
+}
+func (d *mockDirector) EnableResurrection(deployment string, enabled bool) error {
+	return errors.New("not implemented")
 }
 
 func TestBOSHScanner_ScanDeployments(t *testing.T) {
