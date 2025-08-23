@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,8 @@ type DirectorInterface interface {
 type Config struct {
 	Timeout               time.Duration
 	ConnectTimeout        time.Duration
+	SessionInitTimeout    time.Duration // New: SSH session initialization timeout
+	OutputReadTimeout     time.Duration // New: Timeout for reading output
 	MaxConcurrent         int
 	MaxOutputSize         int
 	KeepAlive             time.Duration
@@ -358,28 +361,58 @@ type SessionImpl struct {
 func (s *SessionImpl) Start() error {
 	s.logger.Info("Starting SSH session: %s", s.id)
 
+	// Add timeout context for SSH session initialization using configured timeout
+	sessionInitTimeout := s.config.SessionInitTimeout
+	if sessionInitTimeout == 0 {
+		sessionInitTimeout = 60 * time.Second // Fallback default
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sessionInitTimeout)
+	defer cancel()
+
 	s.statusMutex.Lock()
 	s.status = SessionStatusConnecting
 	s.statusMutex.Unlock()
 
+	// Set error status on failure
+	defer func() {
+		if r := recover(); r != nil {
+			s.statusMutex.Lock()
+			s.status = SessionStatusError
+			s.statusMutex.Unlock()
+			panic(r)
+		}
+	}()
+
 	// Extract session information for SSH setup
 	if s.sessionInfo == nil {
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeInternal, "No session info available", nil)
 	}
 
 	sessionMap, ok := s.sessionInfo.(map[string]interface{})
 	if !ok {
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeInternal, "Invalid session info format", nil)
 	}
 
 	// Extract SSH connection details
 	privateKey, ok := sessionMap["private_key"].(string)
 	if !ok {
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeInternal, "Private key not found in session info", nil)
 	}
 
 	hosts, ok := sessionMap["hosts"].([]interface{})
 	if !ok || len(hosts) == 0 {
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeInternal, "No hosts available for SSH connection", nil)
 	}
 
@@ -391,10 +424,13 @@ func (s *SessionImpl) Start() error {
 	// Parse the private key
 	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
 	if err != nil {
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeConnection, "Failed to parse private key", err)
 	}
 
-	// Create SSH client configuration
+	// Create SSH client configuration with context timeout
 	config := &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
@@ -420,8 +456,21 @@ func (s *SessionImpl) Start() error {
 			Timeout:         30 * time.Second,
 		}
 
+		// Check context timeout
+		select {
+		case <-ctx.Done():
+			s.statusMutex.Lock()
+			s.status = SessionStatusError
+			s.statusMutex.Unlock()
+			return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
+		default:
+		}
+
 		gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
 		if err != nil {
+			s.statusMutex.Lock()
+			s.status = SessionStatusError
+			s.statusMutex.Unlock()
 			return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to gateway %s", gatewayAddr), err)
 		}
 
@@ -432,6 +481,9 @@ func (s *SessionImpl) Start() error {
 			if err := gatewayClient.Close(); err != nil {
 				s.logger.Error("Failed to close gateway client: %v", err)
 			}
+			s.statusMutex.Lock()
+			s.status = SessionStatusError
+			s.statusMutex.Unlock()
 			return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to target host %s through gateway", targetAddr), err)
 		}
 
@@ -440,14 +492,30 @@ func (s *SessionImpl) Start() error {
 			if err := gatewayClient.Close(); err != nil {
 				s.logger.Error("Failed to close gateway client: %v", err)
 			}
+			s.statusMutex.Lock()
+			s.status = SessionStatusError
+			s.statusMutex.Unlock()
 			return NewSSHError(SSHErrorCodeConnection, "Failed to establish SSH connection through gateway", err)
 		}
 		s.sshClient = ssh.NewClient(nconn, chans, reqs)
 	} else {
+		// Check context timeout
+		select {
+		case <-ctx.Done():
+			s.statusMutex.Lock()
+			s.status = SessionStatusError
+			s.statusMutex.Unlock()
+			return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
+		default:
+		}
+
 		// Direct connection
 		addr := fmt.Sprintf("%s:22", hostAddress)
 		client, err := ssh.Dial("tcp", addr, config)
 		if err != nil {
+			s.statusMutex.Lock()
+			s.status = SessionStatusError
+			s.statusMutex.Unlock()
 			return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to %s", addr), err)
 		}
 		s.sshClient = client
@@ -459,6 +527,9 @@ func (s *SessionImpl) Start() error {
 		if err := s.sshClient.Close(); err != nil {
 			s.logger.Error("Failed to close SSH client: %v", err)
 		}
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeConnection, "Failed to create SSH session", err)
 	}
 	s.sshSession = session
@@ -477,6 +548,9 @@ func (s *SessionImpl) Start() error {
 		if err := s.sshClient.Close(); err != nil {
 			s.logger.Error("Failed to close SSH client: %v", err)
 		}
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeConnection, "Failed to request PTY", err)
 	}
 
@@ -489,6 +563,9 @@ func (s *SessionImpl) Start() error {
 		if err := s.sshClient.Close(); err != nil {
 			s.logger.Error("Failed to close SSH client: %v", err)
 		}
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdin pipe", err)
 	}
 	s.stdin = stdin
@@ -502,6 +579,9 @@ func (s *SessionImpl) Start() error {
 		if err := s.sshClient.Close(); err != nil {
 			s.logger.Error("Failed to close SSH client: %v", err)
 		}
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdout pipe", err)
 	}
 	s.stdout = stdout
@@ -515,6 +595,9 @@ func (s *SessionImpl) Start() error {
 		if err := s.sshClient.Close(); err != nil {
 			s.logger.Error("Failed to close SSH client: %v", err)
 		}
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeConnection, "Failed to create stderr pipe", err)
 	}
 	s.stderr = stderr
@@ -538,6 +621,9 @@ func (s *SessionImpl) Start() error {
 		if err := s.sshClient.Close(); err != nil {
 			s.logger.Error("Failed to close SSH client: %v", err)
 		}
+		s.statusMutex.Lock()
+		s.status = SessionStatusError
+		s.statusMutex.Unlock()
 		return NewSSHError(SSHErrorCodeConnection, "Failed to start shell", err)
 	}
 
@@ -563,8 +649,20 @@ func (s *SessionImpl) SendInput(data []byte) error {
 	status := s.status
 	s.statusMutex.RUnlock()
 
-	if status != SessionStatusConnected && status != SessionStatusActive {
-		return NewSSHError(SSHErrorCodeConnection, "Session not connected", nil)
+	switch status {
+	case SessionStatusConnecting:
+		// Don't accept input during connection phase
+		return NewSSHError(SSHErrorCodeConnection, "SSH session is still connecting, please wait", nil)
+	case SessionStatusError:
+		return NewSSHError(SSHErrorCodeConnection, "SSH session failed during initialization", nil)
+	case SessionStatusClosed, SessionStatusClosing:
+		return NewSSHError(SSHErrorCodeConnection, "Session closed", nil)
+	case SessionStatusCreated:
+		return NewSSHError(SSHErrorCodeConnection, "SSH session not yet started", nil)
+	case SessionStatusConnected, SessionStatusActive:
+		// Continue normal operation
+	default:
+		return NewSSHError(SSHErrorCodeConnection, "SSH session in invalid state", nil)
 	}
 
 	if s.stdin == nil {
@@ -593,11 +691,30 @@ func (s *SessionImpl) ReadOutput() ([]byte, error) {
 	status := s.status
 	s.statusMutex.RUnlock()
 
-	if status != SessionStatusConnected && status != SessionStatusActive {
-		return nil, NewSSHError(SSHErrorCodeConnection, "Session not connected", nil)
+	switch status {
+	case SessionStatusConnecting:
+		// Allow reading during connection phase but return empty data
+		// This prevents "Session not connected" errors during initialization
+		return []byte{}, nil
+	case SessionStatusError:
+		return nil, NewSSHError(SSHErrorCodeConnection, "SSH session failed during initialization", nil)
+	case SessionStatusClosed, SessionStatusClosing:
+		return nil, NewSSHError(SSHErrorCodeConnection, "Session closed", nil)
+	case SessionStatusConnected, SessionStatusActive:
+		// Continue normal operation
+	case SessionStatusCreated:
+		// Wait for connection to establish
+		return []byte{}, nil
+	default:
+		return []byte{}, nil // Wait for proper state
 	}
 
-	// Read from output channel with a timeout
+	// Read from output channel with configurable timeout for better stability
+	outputTimeout := s.config.OutputReadTimeout
+	if outputTimeout == 0 {
+		outputTimeout = 2 * time.Second // Fallback default - increased from 100ms to 2s for better stability
+	}
+
 	select {
 	case output := <-s.outputChan:
 		return output, nil
@@ -605,8 +722,7 @@ func (s *SessionImpl) ReadOutput() ([]byte, error) {
 		return nil, err
 	case <-s.closeChan:
 		return nil, NewSSHError(SSHErrorCodeConnection, "Session closed", nil)
-	case <-time.After(100 * time.Millisecond):
-		// Return empty if no data available
+	case <-time.After(outputTimeout):
 		return []byte{}, nil
 	}
 }

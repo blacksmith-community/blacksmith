@@ -4691,6 +4691,33 @@ func (api *InternalApi) getCFServiceBindings(w http.ResponseWriter, req *http.Re
 		return
 	}
 
+	// Collect unique app GUIDs to fetch app names
+	appGUIDs := make(map[string]bool)
+	for _, binding := range response.Resources {
+		if binding.Relationships.App != nil {
+			appGUIDs[binding.Relationships.App.Data.GUID] = true
+		}
+	}
+
+	// Fetch app names if there are any apps
+	appNames := make(map[string]string)
+	if len(appGUIDs) > 0 {
+		appGUIDList := make([]string, 0, len(appGUIDs))
+		for guid := range appGUIDs {
+			appGUIDList = append(appGUIDList, guid)
+		}
+
+		appParams := capi.NewQueryParams().WithFilter("guids", appGUIDList...).WithPerPage(100)
+		appResponse, err := client.Apps().List(ctx, appParams)
+		if err != nil {
+			l.Warning("failed to fetch app names for bindings: %s", err)
+		} else {
+			for _, app := range appResponse.Resources {
+				appNames[app.GUID] = app.Name
+			}
+		}
+	}
+
 	// Convert to interface{} for JSON response
 	bindings := make([]interface{}, len(response.Resources))
 	for i, binding := range response.Resources {
@@ -4708,7 +4735,11 @@ func (api *InternalApi) getCFServiceBindings(w http.ResponseWriter, req *http.Re
 
 		// Add app information if available
 		if binding.Relationships.App != nil {
-			bindingData["app_guid"] = binding.Relationships.App.Data.GUID
+			appGUID := binding.Relationships.App.Data.GUID
+			bindingData["app_guid"] = appGUID
+			if appName, exists := appNames[appGUID]; exists {
+				bindingData["app_name"] = appName
+			}
 		}
 
 		bindings[i] = bindingData

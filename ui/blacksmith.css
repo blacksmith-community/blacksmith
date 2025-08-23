@@ -7162,23 +7162,77 @@ body.terminal-minimized .tabs {
   cursor: not-allowed;
 }
 
-/* Tables for CF data */
-.services-table-container,
-.service-instances-table-container {
+/* Org-Space Table Layout */
+.org-space-table {
+  width: 100%;
+  border: none;
+  border-spacing: 0;
+}
+
+.org-space-table td {
+  padding: 0.25rem 0.5rem;
+  vertical-align: middle;
+}
+
+.org-space-table td:first-child,
+.org-space-table td:nth-child(3) {
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  min-width: 50px;
+}
+
+.org-space-table select {
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  width: 200px;
+}
+
+.org-space-table select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.org-space-table .refresh-btn {
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s ease;
+}
+
+.org-space-table .refresh-btn:hover {
+  background: var(--bg-secondary);
+}
+
+.org-space-table .refresh-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Legacy CF tables - keeping for backwards compatibility with any other tables using these classes */
+.services-table-container {
   overflow-x: auto;
   border: 1px solid var(--border-color);
   border-radius: 6px;
 }
 
-.services-table,
-.service-instances-table {
+.services-table {
   width: 100%;
   border-collapse: collapse;
   background: var(--bg-primary);
 }
 
-.services-table th,
-.service-instances-table th {
+.services-table th {
   padding: 0.75rem;
   text-align: left;
   background: var(--bg-secondary);
@@ -7188,17 +7242,103 @@ body.terminal-minimized .tabs {
   border-bottom: 1px solid var(--border-color);
 }
 
-.services-table td,
-.service-instances-table td {
+.services-table td {
   padding: 0.75rem;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-primary);
   font-size: 0.9rem;
 }
 
-.services-table tbody tr:hover,
-.service-instances-table tbody tr:hover {
+.services-table tbody tr:hover {
   background: var(--bg-hover);
+}
+
+/* Marketplace Services Table - match Events table styling */
+.marketplace-services-table-container {
+  max-height: calc(100vh - 200px);
+  min-height: 200px;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  margin-top: 10px;
+}
+
+.marketplace-services-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+}
+
+.marketplace-services-table thead {
+  background-color: var(--bg-table-header);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.marketplace-services-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
+}
+
+.marketplace-services-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
+}
+
+.marketplace-services-table tbody tr:hover {
+  background-color: var(--bg-table-hover);
+}
+
+/* Service Instances Table - match Events table styling */
+.service-instances-table-container .logs-table-container {
+  max-height: calc(100vh - 200px);
+  min-height: 200px;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  margin-top: 10px;
+}
+
+.service-instances-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+}
+
+.service-instances-table thead {
+  background-color: var(--bg-table-header);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.service-instances-table th {
+  padding: 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
+}
+
+.service-instances-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
+}
+
+.service-instances-table tbody tr:hover {
+  background-color: var(--bg-table-hover);
 }
 
 /* Marketplace and Register content */

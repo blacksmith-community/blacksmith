@@ -409,6 +409,8 @@ func main() {
 	sshConfig := ssh.Config{
 		Timeout:               time.Duration(config.BOSH.SSH.Timeout) * time.Second,
 		ConnectTimeout:        time.Duration(config.BOSH.SSH.ConnectTimeout) * time.Second,
+		SessionInitTimeout:    time.Duration(config.BOSH.SSH.SessionInitTimeout) * time.Second,
+		OutputReadTimeout:     time.Duration(config.BOSH.SSH.OutputReadTimeout) * time.Second,
 		MaxConcurrent:         config.BOSH.SSH.MaxConcurrent,
 		MaxOutputSize:         config.BOSH.SSH.MaxOutputSize,
 		KeepAlive:             time.Duration(config.BOSH.SSH.KeepAlive) * time.Second,
@@ -423,7 +425,13 @@ func main() {
 		sshConfig.Timeout = 10 * time.Minute // Default to 10 minutes instead of 30 seconds
 	}
 	if sshConfig.ConnectTimeout == 0 {
-		sshConfig.ConnectTimeout = 10 * time.Second
+		sshConfig.ConnectTimeout = 30 * time.Second // Increased from 10s to 30s
+	}
+	if sshConfig.SessionInitTimeout == 0 {
+		sshConfig.SessionInitTimeout = 60 * time.Second // Default 60 seconds for session initialization
+	}
+	if sshConfig.OutputReadTimeout == 0 {
+		sshConfig.OutputReadTimeout = 2 * time.Second // Default 2 seconds for output reading
 	}
 	if sshConfig.MaxConcurrent == 0 {
 		sshConfig.MaxConcurrent = 10

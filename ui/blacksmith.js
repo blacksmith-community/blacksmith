@@ -11519,7 +11519,6 @@
       if (data.services) {
         const html = `
           <div class="marketplace-content">
-            <h4>Marketplace Services</h4>
             <div class="marketplace-services-table-container">
               <div class="logs-table-container">
                 <table class="marketplace-services-table">
@@ -11579,20 +11578,30 @@
     async loadServicesTab(panel, endpointName) {
       panel.innerHTML = `
         <div class="services-content">
-          <h4>Service Instances</h4>
           <div class="org-space-selector">
-            <div class="selector-row">
-              <label>Organization:</label>
-              <select id="org-selector">
-                <option value="">Loading organizations...</option>
-              </select>
-            </div>
-            <div class="selector-row">
-              <label>Space:</label>
-              <select id="space-selector" disabled>
-                <option value="">Select organization first</option>
-              </select>
-            </div>
+            <table class="org-space-table">
+              <tr>
+                <td>Org:</td>
+                <td>
+                  <select id="org-selector">
+                    <option value="">Loading organizations...</option>
+                  </select>
+                </td>
+                <td>Space:</td>
+                <td>
+                  <select id="space-selector" disabled>
+                    <option value="">Select organization first</option>
+                  </select>
+                </td>
+                <td>
+                  <button class="refresh-btn" onclick="window.CFEndpointManager && window.CFEndpointManager.refreshOrgsSpaces('${endpointName}')" title="Refresh organizations and spaces">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            </table>
           </div>
           <div id="services-results">
             <p>Select an organization and space to view service instances.</p>
@@ -11645,6 +11654,12 @@
               spaceSelector.disabled = true;
             }
           });
+
+          // Auto-select if there's only one organization
+          if (data.organizations.length === 1) {
+            orgSelector.value = data.organizations[0].guid;
+            orgSelector.dispatchEvent(new Event('change'));
+          }
         }
       } catch (error) {
         console.error('Failed to load organizations:', error);
@@ -11670,9 +11685,47 @@
               this.loadServiceInstances(endpointName, orgGuid, spaceGuid);
             }
           });
+
+          // Auto-select if there's only one space
+          if (data.spaces.length === 1) {
+            spaceSelector.value = data.spaces[0].guid;
+            spaceSelector.dispatchEvent(new Event('change'));
+          }
         }
       } catch (error) {
         console.error('Failed to load spaces:', error);
+      }
+    },
+
+    // Refresh organizations and spaces while preserving selections
+    async refreshOrgsSpaces(endpointName) {
+      const orgSelector = document.getElementById('org-selector');
+      const spaceSelector = document.getElementById('space-selector');
+      const selectedOrg = orgSelector?.value;
+      const selectedSpace = spaceSelector?.value;
+
+      // Reload organizations
+      await this.loadOrganizations(endpointName);
+
+      // Restore selections if they still exist
+      if (selectedOrg) {
+        setTimeout(() => {
+          const orgSelector = document.getElementById('org-selector');
+          if (orgSelector && [...orgSelector.options].some(opt => opt.value === selectedOrg)) {
+            orgSelector.value = selectedOrg;
+            orgSelector.dispatchEvent(new Event('change'));
+            
+            if (selectedSpace) {
+              setTimeout(() => {
+                const spaceSelector = document.getElementById('space-selector');
+                if (spaceSelector && [...spaceSelector.options].some(opt => opt.value === selectedSpace)) {
+                  spaceSelector.value = selectedSpace;
+                  spaceSelector.dispatchEvent(new Event('change'));
+                }
+              }, 100);
+            }
+          }
+        }, 100);
       }
     },
 
@@ -11759,10 +11812,12 @@
           const bindings = data.bindings || [];
           
           if (bindings.length > 0) {
-            // Show binding names, preferring app binding names
+            // Show binding names, preferring app names over GUIDs
             const bindingNames = bindings.map(binding => {
               if (binding.name) {
                 return binding.name;
+              } else if (binding.app_name) {
+                return binding.app_name;
               } else if (binding.app_guid) {
                 return `App:${binding.app_guid.substring(0, 8)}`;
               } else {
@@ -12085,55 +12140,107 @@
       // Create tab
       this.createTab(sessionKey, context);
 
-      // Create WebSocket connection
-      const wsUrl = this.buildWebSocketUrl(context);
-      const ws = new WebSocket(wsUrl);
+      // Create WebSocket connection with retry logic
+      let retryCount = 0;
+      const maxRetries = 3;
+      let ws = null;
+      let handshakeReceived = false;
+      let sessionConnected = false;
 
-      ws.onopen = () => {
-        terminal.writeln(`Connecting to ${context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${context.deploymentName} :: ${context.instanceId}`);
+      const connectWebSocket = () => {
+        const wsUrl = this.buildWebSocketUrl(context);
+        ws = new WebSocket(wsUrl);
+        sessionConnected = false; // Reset connection state
 
-        // Send start control message
-        ws.send(JSON.stringify({
-          type: 'control',
-          meta: {
-            action: 'start',
-            width: terminal.cols,
-            height: terminal.rows,
-            term: 'xterm-256color'
-          },
-          timestamp: new Date().toISOString()
-        }));
-      };
+        ws.onopen = () => {
+          terminal.writeln(`Connecting to ${context.deploymentType === 'blacksmith' ? 'Blacksmith' : 'Service Instance'} ${context.deploymentName} :: ${context.instanceId}`);
+          handshakeReceived = false; // Reset handshake flag
+        };
 
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data);
 
-        switch (msg.type) {
-          case 'output':
-            terminal.write(msg.data);
-            break;
-          case 'error':
-            terminal.writeln(`\r\n[ERROR] ${msg.data}`);
-            break;
-          case 'status':
-            if (msg.meta && msg.meta.status === 'connected') {
-              terminal.writeln('\r\n[Connected]\r\n');
+          switch (msg.type) {
+            case 'handshake':
+              // Wait for handshake before sending start command
+              handshakeReceived = true;
+              // Don't show "Session Initialized" message to user - keep it clean
+              
+              // Small delay to ensure backend is ready
+              setTimeout(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({
+                    type: 'control',
+                    meta: {
+                      action: 'start',
+                      width: terminal.cols,
+                      height: terminal.rows,
+                      term: 'xterm-256color'
+                    },
+                    timestamp: new Date().toISOString()
+                  }));
+                }
+              }, 100);
+              break;
+            case 'output':
+              terminal.write(msg.data);
+              break;
+            case 'error':
+              // Check for specific "Session not connected" error
+              if (msg.data.includes('Session not connected') && retryCount < maxRetries) {
+                terminal.writeln(`\r\n[Connection Error] ${msg.data}`);
+                terminal.writeln(`\r\n[Retrying connection... (${retryCount + 1}/${maxRetries})]`);
+                retryCount++;
+                
+                // Close current connection and retry with exponential backoff
+                ws.close();
+                const delay = 1000 * Math.pow(2, retryCount - 1); // 1s, 2s, 4s
+                setTimeout(connectWebSocket, delay);
+                return;
+              }
+              // Only show error if it's not a session initialization issue
+              if (!msg.data.includes('SSH session not started') && !msg.data.includes('Message handling error')) {
+                terminal.writeln(`\r\n[ERROR] ${msg.data}`);
+              }
+              break;
+            case 'status':
+              if (msg.meta && msg.meta.status === 'connected') {
+                sessionConnected = true; // Mark session as ready for input
+                terminal.writeln('\r\n[Connected]\r\n');
+                retryCount = 0; // Reset retry count on successful connection
+              }
+              break;
+          }
+        };
+
+        ws.onerror = (error) => {
+          terminal.writeln(`\r\n[Connection Error] ${error.message || 'WebSocket connection failed'}`);
+        };
+
+        ws.onclose = (event) => {
+          if (!handshakeReceived && retryCount < maxRetries && event.code !== 1000) {
+            // Connection closed before handshake, likely a connection issue
+            terminal.writeln(`\r\n[Connection closed unexpectedly - Retrying... (${retryCount + 1}/${maxRetries})]`);
+            retryCount++;
+            const delay = 1000 * Math.pow(2, retryCount - 1);
+            setTimeout(connectWebSocket, delay);
+          } else {
+            terminal.writeln('\r\n[Disconnected]');
+            if (retryCount >= maxRetries) {
+              terminal.writeln('\r\n[Max retry attempts reached. Please try reconnecting manually.]');
             }
-            break;
-        }
+          }
+        };
+
+        return ws;
       };
 
-      ws.onerror = (error) => {
-        terminal.writeln(`\r\n[Connection Error] ${error.message || 'WebSocket connection failed'}`);
-      };
+      // Initial connection
+      ws = connectWebSocket();
 
-      ws.onclose = () => {
-        terminal.writeln('\r\n[Disconnected]');
-      };
-
-      // Handle terminal input
+      // Handle terminal input - only send when session is fully connected
       terminal.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws && ws.readyState === WebSocket.OPEN && sessionConnected) {
           ws.send(JSON.stringify({
             type: 'input',
             data: data,
@@ -12142,9 +12249,9 @@
         }
       });
 
-      // Handle terminal resize
+      // Handle terminal resize - only send when session is fully connected
       terminal.onResize((size) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws && ws.readyState === WebSocket.OPEN && sessionConnected) {
           ws.send(JSON.stringify({
             type: 'control',
             meta: {

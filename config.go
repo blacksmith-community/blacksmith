@@ -169,6 +169,8 @@ type SSHConfig struct {
 	Enabled               bool            `yaml:"enabled"`
 	Timeout               int             `yaml:"timeout"`                  // Default timeout for SSH commands in seconds
 	ConnectTimeout        int             `yaml:"connect_timeout"`          // SSH connection timeout in seconds
+	SessionInitTimeout    int             `yaml:"session_init_timeout"`     // SSH session initialization timeout in seconds
+	OutputReadTimeout     int             `yaml:"output_read_timeout"`      // Timeout for reading output in seconds
 	MaxConcurrent         int             `yaml:"max_concurrent"`           // Maximum concurrent SSH sessions
 	MaxOutputSize         int             `yaml:"max_output_size"`          // Maximum output size in bytes
 	KeepAlive             int             `yaml:"keep_alive"`               // Keep-alive interval in seconds
