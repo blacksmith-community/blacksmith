@@ -1108,7 +1108,8 @@
 
   // Helper function to safely format timestamps
   const formatTimestamp = (timestamp) => {
-    if (!timestamp && timestamp !== 0) {
+    // Return '-' for missing, null, undefined, or 0 timestamps
+    if (!timestamp || timestamp === 0) {
       return '-';
     }
 
@@ -11247,10 +11248,16 @@
           this.endpoints = data.endpoints;
           this.renderEndpointsList();
           
-          // Auto-select first endpoint if none selected
+          // Restore previously selected endpoint if it exists, otherwise auto-select first endpoint
           const endpointNames = Object.keys(this.endpoints);
-          if (endpointNames.length > 0 && !this.selectedEndpoint) {
-            this.selectEndpoint(endpointNames[0]);
+          if (endpointNames.length > 0) {
+            if (this.selectedEndpoint && endpointNames.includes(this.selectedEndpoint)) {
+              // Restore previously selected endpoint
+              this.selectEndpoint(this.selectedEndpoint);
+            } else if (!this.selectedEndpoint) {
+              // Auto-select first endpoint if none selected
+              this.selectEndpoint(endpointNames[0]);
+            }
           }
         } else {
           console.error('Failed to load CF endpoints:', data.error);
@@ -11338,6 +11345,9 @@
       // Update selection state
       this.selectedEndpoint = endpointName;
 
+      // Save the selection to localStorage
+      this.saveConnectionStates();
+
       // Update dropdown selection
       const dropdown = document.getElementById('cf-endpoint-select');
       if (dropdown) {
@@ -11366,6 +11376,8 @@
     // Clear endpoint selection
     clearSelection() {
       this.selectedEndpoint = null;
+      // Save the cleared selection to localStorage
+      this.saveConnectionStates();
 
       // Clear all detail panels
       document.querySelectorAll('.cf-detail-panel').forEach(panel => {
@@ -11918,25 +11930,32 @@
       }
     },
 
-    // Save connection states to localStorage for persistence
+    // Save connection states and selected endpoint to localStorage for persistence
     saveConnectionStates() {
       try {
-        localStorage.setItem('cf-connection-states', JSON.stringify(this.connectionStates));
+        const persistentData = {
+          connectionStates: this.connectionStates,
+          selectedEndpoint: this.selectedEndpoint
+        };
+        localStorage.setItem('cf-endpoint-data', JSON.stringify(persistentData));
       } catch (error) {
         console.warn('Failed to save connection states:', error);
       }
     },
 
-    // Load connection states from localStorage
+    // Load connection states and selected endpoint from localStorage
     loadConnectionStates() {
       try {
-        const saved = localStorage.getItem('cf-connection-states');
+        const saved = localStorage.getItem('cf-endpoint-data');
         if (saved) {
-          this.connectionStates = JSON.parse(saved);
+          const persistentData = JSON.parse(saved);
+          this.connectionStates = persistentData.connectionStates || {};
+          this.selectedEndpoint = persistentData.selectedEndpoint || null;
         }
       } catch (error) {
         console.warn('Failed to load connection states:', error);
         this.connectionStates = {};
+        this.selectedEndpoint = null;
       }
     },
 

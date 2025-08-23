@@ -41,6 +41,7 @@ func (da *DirectorAdapter) GetConfig(configType, configName string) (interface{}
 	}
 
 	da.log.Debug("Retrieved config %s/%s successfully", configType, configName)
+	da.log.Debug("Config content:\n%s", config.Content)
 
 	// Parse the YAML content to return as a map
 	var configData map[string]interface{}
@@ -49,6 +50,7 @@ func (da *DirectorAdapter) GetConfig(configType, configName string) (interface{}
 		return nil, fmt.Errorf("failed to parse config YAML: %v", err)
 	}
 
+	da.log.Debug("Parsed config data: %+v", configData)
 	return configData, nil
 }
 
@@ -1492,9 +1494,10 @@ func (da *DirectorAdapter) EnableResurrection(deployment string, enabled bool) e
 `, enabled, deployment)
 
 	// Generate a unique config name for this deployment
-	configName := fmt.Sprintf("blacksmith-%s-resurrection", deployment)
+	// Use 'blacksmith.{deployment}' format as type already indicates 'resurrection'
+	configName := fmt.Sprintf("blacksmith.%s", deployment)
 
-	da.log.Debug("Updating resurrection config %s with content: %s", configName, configYAML)
+	da.log.Debug("Updating resurrection config %s with content:\n%s", configName, configYAML)
 
 	// Update the resurrection config using the BOSH director
 	config, err := da.director.UpdateConfig("resurrection", configName, "", []byte(configYAML))
@@ -1503,7 +1506,8 @@ func (da *DirectorAdapter) EnableResurrection(deployment string, enabled bool) e
 		return fmt.Errorf("failed to update resurrection config for deployment %s: %v", deployment, err)
 	}
 
-	da.log.Debug("Updated resurrection config: %+v", config)
+	da.log.Debug("Successfully updated resurrection config %s for deployment %s", configName, deployment)
+	da.log.Debug("Config response: %+v", config)
 
 	da.log.Info("Successfully updated resurrection config for deployment %s to %v", deployment, enabled)
 	return nil

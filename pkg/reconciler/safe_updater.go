@@ -3,7 +3,6 @@ package reconciler
 import (
 	"context"
 	"fmt"
-	"time"
 )
 
 // SafeVaultUpdater wraps vaultUpdater with additional safeguards for critical paths
@@ -130,44 +129,13 @@ func requiresCredentials(serviceID string) bool {
 func (u *SafeVaultUpdater) DeleteInstance(ctx context.Context, instanceID string) error {
 	u.logInfo("Safe delete requested for instance %s", instanceID)
 
-	// Create final backup before deletion
-	if u.backupConfig.Enabled {
-		backupPath := fmt.Sprintf("%s/%s/final_%d", instanceID, u.backupConfig.Path, time.Now().Unix())
-
-		// Collect all data for final backup
-		allData := make(map[string]interface{})
-
-		// Get all possible paths
-		paths := []string{
-			"", // root
-			"/credentials",
-			"/bindings",
-			"/manifest",
-			"/metadata",
-			"/deployment",
-			"/init",
-		}
-
-		for _, path := range paths {
-			fullPath := instanceID
-			if path != "" {
-				fullPath = fmt.Sprintf("%s%s", instanceID, path)
-			}
-			if data, err := u.getFromVault(fullPath); err == nil && len(data) > 0 {
-				allData[path] = data
-			}
-		}
-
-		if len(allData) > 0 {
-			allData["deleted_at"] = time.Now().Unix()
-			allData["deletion_reason"] = "instance_deletion"
-
-			if err := u.putToVault(backupPath, allData); err != nil {
-				u.logError("Failed to create final backup: %s", err)
-				// Don't fail deletion due to backup failure
-			} else {
-				u.logInfo("Created final backup at %s", backupPath)
-			}
+	// Create final backup before deletion using new backup format
+	if u.backupConfig.Enabled && u.backupConfig.BackupOnDelete {
+		if err := u.backupInstance(instanceID); err != nil {
+			u.logError("Failed to create final backup: %s", err)
+			// Don't fail deletion due to backup failure
+		} else {
+			u.logInfo("Created final backup for instance %s before deletion", instanceID)
 		}
 	}
 

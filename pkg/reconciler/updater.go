@@ -1,13 +1,18 @@
 package reconciler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/vault/api"
 )
 
 type vaultUpdater struct {
@@ -1020,174 +1025,143 @@ func (u *vaultUpdater) logInfo(format string, args ...interface{}) {
 	fmt.Printf("[INFO] updater: "+format+"\n", args...)
 }
 
-// backupInstance creates a timestamped backup of instance data before updates
+// backupInstance creates a backup of instance data using the new format and storage location
 func (u *vaultUpdater) backupInstance(instanceID string) error {
-	// Get all current instance data (exclude backups path itself)
-	allData := make(map[string]interface{})
+	u.logDebug("Creating backup for instance %s", instanceID)
 
-	// Get main instance data from index
-	indexData, err := u.getFromIndex(instanceID)
+	// Export all data from the instance path using the new vault export functionality
+	exportedData, err := u.exportVaultPath(instanceID)
 	if err != nil {
-		// No existing data to backup
-		u.logDebug("No existing data to backup for instance %s", instanceID)
+		return fmt.Errorf("failed to export vault data for instance %s: %w", instanceID, err)
+	}
+
+	// If no data to backup, skip
+	if len(exportedData) == 0 {
+		u.logDebug("No data to backup for instance %s", instanceID)
 		return nil
 	}
-	allData["index"] = indexData
 
-	// Get metadata if exists
-	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
-	if metadata, err := u.getFromVault(metadataPath); err == nil {
-		allData["metadata"] = metadata
-	}
-
-	// Get manifest if exists
-	manifestPath := fmt.Sprintf("%s/manifest", instanceID)
-	if manifest, err := u.getFromVault(manifestPath); err == nil {
-		allData["manifest"] = manifest
-	}
-
-	// Get credentials if exists - CRITICAL for service recovery
-	credsPath := fmt.Sprintf("%s/credentials", instanceID)
-	if creds, err := u.getFromVault(credsPath); err == nil {
-		allData["credentials"] = creds
-		u.logDebug("Backed up credentials for instance %s", instanceID)
-	} else {
-		u.logDebug("No credentials found to backup for instance %s", instanceID)
-	}
-
-	// Get bindings if exists
-	bindingsPath := fmt.Sprintf("%s/bindings", instanceID)
-	if bindings, err := u.getFromVault(bindingsPath); err == nil {
-		allData["bindings"] = bindings
-		u.logDebug("Backed up bindings for instance %s", instanceID)
-	}
-
-	// Calculate SHA256 hash of the data
-	dataBytes, err := json.Marshal(allData)
+	// Compress and encode the backup data
+	compressedArchive, err := u.compressAndEncode(exportedData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal backup data: %w", err)
+		return fmt.Errorf("failed to compress backup data for instance %s: %w", instanceID, err)
 	}
 
-	hash := sha256.Sum256(dataBytes)
+	// Calculate SHA256 hash of the compressed data
+	hash := sha256.Sum256([]byte(compressedArchive))
 	sha256Sum := hex.EncodeToString(hash[:])
 
-	// Check if backup with this SHA256 already exists
-	backupPath := fmt.Sprintf("%s/backups/%s", instanceID, sha256Sum)
+	// Check if backup with this SHA256 already exists at new location
+	backupPath := fmt.Sprintf("secret/backups/%s/%s", instanceID, sha256Sum)
 	existing, err := u.getFromVault(backupPath)
 	if err == nil && len(existing) > 0 {
 		u.logDebug("Backup with SHA256 %s already exists for instance %s - skipping", sha256Sum, instanceID)
 		return nil
 	}
 
-	// Add backup metadata
+	// Create backup entry with new format
 	timestamp := time.Now().Unix()
-	backupData := map[string]interface{}{
-		"data":       allData,
-		"timestamp":  timestamp,
-		"created_at": time.Now().Format(time.RFC3339),
-		"sha256":     sha256Sum,
+	backupEntry := map[string]interface{}{
+		"timestamp": timestamp,
+		"archive":   compressedArchive,
 	}
 
-	// Store the backup
-	err = u.putToVault(backupPath, backupData)
-	if err != nil {
-		return fmt.Errorf("failed to store backup: %w", err)
+	// Store the backup at new location
+	if err := u.putToVault(backupPath, backupEntry); err != nil {
+		return fmt.Errorf("failed to store backup at %s: %w", backupPath, err)
 	}
 
 	u.logDebug("Created backup for instance %s with SHA256 %s at %s", instanceID, sha256Sum, backupPath)
 
-	// Update backup index with new backup info
-	err = u.updateBackupIndex(instanceID, sha256Sum, timestamp)
-	if err != nil {
-		u.logWarning("Failed to update backup index for instance %s: %s", instanceID, err)
-	}
-
 	// Clean old backups if cleanup is enabled
-	if u.backupConfig.Cleanup {
-		retention := u.backupConfig.Retention
+	if u.backupConfig.CleanupEnabled {
+		retention := u.backupConfig.RetentionCount
 		if retention <= 0 {
 			retention = 5 // Default retention of 5 backups
 		}
-		u.cleanOldBackups(instanceID, retention)
+		u.cleanOldBackupsNewFormat(instanceID, retention)
 	}
 
 	return nil
 }
 
-// updateBackupIndex updates the backup index with new backup information
-func (u *vaultUpdater) updateBackupIndex(instanceID, sha256Sum string, timestamp int64) error {
-	backupIndexPath := fmt.Sprintf("%s/backups/index", instanceID)
-
-	var backupIndex map[string]interface{}
-	exists, err := u.vault.(VaultInterface).Get(backupIndexPath, &backupIndex)
-	if err != nil || !exists {
-		// Create new backup index
-		backupIndex = make(map[string]interface{})
-		backupIndex["backups"] = []map[string]interface{}{}
-	}
-
-	// Get current backup list
-	var backups []map[string]interface{}
-	if backupList, ok := backupIndex["backups"].([]interface{}); ok {
-		for _, b := range backupList {
-			if backup, ok := b.(map[string]interface{}); ok {
-				backups = append(backups, backup)
-			}
-		}
-	}
-
-	// Check if this SHA256 already exists
-	for _, backup := range backups {
-		if sha256, ok := backup["sha256"].(string); ok && sha256 == sha256Sum {
-			// Already exists, don't add duplicate
-			return nil
-		}
-	}
-
-	// Add new backup entry
-	newBackup := map[string]interface{}{
-		"sha256":    sha256Sum,
-		"timestamp": timestamp,
-		"created":   time.Now().Format(time.RFC3339),
-	}
-	backups = append(backups, newBackup)
-
-	// Update index
-	backupIndex["backups"] = backups
-	backupIndex["last_updated"] = timestamp
-
-	return u.vault.(VaultInterface).Put(backupIndexPath, backupIndex)
-}
-
-// cleanOldBackups removes old backup entries, keeping only the most recent N backups
-func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
+// cleanOldBackupsNewFormat removes old backups using the new storage format
+func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int) {
 	if keepCount <= 0 {
 		u.logDebug("Backup cleanup disabled for %s (keepCount: %d)", instanceID, keepCount)
 		return
 	}
 
-	// Get backup index
-	backupIndexPath := fmt.Sprintf("%s/backups/index", instanceID)
+	u.logDebug("Cleaning old backups for instance %s, keeping %d most recent", instanceID, keepCount)
 
-	var backupIndex map[string]interface{}
-	exists, err := u.vault.(VaultInterface).Get(backupIndexPath, &backupIndex)
-	if err != nil || !exists {
-		u.logDebug("No backup index found for %s", instanceID)
+	// Try to access the vault client for listing
+	vaultClient, ok := u.vault.(*api.Client)
+	if !ok {
+		// Fallback: try to get client through interface conversion
+		if vaultInterface, ok := u.vault.(interface{ GetClient() *api.Client }); ok {
+			vaultClient = vaultInterface.GetClient()
+		} else {
+			u.logWarning("Unable to access vault client for backup cleanup")
+			return
+		}
+	}
+
+	// List backups using the logical API
+	metadataPath := fmt.Sprintf("secret/metadata/backups/%s", instanceID)
+	listResp, err := vaultClient.Logical().List(metadataPath)
+	if err != nil || listResp == nil {
+		u.logDebug("No backups found to clean up for instance %s", instanceID)
 		return
 	}
 
-	// Get current backup list
-	var backups []map[string]interface{}
-	if backupList, ok := backupIndex["backups"].([]interface{}); ok {
-		for _, b := range backupList {
-			if backup, ok := b.(map[string]interface{}); ok {
-				backups = append(backups, backup)
-			}
-		}
-	} else if backupList, ok := backupIndex["backups"].([]map[string]interface{}); ok {
-		backups = backupList
+	// Parse backup entries
+	type backupInfo struct {
+		sha256    string
+		timestamp int64
 	}
 
+	var backups []backupInfo
+	if listResp.Data != nil {
+		if keys, ok := listResp.Data["keys"].([]interface{}); ok {
+			for _, keyInterface := range keys {
+				if sha256, ok := keyInterface.(string); ok {
+					// Read the backup to get its timestamp
+					backupDataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, sha256)
+					secret, err := vaultClient.Logical().Read(backupDataPath)
+					if err != nil || secret == nil {
+						u.logWarning("Failed to read backup %s for cleanup: %s", sha256, err)
+						continue
+					}
+
+					if secret.Data != nil {
+						if data, ok := secret.Data["data"].(map[string]interface{}); ok {
+							if ts, ok := data["timestamp"]; ok {
+								var timestamp int64
+								switch v := ts.(type) {
+								case float64:
+									timestamp = int64(v)
+								case int64:
+									timestamp = v
+								case int:
+									timestamp = int64(v)
+								default:
+									u.logWarning("Invalid timestamp format in backup %s", sha256)
+									continue
+								}
+
+								backups = append(backups, backupInfo{
+									sha256:    sha256,
+									timestamp: timestamp,
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// If we don't have more backups than we want to keep, nothing to do
 	if len(backups) <= keepCount {
 		u.logDebug("No cleanup needed for %s - have %d backups, keeping %d", instanceID, len(backups), keepCount)
 		return
@@ -1196,21 +1170,7 @@ func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
 	// Sort backups by timestamp (newest first)
 	for i := 0; i < len(backups)-1; i++ {
 		for j := i + 1; j < len(backups); j++ {
-			var timestamp1, timestamp2 int64
-
-			if ts, ok := backups[i]["timestamp"].(float64); ok {
-				timestamp1 = int64(ts)
-			} else if ts, ok := backups[i]["timestamp"].(int64); ok {
-				timestamp1 = ts
-			}
-
-			if ts, ok := backups[j]["timestamp"].(float64); ok {
-				timestamp2 = int64(ts)
-			} else if ts, ok := backups[j]["timestamp"].(int64); ok {
-				timestamp2 = ts
-			}
-
-			if timestamp1 < timestamp2 {
+			if backups[i].timestamp < backups[j].timestamp {
 				backups[i], backups[j] = backups[j], backups[i]
 			}
 		}
@@ -1220,29 +1180,188 @@ func (u *vaultUpdater) cleanOldBackups(instanceID string, keepCount int) {
 	if len(backups) > keepCount {
 		toDelete := backups[keepCount:]
 		for _, backup := range toDelete {
-			if sha256Sum, ok := backup["sha256"].(string); ok {
-				backupPath := fmt.Sprintf("%s/backups/%s", instanceID, sha256Sum)
-				if err := u.vault.(VaultInterface).Delete(backupPath); err != nil {
-					u.logWarning("Failed to delete old backup %s: %s", backupPath, err)
-				} else {
-					u.logDebug("Deleted old backup %s", backupPath)
-				}
+			backupPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, backup.sha256)
+			_, err := vaultClient.Logical().Delete(backupPath)
+			if err != nil {
+				u.logWarning("Failed to delete old backup %s: %s", backupPath, err)
+			} else {
+				u.logDebug("Deleted old backup %s", backupPath)
+			}
+
+			// Also delete metadata
+			backupMetadataPath := fmt.Sprintf("secret/metadata/backups/%s/%s", instanceID, backup.sha256)
+			_, err = vaultClient.Logical().Delete(backupMetadataPath)
+			if err != nil {
+				u.logWarning("Failed to delete old backup metadata %s: %s", backupMetadataPath, err)
 			}
 		}
 
-		// Keep only the recent backups
-		backups = backups[:keepCount]
+		u.logDebug("Backup cleanup for %s completed - deleted %d old backups, keeping %d",
+			instanceID, len(toDelete), keepCount)
+	}
+}
+
+// exportVaultPath recursively exports all secrets from a vault path
+// Returns a map in the format compatible with "safe export"
+func (u *vaultUpdater) exportVaultPath(basePath string) (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+
+	// Try to access the vault client directly
+	vaultClient, ok := u.vault.(*api.Client)
+	if !ok {
+		// Fallback: try to get client through interface conversion
+		if vaultInterface, ok := u.vault.(interface{ GetClient() *api.Client }); ok {
+			vaultClient = vaultInterface.GetClient()
+		} else {
+			return nil, fmt.Errorf("unable to access vault client for export")
+		}
 	}
 
-	// Update backup index
-	backupIndex["backups"] = backups
-	backupIndex["last_cleanup"] = time.Now().Unix()
-
-	if err := u.vault.(VaultInterface).Put(backupIndexPath, backupIndex); err != nil {
-		u.logWarning("Failed to update backup index for %s: %s", instanceID, err)
-	} else {
-		u.logDebug("Backup cleanup for %s completed - keeping %d backups", instanceID, len(backups))
+	// Export all keys under the base path using the logical API
+	if err := u.exportPathRecursive(vaultClient, basePath, basePath, result); err != nil {
+		return nil, fmt.Errorf("failed to export path %s: %w", basePath, err)
 	}
+
+	return result, nil
+}
+
+// exportPathRecursive recursively exports all secrets from a vault path using the logical API
+func (u *vaultUpdater) exportPathRecursive(client *api.Client, currentPath, basePath string, result map[string]interface{}) error {
+	u.logDebug("Exporting vault path: %s", currentPath)
+
+	// Build the full vault path for KV v2 (secret/data/path for reads, secret/metadata/path for lists)
+	listPath := fmt.Sprintf("secret/metadata/%s", currentPath)
+	dataPath := fmt.Sprintf("secret/data/%s", currentPath)
+
+	// Try to list secrets at current path
+	listResp, err := client.Logical().List(listPath)
+	if err != nil || listResp == nil {
+		// If path doesn't exist or has no subpaths, try to read it as a secret
+		secret, err := client.Logical().Read(dataPath)
+		if err != nil || secret == nil {
+			u.logDebug("Path %s has no secrets or subpaths", currentPath)
+			return nil
+		}
+
+		// Store the secret data - extract from KV v2 format
+		if secret.Data != nil {
+			if data, ok := secret.Data["data"]; ok {
+				secretPath := fmt.Sprintf("secret/%s", currentPath)
+				result[secretPath] = data
+				u.logDebug("Exported secret: %s", secretPath)
+			}
+		}
+		return nil
+	}
+
+	// Process each key in the list response
+	if listResp.Data != nil {
+		if keys, ok := listResp.Data["keys"].([]interface{}); ok {
+			for _, keyInterface := range keys {
+				if key, ok := keyInterface.(string); ok {
+					subPath := currentPath
+					if subPath == "" {
+						subPath = key
+					} else {
+						subPath = currentPath + "/" + key
+					}
+
+					// Remove trailing slash for directories and recurse
+					if strings.HasSuffix(key, "/") {
+						dirPath := subPath[:len(subPath)-1] // Remove trailing slash
+						if err := u.exportPathRecursive(client, dirPath, basePath, result); err != nil {
+							u.logWarning("Failed to export directory %s: %s", dirPath, err)
+						}
+					} else {
+						// Try to get the secret
+						subDataPath := fmt.Sprintf("secret/data/%s", subPath)
+						secret, err := client.Logical().Read(subDataPath)
+						if err != nil || secret == nil {
+							u.logWarning("Failed to get secret %s: %s", subPath, err)
+							continue
+						}
+
+						// Store the secret data - extract from KV v2 format
+						if secret.Data != nil {
+							if data, ok := secret.Data["data"]; ok {
+								secretPath := fmt.Sprintf("secret/%s", subPath)
+								result[secretPath] = data
+								u.logDebug("Exported secret: %s", secretPath)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// compressAndEncode compresses and base64 encodes the backup data
+func (u *vaultUpdater) compressAndEncode(data map[string]interface{}) (string, error) {
+	// Marshal to JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal data to JSON: %w", err)
+	}
+
+	// Compress with gzip at maximum level
+	var compressed bytes.Buffer
+	gzipWriter, err := gzip.NewWriterLevel(&compressed, u.backupConfig.CompressionLevel)
+	if err != nil {
+		return "", fmt.Errorf("failed to create gzip writer: %w", err)
+	}
+
+	if _, err := gzipWriter.Write(jsonData); err != nil {
+		_ = gzipWriter.Close() // #nosec G104 - Best effort close on error path
+		return "", fmt.Errorf("failed to write compressed data: %w", err)
+	}
+
+	if err := gzipWriter.Close(); err != nil {
+		return "", fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	// Base64 encode the compressed data
+	encoded := base64.StdEncoding.EncodeToString(compressed.Bytes())
+
+	u.logDebug("Compressed data from %d bytes to %d bytes (%.2f%% compression)",
+		len(jsonData), len(compressed.Bytes()),
+		float64(len(compressed.Bytes()))/float64(len(jsonData))*100)
+
+	return encoded, nil
+}
+
+// DecompressAndDecode decompresses and decodes base64 encoded backup data (exported for recovery operations)
+func (u *vaultUpdater) DecompressAndDecode(encodedData string) (map[string]interface{}, error) {
+	// Base64 decode
+	compressedData, err := base64.StdEncoding.DecodeString(encodedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 data: %w", err)
+	}
+
+	// Decompress with gzip
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzipReader.Close()
+
+	var decompressed bytes.Buffer
+	if _, err := decompressed.ReadFrom(gzipReader); err != nil {
+		return nil, fmt.Errorf("failed to decompress data: %w", err)
+	}
+
+	// Unmarshal JSON
+	var result map[string]interface{}
+	if err := json.Unmarshal(decompressed.Bytes(), &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON data: %w", err)
+	}
+
+	u.logDebug("Decompressed data from %d bytes to %d bytes",
+		len(compressedData), decompressed.Len())
+
+	return result, nil
 }
 
 func (u *vaultUpdater) logError(format string, args ...interface{}) {

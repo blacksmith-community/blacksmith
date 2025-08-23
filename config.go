@@ -45,10 +45,13 @@ type ForgesConfig struct {
 
 // ReconcilerBackupConfig holds backup configuration for the reconciler
 type ReconcilerBackupConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Retention int    `yaml:"retention"`
-	Cleanup   bool   `yaml:"cleanup"`
-	Path      string `yaml:"path"`
+	Enabled          bool `yaml:"enabled"`
+	RetentionCount   int  `yaml:"retention_count"`
+	RetentionDays    int  `yaml:"retention_days"`
+	CompressionLevel int  `yaml:"compression_level"`
+	CleanupEnabled   bool `yaml:"cleanup_enabled"`
+	BackupOnUpdate   bool `yaml:"backup_on_update"`
+	BackupOnDelete   bool `yaml:"backup_on_delete"`
 }
 
 // ReconcilerConfig holds configuration for the deployment reconciler
@@ -301,9 +304,27 @@ func ReadConfig(path string) (c Config, err error) {
 		c.Reconciler.Enabled = true
 	}
 
-	// Reconciler backup is enabled by default
+	// Reconciler backup configuration with sane defaults
 	if !c.Reconciler.Backup.Enabled {
 		c.Reconciler.Backup.Enabled = true
+	}
+	if c.Reconciler.Backup.RetentionCount == 0 {
+		c.Reconciler.Backup.RetentionCount = 5
+	}
+	if c.Reconciler.Backup.RetentionDays == 0 {
+		c.Reconciler.Backup.RetentionDays = 0 // Disabled by default
+	}
+	if c.Reconciler.Backup.CompressionLevel == 0 {
+		c.Reconciler.Backup.CompressionLevel = 9 // Maximum compression
+	}
+	if !c.Reconciler.Backup.CleanupEnabled {
+		c.Reconciler.Backup.CleanupEnabled = true
+	}
+	if !c.Reconciler.Backup.BackupOnUpdate {
+		c.Reconciler.Backup.BackupOnUpdate = true
+	}
+	if !c.Reconciler.Backup.BackupOnDelete {
+		c.Reconciler.Backup.BackupOnDelete = true
 	}
 
 	// SSH is enabled by default

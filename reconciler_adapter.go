@@ -56,10 +56,14 @@ func NewReconcilerAdapter(config *Config, broker *Broker, vault *Vault, boshDir 
 		CacheTTL:       getEnvDurationWithDefault("BLACKSMITH_RECONCILER_CACHE_TTL", configCacheTTL, 5*time.Minute),
 		Debug:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_DEBUG", config.Reconciler.Debug, config.Debug || Debugging),
 		// Backup configuration
-		BackupEnabled:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ENABLED", config.Reconciler.Backup.Enabled, true),
-		BackupRetention: getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION", config.Reconciler.Backup.Retention, 10),
-		BackupCleanup:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_CLEANUP", config.Reconciler.Backup.Cleanup, true),
-		BackupPath:      getEnvStringWithDefault("BLACKSMITH_RECONCILER_BACKUP_PATH", config.Reconciler.Backup.Path, "backups"),
+		BackupEnabled:           getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ENABLED", config.Reconciler.Backup.Enabled, true),
+		BackupRetention:         getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION", config.Reconciler.Backup.RetentionCount, 5),
+		BackupRetentionDays:     getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION_DAYS", config.Reconciler.Backup.RetentionDays, 0),
+		BackupCompressionLevel:  getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_COMPRESSION", config.Reconciler.Backup.CompressionLevel, 9),
+		BackupCleanup:           getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_CLEANUP", config.Reconciler.Backup.CleanupEnabled, true),
+		BackupOnUpdate:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ON_UPDATE", config.Reconciler.Backup.BackupOnUpdate, true),
+		BackupOnDelete:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ON_DELETE", config.Reconciler.Backup.BackupOnDelete, true),
+		BackupPath:              "backups", // Legacy field, will be removed in refactor
 	}
 
 	return &ReconcilerAdapter{
@@ -348,17 +352,6 @@ func getEnvDurationWithDefault(key string, configValue time.Duration, defaultVal
 		}
 	}
 	if configValue != 0 {
-		return configValue
-	}
-	return defaultValue
-}
-
-func getEnvStringWithDefault(key string, configValue string, defaultValue string) string {
-	val := os.Getenv(key)
-	if val != "" {
-		return val
-	}
-	if configValue != "" {
 		return configValue
 	}
 	return defaultValue

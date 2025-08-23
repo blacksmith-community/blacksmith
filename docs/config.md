@@ -520,6 +520,129 @@ Blacksmith sets the following environment variables based on configuration:
 - `BOSH_CLIENT`: Set to the value of `bosh.username`
 - `BOSH_CLIENT_SECRET`: Set to the value of `bosh.password`
 
+## Reconciler Configuration (`reconciler`)
+
+The `reconciler` section configures the deployment reconciler that monitors and maintains service instance state consistency between Vault and BOSH.
+
+```yaml
+reconciler:
+  enabled: true                    # Enable reconciler
+  interval: "5m"                   # Reconciliation interval
+  max_concurrency: 5              # Maximum concurrent reconciliations
+  batch_size: 10                  # Batch size for processing instances
+  retry_attempts: 3               # Retry attempts for failed operations
+  retry_delay: "30s"              # Delay between retry attempts
+  cache_ttl: "5m"                 # Cache TTL for instance data
+  debug: false                    # Enable reconciler debug logging
+  backup:                         # Backup configuration
+    enabled: true                 # Enable backup functionality
+    retention_count: 5            # Number of backups to retain
+    retention_days: 0             # Max age of backups in days (0 = disabled)
+    compression_level: 9          # Gzip compression level (1-9)
+    cleanup_enabled: true         # Enable automatic cleanup of old backups
+    backup_on_update: true        # Create backup before instance updates
+    backup_on_delete: true        # Create backup before instance deletion
+```
+
+### Optional Fields
+
+#### `enabled` (boolean)
+**Default:** `true`
+
+Enable or disable the deployment reconciler. When enabled, Blacksmith will monitor service instances and ensure consistency between Vault metadata and actual BOSH deployments.
+
+#### `interval` (string)
+**Default:** `"5m"`
+
+How often the reconciler runs to check for inconsistencies. Supports duration formats like `"30s"`, `"5m"`, `"1h"`.
+
+#### `max_concurrency` (integer)
+**Default:** `5`
+
+Maximum number of service instances that can be reconciled simultaneously.
+
+#### `batch_size` (integer)
+**Default:** `10`
+
+Number of instances to process in each reconciliation batch.
+
+#### `retry_attempts` (integer)
+**Default:** `3`
+
+Number of retry attempts for failed reconciliation operations.
+
+#### `retry_delay` (string)
+**Default:** `"30s"`
+
+Delay between retry attempts for failed operations.
+
+#### `cache_ttl` (string)
+**Default:** `"5m"`
+
+Time-to-live for cached instance data to improve performance.
+
+#### `debug` (boolean)
+**Default:** `false`
+
+Enable detailed debug logging for reconciler operations.
+
+### Backup Configuration (`reconciler.backup`)
+
+The reconciler includes advanced backup functionality that creates compressed, deduplicated backups of service instance data.
+
+#### `enabled` (boolean)
+**Default:** `true`
+
+Enable backup functionality. When enabled, the reconciler will create backups of service instance data before making changes.
+
+#### `retention_count` (integer)
+**Default:** `5`
+
+Number of backup versions to retain per service instance. Older backups beyond this count will be automatically deleted.
+
+#### `retention_days` (integer)
+**Default:** `0` (disabled)
+
+Maximum age of backups in days. Backups older than this will be deleted. Set to `0` to disable age-based retention.
+
+#### `compression_level` (integer)
+**Default:** `9`
+
+Gzip compression level for backup archives (1-9, where 9 is maximum compression). Higher levels provide better compression but use more CPU.
+
+#### `cleanup_enabled` (boolean)
+**Default:** `true`
+
+Enable automatic cleanup of old backups based on retention policies.
+
+#### `backup_on_update` (boolean)
+**Default:** `true`
+
+Create a backup before updating service instances. Recommended for data safety.
+
+#### `backup_on_delete` (boolean)
+**Default:** `true`
+
+Create a final backup before deleting service instances. Provides recovery option for accidental deletions.
+
+### Backup Storage Format
+
+Backups are stored in Vault using a new deduplicated format:
+
+- **Location:** `secret/backups/{instance-id}/{sha256}`
+- **Format:** Base64-encoded, gzip-compressed JSON export compatible with `safe export/import`
+- **Deduplication:** SHA256 hashing prevents storing identical backups
+- **Content:** Complete export of all data under `secret/{instance-id}`
+
+### Backup Recovery
+
+The credential recovery system automatically attempts to restore missing data from backups:
+
+1. **New Format Recovery:** Attempts recovery from compressed backups at new location
+2. **Legacy Fallback:** Falls back to old backup format if new format not available
+3. **Automatic Detection:** Identifies and restores credential data from backup archives
+4. **Metadata Tracking:** Records recovery information in instance metadata
+
 ## Example Configuration
 
 ```yaml
@@ -539,6 +662,24 @@ vm_monitoring:
   max_retries: 3
   timeout: 30
   max_concurrent: 3
+
+reconciler:
+  enabled: true
+  interval: "5m"
+  max_concurrency: 5
+  batch_size: 10
+  retry_attempts: 3
+  retry_delay: "30s"
+  cache_ttl: "5m"
+  debug: false
+  backup:
+    enabled: true
+    retention_count: 5
+    retention_days: 0
+    compression_level: 9
+    cleanup_enabled: true
+    backup_on_update: true
+    backup_on_delete: true
 
 broker:
   username: "cf-broker"

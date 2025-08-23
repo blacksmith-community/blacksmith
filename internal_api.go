@@ -2612,7 +2612,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		// Check if resurrection config exists for this deployment and determine status
-		configName := fmt.Sprintf("blacksmith-%s-resurrection", deploymentName)
+		// Use 'blacksmith.{deployment}' format as type already indicates 'resurrection'
+		configName := fmt.Sprintf("blacksmith.%s", deploymentName)
 		l.Debug("Checking for resurrection config: %s (deployment: %s)", configName, deploymentName)
 
 		resurrectionPaused := false // Default: resurrection active (BOSH default)
@@ -2623,31 +2624,60 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		if err == nil && resurrectionConfig != nil {
-			l.Debug("Resurrection config found, analyzing content: %+v", resurrectionConfig)
+			l.Debug("Resurrection config found for %s, type: %T", configName, resurrectionConfig)
+			l.Debug("Resurrection config content: %+v", resurrectionConfig)
 
 			// Parse the config to determine if resurrection is enabled or disabled
 			// The config should contain YAML with rules that specify enabled: true/false
 			if configMap, ok := resurrectionConfig.(map[string]interface{}); ok {
-				l.Debug("Config parsed as map: %+v", configMap)
+				l.Debug("Config parsed as map with %d keys", len(configMap))
+				for k, v := range configMap {
+					l.Debug("Config key '%s': %T = %+v", k, v, v)
+				}
+
 				if rules, ok := configMap["rules"].([]interface{}); ok && len(rules) > 0 {
-					l.Debug("Found rules: %+v", rules)
-					if rule, ok := rules[0].(map[string]interface{}); ok {
-						l.Debug("First rule: %+v", rule)
-						if enabled, ok := rule["enabled"].(bool); ok {
+					l.Debug("Found %d rules in config", len(rules))
+					for i, r := range rules {
+						l.Debug("Rule %d: %T = %+v", i, r, r)
+					}
+
+					// Handle both map[string]interface{} and map[interface{}]interface{} from YAML parsing
+					var ruleMap map[string]interface{}
+
+					switch r := rules[0].(type) {
+					case map[string]interface{}:
+						ruleMap = r
+					case map[interface{}]interface{}:
+						// Convert map[interface{}]interface{} to map[string]interface{}
+						ruleMap = make(map[string]interface{})
+						for k, v := range r {
+							if ks, ok := k.(string); ok {
+								ruleMap[ks] = v
+							}
+						}
+					default:
+						l.Error("First rule is not a map: %T", rules[0])
+					}
+
+					if ruleMap != nil {
+						l.Debug("First rule is a map with %d keys", len(ruleMap))
+						for k, v := range ruleMap {
+							l.Debug("Rule key '%s': %T = %+v", k, v, v)
+						}
+
+						if enabled, ok := ruleMap["enabled"].(bool); ok {
 							// If enabled=false in config, then resurrection is paused
 							resurrectionPaused = !enabled
-							l.Debug("Resurrection config rule enabled=%v, setting paused=%v", enabled, resurrectionPaused)
+							l.Info("Resurrection config for %s: enabled=%v, setting paused=%v", deploymentName, enabled, resurrectionPaused)
 						} else {
-							l.Debug("No 'enabled' field found in rule")
+							l.Error("'enabled' field in rule is not a bool or missing")
 						}
-					} else {
-						l.Debug("First rule is not a map")
 					}
 				} else {
-					l.Debug("No rules found in config")
+					l.Debug("No rules found in config or rules is not an array")
 				}
 			} else {
-				l.Debug("Config is not a map: %T", resurrectionConfig)
+				l.Error("Resurrection config is not a map: %T", resurrectionConfig)
 			}
 		} else {
 			l.Debug("No resurrection config found (config: %v, err: %v), using BOSH default (resurrection active)", resurrectionConfig, err)
@@ -4710,7 +4740,7 @@ func (api *InternalApi) getCFServiceBindings(w http.ResponseWriter, req *http.Re
 		appParams := capi.NewQueryParams().WithFilter("guids", appGUIDList...).WithPerPage(100)
 		appResponse, err := client.Apps().List(ctx, appParams)
 		if err != nil {
-			l.Warning("failed to fetch app names for bindings: %s", err)
+			l.Error("failed to fetch app names for bindings: %s", err)
 		} else {
 			for _, app := range appResponse.Resources {
 				appNames[app.GUID] = app.Name

@@ -39,10 +39,13 @@ func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault int
 
 	// Convert ReconcilerConfig backup settings to BackupConfig
 	backupConfig := BackupConfig{
-		Enabled:   config.BackupEnabled,
-		Retention: config.BackupRetention,
-		Cleanup:   config.BackupCleanup,
-		Path:      config.BackupPath,
+		Enabled:          config.BackupEnabled,
+		RetentionCount:   config.BackupRetention,
+		RetentionDays:    config.BackupRetentionDays,
+		CompressionLevel: config.BackupCompressionLevel,
+		CleanupEnabled:   config.BackupCleanup,
+		BackupOnUpdate:   config.BackupOnUpdate,
+		BackupOnDelete:   config.BackupOnDelete,
 	}
 
 	return &reconcilerManager{
