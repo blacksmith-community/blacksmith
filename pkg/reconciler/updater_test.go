@@ -559,7 +559,7 @@ func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
 	// Create instance for update
 	instance := &InstanceData{
 		ID:             "test-instance",
-		ServiceID:      "test-service", 
+		ServiceID:      "test-service",
 		PlanID:         "test-plan",
 		DeploymentName: "test-deployment",
 		CreatedAt:      time.Now().Add(-24 * time.Hour),

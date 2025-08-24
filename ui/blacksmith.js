@@ -1317,6 +1317,7 @@
         <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
         <button class="detail-tab" data-tab="config">Config</button>
+        <button class="detail-tab" data-tab="tasks">Tasks</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>
@@ -2972,7 +2973,15 @@
         objectInfo = event.object_type || event.object_name;
       }
 
-      const taskInfo = event.task_id || event.task || '-';
+      const taskId = event.task_id || event.task;
+      let taskInfo = '-';
+      
+      // Make task ID clickable if it exists and is numeric
+      if (taskId && taskId !== '-' && !isNaN(taskId)) {
+        taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
+      } else if (taskId) {
+        taskInfo = taskId;
+      }
 
       return `
                 <tr class="${event.error ? 'error-row' : ''}">
@@ -2993,14 +3002,13 @@
 
   // Format tasks table
   const formatTasks = (tasks, dataKey = 'tasks') => {
-    if (!tasks || tasks.length === 0) {
-      return '<div class="no-data">No tasks found</div>';
-    }
-
-    // Store original data for sorting
-    tableOriginalData.set(dataKey, [...tasks]);
+    // Always store data for sorting, even if empty
+    tableOriginalData.set(dataKey, tasks || []);
 
     const tableId = `tasks-table`;
+    
+    // Check if we have tasks
+    const hasTasks = tasks && tasks.length > 0;
 
     return `
       <div class="table-controls-container">
@@ -3053,7 +3061,7 @@
             </tr>
           </thead>
           <tbody>
-            ${tasks.map(task => {
+            ${hasTasks ? tasks.map(task => {
               const startedAt = formatTimestamp(task.started_at);
               
               // Calculate duration
@@ -3090,7 +3098,11 @@
                   <td class="task-duration">${duration}</td>
                 </tr>
               `;
-            }).join('')}
+            }).join('') : `
+              <tr>
+                <td colspan="7" class="no-data-row">No current tasks found</td>
+              </tr>
+            `}
           </tbody>
         </table>
       </div>
@@ -3312,6 +3324,28 @@
         time: match[2],
         level: levelMap[match[3]] || match[3],
         message: `[${match[5]}] ${match[6]}`
+      };
+    }
+
+    // BOSH Director format: LEVEL, [YYYY-MM-DDTHH:MM:SS.mmm #PID] [task:TASKID] LEVEL -- MODULE: message
+    const boshPattern = /^([IDWEF]), \[(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+) #\d+\] (\[(?:task:\d+|)\])\s*(\w+) -- ([^:]+):\s*(.*)$/;
+    match = line.match(boshPattern);
+    if (match) {
+      const levelMap = {
+        'I': 'INFO',
+        'D': 'DEBUG', 
+        'W': 'WARN',
+        'E': 'ERROR',
+        'F': 'FATAL'
+      };
+      const level = levelMap[match[1]] || match[5];
+      const taskInfo = match[4] !== '[]' ? match[4] + ' ' : '';
+      
+      return {
+        date: match[2],
+        time: match[3],
+        level: level,
+        message: `${taskInfo}[${match[6]}] ${match[7]}`
       };
     }
 
@@ -8980,70 +9014,65 @@
     let modal = document.getElementById('task-details-modal');
     if (!modal) {
       const modalHTML = `
-        <div id="task-details-modal" class="modal-overlay" style="display: none;" role="dialog" aria-labelledby="task-details-modal-title" aria-hidden="true">
+        <div id="task-details-modal" class="modal-overlay" role="dialog" aria-labelledby="task-details-modal-title" aria-hidden="true">
           <div class="modal">
             <div class="modal-content">
               <div class="modal-header">
                 <h3 id="task-details-modal-title">Task Details</h3>
+                <div class="task-actions">
+                  <button id="cancel-task-btn" class="btn btn-secondary" style="display: none;" onclick="cancelTaskAndRefresh()">Cancel Task</button>
+                </div>
                 <button class="modal-close" onclick="hideTaskDetailsModal()" aria-label="Close modal">&times;</button>
               </div>
               <div class="modal-body">
                 <div id="task-details-loading" class="loading">Loading task details...</div>
                 <div id="task-details-content" style="display: none;">
                   <div class="task-summary">
-                    <div class="task-header">
-                      <h4 id="task-title">Task #<span id="task-id"></span></h4>
-                      <div class="task-actions">
-                        <button id="cancel-task-btn" class="btn btn-secondary" style="display: none;" onclick="cancelTaskAndRefresh()">Cancel Task</button>
-                      </div>
-                    </div>
-                    <div class="task-info-grid">
-                      <div class="info-item">
-                        <label>State:</label>
-                        <span id="task-state-badge"></span>
-                      </div>
-                      <div class="info-item">
-                        <label>Description:</label>
-                        <span id="task-description"></span>
-                      </div>
-                      <div class="info-item">
-                        <label>Deployment:</label>
-                        <span id="task-deployment"></span>
-                      </div>
-                      <div class="info-item">
-                        <label>User:</label>
-                        <span id="task-user"></span>
-                      </div>
-                      <div class="info-item">
-                        <label>Started:</label>
-                        <span id="task-started"></span>
-                      </div>
-                      <div class="info-item">
-                        <label>Duration:</label>
-                        <span id="task-duration"></span>
-                      </div>
+                    <div class="task-info-table">
+                      <table class="task-details-table">
+                        <thead>
+                          <tr>
+                            <th>State</th>
+                            <th>Description</th>
+                            <th>Deployment</th>
+                            <th>User</th>
+                            <th>Started</th>
+                            <th>Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td id="task-state-badge"></td>
+                            <td id="task-description"></td>
+                            <td id="task-deployment"></td>
+                            <td id="task-user"></td>
+                            <td id="task-started"></td>
+                            <td id="task-duration"></td>
+                          </tr>
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                   
-                  <div class="task-details-tabs">
-                    <button class="task-detail-tab active" data-tab="events">Events</button>
-                    <button class="task-detail-tab" data-tab="output">Output</button>
-                    <button class="task-detail-tab" data-tab="debug">Debug</button>
-                    <button class="task-detail-tab" data-tab="raw">Raw</button>
+                  <div class="manifest-tabs-nav">
+                    <button class="manifest-tab-btn active" data-tab="debug" data-group="task-tabs">Debug</button>
+                    <button class="manifest-tab-btn" data-tab="raw" data-group="task-tabs">Raw</button>
+                    <button class="manifest-tab-btn" data-tab="events" data-group="task-tabs">Events</button>
+                    <button class="manifest-tab-btn" data-tab="output" data-group="task-tabs">Output</button>
                   </div>
                   
-                  <div class="task-details-content">
-                    <div id="task-events-content" class="task-tab-content active">
-                      <div class="loading">Loading events...</div>
-                    </div>
-                    <div id="task-output-content" class="task-tab-content">
-                      <div class="loading">Loading output...</div>
-                    </div>
-                    <div id="task-debug-content" class="task-tab-content">
+                  <div class="manifest-tab-content">
+                    <div id="task-debug-content" class="manifest-tab-pane active" data-tab="debug" data-group="task-tabs">
                       <div class="loading">Loading debug...</div>
                     </div>
-                    <div id="task-raw-content" class="task-tab-content">
+                    <div id="task-raw-content" class="manifest-tab-pane" data-tab="raw" data-group="task-tabs">
                       <div class="loading">Loading raw data...</div>
+                    </div>
+                    <div id="task-events-content" class="manifest-tab-pane" data-tab="events" data-group="task-tabs">
+                      <div class="loading">Loading events...</div>
+                    </div>
+                    <div id="task-output-content" class="manifest-tab-pane" data-tab="output" data-group="task-tabs">
+                      <div class="loading">Loading output...</div>
                     </div>
                   </div>
                 </div>
@@ -9077,8 +9106,13 @@
     // Store current task ID for refresh
     window.currentTaskId = taskId;
 
-    // Show modal
+    // Show modal using existing modal system
     modal.style.display = 'flex';
+    
+    // Force reflow to ensure CSS transitions work
+    modal.offsetHeight;
+    
+    modal.classList.add('active');
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
 
@@ -9093,6 +9127,7 @@
   window.hideTaskDetailsModal = () => {
     const modal = document.getElementById('task-details-modal');
     if (modal) {
+      modal.classList.remove('active');
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
       document.body.style.overflow = '';
@@ -9109,27 +9144,31 @@
 
   // Set up task modal tab switching
   const setupTaskModalTabs = () => {
-    const tabButtons = document.querySelectorAll('.task-detail-tab');
-    
+    const tabGroupId = 'task-tabs';
+    const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
+    const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+
     tabButtons.forEach(button => {
       button.addEventListener('click', () => {
         const tabName = button.dataset.tab;
-        
+
         // Update active states
         tabButtons.forEach(btn => btn.classList.remove('active'));
         button.classList.add('active');
-        
-        // Show/hide content
-        document.querySelectorAll('.task-tab-content').forEach(content => {
-          content.classList.remove('active');
+
+        // Show/hide content panes
+        tabPanes.forEach(pane => {
+          pane.classList.remove('active');
+          pane.style.display = 'none';
         });
-        
-        const targetContent = document.getElementById(`task-${tabName}-content`);
-        if (targetContent) {
-          targetContent.classList.add('active');
-          
+
+        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
+        if (targetPane) {
+          targetPane.classList.add('active');
+          targetPane.style.display = 'block';
+
           // Load content if not already loaded
-          if (targetContent.innerHTML.includes('Loading') && window.currentTaskId) {
+          if (targetPane.innerHTML.includes('Loading') && window.currentTaskId) {
             loadTaskTabContent(window.currentTaskId, tabName);
           }
         }
@@ -9152,8 +9191,8 @@
       const taskData = await response.json();
       const task = taskData;
       
-      // Update task summary
-      document.getElementById('task-id').textContent = task.id;
+      // Update task summary and modal title
+      document.getElementById('task-details-modal-title').textContent = `Task Details - Task # ${task.id}`;
       document.getElementById('task-description').textContent = task.description || '-';
       document.getElementById('task-deployment').textContent = task.deployment || '-';
       document.getElementById('task-user').textContent = task.user || '-';
@@ -9190,8 +9229,8 @@
       loadingDiv.style.display = 'none';
       contentDiv.style.display = 'block';
       
-      // Load initial tab content (events)
-      await loadTaskTabContent(taskId, 'events');
+      // Load initial tab content (debug)
+      await loadTaskTabContent(taskId, 'debug');
       
     } catch (error) {
       console.error('Failed to load task details:', error);
@@ -9230,19 +9269,52 @@
         if (Array.isArray(outputData)) {
           content = formatTaskEvents(outputData);
         } else if (outputData.output) {
-          content = `<pre class="task-output">${outputData.output}</pre>`;
+          content = formatTaskOutput(outputData.output, outputType);
         } else {
-          content = '<div class="no-data">No output available</div>';
+          content = formatTaskOutput('', outputType);
         }
         
       } else if (tabType === 'raw') {
         const response = await fetch(`/b/tasks/${taskId}`, { cache: 'no-cache' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const taskData = await response.json();
-        content = `<pre class="task-raw">${JSON.stringify(taskData, null, 2)}</pre>`;
+        const rawText = JSON.stringify(taskData, null, 2);
+        
+        // Store raw text for copying
+        if (!window.taskRawTexts) window.taskRawTexts = {};
+        window.taskRawTexts[taskId] = rawText;
+        
+        content = `
+          <div class="manifest-container">
+            <div class="manifest-header">
+              <button class="copy-btn-manifest" onclick="window.copyTaskRaw('${taskId}', event)"
+                      title="Copy raw data to clipboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+            <pre>${rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+          </div>
+        `;
       }
       
       contentDiv.innerHTML = content;
+      
+      // Initialize search and sorting functionality for tables
+      if (tabType === 'output' || tabType === 'debug') {
+        const tableClass = `task-${tabType === 'output' ? 'result' : 'debug'}-table`;
+        // Set a timeout to ensure DOM is ready
+        setTimeout(() => {
+          initializeSorting(tableClass);
+          attachSearchFilter(tableClass);
+        }, 100);
+      } else if (tabType === 'events') {
+        // Events table uses logs-table class
+        setTimeout(() => {
+          initializeSorting('logs-table');
+          attachSearchFilter('logs-table');
+        }, 100);
+      }
       
     } catch (error) {
       console.error(`Failed to load ${tabType} content:`, error);
@@ -9253,12 +9325,32 @@
   // Format task events for modal display
   const formatTaskEvents = (events) => {
     if (!events || events.length === 0) {
-      return '<div class="no-data">No events recorded</div>';
+      return `
+        <div class="logs-table-container">
+          <table class="logs-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Stage</th>
+                <th>Task</th>
+                <th>State</th>
+                <th>Progress</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colspan="6" class="no-data-row">No events recorded</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
     }
 
     return `
-      <div class="task-events-table-container">
-        <table class="task-events-table">
+      <div class="logs-table-container">
+        <table class="logs-table">
           <thead>
             <tr>
               <th>Time</th>
@@ -9275,17 +9367,90 @@
               const progress = event.progress ? `${event.progress}%` : '-';
               const error = event.error ? event.error.message : '-';
               
+              // Make task field clickable if it's a valid task ID
+              let taskInfo = event.task || '-';
+              if (event.task && !isNaN(event.task) && event.task !== '-') {
+                taskInfo = `<a href="#" class="task-link" data-task-id="${event.task}" onclick="showTaskDetails(${event.task}, event); return false;">${event.task}</a>`;
+              }
+              
               return `
                 <tr>
                   <td>${time}</td>
                   <td>${event.stage || '-'}</td>
-                  <td>${event.task || '-'}</td>
+                  <td>${taskInfo}</td>
                   <td><span class="event-state ${event.state}">${event.state || '-'}</span></td>
                   <td>${progress}</td>
                   <td class="event-error">${error}</td>
                 </tr>
               `;
             }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  // Format task output as table (like logs view)
+  const formatTaskOutput = (output, outputType) => {
+    const tableClass = `task-${outputType}-table`;
+    
+    if (!output || output.trim() === '') {
+      return `
+        <div class="logs-table-container">
+          <div class="table-controls-container">
+            <div class="search-filter-container">
+              ${createSearchFilter(tableClass, `Search ${outputType}...`)}
+            </div>
+            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
+                    title="Copy filtered table rows">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>Copy</span>
+            </button>
+          </div>
+          <table class="${tableClass}">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Level</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colspan="3" class="no-data-row">No ${outputType} output available</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // Parse output lines similar to log parsing
+    const lines = output.split('\n').filter(line => line.trim());
+    const parsedLines = lines.map(line => parseLogLine(line));
+
+    return `
+      <div class="logs-table-container">
+        <div class="table-controls-container">
+          <div class="search-filter-container">
+            ${createSearchFilter(tableClass, `Search ${outputType}...`)}
+          </div>
+          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
+                  title="Copy filtered table rows">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <span>Copy</span>
+          </button>
+        </div>
+        <table class="${tableClass}">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Level</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${parsedLines.map(row => renderLogRow(row)).join('')}
           </tbody>
         </table>
       </div>
@@ -9353,6 +9518,52 @@
   window.cancelTaskAndRefresh = () => {
     if (window.currentTaskId) {
       cancelTask(window.currentTaskId);
+    }
+  };
+
+  // Copy task raw data function
+  window.copyTaskRaw = async (taskId, event) => {
+    const text = window.taskRawTexts && window.taskRawTexts[taskId];
+    if (!text) {
+      console.error('Task raw text not found for ID:', taskId);
+      return;
+    }
+
+    const button = event.currentTarget;
+    try {
+      await navigator.clipboard.writeText(text);
+      // Visual feedback
+      const originalTitle = button.title;
+      const spanElement = button.querySelector('span');
+      const originalText = spanElement ? spanElement.textContent : '';
+      button.classList.add('copied');
+      button.title = 'Copied!';
+      if (spanElement) spanElement.textContent = 'Copied!';
+      setTimeout(() => {
+        button.classList.remove('copied');
+        button.title = originalTitle;
+        if (spanElement) spanElement.textContent = originalText;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy task raw data:', err);
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        button.classList.add('copied');
+        setTimeout(() => {
+          button.classList.remove('copied');
+        }, 2000);
+      } catch (fallbackErr) {
+        console.error('Fallback copy also failed:', fallbackErr);
+      } finally {
+        document.body.removeChild(textarea);
+      }
     }
   };
 

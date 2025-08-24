@@ -1181,7 +1181,7 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 			retention = 5 // Default retention of 5 backups
 		}
 		u.cleanOldBackupsNewFormat(instanceID, retention)
-		
+
 		// Also clean up old per-instance backup data if it exists
 		u.cleanLegacyInstanceBackups(instanceID)
 	}
@@ -1309,7 +1309,7 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 // cleanLegacyInstanceBackups removes old backup data stored at secret/{instanceID}/backups
 func (u *vaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 	u.logDebug("Checking for legacy backup data for instance %s", instanceID)
-	
+
 	// Check if legacy backup path exists
 	legacyBackupPath := fmt.Sprintf("%s/backups", instanceID)
 	legacyData, err := u.getFromVault(legacyBackupPath)
@@ -1317,10 +1317,10 @@ func (u *vaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 		u.logDebug("No legacy backup data found for instance %s", instanceID)
 		return
 	}
-	
+
 	if len(legacyData) > 0 {
 		u.logInfo("Found legacy backup data for instance %s at %s, cleaning up", instanceID, legacyBackupPath)
-		
+
 		// Try to access the vault client for direct deletion
 		vaultClient, ok := u.vault.(*api.Client)
 		if !ok {
@@ -1332,7 +1332,7 @@ func (u *vaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 				return
 			}
 		}
-		
+
 		// Delete the legacy backup path
 		legacyFullPath := fmt.Sprintf("secret/data/%s", legacyBackupPath)
 		_, err := vaultClient.Logical().Delete(legacyFullPath)
@@ -1341,7 +1341,7 @@ func (u *vaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 		} else {
 			u.logInfo("Successfully cleaned up legacy backup data for instance %s", instanceID)
 		}
-		
+
 		// Also delete metadata if it exists
 		legacyMetadataPath := fmt.Sprintf("secret/metadata/%s", legacyBackupPath)
 		_, err = vaultClient.Logical().Delete(legacyMetadataPath)

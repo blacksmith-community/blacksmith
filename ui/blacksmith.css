@@ -2253,8 +2253,9 @@ td a {
   border: 1px solid var(--border-primary);
   border-radius: 4px;
   background: var(--bg-secondary);
-  max-height: calc(100vh - 200px);
+  max-height: calc(100% - 20px);
   min-height: 200px;
+  margin-bottom: 10px;
 }
 
 .logs-table {
@@ -2987,7 +2988,8 @@ th[style*="cursor: pointer"]:hover {
   overflow-y: auto;
   overflow-x: auto;
   flex: 1;
-  max-height: calc(100vh - 400px);
+  max-height: calc(100% - 60px);
+  margin-bottom: 10px;
 }
 
 .manifest-tab-pane {
@@ -7766,6 +7768,17 @@ body.terminal-minimized .tabs {
   background: var(--bg-secondary);
 }
 
+.no-data-row {
+  text-align: center;
+  padding: 2rem 1rem !important;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.no-data-row:hover {
+  background: transparent !important;
+}
+
 /* Task table column specific styles */
 .task-id {
   font-weight: 600;
@@ -7808,19 +7821,22 @@ body.terminal-minimized .tabs {
 .tasks-filters .refresh-btn {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: var(--color-primary);
-  color: white;
-  border: none;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 0.9em;
   cursor: pointer;
-  font-size: 14px;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
 .tasks-filters .refresh-btn:hover {
-  background: var(--color-primary-hover);
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
 }
 
 .tasks-filters .refresh-btn svg {
@@ -7854,47 +7870,69 @@ body.terminal-minimized .tabs {
 }
 
 /* Task Details Modal Styles */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
-}
 
-.modal {
-  background: var(--bg-primary);
-  border-radius: 8px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+/* The task-details-modal uses standard modal styles from .modal-overlay and .modal */
+/* We only need to override specific behaviors */
+
+/* Ensure modal content doesn't expand beyond viewport */
+#task-details-modal .modal {
   max-width: 90vw;
+  width: 90vw;
   max-height: 90vh;
-  width: 800px;
-  overflow: hidden;
+  height: 90vh;
   display: flex;
   flex-direction: column;
 }
 
-.modal-header {
+#task-details-modal .modal-content {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#task-details-modal .modal-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 1.5rem;
   border-bottom: 1px solid var(--border-primary);
   background: var(--bg-secondary);
+  gap: 1rem;
+  flex-shrink: 0;
 }
 
-.modal-header h3 {
+#task-details-modal .modal-header h3 {
   margin: 0;
   font-size: 1.25rem;
   color: var(--text-primary);
+  flex: 1;
 }
 
-.modal-close {
+#task-details-modal .modal-header .task-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#task-details-modal .modal-header .task-actions button {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+#task-details-modal .modal-header .task-actions button:hover {
+  background: var(--bg-secondary);
+}
+
+#task-details-modal .modal-close {
   background: none;
   border: none;
   font-size: 24px;
@@ -7910,20 +7948,24 @@ body.terminal-minimized .tabs {
   transition: all 0.2s;
 }
 
-.modal-close:hover {
+#task-details-modal .modal-close:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 
-.modal-body {
+#task-details-modal .modal-body {
   padding: 1.5rem;
-  overflow-y: auto;
+  overflow: hidden;
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Task Summary Section */
-.task-summary {
-  margin-bottom: 1.5rem;
+#task-details-modal .task-summary {
+  margin-bottom: 0.5rem;
+  flex-shrink: 0;
 }
 
 .task-header {
@@ -7939,19 +7981,6 @@ body.terminal-minimized .tabs {
   color: var(--text-primary);
 }
 
-.task-actions button {
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  border: 1px solid var(--border-primary);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.task-actions button:hover {
-  background: var(--bg-secondary);
-}
 
 .task-info-grid {
   display: grid;
@@ -7975,78 +8004,71 @@ body.terminal-minimized .tabs {
   color: var(--text-primary);
 }
 
-/* Task Details Tabs */
-.task-details-tabs {
+/* Task modal uses existing manifest tab styles and logs table styles */
+
+/* Task modal specific content styles */
+#task-details-modal #task-details-content {
+  flex: 1;
   display: flex;
-  border-bottom: 2px solid var(--border-primary);
-  margin-bottom: 1rem;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.task-detail-tab {
-  padding: 0.75rem 1.5rem;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  transition: all 0.2s;
-  border-bottom: 2px solid transparent;
+#task-details-modal .manifest-tabs-nav {
+  flex-shrink: 0;
 }
 
-.task-detail-tab:hover {
-  color: var(--text-primary);
-  background: var(--bg-secondary);
+#task-details-modal .manifest-tab-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.task-detail-tab.active {
-  color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
-  background: var(--bg-secondary);
-}
-
-/* Task Tab Content */
-.task-details-content {
+#task-details-modal .manifest-tab-pane {
   position: relative;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.task-tab-content {
-  display: none;
+/* Direct children of tab panes should scroll */
+#task-details-modal .manifest-tab-pane > * {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
 }
 
-.task-tab-content.active {
-  display: block;
-}
-
-/* Task Events Table in Modal */
-.task-events-table-container {
+#task-details-modal .logs-table-container {
+  height: 100%;
+  overflow-y: auto;
   overflow-x: auto;
-  border: 1px solid var(--border-primary);
-  border-radius: 6px;
-  max-height: 400px;
+}
+
+/* Ensure tables in task modal have proper scrolling */
+#task-details-modal .logs-table {
+  display: block;
+  height: 100%;
   overflow-y: auto;
 }
 
-.task-events-table {
+#task-details-modal .task-info-table {
   width: 100%;
-  min-width: 600px;
+  max-height: 150px;
+  overflow-y: auto;
+  overflow-x: auto;
+  display: block;
 }
 
-.task-events-table th,
-.task-events-table td {
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border-primary);
-  font-size: 13px;
-}
-
-.task-events-table th {
-  background: var(--bg-table-header);
-  font-weight: 600;
-  color: var(--text-primary);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+/* Constrain pre/code blocks in task modal */
+#task-details-modal pre {
+  max-height: 100%;
+  overflow: auto;
+  margin: 0;
 }
 
 /* Event states in modal */
@@ -8089,34 +8111,21 @@ body.terminal-minimized .tabs {
   color: #fca5a5;
 }
 
-/* Task Output Display */
-.task-output,
-.task-raw {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: 6px;
-  padding: 1rem;
-  font-family: 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.4;
-  max-height: 400px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
+/* Task output uses existing logs table styling */
 
-/* Modal responsive adjustments */
+/* Task modal responsive adjustments */
 @media (max-width: 768px) {
-  .modal {
-    width: 95vw;
-    max-height: 95vh;
+  #task-details-modal .modal {
+    width: 98vw;
+    height: 95vh;
+    margin: 5px;
   }
   
-  .modal-header {
+  #task-details-modal .modal-header {
     padding: 1rem;
   }
   
-  .modal-body {
+  #task-details-modal .modal-body {
     padding: 1rem;
   }
   
@@ -8128,14 +8137,5 @@ body.terminal-minimized .tabs {
     flex-direction: column;
     align-items: stretch;
     gap: 1rem;
-  }
-  
-  .task-details-tabs {
-    overflow-x: auto;
-  }
-  
-  .task-detail-tab {
-    white-space: nowrap;
-    padding: 0.5rem 1rem;
   }
 }

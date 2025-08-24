@@ -101,8 +101,8 @@ func (a *PluginsAuditService) LogExecution(ctx context.Context, execution *Rabbi
 		entry.Error = fmt.Sprintf("Command failed with exit code %d", execution.ExitCode)
 	}
 
-	// Generate Vault key
-	vaultKey := a.generateVaultKey(execution.InstanceID, execution.Timestamp)
+	// Generate Vault path for the audit endpoint
+	vaultPath := a.generateVaultPath(execution.InstanceID)
 
 	// Convert entry to map for Vault storage
 	entryData, err := a.entryToMap(entry)
@@ -111,20 +111,44 @@ func (a *PluginsAuditService) LogExecution(ctx context.Context, execution *Rabbi
 		return fmt.Errorf("failed to convert audit entry: %v", err)
 	}
 
+	// First, read existing audit data
+	existingSecret, err := a.vaultClient.Logical().Read(vaultPath)
+	if err != nil {
+		a.logger.Error("Failed to read existing audit data from Vault: %v", err)
+		return fmt.Errorf("failed to read existing audit data: %v", err)
+	}
+
+	// Prepare the data map
+	var dataMap map[string]interface{}
+	if existingSecret != nil && existingSecret.Data != nil {
+		// For KV v2, the actual data is nested under "data" field
+		if data, ok := existingSecret.Data["data"].(map[string]interface{}); ok {
+			dataMap = data
+		} else {
+			dataMap = make(map[string]interface{})
+		}
+	} else {
+		dataMap = make(map[string]interface{})
+	}
+
+	// Add the new entry with timestamp as key
+	timestampKey := fmt.Sprintf("%d", execution.Timestamp)
+	dataMap[timestampKey] = entryData
+
 	// Store in Vault (KV v2 format requires data wrapper)
 	vaultData := map[string]interface{}{
-		"data": entryData,
+		"data": dataMap,
 	}
 
 	// Write to Vault
-	_, err = a.vaultClient.Logical().Write(vaultKey, vaultData)
+	_, err = a.vaultClient.Logical().Write(vaultPath, vaultData)
 	if err != nil {
-		a.logger.Error("Failed to write audit entry to Vault at %s: %v", vaultKey, err)
+		a.logger.Error("Failed to write audit entry to Vault at %s: %v", vaultPath, err)
 		return fmt.Errorf("failed to write to Vault: %v", err)
 	}
 
-	a.logger.Info("Successfully logged rabbitmq-plugins audit entry for instance %s, command %s",
-		execution.InstanceID, execution.Command)
+	a.logger.Info("Successfully logged rabbitmq-plugins audit entry for instance %s, command %s with key %s",
+		execution.InstanceID, execution.Command, timestampKey)
 	return nil
 }
 
@@ -134,70 +158,62 @@ func (a *PluginsAuditService) GetHistory(ctx context.Context, instanceID string,
 		return nil, fmt.Errorf("vault client not configured")
 	}
 
-	// Generate base path for listing
-	basePath := fmt.Sprintf("secret/metadata/%s/rabbitmq-plugins/audit", instanceID)
-
-	// List all audit entries
-	secret, err := a.vaultClient.Logical().List(basePath)
+	// Read the audit endpoint directly
+	vaultPath := a.generateVaultPath(instanceID)
+	secret, err := a.vaultClient.Logical().Read(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to list audit entries from Vault: %v", err)
-		return nil, fmt.Errorf("failed to list audit entries: %v", err)
+		a.logger.Error("Failed to read audit entries from Vault: %v", err)
+		return nil, fmt.Errorf("failed to read audit entries: %v", err)
 	}
 
 	if secret == nil || secret.Data == nil {
 		return []PluginsHistoryEntry{}, nil
 	}
 
-	// Extract keys
-	keys, ok := secret.Data["keys"].([]interface{})
-	if !ok {
+	// For KV v2, the actual data is nested under "data" field
+	var dataMap map[string]interface{}
+	if data, ok := secret.Data["data"].(map[string]interface{}); ok {
+		dataMap = data
+	} else {
 		return []PluginsHistoryEntry{}, nil
 	}
 
-	// Convert and sort keys (they should be timestamps)
-	var sortedKeys []string
-	for _, key := range keys {
-		if keyStr, ok := key.(string); ok {
-			sortedKeys = append(sortedKeys, keyStr)
+	// Convert timestamp keys to integers for sorting
+	type timestampEntry struct {
+		timestamp int64
+		data      map[string]interface{}
+	}
+	var timestampEntries []timestampEntry
+
+	for key, value := range dataMap {
+		// Parse timestamp from key
+		var timestamp int64
+		if _, err := fmt.Sscanf(key, "%d", &timestamp); err != nil {
+			a.logger.Error("Failed to parse timestamp from key %s: %v", key, err)
+			continue
+		}
+
+		if entryData, ok := value.(map[string]interface{}); ok {
+			timestampEntries = append(timestampEntries, timestampEntry{
+				timestamp: timestamp,
+				data:      entryData,
+			})
 		}
 	}
 
-	// Sort by timestamp descending (most recent first)
-	sort.Slice(sortedKeys, func(i, j int) bool {
-		// Extract timestamp from key format: {timestamp}
-		tsI := a.extractTimestampFromKey(sortedKeys[i])
-		tsJ := a.extractTimestampFromKey(sortedKeys[j])
-		return tsI > tsJ
+	// Sort by timestamp (most recent first)
+	sort.Slice(timestampEntries, func(i, j int) bool {
+		return timestampEntries[i].timestamp > timestampEntries[j].timestamp
 	})
 
-	// Limit the results
-	if limit > 0 && len(sortedKeys) > limit {
-		sortedKeys = sortedKeys[:limit]
-	}
-
-	// Retrieve each entry
+	// Convert to history entries (limit the results)
 	var history []PluginsHistoryEntry
-	for _, key := range sortedKeys {
-		entryPath := fmt.Sprintf("secret/data/%s/rabbitmq-plugins/audit/%s", instanceID, key)
-
-		secret, err := a.vaultClient.Logical().Read(entryPath)
-		if err != nil {
-			a.logger.Error("Failed to read audit entry %s: %v", entryPath, err)
-			continue
+	for i, te := range timestampEntries {
+		if limit > 0 && i >= limit {
+			break
 		}
 
-		if secret == nil || secret.Data == nil {
-			continue
-		}
-
-		// Extract data from KV v2 format
-		data, ok := secret.Data["data"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Convert to history entry
-		entry := a.mapToHistoryEntry(data)
+		entry := a.mapToHistoryEntry(te.data)
 		if entry != nil {
 			history = append(history, *entry)
 		}
@@ -260,44 +276,25 @@ func (a *PluginsAuditService) ClearHistory(ctx context.Context, instanceID strin
 		return fmt.Errorf("vault client not configured")
 	}
 
-	// Generate base path
-	basePath := fmt.Sprintf("secret/metadata/%s/rabbitmq-plugins/audit", instanceID)
-
-	// List all audit entries
-	secret, err := a.vaultClient.Logical().List(basePath)
+	// Delete the entire audit endpoint
+	vaultPath := a.generateVaultPath(instanceID)
+	_, err := a.vaultClient.Logical().Delete(vaultPath)
 	if err != nil {
-		return fmt.Errorf("failed to list audit entries: %v", err)
+		a.logger.Error("Failed to delete audit data at %s: %v", vaultPath, err)
+		return fmt.Errorf("failed to clear audit history: %v", err)
 	}
 
-	if secret == nil || secret.Data == nil {
-		return nil // Nothing to clear
-	}
-
-	// Extract keys
-	keys, ok := secret.Data["keys"].([]interface{})
-	if !ok {
-		return nil // Nothing to clear
-	}
-
-	// Delete each entry
-	deletedCount := 0
-	for _, key := range keys {
-		if keyStr, ok := key.(string); ok {
-			deletePath := fmt.Sprintf("secret/metadata/%s/rabbitmq-plugins/audit/%s", instanceID, keyStr)
-			_, err := a.vaultClient.Logical().Delete(deletePath)
-			if err != nil {
-				a.logger.Error("Failed to delete audit entry %s: %v", deletePath, err)
-			} else {
-				deletedCount++
-			}
-		}
-	}
-
-	a.logger.Info("Cleared %d rabbitmq-plugins audit entries for instance %s", deletedCount, instanceID)
+	a.logger.Info("Cleared all rabbitmq-plugins audit entries for instance %s", instanceID)
 	return nil
 }
 
+// generateVaultPath generates the Vault path for the audit endpoint (KV v2 format)
+func (a *PluginsAuditService) generateVaultPath(instanceID string) string {
+	return fmt.Sprintf("secret/data/%s/rabbitmq-plugins/audit", instanceID)
+}
+
 // generateVaultKey generates a Vault key for storing audit entries
+// Deprecated: Use generateVaultPath instead for the new audit structure
 func (a *PluginsAuditService) generateVaultKey(instanceID string, timestamp int64) string {
 	return fmt.Sprintf("secret/data/%s/rabbitmq-plugins/audit/%d", instanceID, timestamp)
 }
