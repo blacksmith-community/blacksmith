@@ -7852,3 +7852,290 @@ body.terminal-minimized .tabs {
     max-width: 200px;
   }
 }
+
+/* Task Details Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--bg-primary);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  max-width: 90vw;
+  max-height: 90vh;
+  width: 800px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.modal-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Task Summary Section */
+.task-summary {
+  margin-bottom: 1.5rem;
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.task-header h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.task-actions button {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.task-actions button:hover {
+  background: var(--bg-secondary);
+}
+
+.task-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.info-item label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 80px;
+}
+
+.info-item span {
+  color: var(--text-primary);
+}
+
+/* Task Details Tabs */
+.task-details-tabs {
+  display: flex;
+  border-bottom: 2px solid var(--border-primary);
+  margin-bottom: 1rem;
+}
+
+.task-detail-tab {
+  padding: 0.75rem 1.5rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+}
+
+.task-detail-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.task-detail-tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  background: var(--bg-secondary);
+}
+
+/* Task Tab Content */
+.task-details-content {
+  position: relative;
+}
+
+.task-tab-content {
+  display: none;
+}
+
+.task-tab-content.active {
+  display: block;
+}
+
+/* Task Events Table in Modal */
+.task-events-table-container {
+  overflow-x: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.task-events-table {
+  width: 100%;
+  min-width: 600px;
+}
+
+.task-events-table th,
+.task-events-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-primary);
+  font-size: 13px;
+}
+
+.task-events-table th {
+  background: var(--bg-table-header);
+  font-weight: 600;
+  color: var(--text-primary);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* Event states in modal */
+.event-state {
+  padding: 0.125rem 0.5rem;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.event-state.started {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.event-state.finished {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.event-state.failed {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+/* Dark theme event states */
+[data-theme="dark"] .event-state.started {
+  background-color: #1e3a8a;
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .event-state.finished {
+  background-color: #166534;
+  color: #86efac;
+}
+
+[data-theme="dark"] .event-state.failed {
+  background-color: #991b1b;
+  color: #fca5a5;
+}
+
+/* Task Output Display */
+.task-output,
+.task-raw {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 1rem;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Modal responsive adjustments */
+@media (max-width: 768px) {
+  .modal {
+    width: 95vw;
+    max-height: 95vh;
+  }
+  
+  .modal-header {
+    padding: 1rem;
+  }
+  
+  .modal-body {
+    padding: 1rem;
+  }
+  
+  .task-info-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .task-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+  
+  .task-details-tabs {
+    overflow-x: auto;
+  }
+  
+  .task-detail-tab {
+    white-space: nowrap;
+    padding: 0.5rem 1rem;
+  }
+}

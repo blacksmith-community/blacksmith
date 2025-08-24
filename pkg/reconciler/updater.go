@@ -1152,8 +1152,8 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 	hash := sha256.Sum256([]byte(compressedArchive))
 	sha256Sum := hex.EncodeToString(hash[:])
 
-	// Check if backup with this SHA256 already exists at new location
-	backupPath := fmt.Sprintf("secret/backups/%s/%s", instanceID, sha256Sum)
+	// Check if backup with this SHA256 already exists at new location (no secret/ prefix)
+	backupPath := fmt.Sprintf("backups/%s/%s", instanceID, sha256Sum)
 	existing, err := u.getFromVault(backupPath)
 	if err == nil && len(existing) > 0 {
 		u.logDebug("Backup with SHA256 %s already exists for instance %s - skipping", sha256Sum, instanceID)
@@ -1167,7 +1167,7 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 		"archive":   compressedArchive,
 	}
 
-	// Store the backup at new location
+	// Store the backup at new location (no secret/ prefix)
 	if err := u.putToVault(backupPath, backupEntry); err != nil {
 		return fmt.Errorf("failed to store backup at %s: %w", backupPath, err)
 	}
@@ -1181,6 +1181,9 @@ func (u *vaultUpdater) backupInstance(instanceID string) error {
 			retention = 5 // Default retention of 5 backups
 		}
 		u.cleanOldBackupsNewFormat(instanceID, retention)
+		
+		// Also clean up old per-instance backup data if it exists
+		u.cleanLegacyInstanceBackups(instanceID)
 	}
 
 	return nil
@@ -1207,7 +1210,7 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 		}
 	}
 
-	// List backups using the logical API
+	// List backups using the logical API (fixed path without extra secret/)
 	metadataPath := fmt.Sprintf("secret/metadata/backups/%s", instanceID)
 	listResp, err := vaultClient.Logical().List(metadataPath)
 	if err != nil || listResp == nil {
@@ -1226,7 +1229,7 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 		if keys, ok := listResp.Data["keys"].([]interface{}); ok {
 			for _, keyInterface := range keys {
 				if sha256, ok := keyInterface.(string); ok {
-					// Read the backup to get its timestamp
+					// Read the backup to get its timestamp (fixed path without extra secret/)
 					backupDataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, sha256)
 					secret, err := vaultClient.Logical().Read(backupDataPath)
 					if err != nil || secret == nil {
@@ -1281,6 +1284,7 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 	if len(backups) > keepCount {
 		toDelete := backups[keepCount:]
 		for _, backup := range toDelete {
+			// Fixed path without extra secret/
 			backupPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, backup.sha256)
 			_, err := vaultClient.Logical().Delete(backupPath)
 			if err != nil {
@@ -1299,6 +1303,51 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 
 		u.logDebug("Backup cleanup for %s completed - deleted %d old backups, keeping %d",
 			instanceID, len(toDelete), keepCount)
+	}
+}
+
+// cleanLegacyInstanceBackups removes old backup data stored at secret/{instanceID}/backups
+func (u *vaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
+	u.logDebug("Checking for legacy backup data for instance %s", instanceID)
+	
+	// Check if legacy backup path exists
+	legacyBackupPath := fmt.Sprintf("%s/backups", instanceID)
+	legacyData, err := u.getFromVault(legacyBackupPath)
+	if err != nil {
+		u.logDebug("No legacy backup data found for instance %s", instanceID)
+		return
+	}
+	
+	if len(legacyData) > 0 {
+		u.logInfo("Found legacy backup data for instance %s at %s, cleaning up", instanceID, legacyBackupPath)
+		
+		// Try to access the vault client for direct deletion
+		vaultClient, ok := u.vault.(*api.Client)
+		if !ok {
+			// Fallback: try to get client through interface conversion
+			if vaultInterface, ok := u.vault.(interface{ GetClient() *api.Client }); ok {
+				vaultClient = vaultInterface.GetClient()
+			} else {
+				u.logWarning("Unable to access vault client for legacy backup cleanup")
+				return
+			}
+		}
+		
+		// Delete the legacy backup path
+		legacyFullPath := fmt.Sprintf("secret/data/%s", legacyBackupPath)
+		_, err := vaultClient.Logical().Delete(legacyFullPath)
+		if err != nil {
+			u.logWarning("Failed to delete legacy backup data at %s: %s", legacyFullPath, err)
+		} else {
+			u.logInfo("Successfully cleaned up legacy backup data for instance %s", instanceID)
+		}
+		
+		// Also delete metadata if it exists
+		legacyMetadataPath := fmt.Sprintf("secret/metadata/%s", legacyBackupPath)
+		_, err = vaultClient.Logical().Delete(legacyMetadataPath)
+		if err != nil {
+			u.logDebug("Legacy backup metadata cleanup failed (may not exist): %s", err)
+		}
 	}
 }
 

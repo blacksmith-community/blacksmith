@@ -8,6 +8,7 @@ import (
 
 	"blacksmith/bosh"
 	"blacksmith/pkg/reconciler"
+	"github.com/hashicorp/vault/api"
 )
 
 // ReconcilerAdapter adapts the reconciler to work with the existing Blacksmith types
@@ -293,6 +294,15 @@ func (v *vaultWrapper) UpdateIndex(name string, instanceID string, data interfac
 
 	// Save the index
 	return idx.Save()
+}
+
+// GetClient exposes the underlying Vault API client for backup operations
+func (v *vaultWrapper) GetClient() *api.Client {
+	client, err := v.vault.GetAPIClient()
+	if err != nil {
+		return nil
+	}
+	return client
 }
 
 // loggerWrapper wraps the Log for use by the reconciler

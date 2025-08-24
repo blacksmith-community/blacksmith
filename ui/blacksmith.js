@@ -959,7 +959,15 @@
         } else if (event.object_type || event.object_name) {
           objectInfo = event.object_type || event.object_name;
         }
-        const taskInfo = event.task_id || event.task || '-';
+        const taskId = event.task_id || event.task;
+        let taskInfo = '-';
+        
+        // Make task ID clickable if it exists and is numeric
+        if (taskId && taskId !== '-' && !isNaN(taskId)) {
+          taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
+        } else if (taskId) {
+          taskInfo = taskId;
+        }
 
         return `
           <tr class="${event.error ? 'error-row' : ''}">
@@ -8960,13 +8968,392 @@
     });
   };
 
-  // Show task details modal (will be implemented in Phase 4)
-  window.showTaskDetails = (taskId, event) => {
+  // Show task details modal
+  window.showTaskDetails = async (taskId, event) => {
     if (event) {
       event.preventDefault();
     }
-    console.log('Task details modal would open for task:', taskId);
-    // TODO: Implement task details modal in Phase 4
+
+    console.log('Opening task details modal for task:', taskId);
+
+    // Create or get the modal
+    let modal = document.getElementById('task-details-modal');
+    if (!modal) {
+      const modalHTML = `
+        <div id="task-details-modal" class="modal-overlay" style="display: none;" role="dialog" aria-labelledby="task-details-modal-title" aria-hidden="true">
+          <div class="modal">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h3 id="task-details-modal-title">Task Details</h3>
+                <button class="modal-close" onclick="hideTaskDetailsModal()" aria-label="Close modal">&times;</button>
+              </div>
+              <div class="modal-body">
+                <div id="task-details-loading" class="loading">Loading task details...</div>
+                <div id="task-details-content" style="display: none;">
+                  <div class="task-summary">
+                    <div class="task-header">
+                      <h4 id="task-title">Task #<span id="task-id"></span></h4>
+                      <div class="task-actions">
+                        <button id="cancel-task-btn" class="btn btn-secondary" style="display: none;" onclick="cancelTaskAndRefresh()">Cancel Task</button>
+                      </div>
+                    </div>
+                    <div class="task-info-grid">
+                      <div class="info-item">
+                        <label>State:</label>
+                        <span id="task-state-badge"></span>
+                      </div>
+                      <div class="info-item">
+                        <label>Description:</label>
+                        <span id="task-description"></span>
+                      </div>
+                      <div class="info-item">
+                        <label>Deployment:</label>
+                        <span id="task-deployment"></span>
+                      </div>
+                      <div class="info-item">
+                        <label>User:</label>
+                        <span id="task-user"></span>
+                      </div>
+                      <div class="info-item">
+                        <label>Started:</label>
+                        <span id="task-started"></span>
+                      </div>
+                      <div class="info-item">
+                        <label>Duration:</label>
+                        <span id="task-duration"></span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div class="task-details-tabs">
+                    <button class="task-detail-tab active" data-tab="events">Events</button>
+                    <button class="task-detail-tab" data-tab="output">Output</button>
+                    <button class="task-detail-tab" data-tab="debug">Debug</button>
+                    <button class="task-detail-tab" data-tab="raw">Raw</button>
+                  </div>
+                  
+                  <div class="task-details-content">
+                    <div id="task-events-content" class="task-tab-content active">
+                      <div class="loading">Loading events...</div>
+                    </div>
+                    <div id="task-output-content" class="task-tab-content">
+                      <div class="loading">Loading output...</div>
+                    </div>
+                    <div id="task-debug-content" class="task-tab-content">
+                      <div class="loading">Loading debug...</div>
+                    </div>
+                    <div id="task-raw-content" class="task-tab-content">
+                      <div class="loading">Loading raw data...</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      document.body.insertAdjacentHTML('beforeend', modalHTML);
+      modal = document.getElementById('task-details-modal');
+      
+      // Set up modal tab switching
+      setupTaskModalTabs();
+      
+      // Set up escape key handler
+      modal.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          hideTaskDetailsModal();
+        }
+      });
+      
+      // Set up click outside to close
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          hideTaskDetailsModal();
+        }
+      });
+    }
+
+    // Store current task ID for refresh
+    window.currentTaskId = taskId;
+
+    // Show modal
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+
+    // Load task details
+    await loadTaskDetails(taskId);
+    
+    // Set up auto-refresh for running tasks
+    startTaskModalAutoRefresh();
+  };
+
+  // Hide task details modal
+  window.hideTaskDetailsModal = () => {
+    const modal = document.getElementById('task-details-modal');
+    if (modal) {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+    
+    // Clear auto-refresh
+    if (window.taskModalAutoRefresh) {
+      clearInterval(window.taskModalAutoRefresh);
+      window.taskModalAutoRefresh = null;
+    }
+    
+    window.currentTaskId = null;
+  };
+
+  // Set up task modal tab switching
+  const setupTaskModalTabs = () => {
+    const tabButtons = document.querySelectorAll('.task-detail-tab');
+    
+    tabButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        const tabName = button.dataset.tab;
+        
+        // Update active states
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        button.classList.add('active');
+        
+        // Show/hide content
+        document.querySelectorAll('.task-tab-content').forEach(content => {
+          content.classList.remove('active');
+        });
+        
+        const targetContent = document.getElementById(`task-${tabName}-content`);
+        if (targetContent) {
+          targetContent.classList.add('active');
+          
+          // Load content if not already loaded
+          if (targetContent.innerHTML.includes('Loading') && window.currentTaskId) {
+            loadTaskTabContent(window.currentTaskId, tabName);
+          }
+        }
+      });
+    });
+  };
+
+  // Load task details
+  const loadTaskDetails = async (taskId) => {
+    const loadingDiv = document.getElementById('task-details-loading');
+    const contentDiv = document.getElementById('task-details-content');
+    
+    try {
+      // Fetch task details
+      const response = await fetch(`/b/tasks/${taskId}`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const taskData = await response.json();
+      const task = taskData;
+      
+      // Update task summary
+      document.getElementById('task-id').textContent = task.id;
+      document.getElementById('task-description').textContent = task.description || '-';
+      document.getElementById('task-deployment').textContent = task.deployment || '-';
+      document.getElementById('task-user').textContent = task.user || '-';
+      document.getElementById('task-started').textContent = formatTimestamp(task.started_at);
+      
+      // Calculate and set duration
+      let duration = '-';
+      if (task.started_at) {
+        const start = new Date(task.started_at);
+        const end = task.ended_at ? new Date(task.ended_at) : new Date();
+        const durationMs = end - start;
+        if (durationMs > 0) {
+          const minutes = Math.floor(durationMs / 60000);
+          const seconds = Math.floor((durationMs % 60000) / 1000);
+          duration = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+        }
+      }
+      document.getElementById('task-duration').textContent = duration;
+      
+      // Set state badge
+      const stateBadge = document.getElementById('task-state-badge');
+      stateBadge.innerHTML = `<span class="task-state ${task.state}">${task.state}</span>`;
+      
+      // Show/hide cancel button
+      const cancelBtn = document.getElementById('cancel-task-btn');
+      if (task.state === 'processing' || task.state === 'queued') {
+        cancelBtn.style.display = 'inline-block';
+        cancelBtn.onclick = () => cancelTask(taskId);
+      } else {
+        cancelBtn.style.display = 'none';
+      }
+      
+      // Hide loading and show content
+      loadingDiv.style.display = 'none';
+      contentDiv.style.display = 'block';
+      
+      // Load initial tab content (events)
+      await loadTaskTabContent(taskId, 'events');
+      
+    } catch (error) {
+      console.error('Failed to load task details:', error);
+      loadingDiv.innerHTML = `<div class="error">Failed to load task details: ${error.message}</div>`;
+    }
+  };
+
+  // Load specific tab content for task modal
+  const loadTaskTabContent = async (taskId, tabType) => {
+    const contentDiv = document.getElementById(`task-${tabType}-content`);
+    if (!contentDiv) return;
+    
+    contentDiv.innerHTML = '<div class="loading">Loading...</div>';
+    
+    try {
+      let content = '';
+      
+      if (tabType === 'events') {
+        // Events are included in the task details response
+        const response = await fetch(`/b/tasks/${taskId}`, { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const taskData = await response.json();
+        
+        if (taskData.events && taskData.events.length > 0) {
+          content = formatTaskEvents(taskData.events);
+        } else {
+          content = '<div class="no-data">No events available</div>';
+        }
+        
+      } else if (tabType === 'output' || tabType === 'debug') {
+        const outputType = tabType === 'output' ? 'result' : 'debug';
+        const response = await fetch(`/b/tasks/${taskId}/output?type=${outputType}`, { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const outputData = await response.json();
+        
+        if (Array.isArray(outputData)) {
+          content = formatTaskEvents(outputData);
+        } else if (outputData.output) {
+          content = `<pre class="task-output">${outputData.output}</pre>`;
+        } else {
+          content = '<div class="no-data">No output available</div>';
+        }
+        
+      } else if (tabType === 'raw') {
+        const response = await fetch(`/b/tasks/${taskId}`, { cache: 'no-cache' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const taskData = await response.json();
+        content = `<pre class="task-raw">${JSON.stringify(taskData, null, 2)}</pre>`;
+      }
+      
+      contentDiv.innerHTML = content;
+      
+    } catch (error) {
+      console.error(`Failed to load ${tabType} content:`, error);
+      contentDiv.innerHTML = `<div class="error">Failed to load ${tabType}: ${error.message}</div>`;
+    }
+  };
+
+  // Format task events for modal display
+  const formatTaskEvents = (events) => {
+    if (!events || events.length === 0) {
+      return '<div class="no-data">No events recorded</div>';
+    }
+
+    return `
+      <div class="task-events-table-container">
+        <table class="task-events-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Stage</th>
+              <th>Task</th>
+              <th>State</th>
+              <th>Progress</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${events.map(event => {
+              const time = formatTimestamp(event.time);
+              const progress = event.progress ? `${event.progress}%` : '-';
+              const error = event.error ? event.error.message : '-';
+              
+              return `
+                <tr>
+                  <td>${time}</td>
+                  <td>${event.stage || '-'}</td>
+                  <td>${event.task || '-'}</td>
+                  <td><span class="event-state ${event.state}">${event.state || '-'}</span></td>
+                  <td>${progress}</td>
+                  <td class="event-error">${error}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  // Cancel task function
+  const cancelTask = async (taskId) => {
+    if (!confirm(`Are you sure you want to cancel task ${taskId}?`)) {
+      return;
+    }
+    
+    try {
+      const response = await fetch(`/b/tasks/${taskId}/cancel`, {
+        method: 'POST',
+        cache: 'no-cache'
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      console.log('Task cancelled:', result);
+      
+      // Refresh task details
+      await loadTaskDetails(taskId);
+      
+      // Refresh tasks table if visible
+      if (document.querySelector('.detail-tab[data-tab="tasks"].active')) {
+        refreshTasksTable();
+      }
+      
+    } catch (error) {
+      console.error('Failed to cancel task:', error);
+      alert(`Failed to cancel task: ${error.message}`);
+    }
+  };
+
+  // Auto-refresh for task modal
+  const startTaskModalAutoRefresh = () => {
+    // Clear any existing interval
+    if (window.taskModalAutoRefresh) {
+      clearInterval(window.taskModalAutoRefresh);
+    }
+    
+    // Set up new interval for running tasks
+    window.taskModalAutoRefresh = setInterval(async () => {
+      if (window.currentTaskId) {
+        const stateBadge = document.querySelector('#task-state-badge .task-state');
+        if (stateBadge && (stateBadge.classList.contains('processing') || stateBadge.classList.contains('queued'))) {
+          await loadTaskDetails(window.currentTaskId);
+          
+          // Reload active tab content
+          const activeTab = document.querySelector('.task-detail-tab.active');
+          if (activeTab) {
+            await loadTaskTabContent(window.currentTaskId, activeTab.dataset.tab);
+          }
+        }
+      }
+    }, 10000); // Refresh every 10 seconds for modal
+  };
+
+  // Cancel task and refresh modal
+  window.cancelTaskAndRefresh = () => {
+    if (window.currentTaskId) {
+      cancelTask(window.currentTaskId);
+    }
   };
 
   // Fetch trusted certificates from VM certificate store

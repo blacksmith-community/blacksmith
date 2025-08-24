@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/vault/api"
 )
 
 // MockVault implements VaultInterface for testing
@@ -64,6 +66,19 @@ func (m *MockVault) UpdateIndex(name string, instanceID string, data interface{}
 	m.index[instanceID] = data
 	m.saveCalls++
 	return nil
+}
+
+// GetClient returns a mock API client for testing backup functionality
+func (m *MockVault) GetClient() *api.Client {
+	// Create a minimal mock client for backup testing
+	config := &api.Config{
+		Address: "http://mock-vault:8200",
+	}
+	client, _ := api.NewClient(config)
+
+	// Note: This mock client will fail on actual API calls, but allows the
+	// backup export logic to proceed past the type assertion
+	return client
 }
 
 // MockTestLogger implements Logger interface for testing
@@ -517,4 +532,62 @@ func TestVaultUpdater_MergesMetadataCorrectly(t *testing.T) {
 	if history, ok := merged["history"].([]interface{}); !ok || len(history) != 1 {
 		t.Error("history should be preserved from existing")
 	}
+}
+
+func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
+	vault := NewMockVault()
+	logger := &MockTestLogger{}
+	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
+		Enabled:          true,
+		RetentionCount:   5,
+		CompressionLevel: 9,
+		CleanupEnabled:   true,
+		BackupOnUpdate:   true,
+	})
+
+	// Setup existing instance data that would be backed up
+	vault.data["test-instance"] = map[string]interface{}{
+		"service_id":      "test-service",
+		"plan_id":         "test-plan",
+		"deployment_name": "test-deployment",
+	}
+	vault.data["test-instance/metadata"] = map[string]interface{}{
+		"service_name": "Test Service",
+		"plan_name":    "Test Plan",
+	}
+
+	// Create instance for update
+	instance := &InstanceData{
+		ID:             "test-instance",
+		ServiceID:      "test-service", 
+		PlanID:         "test-plan",
+		DeploymentName: "test-deployment",
+		CreatedAt:      time.Now().Add(-24 * time.Hour),
+		UpdatedAt:      time.Now(),
+		LastSyncedAt:   time.Now(),
+		Metadata: map[string]interface{}{
+			"service_name": "Updated Service",
+		},
+	}
+
+	// Update instance
+	ctx := context.Background()
+	err := updater.UpdateInstance(ctx, instance)
+	if err != nil {
+		t.Fatalf("UpdateInstance failed: %v", err)
+	}
+
+	// Check that backup paths don't have double secret/ prefix
+	for _, call := range vault.putCalls {
+		if strings.Contains(call, "backups/") {
+			if strings.HasPrefix(call, "secret/secret/") {
+				t.Errorf("Backup path has double secret/ prefix: %s", call)
+			}
+			if !strings.HasPrefix(call, "backups/") && !strings.HasPrefix(call, "secret/") {
+				t.Errorf("Backup path should start with backups/ or secret/, got: %s", call)
+			}
+		}
+	}
+
+	t.Logf("All vault PUT calls: %v", vault.putCalls)
 }
