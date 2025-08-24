@@ -1004,6 +1004,108 @@ func (d *DirectorAdapter) GetCloudConfig() (string, error) {
 	return configs[0].Content, nil
 }
 
+// GetConfigs retrieves configs based on limit and type filters
+func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshConfig, error) {
+	d.log.Info("Getting configs (limit: %d, types: %v)", limit, configTypes)
+
+	// Convert limit to sensible defaults
+	if limit <= 0 || limit > 200 {
+		limit = 50 // Default limit
+	}
+
+	var allConfigs []boshdirector.Config
+
+	if len(configTypes) == 0 {
+		// Get all config types
+		configs, err := d.director.ListConfigs(limit, boshdirector.ConfigsFilter{})
+		if err != nil {
+			d.log.Error("Failed to get configs: %v", err)
+			return nil, fmt.Errorf("failed to get configs: %w", err)
+		}
+		allConfigs = configs
+	} else {
+		// Get configs for each specified type
+		for _, configType := range configTypes {
+			configs, err := d.director.ListConfigs(limit, boshdirector.ConfigsFilter{
+				Type: configType,
+			})
+			if err != nil {
+				d.log.Error("Failed to get %s configs: %v", configType, err)
+				continue // Continue with other types
+			}
+			allConfigs = append(allConfigs, configs...)
+		}
+	}
+
+	// Convert director configs to our BoshConfig type
+	result := make([]BoshConfig, len(allConfigs))
+	for i, config := range allConfigs {
+		result[i] = convertDirectorBoshConfig(config)
+	}
+
+	d.log.Info("Successfully retrieved %d configs", len(result))
+	return result, nil
+}
+
+// GetConfigByID retrieves detailed config information by ID
+func (d *DirectorAdapter) GetConfigByID(configID string) (*BoshConfigDetail, error) {
+	d.log.Info("Getting config details for ID: %s", configID)
+
+	// Remove the * suffix if present (indicates active config)
+	cleanID := strings.TrimSuffix(configID, "*")
+
+	// Parse the ID to int
+	id, err := strconv.Atoi(cleanID)
+	if err != nil {
+		d.log.Error("Invalid config ID format: %s", configID)
+		return nil, fmt.Errorf("invalid config ID format: %s", configID)
+	}
+
+	// Get the config by ID
+	config, err := d.director.LatestConfigByID(cleanID)
+	if err != nil {
+		d.log.Error("Failed to get config by ID %d: %v", id, err)
+		return nil, fmt.Errorf("failed to get config: %w", err)
+	}
+
+	// Convert to our BoshConfigDetail type
+	result := &BoshConfigDetail{
+		BoshConfig: convertDirectorBoshConfig(config),
+		Content:    config.Content,
+		Metadata: map[string]interface{}{
+			"id":         config.ID,
+			"name":       config.Name,
+			"type":       config.Type,
+			"team":       config.Team,
+			"created_at": config.CreatedAt,
+		},
+	}
+
+	d.log.Info("Successfully retrieved config details for ID: %s", configID)
+	return result, nil
+}
+
+// convertDirectorBoshConfig converts a BOSH director config to our BoshConfig type
+func convertDirectorBoshConfig(config boshdirector.Config) BoshConfig {
+	createdAt := time.Time{}
+	if config.CreatedAt != "" {
+		if parsed, err := time.Parse("2006-01-02 15:04:05 MST", config.CreatedAt); err == nil {
+			createdAt = parsed
+		} else if parsed, err := time.Parse(time.RFC3339, config.CreatedAt); err == nil {
+			createdAt = parsed
+		}
+	}
+
+	return BoshConfig{
+		ID:        config.ID,
+		Name:      config.Name,
+		Type:      config.Type,
+		Team:      config.Team,
+		CreatedAt: createdAt,
+		IsActive:  false, // Will be set based on * suffix logic
+	}
+}
+
 // Cleanup runs BOSH cleanup
 func (d *DirectorAdapter) Cleanup(removeAll bool) (*Task, error) {
 	d.log.Info("Running BOSH cleanup (removeAll: %v)", removeAll)
@@ -1648,6 +1750,33 @@ func (da *DirectorAdapter) EnableResurrection(deployment string, enabled bool) e
 	da.log.Debug("Config response: %+v", config)
 
 	da.log.Info("Successfully updated resurrection config for deployment %s to %v", deployment, enabled)
+	return nil
+}
+
+// DeleteResurrectionConfig deletes resurrection config for a deployment
+func (da *DirectorAdapter) DeleteResurrectionConfig(deployment string) error {
+	da.log.Info("Deleting resurrection config for deployment %s", deployment)
+
+	// Use 'blacksmith.{deployment}' format as type already indicates 'resurrection'
+	configName := fmt.Sprintf("blacksmith.%s", deployment)
+
+	da.log.Debug("Deleting resurrection config %s", configName)
+
+	// Delete the resurrection config using the BOSH director
+	deleted, err := da.director.DeleteConfig("resurrection", configName)
+	if err != nil {
+		da.log.Error("Failed to delete resurrection config for deployment %s: %v", deployment, err)
+		return fmt.Errorf("failed to delete resurrection config for deployment %s: %v", deployment, err)
+	}
+
+	if !deleted {
+		da.log.Error("Resurrection config %s did not exist or was already deleted", configName)
+		return fmt.Errorf("resurrection config for deployment %s not found or already deleted", deployment)
+	}
+
+	da.log.Debug("Successfully deleted resurrection config %s for deployment %s", configName, deployment)
+
+	da.log.Info("Successfully deleted resurrection config for deployment %s", deployment)
 	return nil
 }
 

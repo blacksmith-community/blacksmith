@@ -46,7 +46,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	// Check for existing credentials - NEVER overwrite
-	credsPath := fmt.Sprintf("secret/%s/credentials", instance.ID)
+	credsPath := fmt.Sprintf("%s/credentials", instance.ID)
 	existingCreds, credsErr := u.getFromVault(credsPath)
 	hasCredentials := credsErr == nil && len(existingCreds) > 0
 
@@ -62,7 +62,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	// Check for existing bindings
-	bindingsPath := fmt.Sprintf("secret/%s/bindings", instance.ID)
+	bindingsPath := fmt.Sprintf("%s/bindings", instance.ID)
 	existingBindings, bindingsErr := u.getFromVault(bindingsPath)
 	hasBindings := bindingsErr == nil && len(existingBindings) > 0
 
@@ -107,7 +107,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	// Get existing root data to preserve fields
-	rootPath := fmt.Sprintf("secret/%s", instance.ID)
+	rootPath := instance.ID
 	existingRootData, _ := u.getFromVault(rootPath)
 	if existingRootData == nil {
 		existingRootData = make(map[string]interface{})
@@ -243,7 +243,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 
 	// Store manifest separately if present
 	if instance.Manifest != "" {
-		manifestPath := fmt.Sprintf("secret/%s/manifest", instance.ID)
+		manifestPath := fmt.Sprintf("%s/manifest", instance.ID)
 		manifestData := map[string]interface{}{
 			"manifest":      instance.Manifest,
 			"updated_at":    time.Now().Unix(), // Use Unix timestamp
@@ -262,7 +262,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 
 	// Store metadata if present
 	if len(instance.Metadata) > 0 {
-		metadataPath := fmt.Sprintf("secret/%s/metadata", instance.ID)
+		metadataPath := fmt.Sprintf("%s/metadata", instance.ID)
 
 		// Get existing metadata to preserve history
 		existingMeta, err := u.getFromVault(metadataPath)
@@ -280,7 +280,10 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		// Add reconciliation entry to history with change information
 		u.addReconciliationHistory(mergedMetadata, changes)
 
-		err = u.putToVault(metadataPath, mergedMetadata)
+		// Apply deinterface to ensure all nested maps are properly typed before storing
+		cleanedMetadata := u.deinterfaceMetadata(mergedMetadata).(map[string]interface{})
+
+		err = u.putToVault(metadataPath, cleanedMetadata)
 		if err != nil {
 			u.logError("Failed to store metadata for %s: %s", instance.ID, err)
 			// Continue anyway as this is non-fatal
@@ -317,7 +320,7 @@ func (u *vaultUpdater) checkBindingHealth(instanceID string) ([]BindingInfo, []s
 	u.logDebug("Checking binding health for instance %s", instanceID)
 
 	// Get all bindings for this instance
-	bindingsPath := fmt.Sprintf("secret/%s/bindings", instanceID)
+	bindingsPath := fmt.Sprintf("%s/bindings", instanceID)
 	bindingsData, err := u.getFromVault(bindingsPath)
 	if err != nil {
 		u.logDebug("No bindings found for instance %s: %s", instanceID, err)
@@ -335,7 +338,7 @@ func (u *vaultUpdater) checkBindingHealth(instanceID string) ([]BindingInfo, []s
 		}
 
 		// Check if binding has complete credential data
-		credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
+		credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
 		credentials, err := u.getFromVault(credentialsPath)
 		if err != nil || len(credentials) == 0 {
 			u.logWarning("Binding %s for instance %s missing credentials", bindingID, instanceID)
@@ -414,14 +417,14 @@ func (u *vaultUpdater) StoreBindingCredentials(instanceID, bindingID string, cre
 	}
 
 	// Store credentials at the standard path
-	credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
 	err := u.putToVault(credentialsPath, credentialsMap)
 	if err != nil {
 		return fmt.Errorf("failed to store binding credentials: %w", err)
 	}
 
 	// Store binding metadata
-	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
 
 	// Get existing metadata to preserve history
 	existingMetadata, _ := u.getFromVault(metadataPath)
@@ -458,7 +461,7 @@ func (u *vaultUpdater) StoreBindingCredentials(instanceID, bindingID string, cre
 
 // GetBindingCredentials retrieves binding credentials from vault
 func (u *vaultUpdater) GetBindingCredentials(instanceID, bindingID string) (map[string]interface{}, error) {
-	credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
 	credentials, err := u.getFromVault(credentialsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
@@ -468,7 +471,7 @@ func (u *vaultUpdater) GetBindingCredentials(instanceID, bindingID string) (map[
 
 // GetBindingMetadata retrieves binding metadata from vault
 func (u *vaultUpdater) GetBindingMetadata(instanceID, bindingID string) (map[string]interface{}, error) {
-	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
 	metadata, err := u.getFromVault(metadataPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get binding metadata: %w", err)
@@ -478,7 +481,7 @@ func (u *vaultUpdater) GetBindingMetadata(instanceID, bindingID string) (map[str
 
 // updateBindingsIndex maintains an index of all bindings for an instance
 func (u *vaultUpdater) updateBindingsIndex(instanceID, bindingID string, metadata map[string]interface{}) error {
-	indexPath := fmt.Sprintf("secret/%s/bindings/index", instanceID)
+	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
 
 	// Get existing index
 	existingIndex, err := u.getFromVault(indexPath)
@@ -519,13 +522,13 @@ func (u *vaultUpdater) RemoveBinding(instanceID, bindingID string) error {
 	u.logInfo("Removing binding %s for instance %s", bindingID, instanceID)
 
 	// Remove credentials
-	credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
 	if err := u.deleteFromVault(credentialsPath); err != nil {
 		u.logWarning("Failed to delete binding credentials: %s", err)
 	}
 
 	// Archive metadata instead of deleting for audit purposes
-	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
 	metadata, err := u.getFromVault(metadataPath)
 	if err == nil {
 		metadata["deleted_at"] = time.Now().Format(time.RFC3339)
@@ -536,7 +539,7 @@ func (u *vaultUpdater) RemoveBinding(instanceID, bindingID string) error {
 	}
 
 	// Update index to mark as deleted
-	indexPath := fmt.Sprintf("secret/%s/bindings/index", instanceID)
+	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
 	existingIndex, err := u.getFromVault(indexPath)
 	if err == nil {
 		if bindingEntry, exists := existingIndex[bindingID]; exists {
@@ -565,7 +568,7 @@ func (u *vaultUpdater) deleteFromVault(path string) error {
 
 // ListInstanceBindings returns all bindings for an instance
 func (u *vaultUpdater) ListInstanceBindings(instanceID string) (map[string]interface{}, error) {
-	indexPath := fmt.Sprintf("secret/%s/bindings/index", instanceID)
+	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
 	bindings, err := u.getFromVault(indexPath)
 	if err != nil {
 		// No bindings found is not an error
@@ -719,7 +722,7 @@ func (u *vaultUpdater) RepairInstanceBindings(instanceID string, broker BrokerIn
 
 // recordReconstructionFailure records when a binding reconstruction fails
 func (u *vaultUpdater) recordReconstructionFailure(instanceID, bindingID string, err error) {
-	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
 
 	// Get existing metadata
 	metadata, getErr := u.getFromVault(metadataPath)
@@ -1248,8 +1251,18 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 									timestamp = v
 								case int:
 									timestamp = int64(v)
+								case json.Number:
+									// Handle json.Number type that might come from Vault
+									if i, err := v.Int64(); err == nil {
+										timestamp = i
+									} else {
+										u.logWarning("Invalid json.Number timestamp in backup %s: %v", sha256, err)
+										continue
+									}
 								default:
-									u.logWarning("Invalid timestamp format in backup %s", sha256)
+									// Log the actual value for debugging before deciding to delete
+									u.logWarning("Unexpected timestamp type in backup %s: type=%T, value=%v", sha256, ts, ts)
+									// Don't delete immediately - might be a valid backup with different format
 									continue
 								}
 
@@ -1257,8 +1270,42 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 									sha256:    sha256,
 									timestamp: timestamp,
 								})
+							} else {
+								// Log what fields are actually present for debugging
+								fields := make([]string, 0, len(data))
+								for k := range data {
+									fields = append(fields, k)
+								}
+								u.logWarning("Backup %s missing timestamp field, has fields: %v", sha256, fields)
+
+								// Check if this might be a legacy backup format
+								if _, hasArchive := data["archive"]; hasArchive {
+									u.logDebug("Backup %s appears to be missing timestamp but has archive data", sha256)
+									// Don't delete - might be recoverable or valid in different format
+									continue
+								}
+
+								// Only delete if it's clearly invalid
+								u.logWarning("Backup %s has no valid backup data - removing", sha256)
+								dataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, sha256)
+								metadataPath := fmt.Sprintf("secret/metadata/backups/%s/%s", instanceID, sha256)
+
+								if _, err := vaultClient.Logical().Delete(dataPath); err != nil {
+									u.logWarning("Failed to delete invalid backup data at %s: %s", dataPath, err)
+								}
+								if _, err := vaultClient.Logical().Delete(metadataPath); err != nil {
+									u.logDebug("Failed to delete invalid backup metadata at %s: %s", metadataPath, err)
+								}
+								u.logInfo("Removed backup %s without valid data", sha256)
 							}
+						} else {
+							// Log the actual structure for debugging
+							u.logWarning("Backup %s has unexpected data structure: %T", sha256, secret.Data["data"])
+							// Don't delete immediately - investigate first
+							continue
 						}
+					} else {
+						u.logWarning("Backup %s has nil secret.Data", sha256)
 					}
 				}
 			}
@@ -1310,44 +1357,87 @@ func (u *vaultUpdater) cleanOldBackupsNewFormat(instanceID string, keepCount int
 func (u *vaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 	u.logDebug("Checking for legacy backup data for instance %s", instanceID)
 
-	// Check if legacy backup path exists
-	legacyBackupPath := fmt.Sprintf("%s/backups", instanceID)
-	legacyData, err := u.getFromVault(legacyBackupPath)
+	// Try to access the vault client for direct operations
+	vaultClient, ok := u.vault.(*api.Client)
+	if !ok {
+		// Fallback: try to get client through interface conversion
+		if vaultInterface, ok := u.vault.(interface{ GetClient() *api.Client }); ok {
+			vaultClient = vaultInterface.GetClient()
+		} else {
+			u.logWarning("Unable to access vault client for legacy backup cleanup")
+			return
+		}
+	}
+
+	// List all backup entries under secret/{instanceID}/backups/
+	legacyBackupPath := fmt.Sprintf("secret/metadata/%s/backups", instanceID)
+	listResp, err := vaultClient.Logical().List(legacyBackupPath)
 	if err != nil {
-		u.logDebug("No legacy backup data found for instance %s", instanceID)
+		u.logDebug("No legacy backup data found for instance %s: %v", instanceID, err)
 		return
 	}
 
-	if len(legacyData) > 0 {
-		u.logInfo("Found legacy backup data for instance %s at %s, cleaning up", instanceID, legacyBackupPath)
+	if listResp == nil || listResp.Data == nil {
+		u.logDebug("No legacy backup entries found for instance %s", instanceID)
+		return
+	}
 
-		// Try to access the vault client for direct deletion
-		vaultClient, ok := u.vault.(*api.Client)
+	// Get the list of keys (backup timestamps)
+	keysRaw, ok := listResp.Data["keys"]
+	if !ok {
+		u.logDebug("No keys found in legacy backup list response for instance %s", instanceID)
+		return
+	}
+
+	keys, ok := keysRaw.([]interface{})
+	if !ok || len(keys) == 0 {
+		u.logDebug("No legacy backup entries to clean for instance %s", instanceID)
+		return
+	}
+
+	u.logInfo("Found %d legacy backup entries for instance %s, cleaning up", len(keys), instanceID)
+
+	// Delete each backup entry
+	deletedCount := 0
+	for _, keyRaw := range keys {
+		key, ok := keyRaw.(string)
 		if !ok {
-			// Fallback: try to get client through interface conversion
-			if vaultInterface, ok := u.vault.(interface{ GetClient() *api.Client }); ok {
-				vaultClient = vaultInterface.GetClient()
-			} else {
-				u.logWarning("Unable to access vault client for legacy backup cleanup")
-				return
-			}
+			continue
 		}
 
-		// Delete the legacy backup path
-		legacyFullPath := fmt.Sprintf("secret/data/%s", legacyBackupPath)
-		_, err := vaultClient.Logical().Delete(legacyFullPath)
+		// Delete the data version
+		dataPath := fmt.Sprintf("secret/data/%s/backups/%s", instanceID, key)
+		_, err := vaultClient.Logical().Delete(dataPath)
 		if err != nil {
-			u.logWarning("Failed to delete legacy backup data at %s: %s", legacyFullPath, err)
+			u.logWarning("Failed to delete legacy backup data at %s: %s", dataPath, err)
 		} else {
-			u.logInfo("Successfully cleaned up legacy backup data for instance %s", instanceID)
+			deletedCount++
+			u.logDebug("Deleted legacy backup: %s", dataPath)
 		}
 
-		// Also delete metadata if it exists
-		legacyMetadataPath := fmt.Sprintf("secret/metadata/%s", legacyBackupPath)
-		_, err = vaultClient.Logical().Delete(legacyMetadataPath)
+		// Delete the metadata version
+		metadataPath := fmt.Sprintf("secret/metadata/%s/backups/%s", instanceID, key)
+		_, err = vaultClient.Logical().Delete(metadataPath)
 		if err != nil {
-			u.logDebug("Legacy backup metadata cleanup failed (may not exist): %s", err)
+			u.logDebug("Failed to delete backup metadata at %s: %s", metadataPath, err)
 		}
+	}
+
+	// After deleting all subdirectories, try to delete the parent backup path
+	parentDataPath := fmt.Sprintf("secret/data/%s/backups", instanceID)
+	_, err = vaultClient.Logical().Delete(parentDataPath)
+	if err != nil {
+		u.logDebug("Failed to delete parent backup path %s: %s", parentDataPath, err)
+	}
+
+	parentMetadataPath := fmt.Sprintf("secret/metadata/%s/backups", instanceID)
+	_, err = vaultClient.Logical().Delete(parentMetadataPath)
+	if err != nil {
+		u.logDebug("Failed to delete parent backup metadata %s: %s", parentMetadataPath, err)
+	}
+
+	if deletedCount > 0 {
+		u.logInfo("Successfully cleaned up %d legacy backup entries for instance %s", deletedCount, instanceID)
 	}
 }
 
@@ -1522,4 +1612,31 @@ func (u *vaultUpdater) logError(format string, args ...interface{}) {
 func (u *vaultUpdater) logWarning(format string, args ...interface{}) {
 	// Will be replaced with actual logger call
 	fmt.Printf("[WARNING] updater: "+format+"\n", args...)
+}
+
+// deinterfaceMetadata converts map[interface{}]interface{} structures to map[string]interface{}
+func (u *vaultUpdater) deinterfaceMetadata(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[interface{}]interface{}:
+		result := make(map[string]interface{})
+		for k, val := range v {
+			keyStr := fmt.Sprintf("%v", k)
+			result[keyStr] = u.deinterfaceMetadata(val)
+		}
+		return result
+	case map[string]interface{}:
+		result := make(map[string]interface{})
+		for k, val := range v {
+			result[k] = u.deinterfaceMetadata(val)
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, val := range v {
+			result[i] = u.deinterfaceMetadata(val)
+		}
+		return result
+	default:
+		return data
+	}
 }

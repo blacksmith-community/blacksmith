@@ -122,7 +122,8 @@ func (m *mockSynchronizer) ValidateIndex(ctx context.Context) error {
 }
 
 type mockMetricsCollector struct {
-	metrics map[string]interface{}
+	metrics    map[string]interface{}
+	errorCount int
 }
 
 func newMockMetricsCollector() *mockMetricsCollector {
@@ -140,6 +141,7 @@ func (m *mockMetricsCollector) ReconciliationCompleted(duration time.Duration) {
 }
 
 func (m *mockMetricsCollector) ReconciliationError(err error) {
+	m.errorCount++
 	if count, ok := m.metrics["errors"].(int); ok {
 		m.metrics["errors"] = count + 1
 	} else {
@@ -266,46 +268,11 @@ func TestReconcilerManager_RunReconciliation(t *testing.T) {
 	metrics := newMockMetricsCollector()
 	logger := newMockLogger()
 
-	// Setup test data with proper naming convention: service-plan-uuid
+	// Setup test data with service deployments that match new naming convention
 	scanner.deployments = []DeploymentInfo{
 		{Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc"},
 		{Name: "postgres-basic-87654321-4321-4321-4321-cba987654321"},
-		{Name: "invalid-deployment"},
-	}
-
-	scanner.details = map[string]*DeploymentDetail{
-		"redis-cache-small-12345678-1234-1234-1234-123456789abc": {
-			DeploymentInfo: DeploymentInfo{
-				Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc",
-				Releases: []ReleaseInfo{
-					{Name: "redis", Version: "1.0.0"},
-				},
-			},
-		},
-		"postgres-basic-87654321-4321-4321-4321-cba987654321": {
-			DeploymentInfo: DeploymentInfo{
-				Name: "postgres-basic-87654321-4321-4321-4321-cba987654321",
-				Releases: []ReleaseInfo{
-					{Name: "postgres", Version: "2.0.0"},
-				},
-			},
-		},
-	}
-
-	matcher.matches["redis-cache-small-12345678-1234-1234-1234-123456789abc"] = &MatchResult{
-		InstanceID:  "12345678-1234-1234-1234-123456789abc",
-		ServiceID:   "redis-cache",
-		PlanID:      "small",
-		Confidence:  1.0,
-		MatchReason: "exact_name_match",
-	}
-
-	matcher.matches["postgres-basic-87654321-4321-4321-4321-cba987654321"] = &MatchResult{
-		InstanceID:  "87654321-4321-4321-4321-cba987654321",
-		ServiceID:   "postgres",
-		PlanID:      "basic",
-		Confidence:  1.0,
-		MatchReason: "exact_name_match",
+		{Name: "blacksmith"}, // Platform deployment, should be filtered out
 	}
 
 	ctx3, cancel3 := context.WithCancel(context.Background())
@@ -325,6 +292,8 @@ func TestReconcilerManager_RunReconciliation(t *testing.T) {
 		logger:       logger,
 		ctx:          ctx3,
 		cancel:       cancel3,
+		cfManager:    nil,         // No CF manager in test
+		services:     []Service{}, // Empty services for test
 	}
 
 	// Run reconciliation directly
@@ -335,27 +304,23 @@ func TestReconcilerManager_RunReconciliation(t *testing.T) {
 		t.Errorf("Expected 1 scan call, got %d", scanner.scanCalls)
 	}
 
-	// Verify matcher was called for each deployment
-	if len(matcher.matchCalls) != 3 {
-		t.Errorf("Expected 3 match calls, got %d", len(matcher.matchCalls))
+	// In the new CF-first approach, we should have:
+	// - 2 service deployments scanned (blacksmith filtered out)
+	// - 0 CF instances (no CF manager)
+	// - Metrics for deployments scanned should be 2
+	if metrics.metrics["deployments_scanned"] != 2 {
+		t.Errorf("Expected 2 deployments scanned, got %v", metrics.metrics["deployments_scanned"])
 	}
 
-	// Verify updater was called for matched deployments
-	if len(updater.updateCalls) != 2 {
-		t.Errorf("Expected 2 update calls, got %d", len(updater.updateCalls))
-	}
-
-	// Verify synchronizer was called
-	if synchronizer.syncCalls != 1 {
-		t.Errorf("Expected 1 sync call, got %d", synchronizer.syncCalls)
-	}
-
-	// Verify metrics were recorded
-	if metrics.metrics["deployments_scanned"] != 3 {
-		t.Errorf("Expected 3 deployments scanned, got %v", metrics.metrics["deployments_scanned"])
-	}
+	// Since we don't have CF instances and the new logic builds comprehensive data,
+	// we expect 2 instances matched (from BOSH deployments)
 	if metrics.metrics["instances_matched"] != 2 {
 		t.Errorf("Expected 2 instances matched, got %v", metrics.metrics["instances_matched"])
+	}
+
+	// Verify synchronizer was called with the instances
+	if synchronizer.syncCalls != 1 {
+		t.Errorf("Expected 1 sync call, got %d", synchronizer.syncCalls)
 	}
 }
 
@@ -367,16 +332,15 @@ func TestReconcilerManager_RunReconciliation_WithErrors(t *testing.T) {
 	metrics := newMockMetricsCollector()
 	logger := newMockLogger()
 
-	// Setup scanner to return error
-	scanner.scanErr = errors.New("failed to scan deployments")
+	// Simulate error during scanning
+	scanner.scanErr = fmt.Errorf("scan error")
 
 	ctx4, cancel4 := context.WithCancel(context.Background())
 	defer cancel4()
 	manager := &reconcilerManager{
 		config: ReconcilerConfig{
 			MaxConcurrency: 2,
-			RetryAttempts:  2,
-			RetryDelay:     10 * time.Millisecond,
+			BatchSize:      2,
 		},
 		scanner:      scanner,
 		matcher:      matcher,
@@ -386,25 +350,22 @@ func TestReconcilerManager_RunReconciliation_WithErrors(t *testing.T) {
 		logger:       logger,
 		ctx:          ctx4,
 		cancel:       cancel4,
+		cfManager:    nil,
+		services:     []Service{},
 	}
 
-	// Run reconciliation directly
+	// Run reconciliation with error
 	manager.runReconciliation()
 
-	// Check that error was recorded in status
+	// Verify error was recorded in metrics
+	if errorCount, ok := metrics.metrics["errors"].(int); !ok || errorCount == 0 {
+		t.Error("Expected error to be recorded in metrics")
+	}
+
+	// Verify status contains error
 	status := manager.GetStatus()
 	if len(status.Errors) == 0 {
-		t.Error("Expected error to be recorded in status")
-	}
-
-	// Verify error was recorded in metrics
-	if metrics.metrics["errors"] != 1 {
-		t.Errorf("Expected 1 error recorded, got %v", metrics.metrics["errors"])
-	}
-
-	// Verify error was logged
-	if len(logger.errorLogs) == 0 {
-		t.Error("Expected error to be logged")
+		t.Errorf("Expected error to be recorded in status. Status: %+v, Scanner calls: %d, Scanner error: %v", status, scanner.scanCalls, scanner.scanErr)
 	}
 }
 

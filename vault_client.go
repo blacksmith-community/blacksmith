@@ -407,13 +407,26 @@ func (vc *VaultClient) ListSecrets(path string) ([]string, error) {
 
 // convertToMap converts an interface{} to map[string]interface{}
 func convertToMap(data interface{}) (map[string]interface{}, error) {
-	// If it's already a map, return it
+	// If it's already a map[string]interface{}, return it
 	if m, ok := data.(map[string]interface{}); ok {
 		return m, nil
 	}
 
-	// Otherwise, marshal and unmarshal through JSON
-	jsonData, err := json.Marshal(data)
+	// If it's a map[interface{}]interface{} (common with YAML parsing), use deinterface
+	if m, ok := data.(map[interface{}]interface{}); ok {
+		return deinterfaceMap(m), nil
+	}
+
+	// Use deinterface to handle any nested map[interface{}]interface{} structures
+	deinterfaced := deinterface(data)
+
+	// Try to convert the result to map[string]interface{}
+	if m, ok := deinterfaced.(map[string]interface{}); ok {
+		return m, nil
+	}
+
+	// Otherwise, marshal and unmarshal through JSON as fallback
+	jsonData, err := json.Marshal(deinterfaced)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal data: %s", err)
 	}

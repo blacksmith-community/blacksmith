@@ -122,6 +122,10 @@ func (d *mockDirector) EnableResurrection(deployment string, enabled bool) error
 	return errors.New("not implemented")
 }
 
+func (d *mockDirector) DeleteResurrectionConfig(deployment string) error {
+	return errors.New("not implemented")
+}
+
 // New task methods added for Tasks feature
 func (d *mockDirector) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
 	return nil, errors.New("not implemented")
@@ -133,6 +137,14 @@ func (d *mockDirector) GetAllTasks(limit int) ([]bosh.Task, error) {
 
 func (d *mockDirector) CancelTask(taskID int) error {
 	return errors.New("not implemented")
+}
+
+func (d *mockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
+	return nil, nil
+}
+
+func (d *mockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+	return nil, nil
 }
 
 func TestBOSHScanner_ScanDeployments(t *testing.T) {

@@ -115,7 +115,7 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 		BackupOnDelete:   true,
 	})
 
-	// Setup existing credentials
+	// Setup existing credentials with the secret/ prefix
 	credPath := "test-instance/credentials"
 	vault.data[credPath] = map[string]interface{}{
 		"username": "admin",
@@ -171,7 +171,7 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 		}
 	}
 
-	// Verify has_credentials flag was set
+	// Verify has_credentials flag was set in metadata with secret/ prefix
 	metadataPath := "test-instance/metadata"
 	if metadata, exists := vault.data[metadataPath]; exists {
 		if hasCredentials, ok := metadata["has_credentials"].(bool); !ok || !hasCredentials {
@@ -195,7 +195,7 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 		BackupOnDelete:   true,
 	})
 
-	// Setup existing bindings
+	// Setup existing bindings with secret/ prefix
 	bindingsPath := "test-instance/bindings"
 	vault.data[bindingsPath] = map[string]interface{}{
 		"binding-1": map[string]interface{}{
@@ -251,7 +251,7 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 		t.Error("Bindings were not checked during update")
 	}
 
-	// Verify binding metadata was set
+	// Verify binding metadata was set with secret/ prefix
 	metadataPath := "test-instance/metadata"
 	if metadata, exists := vault.data[metadataPath]; exists {
 		if hasBindings, ok := metadata["has_bindings"].(bool); !ok || !hasBindings {
@@ -362,7 +362,7 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 		BackupOnDelete:   true,
 	})
 
-	// Setup existing metadata with history
+	// Setup existing metadata with history (using secret/ prefix)
 	existingHistory := []interface{}{
 		map[string]interface{}{
 			"timestamp":   time.Now().Add(-2 * time.Hour).Unix(),
@@ -409,7 +409,7 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
 
-	// Verify history was preserved and added to
+	// Verify history was preserved and added to (with secret/ prefix)
 	metadataPath := "test-instance/metadata"
 	if metadata, exists := vault.data[metadataPath]; exists {
 		if history, ok := metadata["history"].([]map[string]interface{}); ok {

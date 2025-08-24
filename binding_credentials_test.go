@@ -432,6 +432,7 @@ func (mb *MockBOSHDirector) SSHSession(deployment, instance string, index int, o
 	return nil, nil
 }
 func (mb *MockBOSHDirector) EnableResurrection(deployment string, enabled bool) error { return nil }
+func (mb *MockBOSHDirector) DeleteResurrectionConfig(deployment string) error         { return nil }
 
 // New task methods added for Tasks feature
 func (mb *MockBOSHDirector) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
@@ -439,3 +440,9 @@ func (mb *MockBOSHDirector) GetTasks(taskType string, limit int, states []string
 }
 func (mb *MockBOSHDirector) GetAllTasks(limit int) ([]bosh.Task, error) { return nil, nil }
 func (mb *MockBOSHDirector) CancelTask(taskID int) error                { return nil }
+func (mb *MockBOSHDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
+	return nil, nil
+}
+func (mb *MockBOSHDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+	return nil, nil
+}

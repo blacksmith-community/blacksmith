@@ -70,12 +70,13 @@
           <div class="detail-tabs">
             <button class="detail-tab active" data-tab="details">Details</button>
             <button class="detail-tab" data-tab="broker">Broker</button>
-            <button class="detail-tab" data-tab="events">Events</button>
             <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
             <button class="detail-tab" data-tab="vms">VMs</button>
             <button class="detail-tab" data-tab="logs">Deployment Logs</button>
             <button class="detail-tab" data-tab="debug">Debug Log</button>
+            <button class="detail-tab" data-tab="events">Events</button>
             <button class="detail-tab" data-tab="tasks">Tasks</button>
+            <button class="detail-tab" data-tab="configs">Configs</button>
           </div>
           
           <!-- Blacksmith detail content -->
@@ -229,8 +230,72 @@
     </div>
   </div>
 
+  <!-- Config Details Modal -->
+  <div id="config-details-modal" class="modal-overlay" role="dialog" aria-labelledby="config-details-modal-title" aria-hidden="true" style="display: none;">
+    <div class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="config-details-modal-title">Config Details</h3>
+          <button class="modal-close" onclick="hideConfigDetailsModal()" aria-label="Close modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="config-details-loading" class="loading">Loading config details...</div>
+          <div id="config-details-content" style="display: none;">
+            <!-- Overview Table - Above tabs as informational header -->
+            <div class="config-overview-header">
+              <div class="config-overview-table-container">
+                <table class="config-overview-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Name</th>
+                      <th>Type</th>
+                      <th>Team</th>
+                      <th>Created At</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td id="config-id"></td>
+                      <td id="config-name"></td>
+                      <td id="config-type"></td>
+                      <td id="config-team"></td>
+                      <td id="config-created-at"></td>
+                      <td id="config-status"></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            
+            <!-- Manifest-style tabs -->
+            <div class="manifest-details-container">
+              <div class="manifest-tabs-nav">
+                <button class="manifest-tab-btn active" data-tab="config" data-group="config-tabs">Config</button>
+                <button class="manifest-tab-btn" data-tab="metadata" data-group="config-tabs">Metadata</button>
+              </div>
+              
+              <div class="manifest-tab-content">
+                <div class="manifest-tab-pane active" data-tab="config" data-group="config-tabs">
+                  <div class="config-content-header">
+                    <button class="btn btn-secondary copy-btn" id="copy-config-content">Copy Content</button>
+                  </div>
+                  <pre id="config-content-text" class="config-content"></pre>
+                </div>
+                <div class="manifest-tab-pane" data-tab="metadata" data-group="config-tabs" style="display: none;">
+                  <pre id="config-metadata-text" class="config-metadata"></pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script type="text/javascript" src="/xterm.min.js"></script>
-  <script type="text/javascript" src="/blacksmith.js?v=20250823"></script>
+  <script type="text/javascript" src="/blacksmith.js?v=20250825"></script>
 </body>
 
 </html>

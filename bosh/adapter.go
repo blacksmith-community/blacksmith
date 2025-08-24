@@ -44,6 +44,8 @@ type Director interface {
 	UpdateCloudConfig(config string) error
 	GetCloudConfig() (string, error)
 	GetConfig(configType, configName string) (interface{}, error)
+	GetConfigs(limit int, configTypes []string) ([]BoshConfig, error)
+	GetConfigByID(configID string) (*BoshConfigDetail, error)
 
 	// Cleanup operations
 	Cleanup(removeAll bool) (*Task, error)
@@ -54,6 +56,7 @@ type Director interface {
 
 	// Resurrection operations
 	EnableResurrection(deployment string, enabled bool) error
+	DeleteResurrectionConfig(deployment string) error
 }
 
 // Info represents BOSH director information
@@ -94,12 +97,13 @@ type VM struct {
 	JobState string `json:"job_state"` // Aggregate state of job (running, etc.)
 
 	// VM state and properties
-	State              string    `json:"state"`               // State of the VM
-	Active             *bool     `json:"active"`              // Whether the VM is active
-	Bootstrap          bool      `json:"bootstrap"`           // Bootstrap property of VM
-	Ignore             bool      `json:"ignore"`              // Ignore this VM if set to true
-	ResurrectionPaused bool      `json:"resurrection_paused"` // Resurrection state
-	VMCreatedAt        time.Time `json:"vm_created_at"`       // Time when the VM was created
+	State                    string    `json:"state"`                      // State of the VM
+	Active                   *bool     `json:"active"`                     // Whether the VM is active
+	Bootstrap                bool      `json:"bootstrap"`                  // Bootstrap property of VM
+	Ignore                   bool      `json:"ignore"`                     // Ignore this VM if set to true
+	ResurrectionPaused       bool      `json:"resurrection_paused"`        // Resurrection state
+	ResurrectionConfigExists bool      `json:"resurrection_config_exists"` // Whether resurrection config exists
+	VMCreatedAt              time.Time `json:"vm_created_at"`              // Time when the VM was created
 
 	// Network and placement
 	IPs []string `json:"ips"` // List of IPs
@@ -209,6 +213,23 @@ type Task struct {
 	User        string     `json:"user"`
 	Deployment  string     `json:"deployment"`
 	ContextID   string     `json:"context_id"`
+}
+
+// BoshConfig represents a BOSH config
+type BoshConfig struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Team      string    `json:"team"`
+	CreatedAt time.Time `json:"created_at"`
+	IsActive  bool      `json:"is_active"`
+}
+
+// BoshConfigDetail represents detailed config information
+type BoshConfigDetail struct {
+	BoshConfig
+	Content  string                 `json:"content"`
+	Metadata map[string]interface{} `json:"metadata"`
 }
 
 // TaskEvent represents an event from a BOSH task

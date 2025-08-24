@@ -8,6 +8,7 @@ The main configuration file contains the following top-level sections:
 
 ```yaml
 broker:       # HTTP server and authentication settings
+cf:           # Cloud Foundry API integration configuration (optional)
 vault:        # Vault integration configuration
 shield:       # SHIELD backup integration (optional)
 bosh:         # BOSH director configuration
@@ -234,6 +235,56 @@ HTTP server idle timeout in seconds. Maximum time to wait for the next request w
 **Default:** See TLS Configuration section
 
 TLS/HTTPS configuration for secure connections. For detailed TLS configuration options, see [docs/tls.md](./tls.md).
+
+## Cloud Foundry Configuration (`cf`)
+
+The `cf` section configures integration with Cloud Foundry API endpoints for the broker view functionality.
+
+```yaml
+cf:
+  apis:
+    fivetwenty:                                    # API endpoint identifier
+      name: "ocfp-aws-lab-ocf-us-east-1-cf"       # Display name for the CF instance
+      endpoint: "https://api.system.aws.lab.fivetwenty.io"  # CF API endpoint URL
+      username: "admin"                            # CF admin username
+      password: "DiKx7L2hSFMY2LyjbmAtQn90V0RptK"  # CF admin password
+    production:                                    # Another API endpoint
+      name: "production-cf"
+      endpoint: "https://api.cf.production.com"
+      username: "cf-admin"
+      password: "secure-password"
+```
+
+### Optional Fields
+
+#### `apis` (map of CFAPIConfig)
+**Default:** `{}`
+
+Map of Cloud Foundry API endpoint configurations, where each key is a unique identifier for the CF instance. Each endpoint configuration contains connection details for accessing the CF API.
+
+#### CFAPIConfig Fields
+
+##### `name` (string)
+**Required**
+
+Display name for the Cloud Foundry instance. This name is shown in the broker view interface to help identify different CF environments.
+
+##### `endpoint` (string)
+**Required**
+
+URL of the Cloud Foundry API endpoint, including protocol and domain. This should be the API endpoint URL for the CF deployment.
+
+##### `username` (string)
+**Required**
+
+Username for Cloud Foundry API authentication. Should be an admin user with sufficient privileges to manage service brokers and applications.
+
+##### `password` (string)
+**Required**
+
+Password for Cloud Foundry API authentication. Store securely and use strong passwords for production environments.
+
+**Security Note:** Consider using environment variables or secure credential management instead of storing passwords directly in configuration files for production deployments.
 
 ## Vault Configuration (`vault`)
 
@@ -770,6 +821,19 @@ broker:
     port: "443"
     certificate: "/etc/ssl/certs/blacksmith.pem"
     key: "/etc/ssl/private/blacksmith.key"
+
+cf:
+  apis:
+    fivetwenty:
+      name: "ocfp-aws-lab-ocf-us-east-1-cf"
+      endpoint: "https://api.system.aws.lab.fivetwenty.io"
+      username: "admin"
+      password: "DiKx7L2hSFMY2LyjbmAtQn90V0RptK"
+    production:
+      name: "production-cf"
+      endpoint: "https://api.cf.production.com"
+      username: "cf-admin"
+      password: "secure-password"
 
 vault:
   address: "https://vault.example.com:8200"

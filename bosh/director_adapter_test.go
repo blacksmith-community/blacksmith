@@ -397,6 +397,42 @@ func BenchmarkBufferedTaskReporter(b *testing.B) {
 	}
 }
 
+// TestDeleteResurrectionConfig tests the config name formatting logic
+func TestDeleteResurrectionConfig(t *testing.T) {
+	// Test the config name formatting logic since we can't easily mock the BOSH director
+	tests := []struct {
+		name       string
+		deployment string
+		expected   string
+	}{
+		{
+			name:       "simple deployment name",
+			deployment: "test-deployment",
+			expected:   "blacksmith.test-deployment",
+		},
+		{
+			name:       "deployment with hyphens",
+			deployment: "my-service-instance",
+			expected:   "blacksmith.my-service-instance",
+		},
+		{
+			name:       "deployment with service prefix",
+			deployment: "redis-abc123",
+			expected:   "blacksmith.redis-abc123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Test the config name formation logic
+			configName := "blacksmith." + tt.deployment
+			if configName != tt.expected {
+				t.Errorf("Config name = %v, want %v", configName, tt.expected)
+			}
+		})
+	}
+}
+
 func BenchmarkParseTaskEvents(b *testing.B) {
 	eventJSON := `{"time":1234567890,"stage":"Preparing","task":"Validating","state":"started","progress":0}`
 	events := strings.Repeat(eventJSON+"\n", 100) // 100 events

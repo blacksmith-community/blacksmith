@@ -380,7 +380,6 @@ func (a *AuditService) generateVaultPath(instanceID string) string {
 	return fmt.Sprintf("secret/data/%s/rabbitmqctl/audit", instanceID)
 }
 
-
 // entryToMap converts an AuditEntry to a map for Vault storage
 func (a *AuditService) entryToMap(entry *AuditEntry) (map[string]interface{}, error) {
 	entryJSON, err := json.Marshal(entry)

@@ -692,6 +692,22 @@
         { key: 'description', sortable: true },
         { key: 'plans', sortable: true },
         { key: 'available', sortable: true }
+      ],
+      'tasks-table': [
+        { key: 'id', sortable: true },
+        { key: 'state', sortable: true },
+        { key: 'description', sortable: true },
+        { key: 'deployment', sortable: true },
+        { key: 'user', sortable: true },
+        { key: 'started', sortable: true },
+        { key: 'duration', sortable: true }
+      ],
+      'configs-table': [
+        { key: 'id', sortable: true },
+        { key: 'name', sortable: true },
+        { key: 'type', sortable: true },
+        { key: 'team', sortable: true },
+        { key: 'created_at', sortable: true }
       ]
     };
 
@@ -912,7 +928,9 @@
       'vms-table': 'vms',
       'logs-table': 'blacksmith-logs',
       'deployment-log-table': 'deployment-logs',
-      'debug-log-table': 'debug-logs'
+      'debug-log-table': 'debug-logs',
+      'tasks-table': 'tasks',
+      'configs-table': 'configs'
     };
 
     // Check if this is a service events table (uses different dataKey)
@@ -1067,6 +1085,65 @@
     } else if (tableClass.startsWith('instance-logs-table-')) {
       // Instance logs tables use the same format as regular logs
       tbody.innerHTML = data.map(row => renderLogRow(row)).join('');
+    } else if (tableClass === 'tasks-table') {
+      tbody.innerHTML = data.map(task => {
+        const startedAt = formatTimestamp(task.started_at);
+        
+        // Calculate duration
+        let duration = '-';
+        if (task.started_at) {
+          const start = new Date(task.started_at);
+          const end = task.ended_at ? new Date(task.ended_at) : new Date();
+          const durationMs = end - start;
+          if (durationMs > 0) {
+            const minutes = Math.floor(durationMs / 60000);
+            const seconds = Math.floor((durationMs % 60000) / 1000);
+            if (minutes > 0) {
+              duration = `${minutes}m ${seconds}s`;
+            } else {
+              duration = `${seconds}s`;
+            }
+          }
+        }
+
+        // Create clickable task ID for details
+        const taskIdLink = `<a href="#" class="task-link" data-task-id="${task.id}" onclick="showTaskDetails(${task.id}, event); return false;">${task.id}</a>`;
+
+        // Format state with badge
+        const stateBadge = `<span class="task-state ${task.state}">${task.state}</span>`;
+
+        return `
+          <tr>
+            <td class="task-id">${taskIdLink}</td>
+            <td class="task-state">${stateBadge}</td>
+            <td class="task-description">${task.description || '-'}</td>
+            <td class="task-deployment">${task.deployment || '-'}</td>
+            <td class="task-user">${task.user || '-'}</td>
+            <td class="task-started">${startedAt}</td>
+            <td class="task-duration">${duration}</td>
+          </tr>
+        `;
+      }).join('');
+    } else if (tableClass === 'configs-table') {
+      tbody.innerHTML = data.map(config => {
+        const createdAt = formatTimestamp(config.created_at);
+        
+        // Create clickable config ID for details
+        const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
+
+        // Format type with badge
+        const typeBadge = `<span class="config-type ${config.type}">${config.type}</span>`;
+
+        return `
+          <tr>
+            <td class="config-id">${configIdLink}</td>
+            <td class="config-name">${config.name || '-'}</td>
+            <td class="config-type">${typeBadge}</td>
+            <td class="config-team">${config.team || '-'}</td>
+            <td class="config-created">${createdAt}</td>
+          </tr>
+        `;
+      }).join('');
     }
   };
 
@@ -1318,6 +1395,7 @@
         <button class="detail-tab" data-tab="credentials">Credentials</button>
         <button class="detail-tab" data-tab="config">Config</button>
         <button class="detail-tab" data-tab="tasks">Tasks</button>
+        <button class="detail-tab" data-tab="configs">Configs</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>
@@ -2143,6 +2221,14 @@
         }
         const tasks = await response.json();
         return formatTasks(tasks);
+      } else if (type === 'configs') {
+        // Fetch BOSH director configs
+        const response = await fetch('/b/configs?limit=100', { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const configs = await response.json();
+        return formatConfigs(configs);
       }
 
       return `<div class="error">Unknown tab type: ${type}</div>`;
@@ -3012,6 +3098,9 @@
 
     return `
       <div class="table-controls-container">
+        <div class="search-filter-container">
+          ${createSearchFilter(tableId, 'Search tasks...')}
+        </div>
         <div class="tasks-filters">
           <div class="filter-group">
             <label>Type:</label>
@@ -3037,9 +3126,6 @@
               <span>Refresh</span>
             </button>
           </div>
-        </div>
-        <div class="search-filter-container">
-          ${createSearchFilter(tableId, 'Search tasks...')}
         </div>
         <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
                 title="Copy filtered table rows">
@@ -3101,6 +3187,86 @@
             }).join('') : `
               <tr>
                 <td colspan="7" class="no-data-row">No current tasks found</td>
+              </tr>
+            `}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  // Format configs table
+  const formatConfigs = (configsData, dataKey = 'configs') => {
+    // Always store data for sorting, even if empty
+    const configs = configsData.configs || [];
+    tableOriginalData.set(dataKey, configs);
+
+    const tableId = `configs-table`;
+    
+    // Check if we have configs
+    const hasConfigs = configs && configs.length > 0;
+
+    return `
+      <div class="table-controls-container">
+        <div class="search-filter-container">
+          ${createSearchFilter(tableId, 'Search configs...')}
+        </div>
+        <div class="configs-filters">
+          <div class="filter-group">
+            <label>Types:</label>
+            <div class="checkbox-group">
+              <label><input type="checkbox" value="cloud" checked> Cloud</label>
+              <label><input type="checkbox" value="runtime" checked> Runtime</label>
+              <label><input type="checkbox" value="cpi" checked> CPI</label>
+              <label><input type="checkbox" value="resurrection" checked> Resurrection</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <button id="refresh-configs-btn" class="refresh-btn" title="Refresh configs">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+        <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
+                title="Copy filtered table rows">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <span>Copy</span>
+        </button>
+      </div>
+      <div class="configs-table-container">
+        <table class="${tableId}">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Team</th>
+              <th>Created At</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${hasConfigs ? configs.map(config => {
+              const createdAt = formatTimestamp(config.created_at);
+              
+              // Create clickable config ID for details
+              const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
+
+              // Format type with badge
+              const typeBadge = `<span class="config-type ${config.type}">${config.type}</span>`;
+
+              return `
+                <tr>
+                  <td class="config-id">${configIdLink}</td>
+                  <td class="config-name">${config.name || '-'}</td>
+                  <td class="config-type">${typeBadge}</td>
+                  <td class="config-team">${config.team || '-'}</td>
+                  <td class="config-created">${createdAt}</td>
+                </tr>
+              `;
+            }).join('') : `
+              <tr>
+                <td colspan="5" class="no-data-row">No configs found</td>
               </tr>
             `}
           </tbody>
@@ -3618,6 +3784,18 @@
                 </div>
               </div>
             </label>
+            <button class="delete-resurrection-btn" 
+                    id="delete-resurrection-btn-${instanceId || 'blacksmith'}"
+                    onclick="window.deleteResurrectionConfig('${instanceId || 'blacksmith'}', event)"
+                    title="Delete resurrection config"
+                    style="display: none;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3,6 5,6 21,6"></polyline>
+                <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+              </svg>
+            </button>
           </div>
         </div>
         <div class="vms-table-container">
@@ -8666,6 +8844,11 @@
               initializeSorting('tasks-table');
               attachSearchFilter('tasks-table');
               initializeTasksTab();
+            } else if (tabType === 'configs') {
+              // Initialize configs functionality
+              initializeSorting('configs-table');
+              attachSearchFilter('configs-table');
+              initializeConfigsTab();
             }
           }, 100);
         } catch (error) {
@@ -9002,6 +9185,90 @@
     });
   };
 
+  // Initialize configs tab functionality
+  const initializeConfigsTab = () => {
+    console.log('Configs tab initialized');
+
+    // Set up filter change handlers
+    const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]');
+    const refreshBtn = document.getElementById('refresh-configs-btn');
+
+    // Handle type filter changes
+    typeCheckboxes.forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        applyConfigsFilter();
+      });
+    });
+
+    // Handle refresh button
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        refreshConfigsTable();
+      });
+    }
+  };
+
+  // Refresh configs table
+  const refreshConfigsTable = async () => {
+    console.log('Refreshing configs table');
+    
+    const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]:checked');
+    const checkedTypes = Array.from(typeCheckboxes).map(cb => cb.value);
+    
+    try {
+      let url = `/b/configs?limit=100`;
+      if (checkedTypes.length > 0 && checkedTypes.length < 4) {
+        url += `&types=${checkedTypes.join(',')}`;
+      }
+
+      const response = await fetch(url, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const configs = await response.json();
+      const contentContainer = document.querySelector('#blacksmith .detail-content');
+      
+      if (contentContainer) {
+        contentContainer.innerHTML = formatConfigs(configs);
+        
+        // Reinitialize functionality
+        setTimeout(() => {
+          initializeSorting('configs-table');
+          attachSearchFilter('configs-table');
+          initializeConfigsTab();
+        }, 100);
+      }
+    } catch (error) {
+      console.error('Failed to refresh configs:', error);
+      const contentContainer = document.querySelector('#blacksmith .detail-content');
+      if (contentContainer) {
+        contentContainer.innerHTML = `<div class="error">Failed to load configs: ${error.message}</div>`;
+      }
+    }
+  };
+
+  // Apply type filters to existing configs table
+  const applyConfigsFilter = () => {
+    const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]:checked');
+    const checkedTypes = new Set(Array.from(typeCheckboxes).map(cb => cb.value));
+    
+    const rows = document.querySelectorAll('.configs-table tbody tr');
+    
+    rows.forEach(row => {
+      const typeCell = row.querySelector('.config-type span');
+      if (typeCell) {
+        const configType = typeCell.classList[1]; // Second class is the type
+        if (checkedTypes.has(configType)) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      }
+    });
+  };
+
   // Show task details modal
   window.showTaskDetails = async (taskId, event) => {
     if (event) {
@@ -9140,6 +9407,138 @@
     }
     
     window.currentTaskId = null;
+  };
+
+  // Show config details modal
+  window.showConfigDetails = async (configId, event) => {
+    if (event) {
+      event.preventDefault();
+    }
+
+    console.log('Opening config details modal for config:', configId);
+
+    // Get the modal
+    const modal = document.getElementById('config-details-modal');
+    if (!modal) {
+      console.error('Config details modal not found in DOM');
+      return;
+    }
+
+    // Show the modal
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+
+    // Show loading state
+    const loadingDiv = document.getElementById('config-details-loading');
+    const contentDiv = document.getElementById('config-details-content');
+    if (loadingDiv) loadingDiv.style.display = 'block';
+    if (contentDiv) contentDiv.style.display = 'none';
+
+    try {
+      // Fetch config details from API
+      const response = await fetch(`/b/configs/${configId}`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const config = await response.json();
+
+      // Update modal title
+      document.getElementById('config-details-modal-title').textContent = `Config Details - ${config.name}`;
+
+      // Populate overview tab
+      document.getElementById('config-id').textContent = config.id;
+      document.getElementById('config-name').textContent = config.name;
+      document.getElementById('config-type').textContent = config.type;
+      document.getElementById('config-team').textContent = config.team || 'N/A';
+      document.getElementById('config-created-at').textContent = formatTimestamp(config.created_at);
+      document.getElementById('config-status').textContent = config.id.endsWith('*') ? 'Active' : 'Inactive';
+
+      // Populate content tab
+      document.getElementById('config-content-text').textContent = config.content || 'No content available';
+
+      // Populate metadata tab
+      document.getElementById('config-metadata-text').textContent = JSON.stringify(config.metadata, null, 2);
+
+      // Hide loading and show content
+      if (loadingDiv) loadingDiv.style.display = 'none';
+      if (contentDiv) contentDiv.style.display = 'block';
+
+      // Set up modal tab switching for this config modal
+      setupConfigModalTabs();
+
+      // Set up copy functionality
+      setupConfigCopyFunctionality();
+
+    } catch (error) {
+      console.error('Failed to load config details:', error);
+      if (loadingDiv) {
+        loadingDiv.innerHTML = `<div class="error">Failed to load config details: ${error.message}</div>`;
+      }
+    }
+  };
+
+  // Hide config details modal
+  window.hideConfigDetailsModal = () => {
+    const modal = document.getElementById('config-details-modal');
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+  };
+
+  // Set up config modal tab switching
+  const setupConfigModalTabs = () => {
+    const tabGroupId = 'config-tabs';
+    const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
+    const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+
+    tabButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        const tabName = button.dataset.tab;
+
+        // Update active states
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        button.classList.add('active');
+
+        // Show/hide content panes
+        tabPanes.forEach(pane => {
+          pane.classList.remove('active');
+          pane.style.display = 'none';
+        });
+
+        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
+        if (targetPane) {
+          targetPane.classList.add('active');
+          targetPane.style.display = 'block';
+        }
+      });
+    });
+  };
+
+  // Set up config copy functionality
+  const setupConfigCopyFunctionality = () => {
+    const copyButton = document.getElementById('copy-config-content');
+    if (copyButton) {
+      copyButton.addEventListener('click', async () => {
+        const contentText = document.getElementById('config-content-text').textContent;
+        try {
+          await navigator.clipboard.writeText(contentText);
+          // Show success feedback
+          const originalText = copyButton.innerHTML;
+          copyButton.innerHTML = '<span>Copied!</span>';
+          setTimeout(() => {
+            copyButton.innerHTML = originalText;
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy config content:', err);
+          alert('Failed to copy to clipboard');
+        }
+      });
+    }
   };
 
   // Set up task modal tab switching
@@ -13567,6 +13966,63 @@
     }
   };
 
+  // Delete resurrection config for a service instance or blacksmith deployment
+  window.deleteResurrectionConfig = async function (instanceId, event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    const deleteBtn = document.getElementById(`delete-resurrection-btn-${instanceId}`);
+    if (!deleteBtn) {
+      console.error('Delete resurrection button not found for:', instanceId);
+      return;
+    }
+
+    // Confirm deletion
+    if (!confirm('Are you sure you want to delete the resurrection config? This will revert to BOSH default resurrection behavior.')) {
+      return;
+    }
+
+    try {
+      // Add loading state
+      deleteBtn.disabled = true;
+      deleteBtn.classList.add('loading');
+
+      const response = await fetch(`/b/${instanceId}/resurrection`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        showNotification(result.message || 'Resurrection config deleted successfully', 'success');
+        
+        // Hide the delete button since config no longer exists
+        deleteBtn.style.display = 'none';
+        
+        // Refresh VMs view to show updated resurrection status
+        if (window.refreshServiceInstanceVMs) {
+          window.refreshServiceInstanceVMs(instanceId, event);
+        } else if (window.loadVMsView) {
+          window.loadVMsView();
+        }
+      } else {
+        throw new Error(result.error || 'Failed to delete resurrection config');
+      }
+    } catch (error) {
+      console.error('Error deleting resurrection config:', error);
+      showNotification(`Failed to delete resurrection config: ${error.message}`, 'error');
+    } finally {
+      // Remove loading state
+      deleteBtn.disabled = false;
+      deleteBtn.classList.remove('loading');
+    }
+  };
+
   // Initialize resurrection toggle state based on VM data
   window.initializeResurrectionToggle = function (instanceId, vms) {
     const slider = document.getElementById(`resurrection-slider-${instanceId}`);
@@ -13578,17 +14034,28 @@
     // Debug: Log resurrection status for each VM
     console.log('initializeResurrectionToggle: VM data', vms.map(vm => ({
       id: vm.id,
-      resurrection_paused: vm.resurrection_paused
+      resurrection_paused: vm.resurrection_paused,
+      resurrection_config_exists: vm.resurrection_config_exists
     })));
 
     // Check if any VM has resurrection paused
     const anyPaused = vms.some(vm => vm.resurrection_paused);
     const allPaused = vms.every(vm => vm.resurrection_paused);
+    
+    // Check if resurrection config exists (should be same for all VMs in a deployment)
+    const resurrectionConfigExists = vms.some(vm => vm.resurrection_config_exists);
+    
+    // Show/hide delete button based on config existence
+    const deleteBtn = document.getElementById(`delete-resurrection-btn-${instanceId}`);
+    if (deleteBtn) {
+      deleteBtn.style.display = resurrectionConfigExists ? 'inline-flex' : 'none';
+    }
 
     console.log('initializeResurrectionToggle: analysis', {
       instanceId,
       anyPaused,
       allPaused,
+      resurrectionConfigExists,
       vmCount: vms.length
     });
 

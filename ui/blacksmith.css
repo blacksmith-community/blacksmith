@@ -6851,6 +6851,57 @@ body.terminal-minimized .tabs {
   color: var(--text-primary);
 }
 
+/* Delete resurrection config button */
+.delete-resurrection-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.delete-resurrection-btn:hover {
+  background: var(--accent-danger);
+  border-color: var(--accent-danger);
+  color: white;
+}
+
+.delete-resurrection-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.delete-resurrection-btn.loading {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.delete-resurrection-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+}
+
+[data-theme="dark"] .delete-resurrection-btn {
+  background: var(--bg-secondary);
+  border-color: var(--border-secondary);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .delete-resurrection-btn:hover {
+  background: var(--accent-danger);
+  border-color: var(--accent-danger);
+  color: white;
+}
+
 /* Notification styles */
 .notification {
   position: fixed;
@@ -7738,14 +7789,19 @@ body.terminal-minimized .tabs {
 
 /* Task table specific styles */
 .tasks-table-container {
-  overflow-x: auto;
+  overflow: hidden;
   border: 1px solid var(--border-primary);
   border-radius: 6px;
+  max-height: calc(100vh - 350px);
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .tasks-table {
   width: 100%;
   min-width: 800px;
+  border-collapse: collapse;
 }
 
 .tasks-table th,
@@ -7753,6 +7809,23 @@ body.terminal-minimized .tabs {
   padding: 0.75rem 1rem;
   text-align: left;
   border-bottom: 1px solid var(--border-primary);
+}
+
+.tasks-table thead {
+  flex-shrink: 0;
+}
+
+.tasks-table tbody {
+  display: block;
+  overflow-y: auto;
+  max-height: calc(100vh - 450px);
+}
+
+.tasks-table thead,
+.tasks-table tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
 }
 
 .tasks-table th {
@@ -7867,6 +7940,280 @@ body.terminal-minimized .tabs {
   .task-description {
     max-width: 200px;
   }
+}
+
+/* Configs Table Styles */
+.configs-filters {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--bg-tertiary);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+}
+
+.configs-filters .filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.configs-filters .filter-group label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.configs-filters .checkbox-group {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.configs-filters .checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: normal;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.configs-filters .refresh-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-text);
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.2s ease;
+}
+
+.configs-filters .refresh-btn:hover {
+  background: var(--button-primary-hover);
+  transform: translateY(-1px);
+}
+
+.configs-filters .refresh-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.configs-table-container {
+  overflow: hidden;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  max-height: calc(100vh - 350px);
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.configs-table {
+  width: 100%;
+  min-width: 800px;
+  border-collapse: collapse;
+}
+
+.configs-table th {
+  background: var(--bg-table-header);
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-primary);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  cursor: pointer;
+  user-select: none;
+}
+
+.configs-table thead {
+  flex-shrink: 0;
+}
+
+.configs-table tbody {
+  display: block;
+  overflow-y: auto;
+  max-height: calc(100vh - 450px);
+}
+
+.configs-table thead,
+.configs-table tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.configs-table th:hover {
+  background: var(--bg-tertiary);
+}
+
+.configs-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-primary);
+  vertical-align: top;
+}
+
+.configs-table tbody tr:hover {
+  background: var(--bg-secondary);
+}
+
+.config-id a {
+  color: var(--link-color);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.config-id a:hover {
+  text-decoration: underline;
+}
+
+.config-type {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.config-type.cloud {
+  background: #e3f2fd;
+  color: #1976d2;
+}
+
+.config-type.runtime {
+  background: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.config-type.cpi {
+  background: #e8f5e8;
+  color: #388e3c;
+}
+
+.config-type.resurrection {
+  background: #fff3e0;
+  color: #f57c00;
+}
+
+/* Dark theme config type badges */
+[data-theme="dark"] .config-type.cloud {
+  background: #1e3a8a;
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .config-type.runtime {
+  background: #581c87;
+  color: #c4b5fd;
+}
+
+[data-theme="dark"] .config-type.cpi {
+  background: #166534;
+  color: #86efac;
+}
+
+[data-theme="dark"] .config-type.resurrection {
+  background: #c2410c;
+  color: #fed7aa;
+}
+
+/* Responsive configs table */
+@media (max-width: 768px) {
+  .configs-filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+  
+  .configs-table {
+    min-width: 600px;
+  }
+  
+  .config-name {
+    max-width: 200px;
+  }
+}
+
+/* Config Details Modal Styles */
+#config-details-modal .modal {
+  max-width: 90vw;
+  width: 90vw;
+  max-height: 90vh;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#config-details-modal .modal-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#config-details-modal .modal-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.config-details-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.config-details-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+}
+
+.config-details-table td:first-child {
+  width: 120px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.config-content-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
+}
+
+.config-content {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.375rem;
+  padding: 1rem;
+  font-family: 'SFMono-Regular', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 400px;
+}
+
+.config-metadata {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.375rem;
+  padding: 1rem;
+  font-family: 'SFMono-Regular', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 400px;
 }
 
 /* Task Details Modal Styles */
@@ -8138,4 +8485,69 @@ body.terminal-minimized .tabs {
     align-items: stretch;
     gap: 1rem;
   }
+}
+
+/* Config Details Modal Overview Table */
+.config-overview-header {
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border-table);
+  padding-bottom: 1rem;
+}
+
+.config-overview-table-container {
+  overflow-x: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-table);
+  border-radius: 6px;
+}
+
+.config-overview-table {
+  width: 100%;
+  min-width: 600px; /* Minimum width to ensure horizontal scroll */
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.config-overview-table thead {
+  background: var(--bg-table-header);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.config-overview-table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.config-overview-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-table-row);
+  color: var(--text-primary);
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+/* Dark theme support */
+[data-theme="dark"] .config-overview-table thead {
+  background: var(--bg-table-header);
+}
+
+[data-theme="dark"] .config-overview-table th {
+  border-color: var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .config-overview-table td {
+  border-color: var(--border-table-row);
+  color: var(--text-primary);
 }

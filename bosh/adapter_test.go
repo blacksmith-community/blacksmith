@@ -105,8 +105,14 @@ func (m *mockDirector) GetEvents(deployment string) ([]bosh.Event, error)       
 func (m *mockDirector) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
 	return "", nil
 }
-func (m *mockDirector) UpdateCloudConfig(config string) error      { return nil }
-func (m *mockDirector) GetCloudConfig() (string, error)            { return "", nil }
+func (m *mockDirector) UpdateCloudConfig(config string) error { return nil }
+func (m *mockDirector) GetCloudConfig() (string, error)       { return "", nil }
+func (m *mockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
+	return nil, nil
+}
+func (m *mockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+	return nil, nil
+}
 func (m *mockDirector) Cleanup(removeAll bool) (*bosh.Task, error) { return nil, nil }
 func (m *mockDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
 	return "SSH command executed successfully", nil
@@ -115,3 +121,4 @@ func (m *mockDirector) SSHSession(deployment, instance string, index int, option
 	return map[string]interface{}{"session_id": "mock-session"}, nil
 }
 func (m *mockDirector) EnableResurrection(deployment string, enabled bool) error { return nil }
+func (m *mockDirector) DeleteResurrectionConfig(deployment string) error         { return nil }

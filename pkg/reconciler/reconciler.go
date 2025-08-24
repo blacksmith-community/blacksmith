@@ -211,13 +211,15 @@ func (r *reconcilerManager) runReconciliation() {
 		totalFound = len(deployments) // Fallback to BOSH count if no CF instances
 	}
 
+	// Preserve any errors that were collected during reconciliation
+	currentStatus := r.GetStatus()
 	r.setStatus(Status{
 		Running:         true,
 		LastRunTime:     startTime,
 		LastRunDuration: time.Since(startTime),
 		InstancesFound:  totalFound,
 		InstancesSynced: len(updatedInstances),
-		Errors:          nil,
+		Errors:          currentStatus.Errors, // Preserve accumulated errors
 	})
 
 	r.logInfo("CF-first reconciliation completed successfully in %v (CF: %d, BOSH: %d, Updated: %d)",
@@ -303,7 +305,6 @@ func (r *reconcilerManager) isServiceDeployment(name string) bool {
 	return false
 }
 
-
 // processBatch processes a batch of deployments
 func (r *reconcilerManager) processBatch(ctx context.Context, deployments []DeploymentInfo) ([]MatchedDeployment, error) {
 	var matches []MatchedDeployment
@@ -357,8 +358,6 @@ func (r *reconcilerManager) processBatch(ctx context.Context, deployments []Depl
 	wg.Wait()
 	return matches, nil
 }
-
-
 
 // mergeInstanceData merges existing and new instance data
 func (r *reconcilerManager) mergeInstanceData(existing, new *InstanceData) *InstanceData {
@@ -570,9 +569,6 @@ func (r *reconcilerManager) buildComprehensiveInstanceData(ctx context.Context, 
 
 	return instances, nil
 }
-
-
-
 
 // extractServiceInfoFromDeployment parses a BOSH deployment name to extract service info
 // Deployment pattern: {plan-id}-{instance-id}

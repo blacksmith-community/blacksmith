@@ -2691,9 +2691,11 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 
 		// Override resurrection status for all VMs based on deployment-level config
+		resurrectionConfigExists := (err == nil && resurrectionConfig != nil)
 		for i := range vms {
 			vms[i].ResurrectionPaused = resurrectionPaused
-			l.Debug("VM %d (%s): resurrection_paused set to %v", i, vms[i].ID, vms[i].ResurrectionPaused)
+			vms[i].ResurrectionConfigExists = resurrectionConfigExists
+			l.Debug("VM %d (%s): resurrection_paused set to %v, config_exists=%v", i, vms[i].ID, vms[i].ResurrectionPaused, vms[i].ResurrectionConfigExists)
 		}
 
 		// Cache VM data in vault at secret/<instance-id>/vms
@@ -2798,6 +2800,62 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			"success": true,
 			"message": fmt.Sprintf("Resurrection %s for deployment %s", action, deploymentName),
 			"enabled": enabled,
+		}
+
+		w.Header().Set("Content-type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			l.Error("failed to encode response: %s", err)
+		}
+		return
+	}
+
+	// Delete resurrection config endpoint - DELETE /b/{instance_id}/resurrection
+	pattern = regexp.MustCompile("^/b/([^/]+)/resurrection$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "DELETE" {
+		l := Logger.Wrap("resurrection-delete")
+		param := m[1]
+		l.Debug("deleting resurrection config for %s", param)
+
+		// Determine deployment name based on param (same logic as toggle)
+		var deploymentName string
+		if param == "blacksmith" {
+			deploymentName = "blacksmith"
+			l.Debug("deleting resurrection config for blacksmith deployment")
+		} else {
+			l.Info("fetching service instance %s from vault", param)
+			var instance map[string]interface{}
+			exists, err := api.Vault.Get(fmt.Sprintf("secret/service/%s", param), &instance)
+			if err != nil || !exists {
+				l.Error("unable to fetch service instance %s: %s", param, err)
+				w.WriteHeader(404)
+				fmt.Fprintf(w, `{"error": "service instance not found"}`)
+				return
+			}
+
+			if serviceName, ok := instance["service_name"].(string); !ok {
+				l.Error("service_name not found or not a string in instance %s", param)
+				w.WriteHeader(500)
+				fmt.Fprintf(w, `{"error": "invalid service instance data"}`)
+				return
+			} else {
+				deploymentName = fmt.Sprintf("%s-%s", serviceName, param)
+			}
+			l.Debug("deleting resurrection config for service deployment %s", deploymentName)
+		}
+
+		// Delete resurrection config via BOSH
+		err := api.Broker.BOSH.DeleteResurrectionConfig(deploymentName)
+		if err != nil {
+			l.Error("unable to delete resurrection config for deployment %s: %s", deploymentName, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "failed to delete resurrection config: %s"}`, err)
+			return
+		}
+
+		// Return success response
+		response := map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Resurrection config deleted for deployment %s", deploymentName),
 		}
 
 		w.Header().Set("Content-type", "application/json")
@@ -3433,6 +3491,94 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Configs list endpoint - GET /b/configs
+	if req.URL.Path == "/b/configs" && req.Method == "GET" {
+		l := Logger.Wrap("configs-list")
+		l.Debug("fetching configs list")
+
+		// Parse query parameters
+		query := req.URL.Query()
+
+		limitStr := query.Get("limit")
+		limit := 50 // default
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 && parsedLimit <= 200 {
+				limit = parsedLimit
+			}
+		}
+
+		var configTypes []string
+		typesParam := query.Get("types")
+		if typesParam != "" {
+			configTypes = strings.Split(typesParam, ",")
+			// Trim whitespace from each type
+			for i, t := range configTypes {
+				configTypes[i] = strings.TrimSpace(t)
+			}
+		}
+
+		l.Debug("fetching configs with limit: %d, types: %v", limit, configTypes)
+
+		// Fetch configs from BOSH
+		configs, err := api.Broker.BOSH.GetConfigs(limit, configTypes)
+		if err != nil {
+			l.Error("unable to fetch configs: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "failed to fetch configs: %s", err)
+			return
+		}
+
+		l.Info("successfully fetched %d configs", len(configs))
+
+		response := map[string]interface{}{
+			"configs": configs,
+			"count":   len(configs),
+		}
+
+		b, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			l.Error("error marshaling configs response: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling response: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
+	// Config details endpoint - GET /b/configs/{id}
+	pattern = regexp.MustCompile("^/b/configs/([^/]+)$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "GET" {
+		l := Logger.Wrap("config-details")
+		configID := m[1]
+		l.Debug("fetching config details for ID: %s", configID)
+
+		// Fetch config details from BOSH
+		config, err := api.Broker.BOSH.GetConfigByID(configID)
+		if err != nil {
+			l.Error("unable to fetch config %s: %s", configID, err)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, "config not found: %s", err)
+			return
+		}
+
+		l.Info("successfully fetched config details for ID: %s", configID)
+
+		b, err := json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			l.Error("error marshaling config details response: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling response: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+	//
 	// Service Instance Logs endpoint
 	pattern = regexp.MustCompile("^/b/([^/]+)/instance-logs$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
@@ -3879,6 +4025,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	// Default 404 handler for unmatched routes
+	Logger.Debug("No handler found for path: %s", req.URL.Path)
 	w.WriteHeader(404)
 }
 
