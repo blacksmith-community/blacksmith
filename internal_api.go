@@ -310,6 +310,72 @@ func convertToJSONCompatible(v interface{}) interface{} {
 	}
 }
 
+// getBlacksmithDeploymentInfoFromManifest extracts deployment name and instance group name from the blacksmith manifest
+func (api *InternalApi) getBlacksmithDeploymentInfoFromManifest() (deploymentName, instanceGroupName string, err error) {
+	l := Logger.Wrap("blacksmith-manifest")
+
+	// First try to get manifest from BOSH director
+	if api.Broker != nil && api.Broker.BOSH != nil {
+		// Try to read deployment name from instance file first
+		var actualDeploymentName string
+		if data, readErr := os.ReadFile("/var/vcap/instance/deployment"); readErr == nil {
+			actualDeploymentName = strings.TrimSpace(string(data))
+			l.Debug("Read deployment name from instance file: %s", actualDeploymentName)
+		} else {
+			l.Debug("Unable to read deployment name from instance file: %s", readErr)
+			// Fallback to environment-based name
+			actualDeploymentName = fmt.Sprintf("%s-blacksmith", api.Config.Env)
+			l.Debug("Using fallback deployment name: %s", actualDeploymentName)
+		}
+
+		// Get deployment manifest from BOSH director
+		deployment, dirErr := api.Broker.BOSH.GetDeployment(actualDeploymentName)
+		if dirErr != nil {
+			l.Error("Failed to get deployment manifest from BOSH director for %s: %s", actualDeploymentName, dirErr)
+			return actualDeploymentName, "blacksmith", fmt.Errorf("failed to get deployment manifest: %w", dirErr)
+		}
+
+		// Parse the manifest to extract deployment name and instance group name
+		var manifest map[interface{}]interface{}
+		if yamlErr := yaml.Unmarshal([]byte(deployment.Manifest), &manifest); yamlErr != nil {
+			l.Error("Failed to parse deployment manifest YAML: %s", yamlErr)
+			return actualDeploymentName, "blacksmith", fmt.Errorf("failed to parse manifest YAML: %w", yamlErr)
+		}
+
+		// Extract deployment name from manifest
+		if manifestName, ok := manifest["name"].(string); ok {
+			deploymentName = manifestName
+			l.Debug("Extracted deployment name from manifest: %s", deploymentName)
+		} else {
+			l.Debug("Could not extract deployment name from manifest, using fallback: %s", actualDeploymentName)
+			deploymentName = actualDeploymentName
+		}
+
+		// Extract instance group name from manifest
+		if instanceGroups, ok := manifest["instance_groups"].([]interface{}); !ok {
+			l.Error("Manifest missing instance_groups")
+			return deploymentName, "blacksmith", fmt.Errorf("manifest missing instance_groups")
+		} else if len(instanceGroups) == 0 {
+			l.Error("Manifest has empty instance_groups")
+			return deploymentName, "blacksmith", fmt.Errorf("manifest has empty instance_groups")
+		} else if firstGroup, ok := instanceGroups[0].(map[interface{}]interface{}); !ok {
+			l.Error("First instance group has invalid format")
+			return deploymentName, "blacksmith", fmt.Errorf("first instance group has invalid format")
+		} else if name, ok := firstGroup["name"].(string); !ok {
+			l.Error("First instance group missing name field")
+			return deploymentName, "blacksmith", fmt.Errorf("first instance group missing name field")
+		} else {
+			instanceGroupName = name
+			l.Info("Successfully extracted deployment info from manifest: %s/%s", deploymentName, instanceGroupName)
+		}
+	} else {
+		l.Error("BOSH director not available")
+		return fmt.Sprintf("%s-blacksmith", api.Config.Env), "blacksmith", fmt.Errorf("BOSH director not available")
+	}
+
+	return deploymentName, instanceGroupName, nil
+}
+
 // getBoshDNSFromHosts reads the BOSH DNS entry from /etc/hosts for a given instance ID
 func (api *InternalApi) getBoshDNSFromHosts(instanceID string) string {
 	l := Logger.Wrap("bosh-dns")
@@ -1948,9 +2014,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// For blacksmith deployment, use environment-specific deployment name
-		deploymentName := fmt.Sprintf("%s-blacksmith", api.Config.Env)
-		instanceName := "blacksmith" // Instance group name for blacksmith deployment
+		// Get deployment name and instance group name from blacksmith manifest
+		deploymentName, instanceName, err := api.getBlacksmithDeploymentInfoFromManifest()
+		if err != nil {
+			l.Error("Failed to get blacksmith deployment info from manifest: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "Failed to get deployment information: %s"}`, err.Error())
+			return
+		}
 		instanceIndex := 0
 
 		l.Info("Establishing WebSocket SSH connection to blacksmith deployment %s/%s/%d", deploymentName, instanceName, instanceIndex)

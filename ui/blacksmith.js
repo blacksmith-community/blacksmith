@@ -1544,18 +1544,30 @@
   const renderServicesTemplate = (instances) => {
     const instancesList = isEmpty(instances) ? [] : Object.entries(instances);
 
+    // Create service id to name mapping from catalog
+    const serviceIdToName = {};
+    if (window.plansData && window.plansData.services) {
+      window.plansData.services.forEach(service => {
+        if (service && service.id && service.name) {
+          serviceIdToName[service.id] = service.name;
+        }
+      });
+    }
+
     // Extract unique services and plans for filter dropdowns
     const services = new Set();
     const plansPerService = {};
 
     instancesList.forEach(([id, details]) => {
       if (details.service_id) {
-        services.add(details.service_id);
-        if (!plansPerService[details.service_id]) {
-          plansPerService[details.service_id] = new Set();
+        // Use service name for filtering, fallback to service_id if not found
+        const serviceName = serviceIdToName[details.service_id] || details.service_id;
+        services.add(serviceName);
+        if (!plansPerService[serviceName]) {
+          plansPerService[serviceName] = new Set();
         }
         if (details.plan && details.plan.name) {
-          plansPerService[details.service_id].add(details.plan.name);
+          plansPerService[serviceName].add(details.plan.name);
         }
       }
     });
@@ -1616,13 +1628,16 @@
           ` : '';
 
         const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
+        
+        // Use service name for display and data attribute, fallback to service_id if not found
+        const serviceName = serviceIdToName[details.service_id] || details.service_id;
 
         return `
-            <div class="service-item ${isDeleting ? 'deleting' : ''}" data-instance-id="${id}" data-service="${details.service_id}" data-plan="${details.plan?.name || ''}">
+            <div class="service-item ${isDeleting ? 'deleting' : ''}" data-instance-id="${id}" data-service="${serviceName}" data-plan="${details.plan?.name || ''}">
               <div class="service-id">${id}</div>
               ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
               <div class="service-meta">
-                ${details.service_id} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
+                ${serviceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
               </div>
               ${deletionStatusHtml}
               ${vmStatusHtml}
@@ -8304,6 +8319,22 @@
                 console.error('Failed to fetch vault data:', error);
               }
 
+              // Fetch manifest to extract deployment name if not already in vault data
+              if (vaultData && !vaultData.deployment_name) {
+                try {
+                  const manifestResponse = await fetch(`/b/${instanceId}/manifest-details`, { cache: 'no-cache' });
+                  if (manifestResponse.ok) {
+                    const manifestData = await manifestResponse.json();
+                    if (manifestData && manifestData.parsed && manifestData.parsed.name) {
+                      vaultData.deployment_name = manifestData.parsed.name;
+                      console.log(`Extracted deployment name from manifest for ${instanceId}: ${vaultData.deployment_name}`);
+                    }
+                  }
+                } catch (error) {
+                  console.error('Failed to fetch manifest data:', error);
+                }
+              }
+
               // Render detail view with vault data
               const detailContainer = document.querySelector('#services .service-detail');
               detailContainer.innerHTML = renderServiceDetail(instanceId, details, vaultData);
@@ -8331,17 +8362,29 @@
 
           if (!serviceFilter || !planFilter) return;
 
+          // Create service id to name mapping from catalog
+          const serviceIdToName = {};
+          if (window.plansData && window.plansData.services) {
+            window.plansData.services.forEach(service => {
+              if (service && service.id && service.name) {
+                serviceIdToName[service.id] = service.name;
+              }
+            });
+          }
+
           // Build plans per service map for the filter
           const plansPerService = {};
           const instancesList = Object.entries(window.serviceInstances || {});
 
           instancesList.forEach(([id, details]) => {
             if (details.service_id) {
-              if (!plansPerService[details.service_id]) {
-                plansPerService[details.service_id] = new Set();
+              // Use service name for filtering, fallback to service_id if not found
+              const serviceName = serviceIdToName[details.service_id] || details.service_id;
+              if (!plansPerService[serviceName]) {
+                plansPerService[serviceName] = new Set();
               }
               if (details.plan && details.plan.name) {
-                plansPerService[details.service_id].add(details.plan.name);
+                plansPerService[serviceName].add(details.plan.name);
               }
             }
           });
@@ -8423,16 +8466,32 @@
               const visibleItems = Array.from(document.querySelectorAll('#services .service-item'))
                 .filter(item => item.style.display !== 'none');
 
-              // Extract deployment names
-              const deploymentNames = visibleItems.map(item => {
+              // Extract deployment names - try to get actual deployment names from manifests
+              const deploymentNames = [];
+              for (const item of visibleItems) {
                 const instanceId = item.dataset.instanceId;
                 const details = window.serviceInstances[instanceId];
                 if (details) {
-                  // Use the same pattern as in renderServiceDetail function
-                  return `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${instanceId}`;
+                  try {
+                    // Try to fetch manifest data to get actual deployment name
+                    const manifestResponse = await fetch(`/b/${instanceId}/manifest-details`, { cache: 'no-cache' });
+                    if (manifestResponse.ok) {
+                      const manifestData = await manifestResponse.json();
+                      if (manifestData && manifestData.parsed && manifestData.parsed.name) {
+                        deploymentNames.push(manifestData.parsed.name);
+                        continue;
+                      }
+                    }
+                  } catch (error) {
+                    console.warn(`Failed to fetch manifest for ${instanceId}:`, error);
+                  }
+                  
+                  // Fallback to constructed deployment name
+                  deploymentNames.push(`${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${instanceId}`);
+                } else {
+                  deploymentNames.push(instanceId); // final fallback
                 }
-                return instanceId; // fallback
-              });
+              }
 
               if (deploymentNames.length === 0) {
                 console.warn('No deployment names to copy');
