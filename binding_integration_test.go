@@ -496,6 +496,13 @@ func (imb *IntegrationMockBOSH) GetConfig(configType, configName string) (interf
 }
 func (imb *IntegrationMockBOSH) EnableResurrection(deployment string, enabled bool) error { return nil }
 
+// New task methods added for Tasks feature
+func (imb *IntegrationMockBOSH) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
+	return nil, nil
+}
+func (imb *IntegrationMockBOSH) GetAllTasks(limit int) ([]bosh.Task, error) { return nil, nil }
+func (imb *IntegrationMockBOSH) CancelTask(taskID int) error                { return nil }
+
 // IntegrationMockLogger implements reconciler.Logger interface for testing
 type IntegrationMockLogger struct{}
 

@@ -440,7 +440,7 @@ func main() {
 		sshConfig.MaxOutputSize = 1024 * 1024 // 1MB
 	}
 	if sshConfig.KeepAlive == 0 {
-		sshConfig.KeepAlive = 30 * time.Second
+		sshConfig.KeepAlive = 10 * time.Second
 	}
 	if sshConfig.RetryAttempts == 0 {
 		sshConfig.RetryAttempts = 3

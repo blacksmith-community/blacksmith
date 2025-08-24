@@ -901,6 +901,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -928,8 +929,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Construct deployment name from plan and instance
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		// Construct deployment name from plan-id and instance-id
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 
 		// Get the correct instance group name from the manifest stored in Vault
 		// The instance group name is critical for SSH connections to work properly
@@ -1160,6 +1161,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -1187,8 +1189,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Construct deployment name from plan and instance
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		// Construct deployment name from plan-id and instance-id
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 
 		// Get the correct instance group name from the manifest stored in Vault
 		// The instance group name is critical for SSH connections to work properly
@@ -1630,6 +1632,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -1637,8 +1640,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Construct deployment name from plan and instance
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		// Construct deployment name from plan-id and instance-id
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 
 		// Set deployment information from instance data
 		sshReq.Deployment = deploymentName
@@ -1738,6 +1741,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -1765,8 +1769,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Construct deployment name from plan and instance
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		// Construct deployment name from plan-id and instance-id
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 
 		// Get the correct instance group name from the manifest stored in Vault
 		// The instance group name is critical for SSH connections to work properly
@@ -1996,6 +2000,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -2003,8 +2008,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Construct deployment name from plan and instance
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		// Construct deployment name from plan-id and instance-id
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 
 		// Get the correct instance group name from the manifest stored in Vault
 		// The instance group name is critical for SSH connections to work properly
@@ -2137,6 +2142,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -2144,8 +2150,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Construct deployment name
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		// Construct deployment name from plan-id and instance-id
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 
 		// Get the correct instance group name from the manifest stored in Vault
 		// The instance group name is critical for SSH connections to work properly
@@ -2349,6 +2355,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -2356,8 +2363,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Construct deployment name
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		// Construct deployment name from plan-id and instance-id
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 
 		// Get the correct instance group name from the manifest stored in Vault
 		// The instance group name is critical for SSH connections to work properly
@@ -2597,8 +2604,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			// Construct deployment name from plan_id and instance_id
-			deploymentName = inst.PlanID + "-" + param
+			// Construct deployment name from service-id, plan-id, and instance-id
+			deploymentName = fmt.Sprintf("%s-%s", inst.PlanID, param)
 			l.Debug("fetching VMs for service deployment %s", deploymentName)
 		}
 
@@ -2768,8 +2775,8 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			// Construct deployment name from plan_id and instance_id
-			deploymentName = inst.PlanID + "-" + param
+			// Construct deployment name from service-id, plan-id, and instance-id
+			deploymentName = fmt.Sprintf("%s-%s", inst.PlanID, param)
 			l.Debug("toggling resurrection for service deployment %s", deploymentName)
 		}
 
@@ -2816,6 +2823,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
+		// Get metadata from secret/{instance-id}/metadata
+		var metadata map[string]interface{}
+		metadataExists, err := api.Vault.Get(fmt.Sprintf("%s/metadata", instanceID), &metadata)
+		if err != nil {
+			l.Debug("failed to get metadata for instance %s: %s", instanceID, err)
+			metadataExists = false
+		}
+
 		// Enrich older instances with missing service metadata on-the-fly
 		if instanceData["service_name"] == nil || instanceData["service_type"] == nil {
 			if serviceID, ok := instanceData["service_id"].(string); ok {
@@ -2850,6 +2865,16 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Remove context field as requested
 		delete(instanceData, "context")
+
+		// Merge metadata into instance data if available
+		if metadataExists && metadata != nil {
+			for key, value := range metadata {
+				// Only add metadata fields that don't conflict with existing instance data
+				if _, exists := instanceData[key]; !exists {
+					instanceData[key] = value
+				}
+			}
+		}
 
 		// Convert to JSON
 		b, err := json.MarshalIndent(instanceData, "", "  ")
@@ -2935,6 +2960,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -2942,7 +2968,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 		l.Debug("fetching events for deployment %s", deploymentName)
 
 		// Get events from BOSH
@@ -2983,6 +3009,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -2990,7 +3017,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 		l.Debug("fetching task log for deployment %s", deploymentName)
 
 		// Get events from BOSH to find the task ID
@@ -3106,6 +3133,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -3113,7 +3141,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 		l.Debug("fetching debug log for deployment %s", deploymentName)
 
 		// Get events from BOSH to find the task ID
@@ -3196,6 +3224,215 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Tasks list endpoint - GET /b/tasks
+	if req.URL.Path == "/b/tasks" && req.Method == "GET" {
+		l := Logger.Wrap("tasks-list")
+		l.Debug("fetching tasks list")
+
+		// Parse query parameters
+		query := req.URL.Query()
+		taskType := query.Get("type")
+		if taskType == "" {
+			taskType = "recent"
+		}
+
+		limitStr := query.Get("limit")
+		limit := 50 // default
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 && parsedLimit <= 200 {
+				limit = parsedLimit
+			}
+		}
+
+		var states []string
+		statesParam := query.Get("states")
+		if statesParam != "" {
+			states = strings.Split(statesParam, ",")
+		}
+
+		l.Debug("getting tasks: type=%s, limit=%d, states=%v", taskType, limit, states)
+
+		// Get tasks from BOSH
+		tasks, err := api.Broker.BOSH.GetTasks(taskType, limit, states)
+		if err != nil {
+			l.Error("unable to get tasks: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s", err)
+			return
+		}
+
+		// Convert to JSON
+		b, err := json.MarshalIndent(tasks, "", "  ")
+		if err != nil {
+			l.Error("error marshaling tasks: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling tasks: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
+	// Task details endpoint - GET /b/tasks/{id}
+	pattern = regexp.MustCompile("^/b/tasks/([0-9]+)$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "GET" {
+		l := Logger.Wrap("task-details")
+		taskIDStr := m[1]
+		taskID, err := strconv.Atoi(taskIDStr)
+		if err != nil {
+			l.Error("invalid task ID: %s", taskIDStr)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, "invalid task ID")
+			return
+		}
+
+		l.Debug("fetching task details for task %d", taskID)
+
+		// Get task from BOSH
+		task, err := api.Broker.BOSH.GetTask(taskID)
+		if err != nil {
+			l.Error("unable to get task %d: %s", taskID, err)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, "task not found: %s", err)
+			return
+		}
+
+		// Get task events
+		events, err := api.Broker.BOSH.GetTaskEvents(taskID)
+		if err != nil {
+			l.Error("unable to get task events for task %d: %s", taskID, err)
+			// Continue without events
+			events = []bosh.TaskEvent{}
+		}
+
+		// Create response with task details and events
+		response := struct {
+			*bosh.Task
+			Events []bosh.TaskEvent `json:"events"`
+		}{
+			Task:   task,
+			Events: events,
+		}
+
+		// Convert to JSON
+		b, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			l.Error("error marshaling task details: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling task details: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
+	// Task output endpoint - GET /b/tasks/{id}/output
+	pattern = regexp.MustCompile("^/b/tasks/([0-9]+)/output$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "GET" {
+		l := Logger.Wrap("task-output")
+		taskIDStr := m[1]
+		taskID, err := strconv.Atoi(taskIDStr)
+		if err != nil {
+			l.Error("invalid task ID: %s", taskIDStr)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, "invalid task ID")
+			return
+		}
+
+		// Parse query parameters
+		query := req.URL.Query()
+		outputType := query.Get("type")
+		if outputType == "" {
+			outputType = "result"
+		}
+
+		l.Debug("fetching task output for task %d (type: %s)", taskID, outputType)
+
+		// Get task output from BOSH
+		output, err := api.Broker.BOSH.GetTaskOutput(taskID, outputType)
+		if err != nil {
+			l.Error("unable to get task output for task %d: %s", taskID, err)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, "task output not found: %s", err)
+			return
+		}
+
+		// Parse output based on type
+		var response interface{}
+		if outputType == "result" || outputType == "event" {
+			// Parse as events for structured output
+			events := parseResultOutputToEvents(output)
+			response = events
+		} else {
+			// Return raw output for debug logs
+			response = map[string]interface{}{
+				"output": output,
+				"type":   outputType,
+			}
+		}
+
+		// Convert to JSON
+		b, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			l.Error("error marshaling task output: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling task output: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
+	// Task cancel endpoint - POST /b/tasks/{id}/cancel
+	pattern = regexp.MustCompile("^/b/tasks/([0-9]+)/cancel$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "POST" {
+		l := Logger.Wrap("task-cancel")
+		taskIDStr := m[1]
+		taskID, err := strconv.Atoi(taskIDStr)
+		if err != nil {
+			l.Error("invalid task ID: %s", taskIDStr)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, "invalid task ID")
+			return
+		}
+
+		l.Debug("cancelling task %d", taskID)
+
+		// Cancel task via BOSH
+		err = api.Broker.BOSH.CancelTask(taskID)
+		if err != nil {
+			l.Error("unable to cancel task %d: %s", taskID, err)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, "failed to cancel task: %s", err)
+			return
+		}
+
+		l.Info("successfully cancelled task %d", taskID)
+
+		response := map[string]interface{}{
+			"success": true,
+			"message": fmt.Sprintf("Task %d cancelled successfully", taskID),
+		}
+
+		b, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			l.Error("error marshaling cancel response: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling response: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
 	// Service Instance Logs endpoint
 	pattern = regexp.MustCompile("^/b/([^/]+)/instance-logs$")
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
@@ -3213,6 +3450,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get the plan which contains service information
 		plan, err := api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
+		_ = plan // Silence unused variable warning
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
@@ -3220,7 +3458,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		deploymentName := fmt.Sprintf("%s-%s-%s", plan.Service.ID, plan.Name, instanceID)
+		deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
 		l.Debug("fetching logs for deployment %s", deploymentName)
 
 		// Get the manifest to determine the job name
@@ -3582,8 +3820,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 						// Convert task events to log format expected by frontend
 						for _, event := range taskEvents {
+							// Log timestamp for debugging
+							timestamp := event.Time.Unix()
+							if timestamp == 0 {
+								l.Debug("Warning: Task event has zero timestamp - stage: %s, task: %s", event.Stage, event.Task)
+							}
+
 							logEntry := map[string]interface{}{
-								"time":     event.Time.Unix(),
+								"time":     timestamp,
 								"stage":    event.Stage,
 								"task":     event.Task,
 								"index":    event.Index,

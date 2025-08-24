@@ -28,6 +28,9 @@ type Director interface {
 
 	// Task operations
 	GetTask(id int) (*Task, error)
+	GetTasks(taskType string, limit int, states []string) ([]Task, error)
+	GetAllTasks(limit int) ([]Task, error)
+	CancelTask(taskID int) error
 	GetTaskOutput(id int, outputType string) (string, error)
 	GetTaskEvents(id int) ([]TaskEvent, error)
 

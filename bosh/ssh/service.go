@@ -355,6 +355,9 @@ type SessionImpl struct {
 
 	// Keepalive components
 	keepAliveDone chan struct{}
+
+	// Ensure Close is only called once
+	closeOnce sync.Once
 }
 
 // Start starts the SSH session
@@ -828,47 +831,52 @@ func (s *SessionImpl) keepAlive() {
 
 // Close closes the session
 func (s *SessionImpl) Close() error {
-	s.logger.Info("Closing SSH session: %s", s.id)
+	var closeErr error
 
-	s.statusMutex.Lock()
-	s.status = SessionStatusClosing
-	s.statusMutex.Unlock()
+	s.closeOnce.Do(func() {
+		s.logger.Info("Closing SSH session: %s", s.id)
 
-	// Signal output readers and keepalive to stop
-	if s.closeChan != nil {
-		close(s.closeChan)
-	}
-	if s.keepAliveDone != nil {
-		close(s.keepAliveDone)
-	}
+		s.statusMutex.Lock()
+		s.status = SessionStatusClosing
+		s.statusMutex.Unlock()
 
-	// Close SSH session
-	if s.sshSession != nil {
-		if err := s.sshSession.Close(); err != nil {
-			s.logger.Error("Failed to close SSH session: %v", err)
+		// Signal output readers and keepalive to stop
+		if s.closeChan != nil {
+			close(s.closeChan)
 		}
-	}
-
-	// Close SSH client
-	if s.sshClient != nil {
-		if err := s.sshClient.Close(); err != nil {
-			s.logger.Error("Failed to close SSH client: %v", err)
+		if s.keepAliveDone != nil {
+			close(s.keepAliveDone)
 		}
-	}
 
-	// Call BOSH cleanup function
-	if s.cleanupFunc != nil {
-		if err := s.cleanupFunc(); err != nil {
-			s.logger.Error("Failed to cleanup BOSH SSH: %v", err)
+		// Close SSH session
+		if s.sshSession != nil {
+			if err := s.sshSession.Close(); err != nil {
+				s.logger.Error("Failed to close SSH session: %v", err)
+			}
 		}
-	}
 
-	s.statusMutex.Lock()
-	s.status = SessionStatusClosed
-	s.statusMutex.Unlock()
+		// Close SSH client
+		if s.sshClient != nil {
+			if err := s.sshClient.Close(); err != nil {
+				s.logger.Error("Failed to close SSH client: %v", err)
+			}
+		}
 
-	s.logger.Info("SSH session closed: %s", s.id)
-	return nil
+		// Call BOSH cleanup function
+		if s.cleanupFunc != nil {
+			if err := s.cleanupFunc(); err != nil {
+				s.logger.Error("Failed to cleanup BOSH SSH: %v", err)
+			}
+		}
+
+		s.statusMutex.Lock()
+		s.status = SessionStatusClosed
+		s.statusMutex.Unlock()
+
+		s.logger.Info("SSH session closed: %s", s.id)
+	})
+
+	return closeErr
 }
 
 // Status returns the current session status

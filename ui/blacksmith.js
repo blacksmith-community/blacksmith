@@ -1559,6 +1559,8 @@
 
   // Service detail rendering functions
   const renderServiceDetail = (id, details, vaultData) => {
+    // vaultData now contains merged data from both secret/{instance-id} and secret/{instance-id}/metadata
+    
     // Use deployment name from vault data if available, otherwise construct it
     const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${id}`;
 
@@ -1586,13 +1588,25 @@
       fieldOrder.forEach(field => {
         if (vaultData[field.key] !== undefined) {
           let value = vaultData[field.key];
-          // Format timestamp fields
-          if ((field.key === 'requested_at' || field.key === 'delete_requested_at' || field.key === 'deprovision_requested_at') && value) {
+          // Format different value types
+          if (typeof value === 'object' && value !== null) {
+            // Convert objects to JSON string
+            value = JSON.stringify(value, null, 2);
+          } else if ((field.key === 'requested_at' || field.key === 'delete_requested_at' || field.key === 'deprovision_requested_at') && value) {
+            // Format timestamp fields
             value = formatTimestamp(value);
           }
           tableRows.push(`
             <tr>
-              <td class="info-key" style="font-size: 16px;">${field.label}</td>
+              <td class="info-key" style="font-size: 16px;">
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${field.key}')"
+                          title="Copy key name">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <span>${field.label}</span>
+                </span>
+              </td>
               <td class="info-value" style="font-size: 16px;">
                 <span class="copy-wrapper">
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
@@ -1611,15 +1625,32 @@
       Object.keys(vaultData).forEach(key => {
         if (key !== 'context' && key !== 'deployment_name' &&
           !fieldOrder.find(f => f.key === key)) {
-          const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-          const value = vaultData[key];
+          let value = vaultData[key];
+          
+          // Format different value types
+          if (typeof value === 'object' && value !== null) {
+            // Convert objects to JSON string
+            value = JSON.stringify(value, null, 2);
+          } else if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
+            // Format timestamp fields (detect ISO 8601 format)
+            value = new Date(value).toLocaleString();
+          }
+          
           tableRows.push(`
             <tr>
-              <td class="info-key" style="font-size: 16px;">${label}</td>
+              <td class="info-key" style="font-size: 16px;">
+                <span class="copy-wrapper">
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${key}')"
+                          title="Copy key name">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                  <span>${key}</span>
+                </span>
+              </td>
               <td class="info-value" style="font-size: 16px;">
                 <span class="copy-wrapper">
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
-                          title="Copy ${label}">
+                          title="Copy value">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
                   <span>${value || '-'}</span>
@@ -1634,7 +1665,15 @@
       const createdAt = details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown';
       tableRows = [
         `<tr>
-          <td class="info-key" style="font-size: 16px;">Instance ID</td>
+          <td class="info-key" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, 'instance_id')"
+                      title="Copy key name">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>Instance ID</span>
+            </span>
+          </td>
           <td class="info-value" style="font-size: 16px;">
             <span class="copy-wrapper">
               <button class="copy-btn-inline" onclick="window.copyValue(event, '${id}')"
@@ -1646,7 +1685,15 @@
           </td>
         </tr>`,
         `<tr>
-          <td class="info-key" style="font-size: 16px;">Service</td>
+          <td class="info-key" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, 'service_id')"
+                      title="Copy key name">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>Service</span>
+            </span>
+          </td>
           <td class="info-value" style="font-size: 16px;">
             <span class="copy-wrapper">
               <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.service_id}')"
@@ -1658,7 +1705,15 @@
           </td>
         </tr>`,
         `<tr>
-          <td class="info-key" style="font-size: 16px;">Plan</td>
+          <td class="info-key" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, 'plan_id')"
+                      title="Copy key name">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>Plan</span>
+            </span>
+          </td>
           <td class="info-value" style="font-size: 16px;">
             <span class="copy-wrapper">
               <button class="copy-btn-inline" onclick="window.copyValue(event, '${details.plan?.name || details.plan_id || 'unknown'}')"
@@ -1670,7 +1725,15 @@
           </td>
         </tr>`,
         `<tr>
-          <td class="info-key" style="font-size: 16px;">Created At</td>
+          <td class="info-key" style="font-size: 16px;">
+            <span class="copy-wrapper">
+              <button class="copy-btn-inline" onclick="window.copyValue(event, 'created_at')"
+                      title="Copy key name">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+              <span>Created At</span>
+            </span>
+          </td>
           <td class="info-value" style="font-size: 16px;">
             <span class="copy-wrapper">
               <button class="copy-btn-inline" onclick="window.copyValue(event, '${createdAt}')"
@@ -2063,6 +2126,14 @@
       } else if (type === 'broker') {
         // Render broker tab content with CF endpoints management
         return renderBrokerTab();
+      } else if (type === 'tasks') {
+        // Fetch BOSH director tasks
+        const response = await fetch('/b/tasks?type=recent&limit=100', { cache: 'no-cache' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const tasks = await response.json();
+        return formatTasks(tasks);
       }
 
       return `<div class="error">Unknown tab type: ${type}</div>`;
@@ -2912,6 +2983,112 @@
     `;
   };
 
+  // Format tasks table
+  const formatTasks = (tasks, dataKey = 'tasks') => {
+    if (!tasks || tasks.length === 0) {
+      return '<div class="no-data">No tasks found</div>';
+    }
+
+    // Store original data for sorting
+    tableOriginalData.set(dataKey, [...tasks]);
+
+    const tableId = `tasks-table`;
+
+    return `
+      <div class="table-controls-container">
+        <div class="tasks-filters">
+          <div class="filter-group">
+            <label>Type:</label>
+            <select id="task-type-filter">
+              <option value="recent">Recent</option>
+              <option value="current">Current</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>States:</label>
+            <div class="checkbox-group">
+              <label><input type="checkbox" value="processing" checked> Processing</label>
+              <label><input type="checkbox" value="queued" checked> Queued</label>
+              <label><input type="checkbox" value="done" checked> Done</label>
+              <label><input type="checkbox" value="error" checked> Error</label>
+              <label><input type="checkbox" value="cancelled" checked> Cancelled</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <button id="refresh-tasks-btn" class="refresh-btn" title="Refresh tasks">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+        <div class="search-filter-container">
+          ${createSearchFilter(tableId, 'Search tasks...')}
+        </div>
+        <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
+                title="Copy filtered table rows">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <span>Copy</span>
+        </button>
+      </div>
+      <div class="tasks-table-container">
+        <table class="${tableId}">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>State</th>
+              <th>Description</th>
+              <th>Deployment</th>
+              <th>User</th>
+              <th>Started</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tasks.map(task => {
+              const startedAt = formatTimestamp(task.started_at);
+              
+              // Calculate duration
+              let duration = '-';
+              if (task.started_at) {
+                const start = new Date(task.started_at);
+                const end = task.ended_at ? new Date(task.ended_at) : new Date();
+                const durationMs = end - start;
+                if (durationMs > 0) {
+                  const minutes = Math.floor(durationMs / 60000);
+                  const seconds = Math.floor((durationMs % 60000) / 1000);
+                  if (minutes > 0) {
+                    duration = `${minutes}m ${seconds}s`;
+                  } else {
+                    duration = `${seconds}s`;
+                  }
+                }
+              }
+
+              // Create clickable task ID for details
+              const taskIdLink = `<a href="#" class="task-link" data-task-id="${task.id}" onclick="showTaskDetails(${task.id}, event); return false;">${task.id}</a>`;
+
+              // Format state with badge
+              const stateBadge = `<span class="task-state ${task.state}">${task.state}</span>`;
+
+              return `
+                <tr>
+                  <td class="task-id">${taskIdLink}</td>
+                  <td class="task-state">${stateBadge}</td>
+                  <td class="task-description">${task.description || '-'}</td>
+                  <td class="task-deployment">${task.deployment || '-'}</td>
+                  <td class="task-user">${task.user || '-'}</td>
+                  <td class="task-started">${startedAt}</td>
+                  <td class="task-duration">${duration}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
   // Log parsing and rendering functions
   const parseLogLine = (line) => {
     // Try different log formats in order of specificity
@@ -3298,6 +3475,7 @@
     // Parse logs and store for sorting
     const parsedLogs = logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
     tableOriginalData.set('blacksmith-logs', parsedLogs);
+    tableOriginalData.set('logs-table', parsedLogs);  // Also store under table class name as fallback
 
     // Available log files for selection
     const logFiles = [
@@ -7628,9 +7806,16 @@
       if (!logs || logs === '') {
         displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
       } else {
+        // Parse the logs and store them for sorting/filtering
+        const parsedLogs = logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+        
+        // Store under both keys to ensure data is available for sorting
+        tableOriginalData.set('blacksmith-logs', parsedLogs);
+        tableOriginalData.set('logs-table', parsedLogs);  // Also store under table class name as fallback
+        
         // Update the display with formatted logs
         // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
-        const tableHTML = renderLogsTable(logs, null, false);
+        const tableHTML = renderLogsTable(logs, parsedLogs, false);
         displayContainer.innerHTML = tableHTML;
 
         // Re-attach the search filter functionality and initialize sorting
@@ -8434,6 +8619,11 @@
             } else if (tabType === 'certificates') {
               // Initialize certificate functionality
               initializeCertificatesTab();
+            } else if (tabType === 'tasks') {
+              // Initialize tasks functionality
+              initializeSorting('tasks-table');
+              attachSearchFilter('tasks-table');
+              initializeTasksTab();
             }
           }, 100);
         } catch (error) {
@@ -8658,6 +8848,125 @@
         });
       });
     }, 100);
+  };
+
+  // Initialize tasks tab functionality
+  const initializeTasksTab = () => {
+    console.log('Tasks tab initialized');
+
+    // Set up filter change handlers
+    const typeFilter = document.getElementById('task-type-filter');
+    const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]');
+    const refreshBtn = document.getElementById('refresh-tasks-btn');
+
+    // Handle type filter changes
+    if (typeFilter) {
+      typeFilter.addEventListener('change', () => {
+        refreshTasksTable();
+      });
+    }
+
+    // Handle state filter changes
+    stateCheckboxes.forEach(checkbox => {
+      checkbox.addEventListener('change', () => {
+        applyTasksFilter();
+      });
+    });
+
+    // Handle refresh button
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        refreshTasksTable();
+      });
+    }
+
+    // Set up auto-refresh for running tasks every 30 seconds
+    const autoRefreshInterval = setInterval(() => {
+      // Only auto-refresh if tasks tab is active and there are running tasks
+      const tasksTab = document.querySelector('.detail-tab[data-tab="tasks"]');
+      if (tasksTab && tasksTab.classList.contains('active')) {
+        const runningTasks = document.querySelectorAll('.task-state.processing, .task-state.queued');
+        if (runningTasks.length > 0) {
+          refreshTasksTable();
+        }
+      }
+    }, 30000);
+
+    // Store interval for cleanup
+    if (!window.tasksAutoRefreshInterval) {
+      window.tasksAutoRefreshInterval = autoRefreshInterval;
+    }
+  };
+
+  // Refresh tasks table
+  const refreshTasksTable = async () => {
+    const typeFilter = document.getElementById('task-type-filter');
+    const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked');
+    
+    const taskType = typeFilter ? typeFilter.value : 'recent';
+    const checkedStates = Array.from(stateCheckboxes).map(cb => cb.value);
+
+    try {
+      let url = `/b/tasks?type=${taskType}&limit=100`;
+      if (checkedStates.length > 0) {
+        url += `&states=${checkedStates.join(',')}`;
+      }
+
+      const response = await fetch(url, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const tasks = await response.json();
+      const contentContainer = document.querySelector('#blacksmith .detail-content');
+      
+      if (contentContainer) {
+        contentContainer.innerHTML = formatTasks(tasks);
+        
+        // Reinitialize functionality
+        setTimeout(() => {
+          initializeSorting('tasks-table');
+          attachSearchFilter('tasks-table');
+          initializeTasksTab();
+        }, 50);
+      }
+    } catch (error) {
+      console.error('Failed to refresh tasks:', error);
+      const contentContainer = document.querySelector('#blacksmith .detail-content');
+      if (contentContainer) {
+        contentContainer.innerHTML = `<div class="error">Failed to load tasks: ${error.message}</div>`;
+      }
+    }
+  };
+
+  // Apply state filters to existing task table
+  const applyTasksFilter = () => {
+    const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked');
+    const checkedStates = new Set(Array.from(stateCheckboxes).map(cb => cb.value));
+    
+    const rows = document.querySelectorAll('.tasks-table tbody tr');
+    
+    rows.forEach(row => {
+      const stateCell = row.querySelector('.task-state span');
+      if (stateCell) {
+        const taskState = stateCell.classList[1]; // Second class is the state
+        if (checkedStates.has(taskState)) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      }
+    });
+  };
+
+  // Show task details modal (will be implemented in Phase 4)
+  window.showTaskDetails = (taskId, event) => {
+    if (event) {
+      event.preventDefault();
+    }
+    console.log('Task details modal would open for task:', taskId);
+    // TODO: Implement task details modal in Phase 4
   };
 
   // Fetch trusted certificates from VM certificate store

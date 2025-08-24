@@ -39,7 +39,7 @@ func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance *Instanc
 	// Step 1: Check and preserve protected paths
 	protectedData := make(map[string]map[string]interface{})
 	for _, path := range u.protectedPaths {
-		fullPath := fmt.Sprintf("%s%s", instance.ID, path)
+		fullPath := fmt.Sprintf("secret/%s%s", instance.ID, path)
 		if data, err := u.getFromVault(fullPath); err == nil && len(data) > 0 {
 			protectedData[path] = data
 			u.logInfo("Protected path %s exists with %d entries, will preserve", fullPath, len(data))
@@ -60,7 +60,7 @@ func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance *Instanc
 
 	// Step 4: Verify protected paths are still intact
 	for path, originalData := range protectedData {
-		fullPath := fmt.Sprintf("%s%s", instance.ID, path)
+		fullPath := fmt.Sprintf("secret/%s%s", instance.ID, path)
 		currentData, err := u.getFromVault(fullPath)
 
 		if err != nil || len(currentData) == 0 {

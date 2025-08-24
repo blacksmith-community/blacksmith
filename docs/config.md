@@ -350,6 +350,82 @@ List of stemcells to automatically upload to the BOSH director at startup. See [
 
 List of BOSH releases to automatically upload to the BOSH director at startup. See [Uploadable Configuration](#uploadable-configuration) for field details.
 
+### SSH Configuration (`ssh`)
+
+The `ssh` subsection within `bosh` configures SSH connection behavior for interactive terminal sessions and command execution.
+
+```yaml
+bosh:
+  ssh:
+    enabled: true                    # Enable SSH functionality
+    keep_alive: 10                   # Keep-alive interval in seconds (default: 10)
+    timeout: 600                     # Overall timeout in seconds (default: 600)
+    connect_timeout: 30              # Connection timeout in seconds (default: 30)
+    session_init_timeout: 60         # Session initialization timeout in seconds (default: 60)
+    output_read_timeout: 2           # Output read timeout in seconds (default: 2)
+    max_concurrent: 10               # Maximum concurrent SSH sessions (default: 10)
+    max_output_size: 1048576         # Maximum output size in bytes (default: 1MB)
+    retry_attempts: 3                # Number of retry attempts (default: 3)
+    retry_delay: 5                   # Delay between retries in seconds (default: 5)
+    insecure_ignore_host_key: false  # Skip host key verification (default: false)
+    known_hosts_file: "/home/vcap/.ssh/known_hosts"  # Path to known_hosts file
+```
+
+#### `keep_alive` (integer)
+**Default:** `10`
+
+Keep-alive interval in seconds for SSH connections. This sends periodic packets to prevent connection timeout. Lower values provide more responsive connections but increase network traffic.
+
+#### `timeout` (integer)
+**Default:** `600` (10 minutes)
+
+Overall timeout for SSH operations in seconds.
+
+#### `connect_timeout` (integer)
+**Default:** `30`
+
+Timeout for establishing SSH connections in seconds.
+
+#### `session_init_timeout` (integer)
+**Default:** `60`
+
+Timeout for SSH session initialization in seconds.
+
+#### `output_read_timeout` (integer)
+**Default:** `2`
+
+Timeout for reading SSH command output in seconds.
+
+#### `max_concurrent` (integer)
+**Default:** `10`
+
+Maximum number of concurrent SSH sessions allowed.
+
+#### `max_output_size` (integer)
+**Default:** `1048576` (1MB)
+
+Maximum size of SSH command output in bytes.
+
+#### `retry_attempts` (integer)
+**Default:** `3`
+
+Number of retry attempts for failed SSH operations.
+
+#### `retry_delay` (integer)
+**Default:** `5`
+
+Delay between retry attempts in seconds.
+
+#### `insecure_ignore_host_key` (boolean)
+**Default:** `false`
+
+Skip SSH host key verification. **Warning:** Only use in development environments as this reduces security.
+
+#### `known_hosts_file` (string)
+**Default:** `"/home/vcap/.ssh/known_hosts"`
+
+Path to SSH known_hosts file for host key verification.
+
 ## SHIELD Configuration (`shield`)
 
 The `shield` section configures optional integration with SHIELD for backup and restore functionality.

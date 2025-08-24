@@ -124,6 +124,51 @@ type InstanceData struct {
 	LastSyncedAt   time.Time
 }
 
+// CFBindingInfo represents CF service binding information for reconciler use
+type CFBindingInfo struct {
+	GUID    string `json:"guid"`
+	Name    string `json:"name,omitempty"`
+	AppGUID string `json:"app_guid,omitempty"`
+	AppName string `json:"app_name,omitempty"`
+	Type    string `json:"type,omitempty"`
+}
+
+// CFServiceInstanceMetadata represents CF metadata for reconciler use
+type CFServiceInstanceMetadata struct {
+	ServiceName   string          `json:"service_name,omitempty"`
+	OrgName       string          `json:"org_name,omitempty"`
+	OrgGUID       string          `json:"org_guid,omitempty"`
+	SpaceName     string          `json:"space_name,omitempty"`
+	SpaceGUID     string          `json:"space_guid,omitempty"`
+	Bindings      []CFBindingInfo `json:"bindings,omitempty"`
+	LastCheckedAt time.Time       `json:"last_checked_at"`
+	CheckError    string          `json:"check_error,omitempty"`
+}
+
+// CFServiceInstanceDetails represents complete CF service instance information for reconciler use
+type CFServiceInstanceDetails struct {
+	GUID            string                     `json:"guid"`
+	Name            string                     `json:"name"`
+	ServiceGUID     string                     `json:"service_guid,omitempty"`
+	ServiceName     string                     `json:"service_name,omitempty"`
+	PlanGUID        string                     `json:"plan_guid,omitempty"`
+	PlanName        string                     `json:"plan_name,omitempty"`
+	OrgName         string                     `json:"org_name,omitempty"`
+	OrgGUID         string                     `json:"org_guid,omitempty"`
+	SpaceName       string                     `json:"space_name,omitempty"`
+	SpaceGUID       string                     `json:"space_guid,omitempty"`
+	Parameters      map[string]interface{}     `json:"parameters,omitempty"`
+	Tags            []string                   `json:"tags,omitempty"`
+	DashboardURL    string                     `json:"dashboard_url,omitempty"`
+	MaintenanceInfo map[string]interface{}     `json:"maintenance_info,omitempty"`
+	CreatedAt       time.Time                  `json:"created_at"`
+	UpdatedAt       time.Time                  `json:"updated_at"`
+	LastOperation   string                     `json:"last_operation,omitempty"`
+	State           string                     `json:"state,omitempty"`
+	Bindings        []CFBindingInfo            `json:"bindings,omitempty"`
+	Metadata        *CFServiceInstanceMetadata `json:"metadata,omitempty"`
+}
+
 // Status contains reconciler status information
 type Status struct {
 	Running         bool
@@ -159,14 +204,14 @@ type ReconcilerConfig struct {
 	CacheTTL       time.Duration
 	Debug          bool
 	// Backup configuration
-	BackupEnabled        bool
-	BackupRetention      int
-	BackupRetentionDays  int
+	BackupEnabled          bool
+	BackupRetention        int
+	BackupRetentionDays    int
 	BackupCompressionLevel int
-	BackupCleanup        bool
-	BackupOnUpdate       bool
-	BackupOnDelete       bool
-	BackupPath           string
+	BackupCleanup          bool
+	BackupOnUpdate         bool
+	BackupOnDelete         bool
+	BackupPath             string
 }
 
 // BackupConfig holds backup configuration settings

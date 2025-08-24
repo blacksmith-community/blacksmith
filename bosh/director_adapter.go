@@ -667,6 +667,144 @@ func (d *DirectorAdapter) GetTask(id int) (*Task, error) {
 	return convertedTask, nil
 }
 
+// GetTasks retrieves multiple tasks based on filter criteria
+func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string) ([]Task, error) {
+	d.log.Info("Getting tasks (type: %s, limit: %d, states: %v)", taskType, limit, states)
+	d.log.Debug("Building task filter for type: %s", taskType)
+
+	// Convert limit to sensible defaults
+	if limit <= 0 || limit > 200 {
+		limit = 50 // Default limit
+	}
+
+	// Build basic filter
+	filter := boshdirector.TasksFilter{}
+
+	var tasks []boshdirector.Task
+	var err error
+
+	switch taskType {
+	case "recent":
+		// Get recent tasks (default behavior)
+		d.log.Debug("Getting recent tasks with limit %d", limit)
+		tasks, err = d.director.RecentTasks(limit*2, filter) // Get more to allow for filtering
+	case "current":
+		// Get only currently running tasks
+		d.log.Debug("Getting current tasks")
+		tasks, err = d.director.CurrentTasks(filter)
+	case "all":
+		// Get all tasks (use CurrentTasks + RecentTasks for broader scope)
+		d.log.Debug("Getting all tasks with limit %d", limit)
+		currentTasks, currentErr := d.director.CurrentTasks(filter)
+		if currentErr != nil {
+			d.log.Error("Failed to get current tasks: %v", currentErr)
+			return nil, fmt.Errorf("failed to get current tasks: %w", currentErr)
+		}
+
+		recentTasks, recentErr := d.director.RecentTasks(limit*2, filter)
+		if recentErr != nil {
+			d.log.Error("Failed to get recent tasks: %v", recentErr)
+			return nil, fmt.Errorf("failed to get recent tasks: %w", recentErr)
+		}
+
+		// Merge tasks, avoiding duplicates by ID
+		taskMap := make(map[int]boshdirector.Task)
+		for _, task := range currentTasks {
+			taskMap[task.ID()] = task
+		}
+		for _, task := range recentTasks {
+			if _, exists := taskMap[task.ID()]; !exists {
+				taskMap[task.ID()] = task
+			}
+		}
+
+		// Convert map back to slice
+		tasks = make([]boshdirector.Task, 0, len(taskMap))
+		for _, task := range taskMap {
+			tasks = append(tasks, task)
+		}
+	default:
+		// Default to recent tasks
+		d.log.Debug("Unknown task type %s, defaulting to recent", taskType)
+		tasks, err = d.director.RecentTasks(limit*2, filter)
+	}
+
+	if err != nil {
+		d.log.Error("Failed to get tasks (type: %s): %v", taskType, err)
+		return nil, fmt.Errorf("failed to get tasks: %w", err)
+	}
+
+	// Filter by states if specified
+	var filteredTasks []boshdirector.Task
+	if len(states) > 0 {
+		stateMap := make(map[string]bool)
+		for _, state := range states {
+			stateMap[state] = true
+		}
+
+		for _, task := range tasks {
+			if stateMap[task.State()] {
+				filteredTasks = append(filteredTasks, task)
+			}
+		}
+		tasks = filteredTasks
+		d.log.Debug("Filtered to %d tasks with states %v", len(tasks), states)
+	}
+
+	// Limit results
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+
+	// Convert director tasks to our Task type
+	result := make([]Task, len(tasks))
+	for i, task := range tasks {
+		result[i] = *convertDirectorTask(task)
+	}
+
+	d.log.Info("Successfully retrieved %d tasks (type: %s)", len(result), taskType)
+	return result, nil
+}
+
+// GetAllTasks retrieves all available tasks up to the specified limit
+func (d *DirectorAdapter) GetAllTasks(limit int) ([]Task, error) {
+	d.log.Info("Getting all tasks (limit: %d)", limit)
+
+	// Use GetTasks with "all" type for consistency
+	return d.GetTasks("all", limit, nil)
+}
+
+// CancelTask cancels a running task
+func (d *DirectorAdapter) CancelTask(taskID int) error {
+	d.log.Info("Cancelling task: %d", taskID)
+	d.log.Debug("Finding task %d for cancellation", taskID)
+
+	// Find the task first
+	task, err := d.director.FindTask(taskID)
+	if err != nil {
+		d.log.Error("Failed to find task %d: %v", taskID, err)
+		return fmt.Errorf("failed to find task %d: %w", taskID, err)
+	}
+
+	// Check if task can be cancelled (must be in processing or queued state)
+	state := task.State()
+	if state != "processing" && state != "queued" {
+		d.log.Error("Task %d is in state '%s' and cannot be cancelled", taskID, state)
+		return fmt.Errorf("task %d is in state '%s' and cannot be cancelled", taskID, state)
+	}
+
+	// Cancel the task
+	d.log.Debug("Cancelling task %d (current state: %s)", taskID, state)
+	err = task.Cancel()
+	if err != nil {
+		d.log.Error("Failed to cancel task %d: %v", taskID, err)
+		return fmt.Errorf("failed to cancel task %d: %w", taskID, err)
+	}
+
+	d.log.Info("Successfully cancelled task %d", taskID)
+	return nil
+}
+
 // GetTaskOutput retrieves task output
 func (d *DirectorAdapter) GetTaskOutput(id int, outputType string) (string, error) {
 	d.log.Info("Getting task output for task %d (type: %s)", id, outputType)

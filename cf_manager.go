@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
+	"blacksmith/pkg/reconciler"
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 	"github.com/fivetwenty-io/capi/v3/pkg/cfclient"
 )
@@ -36,26 +38,162 @@ type CFEndpointClient struct {
 	logger              *Log
 }
 
-// CFServiceInstanceMetadata contains CF-specific metadata for service instances
-type CFServiceInstanceMetadata struct {
-	ServiceName   string          `json:"service_name,omitempty"`
-	OrgName       string          `json:"org_name,omitempty"`
-	OrgGUID       string          `json:"org_guid,omitempty"`
-	SpaceName     string          `json:"space_name,omitempty"`
-	SpaceGUID     string          `json:"space_guid,omitempty"`
-	Bindings      []CFBindingInfo `json:"bindings,omitempty"`
-	LastCheckedAt time.Time       `json:"last_checked_at"`
-	CheckError    string          `json:"check_error,omitempty"`
+// CFServiceInstanceDetails represents complete CF service instance information
+
+// DiscoverAllServiceInstances discovers all service instances from all CF endpoints
+// that belong to services offered by this broker
+func (m *CFConnectionManager) DiscoverAllServiceInstances(brokerServices []string) ([]reconciler.CFServiceInstanceDetails, error) {
+	if len(m.clients) == 0 {
+		m.logger.Debug("skipping CF service instance discovery: no CF endpoints configured")
+		return nil, nil
+	}
+
+	var allInstances []reconciler.CFServiceInstanceDetails
+	var mu sync.Mutex
+
+	// Process each healthy CF endpoint
+	for endpointName, client := range m.GetHealthyClients() {
+		m.logger.Debug("discovering service instances from CF endpoint: %s", endpointName)
+
+		instances, err := m.discoverServiceInstancesFromEndpoint(client, brokerServices, endpointName)
+		if err != nil {
+			m.logger.Error("failed to discover service instances from CF endpoint %s: %v", endpointName, err)
+			continue
+		}
+
+		mu.Lock()
+		allInstances = append(allInstances, instances...)
+		mu.Unlock()
+
+		m.logger.Info("discovered %d service instances from CF endpoint %s", len(instances), endpointName)
+	}
+
+	m.logger.Info("total service instances discovered from CF: %d", len(allInstances))
+	return allInstances, nil
 }
 
-// CFBindingInfo contains information about service bindings
-type CFBindingInfo struct {
-	GUID    string `json:"guid"`
-	Name    string `json:"name,omitempty"`
-	AppGUID string `json:"app_guid,omitempty"`
-	AppName string `json:"app_name,omitempty"`
-	Type    string `json:"type,omitempty"`
+// discoverServiceInstancesFromEndpoint discovers service instances from a single CF endpoint
+func (m *CFConnectionManager) discoverServiceInstancesFromEndpoint(client capi.Client, brokerServices []string, endpointName string) ([]reconciler.CFServiceInstanceDetails, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	var instances []reconciler.CFServiceInstanceDetails
+
+	// Get all organizations
+	orgParams := capi.NewQueryParams().WithPerPage(100)
+	orgResponse, err := client.Organizations().List(ctx, orgParams)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list organizations: %w", err)
+	}
+
+	m.logger.Debug("found %d organizations in CF endpoint %s", len(orgResponse.Resources), endpointName)
+
+	// Process each organization
+	for _, org := range orgResponse.Resources {
+		// Get spaces in the organization
+		spaceParams := capi.NewQueryParams().WithFilter("organization_guids", org.GUID).WithPerPage(100)
+		spaceResponse, err := client.Spaces().List(ctx, spaceParams)
+		if err != nil {
+			m.logger.Debug("failed to list spaces for org %s: %v", org.Name, err)
+			continue
+		}
+
+		m.logger.Debug("found %d spaces in org %s", len(spaceResponse.Resources), org.Name)
+
+		// Process each space
+		for _, space := range spaceResponse.Resources {
+			// Get service instances in the space
+			siParams := capi.NewQueryParams().WithFilter("space_guids", space.GUID).WithPerPage(100)
+			siResponse, err := client.ServiceInstances().List(ctx, siParams)
+			if err != nil {
+				m.logger.Debug("failed to list service instances for space %s: %v", space.Name, err)
+				continue
+			}
+
+			m.logger.Debug("found %d service instances in space %s/%s", len(siResponse.Resources), org.Name, space.Name)
+
+			// Process each service instance
+			for _, si := range siResponse.Resources {
+				// Check if this service instance belongs to our broker
+				if m.isServiceInstanceManagedByBroker(si, brokerServices) {
+					instanceDetails := reconciler.CFServiceInstanceDetails{
+						GUID:        si.GUID,
+						Name:        si.Name,
+						ServiceGUID: si.GUID, // We'll get the real service info from BOSH
+						ServiceName: "",      // Will be determined from BOSH deployment name
+						PlanGUID:    si.GUID, // We'll get the real plan info from BOSH
+						PlanName:    "",      // Will be determined from BOSH deployment name
+						OrgName:     org.Name,
+						OrgGUID:     org.GUID,
+						SpaceName:   space.Name,
+						SpaceGUID:   space.GUID,
+						CreatedAt:   si.CreatedAt,
+						UpdatedAt:   si.UpdatedAt,
+					}
+
+					// Set maintenance info as empty for now
+					instanceDetails.MaintenanceInfo = map[string]interface{}{}
+
+					// Get service bindings for this instance
+					instanceDetails.Bindings = m.getServiceBindings(client, si.GUID)
+
+					// Add metadata
+					instanceDetails.Metadata = &reconciler.CFServiceInstanceMetadata{
+						ServiceName:   si.Name, // CF service instance name (user-provided)
+						OrgName:       org.Name,
+						OrgGUID:       org.GUID,
+						SpaceName:     space.Name,
+						SpaceGUID:     space.GUID,
+						Bindings:      instanceDetails.Bindings,
+						LastCheckedAt: time.Now(),
+					}
+
+					instances = append(instances, instanceDetails)
+					m.logger.Debug("added service instance %s (%s) from %s/%s", si.Name, si.GUID, org.Name, space.Name)
+				}
+			}
+		}
+	}
+
+	return instances, nil
 }
+
+// isServiceInstanceManagedByBroker checks if a service instance belongs to our broker
+func (m *CFConnectionManager) isServiceInstanceManagedByBroker(si capi.ServiceInstance, brokerServices []string) bool {
+	// If no broker services specified, include all (for discovery purposes)
+	if len(brokerServices) == 0 {
+		return true
+	}
+
+	// Check service name against broker services - simplified for now
+	// TODO: Implement proper relationship parsing when CAPI structure is clarified
+	for _, brokerService := range brokerServices {
+		if strings.Contains(si.Name, brokerService) {
+			return true
+		}
+	}
+
+	// Additional check: look for blacksmith-specific patterns in service instance name
+	// Service instances created by blacksmith typically follow a pattern
+	if strings.Contains(si.Name, "-") {
+		parts := strings.Split(si.Name, "-")
+		if len(parts) >= 2 {
+			// Check if any part matches our broker services
+			for _, part := range parts {
+				for _, brokerService := range brokerServices {
+					if strings.Contains(brokerService, part) || strings.Contains(part, brokerService) {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// TODO: Implement proper relationship parsing when CAPI structure is clarified
+// For now, we'll use simplified logic
 
 const (
 	maxRetryAttempts       = 5
@@ -304,13 +442,13 @@ func (m *CFConnectionManager) GetHealthyClients() map[string]capi.Client {
 }
 
 // EnrichServiceInstanceWithCF attempts to enrich service instance metadata with CF information
-func (m *CFConnectionManager) EnrichServiceInstanceWithCF(instanceID, serviceName string) *CFServiceInstanceMetadata {
+func (m *CFConnectionManager) EnrichServiceInstanceWithCF(instanceID, serviceName string) *reconciler.CFServiceInstanceMetadata {
 	if len(m.clients) == 0 {
 		m.logger.Debug("skipping CF enrichment for instance %s: no CF endpoints configured", instanceID)
 		return nil
 	}
 
-	metadata := &CFServiceInstanceMetadata{
+	metadata := &reconciler.CFServiceInstanceMetadata{
 		LastCheckedAt: time.Now(),
 	}
 
@@ -334,7 +472,7 @@ func (m *CFConnectionManager) EnrichServiceInstanceWithCF(instanceID, serviceNam
 }
 
 // findServiceInstanceInCF searches for a service instance across all orgs and spaces in a CF endpoint
-func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instanceID, serviceName, endpointName string) (*CFServiceInstanceMetadata, error) {
+func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instanceID, serviceName, endpointName string) (*reconciler.CFServiceInstanceMetadata, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -368,7 +506,7 @@ func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instan
 					// Found the service instance, get bindings
 					bindings := m.getServiceBindings(client, si.GUID)
 
-					return &CFServiceInstanceMetadata{
+					return &reconciler.CFServiceInstanceMetadata{
 						ServiceName:   si.Name,
 						OrgName:       org.Name,
 						OrgGUID:       org.GUID,
@@ -386,7 +524,7 @@ func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instan
 }
 
 // getServiceBindings retrieves bindings for a service instance
-func (m *CFConnectionManager) getServiceBindings(client capi.Client, serviceInstanceGUID string) []CFBindingInfo {
+func (m *CFConnectionManager) getServiceBindings(client capi.Client, serviceInstanceGUID string) []reconciler.CFBindingInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -397,9 +535,9 @@ func (m *CFConnectionManager) getServiceBindings(client capi.Client, serviceInst
 		return nil
 	}
 
-	var bindings []CFBindingInfo
+	var bindings []reconciler.CFBindingInfo
 	for _, binding := range bindingResponse.Resources {
-		bindingInfo := CFBindingInfo{
+		bindingInfo := reconciler.CFBindingInfo{
 			GUID: binding.GUID,
 			Name: binding.Name,
 			Type: binding.Type,

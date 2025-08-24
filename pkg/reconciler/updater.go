@@ -46,7 +46,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	// Check for existing credentials - NEVER overwrite
-	credsPath := fmt.Sprintf("%s/credentials", instance.ID)
+	credsPath := fmt.Sprintf("secret/%s/credentials", instance.ID)
 	existingCreds, credsErr := u.getFromVault(credsPath)
 	hasCredentials := credsErr == nil && len(existingCreds) > 0
 
@@ -62,7 +62,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	// Check for existing bindings
-	bindingsPath := fmt.Sprintf("%s/bindings", instance.ID)
+	bindingsPath := fmt.Sprintf("secret/%s/bindings", instance.ID)
 	existingBindings, bindingsErr := u.getFromVault(bindingsPath)
 	hasBindings := bindingsErr == nil && len(existingBindings) > 0
 
@@ -106,8 +106,16 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		}
 	}
 
-	// Prepare data for vault storage using Unix timestamps (seconds) like the main broker
+	// Get existing root data to preserve fields
+	rootPath := fmt.Sprintf("secret/%s", instance.ID)
+	existingRootData, _ := u.getFromVault(rootPath)
+	if existingRootData == nil {
+		existingRootData = make(map[string]interface{})
+	}
+
+	// Prepare data for vault storage at root path using Unix timestamps (seconds) like the main broker
 	vaultData := map[string]interface{}{
+		"instance_id":     instance.ID,
 		"service_id":      instance.ServiceID,
 		"plan_id":         instance.PlanID,
 		"deployment_name": instance.DeploymentName,
@@ -124,6 +132,8 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 			"id":   instance.PlanID,
 			"name": planName,
 		}
+		// Also add plan_name at root level for compatibility
+		vaultData["plan_name"] = planName
 	} else {
 		// Fallback to just plan_id if name not available
 		vaultData["plan"] = map[string]interface{}{
@@ -140,9 +150,100 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		vaultData["service_type"] = serviceType
 	}
 
+	// Add CF enriched metadata to root if available
+	// Use instance_name which contains the CF instance name (e.g., "rmq-3n-a")
+	if instanceName, ok := instance.Metadata["instance_name"].(string); ok && instanceName != "" {
+		vaultData["instance_name"] = instanceName
+	} else if instanceName, ok := instance.Metadata["cf_instance_name"].(string); ok && instanceName != "" {
+		vaultData["instance_name"] = instanceName
+	}
+
+	// Add organization data from CF
+	if orgGUID, ok := instance.Metadata["org_guid"].(string); ok && orgGUID != "" {
+		vaultData["organization_guid"] = orgGUID
+	}
+	if orgName, ok := instance.Metadata["org_name"].(string); ok && orgName != "" {
+		vaultData["organization_name"] = orgName
+	}
+
+	// Add space data from CF
+	if spaceGUID, ok := instance.Metadata["space_guid"].(string); ok && spaceGUID != "" {
+		vaultData["space_guid"] = spaceGUID
+	}
+	if spaceName, ok := instance.Metadata["space_name"].(string); ok && spaceName != "" {
+		vaultData["space_name"] = spaceName
+	}
+
+	// Set platform (always cloudfoundry for CF-based instances)
+	vaultData["platform"] = "cloudfoundry"
+
+	// Add requested_at timestamp if available (fallback to created time)
+	if requestedAt, ok := instance.Metadata["cf_created_at"].(string); ok && requestedAt != "" {
+		if t, err := time.Parse(time.RFC3339, requestedAt); err == nil {
+			vaultData["requested_at"] = t.Format(time.RFC3339)
+		}
+	} else if !instance.CreatedAt.IsZero() {
+		vaultData["requested_at"] = instance.CreatedAt.Format(time.RFC3339)
+	}
+
+	// Build context object for compatibility
+	contextObj := map[string]interface{}{
+		"platform":                 "cloudfoundry",
+		"instance_annotations":     map[string]interface{}{},
+		"organization_annotations": map[string]interface{}{},
+		"space_annotations":        map[string]interface{}{},
+	}
+
+	// Add CF data to context if available
+	if instanceName, ok := vaultData["instance_name"].(string); ok {
+		contextObj["instance_name"] = instanceName
+	}
+	if orgGUID, ok := vaultData["organization_guid"].(string); ok {
+		contextObj["organization_guid"] = orgGUID
+	}
+	if orgName, ok := vaultData["organization_name"].(string); ok {
+		contextObj["organization_name"] = orgName
+	}
+	if spaceGUID, ok := vaultData["space_guid"].(string); ok {
+		contextObj["space_guid"] = spaceGUID
+	}
+	if spaceName, ok := vaultData["space_name"].(string); ok {
+		contextObj["space_name"] = spaceName
+	}
+
+	// Marshal context to JSON string for compatibility
+	contextJSON, err := json.Marshal(contextObj)
+	if err == nil {
+		vaultData["context"] = string(contextJSON)
+	}
+
+	// Preserve existing fields that shouldn't be overwritten
+	preserveFields := []string{
+		"parameters",
+		"original_request",
+		"created_by",
+		"provision_params",
+		"update_params",
+	}
+
+	for _, field := range preserveFields {
+		if val, exists := existingRootData[field]; exists && val != nil {
+			vaultData[field] = val
+		}
+	}
+
+	// Store the enriched data at the root path
+	err = u.putToVault(rootPath, vaultData)
+	if err != nil {
+		u.logError("Failed to store root data for %s: %s", instance.ID, err)
+		// Continue anyway as we need to update other paths
+	} else {
+		u.logDebug("Stored enriched data at root path for instance %s", instance.ID)
+	}
+
 	// Store manifest separately if present
 	if instance.Manifest != "" {
-		manifestPath := fmt.Sprintf("%s/manifest", instance.ID)
+		manifestPath := fmt.Sprintf("secret/%s/manifest", instance.ID)
 		manifestData := map[string]interface{}{
 			"manifest":      instance.Manifest,
 			"updated_at":    time.Now().Unix(), // Use Unix timestamp
@@ -161,7 +262,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 
 	// Store metadata if present
 	if len(instance.Metadata) > 0 {
-		metadataPath := fmt.Sprintf("%s/metadata", instance.ID)
+		metadataPath := fmt.Sprintf("secret/%s/metadata", instance.ID)
 
 		// Get existing metadata to preserve history
 		existingMeta, err := u.getFromVault(metadataPath)
@@ -189,7 +290,7 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	// Update the main instance data in the index
-	err := u.updateIndex(instance.ID, vaultData)
+	err = u.updateIndex(instance.ID, vaultData)
 	if err != nil {
 		return fmt.Errorf("failed to update index for %s: %w", instance.ID, err)
 	}
@@ -216,7 +317,7 @@ func (u *vaultUpdater) checkBindingHealth(instanceID string) ([]BindingInfo, []s
 	u.logDebug("Checking binding health for instance %s", instanceID)
 
 	// Get all bindings for this instance
-	bindingsPath := fmt.Sprintf("%s/bindings", instanceID)
+	bindingsPath := fmt.Sprintf("secret/%s/bindings", instanceID)
 	bindingsData, err := u.getFromVault(bindingsPath)
 	if err != nil {
 		u.logDebug("No bindings found for instance %s: %s", instanceID, err)
@@ -234,7 +335,7 @@ func (u *vaultUpdater) checkBindingHealth(instanceID string) ([]BindingInfo, []s
 		}
 
 		// Check if binding has complete credential data
-		credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+		credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
 		credentials, err := u.getFromVault(credentialsPath)
 		if err != nil || len(credentials) == 0 {
 			u.logWarning("Binding %s for instance %s missing credentials", bindingID, instanceID)
@@ -313,14 +414,14 @@ func (u *vaultUpdater) StoreBindingCredentials(instanceID, bindingID string, cre
 	}
 
 	// Store credentials at the standard path
-	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
 	err := u.putToVault(credentialsPath, credentialsMap)
 	if err != nil {
 		return fmt.Errorf("failed to store binding credentials: %w", err)
 	}
 
 	// Store binding metadata
-	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
 
 	// Get existing metadata to preserve history
 	existingMetadata, _ := u.getFromVault(metadataPath)
@@ -357,7 +458,7 @@ func (u *vaultUpdater) StoreBindingCredentials(instanceID, bindingID string, cre
 
 // GetBindingCredentials retrieves binding credentials from vault
 func (u *vaultUpdater) GetBindingCredentials(instanceID, bindingID string) (map[string]interface{}, error) {
-	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
 	credentials, err := u.getFromVault(credentialsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
@@ -367,7 +468,7 @@ func (u *vaultUpdater) GetBindingCredentials(instanceID, bindingID string) (map[
 
 // GetBindingMetadata retrieves binding metadata from vault
 func (u *vaultUpdater) GetBindingMetadata(instanceID, bindingID string) (map[string]interface{}, error) {
-	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
 	metadata, err := u.getFromVault(metadataPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get binding metadata: %w", err)
@@ -377,7 +478,7 @@ func (u *vaultUpdater) GetBindingMetadata(instanceID, bindingID string) (map[str
 
 // updateBindingsIndex maintains an index of all bindings for an instance
 func (u *vaultUpdater) updateBindingsIndex(instanceID, bindingID string, metadata map[string]interface{}) error {
-	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
+	indexPath := fmt.Sprintf("secret/%s/bindings/index", instanceID)
 
 	// Get existing index
 	existingIndex, err := u.getFromVault(indexPath)
@@ -418,13 +519,13 @@ func (u *vaultUpdater) RemoveBinding(instanceID, bindingID string) error {
 	u.logInfo("Removing binding %s for instance %s", bindingID, instanceID)
 
 	// Remove credentials
-	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	credentialsPath := fmt.Sprintf("secret/%s/bindings/%s/credentials", instanceID, bindingID)
 	if err := u.deleteFromVault(credentialsPath); err != nil {
 		u.logWarning("Failed to delete binding credentials: %s", err)
 	}
 
 	// Archive metadata instead of deleting for audit purposes
-	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
 	metadata, err := u.getFromVault(metadataPath)
 	if err == nil {
 		metadata["deleted_at"] = time.Now().Format(time.RFC3339)
@@ -435,7 +536,7 @@ func (u *vaultUpdater) RemoveBinding(instanceID, bindingID string) error {
 	}
 
 	// Update index to mark as deleted
-	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
+	indexPath := fmt.Sprintf("secret/%s/bindings/index", instanceID)
 	existingIndex, err := u.getFromVault(indexPath)
 	if err == nil {
 		if bindingEntry, exists := existingIndex[bindingID]; exists {
@@ -464,7 +565,7 @@ func (u *vaultUpdater) deleteFromVault(path string) error {
 
 // ListInstanceBindings returns all bindings for an instance
 func (u *vaultUpdater) ListInstanceBindings(instanceID string) (map[string]interface{}, error) {
-	indexPath := fmt.Sprintf("%s/bindings/index", instanceID)
+	indexPath := fmt.Sprintf("secret/%s/bindings/index", instanceID)
 	bindings, err := u.getFromVault(indexPath)
 	if err != nil {
 		// No bindings found is not an error
@@ -618,7 +719,7 @@ func (u *vaultUpdater) RepairInstanceBindings(instanceID string, broker BrokerIn
 
 // recordReconstructionFailure records when a binding reconstruction fails
 func (u *vaultUpdater) recordReconstructionFailure(instanceID, bindingID string, err error) {
-	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+	metadataPath := fmt.Sprintf("secret/%s/bindings/%s/metadata", instanceID, bindingID)
 
 	// Get existing metadata
 	metadata, getErr := u.getFromVault(metadataPath)

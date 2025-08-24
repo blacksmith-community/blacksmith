@@ -122,6 +122,19 @@ func (d *mockDirector) EnableResurrection(deployment string, enabled bool) error
 	return errors.New("not implemented")
 }
 
+// New task methods added for Tasks feature
+func (d *mockDirector) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (d *mockDirector) GetAllTasks(limit int) ([]bosh.Task, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (d *mockDirector) CancelTask(taskID int) error {
+	return errors.New("not implemented")
+}
+
 func TestBOSHScanner_ScanDeployments(t *testing.T) {
 	director := &mockDirector{
 		deployments: []bosh.Deployment{
