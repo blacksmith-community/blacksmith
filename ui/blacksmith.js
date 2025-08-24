@@ -1546,7 +1546,9 @@
 
     // Create service id to name mapping from catalog
     const serviceIdToName = {};
-    if (window.plansData && window.plansData.services) {
+    const hasCatalog = window.plansData && window.plansData.services && window.plansData.services.length > 0;
+    
+    if (hasCatalog) {
       window.plansData.services.forEach(service => {
         if (service && service.id && service.name) {
           serviceIdToName[service.id] = service.name;
@@ -1560,14 +1562,16 @@
 
     instancesList.forEach(([id, details]) => {
       if (details.service_id) {
-        // Use service name for filtering, fallback to service_id if not found
-        const serviceName = serviceIdToName[details.service_id] || details.service_id;
-        services.add(serviceName);
-        if (!plansPerService[serviceName]) {
-          plansPerService[serviceName] = new Set();
-        }
-        if (details.plan && details.plan.name) {
-          plansPerService[serviceName].add(details.plan.name);
+        // Only add services that have a proper name mapping from the catalog
+        const serviceName = serviceIdToName[details.service_id];
+        if (serviceName) {
+          services.add(serviceName);
+          if (!plansPerService[serviceName]) {
+            plansPerService[serviceName] = new Set();
+          }
+          if (details.plan && details.plan.name) {
+            plansPerService[serviceName].add(details.plan.name);
+          }
         }
       }
     });
@@ -1576,8 +1580,12 @@
       `<option value="${s}">${s}</option>`
     ).join('');
 
+    // Only show filter if we have catalog data and services
+    const showFilter = hasCatalog && services.size > 0;
+    
     const filterSection = `
       <div class="services-filter-section">
+        ${showFilter ? `
         <div class="filter-row">
           <label for="service-filter">Service:</label>
           <select id="service-filter" class="filter-select">
@@ -1590,7 +1598,11 @@
           <select id="plan-filter" class="filter-select" disabled>
             <option value="">All Plans</option>
           </select>
-        </div>
+        </div>` : `
+        <div class="filter-row">
+          <label>Service Filter:</label>
+          <span style="color: #666; font-style: italic;">Catalog data not available</span>
+        </div>`}
         <div class="filter-buttons">
           <button id="refresh-services" class="copy-deployment-names-btn" title="Refresh Service Instances">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
@@ -1600,7 +1612,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             <span>Deployments</span>
           </button>
-          <button id="clear-filters" class="clear-filters-btn">Clear</button>
+          ${showFilter ? '<button id="clear-filters" class="clear-filters-btn">Clear</button>' : ''}
         </div>
         <div class="filter-status">
           <span id="filter-count">Showing ${instancesList.length} of ${instancesList.length} instances</span>
@@ -1629,15 +1641,17 @@
 
         const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
         
-        // Use service name for display and data attribute, fallback to service_id if not found
-        const serviceName = serviceIdToName[details.service_id] || details.service_id;
+        // Use service name for display and data attribute
+        // Only use mapped service names for filtering, show service_id for display if no mapping
+        const serviceName = serviceIdToName[details.service_id] || '';
+        const displayServiceName = serviceName || details.service_id;
 
         return `
             <div class="service-item ${isDeleting ? 'deleting' : ''}" data-instance-id="${id}" data-service="${serviceName}" data-plan="${details.plan?.name || ''}">
               <div class="service-id">${id}</div>
               ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
               <div class="service-meta">
-                ${serviceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
+                ${displayServiceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
               </div>
               ${deletionStatusHtml}
               ${vmStatusHtml}
@@ -8378,13 +8392,15 @@
 
           instancesList.forEach(([id, details]) => {
             if (details.service_id) {
-              // Use service name for filtering, fallback to service_id if not found
-              const serviceName = serviceIdToName[details.service_id] || details.service_id;
-              if (!plansPerService[serviceName]) {
-                plansPerService[serviceName] = new Set();
-              }
-              if (details.plan && details.plan.name) {
-                plansPerService[serviceName].add(details.plan.name);
+              // Only use properly mapped service names for filtering
+              const serviceName = serviceIdToName[details.service_id];
+              if (serviceName) {
+                if (!plansPerService[serviceName]) {
+                  plansPerService[serviceName] = new Set();
+                }
+                if (details.plan && details.plan.name) {
+                  plansPerService[serviceName].add(details.plan.name);
+                }
               }
             }
           });
@@ -13665,9 +13681,13 @@
       const host = window.location.host;
 
       if (context.deploymentType === 'blacksmith') {
-        // For blacksmith VMs, we need a different endpoint structure
-        // The backend expects the deployment to be "blacksmith"
-        return `${protocol}//${host}/b/blacksmith/ssh/stream`;
+        // For blacksmith VMs, we need to pass the specific instance and index
+        // Parse instanceId (e.g., "blacksmith/1" -> instance="blacksmith", index=1)
+        const instanceParts = context.instanceId.split('/');
+        const instanceName = instanceParts[0] || 'blacksmith';
+        const instanceIndex = instanceParts.length > 1 ? instanceParts[1] : '0';
+        
+        return `${protocol}//${host}/b/blacksmith/ssh/stream?instance=${encodeURIComponent(instanceName)}&index=${encodeURIComponent(instanceIndex)}`;
       } else {
         // For service instances
         return `${protocol}//${host}/b/${context.deploymentName}/ssh/stream`;

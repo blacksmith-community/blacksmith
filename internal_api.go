@@ -2014,15 +2014,33 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Get deployment name and instance group name from blacksmith manifest
-		deploymentName, instanceName, err := api.getBlacksmithDeploymentInfoFromManifest()
+		// Get deployment name from blacksmith manifest
+		deploymentName, manifestInstanceName, err := api.getBlacksmithDeploymentInfoFromManifest()
 		if err != nil {
 			l.Error("Failed to get blacksmith deployment info from manifest: %s", err)
 			w.WriteHeader(500)
 			fmt.Fprintf(w, `{"error": "Failed to get deployment information: %s"}`, err.Error())
 			return
 		}
+
+		// Parse instance name and index from query parameters
+		instanceName := req.URL.Query().Get("instance")
+		instanceIndexStr := req.URL.Query().Get("index")
+		
+		// Use manifest instance name as fallback if not provided in query
+		if instanceName == "" {
+			instanceName = manifestInstanceName
+		}
+		
+		// Parse instance index, default to 0 if not provided or invalid
 		instanceIndex := 0
+		if instanceIndexStr != "" {
+			if parsedIndex, parseErr := strconv.Atoi(instanceIndexStr); parseErr == nil {
+				instanceIndex = parsedIndex
+			} else {
+				l.Error("Invalid instance index '%s', using default 0", instanceIndexStr)
+			}
+		}
 
 		l.Info("Establishing WebSocket SSH connection to blacksmith deployment %s/%s/%d", deploymentName, instanceName, instanceIndex)
 
