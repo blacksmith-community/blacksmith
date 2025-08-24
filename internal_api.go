@@ -2026,12 +2026,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Parse instance name and index from query parameters
 		instanceName := req.URL.Query().Get("instance")
 		instanceIndexStr := req.URL.Query().Get("index")
-		
+
 		// Use manifest instance name as fallback if not provided in query
 		if instanceName == "" {
 			instanceName = manifestInstanceName
 		}
-		
+
 		// Parse instance index, default to 0 if not provided or invalid
 		instanceIndex := 0
 		if instanceIndexStr != "" {

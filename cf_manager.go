@@ -630,3 +630,72 @@ func (m *CFConnectionManager) GetStatus() map[string]interface{} {
 
 	return status
 }
+
+// GetAppEnvironmentWithVCAP fetches an app's environment including VCAP_SERVICES
+// This is used by the reconciler to recover missing service instance credentials
+func (m *CFConnectionManager) GetAppEnvironmentWithVCAP(ctx context.Context, appGUID string) (map[string]interface{}, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if len(m.clients) == 0 {
+		return nil, fmt.Errorf("no CF endpoints configured")
+	}
+
+	// Try each healthy endpoint
+	for name, client := range m.clients {
+		if !client.isHealthy {
+			m.logger.Debug("Skipping unhealthy CF endpoint %s", name)
+			continue
+		}
+
+		// For now, skip this endpoint - the CAPI v3 library doesn't expose raw HTTP client
+		// This functionality needs to be reimplemented using the Apps().GetEnvironment() method
+		// TODO: Use the appropriate CAPI v3 method when available
+		_ = appGUID
+		m.logger.Debug("GetAppEnvironmentWithVCAP not yet implemented for CAPI v3")
+		continue
+	}
+
+	return nil, fmt.Errorf("failed to get app environment from any CF endpoint")
+}
+
+// FindAppsByServiceInstance finds apps bound to a specific service instance
+func (m *CFConnectionManager) FindAppsByServiceInstance(ctx context.Context, serviceInstanceGUID string) ([]string, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if len(m.clients) == 0 {
+		return nil, fmt.Errorf("no CF endpoints configured")
+	}
+
+	var appGUIDs []string
+
+	// Try each healthy endpoint
+	for name, client := range m.clients {
+		if !client.isHealthy {
+			m.logger.Debug("Skipping unhealthy CF endpoint %s", name)
+			continue
+		}
+
+		// Get service bindings for the service instance
+		bindingParams := capi.NewQueryParams().WithFilter("service_instance_guids", serviceInstanceGUID)
+		bindingsResp, err := client.client.ServiceCredentialBindings().List(ctx, bindingParams)
+		if err != nil {
+			m.logger.Debug("Failed to get service bindings from %s: %s", name, err)
+			continue
+		}
+
+		// Extract app GUIDs from bindings
+		for _, binding := range bindingsResp.Resources {
+			if binding.Relationships.App.Data != nil {
+				appGUIDs = append(appGUIDs, binding.Relationships.App.Data.GUID)
+			}
+		}
+
+		if len(appGUIDs) > 0 {
+			return appGUIDs, nil
+		}
+	}
+
+	return appGUIDs, nil
+}

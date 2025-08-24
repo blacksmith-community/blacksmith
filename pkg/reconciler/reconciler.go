@@ -48,6 +48,14 @@ func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault int
 		BackupOnDelete:   config.BackupOnDelete,
 	}
 
+	// Create updater with CF manager if available
+	var updater Updater
+	if cfMgr, ok := cfManager.(CFManagerInterface); ok && cfMgr != nil {
+		updater = NewVaultUpdaterWithCF(vault, logger, backupConfig, cfMgr)
+	} else {
+		updater = NewVaultUpdater(vault, logger, backupConfig)
+	}
+
 	return &reconcilerManager{
 		config:       config,
 		broker:       broker,
@@ -59,7 +67,7 @@ func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault int
 		cancel:       cancel,
 		scanner:      NewBOSHScanner(boshDir, logger),
 		matcher:      NewServiceMatcher(broker, logger),
-		updater:      NewVaultUpdater(vault, logger, backupConfig),
+		updater:      updater,
 		synchronizer: NewIndexSynchronizer(vault, logger),
 		metrics:      NewMetricsCollector(),
 	}
@@ -750,6 +758,40 @@ func (r *reconcilerManager) buildInstanceFromBOSH(boshDeployment DeploymentInfo,
 	if detail.Properties != nil {
 		if taskID, ok := detail.Properties["latest_task_id"].(string); ok && taskID != "" {
 			metadata["latest_task_id"] = taskID
+		}
+	}
+
+	// For RabbitMQ services, try to get dashboard URL from credentials
+	if strings.Contains(strings.ToLower(serviceType), "rabbitmq") || strings.Contains(strings.ToLower(serviceName), "rabbitmq") {
+		r.logDebug("Detected RabbitMQ service, attempting to retrieve dashboard URL from credentials")
+
+		// Try to get credentials from vault if vault is available
+		if vaultInterface, ok := r.vault.(interface {
+			Get(path string, out interface{}) (bool, error)
+		}); ok {
+			credsPath := fmt.Sprintf("%s/credentials", instanceID)
+			var creds map[string]interface{}
+			exists, err := vaultInterface.Get(credsPath, &creds)
+			if err != nil {
+				r.logDebug("Failed to retrieve credentials for RabbitMQ instance %s: %s", instanceID, err)
+			} else if !exists {
+				r.logDebug("No credentials found for RabbitMQ instance %s", instanceID)
+			} else if apiURL, ok := creds["api_url"].(string); ok {
+				// Extract dashboard URL from API URL
+				// API URL format: https://hostname:15672/api
+				// Dashboard URL format: https://hostname:15672/
+				dashboardURL := strings.TrimSuffix(apiURL, "/api")
+				if !strings.HasSuffix(dashboardURL, "/") {
+					dashboardURL = dashboardURL + "/"
+				}
+				metadata["dashboard_url"] = dashboardURL
+				metadata["rabbitmq_dashboard_url"] = dashboardURL
+				r.logInfo("Added RabbitMQ dashboard URL for instance %s: %s", instanceID, dashboardURL)
+			} else {
+				r.logDebug("No api_url found in credentials for RabbitMQ instance %s", instanceID)
+			}
+		} else {
+			r.logDebug("Vault interface not available for retrieving RabbitMQ credentials")
 		}
 	}
 

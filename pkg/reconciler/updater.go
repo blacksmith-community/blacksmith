@@ -19,6 +19,7 @@ type vaultUpdater struct {
 	vault        interface{} // Will be replaced with actual Vault type
 	logger       Logger
 	backupConfig BackupConfig
+	cfManager    CFManagerInterface // For VCAP credential recovery
 }
 
 // NewVaultUpdater creates a new vault updater
@@ -27,6 +28,16 @@ func NewVaultUpdater(vault interface{}, logger Logger, backupConfig BackupConfig
 		vault:        vault,
 		logger:       logger,
 		backupConfig: backupConfig,
+	}
+}
+
+// NewVaultUpdaterWithCF creates a new vault updater with CF manager for VCAP recovery
+func NewVaultUpdaterWithCF(vault interface{}, logger Logger, backupConfig BackupConfig, cfManager CFManagerInterface) Updater {
+	return &vaultUpdater{
+		vault:        vault,
+		logger:       logger,
+		backupConfig: backupConfig,
+		cfManager:    cfManager,
 	}
 }
 
@@ -57,8 +68,28 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	if hasCredentials {
 		u.logDebug("Instance %s has existing credentials - preserving", instance.ID)
 	} else {
-		u.logWarning("Instance %s is missing credentials - will attempt to fetch from BOSH", instance.ID)
+		u.logWarning("Instance %s is missing credentials - will attempt recovery", instance.ID)
 		instance.Metadata["needs_credential_recovery"] = true
+
+		// Attempt VCAP recovery if CF manager is available
+		if u.cfManager != nil {
+			u.logInfo("Attempting VCAP credential recovery for instance %s", instance.ID)
+			vcapRecovery := NewCredentialVCAPRecovery(u.vault.(VaultInterface), u.cfManager, u.logger)
+			if err := vcapRecovery.RecoverCredentialsFromVCAP(ctx, instance.ID); err != nil {
+				u.logWarning("VCAP credential recovery failed for instance %s: %s", instance.ID, err)
+				instance.Metadata["vcap_recovery_attempted"] = true
+				instance.Metadata["vcap_recovery_failed"] = true
+				instance.Metadata["vcap_recovery_error"] = err.Error()
+			} else {
+				u.logInfo("Successfully recovered credentials from VCAP for instance %s", instance.ID)
+				instance.Metadata["credentials_recovered_from"] = "vcap_services"
+				instance.Metadata["vcap_recovery_attempted"] = true
+				instance.Metadata["vcap_recovery_failed"] = false
+				hasCredentials = true
+				instance.Metadata["has_credentials"] = true
+				delete(instance.Metadata, "needs_credential_recovery")
+			}
+		}
 	}
 
 	// Check for existing bindings

@@ -9204,8 +9204,10 @@
     const typeFilter = document.getElementById('task-type-filter');
     const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked');
     
+    // Save current filter values before refresh
     const taskType = typeFilter ? typeFilter.value : 'recent';
     const checkedStates = Array.from(stateCheckboxes).map(cb => cb.value);
+    const uncheckedStates = Array.from(document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
 
     try {
       let url = `/b/tasks?type=${taskType}&limit=100`;
@@ -9224,8 +9226,25 @@
       if (contentContainer) {
         contentContainer.innerHTML = formatTasks(tasks);
         
-        // Reinitialize functionality
+        // Restore filter states after refresh
         setTimeout(() => {
+          // Restore dropdown selection
+          const newTypeFilter = document.getElementById('task-type-filter');
+          if (newTypeFilter) {
+            newTypeFilter.value = taskType;
+          }
+          
+          // Restore checkbox states
+          checkedStates.forEach(state => {
+            const checkbox = document.querySelector(`#blacksmith .checkbox-group input[type="checkbox"][value="${state}"]`);
+            if (checkbox) checkbox.checked = true;
+          });
+          uncheckedStates.forEach(state => {
+            const checkbox = document.querySelector(`#blacksmith .checkbox-group input[type="checkbox"][value="${state}"]`);
+            if (checkbox) checkbox.checked = false;
+          });
+          
+          // Reinitialize functionality
           initializeSorting('tasks-table');
           attachSearchFilter('tasks-table');
           initializeTasksTab();
