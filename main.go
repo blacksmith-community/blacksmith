@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -647,7 +648,11 @@ func main() {
 				if err != nil {
 					l.Error("error grabbing vaultdb for debugging: %s", err)
 				}
-				l.Info("current vault db looks like: %v", vaultDB.Data)
+				if jsonData, err := json.Marshal(vaultDB.Data); err != nil {
+					l.Debug("current vault db looks like: %v (json marshal error: %s)", vaultDB.Data, err)
+				} else {
+					l.Debug("current vault db looks like: %s", string(jsonData))
+				}
 				if _, err := broker.serviceWithNoDeploymentCheck(); err != nil {
 					l.Error("service with no deployment check failed: %s", err)
 				}

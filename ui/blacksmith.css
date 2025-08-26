@@ -130,6 +130,145 @@ table {
   border-spacing: 0;
 }
 
+/* Universal Table Styling - Theme-based consistent table appearance */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+  table-layout: auto;
+}
+
+table tbody tr {
+  /* Use default font size */
+}
+
+table thead {
+  background-color: var(--bg-table-header);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+table thead th {
+  padding: .25rem;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-table);
+  background-color: var(--bg-table-header);
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  margin: 0;
+  /*
+  z-index: 10;
+  top: 0;
+  position: sticky;
+   border-bottom: 1px solid var(--border-primary);
+   */
+}
+
+table thead th:hover {
+  background-color: var(--bg-table-hover);
+}
+
+/* Sort indicators for table headers */
+table thead th.sortable::after {
+  content: '↕';
+  opacity: 0.3;
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+table thead th.sort-asc::after {
+  content: '↑';
+  opacity: 1;
+  color: var(--text-link);
+}
+
+table thead th.sort-desc::after {
+  content: '↓';
+  opacity: 1;
+  color: var(--text-link);
+}
+
+table tbody td {
+  padding: .25rem;
+  border: 1px solid var(--border-table-row);
+  margin: 0;
+  text-align: left;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+  white-space: normal;
+  /*
+  max-width: 200px;
+  border: 1px solid var(--border-primary);
+  */
+}
+
+/* Alternating row colors */
+table tbody tr:nth-child(even) {
+  background-color: var(--bg-table-even);
+}
+
+table tbody tr:nth-child(odd) {
+  background-color: var(--bg-table-odd);
+}
+
+/* Hover effect */
+table tbody tr:hover {
+  background-color: var(--bg-table-hover);
+  /*
+   background: var(--bg-secondary);
+   */
+}
+
+/* Remove display: block from tbody to fix column alignment */
+table tbody {
+  /* display: block; - REMOVED: breaks table column alignment */
+  /* overflow-y: auto; - REMOVED: handle scrolling via container */
+}
+
+/* Table container with scrolling */
+.table-container {
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 20px);
+  margin: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  margin-bottom: .5rem;
+}
+
+.table-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border-table);
+}
+
+.table-wrapper table {
+  margin-bottom: 0;
+}
+
+.table-wrapper::-webkit-scrollbar {
+  width: 8px;
+}
+
+.table-wrapper::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.table-wrapper::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 4px;
+}
+
+.table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: var(--border-secondary);
+}
+
 /* Instance Logs Styles */
 .instance-logs-wrapper {
   display: flex;
@@ -210,36 +349,58 @@ table {
   color: var(--text-primary);
 }
 
-.log-file-dropdown {
+/* Universal select dropdown styles */
+select {
   padding: 8px 12px;
-  font-size: 13px;
-  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 14px;
+  font-family: system-ui, -apple-system, sans-serif;
   border: 1px solid var(--border-primary);
   border-radius: 4px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   color: var(--text-primary);
   cursor: pointer;
+  transition: all 0.2s;
+  appearance: none;
+  background-image: url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12"%3e%3cpath fill="%23999" d="M10.293 3.293L6 7.586 1.707 3.293A1 1 0 00.293 4.707l5 5a1 1 0 001.414 0l5-5a1 1 0 10-1.414-1.414z"/%3e%3c/svg%3e');
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 35px;
+}
+
+select:hover:not(:disabled) {
+  border-color: var(--border-active);
+  background-color: var(--bg-hover);
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
+}
+
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: var(--bg-tertiary);
+}
+
+select option {
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+/* Special overrides for log file dropdown - needs monospace font and wider width */
+.log-file-dropdown {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 13px;
   min-width: 400px;
   max-width: 700px;
   text-overflow: ellipsis;
 }
 
 .log-file-dropdown option {
-  padding: 4px 8px;
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.log-file-dropdown:hover {
-  border-color: var(--border-active);
-  background: var(--bg-hover);
-}
-
-.log-file-dropdown:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
 }
 
 .log-file-display {
@@ -273,7 +434,6 @@ table {
 
 .job-logs-single pre {
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -297,6 +457,8 @@ table {
   --bg-footer: #f5f5f5;
   --bg-table-header: #f8f9fa;
   --bg-table-hover: #f8f9fa;
+  --bg-table-even: #fafafa;
+  --bg-table-odd: #ffffff;
   --bg-sidebar: #f9f9f9;
 
   --text-primary: #333;
@@ -337,6 +499,8 @@ table {
   --bg-footer: #252525;
   --bg-table-header: #000000;
   --bg-table-hover: #1a1a1a;
+  --bg-table-even: #1a1a1a;
+  --bg-table-odd: #000000;
   --bg-sidebar: #252525;
 
   --text-primary: #e0e0e0;
@@ -376,6 +540,41 @@ body {
   display: flex;
   flex-direction: column;
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Base input and textarea styles */
+input,
+textarea {
+  background: white;
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.9em;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+[data-theme="dark"] input,
+[data-theme="dark"] textarea {
+  background: black;
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
+}
+
+[data-theme="dark"] input:focus,
+[data-theme="dark"] textarea:focus {
+  box-shadow: 0 0 0 2px rgba(102, 178, 255, 0.1);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
 }
 
 .wrap {
@@ -463,6 +662,8 @@ header span#ident {
   margin-top: 40px;
   overflow: hidden;
   box-shadow: var(--shadow-secondary);
+  gap: 1px;
+  /* Visual separator between tabs */
 }
 
 .tab-button {
@@ -485,7 +686,7 @@ header span#ident {
 }
 
 .tab-button.active {
-  background-color: var(--bg-secondary);
+  background-color: white;
   border-bottom: 3px solid var(--border-active);
   color: var(--text-link);
   font-weight: 600;
@@ -499,7 +700,62 @@ header span#ident {
   right: 0;
   bottom: -1px;
   height: 1px;
+  background-color: white;
+}
+
+/* Dark theme support for main tabs */
+[data-theme="dark"] .tab-button.active {
   background-color: var(--bg-secondary);
+}
+
+[data-theme="dark"] .tab-button.active::after {
+  background-color: var(--bg-secondary);
+}
+
+/* Dark theme support for detail tabs */
+[data-theme="dark"] #blacksmith .detail-tabs,
+[data-theme="dark"] #services .detail-tabs {
+  background: var(--bg-table-header);
+  border-color: var(--border-table);
+}
+
+[data-theme="dark"] #blacksmith .detail-tab,
+[data-theme="dark"] #services .detail-tab {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] #blacksmith .detail-tab:hover,
+[data-theme="dark"] #services .detail-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] #blacksmith .detail-tab.active,
+[data-theme="dark"] #services .detail-tab.active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
+}
+
+/* Dark theme support for operation tabs */
+[data-theme="dark"] .operation-tabs {
+  background: var(--bg-table-header);
+  border-color: var(--border-table);
+}
+
+[data-theme="dark"] .operation-tab {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .operation-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .operation-tab.active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
 }
 
 /* Tab content styles */
@@ -606,12 +862,12 @@ thead th {
   text-align: left;
   font-size: 10pt;
   border-bottom: 1px dashed var(--border-tertiary);
-  padding: 4px;
+  padding: .25rem;
   color: var(--text-primary);
 }
 
 td {
-  padding: 4px;
+  padding: .25rem;
   color: var(--text-primary);
 }
 
@@ -726,41 +982,8 @@ td a {
   font-size: 12pt;
 }
 
-/* Plan details table - similar to events table */
-.plan-details-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10pt;
-  margin-bottom: 2rem;
-}
-
-.plan-details-table thead {
-  background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.plan-details-table th {
-  padding: 10px;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-table);
-  background-color: var(--bg-table-header);
-  color: var(--text-primary);
-}
-
-.plan-details-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-table-row);
-  color: var(--text-primary);
-}
-
-.plan-details-table tbody tr:hover {
-  background-color: var(--bg-table-hover);
-}
-
-.plan-details-table .info-key {
+/* Table-specific styles that need to remain for content-specific formatting */
+.info-key {
   font-weight: 500;
   color: var(--text-secondary);
   width: auto;
@@ -771,47 +994,12 @@ td a {
   border-right: 1px solid var(--border-table-row);
 }
 
-.plan-details-table .info-value {
+.info-value {
   padding: 0.5rem 1rem;
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-table-row);
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 0.875rem;
   width: 100%;
-}
-
-/* Plan VMs table - similar to events table */
-.plan-vms-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10pt;
-  margin-bottom: 2rem;
-}
-
-.plan-vms-table thead {
-  background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.plan-vms-table th {
-  padding: 10px;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-table);
-  background-color: var(--bg-table-header);
-  color: var(--text-primary);
-}
-
-.plan-vms-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-table-row);
-  color: var(--text-primary);
-}
-
-.plan-vms-table tbody tr:hover {
-  background-color: var(--bg-table-hover);
 }
 
 /* Service description in plan details */
@@ -924,35 +1112,10 @@ td a {
   margin-bottom: 1rem;
 }
 
+/* Service filter specific overrides */
 #services .filter-select {
-  padding: 8px 12px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background-color: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-family: sans-serif;
   flex: 1;
   min-width: 200px;
-}
-
-#services .filter-select:hover:not(:disabled) {
-  border-color: var(--border-active);
-  background-color: var(--bg-hover);
-}
-
-#services .filter-select:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
-}
-
-#services .filter-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background-color: var(--bg-tertiary);
 }
 
 #services .clear-filters-btn {
@@ -1121,56 +1284,14 @@ td a {
   height: 14px;
 }
 
-/* Service info table with key-value format */
+/* Service info table specific additions to universal styling */
 .service-info-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 1rem;
   background: var(--bg-secondary);
   border-radius: 4px;
   overflow: hidden;
   box-shadow: var(--shadow-secondary);
   max-height: calc(100vh - 200px);
   overflow-y: auto;
-}
-
-.service-info-table th {
-  background: var(--bg-table-header);
-  padding: 0.75rem 1rem;
-  text-align: left;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-primary);
-}
-
-.service-info-table .info-key {
-  font-weight: 500;
-  color: var(--text-secondary);
-  width: auto;
-  white-space: nowrap;
-  padding: 0.5rem 1rem;
-  background: var(--bg-table-header);
-  border-bottom: 1px solid var(--border-primary);
-  border-right: 1px solid var(--border-primary);
-}
-
-.service-info-table .info-value {
-  padding: 0.5rem 1rem;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-primary);
-  font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 10pt;
-  width: 100%;
-}
-
-.service-info-table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.service-info-table tbody tr:hover {
-  background: var(--bg-table-hover);
 }
 
 /* Horizontal table layout for service instances */
@@ -1204,33 +1325,18 @@ td a {
 
 .service-info-table-horizontal {
   width: 100%;
-  min-width: 800px; /* Ensure minimum width to prevent column compression */
-  table-layout: auto;
-  /* Font sizes set on individual elements */
+  min-width: 800px;
 }
 
-.service-info-table-horizontal .info-key-horizontal {
-  background: var(--bg-table-header);
-  padding: 0.4rem 0.6rem;
-  text-align: left;
-  font-weight: 600;
-  font-size: 10px !important;
+.info-key-horizontal {
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-primary);
-  border-right: 1px solid var(--border-primary);
   white-space: nowrap;
   position: relative;
 }
 
-.service-info-table-horizontal .info-value-horizontal {
-  padding: 0.4rem 0.6rem;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-primary);
-  border-right: 1px solid var(--border-primary);
+.info-value-horizontal {
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 11px !important;
   white-space: nowrap;
 }
 
@@ -1260,53 +1366,57 @@ td a {
   height: 12px;
 }
 
-/* Keep old table styles for backward compatibility */
-.service-detail-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 1rem;
-}
-
-.service-detail-table th {
-  padding: 8px;
-  text-align: left;
+.info-section-header {
+  padding: 10px !important;
+  background: var(--bg-table-header);
+  color: var(--text-primary);
   font-weight: 600;
-  border-bottom: 2px solid #dee2e6;
-  background-color: #f8f9fa;
+  text-align: center;
+  border-top: 1px solid var(--border-table);
+  border-bottom: 1px solid var(--border-table);
 }
 
-.service-detail-table td {
-  padding: 8px;
-  border-bottom: 1px solid #e9ecef;
-  color: #495057;
+[data-theme="dark"] .info-section-header {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }
+
 
 #services .detail-tabs {
   display: flex;
-  background-color: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-primary);
+  gap: 2px;
+  background: var(--bg-table-header);
+  padding: 4px;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid var(--border-table);
+  border-bottom: none;
+  overflow-x: auto;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 #services .detail-tab {
-  padding: 0.8em 1.5em;
-  background: none;
+  background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
   cursor: pointer;
-  font-size: 11pt;
   color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 #services .detail-tab:hover {
-  background-color: var(--bg-hover);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 #services .detail-tab.active {
-  color: var(--text-link);
-  border-bottom-color: var(--border-active);
-  font-weight: 600;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
 }
 
 #services .detail-content {
@@ -1320,6 +1430,10 @@ td a {
   min-height: 0;
   position: relative;
   height: 100%;
+}
+
+#services .detail-content div {
+  padding: 8px;
 }
 
 #services .detail-content pre {
@@ -1365,38 +1479,8 @@ td a {
   margin-top: 0;
 }
 
-.credentials-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10pt;
-}
-
-.credentials-table thead {
-  background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.credentials-table th {
-  padding: 10px;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-table);
-  background-color: var(--bg-table-header);
-  color: var(--text-primary);
-}
-
-.credentials-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-table-row);
-}
-
-.credentials-table tbody tr:hover {
-  background-color: var(--bg-table-hover);
-}
-
-.credentials-table .cred-key {
+/* Credentials table content-specific styling */
+.cred-key {
   font-weight: 500;
   color: var(--text-secondary);
   width: auto;
@@ -1405,24 +1489,22 @@ td a {
   white-space: nowrap;
 }
 
-.credentials-table .cred-value {
+.cred-value {
   color: var(--text-primary);
   font-family: monospace;
-  font-size: 9pt;
   width: 100%;
 }
 
-.credentials-table .cred-value code {
+.cred-value code {
   background-color: transparent;
   padding: 0;
   border-radius: 0;
   font-family: monospace;
-  font-size: 9pt;
   color: var(--text-link);
   word-break: break-all;
 }
 
-.credentials-table .cred-value em {
+.cred-value em {
   color: var(--text-secondary);
   font-style: italic;
 }
@@ -1446,38 +1528,8 @@ td a {
   overflow-x: auto;
 }
 
-.config-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10pt;
-}
-
-.config-table thead {
-  background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.config-table th {
-  padding: 10px;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-table);
-  background-color: var(--bg-table-header);
-  color: var(--text-primary);
-}
-
-.config-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-table-row);
-}
-
-.config-table tbody tr:hover {
-  background-color: var(--bg-table-hover);
-}
-
-.config-table .config-key {
+/* Config table content-specific styling */
+.config-key {
   font-weight: 500;
   color: var(--text-secondary);
   width: auto;
@@ -1485,28 +1537,25 @@ td a {
   max-width: 300px;
   white-space: nowrap;
   font-family: monospace;
-  font-size: 9pt;
 }
 
-.config-table .config-value {
+.config-value {
   color: var(--text-primary);
   font-family: monospace;
-  font-size: 9pt;
   width: 100%;
 }
 
-.config-table .config-value code {
+.config-value code {
   background-color: transparent;
   padding: 0;
   border-radius: 0;
   font-family: monospace;
-  font-size: 9pt;
   color: var(--text-link);
   word-break: break-all;
   white-space: pre-wrap;
 }
 
-.config-table .config-value em {
+.config-value em {
   color: var(--text-secondary);
   font-style: italic;
 }
@@ -1526,36 +1575,45 @@ td a {
 
 #blacksmith .detail-tabs {
   display: flex;
-  background-color: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-primary);
+  gap: 2px;
+  background: var(--bg-table-header);
+  padding: 4px;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid var(--border-table);
+  border-bottom: none;
+  overflow-x: auto;
+  flex-wrap: wrap;
   flex-shrink: 0;
 }
 
 #blacksmith .detail-tab {
-  padding: 0.8em 1.5em;
-  background: none;
+  background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
   cursor: pointer;
-  font-size: 11pt;
   color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 #blacksmith .detail-tab:hover {
-  background-color: var(--bg-hover);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 #blacksmith .detail-tab.active {
-  color: var(--text-link);
-  border-bottom-color: var(--border-active);
-  font-weight: 600;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
 }
 
 #blacksmith .detail-content {
   flex: 1;
-  padding: 1em 2em;
+  padding: .5rem .5em;
+  margin: 0;
   overflow-y: auto;
   overflow-x: auto;
   background-color: var(--bg-secondary);
@@ -1650,49 +1708,6 @@ td a {
   text-align: center;
 }
 
-/* Events table styles */
-.events-table-container {
-  max-height: calc(100vh - 200px);
-  min-height: 200px;
-  overflow-y: auto;
-  overflow-x: auto;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  margin-top: 10px;
-}
-
-.events-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10pt;
-}
-
-.events-table thead {
-  background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.events-table th {
-  padding: 10px;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-table);
-  background-color: var(--bg-table-header);
-  color: var(--text-primary);
-}
-
-.events-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-table-row);
-  color: var(--text-primary);
-}
-
-.events-table tbody tr:hover {
-  background-color: var(--bg-table-hover);
-}
 
 .event-timestamp {
   font-family: monospace;
@@ -1726,11 +1741,12 @@ td a {
   font-size: 9pt;
 }
 
-.events-table tr.error-row {
+/* Error row styling - content-specific */
+.error-row {
   background-color: rgba(255, 0, 0, 0.05);
 }
 
-.events-table tr.error-row:hover {
+.error-row:hover {
   background-color: rgba(255, 0, 0, 0.1);
 }
 
@@ -1739,38 +1755,6 @@ td a {
   max-width: 600px;
 }
 
-/* VMs table styles - similar to events table */
-.vms-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10pt;
-}
-
-.vms-table thead {
-  background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.vms-table th {
-  padding: 10px;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-table);
-  background-color: var(--bg-table-header);
-  color: var(--text-primary);
-}
-
-.vms-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-table-row);
-  color: var(--text-primary);
-}
-
-.vms-table tbody tr:hover {
-  background-color: var(--bg-table-hover);
-}
 
 .vm-instance {
   font-weight: 500;
@@ -1828,67 +1812,27 @@ td a {
 }
 
 /* Table containers */
-.log-table-container,
-.vms-table-container {
+.log-table-container {
   flex: 1;
   overflow-y: auto;
   overflow-x: auto;
   padding-bottom: 2em;
 }
 
-/* Deployment Log table styles */
-.deployment-log-table-container,
-.debug-log-table-container {
-  max-height: calc(100vh - 200px);
-  min-height: 200px;
+/* Modal specific log table container height - fill parent flex container */
+#task-details-modal .manifest-tab-pane .log-table-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: calc(100% - 60px);
+  /* Account for table-controls-container height */
   overflow-y: auto;
   overflow-x: auto;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  margin-top: 10px;
+  padding-bottom: 1rem;
 }
 
-.deployment-log-table,
-.debug-log-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 10pt;
-}
-
-.deployment-log-table thead,
-.debug-log-table thead {
-  background-color: var(--bg-table-header);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}
-
-.deployment-log-table th,
-.debug-log-table th {
-  padding: 10px;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-table);
-  background-color: var(--bg-table-header);
-  color: var(--text-primary);
-}
-
-.deployment-log-table td,
-.debug-log-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-table-row);
-  color: var(--text-primary);
-}
-
-.deployment-log-table tbody tr:hover,
-.debug-log-table tbody tr:hover {
-  background-color: var(--bg-table-hover);
-}
 
 .log-timestamp {
   font-family: monospace;
-  font-size: 9pt;
   white-space: nowrap;
   color: var(--text-secondary);
 }
@@ -2025,7 +1969,7 @@ td a {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 15px;
+  margin-bottom: 8px;
   flex-wrap: wrap;
 }
 
@@ -2043,27 +1987,6 @@ td a {
   border-bottom: none;
 }
 
-.logs-controls-row .log-file-selector select {
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.logs-controls-row .log-file-selector select:hover {
-  border-color: var(--border-active);
-  background: var(--bg-hover);
-}
-
-.logs-controls-row .log-file-selector select:focus {
-  outline: none;
-  border-color: var(--text-link);
-  box-shadow: 0 0 0 2px var(--shadow-focus);
-}
 
 .copy-btn-logs,
 .refresh-btn-logs {
@@ -2122,6 +2045,7 @@ td a {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -2139,8 +2063,6 @@ td a {
   border-radius: 4px;
   overflow-x: auto;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 0.9em;
-  line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
   flex: 1;
@@ -2225,91 +2147,8 @@ td a {
   overflow: auto;
 }
 
-/* Adjust VMs table for copy buttons */
-.vms-table .vm-ips .copy-wrapper,
-.vms-table .vm-cid .copy-wrapper {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-}
 
-.vms-table .copy-btn-inline {
-  padding: 0.125rem;
-  min-width: 20px;
-  height: 20px;
-}
 
-.vms-table .copy-btn-inline svg {
-  width: 12px;
-  height: 12px;
-}
-
-/* Logs table styles */
-.logs-table-container {
-  margin-top: 10px;
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: auto;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  max-height: calc(100% - 20px);
-  min-height: 200px;
-  margin-bottom: 10px;
-}
-
-.logs-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 0.85em;
-}
-
-.logs-table thead {
-  position: sticky;
-  top: 0;
-  background: var(--bg-tertiary);
-  z-index: 1;
-  border-bottom: 2px solid var(--border-primary);
-}
-
-.logs-table th {
-  padding: 10px 12px;
-  text-align: left;
-  font-weight: 600;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.log-col-date {
-  width: 100px;
-}
-
-.log-col-time {
-  width: 110px;
-}
-
-.log-col-level {
-  width: 80px;
-}
-
-.log-col-message {
-  width: auto;
-}
-
-.logs-table tbody tr {
-  border-bottom: 1px solid var(--border-secondary);
-  transition: background-color 0.1s ease;
-}
-
-.logs-table tbody tr:hover {
-  background: var(--bg-hover);
-}
-
-.logs-table td {
-  padding: 8px 12px;
-  vertical-align: top;
-}
 
 .log-date,
 .log-time {
@@ -2444,9 +2283,6 @@ td a {
 }
 
 /* Dark theme adjustments for logs table */
-[data-theme="dark"] .logs-table {
-  background: var(--bg-primary);
-}
 
 [data-theme="dark"] .log-context {
   background: #1a2332;
@@ -2590,11 +2426,8 @@ th[style*="cursor: pointer"]:hover {
 .filter-input {
   border: none;
   background: transparent;
-  outline: none;
   width: 180px;
   font-size: 14px;
-  font-family: inherit;
-  color: #1f2937;
 }
 
 .filter-input::placeholder {
@@ -2619,13 +2452,6 @@ th[style*="cursor: pointer"]:hover {
   box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.1);
 }
 
-[data-theme="dark"] .filter-input {
-  color: #e5e7eb;
-}
-
-[data-theme="dark"] .filter-input::placeholder {
-  color: #6b7280;
-}
 
 [data-theme="dark"] .filter-count {
   color: #9ca3af;
@@ -2644,29 +2470,29 @@ th[style*="cursor: pointer"]:hover {
     width: 100%;
     margin: 10px 0;
   }
-  
+
   .filter-input {
     width: 100%;
   }
-  
+
   .logs-controls-row {
     flex-direction: column;
     align-items: stretch;
-    gap: 10px;
+    gap: 6px;
   }
-  
+
   .logs-controls-row .search-filter-container {
     width: 100%;
   }
-  
+
   .logs-controls-row .log-file-selector {
     width: 100%;
   }
-  
+
   .logs-controls-row .log-file-selector select {
     width: 100%;
   }
-  
+
   .copy-btn-logs,
   .refresh-btn-logs {
     width: 100%;
@@ -2677,38 +2503,34 @@ th[style*="cursor: pointer"]:hover {
 /* Table search filter styles */
 .table-search-container {
   position: relative;
-  margin-bottom: 1rem;
+  margin: 0px;
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
+.table-search-icon {
+  position: absolute;
+  left: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  opacity: 0.6;
+  z-index: 1;
+  pointer-events: none;
+}
+
 .table-search-input {
   flex: 1;
   max-width: 300px;
-  padding: 0.5rem 2.5rem 0.5rem 0.75rem;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
+  padding: .25rem 2rem .25rem 1.5rem;
   font-size: 0.875rem;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.table-search-input:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px rgba(79, 172, 254, 0.1);
-}
-
-.table-search-input::placeholder {
-  color: var(--text-secondary);
-  opacity: 0.6;
+  position: relative;
 }
 
 .clear-search-btn {
   position: absolute;
-  right: calc(100% - 300px + 8px);
+  right: 0.5rem;
   top: 50%;
   transform: translateY(-50%);
   background: none;
@@ -2718,6 +2540,7 @@ th[style*="cursor: pointer"]:hover {
   color: var(--text-secondary);
   display: none;
   transition: color 0.2s;
+  z-index: 1;
 }
 
 .clear-search-btn:hover {
@@ -2741,15 +2564,6 @@ th[style*="cursor: pointer"]:hover {
 }
 
 /* Dark theme adjustments for search filter */
-[data-theme="dark"] .table-search-input {
-  background: var(--bg-secondary);
-  border-color: #30363d;
-}
-
-[data-theme="dark"] .table-search-input:focus {
-  border-color: #58a6ff;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.1);
-}
 
 [data-theme="dark"] .clear-search-btn {
   color: #6e7681;
@@ -2764,42 +2578,6 @@ th[style*="cursor: pointer"]:hover {
   color: #8b949e;
 }
 
-/* Instance logs table styles */
-.instance-logs-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-  font-size: 0.85em;
-}
-
-.instance-logs-table thead {
-  position: sticky;
-  top: 0;
-  background: var(--bg-tertiary);
-  z-index: 1;
-}
-
-.instance-logs-table th {
-  padding: 10px 12px;
-  text-align: left;
-  font-weight: 600;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.instance-logs-table tbody tr {
-  border-bottom: 1px solid var(--border-secondary);
-  transition: background-color 0.1s ease;
-}
-
-.instance-logs-table tbody tr:hover {
-  background: var(--bg-hover);
-}
-
-.instance-logs-table td {
-  padding: 8px 12px;
-  vertical-align: top;
-}
 
 /* Table controls header row */
 .table-controls-row {
@@ -2815,9 +2593,11 @@ th[style*="cursor: pointer"]:hover {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
   background: var(--bg-secondary);
-  min-height: 48px;
+  flex: 0 0 auto;
+  /* Don't grow or shrink */
+  min-height: 30px;
+  /* Ensure consistent height */
 }
 
 .table-controls-container .search-filter-container {
@@ -2896,10 +2676,6 @@ th[style*="cursor: pointer"]:hover {
   border-color: #dc3545;
 }
 
-/* Dark theme adjustments for instance logs table */
-[data-theme="dark"] .instance-logs-table {
-  background: var(--bg-primary);
-}
 
 [data-theme="dark"] .table-controls-header {
   background: #0d1117 !important;
@@ -2928,6 +2704,66 @@ th[style*="cursor: pointer"]:hover {
 
 [data-theme="dark"] .table-controls-container .copy-btn-logs:hover,
 [data-theme="dark"] .table-controls-container .refresh-btn-logs:hover {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: white;
+}
+
+/* Dark theme styles for compact tasks controls */
+[data-theme="dark"] .compact-tasks-controls {
+  background: #0d1117;
+}
+
+[data-theme="dark"] .compact-tasks-controls .filter-group select {
+  background: #161b22;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .compact-tasks-controls .filter-group select:hover {
+  border-color: #58a6ff;
+}
+
+[data-theme="dark"] .compact-tasks-controls .filter-group label {
+  color: #8b949e;
+}
+
+[data-theme="dark"] .compact-tasks-controls .checkbox-group label {
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .compact-tasks-controls .tasks-action-buttons button {
+  background: #161b22;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .compact-tasks-controls .tasks-action-buttons button:hover {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: white;
+}
+
+/* Dark theme for Compact Configs Controls */
+[data-theme="dark"] .compact-configs-controls {
+  background-color: var(--bg-primary);
+}
+
+[data-theme="dark"] .compact-configs-controls .filter-group label {
+  color: #8b949e;
+}
+
+[data-theme="dark"] .compact-configs-controls .checkbox-group label {
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .compact-configs-controls .configs-action-buttons button {
+  background: #161b22;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+
+[data-theme="dark"] .compact-configs-controls .configs-action-buttons button:hover {
   background: #1f6feb;
   border-color: #1f6feb;
   color: white;
@@ -2992,13 +2828,7 @@ th[style*="cursor: pointer"]:hover {
   margin-bottom: 10px;
 }
 
-.manifest-tab-pane {
-  display: none;
-}
-
-.manifest-tab-pane.active {
-  display: block;
-}
+/* Handled by generic tab-table-container rules below */
 
 .manifest-table {
   width: 100%;
@@ -3398,18 +3228,24 @@ th[style*="cursor: pointer"]:hover {
 
 /* Animations for deletion status */
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.02);
   }
 }
 
 @keyframes blink {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.3;
   }
@@ -3419,6 +3255,7 @@ th[style*="cursor: pointer"]:hover {
   0% {
     background-position: 0 0;
   }
+
   100% {
     background-position: 20px 20px;
   }
@@ -3477,29 +3314,6 @@ th[style*="cursor: pointer"]:hover {
   color: var(--text-secondary);
 }
 
-.connection-field select {
-  padding: 8px 12px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-family: sans-serif;
-}
-
-.connection-field select:hover {
-  border-color: var(--border-active);
-  background: var(--bg-hover);
-}
-
-.connection-field select:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
-}
-
 /* Max width for user and vhost dropdowns with full-width options */
 #connection-user option,
 #connection-vhost option,
@@ -3522,31 +3336,39 @@ select[id*="connection-vhost"] {
 /* Operation tabs - consistent with detail tabs */
 .operation-tabs {
   display: flex;
-  background-color: var(--bg-tertiary);
+  gap: 2px;
+  background: var(--bg-table-header);
+  padding: 4px;
+  border-radius: 8px 8px 0 0;
   border-bottom: 1px solid var(--border-primary);
   margin-bottom: 0;
+  overflow-x: auto;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .operation-tab {
-  padding: 0.8em 1.5em;
-  background: none;
+  background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  padding: 8px 16px;
   cursor: pointer;
-  font-size: 11pt;
   color: var(--text-secondary);
+  font-size: 11pt;
+  font-weight: 500;
+  border-radius: 6px;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 .operation-tab:hover {
-  background-color: var(--bg-hover);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .operation-tab.active {
-  color: var(--text-link);
-  border-bottom-color: var(--border-active);
-  font-weight: 600;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
 }
 
 .operation-content {
@@ -3606,20 +3428,7 @@ select[id*="connection-vhost"] {
 .form-row select {
   width: 100%;
   padding: 10px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
   background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 0.9em;
-  font-family: inherit;
-}
-
-.form-row input:focus,
-.form-row textarea:focus,
-.form-row select:focus {
-  outline: none;
-  border-color: var(--border-active);
-  box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.1);
 }
 
 .form-row textarea {
@@ -3798,17 +3607,17 @@ select[id*="connection-vhost"] {
     gap: 10px;
     align-items: stretch;
   }
-  
+
   .operation-tabs {
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
   }
-  
+
   .operation-tab {
-    border-radius: 4px;
-    border-bottom: 3px solid transparent;
+    border-radius: 6px;
+    text-align: left;
   }
-  
+
   .history-entry-header {
     flex-direction: column;
     align-items: flex-start;
@@ -3864,8 +3673,6 @@ select[id*="connection-vhost"] {
 [data-theme="dark"] .form-row textarea,
 [data-theme="dark"] .form-row select {
   background: var(--bg-tertiary);
-  border-color: var(--border-primary);
-  color: var(--text-primary);
 }
 
 [data-theme="dark"] .history-entries {
@@ -4332,8 +4139,13 @@ select[id*="connection-vhost"] {
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /* Error states */
@@ -4374,21 +4186,7 @@ select[id*="connection-vhost"] {
 
 .cert-form-input {
   padding: 8px 12px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
   font-size: 14px;
-  transition: border-color 0.2s ease;
-}
-
-.cert-form-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-}
-
-.cert-form-input::placeholder {
-  color: var(--text-tertiary);
 }
 
 .cert-fetch-btn {
@@ -4421,24 +4219,24 @@ select[id*="connection-vhost"] {
     max-width: none;
     margin: 10px;
   }
-  
+
   .cert-tabs-nav {
     flex-direction: column;
   }
-  
+
   .cert-tab-btn {
     text-align: left;
     border-radius: 6px 0 0 6px;
   }
-  
+
   .cert-tab-btn.active {
     border-right: 3px solid var(--accent-primary);
   }
-  
+
   .cert-details-table th {
     width: 120px;
   }
-  
+
   .cert-endpoint-form {
     flex-direction: column;
     align-items: stretch;
@@ -4459,13 +4257,6 @@ select[id*="connection-vhost"] {
   background: var(--bg-tertiary);
 }
 
-[data-theme="dark"] .cert-form-input {
-  background: var(--bg-tertiary);
-}
-
-[data-theme="dark"] .cert-form-input:focus {
-  border-color: var(--accent-primary);
-}
 
 /* Dark theme support for certificate tabs */
 [data-theme="dark"] .cert-tabs-nav {
@@ -4639,6 +4430,7 @@ select[id*="connection-vhost"] {
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -4664,16 +4456,16 @@ select[id*="connection-vhost"] {
     align-items: stretch;
     gap: 12px;
   }
-  
+
   .cert-file-load-btn {
     justify-content: center;
   }
-  
+
   .cert-detail-row {
     flex-direction: column;
     gap: 4px;
   }
-  
+
   .cert-detail-label {
     min-width: auto;
   }
@@ -4885,18 +4677,8 @@ select[id*="connection-vhost"] {
 .form-group input[type="password"] {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--border-primary);
   border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
   font-size: 14px;
-  transition: all 0.2s ease;
-}
-
-.form-group input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px var(--accent-primary)20;
 }
 
 .form-group small {
@@ -5007,8 +4789,15 @@ select[id*="connection-vhost"] {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
 }
 
 /* Dark theme adjustments */
@@ -5346,18 +5135,8 @@ select[id*="connection-vhost"] {
 .command-args-input {
   width: 100%;
   padding: 8px;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 13px;
-}
-
-.command-args-input:focus {
-  outline: none;
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(var(--accent-primary-rgb), 0.2);
 }
 
 
@@ -5425,7 +5204,8 @@ select[id*="connection-vhost"] {
   gap: 10px;
 }
 
-.clear-btn, .history-btn {
+.clear-btn,
+.history-btn {
   padding: 6px 12px;
   border: 1px solid var(--border-primary);
   border-radius: 4px;
@@ -5436,7 +5216,8 @@ select[id*="connection-vhost"] {
   transition: all 0.2s ease;
 }
 
-.clear-btn:hover, .history-btn:hover {
+.clear-btn:hover,
+.history-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
@@ -5636,27 +5417,27 @@ select[id*="connection-vhost"] {
   .rabbitmqctl-layout {
     flex-direction: column;
   }
-  
+
   .rabbitmqctl-categories {
     flex: none;
     max-height: 300px;
   }
-  
+
   .commands-table {
     font-size: 0.8em;
   }
-  
+
   .commands-table th,
   .commands-table td {
     padding: 8px;
   }
-  
+
   .output-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
   }
-  
+
   .output-controls {
     align-self: flex-end;
   }
@@ -5926,10 +5707,7 @@ select[id*="connection-vhost"] {
 
 .plugins-table .argument-group input {
   padding: 6px 8px;
-  border: 1px solid var(--border-secondary);
   border-radius: 3px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
   font-size: 0.9em;
 }
 
@@ -6367,31 +6145,31 @@ select[id*="connection-vhost"] {
   .plugins-layout {
     flex-direction: column;
   }
-  
+
   .plugins-categories {
     flex: none;
     max-height: 300px;
   }
-  
+
   .plugins-command-details {
     gap: 10px;
   }
-  
+
   .plugins-table .argument-inputs {
     min-width: unset;
   }
-  
+
   .plugins-table .command-actions {
     flex-direction: column;
     gap: 4px;
   }
-  
+
   .plugins-output-container .output-header {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
   }
-  
+
   .plugins-output-container .output-controls {
     justify-content: flex-end;
   }
@@ -6488,19 +6266,21 @@ select[id*="connection-vhost"] {
   opacity: 1;
 }
 
-/* Tab prefixes for differentiation */
-.terminal-tab.blacksmith-tab::before {
-  content: '[BK]';
-  color: #4a9eff;
-  font-weight: bold;
-  margin-right: 4px;
+.terminal-tab-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
-.terminal-tab.service-instance-tab::before {
-  content: '[SI]';
+/* Tab prefixes for differentiation */
+.terminal-tab .blacksmith-prefix {
+  color: #4a9eff;
+  font-weight: bold;
+}
+
+.terminal-tab .service-prefix {
   color: #28a745;
   font-weight: bold;
-  margin-right: 4px;
 }
 
 .terminal-container {
@@ -6604,7 +6384,7 @@ select[id*="connection-vhost"] {
 /* Minimized terminal header bar */
 .minimized-terminal-bar {
   position: fixed;
-  top: 0;
+  top: 30px;
   left: 0;
   right: 0;
   height: 40px;
@@ -6685,6 +6465,12 @@ select[id*="connection-vhost"] {
 .minimized-terminal-tab .service-prefix {
   color: #28a745;
   font-weight: bold;
+}
+
+.minimized-terminal-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 /* Hide main tabs when minimized bar is active */
@@ -6943,9 +6729,12 @@ body.terminal-minimized .tabs {
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 0.8;
   }
+
   50% {
     opacity: 0.4;
   }
@@ -7179,8 +6968,8 @@ body.terminal-minimized .tabs {
 
 /* Services and Organization/Space Selector */
 .org-space-selector {
-  margin-bottom: 1.5rem;
-  padding: 1rem;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
@@ -7205,17 +6994,6 @@ body.terminal-minimized .tabs {
 
 .selector-row select {
   flex: 1;
-  padding: 0.5rem;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 0.9rem;
-}
-
-.selector-row select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Org-Space Table Layout */
@@ -7354,16 +7132,6 @@ body.terminal-minimized .tabs {
 }
 
 /* Service Instances Table - match Events table styling */
-.service-instances-table-container .logs-table-container {
-  max-height: calc(100vh - 200px);
-  min-height: 200px;
-  overflow-y: auto;
-  overflow-x: auto;
-  border: 1px solid var(--border-primary);
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  margin-top: 10px;
-}
 
 .service-instances-table {
   width: 100%;
@@ -7421,17 +7189,17 @@ body.terminal-minimized .tabs {
   .cf-endpoints-layout {
     flex-direction: column;
   }
-  
+
   .cf-endpoints-panel {
     width: 100%;
     height: 200px;
   }
-  
+
   .cf-detail-tabs {
     overflow-x: auto;
     flex-wrap: nowrap;
   }
-  
+
   .cf-detail-tab {
     white-space: nowrap;
     padding: 0.5rem 0.75rem;
@@ -7463,7 +7231,7 @@ body.terminal-minimized .tabs {
 }
 
 .endpoint-selector-table td {
-  padding: 0;
+  padding: 0 3px;
   vertical-align: middle;
 }
 
@@ -7482,18 +7250,6 @@ body.terminal-minimized .tabs {
 
 .cf-endpoint-dropdown {
   width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 0.9rem;
-  transition: border-color 0.2s;
-}
-
-.cf-endpoint-dropdown:focus {
-  outline: none;
-  border-color: var(--accent-primary);
 }
 
 .connection-status-cell {
@@ -7530,8 +7286,15 @@ body.terminal-minimized .tabs {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .endpoint-controls {
@@ -7615,43 +7378,43 @@ body.terminal-minimized .tabs {
   .endpoint-selector-table {
     display: block;
   }
-  
+
   .endpoint-selector-table tbody,
   .endpoint-selector-table tr,
   .endpoint-selector-table td {
     display: block;
     width: 100%;
   }
-  
+
   .endpoint-label {
     width: 100%;
     padding-right: 0;
     padding-bottom: 0.25rem;
   }
-  
+
   .endpoint-dropdown-cell {
     width: 100%;
     padding-right: 0;
     padding-bottom: 0.5rem;
   }
-  
+
   .connection-status-cell {
     width: 100%;
     text-align: left;
     padding-right: 0;
     padding-bottom: 0.5rem;
   }
-  
+
   .endpoint-controls {
     width: 100%;
     text-align: left;
   }
-  
+
   .broker-tabs-nav {
     overflow-x: auto;
     flex-wrap: nowrap;
   }
-  
+
   .broker-tab-btn {
     white-space: nowrap;
     padding: 0.5rem 0.75rem;
@@ -7661,12 +7424,12 @@ body.terminal-minimized .tabs {
 /* Tasks Tab Styles */
 .tasks-filters {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
   align-items: center;
   flex-wrap: wrap;
   background: var(--bg-tertiary);
-  padding: 1rem;
+  padding: 0.5rem;
   border: 1px solid var(--border-primary);
   border-radius: 6px;
 }
@@ -7711,8 +7474,222 @@ body.terminal-minimized .tabs {
   cursor: pointer;
 }
 
+/* Compact two-line layout for tasks controls */
+.compact-tasks-controls {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 4px;
+  gap: 2px;
+}
+
+.compact-tasks-controls .tasks-controls-row-1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  margin-bottom: .25rem;
+}
+
+.compact-tasks-controls .tasks-controls-row-2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  margin-bottom: .51rem;
+}
+
+.compact-tasks-controls .search-filter-container {
+  flex: 1;
+  max-width: 300px;
+  margin: 0;
+  padding: 0;
+}
+
+.compact-tasks-controls .filter-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+
+.compact-tasks-controls .filter-group label {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.compact-tasks-controls .filter-group select {
+  padding: 0 4px;
+  font-size: 0.85em;
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.compact-tasks-controls .checkbox-group {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0;
+}
+
+.compact-tasks-controls .checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 0.85em;
+  font-weight: normal;
+  padding: 0;
+}
+
+.compact-tasks-controls .checkbox-group input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+.compact-tasks-controls .tasks-action-buttons {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  padding: 0;
+}
+
+.compact-tasks-controls .tasks-action-buttons button {
+  padding: 0 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.compact-tasks-controls .tasks-action-buttons button:hover {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.compact-tasks-controls .tasks-action-buttons button svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Compact Configs Controls - Two Row Layout */
+.compact-configs-controls {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 4px;
+  gap: 2px;
+}
+
+.compact-configs-controls .configs-controls-row-1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  margin-bottom: .25rem;
+}
+
+.compact-configs-controls .configs-controls-row-2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  margin-bottom: .51rem;
+}
+
+.compact-configs-controls .search-filter-container {
+  flex: 1;
+  max-width: 300px;
+  margin: 0;
+  padding: 0;
+}
+
+.compact-configs-controls .filter-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+
+.compact-configs-controls .filter-group label {
+  font-size: 0.85em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.compact-configs-controls .checkbox-group {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0;
+}
+
+.compact-configs-controls .checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 0.85em;
+  font-weight: normal;
+  padding: 0;
+}
+
+.compact-configs-controls .checkbox-group input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+.compact-configs-controls .configs-action-buttons {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  padding: 0;
+}
+
+.compact-configs-controls .configs-action-buttons button {
+  padding: 0 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.compact-configs-controls .configs-action-buttons button:hover {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.compact-configs-controls .configs-action-buttons button svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* Task State Badges */
-.task-state {
+span.task-state {
   display: inline-flex;
   align-items: center;
   padding: 0.25rem 0.75rem;
@@ -7725,63 +7702,66 @@ body.terminal-minimized .tabs {
 }
 
 /* Light theme task state colors */
-.task-state.queued {
+span.task-state.queued {
   background-color: #f3f4f6;
   color: #6b7280;
 }
 
-.task-state.processing {
+span.task-state.processing {
   background-color: #dbeafe;
   color: #1d4ed8;
   animation: pulse 2s infinite;
 }
 
-.task-state.done {
+span.task-state.done {
   background-color: #dcfce7;
   color: #166534;
 }
 
-.task-state.error {
+span.task-state.error {
   background-color: #fee2e2;
   color: #dc2626;
 }
 
-.task-state.cancelled {
+span.task-state.cancelled {
   background-color: #fed7aa;
   color: #ea580c;
 }
 
 /* Dark theme task state colors */
-[data-theme="dark"] .task-state.queued {
+[data-theme="dark"] span.task-state.queued {
   background-color: #374151;
   color: #9ca3af;
 }
 
-[data-theme="dark"] .task-state.processing {
+[data-theme="dark"] span.task-state.processing {
   background-color: #1e3a8a;
   color: #93c5fd;
 }
 
-[data-theme="dark"] .task-state.done {
+[data-theme="dark"] span.task-state.done {
   background-color: #166534;
   color: #86efac;
 }
 
-[data-theme="dark"] .task-state.error {
+[data-theme="dark"] span.task-state.error {
   background-color: #991b1b;
   color: #fca5a5;
 }
 
-[data-theme="dark"] .task-state.cancelled {
+[data-theme="dark"] span.task-state.cancelled {
   background-color: #c2410c;
   color: #fed7aa;
 }
 
 /* Pulse animation for processing tasks */
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.7;
   }
@@ -7789,7 +7769,7 @@ body.terminal-minimized .tabs {
 
 /* Task table specific styles */
 .tasks-table-container {
-  overflow: hidden;
+  overflow-x: auto;
   border: 1px solid var(--border-primary);
   border-radius: 6px;
   max-height: calc(100vh - 350px);
@@ -7804,41 +7784,8 @@ body.terminal-minimized .tabs {
   border-collapse: collapse;
 }
 
-.tasks-table th,
-.tasks-table td {
-  padding: 0.75rem 1rem;
-  text-align: left;
-  border-bottom: 1px solid var(--border-primary);
-}
-
-.tasks-table thead {
-  flex-shrink: 0;
-}
-
 .tasks-table tbody {
-  display: block;
-  overflow-y: auto;
   max-height: calc(100vh - 450px);
-}
-
-.tasks-table thead,
-.tasks-table tbody tr {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.tasks-table th {
-  background: var(--bg-table-header);
-  font-weight: 600;
-  color: var(--text-primary);
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.tasks-table tbody tr:hover {
-  background: var(--bg-secondary);
 }
 
 .no-data-row {
@@ -7890,8 +7837,15 @@ body.terminal-minimized .tabs {
   text-decoration: underline;
 }
 
-/* Refresh button in tasks filter */
-.tasks-filters .refresh-btn {
+/* Tasks action buttons */
+.tasks-action-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.tasks-action-buttons .refresh-btn,
+.tasks-action-buttons .copy-btn-logs {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -7906,13 +7860,14 @@ body.terminal-minimized .tabs {
   white-space: nowrap;
 }
 
-.tasks-filters .refresh-btn:hover {
+.tasks-action-buttons .refresh-btn:hover,
+.tasks-action-buttons .copy-btn-logs:hover {
   background: var(--accent-color);
   color: white;
   border-color: var(--accent-color);
 }
 
-.tasks-filters .refresh-btn svg {
+.tasks-action-buttons svg {
   width: 16px;
   height: 16px;
 }
@@ -7924,19 +7879,57 @@ body.terminal-minimized .tabs {
     align-items: stretch;
     gap: 0.75rem;
   }
-  
+
   .filter-group {
     justify-content: space-between;
   }
-  
+
   .checkbox-group {
     gap: 0.5rem;
   }
-  
+
+  /* Compact layout adjustments for mobile */
+  .compact-tasks-controls .tasks-controls-row-1 {
+    flex-wrap: wrap;
+  }
+
+  .compact-tasks-controls .search-filter-container {
+    flex: 1 1 100%;
+    max-width: none;
+    margin-bottom: 8px;
+  }
+
+  .compact-tasks-controls .filter-group {
+    flex: 1;
+  }
+
+  .compact-tasks-controls .tasks-action-buttons {
+    margin-left: 0;
+  }
+
+  /* Compact configs controls mobile adjustments */
+  .compact-configs-controls .configs-controls-row-1 {
+    flex-wrap: wrap;
+  }
+
+  .compact-configs-controls .search-filter-container {
+    flex: 1 1 100%;
+    max-width: none;
+    margin-bottom: 8px;
+  }
+
+  .compact-configs-controls .filter-group {
+    flex: 1;
+  }
+
+  .compact-configs-controls .configs-action-buttons {
+    margin-left: 0;
+  }
+
   .tasks-table {
     min-width: 600px;
   }
-  
+
   .task-description {
     max-width: 200px;
   }
@@ -8040,18 +8033,19 @@ body.terminal-minimized .tabs {
   flex-shrink: 0;
 }
 
+/* Fixed: Removed display: block to maintain table column alignment */
 .configs-table tbody {
-  display: block;
-  overflow-y: auto;
-  max-height: calc(100vh - 450px);
+  /* display: block; - REMOVED: breaks table column alignment */
+  /* overflow-y: auto; - REMOVED: handle scrolling via container */
+  /* max-height: calc(100vh - 450px); - move to container */
 }
 
-.configs-table thead,
+/* Remove display: table to fix column alignment */
+/* .configs-table thead,
 .configs-table tbody tr {
   display: table;
   width: 100%;
-  table-layout: fixed;
-}
+} */
 
 .configs-table th:hover {
   background: var(--bg-tertiary);
@@ -8077,7 +8071,7 @@ body.terminal-minimized .tabs {
   text-decoration: underline;
 }
 
-.config-type {
+span.config-type {
   display: inline-block;
   padding: 0.25rem 0.5rem;
   border-radius: 0.25rem;
@@ -8086,43 +8080,43 @@ body.terminal-minimized .tabs {
   text-transform: uppercase;
 }
 
-.config-type.cloud {
+span.config-type.cloud {
   background: #e3f2fd;
   color: #1976d2;
 }
 
-.config-type.runtime {
+span.config-type.runtime {
   background: #f3e5f5;
   color: #7b1fa2;
 }
 
-.config-type.cpi {
+span.config-type.cpi {
   background: #e8f5e8;
   color: #388e3c;
 }
 
-.config-type.resurrection {
+span.config-type.resurrection {
   background: #fff3e0;
   color: #f57c00;
 }
 
 /* Dark theme config type badges */
-[data-theme="dark"] .config-type.cloud {
+[data-theme="dark"] span.config-type.cloud {
   background: #1e3a8a;
   color: #93c5fd;
 }
 
-[data-theme="dark"] .config-type.runtime {
+[data-theme="dark"] span.config-type.runtime {
   background: #581c87;
   color: #c4b5fd;
 }
 
-[data-theme="dark"] .config-type.cpi {
+[data-theme="dark"] span.config-type.cpi {
   background: #166534;
   color: #86efac;
 }
 
-[data-theme="dark"] .config-type.resurrection {
+[data-theme="dark"] span.config-type.resurrection {
   background: #c2410c;
   color: #fed7aa;
 }
@@ -8134,11 +8128,11 @@ body.terminal-minimized .tabs {
     align-items: stretch;
     gap: 0.5rem;
   }
-  
+
   .configs-table {
     min-width: 600px;
   }
-  
+
   .config-name {
     max-width: 200px;
   }
@@ -8221,34 +8215,36 @@ body.terminal-minimized .tabs {
 /* The task-details-modal uses standard modal styles from .modal-overlay and .modal */
 /* We only need to override specific behaviors */
 
-/* Ensure modal content doesn't expand beyond viewport */
+/* Modal sizing & layout - proper flexbox approach */
 #task-details-modal .modal {
-  max-width: 90vw;
-  width: 90vw;
-  max-height: 90vh;
-  height: 90vh;
+  width: 80vw;
+  height: 80vh;
+  max-width: none;
+  max-height: none;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  margin: auto;
 }
 
 #task-details-modal .modal-content {
   width: 100%;
-  height: 100%;
-  overflow: hidden;
+  flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   min-height: 0;
 }
 
 #task-details-modal .modal-header {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1.5rem;
+  padding: 8px;
   border-bottom: 1px solid var(--border-primary);
   background: var(--bg-secondary);
   gap: 1rem;
-  flex-shrink: 0;
 }
 
 #task-details-modal .modal-header h3 {
@@ -8301,18 +8297,58 @@ body.terminal-minimized .tabs {
 }
 
 #task-details-modal .modal-body {
-  padding: 1.5rem;
-  overflow: hidden;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+  padding: 5px;
 }
 
 /* Task Summary Section */
 #task-details-modal .task-summary {
-  margin-bottom: 0.5rem;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 4px;
+  max-height: 28em;
+  /* 28 font heights - 2x increase */
+  overflow: auto;
+}
+
+#task-details-modal .task-info-table {
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 28em;
+  /* 28 font heights - 2x increase */
+}
+
+/* Task details table specific styles */
+#task-details-modal .task-details-table {
+  margin: 0;
+  width: max-content;
+  min-width: 100%;
+}
+
+#task-details-modal .task-details-table th {
+  padding: 8px 10px;
+  white-space: nowrap;
+  border-right: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+#task-details-modal .task-details-table td {
+  padding: 8px 10px;
+  white-space: nowrap;
+  border-right: 1px solid rgba(128, 128, 128, 0.2);
+}
+
+#task-details-modal .task-details-table thead {
+  border-bottom: 2px solid var(--border-primary);
+}
+
+#task-details-modal .task-details-table th:last-child,
+#task-details-modal .task-details-table td:last-child {
+  border-right: none;
 }
 
 .task-header {
@@ -8355,68 +8391,276 @@ body.terminal-minimized .tabs {
 
 /* Task modal specific content styles */
 #task-details-modal #task-details-content {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 0.75rem;
+  overflow: hidden;
+  margin-bottom: 1rem;
+  height: calc(100% - 1rem);
+}
+
+/* Hide all task detail tab content by default */
+#task-content,
+#task-debug-content,
+#task-raw-content,
+#task-events-content,
+#task-output-content,
+#task-cpi-content {
+  display: none !important;
+  visibility: hidden;
+  position: absolute;
+  left: -9999px;
+}
+
+/* Show only the active tab content */
+#task-content.active,
+#task-debug-content.active,
+#task-raw-content.active,
+#task-events-content.active,
+#task-output-content.active,
+#task-cpi-content.active {
+  display: flex !important;
+  visibility: visible;
+  position: static;
+  left: auto;
+  flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
 
 #task-details-modal .manifest-tabs-nav {
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 #task-details-modal .manifest-tab-content {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
-}
-
-#task-details-modal .manifest-tab-pane {
-  position: relative;
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
   display: flex;
-  flex-direction: column;
+  overflow: hidden;
+  margin: 0 0 1rem 0;
+  padding: 0;
+  height: calc(100% - 1rem);
 }
 
-/* Direct children of tab panes should scroll */
-#task-details-modal .manifest-tab-pane > * {
+/* =================================================================
+   GENERIC TABBED TABLE VIEW PATTERN
+
+   Usage: Add class="tab-table-container" to any tab pane that contains
+   a search filter and scrollable table.
+
+   HTML Structure Expected:
+   <div class="tab-pane tab-table-container">
+     <input type="search" /> <!-- or <div class="search-filter"> -->
+     <table>
+       <thead>...</thead>
+       <tbody>...</tbody>
+     </table>
+   </div>
+
+   This provides:
+   - Flex column layout with proper height containment
+   - Fixed search bar/controls at top
+   - Scrollable table body with fixed header
+   - Proper overflow handling within parent bounds
+
+   For custom column widths, add a specific class to your table
+   (e.g., class="task-event-table") and define column widths below.
+   ================================================================= */
+
+.tab-table-container,
+.manifest-tab-pane {
+  display: none;
+  /* Hidden by default */
+  flex: 1 1 100%;
+  min-height: 0;
+  overflow: auto;
+  /* Each pane scrolls inside modal */
+  flex-direction: column;
+  padding: 15px;
+  box-sizing: border-box;
+}
+
+/* Active tabs need display flex */
+.tab-table-container.active,
+.manifest-tab-pane.active {
+  display: flex;
+}
+
+/* Search/filter controls stay fixed at top */
+.tab-table-container input[type="search"],
+.tab-table-container .search-filter,
+.tab-table-container .controls,
+.manifest-tab-pane input[type="search"],
+.manifest-tab-pane .search-filter,
+.manifest-tab-pane .controls {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+/* Direct div children that should scroll (e.g., loading messages, output content) */
+.tab-table-container>div:not(.search-filter):not(.controls),
+.manifest-tab-pane>div:not(.search-filter):not(.controls) {
   flex: 1;
   overflow: auto;
   min-height: 0;
+  max-height: 28em;
+  /* 2x increase for more visible rows */
 }
 
-#task-details-modal .logs-table-container {
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: auto;
-}
-
-/* Ensure tables in task modal have proper scrolling */
-#task-details-modal .logs-table {
-  display: block;
-  height: 100%;
-  overflow-y: auto;
-}
-
-#task-details-modal .task-info-table {
+/* Make tables fluid and predictable */
+.tab-table-container table,
+.manifest-tab-pane table {
   width: 100%;
-  max-height: 150px;
-  overflow-y: auto;
+  border-collapse: collapse;
   overflow-x: auto;
-  display: block;
 }
 
-/* Constrain pre/code blocks in task modal */
-#task-details-modal pre {
-  max-height: 100%;
+/* Table body - removed display: block to fix column alignment */
+/* Height should be on container, not tbody */
+.tab-table-container tbody,
+.manifest-tab-pane tbody {
+  /* display: block; - REMOVED: breaks table column alignment */
+  /* height: 14em; - REMOVED: set on container instead */
+  /* overflow-y: auto; - REMOVED: handle via container */
+  /* overflow-x: hidden; - REMOVED: handle via container */
+}
+
+/* Table rows need to be table display to maintain layout */
+/* Remove display: table to fix column alignment */
+/* .tab-table-container tbody tr,
+.manifest-tab-pane tbody tr {
+  display: table;
+  width: 100%;
+} */
+
+/* Header styling without display: table */
+.tab-table-container thead,
+.manifest-tab-pane thead {
+  /* Remove display: table and width calc to fix alignment */
+  border-bottom: 2px solid var(--border-primary);
+}
+
+/* Table cells handle overflow gracefully */
+.tab-table-container td,
+.manifest-tab-pane td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-right: 1px solid rgba(128, 128, 128, 0.2);
+  /* Faint column lines */
+}
+
+.tab-table-container th,
+.manifest-tab-pane th {
+  padding: 8px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-right: 1px solid rgba(128, 128, 128, 0.2);
+  /* Faint column lines */
+}
+
+/* Remove border from last column */
+.tab-table-container td:last-child,
+.manifest-tab-pane td:last-child,
+.tab-table-container th:last-child,
+.manifest-tab-pane th:last-child {
+  border-right: none;
+}
+
+/* Pre/code blocks in tab containers */
+.tab-table-container pre,
+.manifest-tab-pane pre {
+  flex: 1;
   overflow: auto;
   margin: 0;
+  min-height: 0;
 }
+
+/* Logs/table area uses remaining space inside the pane */
+.logs-table-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.table-controls-container {
+  flex: 0 0 auto;
+}
+
+/* =================================================================
+   SPECIFIC IMPLEMENTATIONS
+
+   Examples of how to use the generic pattern:
+
+   1. Add the class directly in HTML (recommended):
+      <div class="manifest-tab-pane tab-table-container">
+
+   2. Or apply the same styles to existing selectors (shown below)
+
+   3. For column-specific widths, add a table class:
+      <table class="task-event-table"> for timestamp/level/message
+      <table class="log-table"> for different column widths
+   ================================================================= */
+
+/* Apply the generic tab-table-container pattern to ALL .manifest-tab-pane elements
+   This avoids code duplication - manifest-tab-pane IS a tab-table-container */
+
+/* Task event tables in modal - wrapper as flex container */
+#task-details-modal .manifest-tab-pane {
+  height: calc(100% - 1rem);
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Container doesn't scroll, children do */
+}
+
+/* Tables themselves should not have fixed heights */
+#task-details-modal .task-event-table,
+#task-details-modal .log-table {
+  width: 100%;
+  /* Do NOT set height on table itself */
+}
+
+/* Task event tables specific column widths */
+.task-event-table th:first-child,
+.task-event-table td:first-child {
+  width: 25%;
+  /* Timestamp column */
+  min-width: 200px;
+  padding-right: 10px;
+}
+
+.task-event-table th:nth-child(2),
+.task-event-table td:nth-child(2) {
+  width: 10%;
+  /* Level column */
+  min-width: 80px;
+  padding-right: 10px;
+}
+
+.task-event-table th:nth-child(3),
+.task-event-table td:nth-child(3) {
+  width: 65%;
+  /* Message column */
+  white-space: normal;
+  /* Allow wrapping in message column */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+
+/* Task info table handled by generic rules above */
+
 
 /* Event states in modal */
 .event-state {
@@ -8467,19 +8711,19 @@ body.terminal-minimized .tabs {
     height: 95vh;
     margin: 5px;
   }
-  
+
   #task-details-modal .modal-header {
     padding: 1rem;
   }
-  
+
   #task-details-modal .modal-body {
     padding: 1rem;
   }
-  
+
   .task-info-grid {
     grid-template-columns: 1fr;
   }
-  
+
   .task-header {
     flex-direction: column;
     align-items: stretch;
@@ -8503,7 +8747,8 @@ body.terminal-minimized .tabs {
 
 .config-overview-table {
   width: 100%;
-  min-width: 600px; /* Minimum width to ensure horizontal scroll */
+  min-width: 600px;
+  /* Minimum width to ensure horizontal scroll */
   border-collapse: collapse;
   font-size: 13px;
 }

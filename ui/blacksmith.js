@@ -62,6 +62,121 @@
     setTheme(newTheme);
   };
 
+  // Universal Table Initialization - Auto-sort functionality
+  const initializeAllTables = () => {
+    // Find all tables in the document
+    const tables = document.querySelectorAll('table');
+    
+    tables.forEach(table => {
+      // Skip if table already has sorting initialized
+      if (table.hasAttribute('data-sorting-initialized')) {
+        return;
+      }
+      
+      // Add sorting to all table headers
+      const headers = table.querySelectorAll('thead th');
+      headers.forEach((header, index) => {
+        // Skip if header already has sorting
+        if (header.classList.contains('sortable') || header.classList.contains('sort-asc') || header.classList.contains('sort-desc')) {
+          return;
+        }
+        
+        // Add sortable class and indicator
+        header.classList.add('sortable');
+        header.style.cursor = 'pointer';
+        header.setAttribute('data-column-index', index);
+        
+        // Add click handler for sorting
+        header.addEventListener('click', () => {
+          sortTableByColumn(table, index, header);
+        });
+      });
+      
+      // Mark table as initialized
+      table.setAttribute('data-sorting-initialized', 'true');
+    });
+  };
+
+  // Sort table by column
+  const sortTableByColumn = (table, columnIndex, headerElement) => {
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const isCurrentlyAsc = headerElement.classList.contains('sort-asc');
+    const isCurrentlyDesc = headerElement.classList.contains('sort-desc');
+    
+    // Clear all sort indicators in this table
+    table.querySelectorAll('th').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+    });
+    
+    // Determine sort direction
+    let sortDirection = 'asc';
+    if (isCurrentlyAsc) {
+      sortDirection = 'desc';
+      headerElement.classList.add('sort-desc');
+    } else {
+      sortDirection = 'asc';
+      headerElement.classList.add('sort-asc');
+    }
+    
+    // Sort rows
+    rows.sort((a, b) => {
+      const aCell = a.cells[columnIndex];
+      const bCell = b.cells[columnIndex];
+      
+      if (!aCell || !bCell) return 0;
+      
+      const aText = aCell.textContent.trim();
+      const bText = bCell.textContent.trim();
+      
+      // Try to parse as numbers first
+      const aNum = parseFloat(aText);
+      const bNum = parseFloat(bText);
+      
+      let comparison = 0;
+      if (!isNaN(aNum) && !isNaN(bNum)) {
+        comparison = aNum - bNum;
+      } else {
+        comparison = aText.localeCompare(bText, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      
+      return sortDirection === 'desc' ? -comparison : comparison;
+    });
+    
+    // Re-append sorted rows
+    rows.forEach(row => tbody.appendChild(row));
+  };
+
+  // Set up observer for dynamic content
+  const setupTableObserver = () => {
+    // Create a MutationObserver to watch for new tables added to the DOM
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'childList') {
+          // Check if any added nodes contain tables
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              // Check if the node itself is a table or contains tables
+              const tables = node.tagName === 'TABLE' ? [node] : node.querySelectorAll('table');
+              if (tables.length > 0) {
+                // Re-run table initialization for new tables
+                initializeAllTables();
+              }
+            }
+          });
+        }
+      });
+    });
+
+    // Start observing the document body for child changes
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  };
+
   // Initialize theme on page load
   document.addEventListener('DOMContentLoaded', () => {
     initTheme();
@@ -71,6 +186,12 @@
     if (themeToggle) {
       themeToggle.addEventListener('click', toggleTheme);
     }
+    
+    // Initialize tables with sorting
+    initializeAllTables();
+    
+    // Set up observer for dynamic content
+    setupTableObserver();
   });
 
   // Helper functions
@@ -260,6 +381,10 @@
   const createSearchFilter = (tableId, placeholder = 'Search...') => {
     return `
       <div class="table-search-container">
+        <svg class="table-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <path d="m21 21-4.35-4.35"></path>
+        </svg>
         <input type="text"
                class="table-search-input"
                id="search-${tableId}"
@@ -979,7 +1104,7 @@
         }
         const taskId = event.task_id || event.task;
         let taskInfo = '-';
-        
+
         // Make task ID clickable if it exists and is numeric
         if (taskId && taskId !== '-' && !isNaN(taskId)) {
           taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
@@ -1088,7 +1213,7 @@
     } else if (tableClass === 'tasks-table') {
       tbody.innerHTML = data.map(task => {
         const startedAt = formatTimestamp(task.started_at);
-        
+
         // Calculate duration
         let duration = '-';
         if (task.started_at) {
@@ -1127,7 +1252,7 @@
     } else if (tableClass === 'configs-table') {
       tbody.innerHTML = data.map(config => {
         const createdAt = formatTimestamp(config.created_at);
-        
+
         // Create clickable config ID for details
         const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
 
@@ -1387,12 +1512,9 @@
         <button class="detail-tab" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
         <button class="detail-tab" data-tab="vms">VMs</button>
-        <button class="detail-tab" data-tab="logs">Deployment Logs</button>
-        <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="broker">Broker</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="certificates">Certificates</button>
-        <button class="detail-tab" data-tab="credentials">Credentials</button>
         <button class="detail-tab" data-tab="config">Config</button>
         <button class="detail-tab" data-tab="tasks">Tasks</button>
         <button class="detail-tab" data-tab="configs">Configs</button>
@@ -1547,7 +1669,7 @@
     // Create service id to name mapping from catalog
     const serviceIdToName = {};
     const hasCatalog = window.plansData && window.plansData.services && window.plansData.services.length > 0;
-    
+
     if (hasCatalog) {
       window.plansData.services.forEach(service => {
         if (service && service.id && service.name) {
@@ -1582,7 +1704,7 @@
 
     // Only show filter if we have catalog data and services
     const showFilter = hasCatalog && services.size > 0;
-    
+
     const filterSection = `
       <div class="services-filter-section">
         ${showFilter ? `
@@ -1640,7 +1762,7 @@
           ` : '';
 
         const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
-        
+
         // Use service name for display and data attribute
         // Only use mapped service names for filtering, show service_id for display if no mapping
         const serviceName = serviceIdToName[details.service_id] || '';
@@ -1676,7 +1798,7 @@
   // Service detail rendering functions
   const renderServiceDetail = (id, details, vaultData) => {
     // vaultData now contains merged data from both secret/{instance-id} and secret/{instance-id}/metadata
-    
+
     // Use deployment name from vault data if available, otherwise construct it
     const deploymentName = vaultData?.deployment_name || `${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${id}`;
 
@@ -1742,7 +1864,7 @@
         if (key !== 'context' && key !== 'deployment_name' &&
           !fieldOrder.find(f => f.key === key)) {
           let value = vaultData[key];
-          
+
           // Format different value types
           if (typeof value === 'object' && value !== null) {
             // Convert objects to JSON string
@@ -1751,7 +1873,7 @@
             // Format timestamp fields (detect ISO 8601 format)
             value = new Date(value).toLocaleString();
           }
-          
+
           tableRows.push(`
             <tr>
               <td class="info-key" style="font-size: 16px;">
@@ -1887,8 +2009,6 @@
         <button class="detail-tab active" data-tab="details">Details</button>
         <button class="detail-tab" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="vms">VMs</button>
-        <button class="detail-tab" data-tab="logs">Deployment Log</button>
-        <button class="detail-tab" data-tab="debug">Debug Log</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
@@ -2220,14 +2340,6 @@
 
         return formatManifestDetails(manifestData, `blacksmith-${deploymentName}`);
 
-      } else if (type === 'credentials') {
-        // Fetch blacksmith credentials
-        const response = await fetch('/b/blacksmith/credentials');
-        if (!response.ok) {
-          throw new Error(`Failed to load credentials: ${response.statusText}`);
-        }
-        const creds = await response.json();
-        return formatCredentials(creds);
       } else if (type === 'config') {
         // Fetch blacksmith configuration
         const response = await fetch('/b/blacksmith/config');
@@ -2334,15 +2446,6 @@
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
         }
-      } else if (type === 'debug') {
-        const text = await response.text();
-        try {
-          const logs = JSON.parse(text);
-          return formatDebugLog(logs, instanceId);
-        } catch (e) {
-          // If not JSON, display as plain text
-          return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
-        }
       } else if (type === 'instance-logs') {
         const text = await response.text();
         try {
@@ -2384,10 +2487,10 @@
     // Store original data for sorting
     tableOriginalData.set('deployment-logs', [...logs]);
 
-    // Determine the refresh function based on whether this is for blacksmith or service instance
+    // Refresh function for service instance
     const refreshFunction = instanceId
       ? `window.refreshServiceInstanceDeploymentLog('${instanceId}', event)`
-      : `window.refreshBlacksmithDeploymentLog(event)`;
+      : '';
 
     return `
       <div class="deployment-log-wrapper">
@@ -2397,14 +2500,12 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.deployment-log-table', event)"
                   title="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
-          <button class="refresh-btn-logs" onclick="${refreshFunction}"
+          ${instanceId ? `<button class="refresh-btn-logs" onclick="${refreshFunction}"
                   title="Refresh deployment logs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span>Refresh</span>
-          </button>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>` : ''}
         </div>
         <div class="deployment-log-table-container">
         <table class="deployment-log-table">
@@ -2467,10 +2568,10 @@
     // Store original data for sorting
     tableOriginalData.set('debug-logs', [...logs]);
 
-    // Determine the refresh function based on whether this is for blacksmith or service instance
+    // Refresh function for service instance
     const refreshFunction = instanceId
       ? `window.refreshServiceInstanceDebugLog('${instanceId}', event)`
-      : `window.refreshBlacksmithDebugLog(event)`;
+      : '';
 
     return `
       <div class="debug-log-wrapper">
@@ -2480,14 +2581,12 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.debug-log-table', event)"
                   title="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
-          <button class="refresh-btn-logs" onclick="${refreshFunction}"
+          ${instanceId ? `<button class="refresh-btn-logs" onclick="${refreshFunction}"
                   title="Refresh debug logs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span>Refresh</span>
-          </button>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>` : ''}
         </div>
         <div class="debug-log-table-container">
         <table class="debug-log-table">
@@ -2619,13 +2718,11 @@
                       </div>
                       <button class="copy-btn-logs" onclick="window.copyInstanceLogs('${jobKey}', event)"
                               title="Copy filtered table rows">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        <span>Copy</span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                       <button class="refresh-btn-logs" onclick="window.refreshInstanceLogs('${jobKey}', event)"
                               title="Refresh logs">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                        <span>Refresh</span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                       </button>
                     </div>
                   </th>
@@ -2730,13 +2827,11 @@
                     </div>
                     <button class="copy-btn-logs" onclick="window.copyInstanceLogs('${jobKey}', event)"
                             title="Copy filtered table rows">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                      <span>Copy</span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                     <button class="refresh-btn-logs" onclick="window.refreshInstanceLogs('${jobKey}', event)"
                             title="Refresh logs">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                      <span>Refresh</span>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
                   </div>
                 </th>
@@ -3056,13 +3151,11 @@
         </div>
         <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
                 title="Copy filtered table rows">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          <span>Copy</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
         </button>
         <button class="refresh-btn-logs" onclick="${refreshFunction}"
                 title="Refresh events">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-          <span>Refresh</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
         </button>
       </div>
       <div class="events-table-container">
@@ -3090,7 +3183,7 @@
 
       const taskId = event.task_id || event.task;
       let taskInfo = '-';
-      
+
       // Make task ID clickable if it exists and is numeric
       if (taskId && taskId !== '-' && !isNaN(taskId)) {
         taskInfo = `<a href="#" class="task-link" data-task-id="${taskId}" onclick="showTaskDetails(${taskId}, event); return false;">${taskId}</a>`;
@@ -3121,16 +3214,16 @@
     tableOriginalData.set(dataKey, tasks || []);
 
     const tableId = `tasks-table`;
-    
+
     // Check if we have tasks
     const hasTasks = tasks && tasks.length > 0;
 
     return `
-      <div class="table-controls-container">
-        <div class="search-filter-container">
-          ${createSearchFilter(tableId, 'Search tasks...')}
-        </div>
-        <div class="tasks-filters">
+      <div class="table-controls-container compact-tasks-controls">
+        <div class="tasks-controls-row-1">
+          <div class="search-filter-container">
+            ${createSearchFilter(tableId, 'Search tasks...')}
+          </div>
           <div class="filter-group">
             <label>Type:</label>
             <select id="task-type-filter">
@@ -3139,6 +3232,23 @@
               <option value="all">All</option>
             </select>
           </div>
+          <div class="filter-group">
+            <label>Filter by:</label>
+            <select id="task-filter">
+              <option value="blacksmith">blacksmith</option>
+            </select>
+          </div>
+          <div class="tasks-action-buttons">
+            <button id="refresh-tasks-btn" class="refresh-btn" title="Refresh tasks">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            </button>
+            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
+                    title="Copy filtered table rows">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+          </div>
+        </div>
+        <div class="tasks-controls-row-2">
           <div class="filter-group">
             <label>States:</label>
             <div class="checkbox-group">
@@ -3149,18 +3259,7 @@
               <label><input type="checkbox" value="cancelled" checked> Cancelled</label>
             </div>
           </div>
-          <div class="filter-group">
-            <button id="refresh-tasks-btn" class="refresh-btn" title="Refresh tasks">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-              <span>Refresh</span>
-            </button>
-          </div>
         </div>
-        <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
-                title="Copy filtered table rows">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          <span>Copy</span>
-        </button>
       </div>
       <div class="tasks-table-container">
         <table class="${tableId}">
@@ -3177,32 +3276,32 @@
           </thead>
           <tbody>
             ${hasTasks ? tasks.map(task => {
-              const startedAt = formatTimestamp(task.started_at);
-              
-              // Calculate duration
-              let duration = '-';
-              if (task.started_at) {
-                const start = new Date(task.started_at);
-                const end = task.ended_at ? new Date(task.ended_at) : new Date();
-                const durationMs = end - start;
-                if (durationMs > 0) {
-                  const minutes = Math.floor(durationMs / 60000);
-                  const seconds = Math.floor((durationMs % 60000) / 1000);
-                  if (minutes > 0) {
-                    duration = `${minutes}m ${seconds}s`;
-                  } else {
-                    duration = `${seconds}s`;
-                  }
-                }
-              }
+      const startedAt = formatTimestamp(task.started_at);
 
-              // Create clickable task ID for details
-              const taskIdLink = `<a href="#" class="task-link" data-task-id="${task.id}" onclick="showTaskDetails(${task.id}, event); return false;">${task.id}</a>`;
+      // Calculate duration
+      let duration = '-';
+      if (task.started_at) {
+        const start = new Date(task.started_at);
+        const end = task.ended_at ? new Date(task.ended_at) : new Date();
+        const durationMs = end - start;
+        if (durationMs > 0) {
+          const minutes = Math.floor(durationMs / 60000);
+          const seconds = Math.floor((durationMs % 60000) / 1000);
+          if (minutes > 0) {
+            duration = `${minutes}m ${seconds}s`;
+          } else {
+            duration = `${seconds}s`;
+          }
+        }
+      }
 
-              // Format state with badge
-              const stateBadge = `<span class="task-state ${task.state}">${task.state}</span>`;
+      // Create clickable task ID for details
+      const taskIdLink = `<a href="#" class="task-link" data-task-id="${task.id}" onclick="showTaskDetails(${task.id}, event); return false;">${task.id}</a>`;
 
-              return `
+      // Format state with badge
+      const stateBadge = `<span class="task-state ${task.state}">${task.state}</span>`;
+
+      return `
                 <tr>
                   <td class="task-id">${taskIdLink}</td>
                   <td class="task-state">${stateBadge}</td>
@@ -3213,7 +3312,7 @@
                   <td class="task-duration">${duration}</td>
                 </tr>
               `;
-            }).join('') : `
+    }).join('') : `
               <tr>
                 <td colspan="7" class="no-data-row">No current tasks found</td>
               </tr>
@@ -3231,16 +3330,27 @@
     tableOriginalData.set(dataKey, configs);
 
     const tableId = `configs-table`;
-    
+
     // Check if we have configs
     const hasConfigs = configs && configs.length > 0;
 
     return `
-      <div class="table-controls-container">
-        <div class="search-filter-container">
-          ${createSearchFilter(tableId, 'Search configs...')}
+      <div class="table-controls-container compact-configs-controls">
+        <div class="configs-controls-row-1">
+          <div class="search-filter-container">
+            ${createSearchFilter(tableId, 'Search configs...')}
+          </div>
+          <div class="configs-action-buttons">
+            <button id="refresh-configs-btn" class="refresh-btn" title="Refresh configs">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            </button>
+            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
+                    title="Copy filtered table rows">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+          </div>
         </div>
-        <div class="configs-filters">
+        <div class="configs-controls-row-2">
           <div class="filter-group">
             <label>Types:</label>
             <div class="checkbox-group">
@@ -3250,18 +3360,7 @@
               <label><input type="checkbox" value="resurrection" checked> Resurrection</label>
             </div>
           </div>
-          <div class="filter-group">
-            <button id="refresh-configs-btn" class="refresh-btn" title="Refresh configs">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-              <span>Refresh</span>
-            </button>
-          </div>
         </div>
-        <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableId}', event)"
-                title="Copy filtered table rows">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-          <span>Copy</span>
-        </button>
       </div>
       <div class="configs-table-container">
         <table class="${tableId}">
@@ -3276,15 +3375,15 @@
           </thead>
           <tbody>
             ${hasConfigs ? configs.map(config => {
-              const createdAt = formatTimestamp(config.created_at);
-              
-              // Create clickable config ID for details
-              const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
+      const createdAt = formatTimestamp(config.created_at);
 
-              // Format type with badge
-              const typeBadge = `<span class="config-type ${config.type}">${config.type}</span>`;
+      // Create clickable config ID for details
+      const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
 
-              return `
+      // Format type with badge
+      const typeBadge = `<span class="config-type ${config.type}">${config.type}</span>`;
+
+      return `
                 <tr>
                   <td class="config-id">${configIdLink}</td>
                   <td class="config-name">${config.name || '-'}</td>
@@ -3293,7 +3392,7 @@
                   <td class="config-created">${createdAt}</td>
                 </tr>
               `;
-            }).join('') : `
+    }).join('') : `
               <tr>
                 <td colspan="5" class="no-data-row">No configs found</td>
               </tr>
@@ -3522,20 +3621,33 @@
       };
     }
 
+    // BOSH Task Output format: Task 12345 | 00:06:55 | Stage: Description (00:00:00)
+    const boshTaskPattern = /^Task\s+\d+\s+\|\s+(\d{2}:\d{2}:\d{2})\s+\|\s+(.+)$/;
+    match = line.match(boshTaskPattern);
+    if (match) {
+      const currentDate = new Date().toISOString().split('T')[0]; // Use today's date as fallback
+      return {
+        date: currentDate,
+        time: match[1],
+        level: 'INFO',
+        message: match[2]
+      };
+    }
+
     // BOSH Director format: LEVEL, [YYYY-MM-DDTHH:MM:SS.mmm #PID] [task:TASKID] LEVEL -- MODULE: message
     const boshPattern = /^([IDWEF]), \[(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+) #\d+\] (\[(?:task:\d+|)\])\s*(\w+) -- ([^:]+):\s*(.*)$/;
     match = line.match(boshPattern);
     if (match) {
       const levelMap = {
         'I': 'INFO',
-        'D': 'DEBUG', 
+        'D': 'DEBUG',
         'W': 'WARN',
         'E': 'ERROR',
         'F': 'FATAL'
       };
       const level = levelMap[match[1]] || match[5];
       const taskInfo = match[4] !== '[]' ? match[4] + ' ' : '';
-      
+
       return {
         date: match[2],
         time: match[3],
@@ -3602,11 +3714,33 @@
     }
 
     // Handle lines that don't match any pattern (continuation lines, etc.)
+    // Try to extract level from simple patterns as fallback
+    let fallbackLevel = '';
+    let fallbackMessage = line;
+    
+    // Look for common level indicators
+    const levelIndicators = /\b(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\b/i;
+    const levelMatch = line.match(levelIndicators);
+    if (levelMatch) {
+      fallbackLevel = levelMatch[1].toUpperCase();
+    }
+    
+    // Try to extract basic timestamp if present at line start
+    let fallbackDate = '';
+    let fallbackTime = '';
+    const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/);
+    if (timestampMatch) {
+      fallbackDate = timestampMatch[1];
+      fallbackTime = timestampMatch[2];
+      // Remove timestamp from message
+      fallbackMessage = line.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*/, '');
+    }
+    
     return {
-      date: '',
-      time: '',
-      level: '',
-      message: line
+      date: fallbackDate,
+      time: fallbackTime,
+      level: fallbackLevel,
+      message: fallbackMessage
     };
   };
 
@@ -3747,13 +3881,11 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.logs-table', event)"
                   title="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
           <button class="refresh-btn-logs" onclick="window.refreshBlacksmithLogs(event)"
                   title="Refresh logs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span>Refresh</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           </button>
         </div>
         <div class="logs-table-container" id="blacksmith-logs-display">
@@ -3795,13 +3927,11 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.vms-table', event)"
                   title="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
           <button class="refresh-btn-logs" onclick="${refreshFunction}"
                   title="Refresh VMs">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span>Refresh</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
           </button>
           <div class="resurrection-toggle-container">
             <label class="resurrection-toggle-label">
@@ -3813,7 +3943,7 @@
                 </div>
               </div>
             </label>
-            <button class="delete-resurrection-btn" 
+            <button class="delete-resurrection-btn"
                     id="delete-resurrection-btn-${instanceId || 'blacksmith'}"
                     onclick="window.deleteResurrectionConfig('${instanceId || 'blacksmith'}', event)"
                     title="Delete resurrection config"
@@ -7201,8 +7331,7 @@
               <div class="manifest-header">
                 <button class="copy-btn-manifest" onclick="window.copyManifest('${manifestId}', event)"
                         title="Copy manifest to clipboard">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                  <span>Copy</span>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
               </div>
               <pre>${manifestData.text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
@@ -7627,88 +7756,6 @@
     }
   };
 
-  // Handler for refreshing blacksmith deployment logs
-  window.refreshBlacksmithDeploymentLog = async (event) => {
-    const button = event.currentTarget;
-
-    // Find the detail-content container - this is what we need to update
-    const detailContent = document.querySelector('#blacksmith .detail-content');
-    if (!detailContent) {
-      console.error('Detail content container not found');
-      return;
-    }
-
-    // Capture current search filter state
-    const currentSearchFilter = captureSearchFilterState('deployment-log-table');
-
-    // Add spinning animation to refresh button
-    button.classList.add('refreshing');
-    button.disabled = true;
-
-    try {
-      // Use the stored deployment name
-      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
-
-      // First fetch events to get task ID
-      const eventsResponse = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
-      if (!eventsResponse.ok) {
-        throw new Error(`Failed to fetch events: HTTP ${eventsResponse.status}`);
-      }
-      const events = await eventsResponse.json();
-
-      // Extract latest deployment task ID
-      const taskId = getLatestDeploymentTaskId(events);
-      if (!taskId) {
-        detailContent.innerHTML = '<div class="no-data">No deployment logs available</div>';
-        return;
-      }
-
-      // Fetch the deployment log using task ID
-      const logResponse = await fetch(`/b/deployments/${deploymentName}/tasks/${taskId}/log`, { cache: 'no-cache' });
-      if (!logResponse.ok) {
-        throw new Error(`HTTP ${logResponse.status}: ${logResponse.statusText}`);
-      }
-
-      const logs = await logResponse.json();
-
-      if (!logs || logs.length === 0) {
-        detailContent.innerHTML = '<div class="no-data">No deployment logs available</div>';
-      } else {
-        // Update the detail-content with formatted logs
-        detailContent.innerHTML = formatDeploymentLog(logs);
-        // Re-initialize sorting and filtering
-        setTimeout(() => {
-          initializeSorting('deployment-log-table');
-          attachSearchFilter('deployment-log-table');
-          // Restore search filter state
-          restoreSearchFilterState('deployment-log-table', currentSearchFilter);
-        }, 100);
-      }
-
-      // Visual feedback for successful refresh
-      button.classList.add('success');
-      const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
-      setTimeout(() => {
-        button.classList.remove('success');
-        spanElement.textContent = originalText;
-      }, 1000);
-
-    } catch (error) {
-      console.error('Failed to refresh deployment logs:', error);
-
-      // Visual feedback for error
-      button.classList.add('error');
-      setTimeout(() => {
-        button.classList.remove('error');
-      }, 2000);
-    } finally {
-      // Remove spinning animation
-      button.classList.remove('refreshing');
-      button.disabled = false;
-    }
-  };
 
   // Handler for refreshing service instance deployment logs
   window.refreshServiceInstanceDeploymentLog = async (instanceId, event) => {
@@ -7783,91 +7830,6 @@
     }
   };
 
-  // Handler for refreshing blacksmith debug logs
-  window.refreshBlacksmithDebugLog = async (event) => {
-    const button = event.currentTarget;
-
-    // Find the detail-content container - this is what we need to update
-    const detailContent = document.querySelector('#blacksmith .detail-content');
-    if (!detailContent) {
-      console.error('Detail content container not found');
-      return;
-    }
-
-    // Capture current search filter state
-    const currentSearchFilter = captureSearchFilterState('debug-log-table');
-
-    // Add spinning animation to refresh button
-    button.classList.add('refreshing');
-    button.disabled = true;
-
-    try {
-      // Use the stored deployment name
-      const deploymentName = window.blacksmithDeploymentName || 'blacksmith';
-
-      // First fetch events to get task ID
-      const eventsResponse = await fetch(`/b/deployments/${deploymentName}/events`, { cache: 'no-cache' });
-      if (!eventsResponse.ok) {
-        throw new Error(`Failed to fetch events: HTTP ${eventsResponse.status}`);
-      }
-      const events = await eventsResponse.json();
-
-      // Extract latest deployment task ID
-      const taskId = getLatestDeploymentTaskId(events);
-      if (!taskId) {
-        detailContent.innerHTML = '<div class="no-data">No debug logs available</div>';
-        return;
-      }
-
-      // Fetch the debug log using task ID
-      const logResponse = await fetch(`/b/deployments/${deploymentName}/tasks/${taskId}/debug`, { cache: 'no-cache' });
-      if (!logResponse.ok) {
-        throw new Error(`HTTP ${logResponse.status}: ${logResponse.statusText}`);
-      }
-
-      const logs = await logResponse.json();
-
-      if (!logs || logs.length === 0) {
-        detailContent.innerHTML = '<div class="no-data">No debug logs available</div>';
-      } else {
-        // Update the detail-content with formatted logs
-        detailContent.innerHTML = formatDebugLog(logs);
-        // Re-initialize sorting and filtering
-        setTimeout(() => {
-          initializeSorting('debug-log-table');
-          attachSearchFilter('debug-log-table');
-          // Restore search filter state
-          restoreSearchFilterState('debug-log-table', currentSearchFilter);
-        }, 100);
-      }
-
-      // Visual feedback for successful refresh
-      button.classList.add('success');
-      const spanElement = button.querySelector('span');
-      const originalText = spanElement.textContent;
-      spanElement.textContent = 'Refreshed!';
-      setTimeout(() => {
-        button.classList.remove('success');
-        spanElement.textContent = originalText;
-      }, 1000);
-
-    } catch (error) {
-      console.error('Failed to refresh debug logs:', error);
-
-      // Show error in UI
-      detailContent.innerHTML = `<div class="error">Failed to refresh debug logs: ${error.message}</div>`;
-
-      // Visual feedback for error
-      button.classList.add('error');
-      setTimeout(() => {
-        button.classList.remove('error');
-      }, 2000);
-    } finally {
-      // Remove spinning animation
-      button.classList.remove('refreshing');
-      button.disabled = false;
-    }
-  };
 
   // Handler for refreshing service instance debug logs
   window.refreshServiceInstanceDebugLog = async (instanceId, event) => {
@@ -8057,11 +8019,11 @@
       } else {
         // Parse the logs and store them for sorting/filtering
         const parsedLogs = logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
-        
+
         // Store under both keys to ensure data is available for sorting
         tableOriginalData.set('blacksmith-logs', parsedLogs);
         tableOriginalData.set('logs-table', parsedLogs);  // Also store under table class name as fallback
-        
+
         // Update the display with formatted logs
         // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
         const tableHTML = renderLogsTable(logs, parsedLogs, false);
@@ -8172,8 +8134,8 @@
       // Check if catalog has services
       if (!catalog || !catalog.services || catalog.services.length === 0) {
         console.warn('No services found in catalog');
-        document.querySelector('#plans .content').innerHTML =
-          '<div class="no-data">No services configured. Please ensure service directories are provided when starting blacksmith.</div>';
+        // Plans will show this message when the sub-tab is accessed
+        window.plansData = null;
       }
 
       // Then fetch the status
@@ -8249,49 +8211,9 @@
       let identHtml = data.env || 'Unknown Environment';
 
 
-      // Render plans if we have services
-      const plansPanel = document.querySelector('#plans');
-      if (plansPanel) {
-        if (catalog.services && catalog.services.length > 0) {
-          plansPanel.innerHTML = renderPlansTemplate(catalog);
-
-          // Store plans data for later use
-          window.plansData = catalog;
-
-          // Set up plan click handlers
-          document.querySelectorAll('#plans .plan-item').forEach(item => {
-            item.addEventListener('click', function () {
-              const planId = this.dataset.planId;
-
-              // Find the service and plan from the stored data
-              let selectedService = null;
-              let selectedPlan = null;
-
-              catalog.services.forEach(service => {
-                if (!service || !service.plans) return;
-                service.plans.forEach(plan => {
-                  if (!plan) return;
-                  if (`${service.name || service.id || 'unknown'}-${plan.name || plan.id || 'unknown'}` === planId) {
-                    selectedService = service;
-                    selectedPlan = plan;
-                  }
-                });
-              });
-
-              if (selectedService && selectedPlan) {
-                // Update active state
-                document.querySelectorAll('#plans .plan-item').forEach(i => i.classList.remove('active'));
-                this.classList.add('active');
-
-                // Render plan details
-                const detailContainer = document.querySelector('#plans .plan-detail');
-                detailContainer.innerHTML = renderPlanDetail(selectedService, selectedPlan);
-              }
-            });
-          });
-        } else {
-          plansPanel.innerHTML = '<div class="no-data">No services configured</div>';
-        }
+      // Store plans data for later use when Plans sub-tab is accessed
+      if (catalog.services && catalog.services.length > 0) {
+        window.plansData = catalog;
       }
 
       // Render services
@@ -8501,7 +8423,7 @@
                   } catch (error) {
                     console.warn(`Failed to fetch manifest for ${instanceId}:`, error);
                   }
-                  
+
                   // Fallback to constructed deployment name
                   deploymentNames.push(`${details.service_id}-${details.plan?.name || details.plan_id || 'unknown'}-${instanceId}`);
                 } else {
@@ -8686,43 +8608,8 @@
                   }
                 }
 
-                // Also refresh the plans panel if needed
-                const plansPanel = document.querySelector('#plans');
-                if (plansPanel && catalog.services && catalog.services.length > 0) {
-                  plansPanel.innerHTML = renderPlansTemplate(catalog);
-
-                  // Re-setup plan click handlers
-                  document.querySelectorAll('#plans .plan-item').forEach(item => {
-                    item.addEventListener('click', function () {
-                      const planId = this.dataset.planId;
-
-                      // Find the service and plan from the stored data
-                      let selectedService = null;
-                      let selectedPlan = null;
-
-                      catalog.services.forEach(service => {
-                        if (!service || !service.plans) return;
-                        service.plans.forEach(plan => {
-                          if (!plan) return;
-                          if (`${service.name || service.id || 'unknown'}-${plan.name || plan.id || 'unknown'}` === planId) {
-                            selectedService = service;
-                            selectedPlan = plan;
-                          }
-                        });
-                      });
-
-                      if (selectedService && selectedPlan) {
-                        // Update active state
-                        document.querySelectorAll('#plans .plan-item').forEach(i => i.classList.remove('active'));
-                        this.classList.add('active');
-
-                        // Render plan details
-                        const detailContainer = document.querySelector('#plans .plan-detail');
-                        detailContainer.innerHTML = renderPlanDetail(selectedService, selectedPlan);
-                      }
-                    });
-                  });
-                }
+                // Update plans data for when Plans sub-tab is accessed
+                window.plansData = catalog;
 
                 // Show success feedback
                 spanElement.textContent = 'Refreshed!';
@@ -8872,7 +8759,248 @@
         try {
           // Handle the Details tab
           if (tabType === 'details') {
-            contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
+            // Fetch credentials and merge with details
+            try {
+              const response = await fetch('/b/blacksmith/credentials');
+              if (response.ok) {
+                const creds = await response.json();
+                
+                // Create details content with credentials
+                const data = window.blacksmithData || {};
+                const deploymentName = data.deployment || 'blacksmith';
+                const environment = data.env || 'Unknown';
+                const totalInstances = data.instances ? Object.keys(data.instances).length : 0;
+                const totalPlans = data.plans ? Object.keys(data.plans).length : 0;
+                const status = 'Running';
+                
+                contentContainer.innerHTML = `
+                  <table class="service-info-table">
+                    <tbody>
+                      <tr>
+                        <td class="info-key">Deployment</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${deploymentName}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${deploymentName}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">Environment</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${environment}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${environment}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">Total Service Instances</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalInstances}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${totalInstances}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">Total Plans</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalPlans}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${totalPlans}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">Status</td>
+                        <td class="info-value">
+                          <span>${status}</span>
+                        </td>
+                      </tr>
+                      ${data.boshDNS ? `
+                      <tr>
+                        <td class="info-key">BOSH DNS</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${data.boshDNS}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${data.boshDNS}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      ` : ''}
+                      <tr>
+                        <td colspan="2" class="info-section-header">BOSH Configuration</td>
+                      </tr>
+                      ${creds.BOSH ? `
+                      <tr>
+                        <td class="info-key">BOSH Address</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.address}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${creds.BOSH.address}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">BOSH Username</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.username}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${creds.BOSH.username}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">BOSH Network</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.network}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${creds.BOSH.network}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      ` : ''}
+                      <tr>
+                        <td colspan="2" class="info-section-header">Vault Configuration</td>
+                      </tr>
+                      ${creds.Vault ? `
+                      <tr>
+                        <td class="info-key">Vault Address</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Vault.address}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${creds.Vault.address}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      ` : ''}
+                      <tr>
+                        <td colspan="2" class="info-section-header">Broker Configuration</td>
+                      </tr>
+                      ${creds.Broker ? `
+                      <tr>
+                        <td class="info-key">Broker Username</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.username}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${creds.Broker.username}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">Broker Port</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.port}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${creds.Broker.port}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td class="info-key">Broker Bind IP</td>
+                        <td class="info-value">
+                          <span class="copy-wrapper">
+                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.bind_ip}')"
+                                    title="Copy to clipboard">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <span>${creds.Broker.bind_ip}</span>
+                          </span>
+                        </td>
+                      </tr>
+                      ` : ''}
+                    </tbody>
+                  </table>
+                `;
+              } else {
+                // Fallback to original details content if credentials can't be fetched
+                contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
+              }
+            } catch (error) {
+              console.error('Failed to load credentials:', error);
+              // Fallback to original details content
+              contentContainer.innerHTML = window.blacksmithDetailsContent || '<div class="no-data">No details available</div>';
+            }
+            return;
+          }
+
+          // Handle the Plans tab
+          if (tabType === 'plans') {
+            // Use the existing plans data if available, or load it
+            if (window.plansData && window.plansData.services && window.plansData.services.length > 0) {
+              contentContainer.innerHTML = renderPlansTemplate(window.plansData);
+              
+              // Set up plan click handlers
+              document.querySelectorAll('#blacksmith .plan-item').forEach(item => {
+                item.addEventListener('click', function () {
+                  const planId = this.dataset.planId;
+                  
+                  // Find the service and plan from the stored data
+                  let selectedService = null;
+                  let selectedPlan = null;
+                  
+                  if (window.plansData && window.plansData.services) {
+                    window.plansData.services.forEach(service => {
+                      if (!service || !service.plans) return;
+                      service.plans.forEach(plan => {
+                        if (plan && plan.id === planId) {
+                          selectedService = service;
+                          selectedPlan = plan;
+                        }
+                      });
+                    });
+                  }
+                  
+                  if (selectedService && selectedPlan) {
+                    // Update active plan selection
+                    document.querySelectorAll('#blacksmith .plan-item').forEach(i => i.classList.remove('active'));
+                    this.classList.add('active');
+                    
+                    // Update detail panel
+                    const detailContainer = document.querySelector('#blacksmith .plan-detail');
+                    if (detailContainer) {
+                      detailContainer.innerHTML = renderPlanDetail(selectedService, selectedPlan);
+                    }
+                  }
+                });
+              });
+            } else {
+              contentContainer.innerHTML = '<div class="no-data">No plans data available. Please reload the page.</div>';
+            }
             return;
           }
 
@@ -8982,8 +9110,9 @@
         : `Failed to load data: ${error.message}`;
 
       document.querySelector('#blacksmith').innerHTML = `<div class="error">${errorMessage}</div>`;
-      document.querySelector('#plans .content').innerHTML = `<div class="error">${errorMessage}</div>`;
       document.querySelector('#services').innerHTML = '<div class="error">Service unavailable</div>';
+      // Plans error will be shown when the sub-tab is accessed
+      window.plansData = null;
     }
   });
 
@@ -9173,6 +9302,14 @@
       });
     });
 
+    // Handle task filter changes
+    const taskFilter = document.getElementById('task-filter');
+    if (taskFilter) {
+      taskFilter.addEventListener('change', () => {
+        refreshTasksTable();
+      });
+    }
+
     // Handle refresh button
     if (refreshBtn) {
       refreshBtn.addEventListener('click', (e) => {
@@ -9197,20 +9334,59 @@
     if (!window.tasksAutoRefreshInterval) {
       window.tasksAutoRefreshInterval = autoRefreshInterval;
     }
+
+    // Populate the task filter dropdown
+    populateTaskFilter();
+  };
+
+  // Populate task filter dropdown with filter options
+  const populateTaskFilter = async (preserveSelection = null) => {
+    try {
+      const response = await fetch('/b/service-filter-options', { cache: 'no-cache' });
+      if (!response.ok) {
+        console.warn('Failed to load service filter options, using default');
+        return;
+      }
+
+      const data = await response.json();
+      const taskFilter = document.getElementById('task-filter');
+      
+      if (taskFilter && data && data.options && Array.isArray(data.options)) {
+        // Save current selection if not provided
+        const currentSelection = preserveSelection || taskFilter.value || 'blacksmith';
+        
+        // Clear existing options
+        taskFilter.innerHTML = '';
+        
+        // Add all options in the order specified:
+        // blacksmith, service-instances, then service names, then plan IDs
+        data.options.forEach(option => {
+          const optionElement = document.createElement('option');
+          optionElement.value = option;
+          optionElement.textContent = option;
+          if (option === currentSelection) optionElement.selected = true;
+          taskFilter.appendChild(optionElement);
+        });
+      }
+    } catch (error) {
+      console.warn('Error loading service filter options:', error);
+    }
   };
 
   // Refresh tasks table
   const refreshTasksTable = async () => {
     const typeFilter = document.getElementById('task-type-filter');
     const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked');
-    
+    const taskFilter = document.getElementById('task-filter');
+
     // Save current filter values before refresh
     const taskType = typeFilter ? typeFilter.value : 'recent';
     const checkedStates = Array.from(stateCheckboxes).map(cb => cb.value);
     const uncheckedStates = Array.from(document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
+    const taskFilterValue = taskFilter ? taskFilter.value : 'blacksmith';
 
     try {
-      let url = `/b/tasks?type=${taskType}&limit=100`;
+      let url = `/b/tasks?type=${taskType}&limit=100&team=${encodeURIComponent(taskFilterValue)}`;
       if (checkedStates.length > 0) {
         url += `&states=${checkedStates.join(',')}`;
       }
@@ -9222,32 +9398,57 @@
 
       const tasks = await response.json();
       const contentContainer = document.querySelector('#blacksmith .detail-content');
-      
+
       if (contentContainer) {
         contentContainer.innerHTML = formatTasks(tasks);
-        
+
         // Restore filter states after refresh
-        setTimeout(() => {
-          // Restore dropdown selection
+        setTimeout(async () => {
+          // First repopulate the task filter dropdown since formatTasks() recreated the HTML
+          await populateTaskFilter(taskFilterValue);
+          
+          // Restore dropdown selections
           const newTypeFilter = document.getElementById('task-type-filter');
           if (newTypeFilter) {
             newTypeFilter.value = taskType;
+            // Reattach the change event handler
+            newTypeFilter.addEventListener('change', () => {
+              refreshTasksTable();
+            });
           }
-          
-          // Restore checkbox states
+          const newTaskFilter = document.getElementById('task-filter');
+          if (newTaskFilter) {
+            newTaskFilter.value = taskFilterValue;
+            // Reattach the change event handler
+            newTaskFilter.addEventListener('change', () => {
+              refreshTasksTable();
+            });
+          }
+
+          // Restore checkbox states and reattach handlers
           checkedStates.forEach(state => {
             const checkbox = document.querySelector(`#blacksmith .checkbox-group input[type="checkbox"][value="${state}"]`);
-            if (checkbox) checkbox.checked = true;
+            if (checkbox) {
+              checkbox.checked = true;
+              checkbox.addEventListener('change', () => {
+                applyTasksFilter();
+              });
+            }
           });
           uncheckedStates.forEach(state => {
             const checkbox = document.querySelector(`#blacksmith .checkbox-group input[type="checkbox"][value="${state}"]`);
-            if (checkbox) checkbox.checked = false;
+            if (checkbox) {
+              checkbox.checked = false;
+              checkbox.addEventListener('change', () => {
+                applyTasksFilter();
+              });
+            }
           });
-          
+
           // Reinitialize functionality
           initializeSorting('tasks-table');
           attachSearchFilter('tasks-table');
-          initializeTasksTab();
+          // Don't call initializeTasksTab() again - it would repopulate the dropdown
         }, 50);
       }
     } catch (error) {
@@ -9263,9 +9464,9 @@
   const applyTasksFilter = () => {
     const stateCheckboxes = document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:checked');
     const checkedStates = new Set(Array.from(stateCheckboxes).map(cb => cb.value));
-    
+
     const rows = document.querySelectorAll('.tasks-table tbody tr');
-    
+
     rows.forEach(row => {
       const stateCell = row.querySelector('.task-state span');
       if (stateCell) {
@@ -9306,10 +9507,10 @@
   // Refresh configs table
   const refreshConfigsTable = async () => {
     console.log('Refreshing configs table');
-    
+
     const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]:checked');
     const checkedTypes = Array.from(typeCheckboxes).map(cb => cb.value);
-    
+
     try {
       let url = `/b/configs?limit=100`;
       if (checkedTypes.length > 0 && checkedTypes.length < 4) {
@@ -9323,10 +9524,10 @@
 
       const configs = await response.json();
       const contentContainer = document.querySelector('#blacksmith .detail-content');
-      
+
       if (contentContainer) {
         contentContainer.innerHTML = formatConfigs(configs);
-        
+
         // Reinitialize functionality
         setTimeout(() => {
           initializeSorting('configs-table');
@@ -9347,9 +9548,9 @@
   const applyConfigsFilter = () => {
     const typeCheckboxes = document.querySelectorAll('#blacksmith .configs-filters .checkbox-group input[type="checkbox"]:checked');
     const checkedTypes = new Set(Array.from(typeCheckboxes).map(cb => cb.value));
-    
+
     const rows = document.querySelectorAll('.configs-table tbody tr');
-    
+
     rows.forEach(row => {
       const typeCell = row.querySelector('.config-type span');
       if (typeCell) {
@@ -9397,7 +9598,9 @@
                             <th>Description</th>
                             <th>Deployment</th>
                             <th>User</th>
+                            <th>Context ID</th>
                             <th>Started</th>
+                            <th>Finished</th>
                             <th>Duration</th>
                           </tr>
                         </thead>
@@ -9407,23 +9610,30 @@
                             <td id="task-description"></td>
                             <td id="task-deployment"></td>
                             <td id="task-user"></td>
+                            <td id="task-context-id"></td>
                             <td id="task-started"></td>
+                            <td id="task-finished"></td>
                             <td id="task-duration"></td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
                   </div>
-                  
+
                   <div class="manifest-tabs-nav">
-                    <button class="manifest-tab-btn active" data-tab="debug" data-group="task-tabs">Debug</button>
+                    <button class="manifest-tab-btn active" data-tab="task" data-group="task-tabs">Task</button>
+                    <button class="manifest-tab-btn" data-tab="debug" data-group="task-tabs">Debug</button>
                     <button class="manifest-tab-btn" data-tab="raw" data-group="task-tabs">Raw</button>
                     <button class="manifest-tab-btn" data-tab="events" data-group="task-tabs">Events</button>
                     <button class="manifest-tab-btn" data-tab="output" data-group="task-tabs">Output</button>
+                    <button class="manifest-tab-btn" data-tab="cpi" data-group="task-tabs">CPI</button>
                   </div>
-                  
+
                   <div class="manifest-tab-content">
-                    <div id="task-debug-content" class="manifest-tab-pane active" data-tab="debug" data-group="task-tabs">
+                    <div id="task-task-content" class="manifest-tab-pane active" data-tab="task" data-group="task-tabs">
+                      <div class="loading">Loading task output...</div>
+                    </div>
+                    <div id="task-debug-content" class="manifest-tab-pane" data-tab="debug" data-group="task-tabs">
                       <div class="loading">Loading debug...</div>
                     </div>
                     <div id="task-raw-content" class="manifest-tab-pane" data-tab="raw" data-group="task-tabs">
@@ -9435,6 +9645,9 @@
                     <div id="task-output-content" class="manifest-tab-pane" data-tab="output" data-group="task-tabs">
                       <div class="loading">Loading output...</div>
                     </div>
+                    <div id="task-cpi-content" class="manifest-tab-pane" data-tab="cpi" data-group="task-tabs">
+                      <div class="loading">Loading CPI output...</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -9442,20 +9655,20 @@
           </div>
         </div>
       `;
-      
+
       document.body.insertAdjacentHTML('beforeend', modalHTML);
       modal = document.getElementById('task-details-modal');
-      
+
       // Set up modal tab switching
       setupTaskModalTabs();
-      
+
       // Set up escape key handler
       modal.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           hideTaskDetailsModal();
         }
       });
-      
+
       // Set up click outside to close
       modal.addEventListener('click', (e) => {
         if (e.target === modal) {
@@ -9469,17 +9682,17 @@
 
     // Show modal using existing modal system
     modal.style.display = 'flex';
-    
+
     // Force reflow to ensure CSS transitions work
     modal.offsetHeight;
-    
+
     modal.classList.add('active');
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
 
     // Load task details
     await loadTaskDetails(taskId);
-    
+
     // Set up auto-refresh for running tasks
     startTaskModalAutoRefresh();
   };
@@ -9493,13 +9706,13 @@
       modal.setAttribute('aria-hidden', 'true');
       document.body.style.overflow = '';
     }
-    
+
     // Clear auto-refresh
     if (window.taskModalAutoRefresh) {
       clearInterval(window.taskModalAutoRefresh);
       window.taskModalAutoRefresh = null;
     }
-    
+
     window.currentTaskId = null;
   };
 
@@ -9673,24 +9886,26 @@
   const loadTaskDetails = async (taskId) => {
     const loadingDiv = document.getElementById('task-details-loading');
     const contentDiv = document.getElementById('task-details-content');
-    
+
     try {
       // Fetch task details
       const response = await fetch(`/b/tasks/${taskId}`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const taskData = await response.json();
       const task = taskData;
-      
+
       // Update task summary and modal title
       document.getElementById('task-details-modal-title').textContent = `Task Details - Task # ${task.id}`;
       document.getElementById('task-description').textContent = task.description || '-';
       document.getElementById('task-deployment').textContent = task.deployment || '-';
       document.getElementById('task-user').textContent = task.user || '-';
+      document.getElementById('task-context-id').textContent = task.context_id || '-';
       document.getElementById('task-started').textContent = formatTimestamp(task.started_at);
-      
+      document.getElementById('task-finished').textContent = task.ended_at ? formatTimestamp(task.ended_at) : '-';
+
       // Calculate and set duration
       let duration = '-';
       if (task.started_at) {
@@ -9704,11 +9919,11 @@
         }
       }
       document.getElementById('task-duration').textContent = duration;
-      
+
       // Set state badge
       const stateBadge = document.getElementById('task-state-badge');
       stateBadge.innerHTML = `<span class="task-state ${task.state}">${task.state}</span>`;
-      
+
       // Show/hide cancel button
       const cancelBtn = document.getElementById('cancel-task-btn');
       if (task.state === 'processing' || task.state === 'queued') {
@@ -9717,14 +9932,14 @@
       } else {
         cancelBtn.style.display = 'none';
       }
-      
+
       // Hide loading and show content
       loadingDiv.style.display = 'none';
       contentDiv.style.display = 'block';
-      
-      // Load initial tab content (debug)
-      await loadTaskTabContent(taskId, 'debug');
-      
+
+      // Load initial tab content (task)
+      await loadTaskTabContent(taskId, 'task');
+
     } catch (error) {
       console.error('Failed to load task details:', error);
       loadingDiv.innerHTML = `<div class="error">Failed to load task details: ${error.message}</div>`;
@@ -9735,67 +9950,138 @@
   const loadTaskTabContent = async (taskId, tabType) => {
     const contentDiv = document.getElementById(`task-${tabType}-content`);
     if (!contentDiv) return;
-    
+
     contentDiv.innerHTML = '<div class="loading">Loading...</div>';
-    
+
     try {
       let content = '';
-      
+
       if (tabType === 'events') {
         // Events are included in the task details response
         const response = await fetch(`/b/tasks/${taskId}`, { cache: 'no-cache' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const taskData = await response.json();
-        
+
         if (taskData.events && taskData.events.length > 0) {
           content = formatTaskEvents(taskData.events);
         } else {
           content = '<div class="no-data">No events available</div>';
         }
+
+      } else if (tabType === 'task' || tabType === 'output' || tabType === 'debug' || tabType === 'cpi') {
+        let outputType;
+        if (tabType === 'task') {
+          outputType = 'task';
+        } else if (tabType === 'output') {
+          outputType = 'result';
+        } else if (tabType === 'debug') {
+          outputType = 'debug';
+        } else if (tabType === 'cpi') {
+          outputType = 'cpi';
+        }
         
-      } else if (tabType === 'output' || tabType === 'debug') {
-        const outputType = tabType === 'output' ? 'result' : 'debug';
-        const response = await fetch(`/b/tasks/${taskId}/output?type=${outputType}`, { cache: 'no-cache' });
+        let fetchUrl = `/b/tasks/${taskId}/output`;
+        if (outputType !== 'task') {
+          fetchUrl += `?type=${outputType}`;
+        }
+        const response = await fetch(fetchUrl, { cache: 'no-cache' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const outputData = await response.json();
-        
+
         if (Array.isArray(outputData)) {
           content = formatTaskEvents(outputData);
         } else if (outputData.output) {
-          content = formatTaskOutput(outputData.output, outputType);
+          // For 'task' type, parse JSONL format (JSON Lines) from BOSH EventOutput
+          if (tabType === 'task' && typeof outputData.output === 'string') {
+            const lines = outputData.output.trim().split('\n').filter(line => line.trim());
+            const events = [];
+            
+            for (const line of lines) {
+              try {
+                const event = JSON.parse(line);
+                // Convert Unix timestamp to readable format
+                const timestamp = new Date(event.time * 1000);
+                const timeStr = timestamp.toISOString().substring(11, 19); // HH:MM:SS format
+                const dateStr = timestamp.toISOString().substring(0, 10); // YYYY-MM-DD format
+                
+                // Build display message from stage and task info
+                let message = event.stage;
+                if (event.task && event.task !== event.stage) {
+                  message += `: ${event.task}`;
+                }
+                if (event.state !== 'finished' && event.state !== 'started') {
+                  message += ` (${event.state})`;
+                }
+                if (event.progress !== undefined && event.progress > 0 && event.progress < 100) {
+                  message += ` ${event.progress}%`;
+                }
+                if (event.data && event.data.status) {
+                  message += ` - ${event.data.status}`;
+                }
+                
+                events.push({
+                  date: dateStr,
+                  time: timeStr,
+                  level: event.state.toUpperCase(),
+                  message: message
+                });
+              } catch (e) {
+                // Skip malformed JSON lines
+                console.warn('Failed to parse event line:', line, e);
+              }
+            }
+            
+            // Format as task events table
+            if (events.length > 0) {
+              content = formatTaskEventsAsLogs(events, 'task');
+            } else {
+              content = formatTaskOutput('', outputType);
+            }
+          } else {
+            content = formatTaskOutput(outputData.output, outputType);
+          }
         } else {
           content = formatTaskOutput('', outputType);
         }
-        
+
       } else if (tabType === 'raw') {
         const response = await fetch(`/b/tasks/${taskId}`, { cache: 'no-cache' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const taskData = await response.json();
         const rawText = JSON.stringify(taskData, null, 2);
-        
+
         // Store raw text for copying
         if (!window.taskRawTexts) window.taskRawTexts = {};
         window.taskRawTexts[taskId] = rawText;
-        
+
         content = `
           <div class="manifest-container">
             <div class="manifest-header">
               <button class="copy-btn-manifest" onclick="window.copyTaskRaw('${taskId}', event)"
                       title="Copy raw data to clipboard">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                <span>Copy</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
             </div>
             <pre>${rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
           </div>
         `;
       }
-      
+
       contentDiv.innerHTML = content;
-      
+
       // Initialize search and sorting functionality for tables
-      if (tabType === 'output' || tabType === 'debug') {
-        const tableClass = `task-${tabType === 'output' ? 'result' : 'debug'}-table`;
+      if (tabType === 'task' || tabType === 'output' || tabType === 'debug' || tabType === 'cpi') {
+        let tableClassSuffix;
+        if (tabType === 'task') {
+          tableClassSuffix = 'task';
+        } else if (tabType === 'output') {
+          tableClassSuffix = 'result';
+        } else if (tabType === 'debug') {
+          tableClassSuffix = 'debug';
+        } else if (tabType === 'cpi') {
+          tableClassSuffix = 'cpi';
+        }
+        const tableClass = `task-${tableClassSuffix}-table`;
         // Set a timeout to ensure DOM is ready
         setTimeout(() => {
           initializeSorting(tableClass);
@@ -9808,7 +10094,7 @@
           attachSearchFilter('logs-table');
         }, 100);
       }
-      
+
     } catch (error) {
       console.error(`Failed to load ${tabType} content:`, error);
       contentDiv.innerHTML = `<div class="error">Failed to load ${tabType}: ${error.message}</div>`;
@@ -9856,17 +10142,17 @@
           </thead>
           <tbody>
             ${events.map(event => {
-              const time = formatTimestamp(event.time);
-              const progress = event.progress ? `${event.progress}%` : '-';
-              const error = event.error ? event.error.message : '-';
-              
-              // Make task field clickable if it's a valid task ID
-              let taskInfo = event.task || '-';
-              if (event.task && !isNaN(event.task) && event.task !== '-') {
-                taskInfo = `<a href="#" class="task-link" data-task-id="${event.task}" onclick="showTaskDetails(${event.task}, event); return false;">${event.task}</a>`;
-              }
-              
-              return `
+      const time = formatTimestamp(event.time);
+      const progress = event.progress ? `${event.progress}%` : '-';
+      const error = event.error ? event.error.message : '-';
+
+      // Make task field clickable if it's a valid task ID
+      let taskInfo = event.task || '-';
+      if (event.task && !isNaN(event.task) && event.task !== '-') {
+        taskInfo = `<a href="#" class="task-link" data-task-id="${event.task}" onclick="showTaskDetails(${event.task}, event); return false;">${event.task}</a>`;
+      }
+
+      return `
                 <tr>
                   <td>${time}</td>
                   <td>${event.stage || '-'}</td>
@@ -9876,7 +10162,82 @@
                   <td class="event-error">${error}</td>
                 </tr>
               `;
-            }).join('')}
+    }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  // Format task events as logs table for the Task tab
+  const formatTaskEventsAsLogs = (events, outputType) => {
+    const tableClass = `task-${outputType}-table`;
+    
+    if (!events || events.length === 0) {
+      return `
+        <div class="logs-table-container">
+          <div class="table-controls-container">
+            <div class="search-filter-container">
+              ${createSearchFilter(tableClass, 'Search task events...')}
+            </div>
+            <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
+                    title="Copy filtered table rows">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
+            </button>
+          </div>
+          <table class="${tableClass}">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Level</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td colspan="3" class="no-data-row">No task events available</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    const rows = events.map(event => {
+      const timestamp = event.date && event.time ? `${event.date} ${event.time}` : (event.time || '-');
+      const level = event.level || 'INFO';
+      const message = event.message || '';
+      
+      return `
+        <tr>
+          <td class="timestamp">${timestamp}</td>
+          <td class="level"><span class="log-level ${level.toLowerCase()}">${level}</span></td>
+          <td class="message">${highlightPatterns(message)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    return `
+      <div class="logs-table-container">
+        <div class="table-controls-container">
+          <div class="search-filter-container">
+            ${createSearchFilter(tableClass, 'Search task events...')}
+          </div>
+          <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
+                  title="Copy filtered table rows">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          </button>
+        </div>
+        <table class="${tableClass}">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Level</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
           </tbody>
         </table>
       </div>
@@ -9886,7 +10247,7 @@
   // Format task output as table (like logs view)
   const formatTaskOutput = (output, outputType) => {
     const tableClass = `task-${outputType}-table`;
-    
+
     if (!output || output.trim() === '') {
       return `
         <div class="logs-table-container">
@@ -9896,8 +10257,7 @@
             </div>
             <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
                     title="Copy filtered table rows">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-              <span>Copy</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
           <table class="${tableClass}">
@@ -9930,8 +10290,7 @@
           </div>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.${tableClass}', event)"
                   title="Copy filtered table rows">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span>Copy</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
         </div>
         <table class="${tableClass}">
@@ -9955,28 +10314,28 @@
     if (!confirm(`Are you sure you want to cancel task ${taskId}?`)) {
       return;
     }
-    
+
     try {
       const response = await fetch(`/b/tasks/${taskId}/cancel`, {
         method: 'POST',
         cache: 'no-cache'
       });
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const result = await response.json();
       console.log('Task cancelled:', result);
-      
+
       // Refresh task details
       await loadTaskDetails(taskId);
-      
+
       // Refresh tasks table if visible
       if (document.querySelector('.detail-tab[data-tab="tasks"].active')) {
         refreshTasksTable();
       }
-      
+
     } catch (error) {
       console.error('Failed to cancel task:', error);
       alert(`Failed to cancel task: ${error.message}`);
@@ -9989,14 +10348,14 @@
     if (window.taskModalAutoRefresh) {
       clearInterval(window.taskModalAutoRefresh);
     }
-    
+
     // Set up new interval for running tasks
     window.taskModalAutoRefresh = setInterval(async () => {
       if (window.currentTaskId) {
         const stateBadge = document.querySelector('#task-state-badge .task-state');
         if (stateBadge && (stateBadge.classList.contains('processing') || stateBadge.classList.contains('queued'))) {
           await loadTaskDetails(window.currentTaskId);
-          
+
           // Reload active tab content
           const activeTab = document.querySelector('.task-detail-tab.active');
           if (activeTab) {
@@ -10847,17 +11206,16 @@
           <table class="endpoint-selector-table">
             <tbody>
               <tr>
-                <td class="endpoint-label">Endpoint:</td>
-                <td class="endpoint-dropdown-cell">
-                  <select id="cf-endpoint-select" class="cf-endpoint-dropdown">
-                    <option value="">Loading endpoints...</option>
-                  </select>
-                </td>
                 <td class="connection-status-cell">
                   <div class="connection-status" id="connection-status">
                     <span class="status-indicator" id="status-indicator"></span>
                     <button class="btn btn-sm btn-secondary" id="connection-btn" onclick="CFEndpointManager.toggleConnection()">Connect</button>
                   </div>
+                </td>
+                <td class="endpoint-dropdown-cell">
+                  <select id="cf-endpoint-select" class="cf-endpoint-dropdown">
+                    <option value="">Loading endpoints...</option>
+                  </select>
                 </td>
                 <td class="endpoint-controls">
                   <button class="btn btn-icon btn-sm" onclick="CFEndpointManager.refreshEndpoints()" title="Refresh Endpoints">
@@ -10873,6 +11231,8 @@
                   <button class="btn btn-sm btn-primary" onclick="CFEndpointManager.showRegistrationModal()" title="Register Broker" id="register-btn" style="display: none; margin-left: 8px;">
                     Register
                   </button>
+                </td>
+                <td>
                 </td>
               </tr>
             </tbody>
@@ -10895,7 +11255,7 @@
               </div>
             </div>
           </div>
-          
+
           <div class="cf-detail-panel" data-panel="register" style="display: none;">
             <div class="cf-registration-content" id="cf-registration-content">
               <div class="empty-state">
@@ -12639,7 +12999,7 @@
     async loadEndpoints() {
       // Load persistent connection states first
       this.loadConnectionStates();
-      
+
       try {
         const response = await fetch('/b/cf/endpoints');
         const data = await response.json();
@@ -12647,7 +13007,7 @@
         if (data.endpoints) {
           this.endpoints = data.endpoints;
           this.renderEndpointsList();
-          
+
           // Restore previously selected endpoint if it exists, otherwise auto-select first endpoint
           const endpointNames = Object.keys(this.endpoints);
           if (endpointNames.length > 0) {
@@ -12676,7 +13036,7 @@
       if (dropdown) {
         dropdown.innerHTML = '<option value="">Refreshing endpoints...</option>';
       }
-      
+
       // Reload endpoints from server
       await this.loadEndpoints();
     },
@@ -12756,10 +13116,10 @@
 
       // Load details for the selected endpoint
       this.loadEndpointDetails(endpointName);
-      
+
       // Update connection status display
       this.updateConnectionStatus(endpointName);
-      
+
       // Show/hide register button based on endpoint selection
       this.updateRegisterButtonVisibility(endpointName);
 
@@ -12794,7 +13154,7 @@
 
       // Reset to details tab
       this.switchToBrokerTab('details');
-      
+
       // Hide register button
       this.updateRegisterButtonVisibility(null);
     },
@@ -12820,7 +13180,7 @@
 
       // First prefill the form with broker defaults
       await this.prefillRegistrationForm();
-      
+
       // Then show the existing registration modal
       CFRegistrationManager.showRegistrationModal();
     },
@@ -12831,7 +13191,7 @@
         // Get broker info from the blacksmith status
         const response = await fetch('/status');
         const data = await response.json();
-        
+
         const endpoint = this.endpoints[this.selectedEndpoint];
         if (endpoint && data) {
           // Pre-fill name field
@@ -12839,19 +13199,19 @@
           if (nameInput) {
             nameInput.value = `blacksmith-${this.selectedEndpoint.toLowerCase()}`;
           }
-          
+
           // Pre-fill API URL if we can extract it from the endpoint
           const apiInput = document.getElementById('reg-api-url');
           if (apiInput && endpoint.endpoint) {
             apiInput.value = endpoint.endpoint;
           }
-          
+
           // Pre-fill broker name
           const brokerNameInput = document.getElementById('reg-broker-name');
           if (brokerNameInput) {
             brokerNameInput.value = 'blacksmith';
           }
-          
+
           // Check auto-register by default
           const autoRegisterInput = document.getElementById('reg-auto-register');
           if (autoRegisterInput) {
@@ -12943,13 +13303,11 @@
                           </div>
                           <button class="copy-btn-logs" onclick="window.copyMarketplaceServicesTable(event)"
                                   title="Copy table data">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            <span>Copy</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
                           <button class="refresh-btn-logs" onclick="window.refreshMarketplaceServices('${endpointName}', event)"
                                   title="Refresh marketplace services">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                            <span>Refresh</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                           </button>
                         </div>
                       </th>
@@ -12977,7 +13335,7 @@
           </div>
         `;
         panel.innerHTML = html;
-        
+
         // Initialize table features
         attachSearchFilter('marketplace-services-table');
         initializeSorting('marketplace-services-table');
@@ -13126,7 +13484,7 @@
           if (orgSelector && [...orgSelector.options].some(opt => opt.value === selectedOrg)) {
             orgSelector.value = selectedOrg;
             orgSelector.dispatchEvent(new Event('change'));
-            
+
             if (selectedSpace) {
               setTimeout(() => {
                 const spaceSelector = document.getElementById('space-selector');
@@ -13162,13 +13520,11 @@
                           </div>
                           <button class="copy-btn-logs" onclick="window.copyServiceInstancesTable(event)"
                                   title="Copy table data">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            <span>Copy</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
                           <button class="refresh-btn-logs" onclick="window.refreshServiceInstances('${endpointName}', '${orgGuid}', '${spaceGuid}', event)"
                                   title="Refresh service instances">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                            <span>Refresh</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                           </button>
                         </div>
                       </th>
@@ -13197,11 +13553,11 @@
             </div>
           `;
           resultsContainer.innerHTML = html;
-          
+
           // Initialize table features
           attachSearchFilter('service-instances-table');
           initializeSorting('service-instances-table');
-          
+
           // Load bindings for each service instance
           data.services.forEach(service => {
             this.loadServiceBindings(endpointName, orgGuid, spaceGuid, service.guid);
@@ -13218,11 +13574,11 @@
       try {
         const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(endpointName)}/orgs/${orgGuid}/spaces/${spaceGuid}/service_instances/${serviceGuid}/bindings`);
         const data = await response.json();
-        
+
         const bindingsElement = document.getElementById(`bindings-${serviceGuid}`);
         if (bindingsElement) {
           const bindings = data.bindings || [];
-          
+
           if (bindings.length > 0) {
             // Show binding names, preferring app names over GUIDs
             const bindingNames = bindings.map(binding => {
@@ -13236,7 +13592,7 @@
                 return 'Service Binding';
               }
             });
-            
+
             bindingsElement.innerHTML = bindingNames.join(', ');
             bindingsElement.title = `Service bindings: ${bindingNames.join(', ')}`;
           } else {
@@ -13258,11 +13614,11 @@
     updateConnectionStatus(endpointName) {
       const statusIndicator = document.getElementById('status-indicator');
       const connectionBtn = document.getElementById('connection-btn');
-      
+
       if (!statusIndicator || !connectionBtn) return;
-      
+
       const connectionState = this.connectionStates[endpointName] || { connected: false, testing: false };
-      
+
       // Update status indicator
       statusIndicator.className = 'status-indicator';
       if (connectionState.testing) {
@@ -13272,7 +13628,7 @@
       } else {
         statusIndicator.classList.add('status-disconnected');
       }
-      
+
       // Update button
       connectionBtn.textContent = connectionState.connected ? 'Disconnect' : 'Connect';
       connectionBtn.disabled = connectionState.testing;
@@ -13281,9 +13637,9 @@
     // Toggle connection status
     async toggleConnection() {
       if (!this.selectedEndpoint) return;
-      
+
       const currentState = this.connectionStates[this.selectedEndpoint] || { connected: false, testing: false };
-      
+
       if (currentState.connected) {
         // Disconnect
         this.connectionStates[this.selectedEndpoint] = { connected: false, testing: false };
@@ -13294,25 +13650,25 @@
         // Connect - start testing
         this.connectionStates[this.selectedEndpoint] = { connected: false, testing: true };
         this.updateConnectionStatus(this.selectedEndpoint);
-        
+
         try {
           const response = await fetch(`/b/cf/endpoints/${encodeURIComponent(this.selectedEndpoint)}/connect`, {
             method: 'POST'
           });
           const result = await response.json();
-          
-          this.connectionStates[this.selectedEndpoint] = { 
-            connected: response.ok && result.success, 
-            testing: false 
+
+          this.connectionStates[this.selectedEndpoint] = {
+            connected: response.ok && result.success,
+            testing: false
           };
         } catch (error) {
           this.connectionStates[this.selectedEndpoint] = { connected: false, testing: false };
         }
-        
+
         this.updateConnectionStatus(this.selectedEndpoint);
         // Save state to localStorage
         this.saveConnectionStates();
-        
+
         // Refresh current tab if it was showing connection required message
         this.refreshCurrentTab();
       }
@@ -13532,6 +13888,11 @@
       // Open terminal in the div
       terminal.open(terminalDiv);
 
+      // Focus the terminal after opening
+      setTimeout(() => {
+        terminal.focus();
+      }, 100);
+
       // Fit terminal to container size
       const fitTerminal = () => {
         const containerWidth = terminalDiv.clientWidth;
@@ -13584,7 +13945,7 @@
               // Wait for handshake before sending start command
               handshakeReceived = true;
               // Don't show "Session Initialized" message to user - keep it clean
-              
+
               // Small delay to ensure backend is ready
               setTimeout(() => {
                 if (ws.readyState === WebSocket.OPEN) {
@@ -13610,7 +13971,7 @@
                 terminal.writeln(`\r\n[Connection Error] ${msg.data}`);
                 terminal.writeln(`\r\n[Retrying connection... (${retryCount + 1}/${maxRetries})]`);
                 retryCount++;
-                
+
                 // Close current connection and retry with exponential backoff
                 ws.close();
                 const delay = 1000 * Math.pow(2, retryCount - 1); // 1s, 2s, 4s
@@ -13627,6 +13988,11 @@
                 sessionConnected = true; // Mark session as ready for input
                 terminal.writeln('\r\n[Connected]\r\n');
                 retryCount = 0; // Reset retry count on successful connection
+
+                // Focus the terminal when connection is established
+                setTimeout(() => {
+                  terminal.focus();
+                }, 100);
               }
               break;
           }
@@ -13705,7 +14071,7 @@
         const instanceParts = context.instanceId.split('/');
         const instanceName = instanceParts[0] || 'blacksmith';
         const instanceIndex = instanceParts.length > 1 ? instanceParts[1] : '0';
-        
+
         return `${protocol}//${host}/b/blacksmith/ssh/stream?instance=${encodeURIComponent(instanceName)}&index=${encodeURIComponent(instanceIndex)}`;
       } else {
         // For service instances
@@ -13719,6 +14085,12 @@
       tab.className = `terminal-tab ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
       tab.id = `tab-${sessionKey}`;
       tab.innerHTML = `
+        <svg class="terminal-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+        <span class="${context.deploymentType === 'blacksmith' ? 'blacksmith-prefix' : 'service-prefix'}">[${context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}]</span>
         ${context.deploymentName}/${context.instanceId}
         <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
       `;
@@ -13747,6 +14119,13 @@
         session.element.classList.add('active');
         document.getElementById(`tab-${sessionKey}`).classList.add('active');
         this.activeSession = sessionKey;
+
+        // Focus the terminal after switching
+        if (session.terminal) {
+          setTimeout(() => {
+            session.terminal.focus();
+          }, 100);
+        }
       }
     },
 
@@ -13861,6 +14240,11 @@
           const tab = document.createElement('div');
           tab.className = `minimized-terminal-tab ${sessionKey === this.activeSession ? 'active' : ''}`;
           tab.innerHTML = `
+            <svg class="minimized-terminal-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
             <span class="${session.context.deploymentType === 'blacksmith' ? 'blacksmith-prefix' : 'service-prefix'}">[${session.context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}]</span>
             ${session.context.deploymentName}/${session.context.instanceId}
             <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
@@ -14098,10 +14482,10 @@
 
       if (response.ok && result.success) {
         showNotification(result.message || 'Resurrection config deleted successfully', 'success');
-        
+
         // Hide the delete button since config no longer exists
         deleteBtn.style.display = 'none';
-        
+
         // Refresh VMs view to show updated resurrection status
         if (window.refreshServiceInstanceVMs) {
           window.refreshServiceInstanceVMs(instanceId, event);
@@ -14139,10 +14523,10 @@
     // Check if any VM has resurrection paused
     const anyPaused = vms.some(vm => vm.resurrection_paused);
     const allPaused = vms.every(vm => vm.resurrection_paused);
-    
+
     // Check if resurrection config exists (should be same for all VMs in a deployment)
     const resurrectionConfigExists = vms.some(vm => vm.resurrection_config_exists);
-    
+
     // Show/hide delete button based on config existence
     const deleteBtn = document.getElementById(`delete-resurrection-btn-${instanceId}`);
     if (deleteBtn) {
@@ -14205,7 +14589,7 @@
       const rows = table.querySelectorAll('tbody tr:not([style*="display: none"])');
       const headers = ['Name', 'Type', 'Status', 'Bindings'];
       let text = headers.join('\t') + '\n';
-      
+
       rows.forEach(row => {
         const cells = row.querySelectorAll('td');
         const rowData = Array.from(cells).map(cell => cell.textContent.trim());
@@ -14228,7 +14612,7 @@
       const rows = table.querySelectorAll('tbody tr:not([style*="display: none"])');
       const headers = ['Service', 'Description', 'Plans', 'Available'];
       let text = headers.join('\t') + '\n';
-      
+
       rows.forEach(row => {
         const cells = row.querySelectorAll('td');
         const rowData = Array.from(cells).map(cell => cell.textContent.trim());

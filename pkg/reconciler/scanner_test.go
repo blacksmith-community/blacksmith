@@ -127,7 +127,7 @@ func (d *mockDirector) DeleteResurrectionConfig(deployment string) error {
 }
 
 // New task methods added for Tasks feature
-func (d *mockDirector) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
+func (d *mockDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, errors.New("not implemented")
 }
 

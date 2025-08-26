@@ -93,7 +93,7 @@ func (m *mockDirector) GetStemcells() ([]bosh.Stemcell, error)                  
 func (m *mockDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error)       { return nil, nil }
 func (m *mockDirector) GetTask(id int) (*bosh.Task, error)                        { return nil, nil }
 
-func (m *mockDirector) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
+func (m *mockDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, nil
 }
 func (m *mockDirector) GetAllTasks(limit int) ([]bosh.Task, error)                   { return nil, nil }

@@ -435,7 +435,7 @@ func (mb *MockBOSHDirector) EnableResurrection(deployment string, enabled bool) 
 func (mb *MockBOSHDirector) DeleteResurrectionConfig(deployment string) error         { return nil }
 
 // New task methods added for Tasks feature
-func (mb *MockBOSHDirector) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
+func (mb *MockBOSHDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, nil
 }
 func (mb *MockBOSHDirector) GetAllTasks(limit int) ([]bosh.Task, error) { return nil, nil }

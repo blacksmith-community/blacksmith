@@ -288,20 +288,33 @@ func (vc *VaultClient) GetSecret(path string) (map[string]interface{}, bool, err
 	// For KV v2, the actual data is nested under "data" key
 	if vc.KVVersion == "2" {
 		if data, ok := secret.Data["data"].(map[string]interface{}); ok {
-			l.Debug("secret found at %s", fullPath)
+			var keys []string
+			for key := range data {
+				keys = append(keys, key)
+			}
+			l.Debug("secret found at %s with keys: %v", fullPath, keys)
 			return data, true, nil
 		}
 		l.Debug("secret found but no data field at %s", fullPath)
 		return nil, false, nil
 	}
 
-	l.Debug("secret found at %s", fullPath)
+	var keys []string
+	for key := range secret.Data {
+		keys = append(keys, key)
+	}
+	l.Debug("secret found at %s with keys: %v", fullPath, keys)
 	return secret.Data, true, nil
 }
 
 // PutSecret writes a secret to vault
 func (vc *VaultClient) PutSecret(path string, data map[string]interface{}) error {
 	l := Logger.Wrap("vault put")
+
+	var keys []string
+	for key := range data {
+		keys = append(keys, key)
+	}
 
 	var fullPath string
 	var writeData map[string]interface{}
@@ -312,11 +325,11 @@ func (vc *VaultClient) PutSecret(path string, data map[string]interface{}) error
 		writeData = map[string]interface{}{
 			"data": data,
 		}
-		l.Debug("writing secret to %s (KV v2)", fullPath)
+		l.Debug("writing secret to %s (KV v2) with keys: %v", fullPath, keys)
 	} else {
 		fullPath = "secret/" + path
 		writeData = data
-		l.Debug("writing secret to %s (KV v1)", fullPath)
+		l.Debug("writing secret to %s (KV v1) with keys: %v", fullPath, keys)
 	}
 
 	_, err := vc.Logical().Write(fullPath, writeData)
@@ -325,7 +338,7 @@ func (vc *VaultClient) PutSecret(path string, data map[string]interface{}) error
 		return err
 	}
 
-	l.Debug("secret written successfully to %s", path)
+	l.Debug("secret written successfully to %s with keys: %v", path, keys)
 	return nil
 }
 

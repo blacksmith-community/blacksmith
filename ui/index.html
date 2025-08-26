@@ -57,8 +57,6 @@
       <div class="tabs" role="tablist" aria-label="Main navigation">
         <button class="tab-button active" data-tab="blacksmith" role="tab" aria-selected="true"
           aria-controls="blacksmith">Blacksmith</button>
-        <button class="tab-button" data-tab="plans" role="tab" aria-selected="false"
-          aria-controls="plans">Plans</button>
         <button class="tab-button" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service
           Instances</button>
       </div>
@@ -69,24 +67,22 @@
           <!-- Blacksmith sub-tabs -->
           <div class="detail-tabs">
             <button class="detail-tab active" data-tab="details">Details</button>
+            <button class="detail-tab" data-tab="plans">Plans</button>
             <button class="detail-tab" data-tab="broker">Broker</button>
             <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
             <button class="detail-tab" data-tab="vms">VMs</button>
-            <button class="detail-tab" data-tab="logs">Deployment Logs</button>
-            <button class="detail-tab" data-tab="debug">Debug Log</button>
             <button class="detail-tab" data-tab="events">Events</button>
             <button class="detail-tab" data-tab="tasks">Tasks</button>
             <button class="detail-tab" data-tab="configs">Configs</button>
+            <button class="detail-tab" data-tab="certificates">Certificates</button>
+            <button class="detail-tab" data-tab="manifest">Manifest</button>
+            <button class="detail-tab" data-tab="config">Config</button>
           </div>
           
           <!-- Blacksmith detail content -->
           <div class="detail-content">
             <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
           </div>
-        </div>
-
-        <div id="plans" class="tab-panel" role="tabpanel" aria-hidden="true">
-          <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
         </div>
 
         <div id="services" class="tab-panel" role="tabpanel" aria-hidden="true">
@@ -279,7 +275,9 @@
               <div class="manifest-tab-content">
                 <div class="manifest-tab-pane active" data-tab="config" data-group="config-tabs">
                   <div class="config-content-header">
-                    <button class="btn btn-secondary copy-btn" id="copy-config-content">Copy Content</button>
+                    <button class="btn btn-secondary copy-btn" id="copy-config-content" title="Copy content to clipboard">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
                   </div>
                   <pre id="config-content-text" class="config-content"></pre>
                 </div>

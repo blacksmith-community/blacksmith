@@ -189,6 +189,32 @@ func (m *CFConnectionManager) isServiceInstanceManagedByBroker(si capi.ServiceIn
 		}
 	}
 
+	// Enhanced matching for common service abbreviations
+	serviceAbbrevMap := map[string][]string{
+		"rabbitmq":   {"rmq", "rabbit"},
+		"redis":      {"rd", "rds"},
+		"postgresql": {"pg", "postgres", "psql"},
+		"mysql":      {"my", "sql"},
+		"vault":      {"vlt"},
+	}
+
+	// Check if any broker service matches the abbreviation patterns
+	for _, brokerService := range brokerServices {
+		// Direct match first
+		if strings.Contains(strings.ToLower(si.Name), strings.ToLower(brokerService)) {
+			return true
+		}
+		
+		// Check abbreviations
+		if abbrevs, exists := serviceAbbrevMap[strings.ToLower(brokerService)]; exists {
+			for _, abbrev := range abbrevs {
+				if strings.Contains(strings.ToLower(si.Name), abbrev) {
+					return true
+				}
+			}
+		}
+	}
+
 	return false
 }
 

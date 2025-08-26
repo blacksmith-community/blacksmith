@@ -668,8 +668,8 @@ func (d *DirectorAdapter) GetTask(id int) (*Task, error) {
 }
 
 // GetTasks retrieves multiple tasks based on filter criteria
-func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string) ([]Task, error) {
-	d.log.Info("Getting tasks (type: %s, limit: %d, states: %v)", taskType, limit, states)
+func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, team string) ([]Task, error) {
+	d.log.Info("Getting tasks (type: %s, limit: %d, states: %v, team: %s)", taskType, limit, states, team)
 	d.log.Debug("Building task filter for type: %s", taskType)
 
 	// Convert limit to sensible defaults
@@ -751,6 +751,59 @@ func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string) 
 		d.log.Debug("Filtered to %d tasks with states %v", len(tasks), states)
 	}
 
+	// Filter by team if specified
+	if team != "" {
+		d.log.Debug("Starting team filtering with %d tasks for team '%s'", len(tasks), team)
+		var teamFilteredTasks []boshdirector.Task
+		for _, task := range tasks {
+			deploymentName := task.DeploymentName()
+			d.log.Debug("Task %d: deployment='%s', description='%s'", task.ID(), deploymentName, task.Description())
+			
+			// Filter based on the selected filter option
+			includeTask := false
+			
+			if team == "blacksmith" {
+				// For blacksmith, show all BOSH director tasks
+				includeTask = true
+				d.log.Debug("Task %d: included for blacksmith (show all)", task.ID())
+			} else if team == "service-instances" {
+				// For service-instances, show tasks from deployments that look like service instances
+				// Service instances typically have deployment names like: redis-{uuid}, rabbitmq-{uuid}, etc.
+				if deploymentName != "" {
+					includeTask = (strings.Contains(deploymentName, "-") && 
+						(strings.HasPrefix(deploymentName, "redis-") ||
+						 strings.HasPrefix(deploymentName, "rabbitmq-") ||
+						 strings.HasPrefix(deploymentName, "postgres-") ||
+						 strings.Contains(deploymentName, "service-")))
+					d.log.Debug("Task %d: service-instances check result: %v", task.ID(), includeTask)
+				} else {
+					d.log.Debug("Task %d: no deployment name, excluded from service-instances", task.ID())
+				}
+			} else {
+				// For specific service/plan names, filter by deployment name patterns
+				if deploymentName != "" {
+					deploymentLower := strings.ToLower(deploymentName)
+					teamLower := strings.ToLower(team)
+					includeTask = (strings.Contains(deploymentLower, teamLower) ||
+						strings.HasPrefix(deploymentLower, teamLower+"-"))
+					d.log.Debug("Task %d: specific filter '%s' check result: %v", task.ID(), team, includeTask)
+				} else {
+					d.log.Debug("Task %d: no deployment name, excluded from specific filter '%s'", task.ID(), team)
+				}
+			}
+			
+			if includeTask {
+				teamFilteredTasks = append(teamFilteredTasks, task)
+				d.log.Debug("Task %d: INCLUDED for team '%s'", task.ID(), team)
+			} else {
+				d.log.Debug("Task %d: EXCLUDED for team '%s'", task.ID(), team)
+			}
+		}
+		originalCount := len(tasks)
+		tasks = teamFilteredTasks
+		d.log.Debug("Team filtering complete: %d tasks included for team '%s' (from %d original)", len(tasks), team, originalCount)
+	}
+
 	// Limit results
 	if len(tasks) > limit {
 		tasks = tasks[:limit]
@@ -771,7 +824,7 @@ func (d *DirectorAdapter) GetAllTasks(limit int) ([]Task, error) {
 	d.log.Info("Getting all tasks (limit: %d)", limit)
 
 	// Use GetTasks with "all" type for consistency
-	return d.GetTasks("all", limit, nil)
+	return d.GetTasks("all", limit, nil, "")
 }
 
 // CancelTask cancels a running task
@@ -821,6 +874,9 @@ func (d *DirectorAdapter) GetTaskOutput(id int, outputType string) (string, erro
 
 	// Get task output based on type
 	switch outputType {
+	case "task":
+		// For comprehensive task output, use event output which matches 'bosh task <id>' output
+		err = task.EventOutput(reporter)
 	case "debug":
 		// For debug output, use DebugOutput method
 		err = task.DebugOutput(reporter)
@@ -830,6 +886,9 @@ func (d *DirectorAdapter) GetTaskOutput(id int, outputType string) (string, erro
 	case "result":
 		// For result output, use ResultOutput method
 		err = task.ResultOutput(reporter)
+	case "cpi":
+		// For CPI output, use CPIOutput method
+		err = task.CPIOutput(reporter)
 	default:
 		// Default to debug output
 		err = task.DebugOutput(reporter)

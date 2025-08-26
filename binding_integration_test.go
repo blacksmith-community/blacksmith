@@ -498,7 +498,7 @@ func (imb *IntegrationMockBOSH) EnableResurrection(deployment string, enabled bo
 func (imb *IntegrationMockBOSH) DeleteResurrectionConfig(deployment string) error         { return nil }
 
 // New task methods added for Tasks feature
-func (imb *IntegrationMockBOSH) GetTasks(taskType string, limit int, states []string) ([]bosh.Task, error) {
+func (imb *IntegrationMockBOSH) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, nil
 }
 func (imb *IntegrationMockBOSH) GetAllTasks(limit int) ([]bosh.Task, error) { return nil, nil }

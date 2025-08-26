@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -809,16 +810,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get credentials from vault
 		var creds map[string]interface{}
-		exists, err := api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
 		if err != nil || !exists {
-			l.Debug("Credentials not found at %s/creds, trying alternate path", instanceID)
-			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
-			if err != nil || !exists {
-				l.Error("Unable to find credentials for instance %s", instanceID)
-				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "credentials not found"}`)
-				return
-			}
+			l.Error("Unable to find credentials for instance %s", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			return
 		}
 
 		// Check if this is a Redis instance
@@ -977,15 +974,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Check if this is a RabbitMQ instance
 		var creds map[string]interface{}
-		exists, err = api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
 		if err != nil || !exists {
-			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
-			if err != nil || !exists {
-				l.Error("Unable to find credentials for instance %s", instanceID)
-				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "credentials not found"}`)
-				return
-			}
+			l.Error("Unable to find credentials for instance %s", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			return
 		}
 
 		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
@@ -1237,15 +1231,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Check if this is a RabbitMQ instance
 		var creds map[string]interface{}
-		exists, err = api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
 		if err != nil || !exists {
-			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
-			if err != nil || !exists {
-				l.Error("Unable to find credentials for instance %s", instanceID)
-				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "credentials not found"}`)
-				return
-			}
+			l.Error("Unable to find credentials for instance %s", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			return
 		}
 
 		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
@@ -1487,16 +1478,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get credentials from vault
 		var creds map[string]interface{}
-		exists, err := api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
 		if err != nil || !exists {
-			l.Debug("Credentials not found at %s/creds, trying alternate path", instanceID)
-			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
-			if err != nil || !exists {
-				l.Error("Unable to find credentials for instance %s", instanceID)
-				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "credentials not found"}`)
-				return
-			}
+			l.Error("Unable to find credentials for instance %s", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			return
 		}
 
 		// Check if this is a RabbitMQ instance
@@ -1817,15 +1804,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Check if this is a RabbitMQ instance
 		var creds map[string]interface{}
-		exists, err = api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
 		if err != nil || !exists {
-			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
-			if err != nil || !exists {
-				l.Error("Unable to find credentials for instance %s", instanceID)
-				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "credentials not found"}`)
-				return
-			}
+			l.Error("Unable to find credentials for instance %s", instanceID)
+			w.WriteHeader(404)
+			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			return
 		}
 
 		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
@@ -3397,10 +3381,16 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			states = strings.Split(statesParam, ",")
 		}
 
-		l.Debug("getting tasks: type=%s, limit=%d, states=%v", taskType, limit, states)
+		// Team filtering - default to "blacksmith" for filtering blacksmith-related tasks
+		team := query.Get("team")
+		if team == "" {
+			team = "blacksmith"
+		}
+
+		l.Debug("getting tasks: type=%s, limit=%d, states=%v, team=%s", taskType, limit, states, team)
 
 		// Get tasks from BOSH
-		tasks, err := api.Broker.BOSH.GetTasks(taskType, limit, states)
+		tasks, err := api.Broker.BOSH.GetTasks(taskType, limit, states, team)
 		if err != nil {
 			l.Error("unable to get tasks: %s", err)
 			w.WriteHeader(500)
@@ -3494,7 +3484,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		query := req.URL.Query()
 		outputType := query.Get("type")
 		if outputType == "" {
-			outputType = "result"
+			outputType = "task"
 		}
 
 		l.Debug("fetching task output for task %d (type: %s)", taskID, outputType)
@@ -3667,6 +3657,75 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s", string(b))
 		return
 	}
+
+	// Service and plan names endpoint - GET /b/service-filter-options
+	if req.URL.Path == "/b/service-filter-options" && req.Method == "GET" {
+		l := Logger.Wrap("service-filter-options")
+		l.Debug("fetching service and plan names for filtering")
+
+		// Get all services and plans from the broker catalog
+		services, err := api.Broker.Services(context.Background())
+		if err != nil {
+			l.Error("unable to get services catalog: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error getting services: %s", err)
+			return
+		}
+
+		// Build filter options in the required format:
+		// 1. blacksmith
+		// 2. service-instances (filters all known service IDs) 
+		// 3. Each service name (e.g., redis, rabbitmq)
+		// 4. Each service plan ID (e.g., redis-cache-small, rabbitmq-single-node)
+
+		var options []string
+
+		// Always start with blacksmith
+		options = append(options, "blacksmith")
+
+		// Add service-instances to show all service instances
+		options = append(options, "service-instances")
+
+		// Collect service names and plan IDs
+		serviceNames := make([]string, 0)
+		planIDs := make([]string, 0)
+
+		for _, service := range services {
+			// Add service name
+			serviceNames = append(serviceNames, service.Name)
+
+			// Add all plan IDs from this service
+			for _, plan := range service.Plans {
+				planIDs = append(planIDs, plan.ID)
+			}
+		}
+
+		// Sort for consistent ordering
+		sort.Strings(serviceNames)
+		sort.Strings(planIDs)
+
+		// Add service names to options
+		options = append(options, serviceNames...)
+
+		// Add plan IDs to options
+		options = append(options, planIDs...)
+
+		response := map[string]interface{}{
+			"options": options,
+		}
+
+		b, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			l.Error("error marshaling service filter options: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling response: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
 	//
 	// Service Instance Logs endpoint
 	pattern = regexp.MustCompile("^/b/([^/]+)/instance-logs$")
@@ -3826,14 +3885,10 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Get credentials from vault
 		var creds map[string]interface{}
-		exists, err := api.Vault.Get(fmt.Sprintf("%s/creds", instanceID), &creds)
+		exists, err := api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
 		if err != nil || !exists {
-			// Try alternate path
-			exists, err = api.Vault.Get(fmt.Sprintf("%s/credentials", instanceID), &creds)
-			if err != nil || !exists {
-				// Return empty object if no credentials found
-				creds = make(map[string]interface{})
-			}
+			// Return empty object if no credentials found
+			creds = make(map[string]interface{})
 		}
 
 		// Convert to JSON
