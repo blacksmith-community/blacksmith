@@ -443,6 +443,16 @@ func (mb *MockBOSHDirector) CancelTask(taskID int) error                { return
 func (mb *MockBOSHDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	return nil, nil
 }
+
+func (mb *MockBOSHDirector) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
+	return nil, nil
+}
 func (mb *MockBOSHDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+	return nil, nil
+}
+func (mb *MockBOSHDirector) GetConfigContent(configID string) (string, error) {
+	return "", nil
+}
+func (mb *MockBOSHDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
 	return nil, nil
 }

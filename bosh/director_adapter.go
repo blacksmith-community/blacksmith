@@ -10,15 +10,18 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
 	boshuaa "github.com/cloudfoundry/bosh-cli/v7/uaa"
 	boshlog "github.com/cloudfoundry/bosh-utils/logger"
 	boshuuid "github.com/cloudfoundry/bosh-utils/uuid"
+	"github.com/geofffranks/spruce"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 )
@@ -758,10 +761,10 @@ func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, 
 		for _, task := range tasks {
 			deploymentName := task.DeploymentName()
 			d.log.Debug("Task %d: deployment='%s', description='%s'", task.ID(), deploymentName, task.Description())
-			
+
 			// Filter based on the selected filter option
 			includeTask := false
-			
+
 			if team == "blacksmith" {
 				// For blacksmith, show all BOSH director tasks
 				includeTask = true
@@ -770,11 +773,11 @@ func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, 
 				// For service-instances, show tasks from deployments that look like service instances
 				// Service instances typically have deployment names like: redis-{uuid}, rabbitmq-{uuid}, etc.
 				if deploymentName != "" {
-					includeTask = (strings.Contains(deploymentName, "-") && 
+					includeTask = (strings.Contains(deploymentName, "-") &&
 						(strings.HasPrefix(deploymentName, "redis-") ||
-						 strings.HasPrefix(deploymentName, "rabbitmq-") ||
-						 strings.HasPrefix(deploymentName, "postgres-") ||
-						 strings.Contains(deploymentName, "service-")))
+							strings.HasPrefix(deploymentName, "rabbitmq-") ||
+							strings.HasPrefix(deploymentName, "postgres-") ||
+							strings.Contains(deploymentName, "service-")))
 					d.log.Debug("Task %d: service-instances check result: %v", task.ID(), includeTask)
 				} else {
 					d.log.Debug("Task %d: no deployment name, excluded from service-instances", task.ID())
@@ -791,7 +794,7 @@ func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, 
 					d.log.Debug("Task %d: no deployment name, excluded from specific filter '%s'", task.ID(), team)
 				}
 			}
-			
+
 			if includeTask {
 				teamFilteredTasks = append(teamFilteredTasks, task)
 				d.log.Debug("Task %d: INCLUDED for team '%s'", task.ID(), team)
@@ -1064,45 +1067,130 @@ func (d *DirectorAdapter) GetCloudConfig() (string, error) {
 }
 
 // GetConfigs retrieves configs based on limit and type filters
+// Only returns the currently active configs for the main list view
 func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshConfig, error) {
 	d.log.Info("Getting configs (limit: %d, types: %v)", limit, configTypes)
 
 	// Convert limit to sensible defaults
 	if limit <= 0 || limit > 200 {
-		limit = 50 // Default limit
+		limit = 100 // Default limit
 	}
 
-	var allConfigs []boshdirector.Config
+	// The BOSH CLI uses the "recent" parameter to control behavior:
+	// - When recent=1 (default), it passes limit=1 which sets latest=true in the API
+	// - This returns only the currently active configs
+	// We want this behavior for the main configs list view
 
-	if len(configTypes) == 0 {
-		// Get all config types
-		configs, err := d.director.ListConfigs(limit, boshdirector.ConfigsFilter{})
-		if err != nil {
-			d.log.Error("Failed to get configs: %v", err)
-			return nil, fmt.Errorf("failed to get configs: %w", err)
+	// To get only active configs, we need to use limit=1 per type/name combo
+	// First, get a list with latest=false to find all unique configs
+	tempLimit := 1000
+	allConfigs, err := d.director.ListConfigs(tempLimit, boshdirector.ConfigsFilter{})
+	if err != nil {
+		d.log.Error("Failed to get configs list: %v", err)
+		return nil, fmt.Errorf("failed to get configs: %w", err)
+	}
+
+	// Track unique type+name combinations we've seen
+	seen := make(map[string]bool)
+	var result []BoshConfig
+
+	for _, config := range allConfigs {
+		key := fmt.Sprintf("%s:%s", config.Type, config.Name)
+
+		// Skip if we've already processed this config
+		if seen[key] {
+			continue
 		}
-		allConfigs = configs
-	} else {
-		// Get configs for each specified type
-		for _, configType := range configTypes {
-			configs, err := d.director.ListConfigs(limit, boshdirector.ConfigsFilter{
-				Type: configType,
-			})
-			if err != nil {
-				d.log.Error("Failed to get %s configs: %v", configType, err)
-				continue // Continue with other types
+		seen[key] = true
+
+		// Check if we need to filter by type
+		if len(configTypes) > 0 {
+			found := false
+			for _, ct := range configTypes {
+				if ct == config.Type {
+					found = true
+					break
+				}
 			}
-			allConfigs = append(allConfigs, configs...)
+			if !found {
+				continue
+			}
+		}
+
+		// Fetch the latest version of this specific config using limit=1
+		// This forces latest=true in the BOSH API call
+		latestConfigs, err := d.director.ListConfigs(1, boshdirector.ConfigsFilter{
+			Type: config.Type,
+			Name: config.Name,
+		})
+
+		if err != nil {
+			d.log.Error("Failed to get latest config for %s/%s: %v", config.Type, config.Name, err)
+			continue
+		}
+
+		if len(latestConfigs) > 0 {
+			latest := latestConfigs[0]
+			bc := convertDirectorBoshConfig(latest)
+			bc.IsActive = true
+			// Add asterisk to ID to indicate it's active (like BOSH CLI does)
+			bc.ID = strings.TrimSuffix(latest.ID, "*") + "*"
+			result = append(result, bc)
 		}
 	}
 
-	// Convert director configs to our BoshConfig type
-	result := make([]BoshConfig, len(allConfigs))
-	for i, config := range allConfigs {
-		result[i] = convertDirectorBoshConfig(config)
+	// Sort by type then name for consistent ordering (like BOSH CLI)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Type != result[j].Type {
+			// Order: cloud, cpi, resurrection, runtime
+			typeOrder := map[string]int{
+				"cloud":        1,
+				"cpi":          2,
+				"resurrection": 3,
+				"runtime":      4,
+			}
+			return typeOrder[result[i].Type] < typeOrder[result[j].Type]
+		}
+		return result[i].Name < result[j].Name
+	})
+
+	d.log.Info("Successfully retrieved %d active configs", len(result))
+
+	// Apply the limit if needed
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
 	}
 
-	d.log.Info("Successfully retrieved %d configs", len(result))
+	return result, nil
+}
+
+// GetConfigVersions retrieves all versions of a specific config
+func (d *DirectorAdapter) GetConfigVersions(configType, name string, limit int) ([]BoshConfig, error) {
+	d.log.Info("Getting config versions for type: %s, name: %s (limit: %d)", configType, name, limit)
+
+	if limit <= 0 || limit > 100 {
+		limit = 20 // Default limit for version history
+	}
+
+	// Use filter to get all versions of a specific config
+	configs, err := d.director.ListConfigs(limit, boshdirector.ConfigsFilter{
+		Type: configType,
+		Name: name,
+	})
+	if err != nil {
+		d.log.Error("Failed to get config versions: %v", err)
+		return nil, fmt.Errorf("failed to get config versions: %w", err)
+	}
+
+	// Convert and mark which version is current/active
+	result := make([]BoshConfig, len(configs))
+	for i, config := range configs {
+		bc := convertDirectorBoshConfig(config)
+		bc.IsActive = config.Current
+		result[i] = bc
+	}
+
+	d.log.Info("Successfully retrieved %d config versions", len(result))
 	return result, nil
 }
 
@@ -1127,10 +1215,13 @@ func (d *DirectorAdapter) GetConfigByID(configID string) (*BoshConfigDetail, err
 		return nil, fmt.Errorf("failed to get config: %w", err)
 	}
 
+	// Fix YAML key casing issues that may be introduced by BOSH CLI library
+	fixedContent := fixYAMLKeyCasing(config.Content)
+
 	// Convert to our BoshConfigDetail type
 	result := &BoshConfigDetail{
 		BoshConfig: convertDirectorBoshConfig(config),
-		Content:    config.Content,
+		Content:    fixedContent,
 		Metadata: map[string]interface{}{
 			"id":         config.ID,
 			"name":       config.Name,
@@ -1142,6 +1233,182 @@ func (d *DirectorAdapter) GetConfigByID(configID string) (*BoshConfigDetail, err
 
 	d.log.Info("Successfully retrieved config details for ID: %s", configID)
 	return result, nil
+}
+
+// GetConfigContent retrieves the full content of a config by its ID
+func (d *DirectorAdapter) GetConfigContent(configID string) (string, error) {
+	d.log.Info("Getting config content for ID: %s", configID)
+
+	// Remove the * suffix if present (indicates active config)
+	cleanID := strings.TrimSuffix(configID, "*")
+
+	// Get the config by ID
+	config, err := d.director.LatestConfigByID(cleanID)
+	if err != nil {
+		d.log.Error("Failed to get config content by ID %s: %v", cleanID, err)
+		return "", fmt.Errorf("failed to get config content: %w", err)
+	}
+
+	d.log.Info("Successfully retrieved config content for ID: %s (size: %d bytes)", configID, len(config.Content))
+	return config.Content, nil
+}
+
+// ComputeConfigDiff computes the diff between two config versions
+func (d *DirectorAdapter) ComputeConfigDiff(fromID, toID string) (*ConfigDiff, error) {
+	d.log.Info("Computing diff between configs %s -> %s", fromID, toID)
+
+	// Get content for both configs
+	fromContent, err := d.GetConfigContent(fromID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get 'from' config: %w", err)
+	}
+
+	toContent, err := d.GetConfigContent(toID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get 'to' config: %w", err)
+	}
+
+	// Parse YAML content
+	var fromData interface{}
+	var toData interface{}
+
+	if err := yaml.Unmarshal([]byte(fromContent), &fromData); err != nil {
+		d.log.Error("Failed to parse 'from' config YAML: %v", err)
+		return nil, fmt.Errorf("failed to parse 'from' config YAML: %w", err)
+	}
+
+	if err := yaml.Unmarshal([]byte(toContent), &toData); err != nil {
+		d.log.Error("Failed to parse 'to' config YAML: %v", err)
+		return nil, fmt.Errorf("failed to parse 'to' config YAML: %w", err)
+	}
+
+	// Compute diff using spruce
+	diffable, err := spruce.Diff(fromData, toData)
+	if err != nil {
+		d.log.Error("Failed to compute diff: %v", err)
+		return nil, fmt.Errorf("failed to compute diff: %w", err)
+	}
+
+	// Convert diff to structured format
+	result := &ConfigDiff{
+		FromID:     fromID,
+		ToID:       toID,
+		HasChanges: diffable.Changed(),
+		Changes:    []ConfigDiffChange{},
+	}
+
+	// Generate diff string representation
+	if diffable.Changed() {
+		diffString := diffable.String("$")
+		result.DiffString = diffString
+
+		// Parse the diff string to extract individual changes
+		changes := parseDiffString(diffString)
+		result.Changes = changes
+	}
+
+	d.log.Info("Diff computed successfully (has changes: %v)", result.HasChanges)
+	return result, nil
+}
+
+// parseDiffString parses the spruce diff output into structured changes
+func parseDiffString(diffStr string) []ConfigDiffChange {
+	changes := []ConfigDiffChange{}
+	lines := strings.Split(diffStr, "\n")
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+
+		// Look for change markers
+		if strings.Contains(line, " added") {
+			change := ConfigDiffChange{
+				Type: "added",
+				Path: extractPath(line),
+			}
+			// Collect the new value
+			if i+1 < len(lines) {
+				change.NewValue = collectValue(lines, i+1, "added")
+			}
+			changes = append(changes, change)
+		} else if strings.Contains(line, " removed") {
+			change := ConfigDiffChange{
+				Type: "removed",
+				Path: extractPath(line),
+			}
+			// Collect the old value
+			if i+1 < len(lines) {
+				change.OldValue = collectValue(lines, i+1, "removed")
+			}
+			changes = append(changes, change)
+		} else if strings.Contains(line, " changed") {
+			change := ConfigDiffChange{
+				Type: "changed",
+				Path: extractPath(line),
+			}
+			// Collect old and new values
+			for j := i + 1; j < len(lines) && j < i+10; j++ {
+				if strings.Contains(lines[j], "from ") {
+					change.OldValue = extractChangedValue(lines[j])
+				} else if strings.Contains(lines[j], "to ") {
+					change.NewValue = extractChangedValue(lines[j])
+					break
+				}
+			}
+			changes = append(changes, change)
+		}
+	}
+
+	return changes
+}
+
+// extractPath extracts the path from a diff line
+func extractPath(line string) string {
+	// Remove ANSI color codes
+	cleaned := stripAnsiCodes(line)
+	// Extract path before the action word
+	parts := strings.Fields(cleaned)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
+}
+
+// stripAnsiCodes removes ANSI color codes from a string
+func stripAnsiCodes(s string) string {
+	// Simple regex-like replacement for common ANSI codes
+	s = strings.ReplaceAll(s, "@C{", "")
+	s = strings.ReplaceAll(s, "@R{", "")
+	s = strings.ReplaceAll(s, "@G{", "")
+	s = strings.ReplaceAll(s, "}", "")
+	return strings.TrimSpace(s)
+}
+
+// collectValue collects multi-line values from diff output
+func collectValue(lines []string, startIdx int, changeType string) string {
+	var value strings.Builder
+	for i := startIdx; i < len(lines); i++ {
+		line := lines[i]
+		// Stop at next change marker or empty line
+		if strings.TrimSpace(line) == "" ||
+			strings.Contains(line, " added") ||
+			strings.Contains(line, " removed") ||
+			strings.Contains(line, " changed") {
+			break
+		}
+		cleaned := stripAnsiCodes(line)
+		value.WriteString(strings.TrimSpace(cleaned))
+		value.WriteString("\n")
+	}
+	return strings.TrimSpace(value.String())
+}
+
+// extractChangedValue extracts value from a "from" or "to" line
+func extractChangedValue(line string) string {
+	cleaned := stripAnsiCodes(line)
+	// Remove "from " or "to " prefix
+	cleaned = strings.TrimPrefix(cleaned, "from ")
+	cleaned = strings.TrimPrefix(cleaned, "to ")
+	return strings.TrimSpace(cleaned)
 }
 
 // convertDirectorBoshConfig converts a BOSH director config to our BoshConfig type
@@ -1837,6 +2104,168 @@ func (da *DirectorAdapter) DeleteResurrectionConfig(deployment string) error {
 
 	da.log.Info("Successfully deleted resurrection config for deployment %s", deployment)
 	return nil
+}
+
+// fixYAMLKeyCasing fixes common YAML key casing issues introduced by BOSH CLI library
+// when YAML content is processed through Go structs without proper yaml tags
+func fixYAMLKeyCasing(yamlContent string) string {
+	if yamlContent == "" {
+		return yamlContent
+	}
+
+	// Parse YAML into generic map to preserve structure
+	var data map[string]interface{}
+	if err := yaml.Unmarshal([]byte(yamlContent), &data); err != nil {
+		// If we can't parse it, return as-is
+		return yamlContent
+	}
+
+	// Recursively fix key casing in the data structure
+	fixedData := fixMapKeyCasing(data)
+
+	// Marshal back to YAML with proper key casing
+	fixedBytes, err := yaml.Marshal(fixedData)
+	if err != nil {
+		// If marshaling fails, return original content
+		return yamlContent
+	}
+
+	return string(fixedBytes)
+}
+
+// fixMapKeyCasing recursively fixes key casing in maps
+func fixMapKeyCasing(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		fixed := make(map[string]interface{})
+		for key, value := range v {
+			// Fix common BOSH config key casing issues
+			fixedKey := fixBOSHConfigKey(key)
+			fixed[fixedKey] = fixMapKeyCasing(value)
+		}
+		return fixed
+	case map[interface{}]interface{}:
+		// Handle yaml.v2's tendency to use interface{} keys
+		fixed := make(map[string]interface{})
+		for key, value := range v {
+			if strKey, ok := key.(string); ok {
+				fixedKey := fixBOSHConfigKey(strKey)
+				fixed[fixedKey] = fixMapKeyCasing(value)
+			} else {
+				// Keep non-string keys as-is but fix values
+				fixed[fmt.Sprintf("%v", key)] = fixMapKeyCasing(value)
+			}
+		}
+		return fixed
+	case []interface{}:
+		fixed := make([]interface{}, len(v))
+		for i, item := range v {
+			fixed[i] = fixMapKeyCasing(item)
+		}
+		return fixed
+	default:
+		// For primitive values, return as-is
+		return v
+	}
+}
+
+// fixBOSHConfigKey fixes individual key casing based on common BOSH config patterns
+func fixBOSHConfigKey(key string) string {
+	// Common BOSH config key mappings (capitalized -> lowercase)
+	keyMappings := map[string]string{
+		// Cloud config keys
+		"AvailabilityZones":    "availability_zones",
+		"CloudProperties":      "cloud_properties",
+		"VmTypes":              "vm_types",
+		"VmExtensions":         "vm_extensions",
+		"DiskTypes":            "disk_types",
+		"Networks":             "networks",
+		"Compilation":          "compilation",
+		"AzName":               "az_name",
+		"InstanceType":         "instance_type",
+		"EphemeralDisk":        "ephemeral_disk",
+		"RawInstanceStorage":   "raw_instance_storage",
+
+		// Runtime config keys
+		"Releases":             "releases",
+		"Addons":               "addons",
+		"Tags":                 "tags",
+		"Properties":           "properties",
+		"Jobs":                 "jobs",
+		"Include":              "include",
+		"Exclude":              "exclude",
+		"Deployments":          "deployments",
+		"Stemcell":             "stemcell",
+		"InstanceGroups":       "instance_groups",
+
+		// CPI config keys
+		"Cpis":                 "cpis",
+		"MigratedFrom":         "migrated_from",
+
+		// Network keys
+		"Type":                 "type",
+		"Subnets":              "subnets",
+		"Range":                "range",
+		"Gateway":              "gateway",
+		"Reserved":             "reserved",
+		"Static":               "static",
+		"Dns":                  "dns",
+		"AzNames":              "az_names",
+
+		// Generic common keys
+		"Name":                 "name",
+		"Version":              "version",
+		"Url":                  "url",
+		"Sha1":                 "sha1",
+		"Stemcells":            "stemcells",
+		"Os":                   "os",
+		"UpdatePolicy":         "update_policy",
+		"VmType":               "vm_type",
+		"PersistentDisk":       "persistent_disk",
+		"PersistentDiskType":   "persistent_disk_type",
+		"Instances":            "instances",
+		"Lifecycle":            "lifecycle",
+		"Migrated":             "migrated",
+		"Env":                  "env",
+		"Update":               "update",
+		"Canaries":             "canaries",
+		"MaxInFlight":          "max_in_flight",
+		"CanaryWatchTime":      "canary_watch_time",
+		"UpdateWatchTime":      "update_watch_time",
+		"Serial":               "serial",
+		"VmStrategy":           "vm_strategy",
+		"Team":                 "team",
+		"Variables":            "variables",
+	}
+
+	// Check if we have a direct mapping
+	if fixed, exists := keyMappings[key]; exists {
+		return fixed
+	}
+
+	// For keys not in our mapping, convert CamelCase to snake_case
+	return camelToSnake(key)
+}
+
+// camelToSnake converts CamelCase to snake_case
+func camelToSnake(str string) string {
+	if str == "" {
+		return str
+	}
+
+	// If string is already in snake_case, return as-is
+	if !strings.ContainsAny(str, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		return str
+	}
+
+	var result strings.Builder
+	for i, r := range str {
+		if i > 0 && 'A' <= r && r <= 'Z' {
+			result.WriteRune('_')
+		}
+		result.WriteRune(unicode.ToLower(r))
+	}
+	return result.String()
 }
 
 // Ensure DirectorAdapter implements Director interface

@@ -442,3 +442,23 @@ func BenchmarkParseTaskEvents(b *testing.B) {
 		parseTaskEvents(events)
 	}
 }
+
+// TestGetConfigsReturnsOnlyActive tests that GetConfigs returns only active configs
+func TestGetConfigsReturnsOnlyActive(t *testing.T) {
+	// This test documents the expected behavior of GetConfigs:
+	// It should return only the currently active version of each config,
+	// not all versions. This is achieved by using limit=1 per config
+	// which forces the BOSH API to set latest=true.
+
+	// The test can't easily mock the BOSH director, but documents
+	// the expected behavior for reference.
+	t.Skip("This test documents expected behavior but requires a real BOSH director")
+
+	// Expected behavior:
+	// 1. GetConfigs should fetch all configs to find unique type+name combinations
+	// 2. For each unique combination, fetch with limit=1 to get only the active version
+	// 3. Return only those active configs
+	//
+	// Example: If there are 3 versions of "cloud:my-cloud" config,
+	// GetConfigs should only return the one marked as Current=true
+}

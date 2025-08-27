@@ -204,7 +204,7 @@ func (m *CFConnectionManager) isServiceInstanceManagedByBroker(si capi.ServiceIn
 		if strings.Contains(strings.ToLower(si.Name), strings.ToLower(brokerService)) {
 			return true
 		}
-		
+
 		// Check abbreviations
 		if abbrevs, exists := serviceAbbrevMap[strings.ToLower(brokerService)]; exists {
 			for _, abbrev := range abbrevs {

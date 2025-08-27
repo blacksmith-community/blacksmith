@@ -506,7 +506,17 @@ func (imb *IntegrationMockBOSH) CancelTask(taskID int) error                { re
 func (imb *IntegrationMockBOSH) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	return nil, nil
 }
+
+func (imb *IntegrationMockBOSH) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
+	return nil, nil
+}
 func (imb *IntegrationMockBOSH) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+	return nil, nil
+}
+func (imb *IntegrationMockBOSH) GetConfigContent(configID string) (string, error) {
+	return "", nil
+}
+func (imb *IntegrationMockBOSH) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
 	return nil, nil
 }
 

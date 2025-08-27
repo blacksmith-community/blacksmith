@@ -45,7 +45,10 @@ type Director interface {
 	GetCloudConfig() (string, error)
 	GetConfig(configType, configName string) (interface{}, error)
 	GetConfigs(limit int, configTypes []string) ([]BoshConfig, error)
+	GetConfigVersions(configType, name string, limit int) ([]BoshConfig, error)
 	GetConfigByID(configID string) (*BoshConfigDetail, error)
+	GetConfigContent(configID string) (string, error)
+	ComputeConfigDiff(fromID, toID string) (*ConfigDiff, error)
 
 	// Cleanup operations
 	Cleanup(removeAll bool) (*Task, error)
@@ -230,6 +233,23 @@ type BoshConfigDetail struct {
 	BoshConfig
 	Content  string                 `json:"content"`
 	Metadata map[string]interface{} `json:"metadata"`
+}
+
+// ConfigDiff represents the diff between two config versions
+type ConfigDiff struct {
+	FromID     string             `json:"from_id"`
+	ToID       string             `json:"to_id"`
+	HasChanges bool               `json:"has_changes"`
+	Changes    []ConfigDiffChange `json:"changes"`
+	DiffString string             `json:"diff_string"`
+}
+
+// ConfigDiffChange represents a single change in a config diff
+type ConfigDiffChange struct {
+	Type     string `json:"type"` // "added", "removed", "changed"
+	Path     string `json:"path"` // YAML path to the changed field
+	OldValue string `json:"old_value,omitempty"`
+	NewValue string `json:"new_value,omitempty"`
 }
 
 // TaskEvent represents an event from a BOSH task

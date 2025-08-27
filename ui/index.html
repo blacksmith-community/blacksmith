@@ -2,6 +2,8 @@
 <html>
 
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Blacksmith Management Console</title>
   <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20250823">
   <link rel="stylesheet" type="text/css" href="/xterm.css">
@@ -203,7 +205,7 @@
   </div>
 
   <!-- Terminal Modal -->
-  <div id="terminal-modal" class="modal-overlay" style="display: none;">
+  <div id="terminal-modal" class="modal-overlay" role="dialog" aria-hidden="true" style="display: none;">
     <div class="modal terminal-modal-content">
       <div class="modal-header terminal-header">
         <h2>SSH Terminal</h2>
@@ -265,24 +267,47 @@
               </div>
             </div>
             
-            <!-- Manifest-style tabs -->
+            <!-- Config Details tabs -->
             <div class="manifest-details-container">
               <div class="manifest-tabs-nav">
-                <button class="manifest-tab-btn active" data-tab="config" data-group="config-tabs">Config</button>
-                <button class="manifest-tab-btn" data-tab="metadata" data-group="config-tabs">Metadata</button>
+                <button class="manifest-tab-btn active" data-tab="versions" data-group="config-tabs">Versions</button>
+                <button class="manifest-tab-btn" data-tab="diffs" data-group="config-tabs">Diffs</button>
               </div>
               
               <div class="manifest-tab-content">
-                <div class="manifest-tab-pane active" data-tab="config" data-group="config-tabs">
-                  <div class="config-content-header">
-                    <button class="btn btn-secondary copy-btn" id="copy-config-content" title="Copy content to clipboard">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                    </button>
+                <!-- Versions Tab -->
+                <div class="manifest-tab-pane active" data-tab="versions" data-group="config-tabs">
+                  <div class="config-versions-container">
+                    <div class="config-versions-sidebar">
+                      <h4>Versions</h4>
+                      <div id="config-versions-list" class="versions-list"></div>
+                    </div>
+                    <div class="config-version-details">
+                      <div class="config-content-header">
+                        <h4>Config Content</h4>
+                        <button class="btn btn-secondary copy-btn" id="copy-config-content" title="Copy content to clipboard">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                      </div>
+                      <pre id="config-content-text" class="config-content"></pre>
+                    </div>
                   </div>
-                  <pre id="config-content-text" class="config-content"></pre>
                 </div>
-                <div class="manifest-tab-pane" data-tab="metadata" data-group="config-tabs" style="display: none;">
-                  <pre id="config-metadata-text" class="config-metadata"></pre>
+                
+                <!-- Diffs Tab -->
+                <div class="manifest-tab-pane" data-tab="diffs" data-group="config-tabs" style="display: none;">
+                  <div id="config-diff-content">
+                    <div class="diff-controls">
+                      <label for="diff-version-selector">Compare versions:</label>
+                      <select id="diff-version-selector" class="form-control">
+                        <option value="">Select versions to compare</option>
+                      </select>
+                    </div>
+                    <div id="config-diff-display" class="diff-display">
+                      <div id="diff-output" class="diff-output-box"></div>
+                      <p id="diff-placeholder">Select versions from the dropdown above to view configuration changes.</p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

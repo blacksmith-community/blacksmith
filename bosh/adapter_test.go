@@ -110,7 +110,14 @@ func (m *mockDirector) GetCloudConfig() (string, error)       { return "", nil }
 func (m *mockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	return nil, nil
 }
+func (m *mockDirector) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
+	return nil, nil
+}
 func (m *mockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+	return nil, nil
+}
+func (m *mockDirector) GetConfigContent(configID string) (string, error) { return "", nil }
+func (m *mockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
 	return nil, nil
 }
 func (m *mockDirector) Cleanup(removeAll bool) (*bosh.Task, error) { return nil, nil }

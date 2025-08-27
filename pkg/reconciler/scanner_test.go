@@ -143,7 +143,19 @@ func (d *mockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshC
 	return nil, nil
 }
 
+func (d *mockDirector) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
+	return nil, nil
+}
+
 func (d *mockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+	return nil, nil
+}
+
+func (d *mockDirector) GetConfigContent(configID string) (string, error) {
+	return "", nil
+}
+
+func (d *mockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
 	return nil, nil
 }
 

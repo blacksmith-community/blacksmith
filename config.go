@@ -88,15 +88,16 @@ type TLSConfig struct {
 }
 
 type BrokerConfig struct {
-	Username     string         `yaml:"username"`
-	Password     string         `yaml:"password"`
-	Port         string         `yaml:"port"`
-	BindIP       string         `yaml:"bind_ip"`
-	ReadTimeout  int            `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
-	WriteTimeout int            `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
-	IdleTimeout  int            `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
-	TLS          TLSConfig      `yaml:"tls"`
-	CF           CFBrokerConfig `yaml:"cf"` // CF registration configuration
+	Username     string               `yaml:"username"`
+	Password     string               `yaml:"password"`
+	Port         string               `yaml:"port"`
+	BindIP       string               `yaml:"bind_ip"`
+	ReadTimeout  int                  `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
+	WriteTimeout int                  `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
+	IdleTimeout  int                  `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
+	TLS          TLSConfig            `yaml:"tls"`
+	CF           CFBrokerConfig       `yaml:"cf"`         // CF registration configuration
+	Compression  CompressionConfig    `yaml:"compression"` // HTTP compression configuration
 }
 
 // CFBrokerConfig holds configuration for CF broker registration
@@ -107,6 +108,15 @@ type CFBrokerConfig struct {
 	BrokerPass  string                 `yaml:"broker_pass"`  // Password for CF to authenticate with this broker
 	DefaultName string                 `yaml:"default_name"` // Default broker name for registrations
 	APIs        map[string]CFAPIConfig `yaml:"apis"`         // CF API endpoints configuration
+}
+
+// CompressionConfig defines HTTP compression settings
+type CompressionConfig struct {
+	Enabled     bool     `yaml:"enabled"`      // Whether compression is enabled (default: true)
+	Types       []string `yaml:"types"`        // Compression types to support: gzip, deflate, brotli (default: ["gzip"])
+	Level       int      `yaml:"level"`        // Compression level 1-9, -1 for default (default: -1)
+	MinSize     int      `yaml:"min_size"`     // Minimum response size to compress in bytes (default: 1024)
+	ContentTypes []string `yaml:"content_types"` // MIME types to compress (default: text/*, application/json, etc.)
 }
 
 // CFAPIConfig represents a Cloud Foundry API endpoint configuration
@@ -239,6 +249,34 @@ func ReadConfig(path string) (c Config, err error) {
 	if c.Broker.TLS.ReuseAfter == 0 {
 		c.Broker.TLS.ReuseAfter = 2
 	}
+
+	// Compression configuration defaults - enabled by default for better web performance
+	if len(c.Broker.Compression.Types) == 0 {
+		c.Broker.Compression.Types = []string{"gzip"} // Start with just gzip for maximum compatibility
+	}
+	if c.Broker.Compression.Level == 0 {
+		c.Broker.Compression.Level = -1 // Use default compression level
+	}
+	if c.Broker.Compression.MinSize == 0 {
+		c.Broker.Compression.MinSize = 1024 // 1KB minimum size
+	}
+	if len(c.Broker.Compression.ContentTypes) == 0 {
+		c.Broker.Compression.ContentTypes = []string{
+			"text/html",
+			"text/css",
+			"text/javascript",
+			"text/plain",
+			"text/xml",
+			"application/json",
+			"application/javascript",
+			"application/xml",
+			"application/rss+xml",
+			"application/atom+xml",
+			"image/svg+xml",
+		}
+	}
+	// Enable compression by default
+	c.Broker.Compression.Enabled = true
 
 	if c.Vault.Address == "" {
 		return c, fmt.Errorf("Vault Address is not set")

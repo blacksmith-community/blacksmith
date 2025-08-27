@@ -69,7 +69,14 @@ func startHTTPServer(config *Config, handler http.Handler, l *Log) *http.Server 
 		l.Info("HTTP server on %s will redirect to HTTPS port %s", bind, config.Broker.TLS.Port)
 	} else {
 		// When TLS is disabled, HTTP server handles normal traffic
-		httpHandler = handler
+		// Apply compression middleware if enabled
+		compressionConfig := config.Broker.Compression
+		if compressionConfig.Enabled {
+			httpHandler = NewCompressionMiddleware(handler, compressionConfig)
+			l.Info("HTTP server compression enabled with types: %v", compressionConfig.Types)
+		} else {
+			httpHandler = handler
+		}
 		l.Info("HTTP server will listen on %s", bind)
 	}
 
@@ -111,9 +118,19 @@ func startHTTPSServer(config *Config, handler http.Handler, l *Log) (*http.Serve
 		idleTimeout = config.Broker.IdleTimeout
 	}
 
+	// Apply compression middleware if enabled
+	var httpsHandler http.Handler
+	compressionConfig := config.Broker.Compression
+	if compressionConfig.Enabled {
+		httpsHandler = NewCompressionMiddleware(handler, compressionConfig)
+		l.Info("HTTPS server compression enabled with types: %v", compressionConfig.Types)
+	} else {
+		httpsHandler = handler
+	}
+
 	server := &http.Server{
 		Addr:         bind,
-		Handler:      handler,
+		Handler:      httpsHandler,
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  time.Duration(readTimeout) * time.Second,
 		WriteTimeout: time.Duration(writeTimeout) * time.Second,

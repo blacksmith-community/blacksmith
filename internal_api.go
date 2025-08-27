@@ -3658,6 +3658,132 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Config versions endpoint - GET /b/configs/{type}/{name}/versions
+	pattern = regexp.MustCompile("^/b/configs/([^/]+)/([^/]+)/versions$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "GET" {
+		l := Logger.Wrap("config-versions")
+		configType := m[1]
+		configName := m[2]
+		l.Debug("fetching config versions for type: %s, name: %s", configType, configName)
+
+		// Parse query parameters
+		query := req.URL.Query()
+		limitStr := query.Get("limit")
+		limit := 20 // default for versions
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 && parsedLimit <= 100 {
+				limit = parsedLimit
+			}
+		}
+
+		// Fetch config versions from BOSH
+		configs, err := api.Broker.BOSH.GetConfigVersions(configType, configName, limit)
+		if err != nil {
+			l.Error("unable to fetch config versions for %s/%s: %s", configType, configName, err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "failed to fetch config versions: %s", err)
+			return
+		}
+
+		l.Info("successfully fetched %d config versions for %s/%s", len(configs), configType, configName)
+
+		response := map[string]interface{}{
+			"configs": configs,
+			"count":   len(configs),
+			"type":    configType,
+			"name":    configName,
+		}
+
+		b, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			l.Error("error marshaling config versions response: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling response: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
+	// Config diff endpoint - GET /b/configs/{type}/{name}/diff
+	pattern = regexp.MustCompile("^/b/configs/([^/]+)/([^/]+)/diff$")
+	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == "GET" {
+		l := Logger.Wrap("config-diff")
+		configType := m[1]
+		configName := m[2]
+		l.Debug("computing config diff for type: %s, name: %s", configType, configName)
+
+		// Parse query parameters
+		query := req.URL.Query()
+		fromID := query.Get("from")
+		toID := query.Get("to")
+
+		if fromID == "" || toID == "" {
+			l.Error("missing required parameters: from=%s, to=%s", fromID, toID)
+			w.WriteHeader(400)
+			fmt.Fprintf(w, "missing required parameters: 'from' and 'to' config IDs")
+			return
+		}
+
+		l.Debug("computing diff from ID %s to ID %s", fromID, toID)
+
+		// Compute diff using BOSH adapter
+		diff, err := api.Broker.BOSH.ComputeConfigDiff(fromID, toID)
+		if err != nil {
+			l.Error("unable to compute config diff: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "failed to compute config diff: %s", err)
+			return
+		}
+
+		// Get metadata for both configs
+		fromConfig, _ := api.Broker.BOSH.GetConfigByID(fromID)
+		toConfig, _ := api.Broker.BOSH.GetConfigByID(toID)
+
+		response := map[string]interface{}{
+			"type":        configType,
+			"name":        configName,
+			"from_id":     fromID,
+			"to_id":       toID,
+			"has_changes": diff.HasChanges,
+			"changes":     diff.Changes,
+			"diff_string": diff.DiffString,
+		}
+
+		// Add metadata if available
+		if fromConfig != nil {
+			response["from_metadata"] = map[string]interface{}{
+				"id":         fromConfig.ID,
+				"created_at": fromConfig.CreatedAt,
+				"is_active":  fromConfig.IsActive,
+			}
+		}
+
+		if toConfig != nil {
+			response["to_metadata"] = map[string]interface{}{
+				"id":         toConfig.ID,
+				"created_at": toConfig.CreatedAt,
+				"is_active":  toConfig.IsActive,
+			}
+		}
+
+		l.Info("successfully computed config diff (has_changes: %v)", diff.HasChanges)
+
+		b, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			l.Error("error marshaling config diff response: %s", err)
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error marshaling response: %s", err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
 	// Service and plan names endpoint - GET /b/service-filter-options
 	if req.URL.Path == "/b/service-filter-options" && req.Method == "GET" {
 		l := Logger.Wrap("service-filter-options")
@@ -3674,7 +3800,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		// Build filter options in the required format:
 		// 1. blacksmith
-		// 2. service-instances (filters all known service IDs) 
+		// 2. service-instances (filters all known service IDs)
 		// 3. Each service name (e.g., redis, rabbitmq)
 		// 4. Each service plan ID (e.g., redis-cache-small, rabbitmq-single-node)
 

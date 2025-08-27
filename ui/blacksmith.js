@@ -1159,11 +1159,41 @@
 
         return `
           <tr>
-            <td class="vm-instance">${instanceName}</td>
+            <td class="vm-instance">
+              ${instanceName !== '-' ? `
+                <span class="copy-wrapper">
+                  <span>${instanceName}</span>
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
+                          title="Copy to clipboard">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                </span>
+              ` : '-'}
+            </td>
             <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
             <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
-            <td class="vm-az">${vm.az || '-'}</td>
-            <td class="vm-type">${vmType}</td>
+            <td class="vm-az">
+              ${vm.az && vm.az !== '-' ? `
+                <span class="copy-wrapper">
+                  <span>${vm.az}</span>
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
+                          title="Copy to clipboard">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                </span>
+              ` : '-'}
+            </td>
+            <td class="vm-type">
+              ${vmType !== '-' ? `
+                <span class="copy-wrapper">
+                  <span>${vmType}</span>
+                  <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
+                          title="Copy to clipboard">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                </span>
+              ` : '-'}
+            </td>
             <td class="vm-active">${active}</td>
             <td class="vm-bootstrap">${bootstrap}</td>
             <td class="vm-ips">${ips}</td>
@@ -1436,11 +1466,11 @@
             <td class="info-key">Deployment</td>
             <td class="info-value">
               <span class="copy-wrapper">
+                <span>${deploymentName}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${deploymentName}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${deploymentName}</span>
               </span>
             </td>
           </tr>
@@ -1448,11 +1478,11 @@
             <td class="info-key">Environment</td>
             <td class="info-value">
               <span class="copy-wrapper">
+                <span>${environment}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${environment}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${environment}</span>
               </span>
             </td>
           </tr>
@@ -1460,11 +1490,11 @@
             <td class="info-key">Total Service Instances</td>
             <td class="info-value">
               <span class="copy-wrapper">
+                <span>${totalInstances}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalInstances}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${totalInstances}</span>
               </span>
             </td>
           </tr>
@@ -1472,11 +1502,11 @@
             <td class="info-key">Total Plans</td>
             <td class="info-value">
               <span class="copy-wrapper">
+                <span>${totalPlans}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalPlans}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${totalPlans}</span>
               </span>
             </td>
           </tr>
@@ -1491,11 +1521,11 @@
             <td class="info-key">BOSH DNS</td>
             <td class="info-value">
               <span class="copy-wrapper">
+                <span>${data.boshDNS}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${data.boshDNS}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${data.boshDNS}</span>
               </span>
             </td>
           </tr>
@@ -1580,11 +1610,11 @@
             <td class="info-key">Service</td>
             <td class="info-value">
               <span class="copy-wrapper">
+                <span>${service?.name || service?.id || 'unknown'}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${service?.name || service?.id || 'unknown'}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${service?.name || service?.id || 'unknown'}</span>
               </span>
             </td>
           </tr>
@@ -1592,11 +1622,11 @@
             <td class="info-key">Plan</td>
             <td class="info-value">
               <span class="copy-wrapper">
+                <span>${plan?.name || plan?.id || 'unknown'}</span>
                 <button class="copy-btn-inline" onclick="window.copyValue(event, '${plan?.name || plan?.id || 'unknown'}')"
                         title="Copy to clipboard">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>
-                <span>${plan?.name || plan?.id || 'unknown'}</span>
               </span>
             </td>
           </tr>
@@ -1826,6 +1856,7 @@
       fieldOrder.forEach(field => {
         if (vaultData[field.key] !== undefined) {
           let value = vaultData[field.key];
+          console.log(`Field ${field.key}: ${value}`); // Debug logging
           // Format different value types
           if (typeof value === 'object' && value !== null) {
             // Convert objects to JSON string
@@ -1838,20 +1869,20 @@
             <tr>
               <td class="info-key" style="font-size: 16px;">
                 <span class="copy-wrapper">
+                  <span>${field.label}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${field.key}')"
                           title="Copy key name">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
-                  <span>${field.label}</span>
                 </span>
               </td>
               <td class="info-value" style="font-size: 16px;">
                 <span class="copy-wrapper">
+                  <span>${value || '-'}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
                           title="Copy ${field.label}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
-                  <span>${value || '-'}</span>
                 </span>
               </td>
             </tr>
@@ -1878,20 +1909,20 @@
             <tr>
               <td class="info-key" style="font-size: 16px;">
                 <span class="copy-wrapper">
+                  <span>${key}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${key}')"
                           title="Copy key name">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
-                  <span>${key}</span>
                 </span>
               </td>
               <td class="info-value" style="font-size: 16px;">
                 <span class="copy-wrapper">
+                  <span>${value || '-'}</span>
                   <button class="copy-btn-inline" onclick="window.copyValue(event, '${(value || '-').toString().replace(/'/g, "\\'")}')"
                           title="Copy value">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
-                  <span>${value || '-'}</span>
                 </span>
               </td>
             </tr>
@@ -2180,11 +2211,11 @@
           <td class="config-key">${item.key}</td>
           <td class="config-value">
             <span class="copy-wrapper">
+              <span>${displayValue}</span>
               <button class="copy-btn-inline" onclick="window.copyValue(event, '${copyValue.toString().replace(/'/g, "\\'").replace(/\n/g, "\\n")}')"
                       title="Copy to clipboard">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
               </button>
-              <span>${displayValue}</span>
             </span>
           </td>
         </tr>
@@ -2460,6 +2491,15 @@
         try {
           const config = JSON.parse(text);
           return formatConfig(config);
+        } catch (e) {
+          // If not JSON, display as plain text
+          return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+        }
+      } else if (type === 'debug') {
+        const text = await response.text();
+        try {
+          const logs = JSON.parse(text);
+          return formatDebugLog(logs, instanceId);
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -3329,10 +3369,73 @@
     const configs = configsData.configs || [];
     tableOriginalData.set(dataKey, configs);
 
+    // Group configs by type
+    const configsByType = {
+      cloud: [],
+      runtime: [],
+      cpi: [],
+      resurrection: []
+    };
+
+    configs.forEach(config => {
+      if (configsByType[config.type]) {
+        configsByType[config.type].push(config);
+      }
+    });
+
+    // Sort each type's configs by name
+    Object.keys(configsByType).forEach(type => {
+      configsByType[type].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    });
+
     const tableId = `configs-table`;
 
     // Check if we have configs
     const hasConfigs = configs && configs.length > 0;
+
+    // Create the table body with configs grouped by type
+    let tableBody = '';
+    if (hasConfigs) {
+      ['cloud', 'cpi', 'resurrection', 'runtime'].forEach(type => {
+        const typeConfigs = configsByType[type];
+        if (typeConfigs.length > 0) {
+          typeConfigs.forEach(config => {
+            const createdAt = formatTimestamp(config.created_at);
+            
+            // Add asterisk for active configs and make it clickable to show versions
+            const isActive = config.is_active || config.id.endsWith('*');
+            const cleanId = config.id.replace('*', '');
+            const configIdDisplay = isActive ? `${cleanId}*` : cleanId;
+            const configIdLink = `<a href="#" class="config-link" data-config-id="${cleanId}" data-config-type="${config.type}" data-config-name="${config.name}" onclick="showConfigVersions('${config.type}', '${config.name ? config.name.replace(/'/g, "\\'"): ''}', '${cleanId}', event); return false;">${configIdDisplay}</a>`;
+            
+            // Format team, show dash for empty
+            const teamDisplay = config.team || '-';
+
+            tableBody += `
+              <tr data-config-type="${config.type}">
+                <td class="config-id">${configIdLink}</td>
+                <td class="config-type"><span class="config-type-badge ${config.type}">${config.type}</span></td>
+                <td class="config-name">${config.name || '-'}</td>
+                <td class="config-team">${teamDisplay}</td>
+                <td class="config-created">${createdAt}</td>
+              </tr>
+            `;
+          });
+        }
+      });
+    } else {
+      tableBody = `
+        <tr>
+          <td colspan="5" class="no-data-row">No configs found</td>
+        </tr>
+      `;
+    }
+
+    // Count configs by type for display
+    const typeCounts = Object.keys(configsByType).map(type => {
+      const count = configsByType[type].length;
+      return count > 0 ? `${count} ${type}` : null;
+    }).filter(Boolean).join(', ');
 
     return `
       <div class="table-controls-container compact-configs-controls">
@@ -3362,44 +3465,24 @@
           </div>
         </div>
       </div>
+      ${hasConfigs ? `<div class="configs-summary">${configs.length} configs${typeCounts ? ': ' + typeCounts : ''}</div>` : ''}
       <div class="configs-table-container">
         <table class="${tableId}">
           <thead>
             <tr>
               <th>ID</th>
-              <th>Name</th>
               <th>Type</th>
+              <th>Name</th>
               <th>Team</th>
               <th>Created At</th>
             </tr>
           </thead>
           <tbody>
-            ${hasConfigs ? configs.map(config => {
-      const createdAt = formatTimestamp(config.created_at);
-
-      // Create clickable config ID for details
-      const configIdLink = `<a href="#" class="config-link" data-config-id="${config.id}" onclick="showConfigDetails('${config.id}', event); return false;">${config.id}</a>`;
-
-      // Format type with badge
-      const typeBadge = `<span class="config-type ${config.type}">${config.type}</span>`;
-
-      return `
-                <tr>
-                  <td class="config-id">${configIdLink}</td>
-                  <td class="config-name">${config.name || '-'}</td>
-                  <td class="config-type">${typeBadge}</td>
-                  <td class="config-team">${config.team || '-'}</td>
-                  <td class="config-created">${createdAt}</td>
-                </tr>
-              `;
-    }).join('') : `
-              <tr>
-                <td colspan="5" class="no-data-row">No configs found</td>
-              </tr>
-            `}
+            ${tableBody}
           </tbody>
         </table>
       </div>
+      ${hasConfigs ? `<div class="configs-note">(*) Currently active - Click ID to see all versions</div>` : ''}
     `;
   };
 
@@ -4031,21 +4114,51 @@
                     </svg>
                   </button>
                 </td>
-                <td class="vm-instance">${instanceName}</td>
+                <td class="vm-instance">
+                  ${instanceName !== '-' ? `
+                    <span class="copy-wrapper">
+                      <span>${instanceName}</span>
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${instanceName}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                    </span>
+                  ` : '-'}
+                </td>
                 <td class="vm-state ${stateClass}">${vm.state || '-'}</td>
                 <td class="vm-job-state ${jobStateClass}">${vm.job_state || '-'}</td>
-                <td class="vm-az">${vm.az || '-'}</td>
-                <td class="vm-type">${vmType}</td>
+                <td class="vm-az">
+                  ${vm.az && vm.az !== '-' ? `
+                    <span class="copy-wrapper">
+                      <span>${vm.az}</span>
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.az}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                    </span>
+                  ` : '-'}
+                </td>
+                <td class="vm-type">
+                  ${vmType !== '-' ? `
+                    <span class="copy-wrapper">
+                      <span>${vmType}</span>
+                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vmType}')"
+                              title="Copy to clipboard">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                    </span>
+                  ` : '-'}
+                </td>
                 <td class="vm-active">${active}</td>
                 <td class="vm-bootstrap">${bootstrap}</td>
                 <td class="vm-ips">
                   ${ips !== '-' ? `
                     <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
-                              title="Copy to clipboard">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                      </button>
                       <span>${ips}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ips}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                     </span>
                   ` : '-'}
                 </td>
@@ -4053,22 +4166,22 @@
                 <td class="vm-cid">
                   ${vm.vm_cid ? `
                     <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.vm_cid}')"
-                              title="Copy to clipboard">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                      </button>
                       <span>${vm.vm_cid}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${vm.vm_cid}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                     </span>
                   ` : '-'}
                 </td>
                 <td class="vm-agent-id">
                   ${agentId !== '-' ? `
                     <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${agentId}')"
-                              title="Copy to clipboard">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                      </button>
                       <span>${agentId}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${agentId}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                     </span>
                   ` : '-'}
                 </td>
@@ -4076,11 +4189,11 @@
                 <td class="vm-disk-cids">
                   ${diskCids !== '-' ? `
                     <span class="copy-wrapper">
-                      <button class="copy-btn-inline" onclick="window.copyValue(event, '${diskCids}')"
-                              title="Copy to clipboard">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                      </button>
                       <span>${diskCids}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${diskCids}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                     </span>
                   ` : '-'}
                 </td>
@@ -6970,11 +7083,11 @@
                             <td>Instances</td>
                             <td>
                               <span class="copy-wrapper">
-                                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ig.instances || 1}')"
-                                        title="Copy to clipboard">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                                </button>
                                 <span>${ig.instances || 1}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${ig.instances || 1}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                               </span>
                             </td>
                           </tr>
@@ -7142,21 +7255,21 @@
                     </td>
                     <td>
                       <span class="copy-wrapper">
+                        <span>${release.version || 'latest'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${(release.version || 'latest').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
-                        <span>${release.version || 'latest'}</span>
                       </span>
                     </td>
                     <td>
                       ${release.url ? `
                         <span class="copy-wrapper">
+                          <a href="${release.url}" target="_blank" style="word-break: break-all;">${release.url}</a>
                           <button class="copy-btn-inline" onclick="window.copyValue(event, '${release.url.replace(/'/g, "\\'")}')"
                                   title="Copy URL">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           </button>
-                          <a href="${release.url}" target="_blank" style="word-break: break-all;">${release.url}</a>
                         </span>
                       ` : 'N/A'}
                     </td>
@@ -7194,29 +7307,29 @@
                   <tr>
                     <td>
                       <span class="copy-wrapper">
+                        <span>${stemcell.alias || 'default'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.alias || 'default').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
-                        <span>${stemcell.alias || 'default'}</span>
                       </span>
                     </td>
                     <td>
                       <span class="copy-wrapper">
+                        <span>${stemcell.os || 'Not specified'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.os || 'Not specified').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
-                        <span>${stemcell.os || 'Not specified'}</span>
                       </span>
                     </td>
                     <td>
                       <span class="copy-wrapper">
+                        <span>${stemcell.version || 'latest'}</span>
                         <button class="copy-btn-inline" onclick="window.copyValue(event, '${(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
-                        <span>${stemcell.version || 'latest'}</span>
                       </span>
                     </td>
                   </tr>
@@ -8250,6 +8363,7 @@
                 const response = await fetch(`/b/${instanceId}/details`, { cache: 'no-cache' });
                 if (response.ok) {
                   vaultData = await response.json();
+                  console.log('Vault data received:', vaultData); // Debug logging
                 }
               } catch (error) {
                 console.error('Failed to fetch vault data:', error);
@@ -8754,6 +8868,8 @@
 
       const loadBlacksmithDetailTab = async (tabType) => {
         const contentContainer = document.querySelector('#blacksmith .detail-content');
+        // Clean up any special layout classes
+        contentContainer.classList.remove('plans-view');
         contentContainer.innerHTML = '<div class="loading">Loading...</div>';
 
         try {
@@ -8780,11 +8896,11 @@
                         <td class="info-key">Deployment</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${deploymentName}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${deploymentName}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${deploymentName}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8792,11 +8908,11 @@
                         <td class="info-key">Environment</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${environment}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${environment}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${environment}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8804,11 +8920,11 @@
                         <td class="info-key">Total Service Instances</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalInstances}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${totalInstances}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalInstances}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8816,11 +8932,11 @@
                         <td class="info-key">Total Plans</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalPlans}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${totalPlans}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${totalPlans}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8835,11 +8951,11 @@
                         <td class="info-key">BOSH DNS</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${data.boshDNS}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${data.boshDNS}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${data.boshDNS}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8852,11 +8968,11 @@
                         <td class="info-key">BOSH Address</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.address}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${creds.BOSH.address}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.address}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8864,11 +8980,11 @@
                         <td class="info-key">BOSH Username</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.username}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${creds.BOSH.username}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.username}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8876,11 +8992,11 @@
                         <td class="info-key">BOSH Network</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.network}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${creds.BOSH.network}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.BOSH.network}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8893,11 +9009,11 @@
                         <td class="info-key">Vault Address</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Vault.address}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${creds.Vault.address}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Vault.address}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8910,11 +9026,11 @@
                         <td class="info-key">Broker Username</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.username}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${creds.Broker.username}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.username}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8922,11 +9038,11 @@
                         <td class="info-key">Broker Port</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.port}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${creds.Broker.port}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.port}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8934,11 +9050,11 @@
                         <td class="info-key">Broker Bind IP</td>
                         <td class="info-value">
                           <span class="copy-wrapper">
-                            <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.bind_ip}')"
-                                    title="Copy to clipboard">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                             <span>${creds.Broker.bind_ip}</span>
+                <button class="copy-btn-inline" onclick="window.copyValue(event, '${creds.Broker.bind_ip}')"
+                        title="Copy to clipboard">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                           </span>
                         </td>
                       </tr>
@@ -8960,6 +9076,9 @@
 
           // Handle the Plans tab
           if (tabType === 'plans') {
+            // Add CSS class for plans layout
+            contentContainer.classList.add('plans-view');
+            
             // Use the existing plans data if available, or load it
             if (window.plansData && window.plansData.services && window.plansData.services.length > 0) {
               contentContainer.innerHTML = renderPlansTemplate(window.plansData);
@@ -9624,8 +9743,6 @@
                     <button class="manifest-tab-btn active" data-tab="task" data-group="task-tabs">Task</button>
                     <button class="manifest-tab-btn" data-tab="debug" data-group="task-tabs">Debug</button>
                     <button class="manifest-tab-btn" data-tab="raw" data-group="task-tabs">Raw</button>
-                    <button class="manifest-tab-btn" data-tab="events" data-group="task-tabs">Events</button>
-                    <button class="manifest-tab-btn" data-tab="output" data-group="task-tabs">Output</button>
                     <button class="manifest-tab-btn" data-tab="cpi" data-group="task-tabs">CPI</button>
                   </div>
 
@@ -9638,12 +9755,6 @@
                     </div>
                     <div id="task-raw-content" class="manifest-tab-pane" data-tab="raw" data-group="task-tabs">
                       <div class="loading">Loading raw data...</div>
-                    </div>
-                    <div id="task-events-content" class="manifest-tab-pane" data-tab="events" data-group="task-tabs">
-                      <div class="loading">Loading events...</div>
-                    </div>
-                    <div id="task-output-content" class="manifest-tab-pane" data-tab="output" data-group="task-tabs">
-                      <div class="loading">Loading output...</div>
                     </div>
                     <div id="task-cpi-content" class="manifest-tab-pane" data-tab="cpi" data-group="task-tabs">
                       <div class="loading">Loading CPI output...</div>
@@ -9847,6 +9958,775 @@
       });
     }
   };
+
+  // Show config details modal
+  window.showConfigVersions = async (configType, configName, currentId, event) => {
+    if (event) {
+      event.preventDefault();
+    }
+
+    console.log('Opening config details modal for config:', configType, configName);
+
+    // Create or get the modal
+    let modal = document.getElementById('config-details-modal');
+    if (!modal) {
+      const modalHTML = `
+        <div id="config-details-modal" class="modal-overlay" role="dialog" aria-labelledby="config-details-modal-title" aria-hidden="true">
+          <div class="modal config-details-modal">
+            <div class="modal-header">
+              <h2 id="config-details-modal-title">Config Details</h2>
+              <button class="close-btn" onclick="hideConfigVersionsModal()" title="Close" aria-label="Close modal">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+            <div class="modal-body config-details-body">
+              <!-- Tab navigation -->
+              <div class="modal-tabs">
+                <button class="manifest-tab-btn active" data-tab="versions" data-group="config-details-tabs">Versions</button>
+                <button class="manifest-tab-btn" data-tab="diffs" data-group="config-details-tabs">Diffs</button>
+              </div>
+              
+              <!-- Tab content -->
+              <div class="modal-tab-content">
+                <!-- Versions tab -->
+                <div id="config-versions-tab" class="manifest-tab-pane active" data-tab="versions" data-group="config-details-tabs">
+                  <div id="config-versions-loading" class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Loading config versions...</p>
+                  </div>
+                  <div id="config-versions-content" style="display: none;">
+                    <div class="config-versions-container">
+                      <div class="config-versions-sidebar">
+                        <h3>Versions</h3>
+                        <div id="config-versions-list" class="versions-list"></div>
+                      </div>
+                      <div class="config-version-details">
+                        <div class="version-details-header">
+                          <h3>Config Content</h3>
+                          <button id="copy-config-version-content" class="copy-btn" title="Copy content">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                          </button>
+                        </div>
+                        <pre id="config-version-content" class="config-content-pre"></pre>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Diffs tab -->
+                <div id="config-diffs-tab" class="manifest-tab-pane" data-tab="diffs" data-group="config-details-tabs">
+                  <div id="config-diffs-loading" class="loading" style="display: none;">
+                    <div class="loading-spinner"></div>
+                    <p>Loading diff...</p>
+                  </div>
+                  <div id="config-diffs-content">
+                    <div class="diff-navigation">
+                      <button id="diff-prev-btn" class="diff-nav-btn" onclick="navigateConfigDiff('prev')" disabled>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                        Previous
+                      </button>
+                      <div class="diff-version-info">
+                        <span id="diff-from-version" class="diff-version">Select versions</span>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                        <span id="diff-to-version" class="diff-version">to compare</span>
+                      </div>
+                      <button id="diff-next-btn" class="diff-nav-btn" onclick="navigateConfigDiff('next')">
+                        Next
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                      </button>
+                    </div>
+                    <div class="diff-viewer">
+                      <div class="diff-panel diff-panel-left">
+                        <div class="diff-panel-header">
+                          <h4>Previous Version</h4>
+                          <span id="diff-left-version-info" class="version-info"></span>
+                        </div>
+                        <pre id="diff-left-content" class="diff-content"></pre>
+                      </div>
+                      <div class="diff-panel diff-panel-right">
+                        <div class="diff-panel-header">
+                          <h4>Current Version</h4>
+                          <span id="diff-right-version-info" class="version-info"></span>
+                        </div>
+                        <pre id="diff-right-content" class="diff-content"></pre>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.insertAdjacentHTML('beforeend', modalHTML);
+      modal = document.getElementById('config-details-modal');
+      
+      // Setup tab switching for config details modal
+      setupConfigDetailsTabs();
+    }
+
+    // Show the modal
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+
+    // Show loading state
+    const loadingDiv = document.getElementById('config-details-loading');
+    const contentDiv = document.getElementById('config-details-content');
+    if (loadingDiv) loadingDiv.style.display = 'block';
+    if (contentDiv) contentDiv.style.display = 'none';
+
+    try {
+      // Fetch config versions from API
+      const response = await fetch(`/b/configs/${configType}/${configName}/versions?limit=30`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const data = await response.json();
+      const versions = data.configs || [];
+
+      // Update modal title
+      document.getElementById('config-details-modal-title').textContent = `Config Details - ${configName} (${configType})`;
+      
+      // Populate config overview table with latest version info
+      const latestVersion = versions.length > 0 ? versions[0] : null;
+      if (latestVersion) {
+        const setElementText = (id, value) => {
+          const elem = document.getElementById(id);
+          if (elem) elem.textContent = value || '-';
+        };
+        
+        setElementText('config-id', latestVersion.id || '-');
+        setElementText('config-name', configName);
+        setElementText('config-type', configType);
+        setElementText('config-team', latestVersion.team || '-');
+        setElementText('config-created-at', latestVersion.created_at || '-');
+        
+        // Set status with active indicator
+        const statusElem = document.getElementById('config-status');
+        if (statusElem) {
+          // Check if this is the active version using the same logic as version list
+          const isActive = latestVersion.is_active || latestVersion.current || 
+                          (latestVersion.id && latestVersion.id.includes('*'));
+          statusElem.innerHTML = isActive ? 
+            '<span class="badge badge-success">ACTIVE</span>' : 
+            '<span class="badge badge-secondary">INACTIVE</span>';
+        }
+      } else {
+        // Clear table if no versions
+        ['config-id', 'config-name', 'config-type', 'config-team', 'config-created-at', 'config-status']
+          .forEach(id => {
+            const elem = document.getElementById(id);
+            if (elem) elem.textContent = '-';
+          });
+      }
+      
+      // Clear any previous config info and reset diff tab
+      window.currentConfigInfo = null;
+      window.currentDiffIndex = null;
+      
+      // Reset diff tab if it exists
+      const diffSelector = document.getElementById('diff-version-selector');
+      if (diffSelector) {
+        diffSelector.innerHTML = '<option value="">Select versions to compare</option>';
+        diffSelector.value = '';
+      }
+      const diffOutput = document.getElementById('diff-output');
+      if (diffOutput) {
+        diffOutput.classList.remove('active');
+        diffOutput.innerHTML = '';
+      }
+      const diffPlaceholder = document.getElementById('diff-placeholder');
+      if (diffPlaceholder) {
+        diffPlaceholder.classList.remove('hidden');
+        diffPlaceholder.textContent = 'Select versions from the dropdown above to view configuration changes.';
+      }
+      
+      // Store new config info for diff tab
+      window.currentConfigInfo = { type: configType, name: configName, versions: versions };
+
+      // Populate versions list
+      const versionsList = document.getElementById('config-versions-list');
+      versionsList.innerHTML = '';
+
+      if (versions.length === 0) {
+        versionsList.innerHTML = '<div class="no-versions">No versions found</div>';
+      } else {
+        versions.forEach((version, index) => {
+          const isActive = version.is_active || version.id === currentId || (index === 0 && currentId && version.id.replace('*', '') === currentId);
+          const versionItem = document.createElement('div');
+          versionItem.className = 'version-item' + (isActive ? ' active' : '');
+          versionItem.dataset.versionId = version.id;
+          versionItem.innerHTML = `
+            <div class="version-id">${version.id}${isActive ? ' *' : ''}</div>
+            <div class="version-date">${formatTimestamp(version.created_at)}</div>
+            ${version.team ? `<div class="version-team">Team: ${version.team}</div>` : ''}
+          `;
+          versionItem.addEventListener('click', () => loadConfigVersion(version.id, versionItem));
+          versionsList.appendChild(versionItem);
+        });
+
+        // Auto-select the first (most recent) version
+        if (versions.length > 0) {
+          const firstItem = versionsList.querySelector('.version-item');
+          if (firstItem) {
+            firstItem.click();
+          }
+        }
+      }
+
+      // Hide loading and show content
+      if (loadingDiv) loadingDiv.style.display = 'none';
+      if (contentDiv) contentDiv.style.display = 'block';
+
+      // Set up copy functionality
+      setupConfigVersionCopyFunctionality();
+      
+      // Set up tab functionality for static modal
+      setupConfigDetailsTabs();
+
+    } catch (error) {
+      console.error('Failed to load config versions:', error);
+      if (loadingDiv) {
+        loadingDiv.innerHTML = `<div class="error">Failed to load config versions: ${error.message}</div>`;
+      }
+    }
+  };
+
+  // Load specific config version content
+  window.loadConfigVersion = async (versionId, versionItem) => {
+    // Remove the asterisk if present
+    const cleanId = versionId.replace('*', '');
+
+    // Update selected state in the list
+    document.querySelectorAll('.version-item').forEach(item => {
+      item.classList.remove('selected');
+    });
+    versionItem.classList.add('selected');
+
+    // Show loading state in content area
+    const contentPre = document.getElementById('config-content-text');
+    contentPre.textContent = 'Loading config content...';
+
+    try {
+      // Fetch config details for this version
+      const response = await fetch(`/b/configs/${cleanId}`, { cache: 'no-cache' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const config = await response.json();
+
+      // Display the content
+      contentPre.textContent = config.content || 'No content available';
+
+    } catch (error) {
+      console.error('Failed to load config version content:', error);
+      contentPre.textContent = `Failed to load config content: ${error.message}`;
+    }
+  };
+
+  // Hide config versions modal
+  window.hideConfigVersionsModal = () => {
+    const modal = document.getElementById('config-details-modal');
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      // Clear stored config info
+      window.currentConfigInfo = null;
+      window.currentDiffIndex = null;
+    }
+  };
+
+  // Set up config version copy functionality
+  const setupConfigVersionCopyFunctionality = () => {
+    const copyButton = document.getElementById('copy-config-content');
+    if (copyButton) {
+      copyButton.removeEventListener('click', copyButton._clickHandler);
+      copyButton._clickHandler = async () => {
+        const contentText = document.getElementById('config-content-text').textContent;
+        try {
+          await navigator.clipboard.writeText(contentText);
+          // Show success feedback
+          const originalHTML = copyButton.innerHTML;
+          copyButton.innerHTML = '<span>Copied!</span>';
+          setTimeout(() => {
+            copyButton.innerHTML = originalHTML;
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy config content:', err);
+          alert('Failed to copy to clipboard');
+        }
+      };
+      copyButton.addEventListener('click', copyButton._clickHandler);
+    }
+  };
+
+  // Set up config details modal tab switching
+  const setupConfigDetailsTabs = () => {
+    const tabGroupId = 'config-tabs';
+    const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
+    const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+    
+    tabButtons.forEach(button => {
+      button.addEventListener('click', () => {
+        const tabName = button.dataset.tab;
+
+        // Update active states
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        button.classList.add('active');
+
+        // Show/hide content panes
+        tabPanes.forEach(pane => {
+          pane.classList.remove('active');
+          pane.style.display = 'none';
+        });
+
+        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
+        if (targetPane) {
+          targetPane.classList.add('active');
+          targetPane.style.display = 'block';
+        }
+
+        // Initialize diff tab when clicked
+        if (tabName === 'diffs' && window.currentConfigInfo) {
+          // Small delay to ensure DOM elements are available after tab switch
+          setTimeout(() => {
+            initConfigDiffTab(window.currentConfigInfo.type, window.currentConfigInfo.name);
+          }, 10);
+        }
+      });
+    });
+
+    // Set up diff version selector
+    const diffSelector = document.getElementById('diff-version-selector');
+    if (diffSelector) {
+      // Remove any existing event listeners
+      const newSelector = diffSelector.cloneNode(true);
+      diffSelector.parentNode.replaceChild(newSelector, diffSelector);
+      
+      newSelector.addEventListener('change', async (event) => {
+        const selectedValue = event.target.value;
+        if (selectedValue) {
+          const [fromId, toId] = selectedValue.split('|');
+          await loadConfigDiffById(fromId, toId);
+        } else {
+          // Clear diff display
+          const diffOutput = document.getElementById('diff-output');
+          const placeholder = document.getElementById('diff-placeholder');
+          if (diffOutput) {
+            diffOutput.classList.remove('active');
+            diffOutput.innerHTML = '';
+          }
+          if (placeholder) {
+            placeholder.classList.remove('hidden');
+          }
+        }
+      });
+    }
+  };
+
+  // Initialize config diff tab
+  window.initConfigDiffTab = async (configType, configName) => {
+    const selector = document.getElementById('diff-version-selector');
+    const placeholder = document.getElementById('diff-placeholder');
+    const diffOutput = document.getElementById('diff-output');
+    
+    if (!window.currentConfigInfo || !window.currentConfigInfo.versions || window.currentConfigInfo.versions.length < 2) {
+      if (placeholder) {
+        placeholder.textContent = 'At least 2 versions are required for diff comparison.';
+        placeholder.classList.remove('hidden');
+      }
+      if (selector) {
+        selector.innerHTML = '<option value="">No versions available</option>';
+        selector.disabled = true;
+      }
+      return;
+    }
+
+    // Clear previous state
+    if (diffOutput) {
+      diffOutput.classList.remove('active');
+      diffOutput.innerHTML = '';
+    }
+    if (placeholder) {
+      placeholder.classList.remove('hidden');
+    }
+
+    // Populate dropdown with version pairs
+    if (selector) {
+      selector.disabled = false;
+      selector.innerHTML = '<option value="">Select versions to compare</option>';
+      
+      const versions = window.currentConfigInfo.versions;
+      // Create options for each consecutive pair
+      for (let i = 0; i < versions.length - 1; i++) {
+        const newer = versions[i];
+        const older = versions[i + 1];
+        const option = document.createElement('option');
+        option.value = `${older.id}|${newer.id}`;
+        option.textContent = `${older.id} → ${newer.id}`;
+        if (i === 0) {
+          option.textContent += ' (latest change)';
+        }
+        selector.appendChild(option);
+      }
+      
+      // Reset selection
+      selector.value = '';
+    }
+  };
+
+  // Load config diff by version IDs
+  window.loadConfigDiffById = async (fromId, toId) => {
+    const diffOutput = document.getElementById('diff-output');
+    const placeholder = document.getElementById('diff-placeholder');
+    
+    if (!diffOutput) return;
+    
+    // Show loading state
+    diffOutput.innerHTML = 'Loading diff...';
+    diffOutput.classList.add('active');
+    if (placeholder) placeholder.classList.add('hidden');
+    
+    try {
+      // Fetch diff from API
+      const response = await fetch(
+        `/b/configs/${window.currentConfigInfo.type}/${window.currentConfigInfo.name}/diff?from=${fromId}&to=${toId}`,
+        { cache: 'no-cache' }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const diffData = await response.json();
+      
+      // Display the diff
+      displaySimpleDiff(diffData, fromId, toId);
+      
+    } catch (error) {
+      console.error('Failed to load config diff:', error);
+      diffOutput.innerHTML = `Error loading diff: ${error.message}`;
+      diffOutput.classList.add('active');
+    }
+  };
+
+  // Display simple diff in monospace box
+  const displaySimpleDiff = (diffData, fromId, toId) => {
+    const diffOutput = document.getElementById('diff-output');
+    
+    if (!diffOutput) return;
+    
+    // Create header
+    let output = `Configuration Changes: ${fromId} → ${toId}\n`;
+    output += '─'.repeat(60) + '\n\n';
+    
+    if (!diffData.has_changes) {
+      output += 'No changes detected between these configuration versions.\n';
+    } else if (diffData.diff_string) {
+      // Display the spruce diff string directly
+      output += diffData.diff_string;
+    } else {
+      output += 'Diff information not available.\n';
+    }
+    
+    // Set the text content to preserve formatting
+    diffOutput.textContent = output;
+    diffOutput.classList.add('active');
+  };
+
+  // DEPRECATED: Old load config diff function - to be removed
+  const loadConfigDiff = async (index) => {
+    const versions = window.currentConfigInfo.versions;
+    if (index < 0 || index >= versions.length - 1) return;
+
+    const fromVersion = versions[index + 1]; // Older version (N-1)
+    const toVersion = versions[index]; // Newer version (N)
+
+    // Update navigation buttons
+    const prevDisabled = index === 0;
+    const nextDisabled = index >= versions.length - 2;
+    
+    console.log(`Navigation state: index=${index}, versions.length=${versions.length}, prevDisabled=${prevDisabled}, nextDisabled=${nextDisabled}`);
+    console.log(`Current diff index: ${window.currentDiffIndex}, comparing ${fromVersion.id} → ${toVersion.id}`);
+    
+    document.getElementById('prev-diff-btn').disabled = prevDisabled;
+    document.getElementById('next-diff-btn').disabled = nextDisabled;
+
+    // Update info display
+    const diffInfo = document.getElementById('diff-info');
+    if (diffInfo) {
+      diffInfo.textContent = `Comparing ${fromVersion.id} → ${toVersion.id}`;
+    }
+
+    // Show loading in diff display
+    const diffDisplay = document.getElementById('config-diff-display');
+    const placeholder = document.getElementById('diff-placeholder');
+    const diffPanels = document.querySelector('.diff-panels');
+    
+    if (placeholder) placeholder.style.display = 'none';
+    if (diffPanels) diffPanels.style.display = 'none';
+    
+    // Create or update loading message without destroying the diff panels
+    let loadingMsg = document.getElementById('diff-loading-msg');
+    if (!loadingMsg) {
+      loadingMsg = document.createElement('p');
+      loadingMsg.id = 'diff-loading-msg';
+      diffDisplay.appendChild(loadingMsg);
+    }
+    loadingMsg.textContent = 'Loading diff...';
+    loadingMsg.style.display = 'block';
+
+    try {
+      // Fetch diff from API
+      const response = await fetch(
+        `/b/configs/${window.currentConfigInfo.type}/${window.currentConfigInfo.name}/diff?from=${fromVersion.id}&to=${toVersion.id}`,
+        { cache: 'no-cache' }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const diffData = await response.json();
+
+      // Display the diff using spruce diff string if available
+      if (diffData.diff_string && diffData.has_changes) {
+        displaySpruceConfigDiff(diffData.diff_string, fromVersion, toVersion);
+      } else if (!diffData.has_changes) {
+        displayNoChangesMessage(fromVersion, toVersion);
+      } else {
+        // Fallback to side-by-side if no diff string
+        const [fromContent, toContent] = await Promise.all([
+          fetchConfigContent(fromVersion.id),
+          fetchConfigContent(toVersion.id)
+        ]);
+        displayConfigDiff(fromContent, toContent, diffData.changes);
+      }
+
+    } catch (error) {
+      console.error('Failed to load config diff:', error);
+      const loadingMsg = document.getElementById('diff-loading-msg');
+      if (loadingMsg) {
+        loadingMsg.textContent = `Error loading diff: ${error.message}`;
+        loadingMsg.className = 'error';
+        loadingMsg.style.display = 'block';
+      }
+    }
+  };
+
+  // Fetch config content by ID
+  const fetchConfigContent = async (configId) => {
+    const cleanId = configId.replace('*', '');
+    const response = await fetch(`/b/configs/${cleanId}`, { cache: 'no-cache' });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch config ${configId}`);
+    }
+    const config = await response.json();
+    return config.content || '';
+  };
+
+  // Display config diff with highlighting
+  const displayConfigDiff = (fromContent, toContent, changes) => {
+    const leftPanel = document.getElementById('diff-left-content');
+    const rightPanel = document.getElementById('diff-right-content');
+    const diffPanels = document.querySelector('.diff-panels');
+    const placeholder = document.getElementById('diff-placeholder');
+    
+    // Show diff panels and hide placeholder/loading
+    if (placeholder) placeholder.style.display = 'none';
+    const loadingMsg = document.getElementById('diff-loading-msg');
+    if (loadingMsg) loadingMsg.style.display = 'none';
+    if (diffPanels) diffPanels.style.display = 'flex';
+
+    // Check if panels exist
+    if (!leftPanel || !rightPanel) {
+      console.error('Diff panels not found:', { leftPanel: !!leftPanel, rightPanel: !!rightPanel });
+      return;
+    }
+
+    // Restore side-by-side layout (in case it was changed by spruce diff view)
+    rightPanel.style.display = 'block';
+    leftPanel.style.width = '';
+    rightPanel.style.width = '';
+
+    // Process content into lines
+    const fromLines = fromContent.split('\n');
+    const toLines = toContent.split('\n');
+
+    // Create diff display with line numbers and highlighting
+    leftPanel.innerHTML = createDiffDisplay(fromLines, 'removed', changes);
+    rightPanel.innerHTML = createDiffDisplay(toLines, 'added', changes);
+
+    // Synchronize scrolling
+    leftPanel.onscroll = () => {
+      rightPanel.scrollTop = leftPanel.scrollTop;
+      rightPanel.scrollLeft = leftPanel.scrollLeft;
+    };
+    rightPanel.onscroll = () => {
+      leftPanel.scrollTop = rightPanel.scrollTop;
+      leftPanel.scrollLeft = rightPanel.scrollLeft;
+    };
+  };
+
+  // Create diff display with line numbers and highlighting
+  const createDiffDisplay = (lines, type, changes) => {
+    let html = '<div class="diff-lines">';
+    
+    lines.forEach((line, index) => {
+      const lineNum = index + 1;
+      let lineClass = 'diff-line';
+      
+      // Check if this line is part of a change
+      // This is a simplified version - you might want to enhance this
+      // based on the actual change data structure
+      if (changes && changes.length > 0) {
+        // Simple heuristic: if line contains changed content
+        for (const change of changes) {
+          if (change.type === type || change.type === 'changed') {
+            // This is a very basic check - enhance as needed
+            if (line.includes(change.path)) {
+              lineClass += type === 'removed' ? ' diff-removed' : ' diff-added';
+              break;
+            }
+          }
+        }
+      }
+      
+      html += `<div class="${lineClass}">`;
+      html += `<span class="line-number">${lineNum}</span>`;
+      html += `<span class="line-content">${escapeHtml(line)}</span>`;
+      html += '</div>';
+    });
+    
+    html += '</div>';
+    return html;
+  };
+
+  // Display spruce diff output in a single formatted panel
+  const displaySpruceConfigDiff = (diffString, fromVersion, toVersion) => {
+    const leftPanel = document.getElementById('diff-left-content');
+    const rightPanel = document.getElementById('diff-right-content');
+    const diffPanels = document.querySelector('.diff-panels');
+    const placeholder = document.getElementById('diff-placeholder');
+    
+    // Show diff panels and hide placeholder/loading
+    if (placeholder) placeholder.style.display = 'none';
+    const loadingMsg = document.getElementById('diff-loading-msg');
+    if (loadingMsg) loadingMsg.style.display = 'none';
+    if (diffPanels) diffPanels.style.display = 'flex';
+
+    // Check if panels exist
+    if (!leftPanel || !rightPanel) {
+      console.error('Diff panels not found:', { leftPanel: !!leftPanel, rightPanel: !!rightPanel });
+      return;
+    }
+
+    // Parse the spruce diff output and create formatted display
+    const formattedDiff = formatSpruceDiff(diffString);
+    
+    // Display diff in left panel, hide right panel or show legend
+    leftPanel.innerHTML = `
+      <div class="spruce-diff-container">
+        <div class="diff-header">
+          <h4>Configuration Changes: ${fromVersion.id} → ${toVersion.id}</h4>
+        </div>
+        <div class="spruce-diff-output">
+          ${formattedDiff}
+        </div>
+      </div>
+    `;
+    
+    // Hide right panel for spruce diff display
+    rightPanel.style.display = 'none';
+    leftPanel.style.width = '100%';
+  };
+
+  // Display message when there are no changes
+  const displayNoChangesMessage = (fromVersion, toVersion) => {
+    const leftPanel = document.getElementById('diff-left-content');
+    const rightPanel = document.getElementById('diff-right-content');
+    const diffPanels = document.querySelector('.diff-panels');
+    const placeholder = document.getElementById('diff-placeholder');
+    
+    // Show diff panels and hide placeholder/loading
+    if (placeholder) placeholder.style.display = 'none';
+    const loadingMsg = document.getElementById('diff-loading-msg');
+    if (loadingMsg) loadingMsg.style.display = 'none';
+    if (diffPanels) diffPanels.style.display = 'flex';
+
+    if (!leftPanel || !rightPanel) {
+      console.error('Diff panels not found');
+      return;
+    }
+
+    leftPanel.innerHTML = `
+      <div class="no-changes-message">
+        <div class="diff-header">
+          <h4>Configuration Comparison: ${fromVersion.id} → ${toVersion.id}</h4>
+        </div>
+        <div class="no-changes-content">
+          <p><i class="fa fa-check-circle" style="color: #28a745; margin-right: 8px;"></i>No changes detected between these configuration versions.</p>
+        </div>
+      </div>
+    `;
+    
+    rightPanel.style.display = 'none';
+    leftPanel.style.width = '100%';
+  };
+
+  // Format spruce diff output with syntax highlighting
+  const formatSpruceDiff = (diffString) => {
+    if (!diffString || diffString.trim() === '') {
+      return '<p>No diff content available</p>';
+    }
+
+    const lines = diffString.split('\n');
+    let html = '<div class="spruce-diff-lines">';
+    
+    lines.forEach((line, index) => {
+      let lineClass = 'spruce-diff-line';
+      let lineContent = escapeHtml(line);
+      
+      // Highlight different types of changes based on spruce diff output
+      if (line.startsWith('+ ')) {
+        lineClass += ' addition';
+        lineContent = '<span class="diff-indicator">+</span>' + lineContent.substring(1);
+      } else if (line.startsWith('- ')) {
+        lineClass += ' removal';
+        lineContent = '<span class="diff-indicator">-</span>' + lineContent.substring(1);
+      } else if (line.includes('⇆ order changed')) {
+        lineClass += ' reorder';
+      } else if (line.match(/^\w+$/)) {
+        // Section headers (like "disk_types")
+        lineClass += ' section-header';
+      } else if (line.trim() === '') {
+        lineClass += ' empty';
+      }
+      
+      html += `<div class="${lineClass}">${lineContent}</div>`;
+    });
+    
+    html += '</div>';
+    return html;
+  };
+
+  // escapeHtml function is already defined earlier in the code
 
   // Set up task modal tab switching
   const setupTaskModalTabs = () => {
@@ -11239,32 +12119,31 @@
           </table>
         </div>
 
+        <!-- Broker Details Table -->
+        <div class="broker-details-table-container" id="broker-details-table-container" style="display: none;">
+          <table class="broker-details-table">
+            <tbody>
+              <tr>
+                <td><strong>Name:</strong></td>
+                <td id="broker-detail-name">-</td>
+                <td><strong>Endpoint:</strong></td>
+                <td id="broker-detail-endpoint">-</td>
+                <td><strong>Username:</strong></td>
+                <td id="broker-detail-username">-</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <!-- CF Detail Tabs (matching Manifest styling) -->
         <div class="broker-tabs-nav">
-          <button class="broker-tab-btn active" data-cftab="details">Details</button>
-          <button class="broker-tab-btn" data-cftab="marketplace">Marketplace</button>
+          <button class="broker-tab-btn active" data-cftab="marketplace">Marketplace</button>
           <button class="broker-tab-btn" data-cftab="services">Services</button>
         </div>
 
         <!-- CF Detail Content -->
         <div class="broker-tab-content">
-          <div class="cf-detail-panel active" data-panel="details">
-            <div class="cf-endpoint-details" id="cf-endpoint-details">
-              <div class="empty-state">
-                <p>Select an endpoint from the dropdown above to view details.</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="cf-detail-panel" data-panel="register" style="display: none;">
-            <div class="cf-registration-content" id="cf-registration-content">
-              <div class="empty-state">
-                <p>Select an endpoint from the dropdown above to manage broker registration.</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="cf-detail-panel" data-panel="marketplace" style="display: none;">
+          <div class="cf-detail-panel active" data-panel="marketplace">
             <div class="cf-marketplace-content" id="cf-marketplace-content">
               <div class="empty-state">
                 <p>Select an endpoint from the dropdown above to view the service marketplace.</p>
@@ -13129,8 +14008,8 @@
         this.toggleConnection();
       }
 
-      // Reset to details tab
-      this.switchToBrokerTab('details');
+      // Reset to marketplace tab
+      this.switchToBrokerTab('marketplace');
     },
 
     // Clear endpoint selection
@@ -13139,6 +14018,12 @@
       // Save the cleared selection to localStorage
       this.saveConnectionStates();
 
+      // Hide broker details table
+      const detailsTableContainer = document.getElementById('broker-details-table-container');
+      if (detailsTableContainer) {
+        detailsTableContainer.style.display = 'none';
+      }
+
       // Clear all detail panels
       document.querySelectorAll('.cf-detail-panel').forEach(panel => {
         const contentDiv = panel.querySelector('div[id*="cf-"]');
@@ -13146,14 +14031,14 @@
           contentDiv.innerHTML = `
             <div class="empty-state">
               <h3>Select an endpoint</h3>
-              <p>Choose a Cloud Foundry endpoint from the dropdown above to view its details and manage services.</p>
+              <p>Choose a Cloud Foundry endpoint from the dropdown above to view services and manage broker registration.</p>
             </div>
           `;
         }
       });
 
-      // Reset to details tab
-      this.switchToBrokerTab('details');
+      // Reset to marketplace tab
+      this.switchToBrokerTab('marketplace');
 
       // Hide register button
       this.updateRegisterButtonVisibility(null);
@@ -13231,33 +14116,20 @@
     // Load endpoint details
     loadEndpointDetails(endpointName) {
       const endpoint = this.endpoints[endpointName];
-      const detailsPanel = document.getElementById('cf-endpoint-details');
+      const detailsTableContainer = document.getElementById('broker-details-table-container');
+      const nameCell = document.getElementById('broker-detail-name');
+      const endpointCell = document.getElementById('broker-detail-endpoint');
+      const usernameCell = document.getElementById('broker-detail-username');
 
-      if (!detailsPanel) return;
+      if (!detailsTableContainer || !nameCell || !endpointCell || !usernameCell) return;
 
-      const html = `
-        <div class="endpoint-details">
-          <h4>Configuration Details</h4>
-          <table class="details-table">
-            <tbody>
-              <tr>
-                <td><strong>Name:</strong></td>
-                <td>${endpoint.name || endpointName}</td>
-              </tr>
-              <tr>
-                <td><strong>Endpoint:</strong></td>
-                <td><a href="${endpoint.endpoint}" target="_blank">${endpoint.endpoint}</a></td>
-              </tr>
-              <tr>
-                <td><strong>Username:</strong></td>
-                <td>${endpoint.username}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      `;
+      // Show the details table
+      detailsTableContainer.style.display = 'block';
 
-      detailsPanel.innerHTML = html;
+      // Populate the table cells
+      nameCell.textContent = endpoint.name || endpointName;
+      endpointCell.innerHTML = `<a href="${endpoint.endpoint}" target="_blank">${endpoint.endpoint}</a>`;
+      usernameCell.textContent = endpoint.username;
     },
 
     // Load content for specific tabs
@@ -13847,6 +14719,7 @@
       if (modal) {
         modal.style.display = 'flex';
         modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
       }
 
       // Create terminal instance
@@ -14187,6 +15060,7 @@
       const modal = document.getElementById('terminal-modal');
       if (modal) {
         modal.classList.remove('active');
+        modal.setAttribute('aria-hidden', 'true');
         setTimeout(() => {
           modal.style.display = 'none';
         }, 300);
@@ -14215,6 +15089,7 @@
       const modal = document.getElementById('terminal-modal');
       if (modal && this.sessions.size > 0) {
         modal.style.display = 'flex';
+        modal.setAttribute('aria-hidden', 'false');
         setTimeout(() => {
           modal.classList.add('active');
         }, 10);
