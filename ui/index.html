@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Blacksmith Management Console</title>
+  <link rel="stylesheet" type="text/css" href="/tailwind.css">
   <link rel="stylesheet" type="text/css" href="/blacksmith.css?v=20250823">
   <link rel="stylesheet" type="text/css" href="/xterm.css">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -13,39 +14,43 @@
 <body>
 
   <header>
-    <div class="wrap">
-      <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
-        <svg id="themeIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-          <!-- Sun icon (light mode) -->
-          <path class="sun-icon" d="M12 17.5C9.5 17.5 7.5 15.5 7.5 13S9.5 8.5 12 8.5 16.5 10.5 16.5 13 14.5 17.5 12 17.5M12 7C8.7 7 6 9.7 6 13S8.7 19 12 19 18 16.3 18 13 15.3 7 12 7M12 2L14.4 6.4L19 5.7L16.2 9.8L18.6 14L14 12.6L10 15L11.4 10.4L7.2 8L11.8 5.6L12 2M3.3 7L7.7 5.6L5.6 9.7L3.3 7M7.7 18.4L3.3 17L5.6 14.3L7.7 18.4M16.3 14.3L18.4 17L14 18.4L16.3 14.3M18.4 7L16.3 9.7L14 5.6L18.4 7Z" style="display: block;"/>
-          <!-- Moon icon (dark mode) -->
-          <path class="moon-icon" d="M17.75,4.09L15.22,6.03L16.13,9.09L13.5,7.28L10.87,9.09L11.78,6.03L9.25,4.09L12.44,4L13.5,1L14.56,4L17.75,4.09M21.25,11L19.61,12.25L20.2,14.23L18.5,13.06L16.8,14.23L17.39,12.25L15.75,11L17.81,10.95L18.5,9L19.19,10.95L21.25,11M18.97,15.95C19.8,15.87 20.69,17.05 20.16,17.8C19.84,18.25 19.5,18.67 19.08,19.07C15.17,23 8.84,23 4.94,19.07C1.03,15.17 1.03,8.83 4.94,4.93C5.34,4.53 5.76,4.17 6.21,3.85C6.96,3.32 8.14,4.21 8.06,5.04C7.79,7.9 8.75,10.87 10.95,13.06C13.14,15.26 16.1,16.22 18.97,15.95M17.33,17.97C14.5,17.81 11.7,16.64 9.53,14.5C7.36,12.31 6.2,9.5 6.04,6.68C3.23,9.82 3.34,14.64 6.35,17.66C9.37,20.67 14.19,20.78 17.33,17.97Z" style="display: none;"/>
-        </svg>
-        <span id="themeText">Dark</span>
-      </button>
-      <span id="logo">
-        <img src="/blacksmith.svg" alt="Blacksmith" style="height: 32px; width: 32px; vertical-align: middle; margin-right: 8px;">
-        Blacksmith
-      </span>
-      <span id="deployment-name"></span>
-      <span id="ident"></span>
+    <div class="wrap flex items-center justify-between mx-5">
+      <div class="flex items-center space-x-4">
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+          <svg id="themeIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <!-- Sun icon (light mode) -->
+            <path class="sun-icon block" d="M12 17.5C9.5 17.5 7.5 15.5 7.5 13S9.5 8.5 12 8.5 16.5 10.5 16.5 13 14.5 17.5 12 17.5M12 7C8.7 7 6 9.7 6 13S8.7 19 12 19 18 16.3 18 13 15.3 7 12 7M12 2L14.4 6.4L19 5.7L16.2 9.8L18.6 14L14 12.6L10 15L11.4 10.4L7.2 8L11.8 5.6L12 2M3.3 7L7.7 5.6L5.6 9.7L3.3 7M7.7 18.4L3.3 17L5.6 14.3L7.7 18.4M16.3 14.3L18.4 17L14 18.4L16.3 14.3M18.4 7L16.3 9.7L14 5.6L18.4 7Z"/>
+            <!-- Moon icon (dark mode) -->
+            <path class="moon-icon hidden" d="M17.75,4.09L15.22,6.03L16.13,9.09L13.5,7.28L10.87,9.09L11.78,6.03L9.25,4.09L12.44,4L13.5,1L14.56,4L17.75,4.09M21.25,11L19.61,12.25L20.2,14.23L18.5,13.06L16.8,14.23L17.39,12.25L15.75,11L17.81,10.95L18.5,9L19.19,10.95L21.25,11M18.97,15.95C19.8,15.87 20.69,17.05 20.16,17.8C19.84,18.25 19.5,18.67 19.08,19.07C15.17,23 8.84,23 4.94,19.07C1.03,15.17 1.03,8.83 4.94,4.93C5.34,4.53 5.76,4.17 6.21,3.85C6.96,3.32 8.14,4.21 8.06,5.04C7.79,7.9 8.75,10.87 10.95,13.06C13.14,15.26 16.1,16.22 18.97,15.95M17.33,17.97C14.5,17.81 11.7,16.64 9.53,14.5C7.36,12.31 6.2,9.5 6.04,6.68C3.23,9.82 3.34,14.64 6.35,17.66C9.37,20.67 14.19,20.78 17.33,17.97Z"/>
+          </svg>
+          <span id="themeText" class="ml-2">Dark</span>
+        </button>
+        <span id="logo" class="flex items-center">
+          <img src="/blacksmith.svg" alt="Blacksmith" class="h-8 w-8 mr-2">
+          Blacksmith
+        </span>
+      </div>
+      <div class="flex items-center space-x-4">
+        <span id="deployment-name"></span>
+        <span id="ident"></span>
+      </div>
     </div>
   </header>
 
   <!-- Minimized Terminal Bar -->
-  <div id="minimized-terminal-bar" class="minimized-terminal-bar">
-    <div class="left-section">
-      <img src="/blacksmith.svg" alt="Blacksmith" style="height: 20px; width: 20px;">
-      <div class="minimized-terminal-tabs" id="minimized-terminal-tabs"></div>
+  <div id="minimized-terminal-bar" class="minimized-terminal-bar fixed top-[30px] left-0 right-0 h-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4 z-[9999] opacity-0 invisible transform -translate-y-full transition-all duration-300">
+    <div class="left-section flex items-center gap-3">
+      <img src="/blacksmith.svg" alt="Blacksmith" class="h-5 w-5">
+      <div class="minimized-terminal-tabs flex gap-1" id="minimized-terminal-tabs"></div>
     </div>
-    <div class="right-section">
-      <button class="terminal-control-btn" title="Restore Terminal" onclick="window.TerminalManager && window.TerminalManager.restoreAll()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div class="right-section flex items-center gap-2">
+      <button class="terminal-control-btn p-2 bg-transparent border-0 rounded-md text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 cursor-pointer transition-colors duration-200" title="Restore Terminal" onclick="window.TerminalManager && window.TerminalManager.restoreAll()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5">
           <path d="M8 3H5a2 2 0 0 0-2 2v3m18-3v3a2 2 0 0 1-2 2h-3m0 8h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
         </svg>
       </button>
-      <button class="terminal-control-btn" title="Close All Terminals" onclick="window.TerminalManager && window.TerminalManager.closeAll()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button class="terminal-control-btn p-2 bg-transparent border-0 rounded-md text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 cursor-pointer transition-colors duration-200" title="Close All Terminals" onclick="window.TerminalManager && window.TerminalManager.closeAll()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5">
           <line x1="18" y1="6" x2="6" y2="18"/>
           <line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
@@ -54,41 +59,41 @@
   </div>
 
   <div class="main-content">
-    <div class="wrap">
+    <div class="wrap mx-5 flex-1 flex flex-col">
       <!-- Tab navigation -->
-      <div class="tabs" role="tablist" aria-label="Main navigation">
-        <button class="tab-button active" data-tab="blacksmith" role="tab" aria-selected="true"
+      <div class="tabs flex bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-600 overflow-x-auto scrollbar-hide" role="tablist" aria-label="Main navigation">
+        <button class="tab-button active flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 data-[active]:bg-white dark:data-[active]:bg-gray-800 data-[active]:border-b-blue-500 data-[active]:text-blue-600 dark:data-[active]:text-blue-400 data-[active]:font-semibold data-[active]:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="blacksmith" role="tab" aria-selected="true"
           aria-controls="blacksmith">Blacksmith</button>
-        <button class="tab-button" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service
+        <button class="tab-button flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service
           Instances</button>
       </div>
 
       <!-- Tab content panels -->
-      <div class="tab-content">
-        <div id="blacksmith" class="tab-panel active" role="tabpanel" aria-hidden="false">
+      <div class="tab-content flex-1 flex flex-col">
+        <div id="blacksmith" class="tab-panel active flex-1 flex flex-col" role="tabpanel" aria-hidden="false">
           <!-- Blacksmith sub-tabs -->
-          <div class="detail-tabs">
-            <button class="detail-tab active" data-tab="details">Details</button>
-            <button class="detail-tab" data-tab="plans">Plans</button>
-            <button class="detail-tab" data-tab="broker">Broker</button>
-            <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
-            <button class="detail-tab" data-tab="vms">VMs</button>
-            <button class="detail-tab" data-tab="events">Events</button>
-            <button class="detail-tab" data-tab="tasks">Tasks</button>
-            <button class="detail-tab" data-tab="configs">Configs</button>
-            <button class="detail-tab" data-tab="certificates">Certificates</button>
-            <button class="detail-tab" data-tab="manifest">Manifest</button>
-            <button class="detail-tab" data-tab="config">Config</button>
+          <div class="detail-tabs flex gap-1 bg-gray-50 dark:bg-gray-700 p-1 rounded-lg border border-gray-200 dark:border-gray-600 overflow-x-auto scrollbar-hide flex-shrink-0" role="tablist" aria-label="Blacksmith sections">
+            <button class="detail-tab active bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 data-[active]:bg-white dark:data-[active]:bg-gray-800 data-[active]:text-gray-900 dark:data-[active]:text-gray-100 data-[active]:shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="details" role="tab" aria-selected="true" aria-controls="details-content">Details</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="plans" role="tab" aria-selected="false" aria-controls="plans-content">Plans</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="broker" role="tab" aria-selected="false" aria-controls="broker-content">Broker</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="blacksmith-logs" role="tab" aria-selected="false" aria-controls="logs-content">Logs</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="vms" role="tab" aria-selected="false" aria-controls="vms-content">VMs</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="events" role="tab" aria-selected="false" aria-controls="events-content">Events</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="tasks" role="tab" aria-selected="false" aria-controls="tasks-content">Tasks</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="configs" role="tab" aria-selected="false" aria-controls="configs-content">Configs</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="certificates" role="tab" aria-selected="false" aria-controls="certificates-content">Certificates</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="manifest" role="tab" aria-selected="false" aria-controls="manifest-content">Manifest</button>
+            <button class="detail-tab bg-transparent border-0 px-4 py-2 cursor-pointer text-gray-600 dark:text-gray-400 text-xs font-medium rounded-md transition-all duration-200 whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="config" role="tab" aria-selected="false" aria-controls="config-content">Config</button>
           </div>
           
           <!-- Blacksmith detail content -->
-          <div class="detail-content">
-            <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
+          <div class="detail-content flex-1 overflow-auto">
+            <div class="loading p-8 text-center">loading, please wait...</div>
           </div>
         </div>
 
-        <div id="services" class="tab-panel" role="tabpanel" aria-hidden="true">
-          <div class="loading" style="padding: 2em; text-align: center;">loading, please wait...</div>
+        <div id="services" class="tab-panel flex-1 flex flex-col" role="tabpanel" aria-hidden="true">
+          <div class="loading p-8 text-center">loading, please wait...</div>
         </div>
 
       </div>
@@ -96,64 +101,63 @@
   </div>
 
   <footer>
-    <div class="wrap">
+    <div class="wrap mx-5">
       <p>
-        <img src="/blacksmith.svg" alt="Blacksmith" style="height: 20px; width: 20px; vertical-align: middle; margin-right: 4px;">
+        <img src="/blacksmith.svg" alt="Blacksmith" class="h-5 w-5 inline-block align-middle mr-1">
         Copyright &copy; 2025 Blacksmith Community
       </p>
     </div>
   </footer>
 
   <!-- CF Registration Modal -->
-  <div id="registration-modal" class="modal" style="display: none;" role="dialog" aria-labelledby="registration-modal-title" aria-hidden="true">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 id="registration-modal-title">New CF Registration</h3>
-        <button class="modal-close" aria-label="Close modal">&times;</button>
+  <div id="registration-modal" class="modal hidden fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-[10000] opacity-0 invisible transition-all duration-300" role="dialog" aria-labelledby="registration-modal-title" aria-hidden="true">
+    <div class="modal-content bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl w-[90vw] max-w-4xl max-h-[90vh] m-5 transform scale-95 transition-transform duration-300">
+      <div class="modal-header flex justify-between items-center px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 rounded-t-lg">
+        <h3 id="registration-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">New CF Registration</h3>
+        <button class="modal-close p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200 text-xl leading-none" aria-label="Close modal">&times;</button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body p-6 flex-1 overflow-y-auto">
         <form id="registration-form">
-          <div class="form-group">
-            <label for="reg-name">Registration Name:</label>
-            <input type="text" id="reg-name" name="name" required>
-            <small>Friendly name for this registration</small>
+          <div class="form-group mb-5">
+            <label for="reg-name" class="block mb-1.5 font-medium text-gray-900 dark:text-gray-100">Registration Name:</label>
+            <input type="text" id="reg-name" name="name" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200">
+            <small class="block mt-1 text-xs text-gray-600 dark:text-gray-400">Friendly name for this registration</small>
           </div>
           
-          <div class="form-group">
-            <label for="reg-api-url">CF API URL:</label>
-            <input type="url" id="reg-api-url" name="api_url" required placeholder="https://api.cf.example.com">
-            <small>Cloud Foundry API endpoint URL</small>
+          <div class="form-group mb-5">
+            <label for="reg-api-url" class="block mb-1.5 font-medium text-gray-900 dark:text-gray-100">CF API URL:</label>
+            <input type="url" id="reg-api-url" name="api_url" required placeholder="https://api.cf.example.com" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200">
+            <small class="block mt-1 text-xs text-gray-600 dark:text-gray-400">Cloud Foundry API endpoint URL</small>
           </div>
           
-          <div class="form-group">
-            <label for="reg-username">Username:</label>
-            <input type="text" id="reg-username" name="username" required>
-            <small>CF user with admin privileges</small>
+          <div class="form-group mb-5">
+            <label for="reg-username" class="block mb-1.5 font-medium text-gray-900 dark:text-gray-100">Username:</label>
+            <input type="text" id="reg-username" name="username" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200">
+            <small class="block mt-1 text-xs text-gray-600 dark:text-gray-400">CF user with admin privileges</small>
           </div>
           
-          <div class="form-group">
-            <label for="reg-password">Password:</label>
-            <input type="password" id="reg-password" name="password" required>
-            <small>CF user password</small>
+          <div class="form-group mb-5">
+            <label for="reg-password" class="block mb-1.5 font-medium text-gray-900 dark:text-gray-100">Password:</label>
+            <input type="password" id="reg-password" name="password" required class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200">
+            <small class="block mt-1 text-xs text-gray-600 dark:text-gray-400">CF user password</small>
           </div>
           
-          <div class="form-group">
-            <label for="reg-broker-name">Broker Name:</label>
-            <input type="text" id="reg-broker-name" name="broker_name" placeholder="blacksmith">
-            <small>Name for the service broker in CF (optional)</small>
+          <div class="form-group mb-5">
+            <label for="reg-broker-name" class="block mb-1.5 font-medium text-gray-900 dark:text-gray-100">Broker Name:</label>
+            <input type="text" id="reg-broker-name" name="broker_name" placeholder="blacksmith" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200">
+            <small class="block mt-1 text-xs text-gray-600 dark:text-gray-400">Name for the service broker in CF (optional)</small>
           </div>
           
-          <div class="form-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="reg-auto-register" name="auto_register">
-              <span class="checkmark"></span>
-              Auto-register immediately
+          <div class="form-group mb-5">
+            <label class="checkbox-label flex items-center cursor-pointer">
+              <input type="checkbox" id="reg-auto-register" name="auto_register" class="w-4 h-4 text-blue-600 border-gray-300 dark:border-gray-600 rounded focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-gray-800 transition-colors duration-200">
+              <span class="ml-2 text-gray-900 dark:text-gray-100">Auto-register immediately</span>
             </label>
-            <small>Start registration process immediately after creation</small>
+            <small class="block mt-1 text-xs text-gray-600 dark:text-gray-400">Start registration process immediately after creation</small>
           </div>
         </form>
         
-        <div id="registration-progress" class="progress-container" style="display: none;">
+        <div id="registration-progress" class="progress-container hidden">
           <div class="progress-header">
             <h4>Registration Progress</h4>
           </div>
@@ -196,71 +200,71 @@
           </div>
         </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="cancel-registration">Cancel</button>
-        <button type="button" class="btn btn-primary" id="test-connection-btn">Test Connection</button>
-        <button type="submit" class="btn btn-success" id="save-registration-btn" form="registration-form">Save Registration</button>
+      <div class="modal-footer flex justify-end gap-3 px-6 py-4 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 rounded-b-lg">
+        <button type="button" class="btn btn-secondary px-4 py-2 bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-500 rounded-md hover:bg-gray-200 dark:hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-300 dark:focus:ring-gray-400 transition-colors duration-200" id="cancel-registration">Cancel</button>
+        <button type="button" class="btn btn-primary px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white border border-blue-600 dark:border-blue-500 rounded-md hover:bg-blue-700 dark:hover:bg-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-300 dark:focus:ring-blue-400 transition-colors duration-200" id="test-connection-btn">Test Connection</button>
+        <button type="submit" class="btn btn-success px-4 py-2 bg-green-600 dark:bg-green-500 text-white border border-green-600 dark:border-green-500 rounded-md hover:bg-green-700 dark:hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-green-300 dark:focus:ring-green-400 transition-colors duration-200" id="save-registration-btn" form="registration-form">Save Registration</button>
       </div>
     </div>
   </div>
 
   <!-- Terminal Modal -->
-  <div id="terminal-modal" class="modal-overlay" role="dialog" aria-hidden="true" style="display: none;">
-    <div class="modal terminal-modal-content">
-      <div class="modal-header terminal-header">
-        <h2>SSH Terminal</h2>
-        <div class="terminal-header-controls">
-          <button class="terminal-control-btn" id="reconnect-btn" title="Reconnect" onclick="window.TerminalManager && window.TerminalManager.reconnectActive()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+  <div id="terminal-modal" class="modal-overlay hidden fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-[10000] opacity-0 invisible transition-all duration-300" role="dialog" aria-hidden="true">
+    <div class="modal terminal-modal-content bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl w-[95vw] h-[95vh] max-w-none max-h-none flex flex-col overflow-hidden m-auto transform scale-95 transition-transform duration-300">
+      <div class="modal-header terminal-header flex justify-between items-center px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex-shrink-0">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">SSH Terminal</h2>
+        <div class="terminal-header-controls flex items-center gap-2">
+          <button class="terminal-control-btn p-2 bg-transparent border-0 rounded-md text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 cursor-pointer transition-colors duration-200" id="reconnect-btn" title="Reconnect" onclick="window.TerminalManager && window.TerminalManager.reconnectActive()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5">
               <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
             </svg>
           </button>
-          <button class="terminal-control-btn" id="minimize-btn" title="Minimize" onclick="window.TerminalManager && window.TerminalManager.minimizeAll()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="terminal-control-btn p-2 bg-transparent border-0 rounded-md text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 cursor-pointer transition-colors duration-200" id="minimize-btn" title="Minimize" onclick="window.TerminalManager && window.TerminalManager.minimizeAll()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5">
               <line x1="6" y1="19" x2="18" y2="19"/>
             </svg>
           </button>
-          <button class="modal-close" onclick="window.TerminalManager && window.TerminalManager.closeAll()">&times;</button>
+          <button class="modal-close p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200 text-xl leading-none" onclick="window.TerminalManager && window.TerminalManager.closeAll()">&times;</button>
         </div>
       </div>
-      <div class="terminal-tabs" id="terminal-tabs"></div>
-      <div class="terminal-container" id="terminal-container"></div>
+      <div class="terminal-tabs flex bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 overflow-x-auto min-h-10" id="terminal-tabs"></div>
+      <div class="terminal-container flex-1 overflow-hidden relative bg-black p-0" id="terminal-container"></div>
     </div>
   </div>
 
   <!-- Config Details Modal -->
-  <div id="config-details-modal" class="modal-overlay" role="dialog" aria-labelledby="config-details-modal-title" aria-hidden="true" style="display: none;">
-    <div class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h3 id="config-details-modal-title">Config Details</h3>
-          <button class="modal-close" onclick="hideConfigDetailsModal()" aria-label="Close modal">&times;</button>
+  <div id="config-details-modal" class="modal-overlay hidden fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-[10000] opacity-0 invisible transition-all duration-300" role="dialog" aria-labelledby="config-details-modal-title" aria-hidden="true">
+    <div class="modal bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl w-[90vw] max-w-6xl max-h-[90vh] m-5 flex flex-col overflow-hidden transform scale-95 transition-transform duration-300">
+      <div class="modal-content flex-1 flex flex-col overflow-hidden">
+        <div class="modal-header flex justify-between items-center px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex-shrink-0">
+          <h3 id="config-details-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Config Details</h3>
+          <button class="modal-close p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200 text-xl leading-none" onclick="hideConfigDetailsModal()" aria-label="Close modal">&times;</button>
         </div>
-        <div class="modal-body">
-          <div id="config-details-loading" class="loading">Loading config details...</div>
-          <div id="config-details-content" style="display: none;">
+        <div class="modal-body flex-1 overflow-hidden flex flex-col">
+          <div id="config-details-loading" class="loading text-center text-gray-500 dark:text-gray-400 p-5 italic animate-pulse">Loading config details...</div>
+          <div id="config-details-content" class="hidden">
             <!-- Overview Table - Above tabs as informational header -->
             <div class="config-overview-header">
-              <div class="config-overview-table-container">
-                <table class="config-overview-table">
-                  <thead>
+              <div class="config-overview-table-container overflow-x-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <table class="config-overview-table w-full min-w-[600px] border-collapse text-sm">
+                  <thead class="bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
                     <tr>
-                      <th>ID</th>
-                      <th>Name</th>
-                      <th>Type</th>
-                      <th>Team</th>
-                      <th>Created At</th>
-                      <th>Status</th>
+                      <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">ID</th>
+                      <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Name</th>
+                      <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Type</th>
+                      <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Team</th>
+                      <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Created At</th>
+                      <th class="px-4 py-3 text-left font-semibold border-b-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 whitespace-nowrap text-xs uppercase tracking-wider">Status</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    <tr>
-                      <td id="config-id"></td>
-                      <td id="config-name"></td>
-                      <td id="config-type"></td>
-                      <td id="config-team"></td>
-                      <td id="config-created-at"></td>
-                      <td id="config-status"></td>
+                  <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-150">
+                      <td id="config-id" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
+                      <td id="config-name" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
+                      <td id="config-type" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
+                      <td id="config-team" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
+                      <td id="config-created-at" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
+                      <td id="config-status" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
                     </tr>
                   </tbody>
                 </table>
@@ -269,14 +273,14 @@
             
             <!-- Config Details tabs -->
             <div class="manifest-details-container">
-              <div class="manifest-tabs-nav">
-                <button class="manifest-tab-btn active" data-tab="versions" data-group="config-tabs">Versions</button>
-                <button class="manifest-tab-btn" data-tab="diffs" data-group="config-tabs">Diffs</button>
+              <div class="manifest-tabs-nav border-b border-gray-200 dark:border-gray-600" role="tablist" aria-label="Config details navigation">
+                <button class="manifest-tab-btn active px-4 py-2 bg-transparent border-0 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 border-b-2 border-b-transparent hover:text-gray-900 dark:hover:text-gray-100 hover:border-b-gray-300 dark:hover:border-b-gray-500 data-[active]:text-blue-600 dark:data-[active]:text-blue-400 data-[active]:border-b-blue-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="versions" data-group="config-tabs" role="tab" aria-selected="true" aria-controls="versions-panel">Versions</button>
+                <button class="manifest-tab-btn px-4 py-2 bg-transparent border-0 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 border-b-2 border-b-transparent hover:text-gray-900 dark:hover:text-gray-100 hover:border-b-gray-300 dark:hover:border-b-gray-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1" data-tab="diffs" data-group="config-tabs" role="tab" aria-selected="false" aria-controls="diffs-panel">Diffs</button>
               </div>
               
               <div class="manifest-tab-content">
                 <!-- Versions Tab -->
-                <div class="manifest-tab-pane active" data-tab="versions" data-group="config-tabs">
+                <div id="versions-panel" class="manifest-tab-pane active" data-tab="versions" data-group="config-tabs" role="tabpanel" aria-labelledby="versions-tab">
                   <div class="config-versions-container">
                     <div class="config-versions-sidebar">
                       <h4>Versions</h4>
@@ -285,7 +289,7 @@
                     <div class="config-version-details">
                       <div class="config-content-header">
                         <h4>Config Content</h4>
-                        <button class="btn btn-secondary copy-btn" id="copy-config-content" title="Copy content to clipboard">
+                        <button class="btn btn-secondary copy-btn px-3 py-1.5 bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-500 rounded text-sm hover:bg-gray-200 dark:hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-300 dark:focus:ring-gray-400 transition-colors duration-200" id="copy-config-content" title="Copy content to clipboard">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                       </div>
@@ -295,11 +299,11 @@
                 </div>
                 
                 <!-- Diffs Tab -->
-                <div class="manifest-tab-pane" data-tab="diffs" data-group="config-tabs" style="display: none;">
+                <div id="diffs-panel" class="manifest-tab-pane hidden" data-tab="diffs" data-group="config-tabs" role="tabpanel" aria-labelledby="diffs-tab">
                   <div id="config-diff-content">
                     <div class="diff-controls">
-                      <label for="diff-version-selector">Compare versions:</label>
-                      <select id="diff-version-selector" class="form-control">
+                      <label for="diff-version-selector" class="block mb-1.5 font-medium text-gray-900 dark:text-gray-100">Compare versions:</label>
+                      <select id="diff-version-selector" class="form-control w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200">
                         <option value="">Select versions to compare</option>
                       </select>
                     </div>
