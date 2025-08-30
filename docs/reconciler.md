@@ -2,58 +2,88 @@
 
 ## Overview
 
-The Blacksmith Deployment Reconciler is a background service that automatically synchronizes service instance deployments between BOSH Director and Vault storage. This ensures that previously deployed services remain visible and manageable in Blacksmith even after restarts or failures.
+The Blacksmith Deployment Reconciler is a background service that automatically synchronizes service instance deployments information and state between Cloud Foundry (CF), BOSH Director, and Vault. It uses a CF-Query approach to ensure that
+previously deployed active in CF services remain visible and manageable in Blacksmith even after restarts, failures, or data corruption.
 
 ## Purpose
 
-When Blacksmith restarts, it may lose track of service instances that were previously deployed through BOSH. The reconciler solves this problem by:
+The reconciler addresses the following operational challenges:
 
-1. Scanning all deployments from the BOSH Director
-2. Matching deployments to known service plans
-3. Updating Vault with deployment information
-4. Maintaining the service instance index
-5. Detecting orphaned instances (instances in Vault without corresponding BOSH deployments)
+1. **Service Discovery** Finds all service instances deployed through Blacksmith by querying CF service broker endpoints
+2. **Infrastructure Mapping** Correlates CF service instances with their corresponding BOSH deployments for infrastructure details
+3. **Data Synchronization** Updates Vault with service instance metadata queried from both CF and BOSH
+4. **Index Maintenance** Keeps the service instance index current and accurate
+5. **Orphan Detection** Identifies orphaned instances (CF instances without BOSH deployments or vice versa)
+6. **Credential Recovery** Reconstructs missing binding credentials from deployment manifests
+7. **State Consistency** Ensures Blacksmith's internal state matches the actual deployed infrastructure and service names
 
 ## Architecture
 
-The reconciler is implemented as a modular system with clean separation of concerns:
+The reconciler is implemented as a modular system with clean separation of concerns.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Main Process                      │
-│                                                     │
-│  ┌───────────────────────────────────────────────┐ │
-│  │          Reconciler Manager                   │ │
-│  │                                              │ │
-│  │  ┌──────────┐  ┌──────────┐  ┌───────────┐ │ │
-│  │  │ Scanner  │→ │ Matcher  │→ │  Updater  │ │ │
-│  │  └──────────┘  └──────────┘  └───────────┘ │ │
-│  │       ↓             ↓              ↓        │ │
-│  │  ┌──────────────────────────────────────┐  │ │
-│  │  │         Synchronizer                 │  │ │
-│  │  └──────────────────────────────────────┘  │ │
-│  │                    ↓                        │ │
-│  │  ┌──────────────────────────────────────┐  │ │
-│  │  │      Metrics Collector               │  │ │
-│  │  └──────────────────────────────────────┘  │ │
-│  └───────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────┘
-         ↓                    ↓              ↓
-    BOSH Director          Vault         Index
-```
+![Blacksmith Reconciler](./images/blacksmith-reconciler.png "Blacksmith Reconciler Architecture diagram")
 
-### Components
+### Core Components
 
-- **Manager**: Orchestrates the reconciliation process and manages the background goroutine
-- **Scanner**: Retrieves deployment information from BOSH Director with caching
-- **Matcher**: Matches deployments to service instances using multiple strategies
-- **Updater**: Updates Vault with deployment metadata and maintains history
-- **Synchronizer**: Synchronizes the service instance index and detects orphans
-- **Metrics Collector**: Tracks reconciliation metrics for monitoring
+#### Manager (`reconcilerManager`)
+- **Purpose**: Orchestrates the entire reconciliation workflow as a background goroutine
+- **Responsibilities**:
+  - Manages reconciliation lifecycle and scheduling
+  - Coordinates all phases of the reconciliation process
+  - Handles graceful shutdown and error recovery
+  - Tracks reconciliation status and metrics
+
+#### CF Manager
+- **Purpose**: Primary source of service instance discovery
+- **Responsibilities**:
+  - Queries CF service broker endpoints for active service instances
+  - Retrieves service instance metadata and binding information
+  - Provides authoritative list of what should exist in Blacksmith
+
+#### BOSH Scanner (`boshScanner`)
+- **Purpose**: Scans BOSH Director for infrastructure details with intelligent caching
+- **Responsibilities**:
+  - Retrieves deployment information from BOSH Director
+  - Caches deployment details to reduce API load
+  - Extracts infrastructure metadata (VMs, releases, stemcells)
+  - Parses manifest properties for service identification
+
+#### Service Matcher (`serviceMatcher`)
+- **Purpose**: Correlates CF service instances with BOSH deployments using multiple strategies
+- **Responsibilities**:
+  - Matches CF service instances to BOSH deployments by UUID
+  - Uses manifest metadata for alternative matching
+  - Validates deployment manifest structure
+  - Handles edge cases and partial matches
+
+#### Vault Updater (`vaultUpdater`)
+- **Purpose**: Updates Vault storage with  instance data and manages backups
+- **Responsibilities**:
+  - Creates automatic backups before updates using SHA256-based deduplication
+  - Updates instance metadata with reconciliation history
+  - Manages backup retention and cleanup
+  - Handles credential recovery and binding repair
+
+#### Index Synchronizer (`indexSynchronizer`)
+- **Purpose**: Maintains the service instance index for fast lookups
+- **Responsibilities**:
+  - Updates the central service instance index
+  - Validates index consistency
+  - Handles legacy deployment name formats
+  - Ensures index accurately reflects current state
+
+#### Metrics Collector (`metricsCollector`)
+- **Purpose**: Tracks operational metrics for monitoring and observability
+- **Responsibilities**:
+  - Collects reconciliation performance metrics
+  - Tracks error rates and recent failures
+  - Provides Prometheus-compatible metrics export
+  - Monitors system health indicators
 
 ## Configuration
 
-The reconciler can be configured through both the `blacksmith.conf` file and environment variables (environment variables take precedence):
+The reconciler can be configured through both the `blacksmith.conf` file and environment variables
+(environment variables take precedence):
 
 ### Configuration Options
 
@@ -66,31 +96,55 @@ The reconciler can be configured through both the `blacksmith.conf` file and env
 | `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `reconciler.retry_attempts` | `3` | Number of retry attempts for failed operations |
 | `BLACKSMITH_RECONCILER_RETRY_DELAY` | `reconciler.retry_delay` | `10s` | Delay between retry attempts |
 | `BLACKSMITH_RECONCILER_CACHE_TTL` | `reconciler.cache_ttl` | `5m` | Cache time-to-live for deployment details |
+| `BLACKSMITH_RECONCILER_DEBUG` | `reconciler.debug` | `false` | Enable detailed debug logging |
+
+#### Backup Configuration
+
+| Environment Variable | Config File | Default | Description |
+|---------------------|-------------|---------|-------------|
 | `BLACKSMITH_RECONCILER_BACKUP_ENABLED` | `reconciler.backup.enabled` | `true` | Enable/disable instance backups |
-| `BLACKSMITH_RECONCILER_BACKUP_RETENTION` | `reconciler.backup.retention` | `10` | Number of backups to keep per instance |
-| `BLACKSMITH_RECONCILER_BACKUP_CLEANUP` | `reconciler.backup.cleanup` | `true` | Enable automatic cleanup of old backups |
-| `BLACKSMITH_RECONCILER_BACKUP_PATH` | `reconciler.backup.path` | `backups` | Vault path for storing backups |
+| `BLACKSMITH_RECONCILER_BACKUP_RETENTION` | `reconciler.backup.retention_count` | `5` | Number of backups to keep per instance |
+| `BLACKSMITH_RECONCILER_BACKUP_RETENTION_DAYS` | `reconciler.backup.retention_days` | `0` | Days to retain backups (0 = disabled) |
+| `BLACKSMITH_RECONCILER_BACKUP_COMPRESSION` | `reconciler.backup.compression_level` | `9` | Compression level (1-9, 9 = best) |
+| `BLACKSMITH_RECONCILER_BACKUP_CLEANUP` | `reconciler.backup.cleanup_enabled` | `true` | Enable automatic cleanup of old backups |
+| `BLACKSMITH_RECONCILER_BACKUP_ON_UPDATE` | `reconciler.backup.backup_on_update` | `true` | Create backup before instance updates |
+| `BLACKSMITH_RECONCILER_BACKUP_ON_DELETE` | `reconciler.backup.backup_on_delete` | `true` | Create backup before instance deletion |
 
-### Backup Configuration
+### Advanced Backup System
 
-The reconciler automatically creates backups of instance data before performing updates. This provides a safety net for recovery in case of issues.
+The reconciler implements a backup system with SHA256-based deduplication:
 
 #### Backup Features
+- **SHA256 Deduplication**: Prevents duplicate backups by content hashing
 - **Automatic Backups**: Created before each reconciliation update
-- **Configurable Retention**: Keep a specified number of backups per instance
-- **Smart Cleanup**: Automatically removes old backups beyond retention limit
-- **Timestamped Storage**: Each backup stored with Unix timestamp for easy identification
+- **Configurable Retention**: Support for both count-based and time-based retention
+- **Smart Cleanup**: Automatically removes old backups beyond retention limits
+- **Compression**: Configurable compression levels (1-9) for space efficiency
+- **Legacy Migration**: Automatically migrates old backup formats
 
 #### What Gets Backed Up
+- Complete instance Vault tree (all paths under the instance ID)
 - Instance index data (service ID, plan ID, timestamps)
 - Instance metadata (releases, stemcells, VMs, properties)
 - Instance manifest (full BOSH deployment manifest)
-- Reconciliation history
+- Binding credentials and metadata
+- Reconciliation history and audit trail
 
-#### Backup Storage Location
-Backups are stored in Vault at: `{instanceID}/{backup_path}/{unix_timestamp}`
+#### Backup Storage Architecture
+Backups use a SHA256-based storage system to prevent duplication:
 
-Example: `abc-123-def-456/backups/1704397200`
+```
+backups/{instanceID}/{sha256hash}
+├── timestamp: 1704397200
+└── archive: <compressed_vault_export>
+```
+
+Example: `backups/abc-123-def-456/a1b2c3d4e5f6.../`
+
+This approach ensures:
+- **Space Efficiency**: Identical content is stored only once
+- **Integrity Verification**: SHA256 hashes provide data integrity checks
+- **Fast Deduplication**: Quick comparison without decompressing archives
 
 ### Configuration File Example
 
@@ -104,11 +158,15 @@ reconciler:
   retry_attempts: 5
   retry_delay: "15s"
   cache_ttl: "10m"
+  debug: false
   backup:
     enabled: true
-    retention: 20
-    cleanup: true
-    path: "reconciler-backups"
+    retention_count: 10
+    retention_days: 30
+    compression_level: 9
+    cleanup_enabled: true
+    backup_on_update: true
+    backup_on_delete: true
 ```
 
 ### Environment Variable Example
@@ -117,16 +175,23 @@ reconciler:
 # Basic reconciler configuration
 export BLACKSMITH_RECONCILER_ENABLED=true
 export BLACKSMITH_RECONCILER_INTERVAL=30m
+export BLACKSMITH_RECONCILER_DEBUG=false
 
 # Performance tuning
 export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=10
 export BLACKSMITH_RECONCILER_BATCH_SIZE=20
+export BLACKSMITH_RECONCILER_RETRY_ATTEMPTS=5
+export BLACKSMITH_RECONCILER_RETRY_DELAY=15s
+export BLACKSMITH_RECONCILER_CACHE_TTL=10m
 
 # Backup configuration
 export BLACKSMITH_RECONCILER_BACKUP_ENABLED=true
-export BLACKSMITH_RECONCILER_BACKUP_RETENTION=20
+export BLACKSMITH_RECONCILER_BACKUP_RETENTION=10
+export BLACKSMITH_RECONCILER_BACKUP_RETENTION_DAYS=30
+export BLACKSMITH_RECONCILER_BACKUP_COMPRESSION=9
 export BLACKSMITH_RECONCILER_BACKUP_CLEANUP=true
-export BLACKSMITH_RECONCILER_BACKUP_PATH=backups
+export BLACKSMITH_RECONCILER_BACKUP_ON_UPDATE=true
+export BLACKSMITH_RECONCILER_BACKUP_ON_DELETE=true
 ```
 
 ### Configuration Precedence
@@ -170,12 +235,14 @@ The reconciler uses multiple strategies to match BOSH deployments to service ins
 
 ### 1. UUID Pattern Matching (Primary)
 
-Deployments following the naming convention `{planID}-{instanceID}` are matched directly:
+Deployments following the naming convention `{service-id}-{plan-id}-{instance-id}` are matched directly:
 
+Example:
 ```
-Example: redis-small-12345678-1234-1234-1234-123456789abc
-         └─planID─┘ └──────────instanceID────────────┘
+redis-cache-small-12345678-1234-1234-1234-123456789abc
 ```
+
+In this example `service-id` is `redis`, `plan-id` is `cache-small` and `instance-id` is `12345678-1234-1234-1234-123456789abc`.
 
 ### 2. Manifest Metadata Matching
 
@@ -185,7 +252,7 @@ The reconciler checks deployment manifests for Blacksmith metadata:
 properties:
   blacksmith:
     service_id: redis-service
-    plan_id: small
+    plan_id: cache-small
     instance_id: 12345678-1234-1234-1234-123456789abc
 ```
 
@@ -203,66 +270,64 @@ The reconciler can identify services through deployment name patterns and manife
 
 ## Reconciliation Process
 
-The reconciliation process follows these steps:
+The reconciler uses six distinct phases for service discovery and synchronization:
 
-### 1. Initialization
-- Reconciler starts as a background goroutine on Blacksmith startup
-- Performs initial reconciliation immediately
-- Schedules periodic reconciliation based on configured interval
+### Phase 1: CF Service Discovery (Primary Source)
+The reconciler starts by discovering service instances from Cloud Foundry, which serves as the authoritative source.
 
-### 2. Scanning Phase
-```go
-// Retrieve all deployments from BOSH
-deployments := scanner.ScanDeployments()
+**Benefits of CF-query approach**:
+- CF knows exactly which service instances should exist
+- Provides service binding information
+- Includes service parameters and user-provided metadata
+- Handles multi-foundation deployments correctly
 
-// Filter service deployments
-serviceDeployments := filterServiceDeployments(deployments)
-```
+### Phase 2: BOSH Infrastructure Scanning
+Scans BOSH Director for deployment infrastructure details.
 
-### 3. Matching Phase
-```go
-// Match each deployment to a service instance
-for deployment := range serviceDeployments {
-    match := matcher.MatchDeployment(deployment)
-    if match != nil {
-        matched = append(matched, match)
-    }
-}
-```
+**Infrastructure data collected**:
+- Deployment manifests and properties
+- VM information (IPs, instance groups, AZs)
+- Release and stemcell versions
+- Deployment timestamps and teams
 
-### 4. Update Phase
-```go
-// Update Vault with deployment information
-for match := range matched {
-    instance := buildInstanceData(match)
-    updater.UpdateInstance(instance)
-}
-```
+### Phase 3: Cross-Reference and Data Building
+Correlates CF service instances with BOSH deployments to build instance data.
 
-### 5. Synchronization Phase
-```go
-// Synchronize the index
-synchronizer.SyncIndex(instances)
+**Matching strategies**:
+1. **UUID Matching**: Direct correlation using service instance GUID
+2. **Manifest Metadata**: Uses Blacksmith properties in deployment manifests
+3. **Name Pattern Recognition**: Parses deployment names for service information
+4. **Release-based Inference**: Identifies services by BOSH releases used
 
-// Detect and mark orphaned instances
-orphans := detectOrphans(vaultInstances, boshDeployments)
-markOrphaned(orphans)
-```
+### Phase 4: Vault Update with Backup
+Updates Vault with  data, creating backups for safety.
+
+**Update process**:
+- Creates SHA256-deduplicated backup before any changes
+- Merges new data with existing instance metadata
+- Adds reconciliation history and timestamps
+- Preserves user-provided configuration and credentials
+
+### Phase 5: Index Synchronization
+Synchronizes the service instance index for fast lookups.
+
+**Index operations**:
+- Updates central service instance registry
+- Validates index consistency
+- Handles legacy deployment name formats
+- Ensures fast service instance lookups
+
+### Phase 6: Orphan Handling
+Identifies and processes orphaned instances.
+
+**Orphan types detected**:
+- **CF Orphans**: CF service instances without BOSH deployments
+- **BOSH Orphans**: BOSH deployments without CF service instances
+- **Vault Orphans**: Vault entries without corresponding CF or BOSH resources
 
 ## Orphan Detection
 
-The reconciler identifies "orphaned" instances - service instances that exist in Vault but have no corresponding BOSH deployment:
-
-```go
-// Instance marked as orphaned
-{
-  "id": "12345678-1234-1234-1234-123456789abc",
-  "service_id": "redis-service",
-  "plan_id": "small",
-  "orphaned": true,
-  "orphaned_at": "2024-01-15T10:30:00Z"
-}
-```
+The reconciler identifies "orphaned" instances - service instances that exist in Vault but have no corresponding BOSH deployment.
 
 Orphaned instances may indicate:
 - Failed deployments that need cleanup
@@ -271,7 +336,9 @@ Orphaned instances may indicate:
 
 ## Metrics and Monitoring
 
-The reconciler collects metrics for monitoring:
+The reconciler provides  metrics for operational monitoring and observability:
+
+### Metrics Structure
 
 ```go
 type Metrics struct {
@@ -288,45 +355,91 @@ type Metrics struct {
 }
 ```
 
+### Prometheus Metrics Export
+
+The reconciler exports Prometheus-compatible metrics:
+
+```
+# Reconciliation run counters
+blacksmith_reconciler_runs_total 42
+blacksmith_reconciler_runs_successful 40
+blacksmith_reconciler_runs_failed 2
+
+# Performance metrics
+blacksmith_reconciler_last_run_duration_seconds 45.123
+blacksmith_reconciler_deployments_total 150
+blacksmith_reconciler_instances_found_total 75
+blacksmith_reconciler_instances_synced_total 73
+blacksmith_reconciler_errors_total 3
+```
+
 ### Accessing Metrics
 
-Metrics can be accessed through the reconciler status:
+```go
+// Get reconciler status
+status := reconciler.GetStatus()
+
+// Get detailed metrics
+metrics := reconciler.GetMetrics()
+
+// Get recent errors for debugging
+errors := reconciler.GetRecentErrors()
+
+// Export as Prometheus format
+prometheusMetrics := reconciler.PrometheusMetrics()
+```
+
+### Status Information
 
 ```go
-status := reconciler.GetStatus()
-metrics := reconciler.GetMetrics()
+type Status struct {
+    Running         bool
+    LastRunTime     time.Time
+    LastRunDuration time.Duration
+    InstancesFound  int
+    InstancesSynced int
+    Errors          []error
+}
 ```
 
 ## Logging
 
-The reconciler provides comprehensive logging at different levels:
+The reconciler provides  logging at different levels:
 
 ### Debug Logging
 Enable debug logging for detailed reconciliation information:
 
 ```bash
+export BLACKSMITH_RECONCILER_DEBUG=true
+# or use global debug
 export BLACKSMITH_DEBUG=true
-# or
-export DEBUG=true
 ```
 
 Debug logs include:
-- Deployment scanning details
-- Matching decisions and confidence scores
-- Cache hits/misses
-- Individual update operations
+- CF service instance discovery details
+- BOSH deployment scanning with cache hits/misses
+- Cross-referencing decisions and matching logic
+- Individual update operations and backup creation
+- Index synchronization operations
+- Orphan detection and handling
 
 ### Info Logging
 Standard operational logs:
-- Reconciliation start/completion
-- Number of deployments found and matched
-- Synchronization results
+- Reconciliation start/completion with timing
+- CF service instance discovery results
+- BOSH deployment scanning results
+- Cross-referencing and matching outcomes
+- Vault update and synchronization results
+- Orphan detection findings
 
 ### Error Logging
 Critical issues that require attention:
+- CF service broker connection failures
 - BOSH Director connection failures
 - Vault access errors
-- Matching failures for critical deployments
+- Backup creation failures
+- Index synchronization errors
+- Credential recovery failures
 
 ## Error Handling
 
@@ -394,27 +507,58 @@ Check logs for initialization errors:
 grep "reconciler" blacksmith.log
 ```
 
-### Deployments Not Being Found
-
-Enable debug logging to see scanning details:
+Verify reconciler status through API:
 ```bash
-export BLACKSMITH_DEBUG=true
+curl -s https://blacksmith.example.com/b/status | jq .reconciler
 ```
+
+### CF Service Discovery Issues
+
+Enable debug logging to see CF discovery details:
+```bash
+export BLACKSMITH_RECONCILER_DEBUG=true
+```
+
+Verify CF connectivity and service broker registration:
+```bash
+# Check CF connection
+cf api
+cf auth
+
+# Verify service broker registration
+cf service-brokers | grep blacksmith
+
+# Check service instances
+cf service-instances
+```
+
+### BOSH Deployment Scanning Issues
 
 Verify BOSH Director connectivity:
 ```bash
 bosh deployments
 ```
 
-### Matching Failures
+Check BOSH authentication:
+```bash
+bosh env
+```
+
+### Matching and Cross-Reference Failures
 
 Check deployment naming conventions:
-- Should follow `{planID}-{instanceID}` pattern
-- Instance ID should be a valid UUID
+- Should follow `{serviceID}-{planID}-{instanceID}` pattern
+- Instance ID should be a valid UUID matching CF service instance GUID
 
-Verify manifest metadata:
+Verify manifest metadata in BOSH deployments:
 ```bash
-bosh -d <deployment-name> manifest | grep blacksmith
+bosh -d <deployment-name> manifest | grep -A5 -B5 blacksmith
+```
+
+Enable verbose logging to see matching decisions:
+```bash
+export BLACKSMITH_RECONCILER_DEBUG=true
+grep "matching\|cross-reference" blacksmith.log
 ```
 
 ### Performance Issues
@@ -439,66 +583,198 @@ reconciler.ForceReconcile()
 
 ## Integration with Blacksmith
 
-The reconciler integrates seamlessly with existing Blacksmith components:
+The reconciler integrates seamlessly with existing Blacksmith components using a layered approach:
+
+### Cloud Foundry Integration
+- **Service Broker Discovery**: Automatically discovers service instances from CF service broker endpoints
+- **Multi-Foundation Support**: Works across multiple CF foundations
+- **Binding Metadata**: Retrieves service binding information for credential recovery
+- **OSB Compatibility**: Maintains full Open Service Broker API compatibility
+- **CF API Integration**: Uses Blacksmith's existing CF connection management
 
 ### Broker Integration
-- Reads service catalog for matching
-- Updates service instance registry
-- Maintains compatibility with OSB API
+- **Service Catalog Access**: Reads service definitions for intelligent matching
+- **Plan Metadata**: Uses service plan information for deployment correlation
+- **Credential Recovery**: Leverages broker interfaces for binding reconstruction
+- **Registry Updates**: Maintains service instance registry consistency
 
 ### Vault Integration
-- Stores deployment metadata securely
-- Maintains instance history
-- Preserves credentials and parameters
+- **Secure Storage**: Stores all deployment metadata and credentials in Vault
+- **Backup Management**: Creates compressed, deduplicated backups with SHA256 hashing
+- **History Tracking**: Maintains complete reconciliation history and audit trails
+- **Index Maintenance**: Updates central service instance index for fast lookups
+- **Credential Preservation**: Protects existing credentials and user-provided parameters
 
 ### BOSH Integration
-- Uses existing BOSH Director connection
-- Respects BOSH authentication settings
-- Compatible with all BOSH deployment types
+- **Director Connection**: Uses existing BOSH Director connection and authentication
+- **Deployment Scanning**: Retrieves infrastructure details from all deployments
+- **Manifest Parsing**: Extracts service metadata from deployment manifests
+- **Infrastructure Mapping**: Correlates VMs, releases, and stemcells with service instances
+- **Caching Layer**: Implements intelligent caching to reduce BOSH API load
 
 ## Best Practices
 
-1. **Regular Monitoring**: Check reconciler metrics regularly to ensure healthy operation
+### Operational Guidelines
 
-2. **Appropriate Intervals**: Set reconciliation interval based on deployment frequency:
-   - High-frequency deployments: 15-30 minutes
-   - Low-frequency deployments: 1-2 hours
-   - Development environments: 5-10 minutes
+1. **Regular Monitoring**: Check reconciler metrics and status regularly
+   - Monitor `blacksmith_reconciler_*` Prometheus metrics
+   - Check reconciler status via `/b/status` API endpoint
+   - Review error logs for failed reconciliation attempts
 
-3. **Resource Allocation**: Ensure adequate resources for reconciliation:
-   - CPU: Minimal impact during normal operation
-   - Memory: Scales with number of deployments
-   - Network: Depends on BOSH API response size
+2. **Appropriate Intervals**: Set reconciliation frequency based on environment:
+   - **Production**: 1-2 hours (stable, infrequent changes)
+   - **Staging**: 30-60 minutes (moderate change frequency)
+   - **Development**: 10-15 minutes (rapid iteration cycles)
+   - **Large Environments**: Consider longer intervals to reduce system load
 
-4. **Error Investigation**: Investigate orphaned instances promptly:
-   - May indicate deployment issues
-   - Could reveal incomplete operations
-   - Helps maintain clean state
+3. **Resource Allocation**: Size resources appropriately:
+   - **CPU**: Minimal impact during normal operation
+   - **Memory**: Scales with CF service instances × BOSH deployments
+   - **Network**: Depends on CF API and BOSH API response sizes
+   - **Vault Storage**: Account for backup storage requirements
 
-5. **Cache Management**: Tune cache settings for your environment:
-   - Larger deployments: Longer TTL
-   - Rapidly changing environments: Shorter TTL
-   - Production: Balance between performance and freshness
+### Performance Optimization
+
+4. **Concurrency Tuning**: Adjust based on your infrastructure capacity:
+   ```bash
+   # For smaller environments
+   export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=3
+   export BLACKSMITH_RECONCILER_BATCH_SIZE=5
+
+   # For larger, robust environments
+   export BLACKSMITH_RECONCILER_MAX_CONCURRENCY=15
+   export BLACKSMITH_RECONCILER_BATCH_SIZE=25
+   ```
+
+5. **Cache Management**: Optimize cache settings for your environment:
+   - **Stable environments**: Longer TTL (15-30 minutes)
+   - **Dynamic environments**: Shorter TTL (2-5 minutes)
+   - **Large deployments**: Balance between API load and data freshness
+
+6. **Backup Optimization**: Configure backup settings for storage efficiency:
+   ```bash
+   # Space-conscious environments
+   export BLACKSMITH_RECONCILER_BACKUP_COMPRESSION=9
+   export BLACKSMITH_RECONCILER_BACKUP_RETENTION=3
+
+   # Compliance-focused environments
+   export BLACKSMITH_RECONCILER_BACKUP_RETENTION_DAYS=90
+   export BLACKSMITH_RECONCILER_BACKUP_CLEANUP=false
+   ```
+
+### Operational Procedures
+
+7. **Error Investigation**: Investigate issues systematically:
+   - **CF Orphans**: May indicate incomplete deprovision operations
+   - **BOSH Orphans**: Could reveal manual deployment deletions
+   - **Vault Orphans**: Might suggest data corruption or migration issues
+
+8. **Maintenance Windows**: Plan reconciler operations around maintenance:
+   - Disable reconciler during major CF/BOSH maintenance
+   - Force reconciliation after significant infrastructure changes
+   - Monitor increased activity after system restarts
+
+## CF-Query Workflow Deep Dive
+
+The reconciler's CF-Query approach represents a significant architectural improvement over traditional BOSH-centric reconciliation:
+
+### Why CF-Query?
+
+**Traditional Problems with BOSH-Only Reconciliation**:
+- BOSH deployments may exist without corresponding CF service instances
+- Deployment names don't always follow consistent patterns
+- Missing service binding information
+- Difficulty handling multi-foundation environments
+- No authoritative source of "what should exist"
+
+**CF-Query Advantages**:
+- CF service broker provides authoritative list of active service instances
+- Includes complete service binding metadata
+- Handles complex deployment scenarios (updates, migrations)
+- Provides user context and service parameters
+- Works seamlessly across multiple foundations
+
+### Fallback Mechanisms
+
+The reconciler gracefully handles partial failures:
+- **CF Unavailable**: Falls back to BOSH-only reconciliation
+- **BOSH Unavailable**: Processes CF instances without infrastructure details
+- **Partial Data**: Records what's available and attempts recovery on next run
 
 ## Security Considerations
 
-The reconciler operates with the same security context as Blacksmith:
+The reconciler operates with  security measures:
 
-- **BOSH Access**: Uses configured BOSH credentials
-- **Vault Access**: Uses Blacksmith's Vault token
-- **No Additional Permissions**: Doesn't require extra privileges
-- **Secure Metadata**: Sensitive information stored in Vault
-- **Audit Trail**: All operations logged for compliance
+### Access Control
+- **CF Access**: Uses Blacksmith's CF client credentials and authentication
+- **BOSH Access**: Uses configured BOSH Director credentials and certificates
+- **Vault Access**: Uses Blacksmith's Vault token with appropriate policies
+- **No Additional Permissions**: Doesn't require extra privileges beyond Blacksmith's existing access
+
+### Data Protection
+- **Secure Metadata**: All sensitive information stored in Vault with encryption
+- **Backup Encryption**: Backup archives use Vault's native encryption
+- **Credential Isolation**: Service instance credentials remain isolated and secure
+- **Audit Trail**: Complete reconciliation history logged for compliance
+
+### Network Security
+- **TLS Communication**: All external API calls use TLS encryption
+- **Certificate Validation**: Validates certificates for CF and BOSH connections
+- **Network Isolation**: Respects existing network policies and firewalls
+
+## API Endpoints
+
+The reconciler exposes several API endpoints for monitoring and control:
+
+### Status Endpoint
+```bash
+# Get  reconciler status
+curl -s http://localhost:3000/b/status | jq .reconciler
+
+# Response format
+{
+  "running": true,
+  "last_run_time": "2024-08-30T14:30:00Z",
+  "last_run_duration": "45.123s",
+  "instances_found": 75,
+  "instances_synced": 73,
+  "errors": []
+}
+```
+
+### Metrics Endpoint
+```bash
+# Get Prometheus metrics
+curl -s http://localhost:3000/b/metrics
+
+# Includes reconciler-specific metrics:
+# blacksmith_reconciler_runs_total
+# blacksmith_reconciler_runs_successful
+# blacksmith_reconciler_runs_failed
+# blacksmith_reconciler_last_run_duration_seconds
+# blacksmith_reconciler_deployments_total
+# blacksmith_reconciler_instances_found_total
+# blacksmith_reconciler_instances_synced_total
+# blacksmith_reconciler_errors_total
+```
+
+### Force Reconciliation
+```bash
+# Trigger immediate reconciliation (if API available)
+curl -X POST http://localhost:3000/b/reconcile
+```
 
 ## Future Enhancements
 
 Planned improvements for the reconciler:
 
-1. **Web UI Integration**: Dashboard showing reconciliation status
-2. **Webhook Notifications**: Alert on orphaned instances
-3. **Custom Matching Rules**: User-defined matching strategies
-4. **Selective Reconciliation**: Reconcile specific services only
-5. **Prometheus Metrics**: Direct metrics export
-6. **Historical Tracking**: Long-term reconciliation history
-7. **Auto-remediation**: Automatic cleanup of orphaned instances
-8. **Multi-BOSH Support**: Reconcile across multiple directors
+1. **Enhanced Web UI** Real-time reconciliation dashboard with detailed status
+2. **Webhook Notifications** Configurable alerts for orphaned instances and failures
+3. **Selective Reconciliation** API endpoints to reconcile specific services or instances
+4. **Custom Matching Rules** User-defined deployment matching strategies
+5. **Multi-Foundation Support** Enhanced CF integration across multiple foundations
+6. **Historical Analytics** Long-term trends and reconciliation performance analysis
+7. **Auto-remediation** Configurable automatic cleanup of orphaned instances
+8. **Multi-BOSH Support** Reconcile across multiple BOSH Directors simultaneously
+9. **Advanced Backup Features** Incremental backups and cross-instance deduplication
+10. **Integration Testing** Built-in health checks and dependency validation

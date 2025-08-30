@@ -580,6 +580,26 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
+	if req.URL.Path == "/b/bosh/pool-stats" {
+		// Get pool statistics if BOSH director is a pooled director
+		var stats interface{}
+		if pooledDirector, ok := api.Broker.BOSH.(*bosh.PooledDirector); ok {
+			stats = pooledDirector.GetPoolStats()
+		} else {
+			stats = map[string]string{"status": "connection pooling not enabled"}
+		}
+
+		b, err := json.Marshal(stats)
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+
+		w.Header().Set("Content-type", "application/json")
+		fmt.Fprintf(w, "%s\n", string(b))
+		return
+	}
 	if req.URL.Path == "/b/cleanup" {
 		task, err := api.Broker.BOSH.Cleanup(false)
 		if err != nil {

@@ -76,7 +76,7 @@ func (vault *Vault) WaitForVaultReady() error {
 	return fmt.Errorf("Vault is not available after %d seconds", maxRetries)
 }
 
-// HealthCheck performs a comprehensive health check using the official Vault API
+// HealthCheck performs a  health check using the official Vault API
 func (vault *Vault) HealthCheck() (*api.HealthResponse, error) {
 	l := Logger.Wrap("vault health")
 

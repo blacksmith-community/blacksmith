@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/andybalholm/brotli"
@@ -74,14 +73,14 @@ func (cm *CompressionMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	// Create a response recorder to capture the response
 	recorder := &responseRecorder{
-		ResponseWriter: w,
+		ResponseWriter:        w,
 		compressionMiddleware: cm,
-		compressionType: compressionType,
+		compressionType:       compressionType,
 	}
 
 	// Serve the request
 	cm.handler.ServeHTTP(recorder, r)
-	
+
 	// Important: Close the compressor to flush any remaining compressed data
 	if err := recorder.Close(); err != nil {
 		Logger.Error("Failed to close compression stream: %s", err)
@@ -91,7 +90,7 @@ func (cm *CompressionMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Reques
 // getBestCompression returns the best compression method supported by both client and server
 func (cm *CompressionMiddleware) getBestCompression(acceptEncoding string) string {
 	acceptEncoding = strings.ToLower(acceptEncoding)
-	
+
 	// Check compression types in order of preference (more efficient first)
 	for _, compressionType := range cm.config.Types {
 		compressionType = strings.ToLower(compressionType)
@@ -105,7 +104,8 @@ func (cm *CompressionMiddleware) getBestCompression(acceptEncoding string) strin
 // shouldCompress determines if a response should be compressed based on content type and size
 func (cm *CompressionMiddleware) shouldCompress(contentType string, contentLength int) bool {
 	// Check minimum size requirement
-	if contentLength > 0 && contentLength < cm.config.MinSize {
+	// If we know the content length, check if it meets the minimum size
+	if contentLength < cm.config.MinSize {
 		return false
 	}
 
@@ -127,6 +127,8 @@ type responseRecorder struct {
 	compressionType       string
 	headerWritten         bool
 	compressor            io.WriteCloser
+	buffer                []byte // Buffer to accumulate response until we know if we should compress
+	statusCode            int    // Store status code until we decide on compression
 }
 
 // Header returns the header map
@@ -134,27 +136,80 @@ func (rr *responseRecorder) Header() http.Header {
 	return rr.ResponseWriter.Header()
 }
 
-// WriteHeader writes the status code and determines if compression should be applied
+// WriteHeader stores the status code but doesn't write headers yet
 func (rr *responseRecorder) WriteHeader(statusCode int) {
+	if rr.headerWritten {
+		return
+	}
+	// Store the status code for later
+	rr.statusCode = statusCode
+}
+
+// Write buffers data and makes compression decision based on actual content size
+func (rr *responseRecorder) Write(data []byte) (int, error) {
+	// If headers are already written, just write the data
+	if rr.headerWritten {
+		if rr.compressor != nil {
+			return rr.compressor.Write(data)
+		}
+		return rr.ResponseWriter.Write(data)
+	}
+
+	// Buffer the data
+	rr.buffer = append(rr.buffer, data...)
+
+	// For now, just return the length as if it was written
+	// The actual write will happen in Close() or when buffer gets large enough
+	return len(data), nil
+}
+
+// Close flushes buffered data and closes the compressor if one is active
+func (rr *responseRecorder) Close() error {
+	// If headers haven't been written yet, we need to make the compression decision now
+	if !rr.headerWritten {
+		rr.finalizeHeaders()
+	}
+
+	// Write any buffered data
+	if len(rr.buffer) > 0 {
+		var err error
+		if rr.compressor != nil {
+			_, err = rr.compressor.Write(rr.buffer)
+		} else {
+			_, err = rr.ResponseWriter.Write(rr.buffer)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	// Close the compressor if active
+	if rr.compressor != nil {
+		return rr.compressor.Close()
+	}
+	return nil
+}
+
+// finalizeHeaders makes the final compression decision based on buffered content
+func (rr *responseRecorder) finalizeHeaders() {
 	if rr.headerWritten {
 		return
 	}
 	rr.headerWritten = true
 
-	contentType := rr.Header().Get("Content-Type")
-	contentLengthStr := rr.Header().Get("Content-Length")
-	contentLength := 0
-	if contentLengthStr != "" {
-		if cl, err := strconv.Atoi(contentLengthStr); err == nil {
-			contentLength = cl
-		}
+	// Use default status code if not set
+	if rr.statusCode == 0 {
+		rr.statusCode = http.StatusOK
 	}
 
-	// Check if we should compress this response
+	contentType := rr.Header().Get("Content-Type")
+	contentLength := len(rr.buffer)
+
+	// Check if we should compress based on actual content size
 	if rr.compressionMiddleware.shouldCompress(contentType, contentLength) {
 		// Remove Content-Length header as it will change after compression
 		rr.Header().Del("Content-Length")
-		
+
 		// Set compression headers
 		rr.Header().Set("Content-Encoding", rr.compressionType)
 		rr.Header().Set("Vary", "Accept-Encoding")
@@ -191,31 +246,31 @@ func (rr *responseRecorder) WriteHeader(statusCode int) {
 		}
 	}
 
-	rr.ResponseWriter.WriteHeader(statusCode)
-}
-
-// Write writes the response body, applying compression if configured
-func (rr *responseRecorder) Write(data []byte) (int, error) {
-	if !rr.headerWritten {
-		rr.WriteHeader(http.StatusOK)
-	}
-
-	if rr.compressor != nil {
-		return rr.compressor.Write(data)
-	}
-	return rr.ResponseWriter.Write(data)
-}
-
-// Close closes the compressor if one is active
-func (rr *responseRecorder) Close() error {
-	if rr.compressor != nil {
-		return rr.compressor.Close()
-	}
-	return nil
+	// Write the actual status code
+	rr.ResponseWriter.WriteHeader(rr.statusCode)
 }
 
 // Flush implements http.Flusher interface
 func (rr *responseRecorder) Flush() {
+	// For streaming, we need to finalize headers and flush buffered content
+	if !rr.headerWritten {
+		rr.finalizeHeaders()
+	}
+
+	// Write any buffered data
+	if len(rr.buffer) > 0 {
+		if rr.compressor != nil {
+			if _, err := rr.compressor.Write(rr.buffer); err != nil {
+				Logger.Error("Failed to write compressed data during flush: %s", err)
+			}
+		} else {
+			if _, err := rr.ResponseWriter.Write(rr.buffer); err != nil {
+				Logger.Error("Failed to write uncompressed data during flush: %s", err)
+			}
+		}
+		rr.buffer = nil // Clear the buffer after flushing
+	}
+
 	if rr.compressor != nil {
 		// For streaming responses, we need to flush the compressor first
 		if flusher, ok := rr.compressor.(http.Flusher); ok {

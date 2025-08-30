@@ -1,0 +1,65 @@
+flowchart TB
+  %% Container Structure
+  subgraph MAIN["Blacksmith Process"]
+    direction TB
+    subgraph RM["Reconciler Manager"]
+      direction TB
+
+      subgraph P1["Phase 1: CF Discovery"]
+        CFMgr["CF Manager
+        (Primary)"]
+      end
+
+      subgraph P2["Phase 2: BOSH Scan"]
+        BOSHScanner["BOSH Scanner
+        (Infrastructure)"]
+      end
+
+      subgraph P3["Phase 3: Cross-Reference Data"]
+        Matcher["Service Matcher"]
+      end
+
+      subgraph P4["Phase 4: Update"]
+        Updater["Updater
+        (w/Backups)"]
+      end
+
+      subgraph P5["Phase 5: Sync"]
+        Sync["Synchronizer"]
+      end
+
+      subgraph P6["Phase 6: Cleanup"]
+        Orphan["Orphan Handler"]
+      end
+
+      Metrics["Metrics Collector"]
+    end
+  end
+
+  %% Data / Control Flow Connections
+  CFMgr --> Matcher
+  BOSHScanner --> Matcher
+  Matcher --> Updater
+  Matcher --> Sync
+  Matcher --> Orphan
+  Updater --> Metrics
+  Sync --> Metrics
+  Orphan --> Metrics
+
+  %% External API Entities
+  CFAPI[/Cloud Foundry API/]
+  BOSHAPI[/BOSH Director API/]
+  VaultAPI[/Vault + Index API/]
+
+  CFMgr <-->|CF API| CFAPI
+  BOSHScanner <-->|Director API| BOSHAPI
+  Updater -->|write| VaultAPI
+  Sync -->|read/write| VaultAPI
+  Orphan -->|delete| VaultAPI
+
+  %% Styling for external APIs
+  classDef external stroke-dasharray: 5 5, stroke-width:1.2px, fill:#e6f2ff;
+  class CFAPI,BOSHAPI,VaultAPI external;
+
+  %% Lighter arrows for ALL links
+  linkStyle default stroke:#bbb, stroke-width:2px;

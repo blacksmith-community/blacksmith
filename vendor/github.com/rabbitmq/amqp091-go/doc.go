@@ -34,7 +34,7 @@ whereas the user defined headers are in the Headers field.
 
 The method naming closely matches the protocol's method name with positional
 parameters mapping to named protocol message fields.  The motivation here is to
-present a comprehensive view over all possible interactions with the server.
+present a  view over all possible interactions with the server.
 
 Generally, methods that map to protocol methods of the "basic" class will be
 elided in this interface, and "select" methods of various channel mode selectors

@@ -1539,15 +1539,16 @@
       </div>
       <div class="detail-tabs">
         <button class="detail-tab active" data-tab="details">Details</button>
-        <button class="detail-tab" data-tab="events">Events</button>
+        <button class="detail-tab" data-tab="plans">Plans</button>
+        <button class="detail-tab" data-tab="broker">Broker</button>
         <button class="detail-tab" data-tab="blacksmith-logs">Logs</button>
         <button class="detail-tab" data-tab="vms">VMs</button>
-        <button class="detail-tab" data-tab="broker">Broker</button>
-        <button class="detail-tab" data-tab="manifest">Manifest</button>
-        <button class="detail-tab" data-tab="certificates">Certificates</button>
-        <button class="detail-tab" data-tab="config">Config</button>
+        <button class="detail-tab" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="tasks">Tasks</button>
         <button class="detail-tab" data-tab="configs">Configs</button>
+        <button class="detail-tab" data-tab="certificates">Certificates</button>
+        <button class="detail-tab" data-tab="manifest">Manifest</button>
+        <button class="detail-tab" data-tab="config">Config</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>

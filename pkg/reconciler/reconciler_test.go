@@ -312,7 +312,7 @@ func TestReconcilerManager_RunReconciliation(t *testing.T) {
 		t.Errorf("Expected 2 deployments scanned, got %v", metrics.metrics["deployments_scanned"])
 	}
 
-	// Since we don't have CF instances and the new logic builds comprehensive data,
+	// Since we don't have CF instances and the new logic builds  data,
 	// we expect 2 instances matched (from BOSH deployments)
 	if metrics.metrics["instances_matched"] != 2 {
 		t.Errorf("Expected 2 instances matched, got %v", metrics.metrics["instances_matched"])

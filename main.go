@@ -213,18 +213,23 @@ func main() {
 
 	// Create a logger adapter for BOSH operations
 	boshLogger := bosh.NewLoggerAdapter(l)
-	boshDirector, err := bosh.CreateDirectorWithLogger(
+	boshDirector, err := bosh.CreatePooledDirector(
 		config.BOSH.Address,
 		config.BOSH.Username,
 		config.BOSH.Password,
 		config.BOSH.CACert,
 		config.BOSH.SkipSslValidation,
+		config.BOSH.MaxConnections,
+		time.Duration(config.BOSH.ConnectionTimeout)*time.Second,
 		boshLogger,
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to authenticate to BOSH: %s\n", err)
 		os.Exit(2)
 	}
+
+	l.Info("BOSH director initialized with connection pooling (max: %d connections, timeout: %ds)",
+		config.BOSH.MaxConnections, config.BOSH.ConnectionTimeout)
 
 	if config.BOSH.CloudConfig != "" {
 		// Check if cloud config is effectively empty (just {} or whitespace)

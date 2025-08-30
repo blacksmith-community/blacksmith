@@ -1,6 +1,6 @@
 # Blacksmith Configuration Reference
 
-This document provides comprehensive documentation for all Blacksmith configuration file options. The configuration file is in YAML format and defines how Blacksmith connects to external services and operates.
+This document provides documentation for all Blacksmith configuration file options. The configuration file is in YAML format and defines how Blacksmith connects to external services and operates.
 
 ## Configuration File Structure
 
@@ -113,12 +113,12 @@ The `vm_monitoring` section configures automatic monitoring of BOSH VM health fo
 
 ```yaml
 vm_monitoring:
-  enabled: true              # Enable VM monitoring
-  normal_interval: 3600      # Check healthy deployments every hour
-  failed_interval: 300       # Check unhealthy deployments every 5 minutes
-  max_retries: 3            # Maximum retry attempts
-  timeout: 30               # BOSH command timeout (seconds)
-  max_concurrent: 3         # Maximum concurrent VM checks
+  enabled: true         # Enable VM monitoring
+  normal_interval: 3600 # Check healthy deployments every hour
+  failed_interval: 300  # Check unhealthy deployments every 5 minutes
+  max_retries: 3        # Maximum retry attempts
+  timeout: 30           # BOSH command timeout (seconds)
+  max_concurrent: 3     # Maximum concurrent VM checks
 ```
 
 ### Optional Fields
@@ -245,9 +245,9 @@ cf:
   apis:
     fivetwenty:                                    # API endpoint identifier
       name: "ocfp-aws-lab-ocf-us-east-1-cf"       # Display name for the CF instance
-      endpoint: "https://api.system.aws.lab.fivetwenty.io"  # CF API endpoint URL
+      endpoint: "https://api.system.example.com"  # CF API endpoint URL
       username: "admin"                            # CF admin username
-      password: "DiKx7L2hSFMY2LyjbmAtQn90V0RptK"  # CF admin password
+      password: "abcdefghijklmnopqrstuvwxyzabcd"  # CF admin password
     production:                                    # Another API endpoint
       name: "production-cf"
       endpoint: "https://api.cf.production.com"
@@ -333,23 +333,29 @@ The `bosh` section configures integration with the BOSH director for service dep
 
 ```yaml
 bosh:
-  address: "https://bosh.example.com:25555"  # Required
-  username: "admin"                          # Required
-  password: "admin-password"                 # Required
-  skip_ssl_validation: false                 # Optional
-  cacert: "/path/to/ca.pem"                 # Optional
-  cloud-config: "/path/to/cloud-config.yml" # Optional
-  network: "blacksmith"                      # Optional
-  stemcells:                                 # Optional
-    - name: "bosh-warden-boshlite-ubuntu-trusty-go_agent"
-      version: "3468.21"
-      url: "https://bosh.io/d/stemcells/bosh-warden-boshlite-ubuntu-trusty-go_agent"
-      sha1: "1234567890abcdef"
+  address: "https://bosh.example.com:25555"             # Required
+  username: "admin"                                     # Required
+  password: "admin-password"                            # Required
+  skip_ssl_validation: false                            # Optional
+  cacert: "/var/vcap/jobs/blacksmith/config/tls/ca.pem" # Optional
+  cloud-config: "/var/vcap/jobs/blacksmith/config/cloud-config.yml"  # Optional
+  network: "blacksmith"                                 # Optional
+  max_connections: 4                                    # Optional (connection pool size)
+  connection_timeout: 300                               # Optional (timeout in seconds)
+  stemcells:                                            # Optional
+    - name: "bosh-warden-boshlite-ubuntu-noble-go_agent"
+      version: "1.25"
+      url: "https://bosh.io/d/stemcells/bosh-warden-boshlite-ubuntu-noble-go_agent"
+      sha1: "a743eafa91a69306da0b7d420ceb3621a277e9c5"
   releases:                                  # Optional
-    - name: "redis"
-      version: "14.0.1"
-      url: "https://bosh.io/d/github.com/cloudfoundry-community/redis-boshrelease"
-      sha1: "abcdef1234567890"
+  - name: rabbitmq-forge
+    version: 1.4.3
+    url: https://github.com/blacksmith-community/rabbitmq-forge-boshrelease/releases/download/v1.4.3/rabbitmq-forge-1.4.3.tgz
+    sha1: sha256:d8cac206354388b3cd521fb50cc861991e3ac12f7687e1fc11865d57ac801fc1
+  - name: redis-forge
+    version: 1.3.3
+    url: https://github.com/genesis-community/redis-forge-boshrelease/releases/download/v1.3.3/redis-forge-1.3.3.tgz
+    sha1: sha256:4ec3e2f921d9170bbdd3e19031bd407cab71b00e818bd9927f524f8b0dba95fe
 ```
 
 ### Required Fields
@@ -400,6 +406,41 @@ List of stemcells to automatically upload to the BOSH director at startup. See [
 **Default:** `[]`
 
 List of BOSH releases to automatically upload to the BOSH director at startup. See [Uploadable Configuration](#uploadable-configuration) for field details.
+
+#### `max_connections` (integer)
+**Default:** `4`
+
+Maximum number of concurrent connections to the BOSH director API. This creates a connection pool that limits the number of simultaneous BOSH API operations to prevent overwhelming the director with too many concurrent requests.
+
+Connection pooling helps improve stability and performance when Blacksmith needs to make many BOSH API calls, such as during VM monitoring, reconciliation, or when handling multiple service operations simultaneously.
+
+#### `connection_timeout` (integer)
+**Default:** `300` (5 minutes)
+
+Timeout in seconds for acquiring a connection slot from the pool. When all connections are in use, new requests will wait up to this duration for a connection to become available. If the timeout is exceeded, the operation will fail with a timeout error.
+
+This setting helps prevent operations from waiting indefinitely when the BOSH director is under heavy load or experiencing issues.
+
+### Connection Pool Monitoring
+
+The BOSH connection pool provides real-time metrics available via the internal API endpoint `/b/bosh/pool-stats`:
+
+```json
+{
+  "max_connections": 4,
+  "active_connections": 2,
+  "queued_requests": 1,
+  "total_requests": 1547,
+  "rejected_requests": 0
+}
+```
+
+**Metrics explained:**
+- `max_connections`: Maximum number of concurrent connections configured
+- `active_connections`: Number of connections currently in use
+- `queued_requests`: Number of requests waiting for an available connection
+- `total_requests`: Total number of requests processed since startup
+- `rejected_requests`: Number of requests rejected due to timeout
 
 ### SSH Configuration (`ssh`)
 
@@ -846,6 +887,8 @@ bosh:
   password: "bosh-password"
   skip_ssl_validation: false
   network: "services"
+  max_connections: 4
+  connection_timeout: 300
   stemcells:
     - name: "bosh-aws-xen-hvm-ubuntu-jammy-go_agent"
       version: "1.181"
@@ -871,5 +914,5 @@ forges:
     - "/var/vcap/data/blacksmith"
   scan-patterns:
     - "*-forge/templates"
-    - "*-forge"    
+    - "*-forge"
 ```

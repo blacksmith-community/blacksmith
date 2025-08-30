@@ -204,7 +204,7 @@ func (m *MetadataService) validateArgumentType(argType, value string) error {
 	}
 }
 
-// initializeCommandMetadata initializes the service with comprehensive rabbitmqctl command metadata
+// initializeCommandMetadata initializes the service with  rabbitmqctl command metadata
 func (m *MetadataService) initializeCommandMetadata() {
 	// Initialize categories
 	m.initializeCategories()

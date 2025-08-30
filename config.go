@@ -88,16 +88,16 @@ type TLSConfig struct {
 }
 
 type BrokerConfig struct {
-	Username     string               `yaml:"username"`
-	Password     string               `yaml:"password"`
-	Port         string               `yaml:"port"`
-	BindIP       string               `yaml:"bind_ip"`
-	ReadTimeout  int                  `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
-	WriteTimeout int                  `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
-	IdleTimeout  int                  `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
-	TLS          TLSConfig            `yaml:"tls"`
-	CF           CFBrokerConfig       `yaml:"cf"`         // CF registration configuration
-	Compression  CompressionConfig    `yaml:"compression"` // HTTP compression configuration
+	Username     string            `yaml:"username"`
+	Password     string            `yaml:"password"`
+	Port         string            `yaml:"port"`
+	BindIP       string            `yaml:"bind_ip"`
+	ReadTimeout  int               `yaml:"read_timeout"`  // HTTP server read timeout in seconds (default: 120)
+	WriteTimeout int               `yaml:"write_timeout"` // HTTP server write timeout in seconds (default: 120)
+	IdleTimeout  int               `yaml:"idle_timeout"`  // HTTP server idle timeout in seconds (default: 300)
+	TLS          TLSConfig         `yaml:"tls"`
+	CF           CFBrokerConfig    `yaml:"cf"`          // CF registration configuration
+	Compression  CompressionConfig `yaml:"compression"` // HTTP compression configuration
 }
 
 // CFBrokerConfig holds configuration for CF broker registration
@@ -112,10 +112,10 @@ type CFBrokerConfig struct {
 
 // CompressionConfig defines HTTP compression settings
 type CompressionConfig struct {
-	Enabled     bool     `yaml:"enabled"`      // Whether compression is enabled (default: true)
-	Types       []string `yaml:"types"`        // Compression types to support: gzip, deflate, brotli (default: ["gzip"])
-	Level       int      `yaml:"level"`        // Compression level 1-9, -1 for default (default: -1)
-	MinSize     int      `yaml:"min_size"`     // Minimum response size to compress in bytes (default: 1024)
+	Enabled      bool     `yaml:"enabled"`       // Whether compression is enabled (default: true)
+	Types        []string `yaml:"types"`         // Compression types to support: gzip, deflate, brotli (default: ["gzip"])
+	Level        int      `yaml:"level"`         // Compression level 1-9, -1 for default (default: -1)
+	MinSize      int      `yaml:"min_size"`      // Minimum response size to compress in bytes (default: 1024)
 	ContentTypes []string `yaml:"content_types"` // MIME types to compress (default: text/*, application/json, etc.)
 }
 
@@ -174,6 +174,8 @@ type BOSHConfig struct {
 	CCPath            string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???
 	CloudConfig       string
 	Network           string    `yaml:"network"`
+	MaxConnections    int       `yaml:"max_connections"`    // Max concurrent BOSH API connections
+	ConnectionTimeout int       `yaml:"connection_timeout"` // Timeout waiting for connection slot (seconds)
 	SSH               SSHConfig `yaml:"ssh"`
 }
 
@@ -305,6 +307,14 @@ func ReadConfig(path string) (c Config, err error) {
 
 	if c.BOSH.Network == "" {
 		c.BOSH.Network = "blacksmith" // Default
+	}
+
+	// BOSH connection pool defaults
+	if c.BOSH.MaxConnections == 0 {
+		c.BOSH.MaxConnections = 4 // Default to 4 concurrent connections
+	}
+	if c.BOSH.ConnectionTimeout == 0 {
+		c.BOSH.ConnectionTimeout = 300 // Default 5 minutes timeout
 	}
 
 	if err := os.Setenv("BOSH_NETWORK", c.BOSH.Network); err != nil { // Required by manifest.go

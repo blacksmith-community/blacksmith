@@ -1,7 +1,7 @@
 /*
 Gomega is the Ginkgo BDD-style testing framework's preferred matcher library.
 
-The godoc documentation describes Gomega's API.  More comprehensive documentation (with examples!) is available at http://onsi.github.io/gomega/
+The godoc documentation describes Gomega's API.  More  documentation (with examples!) is available at http://onsi.github.io/gomega/
 
 Gomega on Github: http://github.com/onsi/gomega
 

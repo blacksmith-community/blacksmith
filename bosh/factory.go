@@ -55,7 +55,7 @@ func CreateDirectorFromLegacyConfig(address, username, password string, skipSSL 
 	return factory.New(config)
 }
 
-// CreateDirectorWithLogger creates a Director with a logger for comprehensive logging
+// CreateDirectorWithLogger creates a Director with a logger for  logging
 func CreateDirectorWithLogger(address, username, password, caCert string, skipSSL bool, logger Logger) (Director, error) {
 	factory := NewDefaultFactory()
 
@@ -89,4 +89,16 @@ func CreateDirectorWithUAA(address string, uaaConfig *UAAConfig, skipSSL bool) (
 // NOTE: Certificate authentication can be implemented in the director adapter
 func CreateDirectorWithCertificate(address, caCert, clientCert, clientKey string, skipSSL bool) (Director, error) {
 	return nil, fmt.Errorf("certificate authentication not yet implemented in the BOSH CLI adapter")
+}
+
+// CreatePooledDirector creates a Director with connection pooling
+func CreatePooledDirector(address, username, password, caCert string, skipSSL bool, maxConnections int, timeout time.Duration, logger Logger) (Director, error) {
+	// Create base director
+	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	// Wrap with pooling
+	return NewPooledDirector(baseDirector, maxConnections, timeout, logger), nil
 }

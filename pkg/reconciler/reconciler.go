@@ -171,28 +171,28 @@ func (r *reconcilerManager) runReconciliation() {
 		r.metrics.DeploymentsScanned(len(deployments))
 	}
 
-	// Phase 3: Cross-reference and build comprehensive instance data
+	// Phase 3: Cross-reference and build  instance data
 	r.logDebug("Phase 3: Cross-referencing CF instances with BOSH deployments")
-	instances, err := r.buildComprehensiveInstanceData(ctx, cfInstances, deployments)
+	instances, err := r.buildInstanceData(ctx, cfInstances, deployments)
 	if err != nil {
-		r.logError("Failed to build comprehensive instance data: %s", err)
+		r.logError("Failed to build  instance data: %s", err)
 		r.metrics.ReconciliationError(err)
 		r.updateStatusError(err)
 		return
 	}
-	r.logInfo("Built comprehensive data for %d service instances", len(instances))
+	r.logInfo("Built  data for %d service instances", len(instances))
 	r.metrics.InstancesMatched(len(instances))
 
-	// Phase 4: Update Vault with comprehensive data
-	r.logDebug("Phase 4: Updating Vault with comprehensive service instance data")
-	updatedInstances, err := r.updateVaultComprehensive(ctx, instances)
+	// Phase 4: Update Vault with  data
+	r.logDebug("Phase 4: Updating Vault with  service instance data")
+	updatedInstances, err := r.updateVault(ctx, instances)
 	if err != nil {
-		r.logError("Failed to update vault with comprehensive data: %s", err)
+		r.logError("Failed to update vault with  data: %s", err)
 		r.metrics.ReconciliationError(err)
 		r.updateStatusError(err)
 		return
 	}
-	r.logInfo("Updated %d instances in Vault with comprehensive data", len(updatedInstances))
+	r.logInfo("Updated %d instances in Vault with  data", len(updatedInstances))
 	r.metrics.InstancesUpdated(len(updatedInstances))
 
 	// Phase 5: Synchronize index
@@ -213,7 +213,7 @@ func (r *reconcilerManager) runReconciliation() {
 		// Don't fail reconciliation for orphan handling issues
 	}
 
-	// Update status with comprehensive metrics
+	// Update status with  metrics
 	totalFound := len(cfInstances)
 	if totalFound == 0 {
 		totalFound = len(deployments) // Fallback to BOSH count if no CF instances
@@ -515,9 +515,9 @@ func (r *reconcilerManager) discoverCFServiceInstances(ctx context.Context, brok
 	}
 }
 
-// buildComprehensiveInstanceData combines CF and BOSH data to build complete instance information
+// buildInstanceData combines CF and BOSH data to build complete instance information
 // Uses BOSH deployments as the source of truth since they contain the correct naming and GUID structure
-func (r *reconcilerManager) buildComprehensiveInstanceData(ctx context.Context, cfInstances []CFServiceInstanceDetails, boshDeployments []DeploymentInfo) ([]InstanceData, error) {
+func (r *reconcilerManager) buildInstanceData(ctx context.Context, cfInstances []CFServiceInstanceDetails, boshDeployments []DeploymentInfo) ([]InstanceData, error) {
 	var instances []InstanceData
 
 	// Create a map of CF instances by GUID for quick lookup
@@ -526,7 +526,7 @@ func (r *reconcilerManager) buildComprehensiveInstanceData(ctx context.Context, 
 		cfInstanceMap[cfInstance.GUID] = cfInstance
 	}
 
-	// Build comprehensive data starting with BOSH deployments as the source of truth
+	// Build  data starting with BOSH deployments as the source of truth
 	for _, boshDeployment := range boshDeployments {
 		// Parse the deployment name to extract service info
 		serviceID, planID, instanceID := r.extractServiceInfoFromDeployment(boshDeployment.Name)
@@ -728,7 +728,7 @@ func (r *reconcilerManager) buildInstanceFromBOSH(boshDeployment DeploymentInfo,
 		serviceType = serviceID
 	}
 
-	// Build comprehensive metadata with BOSH as primary source
+	// Build  metadata with BOSH as primary source
 	metadata := map[string]interface{}{
 		// Service identification
 		"service_name": serviceName,
@@ -949,8 +949,8 @@ func (r *reconcilerManager) buildInstanceFromCFOnly(cfInstance CFServiceInstance
 	}
 }
 
-// updateVaultComprehensive updates vault with comprehensive instance data (CF + BOSH)
-func (r *reconcilerManager) updateVaultComprehensive(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
+// updateVault updates vault with  instance data (CF + BOSH)
+func (r *reconcilerManager) updateVault(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
 	var updatedInstances []InstanceData
 
 	for _, instance := range instances {
@@ -963,11 +963,11 @@ func (r *reconcilerManager) updateVaultComprehensive(ctx context.Context, instan
 
 		// Merge with existing data to preserve important fields
 		if existing != nil {
-			r.logDebug("Updating existing instance %s with comprehensive data", instance.ID)
+			r.logDebug("Updating existing instance %s with  data", instance.ID)
 			mergedInstance := r.mergeInstanceData(existing, &instance)
 			instance = *mergedInstance
 		} else {
-			r.logInfo("Adding new instance %s to vault with comprehensive data", instance.ID)
+			r.logInfo("Adding new instance %s to vault with  data", instance.ID)
 		}
 
 		// Use enhanced update with broker integration if available

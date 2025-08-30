@@ -213,7 +213,7 @@ type Decimal struct {
 	Value int32
 }
 
-// Most common queue argument keys in queue declaration. For a comprehensive list
+// Most common queue argument keys in queue declaration. For a  list
 // of queue arguments, visit [RabbitMQ Queue docs].
 //
 // [QueueTypeArg] queue argument is used to declare quorum and stream queues.
