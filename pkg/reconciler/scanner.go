@@ -3,7 +3,6 @@ package reconciler
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -51,42 +50,15 @@ func (s *boshScanner) ScanDeployments(ctx context.Context) ([]DeploymentInfo, er
 		info := DeploymentInfo{
 			Name:        dep.Name,
 			CloudConfig: dep.CloudConfig,
-			Teams:       dep.Teams,
 			CreatedAt:   time.Now(), // BOSH doesn't provide this, approximate
 			UpdatedAt:   time.Now(),
 		}
 
-		// Parse releases from string format (e.g., "redis/1.0.0")
-		if dep.Releases != nil {
-			for _, relStr := range dep.Releases {
-				parts := strings.Split(relStr, "/")
-				releaseInfo := ReleaseInfo{
-					Name:    relStr, // Default to full string if no slash
-					Version: "unknown",
-				}
-				if len(parts) >= 2 {
-					releaseInfo.Name = parts[0]
-					releaseInfo.Version = parts[1]
-				}
-				info.Releases = append(info.Releases, releaseInfo)
-			}
-		}
+		// Copy releases directly as strings
+		info.Releases = dep.Releases
 
-		// Parse stemcells from string format (e.g., "ubuntu-xenial/456.789")
-		if dep.Stemcells != nil {
-			for _, stemStr := range dep.Stemcells {
-				parts := strings.Split(stemStr, "/")
-				stemcellInfo := StemcellInfo{
-					Name:    stemStr, // Default to full string if no slash
-					Version: "unknown",
-				}
-				if len(parts) >= 2 {
-					stemcellInfo.Name = parts[0]
-					stemcellInfo.Version = parts[1]
-				}
-				info.Stemcells = append(info.Stemcells, stemcellInfo)
-			}
-		}
+		// Copy stemcells directly as strings
+		info.Stemcells = dep.Stemcells
 
 		result = append(result, info)
 	}
@@ -134,11 +106,10 @@ func (s *boshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	detail := &DeploymentDetail{
 		DeploymentInfo: DeploymentInfo{
 			Name:      dep.Name,
-			Manifest:  dep.Manifest,
 			CreatedAt: createdAt,
 			UpdatedAt: updatedAt,
 		},
-		Variables:  make(map[string]interface{}),
+		Manifest:   dep.Manifest,
 		Properties: make(map[string]interface{}),
 	}
 
@@ -154,41 +125,35 @@ func (s *boshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 				for _, rel := range releases {
 					// Handle both map[string]interface{} and map[interface{}]interface{}
 					if relMap, ok := rel.(map[string]interface{}); ok {
-						releaseInfo := ReleaseInfo{}
-						if name, ok := relMap["name"].(string); ok {
-							releaseInfo.Name = name
+						var name, version string
+						if n, ok := relMap["name"].(string); ok {
+							name = n
 						}
-						if version, ok := relMap["version"].(string); ok {
-							releaseInfo.Version = version
-						} else if version, ok := relMap["version"].(int); ok {
-							releaseInfo.Version = fmt.Sprintf("%d", version)
+						if v, ok := relMap["version"].(string); ok {
+							version = v
+						} else if v, ok := relMap["version"].(int); ok {
+							version = fmt.Sprintf("%d", v)
 						}
-						if url, ok := relMap["url"].(string); ok {
-							releaseInfo.URL = url
+						if name != "" {
+							releaseStr := fmt.Sprintf("%s/%s", name, version)
+							detail.Releases = append(detail.Releases, releaseStr)
 						}
-						if sha1, ok := relMap["sha1"].(string); ok {
-							releaseInfo.SHA1 = sha1
-						}
-						detail.Releases = append(detail.Releases, releaseInfo)
 					} else if relMap, ok := rel.(map[interface{}]interface{}); ok {
-						releaseInfo := ReleaseInfo{}
-						if name, ok := relMap["name"].(string); ok {
-							releaseInfo.Name = name
+						var name, version string
+						if n, ok := relMap["name"].(string); ok {
+							name = n
 						}
-						if version, ok := relMap["version"].(string); ok {
-							releaseInfo.Version = version
-						} else if version, ok := relMap["version"].(int); ok {
-							releaseInfo.Version = fmt.Sprintf("%d", version)
-						} else if version, ok := relMap["version"].(float64); ok {
-							releaseInfo.Version = fmt.Sprintf("%.1f", version)
+						if v, ok := relMap["version"].(string); ok {
+							version = v
+						} else if v, ok := relMap["version"].(int); ok {
+							version = fmt.Sprintf("%d", v)
+						} else if v, ok := relMap["version"].(float64); ok {
+							version = fmt.Sprintf("%.1f", v)
 						}
-						if url, ok := relMap["url"].(string); ok {
-							releaseInfo.URL = url
+						if name != "" {
+							releaseStr := fmt.Sprintf("%s/%s", name, version)
+							detail.Releases = append(detail.Releases, releaseStr)
 						}
-						if sha1, ok := relMap["sha1"].(string); ok {
-							releaseInfo.SHA1 = sha1
-						}
-						detail.Releases = append(detail.Releases, releaseInfo)
 					}
 				}
 			}
@@ -198,33 +163,51 @@ func (s *boshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 				for _, stem := range stemcells {
 					// Handle both map[string]interface{} and map[interface{}]interface{}
 					if stemMap, ok := stem.(map[string]interface{}); ok {
-						stemcellInfo := StemcellInfo{}
-						if alias, ok := stemMap["alias"].(string); ok {
-							stemcellInfo.Name = alias
+						var alias, os, version string
+						if a, ok := stemMap["alias"].(string); ok {
+							alias = a
 						}
-						if os, ok := stemMap["os"].(string); ok {
-							stemcellInfo.OS = os
+						if o, ok := stemMap["os"].(string); ok {
+							os = o
 						}
-						if version, ok := stemMap["version"].(string); ok {
-							stemcellInfo.Version = version
-						} else if version, ok := stemMap["version"].(int); ok {
-							stemcellInfo.Version = fmt.Sprintf("%d", version)
+						if v, ok := stemMap["version"].(string); ok {
+							version = v
+						} else if v, ok := stemMap["version"].(int); ok {
+							version = fmt.Sprintf("%d", v)
 						}
-						detail.Stemcells = append(detail.Stemcells, stemcellInfo)
+						// Format: alias/os/version or just os/version if no alias
+						var stemcellStr string
+						if alias != "" {
+							stemcellStr = fmt.Sprintf("%s/%s/%s", alias, os, version)
+						} else if os != "" {
+							stemcellStr = fmt.Sprintf("%s/%s", os, version)
+						}
+						if stemcellStr != "" {
+							detail.Stemcells = append(detail.Stemcells, stemcellStr)
+						}
 					} else if stemMap, ok := stem.(map[interface{}]interface{}); ok {
-						stemcellInfo := StemcellInfo{}
-						if alias, ok := stemMap["alias"].(string); ok {
-							stemcellInfo.Name = alias
+						var alias, os, version string
+						if a, ok := stemMap["alias"].(string); ok {
+							alias = a
 						}
-						if os, ok := stemMap["os"].(string); ok {
-							stemcellInfo.OS = os
+						if o, ok := stemMap["os"].(string); ok {
+							os = o
 						}
-						if version, ok := stemMap["version"].(string); ok {
-							stemcellInfo.Version = version
-						} else if version, ok := stemMap["version"].(int); ok {
-							stemcellInfo.Version = fmt.Sprintf("%d", version)
+						if v, ok := stemMap["version"].(string); ok {
+							version = v
+						} else if v, ok := stemMap["version"].(int); ok {
+							version = fmt.Sprintf("%d", v)
 						}
-						detail.Stemcells = append(detail.Stemcells, stemcellInfo)
+						// Format: alias/os/version or just os/version if no alias
+						var stemcellStr string
+						if alias != "" {
+							stemcellStr = fmt.Sprintf("%s/%s/%s", alias, os, version)
+						} else if os != "" {
+							stemcellStr = fmt.Sprintf("%s/%s", os, version)
+						}
+						if stemcellStr != "" {
+							detail.Stemcells = append(detail.Stemcells, stemcellStr)
+						}
 					}
 				}
 			}
@@ -238,14 +221,10 @@ func (s *boshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	} else {
 		for _, vm := range vms {
 			detail.VMs = append(detail.VMs, VMInfo{
-				CID:          vm.CID,
-				Name:         vm.ID,  // Use ID as Name
-				JobName:      vm.Job, // Job is the job name
-				Index:        vm.Index,
-				State:        vm.State,
-				AZ:           vm.AZ,
-				IPs:          vm.IPs,
-				ResourcePool: vm.ResourcePool,
+				Name:  vm.ID, // Use ID as Name
+				State: vm.State,
+				IPs:   vm.IPs,
+				AZ:    vm.AZ,
 			})
 		}
 	}

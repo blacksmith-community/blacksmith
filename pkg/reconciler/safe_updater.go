@@ -29,11 +29,7 @@ func NewSafeVaultUpdater(vault interface{}, logger Logger, backupConfig BackupCo
 }
 
 // UpdateInstance updates an instance with protection for critical paths
-func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceData) error {
-	if instance == nil {
-		return fmt.Errorf("instance is nil")
-	}
-
+func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData) (*InstanceData, error) {
 	u.logInfo("Safe update starting for instance %s", instance.ID)
 
 	// Step 1: Check and preserve protected paths
@@ -54,8 +50,9 @@ func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance *Instanc
 	}
 
 	// Step 3: Perform the regular update
-	if err := u.vaultUpdater.UpdateInstance(ctx, instance); err != nil {
-		return fmt.Errorf("base update failed: %w", err)
+	updatedInstance, err := u.vaultUpdater.UpdateInstance(ctx, instance)
+	if err != nil {
+		return nil, fmt.Errorf("base update failed: %w", err)
 	}
 
 	// Step 4: Verify protected paths are still intact
@@ -67,7 +64,7 @@ func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance *Instanc
 			u.logError("CRITICAL: Protected path %s was lost during update, restoring", fullPath)
 			// Restore the protected data
 			if err := u.putToVault(fullPath, originalData); err != nil {
-				return fmt.Errorf("failed to restore protected path %s: %w", fullPath, err)
+				return nil, fmt.Errorf("failed to restore protected path %s: %w", fullPath, err)
 			}
 			u.logInfo("Successfully restored protected path %s", fullPath)
 		} else {
@@ -77,11 +74,11 @@ func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance *Instanc
 
 	// Step 5: Final verification
 	if err := u.verifyInstanceIntegrity(instance.ID); err != nil {
-		return fmt.Errorf("instance integrity check failed: %w", err)
+		return nil, fmt.Errorf("instance integrity check failed: %w", err)
 	}
 
 	u.logInfo("Safe update completed successfully for instance %s", instance.ID)
-	return nil
+	return updatedInstance, nil
 }
 
 // verifyInstanceIntegrity checks that an instance has all required data

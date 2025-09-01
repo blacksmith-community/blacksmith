@@ -26,46 +26,133 @@ type ReconcilerAdapter struct {
 func NewReconcilerAdapter(config *Config, broker *Broker, vault *Vault, boshDir bosh.Director, cfManager interface{}) *ReconcilerAdapter {
 	logger := Logger.Wrap("reconciler")
 
-	// Build reconciler config from main config and environment variables
-	// Configuration precedence: env vars > config file > defaults
-
-	// Parse config file duration strings
-	var configInterval, configRetryDelay, configCacheTTL time.Duration
-	if config.Reconciler.Interval != "" {
-		if d, err := time.ParseDuration(config.Reconciler.Interval); err == nil {
-			configInterval = d
-		}
-	}
-	if config.Reconciler.RetryDelay != "" {
-		if d, err := time.ParseDuration(config.Reconciler.RetryDelay); err == nil {
-			configRetryDelay = d
-		}
-	}
-	if config.Reconciler.CacheTTL != "" {
-		if d, err := time.ParseDuration(config.Reconciler.CacheTTL); err == nil {
-			configCacheTTL = d
-		}
-	}
-
+	// Build production reconciler config from main config
 	reconcilerConfig := reconciler.ReconcilerConfig{
-		Enabled:        getEnvBoolWithDefault("BLACKSMITH_RECONCILER_ENABLED", config.Reconciler.Enabled, true),
-		Interval:       getEnvDurationWithDefault("BLACKSMITH_RECONCILER_INTERVAL", configInterval, 1*time.Hour),
-		MaxConcurrency: getEnvIntWithDefault("BLACKSMITH_RECONCILER_MAX_CONCURRENCY", config.Reconciler.MaxConcurrency, 5),
-		BatchSize:      getEnvIntWithDefault("BLACKSMITH_RECONCILER_BATCH_SIZE", config.Reconciler.BatchSize, 10),
-		RetryAttempts:  getEnvIntWithDefault("BLACKSMITH_RECONCILER_RETRY_ATTEMPTS", config.Reconciler.RetryAttempts, 3),
-		RetryDelay:     getEnvDurationWithDefault("BLACKSMITH_RECONCILER_RETRY_DELAY", configRetryDelay, 10*time.Second),
-		CacheTTL:       getEnvDurationWithDefault("BLACKSMITH_RECONCILER_CACHE_TTL", configCacheTTL, 5*time.Minute),
-		Debug:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_DEBUG", config.Reconciler.Debug, config.Debug || Debugging),
-		// Backup configuration
-		BackupEnabled:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ENABLED", config.Reconciler.Backup.Enabled, true),
-		BackupRetention:        getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION", config.Reconciler.Backup.RetentionCount, 5),
-		BackupRetentionDays:    getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION_DAYS", config.Reconciler.Backup.RetentionDays, 0),
-		BackupCompressionLevel: getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_COMPRESSION", config.Reconciler.Backup.CompressionLevel, 9),
-		BackupCleanup:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_CLEANUP", config.Reconciler.Backup.CleanupEnabled, true),
-		BackupOnUpdate:         getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ON_UPDATE", config.Reconciler.Backup.BackupOnUpdate, true),
-		BackupOnDelete:         getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ON_DELETE", config.Reconciler.Backup.BackupOnDelete, true),
-		BackupPath:             "backups", // Legacy field, will be removed in refactor
+		Enabled:  getEnvBoolWithDefault("BLACKSMITH_RECONCILER_ENABLED", config.Reconciler.Enabled, true),
+		Interval: getEnvDurationWithDefault("BLACKSMITH_RECONCILER_INTERVAL", parseDuration(config.Reconciler.Interval), 5*time.Minute),
+		Debug:    getEnvBoolWithDefault("BLACKSMITH_RECONCILER_DEBUG", config.Reconciler.Debug, config.Debug || Debugging),
 	}
+
+	// Configure concurrency controls
+	reconcilerConfig.Concurrency = reconciler.ConcurrencyConfig{
+		MaxConcurrent:        getEnvIntWithDefault("BLACKSMITH_RECONCILER_MAX_CONCURRENT", config.Reconciler.MaxConcurrency, 4),
+		MaxDeploymentsPerRun: getEnvIntWithDefault("BLACKSMITH_RECONCILER_MAX_DEPLOYMENTS_PER_RUN", 0, 100),
+		QueueSize:            getEnvIntWithDefault("BLACKSMITH_RECONCILER_QUEUE_SIZE", 0, 1000),
+		WorkerPoolSize:       getEnvIntWithDefault("BLACKSMITH_RECONCILER_WORKER_POOL_SIZE", 0, 10),
+		CooldownPeriod:       getEnvDurationWithDefault("BLACKSMITH_RECONCILER_COOLDOWN_PERIOD", 0, 2*time.Second),
+	}
+
+	// Configure BOSH API limits (default to 4 requests/second as requested)
+	reconcilerConfig.APIs.BOSH = reconciler.APIConfig{
+		RateLimit: reconciler.RateLimitConfig{
+			RequestsPerSecond: float64(getEnvIntWithDefault("BLACKSMITH_BOSH_REQUESTS_PER_SECOND", 0, 4)),
+			Burst:             getEnvIntWithDefault("BLACKSMITH_BOSH_BURST", 0, 2),
+			WaitTimeout:       getEnvDurationWithDefault("BLACKSMITH_BOSH_WAIT_TIMEOUT", 0, 5*time.Second),
+		},
+		CircuitBreaker: reconciler.CircuitBreakerConfig{
+			Enabled:          getEnvBoolWithDefault("BLACKSMITH_BOSH_CIRCUIT_BREAKER", false, true),
+			FailureThreshold: getEnvIntWithDefault("BLACKSMITH_BOSH_FAILURE_THRESHOLD", 0, 5),
+			SuccessThreshold: getEnvIntWithDefault("BLACKSMITH_BOSH_SUCCESS_THRESHOLD", 0, 2),
+			Timeout:          getEnvDurationWithDefault("BLACKSMITH_BOSH_BREAKER_TIMEOUT", 0, 60*time.Second),
+			MaxConcurrent:    getEnvIntWithDefault("BLACKSMITH_BOSH_BREAKER_MAX_CONCURRENT", 0, 1),
+		},
+		Timeout:        getEnvDurationWithDefault("BLACKSMITH_BOSH_TIMEOUT", 0, 30*time.Second),
+		MaxConnections: getEnvIntWithDefault("BLACKSMITH_BOSH_MAX_CONNECTIONS", config.BOSH.MaxConnections, 10),
+		KeepAlive:      getEnvDurationWithDefault("BLACKSMITH_BOSH_KEEP_ALIVE", 0, 30*time.Second),
+	}
+
+	// Configure CF API limits
+	reconcilerConfig.APIs.CF = reconciler.APIConfig{
+		RateLimit: reconciler.RateLimitConfig{
+			RequestsPerSecond: float64(getEnvIntWithDefault("BLACKSMITH_CF_REQUESTS_PER_SECOND", 0, 20)),
+			Burst:             getEnvIntWithDefault("BLACKSMITH_CF_BURST", 0, 10),
+			WaitTimeout:       getEnvDurationWithDefault("BLACKSMITH_CF_WAIT_TIMEOUT", 0, 5*time.Second),
+		},
+		CircuitBreaker: reconciler.CircuitBreakerConfig{
+			Enabled:          getEnvBoolWithDefault("BLACKSMITH_CF_CIRCUIT_BREAKER", false, true),
+			FailureThreshold: getEnvIntWithDefault("BLACKSMITH_CF_FAILURE_THRESHOLD", 0, 3),
+			SuccessThreshold: getEnvIntWithDefault("BLACKSMITH_CF_SUCCESS_THRESHOLD", 0, 2),
+			Timeout:          getEnvDurationWithDefault("BLACKSMITH_CF_BREAKER_TIMEOUT", 0, 30*time.Second),
+			MaxConcurrent:    getEnvIntWithDefault("BLACKSMITH_CF_BREAKER_MAX_CONCURRENT", 0, 2),
+		},
+		Timeout:        getEnvDurationWithDefault("BLACKSMITH_CF_TIMEOUT", 0, 15*time.Second),
+		MaxConnections: getEnvIntWithDefault("BLACKSMITH_CF_MAX_CONNECTIONS", 0, 20),
+		KeepAlive:      getEnvDurationWithDefault("BLACKSMITH_CF_KEEP_ALIVE", 0, 30*time.Second),
+	}
+
+	// Configure Vault API limits
+	reconcilerConfig.APIs.Vault = reconciler.APIConfig{
+		RateLimit: reconciler.RateLimitConfig{
+			RequestsPerSecond: float64(getEnvIntWithDefault("BLACKSMITH_VAULT_REQUESTS_PER_SECOND", 0, 50)),
+			Burst:             getEnvIntWithDefault("BLACKSMITH_VAULT_BURST", 0, 20),
+			WaitTimeout:       getEnvDurationWithDefault("BLACKSMITH_VAULT_WAIT_TIMEOUT", 0, 3*time.Second),
+		},
+		CircuitBreaker: reconciler.CircuitBreakerConfig{
+			Enabled:          getEnvBoolWithDefault("BLACKSMITH_VAULT_CIRCUIT_BREAKER", false, true),
+			FailureThreshold: getEnvIntWithDefault("BLACKSMITH_VAULT_FAILURE_THRESHOLD", 0, 5),
+			SuccessThreshold: getEnvIntWithDefault("BLACKSMITH_VAULT_SUCCESS_THRESHOLD", 0, 2),
+			Timeout:          getEnvDurationWithDefault("BLACKSMITH_VAULT_BREAKER_TIMEOUT", 0, 45*time.Second),
+			MaxConcurrent:    getEnvIntWithDefault("BLACKSMITH_VAULT_BREAKER_MAX_CONCURRENT", 0, 3),
+		},
+		Timeout:        getEnvDurationWithDefault("BLACKSMITH_VAULT_TIMEOUT", 0, 10*time.Second),
+		MaxConnections: getEnvIntWithDefault("BLACKSMITH_VAULT_MAX_CONNECTIONS", 0, 30),
+		KeepAlive:      getEnvDurationWithDefault("BLACKSMITH_VAULT_KEEP_ALIVE", 0, 30*time.Second),
+	}
+
+	// Configure retry settings
+	reconcilerConfig.Retry = reconciler.RetryConfig{
+		MaxAttempts:  getEnvIntWithDefault("BLACKSMITH_RECONCILER_RETRY_ATTEMPTS", config.Reconciler.RetryAttempts, 3),
+		InitialDelay: getEnvDurationWithDefault("BLACKSMITH_RECONCILER_RETRY_INITIAL_DELAY", 0, 1*time.Second),
+		MaxDelay:     getEnvDurationWithDefault("BLACKSMITH_RECONCILER_RETRY_MAX_DELAY", 0, 30*time.Second),
+		Multiplier:   2.0,
+		Jitter:       0.1,
+	}
+
+	// Configure batch processing
+	reconcilerConfig.Batch = reconciler.BatchConfig{
+		Size:             getEnvIntWithDefault("BLACKSMITH_RECONCILER_BATCH_SIZE", config.Reconciler.BatchSize, 10),
+		Delay:            getEnvDurationWithDefault("BLACKSMITH_RECONCILER_BATCH_DELAY", 0, 500*time.Millisecond),
+		MaxParallelBatch: getEnvIntWithDefault("BLACKSMITH_RECONCILER_MAX_PARALLEL_BATCH", 0, 2),
+		AdaptiveScaling:  getEnvBoolWithDefault("BLACKSMITH_RECONCILER_ADAPTIVE_SCALING", false, true),
+		MinSize:          getEnvIntWithDefault("BLACKSMITH_RECONCILER_MIN_BATCH_SIZE", 0, 5),
+		MaxSize:          getEnvIntWithDefault("BLACKSMITH_RECONCILER_MAX_BATCH_SIZE", 0, 50),
+	}
+
+	// Configure timeouts
+	reconcilerConfig.Timeouts = reconciler.TimeoutConfig{
+		ReconciliationRun:   getEnvDurationWithDefault("BLACKSMITH_RECONCILER_RUN_TIMEOUT", 0, 15*time.Minute),
+		DeploymentScan:      getEnvDurationWithDefault("BLACKSMITH_RECONCILER_SCAN_TIMEOUT", 0, 5*time.Minute),
+		InstanceDiscovery:   getEnvDurationWithDefault("BLACKSMITH_RECONCILER_DISCOVERY_TIMEOUT", 0, 3*time.Minute),
+		VaultOperations:     getEnvDurationWithDefault("BLACKSMITH_RECONCILER_VAULT_TIMEOUT", 0, 2*time.Minute),
+		HealthCheck:         getEnvDurationWithDefault("BLACKSMITH_RECONCILER_HEALTH_TIMEOUT", 0, 30*time.Second),
+		ShutdownGracePeriod: getEnvDurationWithDefault("BLACKSMITH_RECONCILER_SHUTDOWN_TIMEOUT", 0, 30*time.Second),
+	}
+
+	// Configure backup settings
+	reconcilerConfig.Backup = reconciler.BackupConfig{
+		Enabled:          getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ENABLED", config.Reconciler.Backup.Enabled, true),
+		RetentionCount:   getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION", config.Reconciler.Backup.RetentionCount, 5),
+		RetentionDays:    getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_RETENTION_DAYS", config.Reconciler.Backup.RetentionDays, 0),
+		CompressionLevel: getEnvIntWithDefault("BLACKSMITH_RECONCILER_BACKUP_COMPRESSION", config.Reconciler.Backup.CompressionLevel, 9),
+		CleanupEnabled:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_CLEANUP", config.Reconciler.Backup.CleanupEnabled, true),
+		BackupOnUpdate:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ON_UPDATE", config.Reconciler.Backup.BackupOnUpdate, true),
+		BackupOnDelete:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_BACKUP_ON_DELETE", config.Reconciler.Backup.BackupOnDelete, true),
+	}
+
+	// Configure metrics
+	reconcilerConfig.Metrics = reconciler.MetricsConfig{
+		Enabled:            getEnvBoolWithDefault("BLACKSMITH_RECONCILER_METRICS_ENABLED", false, true),
+		CollectionInterval: getEnvDurationWithDefault("BLACKSMITH_RECONCILER_METRICS_INTERVAL", 0, 30*time.Second),
+		RetentionPeriod:    getEnvDurationWithDefault("BLACKSMITH_RECONCILER_METRICS_RETENTION", 0, 24*time.Hour),
+		ExportPrometheus:   getEnvBoolWithDefault("BLACKSMITH_RECONCILER_METRICS_PROMETHEUS", false, false),
+		PrometheusPort:     getEnvIntWithDefault("BLACKSMITH_RECONCILER_METRICS_PORT", 0, 9090),
+	}
+
+	logger.Info("Reconciler configured with production safety features")
+	logger.Info("BOSH rate limit: %d req/s, CF rate limit: %d req/s, Vault rate limit: %d req/s",
+		int(reconcilerConfig.APIs.BOSH.RateLimit.RequestsPerSecond),
+		int(reconcilerConfig.APIs.CF.RateLimit.RequestsPerSecond),
+		int(reconcilerConfig.APIs.Vault.RateLimit.RequestsPerSecond))
 
 	return &ReconcilerAdapter{
 		broker:    broker,
@@ -75,6 +162,14 @@ func NewReconcilerAdapter(config *Config, broker *Broker, vault *Vault, boshDir 
 		config:    reconcilerConfig,
 		cfManager: cfManager,
 	}
+}
+
+func parseDuration(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	d, _ := time.ParseDuration(s)
+	return d
 }
 
 // Start starts the reconciler
@@ -154,52 +249,27 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 			ID:          svc.ID,
 			Name:        svc.Name,
 			Description: svc.Description,
-			Tags:        svc.Tags,
-			Metadata:    make(map[string]interface{}),
-		}
-
-		// Convert brokerapi.ServiceMetadata to map
-		if svc.Metadata != nil {
-			service.Metadata = map[string]interface{}{
-				"displayName":         svc.Metadata.DisplayName,
-				"imageUrl":            svc.Metadata.ImageUrl,
-				"longDescription":     svc.Metadata.LongDescription,
-				"providerDisplayName": svc.Metadata.ProviderDisplayName,
-				"documentationUrl":    svc.Metadata.DocumentationUrl,
-				"supportUrl":          svc.Metadata.SupportUrl,
-			}
-			// Add shareable if set
-			if svc.Metadata.Shareable != nil {
-				service.Metadata["shareable"] = *svc.Metadata.Shareable
-			}
-			// Add any additional metadata
-			for k, v := range svc.Metadata.AdditionalMetadata {
-				service.Metadata[k] = v
-			}
 		}
 
 		// Convert plans
 		for _, p := range svc.Plans {
-			// Handle Free pointer field
-			free := false
-			if p.Free != nil {
-				free = *p.Free
-			}
-
 			plan := reconciler.Plan{
 				ID:          p.ID,
 				Name:        p.Name,
 				Description: p.Description,
-				Free:        free,
-				Metadata:    make(map[string]interface{}),
+				Properties:  make(map[string]interface{}),
 			}
 
-			// Convert brokerapi.ServicePlanMetadata to map
+			// Handle Free pointer field
+			if p.Free != nil {
+				plan.Properties["free"] = *p.Free
+			}
+
+			// Convert brokerapi.ServicePlanMetadata to Properties
 			if p.Metadata != nil {
-				plan.Metadata = map[string]interface{}{
-					"displayName": p.Metadata.DisplayName,
-					"bullets":     p.Metadata.Bullets,
-				}
+				plan.Properties["displayName"] = p.Metadata.DisplayName
+				plan.Properties["bullets"] = p.Metadata.Bullets
+
 				// Convert costs if present
 				if len(p.Metadata.Costs) > 0 {
 					costs := make([]map[string]interface{}, len(p.Metadata.Costs))
@@ -209,11 +279,11 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 							"unit":   cost.Unit,
 						}
 					}
-					plan.Metadata["costs"] = costs
+					plan.Properties["costs"] = costs
 				}
 				// Add any additional metadata
 				for k, v := range p.Metadata.AdditionalMetadata {
-					plan.Metadata[k] = v
+					plan.Properties[k] = v
 				}
 			}
 
@@ -225,30 +295,6 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 	return services
 }
 
-// GetBindingCredentials reconstructs binding credentials using the broker
-func (b *brokerWrapper) GetBindingCredentials(instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
-	credentials, err := b.broker.GetBindingCredentials(instanceID, bindingID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert broker.BindingCredentials to reconciler.BindingCredentials
-	return &reconciler.BindingCredentials{
-		Host:            credentials.Host,
-		Port:            credentials.Port,
-		Username:        credentials.Username,
-		Password:        credentials.Password,
-		URI:             credentials.URI,
-		APIURL:          credentials.APIURL,
-		Vhost:           credentials.Vhost,
-		Database:        credentials.Database,
-		Scheme:          credentials.Scheme,
-		CredentialType:  credentials.CredentialType,
-		ReconstructedAt: credentials.ReconstructedAt,
-		Raw:             credentials.Raw,
-	}, nil
-}
-
 // vaultWrapper wraps the Vault for use by the reconciler
 type vaultWrapper struct {
 	vault *Vault
@@ -258,42 +304,66 @@ func (v *vaultWrapper) Put(path string, data interface{}) error {
 	return v.vault.Put(path, data)
 }
 
-func (v *vaultWrapper) Get(path string, out interface{}) (bool, error) {
-	return v.vault.Get(path, out)
+func (v *vaultWrapper) Get(path string) (map[string]interface{}, error) {
+	var data map[string]interface{}
+	exists, err := v.vault.Get(path, &data)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+	return data, nil
 }
 
 func (v *vaultWrapper) Delete(path string) error {
 	return v.vault.Delete(path)
 }
 
-func (v *vaultWrapper) GetIndex(name string) (*reconciler.VaultIndex, error) {
-	// Get the actual vault index
-	vaultIdx, err := v.vault.GetIndex(name)
+func (v *vaultWrapper) GetSecret(path string) (map[string]interface{}, error) {
+	return v.Get(path)
+}
+
+func (v *vaultWrapper) SetSecret(path string, secret map[string]interface{}) error {
+	return v.Put(path, secret)
+}
+
+func (v *vaultWrapper) DeleteSecret(path string) error {
+	return v.Delete(path)
+}
+
+func (v *vaultWrapper) ListSecrets(path string) ([]string, error) {
+	// Get the vault API client and list using it directly
+	client, err := v.vault.GetAPIClient()
 	if err != nil {
 		return nil, err
 	}
 
-	// Convert to reconciler.VaultIndex with a SaveFunc closure
-	return &reconciler.VaultIndex{
-		Data: vaultIdx.Data,
-		SaveFunc: func() error {
-			return vaultIdx.Save()
-		},
-	}, nil
-}
-
-func (v *vaultWrapper) UpdateIndex(name string, instanceID string, data interface{}) error {
-	// Get the vault index
-	idx, err := v.vault.GetIndex(name)
+	// List secrets at the given path
+	secret, err := client.Logical().List(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Update the data
-	idx.Data[instanceID] = data
+	if secret == nil || secret.Data == nil {
+		return []string{}, nil
+	}
 
-	// Save the index
-	return idx.Save()
+	// Extract keys from the list response
+	keys, ok := secret.Data["keys"].([]interface{})
+	if !ok {
+		return []string{}, nil
+	}
+
+	// Convert to string slice
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if str, ok := key.(string); ok {
+			result = append(result, str)
+		}
+	}
+
+	return result, nil
 }
 
 // GetClient exposes the underlying Vault API client for backup operations

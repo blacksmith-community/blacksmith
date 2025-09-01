@@ -7,3 +7,4 @@ test-*
 tmp
 *.tar.gz
 ui/node_modules/
+.gocache

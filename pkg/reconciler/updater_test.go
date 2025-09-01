@@ -26,40 +26,41 @@ func NewMockVault() *MockVault {
 	}
 }
 
-func (m *MockVault) Put(path string, data interface{}) error {
+func (m *MockVault) Put(path string, secret map[string]interface{}) error {
 	m.putCalls = append(m.putCalls, path)
-	if dataMap, ok := data.(map[string]interface{}); ok {
-		m.data[path] = dataMap
-		return nil
-	}
-	return fmt.Errorf("invalid data type")
+	m.data[path] = secret
+	return nil
 }
 
-func (m *MockVault) Get(path string, out interface{}) (bool, error) {
+func (m *MockVault) SetSecret(path string, secret map[string]interface{}) error {
+	return m.Put(path, secret)
+}
+
+func (m *MockVault) Get(path string) (map[string]interface{}, error) {
 	m.getCalls = append(m.getCalls, path)
 	if data, exists := m.data[path]; exists {
-		if outPtr, ok := out.(*map[string]interface{}); ok {
-			*outPtr = data
-			return true, nil
-		}
-		return false, fmt.Errorf("invalid output type")
+		return data, nil
 	}
-	return false, nil
+	return nil, fmt.Errorf("not found")
 }
 
-func (m *MockVault) GetIndex(name string) (*VaultIndex, error) {
-	return &VaultIndex{
-		Data: m.index,
-		SaveFunc: func() error {
-			m.saveCalls++
-			return nil
-		},
-	}, nil
+func (m *MockVault) GetSecret(path string) (map[string]interface{}, error) {
+	return m.Get(path)
 }
 
-func (m *MockVault) Delete(path string) error {
+func (m *MockVault) DeleteSecret(path string) error {
 	delete(m.data, path)
 	return nil
+}
+
+func (m *MockVault) ListSecrets(path string) ([]string, error) {
+	var keys []string
+	for k := range m.data {
+		if strings.HasPrefix(k, path) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
 }
 
 func (m *MockVault) UpdateIndex(name string, instanceID string, data interface{}) error {
@@ -132,13 +133,16 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 
 	// Create instance data for update
 	instance := &InstanceData{
-		ID:             "test-instance",
-		ServiceID:      "test-service",
-		PlanID:         "test-plan",
-		DeploymentName: "test-plan-test-instance",
-		CreatedAt:      time.Now().Add(-24 * time.Hour),
-		UpdatedAt:      time.Now(),
-		LastSyncedAt:   time.Now(),
+		ID:        "test-instance",
+		ServiceID: "test-service",
+		PlanID:    "test-plan",
+		Deployment: DeploymentDetail{
+			DeploymentInfo: DeploymentInfo{
+				Name: "test-plan-test-instance",
+			},
+		},
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now(),
 		Metadata: map[string]interface{}{
 			"service_name": "Test Service",
 			"plan_name":    "Test Plan",
@@ -147,7 +151,7 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
-	err := updater.UpdateInstance(ctx, instance)
+	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
@@ -222,19 +226,22 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 
 	// Create instance data for update
 	instance := &InstanceData{
-		ID:             "test-instance",
-		ServiceID:      "test-service",
-		PlanID:         "test-plan",
-		DeploymentName: "test-plan-test-instance",
-		CreatedAt:      time.Now().Add(-24 * time.Hour),
-		UpdatedAt:      time.Now(),
-		LastSyncedAt:   time.Now(),
-		Metadata:       make(map[string]interface{}),
+		ID:        "test-instance",
+		ServiceID: "test-service",
+		PlanID:    "test-plan",
+		Deployment: DeploymentDetail{
+			DeploymentInfo: DeploymentInfo{
+				Name: "test-plan-test-instance",
+			},
+		},
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now(),
+		Metadata:  make(map[string]interface{}),
 	}
 
 	// Update instance
 	ctx := context.Background()
-	err := updater.UpdateInstance(ctx, instance)
+	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
@@ -302,13 +309,16 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 
 	// Create instance data for update
 	instance := &InstanceData{
-		ID:             "test-instance",
-		ServiceID:      "test-service",
-		PlanID:         "test-plan",
-		DeploymentName: "new-deployment",
-		CreatedAt:      time.Now().Add(-24 * time.Hour),
-		UpdatedAt:      time.Now(),
-		LastSyncedAt:   time.Now(),
+		ID:        "test-instance",
+		ServiceID: "test-service",
+		PlanID:    "test-plan",
+		Deployment: DeploymentDetail{
+			DeploymentInfo: DeploymentInfo{
+				Name: "new-deployment",
+			},
+		},
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now(),
 		Metadata: map[string]interface{}{
 			"service_name": "New Service",
 		},
@@ -316,7 +326,7 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
-	err := updater.UpdateInstance(ctx, instance)
+	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
@@ -389,13 +399,16 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 
 	// Create instance data for update
 	instance := &InstanceData{
-		ID:             "test-instance",
-		ServiceID:      "test-service",
-		PlanID:         "test-plan",
-		DeploymentName: "test-plan-test-instance",
-		CreatedAt:      time.Now().Add(-24 * time.Hour),
-		UpdatedAt:      time.Now(),
-		LastSyncedAt:   time.Now(),
+		ID:        "test-instance",
+		ServiceID: "test-service",
+		PlanID:    "test-plan",
+		Deployment: DeploymentDetail{
+			DeploymentInfo: DeploymentInfo{
+				Name: "test-plan-test-instance",
+			},
+		},
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now(),
 		Metadata: map[string]interface{}{
 			"service_name": "Test Service",
 			"releases":     []string{"cf-mysql/1.0"},
@@ -404,7 +417,7 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
-	err := updater.UpdateInstance(ctx, instance)
+	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
@@ -558,13 +571,16 @@ func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
 
 	// Create instance for update
 	instance := &InstanceData{
-		ID:             "test-instance",
-		ServiceID:      "test-service",
-		PlanID:         "test-plan",
-		DeploymentName: "test-deployment",
-		CreatedAt:      time.Now().Add(-24 * time.Hour),
-		UpdatedAt:      time.Now(),
-		LastSyncedAt:   time.Now(),
+		ID:        "test-instance",
+		ServiceID: "test-service",
+		PlanID:    "test-plan",
+		Deployment: DeploymentDetail{
+			DeploymentInfo: DeploymentInfo{
+				Name: "test-deployment",
+			},
+		},
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now(),
 		Metadata: map[string]interface{}{
 			"service_name": "Updated Service",
 		},
@@ -572,7 +588,7 @@ func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
-	err := updater.UpdateInstance(ctx, instance)
+	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
@@ -590,4 +606,258 @@ func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
 	}
 
 	t.Logf("All vault PUT calls: %v", vault.putCalls)
+}
+
+// MockVaultForBindingTests implements VaultInterface correctly for binding credential tests
+type MockVaultForBindingTests struct {
+	data     map[string]map[string]interface{}
+	errors   map[string]error
+	putCalls []string
+	getCalls []string
+}
+
+func NewMockVaultForBindingTests() *MockVaultForBindingTests {
+	return &MockVaultForBindingTests{
+		data:   make(map[string]map[string]interface{}),
+		errors: make(map[string]error),
+	}
+}
+
+func (m *MockVaultForBindingTests) Get(path string) (map[string]interface{}, error) {
+	m.getCalls = append(m.getCalls, path)
+	if err, exists := m.errors[path]; exists {
+		return nil, err
+	}
+	if data, exists := m.data[path]; exists {
+		return data, nil
+	}
+	return nil, fmt.Errorf("no data found at path %s", path)
+}
+
+func (m *MockVaultForBindingTests) Put(path string, secret map[string]interface{}) error {
+	m.putCalls = append(m.putCalls, path)
+	if err, exists := m.errors[path]; exists {
+		return err
+	}
+	m.data[path] = secret
+	return nil
+}
+
+func (m *MockVaultForBindingTests) GetSecret(path string) (map[string]interface{}, error) {
+	return m.Get(path)
+}
+
+func (m *MockVaultForBindingTests) SetSecret(path string, secret map[string]interface{}) error {
+	return m.Put(path, secret)
+}
+
+func (m *MockVaultForBindingTests) DeleteSecret(path string) error {
+	delete(m.data, path)
+	return nil
+}
+
+func (m *MockVaultForBindingTests) ListSecrets(path string) ([]string, error) {
+	var secrets []string
+	prefix := path + "/"
+	for key := range m.data {
+		if strings.HasPrefix(key, prefix) {
+			secrets = append(secrets, key)
+		}
+	}
+	return secrets, nil
+}
+
+func (m *MockVaultForBindingTests) SetData(path string, data map[string]interface{}) {
+	m.data[path] = data
+}
+
+func (m *MockVaultForBindingTests) SetError(path string, err error) {
+	m.errors[path] = err
+}
+
+func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
+	tests := []struct {
+		name         string
+		instanceID   string
+		bindingID    string
+		setupVault   func(*MockVaultForBindingTests)
+		expectedErr  string
+		expectedCred map[string]interface{}
+	}{
+		{
+			name:       "successful retrieval of binding credentials",
+			instanceID: "test-instance-123",
+			bindingID:  "test-binding-456",
+			setupVault: func(vault *MockVaultForBindingTests) {
+				vault.SetData("test-instance-123/bindings/test-binding-456/credentials", map[string]interface{}{
+					"host":     "redis.example.com",
+					"port":     6379,
+					"username": "redis-user",
+					"password": "redis-pass",
+					"database": "myredis",
+				})
+			},
+			expectedCred: map[string]interface{}{
+				"host":     "redis.example.com",
+				"port":     6379,
+				"username": "redis-user",
+				"password": "redis-pass",
+				"database": "myredis",
+			},
+		},
+		{
+			name:       "credentials not found",
+			instanceID: "test-instance-123",
+			bindingID:  "non-existent-binding",
+			setupVault: func(vault *MockVaultForBindingTests) {
+				// No credentials set up for this binding
+			},
+			expectedErr: "failed to get binding credentials",
+		},
+		{
+			name:       "vault returns error",
+			instanceID: "test-instance-123",
+			bindingID:  "error-binding",
+			setupVault: func(vault *MockVaultForBindingTests) {
+				vault.SetError("test-instance-123/bindings/error-binding/credentials", fmt.Errorf("vault connection failed"))
+			},
+			expectedErr: "failed to get binding credentials",
+		},
+		{
+			name:       "empty credentials",
+			instanceID: "test-instance-123",
+			bindingID:  "empty-binding",
+			setupVault: func(vault *MockVaultForBindingTests) {
+				vault.SetData("test-instance-123/bindings/empty-binding/credentials", map[string]interface{}{})
+			},
+			expectedCred: map[string]interface{}{},
+		},
+		{
+			name:       "credentials with special characters",
+			instanceID: "test-instance-uuid-with-dashes",
+			bindingID:  "binding-with-special-chars",
+			setupVault: func(vault *MockVaultForBindingTests) {
+				vault.SetData("test-instance-uuid-with-dashes/bindings/binding-with-special-chars/credentials", map[string]interface{}{
+					"host":     "my-service.internal",
+					"port":     5432,
+					"username": "user@domain.com",
+					"password": "p@ssw0rd!#$",
+					"ssl":      true,
+				})
+			},
+			expectedCred: map[string]interface{}{
+				"host":     "my-service.internal",
+				"port":     5432,
+				"username": "user@domain.com",
+				"password": "p@ssw0rd!#$",
+				"ssl":      true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup
+			vault := NewMockVaultForBindingTests()
+			logger := &MockTestLogger{}
+			updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
+
+			// Setup vault with test data
+			tt.setupVault(vault)
+
+			// Cast to vaultUpdater to access GetBindingCredentials method
+			vaultUpdater, ok := updater.(*vaultUpdater)
+			if !ok {
+				t.Fatal("updater is not of expected type *vaultUpdater")
+			}
+
+			// Execute
+			credentials, err := vaultUpdater.GetBindingCredentials(tt.instanceID, tt.bindingID)
+
+			// Verify
+			if tt.expectedErr != "" {
+				if err == nil {
+					t.Errorf("expected error containing '%s', got nil", tt.expectedErr)
+				} else if !strings.Contains(err.Error(), tt.expectedErr) {
+					t.Errorf("expected error containing '%s', got '%s'", tt.expectedErr, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+
+				// Check credentials match expected
+				if len(credentials) != len(tt.expectedCred) {
+					t.Errorf("expected %d credential fields, got %d", len(tt.expectedCred), len(credentials))
+				}
+
+				for key, expectedValue := range tt.expectedCred {
+					if actualValue, exists := credentials[key]; !exists {
+						t.Errorf("expected credential field '%s' not found", key)
+					} else if actualValue != expectedValue {
+						t.Errorf("credential field '%s': expected %v, got %v", key, expectedValue, actualValue)
+					}
+				}
+			}
+
+			// Verify correct vault path was called
+			expectedPath := fmt.Sprintf("%s/bindings/%s/credentials", tt.instanceID, tt.bindingID)
+			found := false
+			for _, call := range vault.getCalls {
+				if call == expectedPath {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected vault.Get to be called with path '%s', but it wasn't. Actual calls: %v", expectedPath, vault.getCalls)
+			}
+		})
+	}
+}
+
+func TestVaultUpdater_GetBindingCredentials_PathConstruction(t *testing.T) {
+	vault := NewMockVaultForBindingTests()
+	logger := &MockTestLogger{}
+	updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
+	vaultUpdater := updater.(*vaultUpdater)
+
+	testCases := []struct {
+		instanceID   string
+		bindingID    string
+		expectedPath string
+	}{
+		{
+			instanceID:   "simple-instance",
+			bindingID:    "simple-binding",
+			expectedPath: "simple-instance/bindings/simple-binding/credentials",
+		},
+		{
+			instanceID:   "instance-with-uuid-12345678-1234-1234-1234-123456789abc",
+			bindingID:    "binding-with-uuid-87654321-4321-4321-4321-cba987654321",
+			expectedPath: "instance-with-uuid-12345678-1234-1234-1234-123456789abc/bindings/binding-with-uuid-87654321-4321-4321-4321-cba987654321/credentials",
+		},
+		{
+			instanceID:   "instance_with_underscores",
+			bindingID:    "binding_with_underscores",
+			expectedPath: "instance_with_underscores/bindings/binding_with_underscores/credentials",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("path_%s_%s", tc.instanceID, tc.bindingID), func(t *testing.T) {
+			// Clear previous calls
+			vault.getCalls = []string{}
+
+			// Execute (will fail, but we just want to check path construction)
+			_, _ = vaultUpdater.GetBindingCredentials(tc.instanceID, tc.bindingID)
+
+			// Verify path construction
+			if len(vault.getCalls) != 1 {
+				t.Errorf("expected exactly 1 vault call, got %d", len(vault.getCalls))
+			} else if vault.getCalls[0] != tc.expectedPath {
+				t.Errorf("expected path '%s', got '%s'", tc.expectedPath, vault.getCalls[0])
+			}
+		})
+	}
 }

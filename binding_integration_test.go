@@ -99,14 +99,17 @@ var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructur
 			It("should detect missing credentials and successfully reconstruct them", func() {
 				// Step 1: Reconciler detects missing binding credentials
 				instance := &reconciler.InstanceData{
-					ID:             instanceID,
-					ServiceID:      testServiceID,
-					PlanID:         testPlanID,
-					DeploymentName: testPlanID + "-" + instanceID,
-					CreatedAt:      time.Now(),
-					UpdatedAt:      time.Now(),
-					LastSyncedAt:   time.Now(),
-					Metadata:       make(map[string]interface{}),
+					ID:        instanceID,
+					ServiceID: testServiceID,
+					PlanID:    testPlanID,
+					Deployment: reconciler.DeploymentDetail{
+						DeploymentInfo: reconciler.DeploymentInfo{
+							Name: testPlanID + "-" + instanceID,
+						},
+					},
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+					Metadata:  make(map[string]interface{}),
 				}
 
 				// Step 2: Run reconciler update which should detect unhealthy bindings
@@ -141,14 +144,17 @@ var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructur
 
 			It("should update instance metadata to reflect repair success", func() {
 				instance := &reconciler.InstanceData{
-					ID:             instanceID,
-					ServiceID:      testServiceID,
-					PlanID:         testPlanID,
-					DeploymentName: testPlanID + "-" + instanceID,
-					CreatedAt:      time.Now(),
-					UpdatedAt:      time.Now(),
-					LastSyncedAt:   time.Now(),
-					Metadata:       make(map[string]interface{}),
+					ID:        instanceID,
+					ServiceID: testServiceID,
+					PlanID:    testPlanID,
+					Deployment: reconciler.DeploymentDetail{
+						DeploymentInfo: reconciler.DeploymentInfo{
+							Name: testPlanID + "-" + instanceID,
+						},
+					},
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+					Metadata:  make(map[string]interface{}),
 				}
 
 				// TODO: Fix this - UpdateInstanceWithBindingRepair is not part of Updater interface
@@ -264,14 +270,17 @@ var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructur
 
 			It("should record reconstruction failure in reconciler", func() {
 				instance := &reconciler.InstanceData{
-					ID:             instanceID,
-					ServiceID:      testServiceID,
-					PlanID:         testPlanID,
-					DeploymentName: testPlanID + "-" + instanceID,
-					CreatedAt:      time.Now(),
-					UpdatedAt:      time.Now(),
-					LastSyncedAt:   time.Now(),
-					Metadata:       make(map[string]interface{}),
+					ID:        instanceID,
+					ServiceID: testServiceID,
+					PlanID:    testPlanID,
+					Deployment: reconciler.DeploymentDetail{
+						DeploymentInfo: reconciler.DeploymentInfo{
+							Name: testPlanID + "-" + instanceID,
+						},
+					},
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+					Metadata:  make(map[string]interface{}),
 				}
 
 				// TODO: Fix this - UpdateInstanceWithBindingRepair is not part of Updater interface
@@ -330,14 +339,17 @@ var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructur
 				start := time.Now()
 
 				instance := &reconciler.InstanceData{
-					ID:             instanceID,
-					ServiceID:      testServiceID,
-					PlanID:         testPlanID,
-					DeploymentName: testPlanID + "-" + instanceID,
-					CreatedAt:      time.Now(),
-					UpdatedAt:      time.Now(),
-					LastSyncedAt:   time.Now(),
-					Metadata:       make(map[string]interface{}),
+					ID:        instanceID,
+					ServiceID: testServiceID,
+					PlanID:    testPlanID,
+					Deployment: reconciler.DeploymentDetail{
+						DeploymentInfo: reconciler.DeploymentInfo{
+							Name: testPlanID + "-" + instanceID,
+						},
+					},
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
+					Metadata:  make(map[string]interface{}),
 				}
 
 				// TODO: Fix this - UpdateInstanceWithBindingRepair is not part of Updater interface

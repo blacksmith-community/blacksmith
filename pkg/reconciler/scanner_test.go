@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,22 +200,16 @@ func TestBOSHScanner_ScanDeployments(t *testing.T) {
 	if len(deployments[0].Releases) != 2 {
 		t.Errorf("Expected 2 releases, got %d", len(deployments[0].Releases))
 	}
-	if deployments[0].Releases[0].Name != "redis" {
-		t.Errorf("Expected release name redis, got %s", deployments[0].Releases[0].Name)
-	}
-	if deployments[0].Releases[0].Version != "1.0.0" {
-		t.Errorf("Expected release version 1.0.0, got %s", deployments[0].Releases[0].Version)
+	if deployments[0].Releases[0] != "redis/1.0.0" {
+		t.Errorf("Expected release redis/1.0.0, got %s", deployments[0].Releases[0])
 	}
 
 	// Check stemcell parsing
 	if len(deployments[0].Stemcells) != 1 {
 		t.Errorf("Expected 1 stemcell, got %d", len(deployments[0].Stemcells))
 	}
-	if deployments[0].Stemcells[0].Name != "ubuntu-xenial" {
-		t.Errorf("Expected stemcell name ubuntu-xenial, got %s", deployments[0].Stemcells[0].Name)
-	}
-	if deployments[0].Stemcells[0].Version != "456.789" {
-		t.Errorf("Expected stemcell version 456.789, got %s", deployments[0].Stemcells[0].Version)
+	if deployments[0].Stemcells[0] != "ubuntu-xenial/456.789" {
+		t.Errorf("Expected stemcell ubuntu-xenial/456.789, got %s", deployments[0].Stemcells[0])
 	}
 }
 
@@ -310,31 +305,28 @@ properties:
 		t.Errorf("Expected 2 releases, got %d", len(detail.Releases))
 	}
 	if len(detail.Releases) > 0 {
-		if detail.Releases[0].Name != "redis" {
-			t.Errorf("Expected release name redis, got %s", detail.Releases[0].Name)
-		}
-		if detail.Releases[0].SHA1 != "abc123" {
-			t.Errorf("Expected release SHA1 abc123, got %s", detail.Releases[0].SHA1)
+		if !strings.HasPrefix(detail.Releases[0], "redis/") {
+			t.Errorf("Expected release to start with redis/, got %s", detail.Releases[0])
 		}
 	}
 
-	// Check stemcells were parsed
+	// Check stemcells were parsed (now include alias prefix if present)
 	if len(detail.Stemcells) != 1 {
 		t.Errorf("Expected 1 stemcell, got %d", len(detail.Stemcells))
 	}
 	if len(detail.Stemcells) > 0 {
-		if detail.Stemcells[0].OS != "ubuntu-xenial" {
-			t.Errorf("Expected stemcell OS ubuntu-xenial, got %s", detail.Stemcells[0].OS)
+		if !strings.HasPrefix(detail.Stemcells[0], "default/ubuntu-xenial/") {
+			t.Errorf("Expected stemcell to start with default/ubuntu-xenial/, got %s", detail.Stemcells[0])
 		}
 	}
 
-	// Check VMs
+	// Check VMs (Name now maps to VM ID)
 	if len(detail.VMs) != 2 {
 		t.Errorf("Expected 2 VMs, got %d", len(detail.VMs))
 	}
 	if len(detail.VMs) > 0 {
-		if detail.VMs[0].CID != "i-abc123" {
-			t.Errorf("Expected VM CID i-abc123, got %s", detail.VMs[0].CID)
+		if detail.VMs[0].Name != "vm-1" {
+			t.Errorf("Expected VM Name vm-1, got %s", detail.VMs[0].Name)
 		}
 	}
 

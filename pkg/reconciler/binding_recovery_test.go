@@ -302,14 +302,17 @@ var _ = Describe("Binding Recovery", func() {
 
 		BeforeEach(func() {
 			instance = &InstanceData{
-				ID:             instanceID,
-				ServiceID:      "redis-service",
-				PlanID:         "small",
-				DeploymentName: "redis-small-" + instanceID,
-				CreatedAt:      time.Now(),
-				UpdatedAt:      time.Now(),
-				LastSyncedAt:   time.Now(),
-				Metadata:       make(map[string]interface{}),
+				ID:        instanceID,
+				ServiceID: "redis-service",
+				PlanID:    "small",
+				Deployment: DeploymentDetail{
+					DeploymentInfo: DeploymentInfo{
+						Name: "redis-small-" + instanceID,
+					},
+				},
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+				Metadata:  make(map[string]interface{}),
 			}
 		})
 

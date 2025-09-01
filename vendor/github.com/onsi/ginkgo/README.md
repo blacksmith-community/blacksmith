@@ -41,7 +41,7 @@ Describe("the strings package", func() {
     - [`JustBeforeEach` blocks](https://onsi.github.io/ginkgo/#separating-creation-and-configuration-justbeforeeach) that separate creation from configuration (also known as the subject action pattern).
     - [`BeforeSuite` and `AfterSuite` blocks](https://onsi.github.io/ginkgo/#global-setup-and-teardown-beforesuite-and-aftersuite) to prep for and cleanup after a suite.
 
-- A  test runner that lets you:
+- A comprehensive test runner that lets you:
     - Mark specs as [pending](https://onsi.github.io/ginkgo/#pending-specs)
     - [Focus](https://onsi.github.io/ginkgo/#focused-specs) individual specs, and groups of specs, either programmatically or on the command line
     - Run your tests in [random order](https://onsi.github.io/ginkgo/#spec-permutation), and then reuse random seeds to replicate the same order.
@@ -63,7 +63,7 @@ Describe("the strings package", func() {
 
 - Built-in support for testing [asynchronicity](https://onsi.github.io/ginkgo/#asynchronous-tests)
 
-- Built-in support for [benchmarking](https://onsi.github.io/ginkgo/#benchmark-tests) your code.  Control the number of benchmark samples as you gather runtimes and other, arbitrary, bits of numerical information about your code.
+- Built-in support for [benchmarking](https://onsi.github.io/ginkgo/#benchmark-tests) your code.  Control the number of benchmark samples as you gather runtimes and other, arbitrary, bits of numerical information about your code. 
 
 - [Completions for Sublime Text](https://github.com/onsi/ginkgo-sublime-completions): just use [Package Control](https://sublime.wbond.net/) to install `Ginkgo Completions`.
 
@@ -129,7 +129,7 @@ ginkgo  # also runs your tests
 
 ## I'm new to Go: What are my testing options?
 
-Of course, I heartily recommend [Ginkgo](https://github.com/onsi/ginkgo) and [Gomega](https://github.com/onsi/gomega).  Both packages are seeing heavy, daily, production use on a number of projects and boast a mature and  feature-set.
+Of course, I heartily recommend [Ginkgo](https://github.com/onsi/ginkgo) and [Gomega](https://github.com/onsi/gomega).  Both packages are seeing heavy, daily, production use on a number of projects and boast a mature and comprehensive feature-set.
 
 With that said, it's great to know what your options are :)
 
@@ -151,12 +151,12 @@ You can also use Ginkgo's matcher library [Gomega](https://github.com/onsi/gomeg
 There are a handful of BDD-style testing frameworks written for Go.  Here are a few:
 
 - [Ginkgo](https://github.com/onsi/ginkgo) ;)
-- [GoConvey](https://github.com/smartystreets/goconvey)
+- [GoConvey](https://github.com/smartystreets/goconvey) 
 - [Goblin](https://github.com/franela/goblin)
 - [Mao](https://github.com/azer/mao)
 - [Zen](https://github.com/pranavraja/zen)
 
-Finally, @shageman has [put together](https://github.com/shageman/gotestit) a  comparison of Go testing libraries.
+Finally, @shageman has [put together](https://github.com/shageman/gotestit) a comprehensive comparison of Go testing libraries.
 
 Go explore!
 

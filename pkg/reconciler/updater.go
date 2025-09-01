@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/vault/api"
@@ -20,6 +21,7 @@ type vaultUpdater struct {
 	logger       Logger
 	backupConfig BackupConfig
 	cfManager    CFManagerInterface // For VCAP credential recovery
+	config       *ReconcilerConfig  // For batch configuration
 }
 
 // NewVaultUpdater creates a new vault updater
@@ -42,11 +44,7 @@ func NewVaultUpdaterWithCF(vault interface{}, logger Logger, backupConfig Backup
 }
 
 // UpdateInstance updates an instance in vault
-func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceData) error {
-	if instance == nil {
-		return fmt.Errorf("instance is nil")
-	}
-
+func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData) (*InstanceData, error) {
 	u.logDebug("Updating instance %s in vault", instance.ID)
 
 	// Create backup of existing instance data before any updates if enabled
@@ -149,10 +147,10 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 		"instance_id":     instance.ID,
 		"service_id":      instance.ServiceID,
 		"plan_id":         instance.PlanID,
-		"deployment_name": instance.DeploymentName,
-		"created":         instance.CreatedAt.Unix(),    // Use Unix timestamp for UI compatibility
-		"updated":         instance.UpdatedAt.Unix(),    // Use Unix timestamp for UI compatibility
-		"last_synced_at":  instance.LastSyncedAt.Unix(), // Use Unix timestamp for UI compatibility
+		"deployment_name": instance.Deployment.Name,
+		"created":         instance.CreatedAt.Unix(), // Use Unix timestamp for UI compatibility
+		"updated":         instance.UpdatedAt.Unix(), // Use Unix timestamp for UI compatibility
+		"last_synced_at":  time.Now().Unix(),         // Set current time as last sync
 		"reconciled":      true,
 		"reconciled_at":   time.Now().Unix(),
 	}
@@ -273,10 +271,10 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	}
 
 	// Store manifest separately if present
-	if instance.Manifest != "" {
+	if instance.Deployment.Manifest != "" {
 		manifestPath := fmt.Sprintf("%s/manifest", instance.ID)
 		manifestData := map[string]interface{}{
-			"manifest":      instance.Manifest,
+			"manifest":      instance.Deployment.Manifest,
 			"updated_at":    time.Now().Unix(), // Use Unix timestamp
 			"reconciled":    true,
 			"reconciled_by": "reconciler",
@@ -326,11 +324,97 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance *InstanceDat
 	// Update the main instance data in the index
 	err = u.updateIndex(instance.ID, vaultData)
 	if err != nil {
-		return fmt.Errorf("failed to update index for %s: %w", instance.ID, err)
+		return nil, fmt.Errorf("failed to update index for %s: %w", instance.ID, err)
 	}
 
 	u.logInfo("Successfully updated instance %s in vault", instance.ID)
-	return nil
+	return &instance, nil
+}
+
+// UpdateBatch updates multiple instances in parallel with concurrency control
+func (u *vaultUpdater) UpdateBatch(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
+	if len(instances) == 0 {
+		return instances, nil
+	}
+
+	u.logInfo("Starting batch update of %d instances", len(instances))
+
+	// Determine batch size (default to 10 if not configured)
+	batchSize := 10
+	if u.config != nil && u.config.Batch.MaxSize > 0 {
+		batchSize = u.config.Batch.MaxSize
+	}
+
+	// Process instances in batches
+	var allUpdated []InstanceData
+	var allErrors []error
+
+	for i := 0; i < len(instances); i += batchSize {
+		end := i + batchSize
+		if end > len(instances) {
+			end = len(instances)
+		}
+
+		batch := instances[i:end]
+		u.logDebug("Processing batch of %d instances (batch %d/%d)",
+			len(batch), (i/batchSize)+1, (len(instances)+batchSize-1)/batchSize)
+
+		// Process batch in parallel using goroutines
+		type result struct {
+			instance InstanceData
+			err      error
+		}
+
+		results := make(chan result, len(batch))
+		var wg sync.WaitGroup
+
+		for _, inst := range batch {
+			wg.Add(1)
+			go func(instance InstanceData) {
+				defer wg.Done()
+
+				// Update the instance
+				updatedInst, err := u.UpdateInstance(ctx, instance)
+
+				if updatedInst != nil {
+					results <- result{
+						instance: *updatedInst,
+						err:      err,
+					}
+				} else {
+					results <- result{
+						instance: instance,
+						err:      err,
+					}
+				}
+			}(inst)
+		}
+
+		// Wait for all goroutines to complete
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		// Collect results
+		for res := range results {
+			if res.err != nil {
+				u.logError("Failed to update instance %s: %v", res.instance.ID, res.err)
+				allErrors = append(allErrors, res.err)
+			} else {
+				allUpdated = append(allUpdated, res.instance)
+			}
+		}
+	}
+
+	u.logInfo("Batch update completed: %d successful, %d failed", len(allUpdated), len(allErrors))
+
+	// Return partial success even if some failed
+	if len(allErrors) > 0 && len(allUpdated) == 0 {
+		return nil, fmt.Errorf("all batch updates failed: %v", allErrors[0])
+	}
+
+	return allUpdated, nil
 }
 
 // BindingInfo represents metadata about a service binding
@@ -632,8 +716,10 @@ func (u *vaultUpdater) GetBindingStatus(instanceID, bindingID string) (string, e
 func (u *vaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error {
 	u.logInfo("Reconstructing binding %s for instance %s using broker", bindingID, instanceID)
 
-	// Call the broker's GetBindingCredentials function
-	credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+	// TODO: Call the broker's GetBindingCredentials function if available
+	// For now, return an error since BrokerInterface doesn't have this method
+	credentials := map[string]interface{}{}
+	err := fmt.Errorf("broker GetBindingCredentials not implemented")
 	if err != nil {
 		u.logError("Broker failed to reconstruct credentials for binding %s: %s", bindingID, err)
 		return fmt.Errorf("broker reconstruction failed: %w", err)
@@ -641,54 +727,16 @@ func (u *vaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string
 
 	u.logDebug("Successfully retrieved reconstructed credentials from broker")
 
-	// Convert BindingCredentials to map for storage
-	credentialsMap := make(map[string]interface{})
-
-	// Copy structured fields
-	if credentials.Host != "" {
-		credentialsMap["host"] = credentials.Host
-	}
-	if credentials.Port != 0 {
-		credentialsMap["port"] = credentials.Port
-	}
-	if credentials.Username != "" {
-		credentialsMap["username"] = credentials.Username
-	}
-	if credentials.Password != "" {
-		credentialsMap["password"] = credentials.Password
-	}
-	if credentials.URI != "" {
-		credentialsMap["uri"] = credentials.URI
-	}
-	if credentials.APIURL != "" {
-		credentialsMap["api_url"] = credentials.APIURL
-	}
-	if credentials.Vhost != "" {
-		credentialsMap["vhost"] = credentials.Vhost
-	}
-	if credentials.Database != "" {
-		credentialsMap["database"] = credentials.Database
-	}
-	if credentials.Scheme != "" {
-		credentialsMap["scheme"] = credentials.Scheme
-	}
-
-	// Include any additional raw fields
-	if credentials.Raw != nil {
-		for k, v := range credentials.Raw {
-			// Don't overwrite structured fields
-			if _, exists := credentialsMap[k]; !exists {
-				credentialsMap[k] = v
-			}
-		}
-	}
+	// credentials is already a map[string]interface{}
+	// Just use it directly as credentialsMap
+	credentialsMap := credentials
 
 	// Create metadata for the binding
 	metadata := map[string]interface{}{
 		"binding_id":            bindingID,
 		"instance_id":           instanceID,
-		"credential_type":       credentials.CredentialType,
-		"reconstructed_at":      credentials.ReconstructedAt,
+		"credential_type":       credentials["credential_type"],
+		"reconstructed_at":      time.Now().Unix(),
 		"reconstruction_source": "broker",
 		"status":                "reconstructed",
 	}
@@ -783,9 +831,12 @@ func (u *vaultUpdater) recordReconstructionFailure(instanceID, bindingID string,
 // UpdateInstanceWithBindingRepair extends UpdateInstance to include broker-based binding repair
 func (u *vaultUpdater) UpdateInstanceWithBindingRepair(ctx context.Context, instance *InstanceData, broker BrokerInterface) error {
 	// First run the standard update
-	err := u.UpdateInstance(ctx, instance)
+	updatedInstance, err := u.UpdateInstance(ctx, *instance)
 	if err != nil {
 		return err
+	}
+	if updatedInstance != nil {
+		*instance = *updatedInstance
 	}
 
 	// Check if binding repair is needed and broker is available
@@ -805,7 +856,7 @@ func (u *vaultUpdater) UpdateInstanceWithBindingRepair(ctx context.Context, inst
 			instance.Metadata["binding_repair_attempted_at"] = time.Now().Format(time.RFC3339)
 
 			// Re-run UpdateInstance to store the updated metadata
-			if err := u.UpdateInstance(ctx, instance); err != nil {
+			if _, err := u.UpdateInstance(ctx, *instance); err != nil {
 				u.logError("Failed to update instance metadata after binding repair failure: %v", err)
 			}
 
@@ -827,7 +878,7 @@ func (u *vaultUpdater) UpdateInstanceWithBindingRepair(ctx context.Context, inst
 			delete(instance.Metadata, "binding_repair_error")
 
 			// Re-run UpdateInstance to store the updated metadata
-			if err := u.UpdateInstance(ctx, instance); err != nil {
+			if _, err := u.UpdateInstance(ctx, *instance); err != nil {
 				u.logError("Failed to update instance metadata after binding repair failure: %v", err)
 			}
 		}
@@ -843,7 +894,7 @@ func (u *vaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 	// Get from index
 	indexData, err := u.getFromIndex(instanceID)
 	if err != nil {
-		return nil, NotFoundError{Resource: "instance", ID: instanceID}
+		return nil, fmt.Errorf("instance not found: %s", instanceID)
 	}
 
 	instance := &InstanceData{
@@ -859,7 +910,7 @@ func (u *vaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 		instance.PlanID = v
 	}
 	if v, ok := indexData["deployment_name"].(string); ok {
-		instance.DeploymentName = v
+		instance.Deployment.Name = v
 	}
 
 	// Parse Unix timestamps - handle both old RFC3339 strings and new Unix timestamps
@@ -885,15 +936,12 @@ func (u *vaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 		}
 	}
 
-	if v, ok := indexData["last_synced_at"].(float64); ok {
-		instance.LastSyncedAt = time.Unix(int64(v), 0)
-	} else if v, ok := indexData["last_synced_at"].(int64); ok {
-		instance.LastSyncedAt = time.Unix(v, 0)
-	} else if v, ok := indexData["last_synced_at"].(string); ok {
-		// Fallback to RFC3339 for backward compatibility
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			instance.LastSyncedAt = t
+	// Store last_synced_at in metadata
+	if v, ok := indexData["last_synced_at"]; ok {
+		if instance.Metadata == nil {
+			instance.Metadata = make(map[string]interface{})
 		}
+		instance.Metadata["last_synced_at"] = v
 	}
 
 	// Get manifest
@@ -901,7 +949,7 @@ func (u *vaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 	manifestData, err := u.getFromVault(manifestPath)
 	if err == nil {
 		if manifest, ok := manifestData["manifest"].(string); ok {
-			instance.Manifest = manifest
+			instance.Deployment.Manifest = manifest
 		}
 	} else {
 		u.logDebug("No manifest found for instance %s", instanceID)
@@ -1091,13 +1139,13 @@ func (u *vaultUpdater) getFromVault(path string) (map[string]interface{}, error)
 		return nil, fmt.Errorf("vault is not of expected type VaultInterface")
 	}
 
-	var data map[string]interface{}
-	exists, err := vault.Get(path, &data)
+	data, err := vault.Get(path)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, fmt.Errorf("no data found at path %s", path)
+	// Return empty map without error if no data found
+	if data == nil {
+		return map[string]interface{}{}, nil
 	}
 
 	return data, nil
@@ -1112,13 +1160,25 @@ func (u *vaultUpdater) updateIndex(instanceID string, data map[string]interface{
 		return fmt.Errorf("vault is not of expected type VaultInterface")
 	}
 
-	idx, err := vault.GetIndex("db")
-	if err != nil {
-		return fmt.Errorf("failed to get vault index: %w", err)
+	// Get the index from vault at the standard path
+	indexPath := "secret/blacksmith/index/db"
+	indexData, err := vault.Get(indexPath)
+	if err != nil || indexData == nil {
+		// If index doesn't exist, create it
+		indexData = make(map[string]interface{})
 	}
 
-	idx.Data[instanceID] = data
-	return idx.Save()
+	// Update the index
+	if data == nil {
+		// Delete the entry
+		delete(indexData, instanceID)
+	} else {
+		// Add/update the entry
+		indexData[instanceID] = data
+	}
+
+	// Save the index back to vault
+	return vault.Put(indexPath, indexData)
 }
 
 func (u *vaultUpdater) getFromIndex(instanceID string) (map[string]interface{}, error) {
@@ -1130,14 +1190,20 @@ func (u *vaultUpdater) getFromIndex(instanceID string) (map[string]interface{}, 
 		return nil, fmt.Errorf("vault is not of expected type VaultInterface")
 	}
 
-	idx, err := vault.GetIndex("db")
+	// Get the index from vault at the standard path
+	indexPath := "secret/blacksmith/index/db"
+	indexData, err := vault.Get(indexPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get vault index: %w", err)
 	}
+	if indexData == nil {
+		return nil, fmt.Errorf("index not found")
+	}
 
-	raw, exists := idx.Lookup(instanceID)
+	// Look up the instance in the index
+	raw, exists := indexData[instanceID]
 	if !exists {
-		return nil, NotFoundError{Resource: "instance", ID: instanceID}
+		return nil, fmt.Errorf("instance not found: %s", instanceID)
 	}
 
 	// Convert raw data to map

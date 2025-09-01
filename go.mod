@@ -19,7 +19,9 @@ require (
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/smallfish/simpleyaml v0.1.0
+	github.com/sony/gobreaker v1.0.0
 	golang.org/x/crypto v0.40.0
+	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -78,7 +80,6 @@ require (
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
-	golang.org/x/time v0.12.0 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

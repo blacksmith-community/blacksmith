@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing! This document contains `nats-io/nats.go` specific contributing details. If you
 are a first-time contributor, please refer to the general [NATS Contributor Guide](https://nats.io/contributing/) to get
-a  overview of contributing to the NATS project.
+a comprehensive overview of contributing to the NATS project.
 
 ## Getting started
 

@@ -150,15 +150,145 @@ This approach ensures:
 
 ```yaml
 # blacksmith.conf
+# Enhanced Reconciler Configuration Example
+# This configuration is optimized for handling hundreds of service instances
+
 reconciler:
+  # Basic settings
   enabled: true
   interval: "30m"
+  debug: false
   max_concurrency: 10
   batch_size: 20
   retry_attempts: 5
   retry_delay: "15s"
   cache_ttl: "10m"
-  debug: false
+
+  # Concurrency controls - Critical for preventing overload
+  concurrency:
+    max_concurrent: 4              # Process max 4 deployments simultaneously
+    max_deployments_per_run: 100   # Limit deployments per reconciliation run
+    queue_size: 1000               # Work queue size
+    worker_pool_size: 10           # Number of worker goroutines
+    cooldown_period: "2s"          # Delay between batches to prevent bursts
+
+  # API-specific rate limiting and circuit breakers
+  apis:
+    bosh:
+      rate_limit:
+        requests_per_second: 10    # Max 10 requests/second to BOSH
+        burst: 5                   # Allow burst of 5 requests
+        wait_timeout: "5s"         # Max time to wait for rate limit
+      circuit_breaker:
+        enabled: true
+        failure_threshold: 5       # Open circuit after 5 failures
+        success_threshold: 2       # Close circuit after 2 successes
+        timeout: "60s"            # Wait 60s before attempting recovery
+        max_concurrent: 1         # Max concurrent requests when half-open
+      timeout: "30s"              # Request timeout
+      max_connections: 10         # Connection pool size
+      keep_alive: "30s"          # Keep-alive interval
+
+    cf:
+      rate_limit:
+        requests_per_second: 20    # CF can handle more requests
+        burst: 10
+        wait_timeout: "5s"
+      circuit_breaker:
+        enabled: true
+        failure_threshold: 3       # CF is more critical, fail faster
+        success_threshold: 2
+        timeout: "30s"
+        max_concurrent: 2
+      timeout: "15s"
+      max_connections: 20
+      keep_alive: "30s"
+
+    vault:
+      rate_limit:
+        requests_per_second: 50    # Vault is fast, allow more
+        burst: 20
+        wait_timeout: "3s"
+      circuit_breaker:
+        enabled: true
+        failure_threshold: 5
+        success_threshold: 2
+        timeout: "45s"
+        max_concurrent: 3
+      timeout: "10s"
+      max_connections: 30
+      keep_alive: "30s"
+
+  # Retry configuration with exponential backoff
+  retry:
+    max_attempts: 3
+    initial_delay: "1s"           # Start with 1 second delay
+    max_delay: "30s"             # Cap at 30 seconds
+    multiplier: 2.0              # Double delay each retry
+    jitter: 0.1                  # Add 10% jitter to prevent thundering herd
+    retryable_errors:            # Patterns to retry
+      - "timeout"
+      - "connection refused"
+      - "rate limit"
+      - "temporary"
+
+  # Batch processing configuration
+  batch:
+    size: 10                     # Process 10 items per batch
+    delay: "500ms"              # Delay between batches
+    max_parallel_batch: 2       # Max 2 batches in parallel
+    adaptive_scaling: true      # Adjust batch size based on performance
+    min_size: 5                 # Minimum batch size
+    max_size: 50               # Maximum batch size
+
+  # Timeout configuration
+  timeouts:
+    reconciliation_run: "15m"    # Overall reconciliation timeout
+    deployment_scan: "5m"        # BOSH deployment scan timeout
+    instance_discovery: "3m"     # CF instance discovery timeout
+    vault_operations: "2m"       # Vault operations timeout
+    health_check: "30s"         # Health check timeout
+    shutdown_grace_period: "30s" # Graceful shutdown timeout
+
+  # Metrics collection
+  metrics:
+    enabled: true
+    collection_interval: "30s"   # Collect metrics every 30 seconds
+    retention_period: "24h"      # Keep metrics for 24 hours
+    export_prometheus: true      # Export to Prometheus
+    prometheus_port: 9090        # Prometheus metrics port
+
+  # Backup configuration (existing)
+  backup:
+    enabled: true
+    retention_count: 5           # Keep 5 backups
+    retention_days: 7           # Keep backups for 7 days
+    compression_level: 9        # Maximum compression
+    cleanup_enabled: true       # Auto cleanup old backups
+    backup_on_update: true      # Backup before updates
+    backup_on_delete: true      # Backup before deletes
+
+# Production configuration for 500+ instances
+# Adjust these values based on your infrastructure capacity:
+#
+# For 100-200 instances:
+# - max_concurrent: 4
+# - batch.size: 10
+# - apis.bosh.requests_per_second: 10
+#
+# For 200-500 instances:
+# - max_concurrent: 6
+# - batch.size: 20
+# - apis.bosh.requests_per_second: 15
+#
+# For 500+ instances:
+# - max_concurrent: 8
+# - batch.size: 30
+# - apis.bosh.requests_per_second: 20
+#
+# Monitor your API response times and adjust accordingly.
+# If APIs start timing out, reduce concurrency and rate limits.
+reconciler:
   backup:
     enabled: true
     retention_count: 10

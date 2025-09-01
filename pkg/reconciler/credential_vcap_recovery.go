@@ -35,9 +35,8 @@ func (c *CredentialVCAPRecovery) RecoverCredentialsFromVCAP(ctx context.Context,
 
 	// Check if credentials already exist
 	credsPath := fmt.Sprintf("%s/credentials", instanceID)
-	var existingCreds map[string]interface{}
-	exists, err := c.vault.Get(credsPath, &existingCreds)
-	if exists && err == nil && len(existingCreds) > 0 {
+	existingCreds, err := c.vault.Get(credsPath)
+	if err == nil && len(existingCreds) > 0 {
 		c.logger.Debug("Credentials already exist for instance %s, skipping VCAP recovery", instanceID)
 		return nil
 	}
@@ -200,19 +199,16 @@ func (c *CredentialVCAPRecovery) storeRecoveredCredentials(instanceID string, cr
 	}
 
 	// Verify storage
-	var verifyCreds map[string]interface{}
-	exists, err := c.vault.Get(credsPath, &verifyCreds)
-	if !exists || err != nil {
+	verifyCreds, err := c.vault.Get(credsPath)
+	if err != nil || len(verifyCreds) == 0 {
 		return fmt.Errorf("failed to verify credential storage")
 	}
 
 	// Add recovery metadata
 	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
-	var metadata map[string]interface{}
-	if _, getErr := c.vault.Get(metadataPath, &metadata); getErr != nil {
-		c.logger.Debug("Could not get existing metadata: %s", getErr)
-	}
-	if metadata == nil {
+	metadata, getErr := c.vault.Get(metadataPath)
+	if getErr != nil || metadata == nil {
+		c.logger.Debug("Could not get existing metadata: %v", getErr)
 		metadata = make(map[string]interface{})
 	}
 
@@ -239,10 +235,9 @@ func (c *CredentialVCAPRecovery) BatchRecoverCredentials(ctx context.Context, in
 	for _, instanceID := range instanceIDs {
 		// Check if credentials already exist
 		credsPath := fmt.Sprintf("%s/credentials", instanceID)
-		var creds map[string]interface{}
-		exists, err := c.vault.Get(credsPath, &creds)
+		creds, err := c.vault.Get(credsPath)
 
-		if exists && err == nil && len(creds) > 0 {
+		if err == nil && len(creds) > 0 {
 			c.logger.Debug("Instance %s already has credentials, skipping", instanceID)
 			skipped++
 			continue

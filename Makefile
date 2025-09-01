@@ -51,19 +51,19 @@ dev: linux ## Build for Linux and run test deployment
 .PHONY: test
 test: ## Run all tests
 	@echo "$(GREEN)Running tests...$(RESET)"
-	@go test -v $(shell go list ./... | grep -v vendor)
+	@go test -v $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Tests complete$(RESET)"
 
 .PHONY: test-short
 test-short: ## Run tests in short mode
 	@echo "$(GREEN)Running short tests...$(RESET)"
-	@go test -short $(shell go list ./... | grep -v vendor)
+	@go test -short $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Short tests complete$(RESET)"
 
 .PHONY: coverage
 coverage: ## Generate test coverage report
 	@echo "$(GREEN)Generating coverage report...$(RESET)"
-	@go test -coverprofile=coverage.out $(shell go list ./... | grep -v vendor)
+	@go test -coverprofile=coverage.out $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@go tool cover -func=coverage.out
 	@echo "$(GREEN)✓ Coverage report generated$(RESET)"
 
@@ -84,13 +84,13 @@ report: coverage-html ## Alias for coverage-html (backwards compatibility)
 .PHONY: fmt
 fmt: ## Format all Go source files
 	@echo "$(GREEN)Formatting code (go fmt ./...)...$(RESET)"
-	@go fmt $(shell go list ./... | grep -v vendor)
+	@go fmt $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Code formatted$(RESET)"
 
 .PHONY: vet
 vet: ## Run go vet on all source files
 	@echo "$(GREEN)Vetting Code (go vet ./...)...$(RESET)"
-	@go vet $(shell go list ./... | grep -v vendor)
+	@go vet $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Vet analysis complete$(RESET)"
 
 .PHONY: lint
@@ -98,12 +98,12 @@ lint: fmt vet ## Run fmt and vet
 
 .PHONY: govulncheck
 govulncheck: ## Run vulnerability check on dependencies
-	@echo "$(GREEN)Checking for vulnerabilities...$(RESET)"
+	@echo "$(GREEN)Checking for vulnerabilities (govulncheck)...$(RESET)"
 	@command -v govulncheck >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing govulncheck...$(RESET)"; \
 		go install golang.org/x/vuln/cmd/govulncheck@latest; \
 	}
-	@govulncheck $(shell go list ./... | grep -v vendor)
+	@govulncheck $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Vulnerability check complete$(RESET)"
 
 .PHONY: gosec
@@ -113,7 +113,7 @@ gosec: ## Run security scanner on source code
 		echo "$(YELLOW)Installing gosec...$(RESET)"; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
 	}
-	@gosec -quiet -fmt text ./...
+	@gosec -quiet -fmt text -exclude-dir=tmp ./...
 	@echo "$(GREEN)✓ Security scan complete$(RESET)"
 
 .PHONY: staticcheck
@@ -123,7 +123,7 @@ staticcheck: ## Run staticcheck static analysis
 		echo "$(YELLOW)Installing staticcheck...$(RESET)"; \
 		go install honnef.co/go/tools/cmd/staticcheck@latest; \
 	}
-	@staticcheck $(shell go list ./... | grep -v vendor)
+	@staticcheck $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Staticcheck analysis complete$(RESET)"
 
 .PHONY: trivy
@@ -136,7 +136,7 @@ trivy: ## Run Trivy container and dependency scanner
 		echo "$(CYAN)  Or visit: https://aquasecurity.github.io/trivy$(RESET)"; \
 		exit 1; \
 	}
-	@trivy fs --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --skip-dirs vendor .
+	@trivy fs --scanners vuln,misconfig,secret --severity HIGH,CRITICAL --skip-dirs vendor,tmp .
 	@echo "$(GREEN)✓ Trivy scan complete$(RESET)"
 
 .PHONY: security

@@ -30,14 +30,16 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		deployment  DeploymentInfo
+		deployment  DeploymentDetail
 		expected    *MatchResult
 		expectError bool
 	}{
 		{
 			name: "exact match with service-plan-uuid format",
-			deployment: DeploymentInfo{
-				Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc",
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc",
+				},
 			},
 			expected: &MatchResult{
 				ServiceID:   "redis-cache",
@@ -49,8 +51,10 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 		},
 		{
 			name: "postgres deployment match",
-			deployment: DeploymentInfo{
-				Name: "postgres-basic-87654321-4321-4321-4321-cba987654321",
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name: "postgres-basic-87654321-4321-4321-4321-cba987654321",
+				},
 			},
 			expected: &MatchResult{
 				ServiceID:   "postgres",
@@ -62,22 +66,28 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 		},
 		{
 			name: "deployment with no UUID",
-			deployment: DeploymentInfo{
-				Name: "some-other-deployment",
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name: "some-other-deployment",
+				},
 			},
 			expected: nil,
 		},
 		{
 			name: "deployment with invalid UUID",
-			deployment: DeploymentInfo{
-				Name: "redis-cache-small-not-a-valid-uuid",
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name: "redis-cache-small-not-a-valid-uuid",
+				},
 			},
 			expected: nil,
 		},
 		{
 			name: "unknown service",
-			deployment: DeploymentInfo{
-				Name: "unknown-service-plan-12345678-1234-1234-1234-123456789abc",
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name: "unknown-service-plan-12345678-1234-1234-1234-123456789abc",
+				},
 			},
 			expected: nil,
 		},
@@ -132,8 +142,10 @@ func TestServiceMatcher_MatchDeployment_ByMetadata(t *testing.T) {
 	matcher := NewServiceMatcher(broker, logger)
 
 	// Test matching by metadata - this should work via the alternative matching logic
-	deployment := DeploymentInfo{
-		Name: "custom-redis-deployment",
+	deployment := DeploymentDetail{
+		DeploymentInfo: DeploymentInfo{
+			Name: "custom-redis-deployment",
+		},
 		Manifest: `
 name: custom-redis-deployment
 properties:
@@ -189,17 +201,16 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		deployment    DeploymentInfo
+		deployment    DeploymentDetail
 		expectedMatch bool
 		expectedSvc   string
 	}{
 		{
 			name: "match by standard naming",
-			deployment: DeploymentInfo{
-				Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc",
-				Releases: []ReleaseInfo{
-					{Name: "redis", Version: "1.0.0"},
-					{Name: "bpm", Version: "1.0.0"},
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name:     "redis-cache-small-12345678-1234-1234-1234-123456789abc",
+					Releases: []string{"redis/1.0.0", "bpm/1.0.0"},
 				},
 			},
 			expectedMatch: true,
@@ -207,10 +218,10 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 		},
 		{
 			name: "match postgres by standard naming",
-			deployment: DeploymentInfo{
-				Name: "postgres-basic-87654321-4321-4321-4321-cba987654321",
-				Releases: []ReleaseInfo{
-					{Name: "postgres", Version: "42.0.0"},
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name:     "postgres-basic-87654321-4321-4321-4321-cba987654321",
+					Releases: []string{"postgres/42.0.0"},
 				},
 			},
 			expectedMatch: true,
@@ -218,10 +229,10 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 		},
 		{
 			name: "no matching - invalid naming",
-			deployment: DeploymentInfo{
-				Name: "unknown-deployment",
-				Releases: []ReleaseInfo{
-					{Name: "unknown-release", Version: "1.0.0"},
+			deployment: DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name:     "unknown-deployment",
+					Releases: []string{"unknown-release/1.0.0"},
 				},
 			},
 			expectedMatch: false,
@@ -326,7 +337,13 @@ func TestServiceMatcher_ValidateMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := matcher.ValidateMatch(tt.match)
+			// Access the ValidateMatch method through the serviceMatcher
+			sm, ok := matcher.(*serviceMatcher)
+			if !ok {
+				t.Fatal("matcher is not of type *serviceMatcher")
+			}
+
+			err := sm.ValidateMatch(tt.match)
 			if tt.expectError {
 				if err == nil {
 					t.Error("Expected error but got nil")

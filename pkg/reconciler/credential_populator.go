@@ -34,10 +34,8 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 		return fmt.Errorf("vault is not of expected type")
 	}
 
-	var existingCreds map[string]interface{}
-	exists, err := vault.Get(credsPath, &existingCreds)
-
-	if exists && err == nil && len(existingCreds) > 0 {
+	existingCreds, err := vault.Get(credsPath)
+	if err == nil && len(existingCreds) > 0 {
 		cp.logger.Debug("Instance %s already has credentials (%d fields)", instanceID, len(existingCreds))
 		return nil
 	}
@@ -73,19 +71,15 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 	}
 
 	// Verify storage
-	var verifyCreds map[string]interface{}
-	exists, err = vault.Get(credsPath, &verifyCreds)
-	if !exists || err != nil {
+	verifyCreds, err := vault.Get(credsPath)
+	if err != nil || len(verifyCreds) == 0 {
 		return fmt.Errorf("failed to verify credential storage")
 	}
 
 	// Add metadata about credential recovery
 	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
-	var metadata map[string]interface{}
-	if _, getErr := vault.Get(metadataPath, &metadata); getErr != nil {
-		// Log get error but continue processing
-	}
-	if metadata == nil {
+	metadata, getErr := vault.Get(metadataPath)
+	if getErr != nil || metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 	metadata["credentials_populated_at"] = time.Now().Format(time.RFC3339)

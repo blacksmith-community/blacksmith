@@ -50,7 +50,7 @@ func (s *indexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 		data := map[string]interface{}{
 			"service_id":      inst.ServiceID,
 			"plan_id":         inst.PlanID,
-			"deployment_name": inst.DeploymentName,
+			"deployment_name": inst.Deployment.Name,
 			"reconciled":      true,
 			"reconciled_at":   time.Now().Format(time.RFC3339),
 			"reconciled_by":   "deployment_reconciler",

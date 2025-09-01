@@ -117,36 +117,30 @@ func (m *CFConnectionManager) discoverServiceInstancesFromEndpoint(client capi.C
 				// Check if this service instance belongs to our broker
 				if m.isServiceInstanceManagedByBroker(si, brokerServices) {
 					instanceDetails := reconciler.CFServiceInstanceDetails{
-						GUID:        si.GUID,
-						Name:        si.Name,
-						ServiceGUID: si.GUID, // We'll get the real service info from BOSH
-						ServiceName: "",      // Will be determined from BOSH deployment name
-						PlanGUID:    si.GUID, // We'll get the real plan info from BOSH
-						PlanName:    "",      // Will be determined from BOSH deployment name
-						OrgName:     org.Name,
-						OrgGUID:     org.GUID,
-						SpaceName:   space.Name,
-						SpaceGUID:   space.GUID,
-						CreatedAt:   si.CreatedAt,
-						UpdatedAt:   si.UpdatedAt,
+						GUID:           si.GUID,
+						Name:           si.Name,
+						ServiceID:      si.GUID, // We'll get the real service info from BOSH
+						PlanID:         si.GUID, // We'll get the real plan info from BOSH
+						OrganizationID: org.GUID,
+						SpaceID:        space.GUID,
+						CreatedAt:      si.CreatedAt,
+						UpdatedAt:      si.UpdatedAt,
 					}
 
 					// Set maintenance info as empty for now
 					instanceDetails.MaintenanceInfo = map[string]interface{}{}
 
 					// Get service bindings for this instance
-					instanceDetails.Bindings = m.getServiceBindings(client, si.GUID)
+					bindings := m.getServiceBindings(client, si.GUID)
 
-					// Add metadata
-					instanceDetails.Metadata = &reconciler.CFServiceInstanceMetadata{
-						ServiceName:   si.Name, // CF service instance name (user-provided)
-						OrgName:       org.Name,
-						OrgGUID:       org.GUID,
-						SpaceName:     space.Name,
-						SpaceGUID:     space.GUID,
-						Bindings:      instanceDetails.Bindings,
-						LastCheckedAt: time.Now(),
-					}
+					// Add metadata to MaintenanceInfo
+					instanceDetails.MaintenanceInfo["service_name"] = si.Name
+					instanceDetails.MaintenanceInfo["org_name"] = org.Name
+					instanceDetails.MaintenanceInfo["org_guid"] = org.GUID
+					instanceDetails.MaintenanceInfo["space_name"] = space.Name
+					instanceDetails.MaintenanceInfo["space_guid"] = space.GUID
+					instanceDetails.MaintenanceInfo["bindings"] = bindings
+					instanceDetails.MaintenanceInfo["last_checked_at"] = time.Now()
 
 					instances = append(instances, instanceDetails)
 					m.logger.Debug("added service instance %s (%s) from %s/%s", si.Name, si.GUID, org.Name, space.Name)
@@ -468,14 +462,14 @@ func (m *CFConnectionManager) GetHealthyClients() map[string]capi.Client {
 }
 
 // EnrichServiceInstanceWithCF attempts to enrich service instance metadata with CF information
-func (m *CFConnectionManager) EnrichServiceInstanceWithCF(instanceID, serviceName string) *reconciler.CFServiceInstanceMetadata {
+func (m *CFConnectionManager) EnrichServiceInstanceWithCF(instanceID, serviceName string) map[string]interface{} {
 	if len(m.clients) == 0 {
 		m.logger.Debug("skipping CF enrichment for instance %s: no CF endpoints configured", instanceID)
 		return nil
 	}
 
-	metadata := &reconciler.CFServiceInstanceMetadata{
-		LastCheckedAt: time.Now(),
+	metadata := map[string]interface{}{
+		"last_checked_at": time.Now(),
 	}
 
 	// Try each healthy CF endpoint to find the service instance
@@ -483,7 +477,7 @@ func (m *CFConnectionManager) EnrichServiceInstanceWithCF(instanceID, serviceNam
 		cfMetadata, err := m.findServiceInstanceInCF(client, instanceID, serviceName, endpointName)
 		if err != nil {
 			m.logger.Debug("failed to find service instance %s in CF endpoint %s: %v", instanceID, endpointName, err)
-			metadata.CheckError = fmt.Sprintf("endpoint %s: %v", endpointName, err)
+			metadata["check_error"] = fmt.Sprintf("endpoint %s: %v", endpointName, err)
 			continue
 		}
 
@@ -498,7 +492,7 @@ func (m *CFConnectionManager) EnrichServiceInstanceWithCF(instanceID, serviceNam
 }
 
 // findServiceInstanceInCF searches for a service instance across all orgs and spaces in a CF endpoint
-func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instanceID, serviceName, endpointName string) (*reconciler.CFServiceInstanceMetadata, error) {
+func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instanceID, serviceName, endpointName string) (map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -532,14 +526,14 @@ func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instan
 					// Found the service instance, get bindings
 					bindings := m.getServiceBindings(client, si.GUID)
 
-					return &reconciler.CFServiceInstanceMetadata{
-						ServiceName:   si.Name,
-						OrgName:       org.Name,
-						OrgGUID:       org.GUID,
-						SpaceName:     space.Name,
-						SpaceGUID:     space.GUID,
-						Bindings:      bindings,
-						LastCheckedAt: time.Now(),
+					return map[string]interface{}{
+						"service_name":    si.Name,
+						"org_name":        org.Name,
+						"org_guid":        org.GUID,
+						"space_name":      space.Name,
+						"space_guid":      space.GUID,
+						"bindings":        bindings,
+						"last_checked_at": time.Now(),
 					}, nil
 				}
 			}
@@ -550,7 +544,7 @@ func (m *CFConnectionManager) findServiceInstanceInCF(client capi.Client, instan
 }
 
 // getServiceBindings retrieves bindings for a service instance
-func (m *CFConnectionManager) getServiceBindings(client capi.Client, serviceInstanceGUID string) []reconciler.CFBindingInfo {
+func (m *CFConnectionManager) getServiceBindings(client capi.Client, serviceInstanceGUID string) []map[string]interface{} {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -561,17 +555,17 @@ func (m *CFConnectionManager) getServiceBindings(client capi.Client, serviceInst
 		return nil
 	}
 
-	var bindings []reconciler.CFBindingInfo
+	var bindings []map[string]interface{}
 	for _, binding := range bindingResponse.Resources {
-		bindingInfo := reconciler.CFBindingInfo{
-			GUID: binding.GUID,
-			Name: binding.Name,
-			Type: binding.Type,
+		bindingInfo := map[string]interface{}{
+			"guid": binding.GUID,
+			"name": binding.Name,
+			"type": binding.Type,
 		}
 
 		// If it's an app binding, try to get app details
 		if binding.Relationships.App != nil {
-			bindingInfo.AppGUID = binding.Relationships.App.Data.GUID
+			bindingInfo["app_guid"] = binding.Relationships.App.Data.GUID
 			// You could fetch app name here if needed
 		}
 

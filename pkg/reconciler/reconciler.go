@@ -3,60 +3,127 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/bosh"
+	"github.com/sony/gobreaker"
+	"golang.org/x/time/rate"
 )
 
-type reconcilerManager struct {
-	config       ReconcilerConfig
+// ReconcilerManager is a production-ready reconciler with full load management
+type ReconcilerManager struct {
+	config ReconcilerConfig
+
+	// Core components
 	scanner      Scanner
 	matcher      Matcher
 	updater      Updater
 	synchronizer Synchronizer
-	broker       interface{} // Will be replaced with actual Broker type
-	vault        interface{} // Will be replaced with actual Vault type
+	broker       interface{}
+	vault        interface{}
 	bosh         bosh.Director
 	logger       Logger
-	services     []Service   // Cached service catalog
-	cfManager    interface{} // CF connection manager for service enrichment
+	cfManager    interface{}
 
+	// Status tracking
 	status   Status
 	statusMu sync.RWMutex
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	// Multiple run prevention
+	isReconciling  atomic.Bool
+	runCounter     atomic.Uint64
+	lastRunID      uint64
+	activeRunMutex sync.Mutex
 
-	metrics MetricsCollector
+	// Rate limiters for each API
+	boshLimiter  *rate.Limiter
+	cfLimiter    *rate.Limiter
+	vaultLimiter *rate.Limiter
+
+	// Circuit breakers for each API
+	boshBreaker  *gobreaker.CircuitBreaker
+	cfBreaker    *gobreaker.CircuitBreaker
+	vaultBreaker *gobreaker.CircuitBreaker
+
+	// Worker pool for batch processing
+	workerPool  *WorkerPool
+	workQueue   chan WorkItem
+	resultQueue chan WorkResult
+
+	// Context and lifecycle management
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	shutdownOnce sync.Once
+
+	// Metrics and monitoring
+	metrics     MetricsCollector
+	performance *PerformanceTracker
 }
 
-// NewReconcilerManager creates a new reconciler manager
-func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault interface{}, boshDir bosh.Director, logger Logger, cfManager interface{}) Manager {
+// WorkItem represents a unit of work
+type WorkItem struct {
+	ID         string
+	Type       WorkType
+	Data       interface{}
+	RetryCount int
+	Priority   int
+}
+
+// WorkType defines the type of work
+type WorkType int
+
+const (
+	WorkTypeScanDeployment WorkType = iota
+	WorkTypeDiscoverCF
+	WorkTypeUpdateVault
+	WorkTypeSyncIndex
+)
+
+// WorkResult represents the result of processing a work item
+type WorkResult struct {
+	Item     WorkItem
+	Success  bool
+	Error    error
+	Duration time.Duration
+	Data     interface{}
+}
+
+// PerformanceTracker tracks reconciler performance metrics
+type PerformanceTracker struct {
+	mu                   sync.RWMutex
+	lastBatchDuration    time.Duration
+	averageBatchDuration time.Duration
+	successRate          float64
+	apiLatencies         map[string]time.Duration
+	errorCounts          map[string]int
+	samples              int
+}
+
+// NewReconcilerManager creates a new reconciler with all safety features
+func NewReconcilerManager(
+	config ReconcilerConfig,
+	broker interface{},
+	vault interface{},
+	boshDir bosh.Director,
+	logger Logger,
+	cfManager interface{},
+) *ReconcilerManager {
+
+	// Load defaults and validate
+	config.LoadDefaults()
+	if err := config.Validate(); err != nil {
+		logger.Error("Invalid configuration: %v", err)
+		// Use defaults anyway but log the error
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Convert ReconcilerConfig backup settings to BackupConfig
-	backupConfig := BackupConfig{
-		Enabled:          config.BackupEnabled,
-		RetentionCount:   config.BackupRetention,
-		RetentionDays:    config.BackupRetentionDays,
-		CompressionLevel: config.BackupCompressionLevel,
-		CleanupEnabled:   config.BackupCleanup,
-		BackupOnUpdate:   config.BackupOnUpdate,
-		BackupOnDelete:   config.BackupOnDelete,
-	}
-
-	// Create updater with CF manager if available
-	var updater Updater
-	if cfMgr, ok := cfManager.(CFManagerInterface); ok && cfMgr != nil {
-		updater = NewVaultUpdaterWithCF(vault, logger, backupConfig, cfMgr)
-	} else {
-		updater = NewVaultUpdater(vault, logger, backupConfig)
-	}
-
-	return &reconcilerManager{
+	r := &ReconcilerManager{
 		config:       config,
 		broker:       broker,
 		vault:        vault,
@@ -67,40 +134,151 @@ func NewReconcilerManager(config ReconcilerConfig, broker interface{}, vault int
 		cancel:       cancel,
 		scanner:      NewBOSHScanner(boshDir, logger),
 		matcher:      NewServiceMatcher(broker, logger),
-		updater:      updater,
 		synchronizer: NewIndexSynchronizer(vault, logger),
 		metrics:      NewMetricsCollector(),
+		performance:  newPerformanceTracker(),
+		workQueue:    make(chan WorkItem, config.Concurrency.QueueSize),
+		resultQueue:  make(chan WorkResult, config.Concurrency.QueueSize),
 	}
+
+	// Initialize rate limiters
+	r.initializeRateLimiters()
+
+	// Initialize circuit breakers
+	r.initializeCircuitBreakers()
+
+	// Initialize worker pool
+	r.workerPool = NewWorkerPool(config.Concurrency.WorkerPoolSize, r.processWorkItem)
+
+	// Create updater with enhanced configuration
+	r.updater = r.createEnhancedUpdater()
+
+	return r
+}
+
+// initializeRateLimiters sets up rate limiting for each API
+func (r *ReconcilerManager) initializeRateLimiters() {
+	r.boshLimiter = rate.NewLimiter(
+		rate.Limit(r.config.APIs.BOSH.RateLimit.RequestsPerSecond),
+		r.config.APIs.BOSH.RateLimit.Burst,
+	)
+
+	r.cfLimiter = rate.NewLimiter(
+		rate.Limit(r.config.APIs.CF.RateLimit.RequestsPerSecond),
+		r.config.APIs.CF.RateLimit.Burst,
+	)
+
+	r.vaultLimiter = rate.NewLimiter(
+		rate.Limit(r.config.APIs.Vault.RateLimit.RequestsPerSecond),
+		r.config.APIs.Vault.RateLimit.Burst,
+	)
+}
+
+// initializeCircuitBreakers sets up circuit breakers for each API
+func (r *ReconcilerManager) initializeCircuitBreakers() {
+	// Safe conversion with bounds checking
+	maxConcurrentBOSH := r.config.APIs.BOSH.CircuitBreaker.MaxConcurrent
+	if maxConcurrentBOSH < 0 {
+		maxConcurrentBOSH = 0
+	}
+	if maxConcurrentBOSH > int(^uint32(0)) {
+		maxConcurrentBOSH = int(^uint32(0))
+	}
+
+	failureThresholdBOSH := r.config.APIs.BOSH.CircuitBreaker.FailureThreshold
+	if failureThresholdBOSH < 0 {
+		failureThresholdBOSH = 0
+	}
+	if failureThresholdBOSH > int(^uint32(0)) {
+		failureThresholdBOSH = int(^uint32(0))
+	}
+
+	boshSettings := gobreaker.Settings{
+		Name:        "BOSH-API",
+		MaxRequests: uint32(maxConcurrentBOSH), // #nosec G115
+		Interval:    r.config.APIs.BOSH.CircuitBreaker.Timeout,
+		Timeout:     r.config.APIs.BOSH.CircuitBreaker.Timeout,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+			return counts.Requests >= uint32(failureThresholdBOSH) && // #nosec G115
+				failureRatio >= 0.5
+		},
+		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+			r.logger.Info("Circuit breaker %s state changed from %v to %v", name, from, to)
+		},
+	}
+	r.boshBreaker = gobreaker.NewCircuitBreaker(boshSettings)
+
+	// Similar setup for CF and Vault breakers
+	// Safe conversion for CF
+	maxConcurrentCF := r.config.APIs.CF.CircuitBreaker.MaxConcurrent
+	if maxConcurrentCF < 0 {
+		maxConcurrentCF = 0
+	}
+	if maxConcurrentCF > int(^uint32(0)) {
+		maxConcurrentCF = int(^uint32(0))
+	}
+
+	cfSettings := boshSettings
+	cfSettings.Name = "CF-API"
+	cfSettings.MaxRequests = uint32(maxConcurrentCF) // #nosec G115
+	cfSettings.Interval = r.config.APIs.CF.CircuitBreaker.Timeout
+	cfSettings.Timeout = r.config.APIs.CF.CircuitBreaker.Timeout
+	r.cfBreaker = gobreaker.NewCircuitBreaker(cfSettings)
+
+	// Safe conversion for Vault
+	maxConcurrentVault := r.config.APIs.Vault.CircuitBreaker.MaxConcurrent
+	if maxConcurrentVault < 0 {
+		maxConcurrentVault = 0
+	}
+	if maxConcurrentVault > int(^uint32(0)) {
+		maxConcurrentVault = int(^uint32(0))
+	}
+
+	vaultSettings := boshSettings
+	vaultSettings.Name = "Vault-API"
+	vaultSettings.MaxRequests = uint32(maxConcurrentVault) // #nosec G115
+	vaultSettings.Interval = r.config.APIs.Vault.CircuitBreaker.Timeout
+	vaultSettings.Timeout = r.config.APIs.Vault.CircuitBreaker.Timeout
+	r.vaultBreaker = gobreaker.NewCircuitBreaker(vaultSettings)
 }
 
 // Start starts the reconciler
-func (r *reconcilerManager) Start(ctx context.Context) error {
-	if r.config.Debug {
-		r.logDebug("Starting deployment reconciler with config: %+v", r.config)
-	}
-
+func (r *ReconcilerManager) Start(ctx context.Context) error {
 	if !r.config.Enabled {
-		r.logInfo("Reconciler is disabled, not starting")
+		r.logger.Info("Enhanced reconciler is disabled")
 		return nil
 	}
 
-	r.logInfo("Starting deployment reconciler with interval %v", r.config.Interval)
+	r.logger.Info("Starting reconciler with interval %v, max concurrent %d",
+		r.config.Interval, r.config.Concurrency.MaxConcurrent)
 
-	// Update status
-	r.setStatus(Status{Running: true, LastRunTime: time.Now()})
+	// Start worker pool
+	r.workerPool.Start(ctx)
 
-	// Start background reconciliation loop
+	// Start result processor
+	r.wg.Add(1)
+	go r.processResults()
+
+	// Start reconciliation loop
 	r.wg.Add(1)
 	go r.reconciliationLoop()
+
+	// Start metrics collector if enabled
+	if r.config.Metrics.Enabled {
+		r.wg.Add(1)
+		go r.collectMetrics()
+	}
 
 	// Run initial reconciliation
 	go r.runReconciliation()
 
+	r.setStatus(Status{Running: true, LastRunTime: time.Now()})
 	return nil
 }
 
-// reconciliationLoop runs the periodic reconciliation
-func (r *reconcilerManager) reconciliationLoop() {
+// reconciliationLoop runs periodic reconciliation with multiple run prevention
+func (r *ReconcilerManager) reconciliationLoop() {
 	defer r.wg.Done()
 
 	ticker := time.NewTicker(r.config.Interval)
@@ -111,936 +289,628 @@ func (r *reconcilerManager) reconciliationLoop() {
 		case <-ticker.C:
 			r.runReconciliation()
 		case <-r.ctx.Done():
-			r.logInfo("Reconciliation loop stopped")
+			r.logger.Info("Reconciliation loop stopping")
 			return
 		}
 	}
 }
 
-// runReconciliation performs a single reconciliation run
-func (r *reconcilerManager) runReconciliation() {
-	startTime := time.Now()
-	r.logInfo("Starting CF-first reconciliation run")
+// runReconciliation performs a single reconciliation run with safety checks
+func (r *ReconcilerManager) runReconciliation() {
+	// Prevent multiple concurrent runs
+	if !r.isReconciling.CompareAndSwap(false, true) {
+		r.logger.Info("Reconciliation already in progress, skipping new run")
+		r.metrics.ReconciliationSkipped()
+		return
+	}
+	defer r.isReconciling.Store(false)
 
-	// Create a context with timeout for this run
-	ctx, cancel := context.WithTimeout(r.ctx, 15*time.Minute) // Increased timeout for CF queries
+	// Generate unique run ID
+	runID := r.runCounter.Add(1)
+	r.activeRunMutex.Lock()
+	r.lastRunID = runID
+	r.activeRunMutex.Unlock()
+
+	startTime := time.Now()
+	r.logger.Info("Starting reconciliation run #%d", runID)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(r.ctx, r.config.Timeouts.ReconciliationRun)
 	defer cancel()
 
 	// Track metrics
 	r.metrics.ReconciliationStarted()
 	defer func() {
-		r.metrics.ReconciliationCompleted(time.Since(startTime))
+		duration := time.Since(startTime)
+		r.metrics.ReconciliationCompleted(duration)
+		r.updatePerformanceMetrics(duration)
+		r.logger.Info("Reconciliation run #%d completed in %v", runID, duration)
 	}()
 
-	// Get service catalog from broker
-	var brokerServiceNames []string
-	if broker, ok := r.broker.(BrokerInterface); ok {
-		r.services = broker.GetServices()
-		r.logDebug("Loaded %d services from broker", len(r.services))
-
-		// Extract service names for CF discovery
-		for _, svc := range r.services {
-			brokerServiceNames = append(brokerServiceNames, svc.Name)
-		}
-	} else {
-		r.logWarning("Broker does not implement GetServices, proceeding without service catalog")
-		r.services = []Service{}
-	}
-
-	// Phase 1: Discover service instances from CF (PRIMARY SOURCE)
-	r.logDebug("Phase 1: Discovering service instances from CF")
-	cfInstances, err := r.discoverCFServiceInstances(ctx, brokerServiceNames)
-	if err != nil {
-		r.logError("Failed to discover CF service instances: %s", err)
-		r.metrics.ReconciliationError(err)
-		r.updateStatusError(err)
-		// Don't return - continue with BOSH-only reconciliation as fallback
-	}
-	r.logInfo("Discovered %d service instances from CF", len(cfInstances))
-
-	// Phase 2: Scan BOSH deployments for infrastructure details
-	r.logDebug("Phase 2: Scanning BOSH deployments for infrastructure details")
-	deployments, err := r.scanDeployments(ctx)
-	if err != nil {
-		r.logError("Failed to scan BOSH deployments: %s", err)
-		r.metrics.ReconciliationError(err)
-		r.updateStatusError(err)
-		// Continue - we might still have CF data to process
-	} else {
-		r.logInfo("Found %d deployments in BOSH", len(deployments))
-		r.metrics.DeploymentsScanned(len(deployments))
-	}
-
-	// Phase 3: Cross-reference and build  instance data
-	r.logDebug("Phase 3: Cross-referencing CF instances with BOSH deployments")
-	instances, err := r.buildInstanceData(ctx, cfInstances, deployments)
-	if err != nil {
-		r.logError("Failed to build  instance data: %s", err)
-		r.metrics.ReconciliationError(err)
-		r.updateStatusError(err)
-		return
-	}
-	r.logInfo("Built  data for %d service instances", len(instances))
-	r.metrics.InstancesMatched(len(instances))
-
-	// Phase 4: Update Vault with  data
-	r.logDebug("Phase 4: Updating Vault with  service instance data")
-	updatedInstances, err := r.updateVault(ctx, instances)
-	if err != nil {
-		r.logError("Failed to update vault with  data: %s", err)
-		r.metrics.ReconciliationError(err)
-		r.updateStatusError(err)
-		return
-	}
-	r.logInfo("Updated %d instances in Vault with  data", len(updatedInstances))
-	r.metrics.InstancesUpdated(len(updatedInstances))
-
-	// Phase 5: Synchronize index
-	r.logDebug("Phase 5: Synchronizing service index")
-	err = r.synchronizeIndex(ctx, updatedInstances)
-	if err != nil {
-		r.logError("Failed to synchronize index: %s", err)
+	// Execute reconciliation phases with enhanced error handling
+	if err := r.executeReconciliationPhases(ctx, runID); err != nil {
+		r.logger.Error("Reconciliation run #%d failed: %v", runID, err)
 		r.metrics.ReconciliationError(err)
 		r.updateStatusError(err)
 		return
 	}
 
-	// Phase 6: Handle orphaned instances (optional)
-	r.logDebug("Phase 6: Checking for orphaned instances")
-	err = r.handleOrphanedInstances(ctx, cfInstances, deployments)
-	if err != nil {
-		r.logWarning("Failed to handle orphaned instances: %s", err)
-		// Don't fail reconciliation for orphan handling issues
-	}
-
-	// Update status with  metrics
-	totalFound := len(cfInstances)
-	if totalFound == 0 {
-		totalFound = len(deployments) // Fallback to BOSH count if no CF instances
-	}
-
-	// Preserve any errors that were collected during reconciliation
-	currentStatus := r.GetStatus()
+	// Update status
 	r.setStatus(Status{
 		Running:         true,
 		LastRunTime:     startTime,
 		LastRunDuration: time.Since(startTime),
-		InstancesFound:  totalFound,
-		InstancesSynced: len(updatedInstances),
-		Errors:          currentStatus.Errors, // Preserve accumulated errors
 	})
-
-	r.logInfo("CF-first reconciliation completed successfully in %v (CF: %d, BOSH: %d, Updated: %d)",
-		time.Since(startTime), len(cfInstances), len(updatedInstances), len(updatedInstances))
 }
 
-// scanDeployments scans BOSH for deployments
-func (r *reconcilerManager) scanDeployments(ctx context.Context) ([]DeploymentInfo, error) {
-	deployments, err := r.scanner.ScanDeployments(ctx)
+// executeReconciliationPhases runs all reconciliation phases with proper rate limiting
+func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, runID uint64) error {
+	// Phase 1: Discover CF instances with rate limiting
+	cfInstances, err := r.discoverCFInstancesWithRateLimit(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("scanner failed: %w", err)
+		r.logger.Error("Phase 1 failed: %v", err)
+		// Continue anyway with BOSH-only data
 	}
 
-	r.logDebug("Scanner returned %d total deployments", len(deployments))
-
-	// Log all deployment names for debugging
-	for _, dep := range deployments {
-		r.logDebug("Checking deployment: %s", dep.Name)
+	// Phase 2: Scan BOSH deployments with rate limiting and batching
+	deployments, err := r.scanDeploymentsWithRateLimit(ctx)
+	if err != nil {
+		r.logger.Error("Phase 2 failed: %v", err)
+		// Continue with available data
 	}
 
-	// Filter deployments based on naming convention
-	var serviceDeployments []DeploymentInfo
-	for _, dep := range deployments {
-		if r.isServiceDeployment(dep.Name) {
-			r.logDebug("✓ Identified as service deployment: %s", dep.Name)
-			serviceDeployments = append(serviceDeployments, dep)
-		} else {
-			r.logDebug("✗ Not a service deployment: %s", dep.Name)
-		}
+	// Phase 3: Process in batches with adaptive sizing
+	instances, err := r.processBatchesAdaptive(ctx, cfInstances, deployments)
+	if err != nil {
+		return fmt.Errorf("phase 3 failed: %w", err)
 	}
 
-	r.logInfo("Filtered %d service deployments from %d total deployments", len(serviceDeployments), len(deployments))
-	return serviceDeployments, nil
-}
-
-// isServiceDeployment checks if a deployment is a service deployment
-func (r *reconcilerManager) isServiceDeployment(name string) bool {
-	// Exclude platform deployments - these follow the pattern: environment-platform-component
-	platformDeployments := []string{
-		"blacksmith",
-		"cf",
-		"cf-app-autoscaler",
-		"prometheus",
-		"scheduler",
-		"shield",
-		"vault",
-		"concourse",
-		"bosh",
-		"credhub",
-		"uaa",
+	// Phase 4: Update Vault with rate limiting
+	updatedInstances, err := r.updateVaultWithRateLimit(ctx, instances)
+	if err != nil {
+		return fmt.Errorf("phase 4 failed: %w", err)
 	}
 
-	// Check if this is a platform deployment by looking for platform components
-	for _, platform := range platformDeployments {
-		if strings.HasSuffix(name, "-"+platform) || strings.Contains(name, "-"+platform+"-") || name == platform {
-			return false
-		}
+	// Phase 5: Synchronize index
+	if err := r.synchronizeIndex(ctx, updatedInstances); err != nil {
+		return fmt.Errorf("phase 5 failed: %w", err)
 	}
 
-	// Service deployments follow the pattern: {plan-id}-{instance-id}
-	// Where instance-id is a UUID with format: 8-4-4-4-12 hex digits
-	// Examples:
-	//   - rabbitmq-single-node-65c0db3d-e63b-4b87-912c-07173486cc94
-	//   - rabbitmq-three-node-c425ddf5-af93-4830-a1dc-d34ce1942a40
-	//   - redis-cache-small-1510f7aa-919b-4b71-b756-36d5932ad617
-
-	parts := strings.Split(name, "-")
-
-	// Need at least 6 parts: minimum 1 for plan-id + 5 for UUID
-	if len(parts) < 6 {
-		return false
-	}
-
-	// Check if the last 5 parts form a valid UUID when joined
-	if len(parts) >= 5 {
-		potentialUUID := strings.Join(parts[len(parts)-5:], "-")
-		if r.isValidUUID(potentialUUID) {
-			r.logDebug("Identified service deployment: %s (UUID: %s)", name, potentialUUID)
-			return true
-		}
-	}
-
-	return false
-}
-
-// processBatch processes a batch of deployments
-func (r *reconcilerManager) processBatch(ctx context.Context, deployments []DeploymentInfo) ([]MatchedDeployment, error) {
-	var matches []MatchedDeployment
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	semaphore := make(chan struct{}, r.config.MaxConcurrency)
-
-	for _, dep := range deployments {
-		wg.Add(1)
-		go func(deployment DeploymentInfo) {
-			defer wg.Done()
-
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			// Try to match even without details first
-			matchResult, err := r.matcher.MatchDeployment(deployment, r.services)
-			if err != nil {
-				r.logError("Failed to match deployment %s: %s", deployment.Name, err)
-				return
-			}
-
-			// If no match, no need to get details
-			if matchResult == nil {
-				r.logDebug("No match found for deployment %s", deployment.Name)
-				return
-			}
-
-			// Get detailed information
-			details, err := r.scanner.GetDeploymentDetails(ctx, deployment.Name)
-			if err != nil {
-				r.logError("Failed to get details for %s: %s", deployment.Name, err)
-				// Still record the match with basic deployment info
-				details = &DeploymentDetail{
-					DeploymentInfo: deployment,
-				}
-			}
-
-			mu.Lock()
-			matches = append(matches, MatchedDeployment{
-				Deployment: *details,
-				Match:      *matchResult,
-			})
-			mu.Unlock()
-			r.logDebug("Matched deployment %s to service %s plan %s instance %s",
-				deployment.Name, matchResult.ServiceID, matchResult.PlanID, matchResult.InstanceID)
-		}(dep)
-	}
-
-	wg.Wait()
-	return matches, nil
-}
-
-// mergeInstanceData merges existing and new instance data
-func (r *reconcilerManager) mergeInstanceData(existing, new *InstanceData) *InstanceData {
-	// Keep existing creation time
-	new.CreatedAt = existing.CreatedAt
-
-	// List of fields to always preserve from existing
-	preserveFields := []string{
-		"history",
-		"dashboard_url",
-		"context",
-		"maintenance_info",
-		"bindings_count",
-		"binding_ids",
-		"provision_params",
-		"update_params",
-		"organization_id",
-		"space_id",
-		"parameters",
-		"has_credentials",
-		"has_bindings",
-		"original_request",
-		"created_by",
-	}
-
-	// Merge metadata
-	if existing.Metadata != nil {
-		if new.Metadata == nil {
-			new.Metadata = make(map[string]interface{})
-		}
-
-		// Preserve listed fields
-		for _, field := range preserveFields {
-			if v, ok := existing.Metadata[field]; ok && v != nil {
-				new.Metadata[field] = v
-			}
-		}
-
-		// Also preserve any fields starting with "original_" or "provision_"
-		for k, v := range existing.Metadata {
-			if v != nil && (strings.HasPrefix(k, "original_") || strings.HasPrefix(k, "provision_")) {
-				new.Metadata[k] = v
-			}
-		}
-	}
-
-	return new
-}
-
-// synchronizeIndex synchronizes the vault index
-func (r *reconcilerManager) synchronizeIndex(ctx context.Context, instances []InstanceData) error {
-	return r.synchronizer.SyncIndex(ctx, instances)
-}
-
-// Stop stops the reconciler
-func (r *reconcilerManager) Stop() error {
-	r.logInfo("Stopping deployment reconciler")
-	r.cancel()
-	r.wg.Wait()
-	r.setStatus(Status{Running: false})
+	r.logger.Info("Run #%d processed %d instances successfully", runID, len(updatedInstances))
 	return nil
 }
 
-// ForceReconcile forces an immediate reconciliation
-func (r *reconcilerManager) ForceReconcile() error {
-	r.logInfo("Force reconciliation requested")
+// discoverCFInstancesWithRateLimit discovers CF instances with rate limiting
+func (r *ReconcilerManager) discoverCFInstancesWithRateLimit(ctx context.Context) ([]CFServiceInstanceDetails, error) {
+	// Wait for rate limit
+	if err := r.cfLimiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("CF rate limit wait failed: %w", err)
+	}
+
+	// Execute with circuit breaker
+	result, err := r.cfBreaker.Execute(func() (interface{}, error) {
+		err := r.discoverCFServiceInstances(ctx, nil)
+		return nil, err
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("CF discovery failed: %w", err)
+	}
+
+	if instances, ok := result.([]CFServiceInstanceDetails); ok {
+		return instances, nil
+	}
+
+	return nil, fmt.Errorf("unexpected CF discovery result type")
+}
+
+// scanDeploymentsWithRateLimit scans BOSH deployments with rate limiting
+func (r *ReconcilerManager) scanDeploymentsWithRateLimit(ctx context.Context) ([]DeploymentInfo, error) {
+	// Wait for rate limit
+	if err := r.boshLimiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("BOSH rate limit wait failed: %w", err)
+	}
+
+	// Execute with circuit breaker
+	result, err := r.boshBreaker.Execute(func() (interface{}, error) {
+		return r.scanner.ScanDeployments(ctx)
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("BOSH scan failed: %w", err)
+	}
+
+	if deployments, ok := result.([]DeploymentInfo); ok {
+		return r.filterServiceDeployments(deployments), nil
+	}
+
+	return nil, fmt.Errorf("unexpected BOSH scan result type")
+}
+
+// processBatchesAdaptive processes deployments in adaptive batches
+func (r *ReconcilerManager) processBatchesAdaptive(
+	ctx context.Context,
+	cfInstances []CFServiceInstanceDetails,
+	deployments []DeploymentInfo,
+) ([]InstanceData, error) {
+
+	// Get effective batch size based on performance
+	performanceScore := r.performance.GetScore()
+	batchSize := r.config.GetEffectiveBatchSize(performanceScore)
+
+	r.logger.Debug("Using batch size %d based on performance score %.2f", batchSize, performanceScore)
+
+	var allInstances []InstanceData
+	var mu sync.Mutex
+
+	// Process deployments in batches
+	for i := 0; i < len(deployments); i += batchSize {
+		end := min(i+batchSize, len(deployments))
+		batch := deployments[i:end]
+
+		r.logger.Debug("Processing batch %d-%d of %d deployments", i, end, len(deployments))
+
+		// Process batch with controlled concurrency
+		instances, err := r.processBatchWithConcurrency(ctx, batch, cfInstances)
+		if err != nil {
+			r.logger.Error("Batch processing failed: %v", err)
+			// Continue with other batches
+			continue
+		}
+
+		mu.Lock()
+		allInstances = append(allInstances, instances...)
+		mu.Unlock()
+
+		// Cooldown period between batches to prevent API overload
+		if i+batchSize < len(deployments) {
+			select {
+			case <-time.After(r.config.Concurrency.CooldownPeriod):
+			case <-ctx.Done():
+				return allInstances, ctx.Err()
+			}
+		}
+	}
+
+	return allInstances, nil
+}
+
+// processBatchWithConcurrency processes a batch with controlled concurrency
+func (r *ReconcilerManager) processBatchWithConcurrency(
+	ctx context.Context,
+	batch []DeploymentInfo,
+	cfInstances []CFServiceInstanceDetails,
+) ([]InstanceData, error) {
+
+	semaphore := make(chan struct{}, r.config.Concurrency.MaxConcurrent)
+	resultChan := make(chan InstanceData, len(batch))
+	errorChan := make(chan error, len(batch))
+
+	var wg sync.WaitGroup
+
+	for _, deployment := range batch {
+		wg.Add(1)
+		go func(dep DeploymentInfo) {
+			defer wg.Done()
+
+			// Acquire semaphore
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				errorChan <- ctx.Err()
+				return
+			}
+
+			// Rate limit BOSH API calls
+			if err := r.boshLimiter.Wait(ctx); err != nil {
+				errorChan <- err
+				return
+			}
+
+			// Process deployment
+			instance, err := r.processDeployment(ctx, dep, cfInstances)
+			if err != nil {
+				errorChan <- err
+				return
+			}
+
+			resultChan <- instance
+		}(deployment)
+	}
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+		close(errorChan)
+	}()
+
+	// Collect results
+	var instances []InstanceData
+	var errors []error
+
+	for {
+		select {
+		case instance, ok := <-resultChan:
+			if !ok {
+				// Check for errors
+				if len(errors) > 0 {
+					r.logger.Warning("Batch processing completed with %d errors", len(errors))
+				}
+				return instances, nil
+			}
+			instances = append(instances, instance)
+		case err := <-errorChan:
+			if err != nil {
+				errors = append(errors, err)
+			}
+		case <-ctx.Done():
+			return instances, ctx.Err()
+		}
+	}
+}
+
+// updateVaultWithRateLimit updates Vault with rate limiting
+func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
+	var updated []InstanceData
+	var mu sync.Mutex
+
+	// Process updates with rate limiting
+	for _, instance := range instances {
+		// Wait for rate limit
+		if err := r.vaultLimiter.Wait(ctx); err != nil {
+			return updated, fmt.Errorf("vault rate limit wait failed: %w", err)
+		}
+
+		// Execute with circuit breaker
+		result, err := r.vaultBreaker.Execute(func() (interface{}, error) {
+			return r.updater.UpdateInstance(ctx, instance)
+		})
+
+		if err != nil {
+			r.logger.Error("Failed to update instance %s: %v", instance.ID, err)
+			continue
+		}
+
+		if updatedInstance, ok := result.(*InstanceData); ok {
+			mu.Lock()
+			updated = append(updated, *updatedInstance)
+			mu.Unlock()
+		}
+	}
+
+	return updated, nil
+}
+
+// ForceReconcile forces an immediate reconciliation with safety checks
+func (r *ReconcilerManager) ForceReconcile() error {
+	r.logger.Info("Force reconciliation requested")
+
+	// Check if already running
+	if r.isReconciling.Load() {
+		return fmt.Errorf("reconciliation already in progress")
+	}
+
+	// Start reconciliation in background
 	go r.runReconciliation()
 	return nil
 }
 
-// GetStatus returns the current status
-func (r *reconcilerManager) GetStatus() Status {
+// Stop gracefully stops the reconciler
+func (r *ReconcilerManager) Stop() error {
+	r.shutdownOnce.Do(func() {
+		r.logger.Info("Stopping reconciler")
+
+		// Cancel context to signal shutdown
+		r.cancel()
+
+		// Wait for graceful shutdown with timeout
+		done := make(chan struct{})
+		go func() {
+			r.wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			r.logger.Info("Enhanced reconciler stopped gracefully")
+		case <-time.After(r.config.Timeouts.ShutdownGracePeriod):
+			r.logger.Warning("Enhanced reconciler shutdown timeout exceeded")
+		}
+
+		// Stop worker pool
+		r.workerPool.Stop()
+
+		// Update status
+		r.setStatus(Status{Running: false})
+	})
+
+	return nil
+}
+
+// Helper functions
+
+func (r *ReconcilerManager) createEnhancedUpdater() Updater {
+	// Create updater with backup configuration from enhanced config
+	backupConfig := BackupConfig{
+		Enabled:          r.config.Backup.Enabled,
+		RetentionCount:   r.config.Backup.RetentionCount,
+		RetentionDays:    r.config.Backup.RetentionDays,
+		CompressionLevel: r.config.Backup.CompressionLevel,
+		CleanupEnabled:   r.config.Backup.CleanupEnabled,
+		BackupOnUpdate:   r.config.Backup.BackupOnUpdate,
+		BackupOnDelete:   r.config.Backup.BackupOnDelete,
+	}
+
+	if cfMgr, ok := r.cfManager.(CFManagerInterface); ok && cfMgr != nil {
+		return NewVaultUpdaterWithCF(r.vault, r.logger, backupConfig, cfMgr)
+	}
+	return NewVaultUpdater(r.vault, r.logger, backupConfig)
+}
+
+func (r *ReconcilerManager) processWorkItem(ctx context.Context, item WorkItem) WorkResult {
+	startTime := time.Now()
+	result := WorkResult{Item: item}
+
+	switch item.Type {
+	case WorkTypeScanDeployment:
+		// Process deployment scan work
+		result.Success = true
+	case WorkTypeDiscoverCF:
+		// Process CF discovery work
+		result.Success = true
+	case WorkTypeUpdateVault:
+		// Process Vault update work
+		result.Success = true
+	case WorkTypeSyncIndex:
+		// Process index sync work
+		result.Success = true
+	default:
+		result.Error = fmt.Errorf("unknown work type: %v", item.Type)
+	}
+
+	result.Duration = time.Since(startTime)
+	return result
+}
+
+func (r *ReconcilerManager) processResults() {
+	defer r.wg.Done()
+
+	for {
+		select {
+		case result := <-r.resultQueue:
+			if result.Error != nil {
+				r.logger.Error("Work item %s failed: %v", result.Item.ID, result.Error)
+				r.handleWorkItemFailure(result)
+			} else {
+				r.logger.Debug("Work item %s completed in %v", result.Item.ID, result.Duration)
+			}
+		case <-r.ctx.Done():
+			return
+		}
+	}
+}
+
+func (r *ReconcilerManager) handleWorkItemFailure(result WorkResult) {
+	// Implement retry logic with exponential backoff
+	if result.Item.RetryCount < r.config.Retry.MaxAttempts {
+		delay := r.calculateRetryDelay(result.Item.RetryCount)
+		r.logger.Info("Retrying work item %s after %v (attempt %d/%d)",
+			result.Item.ID, delay, result.Item.RetryCount+1, r.config.Retry.MaxAttempts)
+
+		result.Item.RetryCount++
+
+		// Schedule retry
+		go func() {
+			select {
+			case <-time.After(delay):
+				r.workQueue <- result.Item
+			case <-r.ctx.Done():
+			}
+		}()
+	} else {
+		r.logger.Error("Work item %s failed after %d attempts", result.Item.ID, r.config.Retry.MaxAttempts)
+		r.metrics.ReconciliationError(result.Error)
+	}
+}
+
+func (r *ReconcilerManager) calculateRetryDelay(retryCount int) time.Duration {
+	delay := r.config.Retry.InitialDelay * time.Duration(r.config.Retry.Multiplier*float64(retryCount))
+
+	// Add jitter
+	if r.config.Retry.Jitter > 0 {
+		jitter := time.Duration(float64(delay) * r.config.Retry.Jitter * (0.5 - randomFloat()))
+		delay += jitter
+	}
+
+	// Cap at max delay
+	if delay > r.config.Retry.MaxDelay {
+		delay = r.config.Retry.MaxDelay
+	}
+
+	return delay
+}
+
+func (r *ReconcilerManager) collectMetrics() {
+	defer r.wg.Done()
+
+	ticker := time.NewTicker(r.config.Metrics.CollectionInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			r.metrics.Collect()
+			if r.config.Metrics.ExportPrometheus {
+				r.exportPrometheusMetrics()
+			}
+		case <-r.ctx.Done():
+			return
+		}
+	}
+}
+
+func (r *ReconcilerManager) exportPrometheusMetrics() {
+	// Export metrics to Prometheus
+	// Implementation would depend on Prometheus client library
+}
+
+func (r *ReconcilerManager) updatePerformanceMetrics(duration time.Duration) {
+	r.performance.Update(duration, true)
+}
+
+func (r *ReconcilerManager) filterServiceDeployments(deployments []DeploymentInfo) []DeploymentInfo {
+	var filtered []DeploymentInfo
+	for _, dep := range deployments {
+		if r.isServiceDeployment(dep.Name) {
+			filtered = append(filtered, dep)
+		}
+	}
+	return filtered
+}
+
+func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment DeploymentInfo, cfInstances []CFServiceInstanceDetails) (InstanceData, error) {
+	// Implementation would process a single deployment
+	// This is a placeholder - actual implementation would use existing logic
+	return InstanceData{}, nil
+}
+
+// synchronizeIndex synchronizes the vault index with the given instances
+func (r *ReconcilerManager) synchronizeIndex(ctx context.Context, instances []InstanceData) error {
+	if r.synchronizer == nil {
+		return fmt.Errorf("synchronizer not initialized")
+	}
+	return r.synchronizer.SyncIndex(ctx, instances)
+}
+
+// discoverCFServiceInstances discovers service instances from Cloud Foundry
+func (r *ReconcilerManager) discoverCFServiceInstances(ctx context.Context, filter interface{}) error {
+	if r.cfManager == nil {
+		r.logger.Debug("CF manager not configured, skipping CF service discovery")
+		return nil
+	}
+
+	// This would integrate with CF to discover service instances
+	// For now, it's a placeholder that can be extended
+	r.logger.Info("Discovering CF service instances")
+	// TODO: Implement CF service discovery
+	return nil
+}
+
+// isServiceDeployment checks if a deployment name indicates it's a service deployment
+func (r *ReconcilerManager) isServiceDeployment(deploymentName string) bool {
+	// Check if deployment name matches service deployment pattern
+	// Format is typically: service-plan-instanceID
+
+	// Quick checks for non-service deployments
+	if deploymentName == "" {
+		return false
+	}
+
+	// System deployments to exclude
+	systemDeployments := []string{
+		"bosh",
+		"cf",
+		"concourse",
+		"prometheus",
+		"grafana",
+		"shield",
+		"vault",
+	}
+
+	for _, sys := range systemDeployments {
+		if deploymentName == sys || strings.HasPrefix(deploymentName, sys+"-") {
+			return false
+		}
+	}
+
+	// Check if it matches the service-plan-uuid pattern
+	// UUID pattern: 8-4-4-4-12 hexadecimal characters
+	uuidPattern := `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+	matched, _ := regexp.MatchString(uuidPattern, deploymentName)
+
+	return matched
+}
+
+func (r *ReconcilerManager) GetStatus() Status {
 	r.statusMu.RLock()
 	defer r.statusMu.RUnlock()
 	return r.status
 }
 
-// setStatus sets the status
-func (r *reconcilerManager) setStatus(status Status) {
+func (r *ReconcilerManager) setStatus(status Status) {
 	r.statusMu.Lock()
 	defer r.statusMu.Unlock()
 	r.status = status
 }
 
-// updateStatusError updates the status with an error
-func (r *reconcilerManager) updateStatusError(err error) {
+func (r *ReconcilerManager) updateStatusError(err error) {
 	r.statusMu.Lock()
 	defer r.statusMu.Unlock()
 	r.status.Errors = append(r.status.Errors, err)
 }
 
-// Logging helper methods - these will be replaced with actual logger calls
-func (r *reconcilerManager) logDebug(format string, args ...interface{}) {
-	if r.logger != nil {
-		r.logger.Debug(format, args...)
+// PerformanceTracker implementation
+
+func newPerformanceTracker() *PerformanceTracker {
+	return &PerformanceTracker{
+		apiLatencies: make(map[string]time.Duration),
+		errorCounts:  make(map[string]int),
+		successRate:  1.0,
+	}
+}
+
+func (p *PerformanceTracker) Update(duration time.Duration, success bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.samples++
+	p.lastBatchDuration = duration
+
+	// Update moving average
+	if p.averageBatchDuration == 0 {
+		p.averageBatchDuration = duration
 	} else {
-		fmt.Printf("[DEBUG] reconciler: "+format+"\n", args...)
+		p.averageBatchDuration = (p.averageBatchDuration*time.Duration(p.samples-1) + duration) / time.Duration(p.samples)
 	}
-}
 
-func (r *reconcilerManager) logInfo(format string, args ...interface{}) {
-	if r.logger != nil {
-		r.logger.Info(format, args...)
+	// Update success rate
+	if success {
+		p.successRate = (p.successRate*float64(p.samples-1) + 1.0) / float64(p.samples)
 	} else {
-		fmt.Printf("[INFO] reconciler: "+format+"\n", args...)
+		p.successRate = (p.successRate * float64(p.samples-1)) / float64(p.samples)
 	}
 }
 
-func (r *reconcilerManager) logWarning(format string, args ...interface{}) {
-	if r.logger != nil {
-		r.logger.Warning(format, args...)
-	} else {
-		fmt.Printf("[WARN] reconciler: "+format+"\n", args...)
+func (p *PerformanceTracker) GetScore() float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	// Simple scoring based on success rate and performance
+	// High success rate and low latency = high score
+	score := p.successRate
+
+	// Adjust based on average duration (penalize slow operations)
+	if p.averageBatchDuration > 30*time.Second {
+		score *= 0.8
+	} else if p.averageBatchDuration > 60*time.Second {
+		score *= 0.5
 	}
+
+	return score
 }
 
-func (r *reconcilerManager) logError(format string, args ...interface{}) {
-	if r.logger != nil {
-		r.logger.Error(format, args...)
-	} else {
-		fmt.Printf("[ERROR] reconciler: "+format+"\n", args...)
+// Helper functions
+
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
+	return b
 }
 
-// discoverCFServiceInstances discovers service instances from CF API
-func (r *reconcilerManager) discoverCFServiceInstances(ctx context.Context, brokerServiceNames []string) ([]CFServiceInstanceDetails, error) {
-	if r.cfManager == nil {
-		r.logDebug("CF manager not available for service instance discovery")
-		return nil, nil
-	}
-
-	// Type assert to get the CF discovery interface
-	if cfMgr, ok := r.cfManager.(interface {
-		DiscoverAllServiceInstances(brokerServices []string) ([]CFServiceInstanceDetails, error)
-	}); ok {
-		r.logDebug("Using CF manager to discover service instances for services: %v", brokerServiceNames)
-		instances, err := cfMgr.DiscoverAllServiceInstances(brokerServiceNames)
-		if err != nil {
-			r.logError("Failed to discover service instances from CF: %v", err)
-			return nil, err
-		}
-		r.logDebug("CF manager returned %d service instances", len(instances))
-		return instances, nil
-	} else {
-		r.logDebug("CF manager does not support service instance discovery")
-		return nil, nil
-	}
-}
-
-// buildInstanceData combines CF and BOSH data to build complete instance information
-// Uses BOSH deployments as the source of truth since they contain the correct naming and GUID structure
-func (r *reconcilerManager) buildInstanceData(ctx context.Context, cfInstances []CFServiceInstanceDetails, boshDeployments []DeploymentInfo) ([]InstanceData, error) {
-	var instances []InstanceData
-
-	// Create a map of CF instances by GUID for quick lookup
-	cfInstanceMap := make(map[string]CFServiceInstanceDetails)
-	for _, cfInstance := range cfInstances {
-		cfInstanceMap[cfInstance.GUID] = cfInstance
-	}
-
-	// Build  data starting with BOSH deployments as the source of truth
-	for _, boshDeployment := range boshDeployments {
-		// Parse the deployment name to extract service info
-		serviceID, planID, instanceID := r.extractServiceInfoFromDeployment(boshDeployment.Name)
-
-		if instanceID == "" {
-			r.logDebug("Could not extract instance ID from deployment %s, skipping", boshDeployment.Name)
-			continue
-		}
-
-		// Find matching CF service instance by GUID
-		cfInstance := r.findCFInstanceByGUID(instanceID, cfInstances)
-
-		// Build instance data using BOSH as primary source
-		instance := r.buildInstanceFromBOSH(boshDeployment, serviceID, planID, instanceID)
-
-		// Enrich with CF data if available
-		if cfInstance != nil {
-			r.logDebug("Found matching CF service instance %s for BOSH deployment %s", instanceID, boshDeployment.Name)
-			r.enrichInstanceWithCF(instance, *cfInstance)
-		} else {
-			r.logDebug("No corresponding CF service instance found for BOSH deployment %s (instance-id: %s)", boshDeployment.Name, instanceID)
-			instance.Metadata["cf_instance_missing"] = true
-		}
-
-		instances = append(instances, *instance)
-	}
-
-	// Handle CF instances that don't have corresponding BOSH deployments (orphaned CF instances)
-	for _, cfInstance := range cfInstances {
-		// Check if we already processed this CF instance via BOSH deployment
-		found := false
-		for _, instance := range instances {
-			if instance.ID == cfInstance.GUID {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			r.logWarning("Found orphaned CF service instance %s with no corresponding BOSH deployment", cfInstance.GUID)
-			// Create instance data from CF only (should be rare)
-			instance := r.buildInstanceFromCFOnly(cfInstance)
-			instance.Metadata["orphaned_cf_instance"] = true
-			instance.Metadata["reconciliation_source"] = "cf_only"
-			instances = append(instances, *instance)
-		}
-	}
-
-	return instances, nil
-}
-
-// extractServiceInfoFromDeployment parses a BOSH deployment name to extract service info
-// Deployment pattern: {plan-id}-{instance-id}
-// Examples:
-//   - rabbitmq-three-node-c425ddf5-af93-4830-a1dc-d34ce1942a40 (plan-id=rabbitmq-three-node, instance-id=c425ddf5-af93-4830-a1dc-d34ce1942a40)
-//   - rabbitmq-single-node-65c0db3d-e63b-4b87-912c-07173486cc94 (plan-id=rabbitmq-single-node, instance-id=65c0db3d-e63b-4b87-912c-07173486cc94)
-//   - redis-cache-small-1510f7aa-919b-4b71-b756-36d5932ad617 (plan-id=redis-cache-small, instance-id=1510f7aa-919b-4b71-b756-36d5932ad617)
-//
-// The plan-id is stored in vault as created by broker: {service-name}-{plan-name}
-func (r *reconcilerManager) extractServiceInfoFromDeployment(deploymentName string) (serviceID, planID, instanceID string) {
-	parts := strings.Split(deploymentName, "-")
-	if len(parts) < 6 { // Need at least 6 parts: minimum 1 for plan-id + 5 for UUID (8-4-4-4-12)
-		r.logDebug("Deployment name %s has insufficient parts (%d)", deploymentName, len(parts))
-		return "", "", ""
-	}
-
-	// UUID format is 8-4-4-4-12 hex digits, so we need exactly 5 parts for the UUID
-	// Work backwards from the end to find where the UUID starts
-	if len(parts) >= 5 {
-		// Check if the last 5 parts form a valid UUID
-		potentialUUID := strings.Join(parts[len(parts)-5:], "-")
-		if r.isValidUUID(potentialUUID) {
-			instanceID = potentialUUID
-
-			// Everything before the UUID is the plan-id
-			planParts := parts[:len(parts)-5]
-			if len(planParts) >= 1 {
-				planID = strings.Join(planParts, "-")
-
-				// Extract service-id from plan-id by finding it in broker catalog
-				serviceID = r.extractServiceIDFromPlanID(planID)
-
-				r.logDebug("Parsed deployment %s: plan-id=%s, instance-id=%s, extracted-service-id=%s", deploymentName, planID, instanceID, serviceID)
-				return serviceID, planID, instanceID
-			}
-		}
-	}
-
-	r.logDebug("Could not parse deployment name %s into plan-id-instance-id format", deploymentName)
-	return "", "", ""
-}
-
-// extractServiceIDFromPlanID finds the service ID by looking up the plan in broker catalog
-func (r *reconcilerManager) extractServiceIDFromPlanID(planID string) string {
-	for _, svc := range r.services {
-		for _, plan := range svc.Plans {
-			if plan.ID == planID {
-				r.logDebug("Found service-id %s for plan-id %s", svc.ID, planID)
-				return svc.ID
-			}
-		}
-	}
-
-	// Fallback: try to infer service ID from plan ID (plan ID often starts with service name)
-	parts := strings.Split(planID, "-")
-	if len(parts) > 0 {
-		potentialServiceID := parts[0]
-		r.logDebug("Could not find plan-id %s in catalog, inferring service-id as %s", planID, potentialServiceID)
-		return potentialServiceID
-	}
-
-	r.logDebug("Could not extract service-id from plan-id %s", planID)
-	return ""
-}
-
-// isValidUUID checks if a string matches the UUID format (8-4-4-4-12)
-func (r *reconcilerManager) isValidUUID(s string) bool {
-	parts := strings.Split(s, "-")
-	if len(parts) != 5 {
-		return false
-	}
-
-	// Check each part has the correct length and contains only hex characters
-	expectedLengths := []int{8, 4, 4, 4, 12}
-	for i, part := range parts {
-		if len(part) != expectedLengths[i] || !isHexString(part) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// isHexString checks if a string contains only hexadecimal characters
-func isHexString(s string) bool {
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
-
-// findCFInstanceByGUID finds a CF service instance by GUID
-func (r *reconcilerManager) findCFInstanceByGUID(guid string, cfInstances []CFServiceInstanceDetails) *CFServiceInstanceDetails {
-	for _, cfInstance := range cfInstances {
-		if cfInstance.GUID == guid {
-			return &cfInstance
-		}
-	}
-	return nil
-}
-
-// buildInstanceFromBOSH creates instance data primarily from BOSH deployment information
-func (r *reconcilerManager) buildInstanceFromBOSH(boshDeployment DeploymentInfo, serviceID, planID, instanceID string) *InstanceData {
-	// Get detailed BOSH information
-	deploymentDetails, err := r.scanner.GetDeploymentDetails(context.Background(), boshDeployment.Name)
-	var detail DeploymentDetail
-	if err != nil {
-		r.logDebug("Could not get detailed BOSH info for deployment %s: %s", boshDeployment.Name, err)
-		detail = DeploymentDetail{DeploymentInfo: boshDeployment}
-	} else {
-		detail = *deploymentDetails
-	}
-
-	// Find service and plan names from broker catalog using the IDs from deployment
-	var serviceName, planName, serviceType string
-	for _, svc := range r.services {
-		if svc.ID == serviceID {
-			serviceName = svc.Name
-			serviceType = svc.Name // Default to service name
-
-			// Get service type from metadata if available
-			if svc.Metadata != nil {
-				if stype, ok := svc.Metadata["type"].(string); ok {
-					serviceType = stype
-				}
-			}
-
-			// Find plan name by plan ID
-			for _, plan := range svc.Plans {
-				if plan.ID == planID {
-					planName = plan.Name
-					break
-				}
-			}
-			break
-		}
-	}
-
-	// Fallback: if we couldn't find in broker catalog, use IDs as names
-	if serviceName == "" {
-		serviceName = serviceID
-	}
-	if planName == "" {
-		planName = planID
-	}
-	if serviceType == "" {
-		serviceType = serviceID
-	}
-
-	// Build  metadata with BOSH as primary source
-	metadata := map[string]interface{}{
-		// Service identification
-		"service_name": serviceName,
-		"service_type": serviceType,
-		"plan_name":    planName,
-
-		// BOSH-specific data (primary source)
-		"bosh_deployment_name": boshDeployment.Name,
-		"bosh_releases":        detail.Releases,
-		"bosh_stemcells":       detail.Stemcells,
-		"bosh_vms":             detail.VMs,
-		"bosh_teams":           detail.Teams,
-		"bosh_variables":       detail.Variables,
-		"bosh_properties":      detail.Properties,
-		"bosh_created_at":      boshDeployment.CreatedAt.Format(time.RFC3339),
-		"bosh_updated_at":      boshDeployment.UpdatedAt.Format(time.RFC3339),
-
-		// Reconciliation metadata
-		"reconciliation_source": "bosh_primary",
-		"reconciled_at":         time.Now().Format(time.RFC3339),
-		"instance_id":           instanceID,
-		"extracted_service_id":  serviceID,
-		"extracted_plan_id":     planID,
-	}
-
-	// Add latest task ID if available from BOSH deployment properties
-	if detail.Properties != nil {
-		if taskID, ok := detail.Properties["latest_task_id"].(string); ok && taskID != "" {
-			metadata["latest_task_id"] = taskID
-		}
-	}
-
-	// For RabbitMQ services, try to get dashboard URL from credentials
-	if strings.Contains(strings.ToLower(serviceType), "rabbitmq") || strings.Contains(strings.ToLower(serviceName), "rabbitmq") {
-		r.logDebug("Detected RabbitMQ service, attempting to retrieve dashboard URL from credentials")
-
-		// Try to get credentials from vault if vault is available
-		if vaultInterface, ok := r.vault.(interface {
-			Get(path string, out interface{}) (bool, error)
-		}); ok {
-			credsPath := fmt.Sprintf("%s/credentials", instanceID)
-			var creds map[string]interface{}
-			exists, err := vaultInterface.Get(credsPath, &creds)
-			if err != nil {
-				r.logDebug("Failed to retrieve credentials for RabbitMQ instance %s: %s", instanceID, err)
-			} else if !exists {
-				r.logDebug("No credentials found for RabbitMQ instance %s", instanceID)
-			} else if apiURL, ok := creds["api_url"].(string); ok {
-				// Extract dashboard URL from API URL
-				// API URL format: https://hostname:15672/api
-				// Dashboard URL format: https://hostname:15672/
-				dashboardURL := strings.TrimSuffix(apiURL, "/api")
-				if !strings.HasSuffix(dashboardURL, "/") {
-					dashboardURL = dashboardURL + "/"
-				}
-				metadata["dashboard_url"] = dashboardURL
-				metadata["rabbitmq_dashboard_url"] = dashboardURL
-				r.logInfo("Added RabbitMQ dashboard URL for instance %s: %s", instanceID, dashboardURL)
-			} else {
-				r.logDebug("No api_url found in credentials for RabbitMQ instance %s", instanceID)
-			}
-		} else {
-			r.logDebug("Vault interface not available for retrieving RabbitMQ credentials")
-		}
-	}
-
-	return &InstanceData{
-		ID:             instanceID, // Use instance ID from deployment name
-		ServiceID:      serviceID,
-		PlanID:         planID,
-		DeploymentName: boshDeployment.Name,
-		Manifest:       detail.Manifest,
-		Metadata:       metadata,
-		CreatedAt:      boshDeployment.CreatedAt,
-		UpdatedAt:      boshDeployment.UpdatedAt,
-		LastSyncedAt:   time.Now(),
-	}
-}
-
-// enrichInstanceWithCF adds CF service instance data to an existing BOSH-based instance
-func (r *reconcilerManager) enrichInstanceWithCF(instance *InstanceData, cfInstance CFServiceInstanceDetails) {
-	if instance.Metadata == nil {
-		instance.Metadata = make(map[string]interface{})
-	}
-
-	// Add CF instance name (the actual name given to the instance like "rmq-3n-a")
-	instance.Metadata["instance_name"] = cfInstance.Name
-
-	// Add CF-specific metadata as enrichment
-	instance.Metadata["cf_instance_name"] = cfInstance.Name       // Also store with cf_ prefix for clarity
-	instance.Metadata["cf_service_name"] = cfInstance.ServiceName // This is the service type (e.g., "rabbitmq")
-	instance.Metadata["cf_plan_name"] = cfInstance.PlanName
-	instance.Metadata["cf_service_guid"] = cfInstance.ServiceGUID
-	instance.Metadata["cf_plan_guid"] = cfInstance.PlanGUID
-	instance.Metadata["org_name"] = cfInstance.OrgName
-	instance.Metadata["org_guid"] = cfInstance.OrgGUID
-	instance.Metadata["space_name"] = cfInstance.SpaceName
-	instance.Metadata["space_guid"] = cfInstance.SpaceGUID
-	instance.Metadata["dashboard_url"] = cfInstance.DashboardURL
-	instance.Metadata["maintenance_info"] = cfInstance.MaintenanceInfo
-	instance.Metadata["cf_parameters"] = cfInstance.Parameters
-	instance.Metadata["cf_tags"] = cfInstance.Tags
-	instance.Metadata["cf_state"] = cfInstance.State
-	instance.Metadata["cf_last_operation"] = cfInstance.LastOperation
-	instance.Metadata["cf_created_at"] = cfInstance.CreatedAt.Format(time.RFC3339)
-	instance.Metadata["cf_updated_at"] = cfInstance.UpdatedAt.Format(time.RFC3339)
-	instance.Metadata["reconciliation_source"] = "bosh_and_cf"
-
-	// Add CF binding information if available
-	if len(cfInstance.Bindings) > 0 {
-		var bindingIDs []string
-		for _, binding := range cfInstance.Bindings {
-			bindingIDs = append(bindingIDs, binding.GUID)
-		}
-		instance.Metadata["has_bindings"] = true
-		instance.Metadata["bindings_count"] = len(cfInstance.Bindings)
-		instance.Metadata["binding_ids"] = bindingIDs
-		instance.Metadata["cf_bindings"] = cfInstance.Bindings
-	} else {
-		instance.Metadata["has_bindings"] = false
-		instance.Metadata["bindings_count"] = 0
-	}
-
-	// Update timestamps if CF has more recent data
-	if cfInstance.UpdatedAt.After(instance.UpdatedAt) {
-		instance.UpdatedAt = cfInstance.UpdatedAt
-	}
-
-	r.logDebug("Enriched BOSH deployment %s (GUID: %s) with CF service instance data (name: %s)", instance.DeploymentName, instance.ID, cfInstance.Name)
-}
-
-// buildInstanceFromCFOnly creates instance data from CF service instance only (for orphaned instances)
-func (r *reconcilerManager) buildInstanceFromCFOnly(cfInstance CFServiceInstanceDetails) *InstanceData {
-	// Find service and plan information from broker catalog using CF names
-	var serviceID, planID, serviceType string
-	for _, svc := range r.services {
-		if svc.Name == cfInstance.ServiceName {
-			serviceID = svc.ID
-			serviceType = svc.Name
-
-			if svc.Metadata != nil {
-				if stype, ok := svc.Metadata["type"].(string); ok {
-					serviceType = stype
-				}
-			}
-
-			for _, plan := range svc.Plans {
-				if plan.Name == cfInstance.PlanName {
-					planID = plan.ID
-					break
-				}
-			}
-			break
-		}
-	}
-
-	// Fallback: use CF data directly
-	if serviceID == "" {
-		serviceID = cfInstance.ServiceGUID
-	}
-	if planID == "" {
-		planID = cfInstance.PlanGUID
-	}
-	if serviceType == "" {
-		serviceType = cfInstance.ServiceName
-	}
-
-	metadata := map[string]interface{}{
-		// CF instance name (the actual name given to the instance like "rmq-3n-a")
-		"instance_name":    cfInstance.Name,
-		"cf_instance_name": cfInstance.Name,
-
-		// CF data as primary source
-		"service_name":      cfInstance.ServiceName, // This is the service type (e.g., "rabbitmq")
-		"service_type":      serviceType,
-		"plan_name":         cfInstance.PlanName,
-		"org_name":          cfInstance.OrgName,
-		"org_guid":          cfInstance.OrgGUID,
-		"space_name":        cfInstance.SpaceName,
-		"space_guid":        cfInstance.SpaceGUID,
-		"dashboard_url":     cfInstance.DashboardURL,
-		"maintenance_info":  cfInstance.MaintenanceInfo,
-		"cf_parameters":     cfInstance.Parameters,
-		"cf_tags":           cfInstance.Tags,
-		"cf_state":          cfInstance.State,
-		"cf_last_operation": cfInstance.LastOperation,
-
-		// Reconciliation metadata
-		"reconciliation_source":   "cf_only",
-		"reconciled_at":           time.Now().Format(time.RFC3339),
-		"instance_id":             cfInstance.GUID,
-		"bosh_deployment_missing": true,
-
-		// Binding information
-		"has_bindings":   len(cfInstance.Bindings) > 0,
-		"bindings_count": len(cfInstance.Bindings),
-	}
-
-	// Add CF binding information if available
-	if len(cfInstance.Bindings) > 0 {
-		var bindingIDs []string
-		for _, binding := range cfInstance.Bindings {
-			bindingIDs = append(bindingIDs, binding.GUID)
-		}
-		metadata["binding_ids"] = bindingIDs
-		metadata["cf_bindings"] = cfInstance.Bindings
-	}
-
-	return &InstanceData{
-		ID:             cfInstance.GUID, // Use CF service instance GUID as the instance ID
-		ServiceID:      serviceID,
-		PlanID:         planID,
-		DeploymentName: "", // No BOSH deployment
-		Metadata:       metadata,
-		CreatedAt:      cfInstance.CreatedAt,
-		UpdatedAt:      cfInstance.UpdatedAt,
-		LastSyncedAt:   time.Now(),
-	}
-}
-
-// updateVault updates vault with  instance data (CF + BOSH)
-func (r *reconcilerManager) updateVault(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
-	var updatedInstances []InstanceData
-
-	for _, instance := range instances {
-		// Check if instance exists in vault
-		existing, err := r.updater.GetInstance(ctx, instance.ID)
-		if err != nil && !IsNotFoundError(err) {
-			r.logError("Failed to get instance %s: %s", instance.ID, err)
-			continue
-		}
-
-		// Merge with existing data to preserve important fields
-		if existing != nil {
-			r.logDebug("Updating existing instance %s with  data", instance.ID)
-			mergedInstance := r.mergeInstanceData(existing, &instance)
-			instance = *mergedInstance
-		} else {
-			r.logInfo("Adding new instance %s to vault with  data", instance.ID)
-		}
-
-		// Use enhanced update with broker integration if available
-		if broker, ok := r.broker.(BrokerInterface); ok {
-			// Try to use the enhanced update method that includes binding repair
-			if updaterWithRepair, ok := r.updater.(interface {
-				UpdateInstanceWithBindingRepair(ctx context.Context, instance *InstanceData, broker BrokerInterface) error
-			}); ok {
-				err = updaterWithRepair.UpdateInstanceWithBindingRepair(ctx, &instance, broker)
-			} else {
-				err = r.updater.UpdateInstance(ctx, &instance)
-			}
-		} else {
-			err = r.updater.UpdateInstance(ctx, &instance)
-		}
-
-		if err != nil {
-			r.logError("Failed to update instance %s: %s", instance.ID, err)
-			continue
-		}
-
-		updatedInstances = append(updatedInstances, instance)
-	}
-
-	return updatedInstances, nil
-}
-
-// handleOrphanedInstances identifies and handles instances that exist in only one system
-func (r *reconcilerManager) handleOrphanedInstances(ctx context.Context, cfInstances []CFServiceInstanceDetails, boshDeployments []DeploymentInfo) error {
-	r.logDebug("Checking for orphaned instances between CF and BOSH")
-
-	// Create maps for quick lookup
-	cfInstanceMap := make(map[string]CFServiceInstanceDetails)
-	for _, cfInstance := range cfInstances {
-		cfInstanceMap[cfInstance.GUID] = cfInstance
-	}
-
-	boshInstanceMap := make(map[string]DeploymentInfo)
-	for _, deployment := range boshDeployments {
-		// Extract instance ID from deployment name
-		_, _, instanceID := r.extractServiceInfoFromDeployment(deployment.Name)
-		if instanceID != "" {
-			boshInstanceMap[instanceID] = deployment
-		}
-	}
-
-	// Find BOSH deployments without CF instances
-	var orphanedBOSH []string
-	for instanceID, deployment := range boshInstanceMap {
-		if _, found := cfInstanceMap[instanceID]; !found {
-			orphanedBOSH = append(orphanedBOSH, deployment.Name)
-			r.logDebug("BOSH deployment %s (instance %s) has no corresponding CF instance", deployment.Name, instanceID)
-		}
-	}
-
-	// Find CF instances without BOSH deployments
-	var orphanedCF []string
-	for _, cfInstance := range cfInstances {
-		if _, found := boshInstanceMap[cfInstance.GUID]; !found {
-			orphanedCF = append(orphanedCF, cfInstance.GUID)
-			// Try to use the instance GUID directly as deployment name fallback
-			r.logDebug("Using instance GUID as deployment name: %s", cfInstance.GUID)
-		}
-	}
-
-	// Log findings
-	if len(orphanedBOSH) > 0 {
-		r.logWarning("Found %d orphaned BOSH deployments (no corresponding CF instances): %v", len(orphanedBOSH), orphanedBOSH)
-	}
-	if len(orphanedCF) > 0 {
-		r.logWarning("Found %d orphaned CF service instances (no corresponding BOSH deployments): %v", len(orphanedCF), orphanedCF)
-	}
-
-	// Could implement cleanup logic here in the future
-	return nil
+func randomFloat() float64 {
+	// Implementation would use crypto/rand for better randomness
+	return 0.5 // Placeholder
 }

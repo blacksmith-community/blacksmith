@@ -22,7 +22,7 @@ func NewServiceMatcher(broker interface{}, logger Logger) Matcher {
 }
 
 // MatchDeployment matches a deployment to a service and plan
-func (m *serviceMatcher) MatchDeployment(deployment DeploymentInfo, services []Service) (*MatchResult, error) {
+func (m *serviceMatcher) MatchDeployment(deployment DeploymentDetail, services []Service) (*MatchResult, error) {
 	m.logDebug("Matching deployment %s", deployment.Name)
 
 	// Try to parse deployment name (format: service-plan-instanceID)
@@ -152,7 +152,7 @@ func (m *serviceMatcher) ValidateMatch(match *MatchResult) error {
 }
 
 // tryAlternativeMatching tries alternative matching strategies
-func (m *serviceMatcher) tryAlternativeMatching(deployment DeploymentInfo, services []Service) *MatchResult {
+func (m *serviceMatcher) tryAlternativeMatching(deployment DeploymentDetail, services []Service) *MatchResult {
 	// Strategy 1: Check manifest for blacksmith metadata
 	if deployment.Manifest != "" {
 		var manifest map[string]interface{}

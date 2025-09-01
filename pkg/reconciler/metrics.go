@@ -92,6 +92,11 @@ func (m *metricsCollector) ReconciliationError(err error) {
 	m.logError("Reconciliation error: %s", err)
 }
 
+// ReconciliationSkipped records when a reconciliation is skipped
+func (m *metricsCollector) ReconciliationSkipped() {
+	m.logDebug("Reconciliation skipped")
+}
+
 // DeploymentsScanned records the number of deployments scanned
 func (m *metricsCollector) DeploymentsScanned(count int) {
 	atomic.AddInt64(&m.totalDeployments, int64(count))
@@ -110,33 +115,26 @@ func (m *metricsCollector) InstancesUpdated(count int) {
 	m.logDebug("Updated %d instances", count)
 }
 
+// Collect collects metrics (implementation required by interface)
+func (m *metricsCollector) Collect() {
+	// This method can be used to push metrics to external systems
+	// For now, it's a no-op as metrics are collected in real-time
+	m.logDebug("Metrics collection triggered")
+}
+
 // GetMetrics returns the current metrics
 func (m *metricsCollector) GetMetrics() Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Calculate average duration
-	var totalDuration time.Duration
-	for _, d := range m.durations {
-		totalDuration += d
-	}
-
-	var avgDuration time.Duration
-	if len(m.durations) > 0 {
-		avgDuration = totalDuration / time.Duration(len(m.durations))
-	}
-
 	return Metrics{
-		TotalRuns:            atomic.LoadInt64(&m.totalRuns),
-		SuccessfulRuns:       atomic.LoadInt64(&m.successfulRuns),
-		FailedRuns:           atomic.LoadInt64(&m.failedRuns),
-		TotalDuration:        totalDuration,
-		AverageDuration:      avgDuration,
-		LastRunDuration:      m.lastRunDuration,
-		TotalDeployments:     atomic.LoadInt64(&m.totalDeployments),
-		TotalInstancesFound:  atomic.LoadInt64(&m.totalInstancesFound),
-		TotalInstancesSynced: atomic.LoadInt64(&m.totalInstancesSynced),
-		TotalErrors:          atomic.LoadInt64(&m.totalErrors),
+		ReconciliationRuns:     atomic.LoadInt64(&m.totalRuns),
+		ReconciliationFailures: atomic.LoadInt64(&m.failedRuns),
+		InstancesProcessed:     atomic.LoadInt64(&m.totalInstancesFound),
+		InstancesUpdated:       atomic.LoadInt64(&m.totalInstancesSynced),
+		InstancesFailed:        atomic.LoadInt64(&m.totalErrors),
+		LastRunTime:            m.lastRunStartTime,
+		LastRunDuration:        m.lastRunDuration,
 	}
 }
 
@@ -175,26 +173,27 @@ func (m *metricsCollector) String() string {
 	metrics := m.GetMetrics()
 
 	successRate := float64(0)
-	if metrics.TotalRuns > 0 {
-		successRate = float64(metrics.SuccessfulRuns) / float64(metrics.TotalRuns) * 100
+	if metrics.ReconciliationRuns > 0 {
+		successRate = float64(metrics.ReconciliationRuns-metrics.ReconciliationFailures) / float64(metrics.ReconciliationRuns) * 100
 	}
 
 	return fmt.Sprintf(
 		"Reconciler Metrics:\n"+
 			"  Total Runs: %d (Success: %d, Failed: %d, Rate: %.1f%%)\n"+
 			"  Last Run Duration: %v\n"+
-			"  Average Duration: %v\n"+
-			"  Total Deployments Scanned: %d\n"+
-			"  Total Instances Found: %d\n"+
-			"  Total Instances Synced: %d\n"+
-			"  Total Errors: %d",
-		metrics.TotalRuns, metrics.SuccessfulRuns, metrics.FailedRuns, successRate,
+			"  Last Run Time: %v\n"+
+			"  Total Instances Processed: %d\n"+
+			"  Total Instances Updated: %d\n"+
+			"  Total Instances Failed: %d",
+		metrics.ReconciliationRuns,
+		metrics.ReconciliationRuns-metrics.ReconciliationFailures,
+		metrics.ReconciliationFailures,
+		successRate,
 		metrics.LastRunDuration,
-		metrics.AverageDuration,
-		metrics.TotalDeployments,
-		metrics.TotalInstancesFound,
-		metrics.TotalInstancesSynced,
-		metrics.TotalErrors,
+		metrics.LastRunTime,
+		metrics.InstancesProcessed,
+		metrics.InstancesUpdated,
+		metrics.InstancesFailed,
 	)
 }
 
@@ -234,14 +233,14 @@ func (m *metricsCollector) PrometheusMetrics() string {
 			"# HELP blacksmith_reconciler_errors_total Total number of errors\n"+
 			"# TYPE blacksmith_reconciler_errors_total counter\n"+
 			"blacksmith_reconciler_errors_total %d\n",
-		metrics.TotalRuns,
-		metrics.SuccessfulRuns,
-		metrics.FailedRuns,
+		metrics.ReconciliationRuns,
+		metrics.ReconciliationRuns-metrics.ReconciliationFailures,
+		metrics.ReconciliationFailures,
 		metrics.LastRunDuration.Seconds(),
-		metrics.TotalDeployments,
-		metrics.TotalInstancesFound,
-		metrics.TotalInstancesSynced,
-		metrics.TotalErrors,
+		atomic.LoadInt64(&m.totalDeployments),
+		metrics.InstancesProcessed,
+		metrics.InstancesUpdated,
+		metrics.InstancesFailed,
 	)
 }
 

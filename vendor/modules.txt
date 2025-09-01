@@ -319,6 +319,9 @@ github.com/shieldproject/shield/client/v2/shield
 # github.com/smallfish/simpleyaml v0.1.0
 ## explicit; go 1.16
 github.com/smallfish/simpleyaml
+# github.com/sony/gobreaker v1.0.0
+## explicit; go 1.12
+github.com/sony/gobreaker
 # github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be
 ## explicit
 github.com/starkandwayne/goutils/ansi
