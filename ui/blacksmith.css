@@ -206,6 +206,126 @@ table tbody td {
   */
 }
 
+/* =========================
+   VMs Table – layout + typography
+   ========================= */
+/* Constrain to parent and enable horizontal scrolling when needed */
+.vms-table-wrapper {
+  max-width: 100%;
+}
+
+.vms-table-container {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto; /* allow horizontal scroll if content is wider */
+  overflow-y: hidden;
+}
+
+/* Keep cells on a single line so wide content scrolls horizontally */
+.vms-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.vms-table thead th,
+.vms-table tbody td {
+  white-space: nowrap;
+  font-size: 13px;   /* consistent size */
+  font-weight: 400;  /* normalize weight */
+}
+
+/* Normalize special cells inside VMs table without affecting other views */
+.vms-table td.vm-instance,
+.vms-table td.vm-state,
+.vms-table td.vm-job-state,
+.vms-table td.vm-az,
+.vms-table td.vm-type,
+.vms-table td.vm-ips,
+.vms-table td.vm-dns,
+.vms-table td.vm-cid,
+.vms-table td.vm-agent-id,
+.vms-table td.vm-created-at,
+.vms-table td.vm-disk-cids,
+.vms-table td.vm-resurrection {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-primary);
+}
+
+/* Preserve state coloring but keep normal weight */
+.vms-table td.vm-state.vm-state-running,
+.vms-table td.vm-state.vm-state-error,
+.vms-table td.vm-state.vm-state-stopped,
+.vms-table td.vm-job-state.vm-state-running,
+.vms-table td.vm-job-state.vm-state-error,
+.vms-table td.vm-job-state.vm-state-stopped {
+  font-weight: 400;
+}
+
+/* Scrollbar appearance for the horizontal container */
+.vms-table-container::-webkit-scrollbar { height: 8px; }
+.vms-table-container::-webkit-scrollbar-track { background: var(--bg-tertiary); border-radius: 4px; }
+.vms-table-container::-webkit-scrollbar-thumb { background: var(--border-primary); border-radius: 4px; }
+.vms-table-container::-webkit-scrollbar-thumb:hover { background: var(--border-secondary); }
+
+/* =========================
+   Normalized table typography across views
+   ========================= */
+/* Default, readable, consistent size and weight for key tables */
+.logs-table thead th,
+.logs-table tbody td,
+.events-table thead th,
+.events-table tbody td,
+.configs-table th,
+.configs-table td,
+.config-details-table th,
+.config-details-table td,
+.details-table td,
+.service-info-table th,
+.service-info-table td,
+.manifest-table th,
+.manifest-table td,
+.service-instances-table th,
+.service-instances-table td,
+.broker-details-table th,
+.broker-details-table td,
+.cert-details-table th,
+.cert-details-table td,
+#task-details-modal .task-details-table th,
+#task-details-modal .task-details-table td {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* Logs tables: override per-cell classes to keep size/weight consistent */
+.logs-table .log-timestamp,
+.logs-table .log-stage,
+.logs-table .log-task,
+.logs-table .log-index,
+.logs-table .log-state,
+.logs-table .log-progress,
+.logs-table .log-tags,
+.logs-table .log-status {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* Events tables: normalize weights/sizes for cells */
+.events-table .event-user,
+.events-table .event-action,
+.events-table .event-object,
+.events-table .event-task,
+.events-table .event-error {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* Details tables (both blacksmith and service instances) */
+.details-table td:first-child,
+.broker-details-table td:first-child {
+  font-weight: 400; /* keep labels normal weight */
+}
+
 /* Alternating row colors */
 table tbody tr:nth-child(even) {
   background-color: var(--bg-table-even);
@@ -1002,6 +1122,15 @@ td a {
   /* width: 100%; */
 }
 
+/* Service Details: constrain value column to 80% and wrap */
+.service-info-table td:nth-child(2),
+.service-info-table .info-value {
+  max-width: 80%;
+  white-space: normal;     /* override any utility no-wrap */
+  overflow-wrap: anywhere; /* break long tokens like URLs/SHAs */
+  word-break: break-word;  /* ensure wrapping in all browsers */
+}
+
 /* Service description in plan details */
 .detail-content .service-description {
   margin-top: 2rem;
@@ -1291,6 +1420,10 @@ td a {
   box-shadow: var(--shadow-secondary);
   max-height: calc(100vh - 200px);
   overflow-y: auto;
+  /* Constrain overall table width within its parent with small padding */
+  width: calc(100% - 1rem);
+  max-width: calc(100% - 1rem);
+  margin: 0.5rem;
 }
 
 /* Horizontal table layout for service instances */
@@ -1336,7 +1469,10 @@ td a {
 
 .info-value-horizontal {
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  white-space: nowrap;
+  /* Allow wrapping for long values in horizontal variant when used in details */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .service-info-table-horizontal th:last-child,
@@ -1921,6 +2057,7 @@ td a {
 .copy-wrapper>span:first-child {
   flex-grow: 1;
   text-align: left;
+  min-width: 0; /* allow flex child to shrink and wrap */
 }
 
 .copy-btn-inline {
@@ -2834,6 +2971,9 @@ th[style*="cursor: pointer"]:hover {
   border-radius: 0 0 8px 8px;
   padding: 20px;
   min-height: 300px;
+  /* Make tab content a flex container so panes can stretch */
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overflow-x: auto;
   flex: 1;
@@ -6236,6 +6376,38 @@ select[id*="connection-vhost"] {
   align-items: center;
 }
 
+/* Improve title contrast and add details styling */
+.terminal-title-text {
+  color: var(--text-primary) !important;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.terminal-title-details {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  color: var(--text-secondary);
+}
+
+.terminal-title-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-active);
+  border: 1px solid var(--border-active);
+  color: var(--text-link);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.terminal-title-seg {
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+}
+
 .terminal-tabs {
   display: flex;
   background: var(--bg-tertiary);
@@ -6252,10 +6424,12 @@ select[id*="connection-vhost"] {
   cursor: pointer;
   white-space: nowrap;
   font-size: 14px;
-  transition: background 0.2s;
+  transition: all 0.2s ease;
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--text-secondary);
+  position: relative;
 }
 
 .terminal-tab:hover {
@@ -6263,8 +6437,22 @@ select[id*="connection-vhost"] {
 }
 
 .terminal-tab.active {
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
+  color: var(--text-link);
   font-weight: 600;
+  border-bottom: 3px solid var(--border-active);
+  box-shadow: var(--shadow-secondary);
+}
+
+/* Create a crisp seam with the tabs rail */
+.terminal-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background-color: var(--bg-secondary);
 }
 
 .terminal-tab .tab-close {
@@ -6455,8 +6643,10 @@ select[id*="connection-vhost"] {
 }
 
 .minimized-terminal-tab.active {
-  background: var(--bg-primary);
-  border-color: var(--border-secondary);
+  background: var(--bg-secondary);
+  border-color: var(--border-active);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-secondary);
 }
 
 .minimized-terminal-tab .tab-close {
@@ -6501,17 +6691,27 @@ body.terminal-minimized .tabs {
   background: var(--bg-secondary);
 }
 
+[data-theme="dark"] .terminal-title-badge {
+  background: rgba(102, 178, 255, 0.15);
+}
+
 [data-theme="dark"] .terminal-tabs {
   background: var(--bg-tertiary);
 }
 
 [data-theme="dark"] .terminal-tab {
   background: var(--bg-tertiary);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .terminal-tab.active {
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
+  color: var(--text-link);
+  border-bottom: 3px solid var(--border-active);
+}
+
+[data-theme="dark"] .terminal-tab.active::after {
+  background-color: var(--bg-secondary);
 }
 
 [data-theme="dark"] .ssh-btn {
@@ -6540,7 +6740,8 @@ body.terminal-minimized .tabs {
 }
 
 [data-theme="dark"] .minimized-terminal-tab.active {
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
+  border-color: var(--border-active);
 }
 
 /* Resurrection Toggle Styles */
@@ -8586,6 +8787,34 @@ span.config-type.resurrection {
   min-height: 0;
   max-height: 28em;
   /* 2x increase for more visible rows */
+}
+
+/* In the main Manifest view, allow the active pane to fully stretch
+   to the parent height without the generic 28em cap. */
+.manifest-details-container .manifest-tab-content .manifest-tab-pane {
+  flex: 1 1 auto;
+}
+
+.manifest-details-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls) {
+  max-height: none;
+}
+
+/* Ensure Broker > Manifest panes also stretch fully */
+.broker-details-container .manifest-tab-content .manifest-tab-pane {
+  flex: 1 1 auto;
+}
+
+.broker-details-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls) {
+  max-height: none;
+}
+
+/* Ensure any Manifest tab rendered inside generic service-testing container also stretches */
+.service-testing-container .manifest-tab-content .manifest-tab-pane {
+  flex: 1 1 auto;
+}
+
+.service-testing-container .manifest-tab-content .manifest-tab-pane>div:not(.search-filter):not(.controls) {
+  max-height: none;
 }
 
 /* Make tables fluid and predictable */

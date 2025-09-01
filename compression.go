@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"compress/flate"
 	"compress/gzip"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -53,6 +56,24 @@ func NewCompressionMiddleware(handler http.Handler, config CompressionConfig) *C
 // ServeHTTP implements the http.Handler interface
 func (cm *CompressionMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !cm.config.Enabled {
+		cm.handler.ServeHTTP(w, r)
+		return
+	}
+
+	// Never apply compression to WebSocket upgrade requests. The websocket
+	// upgrader requires a ResponseWriter that implements http.Hijacker. Our
+	// recorder wrapper does not implement Hijacker, so we must pass through
+	// the original ResponseWriter untouched when an upgrade is requested.
+	upgrade := r.Header.Get("Upgrade")
+	connection := r.Header.Get("Connection")
+	// Also bypass for HTTP/2 Extended CONNECT (WebSocket over H2 uses CONNECT)
+	if r.Method == http.MethodConnect ||
+		strings.EqualFold(upgrade, "websocket") ||
+		strings.Contains(strings.ToLower(connection), "upgrade") ||
+		r.Header.Get("Sec-WebSocket-Key") != "" {
+		if Debugging {
+			Logger.Debug("Compression bypass for WS/CONNECT: proto=%s, writer=%T", r.Proto, w)
+		}
 		cm.handler.ServeHTTP(w, r)
 		return
 	}
@@ -280,4 +301,12 @@ func (rr *responseRecorder) Flush() {
 	if flusher, ok := rr.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+// Hijack implements http.Hijacker by delegating to the underlying ResponseWriter when available.
+func (rr *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := rr.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("hijacker not supported by underlying ResponseWriter")
 }

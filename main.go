@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -136,6 +137,13 @@ func startHTTPSServer(config *Config, handler http.Handler, l *Log) (*http.Serve
 		WriteTimeout: time.Duration(writeTimeout) * time.Second,
 		IdleTimeout:  time.Duration(idleTimeout) * time.Second,
 	}
+
+	// Important: Disable HTTP/2 to ensure WebSocket (HTTP/1.1 upgrade) works reliably with browsers
+	// that do not support RFC8441 (Extended CONNECT over HTTP/2). With HTTP/2 enabled, browsers may
+	// negotiate h2 and attempt a GET upgrade on an HTTP/2 stream, which cannot be hijacked.
+	server.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
+
+	l.Info("HTTPS server configured with HTTP/2 disabled for WebSockets; address: %s", bind)
 
 	return server, nil
 }
@@ -556,7 +564,7 @@ func main() {
 		wsConfig.MaxMessageSize = 32 * 1024 // 32KB
 	}
 	if wsConfig.PingInterval == 0 {
-		wsConfig.PingInterval = 30 * time.Second
+		wsConfig.PingInterval = 5 * time.Second
 	}
 	if wsConfig.PongTimeout == 0 {
 		wsConfig.PongTimeout = 10 * time.Second
@@ -709,3 +717,5 @@ func main() {
 
 	l.Info("Blacksmith service broker shut down complete")
 }
+
+// Use SSH.WebSocket.PingInterval as the authoritative setting for WS ping tuning.

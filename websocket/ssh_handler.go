@@ -2,19 +2,19 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
 	"blacksmith/bosh/ssh"
-	"github.com/gorilla/websocket"
+	wsn "nhooyr.io/websocket"
 )
 
 // SSHHandler manages WebSocket connections for SSH streaming
 type SSHHandler struct {
 	sshService    ssh.SSHService
-	upgrader      websocket.Upgrader
 	sessions      map[string]*SSHStreamSession
 	sessionsMutex sync.RWMutex
 	logger        Logger
@@ -47,13 +47,58 @@ type SSHStreamSession struct {
 	Deployment   string
 	Instance     string
 	Index        int
-	Conn         *websocket.Conn
+	Conn         WSConn
 	SSHSession   ssh.SSHSession
 	Context      context.Context
 	Cancel       context.CancelFunc
 	LastActivity time.Time
 	Mutex        sync.RWMutex
 	Logger       Logger
+}
+
+// WSConn abstracts WebSocket operations used by SSH handler
+type WSConn interface {
+	ReadJSON(v interface{}) error
+	WriteJSON(v interface{}) error
+	Ping(ctx context.Context) error
+	Close() error
+	SetReadLimit(n int64)
+}
+
+// nhooyrWSConn implements WSConn using nhooyr.io/websocket
+type nhooyrWSConn struct {
+	conn *wsn.Conn
+}
+
+func (c *nhooyrWSConn) ReadJSON(v interface{}) error {
+	ctx := context.Background()
+	_, data, err := c.conn.Read(ctx)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+func (c *nhooyrWSConn) WriteJSON(v interface{}) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return c.conn.Write(ctx, wsn.MessageText, b)
+}
+
+func (c *nhooyrWSConn) Ping(ctx context.Context) error {
+	return c.conn.Ping(ctx)
+}
+
+func (c *nhooyrWSConn) Close() error {
+	return c.conn.Close(wsn.StatusNormalClosure, "")
+}
+
+func (c *nhooyrWSConn) SetReadLimit(n int64) {
+	c.conn.SetReadLimit(n)
 }
 
 // WSMessage represents a WebSocket message for SSH communication
@@ -116,20 +161,8 @@ func NewSSHHandler(sshService ssh.SSHService, config Config, logger Logger) *SSH
 		config.SessionTimeout = 30 * time.Minute
 	}
 
-	upgrader := websocket.Upgrader{
-		ReadBufferSize:    config.ReadBufferSize,
-		WriteBufferSize:   config.WriteBufferSize,
-		HandshakeTimeout:  config.HandshakeTimeout,
-		EnableCompression: config.EnableCompression,
-		CheckOrigin: func(r *http.Request) bool {
-			// TODO: Implement proper origin checking for security
-			return true
-		},
-	}
-
 	handler := &SSHHandler{
 		sshService:    sshService,
-		upgrader:      upgrader,
 		sessions:      make(map[string]*SSHStreamSession),
 		sessionsMutex: sync.RWMutex{},
 		logger:        logger,
@@ -145,6 +178,8 @@ func NewSSHHandler(sshService ssh.SSHService, config Config, logger Logger) *SSH
 // HandleWebSocket handles WebSocket upgrade and SSH session management
 func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, deployment, instance string, index int) {
 	h.logger.Info("WebSocket SSH connection request for %s/%s/%d", deployment, instance, index)
+	_, hj := w.(http.Hijacker)
+	h.logger.Debug("WS upgrade debug: proto=%s, hijacker=%v, writer=%T", r.Proto, hj, w)
 
 	// Check session limit
 	h.sessionsMutex.RLock()
@@ -157,12 +192,13 @@ func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, dep
 		return
 	}
 
-	// Upgrade connection to WebSocket
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	// Accept connection via nhooyr (supports HTTP/1.1 and HTTP/2)
+	rawConn, err := acceptWS(w, r, h.config.EnableCompression)
 	if err != nil {
 		h.logger.Error("Failed to upgrade WebSocket connection: %v", err)
 		return
 	}
+	conn := rawConn
 	defer conn.Close()
 
 	// Set connection limits
@@ -215,14 +251,6 @@ func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, dep
 func (h *SSHHandler) handleSession(session *SSHStreamSession) {
 	h.logger.Debug("Starting WebSocket SSH session handler: %s", session.ID)
 
-	// Set up ping/pong for connection keep-alive
-	session.Conn.SetPongHandler(func(appData string) error {
-		session.Mutex.Lock()
-		session.LastActivity = time.Now()
-		session.Mutex.Unlock()
-		return session.Conn.SetReadDeadline(time.Now().Add(h.config.PongTimeout))
-	})
-
 	// Start ping routine
 	go h.pingRoutine(session)
 
@@ -255,11 +283,7 @@ func (h *SSHHandler) handleSession(session *SSHStreamSession) {
 			var msg WSMessage
 			err := session.Conn.ReadJSON(&msg)
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					h.logger.Error("WebSocket read error: %v", err)
-				} else {
-					h.logger.Debug("WebSocket connection closed: %s", session.ID)
-				}
+				h.logger.Debug("WebSocket connection closed or read error: %v", err)
 				return
 			}
 
@@ -526,10 +550,13 @@ func (h *SSHHandler) pingRoutine(session *SSHStreamSession) {
 		case <-session.Context.Done():
 			return
 		case <-ticker.C:
-			if err := session.Conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), h.config.PongTimeout)
+			if err := session.Conn.Ping(ctx); err != nil {
+				cancel()
 				h.logger.Debug("Failed to send ping to session %s: %v", session.ID, err)
 				return
 			}
+			cancel()
 		}
 	}
 }

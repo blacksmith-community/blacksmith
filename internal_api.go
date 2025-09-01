@@ -508,6 +508,10 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if instanceMap, ok := instanceData.(map[string]interface{}); ok {
 				enrichedInstanceMap := make(map[string]interface{})
 				for k, v := range instanceMap {
+					// Filter out huge stuff that shouldn't be sent to the UI for details display
+					if k == "bosh_properties" || k == "bosh_manifest" {
+						continue // Skip these fields
+					}
 					enrichedInstanceMap[k] = v
 				}
 
@@ -1015,7 +1019,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Get the correct instance group name from the manifest stored in Vault
 		// The instance group name is critical for SSH connections to work properly
 		// BOSH expects the actual instance group name from the manifest, not the plan name
-		instanceName := "" // We'll determine this from the manifest
+		instanceName := "" // We'll determine this from the manifest (can be overridden by query)
 		var manifestData struct {
 			Manifest string `json:"manifest"`
 		}
@@ -1059,7 +1063,31 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Info("Using default instance group name 'rabbitmq' for rabbitmq service (plan was: %s)", plan.Name)
 		}
 
+		// Default to index 0, allow override via query parameter
 		instanceIndex := 0
+		// Allow overrides from query parameters: ?instance=<group>&index=<n>
+		if idxStr := req.URL.Query().Get("index"); idxStr != "" {
+			if parsed, err := strconv.Atoi(idxStr); err == nil {
+				instanceIndex = parsed
+			} else {
+				l.Error("Invalid instance index '%s', using default 0", idxStr)
+			}
+		}
+		if qInst := req.URL.Query().Get("instance"); qInst != "" {
+			instanceName = qInst
+		}
+		if idxStr := req.URL.Query().Get("index"); idxStr != "" {
+			if parsed, err := strconv.Atoi(idxStr); err == nil {
+				instanceIndex = parsed
+			} else {
+				l.Error("Invalid instance index '%s', using default 0", idxStr)
+			}
+		}
+
+		// Allow explicit instance group override via query parameter
+		if qInst := req.URL.Query().Get("instance"); qInst != "" {
+			instanceName = qInst
+		}
 
 		// Handle different rabbitmqctl operations
 		switch operation {
@@ -2004,17 +2032,10 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		l := Logger.Wrap("websocket-ssh")
 		l.Debug("WebSocket SSH connection request for blacksmith deployment")
 
-		// Only allow GET method for WebSocket upgrade
-		if req.Method != "GET" {
+		// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
+		if req.Method != http.MethodGet && req.Method != http.MethodConnect {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
-			return
-		}
-
-		// Check for WebSocket upgrade headers
-		if req.Header.Get("Upgrade") != "websocket" {
-			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "WebSocket upgrade required"}`)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or CONNECT for WebSocket."}`)
 			return
 		}
 
@@ -2068,17 +2089,10 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		l := Logger.Wrap("websocket-ssh")
 		l.Debug("WebSocket SSH connection request for instance %s", instanceID)
 
-		// Only allow GET method for WebSocket upgrade
-		if req.Method != "GET" {
+		// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
+		if req.Method != http.MethodGet && req.Method != http.MethodConnect {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
-			return
-		}
-
-		// Check for WebSocket upgrade headers
-		if req.Header.Get("Upgrade") != "websocket" {
-			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "WebSocket upgrade required"}`)
+			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or CONNECT for WebSocket."}`)
 			return
 		}
 
@@ -2167,7 +2181,27 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				l.Info("Could not determine instance group name, falling back to plan name: %s", plan.Name)
 			}
 		}
+
+		// Parse instance and index from query parameters
+		queryInstance := req.URL.Query().Get("instance")
+		instanceIndexStr := req.URL.Query().Get("index")
+
+		// Override instance name if provided in query
+		if queryInstance != "" {
+			instanceName = queryInstance
+			l.Debug("Using instance name from query parameter: %s", instanceName)
+		}
+
+		// Parse instance index, default to 0 if not provided or invalid
 		instanceIndex := 0
+		if instanceIndexStr != "" {
+			if parsedIndex, parseErr := strconv.Atoi(instanceIndexStr); parseErr == nil {
+				instanceIndex = parsedIndex
+				l.Debug("Using instance index from query parameter: %d", instanceIndex)
+			} else {
+				l.Error("Invalid instance index '%s', using default 0", instanceIndexStr)
+			}
+		}
 
 		l.Info("Establishing WebSocket SSH connection to %s/%s/%d", deploymentName, instanceName, instanceIndex)
 
@@ -2909,30 +2943,27 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		param := m[1]
 		l.Debug("deleting resurrection config for %s", param)
 
-		// Determine deployment name based on param (same logic as toggle)
+		// Determine deployment name based on param (mirror logic from toggle)
 		var deploymentName string
 		if param == "blacksmith" {
-			deploymentName = "blacksmith"
-			l.Debug("deleting resurrection config for blacksmith deployment")
+			// For the blacksmith deployment, try to read the actual deployment name
+			if data, err := os.ReadFile("/var/vcap/instance/deployment"); err == nil {
+				deploymentName = strings.TrimSpace(string(data))
+				l.Debug("using blacksmith deployment name from instance file: %s", deploymentName)
+			} else {
+				deploymentName = "blacksmith"
+				l.Debug("using default blacksmith deployment name: %s", deploymentName)
+			}
 		} else {
-			l.Info("fetching service instance %s from vault", param)
-			var instance map[string]interface{}
-			exists, err := api.Vault.Get(fmt.Sprintf("secret/service/%s", param), &instance)
+			// For service instances, use vault index data and PlanID like toggle
+			inst, exists, err := api.Vault.FindInstance(param)
 			if err != nil || !exists {
-				l.Error("unable to fetch service instance %s: %s", param, err)
+				l.Error("unable to find service instance %s in vault index", param)
 				w.WriteHeader(404)
 				fmt.Fprintf(w, `{"error": "service instance not found"}`)
 				return
 			}
-
-			if serviceName, ok := instance["service_name"].(string); !ok {
-				l.Error("service_name not found or not a string in instance %s", param)
-				w.WriteHeader(500)
-				fmt.Fprintf(w, `{"error": "invalid service instance data"}`)
-				return
-			} else {
-				deploymentName = fmt.Sprintf("%s-%s", serviceName, param)
-			}
+			deploymentName = fmt.Sprintf("%s-%s", inst.PlanID, param)
 			l.Debug("deleting resurrection config for service deployment %s", deploymentName)
 		}
 

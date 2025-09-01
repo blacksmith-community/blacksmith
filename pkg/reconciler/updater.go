@@ -47,6 +47,12 @@ func NewVaultUpdaterWithCF(vault interface{}, logger Logger, backupConfig Backup
 func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData) (*InstanceData, error) {
 	u.logDebug("Updating instance %s in vault", instance.ID)
 
+	// Validate instance ID to prevent empty vault paths
+	if instance.ID == "" {
+		u.logError("Cannot update instance with empty ID")
+		return nil, fmt.Errorf("instance ID cannot be empty")
+	}
+
 	// Create backup of existing instance data before any updates if enabled
 	if u.backupConfig.Enabled {
 		if err := u.backupInstance(instance.ID); err != nil {
@@ -92,51 +98,59 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData
 
 	// Check for existing bindings
 	bindingsPath := fmt.Sprintf("%s/bindings", instance.ID)
-	existingBindings, bindingsErr := u.getFromVault(bindingsPath)
-	hasBindings := bindingsErr == nil && len(existingBindings) > 0
+	if instance.ID == "" {
+		u.logWarning("Skipping bindings check for empty instance ID")
+	} else {
+		existingBindings, bindingsErr := u.getFromVault(bindingsPath)
+		hasBindings := bindingsErr == nil && len(existingBindings) > 0
 
-	if hasBindings {
-		instance.Metadata["has_bindings"] = true
-		instance.Metadata["bindings_count"] = len(existingBindings)
+		if hasBindings {
+			instance.Metadata["has_bindings"] = true
+			instance.Metadata["bindings_count"] = len(existingBindings)
 
-		// Store binding IDs for reference
-		bindingIDs := make([]string, 0, len(existingBindings))
-		for id := range existingBindings {
-			bindingIDs = append(bindingIDs, id)
-		}
-		instance.Metadata["binding_ids"] = bindingIDs
-		u.logDebug("Instance %s has %d existing bindings - preserving", instance.ID, len(existingBindings))
+			// Store binding IDs for reference
+			bindingIDs := make([]string, 0, len(existingBindings))
+			for id := range existingBindings {
+				bindingIDs = append(bindingIDs, id)
+			}
+			instance.Metadata["binding_ids"] = bindingIDs
+			u.logDebug("Instance %s has %d existing bindings - preserving", instance.ID, len(existingBindings))
 
-		// Phase 2.1: Check binding health and repair if needed
-		u.logInfo("Checking binding health for instance %s", instance.ID)
-		healthyBindings, unhealthyBindingIDs, healthErr := u.checkBindingHealth(instance.ID)
-		if healthErr != nil {
-			u.logError("Failed to check binding health for instance %s: %s", instance.ID, healthErr)
-			instance.Metadata["binding_health_check_error"] = healthErr.Error()
-		} else {
-			instance.Metadata["healthy_bindings_count"] = len(healthyBindings)
-			instance.Metadata["unhealthy_bindings_count"] = len(unhealthyBindingIDs)
-			instance.Metadata["last_binding_health_check"] = time.Now().Format(time.RFC3339)
-
-			if len(unhealthyBindingIDs) > 0 {
-				u.logWarning("Found %d unhealthy bindings for instance %s: %v",
-					len(unhealthyBindingIDs), instance.ID, unhealthyBindingIDs)
-				instance.Metadata["unhealthy_binding_ids"] = unhealthyBindingIDs
-				instance.Metadata["needs_binding_repair"] = true
-
-				// Attempt to repair bindings (broker integration point)
-				// Note: This would require the broker instance to be passed in
-				// For now, we'll mark that repair is needed
-				u.logInfo("Binding repair needed for instance %s but broker integration not implemented", instance.ID)
+			// Phase 2.1: Check binding health and repair if needed
+			u.logInfo("Checking binding health for instance %s", instance.ID)
+			healthyBindings, unhealthyBindingIDs, healthErr := u.checkBindingHealth(instance.ID)
+			if healthErr != nil {
+				u.logError("Failed to check binding health for instance %s: %s", instance.ID, healthErr)
+				instance.Metadata["binding_health_check_error"] = healthErr.Error()
 			} else {
-				u.logDebug("All bindings healthy for instance %s", instance.ID)
-				instance.Metadata["needs_binding_repair"] = false
+				instance.Metadata["healthy_bindings_count"] = len(healthyBindings)
+				instance.Metadata["unhealthy_bindings_count"] = len(unhealthyBindingIDs)
+				instance.Metadata["last_binding_health_check"] = time.Now().Format(time.RFC3339)
+
+				if len(unhealthyBindingIDs) > 0 {
+					u.logWarning("Found %d unhealthy bindings for instance %s: %v",
+						len(unhealthyBindingIDs), instance.ID, unhealthyBindingIDs)
+					instance.Metadata["unhealthy_binding_ids"] = unhealthyBindingIDs
+					instance.Metadata["needs_binding_repair"] = true
+
+					// Attempt to repair bindings (broker integration point)
+					// Note: This would require the broker instance to be passed in
+					// For now, we'll mark that repair is needed
+					u.logInfo("Binding repair needed for instance %s but broker integration not implemented", instance.ID)
+				} else {
+					u.logDebug("All bindings healthy for instance %s", instance.ID)
+					instance.Metadata["needs_binding_repair"] = false
+				}
 			}
 		}
 	}
 
 	// Get existing root data to preserve fields
 	rootPath := instance.ID
+	if rootPath == "" {
+		u.logError("Cannot store data for instance with empty ID")
+		return &instance, fmt.Errorf("instance ID cannot be empty")
+	}
 	existingRootData, _ := u.getFromVault(rootPath)
 	if existingRootData == nil {
 		existingRootData = make(map[string]interface{})

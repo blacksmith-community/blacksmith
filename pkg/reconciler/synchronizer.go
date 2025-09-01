@@ -48,12 +48,17 @@ func (s *indexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 	// Update index with reconciled instances
 	for _, inst := range instances {
 		data := map[string]interface{}{
-			"service_id":      inst.ServiceID,
-			"plan_id":         inst.PlanID,
 			"deployment_name": inst.Deployment.Name,
 			"reconciled":      true,
 			"reconciled_at":   time.Now().Format(time.RFC3339),
 			"reconciled_by":   "deployment_reconciler",
+		}
+		// Only set service identifiers when known to avoid validation errors
+		if inst.ServiceID != "" {
+			data["service_id"] = inst.ServiceID
+		}
+		if inst.PlanID != "" {
+			data["plan_id"] = inst.PlanID
 		}
 
 		// Check if instance exists

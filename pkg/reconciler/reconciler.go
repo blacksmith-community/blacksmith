@@ -389,8 +389,7 @@ func (r *ReconcilerManager) discoverCFInstancesWithRateLimit(ctx context.Context
 
 	// Execute with circuit breaker
 	result, err := r.cfBreaker.Execute(func() (interface{}, error) {
-		err := r.discoverCFServiceInstances(ctx, nil)
-		return nil, err
+		return r.discoverCFServiceInstances(ctx, nil)
 	})
 
 	if err != nil {
@@ -771,9 +770,74 @@ func (r *ReconcilerManager) filterServiceDeployments(deployments []DeploymentInf
 }
 
 func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment DeploymentInfo, cfInstances []CFServiceInstanceDetails) (InstanceData, error) {
-	// Implementation would process a single deployment
-	// This is a placeholder - actual implementation would use existing logic
-	return InstanceData{}, nil
+	// Try to get full deployment details (manifest etc.) for better matching
+	detail := DeploymentDetail{DeploymentInfo: deployment}
+	if r.scanner != nil {
+		if d, err := r.scanner.GetDeploymentDetails(ctx, deployment.Name); err == nil && d != nil {
+			detail = *d
+		}
+	}
+
+	// Derive instance ID from deployment name; allow lenient fallback for legacy/tests
+	uuidPattern := regexp.MustCompile(`([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
+	matches := uuidPattern.FindStringSubmatch(deployment.Name)
+
+	var instanceID string
+	if len(matches) >= 1 {
+		instanceID = matches[0]
+	} else {
+		fallback := regexp.MustCompile(`([0-9a-f-]{11,36})$`).FindStringSubmatch(deployment.Name)
+		if len(fallback) >= 1 {
+			instanceID = fallback[0]
+		}
+	}
+
+	inst := InstanceData{
+		ID:         instanceID,
+		Deployment: detail,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Metadata: map[string]interface{}{
+			"deployment_name": deployment.Name,
+		},
+	}
+
+	// Attempt to match service/plan via matcher
+	if r.matcher != nil {
+		if match, err := r.matcher.MatchDeployment(detail, nil); err == nil && match != nil {
+			if match.InstanceID != "" {
+				inst.ID = match.InstanceID
+			}
+			inst.ServiceID = match.ServiceID
+			inst.PlanID = match.PlanID
+			inst.Metadata["match_confidence"] = match.Confidence
+			inst.Metadata["match_reason"] = match.MatchReason
+		}
+	}
+
+	// Enrich from CF discovery data if available and matching
+	if inst.ID != "" {
+		for _, c := range cfInstances {
+			if c.GUID == inst.ID {
+				if inst.ServiceID == "" {
+					inst.ServiceID = c.ServiceID
+				}
+				if inst.PlanID == "" {
+					inst.PlanID = c.PlanID
+				}
+				inst.Metadata["cf_org_id"] = c.OrganizationID
+				inst.Metadata["cf_space_id"] = c.SpaceID
+				inst.Metadata["cf_name"] = c.Name
+				break
+			}
+		}
+	}
+
+	if inst.ServiceID == "" || inst.PlanID == "" {
+		inst.Metadata["unmatched_service"] = true
+	}
+
+	return inst, nil
 }
 
 // synchronizeIndex synchronizes the vault index with the given instances
@@ -785,17 +849,17 @@ func (r *ReconcilerManager) synchronizeIndex(ctx context.Context, instances []In
 }
 
 // discoverCFServiceInstances discovers service instances from Cloud Foundry
-func (r *ReconcilerManager) discoverCFServiceInstances(ctx context.Context, filter interface{}) error {
+func (r *ReconcilerManager) discoverCFServiceInstances(ctx context.Context, filter interface{}) ([]CFServiceInstanceDetails, error) {
 	if r.cfManager == nil {
 		r.logger.Debug("CF manager not configured, skipping CF service discovery")
-		return nil
+		return []CFServiceInstanceDetails{}, nil
 	}
 
 	// This would integrate with CF to discover service instances
 	// For now, it's a placeholder that can be extended
 	r.logger.Info("Discovering CF service instances")
-	// TODO: Implement CF service discovery
-	return nil
+	// TODO: Implement CF service discovery via CFManagerInterface when available
+	return []CFServiceInstanceDetails{}, nil
 }
 
 // isServiceDeployment checks if a deployment name indicates it's a service deployment

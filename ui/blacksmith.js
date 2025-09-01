@@ -66,13 +66,13 @@
   const initializeAllTables = () => {
     // Find all tables in the document
     const tables = document.querySelectorAll('table');
-    
+
     tables.forEach(table => {
       // Skip if table already has sorting initialized
       if (table.hasAttribute('data-sorting-initialized')) {
         return;
       }
-      
+
       // Add sorting to all table headers
       const headers = table.querySelectorAll('thead th');
       headers.forEach((header, index) => {
@@ -80,18 +80,18 @@
         if (header.classList.contains('sortable') || header.classList.contains('sort-asc') || header.classList.contains('sort-desc')) {
           return;
         }
-        
+
         // Add sortable class and indicator
         header.classList.add('sortable');
         header.style.cursor = 'pointer';
         header.setAttribute('data-column-index', index);
-        
+
         // Add click handler for sorting
         header.addEventListener('click', () => {
           sortTableByColumn(table, index, header);
         });
       });
-      
+
       // Mark table as initialized
       table.setAttribute('data-sorting-initialized', 'true');
     });
@@ -101,16 +101,16 @@
   const sortTableByColumn = (table, columnIndex, headerElement) => {
     const tbody = table.querySelector('tbody');
     if (!tbody) return;
-    
+
     const rows = Array.from(tbody.querySelectorAll('tr'));
     const isCurrentlyAsc = headerElement.classList.contains('sort-asc');
     const isCurrentlyDesc = headerElement.classList.contains('sort-desc');
-    
+
     // Clear all sort indicators in this table
     table.querySelectorAll('th').forEach(th => {
       th.classList.remove('sort-asc', 'sort-desc');
     });
-    
+
     // Determine sort direction
     let sortDirection = 'asc';
     if (isCurrentlyAsc) {
@@ -120,31 +120,31 @@
       sortDirection = 'asc';
       headerElement.classList.add('sort-asc');
     }
-    
+
     // Sort rows
     rows.sort((a, b) => {
       const aCell = a.cells[columnIndex];
       const bCell = b.cells[columnIndex];
-      
+
       if (!aCell || !bCell) return 0;
-      
+
       const aText = aCell.textContent.trim();
       const bText = bCell.textContent.trim();
-      
+
       // Try to parse as numbers first
       const aNum = parseFloat(aText);
       const bNum = parseFloat(bText);
-      
+
       let comparison = 0;
       if (!isNaN(aNum) && !isNaN(bNum)) {
         comparison = aNum - bNum;
       } else {
         comparison = aText.localeCompare(bText, undefined, { numeric: true, sensitivity: 'base' });
       }
-      
+
       return sortDirection === 'desc' ? -comparison : comparison;
     });
-    
+
     // Re-append sorted rows
     rows.forEach(row => tbody.appendChild(row));
   };
@@ -186,10 +186,10 @@
     if (themeToggle) {
       themeToggle.addEventListener('click', toggleTheme);
     }
-    
+
     // Initialize tables with sorting
     initializeAllTables();
-    
+
     // Set up observer for dynamic content
     setupTableObserver();
   });
@@ -1891,9 +1891,10 @@
         }
       });
 
-      // Add any additional fields not in the predefined order (except context and deployment_name)
+      // Add any additional fields not in the predefined order (except context, deployment_name, and large fields)
       Object.keys(vaultData).forEach(key => {
-        if (key !== 'context' && key !== 'deployment_name' &&
+        if (key !== 'context' && key !== 'bosh_properties' && key !== 'bosh_manifest' &&
+          key !== 'bosh_vms' && key !== 'history' && key !== 'bosh_releases' && key !== 'bosh_stemcells' &&
           !fieldOrder.find(f => f.key === key)) {
           let value = vaultData[key];
 
@@ -3402,13 +3403,13 @@
         if (typeConfigs.length > 0) {
           typeConfigs.forEach(config => {
             const createdAt = formatTimestamp(config.created_at);
-            
+
             // Add asterisk for active configs and make it clickable to show versions
             const isActive = config.is_active || config.id.endsWith('*');
             const cleanId = config.id.replace('*', '');
             const configIdDisplay = isActive ? `${cleanId}*` : cleanId;
-            const configIdLink = `<a href="#" class="config-link" data-config-id="${cleanId}" data-config-type="${config.type}" data-config-name="${config.name}" onclick="showConfigVersions('${config.type}', '${config.name ? config.name.replace(/'/g, "\\'"): ''}', '${cleanId}', event); return false;">${configIdDisplay}</a>`;
-            
+            const configIdLink = `<a href="#" class="config-link" data-config-id="${cleanId}" data-config-type="${config.type}" data-config-name="${config.name}" onclick="showConfigVersions('${config.type}', '${config.name ? config.name.replace(/'/g, "\\'") : ''}', '${cleanId}', event); return false;">${configIdDisplay}</a>`;
+
             // Format team, show dash for empty
             const teamDisplay = config.team || '-';
 
@@ -3801,14 +3802,14 @@
     // Try to extract level from simple patterns as fallback
     let fallbackLevel = '';
     let fallbackMessage = line;
-    
+
     // Look for common level indicators
     const levelIndicators = /\b(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\b/i;
     const levelMatch = line.match(levelIndicators);
     if (levelMatch) {
       fallbackLevel = levelMatch[1].toUpperCase();
     }
-    
+
     // Try to extract basic timestamp if present at line start
     let fallbackDate = '';
     let fallbackTime = '';
@@ -3819,7 +3820,7 @@
       // Remove timestamp from message
       fallbackMessage = line.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*/, '');
     }
-    
+
     return {
       date: fallbackDate,
       time: fallbackTime,
@@ -4121,7 +4122,7 @@
                       <span>${instanceName}</span>
                       <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${instanceName}')"
                               title="Copy to clipboard">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                     </span>
                   ` : '-'}
@@ -8881,7 +8882,7 @@
               const response = await fetch('/b/blacksmith/credentials');
               if (response.ok) {
                 const creds = await response.json();
-                
+
                 // Create details content with credentials
                 const data = window.blacksmithData || {};
                 const deploymentName = data.deployment || 'blacksmith';
@@ -8889,7 +8890,7 @@
                 const totalInstances = data.instances ? Object.keys(data.instances).length : 0;
                 const totalPlans = data.plans ? Object.keys(data.plans).length : 0;
                 const status = 'Running';
-                
+
                 contentContainer.innerHTML = `
                   <table class="service-info-table w-full bg-white dark:bg-gray-900 rounded-lg overflow-hidden shadow-sm border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-200px)] overflow-y-auto">
                     <tbody>
@@ -9079,20 +9080,20 @@
           if (tabType === 'plans') {
             // Add CSS class for plans layout
             contentContainer.classList.add('plans-view');
-            
+
             // Use the existing plans data if available, or load it
             if (window.plansData && window.plansData.services && window.plansData.services.length > 0) {
               contentContainer.innerHTML = renderPlansTemplate(window.plansData);
-              
+
               // Set up plan click handlers
               document.querySelectorAll('#blacksmith .plan-item').forEach(item => {
                 item.addEventListener('click', function () {
                   const planId = this.dataset.planId;
-                  
+
                   // Find the service and plan from the stored data
                   let selectedService = null;
                   let selectedPlan = null;
-                  
+
                   if (window.plansData && window.plansData.services) {
                     window.plansData.services.forEach(service => {
                       if (!service || !service.plans) return;
@@ -9104,12 +9105,12 @@
                       });
                     });
                   }
-                  
+
                   if (selectedService && selectedPlan) {
                     // Update active plan selection
                     document.querySelectorAll('#blacksmith .plan-item').forEach(i => i.classList.remove('active'));
                     this.classList.add('active');
-                    
+
                     // Update detail panel
                     const detailContainer = document.querySelector('#blacksmith .plan-detail');
                     if (detailContainer) {
@@ -9470,14 +9471,14 @@
 
       const data = await response.json();
       const taskFilter = document.getElementById('task-filter');
-      
+
       if (taskFilter && data && data.options && Array.isArray(data.options)) {
         // Save current selection if not provided
         const currentSelection = preserveSelection || taskFilter.value || 'blacksmith';
-        
+
         // Clear existing options
         taskFilter.innerHTML = '';
-        
+
         // Add all options in the order specified:
         // blacksmith, service-instances, then service names, then plan IDs
         data.options.forEach(option => {
@@ -9526,7 +9527,7 @@
         setTimeout(async () => {
           // First repopulate the task filter dropdown since formatTasks() recreated the HTML
           await populateTaskFilter(taskFilterValue);
-          
+
           // Restore dropdown selections
           const newTypeFilter = document.getElementById('task-type-filter');
           if (newTypeFilter) {
@@ -9696,7 +9697,7 @@
     let modal = document.getElementById('task-details-modal');
     if (!modal) {
       const modalHTML = `
-        <div id="task-details-modal" class="modal-overlay" role="dialog" aria-labelledby="task-details-modal-title" aria-hidden="true">
+        <div id="task-details-modal" class="modal-overlay" role="dialog" aria-labelledby="task-details-modal-title">
           <div class="modal">
             <div class="modal-content">
               <div class="modal-header">
@@ -9989,7 +9990,7 @@
                 <button class="manifest-tab-btn active" data-tab="versions" data-group="config-details-tabs">Versions</button>
                 <button class="manifest-tab-btn" data-tab="diffs" data-group="config-details-tabs">Diffs</button>
               </div>
-              
+
               <!-- Tab content -->
               <div class="modal-tab-content">
                 <!-- Versions tab -->
@@ -10019,7 +10020,7 @@
                     </div>
                   </div>
                 </div>
-                
+
                 <!-- Diffs tab -->
                 <div id="config-diffs-tab" class="manifest-tab-pane" data-tab="diffs" data-group="config-details-tabs">
                   <div id="config-diffs-loading" class="loading" style="display: none;">
@@ -10073,7 +10074,7 @@
       `;
       document.body.insertAdjacentHTML('beforeend', modalHTML);
       modal = document.getElementById('config-details-modal');
-      
+
       // Setup tab switching for config details modal
       setupConfigDetailsTabs();
     }
@@ -10101,7 +10102,7 @@
 
       // Update modal title
       document.getElementById('config-details-modal-title').textContent = `Config Details - ${configName} (${configType})`;
-      
+
       // Populate config overview table with latest version info
       const latestVersion = versions.length > 0 ? versions[0] : null;
       if (latestVersion) {
@@ -10109,21 +10110,21 @@
           const elem = document.getElementById(id);
           if (elem) elem.textContent = value || '-';
         };
-        
+
         setElementText('config-id', latestVersion.id || '-');
         setElementText('config-name', configName);
         setElementText('config-type', configType);
         setElementText('config-team', latestVersion.team || '-');
         setElementText('config-created-at', latestVersion.created_at || '-');
-        
+
         // Set status with active indicator
         const statusElem = document.getElementById('config-status');
         if (statusElem) {
           // Check if this is the active version using the same logic as version list
-          const isActive = latestVersion.is_active || latestVersion.current || 
-                          (latestVersion.id && latestVersion.id.includes('*'));
-          statusElem.innerHTML = isActive ? 
-            '<span class="badge badge-success">ACTIVE</span>' : 
+          const isActive = latestVersion.is_active || latestVersion.current ||
+            (latestVersion.id && latestVersion.id.includes('*'));
+          statusElem.innerHTML = isActive ?
+            '<span class="badge badge-success">ACTIVE</span>' :
             '<span class="badge badge-secondary">INACTIVE</span>';
         }
       } else {
@@ -10134,11 +10135,11 @@
             if (elem) elem.textContent = '-';
           });
       }
-      
+
       // Clear any previous config info and reset diff tab
       window.currentConfigInfo = null;
       window.currentDiffIndex = null;
-      
+
       // Reset diff tab if it exists
       const diffSelector = document.getElementById('diff-version-selector');
       if (diffSelector) {
@@ -10155,7 +10156,7 @@
         diffPlaceholder.classList.remove('hidden');
         diffPlaceholder.textContent = 'Select versions from the dropdown above to view configuration changes.';
       }
-      
+
       // Store new config info for diff tab
       window.currentConfigInfo = { type: configType, name: configName, versions: versions };
 
@@ -10195,7 +10196,7 @@
 
       // Set up copy functionality
       setupConfigVersionCopyFunctionality();
-      
+
       // Set up tab functionality for static modal
       setupConfigDetailsTabs();
 
@@ -10282,7 +10283,7 @@
     const tabGroupId = 'config-tabs';
     const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
     const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
-    
+
     tabButtons.forEach(button => {
       button.addEventListener('click', () => {
         const tabName = button.dataset.tab;
@@ -10319,7 +10320,7 @@
       // Remove any existing event listeners
       const newSelector = diffSelector.cloneNode(true);
       diffSelector.parentNode.replaceChild(newSelector, diffSelector);
-      
+
       newSelector.addEventListener('change', async (event) => {
         const selectedValue = event.target.value;
         if (selectedValue) {
@@ -10346,7 +10347,7 @@
     const selector = document.getElementById('diff-version-selector');
     const placeholder = document.getElementById('diff-placeholder');
     const diffOutput = document.getElementById('diff-output');
-    
+
     if (!window.currentConfigInfo || !window.currentConfigInfo.versions || window.currentConfigInfo.versions.length < 2) {
       if (placeholder) {
         placeholder.textContent = 'At least 2 versions are required for diff comparison.';
@@ -10372,7 +10373,7 @@
     if (selector) {
       selector.disabled = false;
       selector.innerHTML = '<option value="">Select versions to compare</option>';
-      
+
       const versions = window.currentConfigInfo.versions;
       // Create options for each consecutive pair
       for (let i = 0; i < versions.length - 1; i++) {
@@ -10386,7 +10387,7 @@
         }
         selector.appendChild(option);
       }
-      
+
       // Reset selection
       selector.value = '';
     }
@@ -10396,14 +10397,14 @@
   window.loadConfigDiffById = async (fromId, toId) => {
     const diffOutput = document.getElementById('diff-output');
     const placeholder = document.getElementById('diff-placeholder');
-    
+
     if (!diffOutput) return;
-    
+
     // Show loading state
     diffOutput.innerHTML = 'Loading diff...';
     diffOutput.classList.add('active');
     if (placeholder) placeholder.classList.add('hidden');
-    
+
     try {
       // Fetch diff from API
       const response = await fetch(
@@ -10416,10 +10417,10 @@
       }
 
       const diffData = await response.json();
-      
+
       // Display the diff
       displaySimpleDiff(diffData, fromId, toId);
-      
+
     } catch (error) {
       console.error('Failed to load config diff:', error);
       diffOutput.innerHTML = `Error loading diff: ${error.message}`;
@@ -10430,13 +10431,13 @@
   // Display simple diff in monospace box
   const displaySimpleDiff = (diffData, fromId, toId) => {
     const diffOutput = document.getElementById('diff-output');
-    
+
     if (!diffOutput) return;
-    
+
     // Create header
     let output = `Configuration Changes: ${fromId} → ${toId}\n`;
     output += '─'.repeat(60) + '\n\n';
-    
+
     if (!diffData.has_changes) {
       output += 'No changes detected between these configuration versions.\n';
     } else if (diffData.diff_string) {
@@ -10445,7 +10446,7 @@
     } else {
       output += 'Diff information not available.\n';
     }
-    
+
     // Set the text content to preserve formatting
     diffOutput.textContent = output;
     diffOutput.classList.add('active');
@@ -10462,10 +10463,10 @@
     // Update navigation buttons
     const prevDisabled = index === 0;
     const nextDisabled = index >= versions.length - 2;
-    
+
     console.log(`Navigation state: index=${index}, versions.length=${versions.length}, prevDisabled=${prevDisabled}, nextDisabled=${nextDisabled}`);
     console.log(`Current diff index: ${window.currentDiffIndex}, comparing ${fromVersion.id} → ${toVersion.id}`);
-    
+
     document.getElementById('prev-diff-btn').disabled = prevDisabled;
     document.getElementById('next-diff-btn').disabled = nextDisabled;
 
@@ -10479,10 +10480,10 @@
     const diffDisplay = document.getElementById('config-diff-display');
     const placeholder = document.getElementById('diff-placeholder');
     const diffPanels = document.querySelector('.diff-panels');
-    
+
     if (placeholder) placeholder.style.display = 'none';
     if (diffPanels) diffPanels.style.display = 'none';
-    
+
     // Create or update loading message without destroying the diff panels
     let loadingMsg = document.getElementById('diff-loading-msg');
     if (!loadingMsg) {
@@ -10548,7 +10549,7 @@
     const rightPanel = document.getElementById('diff-right-content');
     const diffPanels = document.querySelector('.diff-panels');
     const placeholder = document.getElementById('diff-placeholder');
-    
+
     // Show diff panels and hide placeholder/loading
     if (placeholder) placeholder.style.display = 'none';
     const loadingMsg = document.getElementById('diff-loading-msg');
@@ -10588,11 +10589,11 @@
   // Create diff display with line numbers and highlighting
   const createDiffDisplay = (lines, type, changes) => {
     let html = '<div class="diff-lines">';
-    
+
     lines.forEach((line, index) => {
       const lineNum = index + 1;
       let lineClass = 'diff-line';
-      
+
       // Check if this line is part of a change
       // This is a simplified version - you might want to enhance this
       // based on the actual change data structure
@@ -10608,13 +10609,13 @@
           }
         }
       }
-      
+
       html += `<div class="${lineClass}">`;
       html += `<span class="line-number">${lineNum}</span>`;
       html += `<span class="line-content">${escapeHtml(line)}</span>`;
       html += '</div>';
     });
-    
+
     html += '</div>';
     return html;
   };
@@ -10625,7 +10626,7 @@
     const rightPanel = document.getElementById('diff-right-content');
     const diffPanels = document.querySelector('.diff-panels');
     const placeholder = document.getElementById('diff-placeholder');
-    
+
     // Show diff panels and hide placeholder/loading
     if (placeholder) placeholder.style.display = 'none';
     const loadingMsg = document.getElementById('diff-loading-msg');
@@ -10640,7 +10641,7 @@
 
     // Parse the spruce diff output and create formatted display
     const formattedDiff = formatSpruceDiff(diffString);
-    
+
     // Display diff in left panel, hide right panel or show legend
     leftPanel.innerHTML = `
       <div class="spruce-diff-container">
@@ -10652,7 +10653,7 @@
         </div>
       </div>
     `;
-    
+
     // Hide right panel for spruce diff display
     rightPanel.style.display = 'none';
     leftPanel.style.width = '100%';
@@ -10664,7 +10665,7 @@
     const rightPanel = document.getElementById('diff-right-content');
     const diffPanels = document.querySelector('.diff-panels');
     const placeholder = document.getElementById('diff-placeholder');
-    
+
     // Show diff panels and hide placeholder/loading
     if (placeholder) placeholder.style.display = 'none';
     const loadingMsg = document.getElementById('diff-loading-msg');
@@ -10686,7 +10687,7 @@
         </div>
       </div>
     `;
-    
+
     rightPanel.style.display = 'none';
     leftPanel.style.width = '100%';
   };
@@ -10699,11 +10700,11 @@
 
     const lines = diffString.split('\n');
     let html = '<div class="spruce-diff-lines">';
-    
+
     lines.forEach((line, index) => {
       let lineClass = 'spruce-diff-line';
       let lineContent = escapeHtml(line);
-      
+
       // Highlight different types of changes based on spruce diff output
       if (line.startsWith('+ ')) {
         lineClass += ' addition';
@@ -10719,10 +10720,10 @@
       } else if (line.trim() === '') {
         lineClass += ' empty';
       }
-      
+
       html += `<div class="${lineClass}">${lineContent}</div>`;
     });
-    
+
     html += '</div>';
     return html;
   };
@@ -10860,7 +10861,7 @@
         } else if (tabType === 'cpi') {
           outputType = 'cpi';
         }
-        
+
         let fetchUrl = `/b/tasks/${taskId}/output`;
         if (outputType !== 'task') {
           fetchUrl += `?type=${outputType}`;
@@ -10876,7 +10877,7 @@
           if (tabType === 'task' && typeof outputData.output === 'string') {
             const lines = outputData.output.trim().split('\n').filter(line => line.trim());
             const events = [];
-            
+
             for (const line of lines) {
               try {
                 const event = JSON.parse(line);
@@ -10884,7 +10885,7 @@
                 const timestamp = new Date(event.time * 1000);
                 const timeStr = timestamp.toISOString().substring(11, 19); // HH:MM:SS format
                 const dateStr = timestamp.toISOString().substring(0, 10); // YYYY-MM-DD format
-                
+
                 // Build display message from stage and task info
                 let message = event.stage;
                 if (event.task && event.task !== event.stage) {
@@ -10899,7 +10900,7 @@
                 if (event.data && event.data.status) {
                   message += ` - ${event.data.status}`;
                 }
-                
+
                 events.push({
                   date: dateStr,
                   time: timeStr,
@@ -10911,7 +10912,7 @@
                 console.warn('Failed to parse event line:', line, e);
               }
             }
-            
+
             // Format as task events table
             if (events.length > 0) {
               content = formatTaskEventsAsLogs(events, 'task');
@@ -11053,7 +11054,7 @@
   // Format task events as logs table for the Task tab
   const formatTaskEventsAsLogs = (events, outputType) => {
     const tableClass = `task-${outputType}-table`;
-    
+
     if (!events || events.length === 0) {
       return `
         <div class="logs-table-container">
@@ -11088,7 +11089,7 @@
       const timestamp = event.date && event.time ? `${event.date} ${event.time}` : (event.time || '-');
       const level = event.level || 'INFO';
       const message = event.message || '';
-      
+
       return `
         <tr>
           <td class="timestamp">${timestamp}</td>
@@ -14690,8 +14691,43 @@
     sessions: new Map(),
     activeSession: null,
     maxSessions: 10,
+    lastFocusBeforeModal: null,
 
-    openWithContext(deploymentType, deploymentName, instanceId) {
+    updateTitle(context) {
+      try {
+        const detailsEl = document.getElementById('terminal-title-details');
+        if (!detailsEl) return;
+
+        const kind = context.deploymentType === 'blacksmith' ? 'BK' : 'SI';
+
+        // Use the BOSH deployment name (e.g., redis-cache-small-UUID) in the header
+        const deploymentName = context.boshDeploymentName || context.deploymentName || '';
+
+        // instanceId field here often carries job/index like "node/2" or "standalone/0"
+        let jobName = context.instanceId || '';
+        let index = '';
+        if (jobName && jobName.includes('/')) {
+          const parts = jobName.split('/');
+          index = parts.pop();
+          jobName = parts.join('/');
+        }
+
+        const seg = (text) => `<span class=\"terminal-title-seg\">${text}</span>`;
+
+        detailsEl.innerHTML = `
+          <span class=\"terminal-title-badge\">[${kind}]</span>
+          ${seg(deploymentName)}
+          ${jobName ? seg(jobName) : ''}
+          ${index !== '' ? seg('/' + index) : ''}
+        `;
+      } catch (e) {
+        console.error('Failed to update terminal title details:', e);
+      }
+    },
+
+    openWithContext(deploymentType, deploymentName, instanceId, instanceName, boshDeploymentName) {
+      // Remember current focused element to restore after closing
+      this.lastFocusBeforeModal = document.activeElement;
       const sessionKey = `${deploymentType}-${deploymentName}-${instanceId}`;
 
       // Check if session already exists
@@ -14710,7 +14746,9 @@
       this.createSession(sessionKey, {
         deploymentType,
         deploymentName,
-        instanceId
+        instanceId,
+        instanceName: instanceName || null,
+        boshDeploymentName: boshDeploymentName || deploymentName
       });
     },
 
@@ -14721,6 +14759,10 @@
         modal.style.display = 'flex';
         modal.classList.add('active');
         modal.setAttribute('aria-hidden', 'false');
+        // Ensure modal is interactive: remove inert if present
+        if (modal.hasAttribute('inert')) {
+          modal.removeAttribute('inert');
+        }
       }
 
       // Create terminal instance
@@ -14762,8 +14804,14 @@
       // Open terminal in the div
       terminal.open(terminalDiv);
 
-      // Focus the terminal after opening
+      // Make container focusable and focus terminal after opening
+      terminalDiv.setAttribute('tabindex', '0');
+      terminalDiv.addEventListener('mousedown', () => {
+        terminalDiv.focus();
+        terminal.focus();
+      });
       setTimeout(() => {
+        terminalDiv.focus();
         terminal.focus();
       }, 100);
 
@@ -14793,6 +14841,8 @@
 
       // Create tab
       this.createTab(sessionKey, context);
+      // Update header title details
+      this.updateTitle(context);
 
       // Create WebSocket connection with retry logic
       let retryCount = 0;
@@ -14800,6 +14850,8 @@
       let ws = null;
       let handshakeReceived = false;
       let sessionConnected = false;
+      let heartbeatTimer = null;
+      let heartbeatSeq = 0;
 
       const connectWebSocket = () => {
         const wsUrl = this.buildWebSocketUrl(context);
@@ -14835,6 +14887,19 @@
                   }));
                 }
               }, 100);
+
+              // Start application heartbeat to keep client->server traffic flowing for LBs
+              if (heartbeatTimer) clearInterval(heartbeatTimer);
+              heartbeatSeq = 0;
+              heartbeatTimer = setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({
+                    type: 'heartbeat',
+                    seq: ++heartbeatSeq,
+                    timestamp: new Date().toISOString()
+                  }));
+                }
+              }, 4000);
               break;
             case 'output':
               terminal.write(msg.data);
@@ -14877,6 +14942,10 @@
         };
 
         ws.onclose = (event) => {
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
           if (!handshakeReceived && retryCount < maxRetries && event.code !== 1000) {
             // Connection closed before handshake, likely a connection issue
             terminal.writeln(`\r\n[Connection closed unexpectedly - Retrying... (${retryCount + 1}/${maxRetries})]`);
@@ -14948,8 +15017,13 @@
 
         return `${protocol}//${host}/b/blacksmith/ssh/stream?instance=${encodeURIComponent(instanceName)}&index=${encodeURIComponent(instanceIndex)}`;
       } else {
-        // For service instances
-        return `${protocol}//${host}/b/${context.deploymentName}/ssh/stream`;
+        // For service instances we also pass instance group and index
+        // context.instanceId is like "node/2" or "standalone/0"
+        const parts = (context.instanceId || '').split('/');
+        const instanceName = parts[0] || '';
+        const instanceIndex = parts.length > 1 ? parts[1] : '0';
+        const qp = instanceName !== '' ? `?instance=${encodeURIComponent(instanceName)}&index=${encodeURIComponent(instanceIndex)}` : '';
+        return `${protocol}//${host}/b/${context.deploymentName}/ssh/stream${qp}`;
       }
     },
 
@@ -14958,6 +15032,10 @@
       const tab = document.createElement('button');
       tab.className = `terminal-tab px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-0 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 transition-colors duration-200 flex items-center gap-2 whitespace-nowrap text-sm ${context.deploymentType === 'blacksmith' ? 'blacksmith-tab' : 'service-instance-tab'}`;
       tab.id = `tab-${sessionKey}`;
+
+      // Use instance_name for tab display if available
+      const tabDisplayName = context.instanceName || context.deploymentName;
+
       tab.innerHTML = `
         <svg class="terminal-tab-icon w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -14965,7 +15043,7 @@
           <line x1="12" y1="17" x2="12" y2="21"></line>
         </svg>
         <span class="${context.deploymentType === 'blacksmith' ? 'blacksmith-prefix' : 'service-prefix'}">[${context.deploymentType === 'blacksmith' ? 'BK' : 'SI'}]</span>
-        ${context.deploymentName}/${context.instanceId}
+        ${tabDisplayName}/${context.instanceId}
         <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
       `;
       tab.onclick = (e) => {
@@ -14993,6 +15071,9 @@
         session.element.classList.add('active');
         document.getElementById(`tab-${sessionKey}`).classList.add('active');
         this.activeSession = sessionKey;
+
+        // Update header title details to reflect the active session
+        this.updateTitle(session.context);
 
         // Focus the terminal after switching
         if (session.terminal) {
@@ -15032,6 +15113,18 @@
         // Remove from sessions
         this.sessions.delete(sessionKey);
 
+        // Update minimized bar if it's visible
+        const minimizedBar = document.getElementById('minimized-terminal-bar');
+        if (minimizedBar && minimizedBar.classList.contains('active')) {
+          if (this.sessions.size > 0) {
+            // Refresh the minimized bar to reflect the removed session
+            this.showMinimizedBar();
+          } else {
+            // No more sessions, hide the minimized bar
+            this.hideMinimizedBar();
+          }
+        }
+
         // Switch to another session if this was active
         if (this.activeSession === sessionKey) {
           const remainingSessions = Array.from(this.sessions.keys());
@@ -15041,7 +15134,13 @@
             // No more sessions, hide modal
             const modal = document.getElementById('terminal-modal');
             if (modal) {
+              // Ensure focus is moved out before hiding to avoid a11y warnings
+              const active = document.activeElement;
+              if (active && modal.contains(active)) {
+                try { active.blur(); } catch (_) { }
+              }
               modal.classList.remove('active');
+              modal.setAttribute('aria-hidden', 'true');
               setTimeout(() => {
                 modal.style.display = 'none';
               }, 300);
@@ -15069,20 +15168,50 @@
 
       // Hide minimized bar
       this.hideMinimizedBar();
+
+      // Restore focus back to the element that opened the modal (or body)
+      setTimeout(() => {
+        const target = this.lastFocusBeforeModal;
+        if (target && document.contains(target)) {
+          try { target.focus(); } catch (_) { }
+        } else {
+          try { document.body.focus(); } catch (_) { }
+        }
+        this.lastFocusBeforeModal = null;
+      }, 0);
+
+      // Clear title details when no sessions remain
+      if (this.sessions.size === 0) {
+        const detailsEl = document.getElementById('terminal-title-details');
+        if (detailsEl) detailsEl.innerHTML = '';
+      }
     },
 
     minimizeAll() {
-      // Hide the main terminal modal
+      // Show minimized bar with all sessions and move focus there first
+      this.showMinimizedBar();
+      const restoreBtn = document.querySelector('#minimized-terminal-bar .terminal-control-btn[title="Restore Terminal"]');
+      if (restoreBtn) {
+        try { restoreBtn.focus(); } catch (_) { }
+      } else {
+        try { document.body.focus(); } catch (_) { }
+      }
+
+      // Now hide the main terminal modal and mark it aria-hidden/inert
       const modal = document.getElementById('terminal-modal');
       if (modal) {
+        // If focus is still inside the modal, blur it to avoid a11y warning
+        const active = document.activeElement;
+        if (active && modal.contains(active)) {
+          try { active.blur(); } catch (_) { }
+        }
         modal.classList.remove('active');
+        modal.setAttribute('aria-hidden', 'true');
+        modal.setAttribute('inert', '');
         setTimeout(() => {
           modal.style.display = 'none';
         }, 300);
       }
-
-      // Show minimized bar with all sessions
-      this.showMinimizedBar();
     },
 
     restoreAll() {
@@ -15091,6 +15220,9 @@
       if (modal && this.sessions.size > 0) {
         modal.style.display = 'flex';
         modal.setAttribute('aria-hidden', 'false');
+        if (modal.hasAttribute('inert')) {
+          modal.removeAttribute('inert');
+        }
         setTimeout(() => {
           modal.classList.add('active');
         }, 10);
@@ -15248,7 +15380,22 @@
       event.preventDefault();
       event.stopPropagation();
     }
-    TerminalManager.openWithContext(deploymentType, deploymentName, instanceId);
+
+    // For service instances, enrich context with metadata from cache
+    let instanceName = null;
+    let boshDeploymentName = deploymentName;
+
+    if (deploymentType === 'service-instance' && window.serviceInstances) {
+      const instanceData = window.serviceInstances[deploymentName];
+      if (instanceData) {
+        instanceName = instanceData.instance_name || null;
+        // Construct the BOSH deployment name from plan_id and instance ID
+        // Format: {plan_id}-{instance_id}
+        boshDeploymentName = `${instanceData.plan_id}-${deploymentName}`;
+      }
+    }
+
+    TerminalManager.openWithContext(deploymentType, deploymentName, instanceId, instanceName, boshDeploymentName);
   };
 
   // Make TerminalManager available globally

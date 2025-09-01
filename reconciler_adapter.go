@@ -300,8 +300,8 @@ type vaultWrapper struct {
 	vault *Vault
 }
 
-func (v *vaultWrapper) Put(path string, data interface{}) error {
-	return v.vault.Put(path, data)
+func (v *vaultWrapper) Put(path string, secret map[string]interface{}) error {
+	return v.vault.Put(path, secret)
 }
 
 func (v *vaultWrapper) Get(path string) (map[string]interface{}, error) {

@@ -263,3 +263,48 @@ func TestCompressionTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestWebSocketBypassesCompression(t *testing.T) {
+	// Handler sets a header and writes a body; middleware should not compress
+	// when WebSocket upgrade headers are present, even if client advertises encoding.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Inner-Handler", "true")
+		// Simulate what a normal handler might do pre-upgrade
+		fmt.Fprint(w, `{"ok":true}`)
+	})
+
+	config := CompressionConfig{
+		Enabled:      true,
+		Types:        []string{"gzip", "deflate", "br"},
+		MinSize:      1, // force compression normally
+		ContentTypes: []string{"application/json"},
+	}
+
+	mw := NewCompressionMiddleware(handler, config)
+
+	req := httptest.NewRequest("GET", "/b/blacksmith/ssh/stream", nil)
+	// Typical websocket handshake headers
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Accept-Encoding", "gzip, br")
+
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+
+	resp := w.Result()
+	// Ensure middleware did not add compression
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+		t.Fatalf("expected no compression for websocket upgrade, got: %s", enc)
+	}
+	// Ensure inner handler ran
+	if resp.Header.Get("X-Inner-Handler") != "true" {
+		t.Fatalf("inner handler header missing; middleware may have intercepted incorrectly")
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("unexpected body: %s", string(body))
+	}
+}
