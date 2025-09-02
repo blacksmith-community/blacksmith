@@ -72,8 +72,14 @@ coverage-html: coverage ## Generate and open HTML coverage report
 	@echo "$(GREEN)Opening HTML coverage report...$(RESET)"
 	@go tool cover -html=coverage.out
 
+.PHONY: test-race
+test-race: ## Run tests with race detector
+	@echo "$(GREEN)Running tests with race detector...$(RESET)"
+	@go test -race -v $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Race condition tests complete$(RESET)"
+
 .PHONY: test-all
-test-all: test coverage ## Run all tests and generate coverage report
+test-all: test coverage test-race ## Run all tests and generate coverage report with race detection
 	@echo "$(GREEN)✓ All tests and coverage complete$(RESET)"
 
 .PHONY: report
@@ -144,7 +150,7 @@ security: govulncheck gosec trivy ## Run all security scans (govulncheck, gosec,
 	@echo "$(GREEN)✓ All security scans complete$(RESET)"
 
 .PHONY: check
-check: lint vet staticcheck test ## Run basic checks (lint, vet, staticcheck, test)
+check: lint vet staticcheck test test-race ## Run basic checks (lint, vet, staticcheck, test, test-race)
 	@echo "$(GREEN)✓ Basic checks passed$(RESET)"
 
 .PHONY: check-all
@@ -235,5 +241,5 @@ deps-tidy: ## Clean up go.mod and go.sum
 	@echo "$(GREEN)✓ Dependencies tidied$(RESET)"
 
 # Include all phony targets
-.PHONY: build linux dev test test-short test-all coverage coverage-html report fmt vet lint \
+.PHONY: build linux dev test test-short test-race test-all coverage coverage-html report fmt vet lint \
         govulncheck gosec staticcheck trivy security check check-all clean shipit version deps deps-update deps-tidy help
