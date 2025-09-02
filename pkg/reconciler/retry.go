@@ -424,7 +424,6 @@ func RetryWithCircuitBreaker(
 	breaker *gobreaker.CircuitBreaker,
 	fn func() (interface{}, error),
 ) (interface{}, error) {
-
 	retryFunc := func(ctx context.Context) (interface{}, error) {
 		return breaker.Execute(fn)
 	}

@@ -12,6 +12,7 @@ type Config struct {
 	Vault        VaultConfig        `yaml:"vault"`
 	Shield       ShieldConfig       `yaml:"shield"`
 	BOSH         BOSHConfig         `yaml:"bosh"`
+	SSH          SSHConfig          `yaml:"ssh"` // Top-level SSH configuration
 	Services     ServicesConfig     `yaml:"services"`
 	Reconciler   ReconcilerConfig   `yaml:"reconciler"`
 	VMMonitoring VMMonitoringConfig `yaml:"vm_monitoring"`
@@ -176,12 +177,13 @@ type BOSHConfig struct {
 	Network           string    `yaml:"network"`
 	MaxConnections    int       `yaml:"max_connections"`    // Max concurrent BOSH API connections
 	ConnectionTimeout int       `yaml:"connection_timeout"` // Timeout waiting for connection slot (seconds)
-	SSH               SSHConfig `yaml:"ssh"`
+	SSH               SSHConfig `yaml:"ssh,omitempty"`      // Deprecated: Use top-level SSH config instead
 }
 
 // SSHConfig holds SSH-related configuration
 type SSHConfig struct {
 	Enabled               bool            `yaml:"enabled"`
+	UITerminalEnabled     bool            `yaml:"ui_terminal_enabled"`      // Enable/disable SSH terminal UI functionality
 	Timeout               int             `yaml:"timeout"`                  // Default timeout for SSH commands in seconds
 	ConnectTimeout        int             `yaml:"connect_timeout"`          // SSH connection timeout in seconds
 	SessionInitTimeout    int             `yaml:"session_init_timeout"`     // SSH session initialization timeout in seconds
@@ -375,16 +377,64 @@ func ReadConfig(path string) (c Config, err error) {
 		c.Reconciler.Backup.BackupOnDelete = true
 	}
 
+	// Migrate SSH configuration from old location to new location
+	// Support both bosh.ssh (deprecated) and top-level ssh
+	if c.BOSH.SSH.Enabled || c.BOSH.SSH.Timeout > 0 || c.BOSH.SSH.MaxConcurrent > 0 {
+		// Old configuration exists under bosh.ssh
+		if !c.SSH.Enabled && c.SSH.Timeout == 0 {
+			// New location is empty, migrate from old location
+			c.SSH = c.BOSH.SSH
+			Logger.Wrap("config").Info("Migrated SSH configuration from bosh.ssh to top-level ssh. Please update your configuration file.")
+		}
+	}
+
 	// SSH is enabled by default
-	if !c.BOSH.SSH.Enabled {
-		c.BOSH.SSH.Enabled = true
+	if !c.SSH.Enabled {
+		c.SSH.Enabled = true
+	}
+
+	// SSH UI Terminal is enabled by default
+	if !c.SSH.UITerminalEnabled {
+		c.SSH.UITerminalEnabled = true
 	}
 
 	// SSH WebSocket is enabled by default
-	if c.BOSH.SSH.WebSocket.Enabled == nil {
+	if c.SSH.WebSocket.Enabled == nil {
 		enabled := true
-		c.BOSH.SSH.WebSocket.Enabled = &enabled
+		c.SSH.WebSocket.Enabled = &enabled
 	}
+
+	// Set defaults for SSH timeouts and limits if not specified
+	if c.SSH.Timeout == 0 {
+		c.SSH.Timeout = 600 // 10 minutes
+	}
+	if c.SSH.ConnectTimeout == 0 {
+		c.SSH.ConnectTimeout = 30
+	}
+	if c.SSH.SessionInitTimeout == 0 {
+		c.SSH.SessionInitTimeout = 60
+	}
+	if c.SSH.OutputReadTimeout == 0 {
+		c.SSH.OutputReadTimeout = 2
+	}
+	if c.SSH.MaxConcurrent == 0 {
+		c.SSH.MaxConcurrent = 10
+	}
+	if c.SSH.MaxOutputSize == 0 {
+		c.SSH.MaxOutputSize = 1048576 // 1MB
+	}
+	if c.SSH.KeepAlive == 0 {
+		c.SSH.KeepAlive = 10
+	}
+	if c.SSH.RetryAttempts == 0 {
+		c.SSH.RetryAttempts = 3
+	}
+	if c.SSH.RetryDelay == 0 {
+		c.SSH.RetryDelay = 5
+	}
+
+	// Clear deprecated BOSH.SSH after migration to avoid confusion
+	c.BOSH.SSH = SSHConfig{}
 
 	return
 }

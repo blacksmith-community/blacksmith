@@ -249,13 +249,30 @@ func (m *CFConnectionManager) initializeClients() {
 	defer m.mutex.Unlock()
 
 	if len(m.endpoints) == 0 {
-		m.logger.Info("CF reconciliation disabled: no CF API endpoints configured")
+		m.logger.Info("Disabling CF Manager, CF credentials not found.")
 		return
 	}
 
 	for name, config := range m.endpoints {
+		// Check for missing credentials
+		if config.Endpoint == "" && config.Username == "" && config.Password == "" {
+			m.logger.Info("Disabling CF Manager for endpoint '%s', CF credentials not found.", name)
+			continue
+		}
+
+		// Check for incomplete credentials
 		if config.Endpoint == "" || config.Username == "" || config.Password == "" {
-			m.logger.Error("CF endpoint '%s' has incomplete configuration (missing endpoint, username, or password)", name)
+			missingFields := []string{}
+			if config.Endpoint == "" {
+				missingFields = append(missingFields, "endpoint")
+			}
+			if config.Username == "" {
+				missingFields = append(missingFields, "username")
+			}
+			if config.Password == "" {
+				missingFields = append(missingFields, "password")
+			}
+			m.logger.Error("CF endpoint '%s' has incomplete configuration (missing: %s)", name, strings.Join(missingFields, ", "))
 			continue
 		}
 
@@ -269,7 +286,15 @@ func (m *CFConnectionManager) initializeClients() {
 
 		// Attempt initial connection
 		if err := client.connect(context.Background()); err != nil {
-			client.logger.Error("initial connection to CF endpoint '%s' failed: %v", name, err)
+			// Check if the error is related to authentication
+			if strings.Contains(strings.ToLower(err.Error()), "unauthorized") ||
+				strings.Contains(strings.ToLower(err.Error()), "401") ||
+				strings.Contains(strings.ToLower(err.Error()), "authentication") ||
+				strings.Contains(strings.ToLower(err.Error()), "invalid credentials") {
+				client.logger.Error("CF endpoint '%s' has invalid credentials: %v", name, err)
+			} else {
+				client.logger.Error("initial connection to CF endpoint '%s' failed: %v", name, err)
+			}
 			client.markUnhealthy(err)
 		} else {
 			client.markHealthy()

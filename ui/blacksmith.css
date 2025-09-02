@@ -9724,3 +9724,27 @@ span.config-type.resurrection {
   border-color: var(--border-color);
   color: #e5e7eb;
 }
+
+/* Terminal Tab Tooltip Styles */
+.terminal-tab-tooltip {
+  transition: opacity 0.2s ease-in-out;
+}
+
+.terminal-tab-tooltip strong {
+  font-weight: 600;
+  color: #f3f4f6;
+}
+
+/* SSH button disabled state */
+.ssh-btn:disabled,
+.blacksmith-ssh:disabled,
+.service-instance-ssh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ssh-btn.cursor-not-allowed,
+.blacksmith-ssh.cursor-not-allowed,
+.service-instance-ssh.cursor-not-allowed {
+  cursor: not-allowed !important;
+}

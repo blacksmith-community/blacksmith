@@ -1,6 +1,51 @@
 (function (document, window) {
   'use strict';
 
+  // SSH Terminal Configuration State
+  let sshTerminalConfig = { enabled: true, message: '' };
+  
+  // Fetch SSH terminal configuration status
+  const fetchSSHTerminalConfig = async () => {
+    try {
+      const response = await fetch('/b/config/ssh/ui-terminal-status');
+      const data = await response.json();
+      sshTerminalConfig = data;
+      updateSSHButtonStates();
+    } catch (error) {
+      console.error('Failed to fetch SSH terminal configuration:', error);
+      // Default to enabled on error to avoid breaking functionality
+      sshTerminalConfig = { enabled: true, message: 'Unable to fetch configuration' };
+    }
+  };
+  
+  // Update all SSH button states based on configuration
+  const updateSSHButtonStates = () => {
+    const sshButtons = document.querySelectorAll('.ssh-btn, .blacksmith-ssh, .service-instance-ssh');
+    sshButtons.forEach(button => {
+      if (!sshTerminalConfig.enabled) {
+        button.disabled = true;
+        button.classList.add('opacity-50', 'cursor-not-allowed');
+        button.title = sshTerminalConfig.message || 'SSH Terminal is disabled in configuration';
+        // Remove onclick handler
+        button.removeAttribute('onclick');
+        // Add click prevention
+        button.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      } else {
+        button.disabled = false;
+        button.classList.remove('opacity-50', 'cursor-not-allowed');
+        // Restore original title if it was changed
+        if (button.title === 'SSH Terminal is disabled in configuration' || 
+            button.title === sshTerminalConfig.message) {
+          const instanceName = button.closest('tr')?.querySelector('.vm-instance')?.textContent?.trim() || 'instance';
+          button.title = `SSH to ${instanceName}`;
+        }
+      }
+    });
+  };
+
   // Theme Management
   const initTheme = () => {
     // Check for saved theme preference or default to system preference
@@ -164,6 +209,11 @@
                 // Re-run table initialization for new tables
                 initializeAllTables();
               }
+              // Check for SSH buttons and update their states
+              const sshButtons = node.querySelectorAll ? node.querySelectorAll('.ssh-btn, .blacksmith-ssh, .service-instance-ssh') : [];
+              if (sshButtons.length > 0 || node.classList?.contains('ssh-btn') || node.classList?.contains('blacksmith-ssh') || node.classList?.contains('service-instance-ssh')) {
+                updateSSHButtonStates();
+              }
             }
           });
         }
@@ -192,6 +242,12 @@
 
     // Set up observer for dynamic content
     setupTableObserver();
+    
+    // Fetch SSH terminal configuration
+    fetchSSHTerminalConfig();
+    
+    // Poll configuration every 30 seconds
+    setInterval(fetchSSHTerminalConfig, 30000);
   });
 
   // Helper functions
@@ -15258,6 +15314,53 @@
             <span class="tab-close" onclick="window.TerminalManager.closeSession('${sessionKey}', event)">&times;</span>
           `;
 
+          // Add hover tooltip functionality
+          let tooltipTimeout;
+          let tooltip;
+          
+          tab.addEventListener('mouseenter', (e) => {
+            tooltipTimeout = setTimeout(() => {
+              // Create tooltip element
+              tooltip = document.createElement('div');
+              tooltip.className = 'terminal-tab-tooltip absolute bg-gray-900 dark:bg-gray-800 text-white text-xs rounded px-2 py-1.5 shadow-lg z-[10001] pointer-events-none whitespace-nowrap';
+              
+              // Build tooltip content
+              const connectionStatus = session.websocket && session.websocket.readyState === WebSocket.OPEN ? 
+                '<span class="text-green-400">● Connected</span>' : 
+                '<span class="text-red-400">● Disconnected</span>';
+              
+              tooltip.innerHTML = `
+                <div class="space-y-1">
+                  <div><strong>Deployment:</strong> ${session.context.boshDeploymentName || session.context.deploymentName}</div>
+                  <div><strong>Instance:</strong> ${session.context.instanceName || session.context.instanceId}</div>
+                  <div><strong>Instance ID:</strong> ${session.context.instanceId}</div>
+                  <div><strong>Status:</strong> ${connectionStatus}</div>
+                </div>
+              `;
+              
+              document.body.appendChild(tooltip);
+              
+              // Position tooltip above the tab
+              const rect = tab.getBoundingClientRect();
+              tooltip.style.left = `${rect.left + rect.width / 2 - tooltip.offsetWidth / 2}px`;
+              tooltip.style.top = `${rect.top - tooltip.offsetHeight - 5}px`;
+              
+              // Add fade-in animation
+              tooltip.style.opacity = '0';
+              setTimeout(() => {
+                if (tooltip) tooltip.style.opacity = '1';
+              }, 10);
+            }, 500); // Show after 500ms delay
+          });
+          
+          tab.addEventListener('mouseleave', () => {
+            clearTimeout(tooltipTimeout);
+            if (tooltip) {
+              tooltip.remove();
+              tooltip = null;
+            }
+          });
+
           // Click to activate session and restore
           tab.onclick = (e) => {
             if (!e.target.classList.contains('tab-close')) {
@@ -15379,6 +15482,13 @@
     if (event) {
       event.preventDefault();
       event.stopPropagation();
+    }
+    
+    // Check if SSH terminal is enabled
+    if (!sshTerminalConfig.enabled) {
+      console.warn('SSH Terminal is disabled in configuration');
+      alert(sshTerminalConfig.message || 'SSH Terminal UI is disabled in configuration');
+      return;
     }
 
     // For service instances, enrich context with metadata from cache

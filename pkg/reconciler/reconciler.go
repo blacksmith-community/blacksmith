@@ -382,48 +382,86 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 
 // discoverCFInstancesWithRateLimit discovers CF instances with rate limiting
 func (r *ReconcilerManager) discoverCFInstancesWithRateLimit(ctx context.Context) ([]CFServiceInstanceDetails, error) {
-	// Wait for rate limit
-	if err := r.cfLimiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("CF rate limit wait failed: %w", err)
+	// Skip if CF is not configured
+	if r.cfManager == nil {
+		r.logger.Debug("CF manager not configured, skipping CF discovery")
+		return []CFServiceInstanceDetails{}, nil
 	}
 
-	// Execute with circuit breaker
-	result, err := r.cfBreaker.Execute(func() (interface{}, error) {
-		return r.discoverCFServiceInstances(ctx, nil)
-	})
+	// Check if rate limiter is available
+	if r.cfLimiter != nil {
+		if err := r.cfLimiter.Wait(ctx); err != nil {
+			r.logger.Error("CF rate limit wait failed: %v", err)
+			return []CFServiceInstanceDetails{}, nil // Continue without CF discovery
+		}
+	}
+
+	// Execute with or without circuit breaker
+	var result interface{}
+	var err error
+
+	if r.cfBreaker != nil {
+		result, err = r.cfBreaker.Execute(func() (interface{}, error) {
+			return r.discoverCFServiceInstances(ctx, nil)
+		})
+	} else {
+		// Execute directly without circuit breaker
+		result, err = r.discoverCFServiceInstances(ctx, nil)
+	}
 
 	if err != nil {
-		return nil, fmt.Errorf("CF discovery failed: %w", err)
+		r.logger.Error("CF discovery failed: %v", err)
+		return []CFServiceInstanceDetails{}, nil // Continue without CF instances
 	}
 
 	if instances, ok := result.([]CFServiceInstanceDetails); ok {
 		return instances, nil
 	}
 
-	return nil, fmt.Errorf("unexpected CF discovery result type")
+	r.logger.Error("Unexpected CF discovery result type")
+	return []CFServiceInstanceDetails{}, nil
 }
 
 // scanDeploymentsWithRateLimit scans BOSH deployments with rate limiting
 func (r *ReconcilerManager) scanDeploymentsWithRateLimit(ctx context.Context) ([]DeploymentInfo, error) {
-	// Wait for rate limit
-	if err := r.boshLimiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("BOSH rate limit wait failed: %w", err)
+	// Skip if BOSH scanner is not configured
+	if r.scanner == nil {
+		r.logger.Error("BOSH scanner not configured, cannot scan deployments")
+		return []DeploymentInfo{}, nil
 	}
 
-	// Execute with circuit breaker
-	result, err := r.boshBreaker.Execute(func() (interface{}, error) {
-		return r.scanner.ScanDeployments(ctx)
-	})
+	// Check if rate limiter is available
+	if r.boshLimiter != nil {
+		if err := r.boshLimiter.Wait(ctx); err != nil {
+			r.logger.Error("BOSH rate limit wait failed: %v", err)
+			return []DeploymentInfo{}, nil // Continue without BOSH scan
+		}
+	}
+
+	// Execute with or without circuit breaker
+	var result interface{}
+	var err error
+
+	if r.boshBreaker != nil {
+		result, err = r.boshBreaker.Execute(func() (interface{}, error) {
+			return r.scanner.ScanDeployments(ctx)
+		})
+	} else {
+		// Execute directly without circuit breaker
+		result, err = r.scanner.ScanDeployments(ctx)
+	}
 
 	if err != nil {
-		return nil, fmt.Errorf("BOSH scan failed: %w", err)
+		r.logger.Error("BOSH scan failed: %v", err)
+		return []DeploymentInfo{}, nil // Continue without deployments
 	}
 
 	if deployments, ok := result.([]DeploymentInfo); ok {
 		return r.filterServiceDeployments(deployments), nil
 	}
 
-	return nil, fmt.Errorf("unexpected BOSH scan result type")
+	r.logger.Error("Unexpected BOSH scan result type")
+	return []DeploymentInfo{}, nil
 }
 
 // processBatchesAdaptive processes deployments in adaptive batches
@@ -562,10 +600,18 @@ func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instan
 			return updated, fmt.Errorf("vault rate limit wait failed: %w", err)
 		}
 
-		// Execute with circuit breaker
-		result, err := r.vaultBreaker.Execute(func() (interface{}, error) {
-			return r.updater.UpdateInstance(ctx, instance)
-		})
+		// Execute with or without circuit breaker
+		var result interface{}
+		var err error
+
+		if r.vaultBreaker != nil {
+			result, err = r.vaultBreaker.Execute(func() (interface{}, error) {
+				return r.updater.UpdateInstance(ctx, instance)
+			})
+		} else {
+			// Execute directly without circuit breaker
+			result, err = r.updater.UpdateInstance(ctx, instance)
+		}
 
 		if err != nil {
 			r.logger.Error("Failed to update instance %s: %v", instance.ID, err)

@@ -438,17 +438,17 @@ func main() {
 
 	// Initialize SSH service
 	sshConfig := ssh.Config{
-		Timeout:               time.Duration(config.BOSH.SSH.Timeout) * time.Second,
-		ConnectTimeout:        time.Duration(config.BOSH.SSH.ConnectTimeout) * time.Second,
-		SessionInitTimeout:    time.Duration(config.BOSH.SSH.SessionInitTimeout) * time.Second,
-		OutputReadTimeout:     time.Duration(config.BOSH.SSH.OutputReadTimeout) * time.Second,
-		MaxConcurrent:         config.BOSH.SSH.MaxConcurrent,
-		MaxOutputSize:         config.BOSH.SSH.MaxOutputSize,
-		KeepAlive:             time.Duration(config.BOSH.SSH.KeepAlive) * time.Second,
-		RetryAttempts:         config.BOSH.SSH.RetryAttempts,
-		RetryDelay:            time.Duration(config.BOSH.SSH.RetryDelay) * time.Second,
-		InsecureIgnoreHostKey: config.BOSH.SSH.InsecureIgnoreHostKey,
-		KnownHostsFile:        config.BOSH.SSH.KnownHostsFile,
+		Timeout:               time.Duration(config.SSH.Timeout) * time.Second,
+		ConnectTimeout:        time.Duration(config.SSH.ConnectTimeout) * time.Second,
+		SessionInitTimeout:    time.Duration(config.SSH.SessionInitTimeout) * time.Second,
+		OutputReadTimeout:     time.Duration(config.SSH.OutputReadTimeout) * time.Second,
+		MaxConcurrent:         config.SSH.MaxConcurrent,
+		MaxOutputSize:         config.SSH.MaxOutputSize,
+		KeepAlive:             time.Duration(config.SSH.KeepAlive) * time.Second,
+		RetryAttempts:         config.SSH.RetryAttempts,
+		RetryDelay:            time.Duration(config.SSH.RetryDelay) * time.Second,
+		InsecureIgnoreHostKey: config.SSH.InsecureIgnoreHostKey,
+		KnownHostsFile:        config.SSH.KnownHostsFile,
 	}
 
 	// Set default values if not configured
@@ -489,7 +489,7 @@ func main() {
 	sshService := ssh.NewSSHService(broker.BOSH, sshConfig, Logger.Wrap("ssh"))
 
 	// SSH security configuration
-	if config.BOSH.SSH.InsecureIgnoreHostKey {
+	if config.SSH.InsecureIgnoreHostKey {
 		l.Info("SSH security: Using insecure host key verification (not recommended for production)")
 	} else {
 		l.Info("SSH security: Using known_hosts file at %s with auto-discovery", sshConfig.KnownHostsFile)
@@ -539,15 +539,15 @@ func main() {
 	// Create WebSocket SSH handler
 	l.Info("Creating WebSocket SSH handler")
 	wsConfig := websocket.Config{
-		ReadBufferSize:    config.BOSH.SSH.WebSocket.ReadBufferSize,
-		WriteBufferSize:   config.BOSH.SSH.WebSocket.WriteBufferSize,
-		HandshakeTimeout:  time.Duration(config.BOSH.SSH.WebSocket.HandshakeTimeout) * time.Second,
-		MaxMessageSize:    int64(config.BOSH.SSH.WebSocket.MaxMessageSize),
-		PingInterval:      time.Duration(config.BOSH.SSH.WebSocket.PingInterval) * time.Second,
-		PongTimeout:       time.Duration(config.BOSH.SSH.WebSocket.PongTimeout) * time.Second,
-		MaxSessions:       config.BOSH.SSH.WebSocket.MaxSessions,
-		SessionTimeout:    time.Duration(config.BOSH.SSH.WebSocket.SessionTimeout) * time.Second,
-		EnableCompression: config.BOSH.SSH.WebSocket.EnableCompression,
+		ReadBufferSize:    config.SSH.WebSocket.ReadBufferSize,
+		WriteBufferSize:   config.SSH.WebSocket.WriteBufferSize,
+		HandshakeTimeout:  time.Duration(config.SSH.WebSocket.HandshakeTimeout) * time.Second,
+		MaxMessageSize:    int64(config.SSH.WebSocket.MaxMessageSize),
+		PingInterval:      time.Duration(config.SSH.WebSocket.PingInterval) * time.Second,
+		PongTimeout:       time.Duration(config.SSH.WebSocket.PongTimeout) * time.Second,
+		MaxSessions:       config.SSH.WebSocket.MaxSessions,
+		SessionTimeout:    time.Duration(config.SSH.WebSocket.SessionTimeout) * time.Second,
+		EnableCompression: config.SSH.WebSocket.EnableCompression,
 	}
 
 	// Set default WebSocket configuration values
@@ -577,7 +577,7 @@ func main() {
 	}
 
 	var webSocketHandler *websocket.SSHHandler
-	if config.BOSH.SSH.WebSocket.Enabled != nil && *config.BOSH.SSH.WebSocket.Enabled {
+	if config.SSH.WebSocket.Enabled != nil && *config.SSH.WebSocket.Enabled {
 		webSocketHandler = websocket.NewSSHHandler(sshService, wsConfig, Logger.Wrap("websocket-ssh"))
 		l.Info("WebSocket SSH handler created successfully")
 

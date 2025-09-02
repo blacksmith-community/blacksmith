@@ -491,6 +491,32 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(w, "%s ", string(b))
 		return
 	}
+
+	// SSH UI Terminal status endpoint
+	if req.URL.Path == "/b/config/ssh/ui-terminal-status" {
+		w.Header().Set("Content-Type", "application/json")
+
+		statusMessage := "SSH Terminal UI is enabled"
+		if !api.Config.SSH.UITerminalEnabled {
+			statusMessage = "SSH Terminal UI is disabled in configuration"
+		}
+
+		response := map[string]interface{}{
+			"enabled": api.Config.SSH.UITerminalEnabled,
+			"message": statusMessage,
+		}
+
+		b, err := json.Marshal(response)
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"error": "Failed to marshal response: %s"}`, err)
+			return
+		}
+
+		fmt.Fprintf(w, "%s", string(b))
+		return
+	}
+
 	if req.URL.Path == "/b/status" {
 		idx, err := api.Vault.GetIndex("db")
 		if err != nil {
@@ -2032,6 +2058,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		l := Logger.Wrap("websocket-ssh")
 		l.Debug("WebSocket SSH connection request for blacksmith deployment")
 
+		// Check if SSH UI Terminal is enabled in configuration
+		if !api.Config.SSH.UITerminalEnabled {
+			l.Info("SSH Terminal UI access denied - disabled in configuration")
+			w.WriteHeader(403)
+			fmt.Fprintf(w, `{"error": "SSH Terminal UI is disabled in configuration"}`)
+			return
+		}
+
 		// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
 		if req.Method != http.MethodGet && req.Method != http.MethodConnect {
 			w.WriteHeader(405)
@@ -2088,6 +2122,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		l := Logger.Wrap("websocket-ssh")
 		l.Debug("WebSocket SSH connection request for instance %s", instanceID)
+
+		// Check if SSH UI Terminal is enabled in configuration
+		if !api.Config.SSH.UITerminalEnabled {
+			l.Info("SSH Terminal UI access denied for instance %s - disabled in configuration", instanceID)
+			w.WriteHeader(403)
+			fmt.Fprintf(w, `{"error": "SSH Terminal UI is disabled in configuration"}`)
+			return
+		}
 
 		// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
 		if req.Method != http.MethodGet && req.Method != http.MethodConnect {

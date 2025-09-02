@@ -33,6 +33,11 @@ func NewCredentialVCAPRecovery(vault VaultInterface, cfManager CFManagerInterfac
 func (c *CredentialVCAPRecovery) RecoverCredentialsFromVCAP(ctx context.Context, instanceID string) error {
 	c.logger.Info("Attempting to recover credentials from VCAP_SERVICES for instance %s", instanceID)
 
+	// Validate cfManager is available
+	if c.cfManager == nil {
+		return fmt.Errorf("CF manager not available for VCAP recovery")
+	}
+
 	// Check if credentials already exist
 	credsPath := fmt.Sprintf("%s/credentials", instanceID)
 	existingCreds, err := c.vault.Get(credsPath)

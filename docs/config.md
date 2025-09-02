@@ -444,13 +444,16 @@ The BOSH connection pool provides real-time metrics available via the internal A
 
 ### SSH Configuration (`ssh`)
 
-The `ssh` subsection within `bosh` configures SSH connection behavior for interactive terminal sessions and command execution.
+> **Note:** SSH configuration has moved from `bosh.ssh` to the top-level `ssh` key. The old location under `bosh.ssh` is deprecated but still supported for backward compatibility.
+
+The `ssh` section configures SSH connection behavior for all SSH operations including service instances, Blacksmith deployment, and interactive terminal sessions.
 
 ```yaml
-bosh:
-  ssh:
-    enabled: true                    # Enable SSH functionality
-    keep_alive: 10                   # Keep-alive interval in seconds (default: 10)
+# New location (recommended)
+ssh:
+  enabled: true                    # Enable SSH functionality
+  ui_terminal_enabled: true        # Enable SSH terminal UI in web interface (default: true)
+  keep_alive: 10                   # Keep-alive interval in seconds (default: 10)
     timeout: 600                     # Overall timeout in seconds (default: 600)
     connect_timeout: 30              # Connection timeout in seconds (default: 30)
     session_init_timeout: 60         # Session initialization timeout in seconds (default: 60)
@@ -461,7 +464,19 @@ bosh:
     retry_delay: 5                   # Delay between retries in seconds (default: 5)
     insecure_ignore_host_key: false  # Skip host key verification (default: false)
     known_hosts_file: "/home/vcap/.ssh/known_hosts"  # Path to known_hosts file
+
+# Old location (deprecated but still supported)
+bosh:
+  ssh:
+    # Same configuration options as above
 ```
+
+**Migration Note:** If you have SSH configuration under `bosh.ssh`, it will be automatically migrated to the top-level `ssh` key. You should update your configuration file to use the new location.
+
+#### `ui_terminal_enabled` (boolean)
+**Default:** `true`
+
+Controls whether the SSH terminal UI functionality is available in the web interface. When set to `false`, SSH terminal buttons will be disabled and API endpoints will return 403 Forbidden. This setting does not affect backend SSH functionality, only the web UI access. Useful for security-conscious deployments that want to disable web-based terminal access while maintaining backend SSH capabilities.
 
 #### `keep_alive` (integer)
 **Default:** `10`
