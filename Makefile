@@ -132,6 +132,66 @@ staticcheck: ## Run staticcheck static analysis
 	@staticcheck $(shell go list ./... | grep -v vendor | grep -v tmp)
 	@echo "$(GREEN)✓ Staticcheck analysis complete$(RESET)"
 
+.PHONY: gocyclo
+gocyclo: ## Run gocyclo complexity analysis
+	@echo "$(GREEN)Running gocyclo complexity analysis...$(RESET)"
+	@command -v gocyclo >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing gocyclo...$(RESET)"; \
+		go install github.com/fzipp/gocyclo/cmd/gocyclo@latest; \
+	}
+	@gocyclo -over 15 $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*")
+	@echo "$(GREEN)✓ Gocyclo analysis complete$(RESET)"
+
+.PHONY: ineffassign
+ineffassign: ## Run ineffassign to detect ineffectual assignments
+	@echo "$(GREEN)Running ineffassign...$(RESET)"
+	@command -v ineffassign >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing ineffassign...$(RESET)"; \
+		go install github.com/gordonklaus/ineffassign@latest; \
+	}
+	@ineffassign $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*")
+	@echo "$(GREEN)✓ Ineffassign analysis complete$(RESET)"
+
+.PHONY: errcheck
+errcheck: ## Run errcheck to find unchecked errors
+	@echo "$(GREEN)Running errcheck...$(RESET)"
+	@command -v errcheck >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing errcheck...$(RESET)"; \
+		go install github.com/kisielk/errcheck@latest; \
+	}
+	@errcheck -ignoretests $(shell go list ./... | grep -v vendor | grep -v tmp)
+	@echo "$(GREEN)✓ Errcheck analysis complete$(RESET)"
+
+.PHONY: goimports
+goimports: ## Run goimports to check import formatting
+	@echo "$(GREEN)Running goimports...$(RESET)"
+	@command -v goimports >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing goimports...$(RESET)"; \
+		go install golang.org/x/tools/cmd/goimports@latest; \
+	}
+	@goimports -l $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./tmp/*") | (! grep . || (echo "$(RED)✗ Files need goimports formatting$(RESET)" && false))
+	@echo "$(GREEN)✓ Goimports check complete$(RESET)"
+
+.PHONY: deadcode
+deadcode: ## Run deadcode to find unused code
+	@echo "$(GREEN)Running deadcode analysis...$(RESET)"
+	@command -v deadcode >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing deadcode...$(RESET)"; \
+		go install golang.org/x/tools/cmd/deadcode@latest; \
+	}
+	@deadcode -test $(shell go list ./... | grep -v vendor | grep -v tmp) || true
+	@echo "$(GREEN)✓ Deadcode analysis complete$(RESET)"
+
+.PHONY: golangci-lint
+golangci-lint: ## Run golangci-lint comprehensive linter
+	@echo "$(GREEN)Running golangci-lint...$(RESET)"
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin; \
+	}
+	@golangci-lint run --skip-dirs vendor --skip-dirs tmp ./...
+	@echo "$(GREEN)✓ Golangci-lint analysis complete$(RESET)"
+
 .PHONY: trivy
 trivy: ## Run Trivy container and dependency scanner
 	@echo "$(GREEN)Running Trivy scan...$(RESET)"
@@ -150,7 +210,7 @@ security: govulncheck gosec trivy ## Run all security scans (govulncheck, gosec,
 	@echo "$(GREEN)✓ All security scans complete$(RESET)"
 
 .PHONY: check
-check: lint vet staticcheck test test-race ## Run basic checks (lint, vet, staticcheck, test, test-race)
+check: lint vet staticcheck test test-race golangci-lint ## Run basic checks (lint, vet, staticcheck, test, test-race, golangci-lint)
 	@echo "$(GREEN)✓ Basic checks passed$(RESET)"
 
 .PHONY: check-all
@@ -242,4 +302,5 @@ deps-tidy: ## Clean up go.mod and go.sum
 
 # Include all phony targets
 .PHONY: build linux dev test test-short test-race test-all coverage coverage-html report fmt vet lint \
-        govulncheck gosec staticcheck trivy security check check-all clean shipit version deps deps-update deps-tidy help
+        govulncheck gosec staticcheck gocyclo ineffassign errcheck goimports deadcode golangci-lint \
+        trivy security check check-all clean shipit version deps deps-update deps-tidy help

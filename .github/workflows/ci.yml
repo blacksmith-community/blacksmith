@@ -49,6 +49,9 @@ jobs:
       - name: Gosec
         run: make gosec
 
+      - name: Golangci-lint
+        run: make golangci-lint
+
       - name: Install Trivy
         run: |
           sudo apt-get update
