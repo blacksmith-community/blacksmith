@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -250,8 +251,28 @@ func (r *ReconcilerManager) Start(ctx context.Context) error {
 		return nil
 	}
 
-	r.logger.Info("Starting reconciler with interval %v, max concurrent %d",
-		r.config.Interval, r.config.Concurrency.MaxConcurrent)
+	// Log startup configuration for debugging
+	r.logger.Info("Starting reconciler with configuration:")
+	r.logger.Info("  Interval: %v", r.config.Interval)
+	r.logger.Info("  Max Concurrent: %d", r.config.Concurrency.MaxConcurrent)
+	r.logger.Info("  Worker Pool Size: %d", r.config.Concurrency.WorkerPoolSize)
+	r.logger.Info("  Queue Size: %d", r.config.Concurrency.QueueSize)
+	r.logger.Info("  Batch Size: %d", r.config.Batch.Size)
+	r.logger.Info("  BOSH Rate Limit: %.1f req/s (burst: %d)",
+		r.config.APIs.BOSH.RateLimit.RequestsPerSecond, r.config.APIs.BOSH.RateLimit.Burst)
+	r.logger.Info("  CF Rate Limit: %.1f req/s (burst: %d)",
+		r.config.APIs.CF.RateLimit.RequestsPerSecond, r.config.APIs.CF.RateLimit.Burst)
+	r.logger.Info("  Vault Rate Limit: %.1f req/s (burst: %d)",
+		r.config.APIs.Vault.RateLimit.RequestsPerSecond, r.config.APIs.Vault.RateLimit.Burst)
+	r.logger.Info("  Backup Enabled: %v", r.config.Backup.Enabled)
+	r.logger.Info("  Debug Mode: %v", r.config.Debug)
+
+	// Validate critical components are initialized
+	if err := r.validateComponents(); err != nil {
+		r.logger.Error("Component validation warning: %v", err)
+		r.logger.Info("Reconciler will run in degraded mode with available components")
+		// Continue with degraded functionality rather than failing
+	}
 
 	// Start worker pool
 	r.workerPool.Start(ctx)
@@ -277,6 +298,59 @@ func (r *ReconcilerManager) Start(ctx context.Context) error {
 	return nil
 }
 
+// validateComponents checks if critical components are initialized
+func (r *ReconcilerManager) validateComponents() error {
+	var errors []string
+
+	// Check Vault
+	if r.vault == nil {
+		errors = append(errors, "Vault not initialized")
+		r.logger.Error("Vault is not initialized - credential operations will fail")
+	}
+
+	// Check BOSH
+	if r.bosh == nil {
+		errors = append(errors, "BOSH director not initialized")
+		r.logger.Error("BOSH director is not initialized - deployment scanning will be disabled")
+	}
+
+	// Check scanner
+	if r.scanner == nil {
+		errors = append(errors, "BOSH scanner not initialized")
+		r.logger.Error("BOSH scanner is not initialized - deployment scanning will be disabled")
+	}
+
+	// Check updater
+	if r.updater == nil {
+		errors = append(errors, "Updater not initialized")
+		r.logger.Error("Updater is not initialized - instance updates will be disabled")
+	}
+
+	// Log CF manager status (not critical)
+	if r.cfManager == nil {
+		r.logger.Info("CF manager not configured - CF discovery will be skipped")
+	} else {
+		r.logger.Info("CF manager configured - CF discovery enabled")
+	}
+
+	// Check circuit breakers (not critical, can run without them)
+	if r.boshBreaker == nil {
+		r.logger.Info("BOSH circuit breaker not initialized - running without circuit protection")
+	}
+	if r.vaultBreaker == nil {
+		r.logger.Info("Vault circuit breaker not initialized - running without circuit protection")
+	}
+	if r.cfBreaker == nil && r.cfManager != nil {
+		r.logger.Info("CF circuit breaker not initialized - running without circuit protection")
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("missing critical components: %s", strings.Join(errors, ", "))
+	}
+
+	return nil
+}
+
 // reconciliationLoop runs periodic reconciliation with multiple run prevention
 func (r *ReconcilerManager) reconciliationLoop() {
 	defer r.wg.Done()
@@ -297,6 +371,21 @@ func (r *ReconcilerManager) reconciliationLoop() {
 
 // runReconciliation performs a single reconciliation run with safety checks
 func (r *ReconcilerManager) runReconciliation() {
+	// Panic recovery to prevent crashes in production
+	defer func() {
+		if err := recover(); err != nil {
+			r.logger.Error("PANIC in reconciliation: %v", err)
+			r.logger.Error("Stack trace: %s", debug.Stack())
+
+			// Update metrics and status
+			r.metrics.ReconciliationError(fmt.Errorf("panic: %v", err))
+			r.updateStatusError(fmt.Errorf("reconciliation panic: %v", err))
+
+			// Ensure we release the reconciliation lock
+			r.isReconciling.Store(false)
+		}
+	}()
+
 	// Prevent multiple concurrent runs
 	if !r.isReconciling.CompareAndSwap(false, true) {
 		r.logger.Info("Reconciliation already in progress, skipping new run")
@@ -518,8 +607,13 @@ func (r *ReconcilerManager) processBatchWithConcurrency(
 	batch []DeploymentInfo,
 	cfInstances []CFServiceInstanceDetails,
 ) ([]InstanceData, error) {
+	// Ensure configuration is valid to prevent channel panics
+	maxConcurrent := r.config.Concurrency.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1 // Safe fallback
+	}
 
-	semaphore := make(chan struct{}, r.config.Concurrency.MaxConcurrent)
+	semaphore := make(chan struct{}, maxConcurrent)
 	resultChan := make(chan InstanceData, len(batch))
 	errorChan := make(chan error, len(batch))
 
@@ -530,6 +624,14 @@ func (r *ReconcilerManager) processBatchWithConcurrency(
 		go func(dep DeploymentInfo) {
 			defer wg.Done()
 
+			// Panic recovery for goroutine
+			defer func() {
+				if err := recover(); err != nil {
+					r.logger.Error("PANIC in deployment processing goroutine: %v", err)
+					errorChan <- fmt.Errorf("panic processing deployment %s: %v", dep.Name, err)
+				}
+			}()
+
 			// Acquire semaphore
 			select {
 			case semaphore <- struct{}{}:
@@ -539,10 +641,12 @@ func (r *ReconcilerManager) processBatchWithConcurrency(
 				return
 			}
 
-			// Rate limit BOSH API calls
-			if err := r.boshLimiter.Wait(ctx); err != nil {
-				errorChan <- err
-				return
+			// Rate limit BOSH API calls (with nil check)
+			if r.boshLimiter != nil {
+				if err := r.boshLimiter.Wait(ctx); err != nil {
+					errorChan <- err
+					return
+				}
 			}
 
 			// Process deployment
@@ -590,14 +694,21 @@ func (r *ReconcilerManager) processBatchWithConcurrency(
 
 // updateVaultWithRateLimit updates Vault with rate limiting
 func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
+	// Check if updater is available
+	if r.updater == nil {
+		return nil, fmt.Errorf("vault updater not initialized")
+	}
+
 	var updated []InstanceData
 	var mu sync.Mutex
 
 	// Process updates with rate limiting
 	for _, instance := range instances {
-		// Wait for rate limit
-		if err := r.vaultLimiter.Wait(ctx); err != nil {
-			return updated, fmt.Errorf("vault rate limit wait failed: %w", err)
+		// Wait for rate limit (with nil check)
+		if r.vaultLimiter != nil {
+			if err := r.vaultLimiter.Wait(ctx); err != nil {
+				return updated, fmt.Errorf("vault rate limit wait failed: %w", err)
+			}
 		}
 
 		// Execute with or without circuit breaker
@@ -816,12 +927,21 @@ func (r *ReconcilerManager) filterServiceDeployments(deployments []DeploymentInf
 }
 
 func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment DeploymentInfo, cfInstances []CFServiceInstanceDetails) (InstanceData, error) {
+	r.logger.Debug("Processing deployment: %s", deployment.Name)
+
 	// Try to get full deployment details (manifest etc.) for better matching
 	detail := DeploymentDetail{DeploymentInfo: deployment}
 	if r.scanner != nil {
-		if d, err := r.scanner.GetDeploymentDetails(ctx, deployment.Name); err == nil && d != nil {
+		d, err := r.scanner.GetDeploymentDetails(ctx, deployment.Name)
+		if err != nil {
+			r.logger.Debug("Failed to get deployment details for %s: %v", deployment.Name, err)
+		} else if d != nil {
 			detail = *d
+			r.logger.Debug("Got deployment details for %s: %d releases, %d stemcells, %d VMs",
+				deployment.Name, len(detail.Releases), len(detail.Stemcells), len(detail.VMs))
 		}
+	} else {
+		r.logger.Debug("Scanner not available, using basic deployment info")
 	}
 
 	// Derive instance ID from deployment name; allow lenient fallback for legacy/tests
@@ -829,12 +949,16 @@ func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment De
 	matches := uuidPattern.FindStringSubmatch(deployment.Name)
 
 	var instanceID string
-	if len(matches) >= 1 {
+	if len(matches) > 0 {
 		instanceID = matches[0]
+		r.logger.Debug("Extracted instance ID %s from deployment name", instanceID)
 	} else {
 		fallback := regexp.MustCompile(`([0-9a-f-]{11,36})$`).FindStringSubmatch(deployment.Name)
-		if len(fallback) >= 1 {
+		if len(fallback) > 0 {
 			instanceID = fallback[0]
+			r.logger.Debug("Using fallback instance ID %s from deployment name", instanceID)
+		} else {
+			r.logger.Warning("Could not extract instance ID from deployment name: %s", deployment.Name)
 		}
 	}
 

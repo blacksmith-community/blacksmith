@@ -1,7 +1,6 @@
 package reconciler
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -256,53 +255,106 @@ func (c *ReconcilerConfig) loadAPIDefaults(api *APIConfig, name string, rps floa
 	}
 }
 
-// Validate checks configuration for errors
+// Validate checks configuration for errors and sets safe defaults
 func (c *ReconcilerConfig) Validate() error {
 	if c.Interval < 10*time.Second {
-		return fmt.Errorf("interval must be at least 10 seconds")
+		c.Interval = 10 * time.Second // Set safe minimum
 	}
 
+	// Critical: Ensure channel buffer sizes are valid to prevent panics
 	if c.Concurrency.MaxConcurrent < 1 {
-		return fmt.Errorf("max_concurrent must be at least 1")
+		c.Concurrency.MaxConcurrent = 1 // Set safe default to prevent deadlock
 	}
 
 	if c.Concurrency.MaxConcurrent > 100 {
-		return fmt.Errorf("max_concurrent should not exceed 100 to prevent resource exhaustion")
+		c.Concurrency.MaxConcurrent = 100 // Cap to prevent resource exhaustion
+	}
+
+	// Ensure queue sizes are positive to prevent channel creation issues
+	if c.Concurrency.QueueSize <= 0 {
+		c.Concurrency.QueueSize = c.Concurrency.MaxConcurrent * 10 // Safe default
+	}
+
+	if c.Concurrency.WorkerPoolSize <= 0 {
+		c.Concurrency.WorkerPoolSize = c.Concurrency.MaxConcurrent // Match max concurrent
+	}
+
+	if c.Concurrency.MaxDeploymentsPerRun <= 0 {
+		c.Concurrency.MaxDeploymentsPerRun = 100 // Safe default
 	}
 
 	if c.Batch.Size < 1 {
-		return fmt.Errorf("batch size must be at least 1")
+		c.Batch.Size = 10 // Set safe default
+	}
+
+	if c.Batch.MinSize < 1 {
+		c.Batch.MinSize = 1
+	}
+
+	if c.Batch.MaxSize < c.Batch.MinSize {
+		c.Batch.MaxSize = c.Batch.MinSize * 10
 	}
 
 	if c.Retry.MaxAttempts < 1 {
-		return fmt.Errorf("max_attempts must be at least 1")
+		c.Retry.MaxAttempts = 3 // Set safe default
 	}
 
 	if c.Retry.Multiplier < 1.0 {
-		return fmt.Errorf("retry multiplier must be at least 1.0")
+		c.Retry.Multiplier = 2.0 // Set safe default
 	}
 
 	if c.Retry.Jitter < 0 || c.Retry.Jitter > 1.0 {
-		return fmt.Errorf("retry jitter must be between 0.0 and 1.0")
+		c.Retry.Jitter = 0.1 // Set safe default
 	}
 
-	// Validate API configurations
+	// Validate and fix API configurations
 	apis := map[string]*APIConfig{
 		"bosh":  &c.APIs.BOSH,
 		"cf":    &c.APIs.CF,
 		"vault": &c.APIs.Vault,
 	}
 
+	defaultRates := map[string]float64{
+		"bosh":  4.0,
+		"cf":    20.0,
+		"vault": 50.0,
+	}
+
 	for name, api := range apis {
 		if api.RateLimit.RequestsPerSecond <= 0 {
-			return fmt.Errorf("%s rate limit requests_per_second must be positive", name)
+			api.RateLimit.RequestsPerSecond = defaultRates[name] // Set safe defaults
 		}
 		if api.RateLimit.Burst < 1 {
-			return fmt.Errorf("%s rate limit burst must be at least 1", name)
+			api.RateLimit.Burst = int(api.RateLimit.RequestsPerSecond * 2) // Burst = 2x rate
 		}
 		if api.MaxConnections < 1 {
-			return fmt.Errorf("%s max_connections must be at least 1", name)
+			api.MaxConnections = 10 // Safe default
 		}
+	}
+
+	// Validate timeout settings to prevent nil/zero timeouts
+	if c.Timeouts.ReconciliationRun <= 0 {
+		c.Timeouts.ReconciliationRun = 15 * time.Minute
+	}
+	if c.Timeouts.DeploymentScan <= 0 {
+		c.Timeouts.DeploymentScan = 5 * time.Minute
+	}
+	if c.Timeouts.InstanceDiscovery <= 0 {
+		c.Timeouts.InstanceDiscovery = 2 * time.Minute
+	}
+	if c.Timeouts.VaultOperations <= 0 {
+		c.Timeouts.VaultOperations = 30 * time.Second
+	}
+	if c.Timeouts.HealthCheck <= 0 {
+		c.Timeouts.HealthCheck = 1 * time.Minute
+	}
+	if c.Timeouts.ShutdownGracePeriod <= 0 {
+		c.Timeouts.ShutdownGracePeriod = 30 * time.Second
+	}
+
+	// Validate cooldown period
+	if c.Concurrency.CooldownPeriod <= 0 {
+		c.Concurrency.CooldownPeriod = 1 * time.Second
 	}
 
 	return nil

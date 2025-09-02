@@ -181,6 +181,30 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 
 	r.logger.Info("Initializing deployment reconciler")
 
+	// Wait for Vault to be ready before starting
+	if r.vault != nil {
+		r.logger.Info("Waiting for Vault to be ready before starting reconciler...")
+		retries := 0
+		maxRetries := 30 // Wait up to 30 seconds
+		for retries < maxRetries {
+			if r.isVaultReady() {
+				r.logger.Info("Vault is ready")
+				break
+			}
+			time.Sleep(1 * time.Second)
+			retries++
+			if retries%5 == 0 {
+				r.logger.Debug("Still waiting for Vault to be ready... (%d/%d)", retries, maxRetries)
+			}
+		}
+		if retries >= maxRetries {
+			r.logger.Error("Vault not ready after %d seconds - reconciler will run with degraded functionality", maxRetries)
+			// Continue anyway with degraded functionality
+		}
+	} else {
+		r.logger.Error("Vault is nil - reconciler will run with severely limited functionality")
+	}
+
 	// Create wrapped components
 	wrappedBroker := &brokerWrapper{broker: r.broker}
 	wrappedVault := &vaultWrapper{vault: r.vault}
@@ -205,6 +229,34 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 
 	r.logger.Info("Deployment reconciler started successfully")
 	return nil
+}
+
+// isVaultReady checks if Vault is ready for operations
+func (r *ReconcilerAdapter) isVaultReady() bool {
+	if r.vault == nil {
+		return false
+	}
+
+	// Try to check Vault health
+	client := r.vault.client
+	if client == nil {
+		return false
+	}
+
+	// Try a simple operation to verify Vault is responsive
+	health, err := client.Sys().Health()
+	if err != nil {
+		r.logger.Debug("Vault health check failed: %s", err)
+		return false
+	}
+
+	// Check if Vault is initialized and unsealed
+	if !health.Initialized || health.Sealed {
+		r.logger.Debug("Vault not ready: initialized=%v, sealed=%v", health.Initialized, health.Sealed)
+		return false
+	}
+
+	return true
 }
 
 // Stop stops the reconciler

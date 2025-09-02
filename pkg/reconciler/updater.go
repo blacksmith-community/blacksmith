@@ -75,23 +75,29 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData
 		u.logWarning("Instance %s is missing credentials - will attempt recovery", instance.ID)
 		instance.Metadata["needs_credential_recovery"] = true
 
-		// Attempt VCAP recovery if CF manager is available
-		if u.cfManager != nil {
-			u.logInfo("Attempting VCAP credential recovery for instance %s", instance.ID)
-			vcapRecovery := NewCredentialVCAPRecovery(u.vault.(VaultInterface), u.cfManager, u.logger)
-			if err := vcapRecovery.RecoverCredentialsFromVCAP(ctx, instance.ID); err != nil {
-				u.logWarning("VCAP credential recovery failed for instance %s: %s", instance.ID, err)
-				instance.Metadata["vcap_recovery_attempted"] = true
-				instance.Metadata["vcap_recovery_failed"] = true
-				instance.Metadata["vcap_recovery_error"] = err.Error()
+		// Attempt VCAP recovery if CF manager and vault are available
+		if u.cfManager != nil && u.vault != nil {
+			// Safe type assertion with check
+			vaultInterface, ok := u.vault.(VaultInterface)
+			if !ok || vaultInterface == nil {
+				u.logWarning("Vault interface not available for VCAP recovery")
 			} else {
-				u.logInfo("Successfully recovered credentials from VCAP for instance %s", instance.ID)
-				instance.Metadata["credentials_recovered_from"] = "vcap_services"
-				instance.Metadata["vcap_recovery_attempted"] = true
-				instance.Metadata["vcap_recovery_failed"] = false
-				hasCredentials = true
-				instance.Metadata["has_credentials"] = true
-				delete(instance.Metadata, "needs_credential_recovery")
+				u.logInfo("Attempting VCAP credential recovery for instance %s", instance.ID)
+				vcapRecovery := NewCredentialVCAPRecovery(vaultInterface, u.cfManager, u.logger)
+				if err := vcapRecovery.RecoverCredentialsFromVCAP(ctx, instance.ID); err != nil {
+					u.logWarning("VCAP credential recovery failed for instance %s: %s", instance.ID, err)
+					instance.Metadata["vcap_recovery_attempted"] = true
+					instance.Metadata["vcap_recovery_failed"] = true
+					instance.Metadata["vcap_recovery_error"] = err.Error()
+				} else {
+					u.logInfo("Successfully recovered credentials from VCAP for instance %s", instance.ID)
+					instance.Metadata["credentials_recovered_from"] = "vcap_services"
+					instance.Metadata["vcap_recovery_attempted"] = true
+					instance.Metadata["vcap_recovery_failed"] = false
+					hasCredentials = true
+					instance.Metadata["has_credentials"] = true
+					delete(instance.Metadata, "needs_credential_recovery")
+				}
 			}
 		}
 	}
@@ -1135,6 +1141,12 @@ func (u *vaultUpdater) addReconciliationHistory(metadata map[string]interface{},
 func (u *vaultUpdater) putToVault(path string, data map[string]interface{}) error {
 	u.logDebug("Storing data at vault path: %s", path)
 
+	// Check if vault is nil
+	if u.vault == nil {
+		u.logError("Vault is not initialized - cannot store data at path: %s", path)
+		return fmt.Errorf("vault not initialized")
+	}
+
 	// Type assert vault to VaultInterface to access Put method
 	vault, ok := u.vault.(VaultInterface)
 	if !ok {
@@ -1146,6 +1158,12 @@ func (u *vaultUpdater) putToVault(path string, data map[string]interface{}) erro
 
 func (u *vaultUpdater) getFromVault(path string) (map[string]interface{}, error) {
 	u.logDebug("Getting data from vault path: %s", path)
+
+	// Check if vault is nil
+	if u.vault == nil {
+		u.logError("Vault is not initialized - cannot get data from path: %s", path)
+		return nil, fmt.Errorf("vault not initialized")
+	}
 
 	// Type assert vault to VaultInterface to access Get method
 	vault, ok := u.vault.(VaultInterface)
