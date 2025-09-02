@@ -85,9 +85,7 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 	metadata["credentials_populated_at"] = time.Now().Format(time.RFC3339)
 	metadata["credentials_populated_by"] = "reconciler"
 	metadata["credentials_source"] = "bosh_deployment"
-	if putErr := vault.Put(metadataPath, metadata); putErr != nil {
-		// Log put error but continue processing
-	}
+	_ = vault.Put(metadataPath, metadata)
 
 	cp.logger.Info("Successfully populated credentials for instance %s from BOSH", instanceID)
 	return nil
@@ -127,7 +125,7 @@ func (cp *CredentialPopulator) requiresCredentials(serviceType string) bool {
 func (cp *CredentialPopulator) getPlanFromDeployment(deployment DeploymentInfo, broker interface{}) (Plan, error) {
 	// Extract plan ID from deployment name
 	// Deployment names follow pattern: {plan-id}-{instance-id}
-	parts := strings.SplitN(deployment.Name, "-", -1)
+	parts := strings.Split(deployment.Name, "-")
 	if len(parts) < 2 {
 		return Plan{}, fmt.Errorf("invalid deployment name format: %s", deployment.Name)
 	}
@@ -178,7 +176,7 @@ func (cp *CredentialPopulator) looksLikeUUID(s string) bool {
 	}
 
 	for _, c := range cleaned {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return false
 		}
 	}

@@ -23,8 +23,10 @@ func TestFactoryCreation(t *testing.T) {
 
 func TestFactoryNew(t *testing.T) {
 	// Set test mode to skip network calls
-	os.Setenv("BLACKSMITH_TEST_MODE", "true")
-	defer os.Unsetenv("BLACKSMITH_TEST_MODE")
+	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
 
 	factory := bosh.NewFactory()
 	if factory == nil {
@@ -50,8 +52,10 @@ func TestFactoryNew(t *testing.T) {
 
 func TestCreateDirectorFromLegacyConfig(t *testing.T) {
 	// Set test mode to skip network calls
-	os.Setenv("BLACKSMITH_TEST_MODE", "true")
-	defer os.Unsetenv("BLACKSMITH_TEST_MODE")
+	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
 
 	// This test verifies the function exists and creates a director
 	// The BOSH CLI director doesn't connect until first use

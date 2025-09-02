@@ -173,7 +173,8 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 			l.Debug("Found KV mount at %s (version %s)", mount, version)
 
 			// Check if we need to upgrade from KV v1 to KV v2
-			if version == "1" {
+			switch version {
+			case "1":
 				l.Info("Detected KV v1 mount at %s, upgrading to KV v2", mount)
 
 				// Create the tune configuration for upgrading to KV v2
@@ -207,10 +208,10 @@ func (vc *VaultClient) VerifyMount(mount string, createIfMissing bool) error {
 						l.Info("WARNING: Mount %s upgrade verification failed, version is %v", mount, mountInfo.Options["version"])
 					}
 				}
-			} else if version == "2" {
+			case "2":
 				l.Debug("Mount %s is already KV v2", mount)
 				vc.KVVersion = "2"
-			} else {
+			default:
 				l.Info("WARNING: Mount %s has unexpected KV version %s", mount, version)
 				vc.KVVersion = version
 			}

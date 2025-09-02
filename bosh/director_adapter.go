@@ -532,12 +532,13 @@ func (d *DirectorAdapter) GetReleases() ([]Release, error) {
 	} else {
 		d.log.Debug("Director info test successful - User: %s, Name: %s", info.User, info.Name)
 		d.log.Debug("Director authentication type: %s", info.Auth.Type)
-		if info.Auth.Type == "uaa" {
+		switch info.Auth.Type {
+		case "uaa":
 			if uaaURL, ok := info.Auth.Options["url"].(string); ok {
 				d.log.Debug("Director is configured for UAA authentication at: %s", uaaURL)
 				d.log.Debug("Using UAA client credentials for authentication")
 			}
-		} else if info.Auth.Type == "basic" {
+		case "basic":
 			d.log.Debug("Director is configured for basic authentication")
 		}
 		if info.User == "" {
@@ -765,11 +766,12 @@ func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, 
 			// Filter based on the selected filter option
 			includeTask := false
 
-			if team == "blacksmith" {
+			switch team {
+			case "blacksmith":
 				// For blacksmith, show all BOSH director tasks
 				includeTask = true
 				d.log.Debug("Task %d: included for blacksmith (show all)", task.ID())
-			} else if team == "service-instances" {
+			case "service-instances":
 				// For service-instances, show tasks from deployments that look like service instances
 				// Service instances typically have deployment names like: redis-{uuid}, rabbitmq-{uuid}, etc.
 				if deploymentName != "" {
@@ -782,7 +784,7 @@ func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, 
 				} else {
 					d.log.Debug("Task %d: no deployment name, excluded from service-instances", task.ID())
 				}
-			} else {
+			default:
 				// For specific service/plan names, filter by deployment name patterns
 				if deploymentName != "" {
 					deploymentLower := strings.ToLower(deploymentName)
@@ -1760,7 +1762,7 @@ func extractLogsFromTarGz(data io.Reader) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create gzip reader: %w", err)
 	}
-	defer gzReader.Close()
+	defer func() { _ = gzReader.Close() }()
 
 	// Create tar reader
 	tarReader := tar.NewReader(gzReader)
@@ -1903,7 +1905,7 @@ func (d *DirectorAdapter) SSHCommand(deployment, instance string, index int, com
 			d.log.Error("Failed to connect to gateway %s: %v", gatewayAddr, err)
 			return "", fmt.Errorf("failed to connect to gateway: %w", err)
 		}
-		defer gatewayClient.Close()
+		defer func() { _ = gatewayClient.Close() }()
 
 		// Connect to target host through gateway
 		targetAddr := fmt.Sprintf("%s:22", host.Host)
@@ -1928,7 +1930,7 @@ func (d *DirectorAdapter) SSHCommand(deployment, instance string, index int, com
 			return "", fmt.Errorf("failed to connect to host: %w", err)
 		}
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Create a session
 	session, err := client.NewSession()
@@ -1936,7 +1938,7 @@ func (d *DirectorAdapter) SSHCommand(deployment, instance string, index int, com
 		d.log.Error("Failed to create SSH session: %v", err)
 		return "", fmt.Errorf("failed to create SSH session: %w", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	// Build the full command with arguments
 	fullCommand := command

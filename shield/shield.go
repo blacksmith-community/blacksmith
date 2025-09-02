@@ -209,7 +209,7 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 
 	// Verify that the target should be backed up.
 	logger.Debug("Checking if service '%s' is enabled for backup", details.ServiceID)
-	var enabled bool = false
+	enabled := false
 	for _, target := range cli.enabledOnTargets {
 		enabled = target == details.ServiceID || enabled
 	}

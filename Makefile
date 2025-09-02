@@ -189,7 +189,7 @@ golangci-lint: ## Run golangci-lint comprehensive linter
 		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \
 		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin; \
 	}
-	@golangci-lint run --skip-dirs vendor --skip-dirs tmp ./...
+	@golangci-lint run ./...
 	@echo "$(GREEN)✓ Golangci-lint analysis complete$(RESET)"
 
 .PHONY: trivy

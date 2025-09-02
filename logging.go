@@ -77,13 +77,12 @@ func (l *Log) printf(lvl, f string, args ...interface{}) {
 	}
 
 	// Route all logs to STDERR to keep separate from program output
-	if lvl == "DEBUG" {
-		fmt.Fprintf(os.Stderr, "%s", m)
-	} else if lvl == "INFO" {
-		fmt.Fprintf(os.Stderr, "%s", m)
-	} else {
+	switch lvl {
+	case "DEBUG", "INFO":
+		_, _ = fmt.Fprintf(os.Stderr, "%s", m)
+	default:
 		// Error and other levels go to STDERR
-		fmt.Fprintf(os.Stderr, "%s", m)
+		_, _ = fmt.Fprintf(os.Stderr, "%s", m)
 	}
 	l.Audit(m)
 }

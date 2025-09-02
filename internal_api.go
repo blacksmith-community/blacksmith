@@ -483,12 +483,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.Marshal(instanceDetails)
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling instance details: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling instance details: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s ", string(b))
+		_, _ = fmt.Fprintf(w, "%s ", string(b))
 		return
 	}
 
@@ -509,11 +509,11 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.Marshal(response)
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "Failed to marshal response: %s"}`, err)
+			_, _ = fmt.Fprintf(w, `{"error": "Failed to marshal response: %s"}`, err)
 			return
 		}
 
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -521,7 +521,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		idx, err := api.Vault.GetIndex("db")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 
@@ -602,12 +602,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.Marshal(out)
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s\n", string(b))
+		_, _ = fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
 	if req.URL.Path == "/b/bosh/pool-stats" {
@@ -622,26 +622,26 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.Marshal(stats)
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s\n", string(b))
+		_, _ = fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
 	if req.URL.Path == "/b/cleanup" {
 		task, err := api.Broker.BOSH.Cleanup(false)
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 		//return a 200 and a task id for the cleanup task
 		cleanups, err := api.Broker.serviceWithNoDeploymentCheck()
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 		out := struct {
@@ -654,12 +654,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		js, err := json.Marshal(out)
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		fmt.Fprintf(w, "%s\n", string(js))
+		_, _ = fmt.Fprintf(w, "%s\n", string(js))
 		return
 	}
 	if req.URL.Path == "/b/blacksmith/logs" {
@@ -695,7 +695,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if !isAllowed {
 				l.Error("unauthorized log file access attempt: %s", logFile)
 				w.WriteHeader(403)
-				fmt.Fprintf(w, "error: unauthorized log file access\n")
+				_, _ = fmt.Fprintf(w, "error: unauthorized log file access\n")
 				return
 			}
 
@@ -711,7 +711,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				} else {
 					l.Error("failed to read log file %s: %s", logFile, err)
 					w.WriteHeader(500)
-					fmt.Fprintf(w, "error: failed to read log file: %s\n", err)
+					_, _ = fmt.Fprintf(w, "error: failed to read log file: %s\n", err)
 					return
 				}
 			} else {
@@ -733,13 +733,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("failed to marshal blacksmith logs: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		fmt.Fprintf(w, "%s\n", string(b))
+		_, _ = fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
 	if req.URL.Path == "/b/blacksmith/credentials" {
@@ -767,13 +767,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("failed to marshal blacksmith credentials: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		fmt.Fprintf(w, "%s\n", string(b))
+		_, _ = fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
 
@@ -788,13 +788,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("failed to marshal blacksmith config: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		fmt.Fprintf(w, "%s\n", string(b))
+		_, _ = fmt.Fprintf(w, "%s\n", string(b))
 		return
 	}
 
@@ -811,7 +811,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -864,7 +864,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("Unable to find credentials for instance %s", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "credentials not found"}`)
 			return
 		}
 
@@ -872,7 +872,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !services.IsRedisInstance(common.Credentials(creds)) {
 			l.Debug("Instance %s is not identified as Redis", instanceID)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "not a Redis instance"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "not a Redis instance"}`)
 			return
 		}
 
@@ -924,7 +924,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var setReq redis.SetRequest
 			if err := json.NewDecoder(req.Body).Decode(&setReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			setReq.InstanceID = instanceID
@@ -935,7 +935,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var getReq redis.GetRequest
 			if err := json.NewDecoder(req.Body).Decode(&getReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			getReq.InstanceID = instanceID
@@ -946,7 +946,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var delReq redis.DeleteRequest
 			if err := json.NewDecoder(req.Body).Decode(&delReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			delReq.InstanceID = instanceID
@@ -957,7 +957,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var cmdReq redis.CommandRequest
 			if err := json.NewDecoder(req.Body).Decode(&cmdReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			cmdReq.InstanceID = instanceID
@@ -968,7 +968,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var keysReq redis.KeysRequest
 			if err := json.NewDecoder(req.Body).Decode(&keysReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			keysReq.InstanceID = instanceID
@@ -979,7 +979,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var flushReq redis.FlushRequest
 			if err := json.NewDecoder(req.Body).Decode(&flushReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			flushReq.InstanceID = instanceID
@@ -988,7 +988,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		default:
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "unknown Redis operation: %s"}`, operation)
+			_, _ = fmt.Fprintf(w, `{"error": "unknown Redis operation: %s"}`, operation)
 		}
 
 		return
@@ -1008,7 +1008,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -1018,7 +1018,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
 			return
 		}
 
@@ -1028,14 +1028,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("Unable to find credentials for instance %s", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "credentials not found"}`)
 			return
 		}
 
 		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
 			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
 			return
 		}
 
@@ -1121,7 +1121,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// GET /b/{instance_id}/rabbitmq/rabbitmqctl/categories - Returns all command categories
 			if req.Method != "GET" {
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 				return
 			}
 
@@ -1135,14 +1135,15 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "history":
 			// GET /b/{instance_id}/rabbitmq/rabbitmqctl/history - Returns command execution history
 			// DELETE /b/{instance_id}/rabbitmq/rabbitmqctl/history - Clears command execution history
-			if req.Method == "GET" {
+			switch req.Method {
+			case "GET":
 				if api.RabbitMQAuditService != nil {
 					history, err := api.RabbitMQAuditService.GetAuditHistory(req.Context(), instanceID, 100)
 					api.handleJSONResponse(w, history, err)
 				} else {
 					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ audit service not available"))
 				}
-			} else if req.Method == "DELETE" {
+			case "DELETE":
 				if api.RabbitMQAuditService != nil {
 					err := api.RabbitMQAuditService.ClearAuditHistory(req.Context(), instanceID)
 					if err != nil {
@@ -1153,16 +1154,16 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				} else {
 					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ audit service not available"))
 				}
-			} else {
+			default:
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or DELETE."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or DELETE."}`)
 			}
 
 		case "execute":
 			// POST /b/{instance_id}/rabbitmq/rabbitmqctl/execute - Executes command synchronously
 			if req.Method != "POST" {
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
 				return
 			}
 
@@ -1173,13 +1174,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			if err := json.NewDecoder(req.Body).Decode(&executeReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 
 			if executeReq.Category == "" || executeReq.Command == "" {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "category and command are required"}`)
+				_, _ = fmt.Fprintf(w, `{"error": "category and command are required"}`)
 				return
 			}
 
@@ -1213,14 +1214,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// WebSocket streaming endpoint for rabbitmqctl commands
 			if req.Method != "GET" {
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
 				return
 			}
 
 			// Check for WebSocket upgrade headers
 			if req.Header.Get("Upgrade") != "websocket" {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "WebSocket upgrade required"}`)
+				_, _ = fmt.Fprintf(w, `{"error": "WebSocket upgrade required"}`)
 				return
 			}
 
@@ -1237,7 +1238,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					// GET /b/{instance_id}/rabbitmq/rabbitmqctl/category/{category} - Returns commands for category
 					if req.Method != "GET" {
 						w.WriteHeader(405)
-						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 						return
 					}
 
@@ -1252,7 +1253,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					// GET /b/{instance_id}/rabbitmq/rabbitmqctl/category/{category}/command/{command} - Returns command help
 					if req.Method != "GET" {
 						w.WriteHeader(405)
-						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 						return
 					}
 
@@ -1264,11 +1265,11 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					}
 				} else {
 					w.WriteHeader(404)
-					fmt.Fprintf(w, `{"error": "unknown rabbitmqctl operation: %s"}`, operation)
+					_, _ = fmt.Fprintf(w, `{"error": "unknown rabbitmqctl operation: %s"}`, operation)
 				}
 			} else {
 				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "unknown rabbitmqctl operation: %s"}`, operation)
+				_, _ = fmt.Fprintf(w, `{"error": "unknown rabbitmqctl operation: %s"}`, operation)
 			}
 		}
 
@@ -1289,7 +1290,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -1299,7 +1300,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
 			return
 		}
 
@@ -1309,14 +1310,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("Unable to find credentials for instance %s", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "credentials not found"}`)
 			return
 		}
 
 		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
 			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
 			return
 		}
 
@@ -1378,7 +1379,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// GET /b/{instance_id}/rabbitmq/plugins/categories - Returns all command categories
 			if req.Method != "GET" {
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 				return
 			}
 
@@ -1392,14 +1393,15 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "history":
 			// GET /b/{instance_id}/rabbitmq/plugins/history - Returns command execution history
 			// DELETE /b/{instance_id}/rabbitmq/plugins/history - Clears command execution history
-			if req.Method == "GET" {
+			switch req.Method {
+			case "GET":
 				if api.RabbitMQPluginsAuditService != nil {
 					history, err := api.RabbitMQPluginsAuditService.GetHistory(req.Context(), instanceID, 100)
 					api.handleJSONResponse(w, history, err)
 				} else {
 					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins audit service not available"))
 				}
-			} else if req.Method == "DELETE" {
+			case "DELETE":
 				if api.RabbitMQPluginsAuditService != nil {
 					err := api.RabbitMQPluginsAuditService.ClearHistory(req.Context(), instanceID)
 					if err != nil {
@@ -1410,16 +1412,16 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				} else {
 					api.handleJSONResponse(w, nil, fmt.Errorf("RabbitMQ plugins audit service not available"))
 				}
-			} else {
+			default:
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or DELETE."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or DELETE."}`)
 			}
 
 		case "execute":
 			// POST /b/{instance_id}/rabbitmq/plugins/execute - Executes command synchronously
 			if req.Method != "POST" {
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
 				return
 			}
 
@@ -1432,13 +1434,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			decoder := json.NewDecoder(req.Body)
 			if err := decoder.Decode(&reqData); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "Invalid JSON: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "Invalid JSON: %s"}`, err.Error())
 				return
 			}
 
 			if reqData.Category == "" || reqData.Command == "" {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "category and command are required"}`)
+				_, _ = fmt.Fprintf(w, `{"error": "category and command are required"}`)
 				return
 			}
 
@@ -1487,7 +1489,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// WebSocket streaming endpoint for rabbitmq-plugins commands
 			if req.Method != "GET" {
 				w.WriteHeader(405)
-				fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
+				_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET for WebSocket upgrade."}`)
 				return
 			}
 
@@ -1503,7 +1505,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					// GET /b/{instance_id}/rabbitmq/plugins/category/{category} - Returns commands for category
 					if req.Method != "GET" {
 						w.WriteHeader(405)
-						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 						return
 					}
 
@@ -1518,7 +1520,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					// GET /b/{instance_id}/rabbitmq/plugins/category/{category}/command/{command} - Returns command help
 					if req.Method != "GET" {
 						w.WriteHeader(405)
-						fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+						_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 						return
 					}
 
@@ -1530,11 +1532,11 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					}
 				} else {
 					w.WriteHeader(404)
-					fmt.Fprintf(w, `{"error": "unknown rabbitmq-plugins operation: %s"}`, operation)
+					_, _ = fmt.Fprintf(w, `{"error": "unknown rabbitmq-plugins operation: %s"}`, operation)
 				}
 			} else {
 				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "unknown rabbitmq-plugins operation: %s"}`, operation)
+				_, _ = fmt.Fprintf(w, `{"error": "unknown rabbitmq-plugins operation: %s"}`, operation)
 			}
 		}
 
@@ -1556,7 +1558,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("Unable to find credentials for instance %s", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "credentials not found"}`)
 			return
 		}
 
@@ -1564,7 +1566,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
 			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
 			return
 		}
 
@@ -1617,7 +1619,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var pubReq rabbitmq.PublishRequest
 			if err := json.NewDecoder(req.Body).Decode(&pubReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			pubReq.InstanceID = instanceID
@@ -1638,7 +1640,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var consReq rabbitmq.ConsumeRequest
 			if err := json.NewDecoder(req.Body).Decode(&consReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			consReq.InstanceID = instanceID
@@ -1679,7 +1681,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var queueOpsReq rabbitmq.QueueOpsRequest
 			if err := json.NewDecoder(req.Body).Decode(&queueOpsReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			queueOpsReq.InstanceID = instanceID
@@ -1700,7 +1702,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			var mgmtReq rabbitmq.ManagementRequest
 			if err := json.NewDecoder(req.Body).Decode(&mgmtReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 			mgmtReq.InstanceID = instanceID
@@ -1719,7 +1721,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		default:
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "unknown RabbitMQ operation: %s"}`, operation)
+			_, _ = fmt.Fprintf(w, `{"error": "unknown RabbitMQ operation: %s"}`, operation)
 		}
 
 		return
@@ -1736,7 +1738,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Only allow POST method
 		if req.Method != "POST" {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+			_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
 			return
 		}
 
@@ -1744,7 +1746,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		var sshReq ssh.SSHRequest
 		if err := json.NewDecoder(req.Body).Decode(&sshReq); err != nil {
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 			return
 		}
 
@@ -1753,7 +1755,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -1763,7 +1765,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
 			return
 		}
 
@@ -1784,7 +1786,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Validate required fields
 		if sshReq.Command == "" {
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "command is required"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "command is required"}`)
 			return
 		}
 
@@ -1853,7 +1855,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Only allow POST method for SSH operations
 		if req.Method != "POST" {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+			_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
 			return
 		}
 
@@ -1862,7 +1864,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -1872,7 +1874,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
 			return
 		}
 
@@ -1882,14 +1884,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("Unable to find credentials for instance %s", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "credentials not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "credentials not found"}`)
 			return
 		}
 
 		if !services.IsRabbitMQInstance(common.Credentials(creds)) {
 			l.Debug("Instance %s is not identified as RabbitMQ", instanceID)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "not a RabbitMQ instance"}`)
 			return
 		}
 
@@ -2021,13 +2023,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			if err := json.NewDecoder(req.Body).Decode(&customReq); err != nil {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+				_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 				return
 			}
 
 			if customReq.Command == "" {
 				w.WriteHeader(400)
-				fmt.Fprintf(w, `{"error": "command is required"}`)
+				_, _ = fmt.Fprintf(w, `{"error": "command is required"}`)
 				return
 			}
 
@@ -2046,7 +2048,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		default:
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "unknown RabbitMQ SSH operation: %s"}`, operation)
+			_, _ = fmt.Fprintf(w, `{"error": "unknown RabbitMQ SSH operation: %s"}`, operation)
 		}
 
 		return
@@ -2062,14 +2064,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !api.Config.SSH.UITerminalEnabled {
 			l.Info("SSH Terminal UI access denied - disabled in configuration")
 			w.WriteHeader(403)
-			fmt.Fprintf(w, `{"error": "SSH Terminal UI is disabled in configuration"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "SSH Terminal UI is disabled in configuration"}`)
 			return
 		}
 
 		// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
 		if req.Method != http.MethodGet && req.Method != http.MethodConnect {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or CONNECT for WebSocket."}`)
+			_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or CONNECT for WebSocket."}`)
 			return
 		}
 
@@ -2078,7 +2080,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("Failed to get blacksmith deployment info from manifest: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "Failed to get deployment information: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "Failed to get deployment information: %s"}`, err.Error())
 			return
 		}
 
@@ -2109,7 +2111,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		} else {
 			l.Error("WebSocket handler not available")
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "WebSocket SSH service not available"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "WebSocket SSH service not available"}`)
 		}
 
 		return
@@ -2127,14 +2129,14 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !api.Config.SSH.UITerminalEnabled {
 			l.Info("SSH Terminal UI access denied for instance %s - disabled in configuration", instanceID)
 			w.WriteHeader(403)
-			fmt.Fprintf(w, `{"error": "SSH Terminal UI is disabled in configuration"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "SSH Terminal UI is disabled in configuration"}`)
 			return
 		}
 
 		// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
 		if req.Method != http.MethodGet && req.Method != http.MethodConnect {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or CONNECT for WebSocket."}`)
+			_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET or CONNECT for WebSocket."}`)
 			return
 		}
 
@@ -2143,7 +2145,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -2153,7 +2155,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
 			return
 		}
 
@@ -2253,7 +2255,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		} else {
 			l.Error("WebSocket handler not available")
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "WebSocket SSH service not available"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "WebSocket SSH service not available"}`)
 		}
 
 		return
@@ -2267,7 +2269,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		if req.Method != "GET" {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+			_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 			return
 		}
 
@@ -2296,7 +2298,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Only allow GET method
 		if req.Method != "GET" {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
+			_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use GET."}`)
 			return
 		}
 
@@ -2305,7 +2307,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -2315,7 +2317,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
 			return
 		}
 
@@ -2484,7 +2486,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Only allow POST method
 		if req.Method != "POST" {
 			w.WriteHeader(405)
-			fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
+			_, _ = fmt.Fprintf(w, `{"error": "Method not allowed. Use POST."}`)
 			return
 		}
 
@@ -2495,13 +2497,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		if err := json.NewDecoder(req.Body).Decode(&requestData); err != nil {
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "invalid request body: %s"}`, err.Error())
 			return
 		}
 
 		if requestData.FilePath == "" {
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "filePath is required"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "filePath is required"}`)
 			return
 		}
 
@@ -2509,7 +2511,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !strings.HasPrefix(requestData.FilePath, "/etc/ssl/certs/bosh-trusted-cert-") ||
 			!strings.HasSuffix(requestData.FilePath, ".pem") {
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "invalid file path: must be a BOSH trusted certificate"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid file path: must be a BOSH trusted certificate"}`)
 			return
 		}
 
@@ -2518,7 +2520,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find service instance %s in vault index", instanceID)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "service instance not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 			return
 		}
 
@@ -2528,7 +2530,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
+			_, _ = fmt.Fprintf(w, `{"error": "plan not found: %s"}`, err.Error())
 			return
 		}
 
@@ -2718,7 +2720,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifestParsed); err != nil {
 			l.Error("unable to parse manifest YAML: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "unable to parse manifest"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "unable to parse manifest"}`)
 			return
 		}
 
@@ -2736,7 +2738,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to marshal manifest details: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "unable to marshal response"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "unable to marshal response"}`)
 			return
 		}
 		if _, err := w.Write(b); err != nil {
@@ -2783,7 +2785,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to get VMs for deployment %s: %s", deploymentName, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s", err)
+			_, _ = fmt.Fprintf(w, "error: %s", err)
 			return
 		}
 
@@ -2891,12 +2893,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.MarshalIndent(vms, "", "  ")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling VMs: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling VMs: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s ", string(b))
+		_, _ = fmt.Fprintf(w, "%s ", string(b))
 		return
 	}
 
@@ -2911,7 +2913,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err := json.NewDecoder(req.Body).Decode(&requestBody); err != nil {
 			l.Error("failed to decode request body: %s", err)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "invalid JSON in request body"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid JSON in request body"}`)
 			return
 		}
 
@@ -2919,7 +2921,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !ok {
 			l.Error("missing or invalid 'enabled' field in request body")
 			w.WriteHeader(400)
-			fmt.Fprintf(w, `{"error": "missing or invalid 'enabled' field"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "missing or invalid 'enabled' field"}`)
 			return
 		}
 
@@ -2942,7 +2944,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if err != nil || !exists {
 				l.Error("unable to find service instance %s in vault index", param)
 				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "service instance not found"}`)
+				_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 				return
 			}
 
@@ -2956,7 +2958,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to toggle resurrection for deployment %s: %s", deploymentName, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "failed to toggle resurrection: %s"}`, err)
+			_, _ = fmt.Fprintf(w, `{"error": "failed to toggle resurrection: %s"}`, err)
 			return
 		}
 
@@ -3002,7 +3004,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if err != nil || !exists {
 				l.Error("unable to find service instance %s in vault index", param)
 				w.WriteHeader(404)
-				fmt.Fprintf(w, `{"error": "service instance not found"}`)
+				_, _ = fmt.Fprintf(w, `{"error": "service instance not found"}`)
 				return
 			}
 			deploymentName = fmt.Sprintf("%s-%s", inst.PlanID, param)
@@ -3014,7 +3016,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to delete resurrection config for deployment %s: %s", deploymentName, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, `{"error": "failed to delete resurrection config: %s"}`, err)
+			_, _ = fmt.Fprintf(w, `{"error": "failed to delete resurrection config: %s"}`, err)
 			return
 		}
 
@@ -3104,12 +3106,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.MarshalIndent(instanceData, "", "  ")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling instance details: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling instance details: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s ", string(b))
+		_, _ = fmt.Fprintf(w, "%s ", string(b))
 		return
 	}
 
@@ -3131,7 +3133,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_, err = api.Broker.FindPlan(inst.ServiceID, inst.PlanID)
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
 			return
 		}
 
@@ -3139,7 +3141,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			w.WriteHeader(400)
-			fmt.Fprintf(w, "error reading request body: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error reading request body: %s\n", err)
 			return
 		}
 
@@ -3147,7 +3149,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		var testManifest interface{}
 		if err := yaml.Unmarshal(body, &testManifest); err != nil {
 			w.WriteHeader(400)
-			fmt.Fprintf(w, "invalid YAML: %s\n", err)
+			_, _ = fmt.Fprintf(w, "invalid YAML: %s\n", err)
 			return
 		}
 
@@ -3157,13 +3159,13 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		if err := api.Vault.Put(fmt.Sprintf("%s/manifest", m[1]), data); err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error storing manifest: %s\n", err)
+			_, _ = fmt.Fprintf(w, "error storing manifest: %s\n", err)
 			return
 		}
 
 		l.Debug("manifest updated for instance %s", m[1])
 		w.WriteHeader(200)
-		fmt.Fprintf(w, "manifest updated successfully\n")
+		_, _ = fmt.Fprintf(w, "manifest updated successfully\n")
 		return
 	}
 
@@ -3188,7 +3190,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s", err)
+			_, _ = fmt.Fprintf(w, "error: %s", err)
 			return
 		}
 
@@ -3207,12 +3209,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.MarshalIndent(events, "", "  ")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling events: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling events: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3237,7 +3239,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s", err)
+			_, _ = fmt.Fprintf(w, "error: %s", err)
 			return
 		}
 
@@ -3250,7 +3252,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Error("unable to get events for deployment %s: %s", deploymentName, err)
 			// Return empty array
 			w.Header().Set("Content-type", "application/json")
-			fmt.Fprintf(w, "[]")
+			_, _ = fmt.Fprintf(w, "[]")
 			return
 		}
 
@@ -3294,7 +3296,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Debug("no task ID found in events for deployment %s", deploymentName)
 			// Return empty array
 			w.Header().Set("Content-type", "application/json")
-			fmt.Fprintf(w, "[]")
+			_, _ = fmt.Fprintf(w, "[]")
 			return
 		}
 
@@ -3317,7 +3319,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				l.Error("unable to get task result output for task %d: %s", taskID, err)
 				// Return empty array on error
 				w.Header().Set("Content-type", "application/json")
-				fmt.Fprintf(w, "[]")
+				_, _ = fmt.Fprintf(w, "[]")
 				return
 			}
 			l.Debug("using result output for task %d (size: %d bytes)", taskID, len(resultOutput))
@@ -3331,12 +3333,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.MarshalIndent(taskEvents, "", "  ")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling task events: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling task events: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3361,7 +3363,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s", err)
+			_, _ = fmt.Fprintf(w, "error: %s", err)
 			return
 		}
 
@@ -3374,7 +3376,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Error("unable to get events for deployment %s: %s", deploymentName, err)
 			// Return empty array
 			w.Header().Set("Content-type", "application/json")
-			fmt.Fprintf(w, "[]")
+			_, _ = fmt.Fprintf(w, "[]")
 			return
 		}
 
@@ -3418,7 +3420,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Debug("no task ID found in events for deployment %s", deploymentName)
 			// Return empty array
 			w.Header().Set("Content-type", "application/json")
-			fmt.Fprintf(w, "[]")
+			_, _ = fmt.Fprintf(w, "[]")
 			return
 		}
 
@@ -3428,7 +3430,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			l.Error("unable to get task debug output for task %d: %s", taskID, err)
 			// Return empty array on error
 			w.Header().Set("Content-type", "application/json")
-			fmt.Fprintf(w, "[]")
+			_, _ = fmt.Fprintf(w, "[]")
 			return
 		}
 
@@ -3439,12 +3441,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.MarshalIndent(taskEvents, "", "  ")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling task events: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling task events: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3487,7 +3489,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to get tasks: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s", err)
+			_, _ = fmt.Fprintf(w, "error: %s", err)
 			return
 		}
 
@@ -3496,12 +3498,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling tasks: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling tasks: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling tasks: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3514,7 +3516,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("invalid task ID: %s", taskIDStr)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, "invalid task ID")
+			_, _ = fmt.Fprintf(w, "invalid task ID")
 			return
 		}
 
@@ -3525,7 +3527,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to get task %d: %s", taskID, err)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, "task not found: %s", err)
+			_, _ = fmt.Fprintf(w, "task not found: %s", err)
 			return
 		}
 
@@ -3551,12 +3553,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling task details: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling task details: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling task details: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3569,7 +3571,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("invalid task ID: %s", taskIDStr)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, "invalid task ID")
+			_, _ = fmt.Fprintf(w, "invalid task ID")
 			return
 		}
 
@@ -3587,7 +3589,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to get task output for task %d: %s", taskID, err)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, "task output not found: %s", err)
+			_, _ = fmt.Fprintf(w, "task output not found: %s", err)
 			return
 		}
 
@@ -3610,12 +3612,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling task output: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling task output: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling task output: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3628,7 +3630,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("invalid task ID: %s", taskIDStr)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, "invalid task ID")
+			_, _ = fmt.Fprintf(w, "invalid task ID")
 			return
 		}
 
@@ -3639,7 +3641,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to cancel task %d: %s", taskID, err)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, "failed to cancel task: %s", err)
+			_, _ = fmt.Fprintf(w, "failed to cancel task: %s", err)
 			return
 		}
 
@@ -3654,12 +3656,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling cancel response: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling response: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling response: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3696,7 +3698,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to fetch configs: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "failed to fetch configs: %s", err)
+			_, _ = fmt.Fprintf(w, "failed to fetch configs: %s", err)
 			return
 		}
 
@@ -3711,12 +3713,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling configs response: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling response: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling response: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3732,7 +3734,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to fetch config %s: %s", configID, err)
 			w.WriteHeader(404)
-			fmt.Fprintf(w, "config not found: %s", err)
+			_, _ = fmt.Fprintf(w, "config not found: %s", err)
 			return
 		}
 
@@ -3742,12 +3744,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling config details response: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling response: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling response: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3774,7 +3776,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to fetch config versions for %s/%s: %s", configType, configName, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "failed to fetch config versions: %s", err)
+			_, _ = fmt.Fprintf(w, "failed to fetch config versions: %s", err)
 			return
 		}
 
@@ -3791,12 +3793,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling config versions response: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling response: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling response: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3816,7 +3818,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if fromID == "" || toID == "" {
 			l.Error("missing required parameters: from=%s, to=%s", fromID, toID)
 			w.WriteHeader(400)
-			fmt.Fprintf(w, "missing required parameters: 'from' and 'to' config IDs")
+			_, _ = fmt.Fprintf(w, "missing required parameters: 'from' and 'to' config IDs")
 			return
 		}
 
@@ -3827,7 +3829,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to compute config diff: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "failed to compute config diff: %s", err)
+			_, _ = fmt.Fprintf(w, "failed to compute config diff: %s", err)
 			return
 		}
 
@@ -3868,12 +3870,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling config diff response: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling response: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling response: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -3887,7 +3889,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to get services catalog: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error getting services: %s", err)
+			_, _ = fmt.Fprintf(w, "error getting services: %s", err)
 			return
 		}
 
@@ -3937,12 +3939,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("error marshaling service filter options: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling response: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling response: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 	//
@@ -3967,7 +3969,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			l.Error("unable to find plan %s/%s: %s", inst.ServiceID, inst.PlanID, err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: %s", err)
+			_, _ = fmt.Fprintf(w, "error: %s", err)
 			return
 		}
 
@@ -3982,7 +3984,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err != nil || !exists {
 			l.Error("unable to find manifest for instance %s", instanceID)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: unable to find manifest")
+			_, _ = fmt.Fprintf(w, "error: unable to find manifest")
 			return
 		}
 
@@ -3991,7 +3993,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if err := yaml.Unmarshal([]byte(manifestData.Manifest), &manifest); err != nil {
 			l.Error("unable to parse manifest: %s", err)
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: unable to parse manifest")
+			_, _ = fmt.Fprintf(w, "error: unable to parse manifest")
 			return
 		}
 
@@ -4000,7 +4002,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if !ok {
 			l.Error("unable to find instance_groups in manifest")
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error: unable to find instance groups")
+			_, _ = fmt.Fprintf(w, "error: unable to find instance groups")
 			return
 		}
 
@@ -4086,12 +4088,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.MarshalIndent(allLogs, "", "  ")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling logs: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling logs: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -4114,12 +4116,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		b, err := json.MarshalIndent(creds, "", "  ")
 		if err != nil {
 			w.WriteHeader(500)
-			fmt.Fprintf(w, "error marshaling credentials: %s", err)
+			_, _ = fmt.Fprintf(w, "error marshaling credentials: %s", err)
 			return
 		}
 
 		w.Header().Set("Content-type", "application/json")
-		fmt.Fprintf(w, "%s", string(b))
+		_, _ = fmt.Fprintf(w, "%s", string(b))
 		return
 	}
 
@@ -4168,12 +4170,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				b, err := json.Marshal(events)
 				if err != nil {
 					w.WriteHeader(500)
-					fmt.Fprintf(w, "error marshaling events: %s", err)
+					_, _ = fmt.Fprintf(w, "error marshaling events: %s", err)
 					return
 				}
 
 				w.Header().Set("Content-type", "application/json")
-				fmt.Fprintf(w, "%s", string(b))
+				_, _ = fmt.Fprintf(w, "%s", string(b))
 				return
 			}
 
@@ -4188,7 +4190,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					if err != nil {
 						l.Error("failed to get deployment %s: %s", deploymentName, err)
 						w.WriteHeader(404)
-						fmt.Fprintf(w, "deployment not found: %s", err)
+						_, _ = fmt.Fprintf(w, "deployment not found: %s", err)
 						return
 					}
 
@@ -4201,7 +4203,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 
 				w.WriteHeader(500)
-				fmt.Fprintf(w, "BOSH director not available")
+				_, _ = fmt.Fprintf(w, "BOSH director not available")
 				return
 			}
 
@@ -4216,7 +4218,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					if err != nil {
 						l.Error("failed to get deployment %s: %s", deploymentName, err)
 						w.WriteHeader(404)
-						fmt.Fprintf(w, `{"error": "deployment not found"}`)
+						_, _ = fmt.Fprintf(w, `{"error": "deployment not found"}`)
 						return
 					}
 
@@ -4225,7 +4227,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					if err := yaml.Unmarshal([]byte(deployment.Manifest), &manifestParsed); err != nil {
 						l.Error("unable to parse deployment manifest YAML: %s", err)
 						w.WriteHeader(500)
-						fmt.Fprintf(w, `{"error": "unable to parse manifest"}`)
+						_, _ = fmt.Fprintf(w, `{"error": "unable to parse manifest"}`)
 						return
 					}
 
@@ -4243,7 +4245,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					if err != nil {
 						l.Error("unable to marshal manifest details: %s", err)
 						w.WriteHeader(500)
-						fmt.Fprintf(w, `{"error": "unable to marshal response"}`)
+						_, _ = fmt.Fprintf(w, `{"error": "unable to marshal response"}`)
 						return
 					}
 					if _, err := w.Write(b); err != nil {
@@ -4253,7 +4255,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 
 				w.WriteHeader(500)
-				fmt.Fprintf(w, `{"error": "BOSH director not available"}`)
+				_, _ = fmt.Fprintf(w, `{"error": "BOSH director not available"}`)
 				return
 			}
 
@@ -4274,7 +4276,7 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					if err != nil {
 						l.Error("invalid task ID %s: %s", taskID, err)
 						w.WriteHeader(400)
-						fmt.Fprintf(w, "invalid task ID: %s", taskID)
+						_, _ = fmt.Fprintf(w, "invalid task ID: %s", taskID)
 						return
 					}
 
@@ -4377,12 +4379,12 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				b, err := json.Marshal(logs)
 				if err != nil {
 					w.WriteHeader(500)
-					fmt.Fprintf(w, "error marshaling logs: %s", err)
+					_, _ = fmt.Fprintf(w, "error marshaling logs: %s", err)
 					return
 				}
 
 				w.Header().Set("Content-type", "application/json")
-				fmt.Fprintf(w, "%s", string(b))
+				_, _ = fmt.Fprintf(w, "%s", string(b))
 				return
 			}
 		}
@@ -4417,7 +4419,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.getCFRegistration(w, req, parts[0])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "registration not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		}
 
 	// PUT /b/cf/registrations/{id} - Update registration
@@ -4427,7 +4429,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.updateCFRegistration(w, req, parts[0])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "registration not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		}
 
 	// DELETE /b/cf/registrations/{id} - Delete registration
@@ -4437,7 +4439,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.deleteCFRegistration(w, req, parts[0])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "registration not found"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		}
 
 	// POST /b/cf/test-connection - Test CF connection
@@ -4451,7 +4453,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.streamCFRegistrationProgress(w, req, parts[1])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid stream endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid stream endpoint"}`)
 		}
 
 	// POST /b/cf/registrations/{id}/sync - Sync registration
@@ -4461,7 +4463,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.syncCFRegistration(w, req, parts[1])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid sync endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid sync endpoint"}`)
 		}
 
 	// POST /b/cf/registrations/{id}/register - Start registration process
@@ -4471,7 +4473,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.startCFRegistrationProcess(w, req, parts[1])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid registration endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid registration endpoint"}`)
 		}
 
 	// --- CF API Endpoints Management ---
@@ -4487,7 +4489,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.connectCFEndpoint(w, req, parts[1])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
 		}
 
 	// GET /b/cf/endpoints/{name}/marketplace - Get marketplace services for a CF endpoint
@@ -4497,7 +4499,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.getCFMarketplace(w, req, parts[1])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
 		}
 
 	// GET /b/cf/endpoints/{name}/orgs - Get organizations for a CF endpoint
@@ -4507,7 +4509,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.getCFOrganizations(w, req, parts[1])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
 		}
 
 	// GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces - Get spaces for a CF org
@@ -4517,7 +4519,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.getCFSpaces(w, req, parts[1], parts[2])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
 		}
 
 	// GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/services - Get services for a CF space
@@ -4527,7 +4529,7 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.getCFServices(w, req, parts[1], parts[2], parts[3])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
 		}
 
 	// GET /b/cf/endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/service_instances/{service_guid}/bindings - Get bindings for a service instance
@@ -4537,13 +4539,13 @@ func (api *InternalApi) handleCFRegistrationEndpoints(w http.ResponseWriter, req
 			api.getCFServiceBindings(w, req, parts[1], parts[2], parts[3], parts[4])
 		} else {
 			w.WriteHeader(404)
-			fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
+			_, _ = fmt.Fprintf(w, `{"error": "invalid endpoint"}`)
 		}
 
 	default:
 		l.Debug("unknown CF registration endpoint: %s %s", req.Method, path)
 		w.WriteHeader(404)
-		fmt.Fprintf(w, `{"error": "endpoint not found"}`)
+		_, _ = fmt.Fprintf(w, `{"error": "endpoint not found"}`)
 	}
 }
 
@@ -4655,7 +4657,7 @@ func (api *InternalApi) getCFRegistration(w http.ResponseWriter, req *http.Reque
 	if !exists {
 		l.Debug("CF registration %s not found", registrationID)
 		w.WriteHeader(404)
-		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		return
 	}
 
@@ -4680,7 +4682,7 @@ func (api *InternalApi) updateCFRegistration(w http.ResponseWriter, req *http.Re
 	if !exists {
 		l.Debug("CF registration %s not found for update", registrationID)
 		w.WriteHeader(404)
-		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		return
 	}
 
@@ -4742,7 +4744,7 @@ func (api *InternalApi) deleteCFRegistration(w http.ResponseWriter, req *http.Re
 	if !exists {
 		l.Debug("CF registration %s not found for deletion", registrationID)
 		w.WriteHeader(404)
-		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		return
 	}
 
@@ -4914,7 +4916,7 @@ func (api *InternalApi) streamCFRegistrationProgress(w http.ResponseWriter, req 
 	}
 
 	eventData, _ := json.Marshal(initialEvent)
-	fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", string(eventData))
 	flusher.Flush()
 
 	// If registration is completed or failed, send final event and close
@@ -4930,7 +4932,7 @@ func (api *InternalApi) streamCFRegistrationProgress(w http.ResponseWriter, req 
 		}
 
 		eventData, _ := json.Marshal(finalEvent)
-		fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", string(eventData))
 		flusher.Flush()
 
 		l.Debug("completed streaming for CF registration %s (final status: %s)", registrationID, status)
@@ -4964,7 +4966,7 @@ func (api *InternalApi) streamCFRegistrationProgress(w http.ResponseWriter, req 
 				}
 
 				eventData, _ := json.Marshal(statusEvent)
-				fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", string(eventData))
 				flusher.Flush()
 
 				// If completed, send final event and close
@@ -4980,7 +4982,7 @@ func (api *InternalApi) streamCFRegistrationProgress(w http.ResponseWriter, req 
 					}
 
 					eventData, _ := json.Marshal(finalEvent)
-					fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+					_, _ = fmt.Fprintf(w, "data: %s\n\n", string(eventData))
 					flusher.Flush()
 
 					l.Debug("completed streaming for CF registration %s (final status: %s)", registrationID, status)
@@ -4998,7 +5000,7 @@ func (api *InternalApi) streamCFRegistrationProgress(w http.ResponseWriter, req 
 			}
 
 			eventData, _ := json.Marshal(timeoutEvent)
-			fmt.Fprintf(w, "data: %s\n\n", string(eventData))
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", string(eventData))
 			flusher.Flush()
 
 			l.Debug("stream timeout for CF registration %s", registrationID)
@@ -5029,7 +5031,7 @@ func (api *InternalApi) syncCFRegistration(w http.ResponseWriter, req *http.Requ
 	if !exists {
 		l.Debug("CF registration %s not found for sync", registrationID)
 		w.WriteHeader(404)
-		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		return
 	}
 
@@ -5087,7 +5089,7 @@ func (api *InternalApi) startCFRegistrationProcess(w http.ResponseWriter, req *h
 	if !exists {
 		l.Debug("CF registration %s not found", registrationID)
 		w.WriteHeader(404)
-		fmt.Fprintf(w, `{"error": "registration not found"}`)
+		_, _ = fmt.Fprintf(w, `{"error": "registration not found"}`)
 		return
 	}
 
@@ -5637,23 +5639,19 @@ func (api *InternalApi) handleJSONResponse(w http.ResponseWriter, result interfa
 		}
 
 		if jsonData, jsonErr := json.Marshal(errorResponse); jsonErr == nil {
-			if _, writeErr := w.Write(jsonData); writeErr != nil {
-				// Log write error but continue processing
-			}
+			_, _ = w.Write(jsonData)
 		} else {
-			fmt.Fprintf(w, `{"success": false, "error": "internal error"}`)
+			_, _ = fmt.Fprintf(w, `{"success": false, "error": "internal error"}`)
 		}
 		return
 	}
 
 	if jsonData, jsonErr := json.Marshal(result); jsonErr == nil {
 		w.WriteHeader(200)
-		if _, writeErr := w.Write(jsonData); writeErr != nil {
-			// Log write error but response already started
-		}
+		_, _ = w.Write(jsonData)
 	} else {
 		w.WriteHeader(500)
-		fmt.Fprintf(w, `{"success": false, "error": "failed to marshal response"}`)
+		_, _ = fmt.Fprintf(w, `{"success": false, "error": "failed to marshal response"}`)
 	}
 }
 
@@ -5676,7 +5674,7 @@ func (api *InternalApi) handleRabbitMQStreamingWebSocket(w http.ResponseWriter, 
 		l.Error("WebSocket upgrade failed: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	l.Info("WebSocket connection established for instance %s", instanceID)
 
@@ -5852,7 +5850,7 @@ func (api *InternalApi) handleRabbitMQPluginsStreamingWebSocket(w http.ResponseW
 		l.Error("WebSocket upgrade failed: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	l.Info("WebSocket connection established for instance %s", instanceID)
 

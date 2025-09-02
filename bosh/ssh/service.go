@@ -311,7 +311,7 @@ func (s *ServiceImpl) addHostToKnownHosts(hostname string, key ssh.PublicKey) er
 	if err != nil {
 		return fmt.Errorf("failed to open known_hosts file %s: %w", s.config.KnownHostsFile, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Format the host key entry (hostname algorithm key)
 	keyLine := knownhosts.Line([]string{hostname}, key)

@@ -263,13 +263,9 @@ func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID strin
 			})
 
 			if req.AutoAck {
-				if ackErr := msg.Ack(false); ackErr != nil {
-					// Log ack error but continue processing
-				}
+				_ = msg.Ack(false)
 			} else {
-				if nackErr := msg.Nack(false, true); nackErr != nil {
-					// Log nack error but continue processing
-				}
+				_ = msg.Nack(false, true)
 			}
 
 		case <-timeoutCtx.Done():

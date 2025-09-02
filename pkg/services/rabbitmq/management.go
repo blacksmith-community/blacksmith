@@ -52,7 +52,7 @@ func (mc *ManagementClient) GetQueues(creds *Credentials, useSSL bool) ([]Queue,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("management API returned status %d", resp.StatusCode)
@@ -103,7 +103,7 @@ func (mc *ManagementClient) Request(creds *Credentials, method, path string, use
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var data interface{}
 	if resp.Header.Get("Content-Type") == "application/json" {

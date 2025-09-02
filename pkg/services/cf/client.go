@@ -61,7 +61,7 @@ func (c *Client) GetServiceBrokers() ([]BrokerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get service brokers: status %d", resp.StatusCode)
@@ -127,7 +127,7 @@ func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		var errorResp struct {
@@ -183,7 +183,7 @@ func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		var errorResp struct {
@@ -230,7 +230,7 @@ func (c *Client) DeleteServiceBroker(brokerID string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("failed to delete service broker: status %d", resp.StatusCode)
@@ -245,7 +245,7 @@ func (c *Client) GetServiceOfferings() ([]ServiceInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get service offerings: status %d", resp.StatusCode)
@@ -297,7 +297,7 @@ func (c *Client) EnableServiceAccess(serviceOfferingGUID string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to get service plans: status %d", resp.StatusCode)
@@ -326,7 +326,7 @@ func (c *Client) EnableServiceAccess(serviceOfferingGUID string) error {
 		if err != nil {
 			return fmt.Errorf("failed to enable access for plan %s: %w", plan.GUID, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusCreated {
 			// May already be public, continue

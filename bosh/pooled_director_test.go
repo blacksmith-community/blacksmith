@@ -338,7 +338,7 @@ func TestPooledDirector_Timeout(t *testing.T) {
 
 	// Fill the pool with a long-running request
 	go func() {
-		pooled.GetDeployments()
+		_, _ = pooled.GetDeployments()
 	}()
 
 	time.Sleep(100 * time.Millisecond) // Let first request start
@@ -371,7 +371,7 @@ func TestPooledDirector_QueuedRequests(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			pooled.GetInfo()
+			_, _ = pooled.GetInfo()
 		}()
 	}
 
@@ -435,7 +435,7 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		go func() {
 			started <- true
-			pooled.GetInfo()
+			_, _ = pooled.GetInfo()
 			done <- true
 		}()
 	}
@@ -695,7 +695,7 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 
 	// First request fills the pool
 	go func() {
-		pooled.GetDeployments()
+		_, _ = pooled.GetDeployments()
 	}()
 
 	// Give first request time to acquire the slot
@@ -738,7 +738,7 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			pooled.GetDeployments()
+			_, _ = pooled.GetDeployments()
 		}()
 	}
 

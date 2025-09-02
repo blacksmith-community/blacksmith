@@ -212,17 +212,13 @@ func (cr *CredentialRecovery) restoreFromCompressedBackup(instanceID, archiveDat
 	// Add recovery metadata
 	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
 	var metadata map[string]interface{}
-	if _, getErr := cr.vault.Get(metadataPath, &metadata); getErr != nil {
-		// Log get error but continue processing
-	}
+	_, _ = cr.vault.Get(metadataPath, &metadata)
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 	metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
 	metadata["credentials_recovered_from"] = fmt.Sprintf("backup_%s", sha256)
-	if putErr := cr.vault.Put(metadataPath, metadata); putErr != nil {
-		// Log put error but continue processing
-	}
+	_ = cr.vault.Put(metadataPath, metadata)
 
 	return nil
 }
@@ -303,17 +299,13 @@ func (cr *CredentialRecovery) tryRecoverFromLegacyBackup(instanceID, backupPath,
 			// Add recovery metadata
 			metadataPath := fmt.Sprintf("%s/metadata", instanceID)
 			var metadata map[string]interface{}
-			if _, getErr := cr.vault.Get(metadataPath, &metadata); getErr != nil {
-				// Log get error but continue processing
-			}
+			_, _ = cr.vault.Get(metadataPath, &metadata)
 			if metadata == nil {
 				metadata = make(map[string]interface{})
 			}
 			metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
 			metadata["credentials_recovered_from"] = fmt.Sprintf("legacy_backup_%s", sha256)
-			if putErr := cr.vault.Put(metadataPath, metadata); putErr != nil {
-				// Log put error but continue processing
-			}
+			_ = cr.vault.Put(metadataPath, metadata)
 
 			return true
 		}
@@ -375,17 +367,13 @@ func (cr *CredentialRecovery) recoverFromBOSH(instanceID string) (bool, error) {
 	// Add recovery metadata
 	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
 	var metadata map[string]interface{}
-	if _, getErr := cr.vault.Get(metadataPath, &metadata); getErr != nil {
-		// Log get error but continue processing
-	}
+	_, _ = cr.vault.Get(metadataPath, &metadata)
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 	metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
 	metadata["credentials_recovered_from"] = "bosh_deployment"
-	if putErr := cr.vault.Put(metadataPath, metadata); putErr != nil {
-		// Log put error but continue processing
-	}
+	_ = cr.vault.Put(metadataPath, metadata)
 
 	cr.logger.Info("Successfully recovered credentials from BOSH")
 	return true, nil

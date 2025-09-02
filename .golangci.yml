@@ -1,0 +1,36 @@
+# golangci-lint v2 configuration
+version: "2"
+
+# Run configuration
+run:
+  timeout: 5m
+  tests: true
+
+# Linters configuration
+linters:
+  # Use the default set of linters
+  default: standard
+
+  # Exclude paths from linting
+  exclusions:
+    paths:
+      - vendor
+      - tmp
+
+# Formatters configuration
+formatters:
+  # Exclude paths from formatting checks
+  exclusions:
+    paths:
+      - vendor
+      - tmp
+
+# Output configuration
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+# Issues configuration
+issues:
+  max-same-issues: 3

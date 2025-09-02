@@ -138,7 +138,7 @@ func (e *ExecutorService) ExecuteCommandSync(ctx ExecutionContext, deployment, i
 		// Extract the detailed output from the error message
 		errorMsg := err.Error()
 		var extractedOutput string
-		var exitCode int = 1
+		exitCode := 1
 
 		// Parse error message to extract output and exit code
 		if strings.Contains(errorMsg, "output:") {

@@ -102,7 +102,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 		// Extract output from error message if it contains "output:"
 		errorMsg := err.Error()
 		var extractedOutput string
-		var exitCode int = 1
+		exitCode := 1
 
 		// Parse error message to extract output and exit code
 		if strings.Contains(errorMsg, "output:") {

@@ -617,9 +617,7 @@ func (m *CFConnectionManager) HealthCheck(ctx context.Context) {
 			}
 		} else if client.CanRetry() {
 			// Try to reconnect
-			if err := client.TryReconnect(ctx); err != nil {
-				// Error already logged in TryReconnect, no need to log again
-			}
+			_ = client.TryReconnect(ctx)
 		}
 	}
 }

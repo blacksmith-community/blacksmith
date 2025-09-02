@@ -243,8 +243,10 @@ func TestBufferedTaskReporter_Concurrent(t *testing.T) {
 // TestBuildFactoryConfig tests the factory config building
 func TestBuildFactoryConfig(t *testing.T) {
 	// Set test mode to skip network calls
-	os.Setenv("BLACKSMITH_TEST_MODE", "true")
-	defer os.Unsetenv("BLACKSMITH_TEST_MODE")
+	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
 
 	tests := []struct {
 		name    string
@@ -295,8 +297,10 @@ func TestBuildFactoryConfig(t *testing.T) {
 // TestDirectorAdapterCreation tests creating a DirectorAdapter with various configs
 func TestDirectorAdapterCreation(t *testing.T) {
 	// Set test mode to skip network calls
-	os.Setenv("BLACKSMITH_TEST_MODE", "true")
-	defer os.Unsetenv("BLACKSMITH_TEST_MODE")
+	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
 
 	tests := []struct {
 		name      string

@@ -199,7 +199,7 @@ func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, dep
 		return
 	}
 	conn := rawConn
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Set connection limits
 	conn.SetReadLimit(h.config.MaxMessageSize)

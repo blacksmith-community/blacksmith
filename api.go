@@ -26,7 +26,7 @@ func (api API) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		Logger.Info("[api] authentication failed: No basic auth credentials provided for %s %s from %s", req.Method, req.URL.Path, req.RemoteAddr)
 		w.Header().Set("WWW-Authenticate", "basic realm=Blacksmith")
 		w.WriteHeader(401)
-		fmt.Fprintf(w, "Authorization Required\n")
+		_, _ = fmt.Fprintf(w, "Authorization Required\n")
 		return
 	}
 	if username != api.Username || password != api.Password {
@@ -35,7 +35,7 @@ func (api API) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Logger.Debug("[api] failed auth attempt for user: %s, path: %s", username, req.URL.Path)
 		}
 		w.WriteHeader(403)
-		fmt.Fprintf(w, "Forbidden\n")
+		_, _ = fmt.Fprintf(w, "Forbidden\n")
 		return
 	}
 
@@ -83,5 +83,5 @@ func (n NullHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		Logger.Debug("[api] 404 request details: path=%s, query=%s, headers=%v", req.URL.Path, req.URL.RawQuery, req.Header)
 	}
 	w.WriteHeader(404)
-	fmt.Fprintf(w, "404 not found\n")
+	_, _ = fmt.Fprintf(w, "404 not found\n")
 }

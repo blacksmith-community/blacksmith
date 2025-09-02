@@ -94,7 +94,6 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData
 					instance.Metadata["credentials_recovered_from"] = "vcap_services"
 					instance.Metadata["vcap_recovery_attempted"] = true
 					instance.Metadata["vcap_recovery_failed"] = false
-					hasCredentials = true
 					instance.Metadata["has_credentials"] = true
 					delete(instance.Metadata, "needs_credential_recovery")
 				}
@@ -1714,7 +1713,7 @@ func (u *vaultUpdater) DecompressAndDecode(encodedData string) (map[string]inter
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
-	defer gzipReader.Close()
+	defer func() { _ = gzipReader.Close() }()
 
 	var decompressed bytes.Buffer
 	if _, err := decompressed.ReadFrom(gzipReader); err != nil {

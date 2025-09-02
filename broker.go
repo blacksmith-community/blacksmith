@@ -1024,7 +1024,7 @@ func yamlGsub(
 	}
 
 	s := string(m)
-	replaced := strings.Replace(s, orig, replacement, -1)
+	replaced := strings.ReplaceAll(s, orig, replacement)
 	l.Debug("Replaced %d occurrences", strings.Count(s, orig))
 
 	var data map[interface{}]interface{}
@@ -1185,7 +1185,7 @@ func CreateUserPassRabbitMQ(usernameDynamic, passwordDynamic, adminUsername, adm
 		l.Error("HTTP request failed for user creation: %s", err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -1237,7 +1237,7 @@ func GrantUserPermissionsRabbitMQ(usernameDynamic, adminUsername, adminPassword,
 		l.Error("HTTP request failed for permissions: %s", err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -1273,7 +1273,7 @@ func DeletetUserRabbitMQ(bindingID, adminUsername, adminPassword, apiUrl string,
 		l.Error("HTTP request failed for user deletion: %s", err)
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)

@@ -96,7 +96,7 @@ func TestCertificateAPI_HandleCertificatesRequest(t *testing.T) {
 
 			// Endpoint lookup may fail without network; accept 200 or 400 for endpoint tests
 			if test.path == "/b/internal/certificates/endpoint" {
-				if !(w.Code == 200 || w.Code == 400) {
+				if w.Code != 200 && w.Code != 400 {
 					t.Errorf("Expected status 200 or 400 for endpoint request, got %d", w.Code)
 				}
 			} else if w.Code != test.expectedStatus {
@@ -316,7 +316,7 @@ func TestCertificateAPI_HandleEndpointCertificates(t *testing.T) {
 
 			// Accept 200 or 400 for live endpoint fetch depending on environment
 			if strings.Contains(test.requestBody, "google.com:443") {
-				if !(w.Code == 200 || w.Code == 400) {
+				if w.Code != 200 && w.Code != 400 {
 					t.Errorf("Expected status 200 or 400, got %d. Response: %s", w.Code, w.Body.String())
 				}
 			} else if w.Code != test.expectedStatus {

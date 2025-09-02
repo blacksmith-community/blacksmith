@@ -562,9 +562,7 @@ func (c *CertificateAPI) writeJSONResponse(w http.ResponseWriter, data interface
 	}
 
 	w.WriteHeader(http.StatusOK)
-	if _, writeErr := w.Write(jsonData); writeErr != nil {
-		// Log write error but response already started
-	}
+	_, _ = w.Write(jsonData)
 }
 
 // writeErrorResponse writes an error response
@@ -586,7 +584,5 @@ func (c *CertificateAPI) writeErrorResponse(w http.ResponseWriter, statusCode in
 	}
 
 	jsonData, _ := json.Marshal(response)
-	if _, writeErr := w.Write(jsonData); writeErr != nil {
-		// Log write error but response already started
-	}
+	_, _ = w.Write(jsonData)
 }

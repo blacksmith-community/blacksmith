@@ -53,9 +53,7 @@ func (cm *ClientManager) GetClientWithTLSConfig(instanceID string, creds *Creden
 
 		// Connection is dead, remove it
 		cm.mu.Lock()
-		if closeErr := client.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = client.Close()
 		delete(cm.clients, key)
 		cm.mu.Unlock()
 	} else {
@@ -103,9 +101,7 @@ func (cm *ClientManager) GetClientWithTLSConfig(instanceID string, creds *Creden
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		if closeErr := client.Close(); closeErr != nil {
-			// Log close error but don't return it as it's secondary
-		}
+		_ = client.Close()
 		return nil, common.NewRetryableError(
 			fmt.Errorf("redis connection failed: %w", err),
 			true,
@@ -129,9 +125,7 @@ func (cm *ClientManager) CloseClient(instanceID string, useTLS bool) {
 	defer cm.mu.Unlock()
 
 	if client, exists := cm.clients[key]; exists {
-		if closeErr := client.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = client.Close()
 		delete(cm.clients, key)
 	}
 }
@@ -142,9 +136,7 @@ func (cm *ClientManager) CloseAll() {
 	defer cm.mu.Unlock()
 
 	for key, client := range cm.clients {
-		if closeErr := client.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = client.Close()
 		delete(cm.clients, key)
 	}
 }
@@ -161,9 +153,7 @@ func (cm *ClientManager) CleanupStale() {
 		cancel()
 
 		if err != nil {
-			if closeErr := client.Close(); closeErr != nil {
-				// Log close error but continue cleanup
-			}
+			_ = client.Close()
 			delete(cm.clients, key)
 		}
 	}

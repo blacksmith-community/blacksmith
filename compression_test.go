@@ -23,7 +23,7 @@ func TestCompressionMiddleware(t *testing.T) {
 <p>This content is long enough to exceed the minimum compression size threshold.</p>
 </body>
 </html>`
-		fmt.Fprint(w, content)
+		_, _ = fmt.Fprint(w, content)
 	})
 
 	// Test with compression enabled
@@ -65,7 +65,7 @@ func TestCompressionMiddleware(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create gzip reader: %v", err)
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		decompressed, err := io.ReadAll(reader)
 		if err != nil {
@@ -136,7 +136,7 @@ func TestCompressionMiddleware(t *testing.T) {
 	t.Run("SmallContent", func(t *testing.T) {
 		smallHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, "Small")
+			_, _ = fmt.Fprint(w, "Small")
 		})
 
 		config := CompressionConfig{
@@ -166,7 +166,7 @@ func TestCompressionMiddleware(t *testing.T) {
 	t.Run("UnsupportedContentType", func(t *testing.T) {
 		imageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "image/png")
-			fmt.Fprint(w, "This is supposed to be image data that shouldn't be compressed")
+			_, _ = fmt.Fprint(w, "This is supposed to be image data that shouldn't be compressed")
 		})
 
 		config := CompressionConfig{
@@ -195,7 +195,7 @@ func TestCompressionMiddleware(t *testing.T) {
 func TestCompressionTypes(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"message": "This is a JSON response that should be compressed with the requested compression type"}`)
+		_, _ = fmt.Fprint(w, `{"message": "This is a JSON response that should be compressed with the requested compression type"}`)
 	})
 
 	// Test multiple compression types
@@ -271,7 +271,7 @@ func TestWebSocketBypassesCompression(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Inner-Handler", "true")
 		// Simulate what a normal handler might do pre-upgrade
-		fmt.Fprint(w, `{"ok":true}`)
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
 	})
 
 	config := CompressionConfig{

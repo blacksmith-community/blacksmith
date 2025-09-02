@@ -62,15 +62,11 @@ func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *
 	// Clean up stale connections
 	cm.mu.Lock()
 	if conn, exists := cm.connections[key]; exists {
-		if closeErr := conn.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = conn.Close()
 		delete(cm.connections, key)
 	}
 	if ch, exists := cm.channels[key]; exists {
-		if closeErr := ch.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = ch.Close()
 		delete(cm.channels, key)
 	}
 	cm.mu.Unlock()
@@ -110,9 +106,7 @@ func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *
 
 	ch, err := conn.Channel()
 	if err != nil {
-		if closeErr := conn.Close(); closeErr != nil {
-			// Log close error but return original error
-		}
+		_ = conn.Close()
 		return nil, nil, common.NewRetryableError(
 			fmt.Errorf("failed to open channel: %w", err),
 			true,
@@ -137,13 +131,13 @@ func (cm *ConnectionManager) TestConnection(creds *Credentials, useAMQPS bool) e
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ch, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("failed to open channel: %w", err)
 	}
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	// Test basic operation
 	err = ch.ExchangeDeclare(
@@ -193,13 +187,13 @@ func (cm *ConnectionManager) TestConnectionWithOverrides(creds *Credentials, use
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ch, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("failed to open channel: %w", err)
 	}
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	// Test basic operation
 	err = ch.ExchangeDeclare(
@@ -272,16 +266,12 @@ func (cm *ConnectionManager) CloseConnection(instanceID string, useAMQPS bool) {
 	defer cm.mu.Unlock()
 
 	if ch, exists := cm.channels[key]; exists {
-		if closeErr := ch.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = ch.Close()
 		delete(cm.channels, key)
 	}
 
 	if conn, exists := cm.connections[key]; exists {
-		if closeErr := conn.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = conn.Close()
 		delete(cm.connections, key)
 	}
 }
@@ -292,16 +282,12 @@ func (cm *ConnectionManager) CloseAll() {
 	defer cm.mu.Unlock()
 
 	for key, ch := range cm.channels {
-		if closeErr := ch.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = ch.Close()
 		delete(cm.channels, key)
 	}
 
 	for key, conn := range cm.connections {
-		if closeErr := conn.Close(); closeErr != nil {
-			// Log close error but continue cleanup
-		}
+		_ = conn.Close()
 		delete(cm.connections, key)
 	}
 }
@@ -315,9 +301,7 @@ func (cm *ConnectionManager) CleanupStale() {
 		if conn.IsClosed() {
 			delete(cm.connections, key)
 			if ch, exists := cm.channels[key]; exists {
-				if closeErr := ch.Close(); closeErr != nil {
-					// Log close error but continue cleanup
-				}
+				_ = ch.Close()
 				delete(cm.channels, key)
 			}
 		}

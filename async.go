@@ -158,7 +158,7 @@ func (b *Broker) provisionAsync(instanceID string, details interface{}, plan Pla
 
 	// Get the actual task ID from BOSH events if the returned task ID is a placeholder
 	deploymentName := plan.ID + "-" + instanceID
-	var actualTaskID int = task.ID
+	actualTaskID := task.ID
 
 	if task.ID <= 1 {
 		// This is a placeholder task ID (0 or 1), get the real one from BOSH events

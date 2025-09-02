@@ -50,7 +50,7 @@ func (c *CFAuthClient) Authenticate() error {
 	if err != nil {
 		return fmt.Errorf("failed to get CF info: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("CF info request failed with status: %d", resp.StatusCode)
@@ -86,7 +86,7 @@ func (c *CFAuthClient) Authenticate() error {
 	if err != nil {
 		return fmt.Errorf("failed to authenticate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		var errorResp struct {
@@ -134,7 +134,7 @@ func (c *CFAuthClient) TestConnection() (*CFInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to CF API: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("CF API returned status: %d", resp.StatusCode)

@@ -215,11 +215,12 @@ func FetchCertificateFromEndpointWithVerify(address string, timeout time.Duratio
 
 		// If no port specified in URL, use default based on scheme
 		if port == "" {
-			if u.Scheme == "https" {
+			switch u.Scheme {
+			case "https":
 				port = "443"
-			} else if u.Scheme == "http" {
+			case "http":
 				port = "80"
-			} else {
+			default:
 				port = "443" // Default to HTTPS port
 			}
 		}
@@ -245,7 +246,7 @@ func FetchCertificateFromEndpointWithVerify(address string, timeout time.Duratio
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to %s: %w", address, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Get the peer certificate
 	state := conn.ConnectionState()
