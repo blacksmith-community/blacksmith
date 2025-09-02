@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -11,11 +12,14 @@ import (
 // Local test doubles matching current interfaces
 
 type rmMockScanner struct {
+	mu          sync.Mutex
 	deployments []DeploymentInfo
 	scanCalls   int
 }
 
 func (m *rmMockScanner) ScanDeployments(ctx context.Context) ([]DeploymentInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.scanCalls++
 	return m.deployments, nil
 }
@@ -25,12 +29,21 @@ func (m *rmMockScanner) GetDeploymentDetails(ctx context.Context, name string) (
 	return &DeploymentDetail{DeploymentInfo: DeploymentInfo{Name: name}}, nil
 }
 
+func (m *rmMockScanner) getScanCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.scanCalls
+}
+
 type rmMockUpdater struct {
+	mu    sync.Mutex
 	calls []InstanceData
 	err   error
 }
 
 func (u *rmMockUpdater) UpdateInstance(ctx context.Context, inst InstanceData) (*InstanceData, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.calls = append(u.calls, inst)
 	if u.err != nil {
 		return nil, u.err
@@ -41,11 +54,22 @@ func (u *rmMockUpdater) UpdateInstance(ctx context.Context, inst InstanceData) (
 
 func (u *rmMockUpdater) UpdateBatch(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
 	// not used by current reconciler manager paths
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.calls = append(u.calls, instances...)
 	return instances, u.err
 }
 
+func (u *rmMockUpdater) getCalls() []InstanceData {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	callsCopy := make([]InstanceData, len(u.calls))
+	copy(callsCopy, u.calls)
+	return callsCopy
+}
+
 type rmMockSynchronizer struct {
+	mu    sync.Mutex
 	calls [][]InstanceData
 	err   error
 }
@@ -54,8 +78,22 @@ func (s *rmMockSynchronizer) SyncIndex(ctx context.Context, instances []Instance
 	// record a copy for assertions
 	cp := make([]InstanceData, len(instances))
 	copy(cp, instances)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls = append(s.calls, cp)
 	return s.err
+}
+
+func (s *rmMockSynchronizer) getCalls() [][]InstanceData {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	callsCopy := make([][]InstanceData, len(s.calls))
+	for i, call := range s.calls {
+		callCopy := make([]InstanceData, len(call))
+		copy(callCopy, call)
+		callsCopy[i] = callCopy
+	}
+	return callsCopy
 }
 
 // Helper to build a minimally wired manager with our mocks
@@ -130,22 +168,24 @@ func TestReconcilerManager_RunReconciliation_SyncsFilteredDeployments(t *testing
 	// single synchronous run
 	m.runReconciliation()
 
-	if scan.scanCalls != 1 {
-		t.Fatalf("expected exactly 1 scan call, got %d", scan.scanCalls)
+	if scanCalls := scan.getScanCalls(); scanCalls != 1 {
+		t.Fatalf("expected exactly 1 scan call, got %d", scanCalls)
 	}
 
 	// Expect synchronizer called once with the two service deployments
-	if len(sync.calls) != 1 {
-		t.Fatalf("expected 1 SyncIndex call, got %d", len(sync.calls))
+	syncCalls := sync.getCalls()
+	if len(syncCalls) != 1 {
+		t.Fatalf("expected 1 SyncIndex call, got %d", len(syncCalls))
 	}
-	got := sync.calls[0]
+	got := syncCalls[0]
 	if len(got) != 2 {
 		t.Fatalf("expected 2 instances to be synced, got %d: %+v", len(got), got)
 	}
 
 	// updater should be invoked for each instance
-	if len(upd.calls) != 2 {
-		t.Fatalf("expected 2 updater calls, got %d", len(upd.calls))
+	updCalls := upd.getCalls()
+	if len(updCalls) != 2 {
+		t.Fatalf("expected 2 updater calls, got %d", len(updCalls))
 	}
 }
 
