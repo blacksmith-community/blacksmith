@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/vault/api"
@@ -16,6 +20,15 @@ type Vault struct {
 	Token    string
 	Insecure bool
 	client   *VaultClient // HashiCorp API client
+	// auto-unseal management
+	credentialsPath   string
+	mu                sync.Mutex
+	unsealInProgress  int32
+	lastUnsealAttempt time.Time
+	unsealCooldown    time.Duration
+	autoUnsealEnabled bool
+	// test hook: if set, used by withAutoUnseal instead of AutoUnsealIfSealed
+	autoUnsealHook func(context.Context) error
 }
 
 // ensureClient ensures the vault client is initialized
@@ -34,6 +47,10 @@ func (vault *Vault) ensureClient() error {
 func (vault *Vault) GetAPIClient() (*api.Client, error) {
 	if err := vault.ensureClient(); err != nil {
 		return nil, err
+	}
+	// Best-effort: proactively auto-unseal if needed before handing out the client
+	if vault.autoUnsealEnabled {
+		_ = vault.AutoUnsealIfSealed(context.Background())
 	}
 	return vault.client.Client, nil
 }
@@ -168,6 +185,9 @@ func (vault *Vault) Init(store string) error {
 		return err
 	}
 
+	// Remember credentials path for future auto-unseal
+	vault.credentialsPath = store
+
 	// Check if vault is already initialized
 	initResp, err := vault.client.InitVault(1, 1)
 	if err != nil {
@@ -294,10 +314,16 @@ func (vault *Vault) Get(path string, out interface{}) (bool, error) {
 		l.Error("failed to ensure vault client: %s", err)
 		return false, err
 	}
-
-	// Get the secret using the new client
-	data, exists, err := vault.client.GetSecret(path)
-	if err != nil {
+	var (
+		data   map[string]interface{}
+		exists bool
+		err    error
+	)
+	op := func() error {
+		data, exists, err = vault.client.GetSecret(path)
+		return err
+	}
+	if err = vault.withAutoUnseal(op); err != nil {
 		return false, err
 	}
 
@@ -336,8 +362,9 @@ func (vault *Vault) Put(path string, data interface{}) error {
 		return err
 	}
 
-	// Put the secret using the new client
-	return vault.client.PutSecret(path, dataMap)
+	// Put the secret using the new client, with auto-unseal retry
+	op := func() error { return vault.client.PutSecret(path, dataMap) }
+	return vault.withAutoUnseal(op)
 }
 
 func (vault *Vault) Delete(path string) error {
@@ -348,9 +375,9 @@ func (vault *Vault) Delete(path string) error {
 		l.Error("failed to ensure vault client: %s", err)
 		return err
 	}
-
-	// Delete the secret using the new client
-	return vault.client.DeleteSecret(path)
+	// Delete the secret using the new client, with auto-unseal retry
+	op := func() error { return vault.client.DeleteSecret(path) }
+	return vault.withAutoUnseal(op)
 }
 
 func (vault *Vault) Clear(instanceID string) {
@@ -755,4 +782,173 @@ func (vault *Vault) UpdateCFRegistrationStatus(registrationID, status, errorMsg 
 
 	l.Debug("updating CF registration %s status to %s", registrationID, status)
 	return vault.SaveCFRegistration(registration)
+}
+
+// withAutoUnseal runs an operation, and if it fails due to Vault being sealed or
+// temporarily unavailable, attempts to auto-unseal (if we have credentials) and retries once.
+func (vault *Vault) withAutoUnseal(op func() error) error {
+	if err := op(); err != nil {
+		if !vault.isSealedOrUnavailable(err) {
+			return err
+		}
+		// Try to auto-unseal, then retry once
+		if !vault.autoUnsealEnabled {
+			return err
+		}
+		var uerr error
+		if vault.autoUnsealHook != nil {
+			uerr = vault.autoUnsealHook(context.Background())
+		} else {
+			uerr = vault.AutoUnsealIfSealed(context.Background())
+		}
+		if uerr != nil {
+			return err // preserve original error; auto-unseal failed
+		}
+		// retry once
+		return op()
+	}
+	return nil
+}
+
+// AutoUnsealIfSealed checks Vault health, and if sealed and credentials are available,
+// unseals Vault. It avoids concurrent unseal attempts and cools down between attempts.
+func (vault *Vault) AutoUnsealIfSealed(ctx context.Context) error {
+	l := Logger.Wrap("vault auto-unseal")
+
+	// Fast path: ensure client exists
+	if err := vault.ensureClient(); err != nil {
+		return err
+	}
+
+	// Query health; if this fails we might be unable to reach Vault at all.
+	health, err := vault.client.Sys().Health()
+	if err != nil {
+		// If unreachable, nothing to do here. Caller will handle retries.
+		return err
+	}
+	if !health.Sealed {
+		return nil
+	}
+
+	// Require a credentials file to auto-unseal
+	if vault.credentialsPath == "" {
+		l.Debug("vault is sealed but no credentials path configured; skipping auto-unseal")
+		return fmt.Errorf("vault sealed and no credentials available")
+	}
+
+	// Prevent concurrent unseal attempts
+	if !atomic.CompareAndSwapInt32(&vault.unsealInProgress, 0, 1) {
+		// Someone else is unsealing; nothing to do.
+		return nil
+	}
+	defer atomic.StoreInt32(&vault.unsealInProgress, 0)
+
+	// Basic cooldown to avoid hot loops
+	vault.mu.Lock()
+	cooldown := vault.unsealCooldown
+	if cooldown <= 0 {
+		cooldown = 30 * time.Second
+	}
+	if time.Since(vault.lastUnsealAttempt) < cooldown {
+		vault.mu.Unlock()
+		return nil
+	}
+	vault.lastUnsealAttempt = time.Now()
+	vault.mu.Unlock()
+
+	// Load seal key and unseal
+	key, err := vault.loadSealKey()
+	if err != nil {
+		l.Error("failed to load seal key for auto-unseal: %s", err)
+		return err
+	}
+
+	l.Info("vault is sealed; attempting auto-unseal")
+	if err := vault.client.UnsealVault(key); err != nil {
+		l.Error("auto-unseal failed: %s", err)
+		return err
+	}
+	l.Info("vault auto-unseal successful")
+	return nil
+}
+
+// loadSealKey reads the seal key from the configured credentials JSON file.
+func (vault *Vault) loadSealKey() (string, error) {
+	b, err := safeReadFile(vault.credentialsPath)
+	if err != nil {
+		return "", err
+	}
+	creds := VaultCreds{}
+	if err := json.Unmarshal(b, &creds); err != nil {
+		return "", err
+	}
+	if creds.SealKey == "" {
+		return "", fmt.Errorf("seal key not found in credentials file")
+	}
+	return creds.SealKey, nil
+}
+
+// isSealedOrUnavailable attempts to classify an error as being caused by Vault being sealed
+// or temporarily unavailable. It errs on the side of allowing the retry path.
+func (vault *Vault) isSealedOrUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var respErr *api.ResponseError
+	if errors.As(err, &respErr) {
+		// 503 is returned for sealed/standby/unavailable conditions
+		if respErr.StatusCode == http.StatusServiceUnavailable {
+			return true
+		}
+	}
+	s := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(s, "sealed"):
+		return true
+	case strings.Contains(s, "service unavailable"):
+		return true
+	case strings.Contains(s, "connection refused"):
+		return true
+	case strings.Contains(s, "connection reset"):
+		return true
+	case strings.Contains(s, "broken pipe"):
+		return true
+	case strings.Contains(s, "i/o timeout"):
+		return true
+	case strings.Contains(s, "eof"):
+		return true
+	default:
+		return false
+	}
+}
+
+// StartHealthWatcher periodically checks Vault health and auto-unseals when sealed.
+// It is safe to call multiple times; if no credentials are configured it no-ops.
+func (vault *Vault) StartHealthWatcher(ctx context.Context, interval time.Duration) {
+	l := Logger.Wrap("vault watcher")
+	if !vault.autoUnsealEnabled {
+		l.Debug("auto-unseal disabled; vault watcher not started")
+		return
+	}
+	if vault.credentialsPath == "" {
+		l.Debug("no credentials path configured; vault watcher disabled")
+		return
+	}
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	l.Info("starting vault health watcher with %v interval", interval)
+
+	for {
+		select {
+		case <-ctx.Done():
+			l.Info("stopping vault health watcher")
+			return
+		case <-ticker.C:
+			_ = vault.AutoUnsealIfSealed(ctx)
+		}
+	}
 }

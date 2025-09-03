@@ -134,6 +134,10 @@ type VaultConfig struct {
 	Insecure bool   `yaml:"skip_ssl_validation"`
 	CredPath string `yaml:"credentials"`
 	CACert   string `yaml:"cacert"`
+	// Auto-unseal behavior (optional)
+	AutoUnseal          bool   `yaml:"auto_unseal"`
+	HealthCheckInterval string `yaml:"health_check_interval"` // Go duration, e.g., "15s"
+	UnsealCooldown      string `yaml:"unseal_cooldown"`       // Go duration, e.g., "30s"
 }
 
 type ShieldConfig struct {
@@ -325,6 +329,18 @@ func ReadConfig(path string) (c Config, err error) {
 
 	if err := os.Setenv("VAULT_ADDR", c.Vault.Address); err != nil {
 		return Config{}, fmt.Errorf("failed to set VAULT_ADDR environment variable: %s", err)
+	}
+
+	// Vault auto-unseal defaults
+	if !c.Vault.AutoUnseal {
+		// default enabled
+		c.Vault.AutoUnseal = true
+	}
+	if c.Vault.HealthCheckInterval == "" {
+		c.Vault.HealthCheckInterval = "15s"
+	}
+	if c.Vault.UnsealCooldown == "" {
+		c.Vault.UnsealCooldown = "30s"
 	}
 
 	// VM monitoring defaults

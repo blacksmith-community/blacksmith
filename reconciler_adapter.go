@@ -347,6 +347,69 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 	return services
 }
 
+// GetBindingCredentials reconstructs binding credentials via the real broker and maps them
+func (b *brokerWrapper) GetBindingCredentials(instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
+	if b.broker == nil {
+		return nil, fmt.Errorf("broker not initialized")
+	}
+	bc, err := b.broker.GetBindingCredentials(instanceID, bindingID)
+	if err != nil {
+		return nil, err
+	}
+	if bc == nil {
+		return nil, fmt.Errorf("no credentials returned")
+	}
+	// Map to reconciler.BindingCredentials
+	rbc := &reconciler.BindingCredentials{
+		Host:            bc.Host,
+		Port:            bc.Port,
+		Username:        bc.Username,
+		Password:        bc.Password,
+		CredentialType:  bc.CredentialType,
+		ReconstructedAt: bc.ReconstructedAt,
+		Raw:             make(map[string]interface{}),
+	}
+	// Optional service-specific fields: include in Raw and keep structured where applicable
+	if bc.URI != "" {
+		rbc.Raw["uri"] = bc.URI
+	}
+	if bc.APIURL != "" {
+		rbc.Raw["api_url"] = bc.APIURL
+	}
+	if bc.Vhost != "" {
+		rbc.Raw["vhost"] = bc.Vhost
+	}
+	if bc.Database != "" {
+		rbc.Raw["database"] = bc.Database
+	}
+	if bc.Scheme != "" {
+		rbc.Raw["scheme"] = bc.Scheme
+	}
+	// Copy all raw fields if provided
+	if bc.Raw != nil {
+		for k, v := range bc.Raw {
+			rbc.Raw[k] = v
+		}
+	}
+	// Ensure standard fields are reflected in Raw as well
+	if rbc.Host != "" {
+		rbc.Raw["host"] = rbc.Host
+	}
+	if rbc.Port != 0 {
+		rbc.Raw["port"] = rbc.Port
+	}
+	if rbc.Username != "" {
+		rbc.Raw["username"] = rbc.Username
+	}
+	if rbc.Password != "" {
+		rbc.Raw["password"] = rbc.Password
+	}
+	if rbc.CredentialType != "" {
+		rbc.Raw["credential_type"] = rbc.CredentialType
+	}
+	return rbc, nil
+}
+
 // vaultWrapper wraps the Vault for use by the reconciler
 type vaultWrapper struct {
 	vault *Vault

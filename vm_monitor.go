@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 // VMMonitor handles scheduled VM monitoring for service instances
 type VMMonitor struct {
-	vault        *Vault
+	vault        vmVault
 	boshDirector bosh.Director
 	config       *Config
 
@@ -23,6 +24,13 @@ type VMMonitor struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+}
+
+// vmVault abstracts the subset of Vault used by VMMonitor
+type vmVault interface {
+	GetIndex(name string) (*VaultIndex, error)
+	Get(path string, out interface{}) (bool, error)
+	Put(path string, data interface{}) error
 }
 
 // ServiceMonitor tracks the monitoring state of a service instance
@@ -275,6 +283,39 @@ func (m *VMMonitor) handleCheckError(svc *ServiceMonitor, err error) {
 	l := Logger.Wrap("vm-monitor")
 	l.Error("Failed to check VMs for service %s: %s", svc.ServiceID, err)
 
+	// Detect BOSH 404 "doesn't exist" and mark as deleted immediately
+	errStr := err.Error()
+	if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
+		l.Info("Deployment %s not found (404). Marking instance %s as deleted and stopping monitoring.", svc.DeploymentName, svc.ServiceID)
+
+		// Mark deleted in index and store VM status as deleted
+		m.markInstanceDeleted(svc)
+
+		deletedStatus := VMStatus{
+			Status:      "deleted",
+			VMCount:     0,
+			HealthyVMs:  0,
+			LastUpdated: time.Now(),
+			NextUpdate:  time.Time{},
+			Details: map[string]interface{}{
+				"error":           err.Error(),
+				"deleted":         true,
+				"deleted_at":      time.Now().Format(time.RFC3339),
+				"deployment_name": svc.DeploymentName,
+			},
+		}
+		if err := m.storeVMStatus(svc.ServiceID, deletedStatus); err != nil {
+			l.Error("Failed to store deleted status for service %s: %s", svc.ServiceID, err)
+		}
+
+		// Remove from monitoring to avoid further BOSH queries
+		m.mu.Lock()
+		delete(m.services, svc.ServiceID)
+		m.mu.Unlock()
+		return
+	}
+
+	// Default error handling with retry
 	svc.FailureCount++
 	svc.IsHealthy = false
 	svc.LastCheck = time.Now()
@@ -298,6 +339,39 @@ func (m *VMMonitor) handleCheckError(svc *ServiceMonitor, err error) {
 	if err := m.storeVMStatus(svc.ServiceID, vmStatus); err != nil {
 		l.Error("Failed to store error status for service %s: %s", svc.ServiceID, err)
 	}
+}
+
+// markInstanceDeleted updates the Vault index entry to reflect deletion
+func (m *VMMonitor) markInstanceDeleted(svc *ServiceMonitor) {
+	l := Logger.Wrap("vm-monitor")
+	idx, err := m.vault.GetIndex("db")
+	if err != nil {
+		l.Error("Failed to get index to mark deletion for %s: %v", svc.ServiceID, err)
+		return
+	}
+
+	entry := map[string]interface{}{}
+	if existing, ok := idx.Data[svc.ServiceID]; ok {
+		if existingMap, ok := existing.(map[string]interface{}); ok {
+			// Preserve existing fields
+			for k, v := range existingMap {
+				entry[k] = v
+			}
+		}
+	}
+
+	// Set deletion markers
+	entry["deleted"] = true
+	entry["deleted_at"] = time.Now().Format(time.RFC3339)
+	entry["deployment_name"] = svc.DeploymentName
+
+	idx.Data[svc.ServiceID] = entry
+	// Persist updated index via vault.Put on canonical path
+	if err := m.vault.Put("db", idx.Data); err != nil {
+		l.Error("Failed to save deletion marker for %s: %v", svc.ServiceID, err)
+		return
+	}
+	l.Info("Marked instance %s as deleted in index", svc.ServiceID)
 }
 
 // calculateOverallStatus determines the overall health status from VM states

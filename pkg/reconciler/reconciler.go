@@ -1025,10 +1025,33 @@ func (r *ReconcilerManager) discoverCFServiceInstances(ctx context.Context, filt
 		return []CFServiceInstanceDetails{}, nil
 	}
 
-	// This would integrate with CF to discover service instances
-	// For now, it's a placeholder that can be extended
-	r.logger.Info("Discovering CF service instances")
-	// TODO: Implement CF service discovery via CFManagerInterface when available
+	// Narrow interface for CF discovery supported by CFConnectionManager in main package
+	type cfDiscovery interface {
+		DiscoverAllServiceInstances(brokerServices []string) ([]CFServiceInstanceDetails, error)
+	}
+
+	// Build the list of broker services to guide discovery (optional)
+	var brokerServices []string
+	if b, ok := r.broker.(BrokerInterface); ok && b != nil {
+		for _, svc := range b.GetServices() {
+			if svc.Name != "" {
+				brokerServices = append(brokerServices, svc.Name)
+			}
+		}
+	}
+
+	if cfMgr, ok := r.cfManager.(cfDiscovery); ok && cfMgr != nil {
+		r.logger.Info("Discovering CF service instances via CF manager")
+		instances, err := cfMgr.DiscoverAllServiceInstances(brokerServices)
+		if err != nil {
+			r.logger.Error("CF discovery failed: %v", err)
+			return []CFServiceInstanceDetails{}, nil
+		}
+		r.logger.Info("CF discovery returned %d instances", len(instances))
+		return instances, nil
+	}
+
+	r.logger.Info("CF manager present but does not support discovery; skipping")
 	return []CFServiceInstanceDetails{}, nil
 }
 

@@ -58,6 +58,8 @@ type MetricsCollector interface {
 // BrokerInterface defines the broker interface
 type BrokerInterface interface {
 	GetServices() []Service
+	// Provide reconstructed binding credentials using the broker's logic
+	GetBindingCredentials(instanceID, bindingID string) (*BindingCredentials, error)
 }
 
 // CFManagerInterface is defined in credential_vcap_recovery.go

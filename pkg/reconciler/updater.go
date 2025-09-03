@@ -162,6 +162,21 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData
 	}
 
 	// Prepare data for vault storage at root path using Unix timestamps (seconds) like the main broker
+	// Resolve instance_name with preservation-first logic
+	// 1) Preserve existing value from Vault if present
+	// 2) Else prefer instance.Metadata["instance_name"] or ["cf_instance_name"]
+	// 3) Else fall back to instance.Metadata["cf_name"] populated during CF enrichment
+	resolvedInstanceName := ""
+	if existingName, ok := existingRootData["instance_name"].(string); ok && strings.TrimSpace(existingName) != "" {
+		resolvedInstanceName = existingName
+	} else if name, ok := instance.Metadata["instance_name"].(string); ok && strings.TrimSpace(name) != "" {
+		resolvedInstanceName = name
+	} else if name, ok := instance.Metadata["cf_instance_name"].(string); ok && strings.TrimSpace(name) != "" {
+		resolvedInstanceName = name
+	} else if name, ok := instance.Metadata["cf_name"].(string); ok && strings.TrimSpace(name) != "" {
+		resolvedInstanceName = name
+	}
+
 	vaultData := map[string]interface{}{
 		"instance_id":     instance.ID,
 		"service_id":      instance.ServiceID,
@@ -198,25 +213,33 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData
 		vaultData["service_type"] = serviceType
 	}
 
-	// Add CF enriched metadata to root if available
+	// Add CF enriched metadata to root if available, preserving existing value
 	// Use instance_name which contains the CF instance name (e.g., "rmq-3n-a")
-	if instanceName, ok := instance.Metadata["instance_name"].(string); ok && instanceName != "" {
-		vaultData["instance_name"] = instanceName
-	} else if instanceName, ok := instance.Metadata["cf_instance_name"].(string); ok && instanceName != "" {
-		vaultData["instance_name"] = instanceName
+	if resolvedInstanceName != "" {
+		vaultData["instance_name"] = resolvedInstanceName
 	}
 
-	// Add organization data from CF
+	// Add organization data from CF (support both keys used by reconciler)
 	if orgGUID, ok := instance.Metadata["org_guid"].(string); ok && orgGUID != "" {
 		vaultData["organization_guid"] = orgGUID
+	}
+	if vaultData["organization_guid"] == nil {
+		if orgGUID, ok := instance.Metadata["cf_org_id"].(string); ok && orgGUID != "" {
+			vaultData["organization_guid"] = orgGUID
+		}
 	}
 	if orgName, ok := instance.Metadata["org_name"].(string); ok && orgName != "" {
 		vaultData["organization_name"] = orgName
 	}
 
-	// Add space data from CF
+	// Add space data from CF (support both keys used by reconciler)
 	if spaceGUID, ok := instance.Metadata["space_guid"].(string); ok && spaceGUID != "" {
 		vaultData["space_guid"] = spaceGUID
+	}
+	if vaultData["space_guid"] == nil {
+		if spaceGUID, ok := instance.Metadata["cf_space_id"].(string); ok && spaceGUID != "" {
+			vaultData["space_guid"] = spaceGUID
+		}
 	}
 	if spaceName, ok := instance.Metadata["space_name"].(string); ok && spaceName != "" {
 		vaultData["space_name"] = spaceName
@@ -272,6 +295,8 @@ func (u *vaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData
 		"created_by",
 		"provision_params",
 		"update_params",
+		// Explicitly preserve instance_name if it existed previously
+		"instance_name",
 	}
 
 	for _, field := range preserveFields {
@@ -735,34 +760,94 @@ func (u *vaultUpdater) GetBindingStatus(instanceID, bindingID string) (string, e
 func (u *vaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error {
 	u.logInfo("Reconstructing binding %s for instance %s using broker", bindingID, instanceID)
 
-	// TODO: Call the broker's GetBindingCredentials function if available
-	// For now, return an error since BrokerInterface doesn't have this method
-	credentials := map[string]interface{}{}
-	err := fmt.Errorf("broker GetBindingCredentials not implemented")
+	if broker == nil {
+		return fmt.Errorf("broker not available for reconstruction")
+	}
+
+	// Ask broker to reconstruct credentials using its plan-aware logic
+	bc, err := broker.GetBindingCredentials(instanceID, bindingID)
 	if err != nil {
 		u.logError("Broker failed to reconstruct credentials for binding %s: %s", bindingID, err)
 		return fmt.Errorf("broker reconstruction failed: %w", err)
 	}
+	if bc == nil {
+		return fmt.Errorf("broker returned no credentials")
+	}
 
-	u.logDebug("Successfully retrieved reconstructed credentials from broker")
+	// Build credentials map: prefer Raw if provided, else synthesize from structured fields
+	creds := make(map[string]interface{})
+	if len(bc.Raw) > 0 {
+		for k, v := range bc.Raw {
+			creds[k] = v
+		}
+	}
+	// Ensure standard fields are present
+	if _, ok := creds["host"]; !ok && bc.Host != "" {
+		creds["host"] = bc.Host
+	}
+	if _, ok := creds["port"]; !ok && bc.Port != 0 {
+		creds["port"] = bc.Port
+	}
+	if _, ok := creds["username"]; !ok && bc.Username != "" {
+		creds["username"] = bc.Username
+	}
+	if _, ok := creds["password"]; !ok && bc.Password != "" {
+		creds["password"] = bc.Password
+	}
+	// Additional service-specific fields pulled from Raw if present
+	if bc.Raw != nil {
+		if _, ok := creds["uri"]; !ok {
+			if v, ok2 := bc.Raw["uri"]; ok2 {
+				creds["uri"] = v
+			}
+		}
+		if _, ok := creds["api_url"]; !ok {
+			if v, ok2 := bc.Raw["api_url"]; ok2 {
+				creds["api_url"] = v
+			}
+		}
+		if _, ok := creds["vhost"]; !ok {
+			if v, ok2 := bc.Raw["vhost"]; ok2 {
+				creds["vhost"] = v
+			}
+		}
+		if _, ok := creds["database"]; !ok {
+			if v, ok2 := bc.Raw["database"]; ok2 {
+				creds["database"] = v
+			}
+		}
+		if _, ok := creds["scheme"]; !ok {
+			if v, ok2 := bc.Raw["scheme"]; ok2 {
+				creds["scheme"] = v
+			}
+		}
+	}
+	if _, ok := creds["credential_type"]; !ok && bc.CredentialType != "" {
+		creds["credential_type"] = bc.CredentialType
+	}
 
-	// credentials is already a map[string]interface{}
-	// Just use it directly as credentialsMap
-	credentialsMap := credentials
-
-	// Create metadata for the binding
+	// Prepare metadata to mirror broker/binding expectations
 	metadata := map[string]interface{}{
 		"binding_id":            bindingID,
 		"instance_id":           instanceID,
-		"credential_type":       credentials["credential_type"],
-		"reconstructed_at":      time.Now().Unix(),
+		"credential_type":       bc.CredentialType,
+		"reconstructed_at":      time.Now().Format(time.RFC3339),
 		"reconstruction_source": "broker",
 		"status":                "reconstructed",
 	}
 
-	// Store the reconstructed credentials and metadata
-	err = u.StoreBindingCredentials(instanceID, bindingID, credentialsMap, metadata)
-	if err != nil {
+	// Enrich metadata with service/plan if available from index
+	if idxData, idxErr := u.getFromIndex(instanceID); idxErr == nil && idxData != nil {
+		if sid, ok := idxData["service_id"]; ok {
+			metadata["service_id"] = sid
+		}
+		if pid, ok := idxData["plan_id"]; ok {
+			metadata["plan_id"] = pid
+		}
+	}
+
+	// Store the reconstructed credentials and metadata using standard layout
+	if err := u.StoreBindingCredentials(instanceID, bindingID, creds, metadata); err != nil {
 		u.logError("Failed to store reconstructed binding credentials: %s", err)
 		return fmt.Errorf("failed to store reconstructed credentials: %w", err)
 	}
@@ -1191,8 +1276,8 @@ func (u *vaultUpdater) updateIndex(instanceID string, data map[string]interface{
 		return fmt.Errorf("vault is not of expected type VaultInterface")
 	}
 
-	// Get the index from vault at the standard path
-	indexPath := "secret/blacksmith/index/db"
+	// Get the index from vault at the canonical path
+	indexPath := "db"
 	indexData, err := vault.Get(indexPath)
 	if err != nil || indexData == nil {
 		// If index doesn't exist, create it
@@ -1221,8 +1306,8 @@ func (u *vaultUpdater) getFromIndex(instanceID string) (map[string]interface{}, 
 		return nil, fmt.Errorf("vault is not of expected type VaultInterface")
 	}
 
-	// Get the index from vault at the standard path
-	indexPath := "secret/blacksmith/index/db"
+	// Get the index from vault at the canonical path
+	indexPath := "db"
 	indexData, err := vault.Get(indexPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get vault index: %w", err)

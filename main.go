@@ -190,6 +190,14 @@ func main() {
 		Insecure: config.Vault.Insecure,
 	}
 
+	// Configure vault auto-unseal behavior
+	vault.autoUnsealEnabled = config.Vault.AutoUnseal
+	if config.Vault.UnsealCooldown != "" {
+		if d, err := time.ParseDuration(config.Vault.UnsealCooldown); err == nil {
+			vault.unsealCooldown = d
+		}
+	}
+
 	// Wait for Vault to be ready before proceeding
 	if err = vault.WaitForVaultReady(); err != nil {
 		l.Error("Vault readiness check failed: %s", err)
@@ -401,6 +409,17 @@ func main() {
 	// Create context for server and reconciler lifecycle
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Start Vault health watcher to auto-unseal if Vault restarts and comes back sealed
+	if config.Vault.AutoUnseal {
+		interval := 15 * time.Second
+		if config.Vault.HealthCheckInterval != "" {
+			if d, err := time.ParseDuration(config.Vault.HealthCheckInterval); err == nil {
+				interval = d
+			}
+		}
+		go vault.StartHealthWatcher(ctx, interval)
+	}
 
 	// Start CF health check loop if CF manager is initialized
 	if cfManager != nil {

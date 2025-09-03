@@ -9,7 +9,7 @@ import (
 )
 
 type indexSynchronizer struct {
-	vault  interface{} // Will be replaced with actual Vault type
+	vault  interface{} // VaultInterface expected
 	logger Logger
 }
 
@@ -337,39 +337,67 @@ func isValidInstanceID(id string) bool {
 // Vault interaction methods - these will be replaced with actual vault calls
 
 func (s *indexSynchronizer) getVaultIndex() (map[string]interface{}, error) {
-	// This will be replaced with actual vault index retrieval
-	// idx, err := vault.GetIndex("db")
-	// return idx.Data, err
-	s.logDebug("Getting vault index")
-	return make(map[string]interface{}), nil
+	s.logDebug("Getting vault index from Vault")
+
+	v, ok := s.vault.(VaultInterface)
+	if !ok || v == nil {
+		return nil, fmt.Errorf("vault interface not available in synchronizer")
+	}
+
+	data, err := v.Get("db")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get index from vault: %w", err)
+	}
+	if data == nil {
+		return make(map[string]interface{}), nil
+	}
+
+	return data, nil
 }
 
 func (s *indexSynchronizer) saveVaultIndex(idx map[string]interface{}) error {
-	// This will be replaced with actual vault index save
-	// vaultIdx, err := vault.GetIndex("db")
-	// vaultIdx.Data = idx
-	// return vaultIdx.Save()
 	s.logDebug("Saving vault index with %d entries", len(idx))
+
+	v, ok := s.vault.(VaultInterface)
+	if !ok || v == nil {
+		return fmt.Errorf("vault interface not available in synchronizer")
+	}
+
+	if err := v.Put("db", idx); err != nil {
+		return fmt.Errorf("failed to save index to vault: %w", err)
+	}
 	return nil
 }
 
 // Logging helper methods - these will be replaced with actual logger calls
 func (s *indexSynchronizer) logDebug(format string, args ...interface{}) {
-	// Will be replaced with actual logger call
+	if s.logger != nil {
+		s.logger.Debug(format, args...)
+		return
+	}
 	fmt.Printf("[DEBUG] synchronizer: "+format+"\n", args...)
 }
 
 func (s *indexSynchronizer) logInfo(format string, args ...interface{}) {
-	// Will be replaced with actual logger call
+	if s.logger != nil {
+		s.logger.Info(format, args...)
+		return
+	}
 	fmt.Printf("[INFO] synchronizer: "+format+"\n", args...)
 }
 
 func (s *indexSynchronizer) logWarning(format string, args ...interface{}) {
-	// Will be replaced with actual logger call
+	if s.logger != nil {
+		s.logger.Warning(format, args...)
+		return
+	}
 	fmt.Printf("[WARN] synchronizer: "+format+"\n", args...)
 }
 
 func (s *indexSynchronizer) logError(format string, args ...interface{}) {
-	// Will be replaced with actual logger call
+	if s.logger != nil {
+		s.logger.Error(format, args...)
+		return
+	}
 	fmt.Printf("[ERROR] synchronizer: "+format+"\n", args...)
 }

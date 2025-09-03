@@ -296,6 +296,9 @@ vault:
   token: "vault-token"                       # Optional if using credentials file
   skip_ssl_validation: false                 # Optional
   credentials: "/path/to/vault/creds"        # Optional
+  auto_unseal: true                          # Optional (default: true)
+  health_check_interval: "15s"               # Optional (default: 15s)
+  unseal_cooldown: "30s"                     # Optional (default: 30s)
 ```
 
 ### Required Fields
@@ -326,6 +329,46 @@ Skip SSL certificate validation when connecting to Vault. Should only be used in
 **Default:** `""`
 
 Path to file containing Vault credentials. Used when `token` is not provided directly in the configuration.
+
+#### `auto_unseal` (boolean)
+**Default:** `true`
+
+Enable automatic unsealing when Vault becomes sealed while Blacksmith is running (e.g., Vault service restarted independently). Requires `credentials` to point to a JSON file containing `seal_key` and `root_token` (this is written during initial Vault initialization by Blacksmith).
+
+#### `health_check_interval` (duration string)
+**Default:** `"15s"`
+
+Interval for the background health watcher to check Vault’s status. If Vault is detected sealed, Blacksmith will attempt to unseal it using the configured credentials.
+
+#### `unseal_cooldown` (duration string)
+**Default:** `"30s"`
+
+Minimum time between auto‑unseal attempts to avoid repeated hammering when Vault is unavailable or failing to unseal. Applies per‑process and is enforced even if multiple operations notice the sealed state concurrently.
+
+### Handling Vault Restarts (Auto‑Unseal)
+
+When Vault restarts independently of the broker, it may come back sealed. With `auto_unseal: true`, Blacksmith will:
+
+- Detect sealed/unavailable responses during Vault operations and automatically attempt to unseal using the `credentials` file, then retry once.
+- Run a background health watcher at `health_check_interval` that proactively unseals Vault if sealed.
+
+The `credentials` file must be a JSON with `seal_key` and `root_token`. Blacksmith writes this during the initial `vault.init` phase.
+
+#### Troubleshooting Auto‑Unseal
+
+- Logs to look for:
+  - `vault auto-unseal` and `vault watcher` messages indicating detection and unseal attempts.
+  - `vault auto-unseal successful` when unseal completes.
+  - Errors like `failed to load seal key for auto-unseal` or `vault is sealed but no credentials path configured` indicate misconfiguration.
+- Verify configuration:
+  - `vault.credentials` points to a readable file with `seal_key` and `root_token`.
+  - `vault.auto_unseal` is `true` (default).
+  - Adjust `vault.health_check_interval` and `vault.unseal_cooldown` if needed.
+- Environment and connectivity:
+  - Ensure `VAULT_ADDR` and network connectivity to Vault are correct.
+  - If TLS issues occur, confirm CA configuration or set `skip_ssl_validation` only in dev.
+- Manual recovery:
+  - If auto‑unseal lacks permissions or keys, manually unseal Vault and correct the credentials file path/contents.
 
 ## BOSH Configuration (`bosh`)
 
