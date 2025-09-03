@@ -777,46 +777,46 @@ func (api *InternalApi) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-    // Check for blacksmith config endpoint first (before generic pattern)
-    if req.URL.Path == "/b/blacksmith/config" {
-        l := Logger.Wrap("blacksmith-config")
-        l.Debug("fetching blacksmith configuration")
+	// Check for blacksmith config endpoint first (before generic pattern)
+	if req.URL.Path == "/b/blacksmith/config" {
+		l := Logger.Wrap("blacksmith-config")
+		l.Debug("fetching blacksmith configuration")
 
-        // Marshal using YAML tags to preserve the real (lowercase) key names
-        // Then convert the generic YAML structure into a JSON-friendly map[string]interface{}
-        yml, err := yaml.Marshal(api.Config)
-        if err != nil {
-            l.Error("failed to marshal blacksmith config to YAML: %s", err)
-            w.WriteHeader(500)
-            _, _ = fmt.Fprintf(w, "error: %s\n", err)
-            return
-        }
+		// Marshal using YAML tags to preserve the real (lowercase) key names
+		// Then convert the generic YAML structure into a JSON-friendly map[string]interface{}
+		yml, err := yaml.Marshal(api.Config)
+		if err != nil {
+			l.Error("failed to marshal blacksmith config to YAML: %s", err)
+			w.WriteHeader(500)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
 
-        // Unmarshal back into a generic map so we can emit JSON with lowercase keys
-        tmp := make(map[interface{}]interface{})
-        if err := yaml.Unmarshal(yml, &tmp); err != nil {
-            l.Error("failed to unmarshal YAML config: %s", err)
-            w.WriteHeader(500)
-            _, _ = fmt.Fprintf(w, "error: %s\n", err)
-            return
-        }
+		// Unmarshal back into a generic map so we can emit JSON with lowercase keys
+		tmp := make(map[interface{}]interface{})
+		if err := yaml.Unmarshal(yml, &tmp); err != nil {
+			l.Error("failed to unmarshal YAML config: %s", err)
+			w.WriteHeader(500)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
 
-        // Convert map[interface{}]interface{} to map[string]interface{}
-        data := deinterfaceMap(tmp)
+		// Convert map[interface{}]interface{} to map[string]interface{}
+		data := deinterfaceMap(tmp)
 
-        b, err := json.Marshal(data)
-        if err != nil {
-            l.Error("failed to marshal blacksmith config to JSON: %s", err)
-            w.WriteHeader(500)
-            _, _ = fmt.Fprintf(w, "error: %s\n", err)
-            return
-        }
+		b, err := json.Marshal(data)
+		if err != nil {
+			l.Error("failed to marshal blacksmith config to JSON: %s", err)
+			w.WriteHeader(500)
+			_, _ = fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
 
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(200)
-        _, _ = fmt.Fprintf(w, "%s\n", string(b))
-        return
-    }
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_, _ = fmt.Fprintf(w, "%s\n", string(b))
+		return
+	}
 
 	// Instance config endpoint
 	pattern := regexp.MustCompile(`^/b/([^/]+)/config$`)
