@@ -11,7 +11,7 @@ import (
 	"blacksmith/pkg/services/common"
 )
 
-// ConnectionManager manages RabbitMQ AMQP connections
+// ConnectionManager manages RabbitMQ AMQP connections.
 type ConnectionManager struct {
 	connections map[string]*amqp.Connection
 	channels    map[string]*amqp.Channel
@@ -19,10 +19,10 @@ type ConnectionManager struct {
 	ttl         time.Duration
 }
 
-// NewConnectionManager creates a new RabbitMQ connection manager
+// NewConnectionManager creates a new RabbitMQ connection manager.
 func NewConnectionManager(ttl time.Duration) *ConnectionManager {
 	if ttl == 0 {
-		ttl = 5 * time.Minute // Default TTL
+		ttl = DefaultTTL // Default TTL
 	}
 
 	return &ConnectionManager{
@@ -32,22 +32,24 @@ func NewConnectionManager(ttl time.Duration) *ConnectionManager {
 	}
 }
 
-// GetConnection retrieves or creates a RabbitMQ connection and channel for the given instance
+// GetConnection retrieves or creates a RabbitMQ connection and channel for the given instance.
 func (cm *ConnectionManager) GetConnection(instanceID string, creds *Credentials, useAMQPS bool) (*amqp.Connection, *amqp.Channel, error) {
 	// Create default connection options for backward compatibility
 	opts := common.ConnectionOptions{
 		UseAMQPS: useAMQPS,
-		Timeout:  30 * time.Second,
+		Timeout:  HTTPTimeout,
 	}
+
 	return cm.GetConnectionWithOptions(instanceID, creds, opts)
 }
 
-// GetConnectionWithOptions retrieves or creates a RabbitMQ connection with connection options
+// GetConnectionWithOptions retrieves or creates a RabbitMQ connection with connection options.
 func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *Credentials, opts common.ConnectionOptions) (*amqp.Connection, *amqp.Channel, error) {
 	// Create key that includes override parameters to separate different connection types
 	key := fmt.Sprintf("%s-%v-%s-%s", instanceID, opts.UseAMQPS, opts.OverrideUser, opts.OverrideVHost)
 
 	cm.mu.RLock()
+
 	if conn, exists := cm.connections[key]; exists {
 		if ch, exists := cm.channels[key]; exists {
 			cm.mu.RUnlock()
@@ -57,31 +59,40 @@ func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *
 			}
 		}
 	}
+
 	cm.mu.RUnlock()
 
 	// Clean up stale connections
 	cm.mu.Lock()
+
 	if conn, exists := cm.connections[key]; exists {
 		_ = conn.Close()
+
 		delete(cm.connections, key)
 	}
+
 	if ch, exists := cm.channels[key]; exists {
 		_ = ch.Close()
+
 		delete(cm.channels, key)
 	}
+
 	cm.mu.Unlock()
 
 	// Build connection URI with overrides if provided
 	var uri string
+
 	if opts.OverrideUser != "" || opts.OverridePassword != "" || opts.OverrideVHost != "" {
 		// Create a copy of credentials with overrides applied
 		testCreds := *creds
 		if opts.OverrideUser != "" {
 			testCreds.Username = opts.OverrideUser
 		}
+
 		if opts.OverridePassword != "" {
 			testCreds.Password = opts.OverridePassword
 		}
+
 		if opts.OverrideVHost != "" {
 			testCreds.VHost = opts.OverrideVHost
 		}
@@ -100,17 +111,19 @@ func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *
 		return nil, nil, common.NewRetryableError(
 			fmt.Errorf("RabbitMQ connection failed: %w", err),
 			true,
-			5*time.Second,
+			HealthCheckInterval,
 		)
 	}
 
 	ch, err := conn.Channel()
 	if err != nil {
 		_ = conn.Close()
+
+		const channelRetryDelaySeconds = 2
 		return nil, nil, common.NewRetryableError(
 			fmt.Errorf("failed to open channel: %w", err),
 			true,
-			2*time.Second,
+			channelRetryDelaySeconds*time.Second,
 		)
 	}
 
@@ -123,7 +136,7 @@ func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *
 	return conn, ch, nil
 }
 
-// TestConnection tests the connection without caching
+// TestConnection tests the connection without caching.
 func (cm *ConnectionManager) TestConnection(creds *Credentials, useAMQPS bool) error {
 	uri := cm.buildURI(creds, useAMQPS)
 
@@ -131,12 +144,14 @@ func (cm *ConnectionManager) TestConnection(creds *Credentials, useAMQPS bool) e
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
+
 	defer func() { _ = conn.Close() }()
 
 	ch, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("failed to open channel: %w", err)
 	}
+
 	defer func() { _ = ch.Close() }()
 
 	// Test basic operation
@@ -156,7 +171,7 @@ func (cm *ConnectionManager) TestConnection(creds *Credentials, useAMQPS bool) e
 	return nil
 }
 
-// TestConnectionWithOverrides tests connection with optional user/vhost overrides
+// TestConnectionWithOverrides tests connection with optional user/vhost overrides.
 func (cm *ConnectionManager) TestConnectionWithOverrides(creds *Credentials, useAMQPS bool, overrideUser, overridePassword, overrideVHost string) error {
 	// Create a copy of credentials with overrides applied
 	testCreds := *creds
@@ -187,16 +202,18 @@ func (cm *ConnectionManager) TestConnectionWithOverrides(creds *Credentials, use
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
+
 	defer func() { _ = conn.Close() }()
 
-	ch, err := conn.Channel()
+	channel, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("failed to open channel: %w", err)
 	}
-	defer func() { _ = ch.Close() }()
+
+	defer func() { _ = channel.Close() }()
 
 	// Test basic operation
-	err = ch.ExchangeDeclare(
+	err = channel.ExchangeDeclare(
 		"blacksmith.test", // name
 		"direct",          // type
 		false,             // durable
@@ -212,7 +229,7 @@ func (cm *ConnectionManager) TestConnectionWithOverrides(creds *Credentials, use
 	return nil
 }
 
-// buildURI constructs the AMQP connection URI
+// buildURI constructs the AMQP connection URI.
 func (cm *ConnectionManager) buildURI(creds *Credentials, useAMQPS bool) string {
 	protocol := "amqp"
 	if useAMQPS {
@@ -232,6 +249,7 @@ func (cm *ConnectionManager) buildURI(creds *Credentials, useAMQPS bool) string 
 	if useAMQPS && creds.TLSURI != "" {
 		return creds.TLSURI
 	}
+
 	if !useAMQPS && creds.URI != "" {
 		return creds.URI
 	}
@@ -258,7 +276,7 @@ func (cm *ConnectionManager) buildURI(creds *Credentials, useAMQPS bool) string 
 		url.QueryEscape(vhost))
 }
 
-// CloseConnection closes and removes a specific connection
+// CloseConnection closes and removes a specific connection.
 func (cm *ConnectionManager) CloseConnection(instanceID string, useAMQPS bool) {
 	key := fmt.Sprintf("%s-%v", instanceID, useAMQPS)
 
@@ -267,32 +285,36 @@ func (cm *ConnectionManager) CloseConnection(instanceID string, useAMQPS bool) {
 
 	if ch, exists := cm.channels[key]; exists {
 		_ = ch.Close()
+
 		delete(cm.channels, key)
 	}
 
 	if conn, exists := cm.connections[key]; exists {
 		_ = conn.Close()
+
 		delete(cm.connections, key)
 	}
 }
 
-// CloseAll closes all RabbitMQ connections
+// CloseAll closes all RabbitMQ connections.
 func (cm *ConnectionManager) CloseAll() {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
 	for key, ch := range cm.channels {
 		_ = ch.Close()
+
 		delete(cm.channels, key)
 	}
 
 	for key, conn := range cm.connections {
 		_ = conn.Close()
+
 		delete(cm.connections, key)
 	}
 }
 
-// CleanupStale removes connections that are no longer active
+// CleanupStale removes connections that are no longer active.
 func (cm *ConnectionManager) CleanupStale() {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -300,15 +322,17 @@ func (cm *ConnectionManager) CleanupStale() {
 	for key, conn := range cm.connections {
 		if conn.IsClosed() {
 			delete(cm.connections, key)
+
 			if ch, exists := cm.channels[key]; exists {
 				_ = ch.Close()
+
 				delete(cm.channels, key)
 			}
 		}
 	}
 }
 
-// GetConnectionInfo returns information about active connections
+// GetConnectionInfo returns information about active connections.
 func (cm *ConnectionManager) GetConnectionInfo() map[string]ConnectionInfo {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()

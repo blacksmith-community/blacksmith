@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/hashicorp/vault/api"
 	. "github.com/onsi/ginkgo"
@@ -19,7 +19,7 @@ var _ = Describe("Vault Auto-Unseal", func() {
 
 		It("detects sealed via error text", func() {
 			v := &Vault{}
-			err := fmt.Errorf("vault is sealed")
+			err := ErrVaultIsSealed
 			Expect(v.isSealedOrUnavailable(err)).To(BeTrue())
 		})
 	})
@@ -30,9 +30,10 @@ var _ = Describe("Vault Auto-Unseal", func() {
 			calls := 0
 			op := func() error {
 				calls++
-				return fmt.Errorf("vault is sealed")
+
+				return ErrVaultIsSealed
 			}
-			err := v.withAutoUnseal(op)
+			err := v.withAutoUnseal(context.Background(), op)
 			Expect(err).To(HaveOccurred())
 			Expect(calls).To(Equal(1))
 		})
@@ -42,17 +43,19 @@ var _ = Describe("Vault Auto-Unseal", func() {
 			unsealed := false
 			v.autoUnsealHook = func(_ context.Context) error {
 				unsealed = true
+
 				return nil
 			}
 			calls := 0
 			op := func() error {
 				calls++
 				if !unsealed {
-					return fmt.Errorf("vault is sealed")
+					return ErrVaultIsSealed
 				}
+
 				return nil
 			}
-			err := v.withAutoUnseal(op)
+			err := v.withAutoUnseal(context.Background(), op)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(calls).To(Equal(2)) // initial + retry
 		})

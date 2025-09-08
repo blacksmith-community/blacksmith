@@ -12,14 +12,26 @@ import (
 	"github.com/sony/gobreaker"
 )
 
-// RetryManager handles retry logic with exponential backoff
+// Constants for retry operations.
+const (
+	// Default backoff multiplier for decorrelated jitter.
+	decorrelatedJitterMultiplier = 3
+
+	// Default retry configuration values.
+	defaultRetryInitialDelay = 1 * time.Second
+	defaultRetryMaxAttempts  = 3
+	jitterDivisor            = 2
+	randomBoolRange          = 2
+)
+
+// RetryManager handles retry logic with exponential backoff.
 type RetryManager struct {
 	config  RetryConfig
 	metrics *RetryMetrics
 	logger  Logger
 }
 
-// RetryMetrics tracks retry performance
+// RetryMetrics tracks retry performance.
 type RetryMetrics struct {
 	totalRetries      uint64
 	successfulRetries uint64
@@ -27,10 +39,10 @@ type RetryMetrics struct {
 	totalRetryTime    time.Duration
 }
 
-// RetryableFunc is a function that can be retried
+// RetryableFunc is a function that can be retried.
 type RetryableFunc func(context.Context) (interface{}, error)
 
-// RetryResult contains the result of a retry operation
+// RetryResult contains the result of a retry operation.
 type RetryResult struct {
 	Value       interface{}
 	Error       error
@@ -39,20 +51,23 @@ type RetryResult struct {
 	LastAttempt time.Time
 }
 
-// NewRetryManager creates a new retry manager
+// NewRetryManager creates a new retry manager.
 func NewRetryManager(config RetryConfig, logger Logger) *RetryManager {
 	// Set defaults if not configured
 	if config.MaxAttempts == 0 {
-		config.MaxAttempts = 3
+		config.MaxAttempts = defaultRetryMaxAttempts
 	}
+
 	if config.InitialDelay == 0 {
-		config.InitialDelay = 1 * time.Second
+		config.InitialDelay = defaultRetryInitialDelay
 	}
+
 	if config.MaxDelay == 0 {
-		config.MaxDelay = 30 * time.Second
+		config.MaxDelay = defaultRetryMaxDelay
 	}
+
 	if config.Multiplier == 0 {
-		config.Multiplier = 2.0
+		config.Multiplier = defaultRetryMultiplier
 	}
 
 	return &RetryManager{
@@ -62,36 +77,38 @@ func NewRetryManager(config RetryConfig, logger Logger) *RetryManager {
 	}
 }
 
-// Execute executes a function with retry logic
-func (rm *RetryManager) Execute(ctx context.Context, fn RetryableFunc) RetryResult {
-	return rm.ExecuteWithName(ctx, "operation", fn)
+// Execute executes a function with retry logic.
+func (rm *RetryManager) Execute(ctx context.Context, retryableFunc RetryableFunc) RetryResult {
+	return rm.ExecuteWithName(ctx, "operation", retryableFunc)
 }
 
-// ExecuteWithName executes a function with retry logic and a descriptive name
-func (rm *RetryManager) ExecuteWithName(ctx context.Context, name string, fn RetryableFunc) RetryResult {
+// ExecuteWithName executes a function with retry logic and a descriptive name.
+func (rm *RetryManager) ExecuteWithName(ctx context.Context, name string, retryableFunc RetryableFunc) RetryResult {
 	result := RetryResult{
 		Attempts: 0,
 	}
 
-	for attempt := 0; attempt < rm.config.MaxAttempts; attempt++ {
+	for attempt := range rm.config.MaxAttempts {
 		result.Attempts = attempt + 1
 		result.LastAttempt = time.Now()
 
 		// Execute the function
-		value, err := fn(ctx)
-
+		value, err := retryableFunc(ctx)
 		if err == nil {
 			// Success
 			result.Value = value
+
 			if attempt > 0 {
 				rm.recordSuccess()
 			}
+
 			return result
 		}
 
 		// Check if error is retryable
 		if !rm.isRetryableError(err) {
 			result.Error = fmt.Errorf("non-retryable error: %w", err)
+
 			return result
 		}
 
@@ -99,6 +116,7 @@ func (rm *RetryManager) ExecuteWithName(ctx context.Context, name string, fn Ret
 		if attempt == rm.config.MaxAttempts-1 {
 			result.Error = fmt.Errorf("failed after %d attempts: %w", rm.config.MaxAttempts, err)
 			rm.recordFailure()
+
 			return result
 		}
 
@@ -107,7 +125,7 @@ func (rm *RetryManager) ExecuteWithName(ctx context.Context, name string, fn Ret
 		result.TotalDelay += delay
 
 		if rm.logger != nil {
-			rm.logger.Debug("Retry %s: attempt %d/%d failed with %v, retrying after %v",
+			rm.logger.Debugf("Retry %s: attempt %d/%d failed with %v, retrying after %v",
 				name, attempt+1, rm.config.MaxAttempts, err, delay)
 		}
 
@@ -117,6 +135,7 @@ func (rm *RetryManager) ExecuteWithName(ctx context.Context, name string, fn Ret
 			// Continue to next attempt
 		case <-ctx.Done():
 			result.Error = fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+
 			return result
 		}
 
@@ -126,31 +145,32 @@ func (rm *RetryManager) ExecuteWithName(ctx context.Context, name string, fn Ret
 	return result
 }
 
-// ExecuteWithBackoff executes a function with custom backoff strategy
+// ExecuteWithBackoff executes a function with custom backoff strategy.
 func (rm *RetryManager) ExecuteWithBackoff(
 	ctx context.Context,
-	fn RetryableFunc,
+	retryableFunc RetryableFunc,
 	backoffStrategy BackoffStrategy,
 ) RetryResult {
 	result := RetryResult{
 		Attempts: 0,
 	}
 
-	for attempt := 0; attempt < rm.config.MaxAttempts; attempt++ {
+	for attempt := range rm.config.MaxAttempts {
 		result.Attempts = attempt + 1
 		result.LastAttempt = time.Now()
 
 		// Execute the function
-		value, err := fn(ctx)
-
+		value, err := retryableFunc(ctx)
 		if err == nil {
 			result.Value = value
+
 			return result
 		}
 
 		// Check if this was the last attempt
 		if attempt == rm.config.MaxAttempts-1 {
 			result.Error = fmt.Errorf("failed after %d attempts: %w", rm.config.MaxAttempts, err)
+
 			return result
 		}
 
@@ -163,6 +183,7 @@ func (rm *RetryManager) ExecuteWithBackoff(
 		case <-time.After(delay):
 		case <-ctx.Done():
 			result.Error = fmt.Errorf("context cancelled: %w", ctx.Err())
+
 			return result
 		}
 	}
@@ -170,7 +191,7 @@ func (rm *RetryManager) ExecuteWithBackoff(
 	return result
 }
 
-// calculateDelay calculates the delay for the next retry attempt
+// calculateDelay calculates the delay for the next retry attempt.
 func (rm *RetryManager) calculateDelay(attempt int) time.Duration {
 	// Exponential backoff: delay = initialDelay * multiplier^attempt
 	delay := float64(rm.config.InitialDelay) * math.Pow(rm.config.Multiplier, float64(attempt))
@@ -189,7 +210,7 @@ func (rm *RetryManager) calculateDelay(attempt int) time.Duration {
 	return time.Duration(delay)
 }
 
-// calculateJitter adds randomized jitter to prevent thundering herd
+// calculateJitter adds randomized jitter to prevent thundering herd.
 func (rm *RetryManager) calculateJitter(baseDelay time.Duration) time.Duration {
 	if rm.config.Jitter <= 0 {
 		return 0
@@ -209,10 +230,11 @@ func (rm *RetryManager) calculateJitter(baseDelay time.Duration) time.Duration {
 	if randomBool() {
 		return time.Duration(jitterNanos.Int64())
 	}
+
 	return -time.Duration(jitterNanos.Int64())
 }
 
-// isRetryableError determines if an error should trigger a retry
+// isRetryableError determines if an error should trigger a retry.
 func (rm *RetryManager) isRetryableError(err error) bool {
 	if err == nil {
 		return false
@@ -251,34 +273,34 @@ func (rm *RetryManager) isRetryableError(err error) bool {
 	return false
 }
 
-// recordRetry records retry metrics
+// recordRetry records retry metrics.
 func (rm *RetryManager) recordRetry(delay time.Duration) {
 	rm.metrics.totalRetries++
 	rm.metrics.totalRetryTime += delay
 }
 
-// recordSuccess records successful retry
+// recordSuccess records successful retry.
 func (rm *RetryManager) recordSuccess() {
 	rm.metrics.successfulRetries++
 }
 
-// recordFailure records failed retry
+// recordFailure records failed retry.
 func (rm *RetryManager) recordFailure() {
 	rm.metrics.failedRetries++
 }
 
-// GetMetrics returns retry metrics
+// GetMetrics returns retry metrics.
 func (rm *RetryManager) GetMetrics() RetryMetrics {
 	return *rm.metrics
 }
 
-// BackoffStrategy defines a backoff strategy interface
+// BackoffStrategy defines a backoff strategy interface.
 type BackoffStrategy interface {
 	NextDelay(attempt int) time.Duration
 	Reset()
 }
 
-// ExponentialBackoff implements exponential backoff strategy
+// ExponentialBackoff implements exponential backoff strategy.
 type ExponentialBackoff struct {
 	InitialDelay time.Duration
 	MaxDelay     time.Duration
@@ -286,14 +308,14 @@ type ExponentialBackoff struct {
 	Jitter       float64
 }
 
-// NextDelay returns the next delay for exponential backoff
+// NextDelay returns the next delay for exponential backoff.
 func (eb *ExponentialBackoff) NextDelay(attempt int) time.Duration {
 	delay := float64(eb.InitialDelay) * math.Pow(eb.Multiplier, float64(attempt))
 
 	if eb.Jitter > 0 {
 		maxJitter := delay * eb.Jitter
 		jitterNanos, _ := rand.Int(rand.Reader, big.NewInt(int64(maxJitter)))
-		delay += float64(jitterNanos.Int64()) - maxJitter/2
+		delay += float64(jitterNanos.Int64()) - maxJitter/jitterDivisor
 	}
 
 	if time.Duration(delay) > eb.MaxDelay {
@@ -303,19 +325,19 @@ func (eb *ExponentialBackoff) NextDelay(attempt int) time.Duration {
 	return time.Duration(delay)
 }
 
-// Reset resets the backoff strategy
+// Reset resets the backoff strategy.
 func (eb *ExponentialBackoff) Reset() {
 	// No state to reset for exponential backoff
 }
 
-// LinearBackoff implements linear backoff strategy
+// LinearBackoff implements linear backoff strategy.
 type LinearBackoff struct {
 	InitialDelay time.Duration
 	Increment    time.Duration
 	MaxDelay     time.Duration
 }
 
-// NextDelay returns the next delay for linear backoff
+// NextDelay returns the next delay for linear backoff.
 func (lb *LinearBackoff) NextDelay(attempt int) time.Duration {
 	delay := lb.InitialDelay + lb.Increment*time.Duration(attempt)
 
@@ -326,19 +348,19 @@ func (lb *LinearBackoff) NextDelay(attempt int) time.Duration {
 	return delay
 }
 
-// Reset resets the backoff strategy
+// Reset resets the backoff strategy.
 func (lb *LinearBackoff) Reset() {
 	// No state to reset for linear backoff
 }
 
-// FibonacciBackoff implements Fibonacci backoff strategy
+// FibonacciBackoff implements Fibonacci backoff strategy.
 type FibonacciBackoff struct {
 	InitialDelay time.Duration
 	MaxDelay     time.Duration
 	fibonacci    []int
 }
 
-// NewFibonacciBackoff creates a new Fibonacci backoff strategy
+// NewFibonacciBackoff creates a new Fibonacci backoff strategy.
 func NewFibonacciBackoff(initialDelay, maxDelay time.Duration) *FibonacciBackoff {
 	return &FibonacciBackoff{
 		InitialDelay: initialDelay,
@@ -347,7 +369,7 @@ func NewFibonacciBackoff(initialDelay, maxDelay time.Duration) *FibonacciBackoff
 	}
 }
 
-// NextDelay returns the next delay for Fibonacci backoff
+// NextDelay returns the next delay for Fibonacci backoff.
 func (fb *FibonacciBackoff) NextDelay(attempt int) time.Duration {
 	// Ensure we have enough Fibonacci numbers
 	for len(fb.fibonacci) <= attempt {
@@ -364,19 +386,19 @@ func (fb *FibonacciBackoff) NextDelay(attempt int) time.Duration {
 	return delay
 }
 
-// Reset resets the backoff strategy
+// Reset resets the backoff strategy.
 func (fb *FibonacciBackoff) Reset() {
 	fb.fibonacci = []int{1, 1}
 }
 
-// DecorrelatedJitterBackoff implements AWS-style decorrelated jitter backoff
+// DecorrelatedJitterBackoff implements AWS-style decorrelated jitter backoff.
 type DecorrelatedJitterBackoff struct {
 	BaseDelay     time.Duration
 	MaxDelay      time.Duration
 	previousDelay time.Duration
 }
 
-// NextDelay returns the next delay for decorrelated jitter backoff
+// NextDelay returns the next delay for decorrelated jitter backoff.
 func (djb *DecorrelatedJitterBackoff) NextDelay(attempt int) time.Duration {
 	if djb.previousDelay == 0 {
 		djb.previousDelay = djb.BaseDelay
@@ -385,7 +407,7 @@ func (djb *DecorrelatedJitterBackoff) NextDelay(attempt int) time.Duration {
 	// Calculate next delay with decorrelated jitter
 	// sleep = min(cap, random_between(base, sleep * 3))
 	minDelay := djb.BaseDelay
-	maxDelay := djb.previousDelay * 3
+	maxDelay := djb.previousDelay * decorrelatedJitterMultiplier
 
 	if maxDelay > djb.MaxDelay {
 		maxDelay = djb.MaxDelay
@@ -395,6 +417,7 @@ func (djb *DecorrelatedJitterBackoff) NextDelay(attempt int) time.Duration {
 	delayRange := int64(maxDelay - minDelay)
 	if delayRange <= 0 {
 		djb.previousDelay = minDelay
+
 		return minDelay
 	}
 
@@ -402,10 +425,11 @@ func (djb *DecorrelatedJitterBackoff) NextDelay(attempt int) time.Duration {
 	delay := minDelay + time.Duration(randomDelay.Int64())
 
 	djb.previousDelay = delay
+
 	return delay
 }
 
-// Reset resets the backoff strategy
+// Reset resets the backoff strategy.
 func (djb *DecorrelatedJitterBackoff) Reset() {
 	djb.previousDelay = 0
 }
@@ -413,11 +437,12 @@ func (djb *DecorrelatedJitterBackoff) Reset() {
 // Helper functions
 
 func randomBool() bool {
-	b, _ := rand.Int(rand.Reader, big.NewInt(2))
+	b, _ := rand.Int(rand.Reader, big.NewInt(randomBoolRange))
+
 	return b.Int64() == 1
 }
 
-// RetryWithCircuitBreaker combines retry logic with circuit breaker
+// RetryWithCircuitBreaker combines retry logic with circuit breaker.
 func RetryWithCircuitBreaker(
 	ctx context.Context,
 	retryManager *RetryManager,
@@ -429,5 +454,6 @@ func RetryWithCircuitBreaker(
 	}
 
 	result := retryManager.Execute(ctx, retryFunc)
+
 	return result.Value, result.Error
 }

@@ -7,8 +7,10 @@ import (
 	"blacksmith/pkg/services/cf"
 )
 
-// TestCFRegistrationValidation tests the CF registration validation integration
+// TestCFRegistrationValidation tests the CF registration validation integration.
 func TestCFRegistrationValidation(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name           string
 		request        cf.RegistrationRequest
@@ -81,24 +83,30 @@ func TestCFRegistrationValidation(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := cf.ValidateRegistrationRequest(&tt.request)
-			if (err != nil) != tt.expectError {
-				t.Errorf("ValidateRegistrationRequest() error = %v, wantErr %v", err, tt.expectError)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := cf.ValidateRegistrationRequest(&testCase.request)
+			if (err != nil) != testCase.expectError {
+				t.Errorf("ValidateRegistrationRequest() error = %v, wantErr %v", err, testCase.expectError)
+
 				return
 			}
-			if tt.expectError && tt.expectedErrMsg != "" && err != nil {
-				if !strings.Contains(err.Error(), tt.expectedErrMsg) {
-					t.Errorf("ValidateRegistrationRequest() error = %v, expected to contain %v", err.Error(), tt.expectedErrMsg)
+
+			if testCase.expectError && testCase.expectedErrMsg != "" && err != nil {
+				if !strings.Contains(err.Error(), testCase.expectedErrMsg) {
+					t.Errorf("ValidateRegistrationRequest() error = %v, expected to contain %v", err.Error(), testCase.expectedErrMsg)
 				}
 			}
 		})
 	}
 }
 
-// TestCFRegistrationSanitization tests the sanitization functionality
+// TestCFRegistrationSanitization tests the sanitization functionality.
 func TestCFRegistrationSanitization(t *testing.T) {
+	t.Parallel()
+
 	request := &cf.RegistrationRequest{
 		Name:       "  test-registration  ",
 		APIURL:     "  https://api.cf.example.com/  ",
@@ -118,9 +126,11 @@ func TestCFRegistrationSanitization(t *testing.T) {
 	if request.Name != "test-registration" {
 		t.Errorf("Name not trimmed correctly: got %s", request.Name)
 	}
+
 	if request.APIURL != "https://api.cf.example.com" {
 		t.Errorf("APIURL not trimmed correctly: got %s", request.APIURL)
 	}
+
 	if request.Username != "admin" {
 		t.Errorf("Username not trimmed correctly: got %s", request.Username)
 	}
@@ -134,20 +144,26 @@ func TestCFRegistrationSanitization(t *testing.T) {
 	if _, exists := request.Metadata["password"]; exists {
 		t.Error("Password metadata should have been removed")
 	}
+
 	if _, exists := request.Metadata["token"]; exists {
 		t.Error("Token metadata should have been removed")
 	}
+
 	if request.Metadata["env"] != "production" {
 		t.Errorf("Env metadata not trimmed: got %s", request.Metadata["env"])
 	}
+
 	if request.Metadata["region"] != "us-west-1" {
 		t.Errorf("Region metadata incorrect: got %s", request.Metadata["region"])
 	}
 }
 
-// TestCFValidationHelper tests individual validation helper functions
+// TestCFValidationHelper tests individual validation helper functions.
 func TestCFValidationHelper(t *testing.T) {
+	t.Parallel()
 	t.Run("ValidateURL", func(t *testing.T) {
+		t.Parallel()
+
 		validURLs := []string{
 			"https://api.cf.example.com",
 			"https://api.system.cf.example.com:443",
@@ -155,7 +171,8 @@ func TestCFValidationHelper(t *testing.T) {
 		}
 
 		for _, url := range validURLs {
-			if err := cf.ValidateURL(url); err != nil {
+			err := cf.ValidateURL(url)
+			if err != nil {
 				t.Errorf("Expected %s to be valid, got error: %v", url, err)
 			}
 		}
@@ -170,7 +187,8 @@ func TestCFValidationHelper(t *testing.T) {
 		}
 
 		for url, expectedErr := range invalidURLs {
-			if err := cf.ValidateURL(url); err == nil {
+			err := cf.ValidateURL(url)
+			if err == nil {
 				t.Errorf("Expected %s to be invalid", url)
 			} else if !strings.Contains(err.Error(), expectedErr) {
 				t.Errorf("Expected error containing %s, got: %v", expectedErr, err)
@@ -179,6 +197,8 @@ func TestCFValidationHelper(t *testing.T) {
 	})
 
 	t.Run("ValidateName", func(t *testing.T) {
+		t.Parallel()
+
 		validNames := []string{
 			"test-registration",
 			"Test Registration 01",
@@ -187,7 +207,8 @@ func TestCFValidationHelper(t *testing.T) {
 		}
 
 		for _, name := range validNames {
-			if err := cf.ValidateName(name); err != nil {
+			err := cf.ValidateName(name)
+			if err != nil {
 				t.Errorf("Expected %s to be valid, got error: %v", name, err)
 			}
 		}
@@ -200,7 +221,8 @@ func TestCFValidationHelper(t *testing.T) {
 		}
 
 		for name, expectedErr := range invalidNames {
-			if err := cf.ValidateName(name); err == nil {
+			err := cf.ValidateName(name)
+			if err == nil {
 				t.Errorf("Expected %s to be invalid", name)
 			} else if !strings.Contains(err.Error(), expectedErr) {
 				t.Errorf("Expected error containing %s, got: %v", expectedErr, err)

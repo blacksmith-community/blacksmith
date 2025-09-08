@@ -7,6 +7,8 @@ import (
 )
 
 func TestConvertToMap(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		input   interface{}
@@ -55,9 +57,12 @@ func TestConvertToMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			got, err := convertToMap(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("convertToMap() error = %v, wantErr %v", err, tt.wantErr)
+
 				return
 			}
 
@@ -73,8 +78,10 @@ func TestConvertToMap(t *testing.T) {
 }
 
 // Integration test - requires a running Vault instance
-// Run with: VAULT_ADDR=http://127.0.0.1:8200 go test -v -run TestVaultClientIntegration
+// Run with: VAULT_ADDR=http://127.0.0.1:8200 go test -v -run TestVaultClientIntegration.
 func TestVaultClientIntegration(t *testing.T) {
+	t.Parallel()
+
 	// Skip if VAULT_ADDR is not set
 	if os.Getenv("VAULT_ADDR") == "" {
 		t.Skip("Skipping integration test: VAULT_ADDR not set")

@@ -1,16 +1,29 @@
-package reconciler
+package reconciler_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	. "blacksmith/pkg/reconciler"
 	"github.com/hashicorp/vault/api"
 )
 
-// MockVault implements VaultInterface for testing
+const (
+	testInstanceMetadataPath = "test-instance/metadata"
+)
+
+// Static errors for this test file
+var (
+	errNotFound              = errors.New("not found")
+	errNoDataFoundAtPath     = errors.New("no data found at path")
+	errVaultConnectionFailed = errors.New("vault connection failed")
+)
+
+// MockVault implements VaultInterface for testing.
 type MockVault struct {
 	data      map[string]map[string]interface{}
 	index     map[string]interface{}
@@ -29,6 +42,7 @@ func NewMockVault() *MockVault {
 func (m *MockVault) Put(path string, secret map[string]interface{}) error {
 	m.putCalls = append(m.putCalls, path)
 	m.data[path] = secret
+
 	return nil
 }
 
@@ -41,7 +55,8 @@ func (m *MockVault) Get(path string) (map[string]interface{}, error) {
 	if data, exists := m.data[path]; exists {
 		return data, nil
 	}
-	return nil, fmt.Errorf("not found")
+
+	return nil, errNotFound
 }
 
 func (m *MockVault) GetSecret(path string) (map[string]interface{}, error) {
@@ -50,26 +65,30 @@ func (m *MockVault) GetSecret(path string) (map[string]interface{}, error) {
 
 func (m *MockVault) DeleteSecret(path string) error {
 	delete(m.data, path)
+
 	return nil
 }
 
 func (m *MockVault) ListSecrets(path string) ([]string, error) {
 	var keys []string
+
 	for k := range m.data {
 		if strings.HasPrefix(k, path) {
 			keys = append(keys, k)
 		}
 	}
+
 	return keys, nil
 }
 
 func (m *MockVault) UpdateIndex(name string, instanceID string, data interface{}) error {
 	m.index[instanceID] = data
 	m.saveCalls++
+
 	return nil
 }
 
-// GetClient returns a mock API client for testing backup functionality
+// GetClient returns a mock API client for testing backup functionality.
 func (m *MockVault) GetClient() *api.Client {
 	// Create a minimal mock client for backup testing
 	config := &api.Config{
@@ -82,28 +101,30 @@ func (m *MockVault) GetClient() *api.Client {
 	return client
 }
 
-// MockTestLogger implements Logger interface for testing
+// MockTestLogger implements Logger interface for testing.
 type MockTestLogger struct {
 	messages []string
 }
 
-func (l *MockTestLogger) Debug(format string, args ...interface{}) {
+func (l *MockTestLogger) Debugf(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[DEBUG] "+format, args...))
 }
 
-func (l *MockTestLogger) Info(format string, args ...interface{}) {
+func (l *MockTestLogger) Infof(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[INFO] "+format, args...))
 }
 
-func (l *MockTestLogger) Warning(format string, args ...interface{}) {
+func (l *MockTestLogger) Warningf(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[WARN] "+format, args...))
 }
 
-func (l *MockTestLogger) Error(format string, args ...interface{}) {
+func (l *MockTestLogger) Errorf(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[ERROR] "+format, args...))
 }
 
 func TestVaultUpdater_PreservesCredentials(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVault()
 	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
@@ -151,6 +172,7 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
+
 	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
@@ -158,12 +180,15 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 
 	// Verify credentials were checked but not overwritten
 	credsChecked := false
+
 	for _, call := range vault.getCalls {
 		if call == credPath {
 			credsChecked = true
+
 			break
 		}
 	}
+
 	if !credsChecked {
 		t.Error("Credentials were not checked during update")
 	}
@@ -176,7 +201,7 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 	}
 
 	// Verify has_credentials flag was set in metadata with secret/ prefix
-	metadataPath := "test-instance/metadata"
+	metadataPath := testInstanceMetadataPath
 	if metadata, exists := vault.data[metadataPath]; exists {
 		if hasCredentials, ok := metadata["has_credentials"].(bool); !ok || !hasCredentials {
 			t.Error("has_credentials flag should be true")
@@ -187,6 +212,8 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 }
 
 func TestVaultUpdater_PreservesBindings(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVault()
 	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
@@ -241,6 +268,7 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
+
 	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
@@ -248,25 +276,30 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 
 	// Verify bindings were checked
 	bindingsChecked := false
+
 	for _, call := range vault.getCalls {
 		if call == bindingsPath {
 			bindingsChecked = true
+
 			break
 		}
 	}
+
 	if !bindingsChecked {
 		t.Error("Bindings were not checked during update")
 	}
 
 	// Verify binding metadata was set with secret/ prefix
-	metadataPath := "test-instance/metadata"
+	metadataPath := testInstanceMetadataPath
 	if metadata, exists := vault.data[metadataPath]; exists {
 		if hasBindings, ok := metadata["has_bindings"].(bool); !ok || !hasBindings {
 			t.Error("has_bindings flag should be true")
 		}
+
 		if bindingsCount, ok := metadata["bindings_count"].(int); !ok || bindingsCount != 2 {
 			t.Errorf("bindings_count should be 2, got %v", bindingsCount)
 		}
+
 		if bindingIDs, ok := metadata["binding_ids"].([]string); !ok || len(bindingIDs) != 2 {
 			t.Errorf("binding_ids should have 2 entries, got %v", bindingIDs)
 		}
@@ -276,6 +309,8 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 }
 
 func TestVaultUpdater_CreatesBackup(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVault()
 	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
@@ -326,6 +361,7 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
+
 	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
@@ -333,6 +369,7 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 
 	// Verify backup was created in new format (secret/backups/{instance-id}/{sha256})
 	backupCreated := false
+
 	for _, call := range vault.putCalls {
 		if strings.HasPrefix(call, "secret/backups/test-instance/") {
 			backupCreated = true
@@ -341,12 +378,14 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 				if _, hasTimestamp := backupData["timestamp"]; !hasTimestamp {
 					t.Error("Backup should contain timestamp field")
 				}
+
 				if _, hasArchive := backupData["archive"]; !hasArchive {
 					t.Error("Backup should contain archive field (compressed data)")
 				}
 			} else {
 				t.Error("Backup data was not saved")
 			}
+
 			break
 		}
 	}
@@ -360,6 +399,8 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 }
 
 func TestVaultUpdater_PreservesHistory(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVault()
 	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
@@ -417,55 +458,23 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
+
 	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
 
 	// Verify history was preserved and added to (with secret/ prefix)
-	metadataPath := "test-instance/metadata"
-	if metadata, exists := vault.data[metadataPath]; exists {
-		if history, ok := metadata["history"].([]map[string]interface{}); ok {
-			if len(history) < 3 {
-				t.Errorf("History should have at least 3 entries (2 existing + 1 new), got %d", len(history))
-			}
-			// Check that old entries are preserved
-			foundProvision := false
-			foundUpdate := false
-			foundReconciliation := false
-			for _, entry := range history {
-				if action, ok := entry["action"].(string); ok {
-					switch action {
-					case "provision":
-						foundProvision = true
-					case "update":
-						foundUpdate = true
-					case "reconciliation":
-						foundReconciliation = true
-					}
-				}
-			}
-			if !foundProvision {
-				t.Error("Original provision history entry was not preserved")
-			}
-			if !foundUpdate {
-				t.Error("Original update history entry was not preserved")
-			}
-			if !foundReconciliation {
-				t.Error("New reconciliation history entry was not added")
-			}
-		} else {
-			t.Error("History is not in expected format")
-		}
-	} else {
-		t.Error("Metadata was not saved")
-	}
+	metadataPath := testInstanceMetadataPath
+	verifyHistoryPreservation(t, vault, metadataPath)
 }
 
 func TestVaultUpdater_DetectsChanges(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVault()
 	logger := &MockTestLogger{}
-	updater := &vaultUpdater{vault: VaultInterface(vault), logger: logger}
+	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{Enabled: false})
 
 	oldMetadata := map[string]interface{}{
 		"releases":  []string{"cf-mysql/1.0"},
@@ -484,7 +493,7 @@ func TestVaultUpdater_DetectsChanges(t *testing.T) {
 		// field2 removed
 	}
 
-	changes := updater.detectChanges(oldMetadata, newMetadata)
+	changes := updater.DetectChanges(oldMetadata, newMetadata)
 
 	// Verify changes detected correctly
 	if releasesChanged, ok := changes["releases_changed"].(bool); !ok || !releasesChanged {
@@ -509,9 +518,11 @@ func TestVaultUpdater_DetectsChanges(t *testing.T) {
 }
 
 func TestVaultUpdater_MergesMetadataCorrectly(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVault()
 	logger := &MockTestLogger{}
-	updater := &vaultUpdater{vault: VaultInterface(vault), logger: logger}
+	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{Enabled: false})
 
 	existing := map[string]interface{}{
 		"field1": "old_value",
@@ -521,13 +532,13 @@ func TestVaultUpdater_MergesMetadataCorrectly(t *testing.T) {
 		},
 	}
 
-	new := map[string]interface{}{
+	newData := map[string]interface{}{
 		"field1":  "new_value",
 		"field3":  "add_value",
 		"history": []interface{}{}, // Should not override existing history
 	}
 
-	merged := updater.mergeMetadata(existing, new)
+	merged := updater.MergeMetadata(existing, newData)
 
 	// Verify merge results
 	if merged["field1"] != "new_value" {
@@ -548,6 +559,8 @@ func TestVaultUpdater_MergesMetadataCorrectly(t *testing.T) {
 }
 
 func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVault()
 	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(VaultInterface(vault), logger, BackupConfig{
@@ -588,6 +601,7 @@ func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
 
 	// Update instance
 	ctx := context.Background()
+
 	_, err := updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
@@ -599,6 +613,7 @@ func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
 			if strings.HasPrefix(call, "secret/secret/") {
 				t.Errorf("Backup path has double secret/ prefix: %s", call)
 			}
+
 			if !strings.HasPrefix(call, "backups/") && !strings.HasPrefix(call, "secret/") {
 				t.Errorf("Backup path should start with backups/ or secret/, got: %s", call)
 			}
@@ -608,7 +623,7 @@ func TestVaultUpdater_BackupPathCorrection(t *testing.T) {
 	t.Logf("All vault PUT calls: %v", vault.putCalls)
 }
 
-// MockVaultForBindingTests implements VaultInterface correctly for binding credential tests
+// MockVaultForBindingTests implements VaultInterface correctly for binding credential tests.
 type MockVaultForBindingTests struct {
 	data     map[string]map[string]interface{}
 	errors   map[string]error
@@ -628,10 +643,12 @@ func (m *MockVaultForBindingTests) Get(path string) (map[string]interface{}, err
 	if err, exists := m.errors[path]; exists {
 		return nil, err
 	}
+
 	if data, exists := m.data[path]; exists {
 		return data, nil
 	}
-	return nil, fmt.Errorf("no data found at path %s", path)
+
+	return nil, fmt.Errorf("%w: %s", errNoDataFoundAtPath, path)
 }
 
 func (m *MockVaultForBindingTests) Put(path string, secret map[string]interface{}) error {
@@ -639,7 +656,9 @@ func (m *MockVaultForBindingTests) Put(path string, secret map[string]interface{
 	if err, exists := m.errors[path]; exists {
 		return err
 	}
+
 	m.data[path] = secret
+
 	return nil
 }
 
@@ -653,17 +672,20 @@ func (m *MockVaultForBindingTests) SetSecret(path string, secret map[string]inte
 
 func (m *MockVaultForBindingTests) DeleteSecret(path string) error {
 	delete(m.data, path)
+
 	return nil
 }
 
 func (m *MockVaultForBindingTests) ListSecrets(path string) ([]string, error) {
 	var secrets []string
+
 	prefix := path + "/"
 	for key := range m.data {
 		if strings.HasPrefix(key, prefix) {
 			secrets = append(secrets, key)
 		}
 	}
+
 	return secrets, nil
 }
 
@@ -676,6 +698,8 @@ func (m *MockVaultForBindingTests) SetError(path string, err error) {
 }
 
 func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name         string
 		instanceID   string
@@ -719,7 +743,7 @@ func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
 			instanceID: "test-instance-123",
 			bindingID:  "error-binding",
 			setupVault: func(vault *MockVaultForBindingTests) {
-				vault.SetError("test-instance-123/bindings/error-binding/credentials", fmt.Errorf("vault connection failed"))
+				vault.SetError("test-instance-123/bindings/error-binding/credentials", errVaultConnectionFailed)
 			},
 			expectedErr: "failed to get binding credentials",
 		},
@@ -757,6 +781,7 @@ func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Setup
 			vault := NewMockVaultForBindingTests()
 			logger := &MockTestLogger{}
@@ -765,14 +790,8 @@ func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
 			// Setup vault with test data
 			tt.setupVault(vault)
 
-			// Cast to vaultUpdater to access GetBindingCredentials method
-			vaultUpdater, ok := updater.(*vaultUpdater)
-			if !ok {
-				t.Fatal("updater is not of expected type *vaultUpdater")
-			}
-
 			// Execute
-			credentials, err := vaultUpdater.GetBindingCredentials(tt.instanceID, tt.bindingID)
+			credentials, err := updater.GetBindingCredentials(tt.instanceID, tt.bindingID)
 
 			// Verify
 			if tt.expectedErr != "" {
@@ -803,12 +822,15 @@ func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
 			// Verify correct vault path was called
 			expectedPath := fmt.Sprintf("%s/bindings/%s/credentials", tt.instanceID, tt.bindingID)
 			found := false
+
 			for _, call := range vault.getCalls {
 				if call == expectedPath {
 					found = true
+
 					break
 				}
 			}
+
 			if !found {
 				t.Errorf("expected vault.Get to be called with path '%s', but it wasn't. Actual calls: %v", expectedPath, vault.getCalls)
 			}
@@ -817,10 +839,11 @@ func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
 }
 
 func TestVaultUpdater_GetBindingCredentials_PathConstruction(t *testing.T) {
+	t.Parallel()
+
 	vault := NewMockVaultForBindingTests()
 	logger := &MockTestLogger{}
 	updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
-	vaultUpdater := updater.(*vaultUpdater)
 
 	testCases := []struct {
 		instanceID   string
@@ -846,11 +869,12 @@ func TestVaultUpdater_GetBindingCredentials_PathConstruction(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("path_%s_%s", tc.instanceID, tc.bindingID), func(t *testing.T) {
+			t.Parallel()
 			// Clear previous calls
 			vault.getCalls = []string{}
 
 			// Execute (will fail, but we just want to check path construction)
-			_, _ = vaultUpdater.GetBindingCredentials(tc.instanceID, tc.bindingID)
+			_, _ = updater.GetBindingCredentials(tc.instanceID, tc.bindingID)
 
 			// Verify path construction
 			if len(vault.getCalls) != 1 {
@@ -859,5 +883,48 @@ func TestVaultUpdater_GetBindingCredentials_PathConstruction(t *testing.T) {
 				t.Errorf("expected path '%s', got '%s'", tc.expectedPath, vault.getCalls[0])
 			}
 		})
+	}
+}
+
+// verifyHistoryPreservation checks that history entries are properly preserved and added.
+func verifyHistoryPreservation(t *testing.T, vault *MockVault, metadataPath string) {
+	t.Helper()
+
+	metadata, exists := vault.data[metadataPath]
+	if !exists {
+		t.Error("Metadata was not saved")
+
+		return
+	}
+
+	history, ok := metadata["history"].([]map[string]interface{})
+	if !ok {
+		t.Error("History is not in expected format")
+
+		return
+	}
+
+	if len(history) < 3 {
+		t.Errorf("History should have at least 3 entries (2 existing + 1 new), got %d", len(history))
+	}
+
+	validateHistoryActions(t, history)
+}
+
+// validateHistoryActions checks that required history actions are present.
+func validateHistoryActions(t *testing.T, history []map[string]interface{}) {
+	foundActions := make(map[string]bool)
+	requiredActions := []string{"provision", "update", "reconciliation"}
+
+	for _, entry := range history {
+		if action, ok := entry["action"].(string); ok {
+			foundActions[action] = true
+		}
+	}
+
+	for _, action := range requiredActions {
+		if !foundActions[action] {
+			t.Errorf("Required %s history entry was not found", action)
+		}
 	}
 }

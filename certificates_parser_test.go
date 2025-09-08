@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -13,6 +14,7 @@ import (
 )
 
 func TestParseCertificateFromPEM(t *testing.T) {
+	t.Parallel()
 	// Generate a real certificate for testing
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -77,17 +79,21 @@ func TestParseCertificateFromPEM(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cert, err := ParseCertificateFromPEM(test.pemData)
+			t.Parallel()
+
+			cert, err := ParseCertificateFromPEM(context.Background(), test.pemData)
 
 			if test.expectError {
 				if err == nil {
 					t.Errorf("Expected error but got none")
 				}
+
 				return
 			}
 
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 
@@ -96,9 +102,11 @@ func TestParseCertificateFromPEM(t *testing.T) {
 				if cert.Version == 0 {
 					t.Errorf("Expected non-zero version")
 				}
+
 				if cert.SerialNumber == "" {
 					t.Errorf("Expected non-empty serial number")
 				}
+
 				if cert.PEMEncoded == "" {
 					t.Errorf("Expected PEM encoded data")
 				}
@@ -108,6 +116,7 @@ func TestParseCertificateFromPEM(t *testing.T) {
 }
 
 func TestValidateCertificateFormat(t *testing.T) {
+	t.Parallel()
 	// Generate a real certificate for testing
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -160,11 +169,14 @@ func TestValidateCertificateFormat(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := ValidateCertificateFormat(test.pemData)
 
 			if test.expectError && err == nil {
 				t.Errorf("Expected error but got none")
 			}
+
 			if !test.expectError && err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
@@ -173,6 +185,8 @@ func TestValidateCertificateFormat(t *testing.T) {
 }
 
 func TestConvertKeyUsage(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		usage    x509.KeyUsage
@@ -197,10 +211,13 @@ func TestConvertKeyUsage(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := convertKeyUsage(test.usage)
 
 			if len(result) != len(test.expected) {
 				t.Errorf("Expected %d usages, got %d", len(test.expected), len(result))
+
 				return
 			}
 
@@ -214,6 +231,8 @@ func TestConvertKeyUsage(t *testing.T) {
 }
 
 func TestConvertExtKeyUsage(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		usage    []x509.ExtKeyUsage
@@ -238,10 +257,13 @@ func TestConvertExtKeyUsage(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := convertExtKeyUsage(test.usage)
 
 			if len(result) != len(test.expected) {
 				t.Errorf("Expected %d usages, got %d", len(test.expected), len(result))
+
 				return
 			}
 
@@ -255,6 +277,7 @@ func TestConvertExtKeyUsage(t *testing.T) {
 }
 
 func TestExtractSubjectAltNames(t *testing.T) {
+	t.Parallel()
 	// Create a test certificate with SAN
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
@@ -296,12 +319,15 @@ func TestExtractSubjectAltNames(t *testing.T) {
 	expectedValues := []string{"example.com", "www.example.com", "127.0.0.1", "test@example.com"}
 	for _, expected := range expectedValues {
 		found := false
+
 		for _, actual := range result {
 			if actual == expected {
 				found = true
+
 				break
 			}
 		}
+
 		if !found {
 			t.Errorf("Expected SAN %s not found in result %v", expected, result)
 		}
@@ -309,6 +335,7 @@ func TestExtractSubjectAltNames(t *testing.T) {
 }
 
 func TestCalculateFingerprints(t *testing.T) {
+	t.Parallel()
 	// Simple test data
 	testData := []byte("test certificate data")
 
@@ -317,9 +344,11 @@ func TestCalculateFingerprints(t *testing.T) {
 	if fingerprints.MD5 == "" {
 		t.Errorf("Expected non-empty MD5 fingerprint")
 	}
+
 	if fingerprints.SHA1 == "" {
 		t.Errorf("Expected non-empty SHA1 fingerprint")
 	}
+
 	if fingerprints.SHA256 == "" {
 		t.Errorf("Expected non-empty SHA256 fingerprint")
 	}
@@ -328,15 +357,19 @@ func TestCalculateFingerprints(t *testing.T) {
 	if len(fingerprints.MD5) != 32 {
 		t.Errorf("Expected MD5 fingerprint length 32, got %d", len(fingerprints.MD5))
 	}
+
 	if len(fingerprints.SHA1) != 40 {
 		t.Errorf("Expected SHA1 fingerprint length 40, got %d", len(fingerprints.SHA1))
 	}
+
 	if len(fingerprints.SHA256) != 64 {
 		t.Errorf("Expected SHA256 fingerprint length 64, got %d", len(fingerprints.SHA256))
 	}
 }
 
 func TestGetExtensionName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		oid      string
 		expected string
@@ -351,6 +384,8 @@ func TestGetExtensionName(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.oid, func(t *testing.T) {
+			t.Parallel()
+
 			result := getExtensionName(test.oid)
 			if result != test.expected {
 				t.Errorf("Expected %s, got %s", test.expected, result)
@@ -360,6 +395,8 @@ func TestGetExtensionName(t *testing.T) {
 }
 
 func TestConvertPkixName(t *testing.T) {
+	t.Parallel()
+
 	name := pkix.Name{
 		Country:            []string{"US"},
 		Organization:       []string{"Test Org"},
@@ -377,23 +414,28 @@ func TestConvertPkixName(t *testing.T) {
 	if len(result.Country) != 1 || result.Country[0] != "US" {
 		t.Errorf("Expected Country [US], got %v", result.Country)
 	}
+
 	if len(result.Organization) != 1 || result.Organization[0] != "Test Org" {
 		t.Errorf("Expected Organization [Test Org], got %v", result.Organization)
 	}
+
 	if result.CommonName != "test.example.com" {
 		t.Errorf("Expected CommonName test.example.com, got %s", result.CommonName)
 	}
+
 	if result.SerialNumber != "123456789" {
 		t.Errorf("Expected SerialNumber 123456789, got %s", result.SerialNumber)
 	}
 }
 
 func TestParseCertificateChain(t *testing.T) {
+	t.Parallel()
 	// Generate two test certificates
 	privateKey1, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("Failed to generate private key 1: %v", err)
 	}
+
 	privateKey2, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("Failed to generate private key 2: %v", err)
@@ -416,6 +458,7 @@ func TestParseCertificateChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create certificate 1: %v", err)
 	}
+
 	cert2DER, err := x509.CreateCertificate(rand.Reader, &template2, &template2, &privateKey2.PublicKey, privateKey2)
 	if err != nil {
 		t.Fatalf("Failed to create certificate 2: %v", err)
@@ -427,24 +470,23 @@ func TestParseCertificateChain(t *testing.T) {
 	// Test with multiple certificates in PEM data
 	chainPEM := string(cert1PEM) + string(cert2PEM)
 
-	certs, err := ParseCertificateChain(chainPEM)
+	certs, err := ParseCertificateChain(context.Background(), chainPEM)
 	if err != nil {
 		t.Errorf("Expected successful chain parsing, got error: %v", err)
-	} else {
-		if len(certs) != 2 {
-			t.Errorf("Expected 2 certificates in chain, got %d", len(certs))
-		}
+	} else if len(certs) != 2 {
+		t.Errorf("Expected 2 certificates in chain, got %d", len(certs))
 	}
 
 	// Test with empty data
-	_, err = ParseCertificateChain("")
+	_, err = ParseCertificateChain(context.Background(), "")
 	if err == nil {
 		t.Errorf("Expected error for empty PEM data")
 	}
 }
 
-// Integration test with actual certificate generation
+// Integration test with actual certificate generation.
 func TestIntegrationCertificateGeneration(t *testing.T) {
+	t.Parallel()
 	// Generate a real certificate for testing
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -484,7 +526,7 @@ func TestIntegrationCertificateGeneration(t *testing.T) {
 	})
 
 	// Test our parsing function
-	certInfo, err := ParseCertificateFromPEM(string(certPEM))
+	certInfo, err := ParseCertificateFromPEM(context.Background(), string(certPEM))
 	if err != nil {
 		t.Fatalf("Failed to parse generated certificate: %v", err)
 	}
@@ -518,15 +560,17 @@ func TestIntegrationCertificateGeneration(t *testing.T) {
 	if certInfo.NotBefore.IsZero() {
 		t.Errorf("Expected valid NotBefore date")
 	}
+
 	if certInfo.NotAfter.IsZero() {
 		t.Errorf("Expected valid NotAfter date")
 	}
+
 	if !certInfo.NotAfter.After(certInfo.NotBefore) {
 		t.Errorf("Expected NotAfter to be after NotBefore")
 	}
 }
 
-// Benchmark certificate parsing performance
+// Benchmark certificate parsing performance.
 func BenchmarkParseCertificateFromPEM(b *testing.B) {
 	// Generate a real certificate for benchmarking
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -557,8 +601,9 @@ func BenchmarkParseCertificateFromPEM(b *testing.B) {
 	})
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := ParseCertificateFromPEM(string(certPEM))
+
+	for range b.N {
+		_, err := ParseCertificateFromPEM(context.Background(), string(certPEM))
 		if err != nil {
 			b.Fatalf("Parse failed: %v", err)
 		}
@@ -566,6 +611,7 @@ func BenchmarkParseCertificateFromPEM(b *testing.B) {
 }
 
 func TestFetchCertificateFromEndpoint_InvalidAddress(t *testing.T) {
+	t.Parallel()
 	// Test with invalid addresses
 	tests := []struct {
 		name    string
@@ -578,7 +624,9 @@ func TestFetchCertificateFromEndpoint_InvalidAddress(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := FetchCertificateFromEndpoint(test.address, 5*time.Second)
+			t.Parallel()
+
+			_, err := FetchCertificateFromEndpoint(context.Background(), test.address, 5*time.Second)
 			if err == nil {
 				t.Errorf("Expected error for invalid address %s", test.address)
 			}
@@ -586,8 +634,9 @@ func TestFetchCertificateFromEndpoint_InvalidAddress(t *testing.T) {
 	}
 }
 
-// Test certificate chain parsing with multiple certificates
+// Test certificate chain parsing with multiple certificates.
 func TestParseCertificateChainMultiple(t *testing.T) {
+	t.Parallel()
 	// Generate two certificates
 	privateKey1, _ := rsa.GenerateKey(rand.Reader, 2048)
 	privateKey2, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -614,7 +663,7 @@ func TestParseCertificateChainMultiple(t *testing.T) {
 
 	chainPEM := string(cert1PEM) + string(cert2PEM)
 
-	certificates, err := ParseCertificateChain(chainPEM)
+	certificates, err := ParseCertificateChain(context.Background(), chainPEM)
 	if err != nil {
 		t.Fatalf("Failed to parse certificate chain: %v", err)
 	}
@@ -627,6 +676,7 @@ func TestParseCertificateChainMultiple(t *testing.T) {
 	if certificates[0].Subject.CommonName != "cert1.example.com" {
 		t.Errorf("Expected first cert CN cert1.example.com, got %s", certificates[0].Subject.CommonName)
 	}
+
 	if certificates[1].Subject.CommonName != "cert2.example.com" {
 		t.Errorf("Expected second cert CN cert2.example.com, got %s", certificates[1].Subject.CommonName)
 	}

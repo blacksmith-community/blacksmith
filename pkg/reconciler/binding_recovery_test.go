@@ -1,17 +1,27 @@
-package reconciler
+package reconciler_test
 
 import (
 	"context"
 	"errors"
 	"time"
 
+	. "blacksmith/pkg/reconciler"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
+// Static errors for binding recovery test err113 compliance.
+var (
+	ErrNotFound                   = errors.New("not found")
+	ErrBrokerReconstructionFailed = errors.New("broker reconstruction failed")
+	ErrReconstructionFailed       = errors.New("reconstruction failed")
+	ErrRepairFailed               = errors.New("repair failed")
+	ErrCredentialsNotFound        = errors.New("credentials not found")
+)
+
 var _ = Describe("Binding Recovery", func() {
 	var (
-		updater    *vaultUpdater
+		updater    Updater
 		mockVault  *MockVaultUpdater
 		mockBroker *MockBroker
 		instanceID string
@@ -25,21 +35,17 @@ var _ = Describe("Binding Recovery", func() {
 		mockVault = NewMockVaultUpdater()
 		mockBroker = NewMockBroker()
 
-		updater = &vaultUpdater{
-			vault:        mockVault,
-			logger:       NewMockLogger(),
-			backupConfig: BackupConfig{Enabled: false},
-		}
+		updater = NewVaultUpdater(mockVault, NewMockLogger(), BackupConfig{Enabled: false})
 	})
 
 	Describe("checkBindingHealth", func() {
 		Context("when instance has no bindings", func() {
 			BeforeEach(func() {
-				mockVault.SetError(instanceID+"/bindings", errors.New("not found"))
+				mockVault.SetError(instanceID+"/bindings", ErrNotFound)
 			})
 
 			It("should return empty results without error", func() {
-				healthy, unhealthy, err := updater.checkBindingHealth(instanceID)
+				healthy, unhealthy, err := updater.CheckBindingHealth(instanceID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(healthy).To(BeEmpty())
 				Expect(unhealthy).To(BeEmpty())
@@ -66,7 +72,7 @@ var _ = Describe("Binding Recovery", func() {
 			})
 
 			It("should identify healthy bindings", func() {
-				healthy, unhealthy, err := updater.checkBindingHealth(instanceID)
+				healthy, unhealthy, err := updater.CheckBindingHealth(instanceID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(healthy).To(HaveLen(1))
 				Expect(unhealthy).To(BeEmpty())
@@ -86,11 +92,11 @@ var _ = Describe("Binding Recovery", func() {
 				})
 
 				// No credentials data (simulating missing credentials)
-				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", errors.New("not found"))
+				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", ErrNotFound)
 			})
 
 			It("should identify unhealthy bindings", func() {
-				healthy, unhealthy, err := updater.checkBindingHealth(instanceID)
+				healthy, unhealthy, err := updater.CheckBindingHealth(instanceID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(healthy).To(BeEmpty())
 				Expect(unhealthy).To(HaveLen(1))
@@ -125,11 +131,11 @@ var _ = Describe("Binding Recovery", func() {
 				})
 
 				// Unhealthy binding missing credentials
-				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", errors.New("not found"))
+				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", ErrNotFound)
 			})
 
 			It("should correctly categorize bindings", func() {
-				healthy, unhealthy, err := updater.checkBindingHealth(instanceID)
+				healthy, unhealthy, err := updater.CheckBindingHealth(instanceID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(healthy).To(HaveLen(1))
 				Expect(unhealthy).To(HaveLen(1))
@@ -185,7 +191,7 @@ var _ = Describe("Binding Recovery", func() {
 
 		Context("when broker reconstruction fails", func() {
 			BeforeEach(func() {
-				mockBroker.SetError(instanceID, bindingID, errors.New("broker reconstruction failed"))
+				mockBroker.SetError(instanceID, bindingID, ErrBrokerReconstructionFailed)
 			})
 
 			It("should return an error", func() {
@@ -231,7 +237,7 @@ var _ = Describe("Binding Recovery", func() {
 					},
 				})
 
-				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", errors.New("not found"))
+				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", ErrNotFound)
 
 				// Set up broker to successfully reconstruct
 				mockBroker.SetCredentials(instanceID, bindingID, &BindingCredentials{
@@ -272,8 +278,8 @@ var _ = Describe("Binding Recovery", func() {
 					},
 				})
 
-				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", errors.New("not found"))
-				mockVault.SetError(instanceID+"/bindings/"+failingBindingID+"/credentials", errors.New("not found"))
+				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", ErrNotFound)
+				mockVault.SetError(instanceID+"/bindings/"+failingBindingID+"/credentials", ErrNotFound)
 
 				// Set up broker to succeed for one, fail for another
 				mockBroker.SetCredentials(instanceID, bindingID, &BindingCredentials{
@@ -282,7 +288,7 @@ var _ = Describe("Binding Recovery", func() {
 					Username: "repaired-user",
 					Password: "repaired-pass",
 				})
-				mockBroker.SetError(instanceID, failingBindingID, errors.New("reconstruction failed"))
+				mockBroker.SetError(instanceID, failingBindingID, ErrReconstructionFailed)
 			})
 
 			It("should return error but repair what it can", func() {
@@ -322,7 +328,10 @@ var _ = Describe("Binding Recovery", func() {
 			})
 
 			It("should perform normal update only", func() {
-				err := updater.UpdateInstanceWithBindingRepair(context.Background(), instance, mockBroker)
+				updatedInstance, err := updater.UpdateInstanceWithBindingRepair(context.Background(), *instance, mockBroker)
+				if updatedInstance != nil {
+					*instance = *updatedInstance
+				}
 				Expect(err).ToNot(HaveOccurred())
 			})
 		})
@@ -338,7 +347,7 @@ var _ = Describe("Binding Recovery", func() {
 						"plan_id":    "small",
 					},
 				})
-				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", errors.New("not found"))
+				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", ErrNotFound)
 
 				mockBroker.SetCredentials(instanceID, bindingID, &BindingCredentials{
 					Host:     "redis.example.com",
@@ -349,7 +358,10 @@ var _ = Describe("Binding Recovery", func() {
 			})
 
 			It("should repair bindings and update metadata", func() {
-				err := updater.UpdateInstanceWithBindingRepair(context.Background(), instance, mockBroker)
+				updatedInstance, err := updater.UpdateInstanceWithBindingRepair(context.Background(), *instance, mockBroker)
+				if updatedInstance != nil {
+					*instance = *updatedInstance
+				}
 				Expect(err).ToNot(HaveOccurred())
 				Expect(instance.Metadata["needs_binding_repair"]).To(BeFalse())
 				Expect(instance.Metadata["binding_repair_succeeded"]).To(BeTrue())
@@ -367,12 +379,15 @@ var _ = Describe("Binding Recovery", func() {
 						"plan_id":    "small",
 					},
 				})
-				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", errors.New("not found"))
-				mockBroker.SetError(instanceID, bindingID, errors.New("repair failed"))
+				mockVault.SetError(instanceID+"/bindings/"+bindingID+"/credentials", ErrNotFound)
+				mockBroker.SetError(instanceID, bindingID, ErrRepairFailed)
 			})
 
 			It("should update metadata with failure information but not fail overall", func() {
-				err := updater.UpdateInstanceWithBindingRepair(context.Background(), instance, mockBroker)
+				updatedInstance, err := updater.UpdateInstanceWithBindingRepair(context.Background(), *instance, mockBroker)
+				if updatedInstance != nil {
+					*instance = *updatedInstance
+				}
 				Expect(err).ToNot(HaveOccurred()) // Should not fail overall
 				Expect(instance.Metadata["binding_repair_failed"]).To(BeTrue())
 				Expect(instance.Metadata["binding_repair_error"]).To(ContainSubstring("repair failed"))
@@ -438,7 +453,7 @@ func (mb *MockBroker) GetBindingCredentials(instanceID, bindingID string) (*Bind
 
 	creds, exists := mb.credentials[key]
 	if !exists {
-		return nil, errors.New("credentials not found")
+		return nil, ErrCredentialsNotFound
 	}
 
 	return creds, nil
@@ -454,7 +469,7 @@ func NewMockLogger() *MockLogger {
 	return &MockLogger{}
 }
 
-func (ml *MockLogger) Debug(format string, args ...interface{})   {}
-func (ml *MockLogger) Info(format string, args ...interface{})    {}
-func (ml *MockLogger) Error(format string, args ...interface{})   {}
-func (ml *MockLogger) Warning(format string, args ...interface{}) {}
+func (ml *MockLogger) Debugf(format string, args ...interface{})   {}
+func (ml *MockLogger) Infof(format string, args ...interface{})    {}
+func (ml *MockLogger) Errorf(format string, args ...interface{})   {}
+func (ml *MockLogger) Warningf(format string, args ...interface{}) {}

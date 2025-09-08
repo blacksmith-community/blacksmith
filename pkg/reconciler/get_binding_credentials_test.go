@@ -1,12 +1,26 @@
-package reconciler
+package reconciler_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+
+	. "blacksmith/pkg/reconciler"
 )
 
-// Simple mock vault for isolated testing
+const (
+	testInstanceID = "test-instance-123"
+)
+
+// Static errors for this test file
+var (
+	errNoDataFoundAtPath     = errors.New("no data found at path")
+	errVaultConnectionFailed = errors.New("vault connection failed")
+)
+
+
+// Simple mock vault for isolated testing.
 type SimpleMockVault struct {
 	data   map[string]map[string]interface{}
 	errors map[string]error
@@ -26,15 +40,18 @@ func (m *SimpleMockVault) Get(path string) (map[string]interface{}, error) {
 	if err, exists := m.errors[path]; exists {
 		return nil, err
 	}
+
 	if data, exists := m.data[path]; exists {
 		return data, nil
 	}
-	return nil, fmt.Errorf("no data found at path %s", path)
+
+	return nil, fmt.Errorf("%w: %s", errNoDataFoundAtPath, path)
 }
 
 func (m *SimpleMockVault) Put(path string, secret map[string]interface{}) error {
 	m.calls = append(m.calls, "PUT:"+path)
 	m.data[path] = secret
+
 	return nil
 }
 
@@ -48,17 +65,20 @@ func (m *SimpleMockVault) SetSecret(path string, secret map[string]interface{}) 
 
 func (m *SimpleMockVault) DeleteSecret(path string) error {
 	delete(m.data, path)
+
 	return nil
 }
 
 func (m *SimpleMockVault) ListSecrets(path string) ([]string, error) {
 	var secrets []string
+
 	prefix := path + "/"
 	for key := range m.data {
 		if strings.HasPrefix(key, prefix) {
 			secrets = append(secrets, key)
 		}
 	}
+
 	return secrets, nil
 }
 
@@ -70,28 +90,28 @@ func (m *SimpleMockVault) SetError(path string, err error) {
 	m.errors[path] = err
 }
 
-// Simple logger for isolated testing
+// Simple logger for isolated testing.
 type SimpleLogger struct{}
 
-func (l *SimpleLogger) Debug(format string, args ...interface{})   {}
-func (l *SimpleLogger) Info(format string, args ...interface{})    {}
-func (l *SimpleLogger) Warning(format string, args ...interface{}) {}
-func (l *SimpleLogger) Error(format string, args ...interface{})   {}
+func (l *SimpleLogger) Debugf(format string, args ...interface{})   {}
+func (l *SimpleLogger) Infof(format string, args ...interface{})    {}
+func (l *SimpleLogger) Warningf(format string, args ...interface{}) {}
+func (l *SimpleLogger) Errorf(format string, args ...interface{})   {}
 
 func TestGetBindingCredentials_Standalone(t *testing.T) {
+	t.Parallel()
+
 	vault := NewSimpleMockVault()
 	logger := &SimpleLogger{}
 
-	// Create vaultUpdater directly
-	updater := &vaultUpdater{
-		vault:        vault,
-		logger:       logger,
-		backupConfig: BackupConfig{Enabled: false},
-	}
+	// Create updater using constructor
+	updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
 
 	// Test successful retrieval
 	t.Run("successful retrieval", func(t *testing.T) {
-		instanceID := "test-instance-123"
+		t.Parallel()
+
+		instanceID := testInstanceID
 		bindingID := "test-binding-456"
 		expectedCreds := map[string]interface{}{
 			"host":     "redis.example.com",
@@ -126,12 +146,15 @@ func TestGetBindingCredentials_Standalone(t *testing.T) {
 		// Verify vault path
 		expectedPath := "test-instance-123/bindings/test-binding-456/credentials"
 		found := false
+
 		for _, call := range vault.calls {
 			if strings.Contains(call, expectedPath) {
 				found = true
+
 				break
 			}
 		}
+
 		if !found {
 			t.Errorf("expected vault call with path containing '%s', got calls: %v", expectedPath, vault.calls)
 		}
@@ -139,8 +162,10 @@ func TestGetBindingCredentials_Standalone(t *testing.T) {
 
 	// Test not found
 	t.Run("credentials not found", func(t *testing.T) {
+		t.Parallel()
+
 		vault.calls = []string{} // Reset calls
-		instanceID := "test-instance-123"
+		instanceID := testInstanceID
 		bindingID := "non-existent-binding"
 
 		// Execute
@@ -156,12 +181,14 @@ func TestGetBindingCredentials_Standalone(t *testing.T) {
 
 	// Test vault error
 	t.Run("vault error", func(t *testing.T) {
+		t.Parallel()
+
 		vault.calls = []string{} // Reset calls
-		instanceID := "test-instance-123"
+		instanceID := testInstanceID
 		bindingID := "error-binding"
 
 		// Setup vault error
-		vault.SetError("test-instance-123/bindings/error-binding/credentials", fmt.Errorf("vault connection failed"))
+		vault.SetError("test-instance-123/bindings/error-binding/credentials", errVaultConnectionFailed)
 
 		// Execute
 		_, err := updater.GetBindingCredentials(instanceID, bindingID)
@@ -176,8 +203,10 @@ func TestGetBindingCredentials_Standalone(t *testing.T) {
 
 	// Test empty credentials
 	t.Run("empty credentials", func(t *testing.T) {
+		t.Parallel()
+
 		vault.calls = []string{} // Reset calls
-		instanceID := "test-instance-123"
+		instanceID := testInstanceID
 		bindingID := "empty-binding"
 
 		// Setup empty credentials
@@ -198,14 +227,12 @@ func TestGetBindingCredentials_Standalone(t *testing.T) {
 }
 
 func TestGetBindingCredentials_PathConstruction(t *testing.T) {
+	t.Parallel()
+
 	vault := NewSimpleMockVault()
 	logger := &SimpleLogger{}
 
-	updater := &vaultUpdater{
-		vault:        vault,
-		logger:       logger,
-		backupConfig: BackupConfig{Enabled: false},
-	}
+	updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
 
 	testCases := []struct {
 		instanceID   string
@@ -229,21 +256,22 @@ func TestGetBindingCredentials_PathConstruction(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("path_%s_%s", tc.instanceID, tc.bindingID), func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(fmt.Sprintf("path_%s_%s", testCase.instanceID, testCase.bindingID), func(t *testing.T) {
+			t.Parallel()
 			// Clear previous calls
 			vault.calls = []string{}
 
 			// Execute (will fail, but we just want to check path construction)
-			_, _ = updater.GetBindingCredentials(tc.instanceID, tc.bindingID)
+			_, _ = updater.GetBindingCredentials(testCase.instanceID, testCase.bindingID)
 
 			// Verify path construction
 			if len(vault.calls) != 1 {
 				t.Errorf("expected exactly 1 vault call, got %d: %v", len(vault.calls), vault.calls)
 			} else {
 				call := vault.calls[0]
-				if !strings.Contains(call, tc.expectedPath) {
-					t.Errorf("expected call to contain path '%s', got '%s'", tc.expectedPath, call)
+				if !strings.Contains(call, testCase.expectedPath) {
+					t.Errorf("expected call to contain path '%s', got '%s'", testCase.expectedPath, call)
 				}
 			}
 		})

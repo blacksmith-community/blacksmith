@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,25 +12,25 @@ import (
 	"blacksmith/pkg/services/common"
 )
 
-// Handler handles Redis operations
+// Handler handles Redis operations.
 type Handler struct {
 	clientManager *ClientManager
 	logger        func(string, ...interface{})
 }
 
-// NewHandler creates a new Redis operations handler
+// NewHandler creates a new Redis operations handler.
 func NewHandler(logger func(string, ...interface{})) *Handler {
 	if logger == nil {
 		logger = func(string, ...interface{}) {} // No-op logger
 	}
 
 	return &Handler{
-		clientManager: NewClientManager(5 * time.Minute),
+		clientManager: NewClientManager(DefaultTTL),
 		logger:        logger,
 	}
 }
 
-// TestConnection tests the Redis connection
+// TestConnection tests the Redis connection.
 func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credentials, opts common.ConnectionOptions) (*common.TestResult, error) {
 	start := time.Now()
 
@@ -40,22 +41,24 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 			Error:     err.Error(),
 			Timestamp: start.Unix(),
 			Duration:  time.Since(start),
-		}, nil
+		}, nil //nolint:nilerr // Invalid credentials is a valid test result, not an error
 	}
 
-	client, err := h.clientManager.GetClient("test", creds, opts.UseTLS)
+	client, err := h.clientManager.GetClient(ctx, "test", creds, opts.UseTLS)
 	if err != nil {
 		return &common.TestResult{
 			Success:   false,
 			Error:     err.Error(),
 			Timestamp: start.Unix(),
 			Duration:  time.Since(start),
-		}, nil
+		}, nil //nolint:nilerr // Connection test failure is a valid test result, not an error
 	}
 
 	// Test basic operations
 	pingResult := client.Ping(ctx)
-	if err := pingResult.Err(); err != nil {
+
+	err = pingResult.Err()
+	if err != nil {
 		return &common.TestResult{
 			Success:   false,
 			Error:     fmt.Sprintf("PING failed: %v", err),
@@ -66,8 +69,11 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 
 	// Get server info
 	infoResult := client.Info(ctx)
+
 	var serverInfo map[string]string
-	if err := infoResult.Err(); err == nil {
+
+	err = infoResult.Err()
+	if err == nil {
 		serverInfo = parseInfoString(infoResult.Val())
 	}
 
@@ -87,7 +93,7 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 	}, nil
 }
 
-// GetCapabilities returns the capabilities of the Redis service
+// GetCapabilities returns the capabilities of the Redis service.
 func (h *Handler) GetCapabilities() []common.Capability {
 	return []common.Capability{
 		{Name: "info", Description: "Get Redis server information", Category: "monitoring"},
@@ -100,20 +106,21 @@ func (h *Handler) GetCapabilities() []common.Capability {
 	}
 }
 
-// Close closes all connections
+// Close closes all connections.
 func (h *Handler) Close() error {
 	h.clientManager.CloseAll()
+
 	return nil
 }
 
-// HandleInfo gets Redis server information
+// HandleInfo gets Redis server information.
 func (h *Handler) HandleInfo(ctx context.Context, instanceID string, vaultCreds common.Credentials, useTLS bool) (*InfoResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := h.clientManager.GetClient(instanceID, creds, useTLS)
+	client, err := h.clientManager.GetClient(ctx, instanceID, creds, useTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +133,7 @@ func (h *Handler) HandleInfo(ctx context.Context, instanceID string, vaultCreds 
 	// Convert map[string]string to map[string]interface{}
 	infoData := make(map[string]interface{})
 	parsedInfo := parseInfoString(info)
+
 	for k, v := range parsedInfo {
 		infoData[k] = v
 	}
@@ -137,14 +145,14 @@ func (h *Handler) HandleInfo(ctx context.Context, instanceID string, vaultCreds 
 	}, nil
 }
 
-// HandleSet performs a Redis SET operation
+// HandleSet performs a Redis SET operation.
 func (h *Handler) HandleSet(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *SetRequest) (*SetResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := h.clientManager.GetClient(instanceID, creds, req.UseTLS)
+	client, err := h.clientManager.GetClient(ctx, instanceID, creds, req.UseTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -167,20 +175,20 @@ func (h *Handler) HandleSet(ctx context.Context, instanceID string, vaultCreds c
 	}, nil
 }
 
-// HandleGet performs a Redis GET operation
+// HandleGet performs a Redis GET operation.
 func (h *Handler) HandleGet(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *GetRequest) (*GetResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := h.clientManager.GetClient(instanceID, creds, req.UseTLS)
+	client, err := h.clientManager.GetClient(ctx, instanceID, creds, req.UseTLS)
 	if err != nil {
 		return nil, err
 	}
 
 	val, err := client.Get(ctx, req.Key).Result()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return &GetResult{
 			Success: true,
 			Key:     req.Key,
@@ -199,14 +207,14 @@ func (h *Handler) HandleGet(ctx context.Context, instanceID string, vaultCreds c
 	}, nil
 }
 
-// HandleDelete performs a Redis DEL operation
+// HandleDelete performs a Redis DEL operation.
 func (h *Handler) HandleDelete(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *DeleteRequest) (*DeleteResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := h.clientManager.GetClient(instanceID, creds, req.UseTLS)
+	client, err := h.clientManager.GetClient(ctx, instanceID, creds, req.UseTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -223,14 +231,14 @@ func (h *Handler) HandleDelete(ctx context.Context, instanceID string, vaultCred
 	}, nil
 }
 
-// HandleCommand executes a Redis command
+// HandleCommand executes a Redis command.
 func (h *Handler) HandleCommand(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *CommandRequest) (*CommandResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := h.clientManager.GetClient(instanceID, creds, req.UseTLS)
+	client, err := h.clientManager.GetClient(ctx, instanceID, creds, req.UseTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -251,14 +259,14 @@ func (h *Handler) HandleCommand(ctx context.Context, instanceID string, vaultCre
 	}, nil
 }
 
-// HandleKeys lists keys matching a pattern
+// HandleKeys lists keys matching a pattern.
 func (h *Handler) HandleKeys(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *KeysRequest) (*KeysResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := h.clientManager.GetClient(instanceID, creds, req.UseTLS)
+	client, err := h.clientManager.GetClient(ctx, instanceID, creds, req.UseTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -281,14 +289,14 @@ func (h *Handler) HandleKeys(ctx context.Context, instanceID string, vaultCreds 
 	}, nil
 }
 
-// HandleFlush flushes the Redis database
+// HandleFlush flushes the Redis database.
 func (h *Handler) HandleFlush(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *FlushRequest) (*FlushResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := h.clientManager.GetClient(instanceID, creds, req.UseTLS)
+	client, err := h.clientManager.GetClient(ctx, instanceID, creds, req.UseTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -304,27 +312,30 @@ func (h *Handler) HandleFlush(ctx context.Context, instanceID string, vaultCreds
 	}, nil
 }
 
-// parseInfoString parses Redis INFO command output into a map
+// parseInfoString parses Redis INFO command output into a map.
 func parseInfoString(info string) map[string]string {
 	result := make(map[string]string)
 	lines := strings.Split(info, "\n")
 
 	var section string
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			if strings.HasPrefix(line, "# ") {
 				section = strings.TrimPrefix(line, "# ")
 			}
+
 			continue
 		}
 
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
+		parts := strings.SplitN(line, ":", InfoFieldParts)
+		if len(parts) == InfoFieldParts {
 			key := parts[0]
 			if section != "" {
 				key = section + "_" + key
 			}
+
 			result[key] = parts[1]
 		}
 	}

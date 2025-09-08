@@ -25,7 +25,7 @@ foo: bar
 			It("can generate a manifest", func() {
 				s, err := GenManifest(plan, map[interface{}]interface{}{})
 				Ω(err).ShouldNot(HaveOccurred())
-				Ω(s).Should(Equal(`foo: bar
+				Ω(manifest).Should(Equal(`foo: bar
 meta:
   user: redis
 `))
@@ -42,7 +42,7 @@ meta:
 					},
 				})
 				Ω(err).ShouldNot(HaveOccurred())
-				Ω(s).Should(Equal(`foo: bar
+				Ω(manifest).Should(Equal(`foo: bar
 meta:
   params:
     extra: value
@@ -53,7 +53,7 @@ meta:
 
 		Context("with multi-level user parameters", func() {
 			It("can generate a manifest", func() {
-				s, err := GenManifest(plan, map[interface{}]interface{}{
+				manifest, err := GenManifest(plan, map[interface{}]interface{}{
 					"meta": map[interface{}]interface{}{
 						"params": map[interface{}]interface{}{
 							"extra": map[interface{}]interface{}{
@@ -63,7 +63,7 @@ meta:
 					},
 				})
 				Ω(err).ShouldNot(HaveOccurred())
-				Ω(s).Should(Equal(`foo: bar
+				Ω(manifest).Should(Equal(`foo: bar
 meta:
   params:
     extra:

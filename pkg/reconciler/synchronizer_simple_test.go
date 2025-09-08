@@ -1,13 +1,17 @@
-package reconciler
+package reconciler_test
 
 import (
 	"testing"
 	"time"
+
+	. "blacksmith/pkg/reconciler"
 )
 
 // Simple unit tests for synchronizer validation functions
 
 func TestIsValidInstanceID_Simple(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		id    string
 		valid bool
@@ -21,16 +25,20 @@ func TestIsValidInstanceID_Simple(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			result := isValidInstanceID(tt.id)
+			t.Parallel()
+
+			result := IsValidInstanceID(tt.id)
 			if result != tt.valid {
-				t.Errorf("isValidInstanceID(%q) = %v, want %v", tt.id, result, tt.valid)
+				t.Errorf("IsValidInstanceID(%q) = %v, want %v", tt.id, result, tt.valid)
 			}
 		})
 	}
 }
 
 func TestIsLegacyDeploymentName_Simple(t *testing.T) {
-	s := &indexSynchronizer{}
+	t.Parallel()
+
+	s := &IndexSynchronizer{}
 
 	tests := []struct {
 		name       string
@@ -78,9 +86,11 @@ func TestIsLegacyDeploymentName_Simple(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := s.isLegacyDeploymentName(tt.deployment, tt.planID, tt.instanceID)
+			t.Parallel()
+
+			result := s.IsLegacyDeploymentName(tt.deployment, tt.planID, tt.instanceID)
 			if result != tt.expect {
-				t.Errorf("isLegacyDeploymentName(%q, %q, %q) = %v, want %v",
+				t.Errorf("IsLegacyDeploymentName(%q, %q, %q) = %v, want %v",
 					tt.deployment, tt.planID, tt.instanceID, result, tt.expect)
 			}
 		})
@@ -88,7 +98,9 @@ func TestIsLegacyDeploymentName_Simple(t *testing.T) {
 }
 
 func TestCheckEntryWarnings_Simple(t *testing.T) {
-	s := &indexSynchronizer{}
+	t.Parallel()
+
+	s := &IndexSynchronizer{}
 
 	tests := []struct {
 		name         string
@@ -152,13 +164,17 @@ func TestCheckEntryWarnings_Simple(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			warning := s.checkEntryWarnings("test-id", tt.data)
+			t.Parallel()
+
+			warning := s.CheckEntryWarnings("test-id", tt.data)
 			if tt.expectWarn && warning == "" {
 				t.Error("Expected warning but got none")
 			}
+
 			if !tt.expectWarn && warning != "" {
 				t.Errorf("Unexpected warning: %s", warning)
 			}
+
 			if tt.expectWarn && tt.warnContains != "" {
 				if !contains(warning, tt.warnContains) {
 					t.Errorf("Warning %q doesn't contain expected text %q", warning, tt.warnContains)
@@ -168,7 +184,7 @@ func TestCheckEntryWarnings_Simple(t *testing.T) {
 	}
 }
 
-// Helper function
+// Helper function.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && len(substr) > 0 && s[:len(substr)] == substr || len(s) > len(substr) && s[len(s)-len(substr):] == substr || (len(substr) > 0 && len(s) > len(substr) && findSubstring(s, substr)))
 }
@@ -179,5 +195,6 @@ func findSubstring(s, substr string) bool {
 			return true
 		}
 	}
+
 	return false
 }

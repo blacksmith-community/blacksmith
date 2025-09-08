@@ -1,13 +1,17 @@
-package common
+package common_test
 
 import (
 	"testing"
 	"time"
+
+	"blacksmith/pkg/services/common"
 )
 
 func TestRateLimiter(t *testing.T) {
+	t.Parallel()
+
 	// Create a rate limiter with 2 requests per second
-	rl := NewRateLimiter(2, time.Second)
+	rl := common.NewRateLimiter(2, time.Second)
 
 	key := "test-key"
 
@@ -15,6 +19,7 @@ func TestRateLimiter(t *testing.T) {
 	if !rl.AllowRequest(key) {
 		t.Error("First request should be allowed")
 	}
+
 	if !rl.AllowRequest(key) {
 		t.Error("Second request should be allowed")
 	}
@@ -46,7 +51,9 @@ func TestRateLimiter(t *testing.T) {
 }
 
 func TestMaskCredentials(t *testing.T) {
-	creds := Credentials{
+	t.Parallel()
+
+	creds := common.Credentials{
 		"host":        "example.com",
 		"port":        6379,
 		"password":    "secret123",
@@ -58,7 +65,7 @@ func TestMaskCredentials(t *testing.T) {
 		"public_data": "visible_data",
 	}
 
-	masked := MaskCredentials(creds)
+	masked := common.MaskCredentials(creds)
 
 	sensitiveFields := []string{"password", "secret", "token", "key", "private_key"}
 	for _, field := range sensitiveFields {
@@ -71,15 +78,19 @@ func TestMaskCredentials(t *testing.T) {
 	if masked["host"] != "example.com" {
 		t.Errorf("Host should be preserved")
 	}
+
 	if masked["certificate"] != "-----BEGIN CERTIFICATE-----" {
 		t.Errorf("Certificate should be preserved")
 	}
+
 	if masked["public_data"] != "visible_data" {
 		t.Errorf("Public data should be preserved")
 	}
 }
 
 func TestValidateInputs(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		inputs      map[string]interface{}
@@ -119,7 +130,9 @@ func TestValidateInputs(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := ValidateInputs(test.inputs)
+			t.Parallel()
+
+			err := common.ValidateInputs(test.inputs)
 
 			if test.expectError && err == nil {
 				t.Error("Expected error but got none")
@@ -133,6 +146,8 @@ func TestValidateInputs(t *testing.T) {
 }
 
 func TestContainsSQLInjection(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input    string
 		expected bool
@@ -149,7 +164,7 @@ func TestContainsSQLInjection(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := containsSQLInjection(test.input)
+		result := common.ContainsSQLInjection(test.input)
 		if result != test.expected {
 			t.Errorf("containsSQLInjection(%q) = %v, expected %v", test.input, result, test.expected)
 		}
@@ -157,6 +172,8 @@ func TestContainsSQLInjection(t *testing.T) {
 }
 
 func TestContainsScriptInjection(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		input    string
 		expected bool
@@ -172,7 +189,7 @@ func TestContainsScriptInjection(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := containsScriptInjection(test.input)
+		result := common.ContainsScriptInjection(test.input)
 		if result != test.expected {
 			t.Errorf("containsScriptInjection(%q) = %v, expected %v", test.input, result, test.expected)
 		}

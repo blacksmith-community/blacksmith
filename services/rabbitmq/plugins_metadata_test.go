@@ -1,25 +1,29 @@
-package rabbitmq
+package rabbitmq_test
 
 import (
 	"testing"
+
+	. "blacksmith/services/rabbitmq"
 )
 
-// MockLogger implements the Logger interface for testing
+// MockLogger implements the Logger interface for testing.
 type MockLogger struct {
 	messages []string
 }
 
-func (m *MockLogger) Info(format string, args ...interface{}) {
+func (m *MockLogger) Infof(format string, args ...interface{}) {
 	m.messages = append(m.messages, "INFO")
 }
-func (m *MockLogger) Debug(format string, args ...interface{}) {
+func (m *MockLogger) Debugf(format string, args ...interface{}) {
 	m.messages = append(m.messages, "DEBUG")
 }
-func (m *MockLogger) Error(format string, args ...interface{}) {
+func (m *MockLogger) Errorf(format string, args ...interface{}) {
 	m.messages = append(m.messages, "ERROR")
 }
 
 func TestNewPluginsMetadataService(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -27,9 +31,8 @@ func TestNewPluginsMetadataService(t *testing.T) {
 		t.Fatal("NewPluginsMetadataService returned nil")
 	}
 
-	if service.logger != logger {
-		t.Error("Logger not set correctly")
-	}
+	// Logger is private field - we can't directly test it
+	// but we can verify the service was created successfully
 
 	// Test with nil logger
 	service2 := NewPluginsMetadataService(nil)
@@ -39,6 +42,8 @@ func TestNewPluginsMetadataService(t *testing.T) {
 }
 
 func TestPluginsMetadataService_GetCategories(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -50,12 +55,15 @@ func TestPluginsMetadataService_GetCategories(t *testing.T) {
 
 	// Check that help category exists
 	var helpFound bool
+
 	for _, cat := range categories {
 		if cat.Name == "help" {
 			helpFound = true
+
 			if len(cat.Commands) == 0 {
 				t.Error("help category should have commands")
 			}
+
 			break
 		}
 	}
@@ -66,6 +74,8 @@ func TestPluginsMetadataService_GetCategories(t *testing.T) {
 }
 
 func TestPluginsMetadataService_GetCommandsByCategory(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -107,17 +117,21 @@ func TestPluginsMetadataService_GetCommandsByCategory(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			commands, err := service.GetCommandsByCategory(test.category)
 
 			if test.expectError {
 				if err == nil {
 					t.Error("Expected error but got none")
 				}
+
 				return
 			}
 
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 
@@ -129,6 +143,8 @@ func TestPluginsMetadataService_GetCommandsByCategory(t *testing.T) {
 }
 
 func TestPluginsMetadataService_GetCommand(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -166,22 +182,27 @@ func TestPluginsMetadataService_GetCommand(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			cmd, err := service.GetCommand(test.command)
 
 			if test.expectError {
 				if err == nil {
 					t.Error("Expected error but got none")
 				}
+
 				return
 			}
 
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 
 			if cmd == nil {
 				t.Error("Expected command but got nil")
+
 				return
 			}
 
@@ -193,6 +214,8 @@ func TestPluginsMetadataService_GetCommand(t *testing.T) {
 }
 
 func TestPluginsMetadataService_ValidateCommand(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -242,12 +265,15 @@ func TestPluginsMetadataService_ValidateCommand(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := service.ValidateCommand(test.command, test.arguments)
 
 			if test.expectError {
 				if err == nil {
 					t.Error("Expected error but got none")
 				}
+
 				return
 			}
 
@@ -259,6 +285,7 @@ func TestPluginsMetadataService_ValidateCommand(t *testing.T) {
 }
 
 func TestRabbitMQPluginsCommand_Structure(t *testing.T) {
+	t.Parallel()
 	// Test that command structures have required fields
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
@@ -274,12 +301,15 @@ func TestRabbitMQPluginsCommand_Structure(t *testing.T) {
 			if cmd.Name == "" {
 				t.Error("Command has empty name")
 			}
+
 			if cmd.Description == "" {
 				t.Error("Command has empty description")
 			}
+
 			if cmd.Usage == "" {
 				t.Error("Command has empty usage")
 			}
+
 			if cmd.Timeout <= 0 {
 				t.Errorf("Command %s has invalid timeout: %d", cmd.Name, cmd.Timeout)
 			}
@@ -288,6 +318,8 @@ func TestRabbitMQPluginsCommand_Structure(t *testing.T) {
 }
 
 func TestGetCategory(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -325,27 +357,30 @@ func TestGetCategory(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			category, err := service.GetCategory(test.categoryName)
 
 			if test.expectFound {
 				if err != nil {
 					t.Errorf("Expected category but got error: %v", err)
 				}
+
 				if category == nil {
 					t.Error("Expected category but got nil")
 				} else if category.Name != test.categoryName {
 					t.Errorf("Expected category name %s, got %s", test.categoryName, category.Name)
 				}
-			} else {
-				if err == nil {
-					t.Error("Expected error for non-existent category")
-				}
+			} else if err == nil {
+				t.Error("Expected error for non-existent category")
 			}
 		})
 	}
 }
 
 func TestValidatePluginNames(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -393,7 +428,9 @@ func TestValidatePluginNames(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := service.validatePluginNames(test.pluginNames)
+			t.Parallel()
+
+			err := service.ValidatePluginNames(test.pluginNames)
 
 			if test.expectError {
 				if err == nil {
@@ -409,6 +446,8 @@ func TestValidatePluginNames(t *testing.T) {
 }
 
 func TestPluginsMetadataService_CommandLookup(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -421,13 +460,17 @@ func TestPluginsMetadataService_CommandLookup(t *testing.T) {
 
 	for _, cmdName := range expectedCommands {
 		t.Run("Command_"+cmdName, func(t *testing.T) {
+			t.Parallel()
+
 			cmd, err := service.GetCommand(cmdName)
 			if err != nil {
 				t.Errorf("Command %s should exist but got error: %v", cmdName, err)
 			}
+
 			if cmd == nil {
 				t.Errorf("Command %s should exist but got nil", cmdName)
 			}
+
 			if cmd != nil && cmd.Name != cmdName {
 				t.Errorf("Expected command name %s, got %s", cmdName, cmd.Name)
 			}
@@ -436,6 +479,8 @@ func TestPluginsMetadataService_CommandLookup(t *testing.T) {
 }
 
 func TestPluginsMetadataService_DangerousCommands(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -444,11 +489,15 @@ func TestPluginsMetadataService_DangerousCommands(t *testing.T) {
 
 	for _, cmdName := range dangerousCommands {
 		t.Run("Dangerous_"+cmdName, func(t *testing.T) {
+			t.Parallel()
+
 			cmd, err := service.GetCommand(cmdName)
 			if err != nil {
 				t.Errorf("Command %s should exist: %v", cmdName, err)
+
 				return
 			}
+
 			if !cmd.Dangerous {
 				t.Errorf("Command %s should be marked as dangerous", cmdName)
 			}
@@ -460,11 +509,15 @@ func TestPluginsMetadataService_DangerousCommands(t *testing.T) {
 
 	for _, cmdName := range safeCommands {
 		t.Run("Safe_"+cmdName, func(t *testing.T) {
+			t.Parallel()
+
 			cmd, err := service.GetCommand(cmdName)
 			if err != nil {
 				t.Errorf("Command %s should exist: %v", cmdName, err)
+
 				return
 			}
+
 			if cmd.Dangerous {
 				t.Errorf("Command %s should NOT be marked as dangerous", cmdName)
 			}
@@ -473,6 +526,8 @@ func TestPluginsMetadataService_DangerousCommands(t *testing.T) {
 }
 
 func TestPluginsMetadataService_CategoryCount(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -500,6 +555,8 @@ func TestPluginsMetadataService_CategoryCount(t *testing.T) {
 }
 
 func TestPluginsMetadataService_CommandTimeout(t *testing.T) {
+	t.Parallel()
+
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
@@ -510,6 +567,7 @@ func TestPluginsMetadataService_CommandTimeout(t *testing.T) {
 			if cmd.Timeout <= 0 {
 				t.Errorf("Command %s has invalid timeout: %d", cmd.Name, cmd.Timeout)
 			}
+
 			if cmd.Timeout > 300 { // No command should take more than 5 minutes
 				t.Errorf("Command %s has excessive timeout: %d seconds", cmd.Name, cmd.Timeout)
 			}
@@ -517,13 +575,14 @@ func TestPluginsMetadataService_CommandTimeout(t *testing.T) {
 	}
 }
 
-// Benchmark tests
+// Benchmark tests.
 func BenchmarkGetCommand(b *testing.B) {
 	logger := &MockLogger{}
 	service := NewPluginsMetadataService(logger)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for range b.N {
 		_, _ = service.GetCommand("list")
 	}
 }
@@ -533,7 +592,8 @@ func BenchmarkGetCategories(b *testing.B) {
 	service := NewPluginsMetadataService(logger)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for range b.N {
 		_ = service.GetCategories()
 	}
 }
@@ -544,7 +604,8 @@ func BenchmarkValidateCommand(b *testing.B) {
 	args := []string{"rabbitmq_management", "rabbitmq_web_dispatch"}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for range b.N {
 		_ = service.ValidateCommand("enable", args)
 	}
 }

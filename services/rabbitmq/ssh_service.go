@@ -1,6 +1,7 @@
 package rabbitmq
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -10,20 +11,25 @@ import (
 	"blacksmith/bosh/ssh"
 )
 
-// SSHService provides RabbitMQ-specific SSH operations
+// Static errors for err113 compliance.
+var (
+	ErrNoParserForCommand = errors.New("no parser for command")
+)
+
+// SSHService provides RabbitMQ-specific SSH operations.
 type SSHService struct {
 	sshService ssh.SSHService
 	logger     Logger
 }
 
-// Logger interface for logging
+// Logger interface for logging.
 type Logger interface {
-	Info(format string, args ...interface{})
-	Debug(format string, args ...interface{})
-	Error(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
 }
 
-// RabbitMQCommand represents a RabbitMQ management command
+// RabbitMQCommand represents a RabbitMQ management command.
 type RabbitMQCommand struct {
 	Name        string
 	Args        []string
@@ -31,7 +37,7 @@ type RabbitMQCommand struct {
 	Timeout     int // Timeout in seconds
 }
 
-// RabbitMQCommandResult represents the result of a RabbitMQ command
+// RabbitMQCommandResult represents the result of a RabbitMQ command.
 type RabbitMQCommandResult struct {
 	Success    bool        `json:"success"`
 	Command    string      `json:"command"`
@@ -43,7 +49,7 @@ type RabbitMQCommandResult struct {
 	Timestamp  time.Time   `json:"timestamp"`
 }
 
-// NewRabbitMQSSHService creates a new RabbitMQ SSH service
+// NewRabbitMQSSHService creates a new RabbitMQ SSH service.
 func NewRabbitMQSSHService(sshService ssh.SSHService, logger Logger) *SSHService {
 	if logger == nil {
 		logger = &noOpLogger{}
@@ -55,15 +61,16 @@ func NewRabbitMQSSHService(sshService ssh.SSHService, logger Logger) *SSHService
 	}
 }
 
-// ExecuteCommand executes a RabbitMQ command on a service instance
+// ExecuteCommand executes a RabbitMQ command on a service instance.
 func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd RabbitMQCommand) (*RabbitMQCommandResult, error) {
-	r.logger.Info("Executing RabbitMQ command '%s' on %s/%s/%d", cmd.Name, deployment, instance, index)
+	r.logger.Infof("Executing RabbitMQ command '%s' on %s/%s/%d", cmd.Name, deployment, instance, index)
 
 	// Check if this is a rabbitmq-plugins command (already has full command built)
 	var fullCommand []string
+
 	if strings.Contains(cmd.Name, "rabbitmq-plugins") || strings.Contains(cmd.Name, "/var/vcap/jobs/rabbitmq/env") {
 		// This is a pre-built rabbitmq-plugins command, use it directly
-		r.logger.Debug("Detected pre-built rabbitmq-plugins command, using directly")
+		r.logger.Debugf("Detected pre-built rabbitmq-plugins command, using directly")
 
 		// The command is already built with environment sourcing, wrap it with su
 		innerCommand := cmd.Name
@@ -83,7 +90,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 		Timeout:    cmd.Timeout,
 		Options: &ssh.SSHOptions{
 			BufferOutput:  true,
-			MaxOutputSize: 1024 * 1024, // 1MB max output
+			MaxOutputSize: MaxSSHOutputSize, // 1MB max output
 		},
 	}
 
@@ -92,22 +99,24 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 		sshReq.Timeout = 30
 	}
 
-	r.logger.Debug("SSH Request: %+v", sshReq)
+	r.logger.Debugf("SSH Request: %+v", sshReq)
 
 	// Execute the SSH command
 	sshResp, err := r.sshService.ExecuteCommand(sshReq)
 	if err != nil {
-		r.logger.Error("SSH command failed: %v", err)
+		r.logger.Errorf("SSH command failed: %v", err)
 
 		// Extract output from error message if it contains "output:"
 		errorMsg := err.Error()
+
 		var extractedOutput string
+
 		exitCode := 1
 
 		// Parse error message to extract output and exit code
 		if strings.Contains(errorMsg, "output:") {
-			parts := strings.SplitN(errorMsg, "output:", 2)
-			if len(parts) == 2 {
+			parts := strings.SplitN(errorMsg, "output:", ErrorOutputParts)
+			if len(parts) == ErrorOutputParts {
 				extractedOutput = strings.TrimSpace(parts[1])
 			}
 		}
@@ -154,12 +163,12 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 
 		// Include stdout if available (rabbitmq often sends errors to stdout)
 		if result.Output != "" {
-			errorParts = append(errorParts, fmt.Sprintf("Command Output:\n%s", result.Output))
+			errorParts = append(errorParts, "Command Output:\n"+result.Output)
 		}
 
 		// Include stderr if available
 		if sshResp.Stderr != "" {
-			errorParts = append(errorParts, fmt.Sprintf("Stderr:\n%s", sshResp.Stderr))
+			errorParts = append(errorParts, "Stderr:\n"+sshResp.Stderr)
 		}
 
 		// If we have any error information, combine it
@@ -177,18 +186,19 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 			if parsedData, parseErr := r.parseCommandOutput(cmd.Name, result.Output); parseErr == nil {
 				result.ParsedData = parsedData
 			} else {
-				r.logger.Debug("Failed to parse output for command %s: %v", cmd.Name, parseErr)
+				r.logger.Debugf("Failed to parse output for command %s: %v", cmd.Name, parseErr)
 			}
 		}
 	}
 
-	r.logger.Info("RabbitMQ command '%s' completed: success=%t, exitCode=%d", cmd.Name, result.Success, result.ExitCode)
+	r.logger.Infof("RabbitMQ command '%s' completed: success=%t, exitCode=%d", cmd.Name, result.Success, result.ExitCode)
+
 	return result, nil
 }
 
 // Common RabbitMQ commands
 
-// ListQueues lists all queues
+// ListQueues lists all queues.
 func (r *SSHService) ListQueues(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_queues",
@@ -196,10 +206,11 @@ func (r *SSHService) ListQueues(deployment, instance string, index int) (*Rabbit
 		Description: "List all queues with messages and consumers",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
-// ListConnections lists all connections
+// ListConnections lists all connections.
 func (r *SSHService) ListConnections(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_connections",
@@ -207,10 +218,11 @@ func (r *SSHService) ListConnections(deployment, instance string, index int) (*R
 		Description: "List all connections",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
-// ListChannels lists all channels
+// ListChannels lists all channels.
 func (r *SSHService) ListChannels(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_channels",
@@ -218,10 +230,11 @@ func (r *SSHService) ListChannels(deployment, instance string, index int) (*Rabb
 		Description: "List all channels",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
-// ListUsers lists all users
+// ListUsers lists all users.
 func (r *SSHService) ListUsers(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_users",
@@ -229,10 +242,11 @@ func (r *SSHService) ListUsers(deployment, instance string, index int) (*RabbitM
 		Description: "List all users",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
-// ClusterStatus gets cluster status
+// ClusterStatus gets cluster status.
 func (r *SSHService) ClusterStatus(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "cluster_status",
@@ -240,10 +254,11 @@ func (r *SSHService) ClusterStatus(deployment, instance string, index int) (*Rab
 		Description: "Get cluster status",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
-// NodeHealth checks node health
+// NodeHealth checks node health.
 func (r *SSHService) NodeHealth(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "node_health_check",
@@ -251,10 +266,11 @@ func (r *SSHService) NodeHealth(deployment, instance string, index int) (*Rabbit
 		Description: "Check node health",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
-// Status gets overall status
+// Status gets overall status.
 func (r *SSHService) Status(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "status",
@@ -262,10 +278,11 @@ func (r *SSHService) Status(deployment, instance string, index int) (*RabbitMQCo
 		Description: "Get RabbitMQ status",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
-// Environment gets environment information
+// Environment gets environment information.
 func (r *SSHService) Environment(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "environment",
@@ -273,18 +290,20 @@ func (r *SSHService) Environment(deployment, instance string, index int) (*Rabbi
 		Description: "Get RabbitMQ environment",
 		Timeout:     30,
 	}
+
 	return r.ExecuteCommand(deployment, instance, index, cmd)
 }
 
 // Helper methods
 
-// buildRabbitMQCtlCommand builds the full rabbitmqctl command with arguments
+// buildRabbitMQCtlCommand builds the full rabbitmqctl command with arguments.
 func (r *SSHService) buildRabbitMQCtlCommand(cmd RabbitMQCommand) []string {
 	// Build the rabbitmqctl command with environment sourcing
 	// Must run as user vcap and use --longnames option before the command
 
 	// Build rabbitmqctl command parts
 	var cmdParts []string
+
 	cmdParts = append(cmdParts, "source /var/vcap/jobs/rabbitmq/env &&")
 	cmdParts = append(cmdParts, "rabbitmqctl")
 	cmdParts = append(cmdParts, "--longnames")
@@ -297,13 +316,14 @@ func (r *SSHService) buildRabbitMQCtlCommand(cmd RabbitMQCommand) []string {
 	// Wrap with su - vcap -c to run as vcap user
 	fullCmd := []string{"/bin/sudo", "su", "-", "vcap", "-c", innerCommand}
 
-	r.logger.Debug("Built RabbitMQ command: %v", fullCmd)
+	r.logger.Debugf("Built RabbitMQ command: %v", fullCmd)
+
 	return fullCmd
 }
 
-// parseCommandOutput parses the output of rabbitmqctl commands into structured data
+// parseCommandOutput parses the output of rabbitmqctl commands into structured data.
 func (r *SSHService) parseCommandOutput(commandName, output string) (interface{}, error) {
-	r.logger.Debug("Parsing output for command: %s", commandName)
+	r.logger.Debugf("Parsing output for command: %s", commandName)
 
 	switch commandName {
 	case "list_queues":
@@ -323,12 +343,13 @@ func (r *SSHService) parseCommandOutput(commandName, output string) (interface{}
 	case "environment":
 		return r.parseEnvironment(output)
 	default:
-		r.logger.Debug("No parser available for command: %s", commandName)
-		return nil, fmt.Errorf("no parser for command: %s", commandName)
+		r.logger.Debugf("No parser available for command: %s", commandName)
+
+		return nil, fmt.Errorf("%w: %s", ErrNoParserForCommand, commandName)
 	}
 }
 
-// parseListQueues parses the output of list_queues command
+// parseListQueues parses the output of list_queues command.
 func (r *SSHService) parseListQueues(output string) (interface{}, error) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) == 0 {
@@ -344,7 +365,7 @@ func (r *SSHService) parseListQueues(output string) (interface{}, error) {
 
 		// Split by tabs (rabbitmqctl uses tabs as separators)
 		fields := strings.Split(line, "\t")
-		if len(fields) >= 4 {
+		if len(fields) >= MinFieldsForQueue {
 			queue := map[string]interface{}{
 				"name":      strings.TrimSpace(fields[0]),
 				"messages":  r.parseIntSafe(strings.TrimSpace(fields[1])),
@@ -361,7 +382,7 @@ func (r *SSHService) parseListQueues(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseListConnections parses the output of list_connections command
+// parseListConnections parses the output of list_connections command.
 func (r *SSHService) parseListConnections(output string) (interface{}, error) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) == 0 {
@@ -376,7 +397,7 @@ func (r *SSHService) parseListConnections(output string) (interface{}, error) {
 		}
 
 		fields := strings.Split(line, "\t")
-		if len(fields) >= 4 {
+		if len(fields) >= MinFieldsForQueue {
 			connection := map[string]interface{}{
 				"name":     strings.TrimSpace(fields[0]),
 				"state":    strings.TrimSpace(fields[1]),
@@ -393,7 +414,7 @@ func (r *SSHService) parseListConnections(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseListChannels parses the output of list_channels command
+// parseListChannels parses the output of list_channels command.
 func (r *SSHService) parseListChannels(output string) (interface{}, error) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) == 0 {
@@ -408,7 +429,7 @@ func (r *SSHService) parseListChannels(output string) (interface{}, error) {
 		}
 
 		fields := strings.Split(line, "\t")
-		if len(fields) >= 4 {
+		if len(fields) >= MinFieldsForQueue {
 			channel := map[string]interface{}{
 				"name":           strings.TrimSpace(fields[0]),
 				"connection":     strings.TrimSpace(fields[1]),
@@ -425,7 +446,7 @@ func (r *SSHService) parseListChannels(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseListUsers parses the output of list_users command
+// parseListUsers parses the output of list_users command.
 func (r *SSHService) parseListUsers(output string) (interface{}, error) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) == 0 {
@@ -440,14 +461,15 @@ func (r *SSHService) parseListUsers(output string) (interface{}, error) {
 		}
 
 		// Users output format: username tags
-		fields := strings.SplitN(line, "\t", 2)
+		fields := strings.SplitN(line, "\t", TabSeparatorParts)
 		if len(fields) >= 1 {
 			user := map[string]interface{}{
 				"username": strings.TrimSpace(fields[0]),
 			}
-			if len(fields) >= 2 {
+			if len(fields) >= TabSeparatorParts {
 				user["tags"] = strings.TrimSpace(fields[1])
 			}
+
 			users = append(users, user)
 		}
 	}
@@ -458,7 +480,7 @@ func (r *SSHService) parseListUsers(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseClusterStatus parses the output of cluster_status command
+// parseClusterStatus parses the output of cluster_status command.
 func (r *SSHService) parseClusterStatus(output string) (interface{}, error) {
 	// Cluster status output is complex and varies by version
 	// For now, return the raw output
@@ -468,7 +490,7 @@ func (r *SSHService) parseClusterStatus(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseStatus parses the output of status command
+// parseStatus parses the output of status command.
 func (r *SSHService) parseStatus(output string) (interface{}, error) {
 	// Status output is complex and varies by version
 	// For now, return the raw output
@@ -478,7 +500,7 @@ func (r *SSHService) parseStatus(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseNodeHealth parses the output of node_health_check command
+// parseNodeHealth parses the output of node_health_check command.
 func (r *SSHService) parseNodeHealth(output string) (interface{}, error) {
 	// Health check typically returns simple status
 	isHealthy := strings.Contains(strings.ToLower(output), "health check passed") ||
@@ -491,7 +513,7 @@ func (r *SSHService) parseNodeHealth(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseEnvironment parses the output of environment command
+// parseEnvironment parses the output of environment command.
 func (r *SSHService) parseEnvironment(output string) (interface{}, error) {
 	// Environment output is complex and varies by version
 	// For now, return the raw output
@@ -501,17 +523,18 @@ func (r *SSHService) parseEnvironment(output string) (interface{}, error) {
 	}, nil
 }
 
-// parseIntSafe safely parses an integer from a string, returning 0 if parsing fails
+// parseIntSafe safely parses an integer from a string, returning 0 if parsing fails.
 func (r *SSHService) parseIntSafe(s string) int {
 	if i, err := strconv.Atoi(s); err == nil {
 		return i
 	}
+
 	return 0
 }
 
-// noOpLogger is a no-operation logger implementation
+// noOpLogger is a no-operation logger implementation.
 type noOpLogger struct{}
 
-func (l *noOpLogger) Info(format string, args ...interface{})  {}
-func (l *noOpLogger) Debug(format string, args ...interface{}) {}
-func (l *noOpLogger) Error(format string, args ...interface{}) {}
+func (l *noOpLogger) Infof(format string, args ...interface{})  {}
+func (l *noOpLogger) Debugf(format string, args ...interface{}) {}
+func (l *noOpLogger) Errorf(format string, args ...interface{}) {}

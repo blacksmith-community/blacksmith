@@ -1,12 +1,20 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"time"
 
 	"blacksmith/bosh"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+)
+
+// Static errors for test err113 compliance.
+var (
+	ErrBOSHConnectionFailed  = errors.New("BOSH connection failed")
+	ErrUnsupportedOutputType = errors.New("unsupported output type")
+	ErrUnsupportedDataType   = errors.New("unsupported data type")
 )
 
 var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomplete", func() {
@@ -70,7 +78,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 			})
 
 			It("should successfully reconstruct static credentials", func() {
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(credentials).ToNot(BeNil())
 				Expect(credentials.CredentialType).To(Equal("static"))
@@ -79,7 +87,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 
 			It("should include reconstructed timestamp", func() {
 				before := time.Now()
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				after := time.Now()
 
 				Expect(err).ToNot(HaveOccurred())
@@ -92,7 +100,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 
 		Context("when instance data is missing", func() {
 			It("should return an error", func() {
-				credentials, err := broker.GetBindingCredentials("nonexistent-instance", bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), "nonexistent-instance", bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
 				Expect(err.Error()).To(ContainSubstring("failed to get service/plan info"))
@@ -108,7 +116,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 			})
 
 			It("should return an error", func() {
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
 				Expect(err.Error()).To(ContainSubstring("failed to find plan"))
@@ -151,7 +159,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 		})
 
 		It("should create dynamic RabbitMQ credentials", func() {
-			credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+			credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(credentials).ToNot(BeNil())
 			Expect(credentials.CredentialType).To(Equal("dynamic"))
@@ -162,14 +170,14 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 		})
 
 		It("should preserve host and port information", func() {
-			credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+			credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(credentials.Host).To(Equal("rabbitmq.example.com"))
 			Expect(credentials.Port).To(Equal(5672))
 		})
 
 		It("should not include admin credentials in response", func() {
-			credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+			credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(credentials.Raw).ToNot(HaveKey("admin_username"))
 			Expect(credentials.Raw).ToNot(HaveKey("admin_password"))
@@ -207,7 +215,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 		})
 
 		It("should populate all structured fields correctly", func() {
-			credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+			credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(credentials.Host).To(Equal("db.example.com"))
 			Expect(credentials.Port).To(Equal(5432))
@@ -219,7 +227,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 		})
 
 		It("should preserve raw credentials", func() {
-			credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+			credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(credentials.Raw).To(HaveKey("host"))
 			Expect(credentials.Raw).To(HaveKey("port"))
@@ -236,11 +244,11 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 					"plan_id":    testPlanID,
 				})
 
-				mockBOSH.SetError(errors.New("BOSH connection failed"))
+				mockBOSH.SetError(ErrBOSHConnectionFailed)
 			})
 
 			It("should return an error", func() {
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
 				Expect(err.Error()).To(ContainSubstring("failed to get base credentials"))
@@ -260,7 +268,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 			})
 
 			It("should return an error", func() {
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
 				Expect(err.Error()).To(ContainSubstring("credentials not in expected format"))
@@ -293,7 +301,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 			})
 
 			It("should fallback to root instance path", func() {
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(credentials).ToNot(BeNil())
 				Expect(credentials.Host).To(Equal("fallback.example.com"))
@@ -336,21 +344,24 @@ func (mv *MockVault) Get(path string, out interface{}) (bool, error) {
 
 	if outMap, ok := out.(*map[string]interface{}); ok {
 		*outMap = data
+
 		return true, nil
 	}
 
-	return false, errors.New("unsupported output type")
+	return false, ErrUnsupportedOutputType
 }
 
 func (mv *MockVault) Put(path string, data interface{}) error {
 	if dataMap, ok := data.(map[string]interface{}); ok {
 		mv.data[path] = dataMap
+
 		return nil
 	}
-	return errors.New("unsupported data type")
+
+	return ErrUnsupportedDataType
 }
 
-// Implement other required Vault methods as no-ops for testing
+// Implement other required Vault methods as no-ops for testing.
 func (mv *MockVault) Index(instanceID string, data map[string]interface{}) error { return nil }
 func (mv *MockVault) GetIndex(name string) (interface{}, error)                  { return nil, nil }
 func (mv *MockVault) TrackProgress(instanceID, operation, message string, taskID int, params map[interface{}]interface{}) error {
@@ -394,7 +405,7 @@ func (mb *MockBOSHDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, erro
 	return vms, nil
 }
 
-// Implement other required BOSH Director methods as no-ops for testing
+// Implement other required BOSH Director methods as no-ops for testing.
 func (mb *MockBOSHDirector) GetInfo() (*bosh.Info, error)           { return nil, nil }
 func (mb *MockBOSHDirector) GetTask(taskID int) (*bosh.Task, error) { return nil, nil }
 func (mb *MockBOSHDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
@@ -411,7 +422,7 @@ func (mb *MockBOSHDirector) GetEvents(deployment string) ([]bosh.Event, error) {
 	return nil, nil
 }
 
-// Additional methods to implement bosh.Director interface
+// Additional methods to implement bosh.Director interface.
 func (mb *MockBOSHDirector) GetReleases() ([]bosh.Release, error)                 { return nil, nil }
 func (mb *MockBOSHDirector) UploadRelease(url, sha1 string) (*bosh.Task, error)   { return nil, nil }
 func (mb *MockBOSHDirector) GetStemcells() ([]bosh.Stemcell, error)               { return nil, nil }
@@ -434,7 +445,7 @@ func (mb *MockBOSHDirector) SSHSession(deployment, instance string, index int, o
 func (mb *MockBOSHDirector) EnableResurrection(deployment string, enabled bool) error { return nil }
 func (mb *MockBOSHDirector) DeleteResurrectionConfig(deployment string) error         { return nil }
 
-// New task methods added for Tasks feature
+// New task methods added for Tasks feature.
 func (mb *MockBOSHDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, nil
 }

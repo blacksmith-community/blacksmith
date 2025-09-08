@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"blacksmith/bosh"
@@ -9,6 +11,13 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+)
+
+// Static errors for integration test err113 compliance.
+var (
+	ErrIntegrationTestError       = errors.New("integration test error")
+	ErrIntegrationUnsupportedType = errors.New("unsupported output type")
+	ErrIntegrationDataType        = errors.New("unsupported data type")
 )
 
 var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructure incomplete", func() {
@@ -126,6 +135,7 @@ var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructur
 				// Step 4: Verify credentials were reconstructed and stored
 				Eventually(func() bool {
 					storedCreds := mockVault.GetData(instanceID + "/bindings/" + bindingID + "/credentials")
+
 					return len(storedCreds) > 0
 				}, "5s", "100ms").Should(BeTrue())
 
@@ -225,7 +235,7 @@ var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructur
 
 			It("should create dynamic RabbitMQ credentials with binding-specific username", func() {
 				// Test the broker's GetBindingCredentials directly for RabbitMQ
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(credentials).ToNot(BeNil())
 
@@ -262,7 +272,7 @@ var _ = XDescribe("Binding Credentials Integration - SKIPPED: Mock infrastructur
 			})
 
 			It("should handle missing deployment gracefully", func() {
-				credentials, err := broker.GetBindingCredentials(instanceID, bindingID)
+				credentials, err := broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
 				Expect(err.Error()).To(ContainSubstring("failed to get base credentials"))
@@ -401,7 +411,7 @@ func (imv *IntegrationMockVault) SetError(path, errorMsg string) {
 
 func (imv *IntegrationMockVault) Get(path string, out interface{}) (bool, error) {
 	if errorMsg, exists := imv.errors[path]; exists {
-		return false, errors.New(errorMsg)
+		return false, fmt.Errorf("%w: %s", ErrIntegrationTestError, errorMsg)
 	}
 
 	data, exists := imv.data[path]
@@ -411,21 +421,24 @@ func (imv *IntegrationMockVault) Get(path string, out interface{}) (bool, error)
 
 	if outMap, ok := out.(*map[string]interface{}); ok {
 		*outMap = data
+
 		return true, nil
 	}
 
-	return false, errors.New("unsupported output type")
+	return false, ErrIntegrationUnsupportedType
 }
 
 func (imv *IntegrationMockVault) Put(path string, data interface{}) error {
 	if dataMap, ok := data.(map[string]interface{}); ok {
 		imv.data[path] = dataMap
+
 		return nil
 	}
-	return errors.New("unsupported data type")
+
+	return ErrIntegrationDataType
 }
 
-// Implement other Vault interface methods
+// Implement other Vault interface methods.
 func (imv *IntegrationMockVault) Index(instanceID string, data map[string]interface{}) error {
 	return nil
 }
@@ -456,7 +469,7 @@ func (imb *IntegrationMockBOSH) SetError(operation, errorMsg string) {
 
 func (imb *IntegrationMockBOSH) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
 	if errorMsg, exists := imb.errors["GetDeploymentVMs"]; exists {
-		return nil, errors.New(errorMsg)
+		return nil, fmt.Errorf("%w: %s", ErrIntegrationTestError, errorMsg)
 	}
 
 	vms, exists := imb.vms[deployment]
@@ -467,7 +480,7 @@ func (imb *IntegrationMockBOSH) GetDeploymentVMs(deployment string) ([]bosh.VM, 
 	return vms, nil
 }
 
-// Implement other BOSH interface methods
+// Implement other BOSH interface methods.
 func (imb *IntegrationMockBOSH) GetInfo() (*bosh.Info, error)           { return nil, nil }
 func (imb *IntegrationMockBOSH) GetTask(taskID int) (*bosh.Task, error) { return nil, nil }
 func (imb *IntegrationMockBOSH) CreateDeployment(manifest string) (*bosh.Task, error) {
@@ -484,7 +497,7 @@ func (imb *IntegrationMockBOSH) GetEvents(deployment string) ([]bosh.Event, erro
 	return nil, nil
 }
 
-// Additional methods to implement bosh.Director interface
+// Additional methods to implement bosh.Director interface.
 func (imb *IntegrationMockBOSH) GetReleases() ([]bosh.Release, error)                 { return nil, nil }
 func (imb *IntegrationMockBOSH) UploadRelease(url, sha1 string) (*bosh.Task, error)   { return nil, nil }
 func (imb *IntegrationMockBOSH) GetStemcells() ([]bosh.Stemcell, error)               { return nil, nil }
@@ -509,7 +522,7 @@ func (imb *IntegrationMockBOSH) GetConfig(configType, configName string) (interf
 func (imb *IntegrationMockBOSH) EnableResurrection(deployment string, enabled bool) error { return nil }
 func (imb *IntegrationMockBOSH) DeleteResurrectionConfig(deployment string) error         { return nil }
 
-// New task methods added for Tasks feature
+// New task methods added for Tasks feature.
 func (imb *IntegrationMockBOSH) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, nil
 }
@@ -532,10 +545,10 @@ func (imb *IntegrationMockBOSH) ComputeConfigDiff(fromID, toID string) (*bosh.Co
 	return nil, nil
 }
 
-// IntegrationMockLogger implements reconciler.Logger interface for testing
+// IntegrationMockLogger implements reconciler.Logger interface for testing.
 type IntegrationMockLogger struct{}
 
-func (ml *IntegrationMockLogger) Debug(format string, args ...interface{})   {}
-func (ml *IntegrationMockLogger) Info(format string, args ...interface{})    {}
-func (ml *IntegrationMockLogger) Error(format string, args ...interface{})   {}
-func (ml *IntegrationMockLogger) Warning(format string, args ...interface{}) {}
+func (ml *IntegrationMockLogger) Debugf(format string, args ...interface{})   {}
+func (ml *IntegrationMockLogger) Infof(format string, args ...interface{})    {}
+func (ml *IntegrationMockLogger) Errorf(format string, args ...interface{})   {}
+func (ml *IntegrationMockLogger) Warningf(format string, args ...interface{}) {}

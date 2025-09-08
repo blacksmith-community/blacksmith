@@ -2,7 +2,9 @@ package cf
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -10,7 +12,14 @@ import (
 	"time"
 )
 
-// AuthInfo represents CF authentication information
+// Static errors for err113 compliance.
+var (
+	ErrCFInfoRequestFailed  = errors.New("CF info request failed with status")
+	ErrAuthenticationFailed = errors.New("authentication failed")
+	ErrCFAPIReturnedError   = errors.New("CF API returned error status")
+)
+
+// AuthInfo represents CF authentication information.
 type AuthInfo struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type"`
@@ -21,7 +30,7 @@ type AuthInfo struct {
 	ExpiresAt    time.Time `json:"-"`
 }
 
-// CFAuthClient handles Cloud Foundry authentication
+// CFAuthClient handles Cloud Foundry authentication.
 type CFAuthClient struct {
 	APIURL     string
 	Username   string
@@ -30,30 +39,40 @@ type CFAuthClient struct {
 	authInfo   *AuthInfo
 }
 
-// NewCFAuthClient creates a new CF authentication client
+// NewCFAuthClient creates a new CF authentication client.
 func NewCFAuthClient(apiURL, username, password string) *CFAuthClient {
 	return &CFAuthClient{
 		APIURL:   strings.TrimSuffix(apiURL, "/"),
 		Username: username,
 		Password: password,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: DefaultHTTPTimeout,
 		},
 	}
 }
 
-// Authenticate performs CF authentication and obtains access token
+// Authenticate performs CF authentication and obtains access token.
 func (c *CFAuthClient) Authenticate() error {
 	// First, get the authorization endpoint from CF info
-	infoURL := fmt.Sprintf("%s/v2/info", c.APIURL)
-	resp, err := c.httpClient.Get(infoURL)
+	infoURL := c.APIURL + "/v2/info"
+
+	ctx, cancel := context.WithTimeout(context.Background(), AuthContextTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create CF info request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to get CF info: %w", err)
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("CF info request failed with status: %d", resp.StatusCode)
+		return fmt.Errorf("%w: %d", ErrCFInfoRequestFailed, resp.StatusCode)
 	}
 
 	var info struct {
@@ -61,19 +80,24 @@ func (c *CFAuthClient) Authenticate() error {
 		TokenEndpoint         string `json:"token_endpoint"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&info)
+	if err != nil {
 		return fmt.Errorf("failed to decode CF info response: %w", err)
 	}
 
 	// Authenticate with the token endpoint
-	tokenURL := fmt.Sprintf("%s/oauth/token", strings.TrimSuffix(info.TokenEndpoint, "/"))
+	tokenURL := strings.TrimSuffix(info.TokenEndpoint, "/") + "/oauth/token"
 
 	data := url.Values{}
 	data.Set("grant_type", "password")
 	data.Set("username", c.Username)
 	data.Set("password", c.Password)
 
-	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
+	const authTimeoutSeconds = 30
+	ctx2, cancel2 := context.WithTimeout(context.Background(), authTimeoutSeconds*time.Second)
+	defer cancel2()
+
+	req, err = http.NewRequestWithContext(ctx2, http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return fmt.Errorf("failed to create auth request: %w", err)
 	}
@@ -86,6 +110,7 @@ func (c *CFAuthClient) Authenticate() error {
 	if err != nil {
 		return fmt.Errorf("failed to authenticate: %w", err)
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
@@ -93,14 +118,19 @@ func (c *CFAuthClient) Authenticate() error {
 			Error            string `json:"error"`
 			ErrorDescription string `json:"error_description"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+
+		err := json.NewDecoder(resp.Body).Decode(&errorResp)
+		if err != nil {
 			return fmt.Errorf("authentication failed (%d): failed to decode error response: %w", resp.StatusCode, err)
 		}
-		return fmt.Errorf("authentication failed (%d): %s - %s", resp.StatusCode, errorResp.Error, errorResp.ErrorDescription)
+
+		return fmt.Errorf("%w (%d): %s - %s", ErrAuthenticationFailed, resp.StatusCode, errorResp.Error, errorResp.ErrorDescription)
 	}
 
 	var authInfo AuthInfo
-	if err := json.NewDecoder(resp.Body).Decode(&authInfo); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&authInfo)
+	if err != nil {
 		return fmt.Errorf("failed to decode auth response: %w", err)
 	}
 
@@ -111,33 +141,45 @@ func (c *CFAuthClient) Authenticate() error {
 	return nil
 }
 
-// GetAuthToken returns a valid access token, refreshing if necessary
+// GetAuthToken returns a valid access token, refreshing if necessary.
 func (c *CFAuthClient) GetAuthToken() (string, error) {
 	if c.authInfo == nil || time.Now().After(c.authInfo.ExpiresAt.Add(-5*time.Minute)) {
-		if err := c.Authenticate(); err != nil {
+		err := c.Authenticate()
+		if err != nil {
 			return "", err
 		}
 	}
+
 	return fmt.Sprintf("%s %s", c.authInfo.TokenType, c.authInfo.AccessToken), nil
 }
 
-// IsAuthenticated checks if the client has valid authentication
+// IsAuthenticated checks if the client has valid authentication.
 func (c *CFAuthClient) IsAuthenticated() bool {
 	return c.authInfo != nil && time.Now().Before(c.authInfo.ExpiresAt.Add(-5*time.Minute))
 }
 
-// TestConnection tests the CF connection and authentication
+// TestConnection tests the CF connection and authentication.
 func (c *CFAuthClient) TestConnection() (*CFInfo, error) {
 	// Test basic connectivity to CF API
-	infoURL := fmt.Sprintf("%s/v2/info", c.APIURL)
-	resp, err := c.httpClient.Get(infoURL)
+	infoURL := c.APIURL + "/v2/info"
+
+	ctx, cancel := context.WithTimeout(context.Background(), AuthContextTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, infoURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CF info request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to CF API: %w", err)
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("CF API returned status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: %d", ErrCFAPIReturnedError, resp.StatusCode)
 	}
 
 	var rawInfo struct {
@@ -147,12 +189,14 @@ func (c *CFAuthClient) TestConnection() (*CFInfo, error) {
 		Build       string `json:"build"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&rawInfo); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&rawInfo)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode CF info: %w", err)
 	}
 
 	// Test authentication
-	if err := c.Authenticate(); err != nil {
+	err = c.Authenticate()
+	if err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
@@ -166,7 +210,7 @@ func (c *CFAuthClient) TestConnection() (*CFInfo, error) {
 	return cfInfo, nil
 }
 
-// MakeAuthenticatedRequest makes an authenticated request to CF API
+// MakeAuthenticatedRequest makes an authenticated request to CF API.
 func (c *CFAuthClient) MakeAuthenticatedRequest(method, path string, body interface{}) (*http.Response, error) {
 	token, err := c.GetAuthToken()
 	if err != nil {
@@ -182,7 +226,11 @@ func (c *CFAuthClient) MakeAuthenticatedRequest(method, path string, body interf
 	}
 
 	url := fmt.Sprintf("%s%s", c.APIURL, path)
-	req, err := http.NewRequest(method, url, bytes.NewReader(reqBody))
+
+	ctx, cancel := context.WithTimeout(context.Background(), AuthContextTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

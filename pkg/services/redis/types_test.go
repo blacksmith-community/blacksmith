@@ -1,12 +1,15 @@
-package redis
+package redis_test
 
 import (
 	"testing"
 
 	"blacksmith/pkg/services/common"
+	. "blacksmith/pkg/services/redis"
 )
 
 func TestNewCredentials(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		vaultData   common.Credentials
@@ -88,26 +91,32 @@ func TestNewCredentials(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			result, err := NewCredentials(test.vaultData)
 
 			if test.expectError {
 				if err == nil {
 					t.Errorf("Expected error but got none")
 				}
+
 				return
 			}
 
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
+
 				return
 			}
 
 			if result.Host != test.expected.Host {
 				t.Errorf("Host = %s, expected %s", result.Host, test.expected.Host)
 			}
+
 			if result.Port != test.expected.Port {
 				t.Errorf("Port = %d, expected %d", result.Port, test.expected.Port)
 			}
+
 			if result.Password != test.expected.Password {
 				t.Errorf("Password = %s, expected %s", result.Password, test.expected.Password)
 			}

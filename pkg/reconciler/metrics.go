@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// metricsCollector collects metrics for the reconciler
+// metricsCollector collects metrics for the reconciler.
 type metricsCollector struct {
 	mu sync.RWMutex
 
@@ -28,6 +28,9 @@ type metricsCollector struct {
 	// Error tracking
 	recentErrors []errorEntry
 	maxErrors    int
+
+	// Logger
+	logger Logger
 }
 
 type errorEntry struct {
@@ -36,25 +39,40 @@ type errorEntry struct {
 	Context   string
 }
 
-// NewMetricsCollector creates a new metrics collector
-func NewMetricsCollector() MetricsCollector {
+// NewMetricsCollector creates a new metrics collector.
+func NewMetricsCollector(logger Logger) *metricsCollector {
+	if logger == nil {
+		logger = &noOpLogger{}
+	}
+
 	return &metricsCollector{
-		durations:    make([]time.Duration, 0, 100),
-		recentErrors: make([]errorEntry, 0, 50),
-		maxErrors:    50,
+		mu:                   sync.RWMutex{},
+		totalRuns:            0,
+		successfulRuns:       0,
+		failedRuns:           0,
+		totalDeployments:     0,
+		totalInstancesFound:  0,
+		totalInstancesSynced: 0,
+		totalErrors:          0,
+		durations:            make([]time.Duration, 0, MetricsDurationBufferSize),
+		lastRunDuration:      0,
+		lastRunStartTime:     time.Time{},
+		recentErrors:         make([]errorEntry, 0, MetricsErrorBufferSize),
+		maxErrors:            maxErrorsBuffer,
+		logger:               logger,
 	}
 }
 
-// ReconciliationStarted marks the start of a reconciliation run
+// ReconciliationStarted marks the start of a reconciliation run.
 func (m *metricsCollector) ReconciliationStarted() {
 	atomic.AddInt64(&m.totalRuns, 1)
 	m.mu.Lock()
 	m.lastRunStartTime = time.Now()
 	m.mu.Unlock()
-	m.logDebug("Reconciliation run %d started", atomic.LoadInt64(&m.totalRuns))
+	m.logger.Debugf("Reconciliation run %d started", atomic.LoadInt64(&m.totalRuns))
 }
 
-// ReconciliationCompleted marks the completion of a reconciliation run
+// ReconciliationCompleted marks the completion of a reconciliation run.
 func (m *metricsCollector) ReconciliationCompleted(duration time.Duration) {
 	atomic.AddInt64(&m.successfulRuns, 1)
 
@@ -63,15 +81,16 @@ func (m *metricsCollector) ReconciliationCompleted(duration time.Duration) {
 	m.durations = append(m.durations, duration)
 
 	// Keep only last 100 durations for average calculation
-	if len(m.durations) > 100 {
+	if len(m.durations) > MaxMetricsDurations {
 		m.durations = m.durations[len(m.durations)-100:]
 	}
+
 	m.mu.Unlock()
 
-	m.logDebug("Reconciliation run completed in %v", duration)
+	m.logger.Debugf("Reconciliation run completed in %v", duration)
 }
 
-// ReconciliationError records a reconciliation error
+// ReconciliationError records a reconciliation error.
 func (m *metricsCollector) ReconciliationError(err error) {
 	atomic.AddInt64(&m.failedRuns, 1)
 	atomic.AddInt64(&m.totalErrors, 1)
@@ -87,42 +106,43 @@ func (m *metricsCollector) ReconciliationError(err error) {
 	if len(m.recentErrors) > m.maxErrors {
 		m.recentErrors = m.recentErrors[len(m.recentErrors)-m.maxErrors:]
 	}
+
 	m.mu.Unlock()
 
-	m.logError("Reconciliation error: %s", err)
+	m.logger.Errorf("Reconciliation error: %s", err)
 }
 
-// ReconciliationSkipped records when a reconciliation is skipped
+// ReconciliationSkipped records when a reconciliation is skipped.
 func (m *metricsCollector) ReconciliationSkipped() {
-	m.logDebug("Reconciliation skipped")
+	m.logger.Debugf("Reconciliation skipped")
 }
 
-// DeploymentsScanned records the number of deployments scanned
+// DeploymentsScanned records the number of deployments scanned.
 func (m *metricsCollector) DeploymentsScanned(count int) {
 	atomic.AddInt64(&m.totalDeployments, int64(count))
-	m.logDebug("Scanned %d deployments", count)
+	m.logger.Debugf("Scanned %d deployments", count)
 }
 
-// InstancesMatched records the number of instances matched
+// InstancesMatched records the number of instances matched.
 func (m *metricsCollector) InstancesMatched(count int) {
 	atomic.AddInt64(&m.totalInstancesFound, int64(count))
-	m.logDebug("Matched %d instances", count)
+	m.logger.Debugf("Matched %d instances", count)
 }
 
-// InstancesUpdated records the number of instances updated
+// InstancesUpdated records the number of instances updated.
 func (m *metricsCollector) InstancesUpdated(count int) {
 	atomic.AddInt64(&m.totalInstancesSynced, int64(count))
-	m.logDebug("Updated %d instances", count)
+	m.logger.Debugf("Updated %d instances", count)
 }
 
-// Collect collects metrics (implementation required by interface)
+// Collect collects metrics (implementation required by interface).
 func (m *metricsCollector) Collect() {
 	// This method can be used to push metrics to external systems
 	// For now, it's a no-op as metrics are collected in real-time
-	m.logDebug("Metrics collection triggered")
+	m.logger.Debugf("Metrics collection triggered")
 }
 
-// GetMetrics returns the current metrics
+// GetMetrics returns the current metrics.
 func (m *metricsCollector) GetMetrics() Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -138,7 +158,7 @@ func (m *metricsCollector) GetMetrics() Metrics {
 	}
 }
 
-// GetRecentErrors returns recent errors
+// GetRecentErrors returns recent errors.
 func (m *metricsCollector) GetRecentErrors() []errorEntry {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -146,10 +166,11 @@ func (m *metricsCollector) GetRecentErrors() []errorEntry {
 	// Return a copy to avoid race conditions
 	errors := make([]errorEntry, len(m.recentErrors))
 	copy(errors, m.recentErrors)
+
 	return errors
 }
 
-// Reset resets all metrics
+// Reset resets all metrics.
 func (m *metricsCollector) Reset() {
 	atomic.StoreInt64(&m.totalRuns, 0)
 	atomic.StoreInt64(&m.successfulRuns, 0)
@@ -160,21 +181,21 @@ func (m *metricsCollector) Reset() {
 	atomic.StoreInt64(&m.totalErrors, 0)
 
 	m.mu.Lock()
-	m.durations = make([]time.Duration, 0, 100)
+	m.durations = make([]time.Duration, 0, defaultDurationsBuffer)
 	m.lastRunDuration = 0
 	m.recentErrors = make([]errorEntry, 0, m.maxErrors)
 	m.mu.Unlock()
 
-	m.logInfo("Metrics reset")
+	m.logger.Infof("Metrics reset")
 }
 
-// String returns a string representation of the metrics
+// String returns a string representation of the metrics.
 func (m *metricsCollector) String() string {
 	metrics := m.GetMetrics()
 
 	successRate := float64(0)
 	if metrics.ReconciliationRuns > 0 {
-		successRate = float64(metrics.ReconciliationRuns-metrics.ReconciliationFailures) / float64(metrics.ReconciliationRuns) * 100
+		successRate = float64(metrics.ReconciliationRuns-metrics.ReconciliationFailures) / float64(metrics.ReconciliationRuns) * compressionRatioPercent
 	}
 
 	return fmt.Sprintf(
@@ -197,7 +218,7 @@ func (m *metricsCollector) String() string {
 	)
 }
 
-// PrometheusMetrics returns metrics in Prometheus format (for future use)
+// PrometheusMetrics returns metrics in Prometheus format (for future use).
 func (m *metricsCollector) PrometheusMetrics() string {
 	metrics := m.GetMetrics()
 
@@ -244,20 +265,10 @@ func (m *metricsCollector) PrometheusMetrics() string {
 	)
 }
 
-// Logging helper methods - these will be replaced with actual logger calls
-func (m *metricsCollector) logDebug(format string, args ...interface{}) {
-	// Will be replaced with actual logger call
-	if false { // Debug disabled by default
-		fmt.Printf("[DEBUG] metrics: "+format+"\n", args...)
-	}
-}
+// noOpLogger is a no-operation logger implementation.
+type noOpLogger struct{}
 
-func (m *metricsCollector) logInfo(format string, args ...interface{}) {
-	// Will be replaced with actual logger call
-	fmt.Printf("[INFO] metrics: "+format+"\n", args...)
-}
-
-func (m *metricsCollector) logError(format string, args ...interface{}) {
-	// Will be replaced with actual logger call
-	fmt.Printf("[ERROR] metrics: "+format+"\n", args...)
-}
+func (l *noOpLogger) Debugf(format string, args ...interface{})   {}
+func (l *noOpLogger) Infof(format string, args ...interface{})    {}
+func (l *noOpLogger) Warningf(format string, args ...interface{}) {}
+func (l *noOpLogger) Errorf(format string, args ...interface{})   {}

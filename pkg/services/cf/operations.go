@@ -1,13 +1,23 @@
 package cf
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"blacksmith/pkg/services/common"
 )
 
-// Handler provides CF registration operations
+// Static errors for err113 compliance.
+var (
+	ErrRegistrationNameRequired = errors.New("registration name is required")
+	ErrCFAPIURLRequired         = errors.New("CF API URL is required")
+	ErrUsernameRequired         = errors.New("username is required")
+	ErrPasswordRequired         = errors.New("password is required")
+	ErrNoServicesEnabled        = errors.New("no services were enabled")
+)
+
+// Handler provides CF registration operations.
 type Handler struct {
 	brokerURL  string
 	brokerUser string
@@ -15,7 +25,7 @@ type Handler struct {
 	logger     func(string, ...interface{})
 }
 
-// NewHandler creates a new CF operations handler
+// NewHandler creates a new CF operations handler.
 func NewHandler(brokerURL, brokerUser, brokerPass string, logger func(string, ...interface{})) *Handler {
 	return &Handler{
 		brokerURL:  brokerURL,
@@ -25,14 +35,16 @@ func NewHandler(brokerURL, brokerUser, brokerPass string, logger func(string, ..
 	}
 }
 
-// TestConnection tests connection to a CF environment
+// TestConnection tests connection to a CF environment.
 func (h *Handler) TestConnection(req *RegistrationTest) (*RegistrationTestResult, error) {
 	h.logger("Testing CF connection to %s", req.APIURL)
 
 	client := NewClient(req.APIURL, req.Username, req.Password, h.brokerURL, h.brokerUser, h.brokerPass)
+
 	result, err := client.TestConnection()
 	if err != nil {
 		h.logger("CF connection test failed: %s", err)
+
 		return &RegistrationTestResult{
 			Success: false,
 			Message: "Connection test failed",
@@ -41,18 +53,21 @@ func (h *Handler) TestConnection(req *RegistrationTest) (*RegistrationTestResult
 	}
 
 	h.logger("CF connection test successful")
+
 	return result, nil
 }
 
-// PerformRegistration performs the full registration process
+// PerformRegistration performs the full registration process.
 func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan chan<- RegistrationProgress) error {
 	defer close(progressChan)
 
 	h.sendProgress(progressChan, StepValidating, ProgressStatusRunning, "Validating registration request")
 
 	// Validate request
-	if err := h.validateRegistrationRequest(req); err != nil {
+	err := h.validateRegistrationRequest(req)
+	if err != nil {
 		h.sendProgress(progressChan, StepValidating, ProgressStatusError, fmt.Sprintf("Validation failed: %s", err))
+
 		return err
 	}
 
@@ -68,52 +83,68 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 
 	// Test connection
 	h.sendProgress(progressChan, StepConnecting, ProgressStatusRunning, "Connecting to Cloud Foundry")
-	_, err := client.TestConnection()
+
+	_, err = client.TestConnection()
 	if err != nil {
 		h.sendProgress(progressChan, StepConnecting, ProgressStatusError, fmt.Sprintf("Connection failed: %s", err))
+
 		return err
 	}
+
 	h.sendProgress(progressChan, StepConnecting, ProgressStatusSuccess, "Connected to Cloud Foundry")
 
 	// Authenticate
 	h.sendProgress(progressChan, StepAuthenticating, ProgressStatusRunning, "Authenticating with Cloud Foundry")
+
 	if err := client.authClient.Authenticate(); err != nil {
 		h.sendProgress(progressChan, StepAuthenticating, ProgressStatusError, fmt.Sprintf("Authentication failed: %s", err))
+
 		return err
 	}
+
 	h.sendProgress(progressChan, StepAuthenticating, ProgressStatusSuccess, "Authentication successful")
 
 	// Check for existing broker
 	h.sendProgress(progressChan, StepCheckingBroker, ProgressStatusRunning, "Checking for existing service broker")
+
 	existingBroker, err := client.FindServiceBroker(brokerName)
 	if err != nil {
 		h.sendProgress(progressChan, StepCheckingBroker, ProgressStatusError, fmt.Sprintf("Failed to check for existing broker: %s", err))
+
 		return err
 	}
 
 	var brokerInfo *BrokerInfo
+
 	if existingBroker != nil {
 		// Update existing broker
-		h.sendProgress(progressChan, StepUpdatingBroker, ProgressStatusRunning, fmt.Sprintf("Updating existing service broker: %s", brokerName))
+		h.sendProgress(progressChan, StepUpdatingBroker, ProgressStatusRunning, "Updating existing service broker: "+brokerName)
+
 		brokerInfo, err = client.UpdateServiceBroker(existingBroker.ID, brokerName)
 		if err != nil {
 			h.sendProgress(progressChan, StepUpdatingBroker, ProgressStatusError, fmt.Sprintf("Failed to update broker: %s", err))
+
 			return err
 		}
-		h.sendProgress(progressChan, StepUpdatingBroker, ProgressStatusSuccess, fmt.Sprintf("Service broker updated: %s", brokerName))
+
+		h.sendProgress(progressChan, StepUpdatingBroker, ProgressStatusSuccess, "Service broker updated: "+brokerName)
 	} else {
 		// Create new broker
-		h.sendProgress(progressChan, StepCreatingBroker, ProgressStatusRunning, fmt.Sprintf("Creating service broker: %s", brokerName))
+		h.sendProgress(progressChan, StepCreatingBroker, ProgressStatusRunning, "Creating service broker: "+brokerName)
+
 		brokerInfo, err = client.CreateServiceBroker(brokerName)
 		if err != nil {
 			h.sendProgress(progressChan, StepCreatingBroker, ProgressStatusError, fmt.Sprintf("Failed to create broker: %s", err))
+
 			return err
 		}
-		h.sendProgress(progressChan, StepCreatingBroker, ProgressStatusSuccess, fmt.Sprintf("Service broker created: %s", brokerName))
+
+		h.sendProgress(progressChan, StepCreatingBroker, ProgressStatusSuccess, "Service broker created: "+brokerName)
 	}
 
 	// Enable service access
 	h.sendProgress(progressChan, StepEnablingServices, ProgressStatusRunning, "Enabling service access")
+
 	if err := h.enableServiceAccess(client, progressChan); err != nil {
 		h.sendProgress(progressChan, StepEnablingServices, ProgressStatusWarning, fmt.Sprintf("Some services may not be enabled: %s", err))
 		// Don't return error here as the broker is registered, just service access might be partial
@@ -121,11 +152,12 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 		h.sendProgress(progressChan, StepEnablingServices, ProgressStatusSuccess, "Service access enabled")
 	}
 
-	h.sendProgress(progressChan, StepCompleted, ProgressStatusSuccess, fmt.Sprintf("Registration completed successfully. Broker: %s", brokerInfo.Name))
+	h.sendProgress(progressChan, StepCompleted, ProgressStatusSuccess, "Registration completed successfully. Broker: "+brokerInfo.Name)
+
 	return nil
 }
 
-// SyncRegistration syncs the registration status with CF
+// SyncRegistration syncs the registration status with CF.
 func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistration) (*SyncResult, error) {
 	h.logger("Syncing registration %s with CF", req.RegistrationID)
 
@@ -138,7 +170,7 @@ func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistratio
 			Success: false,
 			Message: "Failed to connect to CF during sync",
 			Error:   err.Error(),
-		}, nil
+		}, nil //nolint:nilerr // Connection failure is a valid sync result, not an error
 	}
 
 	// Get broker info
@@ -148,7 +180,7 @@ func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistratio
 			Success: false,
 			Message: "Failed to find service broker",
 			Error:   err.Error(),
-		}, nil
+		}, nil //nolint:nilerr // Broker lookup failure is a valid sync result, not an error
 	}
 
 	if brokerInfo == nil {
@@ -166,11 +198,12 @@ func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistratio
 			Success: false,
 			Message: "Failed to get service offerings",
 			Error:   err.Error(),
-		}, nil
+		}, nil //nolint:nilerr // Service offerings lookup failure is a valid sync result, not an error
 	}
 
 	// Filter services from our broker
 	var brokerServices []ServiceInfo
+
 	for _, service := range services {
 		if service.BrokerID == brokerInfo.ID {
 			brokerServices = append(brokerServices, service)
@@ -186,24 +219,28 @@ func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistratio
 	}, nil
 }
 
-// validateRegistrationRequest validates a registration request
+// validateRegistrationRequest validates a registration request.
 func (h *Handler) validateRegistrationRequest(req *RegistrationRequest) error {
 	if req.Name == "" {
-		return fmt.Errorf("registration name is required")
+		return ErrRegistrationNameRequired
 	}
+
 	if req.APIURL == "" {
-		return fmt.Errorf("CF API URL is required")
+		return ErrCFAPIURLRequired
 	}
+
 	if req.Username == "" {
-		return fmt.Errorf("username is required")
+		return ErrUsernameRequired
 	}
+
 	if req.Password == "" {
-		return fmt.Errorf("password is required")
+		return ErrPasswordRequired
 	}
+
 	return nil
 }
 
-// enableServiceAccess enables access to all services from the broker
+// enableServiceAccess enables access to all services from the broker.
 func (h *Handler) enableServiceAccess(client *Client, progressChan chan<- RegistrationProgress) error {
 	services, err := client.GetServiceOfferings()
 	if err != nil {
@@ -212,31 +249,36 @@ func (h *Handler) enableServiceAccess(client *Client, progressChan chan<- Regist
 
 	if len(services) == 0 {
 		h.sendProgress(progressChan, StepEnablingServices, ProgressStatusWarning, "No services found in catalog")
+
 		return nil
 	}
 
 	enabledCount := 0
+
 	for _, service := range services {
-		h.sendProgress(progressChan, StepEnablingServices, ProgressStatusRunning, fmt.Sprintf("Enabling access for service: %s", service.Name))
+		h.sendProgress(progressChan, StepEnablingServices, ProgressStatusRunning, "Enabling access for service: "+service.Name)
 
 		err := client.EnableServiceAccess(service.ID)
 		if err != nil {
 			h.logger("Failed to enable access for service %s: %s", service.Name, err)
 			h.sendProgress(progressChan, StepEnablingServices, ProgressStatusWarning, fmt.Sprintf("Failed to enable access for service %s: %s", service.Name, err))
+
 			continue
 		}
+
 		enabledCount++
 	}
 
 	if enabledCount == 0 {
-		return fmt.Errorf("no services were enabled")
+		return ErrNoServicesEnabled
 	}
 
 	h.sendProgress(progressChan, StepEnablingServices, ProgressStatusSuccess, fmt.Sprintf("Enabled access for %d of %d services", enabledCount, len(services)))
+
 	return nil
 }
 
-// sendProgress sends a progress update through the channel
+// sendProgress sends a progress update through the channel.
 func (h *Handler) sendProgress(progressChan chan<- RegistrationProgress, step, status, message string) {
 	progress := RegistrationProgress{
 		Step:      step,
@@ -255,7 +297,7 @@ func (h *Handler) sendProgress(progressChan chan<- RegistrationProgress, step, s
 	}
 }
 
-// Capabilities returns the capabilities of this service handler
+// Capabilities returns the capabilities of this service handler.
 func (h *Handler) Capabilities() []common.Capability {
 	return []common.Capability{
 		{

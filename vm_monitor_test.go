@@ -1,49 +1,56 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 )
 
-// fakeVMVault implements the minimal vmVault for VMMonitor tests
+// fakeVMVault implements the minimal vmVault for VMMonitor tests.
 type fakeVMVault struct {
 	index map[string]interface{}
 	puts  []string
 }
 
-func (f *fakeVMVault) GetIndex(name string) (*VaultIndex, error) {
+func (f *fakeVMVault) GetIndex(ctx context.Context, name string) (*VaultIndex, error) {
 	if f.index == nil {
 		f.index = make(map[string]interface{})
 	}
+
 	return &VaultIndex{parent: nil, path: name, Data: f.index}, nil
 }
 
-func (f *fakeVMVault) Put(path string, data interface{}) error {
+func (f *fakeVMVault) Put(ctx context.Context, path string, data interface{}) error {
 	f.puts = append(f.puts, path)
 	if f.index == nil {
 		f.index = make(map[string]interface{})
 	}
+
 	if path == "db" {
 		if m, ok := data.(map[string]interface{}); ok {
 			f.index = m
+
 			return nil
 		}
-		return errors.New("unexpected data type in Put for db")
+
+		return ErrUnexpectedDataType
 	}
 	// ignore non-index writes for this unit test
 	return nil
 }
 
-func (f *fakeVMVault) Get(path string, out interface{}) (bool, error) {
+func (f *fakeVMVault) Get(ctx context.Context, path string, out interface{}) (bool, error) {
 	// Only used by GetServiceVMStatus which is not exercised here
 	return false, nil
 }
 
 func TestVMMonitor_HandleCheckError_Deletes404(t *testing.T) {
-	fv := &fakeVMVault{index: map[string]interface{}{}}
+	t.Parallel()
+
+	fakeVault := &fakeVMVault{index: map[string]interface{}{}}
 	m := &VMMonitor{
-		vault:          fv,
+		vault:          fakeVault,
 		boshDirector:   nil,
 		config:         &Config{},
 		normalInterval: time.Minute,
@@ -56,17 +63,19 @@ func TestVMMonitor_HandleCheckError_Deletes404(t *testing.T) {
 	m.services[svcID] = &ServiceMonitor{ServiceID: svcID, DeploymentName: dep}
 
 	// simulate BOSH 404
-	err := errors.New("Director responded with non-successful status code '404' response '{\"description\":\"Deployment doesn't exist\"}'")
-	m.handleCheckError(m.services[svcID], err)
+	err := ErrDirectorNonSuccessfulStatus
+	m.handleCheckError(context.Background(), m.services[svcID], err)
 
 	// Assert index marked deleted
-	entry, ok := fv.index[svcID].(map[string]interface{})
+	entry, ok := fakeVault.index[svcID].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected index entry for service ID; got index: %#v", fv.index)
+		t.Fatalf("expected index entry for service ID; got index: %#v", fakeVault.index)
 	}
+
 	if del, _ := entry["deleted"].(bool); !del {
 		t.Fatalf("expected deleted=true in index entry: %#v", entry)
 	}
+
 	if entry["deployment_name"] != dep {
 		t.Fatalf("expected deployment_name to be set")
 	}

@@ -4,26 +4,28 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"blacksmith/pkg/logger"
 )
 
-func NewLogger(component, level string) *Log {
-	return &Log{
-		ctx:   []string{component},
-		max:   1024,
-		index: 0,
-		ring:  make([]string, 0),
-	}
+func NewTestLogger(component, _ string) logger.Logger {
+	return logger.Get().Named(component)
 }
 
 func TestCertificateAPI_HandleCertificatesRequest(t *testing.T) {
+	t.Parallel()
 	// Create a test config and logger
 	config := Config{} // Minimal config for testing
-	logger := NewLogger("test", "INFO")
+	testLogger := NewTestLogger("test", "INFO")
 
-	api := NewCertificateAPI(config, logger, nil)
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	tests := []struct {
 		name           string
@@ -81,6 +83,8 @@ func TestCertificateAPI_HandleCertificatesRequest(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			var body io.Reader
 			if test.body != "" {
 				body = strings.NewReader(test.body)
@@ -91,22 +95,24 @@ func TestCertificateAPI_HandleCertificatesRequest(t *testing.T) {
 				req.Header.Set("Content-Type", "application/json")
 			}
 
-			w := httptest.NewRecorder()
-			api.HandleCertificatesRequest(w, req)
+			responseRecorder := httptest.NewRecorder()
+			api.HandleCertificatesRequest(responseRecorder, req)
 
 			// Endpoint lookup may fail without network; accept 200 or 400 for endpoint tests
 			if test.path == "/b/internal/certificates/endpoint" {
-				if w.Code != 200 && w.Code != 400 {
-					t.Errorf("Expected status 200 or 400 for endpoint request, got %d", w.Code)
+				if responseRecorder.Code != 200 && responseRecorder.Code != 400 {
+					t.Errorf("Expected status 200 or 400 for endpoint request, got %d", responseRecorder.Code)
 				}
-			} else if w.Code != test.expectedStatus {
-				t.Errorf("Expected status %d, got %d", test.expectedStatus, w.Code)
+			} else if responseRecorder.Code != test.expectedStatus {
+				t.Errorf("Expected status %d, got %d", test.expectedStatus, responseRecorder.Code)
 			}
 
 			if test.checkResponse {
 				// Check that response is valid JSON
 				var response map[string]interface{}
-				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+				err := json.Unmarshal(responseRecorder.Body.Bytes(), &response)
+				if err != nil {
 					t.Errorf("Response is not valid JSON: %v", err)
 				}
 
@@ -120,11 +126,17 @@ func TestCertificateAPI_HandleCertificatesRequest(t *testing.T) {
 }
 
 func TestCertificateAPI_HandleTrustedCertificates(t *testing.T) {
-	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	t.Parallel()
 
-	req := httptest.NewRequest("GET", "/b/internal/certificates/trusted", nil)
+	config := Config{}
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/b/internal/certificates/trusted", nil)
 	w := httptest.NewRecorder()
 
 	api.handleTrustedCertificates(w, req)
@@ -136,7 +148,9 @@ func TestCertificateAPI_HandleTrustedCertificates(t *testing.T) {
 
 	// Check response structure
 	var response CertificateResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	if err != nil {
 		t.Errorf("Failed to parse response: %v", err)
 	}
 
@@ -151,9 +165,15 @@ func TestCertificateAPI_HandleTrustedCertificates(t *testing.T) {
 }
 
 func TestCertificateAPI_HandleTrustedCertificateFile(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := Logger.Wrap("test")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	tests := []struct {
 		name           string
@@ -206,33 +226,37 @@ func TestCertificateAPI_HandleTrustedCertificateFile(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
 			var body io.Reader
-			if tt.body != "" {
-				body = strings.NewReader(tt.body)
+			if testCase.body != "" {
+				body = strings.NewReader(testCase.body)
 			}
 
-			req := httptest.NewRequest(tt.method, "/b/internal/certificates/trusted/file", body)
-			if tt.method == "POST" {
+			req := httptest.NewRequest(testCase.method, "/b/internal/certificates/trusted/file", body)
+			if testCase.method == "POST" {
 				req.Header.Set("Content-Type", "application/json")
 			}
 
-			w := httptest.NewRecorder()
-			api.handleTrustedCertificateFile(w, req)
+			recorder := httptest.NewRecorder()
+			api.handleTrustedCertificateFile(recorder, req)
 
-			if w.Code != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
+			if recorder.Code != testCase.expectedStatus {
+				t.Errorf("Expected status %d, got %d", testCase.expectedStatus, recorder.Code)
 			}
 
-			if tt.expectedError != "" {
+			if testCase.expectedError != "" {
 				var response CertificateResponse
-				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+				err := json.Unmarshal(recorder.Body.Bytes(), &response)
+				if err != nil {
 					t.Fatalf("Failed to unmarshal response: %v", err)
 				}
 
-				if !response.Success && !strings.Contains(response.Error, tt.expectedError) {
-					t.Errorf("Expected error containing '%s', got '%s'", tt.expectedError, response.Error)
+				if !response.Success && !strings.Contains(response.Error, testCase.expectedError) {
+					t.Errorf("Expected error containing '%s', got '%s'", testCase.expectedError, response.Error)
 				}
 			}
 		})
@@ -240,6 +264,8 @@ func TestCertificateAPI_HandleTrustedCertificateFile(t *testing.T) {
 }
 
 func TestCertificateAPI_HandleBlacksmithCertificates(t *testing.T) {
+	t.Parallel()
+
 	config := Config{
 		BOSH: BOSHConfig{
 			Address:  "https://bosh.example.com:25555",
@@ -251,10 +277,14 @@ func TestCertificateAPI_HandleBlacksmithCertificates(t *testing.T) {
 			CACert:  "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
 		},
 	}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
 
-	req := httptest.NewRequest("GET", "/b/internal/certificates/blacksmith", nil)
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/b/internal/certificates/blacksmith", nil)
 	w := httptest.NewRecorder()
 
 	api.handleBlacksmithCertificates(w, req)
@@ -264,7 +294,9 @@ func TestCertificateAPI_HandleBlacksmithCertificates(t *testing.T) {
 	}
 
 	var response CertificateResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	if err != nil {
 		t.Errorf("Failed to parse response: %v", err)
 	}
 
@@ -274,9 +306,15 @@ func TestCertificateAPI_HandleBlacksmithCertificates(t *testing.T) {
 }
 
 func TestCertificateAPI_HandleEndpointCertificates(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	tests := []struct {
 		name           string
@@ -307,26 +345,30 @@ func TestCertificateAPI_HandleEndpointCertificates(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/b/internal/certificates/endpoint",
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodPost, "/b/internal/certificates/endpoint",
 				strings.NewReader(test.requestBody))
 			req.Header.Set("Content-Type", "application/json")
 
-			w := httptest.NewRecorder()
-			api.handleEndpointCertificates(w, req)
+			recorder := httptest.NewRecorder()
+			api.handleEndpointCertificates(recorder, req)
 
 			// Accept 200 or 400 for live endpoint fetch depending on environment
 			if strings.Contains(test.requestBody, "google.com:443") {
-				if w.Code != 200 && w.Code != 400 {
-					t.Errorf("Expected status 200 or 400, got %d. Response: %s", w.Code, w.Body.String())
+				if recorder.Code != 200 && recorder.Code != 400 {
+					t.Errorf("Expected status 200 or 400, got %d. Response: %s", recorder.Code, recorder.Body.String())
 				}
-			} else if w.Code != test.expectedStatus {
+			} else if recorder.Code != test.expectedStatus {
 				t.Errorf("Expected status %d, got %d. Response: %s",
-					test.expectedStatus, w.Code, w.Body.String())
+					test.expectedStatus, recorder.Code, recorder.Body.String())
 			}
 
 			// Check response is valid JSON for all cases
 			var response map[string]interface{}
-			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+			err := json.Unmarshal(recorder.Body.Bytes(), &response)
+			if err != nil {
 				t.Errorf("Response is not valid JSON: %v", err)
 			}
 		})
@@ -334,9 +376,15 @@ func TestCertificateAPI_HandleEndpointCertificates(t *testing.T) {
 }
 
 func TestCertificateAPI_HandleParseCertificate(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	tests := []struct {
 		name           string
@@ -366,20 +414,23 @@ func TestCertificateAPI_HandleParseCertificate(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/b/internal/certificates/parse",
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodPost, "/b/internal/certificates/parse",
 				strings.NewReader(test.requestBody))
 			req.Header.Set("Content-Type", "application/json")
 
-			w := httptest.NewRecorder()
-			api.handleParseCertificate(w, req)
+			parseCertRecorder := httptest.NewRecorder()
+			api.handleParseCertificate(parseCertRecorder, req)
 
-			if w.Code != test.expectedStatus {
-				t.Errorf("Expected status %d, got %d", test.expectedStatus, w.Code)
+			if parseCertRecorder.Code != test.expectedStatus {
+				t.Errorf("Expected status %d, got %d", test.expectedStatus, parseCertRecorder.Code)
 			}
 
 			var response CertificateResponse
-			if w.Code == 200 {
-				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			if parseCertRecorder.Code == 200 {
+				err := json.Unmarshal(parseCertRecorder.Body.Bytes(), &response)
+				if err != nil {
 					t.Errorf("Failed to parse response: %v", err)
 				}
 
@@ -392,23 +443,31 @@ func TestCertificateAPI_HandleParseCertificate(t *testing.T) {
 }
 
 func TestCertificateAPI_HandleServiceCertificates(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	// Test with non-existent service
-	req := httptest.NewRequest("GET", "/b/internal/certificates/services/test-instance", nil)
-	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/b/internal/certificates/services/test-instance", nil)
+	recorder := httptest.NewRecorder()
 
-	api.handleServiceCertificates(w, req)
+	api.handleServiceCertificates(recorder, req)
 
 	// Should return 200 with empty list for non-existent service
-	if w.Code != 200 {
-		t.Errorf("Expected status 200 for non-existent service, got %d", w.Code)
+	if recorder.Code != 200 {
+		t.Errorf("Expected status 200 for non-existent service, got %d", recorder.Code)
 	}
 
 	var response CertificateResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &response)
+	if err != nil {
 		t.Errorf("Failed to parse response: %v", err)
 	}
 
@@ -421,14 +480,20 @@ func TestCertificateAPI_HandleServiceCertificates(t *testing.T) {
 	}
 }
 
-// Test helper functions
+// Test helper functions.
 func TestCertificateAPI_Helpers(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	// Test sendResponse
-	w := httptest.NewRecorder()
+	recorder := httptest.NewRecorder()
 	testData := CertificateResponseData{
 		Certificates: []CertificateListItem{},
 		Metadata: CertificateMetadata{
@@ -437,17 +502,19 @@ func TestCertificateAPI_Helpers(t *testing.T) {
 		},
 	}
 
-	api.writeJSONResponse(w, CertificateResponse{
+	api.writeJSONResponse(recorder, CertificateResponse{
 		Success: true,
 		Data:    testData,
 	})
 
-	if w.Code != 200 {
-		t.Errorf("Expected status 200, got %d", w.Code)
+	if recorder.Code != 200 {
+		t.Errorf("Expected status 200, got %d", recorder.Code)
 	}
 
 	var response CertificateResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &response)
+	if err != nil {
 		t.Errorf("Failed to parse response: %v", err)
 	}
 
@@ -456,15 +523,17 @@ func TestCertificateAPI_Helpers(t *testing.T) {
 	}
 
 	// Test sendError
-	w2 := httptest.NewRecorder()
-	api.writeErrorResponse(w2, 400, "test error")
+	errorRecorder := httptest.NewRecorder()
+	api.writeErrorResponse(errorRecorder, 400, "test error")
 
-	if w2.Code != 400 {
-		t.Errorf("Expected status 400, got %d", w2.Code)
+	if errorRecorder.Code != 400 {
+		t.Errorf("Expected status 400, got %d", errorRecorder.Code)
 	}
 
 	var errorResponse CertificateResponse
-	if err := json.Unmarshal(w2.Body.Bytes(), &errorResponse); err != nil {
+
+	err = json.Unmarshal(errorRecorder.Body.Bytes(), &errorResponse)
+	if err != nil {
 		t.Errorf("Failed to parse error response: %v", err)
 	}
 
@@ -477,11 +546,17 @@ func TestCertificateAPI_Helpers(t *testing.T) {
 	}
 }
 
-// Integration test for API routing
+// Integration test for API routing.
 func TestCertificateAPI_Routing(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	testCases := []struct {
 		path   string
@@ -497,32 +572,40 @@ func TestCertificateAPI_Routing(t *testing.T) {
 		{"/b/internal/certificates/invalid", "GET", 404},       // Invalid path
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.path+" "+tc.method, func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(testCase.path+" "+testCase.method, func(t *testing.T) {
+			t.Parallel()
+
 			var body io.Reader
-			if tc.method == "POST" {
+			if testCase.method == "POST" {
 				body = bytes.NewReader([]byte{}) // Empty body to trigger 400
 			}
 
-			req := httptest.NewRequest(tc.method, tc.path, body)
-			w := httptest.NewRecorder()
+			req := httptest.NewRequest(testCase.method, testCase.path, body)
+			responseRecorder := httptest.NewRecorder()
 
-			api.HandleCertificatesRequest(w, req)
+			api.HandleCertificatesRequest(responseRecorder, req)
 
-			if w.Code != tc.status {
+			if responseRecorder.Code != testCase.status {
 				t.Errorf("Expected status %d, got %d. Response: %s",
-					tc.status, w.Code, w.Body.String())
+					testCase.status, responseRecorder.Code, responseRecorder.Body.String())
 			}
 		})
 	}
 }
 
 func TestCertificateAPI_ContentType(t *testing.T) {
-	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	t.Parallel()
 
-	req := httptest.NewRequest("GET", "/b/internal/certificates/trusted", nil)
+	config := Config{}
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/b/internal/certificates/trusted", nil)
 	w := httptest.NewRecorder()
 
 	api.HandleCertificatesRequest(w, req)
@@ -534,12 +617,18 @@ func TestCertificateAPI_ContentType(t *testing.T) {
 }
 
 func TestCertificateAPI_MethodValidation(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	// Test that GET endpoints reject POST
-	req := httptest.NewRequest("POST", "/b/internal/certificates/trusted", nil)
+	req := httptest.NewRequest(http.MethodPost, "/b/internal/certificates/trusted", nil)
 	w := httptest.NewRecorder()
 
 	api.HandleCertificatesRequest(w, req)
@@ -549,7 +638,7 @@ func TestCertificateAPI_MethodValidation(t *testing.T) {
 	}
 
 	// Test that POST endpoints reject GET
-	req2 := httptest.NewRequest("GET", "/b/internal/certificates/endpoint", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/b/internal/certificates/endpoint", nil)
 	w2 := httptest.NewRecorder()
 
 	api.HandleCertificatesRequest(w2, req2)
@@ -559,26 +648,34 @@ func TestCertificateAPI_MethodValidation(t *testing.T) {
 	}
 }
 
-// Test error handling and edge cases
+// Test error handling and edge cases.
 func TestCertificateAPI_ErrorHandling(t *testing.T) {
+	t.Parallel()
+
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
+
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
 
 	// Test with malformed JSON
-	req := httptest.NewRequest("POST", "/b/internal/certificates/parse",
+	req := httptest.NewRequest(http.MethodPost, "/b/internal/certificates/parse",
 		strings.NewReader(`{"pem": incomplete json`))
 	req.Header.Set("Content-Type", "application/json")
 
-	w := httptest.NewRecorder()
-	api.HandleCertificatesRequest(w, req)
+	responseWriter := httptest.NewRecorder()
+	api.HandleCertificatesRequest(responseWriter, req)
 
-	if w.Code != 400 {
-		t.Errorf("Expected status 400 for malformed JSON, got %d", w.Code)
+	if responseWriter.Code != 400 {
+		t.Errorf("Expected status 400 for malformed JSON, got %d", responseWriter.Code)
 	}
 
 	var response CertificateResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+
+	err := json.Unmarshal(responseWriter.Body.Bytes(), &response)
+	if err != nil {
 		t.Errorf("Failed to parse error response: %v", err)
 	}
 
@@ -587,16 +684,21 @@ func TestCertificateAPI_ErrorHandling(t *testing.T) {
 	}
 }
 
-// Benchmark API performance
+// Benchmark API performance.
 func BenchmarkCertificateAPI_TrustedCertificates(b *testing.B) {
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
 
-	req := httptest.NewRequest("GET", "/b/internal/certificates/trusted", nil)
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/b/internal/certificates/trusted", nil)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for range b.N {
 		w := httptest.NewRecorder()
 		api.HandleCertificatesRequest(w, req)
 	}
@@ -604,20 +706,27 @@ func BenchmarkCertificateAPI_TrustedCertificates(b *testing.B) {
 
 func BenchmarkCertificateAPI_BlacksmithCertificates(b *testing.B) {
 	config := Config{}
-	logger := NewLogger("test", "INFO")
-	api := NewCertificateAPI(config, logger, nil)
+	testLogger := NewTestLogger("test", "INFO")
 
-	req := httptest.NewRequest("GET", "/b/internal/certificates/blacksmith", nil)
+	// Initialize the global logger for the API to use
+	_ = logger.InitFromEnv()
+
+	api := NewCertificateAPI(config, testLogger, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/b/internal/certificates/blacksmith", nil)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for range b.N {
 		w := httptest.NewRecorder()
 		api.HandleCertificatesRequest(w, req)
 	}
 }
 
-// Test response structure validation
+// Test response structure validation.
 func TestCertificateResponse_Structure(t *testing.T) {
+	t.Parallel()
+
 	response := CertificateResponse{
 		Success: true,
 		Data: CertificateResponseData{
@@ -662,9 +771,11 @@ func TestCertificateResponse_Structure(t *testing.T) {
 	if unmarshaled.Success != response.Success {
 		t.Errorf("Success field not preserved")
 	}
+
 	if len(unmarshaled.Data.Certificates) != len(response.Data.Certificates) {
 		t.Errorf("Certificates count not preserved")
 	}
+
 	if unmarshaled.Data.Metadata.Source != response.Data.Metadata.Source {
 		t.Errorf("Metadata source not preserved")
 	}

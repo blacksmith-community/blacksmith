@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,34 +27,82 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// Constants for director adapter operations.
+const (
+	// Task fetch multiplier for filtering.
+	taskFetchMultiplier = 2
+
+	// Config priority values.
+	configPriorityCPI          = 2
+	configPriorityResurrection = 3
+	configPriorityRuntime      = 4
+
+	// File size limits.
+	maxLogFileSize = 10 * 1024 * 1024 // 10MB limit per file
+
+	// HTTP client timeouts.
+	httpClientTimeout    = 30 * time.Second
+	httpTransportTimeout = 30 * time.Second
+
+	// Default ports for BOSH services.
+	defaultBOSHDirectorPort = 25555
+)
+
+// Static error variables to satisfy err113.
+var (
+	ErrGetConfigFailed                = errors.New("failed to get config")
+	ErrConfigYAMLParseFailed          = errors.New("failed to parse config YAML")
+	ErrDeploymentNameExtractionFailed = errors.New("could not extract deployment name from manifest")
+	ErrNoTaskFoundDeploymentDeletion  = errors.New("no task found for deployment deletion")
+	ErrNoTaskFoundReleaseUpload       = errors.New("no task found for release upload")
+	ErrNoTaskFoundStemcellUpload      = errors.New("no task found for stemcell upload")
+	ErrTaskCannotBeCancelled          = errors.New("task is in invalid state and cannot be cancelled")
+	ErrNoCloudConfigFound             = errors.New("no cloud config found")
+	ErrInvalidConfigIDFormat          = errors.New("invalid config ID format")
+	ErrNoTaskFoundCleanup             = errors.New("no task found for cleanup")
+	ErrNoHostsAvailableSSH            = errors.New("no hosts available for SSH connection")
+	ErrResurrectionConfigUpdateFailed = errors.New("failed to update resurrection config for deployment")
+	ErrResurrectionConfigDeleteFailed = errors.New("failed to delete resurrection config for deployment")
+	ErrResurrectionConfigNotFound     = errors.New("resurrection config for deployment not found or already deleted")
+	ErrUAAAutoDetectionNotApplicable  = errors.New("UAA auto-detection not applicable")
+	ErrUAAURLNotFound                 = errors.New("UAA URL not found in auth options")
+)
+
 // DirectorAdapter wraps bosh-cli director to implement Director interface
-// GetConfig retrieves a configuration by type and name from BOSH director
+// GetConfig retrieves a configuration by type and name from BOSH director.
 func (da *DirectorAdapter) GetConfig(configType, configName string) (interface{}, error) {
-	da.log.Debug("Getting config type=%s name=%s", configType, configName)
+	da.log.Debugf("Getting config type=%s name=%s", configType, configName)
 
 	// Get the config using the BOSH director
 	config, err := da.director.LatestConfig(configType, configName)
 	if err != nil {
 		// Check if it's a "not found" error
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "404") {
-			da.log.Debug("Config %s/%s not found", configType, configName)
+			da.log.Debugf("Config %s/%s not found", configType, configName)
+
 			return nil, nil
 		}
-		da.log.Error("Failed to get config %s/%s: %v", configType, configName, err)
-		return nil, fmt.Errorf("failed to get config %s/%s: %v", configType, configName, err)
+
+		da.log.Errorf("Failed to get config %s/%s: %v", configType, configName, err)
+
+		return nil, fmt.Errorf("%w %s/%s: %w", ErrGetConfigFailed, configType, configName, err)
 	}
 
-	da.log.Debug("Retrieved config %s/%s successfully", configType, configName)
-	da.log.Debug("Config content:\n%s", config.Content)
+	da.log.Debugf("Retrieved config %s/%s successfully", configType, configName)
+	da.log.Debugf("Config content:\n%s", config.Content)
 
 	// Parse the YAML content to return as a map
 	var configData map[string]interface{}
-	if err := yaml.Unmarshal([]byte(config.Content), &configData); err != nil {
-		da.log.Error("Failed to parse config YAML for %s/%s: %v", configType, configName, err)
-		return nil, fmt.Errorf("failed to parse config YAML: %v", err)
+
+	err = yaml.Unmarshal([]byte(config.Content), &configData)
+	if err != nil {
+		da.log.Errorf("Failed to parse config YAML for %s/%s: %v", configType, configName, err)
+
+		return nil, fmt.Errorf("%w: %w", ErrConfigYAMLParseFailed, err)
 	}
 
-	da.log.Debug("Parsed config data: %+v", configData)
+	da.log.Debugf("Parsed config data: %+v", configData)
+
 	return configData, nil
 }
 
@@ -63,14 +112,69 @@ type DirectorAdapter struct {
 	log      Logger // Application logger for Info/Debug logging
 }
 
-// Logger interface for application logging
-type Logger interface {
-	Info(format string, args ...interface{})
-	Debug(format string, args ...interface{})
-	Error(format string, args ...interface{})
+// NewDirectorAdapter creates a new bosh-cli based Director.
+func NewDirectorAdapter(config Config) (Director, error) {
+	// Use the provided logger or create a no-op logger
+	var appLogger Logger
+	if config.Logger != nil {
+		appLogger = config.Logger
+	} else {
+		// Create a no-op logger if none provided
+		appLogger = &noOpLogger{}
+	}
+
+	appLogger.Infof("Creating new BOSH director adapter")
+	appLogger.Debugf("Director address: %s", config.Address)
+
+	logger := boshlog.NewLogger(boshlog.LevelError)
+
+	// Create factory config
+	appLogger.Debugf("Building factory configuration")
+
+	factoryConfig, err := buildFactoryConfig(config, logger)
+	if err != nil {
+		appLogger.Errorf("Failed to build factory config: %v", err)
+
+		return nil, fmt.Errorf("failed to build factory config: %w", err)
+	}
+
+	// Create director factory
+	appLogger.Debugf("Creating director factory")
+
+	factory := boshdirector.NewFactory(logger)
+
+	// Create task reporter and file reporter
+	// Use the built-in no-op reporters from the director package
+	taskReporter := boshdirector.NoopTaskReporter{}
+	fileReporter := boshdirector.NoopFileReporter{}
+
+	// Create director with authentication
+	appLogger.Debugf("Creating director client")
+
+	director, err := factory.New(*factoryConfig, taskReporter, fileReporter)
+	if err != nil {
+		appLogger.Errorf("Failed to create director: %v", err)
+
+		return nil, fmt.Errorf("failed to create director: %w", err)
+	}
+
+	appLogger.Infof("Successfully created BOSH director adapter")
+
+	return &DirectorAdapter{
+		director: director,
+		logger:   logger,
+		log:      appLogger,
+	}, nil
 }
 
-// BufferedTaskReporter implements TaskReporter to capture task output
+// Logger interface for application logging.
+type Logger interface {
+	Infof(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+}
+
+// BufferedTaskReporter implements TaskReporter to capture task output.
 type BufferedTaskReporter struct {
 	mu       sync.Mutex
 	output   bytes.Buffer
@@ -82,12 +186,14 @@ type BufferedTaskReporter struct {
 func (r *BufferedTaskReporter) TaskStarted(id int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.started = true
 }
 
 func (r *BufferedTaskReporter) TaskFinished(id int, state string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.finished = true
 	r.state = state
 }
@@ -95,90 +201,45 @@ func (r *BufferedTaskReporter) TaskFinished(id int, state string) {
 func (r *BufferedTaskReporter) TaskOutputChunk(id int, chunk []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.output.Write(chunk)
 }
 
 func (r *BufferedTaskReporter) GetOutput() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	return r.output.String()
 }
 
-// NewDirectorAdapter creates a new bosh-cli based Director
-func NewDirectorAdapter(config Config) (Director, error) {
-	// Use the provided logger or create a no-op logger
-	var appLogger Logger
-	if config.Logger != nil {
-		appLogger = config.Logger
-	} else {
-		// Create a no-op logger if none provided
-		appLogger = &noOpLogger{}
-	}
-
-	appLogger.Info("Creating new BOSH director adapter")
-	appLogger.Debug("Director address: %s", config.Address)
-
-	logger := boshlog.NewLogger(boshlog.LevelError)
-
-	// Create factory config
-	appLogger.Debug("Building factory configuration")
-	factoryConfig, err := buildFactoryConfig(config, logger)
-	if err != nil {
-		appLogger.Error("Failed to build factory config: %v", err)
-		return nil, fmt.Errorf("failed to build factory config: %w", err)
-	}
-
-	// Create director factory
-	appLogger.Debug("Creating director factory")
-	factory := boshdirector.NewFactory(logger)
-
-	// Create task reporter and file reporter
-	// Use the built-in no-op reporters from the director package
-	taskReporter := boshdirector.NoopTaskReporter{}
-	fileReporter := boshdirector.NoopFileReporter{}
-
-	// Create director with authentication
-	appLogger.Debug("Creating director client")
-	director, err := factory.New(*factoryConfig, taskReporter, fileReporter)
-	if err != nil {
-		appLogger.Error("Failed to create director: %v", err)
-		return nil, fmt.Errorf("failed to create director: %w", err)
-	}
-
-	appLogger.Info("Successfully created BOSH director adapter")
-	return &DirectorAdapter{
-		director: director,
-		logger:   logger,
-		log:      appLogger,
-	}, nil
-}
-
-// noOpLogger is a no-op implementation of Logger interface
+// noOpLogger is a no-op implementation of Logger interface.
 type noOpLogger struct{}
 
-func (n *noOpLogger) Info(format string, args ...interface{})  {}
-func (n *noOpLogger) Debug(format string, args ...interface{}) {}
-func (n *noOpLogger) Error(format string, args ...interface{}) {}
+func (n *noOpLogger) Infof(format string, args ...interface{})  {}
+func (n *noOpLogger) Debugf(format string, args ...interface{}) {}
+func (n *noOpLogger) Errorf(format string, args ...interface{}) {}
 
-// GetInfo retrieves BOSH director information
+// GetInfo retrieves BOSH director information.
 func (d *DirectorAdapter) GetInfo() (*Info, error) {
-	d.log.Info("Getting BOSH director information")
-	d.log.Debug("Calling director.Info()")
+	d.log.Infof("Getting BOSH director information")
+	d.log.Debugf("Calling director.Infof()")
 
 	info, err := d.director.Info()
 	if err != nil {
-		d.log.Error("Failed to get director info: %v", err)
+		d.log.Errorf("Failed to get director info: %v", err)
+
 		return nil, fmt.Errorf("failed to get info: %w", err)
 	}
 
-	d.log.Debug("Director info retrieved - Name: %s, UUID: %s, Version: %s", info.Name, info.UUID, info.Version)
+	d.log.Debugf("Director info retrieved - Name: %s, UUID: %s, Version: %s", info.Name, info.UUID, info.Version)
 
 	features := make(map[string]bool)
 	for feature, enabled := range info.Features {
 		features[feature] = enabled
 	}
 
-	d.log.Info("Successfully retrieved director info: %s (%s)", info.Name, info.Version)
+	d.log.Infof("Successfully retrieved director info: %s (%s)", info.Name, info.Version)
+
 	return &Info{
 		Name:     info.Name,
 		UUID:     info.UUID,
@@ -189,28 +250,31 @@ func (d *DirectorAdapter) GetInfo() (*Info, error) {
 	}, nil
 }
 
-// GetDeployments lists all deployments
+// GetDeployments lists all deployments.
 func (d *DirectorAdapter) GetDeployments() ([]Deployment, error) {
-	d.log.Info("Listing all deployments")
-	d.log.Debug("Calling director.Deployments()")
+	d.log.Infof("Listing all deployments")
+	d.log.Debugf("Calling director.Deployments()")
 
 	deps, err := d.director.Deployments()
 	if err != nil {
-		d.log.Error("Failed to get deployments: %v", err)
+		d.log.Errorf("Failed to get deployments: %v", err)
+
 		return nil, fmt.Errorf("failed to get deployments: %w", err)
 	}
 
-	d.log.Debug("Found %d deployments", len(deps))
+	d.log.Debugf("Found %d deployments", len(deps))
 
 	deployments := make([]Deployment, len(deps))
-	for i, dep := range deps {
+	for index, dep := range deps {
 		depReleases, _ := dep.Releases()
+
 		releases := make([]string, len(depReleases))
 		for j, rel := range depReleases {
 			releases[j] = fmt.Sprintf("%s/%s", rel.Name(), rel.Version())
 		}
 
 		depStemcells, _ := dep.Stemcells()
+
 		stemcells := make([]string, len(depStemcells))
 		for j, sc := range depStemcells {
 			stemcells[j] = fmt.Sprintf("%s/%s", sc.Name(), sc.Version())
@@ -219,7 +283,7 @@ func (d *DirectorAdapter) GetDeployments() ([]Deployment, error) {
 		cloudConfig, _ := dep.CloudConfig()
 		teams, _ := dep.Teams()
 
-		deployments[i] = Deployment{
+		deployments[index] = Deployment{
 			Name:        dep.Name(),
 			CloudConfig: cloudConfig,
 			Releases:    releases,
@@ -228,46 +292,52 @@ func (d *DirectorAdapter) GetDeployments() ([]Deployment, error) {
 		}
 	}
 
-	d.log.Info("Successfully retrieved %d deployments", len(deployments))
+	d.log.Infof("Successfully retrieved %d deployments", len(deployments))
+
 	return deployments, nil
 }
 
-// GetDeployment retrieves a specific deployment
+// GetDeployment retrieves a specific deployment.
 func (d *DirectorAdapter) GetDeployment(name string) (*DeploymentDetail, error) {
-	d.log.Info("Getting deployment: %s", name)
-	d.log.Debug("Finding deployment %s", name)
+	d.log.Infof("Getting deployment: %s", name)
+	d.log.Debugf("Finding deployment %s", name)
 
 	dep, err := d.director.FindDeployment(name)
 	if err != nil {
-		d.log.Error("Failed to find deployment %s: %v", name, err)
+		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+
 		return nil, fmt.Errorf("failed to get deployment %s: %w", name, err)
 	}
 
-	d.log.Debug("Retrieving manifest for deployment %s", name)
+	d.log.Debugf("Retrieving manifest for deployment %s", name)
+
 	manifest, err := dep.Manifest()
 	if err != nil {
-		d.log.Error("Failed to get manifest for deployment %s: %v", name, err)
+		d.log.Errorf("Failed to get manifest for deployment %s: %v", name, err)
+
 		return nil, fmt.Errorf("failed to get manifest for deployment %s: %w", name, err)
 	}
 
-	d.log.Info("Successfully retrieved deployment %s (manifest size: %d bytes)", name, len(manifest))
+	d.log.Infof("Successfully retrieved deployment %s (manifest size: %d bytes)", name, len(manifest))
+
 	return &DeploymentDetail{
 		Name:     name,
 		Manifest: manifest,
 	}, nil
 }
 
-// CreateDeployment creates a new deployment
+// CreateDeployment creates a new deployment.
 func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 	// Parse deployment name from manifest
-	deploymentName := extractDeploymentName(manifest)
+	deploymentName := ExtractDeploymentName(manifest)
 	if deploymentName == "" {
-		d.log.Error("Could not extract deployment name from manifest")
-		return nil, fmt.Errorf("could not extract deployment name from manifest")
+		d.log.Errorf("Could not extract deployment name from manifest")
+
+		return nil, ErrDeploymentNameExtractionFailed
 	}
 
-	d.log.Info("Creating/updating deployment: %s", deploymentName)
-	d.log.Debug("Manifest size: %d bytes", len(manifest))
+	d.log.Infof("Creating/updating deployment: %s", deploymentName)
+	d.log.Debugf("Manifest size: %d bytes", len(manifest))
 
 	// For new deployments, we need to use the director's deploy capability directly
 	// The bosh-cli library doesn't have a direct "create" method, but we can use
@@ -288,8 +358,10 @@ func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 	// Try to find existing deployment
 	dep, err := d.director.FindDeployment(deploymentName)
 	if err != nil {
-		// Deployment doesn't exist - we need to work around the bosh-cli limitation
-		d.log.Debug("Deployment %s not found, attempting to create via manifest deployment", deploymentName)
+		// Deployment doesn't exist - this is expected for new deployments
+		_ = err // Explicitly ignore the error as it indicates the need to create a new deployment
+
+		d.log.Debugf("Deployment %s not found, attempting to create via manifest deployment", deploymentName)
 
 		// Since the bosh-cli library doesn't provide a way to create deployments directly,
 		// and the deployment object's Update method just calls client.UpdateDeployment,
@@ -300,22 +372,25 @@ func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 
 		// For now, return a placeholder task with ID 1 (non-zero to avoid triggering failures)
 		// The async provisioning process will need to handle the actual deployment creation
-		d.log.Info("Deployment %s does not exist yet, returning placeholder task for async creation", deploymentName)
+		d.log.Infof("Deployment %s does not exist yet, returning placeholder task for async creation", deploymentName)
+
 		return &Task{
 			ID:          1, // Use ID 1 instead of 0 to avoid CF thinking it failed
 			State:       "processing",
-			Description: fmt.Sprintf("Creating deployment %s", deploymentName),
+			Description: "Creating deployment " + deploymentName,
 			User:        "admin",
 			Deployment:  deploymentName,
 			StartedAt:   time.Now(),
-		}, nil
+		}, nil //nolint:nilerr // Deployment not found is expected for new deployments
 	}
 
 	// Update existing deployment
-	d.log.Debug("Updating existing deployment %s", deploymentName)
+	d.log.Debugf("Updating existing deployment %s", deploymentName)
+
 	err = dep.Update([]byte(manifest), updateOpts)
 	if err != nil {
-		d.log.Error("Failed to update deployment %s: %v", deploymentName, err)
+		d.log.Errorf("Failed to update deployment %s: %v", deploymentName, err)
+
 		return nil, fmt.Errorf("failed to update deployment: %w", err)
 	}
 
@@ -329,38 +404,43 @@ func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 
 	if len(tasks) > 0 {
 		task := convertDirectorTask(tasks[0])
-		d.log.Info("Deployment %s update started, task ID: %d", deploymentName, task.ID)
+		d.log.Infof("Deployment %s update started, task ID: %d", deploymentName, task.ID)
+
 		return task, nil
 	}
 
 	// If no task found, create a dummy task response
-	d.log.Debug("No task found for deployment update, creating placeholder task")
+	d.log.Debugf("No task found for deployment update, creating placeholder task")
+
 	return &Task{
 		ID:          0,
 		State:       "running",
-		Description: fmt.Sprintf("Creating deployment %s", deploymentName),
+		Description: "Creating deployment " + deploymentName,
 		User:        "admin",
 		Deployment:  deploymentName,
 		StartedAt:   time.Now(),
 	}, nil
 }
 
-// DeleteDeployment deletes a deployment
+// DeleteDeployment deletes a deployment.
 func (d *DirectorAdapter) DeleteDeployment(name string) (*Task, error) {
-	d.log.Info("Deleting deployment: %s", name)
-	d.log.Debug("Finding deployment %s for deletion", name)
+	d.log.Infof("Deleting deployment: %s", name)
+	d.log.Debugf("Finding deployment %s for deletion", name)
 
 	dep, err := d.director.FindDeployment(name)
 	if err != nil {
-		d.log.Error("Failed to find deployment %s: %v", name, err)
+		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+
 		return nil, fmt.Errorf("failed to find deployment %s: %w", name, err)
 	}
 
 	// Delete the deployment (force = false)
-	d.log.Debug("Initiating deletion of deployment %s (force=false)", name)
+	d.log.Debugf("Initiating deletion of deployment %s (force=false)", name)
+
 	err = dep.Delete(false)
 	if err != nil {
-		d.log.Error("Failed to delete deployment %s: %v", name, err)
+		d.log.Errorf("Failed to delete deployment %s: %v", name, err)
+
 		return nil, fmt.Errorf("failed to delete deployment %s: %w", name, err)
 	}
 
@@ -374,38 +454,44 @@ func (d *DirectorAdapter) DeleteDeployment(name string) (*Task, error) {
 
 	if len(tasks) > 0 {
 		task := convertDirectorTask(tasks[0])
-		d.log.Info("Deployment %s deletion started, task ID: %d", name, task.ID)
+		d.log.Infof("Deployment %s deletion started, task ID: %d", name, task.ID)
+
 		return task, nil
 	}
 
-	d.log.Error("No task found for deployment %s deletion", name)
-	return nil, fmt.Errorf("no task found for deployment deletion")
+	d.log.Errorf("No task found for deployment %s deletion", name)
+
+	return nil, ErrNoTaskFoundDeploymentDeletion
 }
 
-// GetDeploymentVMs retrieves VMs for a deployment with full details (format=full)
+// GetDeploymentVMs retrieves VMs for a deployment with full details (format=full).
 func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
-	d.log.Info("Getting VMs for deployment: %s", deployment)
-	d.log.Debug("Finding deployment %s", deployment)
+	d.log.Infof("Getting VMs for deployment: %s", deployment)
+	d.log.Debugf("Finding deployment %s", deployment)
 
 	dep, err := d.director.FindDeployment(deployment)
 	if err != nil {
-		d.log.Error("Failed to find deployment %s: %v", deployment, err)
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+
 		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
 	}
 
-	d.log.Debug("Retrieving detailed VM information for deployment %s (format=full)", deployment)
+	d.log.Debugf("Retrieving detailed VM information for deployment %s (format=full)", deployment)
+
 	vmInfos, err := dep.VMInfos()
 	if err != nil {
-		d.log.Error("Failed to get VMs for deployment %s: %v", deployment, err)
+		d.log.Errorf("Failed to get VMs for deployment %s: %v", deployment, err)
+
 		return nil, fmt.Errorf("failed to get VMs for deployment %s: %w", deployment, err)
 	}
 
 	vms := make([]VM, len(vmInfos))
-	for i, vmInfo := range vmInfos {
+	for index, vmInfo := range vmInfos {
 		// Parse VM creation time
 		var vmCreatedAt time.Time
 		if vmInfo.VMCreatedAtRaw != "" {
-			if parsed, err := time.Parse(time.RFC3339, vmInfo.VMCreatedAtRaw); err == nil {
+			parsed, err := time.Parse(time.RFC3339, vmInfo.VMCreatedAtRaw)
+			if err == nil {
 				vmCreatedAt = parsed
 			}
 		}
@@ -470,10 +556,10 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 		}
 
 		// Log the state values for debugging
-		d.log.Debug("VM %s/%d - ProcessState: %s, State: %s",
+		d.log.Debugf("VM %s/%d - ProcessState: %s, State: %s",
 			vmInfo.JobName, *vmInfo.Index, vmInfo.ProcessState, vmInfo.State)
 
-		vms[i] = VM{
+		vms[index] = VM{
 			// Core VM identity
 			ID:      vmInfo.ID,
 			AgentID: vmInfo.AgentID,
@@ -515,44 +601,48 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 		}
 	}
 
-	d.log.Info("Successfully retrieved %d VMs for deployment %s", len(vms), deployment)
+	d.log.Infof("Successfully retrieved %d VMs for deployment %s", len(vms), deployment)
+
 	return vms, nil
 }
 
-// GetReleases retrieves all releases
+// GetReleases retrieves all releases.
 func (d *DirectorAdapter) GetReleases() ([]Release, error) {
-	d.log.Info("Getting all releases")
-	d.log.Debug("Calling director.Releases()")
+	d.log.Infof("Getting all releases")
+	d.log.Debugf("Calling director.Releases()")
 
 	// Test basic connectivity first
 	info, err := d.director.Info()
 	if err != nil {
-		d.log.Error("Failed to get director info (auth test): %v", err)
-		d.log.Error("This might indicate an authentication issue")
+		d.log.Errorf("Failed to get director info (auth test): %v", err)
+		d.log.Errorf("This might indicate an authentication issue")
 	} else {
-		d.log.Debug("Director info test successful - User: %s, Name: %s", info.User, info.Name)
-		d.log.Debug("Director authentication type: %s", info.Auth.Type)
+		d.log.Debugf("Director info test successful - User: %s, Name: %s", info.User, info.Name)
+		d.log.Debugf("Director authentication type: %s", info.Auth.Type)
+
 		switch info.Auth.Type {
 		case "uaa":
 			if uaaURL, ok := info.Auth.Options["url"].(string); ok {
-				d.log.Debug("Director is configured for UAA authentication at: %s", uaaURL)
-				d.log.Debug("Using UAA client credentials for authentication")
+				d.log.Debugf("Director is configured for UAA authentication at: %s", uaaURL)
+				d.log.Debugf("Using UAA client credentials for authentication")
 			}
 		case "basic":
-			d.log.Debug("Director is configured for basic authentication")
+			d.log.Debugf("Director is configured for basic authentication")
 		}
+
 		if info.User == "" {
-			d.log.Debug("Note: User field is empty in /info response - this is expected as /info doesn't require authentication")
+			d.log.Debugf("Note: User field is empty in /info response - this is expected as /info doesn't require authentication")
 		}
 	}
 
 	releases, err := d.director.Releases()
 	if err != nil {
-		d.log.Error("Failed to get releases: %v", err)
+		d.log.Errorf("Failed to get releases: %v", err)
+
 		return nil, fmt.Errorf("failed to get releases: %w", err)
 	}
 
-	d.log.Debug("Found %d releases", len(releases))
+	d.log.Debugf("Found %d releases", len(releases))
 
 	result := make([]Release, 0, len(releases))
 	for _, rel := range releases {
@@ -570,15 +660,16 @@ func (d *DirectorAdapter) GetReleases() ([]Release, error) {
 	return result, nil
 }
 
-// UploadRelease uploads a release from URL
+// UploadRelease uploads a release from URL.
 func (d *DirectorAdapter) UploadRelease(url, sha1 string) (*Task, error) {
-	d.log.Info("Uploading release from URL: %s", url)
-	d.log.Debug("Release SHA1: %s", sha1)
+	d.log.Infof("Uploading release from URL: %s", url)
+	d.log.Debugf("Release SHA1: %s", sha1)
 
 	// Simplified upload - bosh-cli has different signature
 	err := d.director.UploadReleaseURL(url, sha1, false, false)
 	if err != nil {
-		d.log.Error("Failed to upload release from %s: %v", url, err)
+		d.log.Errorf("Failed to upload release from %s: %v", url, err)
+
 		return nil, fmt.Errorf("failed to upload release from %s: %w", url, err)
 	}
 
@@ -590,52 +681,57 @@ func (d *DirectorAdapter) UploadRelease(url, sha1 string) (*Task, error) {
 
 	if len(tasks) > 0 {
 		task := convertDirectorTask(tasks[0])
-		d.log.Info("Release upload started, task ID: %d", task.ID)
+		d.log.Infof("Release upload started, task ID: %d", task.ID)
+
 		return task, nil
 	}
 
-	d.log.Error("No task found for release upload")
-	return nil, fmt.Errorf("no task found for release upload")
+	d.log.Errorf("No task found for release upload")
+
+	return nil, ErrNoTaskFoundReleaseUpload
 }
 
-// GetStemcells retrieves all stemcells
+// GetStemcells retrieves all stemcells.
 func (d *DirectorAdapter) GetStemcells() ([]Stemcell, error) {
-	d.log.Info("Getting all stemcells")
-	d.log.Debug("Calling director.Stemcells()")
+	d.log.Infof("Getting all stemcells")
+	d.log.Debugf("Calling director.Stemcells()")
 
 	stemcells, err := d.director.Stemcells()
 	if err != nil {
-		d.log.Error("Failed to get stemcells: %v", err)
+		d.log.Errorf("Failed to get stemcells: %v", err)
+
 		return nil, fmt.Errorf("failed to get stemcells: %w", err)
 	}
 
-	d.log.Debug("Found %d stemcells", len(stemcells))
+	d.log.Debugf("Found %d stemcells", len(stemcells))
 
 	result := make([]Stemcell, len(stemcells))
-	for i, sc := range stemcells {
-		result[i] = Stemcell{
-			Name:        sc.Name(),
-			Version:     sc.Version().String(),
-			OS:          sc.OSName(),
-			CID:         sc.CID(),
-			CPI:         sc.CPI(),
+	for index, stemcell := range stemcells {
+		result[index] = Stemcell{
+			Name:        stemcell.Name(),
+			Version:     stemcell.Version().String(),
+			OS:          stemcell.OSName(),
+			CID:         stemcell.CID(),
+			CPI:         stemcell.CPI(),
 			Deployments: []string{}, // Deployments not directly available
 		}
 	}
 
-	d.log.Info("Successfully retrieved %d stemcells", len(result))
+	d.log.Infof("Successfully retrieved %d stemcells", len(result))
+
 	return result, nil
 }
 
-// UploadStemcell uploads a stemcell from URL
+// UploadStemcell uploads a stemcell from URL.
 func (d *DirectorAdapter) UploadStemcell(url, sha1 string) (*Task, error) {
-	d.log.Info("Uploading stemcell from URL: %s", url)
-	d.log.Debug("Stemcell SHA1: %s", sha1)
+	d.log.Infof("Uploading stemcell from URL: %s", url)
+	d.log.Debugf("Stemcell SHA1: %s", sha1)
 
 	// Simplified upload - bosh-cli has different signature
 	err := d.director.UploadStemcellURL(url, sha1, false)
 	if err != nil {
-		d.log.Error("Failed to upload stemcell from %s: %v", url, err)
+		d.log.Errorf("Failed to upload stemcell from %s: %v", url, err)
+
 		return nil, fmt.Errorf("failed to upload stemcell from %s: %w", url, err)
 	}
 
@@ -647,167 +743,52 @@ func (d *DirectorAdapter) UploadStemcell(url, sha1 string) (*Task, error) {
 
 	if len(tasks) > 0 {
 		task := convertDirectorTask(tasks[0])
-		d.log.Info("Stemcell upload started, task ID: %d", task.ID)
+		d.log.Infof("Stemcell upload started, task ID: %d", task.ID)
+
 		return task, nil
 	}
 
-	d.log.Error("No task found for stemcell upload")
-	return nil, fmt.Errorf("no task found for stemcell upload")
+	d.log.Errorf("No task found for stemcell upload")
+
+	return nil, ErrNoTaskFoundStemcellUpload
 }
 
-// GetTask retrieves a task by ID
-func (d *DirectorAdapter) GetTask(id int) (*Task, error) {
-	d.log.Info("Getting task: %d", id)
-	d.log.Debug("Finding task %d", id)
+// GetTask retrieves a task by ID.
+func (d *DirectorAdapter) GetTask(taskID int) (*Task, error) {
+	d.log.Infof("Getting task: %d", taskID)
+	d.log.Debugf("Finding task %d", taskID)
 
-	task, err := d.director.FindTask(id)
+	task, err := d.director.FindTask(taskID)
 	if err != nil {
-		d.log.Error("Failed to get task %d: %v", id, err)
-		return nil, fmt.Errorf("failed to get task %d: %w", id, err)
+		d.log.Errorf("Failed to get task %d: %v", taskID, err)
+
+		return nil, fmt.Errorf("failed to get task %d: %w", taskID, err)
 	}
 
 	convertedTask := convertDirectorTask(task)
-	d.log.Info("Successfully retrieved task %d (state: %s)", id, convertedTask.State)
+	d.log.Infof("Successfully retrieved task %d (state: %s)", taskID, convertedTask.State)
+
 	return convertedTask, nil
 }
 
-// GetTasks retrieves multiple tasks based on filter criteria
+// GetTasks retrieves multiple tasks based on filter criteria.
 func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, team string) ([]Task, error) {
-	d.log.Info("Getting tasks (type: %s, limit: %d, states: %v, team: %s)", taskType, limit, states, team)
-	d.log.Debug("Building task filter for type: %s", taskType)
+	d.log.Infof("Getting tasks (type: %s, limit: %d, states: %v, team: %s)", taskType, limit, states, team)
 
 	// Convert limit to sensible defaults
 	if limit <= 0 || limit > 200 {
 		limit = 50 // Default limit
 	}
 
-	// Build basic filter
-	filter := boshdirector.TasksFilter{}
-
-	var tasks []boshdirector.Task
-	var err error
-
-	switch taskType {
-	case "recent":
-		// Get recent tasks (default behavior)
-		d.log.Debug("Getting recent tasks with limit %d", limit)
-		tasks, err = d.director.RecentTasks(limit*2, filter) // Get more to allow for filtering
-	case "current":
-		// Get only currently running tasks
-		d.log.Debug("Getting current tasks")
-		tasks, err = d.director.CurrentTasks(filter)
-	case "all":
-		// Get all tasks (use CurrentTasks + RecentTasks for broader scope)
-		d.log.Debug("Getting all tasks with limit %d", limit)
-		currentTasks, currentErr := d.director.CurrentTasks(filter)
-		if currentErr != nil {
-			d.log.Error("Failed to get current tasks: %v", currentErr)
-			return nil, fmt.Errorf("failed to get current tasks: %w", currentErr)
-		}
-
-		recentTasks, recentErr := d.director.RecentTasks(limit*2, filter)
-		if recentErr != nil {
-			d.log.Error("Failed to get recent tasks: %v", recentErr)
-			return nil, fmt.Errorf("failed to get recent tasks: %w", recentErr)
-		}
-
-		// Merge tasks, avoiding duplicates by ID
-		taskMap := make(map[int]boshdirector.Task)
-		for _, task := range currentTasks {
-			taskMap[task.ID()] = task
-		}
-		for _, task := range recentTasks {
-			if _, exists := taskMap[task.ID()]; !exists {
-				taskMap[task.ID()] = task
-			}
-		}
-
-		// Convert map back to slice
-		tasks = make([]boshdirector.Task, 0, len(taskMap))
-		for _, task := range taskMap {
-			tasks = append(tasks, task)
-		}
-	default:
-		// Default to recent tasks
-		d.log.Debug("Unknown task type %s, defaulting to recent", taskType)
-		tasks, err = d.director.RecentTasks(limit*2, filter)
-	}
-
+	// Get tasks based on type
+	tasks, err := d.fetchTasksByType(taskType, limit)
 	if err != nil {
-		d.log.Error("Failed to get tasks (type: %s): %v", taskType, err)
-		return nil, fmt.Errorf("failed to get tasks: %w", err)
+		return nil, err
 	}
 
-	// Filter by states if specified
-	var filteredTasks []boshdirector.Task
-	if len(states) > 0 {
-		stateMap := make(map[string]bool)
-		for _, state := range states {
-			stateMap[state] = true
-		}
-
-		for _, task := range tasks {
-			if stateMap[task.State()] {
-				filteredTasks = append(filteredTasks, task)
-			}
-		}
-		tasks = filteredTasks
-		d.log.Debug("Filtered to %d tasks with states %v", len(tasks), states)
-	}
-
-	// Filter by team if specified
-	if team != "" {
-		d.log.Debug("Starting team filtering with %d tasks for team '%s'", len(tasks), team)
-		var teamFilteredTasks []boshdirector.Task
-		for _, task := range tasks {
-			deploymentName := task.DeploymentName()
-			d.log.Debug("Task %d: deployment='%s', description='%s'", task.ID(), deploymentName, task.Description())
-
-			// Filter based on the selected filter option
-			includeTask := false
-
-			switch team {
-			case "blacksmith":
-				// For blacksmith, show all BOSH director tasks
-				includeTask = true
-				d.log.Debug("Task %d: included for blacksmith (show all)", task.ID())
-			case "service-instances":
-				// For service-instances, show tasks from deployments that look like service instances
-				// Service instances typically have deployment names like: redis-{uuid}, rabbitmq-{uuid}, etc.
-				if deploymentName != "" {
-					includeTask = (strings.Contains(deploymentName, "-") &&
-						(strings.HasPrefix(deploymentName, "redis-") ||
-							strings.HasPrefix(deploymentName, "rabbitmq-") ||
-							strings.HasPrefix(deploymentName, "postgres-") ||
-							strings.Contains(deploymentName, "service-")))
-					d.log.Debug("Task %d: service-instances check result: %v", task.ID(), includeTask)
-				} else {
-					d.log.Debug("Task %d: no deployment name, excluded from service-instances", task.ID())
-				}
-			default:
-				// For specific service/plan names, filter by deployment name patterns
-				if deploymentName != "" {
-					deploymentLower := strings.ToLower(deploymentName)
-					teamLower := strings.ToLower(team)
-					includeTask = (strings.Contains(deploymentLower, teamLower) ||
-						strings.HasPrefix(deploymentLower, teamLower+"-"))
-					d.log.Debug("Task %d: specific filter '%s' check result: %v", task.ID(), team, includeTask)
-				} else {
-					d.log.Debug("Task %d: no deployment name, excluded from specific filter '%s'", task.ID(), team)
-				}
-			}
-
-			if includeTask {
-				teamFilteredTasks = append(teamFilteredTasks, task)
-				d.log.Debug("Task %d: INCLUDED for team '%s'", task.ID(), team)
-			} else {
-				d.log.Debug("Task %d: EXCLUDED for team '%s'", task.ID(), team)
-			}
-		}
-		originalCount := len(tasks)
-		tasks = teamFilteredTasks
-		d.log.Debug("Team filtering complete: %d tasks included for team '%s' (from %d original)", len(tasks), team, originalCount)
-	}
+	// Apply filters
+	tasks = d.filterTasksByStates(tasks, states)
+	tasks = d.filterTasksByTeam(tasks, team)
 
 	// Limit results
 	if len(tasks) > limit {
@@ -820,58 +801,65 @@ func (d *DirectorAdapter) GetTasks(taskType string, limit int, states []string, 
 		result[i] = *convertDirectorTask(task)
 	}
 
-	d.log.Info("Successfully retrieved %d tasks (type: %s)", len(result), taskType)
+	d.log.Infof("Successfully retrieved %d tasks (type: %s)", len(result), taskType)
+
 	return result, nil
 }
 
-// GetAllTasks retrieves all available tasks up to the specified limit
+// GetAllTasks retrieves all available tasks up to the specified limit.
 func (d *DirectorAdapter) GetAllTasks(limit int) ([]Task, error) {
-	d.log.Info("Getting all tasks (limit: %d)", limit)
+	d.log.Infof("Getting all tasks (limit: %d)", limit)
 
 	// Use GetTasks with "all" type for consistency
 	return d.GetTasks("all", limit, nil, "")
 }
 
-// CancelTask cancels a running task
+// CancelTask cancels a running task.
 func (d *DirectorAdapter) CancelTask(taskID int) error {
-	d.log.Info("Cancelling task: %d", taskID)
-	d.log.Debug("Finding task %d for cancellation", taskID)
+	d.log.Infof("Cancelling task: %d", taskID)
+	d.log.Debugf("Finding task %d for cancellation", taskID)
 
 	// Find the task first
 	task, err := d.director.FindTask(taskID)
 	if err != nil {
-		d.log.Error("Failed to find task %d: %v", taskID, err)
+		d.log.Errorf("Failed to find task %d: %v", taskID, err)
+
 		return fmt.Errorf("failed to find task %d: %w", taskID, err)
 	}
 
 	// Check if task can be cancelled (must be in processing or queued state)
 	state := task.State()
 	if state != "processing" && state != "queued" {
-		d.log.Error("Task %d is in state '%s' and cannot be cancelled", taskID, state)
-		return fmt.Errorf("task %d is in state '%s' and cannot be cancelled", taskID, state)
+		d.log.Errorf("Task %d is in state '%s' and cannot be cancelled", taskID, state)
+
+		return fmt.Errorf("%w: task %d is in state '%s'", ErrTaskCannotBeCancelled, taskID, state)
 	}
 
 	// Cancel the task
-	d.log.Debug("Cancelling task %d (current state: %s)", taskID, state)
+	d.log.Debugf("Cancelling task %d (current state: %s)", taskID, state)
+
 	err = task.Cancel()
 	if err != nil {
-		d.log.Error("Failed to cancel task %d: %v", taskID, err)
+		d.log.Errorf("Failed to cancel task %d: %v", taskID, err)
+
 		return fmt.Errorf("failed to cancel task %d: %w", taskID, err)
 	}
 
-	d.log.Info("Successfully cancelled task %d", taskID)
+	d.log.Infof("Successfully cancelled task %d", taskID)
+
 	return nil
 }
 
-// GetTaskOutput retrieves task output
-func (d *DirectorAdapter) GetTaskOutput(id int, outputType string) (string, error) {
-	d.log.Info("Getting task output for task %d (type: %s)", id, outputType)
-	d.log.Debug("Finding task %d for output retrieval", id)
+// GetTaskOutput retrieves task output.
+func (d *DirectorAdapter) GetTaskOutput(taskID int, outputType string) (string, error) {
+	d.log.Infof("Getting task output for task %d (type: %s)", taskID, outputType)
+	d.log.Debugf("Finding task %d for output retrieval", taskID)
 
-	task, err := d.director.FindTask(id)
+	task, err := d.director.FindTask(taskID)
 	if err != nil {
-		d.log.Error("Failed to get task %d: %v", id, err)
-		return "", fmt.Errorf("failed to get task %d: %w", id, err)
+		d.log.Errorf("Failed to get task %d: %v", taskID, err)
+
+		return "", fmt.Errorf("failed to get task %d: %w", taskID, err)
 	}
 
 	// Create a buffered reporter to capture output
@@ -900,33 +888,38 @@ func (d *DirectorAdapter) GetTaskOutput(id int, outputType string) (string, erro
 	}
 
 	if err != nil {
-		d.log.Error("Failed to get task output for task %d: %v", id, err)
-		return "", fmt.Errorf("failed to get task output for task %d: %w", id, err)
+		d.log.Errorf("Failed to get task output for task %d: %v", taskID, err)
+
+		return "", fmt.Errorf("failed to get task output for task %d: %w", taskID, err)
 	}
 
 	output := reporter.GetOutput()
-	d.log.Info("Successfully retrieved task output for task %d (size: %d bytes)", id, len(output))
-	d.log.Debug("Task output type %s retrieved successfully", outputType)
+	d.log.Infof("Successfully retrieved task output for task %d (size: %d bytes)", taskID, len(output))
+	d.log.Debugf("Task output type %s retrieved successfully", outputType)
+
 	return output, nil
 }
 
-// GetTaskEvents retrieves task events
-func (d *DirectorAdapter) GetTaskEvents(id int) ([]TaskEvent, error) {
-	d.log.Info("Getting task events for task %d", id)
-	d.log.Debug("Finding task %d for event retrieval", id)
+// GetTaskEvents retrieves task events.
+func (d *DirectorAdapter) GetTaskEvents(taskID int) ([]TaskEvent, error) {
+	d.log.Infof("Getting task events for task %d", taskID)
+	d.log.Debugf("Finding task %d for event retrieval", taskID)
 
-	task, err := d.director.FindTask(id)
+	task, err := d.director.FindTask(taskID)
 	if err != nil {
-		d.log.Error("Failed to get task %d: %v", id, err)
-		return nil, fmt.Errorf("failed to get task %d: %w", id, err)
+		d.log.Errorf("Failed to get task %d: %v", taskID, err)
+
+		return nil, fmt.Errorf("failed to get task %d: %w", taskID, err)
 	}
 
 	// Get event output which should be JSON lines
 	reporter := &BufferedTaskReporter{}
+
 	err = task.ResultOutput(reporter)
 	if err != nil {
-		d.log.Error("Failed to get task events for task %d: %v", id, err)
-		return nil, fmt.Errorf("failed to get task events for task %d: %w", id, err)
+		d.log.Errorf("Failed to get task events for task %d: %v", taskID, err)
+
+		return nil, fmt.Errorf("failed to get task events for task %d: %w", taskID, err)
 	}
 
 	// Parse the output as JSON lines for events
@@ -960,7 +953,8 @@ func (d *DirectorAdapter) GetTaskEvents(id int) ([]TaskEvent, error) {
 			} `json:"error,omitempty"`
 		}
 
-		if err := json.Unmarshal([]byte(line), &boshEvent); err != nil {
+		err := json.Unmarshal([]byte(line), &boshEvent)
+		if err != nil {
 			// Skip lines that aren't valid JSON events
 			continue
 		}
@@ -987,14 +981,15 @@ func (d *DirectorAdapter) GetTaskEvents(id int) ([]TaskEvent, error) {
 		events = append(events, event)
 	}
 
-	d.log.Info("Successfully retrieved %d events for task %d", len(events), id)
+	d.log.Infof("Successfully retrieved %d events for task %d", len(events), taskID)
+
 	return events, nil
 }
 
-// GetEvents retrieves events for a specific deployment
+// GetEvents retrieves events for a specific deployment.
 func (d *DirectorAdapter) GetEvents(deployment string) ([]Event, error) {
-	d.log.Info("Getting events for deployment: %s", deployment)
-	d.log.Debug("Fetching events from BOSH director")
+	d.log.Infof("Getting events for deployment: %s", deployment)
+	d.log.Debugf("Fetching events from BOSH director")
 
 	// Use the BOSH director's Events method to get deployment events
 	filter := boshdirector.EventsFilter{
@@ -1003,7 +998,8 @@ func (d *DirectorAdapter) GetEvents(deployment string) ([]Event, error) {
 
 	directorEvents, err := d.director.Events(filter)
 	if err != nil {
-		d.log.Error("Failed to get events for deployment %s: %v", deployment, err)
+		d.log.Errorf("Failed to get events for deployment %s: %v", deployment, err)
+
 		return nil, fmt.Errorf("failed to get events for deployment %s: %w", deployment, err)
 	}
 
@@ -1026,52 +1022,58 @@ func (d *DirectorAdapter) GetEvents(deployment string) ([]Event, error) {
 		events = append(events, event)
 	}
 
-	d.log.Info("Successfully retrieved %d events for deployment %s", len(events), deployment)
+	d.log.Infof("Successfully retrieved %d events for deployment %s", len(events), deployment)
+
 	return events, nil
 }
 
-// UpdateCloudConfig updates the cloud config
+// UpdateCloudConfig updates the cloud config.
 func (d *DirectorAdapter) UpdateCloudConfig(config string) error {
-	d.log.Info("Updating cloud config")
-	d.log.Debug("Cloud config size: %d bytes", len(config))
+	d.log.Infof("Updating cloud config")
+	d.log.Debugf("Cloud config size: %d bytes", len(config))
 
 	// UpdateConfig has different signature in bosh-cli
 	_, err := d.director.UpdateConfig("cloud", "", config, []byte(config))
 	if err != nil {
-		d.log.Error("Failed to update cloud config: %v", err)
+		d.log.Errorf("Failed to update cloud config: %v", err)
+
 		return fmt.Errorf("failed to update cloud config: %w", err)
 	}
 
-	d.log.Info("Successfully updated cloud config")
+	d.log.Infof("Successfully updated cloud config")
+
 	return nil
 }
 
-// GetCloudConfig retrieves the cloud config
+// GetCloudConfig retrieves the cloud config.
 func (d *DirectorAdapter) GetCloudConfig() (string, error) {
-	d.log.Info("Getting cloud config")
-	d.log.Debug("Listing cloud configs (limit: 1)")
+	d.log.Infof("Getting cloud config")
+	d.log.Debugf("Listing cloud configs (limit: 1)")
 
 	configs, err := d.director.ListConfigs(1, boshdirector.ConfigsFilter{
 		Type: "cloud",
 	})
 	if err != nil {
-		d.log.Error("Failed to get cloud config: %v", err)
+		d.log.Errorf("Failed to get cloud config: %v", err)
+
 		return "", fmt.Errorf("failed to get cloud config: %w", err)
 	}
 
 	if len(configs) == 0 {
-		d.log.Error("No cloud config found")
-		return "", fmt.Errorf("no cloud config found")
+		d.log.Errorf("No cloud config found")
+
+		return "", ErrNoCloudConfigFound
 	}
 
-	d.log.Info("Successfully retrieved cloud config (size: %d bytes)", len(configs[0].Content))
+	d.log.Infof("Successfully retrieved cloud config (size: %d bytes)", len(configs[0].Content))
+
 	return configs[0].Content, nil
 }
 
 // GetConfigs retrieves configs based on limit and type filters
-// Only returns the currently active configs for the main list view
+// Only returns the currently active configs for the main list view.
 func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshConfig, error) {
-	d.log.Info("Getting configs (limit: %d, types: %v)", limit, configTypes)
+	d.log.Infof("Getting configs (limit: %d, types: %v)", limit, configTypes)
 
 	// Convert limit to sensible defaults
 	if limit <= 0 || limit > 200 {
@@ -1086,14 +1088,17 @@ func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshCon
 	// To get only active configs, we need to use limit=1 per type/name combo
 	// First, get a list with latest=false to find all unique configs
 	tempLimit := 1000
+
 	allConfigs, err := d.director.ListConfigs(tempLimit, boshdirector.ConfigsFilter{})
 	if err != nil {
-		d.log.Error("Failed to get configs list: %v", err)
+		d.log.Errorf("Failed to get configs list: %v", err)
+
 		return nil, fmt.Errorf("failed to get configs: %w", err)
 	}
 
 	// Track unique type+name combinations we've seen
 	seen := make(map[string]bool)
+
 	var result []BoshConfig
 
 	for _, config := range allConfigs {
@@ -1103,17 +1108,21 @@ func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshCon
 		if seen[key] {
 			continue
 		}
+
 		seen[key] = true
 
 		// Check if we need to filter by type
 		if len(configTypes) > 0 {
 			found := false
+
 			for _, ct := range configTypes {
 				if ct == config.Type {
 					found = true
+
 					break
 				}
 			}
+
 			if !found {
 				continue
 			}
@@ -1125,9 +1134,9 @@ func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshCon
 			Type: config.Type,
 			Name: config.Name,
 		})
-
 		if err != nil {
-			d.log.Error("Failed to get latest config for %s/%s: %v", config.Type, config.Name, err)
+			d.log.Errorf("Failed to get latest config for %s/%s: %v", config.Type, config.Name, err)
+
 			continue
 		}
 
@@ -1142,21 +1151,23 @@ func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshCon
 	}
 
 	// Sort by type then name for consistent ordering (like BOSH CLI)
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Type != result[j].Type {
+	sort.Slice(result, func(first, second int) bool {
+		if result[first].Type != result[second].Type {
 			// Order: cloud, cpi, resurrection, runtime
 			typeOrder := map[string]int{
 				"cloud":        1,
-				"cpi":          2,
-				"resurrection": 3,
-				"runtime":      4,
+				"cpi":          configPriorityCPI,
+				"resurrection": configPriorityResurrection,
+				"runtime":      configPriorityRuntime,
 			}
-			return typeOrder[result[i].Type] < typeOrder[result[j].Type]
+
+			return typeOrder[result[first].Type] < typeOrder[result[second].Type]
 		}
-		return result[i].Name < result[j].Name
+
+		return result[first].Name < result[second].Name
 	})
 
-	d.log.Info("Successfully retrieved %d active configs", len(result))
+	d.log.Infof("Successfully retrieved %d active configs", len(result))
 
 	// Apply the limit if needed
 	if limit > 0 && len(result) > limit {
@@ -1166,9 +1177,9 @@ func (d *DirectorAdapter) GetConfigs(limit int, configTypes []string) ([]BoshCon
 	return result, nil
 }
 
-// GetConfigVersions retrieves all versions of a specific config
+// GetConfigVersions retrieves all versions of a specific config.
 func (d *DirectorAdapter) GetConfigVersions(configType, name string, limit int) ([]BoshConfig, error) {
-	d.log.Info("Getting config versions for type: %s, name: %s (limit: %d)", configType, name, limit)
+	d.log.Infof("Getting config versions for type: %s, name: %s (limit: %d)", configType, name, limit)
 
 	if limit <= 0 || limit > 100 {
 		limit = 20 // Default limit for version history
@@ -1180,7 +1191,8 @@ func (d *DirectorAdapter) GetConfigVersions(configType, name string, limit int) 
 		Name: name,
 	})
 	if err != nil {
-		d.log.Error("Failed to get config versions: %v", err)
+		d.log.Errorf("Failed to get config versions: %v", err)
+
 		return nil, fmt.Errorf("failed to get config versions: %w", err)
 	}
 
@@ -1192,28 +1204,31 @@ func (d *DirectorAdapter) GetConfigVersions(configType, name string, limit int) 
 		result[i] = bc
 	}
 
-	d.log.Info("Successfully retrieved %d config versions", len(result))
+	d.log.Infof("Successfully retrieved %d config versions", len(result))
+
 	return result, nil
 }
 
-// GetConfigByID retrieves detailed config information by ID
+// GetConfigByID retrieves detailed config information by ID.
 func (d *DirectorAdapter) GetConfigByID(configID string) (*BoshConfigDetail, error) {
-	d.log.Info("Getting config details for ID: %s", configID)
+	d.log.Infof("Getting config details for ID: %s", configID)
 
 	// Remove the * suffix if present (indicates active config)
 	cleanID := strings.TrimSuffix(configID, "*")
 
 	// Parse the ID to int
-	id, err := strconv.Atoi(cleanID)
+	configIDInt, err := strconv.Atoi(cleanID)
 	if err != nil {
-		d.log.Error("Invalid config ID format: %s", configID)
-		return nil, fmt.Errorf("invalid config ID format: %s", configID)
+		d.log.Errorf("Invalid config ID format: %s", configID)
+
+		return nil, fmt.Errorf("%w: %s", ErrInvalidConfigIDFormat, configID)
 	}
 
 	// Get the config by ID
 	config, err := d.director.LatestConfigByID(cleanID)
 	if err != nil {
-		d.log.Error("Failed to get config by ID %d: %v", id, err)
+		d.log.Errorf("Failed to get config by ID %d: %v", configIDInt, err)
+
 		return nil, fmt.Errorf("failed to get config: %w", err)
 	}
 
@@ -1233,13 +1248,14 @@ func (d *DirectorAdapter) GetConfigByID(configID string) (*BoshConfigDetail, err
 		},
 	}
 
-	d.log.Info("Successfully retrieved config details for ID: %s", configID)
+	d.log.Infof("Successfully retrieved config details for ID: %s", configID)
+
 	return result, nil
 }
 
-// GetConfigContent retrieves the full content of a config by its ID
+// GetConfigContent retrieves the full content of a config by its ID.
 func (d *DirectorAdapter) GetConfigContent(configID string) (string, error) {
-	d.log.Info("Getting config content for ID: %s", configID)
+	d.log.Infof("Getting config content for ID: %s", configID)
 
 	// Remove the * suffix if present (indicates active config)
 	cleanID := strings.TrimSuffix(configID, "*")
@@ -1247,17 +1263,19 @@ func (d *DirectorAdapter) GetConfigContent(configID string) (string, error) {
 	// Get the config by ID
 	config, err := d.director.LatestConfigByID(cleanID)
 	if err != nil {
-		d.log.Error("Failed to get config content by ID %s: %v", cleanID, err)
+		d.log.Errorf("Failed to get config content by ID %s: %v", cleanID, err)
+
 		return "", fmt.Errorf("failed to get config content: %w", err)
 	}
 
-	d.log.Info("Successfully retrieved config content for ID: %s (size: %d bytes)", configID, len(config.Content))
+	d.log.Infof("Successfully retrieved config content for ID: %s (size: %d bytes)", configID, len(config.Content))
+
 	return config.Content, nil
 }
 
-// ComputeConfigDiff computes the diff between two config versions
+// ComputeConfigDiff computes the diff between two config versions.
 func (d *DirectorAdapter) ComputeConfigDiff(fromID, toID string) (*ConfigDiff, error) {
-	d.log.Info("Computing diff between configs %s -> %s", fromID, toID)
+	d.log.Infof("Computing diff between configs %s -> %s", fromID, toID)
 
 	// Get content for both configs
 	fromContent, err := d.GetConfigContent(fromID)
@@ -1271,23 +1289,30 @@ func (d *DirectorAdapter) ComputeConfigDiff(fromID, toID string) (*ConfigDiff, e
 	}
 
 	// Parse YAML content
-	var fromData interface{}
-	var toData interface{}
+	var (
+		fromData interface{}
+		toData   interface{}
+	)
 
-	if err := yaml.Unmarshal([]byte(fromContent), &fromData); err != nil {
-		d.log.Error("Failed to parse 'from' config YAML: %v", err)
+	err = yaml.Unmarshal([]byte(fromContent), &fromData)
+	if err != nil {
+		d.log.Errorf("Failed to parse 'from' config YAML: %v", err)
+
 		return nil, fmt.Errorf("failed to parse 'from' config YAML: %w", err)
 	}
 
-	if err := yaml.Unmarshal([]byte(toContent), &toData); err != nil {
-		d.log.Error("Failed to parse 'to' config YAML: %v", err)
+	err = yaml.Unmarshal([]byte(toContent), &toData)
+	if err != nil {
+		d.log.Errorf("Failed to parse 'to' config YAML: %v", err)
+
 		return nil, fmt.Errorf("failed to parse 'to' config YAML: %w", err)
 	}
 
 	// Compute diff using spruce
 	diffable, err := spruce.Diff(fromData, toData)
 	if err != nil {
-		d.log.Error("Failed to compute diff: %v", err)
+		d.log.Errorf("Failed to compute diff: %v", err)
+
 		return nil, fmt.Errorf("failed to compute diff: %w", err)
 	}
 
@@ -1309,53 +1334,57 @@ func (d *DirectorAdapter) ComputeConfigDiff(fromID, toID string) (*ConfigDiff, e
 		result.Changes = changes
 	}
 
-	d.log.Info("Diff computed successfully (has changes: %v)", result.HasChanges)
+	d.log.Infof("Diff computed successfully (has changes: %v)", result.HasChanges)
+
 	return result, nil
 }
 
-// parseDiffString parses the spruce diff output into structured changes
+// parseDiffString parses the spruce diff output into structured changes.
 func parseDiffString(diffStr string) []ConfigDiffChange {
 	changes := []ConfigDiffChange{}
 	lines := strings.Split(diffStr, "\n")
 
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-
+	for lineIndex, line := range lines {
 		// Look for change markers
-		if strings.Contains(line, " added") {
+		switch {
+		case strings.Contains(line, " added"):
 			change := ConfigDiffChange{
 				Type: "added",
 				Path: extractPath(line),
 			}
 			// Collect the new value
-			if i+1 < len(lines) {
-				change.NewValue = collectValue(lines, i+1, "added")
+			if lineIndex+1 < len(lines) {
+				change.NewValue = collectValue(lines, lineIndex+1, "added")
 			}
+
 			changes = append(changes, change)
-		} else if strings.Contains(line, " removed") {
+		case strings.Contains(line, " removed"):
 			change := ConfigDiffChange{
 				Type: "removed",
 				Path: extractPath(line),
 			}
 			// Collect the old value
-			if i+1 < len(lines) {
-				change.OldValue = collectValue(lines, i+1, "removed")
+			if lineIndex+1 < len(lines) {
+				change.OldValue = collectValue(lines, lineIndex+1, "removed")
 			}
+
 			changes = append(changes, change)
-		} else if strings.Contains(line, " changed") {
+		case strings.Contains(line, " changed"):
 			change := ConfigDiffChange{
 				Type: "changed",
 				Path: extractPath(line),
 			}
 			// Collect old and new values
-			for j := i + 1; j < len(lines) && j < i+10; j++ {
+			for j := lineIndex + 1; j < len(lines) && j < lineIndex+10; j++ {
 				if strings.Contains(lines[j], "from ") {
 					change.OldValue = extractChangedValue(lines[j])
 				} else if strings.Contains(lines[j], "to ") {
 					change.NewValue = extractChangedValue(lines[j])
+
 					break
 				}
 			}
+
 			changes = append(changes, change)
 		}
 	}
@@ -1363,7 +1392,7 @@ func parseDiffString(diffStr string) []ConfigDiffChange {
 	return changes
 }
 
-// extractPath extracts the path from a diff line
+// extractPath extracts the path from a diff line.
 func extractPath(line string) string {
 	// Remove ANSI color codes
 	cleaned := stripAnsiCodes(line)
@@ -1372,22 +1401,25 @@ func extractPath(line string) string {
 	if len(parts) > 0 {
 		return parts[0]
 	}
+
 	return ""
 }
 
-// stripAnsiCodes removes ANSI color codes from a string
-func stripAnsiCodes(s string) string {
+// stripAnsiCodes removes ANSI color codes from a string.
+func stripAnsiCodes(inputStr string) string {
 	// Simple regex-like replacement for common ANSI codes
-	s = strings.ReplaceAll(s, "@C{", "")
-	s = strings.ReplaceAll(s, "@R{", "")
-	s = strings.ReplaceAll(s, "@G{", "")
-	s = strings.ReplaceAll(s, "}", "")
-	return strings.TrimSpace(s)
+	inputStr = strings.ReplaceAll(inputStr, "@C{", "")
+	inputStr = strings.ReplaceAll(inputStr, "@R{", "")
+	inputStr = strings.ReplaceAll(inputStr, "@G{", "")
+	inputStr = strings.ReplaceAll(inputStr, "}", "")
+
+	return strings.TrimSpace(inputStr)
 }
 
-// collectValue collects multi-line values from diff output
-func collectValue(lines []string, startIdx int, changeType string) string {
+// collectValue collects multi-line values from diff output.
+func collectValue(lines []string, startIdx int, _ string) string {
 	var value strings.Builder
+
 	for i := startIdx; i < len(lines); i++ {
 		line := lines[i]
 		// Stop at next change marker or empty line
@@ -1397,30 +1429,37 @@ func collectValue(lines []string, startIdx int, changeType string) string {
 			strings.Contains(line, " changed") {
 			break
 		}
+
 		cleaned := stripAnsiCodes(line)
 		value.WriteString(strings.TrimSpace(cleaned))
 		value.WriteString("\n")
 	}
+
 	return strings.TrimSpace(value.String())
 }
 
-// extractChangedValue extracts value from a "from" or "to" line
+// extractChangedValue extracts value from a "from" or "to" line.
 func extractChangedValue(line string) string {
 	cleaned := stripAnsiCodes(line)
 	// Remove "from " or "to " prefix
 	cleaned = strings.TrimPrefix(cleaned, "from ")
 	cleaned = strings.TrimPrefix(cleaned, "to ")
+
 	return strings.TrimSpace(cleaned)
 }
 
-// convertDirectorBoshConfig converts a BOSH director config to our BoshConfig type
+// convertDirectorBoshConfig converts a BOSH director config to our BoshConfig type.
 func convertDirectorBoshConfig(config boshdirector.Config) BoshConfig {
 	createdAt := time.Time{}
 	if config.CreatedAt != "" {
-		if parsed, err := time.Parse("2006-01-02 15:04:05 MST", config.CreatedAt); err == nil {
+		parsed, err := time.Parse("2006-01-02 15:04:05 MST", config.CreatedAt)
+		if err == nil {
 			createdAt = parsed
-		} else if parsed, err := time.Parse(time.RFC3339, config.CreatedAt); err == nil {
-			createdAt = parsed
+		} else {
+			parsed, err := time.Parse(time.RFC3339, config.CreatedAt)
+			if err == nil {
+				createdAt = parsed
+			}
 		}
 	}
 
@@ -1434,15 +1473,16 @@ func convertDirectorBoshConfig(config boshdirector.Config) BoshConfig {
 	}
 }
 
-// Cleanup runs BOSH cleanup
+// Cleanup runs BOSH cleanup.
 func (d *DirectorAdapter) Cleanup(removeAll bool) (*Task, error) {
-	d.log.Info("Running BOSH cleanup (removeAll: %v)", removeAll)
-	d.log.Debug("Initiating cleanup operation")
+	d.log.Infof("Running BOSH cleanup (removeAll: %v)", removeAll)
+	d.log.Debugf("Initiating cleanup operation")
 
 	// CleanUp has different signature in bosh-cli
 	_, err := d.director.CleanUp(removeAll, false, false)
 	if err != nil {
-		d.log.Error("Failed to run cleanup: %v", err)
+		d.log.Errorf("Failed to run cleanup: %v", err)
+
 		return nil, fmt.Errorf("failed to run cleanup: %w", err)
 	}
 
@@ -1454,20 +1494,57 @@ func (d *DirectorAdapter) Cleanup(removeAll bool) (*Task, error) {
 
 	if len(tasks) > 0 {
 		task := convertDirectorTask(tasks[0])
-		d.log.Info("Cleanup started, task ID: %d", task.ID)
+		d.log.Infof("Cleanup started, task ID: %d", task.ID)
+
 		return task, nil
 	}
 
-	d.log.Error("No task found for cleanup")
-	return nil, fmt.Errorf("no task found for cleanup")
+	d.log.Errorf("No task found for cleanup")
+
+	return nil, ErrNoTaskFoundCleanup
 }
 
 // Helper functions
 
 func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
-	// Parse the address to extract host and port
-	host := config.Address
-	port := 25555 // Default BOSH director port
+	factoryConfig, err := createBasicFactoryConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Skip auto-detection if we're in a test environment
+	if os.Getenv("BLACKSMITH_TEST_MODE") == "true" {
+		return setupTestModeAuth(factoryConfig, config, logger)
+	}
+
+	// Try UAA authentication first if possible
+	uaaConfig, err := attemptUAAAutoDetection(config, logger, factoryConfig)
+	if err == nil && uaaConfig != nil {
+		return uaaConfig, nil
+	}
+
+	// Fall back to basic auth or explicit UAA config
+	return setupFallbackAuth(factoryConfig, config, logger)
+}
+
+// createBasicFactoryConfig creates the basic factory config with host and port parsing.
+func createBasicFactoryConfig(config Config) (*boshdirector.FactoryConfig, error) {
+	host, port, err := parseHostAndPort(config.Address, defaultBOSHDirectorPort)
+	if err != nil {
+		return nil, err
+	}
+
+	return &boshdirector.FactoryConfig{
+		Host:   host,
+		Port:   port,
+		CACert: config.CACert,
+	}, nil
+}
+
+// parseHostAndPort extracts host and port from an address string.
+func parseHostAndPort(address string, defaultPort int) (string, int, error) {
+	host := address
+	port := defaultPort
 
 	// Remove https:// or http:// prefix if present
 	if strings.HasPrefix(host, "https://") {
@@ -1479,174 +1556,217 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 	// Extract port if specified
 	if strings.Contains(host, ":") {
 		parts := strings.Split(host, ":")
+
 		host = parts[0]
 		if len(parts) > 1 {
-			if p, err := strconv.Atoi(parts[1]); err == nil {
+			p, err := strconv.Atoi(parts[1])
+			if err == nil {
 				port = p
 			}
 		}
 	}
 
-	factoryConfig := &boshdirector.FactoryConfig{
-		Host:   host,
-		Port:   port,
-		CACert: config.CACert,
-	}
+	return host, port, nil
+}
 
-	// Skip auto-detection if we're in a test environment
-	// This prevents hanging on network calls during tests
-	if os.Getenv("BLACKSMITH_TEST_MODE") == "true" {
-		// Just set up basic auth without trying to connect
-		if config.Username != "" && config.Password != "" {
-			if err := os.Setenv("BOSH_CLIENT", config.Username); err != nil {
-				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
-			}
-			if err := os.Setenv("BOSH_CLIENT_SECRET", config.Password); err != nil {
-				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
-			}
-			factoryConfig.Client = config.Username
-			factoryConfig.ClientSecret = config.Password
+// setupTestModeAuth configures authentication for test mode.
+func setupTestModeAuth(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
+	if config.Username != "" && config.Password != "" {
+		if err := setEnvCredentials(config.Username, config.Password, logger); err != nil {
+			return nil, err
 		}
-		return factoryConfig, nil
+
+		factoryConfig.Client = config.Username
+		factoryConfig.ClientSecret = config.Password
 	}
 
-	// First, try to detect if the director uses UAA by making an unauthenticated info call
-	// Create a temporary director to check authentication type
+	return factoryConfig, nil
+}
+
+// setEnvCredentials sets BOSH environment variables.
+func setEnvCredentials(username, password string, logger boshlog.Logger) error {
+	if err := os.Setenv("BOSH_CLIENT", username); err != nil {
+		logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
+
+		return fmt.Errorf("failed to set BOSH_CLIENT environment variable: %w", err)
+	}
+
+	if err := os.Setenv("BOSH_CLIENT_SECRET", password); err != nil {
+		logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
+
+		return fmt.Errorf("failed to set BOSH_CLIENT_SECRET environment variable: %w", err)
+	}
+
+	return nil
+}
+
+// attemptUAAAutoDetection tries to auto-detect UAA configuration.
+func attemptUAAAutoDetection(config Config, logger boshlog.Logger, factoryConfig *boshdirector.FactoryConfig) (*boshdirector.FactoryConfig, error) {
 	tempFactory := boshdirector.NewFactory(logger)
+
 	tempDirector, err := tempFactory.New(*factoryConfig, nil, nil)
-	if err == nil {
-		if info, err := tempDirector.Info(); err == nil {
-			if config.Logger != nil {
-				config.Logger.Debug("Detected director auth type: %s", info.Auth.Type)
-			}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary BOSH director: %w", err)
+	}
 
-			// If director uses UAA and we have username/password, set up UAA client auth
-			if info.Auth.Type == "uaa" && config.Username != "" && config.Password != "" {
-				// Extract UAA URL from auth options
-				if uaaURL, ok := info.Auth.Options["url"].(string); ok {
-					if config.Logger != nil {
-						config.Logger.Info("Director uses UAA authentication, using provided credentials as UAA client ID and secret")
-						config.Logger.Debug("UAA URL: %s", uaaURL)
-					}
+	info, err := tempDirector.Info()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get director info: %w", err)
+	}
 
-					// Parse UAA URL to extract host and port
-					uaaHost := uaaURL
-					uaaPort := 443 // Default HTTPS port
+	if config.Logger != nil {
+		config.Logger.Debugf("Detected director auth type: %s", info.Auth.Type)
+	}
 
-					// Remove https:// or http:// prefix if present
-					if strings.HasPrefix(uaaHost, "https://") {
-						uaaHost = strings.TrimPrefix(uaaHost, "https://")
-						uaaPort = 443
-					} else if strings.HasPrefix(uaaHost, "http://") {
-						uaaHost = strings.TrimPrefix(uaaHost, "http://")
-						uaaPort = 80
-					}
+	// If director uses UAA and we have credentials, set up UAA client auth
+	if info.Auth.Type == "uaa" && config.Username != "" && config.Password != "" {
+		return setupUAAAuth(info, config, logger, factoryConfig)
+	}
 
-					// Extract port if specified
-					if strings.Contains(uaaHost, ":") {
-						parts := strings.Split(uaaHost, ":")
-						uaaHost = parts[0]
-						if len(parts) > 1 {
-							if p, err := strconv.Atoi(parts[1]); err == nil {
-								uaaPort = p
-							}
-						}
-					}
+	return nil, ErrUAAAutoDetectionNotApplicable
+}
 
-					if config.Logger != nil {
-						config.Logger.Debug("UAA Host: %s, Port: %d", uaaHost, uaaPort)
-					}
+// setupUAAAuth configures UAA authentication.
+func setupUAAAuth(info boshdirector.Info, config Config, logger boshlog.Logger, factoryConfig *boshdirector.FactoryConfig) (*boshdirector.FactoryConfig, error) {
+	uaaURL, ok := info.Auth.Options["url"].(string)
+	if !ok {
+		return nil, ErrUAAURLNotFound
+	}
 
-					// Create UAA client using the username/password as client credentials
-					uaaConfig := boshuaa.Config{
-						Host:         uaaHost,
-						Port:         uaaPort,
-						Client:       config.Username,
-						ClientSecret: config.Password,
-						CACert:       config.CACert,
-					}
+	if config.Logger != nil {
+		config.Logger.Infof("Director uses UAA authentication, using provided credentials as UAA client ID and secret")
+		config.Logger.Debugf("UAA URL: %s", uaaURL)
+	}
 
-					uaaFactory := boshuaa.NewFactory(logger)
-					uaa, err := uaaFactory.New(uaaConfig)
-					if err != nil {
-						if config.Logger != nil {
-							config.Logger.Error("Failed to create UAA client: %v", err)
-						}
-						return nil, fmt.Errorf("failed to create UAA client: %w", err)
-					}
+	uaaHost, uaaPort, err := parseUAAURL(uaaURL)
+	if err != nil {
+		return nil, err
+	}
 
-					// Set up token function for UAA authentication
-					factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
+	if config.Logger != nil {
+		config.Logger.Debugf("UAA Host: %s, Port: %d", uaaHost, uaaPort)
+	}
 
-					// Also set environment variables for compatibility
-					if err := os.Setenv("BOSH_CLIENT", config.Username); err != nil {
-						logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
-					}
-					if err := os.Setenv("BOSH_CLIENT_SECRET", config.Password); err != nil {
-						logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
-					}
+	uaa, err := createUAAClient(uaaHost, uaaPort, config.Username, config.Password, config.CACert, logger)
+	if err != nil {
+		if config.Logger != nil {
+			config.Logger.Errorf("Failed to create UAA client: %v", err)
+		}
 
-					return factoryConfig, nil
-				}
+		return nil, fmt.Errorf("failed to create UAA client: %w", err)
+	}
+
+	factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
+
+	// Set environment variables for compatibility
+	if err := setEnvCredentials(config.Username, config.Password, logger); err != nil {
+		return nil, err
+	}
+
+	return factoryConfig, nil
+}
+
+// parseUAAURL extracts host and port from UAA URL.
+func parseUAAURL(uaaURL string) (string, int, error) {
+	uaaHost := uaaURL
+	uaaPort := 443 // Default HTTPS port
+
+	// Remove https:// or http:// prefix if present
+	if strings.HasPrefix(uaaHost, "https://") {
+		uaaHost = strings.TrimPrefix(uaaHost, "https://")
+		uaaPort = 443
+	} else if strings.HasPrefix(uaaHost, "http://") {
+		uaaHost = strings.TrimPrefix(uaaHost, "http://")
+		uaaPort = 80
+	}
+
+	// Extract port if specified
+	if strings.Contains(uaaHost, ":") {
+		parts := strings.Split(uaaHost, ":")
+
+		uaaHost = parts[0]
+		if len(parts) > 1 {
+			p, err := strconv.Atoi(parts[1])
+			if err == nil {
+				uaaPort = p
 			}
 		}
 	}
 
-	// Fall back to basic auth or explicit UAA config
+	return uaaHost, uaaPort, nil
+}
+
+// createUAAClient creates a new UAA client.
+func createUAAClient(host string, port int, clientID, clientSecret, caCert string, logger boshlog.Logger) (boshuaa.UAA, error) {
+	uaaConfig := boshuaa.Config{
+		Host:         host,
+		Port:         port,
+		Client:       clientID,
+		ClientSecret: clientSecret,
+		CACert:       caCert,
+	}
+
+	uaaFactory := boshuaa.NewFactory(logger)
+
+	uaa, err := uaaFactory.New(uaaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create UAA client: %w", err)
+	}
+
+	return uaa, nil
+}
+
+// setupFallbackAuth configures fallback authentication (basic auth or explicit UAA).
+func setupFallbackAuth(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
 	if config.UAA == nil {
-		if config.Username != "" && config.Password != "" {
-			// Set environment variables for BOSH CLI
-			if err := os.Setenv("BOSH_CLIENT", config.Username); err != nil {
-				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
-			}
-			if err := os.Setenv("BOSH_CLIENT_SECRET", config.Password); err != nil {
-				logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
-			}
+		return setupBasicAuth(factoryConfig, config, logger)
+	}
 
-			// Also set in factory config for direct usage
+	return setupExplicitUAA(factoryConfig, config, logger)
+}
+
+// setupBasicAuth configures basic authentication.
+func setupBasicAuth(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
+	if config.Username != "" && config.Password != "" {
+		if err := setEnvCredentials(config.Username, config.Password, logger); err != nil {
+			return nil, err
+		}
+
+		if config.Logger != nil {
+			config.Logger.Debugf("Setting up basic auth with username: %s", config.Username)
+			config.Logger.Debugf("Set BOSH_CLIENT env var to: %s", config.Username)
+		}
+
+		factoryConfig.Client = config.Username
+		factoryConfig.ClientSecret = config.Password
+	} else {
+		// Check if env vars are already set
+		envClient := os.Getenv("BOSH_CLIENT")
+		envSecret := os.Getenv("BOSH_CLIENT_SECRET")
+
+		if envClient != "" && envSecret != "" {
 			if config.Logger != nil {
-				config.Logger.Debug("Setting up basic auth with username: %s", config.Username)
-				config.Logger.Debug("Set BOSH_CLIENT env var to: %s", config.Username)
+				config.Logger.Debugf("Using BOSH_CLIENT from environment: %s", envClient)
 			}
-			factoryConfig.Client = config.Username
-			factoryConfig.ClientSecret = config.Password
-		} else {
-			// Check if env vars are already set
-			envClient := os.Getenv("BOSH_CLIENT")
-			envSecret := os.Getenv("BOSH_CLIENT_SECRET")
 
-			if envClient != "" && envSecret != "" {
-				if config.Logger != nil {
-					config.Logger.Debug("Using BOSH_CLIENT from environment: %s", envClient)
-				}
-				factoryConfig.Client = envClient
-				factoryConfig.ClientSecret = envSecret
-			} else {
-				// Log warning if no credentials provided
-				if config.Logger != nil {
-					config.Logger.Error("No authentication credentials provided (neither config nor env vars)")
-				}
-			}
+			factoryConfig.Client = envClient
+			factoryConfig.ClientSecret = envSecret
+		} else if config.Logger != nil {
+			config.Logger.Errorf("No authentication credentials provided (neither config nor env vars)")
 		}
 	}
 
-	// Set up UAA if explicitly configured
-	if config.UAA != nil {
-		uaaConfig := boshuaa.Config{
-			Host:         config.UAA.URL,
-			Client:       config.UAA.ClientID,
-			ClientSecret: config.UAA.ClientSecret,
-			CACert:       config.UAA.CACert,
-		}
+	return factoryConfig, nil
+}
 
-		uaaFactory := boshuaa.NewFactory(logger)
-		uaa, err := uaaFactory.New(uaaConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create UAA client: %w", err)
-		}
-
-		factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
+// setupExplicitUAA configures explicit UAA authentication.
+func setupExplicitUAA(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
+	uaa, err := createUAAClient(config.UAA.URL, 0, config.UAA.ClientID, config.UAA.ClientSecret, config.UAA.CACert, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create UAA client: %w", err)
 	}
+
+	factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
 
 	return factoryConfig, nil
 }
@@ -1675,7 +1795,7 @@ func convertDirectorTask(task boshdirector.Task) *Task {
 	return result
 }
 
-func extractDeploymentName(manifest string) string {
+func ExtractDeploymentName(manifest string) string {
 	// Simple extraction - look for "name:" at the beginning of a line
 	lines := strings.Split(manifest, "\n")
 	for _, line := range lines {
@@ -1684,9 +1804,11 @@ func extractDeploymentName(manifest string) string {
 			name := strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
 			// Remove quotes if present
 			name = strings.Trim(name, `"'`)
+
 			return name
 		}
 	}
+
 	return ""
 }
 
@@ -1696,9 +1818,12 @@ func parseStringToUint64(s string) *uint64 {
 	if s == "" {
 		return nil
 	}
-	if val, err := strconv.ParseUint(s, 10, 64); err == nil {
+
+	val, err := strconv.ParseUint(s, 10, 64)
+	if err == nil {
 		return &val
 	}
+
 	return nil
 }
 
@@ -1706,20 +1831,23 @@ func parseStringToFloat64(s string) *float64 {
 	if s == "" {
 		return nil
 	}
+
 	if val, err := strconv.ParseFloat(s, 64); err == nil {
 		return &val
 	}
+
 	return nil
 }
 
-// FetchLogs fetches logs from a specific job in a deployment
+// FetchLogs fetches logs from a specific job in a deployment.
 func (d *DirectorAdapter) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
-	d.log.Info("Fetching logs for deployment: %s, job: %s/%s", deployment, jobName, jobIndex)
-	d.log.Debug("Finding deployment %s", deployment)
+	d.log.Infof("Fetching logs for deployment: %s, job: %s/%s", deployment, jobName, jobIndex)
+	d.log.Debugf("Finding deployment %s", deployment)
 
 	dep, err := d.director.FindDeployment(deployment)
 	if err != nil {
-		d.log.Error("Failed to find deployment %s: %v", deployment, err)
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+
 		return "", fmt.Errorf("failed to find deployment %s: %w", deployment, err)
 	}
 
@@ -1729,39 +1857,44 @@ func (d *DirectorAdapter) FetchLogs(deployment string, jobName string, jobIndex 
 	// Fetch logs (empty filters means all logs, "job" means only job logs)
 	logsResult, err := dep.FetchLogs(slug, []string{}, "job")
 	if err != nil {
-		d.log.Error("Failed to fetch logs for %s/%s in deployment %s: %v", jobName, jobIndex, deployment, err)
+		d.log.Errorf("Failed to fetch logs for %s/%s in deployment %s: %v", jobName, jobIndex, deployment, err)
+
 		return "", fmt.Errorf("failed to fetch logs: %w", err)
 	}
 
-	d.log.Info("Successfully fetched logs for %s/%s (blobstore ID: %s)", jobName, jobIndex, logsResult.BlobstoreID)
+	d.log.Infof("Successfully fetched logs for %s/%s (blobstore ID: %s)", jobName, jobIndex, logsResult.BlobstoreID)
 
 	// Download the logs from blobstore
 	var logBuffer bytes.Buffer
+
 	err = d.director.DownloadResourceUnchecked(logsResult.BlobstoreID, &logBuffer)
 	if err != nil {
-		d.log.Error("Failed to download logs from blobstore %s: %v", logsResult.BlobstoreID, err)
+		d.log.Errorf("Failed to download logs from blobstore %s: %v", logsResult.BlobstoreID, err)
+
 		return "", fmt.Errorf("failed to download logs: %w", err)
 	}
 
-	d.log.Debug("Downloaded log archive, size: %d bytes", logBuffer.Len())
+	d.log.Debugf("Downloaded log archive, size: %d bytes", logBuffer.Len())
 
 	// Extract the tar.gz archive
 	logs, err := extractLogsFromTarGz(&logBuffer)
 	if err != nil {
-		d.log.Error("Failed to extract logs from archive: %v", err)
+		d.log.Errorf("Failed to extract logs from archive: %v", err)
+
 		return "", fmt.Errorf("failed to extract logs: %w", err)
 	}
 
 	return logs, nil
 }
 
-// extractLogsFromTarGz extracts log files from a tar.gz archive
+// extractLogsFromTarGz extracts log files from a tar.gz archive.
 func extractLogsFromTarGz(data io.Reader) (string, error) {
 	// Create gzip reader
 	gzReader, err := gzip.NewReader(data)
 	if err != nil {
 		return "", fmt.Errorf("failed to create gzip reader: %w", err)
 	}
+
 	defer func() { _ = gzReader.Close() }()
 
 	// Create tar reader
@@ -1775,6 +1908,7 @@ func extractLogsFromTarGz(data io.Reader) (string, error) {
 		if err == io.EOF {
 			break
 		}
+
 		if err != nil {
 			return "", fmt.Errorf("failed to read tar archive: %w", err)
 		}
@@ -1789,7 +1923,8 @@ func extractLogsFromTarGz(data io.Reader) (string, error) {
 			// Read file contents
 			var buf bytes.Buffer
 			// Limit read size to prevent memory issues
-			limitReader := io.LimitReader(tarReader, 10*1024*1024) // 10MB limit per file
+			limitReader := io.LimitReader(tarReader, maxLogFileSize) // 10MB limit per file
+
 			_, err := io.Copy(&buf, limitReader)
 			if err != nil {
 				return "", fmt.Errorf("failed to read file %s: %w", header.Name, err)
@@ -1810,199 +1945,57 @@ func extractLogsFromTarGz(data io.Reader) (string, error) {
 	for path, content := range logContents {
 		result.WriteString(fmt.Sprintf("=== %s ===\n", path))
 		result.WriteString(content)
+
 		if !strings.HasSuffix(content, "\n") {
 			result.WriteString("\n")
 		}
+
 		result.WriteString("\n")
 	}
 
 	return result.String(), nil
 }
 
-// SSHCommand executes a one-off command on a BOSH VM via SSH
+// SSHCommand executes a one-off command on a BOSH VM via SSH.
 func (d *DirectorAdapter) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
-	d.log.Info("Executing SSH command on deployment %s, instance %s/%d", deployment, instance, index)
-	d.log.Debug("Command: %s, Args: %v", command, args)
+	d.log.Infof("Executing SSH command on deployment %s, instance %s/%d", deployment, instance, index)
+	d.log.Debugf("Command: %s, Args: %v", command, args)
 
-	// Find the deployment
-	boshDeployment, err := d.director.FindDeployment(deployment)
+	// Set up SSH infrastructure
+	sshResult, privateKey, cleanup, err := d.setupSSHSession(deployment, instance, index)
 	if err != nil {
-		d.log.Error("Failed to find deployment %s: %v", deployment, err)
-		return "", fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+		return "", err
 	}
+	defer cleanup()
 
-	// Create SSH options
-	sshOpts, privateKey, err := boshdirector.NewSSHOpts(boshuuid.NewGenerator())
+	// Create SSH client and execute command
+	client, err := d.createSSHClient(sshResult, privateKey)
 	if err != nil {
-		d.log.Error("Failed to create SSH options: %v", err)
-		return "", fmt.Errorf("failed to create SSH options: %w", err)
+		return "", err
 	}
 
-	// Create slug for targeting the specific instance
-	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(instance, strconv.Itoa(index))
-
-	// Set up SSH session
-	d.log.Debug("Setting up SSH session")
-	sshResult, err := boshDeployment.SetUpSSH(slug, sshOpts)
-	if err != nil {
-		d.log.Error("Failed to set up SSH: %v", err)
-		return "", fmt.Errorf("failed to set up SSH: %w", err)
-	}
-
-	// Clean up SSH session when done
-	defer func() {
-		d.log.Debug("Cleaning up SSH session")
-		if cleanupErr := boshDeployment.CleanUpSSH(slug, sshOpts); cleanupErr != nil {
-			d.log.Error("Failed to clean up SSH: %v", cleanupErr)
-		}
-	}()
-
-	// Check if we got hosts
-	if len(sshResult.Hosts) == 0 {
-		d.log.Error("No hosts returned from SSH setup")
-		return "", fmt.Errorf("no hosts available for SSH connection")
-	}
-
-	d.log.Info("SSH session established successfully for %d hosts", len(sshResult.Hosts))
-	d.log.Debug("Generated SSH private key length: %d bytes", len(privateKey))
-
-	// Use the first host for command execution
-	host := sshResult.Hosts[0]
-
-	// Parse the private key
-	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
-	if err != nil {
-		d.log.Error("Failed to parse private key: %v", err)
-		return "", fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	// Create SSH client configuration with secure host key verification
-	config := &ssh.ClientConfig{
-		User: host.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: d.createSecureHostKeyCallback(host.Host),
-		Timeout:         30 * time.Second,
-	}
-
-	// Connect via the gateway if present
-	var client *ssh.Client
-	if sshResult.GatewayHost != "" {
-		// Connect to gateway first
-		gatewayAddr := fmt.Sprintf("%s:22", sshResult.GatewayHost)
-		gatewayConfig := &ssh.ClientConfig{
-			User: sshResult.GatewayUsername,
-			Auth: []ssh.AuthMethod{
-				ssh.PublicKeys(signer),
-			},
-			HostKeyCallback: d.createSecureHostKeyCallback(sshResult.GatewayHost),
-			Timeout:         30 * time.Second,
-		}
-
-		gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
-		if err != nil {
-			d.log.Error("Failed to connect to gateway %s: %v", gatewayAddr, err)
-			return "", fmt.Errorf("failed to connect to gateway: %w", err)
-		}
-		defer func() { _ = gatewayClient.Close() }()
-
-		// Connect to target host through gateway
-		targetAddr := fmt.Sprintf("%s:22", host.Host)
-		conn, err := gatewayClient.Dial("tcp", targetAddr)
-		if err != nil {
-			d.log.Error("Failed to connect to target host %s through gateway: %v", targetAddr, err)
-			return "", fmt.Errorf("failed to connect to target host through gateway: %w", err)
-		}
-
-		nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
-		if err != nil {
-			d.log.Error("Failed to establish SSH connection to %s: %v", targetAddr, err)
-			return "", fmt.Errorf("failed to establish SSH connection: %w", err)
-		}
-		client = ssh.NewClient(nconn, chans, reqs)
-	} else {
-		// Direct connection
-		addr := fmt.Sprintf("%s:22", host.Host)
-		client, err = ssh.Dial("tcp", addr, config)
-		if err != nil {
-			d.log.Error("Failed to connect to %s: %v", addr, err)
-			return "", fmt.Errorf("failed to connect to host: %w", err)
-		}
-	}
 	defer func() { _ = client.Close() }()
 
-	// Create a session
-	session, err := client.NewSession()
-	if err != nil {
-		d.log.Error("Failed to create SSH session: %v", err)
-		return "", fmt.Errorf("failed to create SSH session: %w", err)
-	}
-	defer func() { _ = session.Close() }()
-
-	// Build the full command with arguments
-	fullCommand := command
-	if len(args) > 0 {
-		// Properly quote arguments if needed
-		quotedArgs := make([]string, len(args))
-		for i, arg := range args {
-			// Simple quoting - might need enhancement for complex cases
-			if strings.Contains(arg, " ") || strings.Contains(arg, "*") || strings.Contains(arg, "?") {
-				quotedArgs[i] = fmt.Sprintf("'%s'", arg)
-			} else {
-				quotedArgs[i] = arg
-			}
-		}
-		fullCommand = fmt.Sprintf("%s %s", command, strings.Join(quotedArgs, " "))
-	}
-
-	// Execute the command
-	d.log.Debug("Executing command: %s", fullCommand)
-	output, err := session.CombinedOutput(fullCommand)
-	if err != nil {
-		d.log.Error("Failed to execute command: %v, output: %s", err, string(output))
-		// Return output even on error (might contain useful error messages)
-		return string(output), fmt.Errorf("command execution failed: %w", err)
-	}
-
-	d.log.Info("Command executed successfully")
-	return string(output), nil
+	return d.executeSSHCommand(client, command, args)
 }
 
-// createSecureHostKeyCallback creates a host key callback that provides secure verification
-// This callback logs the host key fingerprint for auditing purposes and accepts the key
-// In a production environment, this should be enhanced to use known_hosts verification
-func (d *DirectorAdapter) createSecureHostKeyCallback(hostname string) ssh.HostKeyCallback {
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		// Calculate and log the key fingerprint for security auditing
-		fingerprint := ssh.FingerprintSHA256(key)
-		d.log.Info("SSH connection to %s with host key fingerprint: %s", hostname, fingerprint)
-
-		// In a more secure implementation, you would:
-		// 1. Check against a known_hosts file
-		// 2. Prompt for user verification on first connection
-		// 3. Store accepted keys for future verification
-		// For now, we accept all keys but log them for auditing
-
-		return nil
-	}
-}
-
-// SSHSession creates an interactive SSH session for streaming
+// SSHSession creates an interactive SSH session for streaming.
 func (d *DirectorAdapter) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
-	d.log.Info("Creating SSH session for deployment %s, instance %s/%d", deployment, instance, index)
+	d.log.Infof("Creating SSH session for deployment %s, instance %s/%d", deployment, instance, index)
 
 	// Find the deployment
 	boshDeployment, err := d.director.FindDeployment(deployment)
 	if err != nil {
-		d.log.Error("Failed to find deployment %s: %v", deployment, err)
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+
 		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
 	}
 
 	// Create SSH options
 	sshOpts, privateKey, err := boshdirector.NewSSHOpts(boshuuid.NewGenerator())
 	if err != nil {
-		d.log.Error("Failed to create SSH options: %v", err)
+		d.log.Errorf("Failed to create SSH options: %v", err)
+
 		return nil, fmt.Errorf("failed to create SSH options: %w", err)
 	}
 
@@ -2010,14 +2003,16 @@ func (d *DirectorAdapter) SSHSession(deployment, instance string, index int, opt
 	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(instance, strconv.Itoa(index))
 
 	// Set up SSH session
-	d.log.Debug("Setting up SSH session")
+	d.log.Debugf("Setting up SSH session")
+
 	sshResult, err := boshDeployment.SetUpSSH(slug, sshOpts)
 	if err != nil {
-		d.log.Error("Failed to set up SSH: %v", err)
+		d.log.Errorf("Failed to set up SSH: %v", err)
+
 		return nil, fmt.Errorf("failed to set up SSH: %w", err)
 	}
 
-	d.log.Info("SSH session created successfully for %d hosts", len(sshResult.Hosts))
+	d.log.Infof("SSH session created successfully for %d hosts", len(sshResult.Hosts))
 
 	// Convert hosts to interface slice for proper type assertion in SessionImpl
 	hosts := make([]interface{}, len(sshResult.Hosts))
@@ -2049,9 +2044,9 @@ func (d *DirectorAdapter) SSHSession(deployment, instance string, index int, opt
 	return sessionInfo, nil
 }
 
-// EnableResurrection toggles resurrection for a deployment using resurrection config
+// EnableResurrection toggles resurrection for a deployment using resurrection config.
 func (da *DirectorAdapter) EnableResurrection(deployment string, enabled bool) error {
-	da.log.Info("Setting resurrection to %v for deployment %s", enabled, deployment)
+	da.log.Infof("Setting resurrection to %v for deployment %s", enabled, deployment)
 
 	// Create resurrection configuration YAML according to BOSH documentation
 	configYAML := fmt.Sprintf(`rules:
@@ -2063,53 +2058,454 @@ func (da *DirectorAdapter) EnableResurrection(deployment string, enabled bool) e
 
 	// Generate a unique config name for this deployment
 	// Use 'blacksmith.{deployment}' format as type already indicates 'resurrection'
-	configName := fmt.Sprintf("blacksmith.%s", deployment)
+	configName := "blacksmith." + deployment
 
-	da.log.Debug("Updating resurrection config %s with content:\n%s", configName, configYAML)
+	da.log.Debugf("Updating resurrection config %s with content:\n%s", configName, configYAML)
 
 	// Update the resurrection config using the BOSH director
 	config, err := da.director.UpdateConfig("resurrection", configName, "", []byte(configYAML))
 	if err != nil {
-		da.log.Error("Failed to update resurrection config for deployment %s: %v", deployment, err)
-		return fmt.Errorf("failed to update resurrection config for deployment %s: %v", deployment, err)
+		da.log.Errorf("Failed to update resurrection config for deployment %s: %v", deployment, err)
+
+		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigUpdateFailed, deployment, err)
 	}
 
-	da.log.Debug("Successfully updated resurrection config %s for deployment %s", configName, deployment)
-	da.log.Debug("Config response: %+v", config)
+	da.log.Debugf("Successfully updated resurrection config %s for deployment %s", configName, deployment)
+	da.log.Debugf("Config response: %+v", config)
 
-	da.log.Info("Successfully updated resurrection config for deployment %s to %v", deployment, enabled)
+	da.log.Infof("Successfully updated resurrection config for deployment %s to %v", deployment, enabled)
+
 	return nil
 }
 
-// DeleteResurrectionConfig deletes resurrection config for a deployment
+// DeleteResurrectionConfig deletes resurrection config for a deployment.
 func (da *DirectorAdapter) DeleteResurrectionConfig(deployment string) error {
-	da.log.Info("Deleting resurrection config for deployment %s", deployment)
+	da.log.Infof("Deleting resurrection config for deployment %s", deployment)
 
 	// Use 'blacksmith.{deployment}' format as type already indicates 'resurrection'
-	configName := fmt.Sprintf("blacksmith.%s", deployment)
+	configName := "blacksmith." + deployment
 
-	da.log.Debug("Deleting resurrection config %s", configName)
+	da.log.Debugf("Deleting resurrection config %s", configName)
 
 	// Delete the resurrection config using the BOSH director
 	deleted, err := da.director.DeleteConfig("resurrection", configName)
 	if err != nil {
-		da.log.Error("Failed to delete resurrection config for deployment %s: %v", deployment, err)
-		return fmt.Errorf("failed to delete resurrection config for deployment %s: %v", deployment, err)
+		da.log.Errorf("Failed to delete resurrection config for deployment %s: %v", deployment, err)
+
+		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigDeleteFailed, deployment, err)
 	}
 
 	if !deleted {
-		da.log.Error("Resurrection config %s did not exist or was already deleted", configName)
-		return fmt.Errorf("resurrection config for deployment %s not found or already deleted", deployment)
+		da.log.Errorf("Resurrection config %s did not exist or was already deleted", configName)
+
+		return fmt.Errorf("%w %s", ErrResurrectionConfigNotFound, deployment)
 	}
 
-	da.log.Debug("Successfully deleted resurrection config %s for deployment %s", configName, deployment)
+	da.log.Debugf("Successfully deleted resurrection config %s for deployment %s", configName, deployment)
 
-	da.log.Info("Successfully deleted resurrection config for deployment %s", deployment)
+	da.log.Infof("Successfully deleted resurrection config for deployment %s", deployment)
+
 	return nil
 }
 
+// setupSSHSession sets up the SSH session and returns cleanup function.
+func (d *DirectorAdapter) setupSSHSession(deployment, instance string, index int) (*boshdirector.SSHResult, string, func(), error) {
+	// Find the deployment
+	boshDeployment, err := d.director.FindDeployment(deployment)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+
+		return nil, "", nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+	}
+
+	// Create SSH options
+	sshOpts, privateKey, err := boshdirector.NewSSHOpts(boshuuid.NewGenerator())
+	if err != nil {
+		d.log.Errorf("Failed to create SSH options: %v", err)
+
+		return nil, "", nil, fmt.Errorf("failed to create SSH options: %w", err)
+	}
+
+	// Create slug for targeting the specific instance
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(instance, strconv.Itoa(index))
+
+	// Set up SSH session
+	d.log.Debugf("Setting up SSH session")
+
+	sshResult, err := boshDeployment.SetUpSSH(slug, sshOpts)
+	if err != nil {
+		d.log.Errorf("Failed to set up SSH: %v", err)
+
+		return nil, "", nil, fmt.Errorf("failed to set up SSH: %w", err)
+	}
+
+	// Check if we got hosts
+	if len(sshResult.Hosts) == 0 {
+		d.log.Errorf("No hosts returned from SSH setup")
+
+		return nil, "", nil, ErrNoHostsAvailableSSH
+	}
+
+	d.log.Infof("SSH session established successfully for %d hosts", len(sshResult.Hosts))
+
+	cleanup := func() {
+		d.log.Debugf("Cleaning up SSH session")
+
+		if cleanupErr := boshDeployment.CleanUpSSH(slug, sshOpts); cleanupErr != nil {
+			d.log.Errorf("Failed to clean up SSH: %v", cleanupErr)
+		}
+	}
+
+	return &sshResult, privateKey, cleanup, nil
+}
+
+// createSSHClient creates an SSH client using the SSH result.
+func (d *DirectorAdapter) createSSHClient(sshResult *boshdirector.SSHResult, privateKey string) (*ssh.Client, error) {
+	// Parse the private key
+	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
+	if err != nil {
+		d.log.Errorf("Failed to parse private key: %v", err)
+
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	host := sshResult.Hosts[0]
+
+	// Create SSH client configuration with secure host key verification
+	config := &ssh.ClientConfig{
+		User: host.Username,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: d.createSecureHostKeyCallback(host.Host),
+		Timeout:         httpClientTimeout,
+	}
+
+	if sshResult.GatewayHost != "" {
+		return d.createGatewaySSHClient(sshResult, config, signer)
+	}
+
+	return d.createDirectSSHClient(host.Host, config)
+}
+
+// createGatewaySSHClient creates an SSH client through a gateway.
+func (d *DirectorAdapter) createGatewaySSHClient(sshResult *boshdirector.SSHResult, config *ssh.ClientConfig, signer ssh.Signer) (*ssh.Client, error) {
+	// Connect to gateway first
+	gatewayAddr := sshResult.GatewayHost + ":22"
+	gatewayConfig := &ssh.ClientConfig{
+		User: sshResult.GatewayUsername,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: d.createSecureHostKeyCallback(sshResult.GatewayHost),
+		Timeout:         httpClientTimeout,
+	}
+
+	gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
+	if err != nil {
+		d.log.Errorf("Failed to connect to gateway %s: %v", gatewayAddr, err)
+
+		return nil, fmt.Errorf("failed to connect to gateway: %w", err)
+	}
+
+	defer func() { _ = gatewayClient.Close() }()
+
+	// Connect to target host through gateway
+	targetAddr := sshResult.Hosts[0].Host + ":22"
+
+	conn, err := gatewayClient.Dial("tcp", targetAddr)
+	if err != nil {
+		d.log.Errorf("Failed to connect to target host %s through gateway: %v", targetAddr, err)
+
+		return nil, fmt.Errorf("failed to connect to target host through gateway: %w", err)
+	}
+
+	nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
+	if err != nil {
+		d.log.Errorf("Failed to establish SSH connection to %s: %v", targetAddr, err)
+
+		return nil, fmt.Errorf("failed to establish SSH connection: %w", err)
+	}
+
+	return ssh.NewClient(nconn, chans, reqs), nil
+}
+
+// createDirectSSHClient creates a direct SSH client connection.
+func (d *DirectorAdapter) createDirectSSHClient(host string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	addr := host + ":22"
+
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		d.log.Errorf("Failed to connect to %s: %v", addr, err)
+
+		return nil, fmt.Errorf("failed to connect to host: %w", err)
+	}
+
+	return client, nil
+}
+
+// executeSSHCommand executes the command on the SSH client.
+func (d *DirectorAdapter) executeSSHCommand(client *ssh.Client, command string, args []string) (string, error) {
+	// Create a session
+	session, err := client.NewSession()
+	if err != nil {
+		d.log.Errorf("Failed to create SSH session: %v", err)
+
+		return "", fmt.Errorf("failed to create SSH session: %w", err)
+	}
+
+	defer func() { _ = session.Close() }()
+
+	// Build the full command with arguments
+	fullCommand := d.buildFullCommand(command, args)
+
+	// Execute the command
+	d.log.Debugf("Executing command: %s", fullCommand)
+
+	output, err := session.CombinedOutput(fullCommand)
+	if err != nil {
+		d.log.Errorf("Failed to execute command: %v, output: %s", err, string(output))
+		// Return output even on error (might contain useful error messages)
+		return string(output), fmt.Errorf("command execution failed: %w", err)
+	}
+
+	d.log.Infof("Command executed successfully")
+
+	return string(output), nil
+}
+
+// buildFullCommand builds the full command string with properly quoted arguments.
+func (d *DirectorAdapter) buildFullCommand(command string, args []string) string {
+	fullCommand := command
+
+	if len(args) > 0 {
+		// Properly quote arguments if needed
+		quotedArgs := make([]string, len(args))
+		for i, arg := range args {
+			// Simple quoting - might need enhancement for complex cases
+			if strings.Contains(arg, " ") || strings.Contains(arg, "*") || strings.Contains(arg, "?") {
+				quotedArgs[i] = fmt.Sprintf("'%s'", arg)
+			} else {
+				quotedArgs[i] = arg
+			}
+		}
+
+		fullCommand = fmt.Sprintf("%s %s", command, strings.Join(quotedArgs, " "))
+	}
+
+	return fullCommand
+}
+
+// fetchTasksByType retrieves tasks based on the specified type.
+func (d *DirectorAdapter) fetchTasksByType(taskType string, limit int) ([]boshdirector.Task, error) {
+	d.log.Debugf("Building task filter for type: %s", taskType)
+
+	filter := boshdirector.TasksFilter{}
+
+	switch taskType {
+	case "recent":
+		d.log.Debugf("Getting recent tasks with limit %d", limit)
+
+		tasks, err := d.director.RecentTasks(limit*taskFetchMultiplier, filter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get recent tasks: %w", err)
+		}
+
+		return tasks, nil
+	case "current":
+		d.log.Debugf("Getting current tasks")
+
+		tasks, err := d.director.CurrentTasks(filter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current tasks: %w", err)
+		}
+
+		return tasks, nil
+	case "all":
+		return d.fetchAllTasks(limit, filter)
+	default:
+		d.log.Debugf("Unknown task type %s, defaulting to recent", taskType)
+
+		tasks, err := d.director.RecentTasks(limit*taskFetchMultiplier, filter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get recent tasks (default): %w", err)
+		}
+
+		return tasks, nil
+	}
+}
+
+// fetchAllTasks retrieves both current and recent tasks, merging them.
+func (d *DirectorAdapter) fetchAllTasks(limit int, filter boshdirector.TasksFilter) ([]boshdirector.Task, error) {
+	d.log.Debugf("Getting all tasks with limit %d", limit)
+
+	currentTasks, err := d.director.CurrentTasks(filter)
+	if err != nil {
+		d.log.Errorf("Failed to get current tasks: %v", err)
+
+		return nil, fmt.Errorf("failed to get current tasks: %w", err)
+	}
+
+	recentTasks, err := d.director.RecentTasks(limit*taskFetchMultiplier, filter)
+	if err != nil {
+		d.log.Errorf("Failed to get recent tasks: %v", err)
+
+		return nil, fmt.Errorf("failed to get recent tasks: %w", err)
+	}
+
+	// Merge tasks, avoiding duplicates by ID
+	taskMap := make(map[int]boshdirector.Task)
+	for _, task := range currentTasks {
+		taskMap[task.ID()] = task
+	}
+
+	for _, task := range recentTasks {
+		if _, exists := taskMap[task.ID()]; !exists {
+			taskMap[task.ID()] = task
+		}
+	}
+
+	// Convert map back to slice
+	tasks := make([]boshdirector.Task, 0, len(taskMap))
+	for _, task := range taskMap {
+		tasks = append(tasks, task)
+	}
+
+	return tasks, nil
+}
+
+// filterTasksByStates filters tasks by the specified states.
+func (d *DirectorAdapter) filterTasksByStates(tasks []boshdirector.Task, states []string) []boshdirector.Task {
+	if len(states) == 0 {
+		return tasks
+	}
+
+	stateMap := make(map[string]bool)
+	for _, state := range states {
+		stateMap[state] = true
+	}
+
+	var filteredTasks []boshdirector.Task
+
+	for _, task := range tasks {
+		if stateMap[task.State()] {
+			filteredTasks = append(filteredTasks, task)
+		}
+	}
+
+	d.log.Debugf("Filtered to %d tasks with states %v", len(filteredTasks), states)
+
+	return filteredTasks
+}
+
+// filterTasksByTeam filters tasks by the specified team.
+func (d *DirectorAdapter) filterTasksByTeam(tasks []boshdirector.Task, team string) []boshdirector.Task {
+	if team == "" {
+		return tasks
+	}
+
+	d.log.Debugf("Starting team filtering with %d tasks for team '%s'", len(tasks), team)
+
+	var teamFilteredTasks []boshdirector.Task
+
+	for _, task := range tasks {
+		if d.shouldIncludeTaskForTeam(task, team) {
+			teamFilteredTasks = append(teamFilteredTasks, task)
+		}
+	}
+
+	originalCount := len(tasks)
+	d.log.Debugf("Team filtering complete: %d tasks included for team '%s' (from %d original)", len(teamFilteredTasks), team, originalCount)
+
+	return teamFilteredTasks
+}
+
+// shouldIncludeTaskForTeam determines if a task should be included for the specified team.
+func (d *DirectorAdapter) shouldIncludeTaskForTeam(task boshdirector.Task, team string) bool {
+	deploymentName := task.DeploymentName()
+	d.log.Debugf("Task %d: deployment='%s', description='%s'", task.ID(), deploymentName, task.Description())
+
+	includeTask := false
+
+	switch team {
+	case "blacksmith":
+		// For blacksmith, show all BOSH director tasks
+		includeTask = true
+
+		d.log.Debugf("Task %d: included for blacksmith (show all)", task.ID())
+	case "service-instances":
+		includeTask = d.isServiceInstanceTask(deploymentName, task.ID())
+	default:
+		includeTask = d.isSpecificTeamTask(deploymentName, team, task.ID())
+	}
+
+	if includeTask {
+		d.log.Debugf("Task %d: INCLUDED for team '%s'", task.ID(), team)
+	} else {
+		d.log.Debugf("Task %d: EXCLUDED for team '%s'", task.ID(), team)
+	}
+
+	return includeTask
+}
+
+// isServiceInstanceTask checks if a task belongs to a service instance.
+func (d *DirectorAdapter) isServiceInstanceTask(deploymentName string, taskID int) bool {
+	if deploymentName == "" {
+		d.log.Debugf("Task %d: no deployment name, excluded from service-instances", taskID)
+
+		return false
+	}
+
+	includeTask := (strings.Contains(deploymentName, "-") &&
+		(strings.HasPrefix(deploymentName, "redis-") ||
+			strings.HasPrefix(deploymentName, "rabbitmq-") ||
+			strings.HasPrefix(deploymentName, "postgres-") ||
+			strings.Contains(deploymentName, "service-")))
+
+	d.log.Debugf("Task %d: service-instances check result: %v", taskID, includeTask)
+
+	return includeTask
+}
+
+// isSpecificTeamTask checks if a task belongs to a specific team/service.
+func (d *DirectorAdapter) isSpecificTeamTask(deploymentName, team string, taskID int) bool {
+	if deploymentName == "" {
+		d.log.Debugf("Task %d: no deployment name, excluded from specific filter '%s'", taskID, team)
+
+		return false
+	}
+
+	deploymentLower := strings.ToLower(deploymentName)
+	teamLower := strings.ToLower(team)
+	includeTask := (strings.Contains(deploymentLower, teamLower) ||
+		strings.HasPrefix(deploymentLower, teamLower+"-"))
+
+	d.log.Debugf("Task %d: specific filter '%s' check result: %v", taskID, team, includeTask)
+
+	return includeTask
+}
+
+// createSecureHostKeyCallback creates a host key callback that provides secure verification
+// This callback logs the host key fingerprint for auditing purposes and accepts the key
+// In a production environment, this should be enhanced to use known_hosts verification.
+func (d *DirectorAdapter) createSecureHostKeyCallback(_ string) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		// Calculate and log the key fingerprint for security auditing
+		fingerprint := ssh.FingerprintSHA256(key)
+		d.log.Infof("SSH connection to %s with host key fingerprint: %s", hostname, fingerprint)
+
+		// In a more secure implementation, you would:
+		// 1. Check against a known_hosts file
+		// 2. Prompt for user verification on first connection
+		// 3. Store accepted keys for future verification
+		// For now, we accept all keys but log them for auditing
+
+		return nil
+	}
+}
+
 // fixYAMLKeyCasing fixes common YAML key casing issues introduced by BOSH CLI library
-// when YAML content is processed through Go structs without proper yaml tags
+// when YAML content is processed through Go structs without proper yaml tags.
 func fixYAMLKeyCasing(yamlContent string) string {
 	if yamlContent == "" {
 		return yamlContent
@@ -2135,43 +2531,47 @@ func fixYAMLKeyCasing(yamlContent string) string {
 	return string(fixedBytes)
 }
 
-// fixMapKeyCasing recursively fixes key casing in maps
+// fixMapKeyCasing recursively fixes key casing in maps.
 func fixMapKeyCasing(data interface{}) interface{} {
-	switch v := data.(type) {
+	switch value := data.(type) {
 	case map[string]interface{}:
 		fixed := make(map[string]interface{})
-		for key, value := range v {
+
+		for key, val := range value {
 			// Fix common BOSH config key casing issues
 			fixedKey := fixBOSHConfigKey(key)
-			fixed[fixedKey] = fixMapKeyCasing(value)
+			fixed[fixedKey] = fixMapKeyCasing(val)
 		}
+
 		return fixed
 	case map[interface{}]interface{}:
 		// Handle yaml.v2's tendency to use interface{} keys
 		fixed := make(map[string]interface{})
-		for key, value := range v {
+		for key, mapValue := range value {
 			if strKey, ok := key.(string); ok {
 				fixedKey := fixBOSHConfigKey(strKey)
-				fixed[fixedKey] = fixMapKeyCasing(value)
+				fixed[fixedKey] = fixMapKeyCasing(mapValue)
 			} else {
 				// Keep non-string keys as-is but fix values
-				fixed[fmt.Sprintf("%v", key)] = fixMapKeyCasing(value)
+				fixed[fmt.Sprintf("%v", key)] = fixMapKeyCasing(mapValue)
 			}
 		}
+
 		return fixed
 	case []interface{}:
-		fixed := make([]interface{}, len(v))
-		for i, item := range v {
-			fixed[i] = fixMapKeyCasing(item)
+		fixed := make([]interface{}, len(value))
+		for arrayIndex, item := range value {
+			fixed[arrayIndex] = fixMapKeyCasing(item)
 		}
+
 		return fixed
 	default:
 		// For primitive values, return as-is
-		return v
+		return value
 	}
 }
 
-// fixBOSHConfigKey fixes individual key casing based on common BOSH config patterns
+// fixBOSHConfigKey fixes individual key casing based on common BOSH config patterns.
 func fixBOSHConfigKey(key string) string {
 	// Common BOSH config key mappings (capitalized -> lowercase)
 	keyMappings := map[string]string{
@@ -2249,7 +2649,7 @@ func fixBOSHConfigKey(key string) string {
 	return camelToSnake(key)
 }
 
-// camelToSnake converts CamelCase to snake_case
+// camelToSnake converts CamelCase to snake_case.
 func camelToSnake(str string) string {
 	if str == "" {
 		return str
@@ -2261,14 +2661,17 @@ func camelToSnake(str string) string {
 	}
 
 	var result strings.Builder
+
 	for i, r := range str {
 		if i > 0 && 'A' <= r && r <= 'Z' {
 			result.WriteRune('_')
 		}
+
 		result.WriteRune(unicode.ToLower(r))
 	}
+
 	return result.String()
 }
 
-// Ensure DirectorAdapter implements Director interface
+// Ensure DirectorAdapter implements Director interface.
 var _ Director = (*DirectorAdapter)(nil)

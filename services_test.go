@@ -46,11 +46,11 @@ var _ = Describe("Services", func() {
 				Ω(s.Description).Should(Equal("something awesome"))
 				Ω(s.Bindable).Should(BeTrue())
 
-				Ω(len(s.Tags)).Should(Equal(2))
+				Ω(s.Tags).Should(HaveLen(2))
 				Ω(s.Tags[0]).Should(Equal("foo"))
 				Ω(s.Tags[1]).Should(Equal("bar"))
 
-				Ω(len(s.Plans)).Should(Equal(3))
+				Ω(s.Plans).Should(HaveLen(3))
 				// FIXME: test the contents of the Plans
 			})
 		})
@@ -82,7 +82,7 @@ var _ = Describe("Services", func() {
 			It("can read all service/plan metadata", func() {
 				ss, err := ReadServices("test/ok", "test/also/ok")
 				Ω(err).ShouldNot(HaveOccurred())
-				Ω(len(ss)).Should(Equal(3))
+				Ω(ss).Should(HaveLen(3))
 			})
 
 			It("converts to brokerapi.* objects", func() {
@@ -91,7 +91,7 @@ var _ = Describe("Services", func() {
 
 				catalog := Catalog(ss)
 				Ω(catalog).ShouldNot(BeNil())
-				Ω(len(catalog)).Should(Equal(3))
+				Ω(catalog).Should(HaveLen(3))
 			})
 		})
 
@@ -128,7 +128,7 @@ var _ = Describe("Services", func() {
 				Data: make(map[string]interface{}),
 			}
 
-			for n := 0; n < inPlan; n += 1 {
+			for n := range inPlan {
 				name := fmt.Sprintf("in-plan-%d", n)
 				db.Data[name] = map[string]interface{}{
 					"service_id": "test-service",
@@ -136,7 +136,7 @@ var _ = Describe("Services", func() {
 				}
 			}
 
-			for n := 0; n < outOfPlan; n += 1 {
+			for n := range outOfPlan {
 				name := fmt.Sprintf("out-of-plan-%d", n)
 				db.Data[name] = map[string]interface{}{
 					"service_id": "test-service",
@@ -144,7 +144,7 @@ var _ = Describe("Services", func() {
 				}
 			}
 
-			for n := 0; n < outOfService; n += 1 {
+			for n := range outOfService {
 				name := fmt.Sprintf("out-of-service-%d", n)
 				db.Data[name] = map[string]interface{}{
 					"service_id": "not-our-service",

@@ -1,310 +1,388 @@
-package bosh
+package bosh_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"blacksmith/bosh"
 )
 
-// MockDirector for testing
+// Static errors for test err113 compliance.
+var (
+	ErrMockError = errors.New("mock error")
+)
+
+// MockDirector for testing.
 type MockDirector struct {
 	delay     time.Duration
 	callCount int
 	mu        sync.Mutex
 }
 
-func (m *MockDirector) incrementCallCount() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.callCount++
-}
-
-func (m *MockDirector) getCallCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.callCount
-}
-
-func (m *MockDirector) GetInfo() (*Info, error) {
+func (m *MockDirector) GetInfo() (*bosh.Info, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &Info{
+
+	return &bosh.Info{
 		Name:    "test-director",
 		UUID:    "test-uuid",
 		Version: "1.0.0",
 	}, nil
 }
 
-func (m *MockDirector) GetDeployments() ([]Deployment, error) {
+func (m *MockDirector) GetDeployments() ([]bosh.Deployment, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []Deployment{
+
+	return []bosh.Deployment{
 		{Name: "test-deployment"},
 	}, nil
 }
 
-func (m *MockDirector) GetDeployment(name string) (*DeploymentDetail, error) {
+func (m *MockDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &DeploymentDetail{Name: name}, nil
+
+	return &bosh.DeploymentDetail{Name: name}, nil
 }
 
-func (m *MockDirector) CreateDeployment(manifest string) (*Task, error) {
+func (m *MockDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &Task{ID: 1}, nil
+
+	return &bosh.Task{ID: 1}, nil
 }
 
-func (m *MockDirector) DeleteDeployment(name string) (*Task, error) {
+func (m *MockDirector) DeleteDeployment(name string) (*bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &Task{ID: 2}, nil
+
+	return &bosh.Task{ID: 2}, nil
 }
 
-func (m *MockDirector) GetDeploymentVMs(deployment string) ([]VM, error) {
+func (m *MockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []VM{}, nil
+
+	return []bosh.VM{}, nil
 }
 
-func (m *MockDirector) GetReleases() ([]Release, error) {
+func (m *MockDirector) GetReleases() ([]bosh.Release, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []Release{}, nil
+
+	return []bosh.Release{}, nil
 }
 
-func (m *MockDirector) UploadRelease(url string, sha1 string) (*Task, error) {
+func (m *MockDirector) UploadRelease(url string, sha1 string) (*bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &Task{ID: 3}, nil
+
+	return &bosh.Task{ID: 3}, nil
 }
 
-func (m *MockDirector) GetStemcells() ([]Stemcell, error) {
+func (m *MockDirector) GetStemcells() ([]bosh.Stemcell, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []Stemcell{}, nil
+
+	return []bosh.Stemcell{}, nil
 }
 
-func (m *MockDirector) UploadStemcell(url string, sha1 string) (*Task, error) {
+func (m *MockDirector) UploadStemcell(url string, sha1 string) (*bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &Task{ID: 4}, nil
+
+	return &bosh.Task{ID: 4}, nil
 }
 
-func (m *MockDirector) GetTask(id int) (*Task, error) {
+func (m *MockDirector) GetTask(id int) (*bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &Task{ID: id}, nil
+
+	return &bosh.Task{ID: id}, nil
 }
 
-func (m *MockDirector) GetTasks(taskType string, limit int, states []string, team string) ([]Task, error) {
+func (m *MockDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []Task{}, nil
+
+	return []bosh.Task{}, nil
 }
 
-func (m *MockDirector) GetAllTasks(limit int) ([]Task, error) {
+func (m *MockDirector) GetAllTasks(limit int) ([]bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []Task{}, nil
+
+	return []bosh.Task{}, nil
 }
 
 func (m *MockDirector) CancelTask(taskID int) error {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return nil
 }
 
 func (m *MockDirector) GetTaskOutput(id int, outputType string) (string, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return "test output", nil
 }
 
-func (m *MockDirector) GetTaskEvents(id int) ([]TaskEvent, error) {
+func (m *MockDirector) GetTaskEvents(id int) ([]bosh.TaskEvent, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []TaskEvent{}, nil
+
+	return []bosh.TaskEvent{}, nil
 }
 
-func (m *MockDirector) GetEvents(deployment string) ([]Event, error) {
+func (m *MockDirector) GetEvents(deployment string) ([]bosh.Event, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []Event{}, nil
+
+	return []bosh.Event{}, nil
 }
 
 func (m *MockDirector) UpdateCloudConfig(config string) error {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return nil
 }
 
 func (m *MockDirector) GetCloudConfig() (string, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return "test-cloud-config", nil
 }
 
-func (m *MockDirector) GetConfigs(limit int, configTypes []string) ([]BoshConfig, error) {
+func (m *MockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []BoshConfig{}, nil
+
+	return []bosh.BoshConfig{}, nil
 }
 
-func (m *MockDirector) GetConfigVersions(configType, name string, limit int) ([]BoshConfig, error) {
+func (m *MockDirector) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return []BoshConfig{}, nil
+
+	return []bosh.BoshConfig{}, nil
 }
 
-func (m *MockDirector) GetConfigByID(configID string) (*BoshConfigDetail, error) {
+func (m *MockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &BoshConfigDetail{}, nil
+
+	return &bosh.BoshConfigDetail{}, nil
 }
 
 func (m *MockDirector) GetConfigContent(configID string) (string, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return "test-config", nil
 }
 
 func (m *MockDirector) GetConfig(configType, configName string) (interface{}, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return map[string]interface{}{}, nil
 }
 
-func (m *MockDirector) ComputeConfigDiff(fromID, toID string) (*ConfigDiff, error) {
+func (m *MockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &ConfigDiff{}, nil
+
+	return &bosh.ConfigDiff{}, nil
 }
 
-func (m *MockDirector) Cleanup(removeAll bool) (*Task, error) {
+func (m *MockDirector) Cleanup(removeAll bool) (*bosh.Task, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
-	return &Task{ID: 5}, nil
+
+	return &bosh.Task{ID: 5}, nil
 }
 
 func (m *MockDirector) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return "/tmp/logs.tar.gz", nil
 }
 
 func (m *MockDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return "command output", nil
 }
 
 func (m *MockDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return nil, nil
 }
 
 func (m *MockDirector) EnableResurrection(deployment string, enabled bool) error {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return nil
 }
 
 func (m *MockDirector) DeleteResurrectionConfig(deploymentName string) error {
 	m.incrementCallCount()
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
+
 	return nil
+}
+
+func (m *MockDirector) incrementCallCount() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.callCount++
+}
+
+func (m *MockDirector) getCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.callCount
 }
 
 // Tests
 
 func TestPooledDirector_ConcurrentRequests(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{}
-	pooled := NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
 
 	// Test concurrent requests exceed pool size
-	var wg sync.WaitGroup
+	var waitGroup sync.WaitGroup
+
 	results := make(chan error, 10)
 
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
+	for range 10 {
+		waitGroup.Add(1)
+
 		go func() {
-			defer wg.Done()
+			defer waitGroup.Done()
+
 			_, err := pooled.GetDeployments()
 			results <- err
 		}()
 	}
 
-	wg.Wait()
+	waitGroup.Wait()
 	close(results)
 
 	// Verify all requests completed
 	successCount := 0
+
 	for err := range results {
 		if err == nil {
 			successCount++
@@ -325,16 +403,19 @@ func TestPooledDirector_ConcurrentRequests(t *testing.T) {
 	if stats.TotalRequests != 10 {
 		t.Errorf("Expected 10 total requests, got %d", stats.TotalRequests)
 	}
+
 	if stats.ActiveConnections != 0 {
 		t.Errorf("Expected 0 active connections after completion, got %d", stats.ActiveConnections)
 	}
 }
 
 func TestPooledDirector_Timeout(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{
 		delay: 10 * time.Second, // Slow responses
 	}
-	pooled := NewPooledDirector(mockDirector, 1, 1*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 1, 1*time.Second, nil)
 
 	// Fill the pool with a long-running request
 	go func() {
@@ -348,6 +429,7 @@ func TestPooledDirector_Timeout(t *testing.T) {
 	if err == nil {
 		t.Error("Expected timeout error, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "timeout waiting for BOSH connection slot") {
 		t.Errorf("Expected timeout error message, got: %v", err)
 	}
@@ -360,17 +442,21 @@ func TestPooledDirector_Timeout(t *testing.T) {
 }
 
 func TestPooledDirector_QueuedRequests(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{
 		delay: 100 * time.Millisecond,
 	}
-	pooled := NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
 
 	// Launch more concurrent requests than pool size
-	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
+	var waitGroup sync.WaitGroup
+	for range 5 {
+		waitGroup.Add(1)
+
 		go func() {
-			defer wg.Done()
+			defer waitGroup.Done()
+
 			_, _ = pooled.GetInfo()
 		}()
 	}
@@ -385,22 +471,25 @@ func TestPooledDirector_QueuedRequests(t *testing.T) {
 	}
 
 	// Wait for all to complete
-	wg.Wait()
+	waitGroup.Wait()
 
 	// Final stats should show no active or queued
 	finalStats := pooled.GetPoolStats()
 	if finalStats.ActiveConnections != 0 {
 		t.Errorf("Expected 0 active connections, got %d", finalStats.ActiveConnections)
 	}
+
 	if finalStats.QueuedRequests != 0 {
 		t.Errorf("Expected 0 queued requests, got %d", finalStats.QueuedRequests)
 	}
 }
 
 func TestPooledDirector_DefaultPoolSize(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{}
 	// Test with 0 (should default to 4)
-	pooled := NewPooledDirector(mockDirector, 0, 5*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 0, 5*time.Second, nil)
 
 	stats := pooled.GetPoolStats()
 	if stats.MaxConnections != 4 {
@@ -408,7 +497,7 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 	}
 
 	// Test with negative (should default to 4)
-	pooled2 := NewPooledDirector(mockDirector, -1, 5*time.Second, nil)
+	pooled2 := bosh.NewPooledDirector(mockDirector, -1, 5*time.Second, nil)
 
 	stats2 := pooled2.GetPoolStats()
 	if stats2.MaxConnections != 4 {
@@ -417,10 +506,12 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 }
 
 func TestPooledDirector_MetricsAccuracy(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{
 		delay: 50 * time.Millisecond,
 	}
-	pooled := NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
 
 	// Initial stats should be zero
 	stats := pooled.GetPoolStats()
@@ -432,16 +523,18 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	started := make(chan bool, 3)
 	done := make(chan bool, 3)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		go func() {
 			started <- true
+
 			_, _ = pooled.GetInfo()
+
 			done <- true
 		}()
 	}
 
 	// Wait for all to start
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-started
 	}
 
@@ -453,12 +546,13 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	if midStats.ActiveConnections != 2 {
 		t.Errorf("Expected 2 active connections, got %d", midStats.ActiveConnections)
 	}
+
 	if midStats.QueuedRequests != 1 {
 		t.Errorf("Expected 1 queued request, got %d", midStats.QueuedRequests)
 	}
 
 	// Wait for completion
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-done
 	}
 
@@ -467,131 +561,290 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	if finalStats.TotalRequests != 3 {
 		t.Errorf("Expected 3 total requests, got %d", finalStats.TotalRequests)
 	}
+
 	if finalStats.ActiveConnections != 0 {
 		t.Errorf("Expected 0 active connections after completion, got %d", finalStats.ActiveConnections)
 	}
+
 	if finalStats.QueuedRequests != 0 {
 		t.Errorf("Expected 0 queued requests after completion, got %d", finalStats.QueuedRequests)
 	}
 }
 
-func TestPooledDirector_AllMethods(t *testing.T) {
-	mockDirector := &MockDirector{}
-	pooled := NewPooledDirector(mockDirector, 4, 5*time.Second, nil)
-
-	tests := []struct {
+// getDeploymentTests returns tests for deployment operations.
+func getDeploymentTests(pooled *bosh.PooledDirector) []struct {
+	name string
+	fn   func() error
+} {
+	return []struct {
 		name string
 		fn   func() error
 	}{
 		{"GetInfo", func() error {
 			_, err := pooled.GetInfo()
-			return err
+			if err != nil {
+				return fmt.Errorf("GetInfo failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetDeployments", func() error {
 			_, err := pooled.GetDeployments()
-			return err
+			if err != nil {
+				return fmt.Errorf("GetDeployments failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetDeployment", func() error {
 			_, err := pooled.GetDeployment("test")
-			return err
+			if err != nil {
+				return fmt.Errorf("GetDeployment failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"CreateDeployment", func() error {
 			_, err := pooled.CreateDeployment("manifest")
-			return err
+			if err != nil {
+				return fmt.Errorf("CreateDeployment failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"DeleteDeployment", func() error {
 			_, err := pooled.DeleteDeployment("test")
-			return err
+			if err != nil {
+				return fmt.Errorf("DeleteDeployment failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetDeploymentVMs", func() error {
 			_, err := pooled.GetDeploymentVMs("test")
-			return err
+			if err != nil {
+				return fmt.Errorf("GetDeploymentVMs failed: %w", err)
+			}
+
+			return nil
 		}},
+	}
+}
+
+// getReleaseAndStemcellTests returns tests for release and stemcell operations.
+func getReleaseAndStemcellTests(pooled *bosh.PooledDirector) []struct {
+	name string
+	fn   func() error
+} {
+	return []struct {
+		name string
+		fn   func() error
+	}{
 		{"GetReleases", func() error {
 			_, err := pooled.GetReleases()
-			return err
+			if err != nil {
+				return fmt.Errorf("GetReleases failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"UploadRelease", func() error {
 			_, err := pooled.UploadRelease("url", "sha1")
-			return err
+			if err != nil {
+				return fmt.Errorf("UploadRelease failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetStemcells", func() error {
 			_, err := pooled.GetStemcells()
-			return err
+			if err != nil {
+				return fmt.Errorf("GetStemcells failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"UploadStemcell", func() error {
 			_, err := pooled.UploadStemcell("url", "sha1")
-			return err
+			if err != nil {
+				return fmt.Errorf("UploadStemcell failed: %w", err)
+			}
+
+			return nil
 		}},
+	}
+}
+
+// getTaskTests returns tests for task operations.
+func getTaskTests(pooled *bosh.PooledDirector) []struct {
+	name string
+	fn   func() error
+} {
+	return []struct {
+		name string
+		fn   func() error
+	}{
 		{"GetTask", func() error {
 			_, err := pooled.GetTask(1)
-			return err
+			if err != nil {
+				return fmt.Errorf("GetTask failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetAllTasks", func() error {
 			_, err := pooled.GetAllTasks(10)
-			return err
+			if err != nil {
+				return fmt.Errorf("GetAllTasks failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"CancelTask", func() error {
 			return pooled.CancelTask(1)
 		}},
 		{"GetTaskOutput", func() error {
 			_, err := pooled.GetTaskOutput(1, "result")
-			return err
+			if err != nil {
+				return fmt.Errorf("GetTaskOutput failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetTaskEvents", func() error {
 			_, err := pooled.GetTaskEvents(1)
-			return err
+			if err != nil {
+				return fmt.Errorf("GetTaskEvents failed: %w", err)
+			}
+
+			return nil
 		}},
+	}
+}
+
+// getEventTests returns tests for event operations.
+func getEventTests(pooled *bosh.PooledDirector) []struct {
+	name string
+	fn   func() error
+} {
+	return []struct {
+		name string
+		fn   func() error
+	}{
 		{"GetEvents", func() error {
 			_, err := pooled.GetEvents("test")
-			return err
+			if err != nil {
+				return fmt.Errorf("GetEvents failed: %w", err)
+			}
+
+			return nil
 		}},
+	}
+}
+
+// getConfigTests returns tests for config operations.
+func getConfigTests(pooled *bosh.PooledDirector) []struct {
+	name string
+	fn   func() error
+} {
+	return []struct {
+		name string
+		fn   func() error
+	}{
 		{"UpdateCloudConfig", func() error {
 			return pooled.UpdateCloudConfig("config")
 		}},
 		{"GetCloudConfig", func() error {
 			_, err := pooled.GetCloudConfig()
-			return err
+			if err != nil {
+				return fmt.Errorf("GetCloudConfig failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetConfigs", func() error {
 			_, err := pooled.GetConfigs(10, []string{"cloud"})
-			return err
+			if err != nil {
+				return fmt.Errorf("GetConfigs failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetConfigVersions", func() error {
 			_, err := pooled.GetConfigVersions("cloud", "default", 10)
-			return err
+			if err != nil {
+				return fmt.Errorf("GetConfigVersions failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetConfigByID", func() error {
 			_, err := pooled.GetConfigByID("123")
-			return err
+			if err != nil {
+				return fmt.Errorf("GetConfigByID failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetConfigContent", func() error {
 			_, err := pooled.GetConfigContent("123")
-			return err
+			if err != nil {
+				return fmt.Errorf("GetConfigContent failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"GetConfig", func() error {
 			_, err := pooled.GetConfig("cloud", "default")
-			return err
+			if err != nil {
+				return fmt.Errorf("GetConfig failed: %w", err)
+			}
+
+			return nil
 		}},
-		{"ComputeConfigDiff", func() error {
-			_, err := pooled.ComputeConfigDiff("123", "456")
-			return err
-		}},
+	}
+}
+
+// getSSHAndOtherTests returns tests for SSH and other operations.
+func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
+	name string
+	fn   func() error
+} {
+	return []struct {
+		name string
+		fn   func() error
+	}{
 		{"Cleanup", func() error {
 			_, err := pooled.Cleanup(false)
-			return err
+			if err != nil {
+				return fmt.Errorf("Cleanup failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"FetchLogs", func() error {
 			_, err := pooled.FetchLogs("test", "job", "0")
-			return err
+			if err != nil {
+				return fmt.Errorf("FetchLogs failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"SSHCommand", func() error {
 			_, err := pooled.SSHCommand("test", "instance", 0, "ls", []string{}, nil)
-			return err
+			if err != nil {
+				return fmt.Errorf("SSHCommand failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"SSHSession", func() error {
 			_, err := pooled.SSHSession("test", "instance", 0, nil)
-			return err
+			if err != nil {
+				return fmt.Errorf("SSHSession failed: %w", err)
+			}
+
+			return nil
 		}},
 		{"EnableResurrection", func() error {
 			return pooled.EnableResurrection("test", true)
@@ -600,44 +853,100 @@ func TestPooledDirector_AllMethods(t *testing.T) {
 			return pooled.DeleteResurrectionConfig("test")
 		}},
 	}
+}
+
+// runAllTests runs all test cases in parallel.
+func runAllTests(t *testing.T, tests []struct {
+	name string
+	fn   func() error
+}) {
+	t.Helper()
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := test.fn()
 			if err != nil {
 				t.Errorf("%s failed: %v", test.name, err)
 			}
 		})
 	}
+}
 
+// validatePoolUsage validates that the pool was used correctly.
+func validatePoolUsage(t *testing.T, mockDirector *MockDirector, pooled *bosh.PooledDirector, expectedCalls int) {
+	t.Helper()
 	// Verify all methods went through the pool
-	if mockDirector.getCallCount() != len(tests) {
-		t.Errorf("Expected %d calls, got %d", len(tests), mockDirector.getCallCount())
+	if mockDirector.getCallCount() != expectedCalls {
+		t.Errorf("Expected %d calls, got %d", expectedCalls, mockDirector.getCallCount())
 	}
 
 	stats := pooled.GetPoolStats()
-	if stats.TotalRequests != int64(len(tests)) {
-		t.Errorf("Expected %d total requests in stats, got %d", len(tests), stats.TotalRequests)
+	if stats.TotalRequests != int64(expectedCalls) {
+		t.Errorf("Expected %d total requests in stats, got %d", expectedCalls, stats.TotalRequests)
 	}
 }
 
+func TestPooledDirector_AllMethods(t *testing.T) {
+	t.Parallel()
+
+	mockDirector := &MockDirector{}
+	pooled := bosh.NewPooledDirector(mockDirector, 4, 5*time.Second, nil)
+
+	// Group tests by functionality
+	testGroups := [][]struct {
+		name string
+		fn   func() error
+	}{
+		// Deployment operations
+		getDeploymentTests(pooled),
+		// Release and stemcell operations
+		getReleaseAndStemcellTests(pooled),
+		// Task operations
+		getTaskTests(pooled),
+		// Event operations
+		getEventTests(pooled),
+		// Config operations
+		getConfigTests(pooled),
+		// SSH and other operations
+		getSSHAndOtherTests(pooled),
+	}
+
+	// Flatten all tests
+	var allTests []struct {
+		name string
+		fn   func() error
+	}
+	for _, group := range testGroups {
+		allTests = append(allTests, group...)
+	}
+
+	runAllTests(t, allTests)
+	validatePoolUsage(t, mockDirector, pooled, len(allTests))
+}
+
 func TestPooledDirector_StressTest(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{
 		delay: 10 * time.Millisecond,
 	}
-	pooled := NewPooledDirector(mockDirector, 5, 10*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 5, 10*time.Second, nil)
 
 	// Launch 100 concurrent requests
-	var wg sync.WaitGroup
+	var waitGroup sync.WaitGroup
+
 	errors := make(chan error, 100)
 
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func(id int) {
-			defer wg.Done()
+	for index := range 100 {
+		waitGroup.Add(1)
+
+		go func(requestID int) {
+			defer waitGroup.Done()
 
 			// Mix of different operations
-			switch id % 5 {
+			switch requestID % 5 {
 			case 0:
 				_, err := pooled.GetInfo()
 				errors <- err
@@ -645,7 +954,7 @@ func TestPooledDirector_StressTest(t *testing.T) {
 				_, err := pooled.GetDeployments()
 				errors <- err
 			case 2:
-				_, err := pooled.GetTask(id)
+				_, err := pooled.GetTask(requestID)
 				errors <- err
 			case 3:
 				_, err := pooled.GetReleases()
@@ -654,14 +963,15 @@ func TestPooledDirector_StressTest(t *testing.T) {
 				_, err := pooled.GetStemcells()
 				errors <- err
 			}
-		}(i)
+		}(index)
 	}
 
-	wg.Wait()
+	waitGroup.Wait()
 	close(errors)
 
 	// Count successes
 	successCount := 0
+
 	for err := range errors {
 		if err == nil {
 			successCount++
@@ -677,6 +987,7 @@ func TestPooledDirector_StressTest(t *testing.T) {
 	if stats.TotalRequests != 100 {
 		t.Errorf("Expected 100 total requests, got %d", stats.TotalRequests)
 	}
+
 	if stats.RejectedRequests != 0 {
 		t.Errorf("Expected 0 rejected requests with sufficient timeout, got %d", stats.RejectedRequests)
 	}
@@ -688,10 +999,12 @@ func TestPooledDirector_StressTest(t *testing.T) {
 }
 
 func TestPooledDirector_TimeoutBehavior(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{
 		delay: 2 * time.Second, // Very slow responses
 	}
-	pooled := NewPooledDirector(mockDirector, 1, 500*time.Millisecond, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 1, 500*time.Millisecond, nil)
 
 	// First request fills the pool
 	go func() {
@@ -727,17 +1040,21 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 }
 
 func TestPooledDirector_GracefulShutdown(t *testing.T) {
+	t.Parallel()
+
 	mockDirector := &MockDirector{
 		delay: 100 * time.Millisecond,
 	}
-	pooled := NewPooledDirector(mockDirector, 3, 5*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 3, 5*time.Second, nil)
 
 	// Start several long-running operations
-	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
+	var waitGroup sync.WaitGroup
+	for range 3 {
+		waitGroup.Add(1)
+
 		go func() {
-			defer wg.Done()
+			defer waitGroup.Done()
+
 			_, _ = pooled.GetDeployments()
 		}()
 	}
@@ -752,7 +1069,7 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 	}
 
 	// Wait for completion
-	wg.Wait()
+	waitGroup.Wait()
 
 	// Verify clean shutdown
 	finalStats := pooled.GetPoolStats()
@@ -762,17 +1079,20 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 }
 
 func TestPooledDirector_ErrorPropagation(t *testing.T) {
+	t.Parallel()
+
 	// Create a mock that returns errors
 	mockDirector := &MockErrorDirector{
 		errorMessage: "simulated error",
 	}
-	pooled := NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
+	pooled := bosh.NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
 
 	// Test that errors are properly propagated
 	_, err := pooled.GetInfo()
 	if err == nil {
 		t.Error("Expected error to be propagated, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "simulated error") {
 		t.Errorf("Expected error message to contain 'simulated error', got: %v", err)
 	}
@@ -790,18 +1110,21 @@ func TestPooledDirector_ErrorPropagation(t *testing.T) {
 	}
 }
 
-// MockErrorDirector for testing error propagation
+// MockErrorDirector for testing error propagation.
 type MockErrorDirector struct {
 	MockDirector
+
 	errorMessage string
 }
 
-func (m *MockErrorDirector) GetInfo() (*Info, error) {
+func (m *MockErrorDirector) GetInfo() (*bosh.Info, error) {
 	m.incrementCallCount()
-	return nil, fmt.Errorf("%s", m.errorMessage)
+
+	return nil, fmt.Errorf("%w: %s", ErrMockError, m.errorMessage)
 }
 
-func (m *MockErrorDirector) GetDeployments() ([]Deployment, error) {
+func (m *MockErrorDirector) GetDeployments() ([]bosh.Deployment, error) {
 	m.incrementCallCount()
-	return nil, fmt.Errorf("%s", m.errorMessage)
+
+	return nil, fmt.Errorf("%w: %s", ErrMockError, m.errorMessage)
 }

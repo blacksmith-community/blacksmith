@@ -2,12 +2,30 @@ package rabbitmq
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-// RabbitMQCtlCategory represents a category of rabbitmqctl commands
+// Static errors for err113 compliance.
+var (
+	ErrRabbitMQCtlCategoryNotFound      = errors.New("category not found")
+	ErrRabbitMQCtlCommandNotFound       = errors.New("command not found")
+	ErrRabbitMQCtlInsufficientArguments = errors.New("insufficient arguments")
+	ErrRabbitMQCtlIntegerValueEmpty     = errors.New("integer value cannot be empty")
+	ErrRabbitMQCtlInvalidBooleanValue   = errors.New("boolean value must be true/false, yes/no, on/off, or 1/0")
+	ErrRabbitMQCtlVirtualHostEmpty      = errors.New("virtual host name cannot be empty")
+	ErrRabbitMQCtlUsernameEmpty         = errors.New("username cannot be empty")
+	ErrRabbitMQCtlQueueNameEmpty        = errors.New("queue name cannot be empty")
+)
+
+const (
+	// Default timeout for RabbitMQ control commands in seconds
+	defaultRabbitMQCtlTimeout = 30
+)
+
+// RabbitMQCtlCategory represents a category of rabbitmqctl commands.
 type RabbitMQCtlCategory struct {
 	Name        string               `json:"name"`
 	DisplayName string               `json:"display_name"`
@@ -15,7 +33,7 @@ type RabbitMQCtlCategory struct {
 	Commands    []RabbitMQCtlCommand `json:"commands"`
 }
 
-// RabbitMQCtlCommand represents a specific rabbitmqctl command with its metadata
+// RabbitMQCtlCommand represents a specific rabbitmqctl command with its metadata.
 type RabbitMQCtlCommand struct {
 	Name        string                       `json:"name"`
 	Description string                       `json:"description"`
@@ -28,7 +46,7 @@ type RabbitMQCtlCommand struct {
 	Dangerous   bool                         `json:"dangerous"`
 }
 
-// RabbitMQCtlCommandArgument represents a command argument
+// RabbitMQCtlCommandArgument represents a command argument.
 type RabbitMQCtlCommandArgument struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -37,7 +55,7 @@ type RabbitMQCtlCommandArgument struct {
 	Default     string `json:"default,omitempty"`
 }
 
-// RabbitMQCtlCommandOption represents a command option/flag
+// RabbitMQCtlCommandOption represents a command option/flag.
 type RabbitMQCtlCommandOption struct {
 	Name        string `json:"name"`
 	Short       string `json:"short,omitempty"`
@@ -46,7 +64,7 @@ type RabbitMQCtlCommandOption struct {
 	Default     string `json:"default,omitempty"`
 }
 
-// RabbitMQCtlExecution represents a command execution record
+// RabbitMQCtlExecution represents a command execution record.
 type RabbitMQCtlExecution struct {
 	InstanceID string   `json:"instance_id"`
 	Category   string   `json:"category"`
@@ -60,14 +78,14 @@ type RabbitMQCtlExecution struct {
 	User       string   `json:"user,omitempty"`
 }
 
-// MetadataService provides RabbitMQ command metadata management
+// MetadataService provides RabbitMQ command metadata management.
 type MetadataService struct {
 	categories map[string]*RabbitMQCtlCategory
 	commands   map[string]*RabbitMQCtlCommand
 	logger     Logger
 }
 
-// NewMetadataService creates a new metadata service
+// NewMetadataService creates a new metadata service.
 func NewMetadataService(logger Logger) *MetadataService {
 	if logger == nil {
 		logger = &noOpLogger{}
@@ -85,9 +103,9 @@ func NewMetadataService(logger Logger) *MetadataService {
 	return service
 }
 
-// GetCategories returns all command categories
+// GetCategories returns all command categories.
 func (m *MetadataService) GetCategories() []RabbitMQCtlCategory {
-	var categories []RabbitMQCtlCategory
+	categories := make([]RabbitMQCtlCategory, 0, len(m.categories))
 	for _, cat := range m.categories {
 		categories = append(categories, *cat)
 	}
@@ -100,35 +118,39 @@ func (m *MetadataService) GetCategories() []RabbitMQCtlCategory {
 	return categories
 }
 
-// GetCategory returns a specific category with its commands
+// GetCategory returns a specific category with its commands.
 func (m *MetadataService) GetCategory(name string) (*RabbitMQCtlCategory, error) {
 	category, exists := m.categories[name]
 	if !exists {
-		return nil, fmt.Errorf("category '%s' not found", name)
+		return nil, fmt.Errorf("%w: %s", ErrRabbitMQCtlCategoryNotFound, name)
 	}
+
 	return category, nil
 }
 
-// GetCommand returns detailed information about a specific command
+// GetCommand returns detailed information about a specific command.
 func (m *MetadataService) GetCommand(category, command string) (*RabbitMQCtlCommand, error) {
 	commandKey := fmt.Sprintf("%s.%s", category, command)
+
 	cmd, exists := m.commands[commandKey]
 	if !exists {
-		return nil, fmt.Errorf("command '%s' not found in category '%s'", command, category)
+		return nil, fmt.Errorf("%w: %s in category %s", ErrRabbitMQCtlCommandNotFound, command, category)
 	}
+
 	return cmd, nil
 }
 
-// GetCommandsByCategory returns all commands in a specific category
+// GetCommandsByCategory returns all commands in a specific category.
 func (m *MetadataService) GetCommandsByCategory(categoryName string) ([]RabbitMQCtlCommand, error) {
 	category, err := m.GetCategory(categoryName)
 	if err != nil {
 		return nil, err
 	}
+
 	return category.Commands, nil
 }
 
-// ValidateCommand validates a command and its arguments
+// ValidateCommand validates a command and its arguments.
 func (m *MetadataService) ValidateCommand(category, command string, args []string) error {
 	cmd, err := m.GetCommand(category, command)
 	if err != nil {
@@ -137,6 +159,7 @@ func (m *MetadataService) ValidateCommand(category, command string, args []strin
 
 	// Check required arguments
 	requiredArgs := 0
+
 	for _, arg := range cmd.Arguments {
 		if arg.Required {
 			requiredArgs++
@@ -144,15 +167,17 @@ func (m *MetadataService) ValidateCommand(category, command string, args []strin
 	}
 
 	if len(args) < requiredArgs {
-		return fmt.Errorf("command '%s' requires at least %d arguments, got %d", command, requiredArgs, len(args))
+		return fmt.Errorf("%w: command %s requires at least %d arguments, got %d", ErrRabbitMQCtlInsufficientArguments, command, requiredArgs, len(args))
 	}
 
 	// Validate argument types (basic validation)
-	for i, arg := range args {
-		if i < len(cmd.Arguments) {
-			argDef := cmd.Arguments[i]
-			if err := m.validateArgumentType(argDef.Type, arg); err != nil {
-				return fmt.Errorf("argument %d (%s): %v", i+1, argDef.Name, err)
+	for index, arg := range args {
+		if index < len(cmd.Arguments) {
+			argDef := cmd.Arguments[index]
+
+			err := m.validateArgumentType(argDef.Type, arg)
+			if err != nil {
+				return fmt.Errorf("argument %d (%s): %w", index+1, argDef.Name, err)
 			}
 		}
 	}
@@ -160,7 +185,7 @@ func (m *MetadataService) ValidateCommand(category, command string, args []strin
 	return nil
 }
 
-// validateArgumentType performs basic type validation for command arguments
+// validateArgumentType performs basic type validation for command arguments.
 func (m *MetadataService) validateArgumentType(argType, value string) error {
 	switch argType {
 	case "string":
@@ -169,7 +194,7 @@ func (m *MetadataService) validateArgumentType(argType, value string) error {
 	case "int", "integer":
 		// Basic integer check
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("integer value cannot be empty")
+			return ErrRabbitMQCtlIntegerValueEmpty
 		}
 		// Additional validation could be added here
 		return nil
@@ -177,26 +202,30 @@ func (m *MetadataService) validateArgumentType(argType, value string) error {
 		lower := strings.ToLower(strings.TrimSpace(value))
 		if lower != "true" && lower != "false" && lower != "1" && lower != "0" &&
 			lower != "yes" && lower != "no" && lower != "on" && lower != "off" {
-			return fmt.Errorf("boolean value must be true/false, yes/no, on/off, or 1/0")
+			return ErrRabbitMQCtlInvalidBooleanValue
 		}
+
 		return nil
 	case "vhost":
 		// Virtual host name validation
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("virtual host name cannot be empty")
+			return ErrRabbitMQCtlVirtualHostEmpty
 		}
+
 		return nil
 	case "username":
 		// Username validation
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("username cannot be empty")
+			return ErrRabbitMQCtlUsernameEmpty
 		}
+
 		return nil
 	case "queue":
 		// Queue name validation
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("queue name cannot be empty")
+			return ErrRabbitMQCtlQueueNameEmpty
 		}
+
 		return nil
 	default:
 		// Unknown type, allow anything
@@ -204,7 +233,7 @@ func (m *MetadataService) validateArgumentType(argType, value string) error {
 	}
 }
 
-// initializeCommandMetadata initializes the service with  rabbitmqctl command metadata
+// initializeCommandMetadata initializes the service with  rabbitmqctl command metadata.
 func (m *MetadataService) initializeCommandMetadata() {
 	// Initialize categories
 	m.initializeCategories()
@@ -229,10 +258,10 @@ func (m *MetadataService) initializeCommandMetadata() {
 	m.initializeStreamCommands()
 	m.initializeOtherCommands()
 
-	m.logger.Info("Initialized %d categories with %d total commands", len(m.categories), len(m.commands))
+	m.logger.Infof("Initialized %d categories with %d total commands", len(m.categories), len(m.commands))
 }
 
-// initializeCategories creates all command categories
+// initializeCategories creates all command categories.
 func (m *MetadataService) initializeCategories() {
 	categories := []RabbitMQCtlCategory{
 		{
@@ -350,7 +379,7 @@ func (m *MetadataService) initializeCategories() {
 	}
 }
 
-// addCommandToCategory adds a command to a category and the global commands map
+// addCommandToCategory adds a command to a category and the global commands map.
 func (m *MetadataService) addCommandToCategory(categoryName string, command RabbitMQCtlCommand) {
 	// Set the category on the command
 	command.Category = categoryName
@@ -365,7 +394,7 @@ func (m *MetadataService) addCommandToCategory(categoryName string, command Rabb
 	}
 }
 
-// GetCommandsAsJSON returns all commands and categories as JSON
+// GetCommandsAsJSON returns all commands and categories as JSON.
 func (m *MetadataService) GetCommandsAsJSON() ([]byte, error) {
 	data := map[string]interface{}{
 		"categories": m.GetCategories(),
@@ -374,10 +403,16 @@ func (m *MetadataService) GetCommandsAsJSON() ([]byte, error) {
 			"total_commands":   len(m.commands),
 		},
 	}
-	return json.MarshalIndent(data, "", "  ")
+
+	result, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal metadata to JSON: %w", err)
+	}
+
+	return result, nil
 }
 
-// initializeNodesCommands initializes node-related commands
+// initializeNodesCommands initializes node-related commands.
 func (m *MetadataService) initializeNodesCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -387,7 +422,7 @@ func (m *MetadataService) initializeNodesCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl node_health_check",
 			Examples:    []string{"rabbitmqctl node_health_check"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "ping",
@@ -396,7 +431,7 @@ func (m *MetadataService) initializeNodesCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl ping",
 			Examples:    []string{"rabbitmqctl ping"},
-			Timeout:     10,
+			Timeout:     DefaultRabbitmqctlTimeout,
 		},
 	}
 
@@ -405,7 +440,7 @@ func (m *MetadataService) initializeNodesCommands() {
 	}
 }
 
-// initializeClusterCommands initializes cluster-related commands
+// initializeClusterCommands initializes cluster-related commands.
 func (m *MetadataService) initializeClusterCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -415,7 +450,7 @@ func (m *MetadataService) initializeClusterCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl cluster_status",
 			Examples:    []string{"rabbitmqctl cluster_status"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "join_cluster",
@@ -428,7 +463,7 @@ func (m *MetadataService) initializeClusterCommands() {
 			},
 			Usage:     "rabbitmqctl join_cluster [--ram] <node>",
 			Examples:  []string{"rabbitmqctl join_cluster rabbit@server1"},
-			Timeout:   60,
+			Timeout:   LongRabbitmqctlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -438,7 +473,7 @@ func (m *MetadataService) initializeClusterCommands() {
 	}
 }
 
-// initializeUsersCommands initializes user management commands
+// initializeUsersCommands initializes user management commands.
 func (m *MetadataService) initializeUsersCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -448,7 +483,7 @@ func (m *MetadataService) initializeUsersCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl list_users",
 			Examples:    []string{"rabbitmqctl list_users"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "add_user",
@@ -460,7 +495,7 @@ func (m *MetadataService) initializeUsersCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl add_user <username> <password>",
 			Examples:  []string{"rabbitmqctl add_user myuser mypassword"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -472,7 +507,7 @@ func (m *MetadataService) initializeUsersCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl delete_user <username>",
 			Examples:  []string{"rabbitmqctl delete_user myuser"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -485,7 +520,7 @@ func (m *MetadataService) initializeUsersCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl change_password <username> <password>",
 			Examples:  []string{"rabbitmqctl change_password myuser newpassword"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -498,7 +533,7 @@ func (m *MetadataService) initializeUsersCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl set_user_tags <username> [tag ...]",
 			Examples:  []string{"rabbitmqctl set_user_tags myuser administrator"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -508,7 +543,7 @@ func (m *MetadataService) initializeUsersCommands() {
 	}
 }
 
-// initializeAccessCommands initializes access control commands
+// initializeAccessCommands initializes access control commands.
 func (m *MetadataService) initializeAccessCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -520,7 +555,7 @@ func (m *MetadataService) initializeAccessCommands() {
 			Options:  []RabbitMQCtlCommandOption{},
 			Usage:    "rabbitmqctl list_permissions [-p <vhost>]",
 			Examples: []string{"rabbitmqctl list_permissions", "rabbitmqctl list_permissions -p /"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "list_user_permissions",
@@ -531,7 +566,7 @@ func (m *MetadataService) initializeAccessCommands() {
 			Options:  []RabbitMQCtlCommandOption{},
 			Usage:    "rabbitmqctl list_user_permissions <username>",
 			Examples: []string{"rabbitmqctl list_user_permissions myuser"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "set_permissions",
@@ -547,7 +582,7 @@ func (m *MetadataService) initializeAccessCommands() {
 			},
 			Usage:     "rabbitmqctl set_permissions [-p <vhost>] <username> <configure> <write> <read>",
 			Examples:  []string{"rabbitmqctl set_permissions myuser \".*\" \".*\" \".*\""},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -561,7 +596,7 @@ func (m *MetadataService) initializeAccessCommands() {
 			},
 			Usage:     "rabbitmqctl clear_permissions [-p <vhost>] <username>",
 			Examples:  []string{"rabbitmqctl clear_permissions myuser"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -571,7 +606,7 @@ func (m *MetadataService) initializeAccessCommands() {
 	}
 }
 
-// initializeMonitoringCommands initializes monitoring commands
+// initializeMonitoringCommands initializes monitoring commands.
 func (m *MetadataService) initializeMonitoringCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -581,7 +616,7 @@ func (m *MetadataService) initializeMonitoringCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl status",
 			Examples:    []string{"rabbitmqctl status"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "environment",
@@ -590,7 +625,7 @@ func (m *MetadataService) initializeMonitoringCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl environment",
 			Examples:    []string{"rabbitmqctl environment"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "report",
@@ -599,7 +634,7 @@ func (m *MetadataService) initializeMonitoringCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl report",
 			Examples:    []string{"rabbitmqctl report"},
-			Timeout:     60,
+			Timeout:     LongRabbitmqctlTimeout,
 		},
 		{
 			Name:        "list_connections",
@@ -610,7 +645,7 @@ func (m *MetadataService) initializeMonitoringCommands() {
 			Options:  []RabbitMQCtlCommandOption{},
 			Usage:    "rabbitmqctl list_connections [connectioninfoitem ...]",
 			Examples: []string{"rabbitmqctl list_connections", "rabbitmqctl list_connections name state"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "list_channels",
@@ -621,7 +656,7 @@ func (m *MetadataService) initializeMonitoringCommands() {
 			Options:  []RabbitMQCtlCommandOption{},
 			Usage:    "rabbitmqctl list_channels [channelinfoitem ...]",
 			Examples: []string{"rabbitmqctl list_channels", "rabbitmqctl list_channels name connection"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "list_consumers",
@@ -634,7 +669,7 @@ func (m *MetadataService) initializeMonitoringCommands() {
 			},
 			Usage:    "rabbitmqctl list_consumers [-p <vhost>] [consumerinfoitem ...]",
 			Examples: []string{"rabbitmqctl list_consumers", "rabbitmqctl list_consumers -p / queue_name"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 	}
 
@@ -643,7 +678,7 @@ func (m *MetadataService) initializeMonitoringCommands() {
 	}
 }
 
-// initializeParametersCommands initializes parameter management commands
+// initializeParametersCommands initializes parameter management commands.
 func (m *MetadataService) initializeParametersCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -657,7 +692,7 @@ func (m *MetadataService) initializeParametersCommands() {
 			},
 			Usage:    "rabbitmqctl list_parameters [-p <vhost>] [component_name]",
 			Examples: []string{"rabbitmqctl list_parameters", "rabbitmqctl list_parameters federation-upstream"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "set_parameter",
@@ -672,7 +707,7 @@ func (m *MetadataService) initializeParametersCommands() {
 			},
 			Usage:     "rabbitmqctl set_parameter [-p <vhost>] <component_name> <name> <value>",
 			Examples:  []string{"rabbitmqctl set_parameter federation-upstream my-upstream '{\"uri\":\"amqp://server\"}'"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -687,7 +722,7 @@ func (m *MetadataService) initializeParametersCommands() {
 			},
 			Usage:     "rabbitmqctl clear_parameter [-p <vhost>] <component_name> <name>",
 			Examples:  []string{"rabbitmqctl clear_parameter federation-upstream my-upstream"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -697,7 +732,7 @@ func (m *MetadataService) initializeParametersCommands() {
 	}
 }
 
-// initializePoliciesCommands initializes policy management commands
+// initializePoliciesCommands initializes policy management commands.
 func (m *MetadataService) initializePoliciesCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -709,7 +744,7 @@ func (m *MetadataService) initializePoliciesCommands() {
 			},
 			Usage:    "rabbitmqctl list_policies [-p <vhost>]",
 			Examples: []string{"rabbitmqctl list_policies", "rabbitmqctl list_policies -p /"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "set_policy",
@@ -726,7 +761,7 @@ func (m *MetadataService) initializePoliciesCommands() {
 			},
 			Usage:     "rabbitmqctl set_policy [-p <vhost>] [--priority <priority>] [--apply-to <apply-to>] <name> <pattern> <definition>",
 			Examples:  []string{"rabbitmqctl set_policy ha-all \"^ha\\.\" '{\"ha-mode\":\"all\"}'"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -740,7 +775,7 @@ func (m *MetadataService) initializePoliciesCommands() {
 			},
 			Usage:     "rabbitmqctl clear_policy [-p <vhost>] <name>",
 			Examples:  []string{"rabbitmqctl clear_policy ha-all"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -750,7 +785,7 @@ func (m *MetadataService) initializePoliciesCommands() {
 	}
 }
 
-// initializeVHostsCommands initializes virtual host management commands
+// initializeVHostsCommands initializes virtual host management commands.
 func (m *MetadataService) initializeVHostsCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -760,7 +795,7 @@ func (m *MetadataService) initializeVHostsCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl list_vhosts",
 			Examples:    []string{"rabbitmqctl list_vhosts"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "add_vhost",
@@ -771,7 +806,7 @@ func (m *MetadataService) initializeVHostsCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl add_vhost <vhost>",
 			Examples:  []string{"rabbitmqctl add_vhost /test"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -783,7 +818,7 @@ func (m *MetadataService) initializeVHostsCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl delete_vhost <vhost>",
 			Examples:  []string{"rabbitmqctl delete_vhost /test"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -793,7 +828,7 @@ func (m *MetadataService) initializeVHostsCommands() {
 	}
 }
 
-// initializeQueuesCommands initializes queue management commands
+// initializeQueuesCommands initializes queue management commands.
 func (m *MetadataService) initializeQueuesCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -807,7 +842,7 @@ func (m *MetadataService) initializeQueuesCommands() {
 			},
 			Usage:    "rabbitmqctl list_queues [-p <vhost>] [queueinfoitem ...]",
 			Examples: []string{"rabbitmqctl list_queues", "rabbitmqctl list_queues name messages consumers"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "purge_queue",
@@ -820,7 +855,7 @@ func (m *MetadataService) initializeQueuesCommands() {
 			},
 			Usage:     "rabbitmqctl purge_queue [-p <vhost>] <queue>",
 			Examples:  []string{"rabbitmqctl purge_queue myqueue"},
-			Timeout:   60,
+			Timeout:   LongRabbitmqctlTimeout,
 			Dangerous: true,
 		},
 		{
@@ -836,7 +871,7 @@ func (m *MetadataService) initializeQueuesCommands() {
 			},
 			Usage:     "rabbitmqctl delete_queue [-p <vhost>] [--if-empty] [--if-unused] <queue>",
 			Examples:  []string{"rabbitmqctl delete_queue myqueue", "rabbitmqctl delete_queue --if-empty myqueue"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -846,7 +881,7 @@ func (m *MetadataService) initializeQueuesCommands() {
 	}
 }
 
-// initializeDefinitionsCommands initializes import/export definition commands
+// initializeDefinitionsCommands initializes import/export definition commands.
 func (m *MetadataService) initializeDefinitionsCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -858,7 +893,7 @@ func (m *MetadataService) initializeDefinitionsCommands() {
 			Options:  []RabbitMQCtlCommandOption{},
 			Usage:    "rabbitmqctl export_definitions <file>",
 			Examples: []string{"rabbitmqctl export_definitions /tmp/definitions.json"},
-			Timeout:  60,
+			Timeout:  LongRabbitmqctlTimeout,
 		},
 		{
 			Name:        "import_definitions",
@@ -869,7 +904,7 @@ func (m *MetadataService) initializeDefinitionsCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl import_definitions <file>",
 			Examples:  []string{"rabbitmqctl import_definitions /tmp/definitions.json"},
-			Timeout:   60,
+			Timeout:   LongRabbitmqctlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -879,7 +914,7 @@ func (m *MetadataService) initializeDefinitionsCommands() {
 	}
 }
 
-// initializeOperationsCommands initializes operational commands
+// initializeOperationsCommands initializes operational commands.
 func (m *MetadataService) initializeOperationsCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -889,7 +924,7 @@ func (m *MetadataService) initializeOperationsCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl stop_app",
 			Examples:    []string{"rabbitmqctl stop_app"},
-			Timeout:     60,
+			Timeout:     LongRabbitmqctlTimeout,
 			Dangerous:   true,
 		},
 		{
@@ -899,7 +934,7 @@ func (m *MetadataService) initializeOperationsCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl start_app",
 			Examples:    []string{"rabbitmqctl start_app"},
-			Timeout:     60,
+			Timeout:     LongRabbitmqctlTimeout,
 			Dangerous:   true,
 		},
 		{
@@ -909,7 +944,7 @@ func (m *MetadataService) initializeOperationsCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl reset",
 			Examples:    []string{"rabbitmqctl reset"},
-			Timeout:     60,
+			Timeout:     LongRabbitmqctlTimeout,
 			Dangerous:   true,
 		},
 		{
@@ -919,7 +954,7 @@ func (m *MetadataService) initializeOperationsCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl force_reset",
 			Examples:    []string{"rabbitmqctl force_reset"},
-			Timeout:     60,
+			Timeout:     LongRabbitmqctlTimeout,
 			Dangerous:   true,
 		},
 		{
@@ -929,7 +964,7 @@ func (m *MetadataService) initializeOperationsCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl rotate_logs",
 			Examples:    []string{"rabbitmqctl rotate_logs"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 	}
 
@@ -938,7 +973,7 @@ func (m *MetadataService) initializeOperationsCommands() {
 	}
 }
 
-// initializeFeatureFlagsCommands initializes feature flag commands
+// initializeFeatureFlagsCommands initializes feature flag commands.
 func (m *MetadataService) initializeFeatureFlagsCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -948,7 +983,7 @@ func (m *MetadataService) initializeFeatureFlagsCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl list_feature_flags",
 			Examples:    []string{"rabbitmqctl list_feature_flags"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "enable_feature_flag",
@@ -959,7 +994,7 @@ func (m *MetadataService) initializeFeatureFlagsCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl enable_feature_flag <flag>",
 			Examples:  []string{"rabbitmqctl enable_feature_flag quorum_queue"},
-			Timeout:   30,
+			Timeout:   defaultRabbitMQCtlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -969,7 +1004,7 @@ func (m *MetadataService) initializeFeatureFlagsCommands() {
 	}
 }
 
-// initializeConfigEnvCommands initializes config and environment commands
+// initializeConfigEnvCommands initializes config and environment commands.
 func (m *MetadataService) initializeConfigEnvCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -979,7 +1014,7 @@ func (m *MetadataService) initializeConfigEnvCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl environment",
 			Examples:    []string{"rabbitmqctl environment"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "eval",
@@ -990,7 +1025,7 @@ func (m *MetadataService) initializeConfigEnvCommands() {
 			Options:   []RabbitMQCtlCommandOption{},
 			Usage:     "rabbitmqctl eval <expression>",
 			Examples:  []string{"rabbitmqctl eval 'rabbit_mnesia:status().'"},
-			Timeout:   60,
+			Timeout:   LongRabbitmqctlTimeout,
 			Dangerous: true,
 		},
 	}
@@ -1000,7 +1035,7 @@ func (m *MetadataService) initializeConfigEnvCommands() {
 	}
 }
 
-// initializeMQTTCommands initializes MQTT plugin commands
+// initializeMQTTCommands initializes MQTT plugin commands.
 func (m *MetadataService) initializeMQTTCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -1010,7 +1045,7 @@ func (m *MetadataService) initializeMQTTCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl list_mqtt_connections",
 			Examples:    []string{"rabbitmqctl list_mqtt_connections"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 	}
 
@@ -1019,7 +1054,7 @@ func (m *MetadataService) initializeMQTTCommands() {
 	}
 }
 
-// initializeManagementCommands initializes management plugin commands
+// initializeManagementCommands initializes management plugin commands.
 func (m *MetadataService) initializeManagementCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -1033,7 +1068,7 @@ func (m *MetadataService) initializeManagementCommands() {
 			},
 			Usage:    "rabbitmqctl list_bindings [-p <vhost>] [bindinginfoitem ...]",
 			Examples: []string{"rabbitmqctl list_bindings", "rabbitmqctl list_bindings source_name destination_name"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 		{
 			Name:        "list_exchanges",
@@ -1046,7 +1081,7 @@ func (m *MetadataService) initializeManagementCommands() {
 			},
 			Usage:    "rabbitmqctl list_exchanges [-p <vhost>] [exchangeinfoitem ...]",
 			Examples: []string{"rabbitmqctl list_exchanges", "rabbitmqctl list_exchanges name type"},
-			Timeout:  30,
+			Timeout:  defaultRabbitMQCtlTimeout,
 		},
 	}
 
@@ -1055,7 +1090,7 @@ func (m *MetadataService) initializeManagementCommands() {
 	}
 }
 
-// initializeSTOMPCommands initializes STOMP plugin commands
+// initializeSTOMPCommands initializes STOMP plugin commands.
 func (m *MetadataService) initializeSTOMPCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -1065,7 +1100,7 @@ func (m *MetadataService) initializeSTOMPCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl list_stomp_connections",
 			Examples:    []string{"rabbitmqctl list_stomp_connections"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 	}
 
@@ -1074,7 +1109,7 @@ func (m *MetadataService) initializeSTOMPCommands() {
 	}
 }
 
-// initializeStreamCommands initializes stream plugin commands
+// initializeStreamCommands initializes stream plugin commands.
 func (m *MetadataService) initializeStreamCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -1084,7 +1119,7 @@ func (m *MetadataService) initializeStreamCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl list_stream_connections",
 			Examples:    []string{"rabbitmqctl list_stream_connections"},
-			Timeout:     30,
+			Timeout:     defaultRabbitMQCtlTimeout,
 		},
 	}
 
@@ -1093,7 +1128,7 @@ func (m *MetadataService) initializeStreamCommands() {
 	}
 }
 
-// initializeOtherCommands initializes miscellaneous commands
+// initializeOtherCommands initializes miscellaneous commands.
 func (m *MetadataService) initializeOtherCommands() {
 	commands := []RabbitMQCtlCommand{
 		{
@@ -1105,7 +1140,7 @@ func (m *MetadataService) initializeOtherCommands() {
 			Options:  []RabbitMQCtlCommandOption{},
 			Usage:    "rabbitmqctl help [command]",
 			Examples: []string{"rabbitmqctl help", "rabbitmqctl help list_queues"},
-			Timeout:  10,
+			Timeout:  DefaultRabbitmqctlTimeout,
 		},
 		{
 			Name:        "version",
@@ -1114,7 +1149,7 @@ func (m *MetadataService) initializeOtherCommands() {
 			Options:     []RabbitMQCtlCommandOption{},
 			Usage:       "rabbitmqctl version",
 			Examples:    []string{"rabbitmqctl version"},
-			Timeout:     10,
+			Timeout:     DefaultRabbitmqctlTimeout,
 		},
 	}
 

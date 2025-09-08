@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -12,7 +13,22 @@ import (
 	wsn "nhooyr.io/websocket"
 )
 
-// SSHHandler manages WebSocket connections for SSH streaming
+// Constants for WebSocket SSH handler.
+const (
+	SessionCleanupInterval = 5 * time.Minute
+)
+
+// Static errors for err113 compliance.
+var (
+	ErrUnknownMessageType             = errors.New("unknown message type")
+	ErrControlMessageMissingMetaData  = errors.New("control message missing meta data")
+	ErrControlMessageMissingAction    = errors.New("control message missing action")
+	ErrUnknownControlAction           = errors.New("unknown control action")
+	ErrSSHSessionNotStarted           = errors.New("SSH session not started")
+	ErrResizeMessageMissingDimensions = errors.New("resize message missing width or height")
+)
+
+// SSHHandler manages WebSocket connections for SSH streaming.
 type SSHHandler struct {
 	sshService    ssh.SSHService
 	sessions      map[string]*SSHStreamSession
@@ -21,14 +37,14 @@ type SSHHandler struct {
 	config        Config
 }
 
-// Logger interface for logging
+// Logger interface for logging.
 type Logger interface {
-	Info(format string, args ...interface{})
-	Debug(format string, args ...interface{})
-	Error(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
 }
 
-// Config holds WebSocket configuration
+// Config holds WebSocket configuration.
 type Config struct {
 	ReadBufferSize    int           `yaml:"read_buffer_size"`
 	WriteBufferSize   int           `yaml:"write_buffer_size"`
@@ -41,7 +57,7 @@ type Config struct {
 	EnableCompression bool          `yaml:"enable_compression"`
 }
 
-// SSHStreamSession represents an active SSH streaming session
+// SSHStreamSession represents an active SSH streaming session.
 type SSHStreamSession struct {
 	ID           string
 	Deployment   string
@@ -49,14 +65,13 @@ type SSHStreamSession struct {
 	Index        int
 	Conn         WSConn
 	SSHSession   ssh.SSHSession
-	Context      context.Context
 	Cancel       context.CancelFunc
 	LastActivity time.Time
 	Mutex        sync.RWMutex
 	Logger       Logger
 }
 
-// WSConn abstracts WebSocket operations used by SSH handler
+// WSConn abstracts WebSocket operations used by SSH handler.
 type WSConn interface {
 	ReadJSON(v interface{}) error
 	WriteJSON(v interface{}) error
@@ -65,43 +80,67 @@ type WSConn interface {
 	SetReadLimit(n int64)
 }
 
-// nhooyrWSConn implements WSConn using nhooyr.io/websocket
+// nhooyrWSConn implements WSConn using nhooyr.io/websocket.
 type nhooyrWSConn struct {
 	conn *wsn.Conn
 }
 
-func (c *nhooyrWSConn) ReadJSON(v interface{}) error {
+func (c *nhooyrWSConn) ReadJSON(target interface{}) error {
 	ctx := context.Background()
+
 	_, data, err := c.conn.Read(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read from websocket connection: %w", err)
 	}
-	return json.Unmarshal(data, v)
+
+	err = json.Unmarshal(data, target)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal JSON data: %w", err)
+	}
+
+	return nil
 }
 
 func (c *nhooyrWSConn) WriteJSON(v interface{}) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), SSHDialTimeout)
 	defer cancel()
+
 	b, err := json.Marshal(v)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
-	return c.conn.Write(ctx, wsn.MessageText, b)
+
+	err = c.conn.Write(ctx, wsn.MessageText, b)
+	if err != nil {
+		return fmt.Errorf("failed to write to websocket connection: %w", err)
+	}
+
+	return nil
 }
 
 func (c *nhooyrWSConn) Ping(ctx context.Context) error {
-	return c.conn.Ping(ctx)
+	err := c.conn.Ping(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to ping websocket connection: %w", err)
+	}
+
+	return nil
 }
 
 func (c *nhooyrWSConn) Close() error {
-	return c.conn.Close(wsn.StatusNormalClosure, "")
+	err := c.conn.Close(wsn.StatusNormalClosure, "")
+	if err != nil {
+		return fmt.Errorf("failed to close websocket connection: %w", err)
+	}
+
+	return nil
 }
 
 func (c *nhooyrWSConn) SetReadLimit(n int64) {
 	c.conn.SetReadLimit(n)
 }
 
-// WSMessage represents a WebSocket message for SSH communication
+// WSMessage represents a WebSocket message for SSH communication.
 type WSMessage struct {
 	Type      string                 `json:"type"`
 	Data      string                 `json:"data,omitempty"`
@@ -111,7 +150,7 @@ type WSMessage struct {
 	Meta      map[string]interface{} `json:"meta,omitempty"`
 }
 
-// Message types
+// Message types.
 const (
 	MsgTypeInput     = "input"     // User input to SSH session
 	MsgTypeOutput    = "output"    // Output from SSH session
@@ -122,14 +161,14 @@ const (
 	MsgTypeStatus    = "status"    // Session status updates
 )
 
-// Stream types
+// Stream types.
 const (
 	StreamStdin  = "stdin"
 	StreamStdout = "stdout"
 	StreamStderr = "stderr"
 )
 
-// NewSSHHandler creates a new WebSocket SSH handler
+// NewSSHHandler creates a new WebSocket SSH handler.
 func NewSSHHandler(sshService ssh.SSHService, config Config, logger Logger) *SSHHandler {
 	if logger == nil {
 		logger = &noOpLogger{}
@@ -139,26 +178,33 @@ func NewSSHHandler(sshService ssh.SSHService, config Config, logger Logger) *SSH
 	if config.ReadBufferSize == 0 {
 		config.ReadBufferSize = 4096
 	}
+
 	if config.WriteBufferSize == 0 {
 		config.WriteBufferSize = 4096
 	}
+
 	if config.HandshakeTimeout == 0 {
-		config.HandshakeTimeout = 10 * time.Second
+		config.HandshakeTimeout = HandshakeTimeout
 	}
+
 	if config.MaxMessageSize == 0 {
-		config.MaxMessageSize = 32 * 1024 // 32KB
+		config.MaxMessageSize = MaxMessageSize
 	}
+
 	if config.PingInterval == 0 {
-		config.PingInterval = 30 * time.Second
+		config.PingInterval = PingInterval
 	}
+
 	if config.PongTimeout == 0 {
-		config.PongTimeout = 10 * time.Second
+		config.PongTimeout = PongTimeout
 	}
+
 	if config.MaxSessions == 0 {
 		config.MaxSessions = 100
 	}
+
 	if config.SessionTimeout == 0 {
-		config.SessionTimeout = 30 * time.Minute
+		config.SessionTimeout = SessionTimeout
 	}
 
 	handler := &SSHHandler{
@@ -175,11 +221,12 @@ func NewSSHHandler(sshService ssh.SSHService, config Config, logger Logger) *SSH
 	return handler
 }
 
-// HandleWebSocket handles WebSocket upgrade and SSH session management
-func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, deployment, instance string, index int) {
-	h.logger.Info("WebSocket SSH connection request for %s/%s/%d", deployment, instance, index)
+// HandleWebSocket handles WebSocket upgrade and SSH session management.
+func (h *SSHHandler) HandleWebSocket(ctx context.Context, w http.ResponseWriter, r *http.Request, deployment, instance string, index int) {
+	h.logger.Infof("WebSocket SSH connection request for %s/%s/%d", deployment, instance, index)
+
 	_, hj := w.(http.Hijacker)
-	h.logger.Debug("WS upgrade debug: proto=%s, hijacker=%v, writer=%T", r.Proto, hj, w)
+	h.logger.Debugf("WS upgrade debug: proto=%s, hijacker=%v, writer=%T", r.Proto, hj, w)
 
 	// Check session limit
 	h.sessionsMutex.RLock()
@@ -187,18 +234,22 @@ func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, dep
 	h.sessionsMutex.RUnlock()
 
 	if currentSessions >= h.config.MaxSessions {
-		h.logger.Error("Maximum WebSocket sessions (%d) reached", h.config.MaxSessions)
+		h.logger.Errorf("Maximum WebSocket sessions (%d) reached", h.config.MaxSessions)
 		http.Error(w, "Too many active sessions", http.StatusTooManyRequests)
+
 		return
 	}
 
 	// Accept connection via nhooyr (supports HTTP/1.1 and HTTP/2)
 	rawConn, err := acceptWS(w, r, h.config.EnableCompression)
 	if err != nil {
-		h.logger.Error("Failed to upgrade WebSocket connection: %v", err)
+		h.logger.Errorf("Failed to upgrade WebSocket connection: %v", err)
+
 		return
 	}
+
 	conn := rawConn
+
 	defer func() { _ = conn.Close() }()
 
 	// Set connection limits
@@ -206,7 +257,8 @@ func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, dep
 
 	// Create session
 	sessionID := fmt.Sprintf("ws-ssh-%d", time.Now().UnixNano())
-	ctx, cancel := context.WithTimeout(context.Background(), h.config.SessionTimeout)
+	sessionCtx, cancel := context.WithTimeout(ctx, h.config.SessionTimeout)
+
 	defer cancel()
 
 	session := &SSHStreamSession{
@@ -215,13 +267,12 @@ func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, dep
 		Instance:     instance,
 		Index:        index,
 		Conn:         conn,
-		Context:      ctx,
 		Cancel:       cancel,
 		LastActivity: time.Now(),
 		Logger:       h.logger,
 	}
 
-	h.logger.Info("Created WebSocket SSH session: %s", sessionID)
+	h.logger.Infof("Created WebSocket SSH session: %s", sessionID)
 
 	// Register session
 	h.sessionsMutex.Lock()
@@ -235,24 +286,25 @@ func (h *SSHHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request, dep
 		h.sessionsMutex.Unlock()
 
 		if session.SSHSession != nil {
-			if err := session.SSHSession.Close(); err != nil {
-				h.logger.Error("Failed to close SSH session: %v", err)
+			err := session.SSHSession.Close()
+			if err != nil {
+				h.logger.Errorf("Failed to close SSH session: %v", err)
 			}
 		}
 
-		h.logger.Info("Cleaned up WebSocket SSH session: %s", sessionID)
+		h.logger.Infof("Cleaned up WebSocket SSH session: %s", sessionID)
 	}()
 
 	// Handle the session
-	h.handleSession(session)
+	h.handleSession(sessionCtx, session)
 }
 
-// handleSession manages a WebSocket SSH session
-func (h *SSHHandler) handleSession(session *SSHStreamSession) {
-	h.logger.Debug("Starting WebSocket SSH session handler: %s", session.ID)
+// handleSession manages a WebSocket SSH session.
+func (h *SSHHandler) handleSession(ctx context.Context, session *SSHStreamSession) {
+	h.logger.Debugf("Starting WebSocket SSH session handler: %s", session.ID)
 
 	// Start ping routine
-	go h.pingRoutine(session)
+	go h.pingRoutine(ctx, session)
 
 	// Send handshake message
 	handshakeMsg := WSMessage{
@@ -267,23 +319,28 @@ func (h *SSHHandler) handleSession(session *SSHStreamSession) {
 		},
 	}
 
-	if err := h.sendMessage(session, handshakeMsg); err != nil {
-		h.logger.Error("Failed to send handshake message: %v", err)
+	err := h.sendMessage(session, handshakeMsg)
+	if err != nil {
+		h.logger.Errorf("Failed to send handshake message: %v", err)
+
 		return
 	}
 
 	// Handle incoming WebSocket messages
 	for {
 		select {
-		case <-session.Context.Done():
-			h.logger.Debug("WebSocket SSH session context cancelled: %s", session.ID)
+		case <-ctx.Done():
+			h.logger.Debugf("WebSocket SSH session context cancelled: %s", session.ID)
+
 			return
 		default:
 			// Read message from WebSocket
 			var msg WSMessage
+
 			err := session.Conn.ReadJSON(&msg)
 			if err != nil {
-				h.logger.Debug("WebSocket connection closed or read error: %v", err)
+				h.logger.Debugf("WebSocket connection closed or read error: %v", err)
+
 				return
 			}
 
@@ -293,58 +350,58 @@ func (h *SSHHandler) handleSession(session *SSHStreamSession) {
 			session.Mutex.Unlock()
 
 			// Handle the message
-			if err := h.handleMessage(session, msg); err != nil {
-				h.logger.Error("Failed to handle WebSocket message: %v", err)
+			err = h.handleMessage(ctx, session, msg)
+			if err != nil {
+				h.logger.Errorf("Failed to handle WebSocket message: %v", err)
 				h.sendErrorMessage(session, fmt.Sprintf("Message handling error: %v", err))
 			}
 		}
 	}
 }
 
-// handleMessage processes incoming WebSocket messages
-func (h *SSHHandler) handleMessage(session *SSHStreamSession, msg WSMessage) error {
+// handleMessage processes incoming WebSocket messages.
+func (h *SSHHandler) handleMessage(ctx context.Context, session *SSHStreamSession, msg WSMessage) error {
 	// Debug logging removed to reduce noise for input messages
-
 	switch msg.Type {
 	case MsgTypeControl:
-		return h.handleControlMessage(session, msg)
+		return h.handleControlMessage(ctx, session, msg)
 	case MsgTypeInput:
 		return h.handleInputMessage(session, msg)
 	case MsgTypeHeartbeat:
 		return h.handleHeartbeatMessage(session, msg)
 	default:
-		return fmt.Errorf("unknown message type: %s", msg.Type)
+		return fmt.Errorf("%w: %s", ErrUnknownMessageType, msg.Type)
 	}
 }
 
 // handleControlMessage handles control messages (session start, window resize, etc.)
-func (h *SSHHandler) handleControlMessage(session *SSHStreamSession, msg WSMessage) error {
-	h.logger.Debug("Handling control message for session: %s", session.ID)
+func (h *SSHHandler) handleControlMessage(ctx context.Context, session *SSHStreamSession, msg WSMessage) error {
+	h.logger.Debugf("Handling control message for session: %s", session.ID)
 
 	if msg.Meta == nil {
-		return fmt.Errorf("control message missing meta data")
+		return ErrControlMessageMissingMetaData
 	}
 
 	action, ok := msg.Meta["action"].(string)
 	if !ok {
-		return fmt.Errorf("control message missing action")
+		return ErrControlMessageMissingAction
 	}
 
 	switch action {
 	case "start":
-		return h.startSSHSession(session, msg)
+		return h.startSSHSession(ctx, session, msg)
 	case "resize":
 		return h.resizeSession(session, msg)
 	case "signal":
 		return h.sendSignal(session, msg)
 	default:
-		return fmt.Errorf("unknown control action: %s", action)
+		return fmt.Errorf("%w: %s", ErrUnknownControlAction, action)
 	}
 }
 
-// startSSHSession initiates the SSH session
-func (h *SSHHandler) startSSHSession(session *SSHStreamSession, msg WSMessage) error {
-	h.logger.Info("Starting SSH session for WebSocket: %s", session.ID)
+// startSSHSession initiates the SSH session.
+func (h *SSHHandler) startSSHSession(ctx context.Context, session *SSHStreamSession, msg WSMessage) error {
+	h.logger.Infof("Starting SSH session for WebSocket: %s", session.ID)
 
 	// Create SSH request
 	sshReq := &ssh.SSHRequest{
@@ -354,8 +411,8 @@ func (h *SSHHandler) startSSHSession(session *SSHStreamSession, msg WSMessage) e
 		Options: &ssh.SSHOptions{
 			Terminal:     true,
 			TerminalType: "xterm-256color",
-			WindowWidth:  80,
-			WindowHeight: 24,
+			WindowWidth:  DefaultTerminalWidth,
+			WindowHeight: DefaultTerminalHeight,
 			Interactive:  true,
 		},
 	}
@@ -365,15 +422,17 @@ func (h *SSHHandler) startSSHSession(session *SSHStreamSession, msg WSMessage) e
 		if width, ok := msg.Meta["width"].(float64); ok {
 			sshReq.Options.WindowWidth = int(width)
 		}
+
 		if height, ok := msg.Meta["height"].(float64); ok {
 			sshReq.Options.WindowHeight = int(height)
 		}
+
 		if termType, ok := msg.Meta["term"].(string); ok && termType != "" {
 			sshReq.Options.TerminalType = termType
 		}
 	}
 
-	h.logger.Debug("SSH request: %+v", sshReq)
+	h.logger.Debugf("SSH request: %+v", sshReq)
 
 	// Create SSH session
 	sshSession, err := h.sshService.CreateSession(sshReq)
@@ -384,12 +443,13 @@ func (h *SSHHandler) startSSHSession(session *SSHStreamSession, msg WSMessage) e
 	session.SSHSession = sshSession
 
 	// Start SSH session
-	if err := sshSession.Start(); err != nil {
+	err = sshSession.Start()
+	if err != nil {
 		return fmt.Errorf("failed to start SSH session: %w", err)
 	}
 
 	// Start output streaming
-	go h.streamOutput(session)
+	go h.streamOutput(ctx, session)
 
 	// Send session started confirmation
 	statusMsg := WSMessage{
@@ -404,42 +464,54 @@ func (h *SSHHandler) startSSHSession(session *SSHStreamSession, msg WSMessage) e
 	return h.sendMessage(session, statusMsg)
 }
 
-// handleInputMessage handles user input
+// handleInputMessage handles user input.
 func (h *SSHHandler) handleInputMessage(session *SSHStreamSession, msg WSMessage) error {
 	if session.SSHSession == nil {
 		// Don't log this as an error since it's expected during initialization
-		h.logger.Debug("Received input for session %s before SSH session is ready, ignoring", session.ID)
+		h.logger.Debugf("Received input for session %s before SSH session is ready, ignoring", session.ID)
+
 		return nil // Return nil to avoid error propagation
 	}
 
 	// Send input to SSH session
-	return session.SSHSession.SendInput([]byte(msg.Data))
+	err := session.SSHSession.SendInput([]byte(msg.Data))
+	if err != nil {
+		return fmt.Errorf("failed to send input to SSH session: %w", err)
+	}
+
+	return nil
 }
 
-// resizeSession handles terminal resize
+// resizeSession handles terminal resize.
 func (h *SSHHandler) resizeSession(session *SSHStreamSession, msg WSMessage) error {
 	if session.SSHSession == nil {
-		return fmt.Errorf("SSH session not started")
+		return ErrSSHSessionNotStarted
 	}
 
 	width, widthOk := msg.Meta["width"].(float64)
 	height, heightOk := msg.Meta["height"].(float64)
 
 	if !widthOk || !heightOk {
-		return fmt.Errorf("resize message missing width or height")
+		return ErrResizeMessageMissingDimensions
 	}
 
-	return session.SSHSession.SetWindowSize(int(width), int(height))
-}
+	err := session.SSHSession.SetWindowSize(int(width), int(height))
+	if err != nil {
+		return fmt.Errorf("failed to set SSH session window size: %w", err)
+	}
 
-// sendSignal handles signal sending (future implementation)
-func (h *SSHHandler) sendSignal(session *SSHStreamSession, msg WSMessage) error {
-	// TODO: Implement signal sending when SSH session supports it
-	h.logger.Debug("Signal sending not yet implemented")
 	return nil
 }
 
-// handleHeartbeatMessage handles heartbeat/ping messages
+// sendSignal handles signal sending (future implementation).
+func (h *SSHHandler) sendSignal(_ *SSHStreamSession, msg WSMessage) error {
+	// TODO: Implement signal sending when SSH session supports it
+	h.logger.Debugf("Signal sending not yet implemented")
+
+	return nil
+}
+
+// handleHeartbeatMessage handles heartbeat/ping messages.
 func (h *SSHHandler) handleHeartbeatMessage(session *SSHStreamSession, msg WSMessage) error {
 	// Send heartbeat response
 	responseMsg := WSMessage{
@@ -452,9 +524,9 @@ func (h *SSHHandler) handleHeartbeatMessage(session *SSHStreamSession, msg WSMes
 	return h.sendMessage(session, responseMsg)
 }
 
-// streamOutput continuously reads from SSH session and sends to WebSocket
-func (h *SSHHandler) streamOutput(session *SSHStreamSession) {
-	h.logger.Debug("Starting output streaming for session: %s", session.ID)
+// streamOutput continuously reads from SSH session and sends to WebSocket.
+func (h *SSHHandler) streamOutput(ctx context.Context, session *SSHStreamSession) {
+	h.logger.Debugf("Starting output streaming for session: %s", session.ID)
 
 	sequence := int64(0)
 	retryCount := 0
@@ -463,26 +535,30 @@ func (h *SSHHandler) streamOutput(session *SSHStreamSession) {
 
 	for {
 		select {
-		case <-session.Context.Done():
-			h.logger.Debug("Output streaming stopped for session: %s", session.ID)
+		case <-ctx.Done():
+			h.logger.Debugf("Output streaming stopped for session: %s", session.ID)
+
 			return
 		default:
 			if session.SSHSession == nil {
 				// Wait for SSH session to be initialized
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(LongSleep)
+
 				retryCount++
 				if retryCount > maxRetries {
-					h.logger.Error("SSH session not initialized after %d retries for session: %s (waited %v)",
+					h.logger.Errorf("SSH session not initialized after %d retries for session: %s (waited %v)",
 						maxRetries, session.ID, time.Since(lastActivityTime))
 					h.sendErrorMessage(session, "SSH session initialization failed")
+
 					return
 				}
+
 				continue
 			}
 
 			// Reset retry count when session is available
 			if retryCount > 0 {
-				h.logger.Debug("SSH session available for session %s after %d retries", session.ID, retryCount)
+				h.logger.Debugf("SSH session available for session %s after %d retries", session.ID, retryCount)
 				retryCount = 0
 			}
 
@@ -496,15 +572,17 @@ func (h *SSHHandler) streamOutput(session *SSHStreamSession) {
 				// Check if error is due to session state transition
 				if err.Error() == "Session not connected" {
 					// This might be a temporary state during initialization
-					h.logger.Debug("SSH session %s temporarily not connected (status: %v, duration: %v), retrying...",
+					h.logger.Debugf("SSH session %s temporarily not connected (status: %v, duration: %v), retrying...",
 						session.ID, sessionStatus, duration)
-					time.Sleep(50 * time.Millisecond)
+					time.Sleep(MediumSleep)
+
 					continue
 				}
 
-				h.logger.Error("Failed to read SSH output for session %s: %v (status: %v, duration: %v, sequence: %d)",
+				h.logger.Errorf("Failed to read SSH output for session %s: %v (status: %v, duration: %v, sequence: %d)",
 					session.ID, err, sessionStatus, duration, sequence)
 				h.sendErrorMessage(session, fmt.Sprintf("SSH read error: %v", err))
+
 				return
 			}
 
@@ -514,7 +592,7 @@ func (h *SSHHandler) streamOutput(session *SSHStreamSession) {
 
 				// Log periodic activity for debugging
 				if sequence%100 == 0 {
-					h.logger.Debug("SSH session %s activity: sequence %d, output size %d bytes",
+					h.logger.Debugf("SSH session %s activity: sequence %d, output size %d bytes",
 						session.ID, sequence, len(output))
 				}
 
@@ -527,49 +605,60 @@ func (h *SSHHandler) streamOutput(session *SSHStreamSession) {
 					Timestamp: time.Now(),
 				}
 
-				if err := h.sendMessage(session, outputMsg); err != nil {
-					h.logger.Error("Failed to send output message for session %s (sequence: %d): %v",
+				err := h.sendMessage(session, outputMsg)
+				if err != nil {
+					h.logger.Errorf("Failed to send output message for session %s (sequence: %d): %v",
 						session.ID, sequence, err)
+
 					return
 				}
 			}
 
 			// Small delay to prevent busy loop
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(ShortSleep)
 		}
 	}
 }
 
-// pingRoutine sends periodic ping messages to keep connection alive
-func (h *SSHHandler) pingRoutine(session *SSHStreamSession) {
+// pingRoutine sends periodic ping messages to keep connection alive.
+func (h *SSHHandler) pingRoutine(ctx context.Context, session *SSHStreamSession) {
 	ticker := time.NewTicker(h.config.PingInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-session.Context.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), h.config.PongTimeout)
-			if err := session.Conn.Ping(ctx); err != nil {
+			pingCtx, cancel := context.WithTimeout(ctx, h.config.PongTimeout)
+
+			err := session.Conn.Ping(pingCtx)
+			if err != nil {
 				cancel()
-				h.logger.Debug("Failed to send ping to session %s: %v", session.ID, err)
+				h.logger.Debugf("Failed to send ping to session %s: %v", session.ID, err)
+
 				return
 			}
+
 			cancel()
 		}
 	}
 }
 
-// sendMessage sends a message to the WebSocket connection
+// sendMessage sends a message to the WebSocket connection.
 func (h *SSHHandler) sendMessage(session *SSHStreamSession, msg WSMessage) error {
 	session.Mutex.Lock()
 	defer session.Mutex.Unlock()
 
-	return session.Conn.WriteJSON(msg)
+	err := session.Conn.WriteJSON(msg)
+	if err != nil {
+		return fmt.Errorf("failed to write JSON message to websocket: %w", err)
+	}
+
+	return nil
 }
 
-// sendErrorMessage sends an error message to the WebSocket connection
+// sendErrorMessage sends an error message to the WebSocket connection.
 func (h *SSHHandler) sendErrorMessage(session *SSHStreamSession, errorMsg string) {
 	msg := WSMessage{
 		Type:      MsgTypeError,
@@ -577,14 +666,15 @@ func (h *SSHHandler) sendErrorMessage(session *SSHStreamSession, errorMsg string
 		Timestamp: time.Now(),
 	}
 
-	if err := h.sendMessage(session, msg); err != nil {
-		h.logger.Error("Failed to send error message: %v", err)
+	err := h.sendMessage(session, msg)
+	if err != nil {
+		h.logger.Errorf("Failed to send error message: %v", err)
 	}
 }
 
-// sessionCleanupLoop periodically cleans up inactive sessions
+// sessionCleanupLoop periodically cleans up inactive sessions.
 func (h *SSHHandler) sessionCleanupLoop() {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(SessionCleanupInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -592,23 +682,25 @@ func (h *SSHHandler) sessionCleanupLoop() {
 	}
 }
 
-// cleanupInactiveSessions removes sessions that have been inactive too long
+// cleanupInactiveSessions removes sessions that have been inactive too long.
 func (h *SSHHandler) cleanupInactiveSessions() {
 	h.sessionsMutex.Lock()
 	defer h.sessionsMutex.Unlock()
 
 	now := time.Now()
+
 	for sessionID, session := range h.sessions {
 		session.Mutex.RLock()
 		lastActivity := session.LastActivity
 		session.Mutex.RUnlock()
 
 		if now.Sub(lastActivity) > h.config.SessionTimeout {
-			h.logger.Info("Cleaning up inactive session: %s", sessionID)
+			h.logger.Infof("Cleaning up inactive session: %s", sessionID)
 
 			if session.SSHSession != nil {
-				if err := session.SSHSession.Close(); err != nil {
-					h.logger.Error("Failed to close SSH session %s: %v", sessionID, err)
+				err := session.SSHSession.Close()
+				if err != nil {
+					h.logger.Errorf("Failed to close SSH session %s: %v", sessionID, err)
 				}
 			}
 
@@ -618,26 +710,28 @@ func (h *SSHHandler) cleanupInactiveSessions() {
 	}
 }
 
-// GetActiveSessions returns the number of active sessions
+// GetActiveSessions returns the number of active sessions.
 func (h *SSHHandler) GetActiveSessions() int {
 	h.sessionsMutex.RLock()
 	defer h.sessionsMutex.RUnlock()
+
 	return len(h.sessions)
 }
 
-// Close shuts down the handler and cleans up all sessions
+// Close shuts down the handler and cleans up all sessions.
 func (h *SSHHandler) Close() error {
-	h.logger.Info("Closing WebSocket SSH handler")
+	h.logger.Infof("Closing WebSocket SSH handler")
 
 	h.sessionsMutex.Lock()
 	defer h.sessionsMutex.Unlock()
 
 	for sessionID, session := range h.sessions {
-		h.logger.Debug("Closing session: %s", sessionID)
+		h.logger.Debugf("Closing session: %s", sessionID)
 
 		if session.SSHSession != nil {
-			if err := session.SSHSession.Close(); err != nil {
-				h.logger.Error("Failed to close SSH session %s: %v", sessionID, err)
+			err := session.SSHSession.Close()
+			if err != nil {
+				h.logger.Errorf("Failed to close SSH session %s: %v", sessionID, err)
 			}
 		}
 
@@ -645,12 +739,13 @@ func (h *SSHHandler) Close() error {
 	}
 
 	h.sessions = make(map[string]*SSHStreamSession)
+
 	return nil
 }
 
-// noOpLogger is a no-operation logger implementation
+// noOpLogger is a no-operation logger implementation.
 type noOpLogger struct{}
 
-func (l *noOpLogger) Info(format string, args ...interface{})  {}
-func (l *noOpLogger) Debug(format string, args ...interface{}) {}
-func (l *noOpLogger) Error(format string, args ...interface{}) {}
+func (l *noOpLogger) Infof(format string, args ...interface{})  {}
+func (l *noOpLogger) Debugf(format string, args ...interface{}) {}
+func (l *noOpLogger) Errorf(format string, args ...interface{}) {}

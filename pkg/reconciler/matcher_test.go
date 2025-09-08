@@ -1,10 +1,14 @@
-package reconciler
+package reconciler_test
 
 import (
 	"testing"
+
+	. "blacksmith/pkg/reconciler"
 )
 
 func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
+	t.Parallel()
+
 	services := []Service{
 		{
 			ID:   "redis-cache",
@@ -24,7 +28,7 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 	}
 
 	broker := &mockBroker{services: services}
-	logger := newMockLogger()
+	logger := NewMockLogger()
 
 	matcher := NewServiceMatcher(broker, logger)
 
@@ -93,32 +97,39 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := matcher.MatchDeployment(tt.deployment, services)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 
-			if tt.expectError && err == nil {
+			result, err := matcher.MatchDeployment(testCase.deployment, services)
+
+			if testCase.expectError && err == nil {
 				t.Error("Expected error but got none")
 			}
-			if !tt.expectError && err != nil {
+
+			if !testCase.expectError && err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
 
-			if tt.expected == nil && result != nil {
+			if testCase.expected == nil && result != nil {
 				t.Errorf("Expected no match but got: %+v", result)
 			}
-			if tt.expected != nil && result == nil {
+
+			if testCase.expected != nil && result == nil {
 				t.Error("Expected a match but got nil")
 			}
-			if tt.expected != nil && result != nil {
-				if result.ServiceID != tt.expected.ServiceID {
-					t.Errorf("ServiceID: expected %s, got %s", tt.expected.ServiceID, result.ServiceID)
+
+			if testCase.expected != nil && result != nil {
+				if result.ServiceID != testCase.expected.ServiceID {
+					t.Errorf("ServiceID: expected %s, got %s", testCase.expected.ServiceID, result.ServiceID)
 				}
-				if result.PlanID != tt.expected.PlanID {
-					t.Errorf("PlanID: expected %s, got %s", tt.expected.PlanID, result.PlanID)
+
+				if result.PlanID != testCase.expected.PlanID {
+					t.Errorf("PlanID: expected %s, got %s", testCase.expected.PlanID, result.PlanID)
 				}
-				if result.InstanceID != tt.expected.InstanceID {
-					t.Errorf("InstanceID: expected %s, got %s", tt.expected.InstanceID, result.InstanceID)
+
+				if result.InstanceID != testCase.expected.InstanceID {
+					t.Errorf("InstanceID: expected %s, got %s", testCase.expected.InstanceID, result.InstanceID)
 				}
 			}
 		})
@@ -126,6 +137,8 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 }
 
 func TestServiceMatcher_MatchDeployment_ByMetadata(t *testing.T) {
+	t.Parallel()
+
 	services := []Service{
 		{
 			ID:   "redis-cache",
@@ -137,7 +150,7 @@ func TestServiceMatcher_MatchDeployment_ByMetadata(t *testing.T) {
 	}
 
 	broker := &mockBroker{services: services}
-	logger := newMockLogger()
+	logger := NewMockLogger()
 
 	matcher := NewServiceMatcher(broker, logger)
 
@@ -168,15 +181,19 @@ properties:
 	if instance.ServiceID != "redis-cache" {
 		t.Errorf("Expected service ID redis-cache, got %s", instance.ServiceID)
 	}
+
 	if instance.PlanID != "small" {
 		t.Errorf("Expected plan ID small, got %s", instance.PlanID)
 	}
+
 	if instance.InstanceID != "12345678-1234-1234-1234-123456789abc" {
 		t.Errorf("Expected instance ID 12345678-1234-1234-1234-123456789abc, got %s", instance.InstanceID)
 	}
 }
 
 func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
+	t.Parallel()
+
 	services := []Service{
 		{
 			ID:   "redis-cache",
@@ -195,7 +212,7 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 	}
 
 	broker := &mockBroker{services: services}
-	logger := newMockLogger()
+	logger := NewMockLogger()
 
 	matcher := NewServiceMatcher(broker, logger)
 
@@ -239,32 +256,35 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			instance, err := matcher.MatchDeployment(tt.deployment, services)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 
+			instance, err := matcher.MatchDeployment(testCase.deployment, services)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 
-			if tt.expectedMatch {
+			if testCase.expectedMatch {
 				if instance == nil {
 					t.Error("Expected a match but got nil")
+
 					return
 				}
-				if instance.ServiceID != tt.expectedSvc {
-					t.Errorf("Expected service ID %s, got %s", tt.expectedSvc, instance.ServiceID)
+
+				if instance.ServiceID != testCase.expectedSvc {
+					t.Errorf("Expected service ID %s, got %s", testCase.expectedSvc, instance.ServiceID)
 				}
-			} else {
-				if instance != nil {
-					t.Errorf("Expected no match but got instance: %+v", instance)
-				}
+			} else if instance != nil {
+				t.Errorf("Expected no match but got instance: %+v", instance)
 			}
 		})
 	}
 }
 
 func TestServiceMatcher_ValidateMatch(t *testing.T) {
+	t.Parallel()
+
 	services := []Service{
 		{
 			ID:   "redis-service",
@@ -276,7 +296,7 @@ func TestServiceMatcher_ValidateMatch(t *testing.T) {
 	}
 
 	broker := &mockBroker{services: services}
-	logger := newMockLogger()
+	logger := NewMockLogger()
 
 	matcher := NewServiceMatcher(broker, logger)
 
@@ -335,16 +355,12 @@ func TestServiceMatcher_ValidateMatch(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Access the ValidateMatch method through the serviceMatcher
-			sm, ok := matcher.(*serviceMatcher)
-			if !ok {
-				t.Fatal("matcher is not of type *serviceMatcher")
-			}
-
-			err := sm.ValidateMatch(tt.match)
-			if tt.expectError {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			// Access the ValidateMatch method directly
+			err := matcher.ValidateMatch(testCase.match)
+			if testCase.expectError {
 				if err == nil {
 					t.Error("Expected error but got nil")
 				}
@@ -357,7 +373,7 @@ func TestServiceMatcher_ValidateMatch(t *testing.T) {
 	}
 }
 
-// Mock broker for testing
+// Mock broker for testing.
 type mockBroker struct {
 	services []Service
 }
@@ -366,8 +382,10 @@ func (b *mockBroker) GetServices() []Service {
 	return b.services
 }
 
-// Test helper to check if UUID validation works
+// Test helper to check if UUID validation works.
 func TestIsValidUUID(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		uuid     string
 		expected bool
@@ -384,7 +402,9 @@ func TestIsValidUUID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.uuid, func(t *testing.T) {
-			result := isValidUUID(tt.uuid)
+			t.Parallel()
+
+			result := IsValidUUID(tt.uuid)
 			if result != tt.expected {
 				t.Errorf("Expected isValidUUID(%s) = %v, got %v", tt.uuid, tt.expected, result)
 			}

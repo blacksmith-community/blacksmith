@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,17 +11,24 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func wrap(key string, data map[interface{}]interface{}) map[interface{}]interface{} {
-	kk := strings.Split(key, ".")
+// Static errors for err113 compliance.
+var (
+	ErrFilePathCannotBeEmpty              = errors.New("file path cannot be empty")
+	ErrPathTraversalDetected              = errors.New("path traversal detected in file path")
+	ErrPotentiallyDangerousCharacterFound = errors.New("potentially dangerous character found in executable path")
+)
 
-	for i := 0; i < len(kk)/2; i++ {
-		s := kk[i]
-		kk[i] = kk[len(kk)-i-1]
-		kk[len(kk)-i-1] = s
+func wrap(key string, data map[interface{}]interface{}) map[interface{}]interface{} {
+	keyParts := strings.Split(key, ".")
+
+	for i := range len(keyParts) / 2 {
+		keyParts[i], keyParts[len(keyParts)-i-1] = keyParts[len(keyParts)-i-1], keyParts[i]
 	}
-	for _, k := range kk {
+
+	for _, k := range keyParts {
 		data = map[interface{}]interface{}{k: data}
 	}
+
 	return data
 }
 
@@ -40,6 +48,7 @@ func deinterfaceMap(o map[interface{}]interface{}) map[string]interface{} {
 	for k, v := range o {
 		m[fmt.Sprintf("%v", k)] = deinterface(v)
 	}
+
 	return m
 }
 
@@ -48,6 +57,7 @@ func deinterfaceList(o []interface{}) []interface{} {
 	for i, v := range o {
 		l[i] = deinterface(v)
 	}
+
 	return l
 }
 
@@ -56,10 +66,12 @@ func readFile(path string) ([]byte, bool, error) {
 		if os.IsNotExist(err) {
 			return []byte{}, false, nil
 		}
-		return []byte{}, true, err
+
+		return []byte{}, true, fmt.Errorf("failed to stat file %s: %w", path, err)
 	}
 
 	b, err := safeReadFile(path)
+
 	return b, true, err
 }
 
@@ -69,10 +81,12 @@ func mergeFiles(required string, optional ...string) (map[interface{}]interface{
 	if err != nil {
 		return nil, err
 	}
-	m := make(map[interface{}]interface{})
-	err = yaml.Unmarshal(b, &m)
+
+	manifestData := make(map[interface{}]interface{})
+
+	err = yaml.Unmarshal(b, &manifestData)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal YAML: %w", err)
 	}
 
 	// Optional Manifests
@@ -81,28 +95,32 @@ func mergeFiles(required string, optional ...string) (map[interface{}]interface{
 		if !exists {
 			continue
 		}
+
 		if err != nil {
 			return nil, err
 		}
+
 		tmp := make(map[interface{}]interface{})
+
 		err = yaml.Unmarshal(b, &tmp)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to unmarshal optional YAML file %s: %w", path, err)
 		}
-		m, err = spruce.Merge(m, tmp)
+
+		manifestData, err = spruce.Merge(manifestData, tmp)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to merge files: %w", err)
 		}
 	}
 
-	return m, nil
+	return manifestData, nil
 }
 
 // validateFilePath validates that a file path is safe to use
-// This helps prevent path traversal attacks and ensures we only access intended files
+// This helps prevent path traversal attacks and ensures we only access intended files.
 func validateFilePath(path string) error {
 	if path == "" {
-		return fmt.Errorf("file path cannot be empty")
+		return ErrFilePathCannotBeEmpty
 	}
 
 	// Clean the path to resolve any .. or . components
@@ -110,31 +128,46 @@ func validateFilePath(path string) error {
 
 	// Check for path traversal attempts
 	if strings.Contains(cleanPath, "..") {
-		return fmt.Errorf("path traversal detected in file path: %s", path)
+		return fmt.Errorf("path traversal detected in file path %s: %w", path, ErrPathTraversalDetected)
 	}
 
 	return nil
 }
 
-// safeReadFile safely reads a file after validating the path
+// safeReadFile safely reads a file after validating the path.
 func safeReadFile(path string) ([]byte, error) {
-	if err := validateFilePath(path); err != nil {
+	err := validateFilePath(path)
+	if err != nil {
 		return nil, err
 	}
-	return os.ReadFile(path) // #nosec G304 - Path has been validated by validateFilePath
+
+	data, err := os.ReadFile(path) // #nosec G304 - Path has been validated by validateFilePath
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
+	}
+
+	return data, nil
 }
 
-// safeOpenFile safely opens a file after validating the path
+// safeOpenFile safely opens a file after validating the path.
 func safeOpenFile(path string) (*os.File, error) {
-	if err := validateFilePath(path); err != nil {
+	err := validateFilePath(path)
+	if err != nil {
 		return nil, err
 	}
-	return os.Open(path) // #nosec G304 - Path has been validated by validateFilePath
+
+	file, err := os.Open(path) // #nosec G304 - Path has been validated by validateFilePath
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file %s: %w", path, err)
+	}
+
+	return file, nil
 }
 
-// validateExecutablePath validates that an executable path is safe to run
+// validateExecutablePath validates that an executable path is safe to run.
 func validateExecutablePath(path string) error {
-	if err := validateFilePath(path); err != nil {
+	err := validateFilePath(path)
+	if err != nil {
 		return err
 	}
 
@@ -145,7 +178,7 @@ func validateExecutablePath(path string) error {
 	dangerousChars := []string{";", "&", "|", "`", "$", "(", ")", "{", "}", "[", "]", "*", "?", "~", "<", ">", "^", "!"}
 	for _, char := range dangerousChars {
 		if strings.Contains(cleanPath, char) {
-			return fmt.Errorf("potentially dangerous character '%s' found in executable path: %s", char, path)
+			return fmt.Errorf("potentially dangerous character '%s' found in executable path %s: %w", char, path, ErrPotentiallyDangerousCharacterFound)
 		}
 	}
 

@@ -1,12 +1,15 @@
-package services
+package services_test
 
 import (
 	"testing"
 
+	. "blacksmith/pkg/services"
 	"blacksmith/pkg/services/common"
 )
 
 func TestIsRedisInstance(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		creds    common.Credentials
@@ -72,6 +75,8 @@ func TestIsRedisInstance(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := IsRedisInstance(test.creds)
 			if result != test.expected {
 				t.Errorf("IsRedisInstance() = %v, expected %v", result, test.expected)
@@ -81,6 +86,8 @@ func TestIsRedisInstance(t *testing.T) {
 }
 
 func TestIsRabbitMQInstance(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		creds    common.Credentials
@@ -160,6 +167,8 @@ func TestIsRabbitMQInstance(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := IsRabbitMQInstance(test.creds)
 			if result != test.expected {
 				t.Errorf("IsRabbitMQInstance() = %v, expected %v", result, test.expected)
@@ -169,6 +178,7 @@ func TestIsRabbitMQInstance(t *testing.T) {
 }
 
 func TestNewManager(t *testing.T) {
+	t.Parallel()
 	// Test with logger
 	logger := func(format string, args ...interface{}) {
 		// Test logger

@@ -15,7 +15,50 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// ServiceImpl implements the SSHService interface
+// Constants for SSH service.
+const (
+	// File permissions.
+	dirPermissions  = 0700
+	filePermissions = 0600
+
+	// Terminal settings.
+	terminalBaudRate = 14400 // 14.4kbaud
+	terminalColumns  = 80
+	terminalRows     = 24
+
+	// Channel buffer sizes.
+	outputChannelBuffer = 100
+
+	// Number of goroutines for reading output pipes.
+	outputPipeGoroutines = 2
+
+	// SSH connection timeout.
+	sshConnectionTimeout = 30 * time.Second
+	errorChannelBuffer   = 10
+
+	// Timeouts.
+	defaultSessionInitTimeout = 60 * time.Second
+	defaultConnectTimeout     = 30 * time.Second
+	defaultOutputTimeout      = 2 * time.Second
+
+	// I/O buffer size.
+	ioBufferSize = 4096
+)
+
+// Static error variables to satisfy err113.
+var (
+	ErrRequestCannotBeNil           = errors.New("request cannot be nil")
+	ErrDeploymentNameRequired       = errors.New("deployment name is required")
+	ErrInstanceNameRequired         = errors.New("instance name is required")
+	ErrInstanceIndexNonNegative     = errors.New("instance index must be non-negative")
+	ErrNoKnownHostsFileConfigured   = errors.New("no known_hosts file configured")
+	ErrUnexpectedTypeForHost        = errors.New("unexpected type for host")
+	ErrUnexpectedTypeForHostAddress = errors.New("unexpected type for host address")
+	ErrUnexpectedTypeForUsername    = errors.New("unexpected type for username")
+	ErrGatewayUserMustBeString      = errors.New("gateway_user must be a string")
+)
+
+// ServiceImpl implements the SSHService interface.
 type ServiceImpl struct {
 	director     DirectorInterface
 	config       Config
@@ -24,13 +67,13 @@ type ServiceImpl struct {
 	logger       Logger
 }
 
-// DirectorInterface defines the methods we need from the BOSH director
+// DirectorInterface defines the methods we need from the BOSH director.
 type DirectorInterface interface {
 	SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
 	SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
 }
 
-// Config holds configuration for the SSH service
+// Config holds configuration for the SSH service.
 type Config struct {
 	Timeout               time.Duration
 	ConnectTimeout        time.Duration
@@ -45,15 +88,15 @@ type Config struct {
 	KnownHostsFile        string // Path to known_hosts file for host key verification
 }
 
-// Logger interface for logging
+// Logger interface for logging.
 type Logger interface {
-	Info(format string, args ...interface{})
-	Debug(format string, args ...interface{})
-	Error(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
 }
 
-// NewSSHService creates a new SSH service instance
-func NewSSHService(director DirectorInterface, config Config, logger Logger) SSHService {
+// NewSSHService creates a new SSH service instance.
+func NewSSHService(director DirectorInterface, config Config, logger Logger) *ServiceImpl {
 	if logger == nil {
 		logger = &noOpLogger{}
 	}
@@ -67,15 +110,16 @@ func NewSSHService(director DirectorInterface, config Config, logger Logger) SSH
 	}
 }
 
-// ExecuteCommand executes a one-off command on a BOSH VM
+// ExecuteCommand executes a one-off command on a BOSH VM.
 func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) {
-	s.logger.Info("Executing SSH command on %s/%s/%d", request.Deployment, request.Instance, request.Index)
-	s.logger.Debug("Command: %s %v", request.Command, request.Args)
+	s.logger.Infof("Executing SSH command on %s/%s/%d", request.Deployment, request.Instance, request.Index)
+	s.logger.Debugf("Command: %s %v", request.Command, request.Args)
 
 	startTime := time.Now()
 
 	// Validate request
-	if err := s.validateRequest(request); err != nil {
+	err := s.validateRequest(request)
+	if err != nil {
 		return nil, NewSSHError(SSHErrorCodeInvalidRequest, "Invalid SSH request", err)
 	}
 
@@ -83,13 +127,16 @@ func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) 
 
 	// Prepare options
 	options := make(map[string]interface{})
+
 	if request.Options != nil {
 		if request.Options.ConnectTimeout > 0 {
 			options["connect_timeout"] = request.Options.ConnectTimeout
 		}
+
 		if request.Options.BufferOutput {
 			options["buffer_output"] = true
 		}
+
 		if request.Options.MaxOutputSize > 0 {
 			options["max_output_size"] = request.Options.MaxOutputSize
 		}
@@ -108,33 +155,43 @@ func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) 
 	duration := time.Since(startTime)
 
 	if err != nil {
-		s.logger.Error("SSH command failed: %v", err)
+		s.logger.Errorf("SSH command failed: %v", err)
+
 		return &SSHResponse{
 			Success:   false,
 			ExitCode:  1,
 			Duration:  duration.Milliseconds(),
+			Stdout:    "",
+			Stderr:    "",
 			Error:     err.Error(),
 			Timestamp: startTime,
+			RequestID: "",
 		}, nil
 	}
 
-	s.logger.Info("SSH command completed successfully in %v", duration)
+	s.logger.Infof("SSH command completed successfully in %v", duration)
 
 	return &SSHResponse{
 		Success:   true,
 		ExitCode:  0,
 		Duration:  duration.Milliseconds(),
 		Stdout:    output,
+		Stderr:    "",
+		Error:     "",
 		Timestamp: startTime,
+		RequestID: "",
 	}, nil
 }
 
 // CreateSession creates an interactive SSH session for streaming
+//
+//nolint:ireturn // Interface return is intentional - part of SSHService interface contract
 func (s *ServiceImpl) CreateSession(request *SSHRequest) (SSHSession, error) {
-	s.logger.Info("Creating SSH session for %s/%s/%d", request.Deployment, request.Instance, request.Index)
+	s.logger.Infof("Creating SSH session for %s/%s/%d", request.Deployment, request.Instance, request.Index)
 
 	// Validate request
-	if err := s.validateRequest(request); err != nil {
+	err := s.validateRequest(request)
+	if err != nil {
 		return nil, NewSSHError(SSHErrorCodeInvalidRequest, "Invalid SSH request", err)
 	}
 
@@ -150,6 +207,7 @@ func (s *ServiceImpl) CreateSession(request *SSHRequest) (SSHSession, error) {
 
 	// Prepare options
 	options := make(map[string]interface{})
+
 	if request.Options != nil {
 		if request.Options.Terminal {
 			options["terminal"] = true
@@ -157,6 +215,7 @@ func (s *ServiceImpl) CreateSession(request *SSHRequest) (SSHSession, error) {
 			options["window_width"] = request.Options.WindowWidth
 			options["window_height"] = request.Options.WindowHeight
 		}
+
 		if request.Options.Interactive {
 			options["interactive"] = true
 		}
@@ -169,23 +228,35 @@ func (s *ServiceImpl) CreateSession(request *SSHRequest) (SSHSession, error) {
 		request.Index,
 		options,
 	)
-
 	if err != nil {
-		s.logger.Error("Failed to create SSH session: %v", err)
+		s.logger.Errorf("Failed to create SSH session: %v", err)
+
 		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to create SSH session", err)
 	}
 
 	// Create session wrapper
 	session := &SessionImpl{
-		id:          fmt.Sprintf("%s-%s-%d-%d", request.Deployment, request.Instance, request.Index, time.Now().Unix()),
-		deployment:  request.Deployment,
-		instance:    request.Instance,
-		index:       request.Index,
-		sessionInfo: sessionInfo,
-		status:      SessionStatusCreated,
-		logger:      s.logger,
-		config:      s.config,
-		service:     s,
+		id:            fmt.Sprintf("%s-%s-%d-%d", request.Deployment, request.Instance, request.Index, time.Now().Unix()),
+		deployment:    request.Deployment,
+		instance:      request.Instance,
+		index:         request.Index,
+		sessionInfo:   sessionInfo,
+		status:        SessionStatusCreated,
+		statusMutex:   sync.RWMutex{},
+		logger:        s.logger,
+		config:        s.config,
+		service:       s,
+		sshClient:     nil,
+		sshSession:    nil,
+		stdin:         nil,
+		stdout:        nil,
+		stderr:        nil,
+		cleanupFunc:   nil,
+		outputChan:    nil,
+		errorChan:     nil,
+		closeChan:     nil,
+		keepAliveDone: nil,
+		closeOnce:     sync.Once{},
 	}
 
 	// Add to session pool
@@ -193,22 +264,24 @@ func (s *ServiceImpl) CreateSession(request *SSHRequest) (SSHSession, error) {
 	s.sessionPool[session.id] = session
 	s.sessionMutex.Unlock()
 
-	s.logger.Info("SSH session created successfully: %s", session.id)
+	s.logger.Infof("SSH session created successfully: %s", session.id)
 
 	return session, nil
 }
 
-// Close closes the SSH service and cleanup resources
+// Close closes the SSH service and cleanup resources.
 func (s *ServiceImpl) Close() error {
-	s.logger.Info("Closing SSH service")
+	s.logger.Infof("Closing SSH service")
 
 	s.sessionMutex.Lock()
 	defer s.sessionMutex.Unlock()
 
 	var errs []error
+
 	for id, session := range s.sessionPool {
-		if err := session.Close(); err != nil {
-			s.logger.Error("Failed to close session %s: %v", id, err)
+		err := session.Close()
+		if err != nil {
+			s.logger.Errorf("Failed to close session %s: %v", id, err)
 			errs = append(errs, err)
 		}
 	}
@@ -220,36 +293,38 @@ func (s *ServiceImpl) Close() error {
 		return NewSSHError(SSHErrorCodeInternal, "Failed to close some sessions", errs[0])
 	}
 
-	s.logger.Info("SSH service closed successfully")
+	s.logger.Infof("SSH service closed successfully")
+
 	return nil
 }
 
-// validateRequest validates an SSH request
+// validateRequest validates an SSH request.
 func (s *ServiceImpl) validateRequest(request *SSHRequest) error {
 	if request == nil {
-		return fmt.Errorf("request cannot be nil")
+		return ErrRequestCannotBeNil
 	}
 
 	if request.Deployment == "" {
-		return fmt.Errorf("deployment name is required")
+		return ErrDeploymentNameRequired
 	}
 
 	if request.Instance == "" {
-		return fmt.Errorf("instance name is required")
+		return ErrInstanceNameRequired
 	}
 
 	if request.Index < 0 {
-		return fmt.Errorf("instance index must be non-negative")
+		return ErrInstanceIndexNonNegative
 	}
 
 	return nil
 }
 
-// getHostKeyCallback returns the appropriate host key callback based on configuration
+// getHostKeyCallback returns the appropriate host key callback based on configuration.
 func (s *ServiceImpl) getHostKeyCallback() ssh.HostKeyCallback {
 	// If insecure mode is explicitly enabled, use it
 	if s.config.InsecureIgnoreHostKey {
-		s.logger.Info("Using insecure host key verification (not recommended for production)")
+		s.logger.Infof("Using insecure host key verification (not recommended for production)")
+
 		return ssh.InsecureIgnoreHostKey() // #nosec G106 - Intentional insecure mode for BOSH environments
 	}
 
@@ -257,7 +332,7 @@ func (s *ServiceImpl) getHostKeyCallback() ssh.HostKeyCallback {
 	return s.autoDiscoveryHostKeyCallback()
 }
 
-// autoDiscoveryHostKeyCallback creates a host key callback that automatically adds unknown hosts
+// autoDiscoveryHostKeyCallback creates a host key callback that automatically adds unknown hosts.
 func (s *ServiceImpl) autoDiscoveryHostKeyCallback() ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		// First, try to verify against existing known_hosts
@@ -268,7 +343,8 @@ func (s *ServiceImpl) autoDiscoveryHostKeyCallback() ssh.HostKeyCallback {
 				err := callback(hostname, remote, key)
 				if err == nil {
 					// Host key is already known and valid
-					s.logger.Debug("SSH host key verified for %s", hostname)
+					s.logger.Debugf("SSH host key verified for %s", hostname)
+
 					return nil
 				}
 
@@ -276,56 +352,64 @@ func (s *ServiceImpl) autoDiscoveryHostKeyCallback() ssh.HostKeyCallback {
 				var keyErr *knownhosts.KeyError
 				if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
 					// This is an unknown host (no keys in Want slice)
-					s.logger.Info("Unknown SSH host %s, adding to known_hosts", hostname)
+					s.logger.Infof("Unknown SSH host %s, adding to known_hosts", hostname)
+
 					return s.addHostToKnownHosts(hostname, key)
 				}
 
 				// This is a key mismatch - reject the connection
-				s.logger.Error("SSH host key mismatch for %s: %v", hostname, err)
+				s.logger.Errorf("SSH host key mismatch for %s: %v", hostname, err)
+
 				return err
 			}
 			// If we can't load known_hosts, we'll add this host as the first entry
-			s.logger.Debug("Could not load known_hosts file, will create with first host: %v", err)
+			s.logger.Debugf("Could not load known_hosts file, will create with first host: %v", err)
 		}
 
 		// Add the host to known_hosts (this handles both new file creation and new host addition)
-		s.logger.Info("Adding SSH host %s to known_hosts", hostname)
+		s.logger.Infof("Adding SSH host %s to known_hosts", hostname)
+
 		return s.addHostToKnownHosts(hostname, key)
 	}
 }
 
-// addHostToKnownHosts adds a host key to the known_hosts file
+// addHostToKnownHosts adds a host key to the known_hosts file.
 func (s *ServiceImpl) addHostToKnownHosts(hostname string, key ssh.PublicKey) error {
 	if s.config.KnownHostsFile == "" {
-		return fmt.Errorf("no known_hosts file configured")
+		return ErrNoKnownHostsFileConfigured
 	}
 
 	// Ensure the directory exists
 	dir := filepath.Dir(s.config.KnownHostsFile)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+
+	err := os.MkdirAll(dir, dirPermissions)
+	if err != nil {
 		return fmt.Errorf("failed to create known_hosts directory %s: %w", dir, err)
 	}
 
 	// Open the known_hosts file for appending (create if it doesn't exist)
-	file, err := os.OpenFile(s.config.KnownHostsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(s.config.KnownHostsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filePermissions)
 	if err != nil {
 		return fmt.Errorf("failed to open known_hosts file %s: %w", s.config.KnownHostsFile, err)
 	}
+
 	defer func() { _ = file.Close() }()
 
 	// Format the host key entry (hostname algorithm key)
 	keyLine := knownhosts.Line([]string{hostname}, key)
 
 	// Append to the file
-	if _, err := file.WriteString(keyLine + "\n"); err != nil {
+	_, err = file.WriteString(keyLine + "\n")
+	if err != nil {
 		return fmt.Errorf("failed to write to known_hosts file: %w", err)
 	}
 
-	s.logger.Debug("Added SSH host key for %s to %s", hostname, s.config.KnownHostsFile)
+	s.logger.Debugf("Added SSH host key for %s to %s", hostname, s.config.KnownHostsFile)
+
 	return nil
 }
 
-// SessionImpl implements the SSHSession interface
+// SessionImpl implements the SSHSession interface.
 type SessionImpl struct {
 	id          string
 	deployment  string
@@ -360,293 +444,55 @@ type SessionImpl struct {
 	closeOnce sync.Once
 }
 
-// Start starts the SSH session
+// Start starts the SSH session.
 func (s *SessionImpl) Start() error {
-	s.logger.Info("Starting SSH session: %s", s.id)
+	s.logger.Infof("Starting SSH session: %s", s.id)
 
-	// Add timeout context for SSH session initialization using configured timeout
-	sessionInitTimeout := s.config.SessionInitTimeout
-	if sessionInitTimeout == 0 {
-		sessionInitTimeout = 60 * time.Second // Fallback default
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), sessionInitTimeout)
+	// Set up timeout context
+	ctx, cancel := s.createTimeoutContext()
 	defer cancel()
 
-	s.statusMutex.Lock()
-	s.status = SessionStatusConnecting
-	s.statusMutex.Unlock()
+	s.setStatus(SessionStatusConnecting)
 
 	// Set error status on failure
-	defer func() {
-		if r := recover(); r != nil {
-			s.statusMutex.Lock()
-			s.status = SessionStatusError
-			s.statusMutex.Unlock()
-			panic(r)
-		}
-	}()
+	defer s.handlePanicAndSetErrorStatus()
 
-	// Extract session information for SSH setup
-	if s.sessionInfo == nil {
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeInternal, "No session info available", nil)
-	}
-
-	sessionMap, ok := s.sessionInfo.(map[string]interface{})
-	if !ok {
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeInternal, "Invalid session info format", nil)
-	}
-
-	// Extract SSH connection details
-	privateKey, ok := sessionMap["private_key"].(string)
-	if !ok {
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeInternal, "Private key not found in session info", nil)
-	}
-
-	hosts, ok := sessionMap["hosts"].([]interface{})
-	if !ok || len(hosts) == 0 {
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeInternal, "No hosts available for SSH connection", nil)
-	}
-
-	// Extract the first host information
-	host := hosts[0].(map[string]interface{})
-	hostAddress := host["Host"].(string)
-	username := host["Username"].(string)
-
-	// Parse the private key
-	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
+	// Extract and validate session information
+	sessionDetails, err := s.extractSessionDetails()
 	if err != nil {
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeConnection, "Failed to parse private key", err)
+		s.setStatus(SessionStatusError)
+
+		return err
 	}
 
-	// Create SSH client configuration with context timeout
-	config := &ssh.ClientConfig{
-		User: username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: s.service.getHostKeyCallback(),
-		Timeout:         30 * time.Second,
-	}
-
-	// Handle gateway connection if present
-	gatewayHost, hasGateway := sessionMap["gateway_host"].(string)
-	if hasGateway && gatewayHost != "" {
-		gatewayUser := sessionMap["gateway_user"].(string)
-
-		// Connect to gateway first
-		gatewayAddr := fmt.Sprintf("%s:22", gatewayHost)
-		gatewayConfig := &ssh.ClientConfig{
-			User: gatewayUser,
-			Auth: []ssh.AuthMethod{
-				ssh.PublicKeys(signer),
-			},
-			HostKeyCallback: s.service.getHostKeyCallback(),
-			Timeout:         30 * time.Second,
-		}
-
-		// Check context timeout
-		select {
-		case <-ctx.Done():
-			s.statusMutex.Lock()
-			s.status = SessionStatusError
-			s.statusMutex.Unlock()
-			return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
-		default:
-		}
-
-		gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
-		if err != nil {
-			s.statusMutex.Lock()
-			s.status = SessionStatusError
-			s.statusMutex.Unlock()
-			return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to gateway %s", gatewayAddr), err)
-		}
-
-		// Connect to target host through gateway
-		targetAddr := fmt.Sprintf("%s:22", hostAddress)
-		conn, err := gatewayClient.Dial("tcp", targetAddr)
-		if err != nil {
-			if err := gatewayClient.Close(); err != nil {
-				s.logger.Error("Failed to close gateway client: %v", err)
-			}
-			s.statusMutex.Lock()
-			s.status = SessionStatusError
-			s.statusMutex.Unlock()
-			return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to target host %s through gateway", targetAddr), err)
-		}
-
-		nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
-		if err != nil {
-			if err := gatewayClient.Close(); err != nil {
-				s.logger.Error("Failed to close gateway client: %v", err)
-			}
-			s.statusMutex.Lock()
-			s.status = SessionStatusError
-			s.statusMutex.Unlock()
-			return NewSSHError(SSHErrorCodeConnection, "Failed to establish SSH connection through gateway", err)
-		}
-		s.sshClient = ssh.NewClient(nconn, chans, reqs)
-	} else {
-		// Check context timeout
-		select {
-		case <-ctx.Done():
-			s.statusMutex.Lock()
-			s.status = SessionStatusError
-			s.statusMutex.Unlock()
-			return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
-		default:
-		}
-
-		// Direct connection
-		addr := fmt.Sprintf("%s:22", hostAddress)
-		client, err := ssh.Dial("tcp", addr, config)
-		if err != nil {
-			s.statusMutex.Lock()
-			s.status = SessionStatusError
-			s.statusMutex.Unlock()
-			return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to %s", addr), err)
-		}
-		s.sshClient = client
-	}
-
-	// Create SSH session
-	session, err := s.sshClient.NewSession()
+	// Establish SSH connection
+	err = s.establishSSHConnection(ctx, sessionDetails)
 	if err != nil {
-		if err := s.sshClient.Close(); err != nil {
-			s.logger.Error("Failed to close SSH client: %v", err)
-		}
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeConnection, "Failed to create SSH session", err)
-	}
-	s.sshSession = session
+		s.setStatus(SessionStatusError)
 
-	// Set up PTY
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          1,     // enable echoing
-		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
-		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
+		return err
 	}
 
-	if err := session.RequestPty("xterm-256color", 80, 24, modes); err != nil {
-		if err := session.Close(); err != nil {
-			s.logger.Error("Failed to close SSH session: %v", err)
-		}
-		if err := s.sshClient.Close(); err != nil {
-			s.logger.Error("Failed to close SSH client: %v", err)
-		}
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeConnection, "Failed to request PTY", err)
-	}
-
-	// Set up stdin pipe
-	stdin, err := session.StdinPipe()
+	// Set up SSH session components
+	err = s.setupSSHSession()
 	if err != nil {
-		if err := session.Close(); err != nil {
-			s.logger.Error("Failed to close SSH session: %v", err)
-		}
-		if err := s.sshClient.Close(); err != nil {
-			s.logger.Error("Failed to close SSH client: %v", err)
-		}
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdin pipe", err)
-	}
-	s.stdin = stdin
+		s.closeConnections()
+		s.setStatus(SessionStatusError)
 
-	// Set up stdout pipe
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		if err := session.Close(); err != nil {
-			s.logger.Error("Failed to close SSH session: %v", err)
-		}
-		if err := s.sshClient.Close(); err != nil {
-			s.logger.Error("Failed to close SSH client: %v", err)
-		}
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdout pipe", err)
-	}
-	s.stdout = stdout
-
-	// Set up stderr pipe
-	stderr, err := session.StderrPipe()
-	if err != nil {
-		if err := session.Close(); err != nil {
-			s.logger.Error("Failed to close SSH session: %v", err)
-		}
-		if err := s.sshClient.Close(); err != nil {
-			s.logger.Error("Failed to close SSH client: %v", err)
-		}
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeConnection, "Failed to create stderr pipe", err)
-	}
-	s.stderr = stderr
-
-	// Initialize channels
-	s.outputChan = make(chan []byte, 100)
-	s.errorChan = make(chan error, 10)
-	s.closeChan = make(chan struct{})
-	s.keepAliveDone = make(chan struct{})
-
-	// Store cleanup function
-	if cleanupFunc, ok := sessionMap["cleanup_func"].(func() error); ok {
-		s.cleanupFunc = cleanupFunc
+		return err
 	}
 
-	// Start shell
-	if err := session.Shell(); err != nil {
-		if err := session.Close(); err != nil {
-			s.logger.Error("Failed to close SSH session: %v", err)
-		}
-		if err := s.sshClient.Close(); err != nil {
-			s.logger.Error("Failed to close SSH client: %v", err)
-		}
-		s.statusMutex.Lock()
-		s.status = SessionStatusError
-		s.statusMutex.Unlock()
-		return NewSSHError(SSHErrorCodeConnection, "Failed to start shell", err)
-	}
+	// Initialize session channels and start background processes
+	s.initializeSessionChannels()
+	s.startBackgroundProcesses()
 
-	// Start output readers
-	go s.readOutput()
+	s.setStatus(SessionStatusConnected)
+	s.logger.Infof("SSH session started successfully: %s", s.id)
 
-	// Start keepalive if configured
-	if s.config.KeepAlive > 0 {
-		go s.keepAlive()
-	}
-
-	s.statusMutex.Lock()
-	s.status = SessionStatusConnected
-	s.statusMutex.Unlock()
-
-	s.logger.Info("SSH session started successfully: %s", s.id)
 	return nil
 }
 
-// SendInput sends input to the session
+// SendInput sends input to the session.
 func (s *SessionImpl) SendInput(data []byte) error {
 	s.statusMutex.RLock()
 	status := s.status
@@ -688,7 +534,7 @@ func (s *SessionImpl) SendInput(data []byte) error {
 	return nil
 }
 
-// ReadOutput reads output from the session
+// ReadOutput reads output from the session.
 func (s *SessionImpl) ReadOutput() ([]byte, error) {
 	s.statusMutex.RLock()
 	status := s.status
@@ -715,7 +561,7 @@ func (s *SessionImpl) ReadOutput() ([]byte, error) {
 	// Read from output channel with configurable timeout for better stability
 	outputTimeout := s.config.OutputReadTimeout
 	if outputTimeout == 0 {
-		outputTimeout = 2 * time.Second // Fallback default - increased from 100ms to 2s for better stability
+		outputTimeout = defaultOutputTimeout // Fallback default - increased from 100ms to 2s for better stability
 	}
 
 	select {
@@ -730,165 +576,9 @@ func (s *SessionImpl) ReadOutput() ([]byte, error) {
 	}
 }
 
-// readOutput continuously reads from stdout and stderr
-func (s *SessionImpl) readOutput() {
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Read stdout
-	go func() {
-		defer wg.Done()
-		buf := make([]byte, 4096)
-		for {
-			select {
-			case <-s.closeChan:
-				return
-			default:
-				n, err := s.stdout.Read(buf)
-				if err != nil {
-					if err != io.EOF {
-						s.errorChan <- err
-					}
-					return
-				}
-				if n > 0 {
-					// Send a copy of the data
-					output := make([]byte, n)
-					copy(output, buf[:n])
-					select {
-					case s.outputChan <- output:
-					case <-s.closeChan:
-						return
-					}
-				}
-			}
-		}
-	}()
-
-	// Read stderr
-	go func() {
-		defer wg.Done()
-		buf := make([]byte, 4096)
-		for {
-			select {
-			case <-s.closeChan:
-				return
-			default:
-				n, err := s.stderr.Read(buf)
-				if err != nil {
-					if err != io.EOF {
-						s.errorChan <- err
-					}
-					return
-				}
-				if n > 0 {
-					// Send a copy of the data
-					output := make([]byte, n)
-					copy(output, buf[:n])
-					select {
-					case s.outputChan <- output:
-					case <-s.closeChan:
-						return
-					}
-				}
-			}
-		}
-	}()
-
-	wg.Wait()
-	close(s.outputChan)
-}
-
-// keepAlive sends periodic SSH keepalive packets to prevent connection timeout
-func (s *SessionImpl) keepAlive() {
-	s.logger.Debug("Starting SSH keepalive for session: %s (interval: %v)", s.id, s.config.KeepAlive)
-
-	ticker := time.NewTicker(s.config.KeepAlive)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.keepAliveDone:
-			s.logger.Debug("SSH keepalive stopped for session: %s", s.id)
-			return
-		case <-s.closeChan:
-			s.logger.Debug("SSH keepalive stopped due to session closure: %s", s.id)
-			return
-		case <-ticker.C:
-			if s.sshClient != nil {
-				// Send SSH keepalive packet
-				_, _, err := s.sshClient.SendRequest("keepalive@openssh.com", true, nil)
-				if err != nil {
-					s.logger.Debug("Failed to send SSH keepalive for session %s: %v", s.id, err)
-					// Don't return on error, just continue trying
-				} else {
-					s.logger.Debug("Sent SSH keepalive for session: %s", s.id)
-				}
-			}
-		}
-	}
-}
-
-// Close closes the session
-func (s *SessionImpl) Close() error {
-	var closeErr error
-
-	s.closeOnce.Do(func() {
-		s.logger.Info("Closing SSH session: %s", s.id)
-
-		s.statusMutex.Lock()
-		s.status = SessionStatusClosing
-		s.statusMutex.Unlock()
-
-		// Signal output readers and keepalive to stop
-		if s.closeChan != nil {
-			close(s.closeChan)
-		}
-		if s.keepAliveDone != nil {
-			close(s.keepAliveDone)
-		}
-
-		// Close SSH session
-		if s.sshSession != nil {
-			if err := s.sshSession.Close(); err != nil {
-				s.logger.Error("Failed to close SSH session: %v", err)
-			}
-		}
-
-		// Close SSH client
-		if s.sshClient != nil {
-			if err := s.sshClient.Close(); err != nil {
-				s.logger.Error("Failed to close SSH client: %v", err)
-			}
-		}
-
-		// Call BOSH cleanup function
-		if s.cleanupFunc != nil {
-			if err := s.cleanupFunc(); err != nil {
-				s.logger.Error("Failed to cleanup BOSH SSH: %v", err)
-			}
-		}
-
-		s.statusMutex.Lock()
-		s.status = SessionStatusClosed
-		s.statusMutex.Unlock()
-
-		s.logger.Info("SSH session closed: %s", s.id)
-	})
-
-	return closeErr
-}
-
-// Status returns the current session status
-func (s *SessionImpl) Status() SessionStatus {
-	s.statusMutex.RLock()
-	defer s.statusMutex.RUnlock()
-	return s.status
-}
-
-// SetWindowSize sets the window size for terminal sessions
+// SetWindowSize sets the window size for terminal sessions.
 func (s *SessionImpl) SetWindowSize(width, height int) error {
-	s.logger.Debug("Setting window size for session %s: %dx%d", s.id, width, height)
+	s.logger.Debugf("Setting window size for session %s: %dx%d", s.id, width, height)
 
 	s.statusMutex.RLock()
 	status := s.status
@@ -903,17 +593,500 @@ func (s *SessionImpl) SetWindowSize(width, height int) error {
 	}
 
 	// Send window change request
-	if err := s.sshSession.WindowChange(height, width); err != nil {
+	err := s.sshSession.WindowChange(height, width)
+	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to change window size", err)
 	}
 
-	s.logger.Debug("Window size set for session %s", s.id)
+	s.logger.Debugf("Window size set for session %s", s.id)
+
 	return nil
 }
 
-// noOpLogger is a no-operation logger implementation
+// Close closes the session.
+func (s *SessionImpl) Close() error {
+	var closeErr error
+
+	s.closeOnce.Do(func() {
+		s.logger.Infof("Closing SSH session: %s", s.id)
+
+		s.statusMutex.Lock()
+		s.status = SessionStatusClosing
+		s.statusMutex.Unlock()
+
+		// Signal output readers and keepalive to stop
+		if s.closeChan != nil {
+			close(s.closeChan)
+		}
+
+		if s.keepAliveDone != nil {
+			close(s.keepAliveDone)
+		}
+
+		// Close SSH session
+		if s.sshSession != nil {
+			err := s.sshSession.Close()
+			if err != nil {
+				s.logger.Errorf("Failed to close SSH session: %v", err)
+			}
+		}
+
+		// Close SSH client
+		if s.sshClient != nil {
+			err := s.sshClient.Close()
+			if err != nil {
+				s.logger.Errorf("Failed to close SSH client: %v", err)
+			}
+		}
+
+		// Call BOSH cleanup function
+		if s.cleanupFunc != nil {
+			err := s.cleanupFunc()
+			if err != nil {
+				s.logger.Errorf("Failed to cleanup BOSH SSH: %v", err)
+			}
+		}
+
+		s.statusMutex.Lock()
+		s.status = SessionStatusClosed
+		s.statusMutex.Unlock()
+
+		s.logger.Infof("SSH session closed: %s", s.id)
+	})
+
+	return closeErr
+}
+
+// Status returns the current session status.
+func (s *SessionImpl) Status() SessionStatus {
+	s.statusMutex.RLock()
+	defer s.statusMutex.RUnlock()
+
+	return s.status
+}
+
+// createTimeoutContext creates a timeout context for session initialization.
+func (s *SessionImpl) createTimeoutContext() (context.Context, context.CancelFunc) {
+	sessionInitTimeout := s.config.SessionInitTimeout
+	if sessionInitTimeout == 0 {
+		sessionInitTimeout = defaultSessionInitTimeout
+	}
+
+	return context.WithTimeout(context.Background(), sessionInitTimeout)
+}
+
+// setStatus safely sets the session status.
+func (s *SessionImpl) setStatus(status SessionStatus) {
+	s.statusMutex.Lock()
+	s.status = status
+	s.statusMutex.Unlock()
+}
+
+// handlePanicAndSetErrorStatus handles panics and sets error status.
+func (s *SessionImpl) handlePanicAndSetErrorStatus() {
+	if r := recover(); r != nil {
+		s.setStatus(SessionStatusError)
+		panic(r)
+	}
+}
+
+// extractSessionDetails extracts and validates session connection details.
+func (s *SessionImpl) extractSessionDetails() (*sessionConnectionDetails, error) {
+	if s.sessionInfo == nil {
+		return nil, NewSSHError(SSHErrorCodeInternal, "No session info available", nil)
+	}
+
+	sessionMap, ok := s.sessionInfo.(map[string]interface{})
+	if !ok {
+		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid session info format", nil)
+	}
+
+	details := &sessionConnectionDetails{}
+
+	// Extract private key
+	privateKey, exists := sessionMap["private_key"].(string)
+	if !exists {
+		return nil, NewSSHError(SSHErrorCodeInternal, "Private key not found in session info", nil)
+	}
+
+	details.privateKey = privateKey
+
+	// Extract and validate hosts
+	hosts, exists := sessionMap["hosts"].([]interface{})
+	if !exists || len(hosts) == 0 {
+		return nil, NewSSHError(SSHErrorCodeInternal, "No hosts available for SSH connection", nil)
+	}
+
+	hostInfo, err := s.extractHostInfo(hosts[0])
+	if err != nil {
+		return nil, err
+	}
+
+	details.host = hostInfo
+
+	// Extract gateway information if present
+	if gatewayHost, hasGateway := sessionMap["gateway_host"].(string); hasGateway && gatewayHost != "" {
+		gatewayUser, ok := sessionMap["gateway_user"].(string)
+		if !ok {
+			return nil, ErrGatewayUserMustBeString
+		}
+
+		details.gateway = &gatewayInfo{
+			host: gatewayHost,
+			user: gatewayUser,
+		}
+	}
+
+	// Store cleanup function
+	if cleanupFunc, ok := sessionMap["cleanup_func"].(func() error); ok {
+		details.cleanupFunc = cleanupFunc
+	}
+
+	return details, nil
+}
+
+// sessionConnectionDetails holds SSH connection details.
+type sessionConnectionDetails struct {
+	privateKey  string
+	host        *hostInfo
+	gateway     *gatewayInfo
+	cleanupFunc func() error
+}
+
+// hostInfo holds host connection details.
+type hostInfo struct {
+	address  string
+	username string
+}
+
+// gatewayInfo holds gateway connection details.
+type gatewayInfo struct {
+	host string
+	user string
+}
+
+// extractHostInfo extracts host information from the hosts array.
+func (s *SessionImpl) extractHostInfo(hostData interface{}) (*hostInfo, error) {
+	hostMap, isValid := hostData.(map[string]interface{})
+	if !isValid {
+		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid host type", fmt.Errorf("%w: %T", ErrUnexpectedTypeForHost, hostData))
+	}
+
+	hostAddressRaw, exists := hostMap["Host"]
+	if !exists {
+		return nil, NewSSHError(SSHErrorCodeInternal, "Host address not found", nil)
+	}
+
+	hostAddress, exists := hostAddressRaw.(string)
+	if !exists {
+		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid host address type", fmt.Errorf("%w: %T", ErrUnexpectedTypeForHostAddress, hostAddressRaw))
+	}
+
+	usernameRaw, exists := hostMap["Username"]
+	if !exists {
+		return nil, NewSSHError(SSHErrorCodeInternal, "Username not found", nil)
+	}
+
+	username, exists := usernameRaw.(string)
+	if !exists {
+		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid username type", fmt.Errorf("%w: %T", ErrUnexpectedTypeForUsername, usernameRaw))
+	}
+
+	return &hostInfo{
+		address:  hostAddress,
+		username: username,
+	}, nil
+}
+
+// establishSSHConnection establishes the SSH connection (direct or through gateway).
+func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessionConnectionDetails) error {
+	// Parse the private key
+	signer, err := ssh.ParsePrivateKey([]byte(details.privateKey))
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to parse private key", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User: details.host.username,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: s.service.getHostKeyCallback(),
+		Timeout:         defaultConnectTimeout,
+	}
+
+	if details.gateway != nil {
+		return s.connectThroughGateway(ctx, details, config, signer)
+	}
+
+	return s.connectDirect(ctx, details.host.address, config)
+}
+
+// connectThroughGateway establishes connection through a gateway.
+func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessionConnectionDetails, config *ssh.ClientConfig, signer ssh.Signer) error {
+	// Check timeout
+	select {
+	case <-ctx.Done():
+		return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
+	default:
+	}
+
+	gatewayAddr := details.gateway.host + ":22"
+	gatewayConfig := &ssh.ClientConfig{
+		User: details.gateway.user,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: s.service.getHostKeyCallback(),
+		Timeout:         sshConnectionTimeout,
+	}
+
+	gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to connect to gateway "+gatewayAddr, err)
+	}
+
+	targetAddr := details.host.address + ":22"
+
+	conn, err := gatewayClient.Dial("tcp", targetAddr)
+	if err != nil {
+		_ = gatewayClient.Close()
+
+		return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to target host %s through gateway", targetAddr), err)
+	}
+
+	nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
+	if err != nil {
+		_ = gatewayClient.Close()
+
+		return NewSSHError(SSHErrorCodeConnection, "Failed to establish SSH connection through gateway", err)
+	}
+
+	s.sshClient = ssh.NewClient(nconn, chans, reqs)
+
+	return nil
+}
+
+// connectDirect establishes a direct SSH connection.
+func (s *SessionImpl) connectDirect(ctx context.Context, hostAddress string, config *ssh.ClientConfig) error {
+	// Check timeout
+	select {
+	case <-ctx.Done():
+		return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
+	default:
+	}
+
+	addr := hostAddress + ":22"
+
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to connect to "+addr, err)
+	}
+
+	s.sshClient = client
+
+	return nil
+}
+
+// setupSSHSession sets up the SSH session with PTY and pipes.
+func (s *SessionImpl) setupSSHSession() error {
+	session, err := s.sshClient.NewSession()
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to create SSH session", err)
+	}
+
+	s.sshSession = session
+
+	// Set up PTY
+	if err := s.setupPTY(); err != nil {
+		return err
+	}
+
+	// Set up pipes
+	if err := s.setupPipes(); err != nil {
+		return err
+	}
+
+	// Start shell
+	if err := session.Shell(); err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to start shell", err)
+	}
+
+	return nil
+}
+
+// setupPTY sets up the pseudo-terminal.
+func (s *SessionImpl) setupPTY() error {
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: terminalBaudRate,
+		ssh.TTY_OP_OSPEED: terminalBaudRate,
+	}
+
+	err := s.sshSession.RequestPty("xterm-256color", terminalColumns, terminalRows, modes)
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to request PTY", err)
+	}
+
+	return nil
+}
+
+// setupPipes sets up stdin, stdout, and stderr pipes.
+func (s *SessionImpl) setupPipes() error {
+	var err error
+
+	s.stdin, err = s.sshSession.StdinPipe()
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdin pipe", err)
+	}
+
+	s.stdout, err = s.sshSession.StdoutPipe()
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdout pipe", err)
+	}
+
+	s.stderr, err = s.sshSession.StderrPipe()
+	if err != nil {
+		return NewSSHError(SSHErrorCodeConnection, "Failed to create stderr pipe", err)
+	}
+
+	return nil
+}
+
+// closeConnections closes SSH connections.
+func (s *SessionImpl) closeConnections() {
+	if s.sshSession != nil {
+		if err := s.sshSession.Close(); err != nil {
+			s.logger.Errorf("Failed to close SSH session: %v", err)
+		}
+	}
+
+	if s.sshClient != nil {
+		if err := s.sshClient.Close(); err != nil {
+			s.logger.Errorf("Failed to close SSH client: %v", err)
+		}
+	}
+}
+
+// initializeSessionChannels initializes communication channels.
+func (s *SessionImpl) initializeSessionChannels() {
+	s.outputChan = make(chan []byte, outputChannelBuffer)
+	s.errorChan = make(chan error, errorChannelBuffer)
+	s.closeChan = make(chan struct{})
+	s.keepAliveDone = make(chan struct{})
+}
+
+// startBackgroundProcesses starts the background goroutines.
+func (s *SessionImpl) startBackgroundProcesses() {
+	go s.readOutput()
+
+	if s.config.KeepAlive > 0 {
+		go s.keepAlive()
+	}
+}
+
+// readOutput continuously reads from stdout and stderr.
+func (s *SessionImpl) readOutput() {
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(outputPipeGoroutines)
+
+	// Read stdout in separate goroutine
+	go s.readFromPipe(s.stdout, &waitGroup, "stdout")
+
+	// Read stderr in separate goroutine
+	go s.readFromPipe(s.stderr, &waitGroup, "stderr")
+
+	waitGroup.Wait()
+	close(s.outputChan)
+}
+
+// readFromPipe reads from a pipe and sends data to the output channel.
+func (s *SessionImpl) readFromPipe(pipe io.Reader, waitGroup *sync.WaitGroup, pipeName string) {
+	defer waitGroup.Done()
+
+	buf := make([]byte, ioBufferSize)
+
+	for {
+		if s.shouldStopReading() {
+			return
+		}
+
+		bytesRead, err := pipe.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				s.errorChan <- err
+			}
+
+			return
+		}
+
+		if bytesRead > 0 {
+			if !s.sendOutputData(buf[:bytesRead]) {
+				return
+			}
+		}
+	}
+}
+
+// shouldStopReading checks if reading should stop due to close signal.
+func (s *SessionImpl) shouldStopReading() bool {
+	select {
+	case <-s.closeChan:
+		return true
+	default:
+		return false
+	}
+}
+
+// sendOutputData sends output data to the channel, returning false if should stop.
+func (s *SessionImpl) sendOutputData(data []byte) bool {
+	// Send a copy of the data
+	output := make([]byte, len(data))
+	copy(output, data)
+
+	select {
+	case s.outputChan <- output:
+		return true
+	case <-s.closeChan:
+		return false
+	}
+}
+
+// keepAlive sends periodic SSH keepalive packets to prevent connection timeout.
+func (s *SessionImpl) keepAlive() {
+	s.logger.Debugf("Starting SSH keepalive for session: %s (interval: %v)", s.id, s.config.KeepAlive)
+
+	ticker := time.NewTicker(s.config.KeepAlive)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.keepAliveDone:
+			s.logger.Debugf("SSH keepalive stopped for session: %s", s.id)
+
+			return
+		case <-s.closeChan:
+			s.logger.Debugf("SSH keepalive stopped due to session closure: %s", s.id)
+
+			return
+		case <-ticker.C:
+			if s.sshClient != nil {
+				// Send SSH keepalive packet
+				_, _, err := s.sshClient.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					s.logger.Debugf("Failed to send SSH keepalive for session %s: %v", s.id, err)
+					// Don't return on error, just continue trying
+				} else {
+					s.logger.Debugf("Sent SSH keepalive for session: %s", s.id)
+				}
+			}
+		}
+	}
+}
+
+// noOpLogger is a no-operation logger implementation.
 type noOpLogger struct{}
 
-func (l *noOpLogger) Info(format string, args ...interface{})  {}
-func (l *noOpLogger) Debug(format string, args ...interface{}) {}
-func (l *noOpLogger) Error(format string, args ...interface{}) {}
+func (l *noOpLogger) Infof(format string, args ...interface{})  {}
+func (l *noOpLogger) Debugf(format string, args ...interface{}) {}
+func (l *noOpLogger) Errorf(format string, args ...interface{}) {}

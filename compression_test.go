@@ -12,9 +12,11 @@ import (
 )
 
 func TestCompressionMiddleware(t *testing.T) {
+	t.Parallel()
 	// Create a simple handler that returns HTML content
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
+
 		content := `<!DOCTYPE html>
 <html>
 <head><title>Test Page</title></head>
@@ -28,6 +30,8 @@ func TestCompressionMiddleware(t *testing.T) {
 
 	// Test with compression enabled
 	t.Run("CompressionEnabled", func(t *testing.T) {
+		t.Parallel()
+
 		config := CompressionConfig{
 			Enabled:      true,
 			Types:        []string{"gzip"},
@@ -38,7 +42,7 @@ func TestCompressionMiddleware(t *testing.T) {
 
 		compressedHandler := NewCompressionMiddleware(handler, config)
 
-		req := httptest.NewRequest("GET", "/", nil)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.Header.Set("Accept-Encoding", "gzip, deflate")
 
 		w := httptest.NewRecorder()
@@ -65,6 +69,7 @@ func TestCompressionMiddleware(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create gzip reader: %v", err)
 		}
+
 		defer func() { _ = reader.Close() }()
 
 		decompressed, err := io.ReadAll(reader)
@@ -79,13 +84,15 @@ func TestCompressionMiddleware(t *testing.T) {
 
 	// Test with compression disabled
 	t.Run("CompressionDisabled", func(t *testing.T) {
+		t.Parallel()
+
 		config := CompressionConfig{
 			Enabled: false,
 		}
 
 		uncompressedHandler := NewCompressionMiddleware(handler, config)
 
-		req := httptest.NewRequest("GET", "/", nil)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.Header.Set("Accept-Encoding", "gzip, deflate")
 
 		w := httptest.NewRecorder()
@@ -110,6 +117,8 @@ func TestCompressionMiddleware(t *testing.T) {
 
 	// Test with no Accept-Encoding header
 	t.Run("NoAcceptEncoding", func(t *testing.T) {
+		t.Parallel()
+
 		config := CompressionConfig{
 			Enabled:      true,
 			Types:        []string{"gzip"},
@@ -118,7 +127,7 @@ func TestCompressionMiddleware(t *testing.T) {
 
 		compressedHandler := NewCompressionMiddleware(handler, config)
 
-		req := httptest.NewRequest("GET", "/", nil)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		// No Accept-Encoding header
 
 		w := httptest.NewRecorder()
@@ -134,6 +143,8 @@ func TestCompressionMiddleware(t *testing.T) {
 
 	// Test with small content (below minimum size)
 	t.Run("SmallContent", func(t *testing.T) {
+		t.Parallel()
+
 		smallHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			_, _ = fmt.Fprint(w, "Small")
@@ -148,7 +159,7 @@ func TestCompressionMiddleware(t *testing.T) {
 
 		compressedHandler := NewCompressionMiddleware(smallHandler, config)
 
-		req := httptest.NewRequest("GET", "/", nil)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 
 		w := httptest.NewRecorder()
@@ -164,6 +175,8 @@ func TestCompressionMiddleware(t *testing.T) {
 
 	// Test content type filtering
 	t.Run("UnsupportedContentType", func(t *testing.T) {
+		t.Parallel()
+
 		imageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "image/png")
 			_, _ = fmt.Fprint(w, "This is supposed to be image data that shouldn't be compressed")
@@ -177,7 +190,7 @@ func TestCompressionMiddleware(t *testing.T) {
 
 		compressedHandler := NewCompressionMiddleware(imageHandler, config)
 
-		req := httptest.NewRequest("GET", "/image.png", nil)
+		req := httptest.NewRequest(http.MethodGet, "/image.png", nil)
 		req.Header.Set("Accept-Encoding", "gzip")
 
 		w := httptest.NewRecorder()
@@ -193,6 +206,8 @@ func TestCompressionMiddleware(t *testing.T) {
 }
 
 func TestCompressionTypes(t *testing.T) {
+	t.Parallel()
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"message": "This is a JSON response that should be compressed with the requested compression type"}`)
@@ -237,19 +252,21 @@ func TestCompressionTypes(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
 			config := CompressionConfig{
 				Enabled:      true,
-				Types:        tc.configTypes,
+				Types:        testCase.configTypes,
 				MinSize:      10, // Small size to ensure test content gets compressed
 				ContentTypes: []string{"application/json"},
 			}
 
 			compressedHandler := NewCompressionMiddleware(handler, config)
 
-			req := httptest.NewRequest("GET", "/api/test", nil)
-			req.Header.Set("Accept-Encoding", tc.acceptEncoding)
+			req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+			req.Header.Set("Accept-Encoding", testCase.acceptEncoding)
 
 			w := httptest.NewRecorder()
 			compressedHandler.ServeHTTP(w, req)
@@ -257,14 +274,15 @@ func TestCompressionTypes(t *testing.T) {
 			resp := w.Result()
 
 			actualEncoding := resp.Header.Get("Content-Encoding")
-			if actualEncoding != tc.expectedEncoding {
-				t.Errorf("Expected Content-Encoding: %s, got: %s", tc.expectedEncoding, actualEncoding)
+			if actualEncoding != testCase.expectedEncoding {
+				t.Errorf("Expected Content-Encoding: %s, got: %s", testCase.expectedEncoding, actualEncoding)
 			}
 		})
 	}
 }
 
 func TestWebSocketBypassesCompression(t *testing.T) {
+	t.Parallel()
 	// Handler sets a header and writes a body; middleware should not compress
 	// when WebSocket upgrade headers are present, even if client advertises encoding.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -281,9 +299,9 @@ func TestWebSocketBypassesCompression(t *testing.T) {
 		ContentTypes: []string{"application/json"},
 	}
 
-	mw := NewCompressionMiddleware(handler, config)
+	middleware := NewCompressionMiddleware(handler, config)
 
-	req := httptest.NewRequest("GET", "/b/blacksmith/ssh/stream", nil)
+	req := httptest.NewRequest(http.MethodGet, "/b/blacksmith/ssh/stream", nil)
 	// Typical websocket handshake headers
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
@@ -291,10 +309,10 @@ func TestWebSocketBypassesCompression(t *testing.T) {
 	req.Header.Set("Sec-WebSocket-Version", "13")
 	req.Header.Set("Accept-Encoding", "gzip, br")
 
-	w := httptest.NewRecorder()
-	mw.ServeHTTP(w, req)
+	recorder := httptest.NewRecorder()
+	middleware.ServeHTTP(recorder, req)
 
-	resp := w.Result()
+	resp := recorder.Result()
 	// Ensure middleware did not add compression
 	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
 		t.Fatalf("expected no compression for websocket upgrade, got: %s", enc)
@@ -303,6 +321,7 @@ func TestWebSocketBypassesCompression(t *testing.T) {
 	if resp.Header.Get("X-Inner-Handler") != "true" {
 		t.Fatalf("inner handler header missing; middleware may have intercepted incorrectly")
 	}
+
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != `{"ok":true}` {
 		t.Fatalf("unexpected body: %s", string(body))

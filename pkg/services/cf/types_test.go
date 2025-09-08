@@ -1,11 +1,15 @@
-package cf
+package cf_test
 
 import (
 	"strings"
 	"testing"
+
+	. "blacksmith/pkg/services/cf"
 )
 
 func TestValidateRegistrationRequest(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		req     *RegistrationRequest
@@ -85,11 +89,15 @@ func TestValidateRegistrationRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := ValidateRegistrationRequest(tt.req)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateRegistrationRequest() error = %v, wantErr %v", err, tt.wantErr)
+
 				return
 			}
+
 			if tt.wantErr && tt.errMsg != "" && err != nil {
 				if !containsErrorMessage(err.Error(), tt.errMsg) {
 					t.Errorf("ValidateRegistrationRequest() error = %v, expected to contain %v", err.Error(), tt.errMsg)
@@ -100,6 +108,8 @@ func TestValidateRegistrationRequest(t *testing.T) {
 }
 
 func TestValidateURL(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		url     string
@@ -150,11 +160,15 @@ func TestValidateURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := ValidateURL(tt.url)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateURL() error = %v, wantErr %v", err, tt.wantErr)
+
 				return
 			}
+
 			if tt.wantErr && tt.errMsg != "" && err != nil {
 				if !containsErrorMessage(err.Error(), tt.errMsg) {
 					t.Errorf("ValidateURL() error = %v, expected to contain %v", err.Error(), tt.errMsg)
@@ -164,7 +178,38 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
+// runValidationTests is a helper function to run validation tests with the given validator function.
+func runValidationTests(t *testing.T, validatorName string, validator func(string) error, tests []struct {
+	name    string
+	input   string
+	wantErr bool
+	errMsg  string
+}) {
+	t.Helper()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validator(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("%s() error = %v, wantErr %v", validatorName, err, tt.wantErr)
+
+				return
+			}
+
+			if tt.wantErr && tt.errMsg != "" && err != nil {
+				if !containsErrorMessage(err.Error(), tt.errMsg) {
+					t.Errorf("%s() error = %v, expected to contain %v", validatorName, err.Error(), tt.errMsg)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		input   string
@@ -207,23 +252,12 @@ func TestValidateName(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateName(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateName() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if tt.wantErr && tt.errMsg != "" && err != nil {
-				if !containsErrorMessage(err.Error(), tt.errMsg) {
-					t.Errorf("ValidateName() error = %v, expected to contain %v", err.Error(), tt.errMsg)
-				}
-			}
-		})
-	}
+	runValidationTests(t, "ValidateName", ValidateName, tests)
 }
 
 func TestValidateBrokerName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		input   string
@@ -266,23 +300,12 @@ func TestValidateBrokerName(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateBrokerName(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateBrokerName() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if tt.wantErr && tt.errMsg != "" && err != nil {
-				if !containsErrorMessage(err.Error(), tt.errMsg) {
-					t.Errorf("ValidateBrokerName() error = %v, expected to contain %v", err.Error(), tt.errMsg)
-				}
-			}
-		})
-	}
+	runValidationTests(t, "ValidateBrokerName", ValidateBrokerName, tests)
 }
 
 func TestSanitizeRegistrationRequest(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		input    *RegistrationRequest
@@ -346,17 +369,21 @@ func TestSanitizeRegistrationRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			SanitizeRegistrationRequest(tt.input)
 
 			if tt.input.Name != tt.expected.Name {
 				t.Errorf("Name = %v, expected %v", tt.input.Name, tt.expected.Name)
 			}
+
 			if tt.input.APIURL != tt.expected.APIURL {
 				t.Errorf("APIURL = %v, expected %v", tt.input.APIURL, tt.expected.APIURL)
 			}
+
 			if tt.input.Username != tt.expected.Username {
 				t.Errorf("Username = %v, expected %v", tt.input.Username, tt.expected.Username)
 			}
+
 			if tt.input.BrokerName != tt.expected.BrokerName {
 				t.Errorf("BrokerName = %v, expected %v", tt.input.BrokerName, tt.expected.BrokerName)
 			}
@@ -380,7 +407,7 @@ func TestSanitizeRegistrationRequest(t *testing.T) {
 	}
 }
 
-// Helper function to check if error message contains expected text
+// Helper function to check if error message contains expected text.
 func containsErrorMessage(actual, expected string) bool {
 	return strings.Contains(actual, expected)
 }

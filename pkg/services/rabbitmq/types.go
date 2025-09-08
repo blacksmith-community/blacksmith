@@ -6,7 +6,7 @@ import (
 	"blacksmith/pkg/services/common"
 )
 
-// Credentials represents RabbitMQ credentials from Vault
+// Credentials represents RabbitMQ credentials from Vault.
 type Credentials struct {
 	Host               string                            `json:"host"`
 	Hostname           string                            `json:"hostname"`
@@ -22,7 +22,7 @@ type Credentials struct {
 	Protocols          map[string]map[string]interface{} `json:"protocols"`
 }
 
-// NewCredentials creates RabbitMQ credentials from Vault data
+// NewCredentials creates RabbitMQ credentials from Vault data.
 func NewCredentials(vaultData common.Credentials) (*Credentials, error) {
 	creds := &Credentials{
 		Host:               vaultData.GetString("host"),
@@ -57,9 +57,11 @@ func NewCredentials(vaultData common.Credentials) (*Credentials, error) {
 	if creds.Host == "" {
 		return nil, common.NewServiceError("rabbitmq", "E001", "missing host in credentials", false)
 	}
+
 	if creds.Port == 0 {
 		creds.Port = 5672 // Default AMQP port
 	}
+
 	if creds.Username == "" {
 		return nil, common.NewServiceError("rabbitmq", "E002", "missing username in credentials", false)
 	}
@@ -72,7 +74,7 @@ func NewCredentials(vaultData common.Credentials) (*Credentials, error) {
 	return creds, nil
 }
 
-// PublishRequest represents a RabbitMQ publish operation request
+// PublishRequest represents a RabbitMQ publish operation request.
 type PublishRequest struct {
 	InstanceID         string `json:"instance_id"`
 	Queue              string `json:"queue"`
@@ -85,7 +87,7 @@ type PublishRequest struct {
 	ConnectionVHost    string `json:"connection_vhost"`
 }
 
-// PublishResult represents a RabbitMQ publish operation result
+// PublishResult represents a RabbitMQ publish operation result.
 type PublishResult struct {
 	Success   bool   `json:"success"`
 	Queue     string `json:"queue"`
@@ -94,7 +96,7 @@ type PublishResult struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// ConsumeRequest represents a RabbitMQ consume operation request
+// ConsumeRequest represents a RabbitMQ consume operation request.
 type ConsumeRequest struct {
 	InstanceID         string `json:"instance_id"`
 	Queue              string `json:"queue"`
@@ -107,7 +109,7 @@ type ConsumeRequest struct {
 	ConnectionVHost    string `json:"connection_vhost"`
 }
 
-// ConsumeResult represents a RabbitMQ consume operation result
+// ConsumeResult represents a RabbitMQ consume operation result.
 type ConsumeResult struct {
 	Success  bool      `json:"success"`
 	Queue    string    `json:"queue"`
@@ -115,7 +117,7 @@ type ConsumeResult struct {
 	Count    int       `json:"count"`
 }
 
-// Message represents a RabbitMQ message
+// Message represents a RabbitMQ message.
 type Message struct {
 	Body       string `json:"body"`
 	MessageID  string `json:"message_id"`
@@ -124,7 +126,7 @@ type Message struct {
 	RoutingKey string `json:"routing_key"`
 }
 
-// QueueInfoRequest represents a queue information request
+// QueueInfoRequest represents a queue information request.
 type QueueInfoRequest struct {
 	InstanceID         string `json:"instance_id"`
 	UseAMQPS           bool   `json:"use_amqps"`
@@ -133,13 +135,13 @@ type QueueInfoRequest struct {
 	ConnectionVHost    string `json:"connection_vhost"`
 }
 
-// QueueInfoResult represents queue information
+// QueueInfoResult represents queue information.
 type QueueInfoResult struct {
 	Success bool    `json:"success"`
 	Queues  []Queue `json:"queues"`
 }
 
-// Queue represents a RabbitMQ queue
+// Queue represents a RabbitMQ queue.
 type Queue struct {
 	Name      string `json:"name"`
 	Messages  int    `json:"messages"`
@@ -149,7 +151,7 @@ type Queue struct {
 	State     string `json:"state"`
 }
 
-// QueueOpsRequest represents queue operations request
+// QueueOpsRequest represents queue operations request.
 type QueueOpsRequest struct {
 	InstanceID         string `json:"instance_id"`
 	Queue              string `json:"queue"`
@@ -161,14 +163,14 @@ type QueueOpsRequest struct {
 	ConnectionVHost    string `json:"connection_vhost"`
 }
 
-// QueueOpsResult represents queue operations result
+// QueueOpsResult represents queue operations result.
 type QueueOpsResult struct {
 	Success   bool   `json:"success"`
 	Queue     string `json:"queue"`
 	Operation string `json:"operation"`
 }
 
-// ManagementRequest represents a management API request
+// ManagementRequest represents a management API request.
 type ManagementRequest struct {
 	InstanceID         string `json:"instance_id"`
 	Path               string `json:"path"`
@@ -179,14 +181,14 @@ type ManagementRequest struct {
 	ConnectionVHost    string `json:"connection_vhost"`
 }
 
-// ManagementResult represents a management API result
+// ManagementResult represents a management API result.
 type ManagementResult struct {
 	Success    bool        `json:"success"`
 	StatusCode int         `json:"status_code"`
 	Data       interface{} `json:"data"`
 }
 
-// ConnectionInfo contains connection metadata
+// ConnectionInfo contains connection metadata.
 type ConnectionInfo struct {
 	Host      string    `json:"host"`
 	Port      int       `json:"port"`

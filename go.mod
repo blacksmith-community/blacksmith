@@ -20,6 +20,7 @@ require (
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/smallfish/simpleyaml v0.1.0
 	github.com/sony/gobreaker v1.0.0
+	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.40.0
 	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -78,6 +79,7 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be // indirect
 	github.com/ziutek/utils v0.0.0-20190626152656-eb2a3b364d6c // indirect
+	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.27.0 // indirect

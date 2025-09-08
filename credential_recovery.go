@@ -1,186 +1,289 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"blacksmith/pkg/logger"
 	"blacksmith/pkg/reconciler"
 	"github.com/hashicorp/vault/api"
 )
 
-// CredentialRecovery provides functions to recover lost credentials
+// Static errors for err113 compliance.
+var (
+	ErrCredentialsLostButCanBeRegenerated        = errors.New("credentials lost but can be regenerated - requires manual intervention")
+	ErrUnableToRecoverCredentials                = errors.New("unable to recover credentials for instance")
+	ErrNoValidBackupsFound                       = errors.New("no valid backups found")
+	ErrNoBackupsFound                            = errors.New("no backups found")
+	ErrNoCredentialsInNewFormatBackups           = errors.New("no credentials in new-format backups")
+	ErrNoCredentialsFoundInBackup                = errors.New("no credentials found in backup")
+	ErrNoLegacyBackupIndexFound                  = errors.New("no legacy backup index found")
+	ErrNoLegacyBackupsInIndex                    = errors.New("no legacy backups in index")
+	ErrNoCredentialsInLegacyBackups              = errors.New("no credentials in legacy backups")
+	ErrVaultClientExtractionNotImplemented       = errors.New("vault client extraction not implemented yet")
+	ErrDecompressionNotImplementedInRecovery     = errors.New("decompression not implemented in credential recovery yet")
+	ErrInstanceNotFoundInIndex                   = errors.New("instance not found in index")
+	ErrCredentialRecoveryPlanNotFound            = errors.New("plan not found")
+	ErrVerificationFailed                        = errors.New("verification failed")
+	ErrInstanceNotFound                          = errors.New("instance not found")
+	ErrServiceTypeDoesNotSupportEasyRegeneration = errors.New("service type does not support easy regeneration")
+	ErrFailedToRecoverCredentialsForInstances    = errors.New("failed to recover credentials for instances")
+	ErrNoCredentialsFoundForInstance             = errors.New("no credentials found for instance")
+	ErrMissingRequiredFieldInCredentials         = errors.New("missing required field in credentials")
+	ErrMissingPasswordInRedisCredentials         = errors.New("missing password in Redis credentials")
+)
+
+// CredentialRecovery provides functions to recover lost credentials.
 type CredentialRecovery struct {
 	broker *Broker
 	vault  *Vault
-	logger *Log
+	logger logger.Logger
 }
 
-// NewCredentialRecovery creates a new credential recovery handler
+// NewCredentialRecovery creates a new credential recovery handler.
 func NewCredentialRecovery(broker *Broker, vault *Vault) *CredentialRecovery {
 	return &CredentialRecovery{
 		broker: broker,
 		vault:  vault,
-		logger: Logger.Wrap("credential-recovery"),
+		logger: logger.Get().Named("credential-recovery"),
 	}
 }
 
-// RecoverCredentialsForInstance attempts to recover credentials for a specific instance
-func (cr *CredentialRecovery) RecoverCredentialsForInstance(instanceID string) error {
+// RecoverCredentialsForInstance attempts to recover credentials for a specific instance.
+func (cr *CredentialRecovery) RecoverCredentialsForInstance(ctx context.Context, instanceID string) error {
 	cr.logger.Info("Starting credential recovery for instance %s", instanceID)
 
 	// Step 1: Check if credentials already exist
-	credsPath := fmt.Sprintf("%s/credentials", instanceID)
+	credsPath := instanceID + "/credentials"
+
 	var existingCreds map[string]interface{}
-	exists, err := cr.vault.Get(credsPath, &existingCreds)
+
+	exists, err := cr.vault.Get(ctx, credsPath, &existingCreds)
 	if exists && err == nil && len(existingCreds) > 0 {
 		cr.logger.Info("Credentials already exist for instance %s, no recovery needed", instanceID)
+
 		return nil
 	}
 
 	// Step 2: Try to recover from backups
 	cr.logger.Info("Attempting to recover credentials from backups")
-	if recovered, err := cr.recoverFromBackups(instanceID); err == nil && recovered {
+
+	if recovered, err := cr.recoverFromBackups(ctx, instanceID); err == nil && recovered {
 		cr.logger.Info("Successfully recovered credentials from backups")
+
 		return nil
 	}
 
 	// Step 3: Try to recover from BOSH deployment
 	cr.logger.Info("Attempting to recover credentials from BOSH deployment")
-	if recovered, err := cr.recoverFromBOSH(instanceID); err == nil && recovered {
+
+	if recovered, err := cr.recoverFromBOSH(ctx, instanceID); err == nil && recovered {
 		cr.logger.Info("Successfully recovered credentials from BOSH")
+
 		return nil
 	}
 
 	// Step 4: If all else fails, check if we can regenerate
 	cr.logger.Info("WARNING: Unable to recover existing credentials, checking if regeneration is possible")
-	if err := cr.checkRegenerationPossible(instanceID); err == nil {
+
+	if err := cr.checkRegenerationPossible(ctx, instanceID); err == nil {
 		cr.logger.Info("Credentials can be regenerated - manual intervention required")
-		return fmt.Errorf("credentials lost but can be regenerated - requires manual intervention")
+
+		return ErrCredentialsLostButCanBeRegenerated
 	}
 
-	return fmt.Errorf("unable to recover credentials for instance %s", instanceID)
+	return fmt.Errorf("unable to recover credentials for instance %s: %w", instanceID, ErrUnableToRecoverCredentials)
 }
 
-// recoverFromBackups attempts to recover credentials from vault backups using the new format
-func (cr *CredentialRecovery) recoverFromBackups(instanceID string) (bool, error) {
+// recoverFromBackups attempts to recover credentials from vault backups using the new format.
+func (cr *CredentialRecovery) recoverFromBackups(ctx context.Context, instanceID string) (bool, error) {
 	cr.logger.Debug("Attempting to recover from new backup format for instance %s", instanceID)
 
-	// First try to get the vault client for advanced operations
 	vaultClient, err := cr.getVaultClient()
 	if err != nil {
 		cr.logger.Debug("Could not get vault client, falling back to VaultInterface: %s", err)
-		return cr.recoverFromBackupsLegacy(instanceID)
+
+		return cr.recoverFromBackupsLegacy(ctx, instanceID)
 	}
 
-	// List available backups
-	listPath := fmt.Sprintf("secret/metadata/backups/%s", instanceID)
+	backups, err := cr.collectBackupsFromVault(vaultClient, instanceID)
+	if err != nil {
+		return cr.recoverFromBackupsLegacy(ctx, instanceID)
+	}
+
+	if len(backups) == 0 {
+		cr.logger.Debug("No valid backups found for instance %s", instanceID)
+
+		return false, ErrNoValidBackupsFound
+	}
+
+	cr.sortBackupsByTimestamp(backups)
+
+	return cr.attemptRecoveryFromBackups(ctx, vaultClient, instanceID, backups)
+}
+
+// backupEntry represents a backup entry with metadata.
+type backupEntry struct {
+	sha256    string
+	timestamp int64
+}
+
+// collectBackupsFromVault collects all valid backups from Vault.
+func (cr *CredentialRecovery) collectBackupsFromVault(vaultClient *api.Client, instanceID string) ([]backupEntry, error) {
+	listPath := "secret/metadata/backups/" + instanceID
+
 	listResp, err := vaultClient.Logical().List(listPath)
 	if err != nil || listResp == nil {
 		cr.logger.Debug("No backups found for instance %s at new location", instanceID)
-		return cr.recoverFromBackupsLegacy(instanceID)
-	}
 
-	// Parse backup entries and sort by timestamp
-	type backupEntry struct {
-		sha256    string
-		timestamp int64
+		return nil, ErrNoBackupsFound
 	}
 
 	var backups []backupEntry
+
 	if listResp.Data != nil {
 		if keys, ok := listResp.Data["keys"].([]interface{}); ok {
 			for _, keyInterface := range keys {
 				if sha256, ok := keyInterface.(string); ok {
-					// Read the backup to get its timestamp
-					backupDataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, sha256)
-					secret, err := vaultClient.Logical().Read(backupDataPath)
-					if err != nil || secret == nil {
-						cr.logger.Debug("Failed to read backup %s: %s", sha256, err)
-						continue
-					}
-
-					if secret.Data != nil {
-						if data, ok := secret.Data["data"].(map[string]interface{}); ok {
-							if ts, ok := data["timestamp"]; ok {
-								var timestamp int64
-								switch v := ts.(type) {
-								case float64:
-									timestamp = int64(v)
-								case int64:
-									timestamp = v
-								case int:
-									timestamp = int64(v)
-								}
-
-								backups = append(backups, backupEntry{
-									sha256:    sha256,
-									timestamp: timestamp,
-								})
-							}
-						}
+					backup := cr.processBackupEntry(vaultClient, instanceID, sha256)
+					if backup != nil {
+						backups = append(backups, *backup)
 					}
 				}
 			}
 		}
 	}
 
-	if len(backups) == 0 {
-		cr.logger.Debug("No valid backups found for instance %s", instanceID)
-		return false, fmt.Errorf("no valid backups found")
+	return backups, nil
+}
+
+// processBackupEntry processes a single backup entry to extract timestamp.
+func (cr *CredentialRecovery) processBackupEntry(vaultClient *api.Client, instanceID, sha256 string) *backupEntry {
+	backupDataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, sha256)
+
+	secret, err := vaultClient.Logical().Read(backupDataPath)
+	if err != nil || secret == nil {
+		cr.logger.Debug("Failed to read backup %s: %s", sha256, err)
+
+		return nil
 	}
 
-	// Sort backups by timestamp (newest first)
-	for i := 0; i < len(backups)-1; i++ {
+	if secret.Data == nil {
+		return nil
+	}
+
+	data, ok := secret.Data["data"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	ts, ok := data["timestamp"]
+	if !ok {
+		return nil
+	}
+
+	timestamp := cr.parseTimestamp(ts)
+	if timestamp == 0 {
+		return nil
+	}
+
+	return &backupEntry{
+		sha256:    sha256,
+		timestamp: timestamp,
+	}
+}
+
+// parseTimestamp parses timestamp from various numeric types.
+func (cr *CredentialRecovery) parseTimestamp(ts interface{}) int64 {
+	switch value := ts.(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	default:
+		return 0
+	}
+}
+
+// sortBackupsByTimestamp sorts backups by timestamp (newest first).
+func (cr *CredentialRecovery) sortBackupsByTimestamp(backups []backupEntry) {
+	for i := range len(backups) - 1 {
 		for j := i + 1; j < len(backups); j++ {
 			if backups[i].timestamp < backups[j].timestamp {
 				backups[i], backups[j] = backups[j], backups[i]
 			}
 		}
 	}
+}
 
-	// Try to recover from most recent backup first
+// attemptRecoveryFromBackups tries to recover from each backup in order.
+func (cr *CredentialRecovery) attemptRecoveryFromBackups(ctx context.Context, vaultClient *api.Client, instanceID string, backups []backupEntry) (bool, error) {
 	for _, backup := range backups {
 		cr.logger.Debug("Attempting recovery from backup %s (timestamp: %d)", backup.sha256, backup.timestamp)
 
-		// Read the backup
-		backupDataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, backup.sha256)
-		secret, err := vaultClient.Logical().Read(backupDataPath)
-		if err != nil || secret == nil {
-			cr.logger.Debug("Failed to read backup %s: %s", backup.sha256, err)
-			continue
+		if cr.tryRecoverFromSingleBackup(ctx, vaultClient, instanceID, backup) {
+			return true, nil
 		}
-
-		// Extract archive data
-		var archiveData string
-		if secret.Data != nil {
-			if data, ok := secret.Data["data"].(map[string]interface{}); ok {
-				if archive, ok := data["archive"].(string); ok {
-					archiveData = archive
-				}
-			}
-		}
-
-		if archiveData == "" {
-			cr.logger.Debug("Backup %s has no archive data", backup.sha256)
-			continue
-		}
-
-		// Decompress and decode the backup
-		if err := cr.restoreFromCompressedBackup(instanceID, archiveData, backup.sha256); err != nil {
-			cr.logger.Debug("Failed to restore from backup %s: %s", backup.sha256, err)
-			continue
-		}
-
-		return true, nil
 	}
 
 	cr.logger.Debug("No credentials found in any new-format backups")
-	return false, fmt.Errorf("no credentials in new-format backups")
+
+	return false, ErrNoCredentialsInNewFormatBackups
 }
 
-// restoreFromCompressedBackup restores data from a compressed backup archive
-func (cr *CredentialRecovery) restoreFromCompressedBackup(instanceID, archiveData, sha256 string) error {
+// tryRecoverFromSingleBackup attempts to recover from a single backup.
+func (cr *CredentialRecovery) tryRecoverFromSingleBackup(ctx context.Context, vaultClient *api.Client, instanceID string, backup backupEntry) bool {
+	backupDataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, backup.sha256)
+
+	secret, err := vaultClient.Logical().Read(backupDataPath)
+	if err != nil || secret == nil {
+		cr.logger.Debug("Failed to read backup %s: %s", backup.sha256, err)
+
+		return false
+	}
+
+	archiveData := cr.extractArchiveData(secret)
+	if archiveData == "" {
+		cr.logger.Debug("Backup %s has no archive data", backup.sha256)
+
+		return false
+	}
+
+	if err := cr.restoreFromCompressedBackup(ctx, instanceID, archiveData, backup.sha256); err != nil {
+		cr.logger.Debug("Failed to restore from backup %s: %s", backup.sha256, err)
+
+		return false
+	}
+
+	return true
+}
+
+// extractArchiveData extracts archive data from a backup secret.
+func (cr *CredentialRecovery) extractArchiveData(secret *api.Secret) string {
+	if secret.Data == nil {
+		return ""
+	}
+
+	data, ok := secret.Data["data"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	archive, ok := data["archive"].(string)
+	if !ok {
+		return ""
+	}
+
+	return archive
+}
+
+// restoreFromCompressedBackup restores data from a compressed backup archive.
+func (cr *CredentialRecovery) restoreFromCompressedBackup(ctx context.Context, instanceID, archiveData, sha256 string) error {
 	// Use the same decompression logic as the updater
 	// We'll need to implement this or extract it to a shared utility
 	decompressedData, err := cr.decompressAndDecode(archiveData)
@@ -190,66 +293,77 @@ func (cr *CredentialRecovery) restoreFromCompressedBackup(instanceID, archiveDat
 
 	// Look for credentials in the decompressed data
 	credentialsFound := false
+
 	for path, data := range decompressedData {
 		// Check if this path contains credentials we can restore
 		if strings.Contains(path, "/credentials") || strings.Contains(path, "/creds") {
 			// Restore to the original path
 			originalPath := strings.TrimPrefix(path, "secret/")
-			if err := cr.vault.Put(originalPath, data); err != nil {
+
+			err := cr.vault.Put(ctx, originalPath, data)
+			if err != nil {
 				cr.logger.Debug("Failed to restore %s: %s", originalPath, err)
+
 				continue
 			}
 
 			cr.logger.Info("Restored credentials from backup %s to %s", sha256, originalPath)
+
 			credentialsFound = true
 		}
 	}
 
 	if !credentialsFound {
-		return fmt.Errorf("no credentials found in backup")
+		return ErrNoCredentialsFoundInBackup
 	}
 
 	// Add recovery metadata
-	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
+	metadataPath := instanceID + "/metadata"
+
 	var metadata map[string]interface{}
-	_, _ = cr.vault.Get(metadataPath, &metadata)
+
+	_, _ = cr.vault.Get(ctx, metadataPath, &metadata)
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
+
 	metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
-	metadata["credentials_recovered_from"] = fmt.Sprintf("backup_%s", sha256)
-	_ = cr.vault.Put(metadataPath, metadata)
+	metadata["credentials_recovered_from"] = "backup_" + sha256
+	_ = cr.vault.Put(ctx, metadataPath, metadata)
 
 	return nil
 }
 
-// recoverFromBackupsLegacy fallback to old backup format for compatibility
-func (cr *CredentialRecovery) recoverFromBackupsLegacy(instanceID string) (bool, error) {
+// recoverFromBackupsLegacy fallback to old backup format for compatibility.
+func (cr *CredentialRecovery) recoverFromBackupsLegacy(ctx context.Context, instanceID string) (bool, error) {
 	cr.logger.Debug("Falling back to legacy backup format recovery for instance %s", instanceID)
 
 	// Check backup index (old format)
-	backupIndexPath := fmt.Sprintf("%s/backups/index", instanceID)
+	backupIndexPath := instanceID + "/backups/index"
+
 	var backupIndex map[string]interface{}
-	exists, err := cr.vault.Get(backupIndexPath, &backupIndex)
+
+	exists, err := cr.vault.Get(ctx, backupIndexPath, &backupIndex)
 	if !exists || err != nil {
 		cr.logger.Debug("No legacy backup index found for instance %s", instanceID)
-		return false, fmt.Errorf("no legacy backup index found")
+
+		return false, ErrNoLegacyBackupIndexFound
 	}
 
 	// Get list of backups
 	backups, ok := backupIndex["backups"].([]interface{})
 	if !ok || len(backups) == 0 {
 		cr.logger.Debug("No legacy backups found in index for instance %s", instanceID)
-		return false, fmt.Errorf("no legacy backups in index")
+
+		return false, ErrNoLegacyBackupsInIndex
 	}
 
 	// Try to recover from most recent backup first
 	for i := len(backups) - 1; i >= 0; i-- {
-		switch v := backups[i].(type) {
-		case map[string]interface{}:
+		if v, ok := backups[i].(map[string]interface{}); ok {
 			if sha256, ok := v["sha256"].(string); ok {
 				backupPath := fmt.Sprintf("%s/backups/%s", instanceID, sha256)
-				if cr.tryRecoverFromLegacyBackup(instanceID, backupPath, sha256) {
+				if cr.tryRecoverFromLegacyBackup(ctx, instanceID, backupPath, sha256) {
 					return true, nil
 				}
 			}
@@ -257,30 +371,33 @@ func (cr *CredentialRecovery) recoverFromBackupsLegacy(instanceID string) (bool,
 	}
 
 	cr.logger.Debug("No credentials found in any legacy backups")
-	return false, fmt.Errorf("no credentials in legacy backups")
+
+	return false, ErrNoCredentialsInLegacyBackups
 }
 
-// Helper methods for the new recovery system
+// Helper methods for the new recovery system.
 func (cr *CredentialRecovery) getVaultClient() (*api.Client, error) {
 	// Try to extract vault client from the vault interface
 	// This depends on how the vault is implemented in the CredentialRecovery
 	// For now, return an error to fall back to legacy mode
-	return nil, fmt.Errorf("vault client extraction not implemented yet")
+	return nil, ErrVaultClientExtractionNotImplemented
 }
 
 func (cr *CredentialRecovery) decompressAndDecode(encodedData string) (map[string]interface{}, error) {
 	// This should match the implementation in updater.go
 	// For now, return an error to use legacy recovery
-	return nil, fmt.Errorf("decompression not implemented in credential recovery yet")
+	return nil, ErrDecompressionNotImplementedInRecovery
 }
 
-func (cr *CredentialRecovery) tryRecoverFromLegacyBackup(instanceID, backupPath, sha256 string) bool {
+func (cr *CredentialRecovery) tryRecoverFromLegacyBackup(ctx context.Context, instanceID, backupPath, sha256 string) bool {
 	cr.logger.Debug("Checking legacy backup at %s", backupPath)
 
 	var backupData map[string]interface{}
-	exists, err := cr.vault.Get(backupPath, &backupData)
+
+	exists, err := cr.vault.Get(ctx, backupPath, &backupData)
 	if !exists || err != nil {
 		cr.logger.Debug("Could not read legacy backup at %s: %s", backupPath, err)
+
 		return false
 	}
 
@@ -290,22 +407,28 @@ func (cr *CredentialRecovery) tryRecoverFromLegacyBackup(instanceID, backupPath,
 			cr.logger.Info("Found credentials in legacy backup %s", sha256)
 
 			// Restore credentials
-			credsPath := fmt.Sprintf("%s/credentials", instanceID)
-			if err := cr.vault.Put(credsPath, creds); err != nil {
+			credsPath := instanceID + "/credentials"
+
+			err := cr.vault.Put(ctx, credsPath, creds)
+			if err != nil {
 				cr.logger.Error("Failed to restore credentials: %s", err)
+
 				return false
 			}
 
 			// Add recovery metadata
-			metadataPath := fmt.Sprintf("%s/metadata", instanceID)
+			metadataPath := instanceID + "/metadata"
+
 			var metadata map[string]interface{}
-			_, _ = cr.vault.Get(metadataPath, &metadata)
+
+			_, _ = cr.vault.Get(ctx, metadataPath, &metadata)
 			if metadata == nil {
 				metadata = make(map[string]interface{})
 			}
+
 			metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
-			metadata["credentials_recovered_from"] = fmt.Sprintf("legacy_backup_%s", sha256)
-			_ = cr.vault.Put(metadataPath, metadata)
+			metadata["credentials_recovered_from"] = "legacy_backup_" + sha256
+			_ = cr.vault.Put(ctx, metadataPath, metadata)
 
 			return true
 		}
@@ -314,24 +437,27 @@ func (cr *CredentialRecovery) tryRecoverFromLegacyBackup(instanceID, backupPath,
 	return false
 }
 
-// recoverFromBOSH attempts to recover credentials from the BOSH deployment manifest
-func (cr *CredentialRecovery) recoverFromBOSH(instanceID string) (bool, error) {
+// recoverFromBOSH attempts to recover credentials from the BOSH deployment manifest.
+func (cr *CredentialRecovery) recoverFromBOSH(ctx context.Context, instanceID string) (bool, error) {
 	// Get instance details
-	instance, exists, err := cr.vault.FindInstance(instanceID)
+	instance, exists, err := cr.vault.FindInstance(ctx, instanceID)
 	if !exists || err != nil {
 		cr.logger.Error("Cannot find instance %s in vault index", instanceID)
-		return false, fmt.Errorf("instance not found in index")
+
+		return false, ErrInstanceNotFoundInIndex
 	}
 
 	// Find the plan
 	planKey := fmt.Sprintf("%s/%s", instance.ServiceID, instance.PlanID)
+
 	plan, ok := cr.broker.Plans[planKey]
 	if !ok {
 		// Try without service ID
 		plan, ok = cr.broker.Plans[instance.PlanID]
 		if !ok {
 			cr.logger.Error("Cannot find plan for instance %s", instanceID)
-			return false, fmt.Errorf("plan not found")
+
+			return false, ErrCredentialRecoveryPlanNotFound
 		}
 	}
 
@@ -340,58 +466,69 @@ func (cr *CredentialRecovery) recoverFromBOSH(instanceID string) (bool, error) {
 
 	// Use the credential populator to fetch from manifest
 	populator := reconciler.NewCredentialPopulator(nil, &loggerWrapper{logger: cr.logger})
+
 	creds, err := populator.FetchCredsFromBOSH(instanceID, reconciler.Plan{
 		ID:   plan.ID,
 		Name: plan.Name,
 	}, cr.broker.BOSH)
 	if err != nil {
 		cr.logger.Error("Failed to extract credentials from BOSH manifest: %s", err)
-		return false, err
+
+		return false, fmt.Errorf("failed to extract credentials from BOSH manifest: %w", err)
 	}
 
 	// Store recovered credentials
-	credsPath := fmt.Sprintf("%s/credentials", instanceID)
-	if err := cr.vault.Put(credsPath, creds); err != nil {
+	credsPath := instanceID + "/credentials"
+	if err := cr.vault.Put(ctx, credsPath, creds); err != nil {
 		cr.logger.Error("Failed to store recovered credentials: %s", err)
+
 		return false, err
 	}
 
 	// Verify storage
 	var verifyCreds map[string]interface{}
-	exists2, err := cr.vault.Get(credsPath, &verifyCreds)
+
+	exists2, err := cr.vault.Get(ctx, credsPath, &verifyCreds)
 	if !exists2 || err != nil {
 		cr.logger.Error("Failed to verify credential storage after recovery")
-		return false, fmt.Errorf("verification failed")
+
+		return false, ErrVerificationFailed
 	}
 
 	// Add recovery metadata
-	metadataPath := fmt.Sprintf("%s/metadata", instanceID)
+	metadataPath := instanceID + "/metadata"
+
 	var metadata map[string]interface{}
-	_, _ = cr.vault.Get(metadataPath, &metadata)
+
+	_, _ = cr.vault.Get(ctx, metadataPath, &metadata)
 	if metadata == nil {
 		metadata = make(map[string]interface{})
 	}
+
 	metadata["credentials_recovered_at"] = time.Now().Format(time.RFC3339)
 	metadata["credentials_recovered_from"] = "bosh_deployment"
-	_ = cr.vault.Put(metadataPath, metadata)
+	_ = cr.vault.Put(ctx, metadataPath, metadata)
 
 	cr.logger.Info("Successfully recovered credentials from BOSH")
+
 	return true, nil
 }
 
-// checkRegenerationPossible checks if credentials can be regenerated
-func (cr *CredentialRecovery) checkRegenerationPossible(instanceID string) error {
-	instance, exists, err := cr.vault.FindInstance(instanceID)
+// checkRegenerationPossible checks if credentials can be regenerated.
+func (cr *CredentialRecovery) checkRegenerationPossible(ctx context.Context, instanceID string) error {
+	instance, exists, err := cr.vault.FindInstance(ctx, instanceID)
 	if !exists || err != nil {
-		return fmt.Errorf("instance not found")
+		return ErrInstanceNotFound
 	}
 
 	// Check if deployment still exists
 	deploymentName := instance.PlanID + "-" + instanceID
+
 	_, err = cr.broker.BOSH.GetDeployment(deploymentName)
 	if err != nil {
 		cr.logger.Error("Deployment %s does not exist in BOSH", deploymentName)
-		return fmt.Errorf("deployment not found")
+
+		return ErrDeploymentNotFound
 	}
 
 	// Check service type
@@ -406,18 +543,19 @@ func (cr *CredentialRecovery) checkRegenerationPossible(instanceID string) error
 
 	if canRegen, ok := regeneratable[serviceType]; ok && canRegen {
 		cr.logger.Info("Service type %s supports credential regeneration", serviceType)
+
 		return nil
 	}
 
-	return fmt.Errorf("service type %s does not support easy regeneration", serviceType)
+	return fmt.Errorf("service type %s does not support easy regeneration: %w", serviceType, ErrServiceTypeDoesNotSupportEasyRegeneration)
 }
 
-// RecoverAllMissingCredentials scans all instances and recovers missing credentials
-func (cr *CredentialRecovery) RecoverAllMissingCredentials() error {
+// RecoverAllMissingCredentials scans all instances and recovers missing credentials.
+func (cr *CredentialRecovery) RecoverAllMissingCredentials(ctx context.Context) error {
 	cr.logger.Info("Starting recovery scan for all instances")
 
 	// Get all instances from index
-	idx, err := cr.vault.GetIndex("db")
+	idx, err := cr.vault.GetIndex(ctx, "db")
 	if err != nil {
 		return fmt.Errorf("failed to get vault index: %w", err)
 	}
@@ -428,23 +566,30 @@ func (cr *CredentialRecovery) RecoverAllMissingCredentials() error {
 
 	for instanceID := range idx.Data {
 		// Check if credentials exist
-		credsPath := fmt.Sprintf("%s/credentials", instanceID)
+		credsPath := instanceID + "/credentials"
+
 		var creds map[string]interface{}
-		exists, err := cr.vault.Get(credsPath, &creds)
+
+		exists, err := cr.vault.Get(ctx, credsPath, &creds)
 
 		if exists && err == nil && len(creds) > 0 {
 			cr.logger.Debug("Instance %s has credentials, skipping", instanceID)
+
 			skipped++
+
 			continue
 		}
 
 		// Attempt recovery
 		cr.logger.Info("Instance %s missing credentials, attempting recovery", instanceID)
-		if err := cr.RecoverCredentialsForInstance(instanceID); err != nil {
+
+		if err := cr.RecoverCredentialsForInstance(ctx, instanceID); err != nil {
 			cr.logger.Error("Failed to recover credentials for %s: %s", instanceID, err)
+
 			failed++
 		} else {
 			cr.logger.Info("Successfully recovered credentials for %s", instanceID)
+
 			recovered++
 		}
 	}
@@ -453,24 +598,26 @@ func (cr *CredentialRecovery) RecoverAllMissingCredentials() error {
 		recovered, failed, skipped)
 
 	if failed > 0 {
-		return fmt.Errorf("failed to recover credentials for %d instances", failed)
+		return fmt.Errorf("failed to recover credentials for %d instances: %w", failed, ErrFailedToRecoverCredentialsForInstances)
 	}
 
 	return nil
 }
 
-// VerifyInstanceCredentials verifies that an instance has valid credentials
-func (cr *CredentialRecovery) VerifyInstanceCredentials(instanceID string) error {
-	credsPath := fmt.Sprintf("%s/credentials", instanceID)
+// VerifyInstanceCredentials verifies that an instance has valid credentials.
+func (cr *CredentialRecovery) VerifyInstanceCredentials(ctx context.Context, instanceID string) error {
+	credsPath := instanceID + "/credentials"
+
 	var creds map[string]interface{}
-	exists, err := cr.vault.Get(credsPath, &creds)
+
+	exists, err := cr.vault.Get(ctx, credsPath, &creds)
 
 	if !exists || err != nil {
-		return fmt.Errorf("no credentials found for instance %s", instanceID)
+		return fmt.Errorf("no credentials found for instance %s: %w", instanceID, ErrNoCredentialsFoundForInstance)
 	}
 
 	// Check for required fields based on service type
-	instance, _, _ := cr.vault.FindInstance(instanceID)
+	instance, _, _ := cr.vault.FindInstance(ctx, instanceID)
 	if instance != nil {
 		serviceType := strings.Split(instance.PlanID, "-")[0]
 
@@ -479,23 +626,24 @@ func (cr *CredentialRecovery) VerifyInstanceCredentials(instanceID string) error
 			required := []string{"username", "password", "host", "port"}
 			for _, field := range required {
 				if _, ok := creds[field]; !ok {
-					return fmt.Errorf("missing required field '%s' in credentials", field)
+					return fmt.Errorf("missing required field '%s' in credentials: %w", field, ErrMissingRequiredFieldInCredentials)
 				}
 			}
 		case "redis":
 			if _, ok := creds["password"]; !ok {
-				return fmt.Errorf("missing password in Redis credentials")
+				return ErrMissingPasswordInRedisCredentials
 			}
 		case "postgresql", "mysql":
 			required := []string{"username", "password", "host", "port", "database"}
 			for _, field := range required {
 				if _, ok := creds[field]; !ok {
-					return fmt.Errorf("missing required field '%s' in credentials", field)
+					return fmt.Errorf("missing required field '%s' in credentials: %w", field, ErrMissingRequiredFieldInCredentials)
 				}
 			}
 		}
 	}
 
 	cr.logger.Debug("Credentials verified for instance %s", instanceID)
+
 	return nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -11,15 +12,18 @@ type VaultIndex struct {
 	Data   map[string]interface{}
 }
 
-func (v *Vault) GetIndex(path string) (*VaultIndex, error) {
+func (v *Vault) GetIndex(ctx context.Context, path string) (*VaultIndex, error) {
 	Data := map[string]interface{}{}
-	exists, err := v.Get(path, &Data)
+
+	exists, err := v.Get(ctx, path, &Data)
 	if err != nil {
 		return nil, err
 	}
+
 	if !exists {
 		Data = make(map[string]interface{})
 	}
+
 	return &VaultIndex{
 		parent: v,
 		path:   path,
@@ -30,16 +34,18 @@ func (v *Vault) GetIndex(path string) (*VaultIndex, error) {
 func (vi *VaultIndex) Lookup(key string) (interface{}, error) {
 	v, ok := vi.Data[key]
 	if !ok {
-		return nil, fmt.Errorf("key '%s' not found in index", key)
+		return nil, fmt.Errorf("%w: '%s'", ErrKeyNotFoundInIndex, key)
 	}
+
 	return v, nil
 }
 
-func (vi *VaultIndex) Save() error {
+func (vi *VaultIndex) Save(ctx context.Context) error {
 	if len(vi.Data) == 0 {
-		return vi.parent.Delete(vi.path)
+		return vi.parent.Delete(ctx, vi.path)
 	}
-	return vi.parent.Put(vi.path, vi.Data)
+
+	return vi.parent.Put(ctx, vi.path, vi.Data)
 }
 
 func (vi *VaultIndex) JSON() string {

@@ -10,27 +10,32 @@ import (
 	"blacksmith/pkg/services/common"
 )
 
-// Handler handles RabbitMQ operations
+const (
+	// Default timeout for RabbitMQ operations
+	defaultRabbitMQOperationTimeout = 30 * time.Second
+)
+
+// Handler handles RabbitMQ operations.
 type Handler struct {
 	connManager      *ConnectionManager
 	managementClient *ManagementClient
 	logger           func(string, ...interface{})
 }
 
-// NewHandler creates a new RabbitMQ operations handler
+// NewHandler creates a new RabbitMQ operations handler.
 func NewHandler(logger func(string, ...interface{})) *Handler {
 	if logger == nil {
 		logger = func(string, ...interface{}) {} // No-op logger
 	}
 
 	return &Handler{
-		connManager:      NewConnectionManager(5 * time.Minute),
+		connManager:      NewConnectionManager(DefaultTTL),
 		managementClient: NewManagementClient(),
 		logger:           logger,
 	}
 }
 
-// TestConnection tests the RabbitMQ connection
+// TestConnection tests the RabbitMQ connection.
 func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credentials, opts common.ConnectionOptions) (*common.TestResult, error) {
 	start := time.Now()
 
@@ -41,7 +46,7 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 			Error:     err.Error(),
 			Timestamp: start.Unix(),
 			Duration:  time.Since(start),
-		}, nil
+		}, nil //nolint:nilerr // Invalid credentials is a valid test result, not an error
 	}
 
 	// Use override parameters if provided
@@ -58,7 +63,7 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 			Error:     testErr.Error(),
 			Timestamp: start.Unix(),
 			Duration:  time.Since(start),
-		}, nil
+		}, nil //nolint:nilerr // Connection test failure is a valid test result, not an error
 	}
 
 	// Determine which user and vhost were actually used for the connection
@@ -68,6 +73,7 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 	if opts.OverrideUser != "" {
 		actualUser = opts.OverrideUser
 	}
+
 	if opts.OverrideVHost != "" {
 		actualVHost = opts.OverrideVHost
 	}
@@ -88,7 +94,7 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 	}, nil
 }
 
-// GetCapabilities returns the capabilities of the RabbitMQ service
+// GetCapabilities returns the capabilities of the RabbitMQ service.
 func (h *Handler) GetCapabilities() []common.Capability {
 	return []common.Capability{
 		{Name: "publish", Description: "Publish messages to queues", Category: "messaging"},
@@ -99,23 +105,25 @@ func (h *Handler) GetCapabilities() []common.Capability {
 	}
 }
 
-// Close closes all connections
+// Close closes all connections.
 func (h *Handler) Close() error {
 	h.connManager.CloseAll()
+
 	return nil
 }
 
-// HandlePublish publishes a message to RabbitMQ
+// HandlePublish publishes a message to RabbitMQ.
 func (h *Handler) HandlePublish(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *PublishRequest) (*PublishResult, error) {
 	// Create default connection options for backward compatibility
 	opts := common.ConnectionOptions{
 		UseAMQPS: req.UseAMQPS,
-		Timeout:  30 * time.Second,
+		Timeout:  defaultRabbitMQOperationTimeout,
 	}
+
 	return h.HandlePublishWithOptions(ctx, instanceID, vaultCreds, req, opts)
 }
 
-// HandlePublishWithOptions publishes a message to RabbitMQ with connection options
+// HandlePublishWithOptions publishes a message to RabbitMQ with connection options.
 func (h *Handler) HandlePublishWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *PublishRequest, opts common.ConnectionOptions) (*PublishResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
@@ -123,13 +131,13 @@ func (h *Handler) HandlePublishWithOptions(ctx context.Context, instanceID strin
 	}
 
 	// Get connection with override support
-	_, ch, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
+	_, channel, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Declare queue (idempotent operation)
-	q, err := ch.QueueDeclare(
+	queue, err := channel.QueueDeclare(
 		req.Queue, // name
 		true,      // durable
 		false,     // auto-delete
@@ -148,7 +156,7 @@ func (h *Handler) HandlePublishWithOptions(ctx context.Context, instanceID strin
 	}
 
 	// Determine routing key (use queue name if publishing to default exchange)
-	routingKey := q.Name
+	routingKey := queue.Name
 	if exchange != "" {
 		routingKey = req.Queue // Use original queue name for named exchanges
 	}
@@ -160,7 +168,7 @@ func (h *Handler) HandlePublishWithOptions(ctx context.Context, instanceID strin
 	}
 
 	// Publish message
-	err = ch.PublishWithContext(
+	err = channel.PublishWithContext(
 		ctx,
 		exchange,   // exchange
 		routingKey, // routing key
@@ -186,17 +194,18 @@ func (h *Handler) HandlePublishWithOptions(ctx context.Context, instanceID strin
 	}, nil
 }
 
-// HandleConsume consumes messages from RabbitMQ
+// HandleConsume consumes messages from RabbitMQ.
 func (h *Handler) HandleConsume(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ConsumeRequest) (*ConsumeResult, error) {
 	// Create default connection options for backward compatibility
 	opts := common.ConnectionOptions{
 		UseAMQPS: req.UseAMQPS,
-		Timeout:  30 * time.Second,
+		Timeout:  defaultRabbitMQOperationTimeout,
 	}
+
 	return h.HandleConsumeWithOptions(ctx, instanceID, vaultCreds, req, opts)
 }
 
-// HandleConsumeWithOptions consumes messages from RabbitMQ with connection options
+// HandleConsumeWithOptions consumes messages from RabbitMQ with connection options.
 func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ConsumeRequest, opts common.ConnectionOptions) (*ConsumeResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
@@ -204,13 +213,13 @@ func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID strin
 	}
 
 	// Get connection with override support
-	_, ch, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
+	_, channel, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	// Ensure queue exists
-	_, err = ch.QueueDeclare(
+	_, err = channel.QueueDeclare(
 		req.Queue, // name
 		true,      // durable
 		false,     // auto-delete
@@ -223,7 +232,7 @@ func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID strin
 	}
 
 	// Start consuming
-	msgs, err := ch.Consume(
+	msgs, err := channel.Consume(
 		req.Queue, // queue
 		"",        // consumer tag
 		false,     // auto-ack
@@ -238,6 +247,7 @@ func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID strin
 
 	// Collect messages with timeout
 	var messages []Message
+
 	maxCount := req.Count
 	if maxCount <= 0 {
 		maxCount = 10 // Default limit
@@ -245,13 +255,13 @@ func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID strin
 
 	timeout := time.Duration(req.Timeout) * time.Millisecond
 	if timeout <= 0 {
-		timeout = 5 * time.Second // Default timeout
+		timeout = DefaultTimeout // Default timeout
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	for i := 0; i < maxCount; i++ {
+	for range maxCount {
 		select {
 		case msg := <-msgs:
 			messages = append(messages, Message{
@@ -273,7 +283,7 @@ func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID strin
 			goto done
 
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("context cancelled during queue monitoring: %w", ctx.Err())
 		}
 	}
 
@@ -286,17 +296,18 @@ done:
 	}, nil
 }
 
-// HandleQueueInfo retrieves information about queues
+// HandleQueueInfo retrieves information about queues.
 func (h *Handler) HandleQueueInfo(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueInfoRequest) (*QueueInfoResult, error) {
 	// Create default connection options for backward compatibility
 	opts := common.ConnectionOptions{
 		UseAMQPS: req.UseAMQPS,
-		Timeout:  30 * time.Second,
+		Timeout:  defaultRabbitMQOperationTimeout,
 	}
+
 	return h.HandleQueueInfoWithOptions(ctx, instanceID, vaultCreds, req, opts)
 }
 
-// HandleQueueInfoWithOptions retrieves information about queues with connection options
+// HandleQueueInfoWithOptions retrieves information about queues with connection options.
 func (h *Handler) HandleQueueInfoWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueInfoRequest, opts common.ConnectionOptions) (*QueueInfoResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
@@ -309,24 +320,28 @@ func (h *Handler) HandleQueueInfoWithOptions(ctx context.Context, instanceID str
 		if opts.OverrideUser != "" {
 			testCreds.Username = opts.OverrideUser
 		}
+
 		if opts.OverridePassword != "" {
 			testCreds.Password = opts.OverridePassword
 		}
+
 		if opts.OverrideVHost != "" {
 			testCreds.VHost = opts.OverrideVHost
 		}
+
 		creds = &testCreds
 	}
 
 	// Try to get queue info via Management API first
 	if h.managementClient != nil {
-		queues, err := h.managementClient.GetQueues(creds, opts.UseAMQPS)
+		queues, err := h.managementClient.GetQueues(ctx, creds, opts.UseAMQPS)
 		if err == nil {
 			return &QueueInfoResult{
 				Success: true,
 				Queues:  queues,
 			}, nil
 		}
+
 		h.logger("Failed to get queues via management API: %v", err)
 	}
 
@@ -338,17 +353,18 @@ func (h *Handler) HandleQueueInfoWithOptions(ctx context.Context, instanceID str
 	}, nil
 }
 
-// HandleQueueOps performs queue operations (create, delete, purge)
+// HandleQueueOps performs queue operations (create, delete, purge).
 func (h *Handler) HandleQueueOps(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueOpsRequest) (*QueueOpsResult, error) {
 	// Create default connection options for backward compatibility
 	opts := common.ConnectionOptions{
 		UseAMQPS: req.UseAMQPS,
-		Timeout:  30 * time.Second,
+		Timeout:  defaultRabbitMQOperationTimeout,
 	}
+
 	return h.HandleQueueOpsWithOptions(ctx, instanceID, vaultCreds, req, opts)
 }
 
-// HandleQueueOpsWithOptions performs queue operations with connection options
+// HandleQueueOpsWithOptions performs queue operations with connection options.
 func (h *Handler) HandleQueueOpsWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *QueueOpsRequest, opts common.ConnectionOptions) (*QueueOpsResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
@@ -396,7 +412,7 @@ func (h *Handler) HandleQueueOpsWithOptions(ctx context.Context, instanceID stri
 		}
 
 	default:
-		return nil, common.NewServiceError("rabbitmq", "E010", fmt.Sprintf("unknown operation: %s", req.Operation), false)
+		return nil, common.NewServiceError("rabbitmq", "E010", "unknown operation: "+req.Operation, false)
 	}
 
 	return &QueueOpsResult{
@@ -406,17 +422,18 @@ func (h *Handler) HandleQueueOpsWithOptions(ctx context.Context, instanceID stri
 	}, nil
 }
 
-// HandleManagement handles management API requests
+// HandleManagement handles management API requests.
 func (h *Handler) HandleManagement(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ManagementRequest) (*ManagementResult, error) {
 	// Create default connection options for backward compatibility
 	opts := common.ConnectionOptions{
 		UseAMQPS: false, // Management API doesn't use AMQP
-		Timeout:  30 * time.Second,
+		Timeout:  defaultRabbitMQOperationTimeout,
 	}
+
 	return h.HandleManagementWithOptions(ctx, instanceID, vaultCreds, req, opts)
 }
 
-// HandleManagementWithOptions handles management API requests with connection options
+// HandleManagementWithOptions handles management API requests with connection options.
 func (h *Handler) HandleManagementWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ManagementRequest, opts common.ConnectionOptions) (*ManagementResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
@@ -431,14 +448,17 @@ func (h *Handler) HandleManagementWithOptions(ctx context.Context, instanceID st
 			testCreds.Username = opts.OverrideUser
 			testCreds.ManagementUsername = opts.OverrideUser
 		}
+
 		if opts.OverridePassword != "" {
 			// For management API, set both regular and management-specific credentials
 			testCreds.Password = opts.OverridePassword
 			testCreds.ManagementPassword = opts.OverridePassword
 		}
+
 		if opts.OverrideVHost != "" {
 			testCreds.VHost = opts.OverrideVHost
 		}
+
 		creds = &testCreds
 	}
 
@@ -446,7 +466,7 @@ func (h *Handler) HandleManagementWithOptions(ctx context.Context, instanceID st
 		return nil, common.NewServiceError("rabbitmq", "E011", "management client not available", false)
 	}
 
-	statusCode, data, err := h.managementClient.Request(creds, req.Method, req.Path, req.UseSSL)
+	statusCode, data, err := h.managementClient.Request(ctx, creds, req.Method, req.Path, req.UseSSL)
 	if err != nil {
 		return nil, common.NewServiceError("rabbitmq", "E012", fmt.Sprintf("management API request failed: %v", err), true)
 	}

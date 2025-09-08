@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Manager is the main interface for the reconciler
+// Manager is the main interface for the reconciler.
 type Manager interface {
 	Start(ctx context.Context) error
 	Stop() error
@@ -13,37 +13,54 @@ type Manager interface {
 	GetStatus() Status
 }
 
-// Scanner discovers deployments from BOSH
+// Scanner discovers deployments from BOSH.
 type Scanner interface {
 	ScanDeployments(ctx context.Context) ([]DeploymentInfo, error)
 	GetDeploymentDetails(ctx context.Context, name string) (*DeploymentDetail, error)
 }
 
-// Matcher matches deployments to services
+// Matcher matches deployments to services.
 type Matcher interface {
 	MatchDeployment(deployment DeploymentDetail, services []Service) (*MatchResult, error)
 }
 
-// Updater updates instance data in Vault
+// BindingInfo represents metadata about a service binding.
+type BindingInfo struct {
+	ID             string
+	InstanceID     string
+	ServiceID      string
+	PlanID         string
+	AppGUID        string
+	CredentialType string
+	CreatedAt      time.Time
+	LastVerified   time.Time
+	Status         string
+}
+
+// Updater updates instance data in Vault.
 type Updater interface {
 	UpdateInstance(ctx context.Context, instance InstanceData) (*InstanceData, error)
 	UpdateBatch(ctx context.Context, instances []InstanceData) ([]InstanceData, error)
+	CheckBindingHealth(instanceID string) ([]BindingInfo, []string, error)
+	ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error
+	RepairInstanceBindings(instanceID string, broker BrokerInterface) error
+	UpdateInstanceWithBindingRepair(ctx context.Context, instance InstanceData, broker BrokerInterface) (*InstanceData, error)
 }
 
-// Synchronizer synchronizes the vault index
+// Synchronizer synchronizes the vault index.
 type Synchronizer interface {
 	SyncIndex(ctx context.Context, instances []InstanceData) error
 }
 
-// Logger provides logging functionality
+// Logger provides logging functionality.
 type Logger interface {
-	Debug(format string, args ...interface{})
-	Info(format string, args ...interface{})
-	Warning(format string, args ...interface{})
-	Error(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Warningf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
 }
 
-// MetricsCollector collects reconciler metrics
+// MetricsCollector collects reconciler metrics.
 type MetricsCollector interface {
 	ReconciliationStarted()
 	ReconciliationCompleted(duration time.Duration)
@@ -55,7 +72,7 @@ type MetricsCollector interface {
 	Collect()
 }
 
-// BrokerInterface defines the broker interface
+// BrokerInterface defines the broker interface.
 type BrokerInterface interface {
 	GetServices() []Service
 	// Provide reconstructed binding credentials using the broker's logic
@@ -64,7 +81,7 @@ type BrokerInterface interface {
 
 // CFManagerInterface is defined in credential_vcap_recovery.go
 
-// Status represents the reconciler status
+// Status represents the reconciler status.
 type Status struct {
 	Running         bool
 	LastRunTime     time.Time
@@ -74,7 +91,7 @@ type Status struct {
 	Errors          []error
 }
 
-// DeploymentInfo contains basic deployment information
+// DeploymentInfo contains basic deployment information.
 type DeploymentInfo struct {
 	Name        string
 	UUID        string
@@ -85,16 +102,17 @@ type DeploymentInfo struct {
 	CloudConfig string
 }
 
-// DeploymentDetail contains detailed deployment information
+// DeploymentDetail contains detailed deployment information.
 type DeploymentDetail struct {
 	DeploymentInfo
+
 	Manifest   string
 	Properties map[string]interface{}
 	Networks   []string
 	VMs        []VMInfo
 }
 
-// VMInfo contains VM information
+// VMInfo contains VM information.
 type VMInfo struct {
 	Name  string
 	State string
@@ -102,7 +120,7 @@ type VMInfo struct {
 	AZ    string
 }
 
-// MatchResult contains the result of matching a deployment
+// MatchResult contains the result of matching a deployment.
 type MatchResult struct {
 	ServiceID   string
 	PlanID      string
@@ -111,7 +129,7 @@ type MatchResult struct {
 	MatchReason string
 }
 
-// InstanceData contains complete instance information
+// InstanceData contains complete instance information.
 type InstanceData struct {
 	ID         string
 	ServiceID  string
@@ -122,7 +140,7 @@ type InstanceData struct {
 	Metadata   map[string]interface{}
 }
 
-// Service represents a service in the catalog
+// Service represents a service in the catalog.
 type Service struct {
 	ID          string
 	Name        string
@@ -130,7 +148,7 @@ type Service struct {
 	Plans       []Plan
 }
 
-// Plan represents a service plan
+// Plan represents a service plan.
 type Plan struct {
 	ID          string
 	Name        string
@@ -138,7 +156,7 @@ type Plan struct {
 	Properties  map[string]interface{}
 }
 
-// CFServiceInstanceDetails contains CF service instance details
+// CFServiceInstanceDetails contains CF service instance details.
 type CFServiceInstanceDetails struct {
 	GUID            string
 	Name            string
@@ -155,7 +173,7 @@ type CFServiceInstanceDetails struct {
 	MaintenanceInfo map[string]interface{}
 }
 
-// BackupConfig contains backup configuration
+// BackupConfig contains backup configuration.
 type BackupConfig struct {
 	Enabled          bool
 	RetentionCount   int
@@ -166,7 +184,7 @@ type BackupConfig struct {
 	BackupOnDelete   bool
 }
 
-// VaultInterface defines the vault interface
+// VaultInterface defines the vault interface.
 type VaultInterface interface {
 	Get(path string) (map[string]interface{}, error)
 	Put(path string, secret map[string]interface{}) error
@@ -176,7 +194,7 @@ type VaultInterface interface {
 	ListSecrets(path string) ([]string, error)
 }
 
-// BindingCredentials represents credentials for a service binding
+// BindingCredentials represents credentials for a service binding.
 type BindingCredentials struct {
 	Host            string
 	Port            int
@@ -187,7 +205,7 @@ type BindingCredentials struct {
 	Raw             map[string]interface{}
 }
 
-// Metrics contains reconciler metrics
+// Metrics contains reconciler metrics.
 type Metrics struct {
 	ReconciliationRuns     int64
 	ReconciliationFailures int64

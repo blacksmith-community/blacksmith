@@ -1,18 +1,22 @@
-package reconciler
+package reconciler_test
 
 import (
 	"reflect"
 	"testing"
+
+	. "blacksmith/pkg/reconciler"
 )
 
 func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
+	t.Parallel()
+
 	v := newMemVault()
-	u := &vaultUpdater{vault: v, logger: newMockLogger()}
+	u := NewVaultUpdater(v, NewMockLogger(), BackupConfig{})
 
 	instanceID := "12345678-1234-1234-1234-123456789abc"
 	entry := map[string]interface{}{"service_id": "redis", "plan_id": "cache-small"}
 
-	if err := u.updateIndex(instanceID, entry); err != nil {
+	if err := u.UpdateIndex(instanceID, entry); err != nil {
 		t.Fatalf("updateIndex error: %v", err)
 	}
 
@@ -21,6 +25,7 @@ func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 	if storedIndex == nil {
 		t.Fatalf("expected index stored at path 'db', not found")
 	}
+
 	if got, ok := storedIndex[instanceID]; !ok {
 		t.Fatalf("expected instance id present in stored index")
 	} else if !reflect.DeepEqual(got, entry) {
@@ -28,23 +33,27 @@ func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 	}
 
 	// Now read back via getFromIndex
-	gotEntry, err := u.getFromIndex(instanceID)
+	gotEntry, err := u.GetFromIndex(instanceID)
 	if err != nil {
 		t.Fatalf("getFromIndex error: %v", err)
 	}
+
 	if !reflect.DeepEqual(gotEntry, entry) {
 		t.Fatalf("round-trip entry mismatch\nwant: %#v\n got: %#v", entry, gotEntry)
 	}
 }
 
 func TestVaultUpdater_UpdateIndex_DeleteEntry(t *testing.T) {
+	t.Parallel()
+
 	v := newMemVault()
-	u := &vaultUpdater{vault: v, logger: newMockLogger()}
+	u := NewVaultUpdater(v, NewMockLogger(), BackupConfig{})
 
 	instanceID := "00000000-0000-0000-0000-0000000000ee"
 	v.store["db"] = map[string]interface{}{instanceID: map[string]interface{}{"service_id": "redis"}}
 
-	if err := u.updateIndex(instanceID, nil); err != nil {
+	err := u.UpdateIndex(instanceID, nil)
+	if err != nil {
 		t.Fatalf("updateIndex delete error: %v", err)
 	}
 

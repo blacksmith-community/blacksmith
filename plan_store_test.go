@@ -10,12 +10,14 @@ import (
 )
 
 func TestCalculateSHA256(t *testing.T) {
+	t.Parallel()
+
 	// Create a temporary file
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
 	testContent := "Hello, World!"
 
-	err := os.WriteFile(testFile, []byte(testContent), 0644)
+	err := os.WriteFile(testFile, []byte(testContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
@@ -37,6 +39,8 @@ func TestCalculateSHA256(t *testing.T) {
 }
 
 func TestPlanStorageStructure(t *testing.T) {
+	t.Parallel()
+
 	// Create test plan structure
 	tmpDir := t.TempDir()
 
@@ -46,7 +50,8 @@ func TestPlanStorageStructure(t *testing.T) {
 
 	for _, plan := range planDirs {
 		planPath := filepath.Join(serviceDir, plan)
-		err := os.MkdirAll(planPath, 0755)
+
+		err := os.MkdirAll(planPath, 0750)
 		if err != nil {
 			t.Fatalf("Failed to create plan directory %s: %v", planPath, err)
 		}
@@ -60,7 +65,8 @@ func TestPlanStorageStructure(t *testing.T) {
 
 		for filename, content := range files {
 			filePath := filepath.Join(planPath, filename)
-			err := os.WriteFile(filePath, []byte(content), 0644)
+
+			err := os.WriteFile(filePath, []byte(content), 0600)
 			if err != nil {
 				t.Fatalf("Failed to write file %s: %v", filePath, err)
 			}
@@ -84,12 +90,15 @@ func TestPlanStorageStructure(t *testing.T) {
 }
 
 func TestSHA256Comparison(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.yml")
 
 	// Write initial content
 	initialContent := "version: 1\ndata: test\n"
-	err := os.WriteFile(testFile, []byte(initialContent), 0644)
+
+	err := os.WriteFile(testFile, []byte(initialContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
@@ -101,7 +110,7 @@ func TestSHA256Comparison(t *testing.T) {
 	}
 
 	// Write same content again
-	err = os.WriteFile(testFile, []byte(initialContent), 0644)
+	err = os.WriteFile(testFile, []byte(initialContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to rewrite test file: %v", err)
 	}
@@ -118,7 +127,8 @@ func TestSHA256Comparison(t *testing.T) {
 
 	// Write different content
 	differentContent := "version: 2\ndata: modified\n"
-	err = os.WriteFile(testFile, []byte(differentContent), 0644)
+
+	err = os.WriteFile(testFile, []byte(differentContent), 0600)
 	if err != nil {
 		t.Fatalf("Failed to write modified test file: %v", err)
 	}
@@ -139,6 +149,8 @@ func TestSHA256Comparison(t *testing.T) {
 }
 
 func TestPlanStorageVaultPaths(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		service  string
@@ -175,6 +187,8 @@ func TestPlanStorageVaultPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			// Test the vault path generation
 			vaultPath := fmt.Sprintf("plans/%s/%s/%s/%s", tt.service, tt.plan, tt.fileType, tt.sha256)
 			if vaultPath != tt.expected {
@@ -185,6 +199,8 @@ func TestPlanStorageVaultPaths(t *testing.T) {
 }
 
 func TestInstancePlanReferencePaths(t *testing.T) {
+	t.Parallel()
+
 	instanceID := "ed1e4f4c-3da8-4176-ba46-c825684eeeb1"
 
 	// Test instance plan reference paths
@@ -202,6 +218,8 @@ func TestInstancePlanReferencePaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			vaultPath := fmt.Sprintf("%s/%s", instanceID, tt.refType)
 			if vaultPath != tt.expected {
 				t.Errorf("Expected vault path %s, got %s", tt.expected, vaultPath)
@@ -211,6 +229,8 @@ func TestInstancePlanReferencePaths(t *testing.T) {
 
 	// Test the structure of stored references
 	t.Run("Reference structure", func(t *testing.T) {
+		t.Parallel()
+
 		expectedRefs := map[string]string{
 			"manifest":    "275930907e005f6792ba1b86f382d9fc7a6285adbe2df02070458c2c7ace136c",
 			"credentials": "abc123def456789",

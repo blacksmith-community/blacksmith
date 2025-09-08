@@ -6,6 +6,8 @@ import (
 )
 
 func TestCFCredentialValidation(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name           string
 		endpoints      map[string]CFAPIConfig
@@ -73,9 +75,11 @@ func TestCFCredentialValidation(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			manager := NewCFConnectionManager(tt.endpoints, nil)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			manager := NewCFConnectionManager(testCase.endpoints, nil)
 
 			hasValidClients := len(manager.clients) > 0
 			for _, client := range manager.clients {
@@ -83,14 +87,16 @@ func TestCFCredentialValidation(t *testing.T) {
 					client.config.Username == "" ||
 					client.config.Password == "" {
 					hasValidClients = false
+
 					break
 				}
 			}
 
-			if tt.expectDisabled && hasValidClients {
+			if testCase.expectDisabled && hasValidClients {
 				t.Errorf("Expected CF manager to be disabled but found valid clients")
 			}
-			if !tt.expectDisabled && !hasValidClients {
+
+			if !testCase.expectDisabled && !hasValidClients {
 				t.Errorf("Expected CF manager to have valid clients but none found")
 			}
 		})
@@ -98,6 +104,7 @@ func TestCFCredentialValidation(t *testing.T) {
 }
 
 func TestAuthenticationErrorDetection(t *testing.T) {
+	t.Parallel()
 	// Test that our error detection patterns work
 	authErrors := []string{
 		"unauthorized",
@@ -110,6 +117,7 @@ func TestAuthenticationErrorDetection(t *testing.T) {
 
 	for _, errMsg := range authErrors {
 		t.Run(errMsg, func(t *testing.T) {
+			t.Parallel()
 			// Check if our error patterns would catch this
 			isAuthError := strings.Contains(strings.ToLower(errMsg), "unauthorized") ||
 				strings.Contains(strings.ToLower(errMsg), "401") ||
@@ -132,6 +140,8 @@ func TestAuthenticationErrorDetection(t *testing.T) {
 
 	for _, errMsg := range nonAuthErrors {
 		t.Run("not_auth_"+errMsg, func(t *testing.T) {
+			t.Parallel()
+
 			isAuthError := strings.Contains(strings.ToLower(errMsg), "unauthorized") ||
 				strings.Contains(strings.ToLower(errMsg), "401") ||
 				strings.Contains(strings.ToLower(errMsg), "authentication") ||

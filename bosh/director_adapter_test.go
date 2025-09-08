@@ -1,16 +1,20 @@
-package bosh
+package bosh_test
 
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
+
+	. "blacksmith/bosh"
+	"blacksmith/pkg/logger"
 )
 
-// TestBufferedTaskReporter tests the BufferedTaskReporter implementation
+// TestBufferedTaskReporter tests the BufferedTaskReporter implementation.
 func TestBufferedTaskReporter(t *testing.T) {
+	t.Parallel()
+
 	reporter := &BufferedTaskReporter{}
 
 	// Test TaskStarted
@@ -19,11 +23,13 @@ func TestBufferedTaskReporter(t *testing.T) {
 	// Test TaskOutputChunk
 	chunk1 := []byte("First chunk\n")
 	chunk2 := []byte("Second chunk\n")
+
 	reporter.TaskOutputChunk(42, chunk1)
 	reporter.TaskOutputChunk(42, chunk2)
 
 	// Test GetOutput
 	output := reporter.GetOutput()
+
 	expected := "First chunk\nSecond chunk\n"
 	if output != expected {
 		t.Errorf("GetOutput() = %q, want %q", output, expected)
@@ -33,8 +39,10 @@ func TestBufferedTaskReporter(t *testing.T) {
 	reporter.TaskFinished(42, "done")
 }
 
-// TestTaskEventParsing tests parsing of task events from JSON output
+// TestTaskEventParsing tests parsing of task events from JSON output.
 func TestTaskEventParsing(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		jsonOutput string
@@ -69,6 +77,8 @@ not valid json
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			events := parseTaskEvents(tt.jsonOutput)
 
 			if len(events) != tt.wantEvents {
@@ -77,7 +87,7 @@ not valid json
 
 			if tt.wantError && len(events) > 0 {
 				if events[0].Error == nil {
-					t.Error("Expected event to have an error, but Error was nil")
+					t.Errorf("Expected event to have an error, but Error was nil")
 				} else if events[0].Error.Message != "insufficient resources" {
 					t.Errorf("Error message = %q, want %q", events[0].Error.Message, "insufficient resources")
 				}
@@ -86,7 +96,7 @@ not valid json
 	}
 }
 
-// parseTaskEvents is a helper function that mimics the logic in GetTaskEvents
+// parseTaskEvents is a helper function that mimics the logic in GetTaskEvents.
 func parseTaskEvents(output string) []TaskEvent {
 	if output == "" {
 		return []TaskEvent{}
@@ -116,7 +126,8 @@ func parseTaskEvents(output string) []TaskEvent {
 			} `json:"error,omitempty"`
 		}
 
-		if err := json.Unmarshal([]byte(line), &boshEvent); err != nil {
+		err := json.Unmarshal([]byte(line), &boshEvent)
+		if err != nil {
 			continue
 		}
 
@@ -144,20 +155,23 @@ func parseTaskEvents(output string) []TaskEvent {
 	return events
 }
 
-// TestLoggerInterface tests that our logger types implement the Logger interface
+// TestLoggerInterface tests that our logger types implement the Logger interface.
 func TestLoggerInterface(t *testing.T) {
-	// Test noOpLogger implements Logger
-	var _ Logger = (*noOpLogger)(nil)
+	t.Parallel()
+	// Test NoOpLogger implements Logger
+	var _ Logger = (*logger.NoOpLogger)(nil)
 
-	// Test that noOpLogger methods don't panic
-	logger := &noOpLogger{}
-	logger.Info("test")
-	logger.Debug("test")
-	logger.Error("test")
+	// Test that NoOpLogger methods don't panic
+	testLogger := &logger.NoOpLogger{}
+	testLogger.Infof("test")
+	testLogger.Debugf("test")
+	testLogger.Errorf("test")
 }
 
-// TestExtractDeploymentName tests the deployment name extraction from manifest
+// TestExtractDeploymentName tests the deployment name extraction from manifest.
 func TestExtractDeploymentName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		manifest string
@@ -198,30 +212,36 @@ releases: []`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractDeploymentName(tt.manifest)
+			t.Parallel()
+
+			got := ExtractDeploymentName(tt.manifest)
 			if got != tt.want {
-				t.Errorf("extractDeploymentName() = %q, want %q", got, tt.want)
+				t.Errorf("ExtractDeploymentName() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestBufferedTaskReporter_Concurrent tests concurrent access to BufferedTaskReporter
+// TestBufferedTaskReporter_Concurrent tests concurrent access to BufferedTaskReporter.
 func TestBufferedTaskReporter_Concurrent(t *testing.T) {
+	t.Parallel()
+
 	reporter := &BufferedTaskReporter{}
 
 	// Start multiple goroutines writing chunks
 	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+
+	for i := range 10 {
 		go func(id int) {
 			chunk := []byte(string(rune('A' + id)))
 			reporter.TaskOutputChunk(1, chunk)
+
 			done <- true
 		}(i)
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -232,7 +252,7 @@ func TestBufferedTaskReporter_Concurrent(t *testing.T) {
 	}
 
 	// Check that all characters are present (order doesn't matter due to concurrency)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		char := string(rune('A' + i))
 		if !strings.Contains(output, char) {
 			t.Errorf("Output missing character %s", char)
@@ -240,13 +260,11 @@ func TestBufferedTaskReporter_Concurrent(t *testing.T) {
 	}
 }
 
-// TestBuildFactoryConfig tests the factory config building
+// TestBuildFactoryConfig tests the factory config building.
 func TestBuildFactoryConfig(t *testing.T) {
+	t.Parallel()
 	// Set test mode to skip network calls
-	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	tests := []struct {
 		name    string
@@ -272,6 +290,8 @@ func TestBuildFactoryConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			config := Config{
 				Address:  tt.address,
 				Username: "admin",
@@ -287,20 +307,19 @@ func TestBuildFactoryConfig(t *testing.T) {
 			if err != nil {
 				t.Errorf("Unexpected error creating director: %v", err)
 			}
+
 			if director == nil {
-				t.Error("Expected director to be created")
+				t.Errorf("Expected director to be created")
 			}
 		})
 	}
 }
 
-// TestDirectorAdapterCreation tests creating a DirectorAdapter with various configs
+// TestDirectorAdapterCreation tests creating a DirectorAdapter with various configs.
 func TestDirectorAdapterCreation(t *testing.T) {
+	t.Parallel()
 	// Set test mode to skip network calls
-	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	tests := []struct {
 		name      string
@@ -330,6 +349,8 @@ func TestDirectorAdapterCreation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			_, err := NewDirectorAdapter(tt.config)
 			if (err != nil) != tt.wantError {
 				t.Errorf("NewDirectorAdapter() error = %v, wantError %v", err, tt.wantError)
@@ -338,25 +359,27 @@ func TestDirectorAdapterCreation(t *testing.T) {
 	}
 }
 
-// testLogger is a test implementation of the Logger interface
+// testLogger is a test implementation of the Logger interface.
 type testLogger struct {
 	t *testing.T
 }
 
-func (l *testLogger) Info(format string, args ...interface{}) {
+func (l *testLogger) Infof(format string, args ...interface{}) {
 	l.t.Logf("[INFO] "+format, args...)
 }
 
-func (l *testLogger) Debug(format string, args ...interface{}) {
+func (l *testLogger) Debugf(format string, args ...interface{}) {
 	l.t.Logf("[DEBUG] "+format, args...)
 }
 
-func (l *testLogger) Error(format string, args ...interface{}) {
+func (l *testLogger) Errorf(format string, args ...interface{}) {
 	l.t.Logf("[ERROR] "+format, args...)
 }
 
-// TestConvertDirectorTask tests the task conversion helper
+// TestConvertDirectorTask tests the task conversion helper.
 func TestConvertDirectorTask(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 
 	// We can't easily test convertDirectorTask as it's private
@@ -386,23 +409,25 @@ func TestConvertDirectorTask(t *testing.T) {
 	task.EndedAt = &endTime
 
 	if task.EndedAt == nil {
-		t.Error("Task.EndedAt should not be nil for completed task")
+		t.Errorf("Task.EndedAt should not be nil for completed task")
 	}
 }
 
-// Benchmark tests
+// Benchmark tests.
 func BenchmarkBufferedTaskReporter(b *testing.B) {
 	reporter := &BufferedTaskReporter{}
 	chunk := bytes.Repeat([]byte("x"), 1024) // 1KB chunk
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for range b.N {
 		reporter.TaskOutputChunk(1, chunk)
 	}
 }
 
-// TestDeleteResurrectionConfig tests the config name formatting logic
+// TestDeleteResurrectionConfig tests the config name formatting logic.
 func TestDeleteResurrectionConfig(t *testing.T) {
+	t.Parallel()
 	// Test the config name formatting logic since we can't easily mock the BOSH director
 	tests := []struct {
 		name       string
@@ -428,6 +453,7 @@ func TestDeleteResurrectionConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			// Test the config name formation logic
 			configName := "blacksmith." + tt.deployment
 			if configName != tt.expected {
@@ -442,13 +468,15 @@ func BenchmarkParseTaskEvents(b *testing.B) {
 	events := strings.Repeat(eventJSON+"\n", 100) // 100 events
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for range b.N {
 		parseTaskEvents(events)
 	}
 }
 
-// TestGetConfigsReturnsOnlyActive tests that GetConfigs returns only active configs
+// TestGetConfigsReturnsOnlyActive tests that GetConfigs returns only active configs.
 func TestGetConfigsReturnsOnlyActive(t *testing.T) {
+	t.Parallel()
 	// This test documents the expected behavior of GetConfigs:
 	// It should return only the currently active version of each config,
 	// not all versions. This is achieved by using limit=1 per config

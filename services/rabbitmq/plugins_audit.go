@@ -3,6 +3,7 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -12,13 +13,20 @@ import (
 	"github.com/hashicorp/vault/api"
 )
 
-// PluginsAuditService provides audit logging functionality for rabbitmq-plugins commands
+// Static errors for err113 compliance.
+var (
+	ErrVaultClientNotConfigured = errors.New("vault client not configured")
+	ErrVaultNotInitialized      = errors.New("vault not initialized")
+	ErrVaultIsSealed            = errors.New("vault is sealed")
+)
+
+// PluginsAuditService provides audit logging functionality for rabbitmq-plugins commands.
 type PluginsAuditService struct {
 	vaultClient *api.Client
 	logger      Logger
 }
 
-// PluginsAuditEntry represents an audit log entry for a rabbitmq-plugins command execution
+// PluginsAuditEntry represents an audit log entry for a rabbitmq-plugins command execution.
 type PluginsAuditEntry struct {
 	Timestamp   int64                  `json:"timestamp"`
 	InstanceID  string                 `json:"instance_id"`
@@ -36,7 +44,7 @@ type PluginsAuditEntry struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// PluginsAuditSummary provides a summary of audit entries
+// PluginsAuditSummary provides a summary of audit entries.
 type PluginsAuditSummary struct {
 	TotalEntries   int              `json:"total_entries"`
 	SuccessfulCmds int              `json:"successful_commands"`
@@ -49,7 +57,7 @@ type PluginsAuditSummary struct {
 	FirstExecution int64            `json:"first_execution"`
 }
 
-// PluginsHistoryEntry represents a command execution history entry
+// PluginsHistoryEntry represents a command execution history entry.
 type PluginsHistoryEntry struct {
 	Timestamp    int64    `json:"timestamp"`
 	Category     string   `json:"category"`
@@ -62,7 +70,7 @@ type PluginsHistoryEntry struct {
 	OutputSample string   `json:"output_sample"`
 }
 
-// NewPluginsAuditService creates a new plugins audit service
+// NewPluginsAuditService creates a new plugins audit service.
 func NewPluginsAuditService(vaultClient *api.Client, logger Logger) *PluginsAuditService {
 	if logger == nil {
 		logger = &noOpLogger{}
@@ -74,11 +82,12 @@ func NewPluginsAuditService(vaultClient *api.Client, logger Logger) *PluginsAudi
 	}
 }
 
-// LogExecution logs a rabbitmq-plugins command execution to Vault
+// LogExecution logs a rabbitmq-plugins command execution to Vault.
 func (a *PluginsAuditService) LogExecution(ctx context.Context, execution *RabbitMQPluginsExecution, user, clientIP, executionID string, duration int64) error {
 	if a.vaultClient == nil {
-		a.logger.Error("Vault client not configured, skipping audit logging")
-		return fmt.Errorf("vault client not configured")
+		a.logger.Errorf("Vault client not configured, skipping audit logging")
+
+		return ErrVaultClientNotConfigured
 	}
 
 	// Create audit entry
@@ -107,19 +116,22 @@ func (a *PluginsAuditService) LogExecution(ctx context.Context, execution *Rabbi
 	// Convert entry to map for Vault storage
 	entryData, err := a.entryToMap(entry)
 	if err != nil {
-		a.logger.Error("Failed to convert audit entry to map: %v", err)
-		return fmt.Errorf("failed to convert audit entry: %v", err)
+		a.logger.Errorf("Failed to convert audit entry to map: %v", err)
+
+		return fmt.Errorf("failed to convert audit entry: %w", err)
 	}
 
 	// First, read existing audit data
 	existingSecret, err := a.vaultClient.Logical().Read(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to read existing audit data from Vault: %v", err)
-		return fmt.Errorf("failed to read existing audit data: %v", err)
+		a.logger.Errorf("Failed to read existing audit data from Vault: %v", err)
+
+		return fmt.Errorf("failed to read existing audit data: %w", err)
 	}
 
 	// Prepare the data map
 	var dataMap map[string]interface{}
+
 	if existingSecret != nil && existingSecret.Data != nil {
 		// For KV v2, the actual data is nested under "data" field
 		if data, ok := existingSecret.Data["data"].(map[string]interface{}); ok {
@@ -132,7 +144,7 @@ func (a *PluginsAuditService) LogExecution(ctx context.Context, execution *Rabbi
 	}
 
 	// Add the new entry with timestamp as key
-	timestampKey := fmt.Sprintf("%d", execution.Timestamp)
+	timestampKey := strconv.FormatInt(execution.Timestamp, 10)
 	dataMap[timestampKey] = entryData
 
 	// Store in Vault (KV v2 format requires data wrapper)
@@ -143,27 +155,31 @@ func (a *PluginsAuditService) LogExecution(ctx context.Context, execution *Rabbi
 	// Write to Vault
 	_, err = a.vaultClient.Logical().Write(vaultPath, vaultData)
 	if err != nil {
-		a.logger.Error("Failed to write audit entry to Vault at %s: %v", vaultPath, err)
-		return fmt.Errorf("failed to write to Vault: %v", err)
+		a.logger.Errorf("Failed to write audit entry to Vault at %s: %v", vaultPath, err)
+
+		return fmt.Errorf("failed to write to Vault: %w", err)
 	}
 
-	a.logger.Info("Successfully logged rabbitmq-plugins audit entry for instance %s, command %s with key %s",
+	a.logger.Infof("Successfully logged rabbitmq-plugins audit entry for instance %s, command %s with key %s",
 		execution.InstanceID, execution.Command, timestampKey)
+
 	return nil
 }
 
-// GetHistory retrieves command execution history for an instance
+// GetHistory retrieves command execution history for an instance.
 func (a *PluginsAuditService) GetHistory(ctx context.Context, instanceID string, limit int) ([]PluginsHistoryEntry, error) {
 	if a.vaultClient == nil {
-		return nil, fmt.Errorf("vault client not configured")
+		return nil, ErrVaultClientNotConfigured
 	}
 
 	// Read the audit endpoint directly
 	vaultPath := a.generateVaultPath(instanceID)
+
 	secret, err := a.vaultClient.Logical().Read(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to read audit entries from Vault: %v", err)
-		return nil, fmt.Errorf("failed to read audit entries: %v", err)
+		a.logger.Errorf("Failed to read audit entries from Vault: %v", err)
+
+		return nil, fmt.Errorf("failed to read audit entries: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
@@ -183,13 +199,17 @@ func (a *PluginsAuditService) GetHistory(ctx context.Context, instanceID string,
 		timestamp int64
 		data      map[string]interface{}
 	}
+
 	var timestampEntries []timestampEntry
 
 	for key, value := range dataMap {
 		// Parse timestamp from key
 		var timestamp int64
-		if _, err := fmt.Sscanf(key, "%d", &timestamp); err != nil {
-			a.logger.Error("Failed to parse timestamp from key %s: %v", key, err)
+
+		_, err := fmt.Sscanf(key, "%d", &timestamp)
+		if err != nil {
+			a.logger.Errorf("Failed to parse timestamp from key %s: %v", key, err)
+
 			continue
 		}
 
@@ -208,6 +228,7 @@ func (a *PluginsAuditService) GetHistory(ctx context.Context, instanceID string,
 
 	// Convert to history entries (limit the results)
 	var history []PluginsHistoryEntry
+
 	for i, te := range timestampEntries {
 		if limit > 0 && i >= limit {
 			break
@@ -222,7 +243,7 @@ func (a *PluginsAuditService) GetHistory(ctx context.Context, instanceID string,
 	return history, nil
 }
 
-// GetAuditSummary retrieves audit summary statistics for an instance
+// GetAuditSummary retrieves audit summary statistics for an instance.
 func (a *PluginsAuditService) GetAuditSummary(ctx context.Context, instanceID string) (*PluginsAuditSummary, error) {
 	history, err := a.GetHistory(ctx, instanceID, 0) // Get all entries for summary
 	if err != nil {
@@ -270,53 +291,54 @@ func (a *PluginsAuditService) GetAuditSummary(ctx context.Context, instanceID st
 	return summary, nil
 }
 
-// ClearHistory clears command execution history for an instance
+// ClearHistory clears command execution history for an instance.
 func (a *PluginsAuditService) ClearHistory(ctx context.Context, instanceID string) error {
 	if a.vaultClient == nil {
-		return fmt.Errorf("vault client not configured")
+		return ErrVaultClientNotConfigured
 	}
 
 	// Delete the entire audit endpoint
 	vaultPath := a.generateVaultPath(instanceID)
+
 	_, err := a.vaultClient.Logical().Delete(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to delete audit data at %s: %v", vaultPath, err)
-		return fmt.Errorf("failed to clear audit history: %v", err)
+		a.logger.Errorf("Failed to delete audit data at %s: %v", vaultPath, err)
+
+		return fmt.Errorf("failed to clear audit history: %w", err)
 	}
 
-	a.logger.Info("Cleared all rabbitmq-plugins audit entries for instance %s", instanceID)
+	a.logger.Infof("Cleared all rabbitmq-plugins audit entries for instance %s", instanceID)
+
 	return nil
 }
 
-// generateVaultPath generates the Vault path for the audit endpoint (KV v2 format)
+// generateVaultPath generates the Vault path for the audit endpoint (KV v2 format).
 func (a *PluginsAuditService) generateVaultPath(instanceID string) string {
 	return fmt.Sprintf("secret/data/%s/rabbitmq-plugins/audit", instanceID)
 }
 
 // generateVaultKey generates a Vault key for storing audit entries
 // Deprecated: Use generateVaultPath instead for the new audit structure
-func (a *PluginsAuditService) generateVaultKey(instanceID string, timestamp int64) string {
-	return fmt.Sprintf("secret/data/%s/rabbitmq-plugins/audit/%d", instanceID, timestamp)
-}
 
-// entryToMap converts an audit entry to a map for Vault storage
+// entryToMap converts an audit entry to a map for Vault storage.
 func (a *PluginsAuditService) entryToMap(entry *PluginsAuditEntry) (map[string]interface{}, error) {
 	// Convert to JSON and back to map to handle nested structures
 	jsonData, err := json.Marshal(entry)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal plugin audit entry to JSON: %w", err)
 	}
 
 	var result map[string]interface{}
+
 	err = json.Unmarshal(jsonData, &result)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal plugin audit data from JSON: %w", err)
 	}
 
 	return result, nil
 }
 
-// mapToHistoryEntry converts a map from Vault to a history entry
+// mapToHistoryEntry converts a map from Vault to a history entry.
 func (a *PluginsAuditService) mapToHistoryEntry(data map[string]interface{}) *PluginsHistoryEntry {
 	entry := &PluginsHistoryEntry{}
 
@@ -363,8 +385,8 @@ func (a *PluginsAuditService) mapToHistoryEntry(data map[string]interface{}) *Pl
 
 	if output, ok := data["output"].(string); ok {
 		// Truncate output for history display (first 200 characters)
-		if len(output) > 200 {
-			entry.OutputSample = output[:200] + "..."
+		if len(output) > MaxOutputLength {
+			entry.OutputSample = output[:MaxOutputLength] + "..."
 		} else {
 			entry.OutputSample = output
 		}
@@ -374,38 +396,31 @@ func (a *PluginsAuditService) mapToHistoryEntry(data map[string]interface{}) *Pl
 }
 
 // extractTimestampFromKey extracts timestamp from a Vault key
-func (a *PluginsAuditService) extractTimestampFromKey(key string) int64 {
-	// Keys should be just the timestamp
-	if ts, err := strconv.ParseInt(key, 10, 64); err == nil {
-		return ts
-	}
-	return 0
-}
 
-// IsHealthy checks if the audit service is healthy
+// IsHealthy checks if the audit service is healthy.
 func (a *PluginsAuditService) IsHealthy(ctx context.Context) error {
 	if a.vaultClient == nil {
-		return fmt.Errorf("vault client not configured")
+		return ErrVaultClientNotConfigured
 	}
 
 	// Try to read Vault health
 	health, err := a.vaultClient.Sys().Health()
 	if err != nil {
-		return fmt.Errorf("vault health check failed: %v", err)
+		return fmt.Errorf("vault health check failed: %w", err)
 	}
 
 	if !health.Initialized {
-		return fmt.Errorf("vault not initialized")
+		return ErrVaultNotInitialized
 	}
 
 	if health.Sealed {
-		return fmt.Errorf("vault is sealed")
+		return ErrVaultIsSealed
 	}
 
 	return nil
 }
 
-// GetPluginOperationHistory retrieves history filtered by plugin operations
+// GetPluginOperationHistory retrieves history filtered by plugin operations.
 func (a *PluginsAuditService) GetPluginOperationHistory(ctx context.Context, instanceID, operation string, limit int) ([]PluginsHistoryEntry, error) {
 	allHistory, err := a.GetHistory(ctx, instanceID, 0)
 	if err != nil {
@@ -413,6 +428,7 @@ func (a *PluginsAuditService) GetPluginOperationHistory(ctx context.Context, ins
 	}
 
 	var filteredHistory []PluginsHistoryEntry
+
 	for _, entry := range allHistory {
 		if operation == "" || entry.Command == operation {
 			filteredHistory = append(filteredHistory, entry)
@@ -425,16 +441,17 @@ func (a *PluginsAuditService) GetPluginOperationHistory(ctx context.Context, ins
 	return filteredHistory, nil
 }
 
-// GetRecentActivity retrieves recent plugin activity
+// GetRecentActivity retrieves recent plugin activity.
 func (a *PluginsAuditService) GetRecentActivity(ctx context.Context, instanceID string, hours int) ([]PluginsHistoryEntry, error) {
-	allHistory, err := a.GetHistory(ctx, instanceID, 100) // Get recent 100 entries
+	allHistory, err := a.GetHistory(ctx, instanceID, DefaultHistoryLimit) // Get recent entries
 	if err != nil {
 		return nil, err
 	}
 
-	cutoffTime := time.Now().Add(-time.Duration(hours)*time.Hour).Unix() * 1000 // Convert to milliseconds
+	cutoffTime := time.Now().Add(-time.Duration(hours)*time.Hour).Unix() * int64(MillisecondsPerSecond) // Convert to milliseconds
 
 	var recentHistory []PluginsHistoryEntry
+
 	for _, entry := range allHistory {
 		if entry.Timestamp >= cutoffTime {
 			recentHistory = append(recentHistory, entry)
@@ -444,9 +461,9 @@ func (a *PluginsAuditService) GetRecentActivity(ctx context.Context, instanceID 
 	return recentHistory, nil
 }
 
-// FormatHistoryEntry formats a history entry for display
+// FormatHistoryEntry formats a history entry for display.
 func (a *PluginsAuditService) FormatHistoryEntry(entry *PluginsHistoryEntry) string {
-	timestamp := time.Unix(entry.Timestamp/1000, 0).Format("2006-01-02 15:04:05")
+	timestamp := time.Unix(entry.Timestamp/int64(MillisecondsPerSecond), 0).Format("2006-01-02 15:04:05")
 
 	status := "✅"
 	if !entry.Success {
@@ -458,7 +475,7 @@ func (a *PluginsAuditService) FormatHistoryEntry(entry *PluginsHistoryEntry) str
 		args = " " + strings.Join(entry.Arguments, " ")
 	}
 
-	duration := fmt.Sprintf("%.2fs", float64(entry.Duration)/1000.0)
+	duration := fmt.Sprintf("%.2fs", float64(entry.Duration)/MillisecondsPerSecond)
 
 	return fmt.Sprintf("[%s] %s %s%s - %s (%s)",
 		timestamp, status, entry.Command, args, entry.User, duration)

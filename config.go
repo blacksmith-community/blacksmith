@@ -1,10 +1,20 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"blacksmith/pkg/logger"
 	"gopkg.in/yaml.v2"
+)
+
+// Static errors for err113 compliance.
+var (
+	ErrVaultAddressNotSet = errors.New("Vault Address is not set")
+	ErrBOSHAddressNotSet  = errors.New("BOSH Address is not set")
+	ErrBOSHUsernameNotSet = errors.New("BOSH Username is not set")
+	ErrBOSHPasswordNotSet = errors.New("BOSH Password is not set")
 )
 
 type Config struct {
@@ -23,18 +33,19 @@ type Config struct {
 	Forges       ForgesConfig       `yaml:"forges"`
 }
 
-// ServicesConfig configures service-specific behavior
+// ServicesConfig configures service-specific behavior.
 type ServicesConfig struct {
 	SkipTLSVerify []string `yaml:"skip_tls_verify"` // List of services to skip TLS verification for (e.g., ["rabbitmq", "redis"] or ["all"])
 }
 
-// ShouldSkipTLSVerify checks if TLS verification should be skipped for the given service
+// ShouldSkipTLSVerify checks if TLS verification should be skipped for the given service.
 func (s *ServicesConfig) ShouldSkipTLSVerify(serviceName string) bool {
 	for _, service := range s.SkipTLSVerify {
 		if service == "all" || service == serviceName {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -44,7 +55,7 @@ type ForgesConfig struct {
 	ScanPatterns []string `yaml:"scan-patterns"`
 }
 
-// ReconcilerBackupConfig holds backup configuration for the reconciler
+// ReconcilerBackupConfig holds backup configuration for the reconciler.
 type ReconcilerBackupConfig struct {
 	Enabled          bool `yaml:"enabled"`
 	RetentionCount   int  `yaml:"retention_count"`
@@ -55,7 +66,7 @@ type ReconcilerBackupConfig struct {
 	BackupOnDelete   bool `yaml:"backup_on_delete"`
 }
 
-// ReconcilerConfig holds configuration for the deployment reconciler
+// ReconcilerConfig holds configuration for the deployment reconciler.
 type ReconcilerConfig struct {
 	Enabled        bool                   `yaml:"enabled"`
 	Interval       string                 `yaml:"interval"`
@@ -68,7 +79,7 @@ type ReconcilerConfig struct {
 	Backup         ReconcilerBackupConfig `yaml:"backup"`
 }
 
-// VMMonitoringConfig holds configuration for VM monitoring
+// VMMonitoringConfig holds configuration for VM monitoring.
 type VMMonitoringConfig struct {
 	Enabled        *bool `yaml:"enabled"`         // Pointer to distinguish between false and unset
 	NormalInterval int   `yaml:"normal_interval"` // Seconds between checks for healthy deployments
@@ -101,7 +112,7 @@ type BrokerConfig struct {
 	Compression  CompressionConfig `yaml:"compression"` // HTTP compression configuration
 }
 
-// CFBrokerConfig holds configuration for CF broker registration
+// CFBrokerConfig holds configuration for CF broker registration.
 type CFBrokerConfig struct {
 	Enabled     bool                   `yaml:"enabled"`      // Whether CF registration is enabled
 	BrokerURL   string                 `yaml:"broker_url"`   // Public URL for this broker that CF can reach
@@ -111,7 +122,7 @@ type CFBrokerConfig struct {
 	APIs        map[string]CFAPIConfig `yaml:"apis"`         // CF API endpoints configuration
 }
 
-// CompressionConfig defines HTTP compression settings
+// CompressionConfig defines HTTP compression settings.
 type CompressionConfig struct {
 	Enabled      bool     `yaml:"enabled"`       // Whether compression is enabled (default: true)
 	Types        []string `yaml:"types"`         // Compression types to support: gzip, deflate, brotli (default: ["gzip"])
@@ -120,7 +131,7 @@ type CompressionConfig struct {
 	ContentTypes []string `yaml:"content_types"` // MIME types to compress (default: text/*, application/json, etc.)
 }
 
-// CFAPIConfig represents a Cloud Foundry API endpoint configuration
+// CFAPIConfig represents a Cloud Foundry API endpoint configuration.
 type CFAPIConfig struct {
 	Name     string `yaml:"name"`     // Display name for the CF endpoint
 	Endpoint string `yaml:"endpoint"` // CF API endpoint URL
@@ -184,7 +195,7 @@ type BOSHConfig struct {
 	SSH               SSHConfig `yaml:"ssh,omitempty"`      // Deprecated: Use top-level SSH config instead
 }
 
-// SSHConfig holds SSH-related configuration
+// SSHConfig holds SSH-related configuration.
 type SSHConfig struct {
 	Enabled               bool            `yaml:"enabled"`
 	UITerminalEnabled     bool            `yaml:"ui_terminal_enabled"`      // Enable/disable SSH terminal UI functionality
@@ -202,7 +213,7 @@ type SSHConfig struct {
 	WebSocket             WebSocketConfig `yaml:"websocket"`                // WebSocket configuration
 }
 
-// WebSocketConfig holds WebSocket-specific configuration
+// WebSocketConfig holds WebSocket-specific configuration.
 type WebSocketConfig struct {
 	Enabled           *bool `yaml:"enabled"` // Pointer to distinguish between false and unset
 	ReadBufferSize    int   `yaml:"read_buffer_size"`
@@ -216,24 +227,62 @@ type WebSocketConfig struct {
 	EnableCompression bool  `yaml:"enable_compression"`
 }
 
-func ReadConfig(path string) (c Config, err error) {
+// ReadConfig reads and validates configuration from file.
+func ReadConfig(path string) (Config, error) {
+	config, err := loadConfigFromFile(path)
+	if err != nil {
+		return config, err
+	}
+
+	setBrokerDefaults(&config)
+	setTLSDefaults(&config)
+	setCompressionDefaults(&config)
+
+	if err = validateRequiredFields(&config); err != nil {
+		return config, err
+	}
+
+	if err = setBOSHDefaults(&config); err != nil {
+		return config, err
+	}
+
+	if err = setEnvironmentVariables(&config); err != nil {
+		return config, err
+	}
+
+	setVaultDefaults(&config)
+	setVMMonitoringDefaults(&config)
+	setReconcilerDefaults(&config)
+	setSSHDefaults(&config)
+
+	return config, nil
+}
+
+// loadConfigFromFile reads YAML config file.
+func loadConfigFromFile(path string) (Config, error) {
+	var config Config
+
 	b, err := safeReadFile(path)
 	if err != nil {
-		return
+		return config, err
 	}
 
-	err = yaml.Unmarshal(b, &c)
-
+	err = yaml.Unmarshal(b, &config)
 	if err != nil {
-		return
+		return config, fmt.Errorf("failed to unmarshal config YAML: %w", err)
 	}
 
+	return config, nil
+}
+
+// setBrokerDefaults sets default values for broker configuration.
+func setBrokerDefaults(c *Config) {
 	if c.Broker.Username == "" {
-		c.Broker.Username = "blacksmith"
+		c.Broker.Username = serviceTypeBlacksmith
 	}
 
 	if c.Broker.Password == "" {
-		c.Broker.Password = "blacksmith"
+		c.Broker.Password = serviceTypeBlacksmith
 	}
 
 	if c.Broker.Port == "" {
@@ -243,31 +292,41 @@ func ReadConfig(path string) (c Config, err error) {
 	if c.Broker.BindIP == "" {
 		c.Broker.BindIP = "0.0.0.0"
 	}
+}
 
-	// TLS configuration defaults
+// setTLSDefaults sets default values for TLS configuration.
+func setTLSDefaults(c *Config) {
 	if c.Broker.TLS.Port == "" {
 		c.Broker.TLS.Port = "443"
 	}
+
 	if c.Broker.TLS.Protocols == "" {
 		c.Broker.TLS.Protocols = "TLSv1.2 TLSv1.3"
 	}
+
 	if c.Broker.TLS.Ciphers == "" {
 		c.Broker.TLS.Ciphers = "ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:HIGH:!MD5:!aNULL:!EDH"
 	}
+
 	if c.Broker.TLS.ReuseAfter == 0 {
 		c.Broker.TLS.ReuseAfter = 2
 	}
+}
 
-	// Compression configuration defaults - enabled by default for better web performance
+// setCompressionDefaults sets default values for compression configuration.
+func setCompressionDefaults(c *Config) {
 	if len(c.Broker.Compression.Types) == 0 {
-		c.Broker.Compression.Types = []string{"gzip"} // Start with just gzip for maximum compatibility
+		c.Broker.Compression.Types = []string{"gzip"}
 	}
+
 	if c.Broker.Compression.Level == 0 {
 		c.Broker.Compression.Level = -1 // Use default compression level
 	}
+
 	if c.Broker.Compression.MinSize == 0 {
 		c.Broker.Compression.MinSize = 1024 // 1KB minimum size
 	}
+
 	if len(c.Broker.Compression.ContentTypes) == 0 {
 		c.Broker.Compression.ContentTypes = []string{
 			"text/html",
@@ -285,77 +344,105 @@ func ReadConfig(path string) (c Config, err error) {
 	}
 	// Enable compression by default
 	c.Broker.Compression.Enabled = true
+}
 
+// validateRequiredFields validates that required configuration fields are set.
+func validateRequiredFields(c *Config) error {
 	if c.Vault.Address == "" {
-		return c, fmt.Errorf("Vault Address is not set")
+		return ErrVaultAddressNotSet
 	}
 
 	if c.BOSH.Address == "" {
-		return c, fmt.Errorf("BOSH Address is not set")
+		return ErrBOSHAddressNotSet
 	}
 
 	if c.BOSH.Username == "" {
-		return c, fmt.Errorf("BOSH Username is not set")
+		return ErrBOSHUsernameNotSet
 	}
 
 	if c.BOSH.Password == "" {
-		return c, fmt.Errorf("BOSH Password is not set")
+		return ErrBOSHPasswordNotSet
 	}
 
+	return nil
+}
+
+// setBOSHDefaults sets default values for BOSH configuration.
+func setBOSHDefaults(c *Config) error {
 	if c.BOSH.CCPath != "" {
 		/* cloud-config provided; try to read it. */
 		b, err := safeReadFile(c.BOSH.CCPath)
 		if err != nil {
-			return c, fmt.Errorf("BOSH cloud-config file '%s': %s", c.BOSH.CCPath, err)
+			return fmt.Errorf("BOSH cloud-config file '%s': %w", c.BOSH.CCPath, err)
 		}
+
 		c.BOSH.CloudConfig = string(b)
 	}
 
 	if c.BOSH.Network == "" {
-		c.BOSH.Network = "blacksmith" // Default
+		c.BOSH.Network = serviceTypeBlacksmith // Default
 	}
 
 	// BOSH connection pool defaults
 	if c.BOSH.MaxConnections == 0 {
 		c.BOSH.MaxConnections = 4 // Default to 4 concurrent connections
 	}
+
 	if c.BOSH.ConnectionTimeout == 0 {
 		c.BOSH.ConnectionTimeout = 300 // Default 5 minutes timeout
 	}
 
-	if err := os.Setenv("BOSH_NETWORK", c.BOSH.Network); err != nil { // Required by manifest.go
-		return Config{}, fmt.Errorf("failed to set BOSH_NETWORK environment variable: %s", err)
+	return nil
+}
+
+// setEnvironmentVariables sets required environment variables.
+func setEnvironmentVariables(c *Config) error {
+	err := os.Setenv("BOSH_NETWORK", c.BOSH.Network)
+	if err != nil {
+		return fmt.Errorf("failed to set BOSH_NETWORK environment variable: %w", err)
 	}
 
-	if err := os.Setenv("VAULT_ADDR", c.Vault.Address); err != nil {
-		return Config{}, fmt.Errorf("failed to set VAULT_ADDR environment variable: %s", err)
+	err = os.Setenv("VAULT_ADDR", c.Vault.Address)
+	if err != nil {
+		return fmt.Errorf("failed to set VAULT_ADDR environment variable: %w", err)
 	}
 
-	// Vault auto-unseal defaults
+	return nil
+}
+
+// setVaultDefaults sets default values for Vault configuration.
+func setVaultDefaults(c *Config) {
 	if !c.Vault.AutoUnseal {
-		// default enabled
-		c.Vault.AutoUnseal = true
+		c.Vault.AutoUnseal = true // default enabled
 	}
+
 	if c.Vault.HealthCheckInterval == "" {
 		c.Vault.HealthCheckInterval = "15s"
 	}
+
 	if c.Vault.UnsealCooldown == "" {
 		c.Vault.UnsealCooldown = "30s"
 	}
+}
 
-	// VM monitoring defaults
+// setVMMonitoringDefaults sets default values for VM monitoring configuration.
+func setVMMonitoringDefaults(c *Config) {
 	if c.VMMonitoring.NormalInterval == 0 {
 		c.VMMonitoring.NormalInterval = 3600 // 1 hour
 	}
+
 	if c.VMMonitoring.FailedInterval == 0 {
 		c.VMMonitoring.FailedInterval = 300 // 5 minutes
 	}
+
 	if c.VMMonitoring.MaxRetries == 0 {
 		c.VMMonitoring.MaxRetries = 3
 	}
+
 	if c.VMMonitoring.Timeout == 0 {
 		c.VMMonitoring.Timeout = 30
 	}
+
 	if c.VMMonitoring.MaxConcurrent == 0 {
 		c.VMMonitoring.MaxConcurrent = 3
 	}
@@ -364,7 +451,10 @@ func ReadConfig(path string) (c Config, err error) {
 		enabled := true
 		c.VMMonitoring.Enabled = &enabled
 	}
+}
 
+// setReconcilerDefaults sets default values for reconciler configuration.
+func setReconcilerDefaults(c *Config) {
 	// Reconciler is enabled by default
 	if !c.Reconciler.Enabled {
 		c.Reconciler.Enabled = true
@@ -374,83 +464,124 @@ func ReadConfig(path string) (c Config, err error) {
 	if !c.Reconciler.Backup.Enabled {
 		c.Reconciler.Backup.Enabled = true
 	}
+
 	if c.Reconciler.Backup.RetentionCount == 0 {
 		c.Reconciler.Backup.RetentionCount = 5
 	}
+
 	if c.Reconciler.Backup.RetentionDays == 0 {
 		c.Reconciler.Backup.RetentionDays = 0 // Disabled by default
 	}
+
 	if c.Reconciler.Backup.CompressionLevel == 0 {
 		c.Reconciler.Backup.CompressionLevel = 9 // Maximum compression
 	}
+
 	if !c.Reconciler.Backup.CleanupEnabled {
 		c.Reconciler.Backup.CleanupEnabled = true
 	}
+
 	if !c.Reconciler.Backup.BackupOnUpdate {
 		c.Reconciler.Backup.BackupOnUpdate = true
 	}
+
 	if !c.Reconciler.Backup.BackupOnDelete {
 		c.Reconciler.Backup.BackupOnDelete = true
 	}
+}
 
-	// Migrate SSH configuration from old location to new location
+// setSSHDefaults sets default values for SSH configuration.
+func setSSHDefaults(c *Config) {
+	migrateSSHConfiguration(c)
+	setSSHEnabledDefaults(c)
+	setSSHTimeoutDefaults(c)
+	setSSHLimitDefaults(c)
+	setSSHRetryDefaults(c)
+	clearDeprecatedSSHConfig(c)
+}
+
+// migrateSSHConfiguration migrates SSH configuration from old location to new location.
+func migrateSSHConfiguration(c *Config) {
 	// Support both bosh.ssh (deprecated) and top-level ssh
 	if c.BOSH.SSH.Enabled || c.BOSH.SSH.Timeout > 0 || c.BOSH.SSH.MaxConcurrent > 0 {
 		// Old configuration exists under bosh.ssh
 		if !c.SSH.Enabled && c.SSH.Timeout == 0 {
 			// New location is empty, migrate from old location
 			c.SSH = c.BOSH.SSH
-			Logger.Wrap("config").Info("Migrated SSH configuration from bosh.ssh to top-level ssh. Please update your configuration file.")
+
+			logger.Get().Named("config").Info("Migrated SSH configuration from bosh.ssh to top-level ssh. Please update your configuration file.")
 		}
 	}
+}
 
+// setSSHEnabledDefaults sets default enabled flags for SSH features.
+func setSSHEnabledDefaults(c *Config) {
 	// SSH is enabled by default
 	if !c.SSH.Enabled {
 		c.SSH.Enabled = true
 	}
-
 	// SSH UI Terminal is enabled by default
 	if !c.SSH.UITerminalEnabled {
 		c.SSH.UITerminalEnabled = true
 	}
-
 	// SSH WebSocket is enabled by default
 	if c.SSH.WebSocket.Enabled == nil {
 		enabled := true
 		c.SSH.WebSocket.Enabled = &enabled
 	}
+}
 
-	// Set defaults for SSH timeouts and limits if not specified
+// setSSHTimeoutDefaults sets default timeout values for SSH.
+func setSSHTimeoutDefaults(c *Config) {
 	if c.SSH.Timeout == 0 {
 		c.SSH.Timeout = 600 // 10 minutes
 	}
+
 	if c.SSH.ConnectTimeout == 0 {
 		c.SSH.ConnectTimeout = 30
 	}
+
 	if c.SSH.SessionInitTimeout == 0 {
 		c.SSH.SessionInitTimeout = 60
 	}
+
 	if c.SSH.OutputReadTimeout == 0 {
 		c.SSH.OutputReadTimeout = 2
 	}
+}
+
+// setSSHLimitDefaults sets default limits for SSH operations.
+func setSSHLimitDefaults(c *Config) {
 	if c.SSH.MaxConcurrent == 0 {
 		c.SSH.MaxConcurrent = 10
 	}
+
 	if c.SSH.MaxOutputSize == 0 {
 		c.SSH.MaxOutputSize = 1048576 // 1MB
 	}
+
 	if c.SSH.KeepAlive == 0 {
 		c.SSH.KeepAlive = 10
 	}
+}
+
+// setSSHRetryDefaults sets default retry values for SSH.
+func setSSHRetryDefaults(c *Config) {
 	if c.SSH.RetryAttempts == 0 {
 		c.SSH.RetryAttempts = 3
 	}
+
 	if c.SSH.RetryDelay == 0 {
 		c.SSH.RetryDelay = 5
 	}
+}
 
-	// Clear deprecated BOSH.SSH after migration to avoid confusion
+// clearDeprecatedSSHConfig clears the deprecated BOSH.SSH configuration.
+func clearDeprecatedSSHConfig(c *Config) {
 	c.BOSH.SSH = SSHConfig{}
+}
 
-	return
+// IsSSHUITerminalEnabled returns whether SSH UI Terminal is enabled.
+func (c *Config) IsSSHUITerminalEnabled() bool {
+	return c.SSH.UITerminalEnabled
 }

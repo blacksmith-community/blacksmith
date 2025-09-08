@@ -2,12 +2,20 @@ package rabbitmq
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-// RabbitMQPluginsCategory represents a category of rabbitmq-plugins commands
+// Static errors for err113 compliance.
+var (
+	ErrCategoryNotFound  = errors.New("category not found")
+	ErrCommandNotFound   = errors.New("command not found")
+	ErrInvalidPluginName = errors.New("invalid plugin name")
+)
+
+// RabbitMQPluginsCategory represents a category of rabbitmq-plugins commands.
 type RabbitMQPluginsCategory struct {
 	Name        string                   `json:"name"`
 	DisplayName string                   `json:"display_name"`
@@ -15,7 +23,7 @@ type RabbitMQPluginsCategory struct {
 	Commands    []RabbitMQPluginsCommand `json:"commands"`
 }
 
-// RabbitMQPluginsCommand represents a specific rabbitmq-plugins command with its metadata
+// RabbitMQPluginsCommand represents a specific rabbitmq-plugins command with its metadata.
 type RabbitMQPluginsCommand struct {
 	Name        string                           `json:"name"`
 	Description string                           `json:"description"`
@@ -28,7 +36,7 @@ type RabbitMQPluginsCommand struct {
 	Dangerous   bool                             `json:"dangerous"`
 }
 
-// RabbitMQPluginsCommandArgument represents a command argument
+// RabbitMQPluginsCommandArgument represents a command argument.
 type RabbitMQPluginsCommandArgument struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -37,7 +45,7 @@ type RabbitMQPluginsCommandArgument struct {
 	Default     string `json:"default,omitempty"`
 }
 
-// RabbitMQPluginsCommandOption represents a command option/flag
+// RabbitMQPluginsCommandOption represents a command option/flag.
 type RabbitMQPluginsCommandOption struct {
 	Name        string `json:"name"`
 	Short       string `json:"short,omitempty"`
@@ -46,7 +54,7 @@ type RabbitMQPluginsCommandOption struct {
 	Default     string `json:"default,omitempty"`
 }
 
-// RabbitMQPluginsExecution represents a command execution record
+// RabbitMQPluginsExecution represents a command execution record.
 type RabbitMQPluginsExecution struct {
 	InstanceID string   `json:"instance_id"`
 	Category   string   `json:"category"`
@@ -60,14 +68,14 @@ type RabbitMQPluginsExecution struct {
 	User       string   `json:"user,omitempty"`
 }
 
-// PluginsMetadataService provides RabbitMQ plugins command metadata management
+// PluginsMetadataService provides RabbitMQ plugins command metadata management.
 type PluginsMetadataService struct {
 	categories map[string]*RabbitMQPluginsCategory
 	commands   map[string]*RabbitMQPluginsCommand
 	logger     Logger
 }
 
-// NewPluginsMetadataService creates a new plugins metadata service
+// NewPluginsMetadataService creates a new plugins metadata service.
 func NewPluginsMetadataService(logger Logger) *PluginsMetadataService {
 	if logger == nil {
 		logger = &noOpLogger{}
@@ -85,9 +93,9 @@ func NewPluginsMetadataService(logger Logger) *PluginsMetadataService {
 	return service
 }
 
-// GetCategories returns all command categories
+// GetCategories returns all command categories.
 func (p *PluginsMetadataService) GetCategories() []RabbitMQPluginsCategory {
-	var categories []RabbitMQPluginsCategory
+	categories := make([]RabbitMQPluginsCategory, 0, len(p.categories))
 	for _, cat := range p.categories {
 		categories = append(categories, *cat)
 	}
@@ -100,34 +108,37 @@ func (p *PluginsMetadataService) GetCategories() []RabbitMQPluginsCategory {
 	return categories
 }
 
-// GetCategory returns a specific category by name
+// GetCategory returns a specific category by name.
 func (p *PluginsMetadataService) GetCategory(name string) (*RabbitMQPluginsCategory, error) {
 	category, exists := p.categories[name]
 	if !exists {
-		return nil, fmt.Errorf("category '%s' not found", name)
+		return nil, fmt.Errorf("%w: %s", ErrCategoryNotFound, name)
 	}
+
 	return category, nil
 }
 
-// GetCommand returns a specific command by name
+// GetCommand returns a specific command by name.
 func (p *PluginsMetadataService) GetCommand(name string) (*RabbitMQPluginsCommand, error) {
 	command, exists := p.commands[name]
 	if !exists {
-		return nil, fmt.Errorf("command '%s' not found", name)
+		return nil, fmt.Errorf("%w: %s", ErrCommandNotFound, name)
 	}
+
 	return command, nil
 }
 
-// GetCommandsByCategory returns all commands for a specific category
+// GetCommandsByCategory returns all commands for a specific category.
 func (p *PluginsMetadataService) GetCommandsByCategory(categoryName string) ([]RabbitMQPluginsCommand, error) {
 	category, err := p.GetCategory(categoryName)
 	if err != nil {
 		return nil, err
 	}
+
 	return category.Commands, nil
 }
 
-// ValidateCommand validates a command and its arguments
+// ValidateCommand validates a command and its arguments.
 func (p *PluginsMetadataService) ValidateCommand(commandName string, arguments []string) error {
 	command, err := p.GetCommand(commandName)
 	if err != nil {
@@ -136,38 +147,40 @@ func (p *PluginsMetadataService) ValidateCommand(commandName string, arguments [
 
 	// Check for dangerous commands
 	if command.Dangerous {
-		p.logger.Error("Executing dangerous command: %s", commandName)
+		p.logger.Errorf("Executing dangerous command: %s", commandName)
 	}
 
 	// Validate plugin names for enable/disable/set commands
 	if commandName == "enable" || commandName == "disable" || commandName == "set" {
-		return p.validatePluginNames(arguments)
+		return p.ValidatePluginNames(arguments)
 	}
 
 	return nil
 }
 
-// validatePluginNames validates plugin names format
-func (p *PluginsMetadataService) validatePluginNames(pluginNames []string) error {
+// ValidatePluginNames validates plugin names format.
+func (p *PluginsMetadataService) ValidatePluginNames(pluginNames []string) error {
 	for _, name := range pluginNames {
 		if name == "" {
 			continue
 		}
+
 		if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
-			return fmt.Errorf("invalid plugin name: %s", name)
+			return fmt.Errorf("%w: %s", ErrInvalidPluginName, name)
 		}
 	}
+
 	return nil
 }
 
-// initializeCommandMetadata initializes all command metadata
+// initializeCommandMetadata initializes all command metadata.
 func (p *PluginsMetadataService) initializeCommandMetadata() {
 	p.initializeHelpCategory()
 	p.initializeMonitoringCategory()
 	p.initializePluginManagementCategory()
 }
 
-// initializeHelpCategory initializes help command category
+// initializeHelpCategory initializes help command category.
 func (p *PluginsMetadataService) initializeHelpCategory() {
 	helpCategory := &RabbitMQPluginsCategory{
 		Name:        "help",
@@ -195,7 +208,7 @@ func (p *PluginsMetadataService) initializeHelpCategory() {
 				Type:        "string",
 			},
 		},
-		Timeout: 30,
+		Timeout: DefaultPluginTimeout,
 	}
 
 	// autocomplete command
@@ -216,7 +229,7 @@ func (p *PluginsMetadataService) initializeHelpCategory() {
 				Type:        "string",
 			},
 		},
-		Timeout: 30,
+		Timeout: DefaultPluginTimeout,
 	}
 
 	// version command
@@ -228,7 +241,7 @@ func (p *PluginsMetadataService) initializeHelpCategory() {
 		Examples: []string{
 			"rabbitmq-plugins version",
 		},
-		Timeout: 30,
+		Timeout: DefaultPluginTimeout,
 	}
 
 	helpCategory.Commands = append(helpCategory.Commands, helpCmd, autocompleteCmd, versionCmd)
@@ -238,7 +251,7 @@ func (p *PluginsMetadataService) initializeHelpCategory() {
 	p.commands["version"] = &versionCmd
 }
 
-// initializeMonitoringCategory initializes monitoring command category
+// initializeMonitoringCategory initializes monitoring command category.
 func (p *PluginsMetadataService) initializeMonitoringCategory() {
 	monitoringCategory := &RabbitMQPluginsCategory{
 		Name:        "monitoring",
@@ -270,7 +283,7 @@ func (p *PluginsMetadataService) initializeMonitoringCategory() {
 				Type:        "boolean",
 			},
 		},
-		Timeout: 30,
+		Timeout: DefaultPluginTimeout,
 	}
 
 	// is_enabled command
@@ -304,7 +317,7 @@ func (p *PluginsMetadataService) initializeMonitoringCategory() {
 				Type:        "boolean",
 			},
 		},
-		Timeout: 30,
+		Timeout: DefaultPluginTimeout,
 	}
 
 	monitoringCategory.Commands = append(monitoringCategory.Commands, directoriesCmd, isEnabledCmd)
@@ -313,7 +326,7 @@ func (p *PluginsMetadataService) initializeMonitoringCategory() {
 	p.commands["is_enabled"] = &isEnabledCmd
 }
 
-// initializePluginManagementCategory initializes plugin management command category
+// initializePluginManagementCategory initializes plugin management command category.
 func (p *PluginsMetadataService) initializePluginManagementCategory() {
 	pluginMgmtCategory := &RabbitMQPluginsCategory{
 		Name:        "plugin_management",
@@ -368,7 +381,7 @@ func (p *PluginsMetadataService) initializePluginManagementCategory() {
 				Type:        "boolean",
 			},
 		},
-		Timeout: 60,
+		Timeout: LongPluginTimeout,
 	}
 
 	// enable command
@@ -408,7 +421,7 @@ func (p *PluginsMetadataService) initializePluginManagementCategory() {
 				Type:        "boolean",
 			},
 		},
-		Timeout:   120,
+		Timeout:   ExtendedPluginTimeout,
 		Dangerous: false,
 	}
 
@@ -449,7 +462,7 @@ func (p *PluginsMetadataService) initializePluginManagementCategory() {
 				Type:        "boolean",
 			},
 		},
-		Timeout:   120,
+		Timeout:   ExtendedPluginTimeout,
 		Dangerous: true,
 	}
 
@@ -484,7 +497,7 @@ func (p *PluginsMetadataService) initializePluginManagementCategory() {
 				Type:        "boolean",
 			},
 		},
-		Timeout:   120,
+		Timeout:   ExtendedPluginTimeout,
 		Dangerous: true,
 	}
 
@@ -496,7 +509,7 @@ func (p *PluginsMetadataService) initializePluginManagementCategory() {
 	p.commands["set"] = &setCmd
 }
 
-// GetCommandHelp returns detailed help for a specific command
+// GetCommandHelp returns detailed help for a specific command.
 func (p *PluginsMetadataService) GetCommandHelp(commandName string) (string, error) {
 	command, err := p.GetCommand(commandName)
 	if err != nil {
@@ -504,34 +517,40 @@ func (p *PluginsMetadataService) GetCommandHelp(commandName string) (string, err
 	}
 
 	var help strings.Builder
+
 	help.WriteString(fmt.Sprintf("Command: %s\n", command.Name))
 	help.WriteString(fmt.Sprintf("Description: %s\n", command.Description))
 	help.WriteString(fmt.Sprintf("Usage: %s\n", command.Usage))
 
 	if len(command.Arguments) > 0 {
 		help.WriteString("\nArguments:\n")
+
 		for _, arg := range command.Arguments {
 			required := ""
 			if arg.Required {
 				required = " (required)"
 			}
+
 			help.WriteString(fmt.Sprintf("  %s: %s%s\n", arg.Name, arg.Description, required))
 		}
 	}
 
 	if len(command.Options) > 0 {
 		help.WriteString("\nOptions:\n")
+
 		for _, option := range command.Options {
 			short := ""
 			if option.Short != "" {
-				short = fmt.Sprintf(", -%s", option.Short)
+				short = ", -" + option.Short
 			}
+
 			help.WriteString(fmt.Sprintf("  --%s%s: %s\n", option.Name, short, option.Description))
 		}
 	}
 
 	if len(command.Examples) > 0 {
 		help.WriteString("\nExamples:\n")
+
 		for _, example := range command.Examples {
 			help.WriteString(fmt.Sprintf("  %s\n", example))
 		}
@@ -544,7 +563,7 @@ func (p *PluginsMetadataService) GetCommandHelp(commandName string) (string, err
 	return help.String(), nil
 }
 
-// ToJSON converts command metadata to JSON
+// ToJSON converts command metadata to JSON.
 func (p *PluginsMetadataService) ToJSON() (string, error) {
 	data := struct {
 		Categories []RabbitMQPluginsCategory `json:"categories"`
@@ -559,7 +578,7 @@ func (p *PluginsMetadataService) ToJSON() (string, error) {
 
 	jsonData, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal to JSON: %v", err)
+		return "", fmt.Errorf("failed to marshal to JSON: %w", err)
 	}
 
 	return string(jsonData), nil

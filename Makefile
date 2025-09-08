@@ -182,8 +182,8 @@ deadcode: ## Run deadcode to find unused code
 	@deadcode -test $(shell go list ./... | grep -v vendor | grep -v tmp) || true
 	@echo "$(GREEN)✓ Deadcode analysis complete$(RESET)"
 
-.PHONY: golangci-lint
-golangci-lint: ## Run golangci-lint comprehensive linter
+.PHONY: golangci
+golangci: ## Run golangci-lint comprehensive linter
 	@echo "$(GREEN)Running golangci-lint...$(RESET)"
 	@command -v golangci-lint >/dev/null 2>&1 || { \
 		echo "$(YELLOW)Installing golangci-lint...$(RESET)"; \

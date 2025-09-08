@@ -1,6 +1,7 @@
 package shield
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,13 @@ import (
 
 	"github.com/pivotal-cf/brokerapi/v8/domain"
 	"github.com/shieldproject/shield/client/v2/shield"
+)
+
+// Static errors for err113 compliance.
+var (
+	ErrInvalidCredentialsFormat = errors.New("invalid credentials format for RabbitMQ service")
+	ErrMissingAdminUsername     = errors.New("missing admin_username in RabbitMQ credentials")
+	ErrMissingAdminPassword     = errors.New("missing admin_password in RabbitMQ credentials")
 )
 
 type (
@@ -32,65 +40,62 @@ type Client interface {
 	DeleteSchedule(instance string, details domain.DeprovisionDetails) error
 }
 
-// Package-level logger that mimics the main package logger
-type Log struct {
-	ctx []string
+// Logger interface for shield package.
+type Logger interface {
+	Debug(format string, args ...interface{})
+	Info(format string, args ...interface{})
+	Error(format string, args ...interface{})
 }
 
-var Debugging bool
-var logger *Log
+// defaultLogger provides a default logger implementation.
+type defaultLogger struct {
+	debugging bool
+}
 
-func init() {
-	if os.Getenv("DEBUG") != "" || os.Getenv("BLACKSMITH_DEBUG") != "" {
-		Debugging = true
+func newDefaultLogger() *defaultLogger {
+	return &defaultLogger{
+		debugging: os.Getenv("DEBUG") != "" || os.Getenv("BLACKSMITH_DEBUG") != "",
 	}
-	logger = &Log{}
 }
 
-func (l *Log) printf(lvl, f string, args ...interface{}) {
-	m := fmt.Sprintf(f, args...)
-	now := time.Now().Format("2006-01-02 15:04:05.000")
-	if len(l.ctx) == 0 {
-		m = fmt.Sprintf("%s %-5s  [shield] %s\n", now, lvl, m)
-	} else {
-		m = fmt.Sprintf("%s %-5s  [shield / %s] %s\n", now, lvl, strings.Join(l.ctx, " / "), m)
-	}
-	fmt.Fprintf(os.Stderr, "%s", m)
-}
-
-func (l *Log) Debug(f string, args ...interface{}) {
-	if Debugging {
+func (l *defaultLogger) Debug(f string, args ...interface{}) {
+	if l.debugging {
 		l.printf("DEBUG", f, args...)
 	}
 }
 
-func (l *Log) Info(f string, args ...interface{}) {
+func (l *defaultLogger) Info(f string, args ...interface{}) {
 	l.printf("INFO", f, args...)
 }
 
-func (l *Log) Error(f string, args ...interface{}) {
+func (l *defaultLogger) Error(f string, args ...interface{}) {
 	l.printf("ERROR", f, args...)
+}
+
+func (l *defaultLogger) printf(lvl, f string, args ...interface{}) {
+	m := fmt.Sprintf(f, args...)
+	now := time.Now().Format("2006-01-02 15:04:05.000")
+	m = fmt.Sprintf("%s %-5s  [shield] %s\n", now, lvl, m)
+	fmt.Fprintf(os.Stderr, "%s", m)
 }
 
 // A noop implementation that always returns nil for all methods.
 type NoopClient struct{}
 
 func (cli *NoopClient) Close() error {
-	logger.Debug("NoopClient.Close() called - no-op")
 	return nil
 }
 func (cli *NoopClient) CreateSchedule(instance string, details domain.ProvisionDetails, url string, creds interface{}) error {
-	logger.Debug("NoopClient.CreateSchedule() called for instance %s - no-op", instance)
 	return nil
 }
 func (cli *NoopClient) DeleteSchedule(instance string, details domain.DeprovisionDetails) error {
-	logger.Debug("NoopClient.DeleteSchedule() called for instance %s - no-op", instance)
 	return nil
 }
 
 // The actual implementation of the client with network connectivity.
 type NetworkClient struct {
 	shield *shield.Client
+	logger Logger
 
 	agent string
 
@@ -120,9 +125,17 @@ type Config struct {
 	EnabledOnTargets []string
 
 	Authentication AuthMethod
+	Logger         Logger // Optional logger, will use default if nil
 }
 
 func NewClient(cfg Config) (*NetworkClient, error) {
+	var logger Logger
+	if cfg.Logger != nil {
+		logger = cfg.Logger
+	} else {
+		logger = newDefaultLogger()
+	}
+
 	logger.Info("Creating new Shield client for address: %s", cfg.Address)
 	logger.Debug("Shield config - Tenant: %s, Store: %s, Agent: %s, Schedule: %s, Retain: %s",
 		cfg.Tenant, cfg.Store, cfg.Agent, cfg.Schedule, cfg.Retain)
@@ -134,31 +147,43 @@ func NewClient(cfg Config) (*NetworkClient, error) {
 	}
 
 	logger.Debug("Authenticating with Shield...")
-	if err := cli.Authenticate(cfg.Authentication); err != nil {
+
+	err := cli.Authenticate(cfg.Authentication)
+	if err != nil {
 		logger.Error("Failed to authenticate with Shield: %v", err)
+
 		return nil, fmt.Errorf("shield authentication failed: %w", err)
 	}
+
 	logger.Debug("Successfully authenticated with Shield")
 
 	logger.Debug("Finding tenant '%s' in Shield", cfg.Tenant)
+
 	tenant, err := cli.FindMyTenant(cfg.Tenant, false)
 	if err != nil {
 		logger.Error("Failed to find tenant '%s': %v", cfg.Tenant, err)
+
 		return nil, fmt.Errorf("failed to find tenant '%s': %w", cfg.Tenant, err)
 	}
+
 	logger.Debug("Found tenant: %s (UUID: %s)", tenant.Name, tenant.UUID)
 
 	logger.Debug("Finding usable store '%s' for tenant", cfg.Store)
+
 	store, err := cli.FindUsableStore(tenant, cfg.Store, false)
 	if err != nil {
 		logger.Error("Failed to find usable store '%s': %v", cfg.Store, err)
+
 		return nil, fmt.Errorf("failed to find usable store '%s': %w", cfg.Store, err)
 	}
+
 	logger.Debug("Found store: %s (UUID: %s)", store.Name, store.UUID)
 
 	logger.Info("Successfully created Shield client for tenant '%s' with store '%s'", tenant.Name, store.Name)
+
 	return &NetworkClient{
 		shield: cli,
+		logger: logger,
 
 		agent: cfg.Agent,
 
@@ -175,13 +200,17 @@ func NewClient(cfg Config) (*NetworkClient, error) {
 }
 
 func (cli *NetworkClient) Close() error {
-	logger.Debug("Closing Shield client connection")
+	cli.logger.Debug("Closing Shield client connection")
+
 	err := cli.shield.Logout()
 	if err != nil {
-		logger.Error("Error during Shield logout: %v", err)
+		cli.logger.Error("Error during Shield logout: %v", err)
+
 		return fmt.Errorf("shield logout failed: %w", err)
 	}
-	logger.Debug("Shield client connection closed successfully")
+
+	cli.logger.Debug("Shield client connection closed successfully")
+
 	return nil
 }
 
@@ -190,59 +219,73 @@ func join(s ...string) string {
 }
 
 func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.ProvisionDetails, host string, creds interface{}) error {
-	logger.Info("Creating Shield schedule for instance %s (service: %s, plan: %s)",
+	cli.logger.Info("Creating Shield schedule for instance %s (service: %s, plan: %s)",
 		instanceID, details.ServiceID, details.PlanID)
-	logger.Debug("Instance details - Org: %s, Space: %s, Host: %s",
+	cli.logger.Debug("Instance details - Org: %s, Space: %s, Host: %s",
 		details.OrganizationGUID, details.SpaceGUID, host)
 
-	logger.Debug("Re-authenticating with Shield for schedule creation")
-	if err := cli.shield.Authenticate(cli.auth); err != nil {
-		logger.Error("Failed to re-authenticate with Shield: %v", err)
+	cli.logger.Debug("Re-authenticating with Shield for schedule creation")
+
+	err := cli.shield.Authenticate(cli.auth)
+	if err != nil {
+		cli.logger.Error("Failed to re-authenticate with Shield: %v", err)
+
 		return fmt.Errorf("shield re-authentication failed: %w", err)
 	}
-	logger.Debug("Shield re-authentication successful")
 
-	m := map[string]string{
+	cli.logger.Debug("Shield re-authentication successful")
+
+	serviceMapping := map[string]string{
 		"rabbitmq": "rabbitmq-broker",
 		"redis":    "redis-broker",
 	}
 
 	// Verify that the target should be backed up.
-	logger.Debug("Checking if service '%s' is enabled for backup", details.ServiceID)
+	cli.logger.Debug("Checking if service '%s' is enabled for backup", details.ServiceID)
+
 	enabled := false
+
 	for _, target := range cli.enabledOnTargets {
 		enabled = target == details.ServiceID || enabled
 	}
+
 	if !enabled {
-		logger.Info("Service '%s' is not enabled for Shield backup, skipping schedule creation", details.ServiceID)
+		cli.logger.Info("Service '%s' is not enabled for Shield backup, skipping schedule creation", details.ServiceID)
+
 		return nil
 	}
-	logger.Debug("Service '%s' is enabled for backup, proceeding with schedule creation", details.ServiceID)
+
+	cli.logger.Debug("Service '%s' is enabled for backup, proceeding with schedule creation", details.ServiceID)
 
 	// Generate the target configurations.
-	logger.Debug("Generating target configuration for service '%s'", details.ServiceID)
+	cli.logger.Debug("Generating target configuration for service '%s'", details.ServiceID)
+
 	var config map[string]interface{}
+
 	switch details.ServiceID {
 	case "rabbitmq":
 		rmqURL := "http://" + net.JoinHostPort(host, "15672")
-		logger.Debug("Configuring RabbitMQ target with URL: %s", rmqURL)
+		cli.logger.Debug("Configuring RabbitMQ target with URL: %s", rmqURL)
 
 		credsMap, ok := creds.(map[string]interface{})
 		if !ok {
-			logger.Error("Invalid credentials format for RabbitMQ, expected map[string]interface{}, got %T", creds)
-			return fmt.Errorf("invalid credentials format for RabbitMQ service")
+			cli.logger.Error("Invalid credentials format for RabbitMQ, expected map[string]interface{}, got %T", creds)
+
+			return ErrInvalidCredentialsFormat
 		}
 
 		adminUser, ok := credsMap["admin_username"].(string)
 		if !ok {
-			logger.Error("Missing or invalid admin_username in RabbitMQ credentials")
-			return fmt.Errorf("missing admin_username in RabbitMQ credentials")
+			cli.logger.Error("Missing or invalid admin_username in RabbitMQ credentials")
+
+			return ErrMissingAdminUsername
 		}
 
 		adminPass, ok := credsMap["admin_password"].(string)
 		if !ok {
-			logger.Error("Missing or invalid admin_password in RabbitMQ credentials")
-			return fmt.Errorf("missing admin_password in RabbitMQ credentials")
+			cli.logger.Error("Missing or invalid admin_password in RabbitMQ credentials")
+
+			return ErrMissingAdminPassword
 		}
 
 		config = map[string]interface{}{
@@ -250,32 +293,36 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 			"rmq_username": adminUser,
 			"rmq_password": adminPass,
 		}
-		logger.Debug("RabbitMQ target configuration created successfully")
+
+		cli.logger.Debug("RabbitMQ target configuration created successfully")
 	default:
-		logger.Info("No Shield backup configuration available for service '%s', skipping", details.ServiceID)
+		cli.logger.Info("No Shield backup configuration available for service '%s', skipping", details.ServiceID)
+
 		return nil
 	}
 
 	targetName := join("targets", details.ServiceID, details.PlanID, instanceID)
-	logger.Debug("Creating Shield target: %s", targetName)
+	cli.logger.Debug("Creating Shield target: %s", targetName)
 	target := &shield.Target{
 		Name:    targetName,
 		Summary: "This target is managed by Blacksmith.",
 
-		Plugin: m[details.ServiceID],
+		Plugin: serviceMapping[details.ServiceID],
 		Agent:  cli.agent,
 		Config: config,
 	}
 
-	target, err := cli.shield.CreateTarget(cli.tenant, target)
+	target, err = cli.shield.CreateTarget(cli.tenant, target)
 	if err != nil {
-		logger.Error("Failed to create Shield target '%s': %v", targetName, err)
+		cli.logger.Error("Failed to create Shield target '%s': %v", targetName, err)
+
 		return fmt.Errorf("failed to create Shield target: %w", err)
 	}
-	logger.Info("Successfully created Shield target '%s' (UUID: %s)", target.Name, target.UUID)
+
+	cli.logger.Info("Successfully created Shield target '%s' (UUID: %s)", target.Name, target.UUID)
 
 	jobName := join("jobs", details.ServiceID, details.PlanID, instanceID)
-	logger.Debug("Creating Shield job: %s (schedule: %s, retain: %s)", jobName, cli.schedule, cli.retain)
+	cli.logger.Debug("Creating Shield job: %s (schedule: %s, retain: %s)", jobName, cli.schedule, cli.retain)
 	job := &shield.Job{
 		Name:    jobName,
 		Summary: "This job is managed by Blacksmith.",
@@ -288,54 +335,69 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 
 	createdJob, err := cli.shield.CreateJob(cli.tenant, job)
 	if err != nil {
-		logger.Error("Failed to create Shield job '%s': %v", jobName, err)
+		cli.logger.Error("Failed to create Shield job '%s': %v", jobName, err)
+
 		return fmt.Errorf("failed to create Shield job: %w", err)
 	}
-	logger.Info("Successfully created Shield job '%s' (UUID: %s) for instance %s",
+
+	cli.logger.Info("Successfully created Shield job '%s' (UUID: %s) for instance %s",
 		createdJob.Name, createdJob.UUID, instanceID)
 
 	return nil
 }
 
 func (cli *NetworkClient) DeleteSchedule(instanceID string, details domain.DeprovisionDetails) error {
-	logger.Info("Deleting Shield schedule for instance %s (service: %s, plan: %s)",
+	cli.logger.Info("Deleting Shield schedule for instance %s (service: %s, plan: %s)",
 		instanceID, details.ServiceID, details.PlanID)
 
-	logger.Debug("Re-authenticating with Shield for schedule deletion")
-	if err := cli.shield.Authenticate(cli.auth); err != nil {
-		logger.Error("Failed to re-authenticate with Shield: %v", err)
+	cli.logger.Debug("Re-authenticating with Shield for schedule deletion")
+
+	err := cli.shield.Authenticate(cli.auth)
+	if err != nil {
+		cli.logger.Error("Failed to re-authenticate with Shield: %v", err)
+
 		return fmt.Errorf("shield re-authentication failed: %w", err)
 	}
-	logger.Debug("Shield re-authentication successful")
+
+	cli.logger.Debug("Shield re-authentication successful")
 
 	name := join("jobs", details.ServiceID, details.PlanID, instanceID)
-	logger.Debug("Finding Shield job: %s", name)
+	cli.logger.Debug("Finding Shield job: %s", name)
+
 	job, err := cli.shield.FindJob(cli.tenant, name, false)
 	if err != nil {
-		logger.Error("Failed to find Shield job '%s': %v", name, err)
+		cli.logger.Error("Failed to find Shield job '%s': %v", name, err)
+
 		return fmt.Errorf("failed to find Shield job '%s': %w", name, err)
 	}
-	logger.Debug("Found Shield job '%s' (UUID: %s)", job.Name, job.UUID)
 
-	logger.Debug("Deleting Shield job with UUID: %s", job.UUID)
+	cli.logger.Debug("Found Shield job '%s' (UUID: %s)", job.Name, job.UUID)
+
+	cli.logger.Debug("Deleting Shield job with UUID: %s", job.UUID)
+
 	_, err = cli.shield.DeleteJob(cli.tenant, &shield.Job{UUID: job.UUID})
 	if err != nil {
-		logger.Error("Failed to delete Shield job (UUID: %s): %v", job.UUID, err)
+		cli.logger.Error("Failed to delete Shield job (UUID: %s): %v", job.UUID, err)
+
 		return fmt.Errorf("failed to delete Shield job: %w", err)
 	}
-	logger.Debug("Shield job deletion response received")
-	logger.Info("Successfully deleted Shield job '%s' (UUID: %s)", job.Name, job.UUID)
 
-	logger.Debug("Deleting Shield target with UUID: %s", job.Target.UUID)
+	cli.logger.Debug("Shield job deletion response received")
+	cli.logger.Info("Successfully deleted Shield job '%s' (UUID: %s)", job.Name, job.UUID)
+
+	cli.logger.Debug("Deleting Shield target with UUID: %s", job.Target.UUID)
+
 	_, err = cli.shield.DeleteTarget(cli.tenant, &shield.Target{UUID: job.Target.UUID})
 	if err != nil {
-		logger.Error("Failed to delete Shield target (UUID: %s): %v", job.Target.UUID, err)
+		cli.logger.Error("Failed to delete Shield target (UUID: %s): %v", job.Target.UUID, err)
 		// Log error but continue since job is already deleted
-		logger.Error("Warning: Shield target deletion failed but continuing as job is already deleted")
+		cli.logger.Error("Warning: Shield target deletion failed but continuing as job is already deleted")
+
 		return fmt.Errorf("failed to delete Shield target: %w", err)
 	}
-	logger.Debug("Shield target deletion response received")
-	logger.Info("Successfully deleted Shield target (UUID: %s) for instance %s", job.Target.UUID, instanceID)
+
+	cli.logger.Debug("Shield target deletion response received")
+	cli.logger.Info("Successfully deleted Shield target (UUID: %s) for instance %s", job.Target.UUID, instanceID)
 
 	return nil
 }

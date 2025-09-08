@@ -1,10 +1,18 @@
-package common
+package common_test
 
 import (
 	"testing"
+
+	. "blacksmith/pkg/services/common"
+)
+
+const (
+	maskedValue = "***MASKED***"
 )
 
 func TestCredentials_GetString(t *testing.T) {
+	t.Parallel()
+
 	creds := Credentials{
 		"host":     "example.com",
 		"port":     6379,
@@ -29,6 +37,8 @@ func TestCredentials_GetString(t *testing.T) {
 }
 
 func TestCredentials_GetInt(t *testing.T) {
+	t.Parallel()
+
 	creds := Credentials{
 		"port":       6379,
 		"float_port": 6380.0,
@@ -54,6 +64,8 @@ func TestCredentials_GetInt(t *testing.T) {
 }
 
 func TestCredentials_GetBool(t *testing.T) {
+	t.Parallel()
+
 	creds := Credentials{
 		"enabled":  true,
 		"disabled": false,
@@ -79,6 +91,8 @@ func TestCredentials_GetBool(t *testing.T) {
 }
 
 func TestCredentialsMasking(t *testing.T) {
+	t.Parallel()
+
 	creds := Credentials{
 		"host":        "example.com",
 		"port":        6379,
@@ -91,9 +105,10 @@ func TestCredentialsMasking(t *testing.T) {
 	masked := MaskCredentials(creds)
 
 	// Check that sensitive fields are masked
-	if masked["password"] != "***MASKED***" {
+	if masked["password"] != maskedValue {
 		t.Errorf("Password should be masked, got: %v", masked["password"])
 	}
+
 	if masked["secret"] != "***MASKED***" {
 		t.Errorf("Secret should be masked, got: %v", masked["secret"])
 	}
@@ -102,6 +117,7 @@ func TestCredentialsMasking(t *testing.T) {
 	if masked["host"] != "example.com" {
 		t.Errorf("Host should be preserved, got: %v", masked["host"])
 	}
+
 	if masked["port"] != 6379 {
 		t.Errorf("Port should be preserved, got: %v", masked["port"])
 	}

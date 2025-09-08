@@ -1,28 +1,50 @@
-package reconciler
+package reconciler_test
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 	"time"
+
+	. "blacksmith/pkg/reconciler"
+)
+
+// Static errors for this test file
+var (
+	errEmptyServiceID     = errors.New("empty service_id")
+	errEmptyPlanID        = errors.New("empty plan_id")
+	errInvalidUUIDFormat  = errors.New("invalid UUID format")
 )
 
 // This file contains integration-style tests that test the synchronizer behavior
 // using the actual code paths but with controlled data
 
 func TestSynchronizer_Integration_NeverDeletesServiceInstances(t *testing.T) {
+	t.Parallel()
 	// This test verifies that service instances are never deleted from the vault,
 	// only marked as stale after being orphaned for 30+ days
 
 	// The key behavior we're testing is in synchronizer.go lines 126-140
 	// where service instances are marked as stale but preserved
+	testCases := buildTestCases()
 
-	testCases := []struct {
-		name          string
-		existingEntry map[string]interface{}
-		expectDeleted bool
-		expectStale   bool
-		expectReason  string
-	}{
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runTestCase(t, tc)
+		})
+	}
+}
+
+type testCaseData struct {
+	name          string
+	existingEntry map[string]interface{}
+	expectDeleted bool
+	expectStale   bool
+	expectReason  string
+}
+
+func buildTestCases() []testCaseData {
+	return []testCaseData{
 		{
 			name: "Fresh service instance",
 			existingEntry: map[string]interface{}{
@@ -70,83 +92,80 @@ func TestSynchronizer_Integration_NeverDeletesServiceInstances(t *testing.T) {
 			expectStale:   true,
 		},
 	}
+}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Simulate the index state
-			idx := map[string]interface{}{
-				"test-instance": tc.existingEntry,
-			}
+func runTestCase(t *testing.T, tc testCaseData) {
+	idx := map[string]interface{}{
+		"test-instance": tc.existingEntry,
+	}
 
-			// Apply the cleanup logic from synchronizer.go
-			for id, data := range idx {
-				if dataMap, ok := data.(map[string]interface{}); ok {
-					if orphaned, ok := dataMap["orphaned"].(bool); ok && orphaned {
-						if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
-							if orphTime, err := time.Parse(time.RFC3339, orphanedAt); err == nil {
-								daysSinceOrphaned := int(time.Since(orphTime).Hours() / 24)
+	processTestIndex(idx)
+	validateTestResults(t, tc, idx)
+}
 
-								// After 30 days, mark as stale but DO NOT DELETE
-								if daysSinceOrphaned > 30 {
-									// Check if it's a service instance
-									if _, hasService := dataMap["service_id"]; hasService {
-										if _, hasPlan := dataMap["plan_id"]; hasPlan {
-											// Mark as stale but keep for historical purposes
-											dataMap["stale"] = true
-											dataMap["stale_since"] = orphanedAt
-											dataMap["days_orphaned"] = daysSinceOrphaned
-											dataMap["preservation_reason"] = "service_instance_historical_data"
-											idx[id] = dataMap
-											continue
-										}
-									}
+func processTestIndex(idx map[string]interface{}) {
+	for id, data := range idx {
+		processIndexEntry(id, data, idx)
+	}
+}
 
-									// Non-service entries also preserved
-									dataMap["stale"] = true
-									dataMap["stale_since"] = orphanedAt
-									dataMap["days_orphaned"] = daysSinceOrphaned
-									idx[id] = dataMap
-								}
-							}
-						}
-					}
-				}
-			}
+func validateTestResults(t *testing.T, tc testCaseData, idx map[string]interface{}) {
+	entry, exists := idx["test-instance"]
 
-			// Verify the entry still exists
-			entry, exists := idx["test-instance"]
-			if !exists && !tc.expectDeleted {
-				t.Error("Entry was deleted but should have been preserved")
-			}
-			if exists && tc.expectDeleted {
-				t.Error("Entry exists but should have been deleted")
-			}
+	validateEntryExistence(t, tc, exists)
 
-			if exists {
-				dataMap := entry.(map[string]interface{})
+	if exists {
+		validateEntryData(t, tc, entry)
+	}
+}
 
-				// Check stale flag
-				isStale, hasStale := dataMap["stale"].(bool)
-				if tc.expectStale && (!hasStale || !isStale) {
-					t.Error("Entry should be marked as stale but isn't")
-				}
-				if !tc.expectStale && hasStale && isStale {
-					t.Error("Entry is marked as stale but shouldn't be")
-				}
+func validateEntryExistence(t *testing.T, tc testCaseData, exists bool) {
+	if !exists && !tc.expectDeleted {
+		t.Error("Entry was deleted but should have been preserved")
+	}
 
-				// Check preservation reason
-				if tc.expectReason != "" {
-					reason, hasReason := dataMap["preservation_reason"].(string)
-					if !hasReason || reason != tc.expectReason {
-						t.Errorf("Expected preservation_reason %q, got %q", tc.expectReason, reason)
-					}
-				}
-			}
-		})
+	if exists && tc.expectDeleted {
+		t.Error("Entry exists but should have been deleted")
+	}
+}
+
+func validateEntryData(t *testing.T, tc testCaseData, entry interface{}) {
+	dataMap, ok := entry.(map[string]interface{})
+	if !ok {
+		t.Errorf("Expected entry to be map[string]interface{}, got %T", entry)
+
+		return
+	}
+
+	validateStaleFlag(t, tc, dataMap)
+	validatePreservationReason(t, tc, dataMap)
+}
+
+func validateStaleFlag(t *testing.T, tc testCaseData, dataMap map[string]interface{}) {
+	isStale, hasStale := dataMap["stale"].(bool)
+
+	if tc.expectStale && (!hasStale || !isStale) {
+		t.Error("Entry should be marked as stale but isn't")
+	}
+
+	if !tc.expectStale && hasStale && isStale {
+		t.Error("Entry is marked as stale but shouldn't be")
+	}
+}
+
+func validatePreservationReason(t *testing.T, tc testCaseData, dataMap map[string]interface{}) {
+	if tc.expectReason == "" {
+		return
+	}
+
+	reason, hasReason := dataMap["preservation_reason"].(string)
+	if !hasReason || reason != tc.expectReason {
+		t.Errorf("Expected preservation_reason %q, got %q", tc.expectReason, reason)
 	}
 }
 
 func TestSynchronizer_Integration_PreservesExistingFields(t *testing.T) {
+	t.Parallel()
 	// Test that certain fields are always preserved when updating existing instances
 
 	// Initial index state
@@ -186,28 +205,35 @@ func TestSynchronizer_Integration_PreservesExistingFields(t *testing.T) {
 	if newData["organization_id"] != "org-123" {
 		t.Error("organization_id was not preserved")
 	}
+
 	if newData["space_id"] != "space-456" {
 		t.Error("space_id was not preserved")
 	}
+
 	if params, ok := newData["parameters"].(map[string]interface{}); !ok || params["nodes"] != 3 {
 		t.Error("parameters were not preserved correctly")
 	}
+
 	if newData["created_at"] != "2024-01-01T00:00:00Z" {
 		t.Error("created_at was not preserved")
 	}
 
 	// Verify new fields were added
-	if !newData["reconciled"].(bool) {
+	reconciledVal, ok := newData["reconciled"].(bool)
+	if !ok {
+		t.Error("reconciled field must be a bool")
+	} else if !reconciledVal {
 		t.Error("reconciled flag was not set")
 	}
+
 	if _, hasReconciledAt := newData["reconciled_at"]; !hasReconciledAt {
 		t.Error("reconciled_at was not set")
 	}
 }
 
 func TestSynchronizer_Integration_ValidatesEntries(t *testing.T) {
+	t.Parallel()
 	// Test the validation logic for index entries
-
 	testCases := []struct {
 		name      string
 		id        string
@@ -254,11 +280,13 @@ func TestSynchronizer_Integration_ValidatesEntries(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			// Apply validation logic
 			err := validateTestEntry(tc.id, tc.data)
 			if tc.expectErr && err == nil {
 				t.Error("Expected validation error but got none")
 			}
+
 			if !tc.expectErr && err != nil {
 				t.Errorf("Unexpected validation error: %v", err)
 			}
@@ -266,24 +294,75 @@ func TestSynchronizer_Integration_ValidatesEntries(t *testing.T) {
 	}
 }
 
-// Helper function that mirrors the validation logic
+// Helper function that mirrors the validation logic.
 func validateTestEntry(id string, data map[string]interface{}) error {
 	// Check if it's a service instance
 	if serviceID, hasService := data["service_id"].(string); hasService {
 		if serviceID == "" {
-			return fmt.Errorf("empty service_id")
+			return errEmptyServiceID
 		}
 
 		// For service instances, also check plan_id
 		if planID, hasPlan := data["plan_id"].(string); hasPlan && planID == "" {
-			return fmt.Errorf("empty plan_id")
+			return errEmptyPlanID
 		}
 
 		// Validate UUID format
-		if !isValidInstanceID(id) {
-			return fmt.Errorf("invalid UUID format")
+		if !IsValidInstanceID(id) {
+			return errInvalidUUIDFormat
 		}
 	}
 
 	return nil
+}
+
+// processIndexEntry handles the complex nested logic for processing a single index entry.
+func processIndexEntry(id string, data interface{}, idx map[string]interface{}) {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	orphaned, ok := dataMap["orphaned"].(bool)
+	if !ok || !orphaned {
+		return
+	}
+
+	orphanedAt, ok := dataMap["orphaned_at"].(string)
+	if !ok {
+		return
+	}
+
+	orphTime, err := time.Parse(time.RFC3339, orphanedAt)
+	if err != nil {
+		return
+	}
+
+	daysSinceOrphaned := int(time.Since(orphTime).Hours() / 24)
+	if daysSinceOrphaned <= 30 {
+		return
+	}
+
+	markAsStale(dataMap, orphanedAt, daysSinceOrphaned)
+
+	if isServiceInstance(dataMap) {
+		dataMap["preservation_reason"] = "service_instance_historical_data"
+	}
+
+	idx[id] = dataMap
+}
+
+// markAsStale marks an entry as stale with appropriate metadata.
+func markAsStale(dataMap map[string]interface{}, orphanedAt string, daysSinceOrphaned int) {
+	dataMap["stale"] = true
+	dataMap["stale_since"] = orphanedAt
+	dataMap["days_orphaned"] = daysSinceOrphaned
+}
+
+// isServiceInstance checks if the data represents a service instance.
+func isServiceInstance(dataMap map[string]interface{}) bool {
+	_, hasService := dataMap["service_id"]
+	_, hasPlan := dataMap["plan_id"]
+
+	return hasService && hasPlan
 }

@@ -5,17 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/hashicorp/vault/api"
 )
 
-// AuditService provides audit logging functionality for rabbitmqctl commands
+// AuditService provides audit logging functionality for rabbitmqctl commands.
 type AuditService struct {
 	vaultClient *api.Client
 	logger      Logger
 }
 
-// AuditEntry represents an audit log entry for a rabbitmqctl command execution
+// AuditEntry represents an audit log entry for a rabbitmqctl command execution.
 type AuditEntry struct {
 	Timestamp   int64                  `json:"timestamp"`
 	InstanceID  string                 `json:"instance_id"`
@@ -33,7 +34,7 @@ type AuditEntry struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// AuditSummary provides a summary of audit entries
+// AuditSummary provides a summary of audit entries.
 type AuditSummary struct {
 	TotalEntries   int              `json:"total_entries"`
 	SuccessfulCmds int              `json:"successful_commands"`
@@ -46,7 +47,7 @@ type AuditSummary struct {
 	FirstExecution int64            `json:"first_execution"`
 }
 
-// NewAuditService creates a new audit service
+// NewAuditService creates a new audit service.
 func NewAuditService(vaultClient *api.Client, logger Logger) *AuditService {
 	if logger == nil {
 		logger = &noOpLogger{}
@@ -58,11 +59,12 @@ func NewAuditService(vaultClient *api.Client, logger Logger) *AuditService {
 	}
 }
 
-// LogExecution logs a rabbitmqctl command execution to Vault
+// LogExecution logs a rabbitmqctl command execution to Vault.
 func (a *AuditService) LogExecution(ctx context.Context, execution *RabbitMQCtlExecution, user, clientIP, executionID string, duration int64) error {
 	if a.vaultClient == nil {
-		a.logger.Error("Vault client not configured, skipping audit logging")
-		return fmt.Errorf("vault client not configured")
+		a.logger.Errorf("Vault client not configured, skipping audit logging")
+
+		return ErrVaultClientNotConfigured
 	}
 
 	// Create audit entry
@@ -91,19 +93,22 @@ func (a *AuditService) LogExecution(ctx context.Context, execution *RabbitMQCtlE
 	// Convert entry to map for Vault storage
 	entryData, err := a.entryToMap(entry)
 	if err != nil {
-		a.logger.Error("Failed to convert audit entry to map: %v", err)
-		return fmt.Errorf("failed to convert audit entry: %v", err)
+		a.logger.Errorf("Failed to convert audit entry to map: %v", err)
+
+		return fmt.Errorf("failed to convert audit entry: %w", err)
 	}
 
 	// First, read existing audit data
 	existingSecret, err := a.vaultClient.Logical().Read(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to read existing audit data from Vault: %v", err)
-		return fmt.Errorf("failed to read existing audit data: %v", err)
+		a.logger.Errorf("Failed to read existing audit data from Vault: %v", err)
+
+		return fmt.Errorf("failed to read existing audit data: %w", err)
 	}
 
 	// Prepare the data map
 	var dataMap map[string]interface{}
+
 	if existingSecret != nil && existingSecret.Data != nil {
 		// For KV v2, the actual data is nested under "data" field
 		if data, ok := existingSecret.Data["data"].(map[string]interface{}); ok {
@@ -116,28 +121,32 @@ func (a *AuditService) LogExecution(ctx context.Context, execution *RabbitMQCtlE
 	}
 
 	// Add the new entry with timestamp as key
-	timestampKey := fmt.Sprintf("%d", execution.Timestamp)
+	timestampKey := strconv.FormatInt(execution.Timestamp, 10)
 	dataMap[timestampKey] = entryData
 
 	// Store in Vault (KV v2 format requires data wrapper)
 	vaultData := map[string]interface{}{
 		"data": dataMap,
 	}
+
 	_, err = a.vaultClient.Logical().Write(vaultPath, vaultData)
 	if err != nil {
-		a.logger.Error("Failed to write audit entry to Vault at %s: %v", vaultPath, err)
-		return fmt.Errorf("failed to write to vault: %v", err)
+		a.logger.Errorf("Failed to write audit entry to Vault at %s: %v", vaultPath, err)
+
+		return fmt.Errorf("failed to write to vault: %w", err)
 	}
 
-	a.logger.Info("Audit entry logged to Vault: %s with key %s", vaultPath, timestampKey)
+	a.logger.Infof("Audit entry logged to Vault: %s with key %s", vaultPath, timestampKey)
+
 	return nil
 }
 
-// LogStreamingExecution logs a streaming command execution to Vault
+// LogStreamingExecution logs a streaming command execution to Vault.
 func (a *AuditService) LogStreamingExecution(ctx context.Context, result *StreamingExecutionResult, user, clientIP string) error {
 	if a.vaultClient == nil {
-		a.logger.Error("Vault client not configured, skipping audit logging")
-		return fmt.Errorf("vault client not configured")
+		a.logger.Errorf("Vault client not configured, skipping audit logging")
+
+		return ErrVaultClientNotConfigured
 	}
 
 	// Calculate duration
@@ -148,7 +157,9 @@ func (a *AuditService) LogStreamingExecution(ctx context.Context, result *Stream
 
 	// Collect output from channel (non-blocking)
 	var outputLines []string
+
 	outputDone := false
+
 	for !outputDone {
 		select {
 		case line, ok := <-result.Output:
@@ -161,6 +172,7 @@ func (a *AuditService) LogStreamingExecution(ctx context.Context, result *Stream
 			outputDone = true
 		}
 	}
+
 	output := ""
 	if len(outputLines) > 0 {
 		output = fmt.Sprintf("%s... [%d lines total]", outputLines[0], len(outputLines))
@@ -190,15 +202,17 @@ func (a *AuditService) LogStreamingExecution(ctx context.Context, result *Stream
 	// Convert entry to map for Vault storage
 	entryData, err := a.entryToMap(entry)
 	if err != nil {
-		a.logger.Error("Failed to convert streaming audit entry to map: %v", err)
-		return fmt.Errorf("failed to convert audit entry: %v", err)
+		a.logger.Errorf("Failed to convert streaming audit entry to map: %v", err)
+
+		return fmt.Errorf("failed to convert audit entry: %w", err)
 	}
 
 	// First, read existing audit data
 	existingSecret, err := a.vaultClient.Logical().Read(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to read existing audit data from Vault: %v", err)
-		return fmt.Errorf("failed to read existing audit data: %v", err)
+		a.logger.Errorf("Failed to read existing audit data from Vault: %v", err)
+
+		return fmt.Errorf("failed to read existing audit data: %w", err)
 	}
 
 	// Prepare the data map
@@ -215,35 +229,40 @@ func (a *AuditService) LogStreamingExecution(ctx context.Context, result *Stream
 	}
 
 	// Add the new entry with timestamp as key
-	timestampKey := fmt.Sprintf("%d", result.StartTime.Unix())
+	timestampKey := strconv.FormatInt(result.StartTime.Unix(), 10)
 	dataMap[timestampKey] = entryData
 
 	// Store in Vault (KV v2 format requires data wrapper)
 	vaultData := map[string]interface{}{
 		"data": dataMap,
 	}
+
 	_, err = a.vaultClient.Logical().Write(vaultPath, vaultData)
 	if err != nil {
-		a.logger.Error("Failed to write streaming audit entry to Vault at %s: %v", vaultPath, err)
-		return fmt.Errorf("failed to write to vault: %v", err)
+		a.logger.Errorf("Failed to write streaming audit entry to Vault at %s: %v", vaultPath, err)
+
+		return fmt.Errorf("failed to write to vault: %w", err)
 	}
 
-	a.logger.Info("Streaming audit entry logged to Vault: %s with key %s", vaultPath, timestampKey)
+	a.logger.Infof("Streaming audit entry logged to Vault: %s with key %s", vaultPath, timestampKey)
+
 	return nil
 }
 
-// GetAuditHistory retrieves audit history for an instance
+// GetAuditHistory retrieves audit history for an instance.
 func (a *AuditService) GetAuditHistory(ctx context.Context, instanceID string, limit int) ([]AuditEntry, error) {
 	if a.vaultClient == nil {
-		return nil, fmt.Errorf("vault client not configured")
+		return nil, ErrVaultClientNotConfigured
 	}
 
 	// Read the audit endpoint directly
 	vaultPath := a.generateVaultPath(instanceID)
+
 	secret, err := a.vaultClient.Logical().Read(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to read audit entries from Vault: %v", err)
-		return nil, fmt.Errorf("failed to read audit entries: %v", err)
+		a.logger.Errorf("Failed to read audit entries from Vault: %v", err)
+
+		return nil, fmt.Errorf("failed to read audit entries: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
@@ -263,13 +282,15 @@ func (a *AuditService) GetAuditHistory(ctx context.Context, instanceID string, l
 		timestamp int64
 		data      map[string]interface{}
 	}
+
 	var timestampEntries []timestampEntry
 
 	for key, value := range dataMap {
 		// Parse timestamp from key
 		var timestamp int64
 		if _, err := fmt.Sscanf(key, "%d", &timestamp); err != nil {
-			a.logger.Error("Failed to parse timestamp from key %s: %v", key, err)
+			a.logger.Errorf("Failed to parse timestamp from key %s: %v", key, err)
+
 			continue
 		}
 
@@ -287,29 +308,37 @@ func (a *AuditService) GetAuditHistory(ctx context.Context, instanceID string, l
 	})
 
 	// Convert to audit entries (limit the results)
-	var entries []AuditEntry
-	for i, te := range timestampEntries {
+	entriesCapacity := limit
+	if len(timestampEntries) < limit {
+		entriesCapacity = len(timestampEntries)
+	}
+
+	entries := make([]AuditEntry, 0, entriesCapacity)
+
+	for i, timestampEntry := range timestampEntries {
 		if i >= limit {
 			break
 		}
 
-		entry, err := a.mapToEntry(te.data)
+		entry, err := a.mapToEntry(timestampEntry.data)
 		if err != nil {
-			a.logger.Error("Failed to parse audit entry for timestamp %d: %v", te.timestamp, err)
+			a.logger.Errorf("Failed to parse audit entry for timestamp %d: %v", timestampEntry.timestamp, err)
+
 			continue
 		}
 
 		entries = append(entries, *entry)
 	}
 
-	a.logger.Info("Retrieved %d audit entries for instance %s", len(entries), instanceID)
+	a.logger.Infof("Retrieved %d audit entries for instance %s", len(entries), instanceID)
+
 	return entries, nil
 }
 
-// GetAuditSummary generates a summary of audit entries for an instance
+// GetAuditSummary generates a summary of audit entries for an instance.
 func (a *AuditService) GetAuditSummary(ctx context.Context, instanceID string) (*AuditSummary, error) {
 	// Get all audit entries (no limit for summary)
-	entries, err := a.GetAuditHistory(ctx, instanceID, 10000)
+	entries, err := a.GetAuditHistory(ctx, instanceID, MaxAuditHistoryLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -356,72 +385,77 @@ func (a *AuditService) GetAuditSummary(ctx context.Context, instanceID string) (
 	return summary, nil
 }
 
-// ClearAuditHistory clears audit history for an instance (dangerous operation)
+// ClearAuditHistory clears audit history for an instance (dangerous operation).
 func (a *AuditService) ClearAuditHistory(ctx context.Context, instanceID string) error {
 	if a.vaultClient == nil {
-		return fmt.Errorf("vault client not configured")
+		return ErrVaultClientNotConfigured
 	}
 
 	// Delete the entire audit endpoint
 	vaultPath := a.generateVaultPath(instanceID)
+
 	_, err := a.vaultClient.Logical().Delete(vaultPath)
 	if err != nil {
-		a.logger.Error("Failed to delete audit data at %s: %v", vaultPath, err)
-		return fmt.Errorf("failed to clear audit history: %v", err)
+		a.logger.Errorf("Failed to delete audit data at %s: %v", vaultPath, err)
+
+		return fmt.Errorf("failed to clear audit history: %w", err)
 	}
 
-	a.logger.Info("Cleared all audit entries for instance %s", instanceID)
+	a.logger.Infof("Cleared all audit entries for instance %s", instanceID)
+
 	return nil
 }
 
-// generateVaultPath generates the Vault path for the audit endpoint (KV v2 format)
+// generateVaultPath generates the Vault path for the audit endpoint (KV v2 format).
 func (a *AuditService) generateVaultPath(instanceID string) string {
 	// Format for KV v2: secret/data/{instance-id}/rabbitmqctl/audit
 	return fmt.Sprintf("secret/data/%s/rabbitmqctl/audit", instanceID)
 }
 
-// entryToMap converts an AuditEntry to a map for Vault storage
+// entryToMap converts an AuditEntry to a map for Vault storage.
 func (a *AuditService) entryToMap(entry *AuditEntry) (map[string]interface{}, error) {
 	entryJSON, err := json.Marshal(entry)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal audit entry: %w", err)
 	}
 
 	var entryMap map[string]interface{}
+
 	err = json.Unmarshal(entryJSON, &entryMap)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal entry to map: %w", err)
 	}
 
 	return entryMap, nil
 }
 
-// mapToEntry converts a map from Vault to an AuditEntry
+// mapToEntry converts a map from Vault to an AuditEntry.
 func (a *AuditService) mapToEntry(data map[string]interface{}) (*AuditEntry, error) {
 	dataJSON, err := json.Marshal(data)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal map data: %w", err)
 	}
 
 	var entry AuditEntry
+
 	err = json.Unmarshal(dataJSON, &entry)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal map to entry: %w", err)
 	}
 
 	return &entry, nil
 }
 
-// HealthCheck verifies the audit service can connect to Vault
+// HealthCheck verifies the audit service can connect to Vault.
 func (a *AuditService) HealthCheck(ctx context.Context) error {
 	if a.vaultClient == nil {
-		return fmt.Errorf("vault client not configured")
+		return ErrVaultClientNotConfigured
 	}
 
 	// Try to read from Vault metadata root to verify connectivity (KV v2)
 	_, err := a.vaultClient.Logical().Read("secret/metadata/")
 	if err != nil {
-		return fmt.Errorf("vault health check failed: %v", err)
+		return fmt.Errorf("vault health check failed: %w", err)
 	}
 
 	return nil

@@ -5,9 +5,10 @@ import (
 	"blacksmith/pkg/services/common"
 	"blacksmith/pkg/services/rabbitmq"
 	"blacksmith/pkg/services/redis"
+	"fmt"
 )
 
-// Manager manages all service testing handlers
+// Manager manages all service testing handlers.
 type Manager struct {
 	Redis    *redis.Handler
 	RabbitMQ *rabbitmq.Handler
@@ -16,7 +17,7 @@ type Manager struct {
 	logger   func(string, ...interface{})
 }
 
-// NewManager creates a new service testing manager
+// NewManager creates a new service testing manager.
 func NewManager(logger func(string, ...interface{})) *Manager {
 	if logger == nil {
 		logger = func(string, ...interface{}) {} // No-op logger
@@ -31,7 +32,7 @@ func NewManager(logger func(string, ...interface{})) *Manager {
 	}
 }
 
-// NewManagerWithCFConfig creates a new service testing manager with CF broker configuration
+// NewManagerWithCFConfig creates a new service testing manager with CF broker configuration.
 func NewManagerWithCFConfig(logger func(string, ...interface{}), brokerURL, brokerUser, brokerPass string) *Manager {
 	if logger == nil {
 		logger = func(string, ...interface{}) {} // No-op logger
@@ -46,27 +47,31 @@ func NewManagerWithCFConfig(logger func(string, ...interface{}), brokerURL, brok
 	}
 }
 
-// Close closes all service handlers
+// Close closes all service handlers.
 func (m *Manager) Close() error {
 	if m.Redis != nil {
-		if err := m.Redis.Close(); err != nil {
-			return err
+		err := m.Redis.Close()
+		if err != nil {
+			return fmt.Errorf("failed to close Redis handler: %w", err)
 		}
 	}
+
 	if m.RabbitMQ != nil {
-		if err := m.RabbitMQ.Close(); err != nil {
-			return err
+		err := m.RabbitMQ.Close()
+		if err != nil {
+			return fmt.Errorf("failed to close RabbitMQ handler: %w", err)
 		}
 	}
 	// CF handler doesn't need explicit closing
 	return nil
 }
 
-// IsRedisInstance checks if the credentials indicate a Redis service
+// IsRedisInstance checks if the credentials indicate a Redis service.
 func IsRedisInstance(creds common.Credentials) bool {
 	// Check for Redis-specific fields
 	if creds.GetString("uri") != "" {
 		uri := creds.GetString("uri")
+
 		return len(uri) > 8 && (uri[:8] == "redis://" || uri[:9] == "rediss://")
 	}
 
@@ -85,11 +90,12 @@ func IsRedisInstance(creds common.Credentials) bool {
 	return false
 }
 
-// IsRabbitMQInstance checks if the credentials indicate a RabbitMQ service
+// IsRabbitMQInstance checks if the credentials indicate a RabbitMQ service.
 func IsRabbitMQInstance(creds common.Credentials) bool {
 	// Check for AMQP URI
 	if creds.GetString("uri") != "" {
 		uri := creds.GetString("uri")
+
 		return len(uri) > 7 && (uri[:7] == "amqp://" || uri[:8] == "amqps://")
 	}
 
@@ -98,9 +104,11 @@ func IsRabbitMQInstance(creds common.Credentials) bool {
 		if _, ok := protocols["management"]; ok {
 			return true
 		}
+
 		if _, ok := protocols["amqp"]; ok {
 			return true
 		}
+
 		if _, ok := protocols["amqps"]; ok {
 			return true
 		}

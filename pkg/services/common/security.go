@@ -3,11 +3,18 @@ package common
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"time"
 )
 
-// TLSConfig represents enhanced TLS configuration
+// Static errors for err113 compliance.
+var (
+	ErrPotentiallyUnsafeInput         = errors.New("potentially unsafe input detected")
+	ErrPotentiallyUnsafeScriptContent = errors.New("potentially unsafe script content")
+)
+
+// TLSConfig represents enhanced TLS configuration.
 type TLSConfig struct {
 	InsecureSkipVerify bool
 	RootCAs            *x509.CertPool
@@ -16,7 +23,7 @@ type TLSConfig struct {
 	Certificates       []tls.Certificate
 }
 
-// BuildTLSConfig creates a TLS configuration from credentials
+// BuildTLSConfig creates a TLS configuration from credentials.
 func BuildTLSConfig(creds Credentials, serverName string) *tls.Config {
 	config := &tls.Config{
 		MinVersion: tls.VersionTLS12,
@@ -52,14 +59,14 @@ func BuildTLSConfig(creds Credentials, serverName string) *tls.Config {
 	return config
 }
 
-// RateLimiter provides basic rate limiting functionality
+// RateLimiter provides basic rate limiting functionality.
 type RateLimiter struct {
 	requests map[string][]time.Time
 	Limit    int
 	Window   time.Duration
 }
 
-// NewRateLimiter creates a new rate limiter
+// NewRateLimiter creates a new rate limiter.
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	return &RateLimiter{
 		requests: make(map[string][]time.Time),
@@ -68,7 +75,7 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 	}
 }
 
-// AllowRequest checks if a request is allowed for the given key
+// AllowRequest checks if a request is allowed for the given key.
 func (rl *RateLimiter) AllowRequest(key string) bool {
 	now := time.Now()
 
@@ -77,6 +84,7 @@ func (rl *RateLimiter) AllowRequest(key string) bool {
 
 	// Remove requests outside the time window
 	validRequests := make([]time.Time, 0)
+
 	for _, reqTime := range requests {
 		if now.Sub(reqTime) < rl.Window {
 			validRequests = append(validRequests, reqTime)
@@ -95,12 +103,13 @@ func (rl *RateLimiter) AllowRequest(key string) bool {
 	return true
 }
 
-// GetRemainingRequests returns the number of remaining requests in the current window
+// GetRemainingRequests returns the number of remaining requests in the current window.
 func (rl *RateLimiter) GetRemainingRequests(key string) int {
 	now := time.Now()
 
 	// Count valid requests
 	validCount := 0
+
 	for _, reqTime := range rl.requests[key] {
 		if now.Sub(reqTime) < rl.Window {
 			validCount++
@@ -115,12 +124,12 @@ func (rl *RateLimiter) GetRemainingRequests(key string) int {
 	return remaining
 }
 
-// AuditLogger provides audit logging functionality
+// AuditLogger provides audit logging functionality.
 type AuditLogger struct {
 	logger func(string, ...interface{})
 }
 
-// NewAuditLogger creates a new audit logger
+// NewAuditLogger creates a new audit logger.
 func NewAuditLogger(logger func(string, ...interface{})) *AuditLogger {
 	if logger == nil {
 		logger = func(string, ...interface{}) {} // No-op logger
@@ -131,18 +140,24 @@ func NewAuditLogger(logger func(string, ...interface{})) *AuditLogger {
 	}
 }
 
-// LogOperation logs a service operation for auditing
+// LogOperation logs a service operation for auditing.
 func (al *AuditLogger) LogOperation(user, instanceID, serviceType, operation string, params interface{}, result interface{}, err error) {
+	var maskedParams interface{}
+	if creds, ok := params.(Credentials); ok {
+		maskedParams = MaskCredentials(creds)
+	} else {
+		maskedParams = params
+	}
+
 	entry := map[string]interface{}{
 		"timestamp":    time.Now().Unix(),
 		"user":         user,
 		"instance_id":  instanceID,
 		"service_type": serviceType,
 		"operation":    operation,
-		"params":       MaskCredentials(params.(Credentials)),
+		"params":       maskedParams,
 		"success":      err == nil,
 	}
-
 	if err != nil {
 		entry["error"] = err.Error()
 	} else {
@@ -152,24 +167,26 @@ func (al *AuditLogger) LogOperation(user, instanceID, serviceType, operation str
 	al.logger("service_testing_audit: %+v", entry)
 }
 
-// ValidateInputs performs basic input validation
+// ValidateInputs performs basic input validation.
 func ValidateInputs(inputs map[string]interface{}) error {
 	for key, value := range inputs {
 		if str, ok := value.(string); ok {
 			// Check for potential security issues
-			if containsSQLInjection(str) {
-				return fmt.Errorf("potentially unsafe input detected in %s", key)
+			if ContainsSQLInjection(str) {
+				return fmt.Errorf("%w in %s", ErrPotentiallyUnsafeInput, key)
 			}
-			if containsScriptInjection(str) {
-				return fmt.Errorf("potentially unsafe script content in %s", key)
+
+			if ContainsScriptInjection(str) {
+				return fmt.Errorf("%w in %s", ErrPotentiallyUnsafeScriptContent, key)
 			}
 		}
 	}
+
 	return nil
 }
 
-// containsSQLInjection checks for basic SQL injection patterns
-func containsSQLInjection(input string) bool {
+// containsSQLInjection checks for basic SQL injection patterns.
+func ContainsSQLInjection(input string) bool {
 	dangerousPatterns := []string{
 		"'; DROP",
 		"\"; DROP",
@@ -183,12 +200,15 @@ func containsSQLInjection(input string) bool {
 		if len(input) >= len(pattern) {
 			for i := 0; i <= len(input)-len(pattern); i++ {
 				match := true
-				for j := 0; j < len(pattern); j++ {
+
+				for j := range len(pattern) {
 					if input[i+j] != pattern[j] && input[i+j] != pattern[j]+32 && input[i+j] != pattern[j]-32 {
 						match = false
+
 						break
 					}
 				}
+
 				if match {
 					return true
 				}
@@ -199,8 +219,8 @@ func containsSQLInjection(input string) bool {
 	return false
 }
 
-// containsScriptInjection checks for basic script injection patterns
-func containsScriptInjection(input string) bool {
+// containsScriptInjection checks for basic script injection patterns.
+func ContainsScriptInjection(input string) bool {
 	dangerousPatterns := []string{
 		"<script",
 		"javascript:",
@@ -214,12 +234,15 @@ func containsScriptInjection(input string) bool {
 		if len(input) >= len(pattern) {
 			for i := 0; i <= len(input)-len(pattern); i++ {
 				match := true
-				for j := 0; j < len(pattern); j++ {
+
+				for j := range len(pattern) {
 					if input[i+j] != pattern[j] && input[i+j] != pattern[j]+32 && input[i+j] != pattern[j]-32 {
 						match = false
+
 						break
 					}
 				}
+
 				if match {
 					return true
 				}

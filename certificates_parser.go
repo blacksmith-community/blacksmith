@@ -1,6 +1,8 @@
 package main
 
 import (
+	"blacksmith/pkg/logger"
+	"context"
 	"crypto/md5"  // #nosec G501 - MD5 used only for certificate fingerprint identification, not security
 	"crypto/sha1" // #nosec G505 - SHA1 used only for certificate fingerprint identification, not security
 	"crypto/sha256"
@@ -9,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -17,7 +20,23 @@ import (
 	"time"
 )
 
-// CertificateInfo represents detailed information about an X.509 certificate
+const (
+	certificateBlockType = "CERTIFICATE"
+	opensslTimeout       = 30 * time.Second
+)
+
+// Static errors for err113 compliance.
+var (
+	ErrFailedToParsePEMBlock             = errors.New("failed to parse PEM block")
+	ErrPEMBlockIsNotCertificate          = errors.New("PEM block is not a certificate")
+	ErrConnectionIsNotTLS                = errors.New("connection is not a TLS connection")
+	ErrNoCertificatesFoundForAddress     = errors.New("no certificates found for address")
+	ErrInvalidPEMFormat                  = errors.New("invalid PEM format")
+	ErrPEMBlockIsNotCertificateWithType  = errors.New("PEM block is not a certificate")
+	ErrNoValidCertificatesFoundInPEMData = errors.New("no valid certificates found in PEM data")
+)
+
+// CertificateInfo represents detailed information about an X.509 certificate.
 type CertificateInfo struct {
 	Version            int                     `json:"version"`
 	SerialNumber       string                  `json:"serialNumber"`
@@ -37,7 +56,7 @@ type CertificateInfo struct {
 	Chain              []CertificateChainInfo  `json:"chain,omitempty"`
 }
 
-// CertificateSubject represents the subject or issuer of a certificate
+// CertificateSubject represents the subject or issuer of a certificate.
 type CertificateSubject struct {
 	Country            []string `json:"country,omitempty"`
 	Organization       []string `json:"organization,omitempty"`
@@ -51,7 +70,7 @@ type CertificateSubject struct {
 	Names              []string `json:"names,omitempty"`
 }
 
-// CertificatePublicKey represents the public key information
+// CertificatePublicKey represents the public key information.
 type CertificatePublicKey struct {
 	Algorithm string `json:"algorithm"`
 	Bits      int    `json:"bits"`
@@ -60,7 +79,7 @@ type CertificatePublicKey struct {
 	Curve     string `json:"curve,omitempty"`
 }
 
-// CertificateExtension represents a certificate extension
+// CertificateExtension represents a certificate extension.
 type CertificateExtension struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -68,14 +87,14 @@ type CertificateExtension struct {
 	Value    string `json:"value"`
 }
 
-// CertificateFingerprints represents certificate fingerprints
+// CertificateFingerprints represents certificate fingerprints.
 type CertificateFingerprints struct {
 	MD5    string `json:"md5"`
 	SHA1   string `json:"sha1"`
 	SHA256 string `json:"sha256"`
 }
 
-// CertificateChainInfo represents basic information about certificates in the chain
+// CertificateChainInfo represents basic information about certificates in the chain.
 type CertificateChainInfo struct {
 	Subject      string    `json:"subject"`
 	Issuer       string    `json:"issuer"`
@@ -84,61 +103,61 @@ type CertificateChainInfo struct {
 	NotAfter     time.Time `json:"notAfter"`
 }
 
-// CertificateListItem represents a certificate in a list
+// CertificateListItem represents a certificate in a list.
 type CertificateListItem struct {
 	Name    string          `json:"name"`
 	Path    string          `json:"path,omitempty"`
 	Details CertificateInfo `json:"details"`
 }
 
-// CertificateResponse represents the API response for certificate operations
+// CertificateResponse represents the API response for certificate operations.
 type CertificateResponse struct {
 	Success bool                    `json:"success"`
 	Data    CertificateResponseData `json:"data"`
 	Error   string                  `json:"error,omitempty"`
 }
 
-// CertificateResponseData represents the data portion of certificate API responses
+// CertificateResponseData represents the data portion of certificate API responses.
 type CertificateResponseData struct {
 	Certificates []CertificateListItem `json:"certificates"`
 	Metadata     CertificateMetadata   `json:"metadata"`
 }
 
-// CertificateMetadata represents metadata about the certificate source
+// CertificateMetadata represents metadata about the certificate source.
 type CertificateMetadata struct {
 	Source    string    `json:"source"`
 	Timestamp time.Time `json:"timestamp"`
 	Count     int       `json:"count"`
 }
 
-// CertificateFileItem represents a certificate file reference without parsing the content
+// CertificateFileItem represents a certificate file reference without parsing the content.
 type CertificateFileItem struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 }
 
-// CertificateFileResponse represents the API response for certificate file listings
+// CertificateFileResponse represents the API response for certificate file listings.
 type CertificateFileResponse struct {
 	Success bool                `json:"success"`
 	Data    CertificateFileData `json:"data"`
 	Error   string              `json:"error,omitempty"`
 }
 
-// CertificateFileData represents the data portion of certificate file API responses
+// CertificateFileData represents the data portion of certificate file API responses.
 type CertificateFileData struct {
 	Files    []CertificateFileItem `json:"files"`
 	Metadata CertificateMetadata   `json:"metadata"`
 }
 
-// ParseCertificateFromPEM parses a PEM-encoded certificate and returns detailed information
-func ParseCertificateFromPEM(pemData string) (*CertificateInfo, error) {
+// ParseCertificateFromPEM parses a PEM-encoded certificate and returns detailed information.
+func ParseCertificateFromPEM(ctx context.Context, pemData string) (*CertificateInfo, error) {
 	block, _ := pem.Decode([]byte(pemData))
 	if block == nil {
-		return nil, fmt.Errorf("failed to parse PEM block")
+		return nil, ErrFailedToParsePEMBlock
 	}
 
-	if block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("PEM block is not a certificate")
+	if block.Type != certificateBlockType {
+		return nil, ErrPEMBlockIsNotCertificate
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
@@ -146,11 +165,11 @@ func ParseCertificateFromPEM(pemData string) (*CertificateInfo, error) {
 		return nil, fmt.Errorf("failed to parse certificate: %w", err)
 	}
 
-	return ParseCertificateFromX509(cert, pemData)
+	return ParseCertificateFromX509(ctx, cert, pemData)
 }
 
-// ParseCertificateFromX509 converts an x509.Certificate to CertificateInfo
-func ParseCertificateFromX509(cert *x509.Certificate, pemData string) (*CertificateInfo, error) {
+// ParseCertificateFromX509 converts an x509.Certificate to CertificateInfo.
+func ParseCertificateFromX509(ctx context.Context, cert *x509.Certificate, pemData string) (*CertificateInfo, error) {
 	certInfo := &CertificateInfo{
 		Version:            cert.Version,
 		SerialNumber:       cert.SerialNumber.String(),
@@ -169,9 +188,10 @@ func ParseCertificateFromX509(cert *x509.Certificate, pemData string) (*Certific
 	}
 
 	// Get OpenSSL text output
-	textDetails, err := GetOpenSSLTextOutput(pemData)
+	textDetails, err := GetOpenSSLTextOutput(ctx, pemData)
 	if err != nil {
-		Logger.Wrap("certificates").Error("Failed to get OpenSSL text output: %s", err)
+		logger.Get().Named("certificates").Error("Failed to get OpenSSL text output: %s", err)
+
 		certInfo.TextDetails = "OpenSSL text output not available"
 	} else {
 		certInfo.TextDetails = textDetails
@@ -180,9 +200,12 @@ func ParseCertificateFromX509(cert *x509.Certificate, pemData string) (*Certific
 	return certInfo, nil
 }
 
-// GetOpenSSLTextOutput executes OpenSSL to get the text representation of a certificate
-func GetOpenSSLTextOutput(pemData string) (string, error) {
-	cmd := exec.Command("openssl", "x509", "-text", "-noout")
+// GetOpenSSLTextOutput executes OpenSSL to get the text representation of a certificate.
+func GetOpenSSLTextOutput(ctx context.Context, pemData string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, opensslTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "openssl", "x509", "-text", "-noout")
 	cmd.Stdin = strings.NewReader(pemData)
 
 	output, err := cmd.Output()
@@ -193,13 +216,13 @@ func GetOpenSSLTextOutput(pemData string) (string, error) {
 	return string(output), nil
 }
 
-// FetchCertificateFromEndpoint connects to a network endpoint and retrieves its certificate
-func FetchCertificateFromEndpoint(address string, timeout time.Duration) (*CertificateInfo, error) {
-	return FetchCertificateFromEndpointWithVerify(address, timeout, true) // Default to skip verify for certificate inspection
+// FetchCertificateFromEndpoint connects to a network endpoint and retrieves its certificate.
+func FetchCertificateFromEndpoint(ctx context.Context, address string, timeout time.Duration) (*CertificateInfo, error) {
+	return FetchCertificateFromEndpointWithVerify(ctx, address, timeout, true) // Default to skip verify for certificate inspection
 }
 
-// FetchCertificateFromEndpointWithVerify connects to a network endpoint and retrieves its certificate with TLS verification control
-func FetchCertificateFromEndpointWithVerify(address string, timeout time.Duration, skipTLSVerify bool) (*CertificateInfo, error) {
+// FetchCertificateFromEndpointWithVerify connects to a network endpoint and retrieves its certificate with TLS verification control.
+func FetchCertificateFromEndpointWithVerify(ctx context.Context, address string, timeout time.Duration, skipTLSVerify bool) (*CertificateInfo, error) {
 	// Parse the address to handle both URLs and host:port formats
 	var host, port string
 
@@ -229,40 +252,56 @@ func FetchCertificateFromEndpointWithVerify(address string, timeout time.Duratio
 	} else {
 		// Try to parse as host:port
 		var err error
+
 		host, port, err = net.SplitHostPort(address)
 		if err != nil {
 			// If no port specified, assume HTTPS (443)
 			host = address
 			port = "443"
 		}
+
 		address = net.JoinHostPort(host, port)
 	}
 
 	// Create a TLS connection with a timeout
-	dialer := &net.Dialer{Timeout: timeout}
-	conn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
-		InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Configurable TLS verification for certificate inspection
-	})
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: timeout},
+		Config: &tls.Config{
+			InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Configurable TLS verification for certificate inspection
+		},
+	}
+
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to %s: %w", address, err)
 	}
+
 	defer func() { _ = conn.Close() }()
 
+	// Cast to TLS connection to get certificate info
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		return nil, ErrConnectionIsNotTLS
+	}
+
 	// Get the peer certificate
-	state := conn.ConnectionState()
+	state := tlsConn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
-		return nil, fmt.Errorf("no certificates found for %s", address)
+		return nil, fmt.Errorf("%w: %s", ErrNoCertificatesFoundForAddress, address)
 	}
 
 	cert := state.PeerCertificates[0]
 
 	// Convert to PEM format
 	pemData := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
+		Type:  certificateBlockType,
 		Bytes: cert.Raw,
 	})
 
-	certInfo, err := ParseCertificateFromX509(cert, string(pemData))
+	certInfo, err := ParseCertificateFromX509(ctx, cert, string(pemData))
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +309,8 @@ func FetchCertificateFromEndpointWithVerify(address string, timeout time.Duratio
 	// Add certificate chain information
 	if len(state.PeerCertificates) > 1 {
 		var chain []CertificateChainInfo
-		for i, chainCert := range state.PeerCertificates[1:] {
+
+		for chainIndex, chainCert := range state.PeerCertificates[1:] {
 			chainInfo := CertificateChainInfo{
 				Subject:      chainCert.Subject.String(),
 				Issuer:       chainCert.Issuer.String(),
@@ -281,19 +321,21 @@ func FetchCertificateFromEndpointWithVerify(address string, timeout time.Duratio
 			chain = append(chain, chainInfo)
 
 			// Limit chain length to prevent excessive data
-			if i >= 9 { // max 10 certificates in chain
+			const maxChainLength = 9 // max 10 certificates in chain (0-9 = 10 total)
+			if chainIndex >= maxChainLength {
 				break
 			}
 		}
+
 		certInfo.Chain = chain
 	}
 
 	return certInfo, nil
 }
 
-// convertPkixName converts a pkix.Name to CertificateSubject
+// convertPkixName converts a pkix.Name to CertificateSubject.
 func convertPkixName(name pkix.Name) CertificateSubject {
-	var names []string
+	names := make([]string, 0, len(name.Names))
 	for _, attr := range name.Names {
 		names = append(names, fmt.Sprintf("%s=%s", attr.Type.String(), attr.Value))
 	}
@@ -312,34 +354,42 @@ func convertPkixName(name pkix.Name) CertificateSubject {
 	}
 }
 
-// convertKeyUsage converts x509.KeyUsage to string slice
+// convertKeyUsage converts x509.KeyUsage to string slice.
 func convertKeyUsage(usage x509.KeyUsage) []string {
 	var usages []string
 
 	if usage&x509.KeyUsageDigitalSignature != 0 {
 		usages = append(usages, "digitalSignature")
 	}
+
 	if usage&x509.KeyUsageContentCommitment != 0 {
 		usages = append(usages, "contentCommitment")
 	}
+
 	if usage&x509.KeyUsageKeyEncipherment != 0 {
 		usages = append(usages, "keyEncipherment")
 	}
+
 	if usage&x509.KeyUsageDataEncipherment != 0 {
 		usages = append(usages, "dataEncipherment")
 	}
+
 	if usage&x509.KeyUsageKeyAgreement != 0 {
 		usages = append(usages, "keyAgreement")
 	}
+
 	if usage&x509.KeyUsageCertSign != 0 {
 		usages = append(usages, "keyCertSign")
 	}
+
 	if usage&x509.KeyUsageCRLSign != 0 {
 		usages = append(usages, "cRLSign")
 	}
+
 	if usage&x509.KeyUsageEncipherOnly != 0 {
 		usages = append(usages, "encipherOnly")
 	}
+
 	if usage&x509.KeyUsageDecipherOnly != 0 {
 		usages = append(usages, "decipherOnly")
 	}
@@ -347,7 +397,7 @@ func convertKeyUsage(usage x509.KeyUsage) []string {
 	return usages
 }
 
-// convertExtKeyUsage converts x509.ExtKeyUsage to string slice
+// convertExtKeyUsage converts x509.ExtKeyUsage to string slice.
 func convertExtKeyUsage(usage []x509.ExtKeyUsage) []string {
 	var usages []string
 
@@ -365,15 +415,31 @@ func convertExtKeyUsage(usage []x509.ExtKeyUsage) []string {
 			usages = append(usages, "timeStamping")
 		case x509.ExtKeyUsageOCSPSigning:
 			usages = append(usages, "ocspSigning")
+		case x509.ExtKeyUsageAny:
+			usages = append(usages, "any")
+		case x509.ExtKeyUsageIPSECEndSystem:
+			usages = append(usages, "ipsecEndSystem")
+		case x509.ExtKeyUsageIPSECTunnel:
+			usages = append(usages, "ipsecTunnel")
+		case x509.ExtKeyUsageIPSECUser:
+			usages = append(usages, "ipsecUser")
+		case x509.ExtKeyUsageMicrosoftServerGatedCrypto:
+			usages = append(usages, "microsoftServerGatedCrypto")
+		case x509.ExtKeyUsageNetscapeServerGatedCrypto:
+			usages = append(usages, "netscapeServerGatedCrypto")
+		case x509.ExtKeyUsageMicrosoftCommercialCodeSigning:
+			usages = append(usages, "microsoftCommercialCodeSigning")
+		case x509.ExtKeyUsageMicrosoftKernelCodeSigning:
+			usages = append(usages, "microsoftKernelCodeSigning")
 		}
 	}
 
 	return usages
 }
 
-// extractSubjectAltNames extracts subject alternative names from the certificate
+// extractSubjectAltNames extracts subject alternative names from the certificate.
 func extractSubjectAltNames(cert *x509.Certificate) []string {
-	var sans []string
+	sans := make([]string, 0, len(cert.DNSNames)+len(cert.IPAddresses)+len(cert.EmailAddresses)+len(cert.URIs))
 
 	sans = append(sans, cert.DNSNames...)
 
@@ -390,7 +456,7 @@ func extractSubjectAltNames(cert *x509.Certificate) []string {
 	return sans
 }
 
-// convertPublicKey extracts public key information
+// convertPublicKey extracts public key information.
 func convertPublicKey(pubKey interface{}) CertificatePublicKey {
 	switch key := pubKey.(type) {
 	case *x509.Certificate:
@@ -405,9 +471,9 @@ func convertPublicKey(pubKey interface{}) CertificatePublicKey {
 	}
 }
 
-// convertExtensions converts certificate extensions
+// convertExtensions converts certificate extensions.
 func convertExtensions(extensions []pkix.Extension) []CertificateExtension {
-	var exts []CertificateExtension
+	exts := make([]CertificateExtension, 0, len(extensions))
 
 	for _, ext := range extensions {
 		exts = append(exts, CertificateExtension{
@@ -421,7 +487,7 @@ func convertExtensions(extensions []pkix.Extension) []CertificateExtension {
 	return exts
 }
 
-// getExtensionName returns a human-readable name for extension OIDs
+// getExtensionName returns a human-readable name for extension OIDs.
 func getExtensionName(oid string) string {
 	names := map[string]string{
 		"2.5.29.15":         "keyUsage",
@@ -442,7 +508,7 @@ func getExtensionName(oid string) string {
 	return "unknown"
 }
 
-// calculateFingerprints calculates certificate fingerprints
+// calculateFingerprints calculates certificate fingerprints.
 func calculateFingerprints(certBytes []byte) CertificateFingerprints {
 	md5Hash := md5.Sum(certBytes)   // #nosec G401 - MD5 used only for certificate fingerprint identification, not security
 	sha1Hash := sha1.Sum(certBytes) // #nosec G401 - SHA1 used only for certificate fingerprint identification, not security
@@ -455,15 +521,15 @@ func calculateFingerprints(certBytes []byte) CertificateFingerprints {
 	}
 }
 
-// ValidateCertificateFormat validates that the input is a valid PEM certificate
+// ValidateCertificateFormat validates that the input is a valid PEM certificate.
 func ValidateCertificateFormat(pemData string) error {
 	block, _ := pem.Decode([]byte(pemData))
 	if block == nil {
-		return fmt.Errorf("invalid PEM format")
+		return ErrInvalidPEMFormat
 	}
 
-	if block.Type != "CERTIFICATE" {
-		return fmt.Errorf("PEM block is not a certificate, got: %s", block.Type)
+	if block.Type != certificateBlockType {
+		return fmt.Errorf("%w, got: %s", ErrPEMBlockIsNotCertificateWithType, block.Type)
 	}
 
 	_, err := x509.ParseCertificate(block.Bytes)
@@ -474,9 +540,10 @@ func ValidateCertificateFormat(pemData string) error {
 	return nil
 }
 
-// ParseCertificateChain parses a certificate chain from PEM data
-func ParseCertificateChain(pemData string) ([]*CertificateInfo, error) {
+// ParseCertificateChain parses a certificate chain from PEM data.
+func ParseCertificateChain(ctx context.Context, pemData string) ([]*CertificateInfo, error) {
 	var certificates []*CertificateInfo
+
 	remaining := []byte(pemData)
 
 	for len(remaining) > 0 {
@@ -485,8 +552,9 @@ func ParseCertificateChain(pemData string) ([]*CertificateInfo, error) {
 			break
 		}
 
-		if block.Type != "CERTIFICATE" {
+		if block.Type != certificateBlockType {
 			remaining = rest
+
 			continue
 		}
 
@@ -498,7 +566,7 @@ func ParseCertificateChain(pemData string) ([]*CertificateInfo, error) {
 		// Convert back to PEM for this individual certificate
 		certPEM := pem.EncodeToMemory(block)
 
-		certInfo, err := ParseCertificateFromX509(cert, string(certPEM))
+		certInfo, err := ParseCertificateFromX509(ctx, cert, string(certPEM))
 		if err != nil {
 			return nil, err
 		}
@@ -508,7 +576,7 @@ func ParseCertificateChain(pemData string) ([]*CertificateInfo, error) {
 	}
 
 	if len(certificates) == 0 {
-		return nil, fmt.Errorf("no valid certificates found in PEM data")
+		return nil, ErrNoValidCertificatesFoundInPEMData
 	}
 
 	return certificates, nil

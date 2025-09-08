@@ -6,7 +6,7 @@ import (
 )
 
 // Director defines the interface for BOSH operations
-// This provides a clean abstraction over the BOSH CLI director client
+// This provides a clean abstraction over the BOSH CLI director client.
 type Director interface {
 	// Director operations
 	GetInfo() (*Info, error)
@@ -62,7 +62,7 @@ type Director interface {
 	DeleteResurrectionConfig(deployment string) error
 }
 
-// Info represents BOSH director information
+// Info represents BOSH director information.
 type Info struct {
 	Name     string          `json:"name"`
 	UUID     string          `json:"uuid"`
@@ -72,7 +72,7 @@ type Info struct {
 	Features map[string]bool `json:"features"`
 }
 
-// Deployment represents a BOSH deployment
+// Deployment represents a BOSH deployment.
 type Deployment struct {
 	Name        string   `json:"name"`
 	CloudConfig string   `json:"cloud_config"`
@@ -81,13 +81,13 @@ type Deployment struct {
 	Teams       []string `json:"teams"`
 }
 
-// DeploymentDetail represents detailed deployment information
+// DeploymentDetail represents detailed deployment information.
 type DeploymentDetail struct {
 	Name     string `json:"name"`
 	Manifest string `json:"manifest"`
 }
 
-// VM represents a BOSH VM
+// VM represents a BOSH VM.
 type VM struct {
 	// Core VM identity
 	ID      string `json:"id"`
@@ -128,7 +128,7 @@ type VM struct {
 	Stemcell        VMStemcell  `json:"stemcell"`         // Information of the Stemcell used for the VM
 }
 
-// VMProcess represents a process running on a VM
+// VMProcess represents a process running on a VM.
 type VMProcess struct {
 	Name   string         `json:"name"`
 	State  string         `json:"state"`
@@ -137,7 +137,7 @@ type VMProcess struct {
 	Uptime VMVitalsUptime `json:"uptime"`
 }
 
-// VMVitals represents VM vital statistics
+// VMVitals represents VM vital statistics.
 type VMVitals struct {
 	CPU    VMVitalsCPU             `json:"cpu"`
 	Memory VMVitalsMemory          `json:"mem"`
@@ -147,7 +147,7 @@ type VMVitals struct {
 	Uptime VMVitalsUptime          `json:"uptime"`
 }
 
-// VMVitalsCPU represents CPU vitals
+// VMVitalsCPU represents CPU vitals.
 type VMVitalsCPU struct {
 	Total *float64 `json:"total,omitempty"` // used by VMProcess
 	Sys   string   `json:"sys"`
@@ -155,37 +155,37 @@ type VMVitalsCPU struct {
 	Wait  string   `json:"wait"`
 }
 
-// VMVitalsMemory represents memory vitals
+// VMVitalsMemory represents memory vitals.
 type VMVitalsMemory struct {
 	KB      *uint64  `json:"kb,omitempty"`
 	Percent *float64 `json:"percent,omitempty"`
 }
 
-// VMVitalsDisk represents disk vitals
+// VMVitalsDisk represents disk vitals.
 type VMVitalsDisk struct {
 	InodePercent string `json:"inode_percent"`
 	Percent      string `json:"percent"`
 }
 
-// VMVitalsUptime represents uptime vitals
+// VMVitalsUptime represents uptime vitals.
 type VMVitalsUptime struct {
 	Seconds *uint64 `json:"secs,omitempty"`
 }
 
-// VMStemcell represents stemcell information for a VM
+// VMStemcell represents stemcell information for a VM.
 type VMStemcell struct {
 	Name       string `json:"name"`
 	Version    string `json:"version"`
 	ApiVersion int    `json:"api_version"`
 }
 
-// Release represents a BOSH release
+// Release represents a BOSH release.
 type Release struct {
 	Name            string           `json:"name"`
 	ReleaseVersions []ReleaseVersion `json:"release_versions"`
 }
 
-// ReleaseVersion represents a specific version of a release
+// ReleaseVersion represents a specific version of a release.
 type ReleaseVersion struct {
 	Version            string   `json:"version"`
 	CommitHash         string   `json:"commit_hash"`
@@ -194,7 +194,7 @@ type ReleaseVersion struct {
 	JobNames           []string `json:"job_names"`
 }
 
-// Stemcell represents a BOSH stemcell
+// Stemcell represents a BOSH stemcell.
 type Stemcell struct {
 	Name        string   `json:"name"`
 	Version     string   `json:"version"`
@@ -204,7 +204,7 @@ type Stemcell struct {
 	Deployments []string `json:"deployments"`
 }
 
-// Task represents a BOSH task
+// Task represents a BOSH task.
 type Task struct {
 	ID          int        `json:"id"`
 	State       string     `json:"state"`
@@ -218,7 +218,7 @@ type Task struct {
 	ContextID   string     `json:"context_id"`
 }
 
-// BoshConfig represents a BOSH config
+// BoshConfig represents a BOSH config.
 type BoshConfig struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -228,14 +228,15 @@ type BoshConfig struct {
 	IsActive  bool      `json:"is_active"`
 }
 
-// BoshConfigDetail represents detailed config information
+// BoshConfigDetail represents detailed config information.
 type BoshConfigDetail struct {
 	BoshConfig
+
 	Content  string                 `json:"content"`
 	Metadata map[string]interface{} `json:"metadata"`
 }
 
-// ConfigDiff represents the diff between two config versions
+// ConfigDiff represents the diff between two config versions.
 type ConfigDiff struct {
 	FromID     string             `json:"from_id"`
 	ToID       string             `json:"to_id"`
@@ -244,7 +245,7 @@ type ConfigDiff struct {
 	DiffString string             `json:"diff_string"`
 }
 
-// ConfigDiffChange represents a single change in a config diff
+// ConfigDiffChange represents a single change in a config diff.
 type ConfigDiffChange struct {
 	Type     string `json:"type"` // "added", "removed", "changed"
 	Path     string `json:"path"` // YAML path to the changed field
@@ -252,7 +253,7 @@ type ConfigDiffChange struct {
 	NewValue string `json:"new_value,omitempty"`
 }
 
-// TaskEvent represents an event from a BOSH task
+// TaskEvent represents an event from a BOSH task.
 type TaskEvent struct {
 	Time     time.Time              `json:"time"`
 	Stage    string                 `json:"stage"`
@@ -266,7 +267,7 @@ type TaskEvent struct {
 	Error    *TaskEventError        `json:"error,omitempty"`
 }
 
-// Event represents a BOSH event
+// Event represents a BOSH event.
 type Event struct {
 	ID         string    `json:"id"`
 	Time       time.Time `json:"time"`
@@ -282,20 +283,20 @@ type Event struct {
 	Error      string    `json:"error"`
 }
 
-// TaskEventError represents an error in a task event
+// TaskEventError represents an error in a task event.
 type TaskEventError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-// TaskReporter provides task progress reporting
+// TaskReporter provides task progress reporting.
 type TaskReporter interface {
 	TaskStarted(taskID int)
 	TaskFinished(taskID int, state string)
 	TaskOutputChunk(taskID int, chunk []byte)
 }
 
-// EventLogger provides event logging capabilities
+// EventLogger provides event logging capabilities.
 type EventLogger interface {
 	io.Writer
 	Stage(stage string)
@@ -304,12 +305,12 @@ type EventLogger interface {
 	Errorf(pattern string, args ...interface{})
 }
 
-// DirectorFactory creates Director instances
+// DirectorFactory creates Director instances.
 type DirectorFactory interface {
 	New(config Config) (Director, error)
 }
 
-// Config represents the configuration for creating a Director
+// Config represents the configuration for creating a Director.
 type Config struct {
 	// Connection details
 	Address           string
@@ -336,7 +337,7 @@ type Config struct {
 	Logger      Logger      // For Info/Debug/Error logging
 }
 
-// UAAConfig represents UAA authentication configuration
+// UAAConfig represents UAA authentication configuration.
 type UAAConfig struct {
 	URL               string
 	ClientID          string

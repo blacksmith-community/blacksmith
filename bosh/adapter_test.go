@@ -1,13 +1,13 @@
 package bosh_test
 
 import (
-	"os"
 	"testing"
 
 	"blacksmith/bosh"
 )
 
 func TestFactoryCreation(t *testing.T) {
+	t.Parallel()
 	// Test default factory (now always uses BOSH CLI)
 	factory := bosh.NewDefaultFactory()
 	if factory == nil {
@@ -23,10 +23,7 @@ func TestFactoryCreation(t *testing.T) {
 
 func TestFactoryNew(t *testing.T) {
 	// Set test mode to skip network calls
-	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	factory := bosh.NewFactory()
 	if factory == nil {
@@ -45,6 +42,7 @@ func TestFactoryNew(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error creating director: %v", err)
 	}
+
 	if director == nil {
 		t.Error("Expected director to be created")
 	}
@@ -52,10 +50,7 @@ func TestFactoryNew(t *testing.T) {
 
 func TestCreateDirectorFromLegacyConfig(t *testing.T) {
 	// Set test mode to skip network calls
-	if err := os.Setenv("BLACKSMITH_TEST_MODE", "true"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Unsetenv("BLACKSMITH_TEST_MODE") }()
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	// This test verifies the function exists and creates a director
 	// The BOSH CLI director doesn't connect until first use
@@ -78,11 +73,12 @@ func TestCreateDirectorFromLegacyConfig(t *testing.T) {
 }
 
 func TestDirectorInterface(t *testing.T) {
+	t.Parallel()
 	// This test just verifies that our interface is properly defined
 	var _ bosh.Director = (*mockDirector)(nil)
 }
 
-// mockDirector is a simple mock implementation for testing
+// mockDirector is a simple mock implementation for testing.
 type mockDirector struct{}
 
 func (m *mockDirector) GetInfo() (*bosh.Info, error)                              { return nil, nil }

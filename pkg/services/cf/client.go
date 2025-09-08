@@ -2,22 +2,34 @@ package cf
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 )
 
-// Logger interface for logging
+// Static errors for err113 compliance.
+var (
+	ErrFailedToGetServiceBrokers          = errors.New("failed to get service brokers")
+	ErrFailedToCreateServiceBroker        = errors.New("failed to create service broker")
+	ErrFailedToUpdateServiceBroker        = errors.New("failed to update service broker")
+	ErrFailedToDeleteServiceBroker        = errors.New("failed to delete service broker")
+	ErrFailedToGetServiceOfferings        = errors.New("failed to get service offerings")
+	ErrFailedToGetServicePlans            = errors.New("failed to get service plans")
+	ErrDisableServiceAccessNotImplemented = errors.New("disable service access not yet implemented")
+)
+
+// Logger interface for logging.
 type Logger interface {
-	Warn(format string, args ...interface{})
+	Warnf(format string, args ...interface{})
 }
 
-// noOpLogger is a logger that does nothing
+// noOpLogger is a logger that does nothing.
 type noOpLogger struct{}
 
-func (n *noOpLogger) Warn(format string, args ...interface{}) {}
+func (n *noOpLogger) Warnf(format string, args ...interface{}) {}
 
-// Client represents a Cloud Foundry API client
+// Client represents a Cloud Foundry API client.
 type Client struct {
 	authClient *CFAuthClient
 	brokerURL  string
@@ -26,7 +38,7 @@ type Client struct {
 	logger     Logger
 }
 
-// NewClient creates a new CF API client
+// NewClient creates a new CF API client.
 func NewClient(apiURL, username, password, brokerURL, brokerUser, brokerPass string) *Client {
 	return &Client{
 		authClient: NewCFAuthClient(apiURL, username, password),
@@ -37,15 +49,16 @@ func NewClient(apiURL, username, password, brokerURL, brokerUser, brokerPass str
 	}
 }
 
-// TestConnection tests the CF connection
+// TestConnection tests the CF connection.
 func (c *Client) TestConnection() (*RegistrationTestResult, error) {
 	cfInfo, err := c.authClient.TestConnection()
 	if err != nil {
+		// Connection test failed - this is a valid result, not a function error
 		return &RegistrationTestResult{
 			Success: false,
 			Message: "Connection failed",
 			Error:   err.Error(),
-		}, nil
+		}, nil //nolint:nilerr // Connection test failure is a valid result, not an error
 	}
 
 	return &RegistrationTestResult{
@@ -55,16 +68,17 @@ func (c *Client) TestConnection() (*RegistrationTestResult, error) {
 	}, nil
 }
 
-// GetServiceBrokers retrieves all service brokers from CF
+// GetServiceBrokers retrieves all service brokers from CF.
 func (c *Client) GetServiceBrokers() ([]BrokerInfo, error) {
 	resp, err := c.authClient.MakeAuthenticatedRequest("GET", "/v3/service_brokers", nil)
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get service brokers: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: status %d", ErrFailedToGetServiceBrokers, resp.StatusCode)
 	}
 
 	var response struct {
@@ -79,7 +93,8 @@ func (c *Client) GetServiceBrokers() ([]BrokerInfo, error) {
 		} `json:"resources"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode brokers response: %w", err)
 	}
 
@@ -98,7 +113,7 @@ func (c *Client) GetServiceBrokers() ([]BrokerInfo, error) {
 	return brokers, nil
 }
 
-// FindServiceBroker finds a service broker by name
+// FindServiceBroker finds a service broker by name.
 func (c *Client) FindServiceBroker(name string) (*BrokerInfo, error) {
 	brokers, err := c.GetServiceBrokers()
 	if err != nil {
@@ -114,7 +129,7 @@ func (c *Client) FindServiceBroker(name string) (*BrokerInfo, error) {
 	return nil, nil // Not found
 }
 
-// CreateServiceBroker creates a new service broker in CF
+// CreateServiceBroker creates a new service broker in CF.
 func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 	brokerData := map[string]interface{}{
 		"name":     name,
@@ -127,6 +142,7 @@ func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
@@ -137,15 +153,18 @@ func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 				Code   int    `json:"code"`
 			} `json:"errors"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
-			c.logger.Warn("Failed to decode error response: %v", err)
+
+		err := json.NewDecoder(resp.Body).Decode(&errorResp)
+		if err != nil {
+			c.logger.Warnf("Failed to decode error response: %v", err)
 		}
 
 		errorMsg := "Unknown error"
 		if len(errorResp.Errors) > 0 {
 			errorMsg = errorResp.Errors[0].Detail
 		}
-		return nil, fmt.Errorf("failed to create service broker (%d): %s", resp.StatusCode, errorMsg)
+
+		return nil, fmt.Errorf("%w (%d): %s", ErrFailedToCreateServiceBroker, resp.StatusCode, errorMsg)
 	}
 
 	var brokerResponse struct {
@@ -156,7 +175,8 @@ func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 		State    string `json:"state"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&brokerResponse); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&brokerResponse)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode broker creation response: %w", err)
 	}
 
@@ -169,7 +189,7 @@ func (c *Client) CreateServiceBroker(name string) (*BrokerInfo, error) {
 	}, nil
 }
 
-// UpdateServiceBroker updates an existing service broker
+// UpdateServiceBroker updates an existing service broker.
 func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error) {
 	brokerData := map[string]interface{}{
 		"name":     name,
@@ -178,11 +198,13 @@ func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error)
 		"password": c.brokerPass,
 	}
 
-	path := fmt.Sprintf("/v3/service_brokers/%s", brokerID)
+	path := "/v3/service_brokers/" + brokerID
+
 	resp, err := c.authClient.MakeAuthenticatedRequest("PATCH", path, brokerData)
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
@@ -191,15 +213,18 @@ func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error)
 				Detail string `json:"detail"`
 			} `json:"errors"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
-			c.logger.Warn("Failed to decode error response: %v", err)
+
+		err := json.NewDecoder(resp.Body).Decode(&errorResp)
+		if err != nil {
+			c.logger.Warnf("Failed to decode error response: %v", err)
 		}
 
 		errorMsg := "Unknown error"
 		if len(errorResp.Errors) > 0 {
 			errorMsg = errorResp.Errors[0].Detail
 		}
-		return nil, fmt.Errorf("failed to update service broker (%d): %s", resp.StatusCode, errorMsg)
+
+		return nil, fmt.Errorf("%w (%d): %s", ErrFailedToUpdateServiceBroker, resp.StatusCode, errorMsg)
 	}
 
 	var brokerResponse struct {
@@ -210,7 +235,8 @@ func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error)
 		State    string `json:"state"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&brokerResponse); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&brokerResponse)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode broker update response: %w", err)
 	}
 
@@ -223,32 +249,35 @@ func (c *Client) UpdateServiceBroker(brokerID, name string) (*BrokerInfo, error)
 	}, nil
 }
 
-// DeleteServiceBroker deletes a service broker from CF
+// DeleteServiceBroker deletes a service broker from CF.
 func (c *Client) DeleteServiceBroker(brokerID string) error {
-	path := fmt.Sprintf("/v3/service_brokers/%s", brokerID)
+	path := "/v3/service_brokers/" + brokerID
+
 	resp, err := c.authClient.MakeAuthenticatedRequest("DELETE", path, nil)
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("failed to delete service broker: status %d", resp.StatusCode)
+		return fmt.Errorf("%w: status %d", ErrFailedToDeleteServiceBroker, resp.StatusCode)
 	}
 
 	return nil
 }
 
-// GetServiceOfferings retrieves service offerings from CF catalog
+// GetServiceOfferings retrieves service offerings from CF catalog.
 func (c *Client) GetServiceOfferings() ([]ServiceInfo, error) {
 	resp, err := c.authClient.MakeAuthenticatedRequest("GET", "/v3/service_offerings", nil)
 	if err != nil {
 		return nil, err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get service offerings: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w: status %d", ErrFailedToGetServiceOfferings, resp.StatusCode)
 	}
 
 	var response struct {
@@ -267,7 +296,8 @@ func (c *Client) GetServiceOfferings() ([]ServiceInfo, error) {
 		} `json:"resources"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&response)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode service offerings response: %w", err)
 	}
 
@@ -285,22 +315,24 @@ func (c *Client) GetServiceOfferings() ([]ServiceInfo, error) {
 	return services, nil
 }
 
-// EnableServiceAccess enables access to a service offering
+// EnableServiceAccess enables access to a service offering.
 func (c *Client) EnableServiceAccess(serviceOfferingGUID string) error {
 	// Build the query to enable access for all orgs
 	params := url.Values{}
 	params.Set("service_offering_guids", serviceOfferingGUID)
 
 	// First, get all service plans for this offering
-	planPath := fmt.Sprintf("/v3/service_plans?service_offering_guids=%s", serviceOfferingGUID)
+	planPath := "/v3/service_plans?service_offering_guids=" + serviceOfferingGUID
+
 	resp, err := c.authClient.MakeAuthenticatedRequest("GET", planPath, nil)
 	if err != nil {
 		return err
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to get service plans: status %d", resp.StatusCode)
+		return fmt.Errorf("%w: status %d", ErrFailedToGetServicePlans, resp.StatusCode)
 	}
 
 	var plansResponse struct {
@@ -309,7 +341,8 @@ func (c *Client) EnableServiceAccess(serviceOfferingGUID string) error {
 		} `json:"resources"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&plansResponse); err != nil {
+	err = json.NewDecoder(resp.Body).Decode(&plansResponse)
+	if err != nil {
 		return fmt.Errorf("failed to decode service plans response: %w", err)
 	}
 
@@ -326,6 +359,7 @@ func (c *Client) EnableServiceAccess(serviceOfferingGUID string) error {
 		if err != nil {
 			return fmt.Errorf("failed to enable access for plan %s: %w", plan.GUID, err)
 		}
+
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusCreated {
@@ -337,9 +371,9 @@ func (c *Client) EnableServiceAccess(serviceOfferingGUID string) error {
 	return nil
 }
 
-// DisableServiceAccess disables access to a service offering
+// DisableServiceAccess disables access to a service offering.
 func (c *Client) DisableServiceAccess(serviceOfferingGUID string) error {
 	// Implementation would remove public visibility
 	// For now, we'll skip this as it's not in the immediate requirements
-	return fmt.Errorf("disable service access not yet implemented")
+	return ErrDisableServiceAccessNotImplemented
 }
