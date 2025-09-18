@@ -48,23 +48,16 @@ func NewCredentialPopulator(updater Updater, logger Logger) *CredentialPopulator
 func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID string, deploymentInfo DeploymentInfo, boshClient interface{}, broker interface{}) error {
 	cp.logger.Debugf("Checking credentials for instance %s", instanceID)
 
-	// Check if credentials already exist in Vault
-	credsPath := instanceID + "/credentials"
-
 	vault, ok := cp.updater.(*VaultUpdater).vault.(VaultInterface)
 	if !ok {
 		return ErrVaultNotExpectedType
 	}
 
-	existingCreds, err := vault.Get(credsPath)
-	if err == nil && len(existingCreds) > 0 {
-		cp.logger.Debugf("Instance %s already has credentials (%d fields)", instanceID, len(existingCreds))
-
+	// Check if credentials already exist
+	exists := cp.credentialsExist(vault, instanceID)
+	if exists {
 		return nil
 	}
-
-	// Credentials missing - need to fetch from BOSH
-	cp.logger.Infof("Instance %s missing credentials, fetching from BOSH deployment", instanceID)
 
 	// Extract service type from deployment name
 	serviceType := cp.extractServiceType(deploymentInfo.Name)
@@ -74,7 +67,7 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 		return nil
 	}
 
-	// Get plan information from the broker
+	// Get plan and fetch credentials
 	plan, err := cp.getPlanFromDeployment(deploymentInfo, broker)
 	if err != nil {
 		return fmt.Errorf("failed to determine plan for deployment %s: %w", deploymentInfo.Name, err)
@@ -82,16 +75,116 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 
 	cp.logger.Infof("Fetching credentials from BOSH for %s (plan: %s)", deploymentInfo.Name, plan.ID)
 
-	// Extract credentials from BOSH manifest
 	creds, err := cp.FetchCredsFromBOSH(instanceID, plan, boshClient)
 	if err != nil {
 		return fmt.Errorf("failed to fetch credentials from BOSH: %w", err)
 	}
 
-	// Store credentials in Vault
+	// Store and verify credentials
+	err = cp.storeCredentials(vault, instanceID, creds)
+	if err != nil {
+		return err
+	}
+
+	// Update metadata
+	err = cp.updateCredentialMetadata(vault, instanceID)
+	if err != nil {
+		cp.logger.Warningf("Failed to update metadata for instance %s: %v", instanceID, err)
+	}
+
+	cp.logger.Infof("Successfully populated credentials for instance %s from BOSH", instanceID)
+
+	return nil
+}
+
+// credentialsExist checks if credentials already exist in Vault.
+
+
+
+// FetchCredsFromBOSH extracts credentials from the deployed BOSH manifest (exported for use by recovery tools).
+func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, boshClient interface{}) (map[string]interface{}, error) {
+	deploymentName := plan.ID + "-" + instanceID
+	cp.logger.Infof("Fetching manifest from BOSH for deployment %s", deploymentName)
+
+	// Get deployment manifest from BOSH
+	manifest, err := cp.getDeploymentManifest(deploymentName, boshClient)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract credentials based on service type
+	creds, err := cp.extractCredentialsFromManifest(manifest, deploymentName)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(creds) == 0 {
+		return nil, ErrNoCredentialsFoundInManifest
+	}
+
+	cp.logger.Infof("Successfully extracted %d credential fields from manifest", len(creds))
+
+	return creds, nil
+}
+
+
+
+// BatchEnsureCredentials processes multiple instances to ensure they have credentials.
+func (cp *CredentialPopulator) BatchEnsureCredentials(ctx context.Context, instances []string, deployments map[string]DeploymentInfo, boshClient interface{}, broker interface{}) error {
+	populated := 0
+	skipped := 0
+	failed := 0
+
+	for _, instanceID := range instances {
+		deployment, ok := deployments[instanceID]
+		if !ok {
+			cp.logger.Debugf("No deployment found for instance %s, skipping credential check", instanceID)
+
+			skipped++
+
+			continue
+		}
+
+		err := cp.EnsureCredentials(ctx, instanceID, deployment, boshClient, broker)
+		if err != nil {
+			cp.logger.Errorf("Failed to ensure credentials for %s: %s", instanceID, err)
+
+			failed++
+		} else {
+			populated++
+		}
+	}
+
+	cp.logger.Infof("Credential population complete - Populated: %d, Failed: %d, Skipped: %d",
+		populated, failed, skipped)
+
+	if failed > 0 {
+		return fmt.Errorf("%w for %d instances", ErrFailedToPopulateCredentials, failed)
+	}
+
+	return nil
+}
+
+func (cp *CredentialPopulator) credentialsExist(vault VaultInterface, instanceID string) bool {
+	credsPath := instanceID + "/credentials"
+
+	existingCreds, err := vault.Get(credsPath)
+	if err == nil && len(existingCreds) > 0 {
+		cp.logger.Debugf("Instance %s already has credentials (%d fields)", instanceID, len(existingCreds))
+
+		return true
+	}
+
+	cp.logger.Infof("Instance %s missing credentials, fetching from BOSH deployment", instanceID)
+
+	return false
+}
+
+func (cp *CredentialPopulator) storeCredentials(vault VaultInterface, instanceID string, creds map[string]interface{}) error {
+	credsPath := instanceID + "/credentials"
 	cp.logger.Infof("Storing fetched credentials for instance %s", instanceID)
 
-	err = vault.Put(credsPath, creds)
+	err := vault.Put(credsPath, creds)
 	if err != nil {
 		return fmt.Errorf("failed to store credentials: %w", err)
 	}
@@ -102,11 +195,14 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 		return ErrFailedToVerifyCredentialStorage
 	}
 
-	// Add metadata about credential recovery
+	return nil
+}
+
+func (cp *CredentialPopulator) updateCredentialMetadata(vault VaultInterface, instanceID string) error {
 	metadataPath := instanceID + "/metadata"
 
-	metadata, getErr := vault.Get(metadataPath)
-	if getErr != nil || metadata == nil {
+	metadata, err := vault.Get(metadataPath)
+	if err != nil || metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 
@@ -114,20 +210,15 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 	metadata["credentials_populated_by"] = "reconciler"
 	metadata["credentials_source"] = "bosh_deployment"
 
-	_ = vault.Put(metadataPath, metadata)
-
-	cp.logger.Infof("Successfully populated credentials for instance %s from BOSH", instanceID)
+	err = vault.Put(metadataPath, metadata)
+	if err != nil {
+		return fmt.Errorf("failed to store credential metadata at %s: %w", metadataPath, err)
+	}
 
 	return nil
 }
 
-// FetchCredsFromBOSH extracts credentials from the deployed BOSH manifest (exported for use by recovery tools).
-func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, boshClient interface{}) (map[string]interface{}, error) {
-	deploymentName := plan.ID + "-" + instanceID
-	cp.logger.Infof("Fetching manifest from BOSH for deployment %s", deploymentName)
-
-	// Import the bosh package types
-	// The boshClient should be a bosh.Director
+func (cp *CredentialPopulator) getDeploymentManifest(deploymentName string, boshClient interface{}) (map[string]interface{}, error) {
 	type DeploymentDetail struct {
 		Name     string `json:"name"`
 		Manifest string `json:"manifest"`
@@ -151,7 +242,6 @@ func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, 
 		return nil, ErrDeploymentHasNoManifest
 	}
 
-	// Parse the YAML manifest
 	var manifest map[string]interface{}
 
 	err = yaml.Unmarshal([]byte(deployment.Manifest), &manifest)
@@ -159,16 +249,15 @@ func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, 
 		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
-	// Extract credentials from the manifest
-	// Look for instance_groups -> jobs -> properties
-	creds := make(map[string]interface{})
+	return manifest, nil
+}
 
-	// Extract based on service type
+func (cp *CredentialPopulator) extractCredentialsFromManifest(manifest map[string]interface{}, deploymentName string) (map[string]interface{}, error) {
+	creds := make(map[string]interface{})
 	serviceType := cp.extractServiceType(deploymentName)
 
 	switch serviceType {
 	case serviceTypeRabbitMQReconciler:
-		// RabbitMQ credentials are in instance_groups[0].jobs[rabbitmq].properties
 		err := cp.extractRabbitMQCreds(manifest, creds)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract RabbitMQ credentials: %w", err)
@@ -186,12 +275,6 @@ func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, 
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedServiceType, serviceType)
 	}
-
-	if len(creds) == 0 {
-		return nil, ErrNoCredentialsFoundInManifest
-	}
-
-	cp.logger.Infof("Successfully extracted %d credential fields from manifest", len(creds))
 
 	return creds, nil
 }
@@ -224,8 +307,8 @@ func (cp *CredentialPopulator) extractRedisCreds(manifest map[string]interface{}
 			continue
 		}
 
-		properties, ok := jobMap["properties"].(map[string]interface{})
-		if !ok {
+		properties, valid := jobMap["properties"].(map[string]interface{})
+		if !valid {
 			continue
 		}
 
@@ -293,13 +376,13 @@ func (cp *CredentialPopulator) validatePostgreSQLInstanceGroups(manifest map[str
 }
 
 func (cp *CredentialPopulator) getPostgreSQLJobs(firstGroup interface{}) ([]interface{}, error) {
-	group, ok := firstGroup.(map[string]interface{})
-	if !ok {
+	group, valid := firstGroup.(map[string]interface{})
+	if !valid {
 		return nil, ErrInvalidInstanceGroupsFormat
 	}
 
-	jobs, ok := group["jobs"].([]interface{})
-	if !ok {
+	jobs, valid := group["jobs"].([]interface{})
+	if !valid {
 		return nil, ErrNoJobsFoundInInstanceGroup
 	}
 
@@ -308,8 +391,8 @@ func (cp *CredentialPopulator) getPostgreSQLJobs(firstGroup interface{}) ([]inte
 
 func (cp *CredentialPopulator) findPostgreSQLProperties(jobs []interface{}) (map[string]interface{}, error) {
 	for _, job := range jobs {
-		jobMap, ok := job.(map[string]interface{})
-		if !ok {
+		jobMap, exists := job.(map[string]interface{})
+		if !exists {
 			continue
 		}
 
@@ -317,13 +400,13 @@ func (cp *CredentialPopulator) findPostgreSQLProperties(jobs []interface{}) (map
 			continue
 		}
 
-		properties, ok := jobMap["properties"].(map[string]interface{})
-		if !ok {
+		properties, exists := jobMap["properties"].(map[string]interface{})
+		if !exists {
 			continue
 		}
 
-		postgresProps, ok := properties["postgres"].(map[string]interface{})
-		if !ok {
+		postgresProps, exists := properties["postgres"].(map[string]interface{})
+		if !exists {
 			continue
 		}
 
@@ -364,42 +447,6 @@ func (cp *CredentialPopulator) buildPostgreSQLURI(creds map[string]interface{}) 
 	if hasUsername && hasPassword && hasHost && hasDatabase {
 		creds["uri"] = fmt.Sprintf("postgres://%s:%s@%s/%s", username, password, net.JoinHostPort(host, "5432"), database)
 	}
-}
-
-// BatchEnsureCredentials processes multiple instances to ensure they have credentials.
-func (cp *CredentialPopulator) BatchEnsureCredentials(ctx context.Context, instances []string, deployments map[string]DeploymentInfo, boshClient interface{}, broker interface{}) error {
-	populated := 0
-	skipped := 0
-	failed := 0
-
-	for _, instanceID := range instances {
-		deployment, ok := deployments[instanceID]
-		if !ok {
-			cp.logger.Debugf("No deployment found for instance %s, skipping credential check", instanceID)
-
-			skipped++
-
-			continue
-		}
-
-		err := cp.EnsureCredentials(ctx, instanceID, deployment, boshClient, broker)
-		if err != nil {
-			cp.logger.Errorf("Failed to ensure credentials for %s: %s", instanceID, err)
-
-			failed++
-		} else {
-			populated++
-		}
-	}
-
-	cp.logger.Infof("Credential population complete - Populated: %d, Failed: %d, Skipped: %d",
-		populated, failed, skipped)
-
-	if failed > 0 {
-		return fmt.Errorf("%w for %d instances", ErrFailedToPopulateCredentials, failed)
-	}
-
-	return nil
 }
 
 // extractServiceType extracts the service type from deployment name.
@@ -532,8 +579,8 @@ func (cp *CredentialPopulator) findRabbitMQProperties(manifest map[string]interf
 	}
 
 	for _, job := range jobs {
-		jobMap, ok := job.(map[string]interface{})
-		if !ok {
+		jobMap, valid := job.(map[string]interface{})
+		if !valid {
 			continue
 		}
 
@@ -592,27 +639,27 @@ func (cp *CredentialPopulator) extractRabbitMQBasicCreds(rabbitmqProps, creds ma
 
 // extractRabbitMQHost extracts the host from the manifest's instance groups.
 func (cp *CredentialPopulator) extractRabbitMQHost(manifest map[string]interface{}, creds map[string]interface{}) {
-	vms, ok := manifest["instance_groups"].([]interface{})
-	if !ok || len(vms) == 0 {
+	vms, exists := manifest["instance_groups"].([]interface{})
+	if !exists || len(vms) == 0 {
 		return
 	}
 
-	firstVM, ok := vms[0].(map[string]interface{})
-	if !ok {
+	firstVM, exists := vms[0].(map[string]interface{})
+	if !exists {
 		return
 	}
 
-	networks, ok := firstVM["networks"].([]interface{})
-	if !ok || len(networks) == 0 {
+	networks, exists := firstVM["networks"].([]interface{})
+	if !exists || len(networks) == 0 {
 		return
 	}
 
-	network, ok := networks[0].(map[string]interface{})
-	if !ok {
+	network, exists := networks[0].(map[string]interface{})
+	if !exists {
 		return
 	}
 
-	if staticIPs, ok := network["static_ips"].([]interface{}); ok && len(staticIPs) > 0 {
+	if staticIPs, exists := network["static_ips"].([]interface{}); exists && len(staticIPs) > 0 {
 		creds["host"] = staticIPs[0]
 	}
 }
@@ -651,23 +698,23 @@ func (cp *CredentialPopulator) buildRabbitMQURI(creds map[string]interface{}) {
 
 // extractHostFromManifest extracts the host from the first VM's static IPs.
 func extractHostFromManifest(manifest map[string]interface{}) (interface{}, bool) {
-	vms, ok := manifest["instance_groups"].([]interface{})
-	if !ok || len(vms) == 0 {
+	vms, exists := manifest["instance_groups"].([]interface{})
+	if !exists || len(vms) == 0 {
 		return nil, false
 	}
 
-	firstVM, ok := vms[0].(map[string]interface{})
-	if !ok {
+	firstVM, exists := vms[0].(map[string]interface{})
+	if !exists {
 		return nil, false
 	}
 
-	networks, ok := firstVM["networks"].([]interface{})
-	if !ok || len(networks) == 0 {
+	networks, exists := firstVM["networks"].([]interface{})
+	if !exists || len(networks) == 0 {
 		return nil, false
 	}
 
-	network, ok := networks[0].(map[string]interface{})
-	if !ok {
+	network, exists := networks[0].(map[string]interface{})
+	if !exists {
 		return nil, false
 	}
 

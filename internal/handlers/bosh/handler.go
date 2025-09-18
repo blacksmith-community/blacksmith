@@ -32,7 +32,7 @@ func NewHandler(deps Dependencies) *Handler {
 }
 
 // GetPoolStats returns BOSH pool statistics.
-func (h *Handler) GetPoolStats(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) GetPoolStats(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("bosh-pool-stats")
 	logger.Debug("BOSH pool stats request")
 
@@ -45,11 +45,11 @@ func (h *Handler) GetPoolStats(w http.ResponseWriter, req *http.Request) {
 		"timestamp":     time.Now().Unix(),
 	}
 
-	response.HandleJSON(w, stats, nil)
+	response.HandleJSON(responseWriter, stats, nil)
 }
 
 // GetStatus returns BOSH/Blacksmith status information.
-func (h *Handler) GetStatus(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("bosh-status")
 	logger.Debug("BOSH status request")
 
@@ -64,5 +64,5 @@ func (h *Handler) GetStatus(w http.ResponseWriter, req *http.Request) {
 		"timestamp":   time.Now().Unix(),
 	}
 
-	response.HandleJSON(w, status, nil)
+	response.HandleJSON(responseWriter, status, nil)
 }

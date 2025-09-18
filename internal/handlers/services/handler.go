@@ -82,18 +82,18 @@ func (h *Handler) CanHandle(path string) bool {
 }
 
 // ServeHTTP handles service instance endpoints with pattern matching.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// SSH execute endpoint - /b/{instance}/ssh/execute
 	sshExecutePattern := regexp.MustCompile(`^/b/([^/]+)/ssh/execute$`)
 	if m := sshExecutePattern.FindStringSubmatch(req.URL.Path); m != nil {
 		if req.Method == http.MethodPost {
 			instanceID := m[1]
-			h.ExecuteSSHCommand(w, req, instanceID)
+			h.ExecuteSSHCommand(writer, req, instanceID)
 
 			return
 		}
 
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writer.WriteHeader(http.StatusMethodNotAllowed)
 
 		return
 	}
@@ -102,14 +102,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	certsPattern := regexp.MustCompile(`^/b/([^/]+)/certificates/trusted$`)
 	if m := certsPattern.FindStringSubmatch(req.URL.Path); m != nil {
 		instanceID := m[1]
-		if req.Method == http.MethodGet {
-			h.GetTrustedCertificates(w, req, instanceID)
-		} else if req.Method == http.MethodPost {
-			h.AddTrustedCertificate(w, req, instanceID)
-		} else if req.Method == http.MethodDelete {
-			h.RemoveTrustedCertificate(w, req, instanceID)
-		} else {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+
+		switch req.Method {
+		case http.MethodGet:
+			h.GetTrustedCertificates(writer, req, instanceID)
+		case http.MethodPost:
+			h.AddTrustedCertificate(writer, req, instanceID)
+		case http.MethodDelete:
+			h.RemoveTrustedCertificate(writer, req, instanceID)
+		default:
+			writer.WriteHeader(http.StatusMethodNotAllowed)
 		}
 
 		return
@@ -120,33 +122,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if m := rabbitMQSSHPattern.FindStringSubmatch(req.URL.Path); m != nil {
 		instanceID := m[1]
 		command := m[2]
-		h.ExecuteRabbitMQSSHCommand(w, req, instanceID, command)
+		h.ExecuteRabbitMQSSHCommand(writer, req, instanceID, command)
 
 		return
 	}
 
 	// No matching endpoint
-	w.WriteHeader(http.StatusNotFound)
+	writer.WriteHeader(http.StatusNotFound)
 }
 
 // ExecuteSSHCommand executes an SSH command on a service instance.
-func (h *Handler) ExecuteSSHCommand(w http.ResponseWriter, req *http.Request, instanceID string) {
+func (h *Handler) ExecuteSSHCommand(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("ssh-execute")
 	logger.Debug("Executing SSH command on instance: %s", instanceID)
 
 	// Parse request body
 	var execReq SSHExecuteRequest
-	if err := json.NewDecoder(req.Body).Decode(&execReq); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, fmt.Errorf("%w: %w", errInvalidRequest, err))
+
+	err := json.NewDecoder(req.Body).Decode(&execReq)
+	if err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, fmt.Errorf("%w: %w", errInvalidRequest, err))
 
 		return
 	}
 
 	// Validate command
 	if execReq.Command == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, errCommandIsRequired)
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, errCommandIsRequired)
 
 		return
 	}
@@ -176,11 +180,11 @@ func (h *Handler) ExecuteSSHCommand(w http.ResponseWriter, req *http.Request, in
 		result["message"] = "Command execution started asynchronously"
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // GetTrustedCertificates returns trusted certificates for a service instance.
-func (h *Handler) GetTrustedCertificates(w http.ResponseWriter, req *http.Request, instanceID string) {
+func (h *Handler) GetTrustedCertificates(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("certificates-trusted-get")
 	logger.Debug("Getting trusted certificates for instance: %s", instanceID)
 
@@ -196,7 +200,7 @@ func (h *Handler) GetTrustedCertificates(w http.ResponseWriter, req *http.Reques
 		},
 	}
 
-	response.HandleJSON(w, map[string]interface{}{
+	response.HandleJSON(writer, map[string]interface{}{
 		"instance_id":  instanceID,
 		"certificates": certificates,
 		"count":        len(certificates),
@@ -204,7 +208,7 @@ func (h *Handler) GetTrustedCertificates(w http.ResponseWriter, req *http.Reques
 }
 
 // AddTrustedCertificate adds a trusted certificate to a service instance.
-func (h *Handler) AddTrustedCertificate(w http.ResponseWriter, req *http.Request, instanceID string) {
+func (h *Handler) AddTrustedCertificate(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("certificates-trusted-add")
 	logger.Info("Adding trusted certificate to instance: %s", instanceID)
 
@@ -214,16 +218,17 @@ func (h *Handler) AddTrustedCertificate(w http.ResponseWriter, req *http.Request
 		Name        string `json:"name"`
 	}
 
-	if err := json.NewDecoder(req.Body).Decode(&certRequest); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, fmt.Errorf("%w: %w", errInvalidRequest, err))
+	err := json.NewDecoder(req.Body).Decode(&certRequest)
+	if err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, fmt.Errorf("%w: %w", errInvalidRequest, err))
 
 		return
 	}
 
 	if certRequest.Certificate == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, errCertificateIsRequired)
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, errCertificateIsRequired)
 
 		return
 	}
@@ -245,18 +250,18 @@ func (h *Handler) AddTrustedCertificate(w http.ResponseWriter, req *http.Request
 		"message": "Certificate added successfully",
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // RemoveTrustedCertificate removes a trusted certificate from a service instance.
-func (h *Handler) RemoveTrustedCertificate(w http.ResponseWriter, req *http.Request, instanceID string) {
+func (h *Handler) RemoveTrustedCertificate(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("certificates-trusted-remove")
 
 	// Get certificate ID from query params
 	certID := req.URL.Query().Get("id")
 	if certID == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, errCertificateIDRequired)
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, errCertificateIDRequired)
 
 		return
 	}
@@ -271,23 +276,27 @@ func (h *Handler) RemoveTrustedCertificate(w http.ResponseWriter, req *http.Requ
 		"message":        "Certificate removed successfully",
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // ExecuteRabbitMQSSHCommand executes RabbitMQ-specific SSH commands.
-func (h *Handler) ExecuteRabbitMQSSHCommand(w http.ResponseWriter, req *http.Request, instanceID string, command string) {
+func (h *Handler) ExecuteRabbitMQSSHCommand(writer http.ResponseWriter, req *http.Request, instanceID string, command string) {
 	logger := h.logger.Named("rabbitmq-ssh")
 	logger.Debug("Executing RabbitMQ SSH command '%s' on instance: %s", command, instanceID)
 
 	// Parse any additional parameters from request body
 	var cmdRequest map[string]interface{}
-	json.NewDecoder(req.Body).Decode(&cmdRequest)
+
+	err := json.NewDecoder(req.Body).Decode(&cmdRequest)
+	if err != nil && err.Error() != "EOF" {
+		logger.Warn("Failed to decode request body: %v", err)
+	}
 
 	// Handle different RabbitMQ SSH commands
 	cmdParts := strings.Split(command, "/")
 	if len(cmdParts) == 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, errInvalidCommand)
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, errInvalidCommand)
 
 		return
 	}
@@ -322,5 +331,5 @@ func (h *Handler) ExecuteRabbitMQSSHCommand(w http.ResponseWriter, req *http.Req
 		result["users"] = []string{"admin", "guest", "app_user"}
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }

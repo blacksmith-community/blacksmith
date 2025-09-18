@@ -58,6 +58,7 @@ func (h *Handler) TestConnection(req *RegistrationTest) (*RegistrationTestResult
 }
 
 // PerformRegistration performs the full registration process.
+//nolint:funlen
 func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan chan<- RegistrationProgress) error {
 	defer close(progressChan)
 
@@ -96,7 +97,8 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 	// Authenticate
 	h.sendProgress(progressChan, StepAuthenticating, ProgressStatusRunning, "Authenticating with Cloud Foundry")
 
-	if err := client.authClient.Authenticate(); err != nil {
+	err = client.authClient.Authenticate()
+	if err != nil {
 		h.sendProgress(progressChan, StepAuthenticating, ProgressStatusError, fmt.Sprintf("Authentication failed: %s", err))
 
 		return err
@@ -145,7 +147,8 @@ func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan cha
 	// Enable service access
 	h.sendProgress(progressChan, StepEnablingServices, ProgressStatusRunning, "Enabling service access")
 
-	if err := h.enableServiceAccess(client, progressChan); err != nil {
+	err = h.enableServiceAccess(client, progressChan)
+	if err != nil {
 		h.sendProgress(progressChan, StepEnablingServices, ProgressStatusWarning, fmt.Sprintf("Some services may not be enabled: %s", err))
 		// Don't return error here as the broker is registered, just service access might be partial
 	} else {
@@ -164,23 +167,24 @@ func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistratio
 	client := NewClient(registration.APIURL, registration.Username, "", h.brokerURL, h.brokerUser, h.brokerPass)
 
 	// Test connection first
-	testResult, err := client.TestConnection()
-	if err != nil || !testResult.Success {
+	testResult, testErr := client.TestConnection()
+	if testErr != nil {
+		// Unexpected error during test execution
+		return nil, fmt.Errorf("failed to execute connection test: %w", testErr)
+	}
+
+	if !testResult.Success {
 		return &SyncResult{
 			Success: false,
 			Message: "Failed to connect to CF during sync",
-			Error:   err.Error(),
-		}, nil //nolint:nilerr // Connection failure is a valid sync result, not an error
+			Error:   testResult.Error,
+		}, nil
 	}
 
 	// Get broker info
-	brokerInfo, err := client.FindServiceBroker(registration.BrokerName)
-	if err != nil {
-		return &SyncResult{
-			Success: false,
-			Message: "Failed to find service broker",
-			Error:   err.Error(),
-		}, nil //nolint:nilerr // Broker lookup failure is a valid sync result, not an error
+	brokerInfo, brokerErr := client.FindServiceBroker(registration.BrokerName)
+	if brokerErr != nil {
+		return nil, fmt.Errorf("failed to find service broker: %w", brokerErr)
 	}
 
 	if brokerInfo == nil {
@@ -192,13 +196,9 @@ func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistratio
 	}
 
 	// Get service offerings
-	services, err := client.GetServiceOfferings()
-	if err != nil {
-		return &SyncResult{
-			Success: false,
-			Message: "Failed to get service offerings",
-			Error:   err.Error(),
-		}, nil //nolint:nilerr // Service offerings lookup failure is a valid sync result, not an error
+	services, servicesErr := client.GetServiceOfferings()
+	if servicesErr != nil {
+		return nil, fmt.Errorf("failed to get service offerings: %w", servicesErr)
 	}
 
 	// Filter services from our broker
@@ -217,6 +217,22 @@ func (h *Handler) SyncRegistration(req *SyncRequest, registration *CFRegistratio
 		Services:      brokerServices,
 		ServicesCount: len(brokerServices),
 	}, nil
+}
+
+// Capabilities returns the capabilities of this service handler.
+func (h *Handler) Capabilities() []common.Capability {
+	return []common.Capability{
+		{
+			Name:        "cf_registration",
+			Description: "Cloud Foundry service broker registration",
+			Category:    "integration",
+		},
+		{
+			Name:        "cf_v3_api",
+			Description: "Cloud Foundry V3 API support",
+			Category:    "api",
+		},
+	}
 }
 
 // validateRegistrationRequest validates a registration request.
@@ -294,21 +310,5 @@ func (h *Handler) sendProgress(progressChan chan<- RegistrationProgress, step, s
 	default:
 		// Channel might be closed or full, log instead
 		h.logger("Registration progress (channel unavailable): %s - %s - %s", step, status, message)
-	}
-}
-
-// Capabilities returns the capabilities of this service handler.
-func (h *Handler) Capabilities() []common.Capability {
-	return []common.Capability{
-		{
-			Name:        "cf_registration",
-			Description: "Cloud Foundry service broker registration",
-			Category:    "integration",
-		},
-		{
-			Name:        "cf_v3_api",
-			Description: "Cloud Foundry V3 API support",
-			Category:    "api",
-		},
 	}
 }

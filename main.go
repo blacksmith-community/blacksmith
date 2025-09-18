@@ -18,12 +18,21 @@ import (
 	"syscall"
 	"time"
 
-	"blacksmith/bosh"
-	"blacksmith/bosh/ssh"
 	"blacksmith/internal/api"
+	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/ssh"
+	"blacksmith/internal/broker"
+	internalCF "blacksmith/internal/cf"
+	"blacksmith/internal/compression"
+	"blacksmith/internal/config"
+	"blacksmith/internal/planstore"
+	"blacksmith/internal/recovery"
+	"blacksmith/internal/services/rabbitmq"
+	internalTLS "blacksmith/internal/tls"
+	internalVault "blacksmith/internal/vault"
+	"blacksmith/internal/vmmonitor"
 	loggerPkg "blacksmith/pkg/logger"
 	"blacksmith/pkg/services"
-	"blacksmith/services/rabbitmq"
 	"blacksmith/shield"
 	"blacksmith/websocket"
 	"code.cloudfoundry.org/lager"
@@ -32,7 +41,7 @@ import (
 
 // Configuration default constants.
 const (
-	// Exit code for errors
+	// Exit code for errors.
 	exitCodeError = 2
 
 	// SSH service defaults.
@@ -59,10 +68,10 @@ const (
 	DefaultVaultTimeout        = 30 * time.Second
 	DefaultVaultHistoryLimit   = 50
 	DefaultVaultUnsealInterval = 15 * time.Second
-	
-	// Additional WebSocket defaults  
-	DefaultWSPingInterval      = 5 * time.Second
-	DefaultWSPongTimeout       = 10 * time.Second
+
+	// Additional WebSocket defaults.
+	DefaultWSPingInterval = 5 * time.Second
+	DefaultWSPongTimeout  = 10 * time.Second
 )
 
 // BuildInfo holds build-time information.
@@ -92,47 +101,56 @@ func GetBuildInfo() *BuildInfo {
 
 // createHTTPSRedirectHandler creates an HTTP handler that redirects all requests to HTTPS.
 func createHTTPSRedirectHandler(httpsPort string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
+	return func(responseWriter http.ResponseWriter, request *http.Request) {
+		host := request.Host
 		if strings.Contains(host, ":") {
 			host = strings.Split(host, ":")[0]
 		}
 
-		redirectURL := fmt.Sprintf("https://%s%s", net.JoinHostPort(host, httpsPort), r.RequestURI)
-		http.Redirect(w, r, redirectURL, http.StatusMovedPermanently)
+		redirectURL := fmt.Sprintf("https://%s%s", net.JoinHostPort(host, httpsPort), request.RequestURI)
+		http.Redirect(responseWriter, request, redirectURL, http.StatusMovedPermanently)
 	}
 }
 
 // startHTTPServer starts an HTTP server, either for redirects (when TLS enabled) or normal operation.
-func startHTTPServer(config *Config, handler http.Handler, logger loggerPkg.Logger) *http.Server {
-	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.Port)
+func startHTTPServer(cfg *config.Config, handler http.Handler, logger loggerPkg.Logger) *http.Server {
+	bind := fmt.Sprintf("%s:%s", cfg.Broker.BindIP, cfg.Broker.Port)
 
 	readTimeout := 120
-	if config.Broker.ReadTimeout > 0 {
-		readTimeout = config.Broker.ReadTimeout
+	if cfg.Broker.ReadTimeout > 0 {
+		readTimeout = cfg.Broker.ReadTimeout
 	}
 
 	writeTimeout := 120
-	if config.Broker.WriteTimeout > 0 {
-		writeTimeout = config.Broker.WriteTimeout
+	if cfg.Broker.WriteTimeout > 0 {
+		writeTimeout = cfg.Broker.WriteTimeout
 	}
 
 	idleTimeout := 300
-	if config.Broker.IdleTimeout > 0 {
-		idleTimeout = config.Broker.IdleTimeout
+	if cfg.Broker.IdleTimeout > 0 {
+		idleTimeout = cfg.Broker.IdleTimeout
 	}
 
 	var httpHandler http.Handler
-	if config.Broker.TLS.Enabled {
+	if cfg.Broker.TLS.Enabled {
 		// When TLS is enabled, HTTP server only handles redirects
-		httpHandler = createHTTPSRedirectHandler(config.Broker.TLS.Port)
-		logger.Info("HTTP server on %s will redirect to HTTPS port %s", bind, config.Broker.TLS.Port)
+		httpHandler = createHTTPSRedirectHandler(cfg.Broker.TLS.Port)
+		logger.Info("HTTP server on %s will redirect to HTTPS port %s", bind, cfg.Broker.TLS.Port)
 	} else {
 		// When TLS is disabled, HTTP server handles normal traffic
 		// Apply compression middleware if enabled
-		compressionConfig := config.Broker.Compression
+		compressionConfig := cfg.Broker.Compression
 		if compressionConfig.Enabled {
-			httpHandler = NewCompressionMiddleware(handler, compressionConfig)
+			// Convert cfg.CompressionConfig to compression.Config
+			compCfg := compression.Config{
+				Enabled:      compressionConfig.Enabled,
+				Types:        compressionConfig.Types,
+				Level:        compressionConfig.Level,
+				MinSize:      compressionConfig.MinSize,
+				ContentTypes: compressionConfig.ContentTypes,
+			}
+			httpHandler = compression.NewMiddleware(handler, compCfg)
+
 			logger.Info("HTTP server compression enabled with types: %v", compressionConfig.Types)
 		} else {
 			httpHandler = handler
@@ -153,40 +171,49 @@ func startHTTPServer(config *Config, handler http.Handler, logger loggerPkg.Logg
 }
 
 // startHTTPSServer starts an HTTPS server with TLS configuration.
-func startHTTPSServer(config *Config, handler http.Handler, logger loggerPkg.Logger) (*http.Server, error) {
-	if !config.Broker.TLS.Enabled {
-		return nil, nil
+func startHTTPSServer(cfg *config.Config, handler http.Handler, logger loggerPkg.Logger) (*http.Server, error) {
+	if !cfg.Broker.TLS.Enabled {
+		return nil, internalTLS.ErrTLSDisabled
 	}
 
-	tlsConfig, err := CreateTLSConfig(config.Broker.TLS)
+	tlsConfig, err := internalTLS.CreateTLSConfig(cfg.Broker.TLS)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TLS configuration: %w", err)
 	}
 
-	bind := fmt.Sprintf("%s:%s", config.Broker.BindIP, config.Broker.TLS.Port)
+	bind := fmt.Sprintf("%s:%s", cfg.Broker.BindIP, cfg.Broker.TLS.Port)
 	logger.Info("HTTPS server will listen on %s", bind)
 
 	readTimeout := 120
-	if config.Broker.ReadTimeout > 0 {
-		readTimeout = config.Broker.ReadTimeout
+	if cfg.Broker.ReadTimeout > 0 {
+		readTimeout = cfg.Broker.ReadTimeout
 	}
 
 	writeTimeout := 120
-	if config.Broker.WriteTimeout > 0 {
-		writeTimeout = config.Broker.WriteTimeout
+	if cfg.Broker.WriteTimeout > 0 {
+		writeTimeout = cfg.Broker.WriteTimeout
 	}
 
 	idleTimeout := 300
-	if config.Broker.IdleTimeout > 0 {
-		idleTimeout = config.Broker.IdleTimeout
+	if cfg.Broker.IdleTimeout > 0 {
+		idleTimeout = cfg.Broker.IdleTimeout
 	}
 
 	// Apply compression middleware if enabled
 	var httpsHandler http.Handler
 
-	compressionConfig := config.Broker.Compression
+	compressionConfig := cfg.Broker.Compression
 	if compressionConfig.Enabled {
-		httpsHandler = NewCompressionMiddleware(handler, compressionConfig)
+		// Convert cfg.CompressionConfig to compression.Config
+		compCfg := compression.Config{
+			Enabled:      compressionConfig.Enabled,
+			Types:        compressionConfig.Types,
+			Level:        compressionConfig.Level,
+			MinSize:      compressionConfig.MinSize,
+			ContentTypes: compressionConfig.ContentTypes,
+		}
+		httpsHandler = compression.NewMiddleware(handler, compCfg)
+
 		logger.Info("HTTPS server compression enabled with types: %v", compressionConfig.Types)
 	} else {
 		httpsHandler = handler
@@ -229,44 +256,40 @@ func parseFlags(buildInfo *BuildInfo) string {
 }
 
 // initializeConfig loads and validates configuration.
-func initializeConfig(configPath string, logger loggerPkg.Logger) *Config {
-	config, err := ReadConfig(configPath)
+func initializeConfig(configPath string, logger loggerPkg.Logger) *config.Config {
+	cfg, err := config.ReadConfig(configPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if config.Debug {
-		logger.SetLevel("debug")
+	if cfg.Debug {
+		err := logger.SetLevel("debug")
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// TLS configuration validation
-	if config.Broker.TLS.Enabled {
-		err := ValidateCertificateFiles(config.Broker.TLS.Certificate, config.Broker.TLS.Key)
+	if cfg.Broker.TLS.Enabled {
+		err := internalTLS.ValidateCertificateFiles(cfg.Broker.TLS.Certificate, cfg.Broker.TLS.Key)
 		if err != nil {
 			logger.Error("TLS configuration error: %s", err)
 			os.Exit(exitCodeError)
 		}
 
-		logger.Info("TLS enabled - certificate: %s, key: %s", config.Broker.TLS.Certificate, config.Broker.TLS.Key)
+		logger.Info("TLS enabled - certificate: %s, key: %s", cfg.Broker.TLS.Certificate, cfg.Broker.TLS.Key)
 	}
 
-	return &config
+	return &cfg
 }
 
 // initializeVault sets up and initializes Vault client.
-func initializeVault(config *Config, logger loggerPkg.Logger) *Vault {
-	vault := &Vault{
-		URL:      config.Vault.Address,
-		Token:    "", // will be supplied soon.
-		Insecure: config.Vault.Insecure,
-	}
+func initializeVault(cfg *config.Config, logger loggerPkg.Logger) *internalVault.Vault {
+	vault := internalVault.New(cfg.Vault.Address, "", cfg.Vault.Insecure)
 
 	// Configure vault auto-unseal behavior
-	vault.autoUnsealEnabled = config.Vault.AutoUnseal
-	if config.Vault.UnsealCooldown != "" {
-		if d, err := time.ParseDuration(config.Vault.UnsealCooldown); err == nil {
-			vault.unsealCooldown = d
-		}
+	if cfg.Vault.AutoUnseal {
+		vault.EnableAutoUnseal(cfg.Vault.CredPath)
 	}
 
 	err := vault.WaitForVaultReady()
@@ -275,7 +298,7 @@ func initializeVault(config *Config, logger loggerPkg.Logger) *Vault {
 		log.Fatal(err)
 	}
 
-	err = vault.Init(config.Vault.CredPath)
+	err = vault.Init(cfg.Vault.CredPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -286,7 +309,7 @@ func initializeVault(config *Config, logger loggerPkg.Logger) *Vault {
 	}
 
 	// Store blacksmith plans to Vault after ensuring KVv2
-	planStorage := NewPlanStorage(vault, config)
+	planStorage := planstore.New(vault, cfg)
 
 	planStorage.StorePlans(context.Background())
 	// Don't fail startup if plan storage fails
@@ -295,29 +318,31 @@ func initializeVault(config *Config, logger loggerPkg.Logger) *Vault {
 }
 
 // initializeBOSH creates and configures BOSH director.
-func initializeBOSH(config *Config, logger loggerPkg.Logger) *bosh.PooledDirector {
+func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) *bosh.PooledDirector {
 	// Set BOSH environment variables for CLI compatibility
-	if err := os.Setenv("BOSH_CLIENT", config.BOSH.Username); err != nil {
+	err := os.Setenv("BOSH_CLIENT", cfg.BOSH.Username)
+	if err != nil {
 		logger.Error("Failed to set BOSH_CLIENT env var: %s", err)
 	}
 
-	if err := os.Setenv("BOSH_CLIENT_SECRET", config.BOSH.Password); err != nil {
+	err = os.Setenv("BOSH_CLIENT_SECRET", cfg.BOSH.Password)
+	if err != nil {
 		logger.Error("Failed to set BOSH_CLIENT_SECRET env var: %s", err)
 	}
 
-	logger.Debug("Set BOSH_CLIENT to: %s", config.BOSH.Username)
+	logger.Debug("Set BOSH_CLIENT to: %s", cfg.BOSH.Username)
 
 	// Use logger for BOSH operations
 	boshLogger := logger
 
 	boshDirector, err := bosh.CreatePooledDirector(
-		config.BOSH.Address,
-		config.BOSH.Username,
-		config.BOSH.Password,
-		config.BOSH.CACert,
-		config.BOSH.SkipSslValidation,
-		config.BOSH.MaxConnections,
-		time.Duration(config.BOSH.ConnectionTimeout)*time.Second,
+		cfg.BOSH.Address,
+		cfg.BOSH.Username,
+		cfg.BOSH.Password,
+		cfg.BOSH.CACert,
+		cfg.BOSH.SkipSslValidation,
+		cfg.BOSH.MaxConnections,
+		time.Duration(cfg.BOSH.ConnectionTimeout)*time.Second,
 		boshLogger,
 	)
 	if err != nil {
@@ -326,36 +351,36 @@ func initializeBOSH(config *Config, logger loggerPkg.Logger) *bosh.PooledDirecto
 	}
 
 	logger.Info("BOSH director initialized with connection pooling (max: %d connections, timeout: %ds)",
-		config.BOSH.MaxConnections, config.BOSH.ConnectionTimeout)
+		cfg.BOSH.MaxConnections, cfg.BOSH.ConnectionTimeout)
 
 	return boshDirector
 }
 
 // updateBOSHCloudConfig updates BOSH cloud config if provided.
-func updateBOSHCloudConfig(config *Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
-	if config.BOSH.CloudConfig == "" {
+func updateBOSHCloudConfig(cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+	if cfg.BOSH.CloudConfig == "" {
 		return
 	}
 
 	// Check if cloud config is effectively empty (just {} or whitespace)
-	trimmed := strings.TrimSpace(config.BOSH.CloudConfig)
+	trimmed := strings.TrimSpace(cfg.BOSH.CloudConfig)
 	if trimmed == "{}" || trimmed == "---" || trimmed == "--- {}" || trimmed == "" {
 		return
 	}
 
-	logger.Info("updating cloud-config...")
-	logger.Debug("updating cloud-config with:\n%s", config.BOSH.CloudConfig)
+	logger.Info("updating cloud-cfg...")
+	logger.Debug("updating cloud-config with:\n%s", cfg.BOSH.CloudConfig)
 
-	err := boshDirector.UpdateCloudConfig(config.BOSH.CloudConfig)
+	err := boshDirector.UpdateCloudConfig(cfg.BOSH.CloudConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, config.BOSH.CloudConfig)
+		fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, cfg.BOSH.CloudConfig)
 		os.Exit(exitCodeError)
 	}
 }
 
 // uploadBOSHReleases uploads configured BOSH releases.
-func uploadBOSHReleases(config *Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
-	if config.BOSH.Releases == nil {
+func uploadBOSHReleases(cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+	if cfg.BOSH.Releases == nil {
 		return
 	}
 
@@ -367,15 +392,15 @@ func uploadBOSHReleases(config *Config, boshDirector bosh.Director, logger logge
 
 	have := make(map[string]bool)
 
-	for _, r := range releases {
-		for _, v := range r.ReleaseVersions {
-			have[r.Name+"/"+v.Version] = true
+	for _, release := range releases {
+		for _, version := range release.ReleaseVersions {
+			have[release.Name+"/"+version.Version] = true
 		}
 	}
 
 	logger.Info("uploading releases...")
 
-	for _, release := range config.BOSH.Releases {
+	for _, release := range cfg.BOSH.Releases {
 		if have[release.Name+"/"+release.Version] {
 			logger.Info("skipping %s/%s (already uploaded)", release.Name, release.Version)
 
@@ -395,8 +420,8 @@ func uploadBOSHReleases(config *Config, boshDirector bosh.Director, logger logge
 }
 
 // uploadBOSHStemcells uploads configured BOSH stemcells.
-func uploadBOSHStemcells(config *Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
-	if config.BOSH.Stemcells == nil {
+func uploadBOSHStemcells(cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+	if cfg.BOSH.Stemcells == nil {
 		return
 	}
 
@@ -413,7 +438,7 @@ func uploadBOSHStemcells(config *Config, boshDirector bosh.Director, logger logg
 
 	logger.Info("uploading stemcells...")
 
-	for _, stemcell := range config.BOSH.Stemcells {
+	for _, stemcell := range cfg.BOSH.Stemcells {
 		if have[stemcell.Name+"/"+stemcell.Version] {
 			logger.Info("skipping %s/%s (already uploaded)", stemcell.Name, stemcell.Version)
 
@@ -435,47 +460,47 @@ func uploadBOSHStemcells(config *Config, boshDirector bosh.Director, logger logg
 // initializeShieldClient creates SHIELD client if enabled
 //
 //nolint:ireturn // Returns interface to allow both NoopClient and ShieldClient implementations
-func initializeShieldClient(config *Config, logger loggerPkg.Logger) shield.Client {
+func initializeShieldClient(cfg *config.Config, logger loggerPkg.Logger) shield.Client {
 	var shieldClient shield.Client = &shield.NoopClient{}
-	if !config.Shield.Enabled {
+	if !cfg.Shield.Enabled {
 		return shieldClient
 	}
 
-	cfg := shield.Config{
-		Address:          config.Shield.Address,
-		Insecure:         config.Shield.Insecure,
-		Agent:            config.Shield.Agent,
-		Tenant:           config.Shield.Tenant,
-		Store:            config.Shield.Store,
-		Schedule:         config.Shield.Schedule,
-		Retain:           config.Shield.Retain,
-		EnabledOnTargets: config.Shield.EnabledOnTargets,
+	shieldCfg := shield.Config{
+		Address:          cfg.Shield.Address,
+		Insecure:         cfg.Shield.Insecure,
+		Agent:            cfg.Shield.Agent,
+		Tenant:           cfg.Shield.Tenant,
+		Store:            cfg.Shield.Store,
+		Schedule:         cfg.Shield.Schedule,
+		Retain:           cfg.Shield.Retain,
+		EnabledOnTargets: cfg.Shield.EnabledOnTargets,
 		Logger:           logger.Named("shield"),
 	}
 
-	if cfg.Schedule == "" {
-		cfg.Schedule = "daily 6am"
+	if shieldCfg.Schedule == "" {
+		shieldCfg.Schedule = "daily 6am"
 	}
 
-	if cfg.Retain == "" {
-		cfg.Retain = "7d"
+	if shieldCfg.Retain == "" {
+		shieldCfg.Retain = "7d"
 	}
 
-	switch config.Shield.AuthMethod {
+	switch cfg.Shield.AuthMethod {
 	case "local":
-		cfg.Authentication = &shield.LocalAuth{Username: config.Shield.Username, Password: config.Shield.Password}
+		shieldCfg.Authentication = &shield.LocalAuth{Username: cfg.Shield.Username, Password: cfg.Shield.Password}
 	case "token":
-		cfg.Authentication = &shield.TokenAuth{Token: config.Shield.Token}
+		shieldCfg.Authentication = &shield.TokenAuth{Token: cfg.Shield.Token}
 	default:
-		fmt.Fprintf(os.Stderr, "Invalid S.H.I.E.L.D. authentication method (must be one of 'local' or 'token'): %s\n", config.Shield.AuthMethod)
+		fmt.Fprintf(os.Stderr, "Invalid S.H.I.E.L.D. authentication method (must be one of 'local' or 'token'): %s\n", cfg.Shield.AuthMethod)
 		os.Exit(exitCodeError)
 	}
 
-	logger.Debug("creating S.H.I.E.L.D. client with config: %+v", cfg)
+	logger.Debug("creating S.H.I.E.L.D. client with config: %+v", shieldCfg)
 
 	var err error
 
-	networkClient, err := shield.NewClient(cfg)
+	networkClient, err := shield.NewClient(shieldCfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create S.H.I.E.L.D. client: %s\n", err)
 		os.Exit(exitCodeError)
@@ -485,35 +510,35 @@ func initializeShieldClient(config *Config, logger loggerPkg.Logger) shield.Clie
 }
 
 // initializeServices creates and configures SSH and RabbitMQ services.
-func initializeServices(config *Config, broker *Broker, vault *Vault, logger loggerPkg.Logger) (*ssh.ServiceImpl, *rabbitmq.SSHService, *rabbitmq.MetadataService, *rabbitmq.ExecutorService, *rabbitmq.AuditService, *rabbitmq.PluginsMetadataService, *rabbitmq.PluginsExecutorService, *rabbitmq.PluginsAuditService, *websocket.SSHHandler) {
+func initializeServices(cfg *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, logger loggerPkg.Logger) (*ssh.ServiceImpl, *rabbitmq.SSHService, *rabbitmq.MetadataService, *rabbitmq.ExecutorService, *rabbitmq.AuditService, *rabbitmq.PluginsMetadataService, *rabbitmq.PluginsExecutorService, *rabbitmq.PluginsAuditService, *websocket.SSHHandler) {
 	// Initialize SSH service
 	sshConfig := ssh.Config{
-		Timeout:               time.Duration(config.SSH.Timeout) * time.Second,
-		ConnectTimeout:        time.Duration(config.SSH.ConnectTimeout) * time.Second,
-		SessionInitTimeout:    time.Duration(config.SSH.SessionInitTimeout) * time.Second,
-		OutputReadTimeout:     time.Duration(config.SSH.OutputReadTimeout) * time.Second,
-		MaxConcurrent:         config.SSH.MaxConcurrent,
-		MaxOutputSize:         config.SSH.MaxOutputSize,
-		KeepAlive:             time.Duration(config.SSH.KeepAlive) * time.Second,
-		RetryAttempts:         config.SSH.RetryAttempts,
-		RetryDelay:            time.Duration(config.SSH.RetryDelay) * time.Second,
-		InsecureIgnoreHostKey: config.SSH.InsecureIgnoreHostKey,
-		KnownHostsFile:        config.SSH.KnownHostsFile,
+		Timeout:               time.Duration(cfg.SSH.Timeout) * time.Second,
+		ConnectTimeout:        time.Duration(cfg.SSH.ConnectTimeout) * time.Second,
+		SessionInitTimeout:    time.Duration(cfg.SSH.SessionInitTimeout) * time.Second,
+		OutputReadTimeout:     time.Duration(cfg.SSH.OutputReadTimeout) * time.Second,
+		MaxConcurrent:         cfg.SSH.MaxConcurrent,
+		MaxOutputSize:         cfg.SSH.MaxOutputSize,
+		KeepAlive:             time.Duration(cfg.SSH.KeepAlive) * time.Second,
+		RetryAttempts:         cfg.SSH.RetryAttempts,
+		RetryDelay:            time.Duration(cfg.SSH.RetryDelay) * time.Second,
+		InsecureIgnoreHostKey: cfg.SSH.InsecureIgnoreHostKey,
+		KnownHostsFile:        cfg.SSH.KnownHostsFile,
 	}
 
 	// Set default values if not configured
 	setSSHServiceDefaults(&sshConfig)
 
 	logger.Info("Creating SSH service with timeout=%v, maxConcurrent=%d", sshConfig.Timeout, sshConfig.MaxConcurrent)
-	sshService := ssh.NewSSHService(broker.BOSH, sshConfig, logger.Named("ssh"))
+	sshService := ssh.NewSSHService(brokerInstance.BOSH, sshConfig, logger.Named("ssh"))
 
-	logSSHSecurity(config, sshConfig, logger)
+	logSSHSecurity(cfg, sshConfig, logger)
 
 	// Create RabbitMQ services
 	rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService := createRabbitMQServices(sshService, vault, logger)
 
 	// Create WebSocket handler
-	webSocketHandler := createWebSocketHandler(config, sshService, logger)
+	webSocketHandler := createWebSocketHandler(cfg, sshService, logger)
 
 	return sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler
 }
@@ -562,8 +587,8 @@ func setSSHServiceDefaults(sshConfig *ssh.Config) {
 }
 
 // logSSHSecurity logs SSH security configuration.
-func logSSHSecurity(config *Config, sshConfig ssh.Config, logger loggerPkg.Logger) {
-	if config.SSH.InsecureIgnoreHostKey {
+func logSSHSecurity(cfg *config.Config, sshConfig ssh.Config, logger loggerPkg.Logger) {
+	if cfg.SSH.InsecureIgnoreHostKey {
 		logger.Info("SSH security: Using insecure host key verification (not recommended for production)")
 	} else {
 		logger.Info("SSH security: Using known_hosts file at %s with auto-discovery", sshConfig.KnownHostsFile)
@@ -572,7 +597,7 @@ func logSSHSecurity(config *Config, sshConfig ssh.Config, logger loggerPkg.Logge
 }
 
 // createRabbitMQServices creates all RabbitMQ-related services.
-func createRabbitMQServices(sshService ssh.SSHService, vault *Vault, logger loggerPkg.Logger) (*rabbitmq.SSHService, *rabbitmq.MetadataService, *rabbitmq.ExecutorService, *rabbitmq.AuditService, *rabbitmq.PluginsMetadataService, *rabbitmq.PluginsExecutorService, *rabbitmq.PluginsAuditService) {
+func createRabbitMQServices(sshService ssh.SSHService, vault *internalVault.Vault, logger loggerPkg.Logger) (*rabbitmq.SSHService, *rabbitmq.MetadataService, *rabbitmq.ExecutorService, *rabbitmq.AuditService, *rabbitmq.PluginsMetadataService, *rabbitmq.PluginsExecutorService, *rabbitmq.PluginsAuditService) {
 	logger.Info("Creating RabbitMQ SSH service")
 
 	rabbitmqSSHService := rabbitmq.NewRabbitMQSSHService(sshService, logger.Named("rabbitmq-ssh"))
@@ -612,8 +637,8 @@ func createRabbitMQServices(sshService ssh.SSHService, vault *Vault, logger logg
 }
 
 // createWebSocketHandler creates WebSocket SSH handler if enabled.
-func createWebSocketHandler(config *Config, sshService ssh.SSHService, logger loggerPkg.Logger) *websocket.SSHHandler {
-	if config.SSH.WebSocket.Enabled == nil || !*config.SSH.WebSocket.Enabled {
+func createWebSocketHandler(cfg *config.Config, sshService ssh.SSHService, logger loggerPkg.Logger) *websocket.SSHHandler {
+	if cfg.SSH.WebSocket.Enabled == nil || !*cfg.SSH.WebSocket.Enabled {
 		logger.Info("WebSocket SSH is disabled in configuration")
 
 		return nil
@@ -622,15 +647,15 @@ func createWebSocketHandler(config *Config, sshService ssh.SSHService, logger lo
 	logger.Info("Creating WebSocket SSH handler")
 
 	wsConfig := websocket.Config{
-		ReadBufferSize:    config.SSH.WebSocket.ReadBufferSize,
-		WriteBufferSize:   config.SSH.WebSocket.WriteBufferSize,
-		HandshakeTimeout:  time.Duration(config.SSH.WebSocket.HandshakeTimeout) * time.Second,
-		MaxMessageSize:    int64(config.SSH.WebSocket.MaxMessageSize),
-		PingInterval:      time.Duration(config.SSH.WebSocket.PingInterval) * time.Second,
-		PongTimeout:       time.Duration(config.SSH.WebSocket.PongTimeout) * time.Second,
-		MaxSessions:       config.SSH.WebSocket.MaxSessions,
-		SessionTimeout:    time.Duration(config.SSH.WebSocket.SessionTimeout) * time.Second,
-		EnableCompression: config.SSH.WebSocket.EnableCompression,
+		ReadBufferSize:    cfg.SSH.WebSocket.ReadBufferSize,
+		WriteBufferSize:   cfg.SSH.WebSocket.WriteBufferSize,
+		HandshakeTimeout:  time.Duration(cfg.SSH.WebSocket.HandshakeTimeout) * time.Second,
+		MaxMessageSize:    int64(cfg.SSH.WebSocket.MaxMessageSize),
+		PingInterval:      time.Duration(cfg.SSH.WebSocket.PingInterval) * time.Second,
+		PongTimeout:       time.Duration(cfg.SSH.WebSocket.PongTimeout) * time.Second,
+		MaxSessions:       cfg.SSH.WebSocket.MaxSessions,
+		SessionTimeout:    time.Duration(cfg.SSH.WebSocket.SessionTimeout) * time.Second,
+		EnableCompression: cfg.SSH.WebSocket.EnableCompression,
 	}
 
 	// Set default WebSocket configuration values
@@ -679,13 +704,14 @@ func setWebSocketDefaults(wsConfig *websocket.Config) {
 }
 
 // startBackgroundServices starts vault watcher, CF manager, reconciler and VM monitor.
-func startBackgroundServices(config *Config, vault *Vault, cfManager *CFConnectionManager, reconciler *ReconcilerAdapter, vmMonitor *VMMonitor, ctx context.Context, logger loggerPkg.Logger) {
+func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfManager *internalCF.Manager, reconciler *recovery.ReconcilerAdapter, vmMonitor *vmmonitor.Monitor, ctx context.Context, logger loggerPkg.Logger) {
 	// Start Vault health watcher to auto-unseal if Vault restarts and comes back sealed
-	if config.Vault.AutoUnseal {
+	if cfg.Vault.AutoUnseal {
 		interval := DefaultWSCheckInterval
 
-		if config.Vault.HealthCheckInterval != "" {
-			if d, err := time.ParseDuration(config.Vault.HealthCheckInterval); err == nil {
+		if cfg.Vault.HealthCheckInterval != "" {
+			d, err := time.ParseDuration(cfg.Vault.HealthCheckInterval)
+			if err == nil {
 				interval = d
 			}
 		}
@@ -729,22 +755,7 @@ func startBackgroundServices(config *Config, vault *Vault, cfManager *CFConnecti
 	}
 }
 
-// runServersAndMaintenance starts HTTP/HTTPS servers and BOSH maintenance loop.
-func runServersAndMaintenance(config *Config, apiHandler *API, broker *Broker, vault *Vault, ctx context.Context, cancel context.CancelFunc, logger loggerPkg.Logger) *sync.WaitGroup {
-	// Create HTTP server
-	httpServer := startHTTPServer(config, apiHandler, logger)
-
-	// Create HTTPS server if TLS is enabled
-	httpsServer, err := startHTTPSServer(config, apiHandler, logger)
-	if err != nil {
-		logger.Error("Failed to create HTTPS server: %s", err)
-		os.Exit(exitCodeError)
-	}
-
-	// Start servers
-	var waitGroup sync.WaitGroup
-
-	// Start HTTP server
+func startHTTPServerGoroutine(waitGroup *sync.WaitGroup, httpServer *http.Server, cancel context.CancelFunc, logger loggerPkg.Logger) {
 	waitGroup.Add(1)
 
 	go func() {
@@ -758,25 +769,29 @@ func runServersAndMaintenance(config *Config, apiHandler *API, broker *Broker, v
 			cancel()
 		}
 	}()
+}
 
-	// Start HTTPS server if enabled
-	if httpsServer != nil {
-		waitGroup.Add(1)
-
-		go func() {
-			defer waitGroup.Done()
-
-			logger.Info("Starting HTTPS server...")
-
-			err := httpsServer.ListenAndServeTLS("", "")
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logger.Error("HTTPS server failed: %s", err)
-				cancel()
-			}
-		}()
+func startHTTPSServerGoroutine(waitGroup *sync.WaitGroup, httpsServer *http.Server, cancel context.CancelFunc, logger loggerPkg.Logger) {
+	if httpsServer == nil {
+		return
 	}
 
-	// Start BOSH maintenance loop
+	waitGroup.Add(1)
+
+	go func() {
+		defer waitGroup.Done()
+
+		logger.Info("Starting HTTPS server...")
+
+		err := httpsServer.ListenAndServeTLS("", "")
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTPS server failed: %s", err)
+			cancel()
+		}
+	}()
+}
+
+func startMaintenanceLoop(waitGroup *sync.WaitGroup, brokerInstance *broker.Broker, vault *internalVault.Vault, ctx context.Context, logger loggerPkg.Logger) {
 	waitGroup.Add(1)
 
 	go func() {
@@ -790,165 +805,183 @@ func runServersAndMaintenance(config *Config, apiHandler *API, broker *Broker, v
 			case <-ctx.Done():
 				return
 			case <-boshMaintenanceLoop.C:
-				vaultDB, err := vault.getVaultDB(ctx)
-				if err != nil {
-					logger.Error("error grabbing vaultdb for debugging: %s", err)
-				}
-
-				if jsonData, err := json.Marshal(vaultDB.Data); err != nil {
-					logger.Debug("current vault db looks like: %v (json marshal error: %s)", vaultDB.Data, err)
-				} else {
-					logger.Debug("current vault db looks like: %s", string(jsonData))
-				}
-
-				if _, err := broker.serviceWithNoDeploymentCheck(ctx); err != nil {
-					logger.Error("service with no deployment check failed: %s", err)
-				}
+				runMaintenanceTasks(brokerInstance, vault, ctx, logger)
 			}
 		}
 	}()
+}
 
-	// Setup graceful shutdown goroutine
+func runMaintenanceTasks(brokerInstance *broker.Broker, vault *internalVault.Vault, ctx context.Context, logger loggerPkg.Logger) {
+	logVaultDBState(vault, ctx, logger)
+	checkServicesWithoutDeployments(brokerInstance, ctx, logger)
+}
+
+func logVaultDBState(vault *internalVault.Vault, ctx context.Context, logger loggerPkg.Logger) {
+	vaultDB, err := vault.GetVaultDB(ctx)
+	if err != nil {
+		logger.Error("error grabbing vaultdb for debugging: %s", err)
+
+		return
+	}
+
+	jsonData, err := json.Marshal(vaultDB.Data)
+	if err != nil {
+		logger.Debug("current vault db looks like: %v (json marshal error: %s)", vaultDB.Data, err)
+	} else {
+		logger.Debug("current vault db looks like: %s", string(jsonData))
+	}
+}
+
+func checkServicesWithoutDeployments(brokerInstance *broker.Broker, ctx context.Context, logger loggerPkg.Logger) {
+	_, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+	if err != nil {
+		logger.Error("service with no deployment check failed: %s", err)
+	}
+}
+
+func setupGracefulShutdown(httpServer, httpsServer *http.Server, ctx context.Context, logger loggerPkg.Logger) {
 	go func() {
 		<-ctx.Done()
 		logger.Info("Shutting down servers...")
 
-		// Graceful shutdown
 		shutdownCtx, shutdownCancel := context.WithTimeout(ctx, DefaultShutdownTimeout)
 		defer shutdownCancel()
 
-		err := httpServer.Shutdown(shutdownCtx)
-		if err != nil {
-			logger.Error("Error shutting down HTTP server: %s", err)
-		}
-
-		if httpsServer != nil {
-			err := httpsServer.Shutdown(shutdownCtx)
-			if err != nil {
-				logger.Error("Error shutting down HTTPS server: %s", err)
-			}
-		}
+		shutdownHTTPServer(httpServer, shutdownCtx, logger)
+		shutdownHTTPSServer(httpsServer, shutdownCtx, logger)
 	}()
+}
+
+func shutdownHTTPServer(httpServer *http.Server, shutdownCtx context.Context, logger loggerPkg.Logger) {
+	err := httpServer.Shutdown(shutdownCtx)
+	if err != nil {
+		logger.Error("Error shutting down HTTP server: %s", err)
+	}
+}
+
+func shutdownHTTPSServer(httpsServer *http.Server, shutdownCtx context.Context, logger loggerPkg.Logger) {
+	if httpsServer != nil {
+		err := httpsServer.Shutdown(shutdownCtx)
+		if err != nil {
+			logger.Error("Error shutting down HTTPS server: %s", err)
+		}
+	}
+}
+
+func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, brokerInstance *broker.Broker, vault *internalVault.Vault, ctx context.Context, cancel context.CancelFunc, logger loggerPkg.Logger) *sync.WaitGroup {
+	httpServer := startHTTPServer(cfg, apiHandler, logger)
+
+	httpsServer, err := startHTTPSServer(cfg, apiHandler, logger)
+	if err != nil {
+		logger.Error("Failed to create HTTPS server: %s", err)
+		os.Exit(exitCodeError)
+	}
+
+	var waitGroup sync.WaitGroup
+
+	startHTTPServerGoroutine(&waitGroup, httpServer, cancel, logger)
+	startHTTPSServerGoroutine(&waitGroup, httpsServer, cancel, logger)
+	startMaintenanceLoop(&waitGroup, brokerInstance, vault, ctx, logger)
+	setupGracefulShutdown(httpServer, httpsServer, ctx, logger)
 
 	return &waitGroup
 }
 
-func main() {
-	// Initialize build info
-	buildInfo := GetBuildInfo()
+func setupSignalHandlingAndContext() (context.Context, context.CancelFunc, chan os.Signal) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Parse command line flags
-	configPath := parseFlags(buildInfo)
+	ctx, cancel := context.WithCancel(context.Background())
 
-	// Initialize centralized logger from environment
-	if err := loggerPkg.InitFromEnv(); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
-	}
+	return ctx, cancel, sigChan
+}
 
-	// Get the global logger instance
-	logger := loggerPkg.Get()
-
-	// Log build version information at startup
-	logger.Info("blacksmith starting - version: %s, build: %s, commit: %s, go: %s",
-		buildInfo.Version, buildInfo.BuildTime, buildInfo.GitCommit, runtime.Version())
-
+func initializeCore(configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector) {
 	config := initializeConfig(configPath, logger)
 	vault := initializeVault(config, logger)
 	boshDirector := initializeBOSH(config, logger)
+	setupBOSHResources(config, boshDirector, logger)
 
+	return config, vault, boshDirector
+}
+
+func setupBOSHResources(config *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
 	updateBOSHCloudConfig(config, boshDirector, logger)
 	uploadBOSHReleases(config, boshDirector, logger)
 	uploadBOSHStemcells(config, boshDirector, logger)
+}
 
-	shieldClient := initializeShieldClient(config, logger)
+func getUIHandler(config *config.Config) http.Handler {
+	if config.WebRoot != "" {
+		return http.FileServer(http.Dir(config.WebRoot))
+	}
 
-	broker := &Broker{
+	return &broker.NullHandler{}
+}
+
+func initializeBroker(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, shieldClient shield.Client, logger loggerPkg.Logger) (*broker.Broker, error) {
+	brokerInstance := &broker.Broker{
 		Vault:  vault,
 		BOSH:   boshDirector,
 		Shield: shieldClient,
 		Config: config,
 	}
 
-	// Read services from CLI args or auto-scan
 	var err error
 
 	if len(os.Args) > DefaultMinArgsRequired {
 		logger.Info("reading services from CLI arguments: %s", strings.Join(os.Args[3:], ", "))
-		err = broker.ReadServices(os.Args[3:]...)
+		err = brokerInstance.ReadServices(os.Args[3:]...)
 	} else {
 		logger.Info("no CLI arguments provided, using configuration-based service discovery")
 
-		err = broker.ReadServices()
+		err = brokerInstance.ReadServices()
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read SERVICE directories: %s\n", err)
-		os.Exit(exitCodeError)
+		return nil, fmt.Errorf("failed to read SERVICE directories: %w", err)
 	}
 
-	var uiHandler http.Handler = &NullHandler{}
-	if config.WebRoot != "" {
-		uiHandler = http.FileServer(http.Dir(config.WebRoot))
-	}
+	return brokerInstance, nil
+}
 
-	logger.Info("blacksmith service broker v%s starting up...", buildInfo.Version)
-
-	// Setup signal handling for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Initialize CF connection manager
-	var cfManager *CFConnectionManager
-
-	if len(config.Broker.CF.APIs) > 0 {
-		logger.Info("initializing CF connection manager with %d endpoint(s)", len(config.Broker.CF.APIs))
-		cfManager = NewCFConnectionManager(config.Broker.CF.APIs, logger.Named("cf-manager"))
-
-		logger.Info("CF connection manager initialized successfully")
-	} else {
+func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *internalCF.Manager {
+	if len(config.Broker.CF.APIs) == 0 {
 		logger.Info("CF reconciliation disabled: no CF API endpoints configured")
+
+		return nil
 	}
 
-	// Initialize the deployment reconciler
-	reconciler := NewReconcilerAdapter(config, broker, vault, boshDirector, cfManager)
+	logger.Info("initializing CF connection manager with %d endpoint(s)", len(config.Broker.CF.APIs))
 
-	// Initialize the VM monitor
-	vmMonitor := NewVMMonitor(vault, boshDirector, config)
-
-	// Create context for server and reconciler lifecycle
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start background services
-	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
-
-	// Initialize SSH and RabbitMQ services
-	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, broker, vault, logger)
-
-	// Ensure SSH service is closed on shutdown
-	defer func() {
-		err := sshService.Close()
-		if err != nil {
-			logger.Error("Error closing SSH service: %s", err)
+	// Convert main CFAPIConfig to internal CFAPIConfig
+	internalAPIs := make(map[string]internalCF.ExternalCFAPIConfig)
+	for name, apiConfig := range config.Broker.CF.APIs {
+		internalAPIs[name] = internalCF.ExternalCFAPIConfig{
+			Name:     apiConfig.Name,
+			Endpoint: apiConfig.Endpoint,
+			Username: apiConfig.Username,
+			Password: apiConfig.Password,
 		}
-	}()
-
-	// Ensure WebSocket handler is closed on shutdown
-	if webSocketHandler != nil {
-		defer func() {
-			err := webSocketHandler.Close()
-			if err != nil {
-				logger.Error("Error closing WebSocket handler: %s", err)
-			}
-		}()
 	}
 
-	// Create the main API handler with refactored InternalAPI
+	cfManager := internalCF.NewManagerFromExternal(internalAPIs, logger.Named("cf-manager"))
+	logger.Info("CF connection manager initialized successfully")
+
+	return cfManager
+}
+
+func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, cfManager *internalCF.Manager,
+	vmMonitor *vmmonitor.Monitor, sshService *ssh.ServiceImpl, rabbitmqSSHService *rabbitmq.SSHService,
+	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
+	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
+	rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService, rabbitmqPluginsAuditService *rabbitmq.PluginsAuditService,
+	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, logger loggerPkg.Logger) *broker.API {
 	internalAPI := api.NewInternalAPI(api.Dependencies{
 		Config:                         config,
 		Logger:                         logger,
 		Vault:                          vault,
-		Broker:                         broker,
+		Broker:                         brokerInstance,
 		ServicesManager:                services.NewManagerWithCFConfig(logger.Named("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
 		CFManager:                      cfManager,
 		VMMonitor:                      vmMonitor,
@@ -964,14 +997,14 @@ func main() {
 		SecurityMiddleware:             services.NewSecurityMiddleware(logger.Named("security").Debug),
 	})
 
-	apiHandler := &API{
+	return &broker.API{
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,
 		WebRoot:  uiHandler,
 		Logger:   logger,
 		Internal: internalAPI,
 		Primary: brokerapi.New(
-			broker,
+			brokerInstance,
 			lager.NewLogger("blacksmith-broker"),
 			brokerapi.BrokerCredentials{
 				Username: config.Broker.Username,
@@ -979,9 +1012,60 @@ func main() {
 			},
 		),
 	}
+}
+
+// runService runs the main service logic.
+func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger) error {
+	config, vault, boshDirector := initializeCore(configPath, logger)
+
+	shieldClient := initializeShieldClient(config, logger)
+
+	brokerInstance, err := initializeBroker(config, vault, boshDirector, shieldClient, logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize broker: %w", err)
+	}
+
+	uiHandler := getUIHandler(config)
+
+	logger.Info("blacksmith service broker v%s starting up...", buildInfo.Version)
+
+	// Setup signal handling and context
+	ctx, cancel, sigChan := setupSignalHandlingAndContext()
+	defer cancel()
+
+	// Initialize CF connection manager
+	cfManager := initializeCFManager(config, logger)
+
+	// Initialize the deployment reconciler
+	reconciler := recovery.NewReconcilerAdapter(config, brokerInstance, vault, boshDirector, cfManager)
+
+	// Initialize the VM monitor
+	vmMonitor := vmmonitor.New(vault, boshDirector, config)
+
+	// Start background services
+	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
+
+	// Initialize SSH and RabbitMQ services
+	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
+
+	// Ensure SSH service is closed on shutdown
+	defer func() {
+		if sshService != nil {
+			err := sshService.Close()
+			if err != nil {
+				logger.Error("Error closing SSH service: %s", err)
+			}
+		}
+	}()
+
+	// Create the main API handler with refactored InternalAPI
+	apiHandler := createAPIHandler(config, brokerInstance, vault, cfManager, vmMonitor,
+		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
+		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
+		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, logger)
 
 	// Start servers and maintenance loops
-	serverWaitGroup := runServersAndMaintenance(config, apiHandler, broker, vault, ctx, cancel, logger)
+	serverWaitGroup := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
 
 	// Wait for shutdown signal
 	select {
@@ -993,6 +1077,36 @@ func main() {
 
 	cancel()               // Cancel context to stop other goroutines
 	serverWaitGroup.Wait() // Wait for all goroutines to finish
+
+	return nil
+}
+
+func main() {
+	// Initialize build info
+	buildInfo := GetBuildInfo()
+
+	// Parse command line flags
+	configPath := parseFlags(buildInfo)
+
+	// Initialize centralized logger from environment
+	err := loggerPkg.InitFromEnv()
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+
+	// Get the global logger instance
+	logger := loggerPkg.Get()
+
+	// Log build version information at startup
+	logger.Info("blacksmith starting - version: %s, build: %s, commit: %s, go: %s",
+		buildInfo.Version, buildInfo.BuildTime, buildInfo.GitCommit, runtime.Version())
+
+	// Initialize and run the service
+	err = runService(configPath, *buildInfo, logger)
+	if err != nil {
+		logger.Error("Service failed: %v", err)
+		os.Exit(exitCodeError)
+	}
 
 	logger.Info("Blacksmith service broker shut down complete")
 }

@@ -7,6 +7,7 @@ import (
 	. "blacksmith/pkg/services/cf"
 )
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestValidateRegistrationRequest(t *testing.T) {
 	t.Parallel()
 
@@ -87,26 +88,28 @@ func TestValidateRegistrationRequest(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := ValidateRegistrationRequest(tt.req)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateRegistrationRequest() error = %v, wantErr %v", err, tt.wantErr)
+			err := ValidateRegistrationRequest(testCase.req)
+			if (err != nil) != testCase.wantErr {
+				t.Errorf("ValidateRegistrationRequest() error = %v, wantErr %v", err, testCase.wantErr)
 
 				return
 			}
 
-			if tt.wantErr && tt.errMsg != "" && err != nil {
-				if !containsErrorMessage(err.Error(), tt.errMsg) {
-					t.Errorf("ValidateRegistrationRequest() error = %v, expected to contain %v", err.Error(), tt.errMsg)
+			if testCase.wantErr && testCase.errMsg != "" && err != nil {
+				if !containsErrorMessage(err.Error(), testCase.errMsg) {
+					t.Errorf("ValidateRegistrationRequest() error = %v, expected to contain %v", err.Error(), testCase.errMsg)
 				}
 			}
 		})
 	}
 }
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 
+//nolint:funlen
 func TestValidateURL(t *testing.T) {
 	t.Parallel()
 
@@ -158,20 +161,20 @@ func TestValidateURL(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := ValidateURL(tt.url)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateURL() error = %v, wantErr %v", err, tt.wantErr)
+			err := ValidateURL(testCase.url)
+			if (err != nil) != testCase.wantErr {
+				t.Errorf("ValidateURL() error = %v, wantErr %v", err, testCase.wantErr)
 
 				return
 			}
 
-			if tt.wantErr && tt.errMsg != "" && err != nil {
-				if !containsErrorMessage(err.Error(), tt.errMsg) {
-					t.Errorf("ValidateURL() error = %v, expected to contain %v", err.Error(), tt.errMsg)
+			if testCase.wantErr && testCase.errMsg != "" && err != nil {
+				if !containsErrorMessage(err.Error(), testCase.errMsg) {
+					t.Errorf("ValidateURL() error = %v, expected to contain %v", err.Error(), testCase.errMsg)
 				}
 			}
 		})
@@ -187,20 +190,20 @@ func runValidationTests(t *testing.T, validatorName string, validator func(strin
 }) {
 	t.Helper()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := validator(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("%s() error = %v, wantErr %v", validatorName, err, tt.wantErr)
+			err := validator(testCase.input)
+			if (err != nil) != testCase.wantErr {
+				t.Errorf("%s() error = %v, wantErr %v", validatorName, err, testCase.wantErr)
 
 				return
 			}
 
-			if tt.wantErr && tt.errMsg != "" && err != nil {
-				if !containsErrorMessage(err.Error(), tt.errMsg) {
-					t.Errorf("%s() error = %v, expected to contain %v", validatorName, err.Error(), tt.errMsg)
+			if testCase.wantErr && testCase.errMsg != "" && err != nil {
+				if !containsErrorMessage(err.Error(), testCase.errMsg) {
+					t.Errorf("%s() error = %v, expected to contain %v", validatorName, err.Error(), testCase.errMsg)
 				}
 			}
 		})
@@ -303,14 +306,14 @@ func TestValidateBrokerName(t *testing.T) {
 	runValidationTests(t, "ValidateBrokerName", ValidateBrokerName, tests)
 }
 
-func TestSanitizeRegistrationRequest(t *testing.T) {
-	t.Parallel()
+type registrationRequestTestCase struct {
+	name     string
+	input    *RegistrationRequest
+	expected *RegistrationRequest
+}
 
-	tests := []struct {
-		name     string
-		input    *RegistrationRequest
-		expected *RegistrationRequest
-	}{
+func getRegistrationRequestTestCases() []registrationRequestTestCase {
+	return []registrationRequestTestCase{
 		{
 			name: "trim whitespace",
 			input: &RegistrationRequest{
@@ -366,43 +369,76 @@ func TestSanitizeRegistrationRequest(t *testing.T) {
 			},
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+func runRegistrationRequestTest(t *testing.T, testCase registrationRequestTestCase) {
+	t.Helper()
+	SanitizeRegistrationRequest(testCase.input)
+
+	validateBasicFields(t, testCase.input, testCase.expected)
+	validateMetadata(t, testCase.input, testCase.expected)
+}
+
+func validateBasicFields(t *testing.T, input, expected *RegistrationRequest) {
+	t.Helper()
+
+	if input.Name != expected.Name {
+		t.Errorf("Name = %v, expected %v", input.Name, expected.Name)
+	}
+
+	if input.APIURL != expected.APIURL {
+		t.Errorf("APIURL = %v, expected %v", input.APIURL, expected.APIURL)
+	}
+
+	if input.Username != expected.Username {
+		t.Errorf("Username = %v, expected %v", input.Username, expected.Username)
+	}
+
+	if input.BrokerName != expected.BrokerName {
+		t.Errorf("BrokerName = %v, expected %v", input.BrokerName, expected.BrokerName)
+	}
+}
+
+func validateMetadata(t *testing.T, input, expected *RegistrationRequest) {
+	t.Helper()
+
+	if expected.Metadata == nil {
+		return
+	}
+
+	validateExpectedMetadataExists(t, input, expected)
+	validateSensitiveKeysRemoved(t, input, expected)
+}
+
+func validateExpectedMetadataExists(t *testing.T, input, expected *RegistrationRequest) {
+	t.Helper()
+
+	for key, expectedValue := range expected.Metadata {
+		if actualValue, exists := input.Metadata[key]; !exists || actualValue != expectedValue {
+			t.Errorf("Metadata[%s] = %v, expected %v", key, actualValue, expectedValue)
+		}
+	}
+}
+
+func validateSensitiveKeysRemoved(t *testing.T, input, expected *RegistrationRequest) {
+	t.Helper()
+
+	for key := range input.Metadata {
+		if _, expectedExists := expected.Metadata[key]; !expectedExists {
+			t.Errorf("Metadata[%s] should have been removed but still exists", key)
+		}
+	}
+}
+
+func TestSanitizeRegistrationRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := getRegistrationRequestTestCases()
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			SanitizeRegistrationRequest(tt.input)
-
-			if tt.input.Name != tt.expected.Name {
-				t.Errorf("Name = %v, expected %v", tt.input.Name, tt.expected.Name)
-			}
-
-			if tt.input.APIURL != tt.expected.APIURL {
-				t.Errorf("APIURL = %v, expected %v", tt.input.APIURL, tt.expected.APIURL)
-			}
-
-			if tt.input.Username != tt.expected.Username {
-				t.Errorf("Username = %v, expected %v", tt.input.Username, tt.expected.Username)
-			}
-
-			if tt.input.BrokerName != tt.expected.BrokerName {
-				t.Errorf("BrokerName = %v, expected %v", tt.input.BrokerName, tt.expected.BrokerName)
-			}
-
-			// Check metadata sanitization
-			if tt.expected.Metadata != nil {
-				for key, expectedValue := range tt.expected.Metadata {
-					if actualValue, exists := tt.input.Metadata[key]; !exists || actualValue != expectedValue {
-						t.Errorf("Metadata[%s] = %v, expected %v", key, actualValue, expectedValue)
-					}
-				}
-
-				// Check that sensitive keys were removed
-				for key := range tt.input.Metadata {
-					if _, expectedExists := tt.expected.Metadata[key]; !expectedExists {
-						t.Errorf("Metadata[%s] should have been removed but still exists", key)
-					}
-				}
-			}
+			runRegistrationRequestTest(t, testCase)
 		})
 	}
 }

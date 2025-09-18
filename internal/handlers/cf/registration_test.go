@@ -1,0 +1,327 @@
+package cf_test
+
+import (
+	"strings"
+	"testing"
+
+	"blacksmith/pkg/services/cf"
+)
+
+// TestCFRegistrationValidation tests the CF registration validation integration.
+func getCFRegistrationValidationTestCases() []struct {
+	name           string
+	request        cf.RegistrationRequest
+	expectError    bool
+	expectedErrMsg string
+} {
+	var testCases []struct {
+		name           string
+		request        cf.RegistrationRequest
+		expectError    bool
+		expectedErrMsg string
+	}
+
+	testCases = append(testCases, getValidRegistrationTestCases()...)
+	testCases = append(testCases, getInvalidURLTestCases()...)
+	testCases = append(testCases, getMissingFieldTestCases()...)
+	testCases = append(testCases, getInvalidFieldTestCases()...)
+
+	return testCases
+}
+
+func getValidRegistrationTestCases() []struct {
+	name           string
+	request        cf.RegistrationRequest
+	expectError    bool
+	expectedErrMsg string
+} {
+	return []struct {
+		name           string
+		request        cf.RegistrationRequest
+		expectError    bool
+		expectedErrMsg string
+	}{
+		{
+			name: "valid registration request",
+			request: cf.RegistrationRequest{
+				Name:     "test-registration",
+				APIURL:   "https://api.cf.example.com",
+				Username: "admin",
+				Password: "password123",
+			},
+			expectError: false,
+		},
+	}
+}
+
+func getInvalidURLTestCases() []struct {
+	name           string
+	request        cf.RegistrationRequest
+	expectError    bool
+	expectedErrMsg string
+} {
+	return []struct {
+		name           string
+		request        cf.RegistrationRequest
+		expectError    bool
+		expectedErrMsg string
+	}{
+		{
+			name: "invalid URL - HTTP instead of HTTPS",
+			request: cf.RegistrationRequest{
+				Name:     "test-registration",
+				APIURL:   "http://api.cf.example.com",
+				Username: "admin",
+				Password: "password123",
+			},
+			expectError:    true,
+			expectedErrMsg: "API URL must use HTTPS protocol",
+		},
+		{
+			name: "private network URL blocked",
+			request: cf.RegistrationRequest{
+				Name:     "test-registration",
+				APIURL:   "https://192.168.1.100",
+				Username: "admin",
+				Password: "password123",
+			},
+			expectError:    true,
+			expectedErrMsg: "private/local network URLs are not allowed",
+		},
+	}
+}
+
+func getMissingFieldTestCases() []struct {
+	name           string
+	request        cf.RegistrationRequest
+	expectError    bool
+	expectedErrMsg string
+} {
+	return []struct {
+		name           string
+		request        cf.RegistrationRequest
+		expectError    bool
+		expectedErrMsg string
+	}{
+		{
+			name: "missing required field",
+			request: cf.RegistrationRequest{
+				APIURL:   "https://api.cf.example.com",
+				Username: "admin",
+				Password: "password123",
+			},
+			expectError:    true,
+			expectedErrMsg: "registration name is required",
+		},
+	}
+}
+
+func getInvalidFieldTestCases() []struct {
+	name           string
+	request        cf.RegistrationRequest
+	expectError    bool
+	expectedErrMsg string
+} {
+	return []struct {
+		name           string
+		request        cf.RegistrationRequest
+		expectError    bool
+		expectedErrMsg string
+	}{
+		{
+			name: "name with dangerous content",
+			request: cf.RegistrationRequest{
+				Name:     "test<script>alert('xss')</script>",
+				APIURL:   "https://api.cf.example.com",
+				Username: "admin",
+				Password: "password123",
+			},
+			expectError:    true,
+			expectedErrMsg: "name can only contain letters, numbers, spaces, hyphens, and underscores",
+		},
+		{
+			name: "short password",
+			request: cf.RegistrationRequest{
+				Name:     "test-registration",
+				APIURL:   "https://api.cf.example.com",
+				Username: "admin",
+				Password: "123",
+			},
+			expectError:    true,
+			expectedErrMsg: "password must be at least 6 characters long",
+		},
+	}
+}
+
+func TestCFRegistrationValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := getCFRegistrationValidationTestCases()
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := cf.ValidateRegistrationRequest(&testCase.request)
+			if (err != nil) != testCase.expectError {
+				t.Errorf("ValidateRegistrationRequest() error = %v, wantErr %v", err, testCase.expectError)
+
+				return
+			}
+
+			if testCase.expectError && testCase.expectedErrMsg != "" && err != nil {
+				if !strings.Contains(err.Error(), testCase.expectedErrMsg) {
+					t.Errorf("ValidateRegistrationRequest() error = %v, expected to contain %v", err.Error(), testCase.expectedErrMsg)
+				}
+			}
+		})
+	}
+}
+
+// TestCFRegistrationSanitization tests the sanitization functionality.
+func TestCFRegistrationSanitization(t *testing.T) {
+	t.Parallel()
+
+	request := &cf.RegistrationRequest{
+		Name:       "  test-registration  ",
+		APIURL:     "  https://api.cf.example.com/  ",
+		Username:   "  admin  ",
+		BrokerName: "  ",
+		Metadata: map[string]string{
+			"env":      "  production  ",
+			"password": "secret123",
+			"token":    "abc123",
+			"region":   "us-west-1",
+		},
+	}
+
+	cf.SanitizeRegistrationRequest(request)
+
+	// Check trimmed fields
+	if request.Name != "test-registration" {
+		t.Errorf("Name not trimmed correctly: got %s", request.Name)
+	}
+
+	if request.APIURL != "https://api.cf.example.com" {
+		t.Errorf("APIURL not trimmed correctly: got %s", request.APIURL)
+	}
+
+	if request.Username != "admin" {
+		t.Errorf("Username not trimmed correctly: got %s", request.Username)
+	}
+
+	// Check default broker name set
+	if request.BrokerName != "blacksmith" {
+		t.Errorf("Default broker name not set: got %s", request.BrokerName)
+	}
+
+	// Check metadata sanitization
+	if _, exists := request.Metadata["password"]; exists {
+		t.Error("Password metadata should have been removed")
+	}
+
+	if _, exists := request.Metadata["token"]; exists {
+		t.Error("Token metadata should have been removed")
+	}
+
+	if request.Metadata["env"] != "production" {
+		t.Errorf("Env metadata not trimmed: got %s", request.Metadata["env"])
+	}
+
+	if request.Metadata["region"] != "us-west-1" {
+		t.Errorf("Region metadata incorrect: got %s", request.Metadata["region"])
+	}
+}
+
+// TestCFValidationHelper tests individual validation helper functions.
+func testValidURLs(t *testing.T) {
+	t.Helper()
+
+	validURLs := []string{
+		"https://api.cf.example.com",
+		"https://api.system.cf.example.com:443",
+		"https://cf.pivotal.io",
+	}
+
+	for _, url := range validURLs {
+		err := cf.ValidateURL(url)
+		if err != nil {
+			t.Errorf("Expected %s to be valid, got error: %v", url, err)
+		}
+	}
+}
+
+func testInvalidURLs(t *testing.T) {
+	t.Helper()
+
+	invalidURLs := map[string]string{
+		"http://api.cf.example.com": "HTTPS protocol",
+		"https://localhost:8080":    "private/local network URLs",
+		"https://127.0.0.1":         "private/local network URLs",
+		"https://192.168.1.100":     "private/local network URLs",
+		"https://10.0.0.1":          "private/local network URLs",
+		"malformed":                 "HTTPS protocol",
+	}
+
+	for url, expectedErr := range invalidURLs {
+		err := cf.ValidateURL(url)
+		if err == nil {
+			t.Errorf("Expected %s to be invalid", url)
+		} else if !strings.Contains(err.Error(), expectedErr) {
+			t.Errorf("Expected error containing %s, got: %v", expectedErr, err)
+		}
+	}
+}
+
+func testValidNames(t *testing.T) {
+	t.Helper()
+
+	validNames := []string{
+		"test-registration",
+		"Test Registration 01",
+		"my_broker_name",
+		"Production-CF-Env",
+	}
+
+	for _, name := range validNames {
+		err := cf.ValidateName(name)
+		if err != nil {
+			t.Errorf("Expected %s to be valid, got error: %v", name, err)
+		}
+	}
+}
+
+func testInvalidNames(t *testing.T) {
+	t.Helper()
+
+	invalidNames := map[string]string{
+		"ab":                "at least 3 characters",
+		"test@registration": "letters, numbers, spaces, hyphens, and underscores",
+		"test<script>":      "letters, numbers, spaces, hyphens, and underscores",
+		"this-is-way-too-long-registration-name-that-exceeds": "no more than 50 characters",
+	}
+
+	for name, expectedErr := range invalidNames {
+		err := cf.ValidateName(name)
+		if err == nil {
+			t.Errorf("Expected %s to be invalid", name)
+		} else if !strings.Contains(err.Error(), expectedErr) {
+			t.Errorf("Expected error containing %s, got: %v", expectedErr, err)
+		}
+	}
+}
+
+func TestCFValidationHelper(t *testing.T) {
+	t.Parallel()
+	t.Run("ValidateURL", func(t *testing.T) {
+		t.Parallel()
+		testValidURLs(t)
+		testInvalidURLs(t)
+	})
+
+	t.Run("ValidateName", func(t *testing.T) {
+		t.Parallel()
+		testValidNames(t)
+		testInvalidNames(t)
+	})
+}

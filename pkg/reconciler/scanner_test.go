@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"blacksmith/bosh"
+	"blacksmith/internal/bosh"
 	. "blacksmith/pkg/reconciler"
 )
 
@@ -66,7 +66,7 @@ func (d *mockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
 }
 
 func (d *mockDirector) GetConfig(configType, configName string) (interface{}, error) {
-	return nil, nil
+	return nil, ErrScannerNotImplemented
 }
 
 func (d *mockDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
@@ -154,15 +154,15 @@ func (d *mockDirector) CancelTask(taskID int) error {
 }
 
 func (d *mockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
-	return nil, nil
+	return nil, ErrScannerNotImplemented
 }
 
 func (d *mockDirector) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
-	return nil, nil
+	return nil, ErrScannerNotImplemented
 }
 
 func (d *mockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
-	return nil, nil
+	return nil, ErrScannerNotImplemented
 }
 
 func (d *mockDirector) GetConfigContent(configID string) (string, error) {
@@ -170,7 +170,7 @@ func (d *mockDirector) GetConfigContent(configID string) (string, error) {
 }
 
 func (d *mockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
-	return nil, nil
+	return nil, ErrScannerNotImplemented
 }
 
 func TestBOSHScanner_ScanDeployments(t *testing.T) {
@@ -250,6 +250,7 @@ func TestBOSHScanner_ScanDeployments_Error(t *testing.T) {
 	}
 }
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestBOSHScanner_GetDeploymentDetails(t *testing.T) {
 	t.Parallel()
 

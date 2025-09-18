@@ -1,11 +1,13 @@
 package reconciler_test
 
 import (
+	"errors"
 	"testing"
 
 	. "blacksmith/pkg/reconciler"
 )
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 	t.Parallel()
 
@@ -75,7 +77,8 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 					Name: "some-other-deployment",
 				},
 			},
-			expected: nil,
+			expected:    nil,
+			expectError: true,
 		},
 		{
 			name: "deployment with invalid UUID",
@@ -84,7 +87,8 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 					Name: "redis-cache-small-not-a-valid-uuid",
 				},
 			},
-			expected: nil,
+			expected:    nil,
+			expectError: true,
 		},
 		{
 			name: "unknown service",
@@ -93,7 +97,8 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 					Name: "unknown-service-plan-12345678-1234-1234-1234-123456789abc",
 				},
 			},
-			expected: nil,
+			expected:    nil,
+			expectError: true,
 		},
 	}
 
@@ -103,36 +108,60 @@ func TestServiceMatcher_MatchDeployment_ValidUUIDs(t *testing.T) {
 
 			result, err := matcher.MatchDeployment(testCase.deployment, services)
 
-			if testCase.expectError && err == nil {
-				t.Error("Expected error but got none")
-			}
-
-			if !testCase.expectError && err != nil {
-				t.Errorf("Unexpected error: %v", err)
-			}
-
-			if testCase.expected == nil && result != nil {
-				t.Errorf("Expected no match but got: %+v", result)
-			}
-
-			if testCase.expected != nil && result == nil {
-				t.Error("Expected a match but got nil")
-			}
-
-			if testCase.expected != nil && result != nil {
-				if result.ServiceID != testCase.expected.ServiceID {
-					t.Errorf("ServiceID: expected %s, got %s", testCase.expected.ServiceID, result.ServiceID)
-				}
-
-				if result.PlanID != testCase.expected.PlanID {
-					t.Errorf("PlanID: expected %s, got %s", testCase.expected.PlanID, result.PlanID)
-				}
-
-				if result.InstanceID != testCase.expected.InstanceID {
-					t.Errorf("InstanceID: expected %s, got %s", testCase.expected.InstanceID, result.InstanceID)
-				}
-			}
+			validateTestError(t, testCase.expectError, err)
+			validateTestResult(t, testCase.expected, result)
 		})
+	}
+}
+
+// validateTestError validates error expectations.
+func validateTestError(t *testing.T, expectError bool, err error) {
+	t.Helper()
+
+	if expectError && err == nil {
+		t.Error("Expected error but got none")
+	}
+
+	if !expectError && err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+// validateTestResult validates test result expectations.
+func validateTestResult(t *testing.T, expected, actual *MatchResult) {
+	t.Helper()
+
+	if expected == nil && actual != nil {
+		t.Errorf("Expected no match but got: %+v", actual)
+
+		return
+	}
+
+	if expected != nil && actual == nil {
+		t.Error("Expected a match but got nil")
+
+		return
+	}
+
+	if expected != nil && actual != nil {
+		validateMatchResult(t, expected, actual)
+	}
+}
+
+// validateMatchResult validates individual fields of MatchResult.
+func validateMatchResult(t *testing.T, expected, actual *MatchResult) {
+	t.Helper()
+
+	if actual.ServiceID != expected.ServiceID {
+		t.Errorf("ServiceID: expected %s, got %s", expected.ServiceID, actual.ServiceID)
+	}
+
+	if actual.PlanID != expected.PlanID {
+		t.Errorf("PlanID: expected %s, got %s", expected.PlanID, actual.PlanID)
+	}
+
+	if actual.InstanceID != expected.InstanceID {
+		t.Errorf("InstanceID: expected %s, got %s", expected.InstanceID, actual.InstanceID)
 	}
 }
 
@@ -190,7 +219,9 @@ properties:
 		t.Errorf("Expected instance ID 12345678-1234-1234-1234-123456789abc, got %s", instance.InstanceID)
 	}
 }
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 
+//nolint:funlen
 func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 	t.Parallel()
 
@@ -261,11 +292,12 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 			t.Parallel()
 
 			instance, err := matcher.MatchDeployment(testCase.deployment, services)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-
+			
 			if testCase.expectedMatch {
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				
 				if instance == nil {
 					t.Error("Expected a match but got nil")
 
@@ -275,13 +307,22 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 				if instance.ServiceID != testCase.expectedSvc {
 					t.Errorf("Expected service ID %s, got %s", testCase.expectedSvc, instance.ServiceID)
 				}
-			} else if instance != nil {
-				t.Errorf("Expected no match but got instance: %+v", instance)
+			} else {
+				if err == nil {
+					t.Error("Expected ErrNoMatchFound error but got none")
+				} else if !errors.Is(err, ErrNoMatchFound) {
+					t.Errorf("Expected ErrNoMatchFound but got: %v", err)
+				}
+				
+				if instance != nil {
+					t.Errorf("Expected no match but got instance: %+v", instance)
+				}
 			}
 		})
 	}
 }
 
+//nolint:funlen
 func TestServiceMatcher_ValidateMatch(t *testing.T) {
 	t.Parallel()
 
@@ -400,13 +441,13 @@ func TestIsValidUUID(t *testing.T) {
 		{"", false},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.uuid, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.uuid, func(t *testing.T) {
 			t.Parallel()
 
-			result := IsValidUUID(tt.uuid)
-			if result != tt.expected {
-				t.Errorf("Expected isValidUUID(%s) = %v, got %v", tt.uuid, tt.expected, result)
+			result := IsValidUUID(testCase.uuid)
+			if result != testCase.expected {
+				t.Errorf("Expected isValidUUID(%s) = %v, got %v", testCase.uuid, testCase.expected, result)
 			}
 		})
 	}

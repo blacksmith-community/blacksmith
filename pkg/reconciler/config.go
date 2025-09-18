@@ -56,12 +56,6 @@ const (
 	workerMaxLimitMultiplier = 2
 	healthCheckInterval      = 30 * time.Second
 
-	// Concurrency defaults.
-	defaultMaxConcurrent        = 4
-	defaultMaxDeploymentsPerRun = 100
-	defaultQueueSize            = 1000
-	defaultWorkerPoolSize       = 10
-
 	// Retry defaults.
 	defaultRetryAttempts   = 3
 	defaultInitialDelay    = 1 * time.Second
@@ -204,6 +198,38 @@ func (c *ReconcilerConfig) LoadDefaults() {
 	c.loadMetricsDefaults()
 }
 
+// GetEffectiveBatchSize calculates the effective batch size based on performance score.
+func (c *ReconcilerConfig) GetEffectiveBatchSize(performanceScore float64) int {
+	if !c.Batch.AdaptiveScaling {
+		return c.Batch.Size
+	}
+
+	// Adjust batch size based on performance (0.0 = poor, 1.0 = excellent)
+	scaledSize := int(float64(c.Batch.MinSize) + performanceScore*float64(c.Batch.MaxSize-c.Batch.MinSize))
+
+	if scaledSize < c.Batch.MinSize {
+		return c.Batch.MinSize
+	}
+
+	if scaledSize > c.Batch.MaxSize {
+		return c.Batch.MaxSize
+	}
+
+	return scaledSize
+}
+
+// Validate checks configuration for errors and sets safe defaults.
+func (c *ReconcilerConfig) Validate() error {
+	c.validateBasicSettings()
+	c.validateConcurrencySettings()
+	c.validateBatchSettings()
+	c.validateRetrySettings()
+	c.validateAPIConfigurations()
+	c.validateTimeoutSettings()
+
+	return nil
+}
+
 // loadBasicDefaults sets basic configuration defaults.
 func (c *ReconcilerConfig) loadBasicDefaults() {
 	if c.Interval == 0 {
@@ -322,38 +348,6 @@ func (c *ReconcilerConfig) loadMetricsDefaults() {
 	}
 }
 
-// GetEffectiveBatchSize calculates the effective batch size based on performance score.
-func (c *ReconcilerConfig) GetEffectiveBatchSize(performanceScore float64) int {
-	if !c.Batch.AdaptiveScaling {
-		return c.Batch.Size
-	}
-
-	// Adjust batch size based on performance (0.0 = poor, 1.0 = excellent)
-	scaledSize := int(float64(c.Batch.MinSize) + performanceScore*float64(c.Batch.MaxSize-c.Batch.MinSize))
-
-	if scaledSize < c.Batch.MinSize {
-		return c.Batch.MinSize
-	}
-
-	if scaledSize > c.Batch.MaxSize {
-		return c.Batch.MaxSize
-	}
-
-	return scaledSize
-}
-
-// Validate checks configuration for errors and sets safe defaults.
-func (c *ReconcilerConfig) Validate() error {
-	c.validateBasicSettings()
-	c.validateConcurrencySettings()
-	c.validateBatchSettings()
-	c.validateRetrySettings()
-	c.validateAPIConfigurations()
-	c.validateTimeoutSettings()
-
-	return nil
-}
-
 // validateBasicSettings validates basic configuration settings.
 func (c *ReconcilerConfig) validateBasicSettings() {
 	if c.Interval < 10*time.Second {
@@ -439,6 +433,7 @@ func (c *ReconcilerConfig) validateAPIConfigurations() {
 
 		if api.RateLimit.Burst < 1 {
 			const burstMultiplier = 2
+
 			api.RateLimit.Burst = int(api.RateLimit.RequestsPerSecond * burstMultiplier) // Burst = 2x rate
 		}
 
@@ -488,6 +483,7 @@ func (c *ReconcilerConfig) loadAPIDefaults(api *APIConfig, _ string, rps float64
 
 	if api.RateLimit.WaitTimeout == 0 {
 		const defaultWaitTimeout = 5
+
 		api.RateLimit.WaitTimeout = defaultWaitTimeout * time.Second
 	}
 

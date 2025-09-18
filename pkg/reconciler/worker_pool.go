@@ -157,8 +157,24 @@ func (wp *WorkerPool) SubmitBatch(items []WorkItem, priority int) error {
 	return nil
 }
 
+// GetMetrics returns current metrics.
+func (wp *WorkerPool) GetMetrics() WorkerPoolMetrics {
+	wp.metrics.mu.RLock()
+	defer wp.metrics.mu.RUnlock()
+
+	// Create a copy without the mutex
+	return WorkerPoolMetrics{
+		tasksProcessed:   wp.metrics.tasksProcessed,
+		tasksFailed:      wp.metrics.tasksFailed,
+		totalWaitTime:    wp.metrics.totalWaitTime,
+		totalProcessTime: wp.metrics.totalProcessTime,
+		queueDepth:       wp.metrics.queueDepth,
+		activeWorkers:    wp.metrics.activeWorkers,
+	}
+}
+
 // worker is the main worker loop.
-func (wp *WorkerPool) worker(ctx context.Context, id int) {
+func (wp *WorkerPool) worker(ctx context.Context, workerID int) {
 	defer wp.wg.Done()
 
 	for {
@@ -169,7 +185,7 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 			}
 
 			wp.updateActiveWorkers(1)
-			wp.processTask(ctx, task, id)
+			wp.processTask(ctx, task, workerID)
 			wp.updateActiveWorkers(-1)
 
 		case <-ctx.Done():
@@ -309,22 +325,6 @@ func (wp *WorkerPool) reportMetrics() {
 
 	// Metrics are collected - could log or export to Prometheus
 	// For now, just update the metrics which can be retrieved via GetMetrics()
-}
-
-// GetMetrics returns current metrics.
-func (wp *WorkerPool) GetMetrics() WorkerPoolMetrics {
-	wp.metrics.mu.RLock()
-	defer wp.metrics.mu.RUnlock()
-
-	// Create a copy without the mutex
-	return WorkerPoolMetrics{
-		tasksProcessed:   wp.metrics.tasksProcessed,
-		tasksFailed:      wp.metrics.tasksFailed,
-		totalWaitTime:    wp.metrics.totalWaitTime,
-		totalProcessTime: wp.metrics.totalProcessTime,
-		queueDepth:       wp.metrics.queueDepth,
-		activeWorkers:    wp.metrics.activeWorkers,
-	}
 }
 
 // updateMetrics updates worker pool metrics.

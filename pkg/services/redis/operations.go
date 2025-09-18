@@ -34,34 +34,24 @@ func NewHandler(logger func(string, ...interface{})) *Handler {
 func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credentials, opts common.ConnectionOptions) (*common.TestResult, error) {
 	start := time.Now()
 
-	creds, err := NewCredentials(vaultCreds)
-	if err != nil {
-		return &common.TestResult{
-			Success:   false,
-			Error:     err.Error(),
-			Timestamp: start.Unix(),
-			Duration:  time.Since(start),
-		}, nil //nolint:nilerr // Invalid credentials is a valid test result, not an error
+	creds, credsErr := NewCredentials(vaultCreds)
+	if credsErr != nil {
+		return nil, fmt.Errorf("invalid credentials: %w", credsErr)
 	}
 
-	client, err := h.clientManager.GetClient(ctx, "test", creds, opts.UseTLS)
-	if err != nil {
-		return &common.TestResult{
-			Success:   false,
-			Error:     err.Error(),
-			Timestamp: start.Unix(),
-			Duration:  time.Since(start),
-		}, nil //nolint:nilerr // Connection test failure is a valid test result, not an error
+	client, clientErr := h.clientManager.GetClient(ctx, "test", creds, opts.UseTLS)
+	if clientErr != nil {
+		return nil, fmt.Errorf("failed to get Redis client: %w", clientErr)
 	}
 
 	// Test basic operations
 	pingResult := client.Ping(ctx)
 
-	err = pingResult.Err()
-	if err != nil {
+	pingErr := pingResult.Err()
+	if pingErr != nil {
 		return &common.TestResult{
 			Success:   false,
-			Error:     fmt.Sprintf("PING failed: %v", err),
+			Error:     fmt.Sprintf("PING failed: %v", pingErr),
 			Timestamp: start.Unix(),
 			Duration:  time.Since(start),
 		}, nil
@@ -72,8 +62,8 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 
 	var serverInfo map[string]string
 
-	err = infoResult.Err()
-	if err == nil {
+	infoErr := infoResult.Err()
+	if infoErr == nil {
 		serverInfo = parseInfoString(infoResult.Val())
 	}
 

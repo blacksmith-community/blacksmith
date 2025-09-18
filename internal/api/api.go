@@ -61,176 +61,228 @@ type Dependencies struct {
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
-func NewInternalAPI(deps Dependencies) *InternalAPI {
-	// Create handlers
-	certificateHandler := certificates.NewHandler(deps.Config, deps.Logger, deps.Broker)
-	cfHandler := cf.NewHandler(deps.Logger, deps.CFManager, deps.Vault)
-	instanceHandler := instances.NewHandler(deps.Logger)
-	redisHandler := redis.NewHandler(deps.Logger, deps.Vault, deps.ServicesManager)
+type apiHandlers struct {
+	certificate       *certificates.Handler
+	cf                *cf.Handler
+	instance          *instances.Handler
+	redis             *redis.Handler
+	rabbitMQWebSocket *websocket.Handler
+	sshWebSocket      *sshwebsocket.Handler
+	bosh              *bosh.Handler
+	blacksmith        *blacksmith.Handler
+	tasks             *tasks.Handler
+	deployments       *deployments.Handler
+	configuration     *configuration.Handler
+	services          *serviceshandler.Handler
+}
 
-	// Create RabbitMQ WebSocket handler
-	rabbitMQWebSocketHandler := websocket.NewHandler(websocket.Dependencies{
+func createHandlers(deps Dependencies) apiHandlers {
+	return apiHandlers{
+		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
+		cf:                cf.NewHandler(deps.Logger, deps.CFManager, deps.Vault),
+		instance:          instances.NewHandler(deps.Logger),
+		redis:             redis.NewHandler(deps.Logger, deps.Vault, deps.ServicesManager),
+		rabbitMQWebSocket: createRabbitMQWebSocketHandler(deps),
+		sshWebSocket:      createSSHWebSocketHandler(deps),
+		bosh:              createBOSHHandler(deps),
+		blacksmith:        createBlacksmithHandler(deps),
+		tasks:             createTasksHandler(deps),
+		deployments:       createDeploymentsHandler(deps),
+		configuration:     createConfigurationHandler(deps),
+		services:          createServicesHandler(deps),
+	}
+}
+
+func createRabbitMQWebSocketHandler(deps Dependencies) *websocket.Handler {
+	return websocket.NewHandler(websocket.Dependencies{
 		Logger:                         deps.Logger,
 		RabbitMQExecutorService:        deps.RabbitMQExecutorService,
 		RabbitMQPluginsExecutorService: deps.RabbitMQPluginsExecutorService,
 		RabbitMQAuditService:           deps.RabbitMQAuditService,
 		RabbitMQPluginsAuditService:    deps.RabbitMQPluginsAuditService,
 	})
+}
 
-	// Create SSH WebSocket handler
-	sshWebSocketHandler := sshwebsocket.NewHandler(sshwebsocket.Dependencies{
+func createSSHWebSocketHandler(deps Dependencies) *sshwebsocket.Handler {
+	return sshwebsocket.NewHandler(sshwebsocket.Dependencies{
 		Logger:           deps.Logger,
 		Config:           deps.Config,
 		WebSocketHandler: deps.WebSocketHandler,
 	})
+}
 
-	// Create management handlers
-	boshHandler := bosh.NewHandler(bosh.Dependencies{
+func createBOSHHandler(deps Dependencies) *bosh.Handler {
+	return bosh.NewHandler(bosh.Dependencies{
 		Logger: deps.Logger,
 		Config: deps.Config,
 		Vault:  deps.Vault,
 	})
+}
 
-	blacksmithHandler := blacksmith.NewHandler(blacksmith.Dependencies{
+func createBlacksmithHandler(deps Dependencies) *blacksmith.Handler {
+	return blacksmith.NewHandler(blacksmith.Dependencies{
 		Logger: deps.Logger,
 		Config: deps.Config,
 		Vault:  deps.Vault,
 	})
+}
 
-	tasksHandler := tasks.NewHandler(tasks.Dependencies{
+func createTasksHandler(deps Dependencies) *tasks.Handler {
+	return tasks.NewHandler(tasks.Dependencies{
 		Logger: deps.Logger,
 		Config: deps.Config,
 	})
+}
 
-	deploymentsHandler := deployments.NewHandler(deployments.Dependencies{
-		Logger: deps.Logger,
-		Config: deps.Config,
-		Vault:  deps.Vault,
-	})
-
-	configurationHandler := configuration.NewHandler(configuration.Dependencies{
-		Logger: deps.Logger,
-		Config: deps.Config,
-		Vault:  deps.Vault,
-	})
-
-	servicesHandler := serviceshandler.NewHandler(serviceshandler.Dependencies{
+func createDeploymentsHandler(deps Dependencies) *deployments.Handler {
+	return deployments.NewHandler(deployments.Dependencies{
 		Logger: deps.Logger,
 		Config: deps.Config,
 		Vault:  deps.Vault,
 	})
+}
 
-	// Create middleware chain
+func createConfigurationHandler(deps Dependencies) *configuration.Handler {
+	return configuration.NewHandler(configuration.Dependencies{
+		Logger: deps.Logger,
+		Config: deps.Config,
+		Vault:  deps.Vault,
+	})
+}
+
+func createServicesHandler(deps Dependencies) *serviceshandler.Handler {
+	return serviceshandler.NewHandler(serviceshandler.Dependencies{
+		Logger: deps.Logger,
+		Config: deps.Config,
+		Vault:  deps.Vault,
+	})
+}
+
+func createRouterWithMiddleware(deps Dependencies) *routing.Router {
 	middlewareChain := pkgmiddleware.New(
 		middleware.LoggingMiddleware(deps.Logger),
 		middleware.SecurityMiddleware(deps.SecurityMiddleware),
 	)
 
-	// Create router and register handlers
-	router := routing.NewRouter(middlewareChain)
+	return routing.NewRouter(middlewareChain)
+}
 
-	// Register route handlers
+func handleServiceRouting(writer http.ResponseWriter, req *http.Request, handlers apiHandlers) {
+	if handlers.rabbitMQWebSocket.CanHandle(req.URL.Path) {
+		handlers.rabbitMQWebSocket.ServeHTTP(writer, req)
+
+		return
+	}
+
+	if handlers.redis.CanHandle(req.URL.Path) {
+		handlers.redis.ServeHTTP(writer, req)
+
+		return
+	}
+
+	if handlers.sshWebSocket.CanHandle(req.URL.Path) {
+		handlers.sshWebSocket.ServeHTTP(writer, req)
+
+		return
+	}
+
+	if handlers.services.CanHandle(req.URL.Path) {
+		handlers.services.ServeHTTP(writer, req)
+
+		return
+	}
+
+	if handlers.configuration.CanHandle(req.URL.Path) {
+		handlers.configuration.ServeHTTP(writer, req)
+
+		return
+	}
+
+	writer.WriteHeader(http.StatusNotFound)
+	_, _ = writer.Write([]byte("endpoint not found"))
+}
+
+func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependencies) {
 	// Certificate endpoints
-	router.RegisterHandler("/b/certificates/", certificateHandler)
+	router.RegisterHandler("/b/internal/certificates", http.HandlerFunc(handlers.certificate.HandleCertificatesRequest))
 
 	// CF endpoints
-	router.RegisterHandler("/b/cf/", cfHandler)
+	router.RegisterHandler("/b/cf/", handlers.cf)
 
 	// Instance endpoints
-	router.RegisterHandler("/b/instance", http.HandlerFunc(instanceHandler.GetInstanceDetails))
+	router.RegisterHandler("/b/instance", http.HandlerFunc(handlers.instance.GetInstanceDetails))
 	router.RegisterHandler("/b/config/ssh/ui-terminal-status", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		instanceHandler.GetSSHUITerminalStatus(w, req, deps.Config.IsSSHUITerminalEnabled())
+		handlers.instance.GetSSHUITerminalStatus(w, req, deps.Config.IsSSHUITerminalEnabled())
 	}))
 
 	// BOSH endpoints
-	router.RegisterHandler("/b/bosh/pool-stats", http.HandlerFunc(boshHandler.GetPoolStats))
-	router.RegisterHandler("/b/status", http.HandlerFunc(boshHandler.GetStatus))
+	router.RegisterHandler("/b/bosh/pool-stats", http.HandlerFunc(handlers.bosh.GetPoolStats))
+	router.RegisterHandler("/b/status", http.HandlerFunc(handlers.bosh.GetStatus))
 
 	// Blacksmith management endpoints
-	router.RegisterHandler("/b/blacksmith/logs", http.HandlerFunc(blacksmithHandler.GetLogs))
-	router.RegisterHandler("/b/blacksmith/credentials", http.HandlerFunc(blacksmithHandler.GetCredentials))
-	router.RegisterHandler("/b/blacksmith/config", http.HandlerFunc(blacksmithHandler.GetConfig))
-	router.RegisterHandler("/b/cleanup", http.HandlerFunc(blacksmithHandler.Cleanup))
+	router.RegisterHandler("/b/blacksmith/logs", http.HandlerFunc(handlers.blacksmith.GetLogs))
+	router.RegisterHandler("/b/blacksmith/credentials", http.HandlerFunc(handlers.blacksmith.GetCredentials))
+	router.RegisterHandler("/b/blacksmith/config", http.HandlerFunc(handlers.blacksmith.GetConfig))
+	router.RegisterHandler("/b/cleanup", http.HandlerFunc(handlers.blacksmith.Cleanup))
 
 	// Task endpoints
-	router.RegisterHandler("/b/tasks", tasksHandler)
+	router.RegisterHandler("/b/tasks", handlers.tasks)
 
 	// Deployment endpoints
-	router.RegisterHandler("/b/deployments/", deploymentsHandler)
+	router.RegisterHandler("/b/deployments/", handlers.deployments)
 
 	// Configuration endpoints
-	router.RegisterHandler("/b/configs", http.HandlerFunc(configurationHandler.GetConfigs))
-	router.RegisterHandler("/b/service-filter-options", http.HandlerFunc(configurationHandler.GetServiceFilterOptions))
+	router.RegisterHandler("/b/configs", http.HandlerFunc(handlers.configuration.GetConfigs))
+	router.RegisterHandler("/b/service-filter-options", http.HandlerFunc(handlers.configuration.GetServiceFilterOptions))
 
 	// SSH WebSocket handlers
-	router.RegisterHandler("/b/blacksmith/ssh/stream", sshWebSocketHandler)
-	router.RegisterHandler("/b/ssh/status", sshWebSocketHandler)
+	router.RegisterHandler("/b/blacksmith/ssh/stream", handlers.sshWebSocket)
+	router.RegisterHandler("/b/ssh/status", handlers.sshWebSocket)
 
-	// Service-specific handlers - these use pattern matching so register them last
-	// This is a catch-all for dynamic service patterns
-	router.RegisterHandler("/b/", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// Check for RabbitMQ WebSocket patterns
-		if rabbitMQWebSocketHandler.CanHandle(req.URL.Path) {
-			rabbitMQWebSocketHandler.ServeHTTP(w, req)
-
-			return
-		}
-		// Check for Redis patterns
-		if redisHandler.CanHandle(req.URL.Path) {
-			redisHandler.ServeHTTP(w, req)
-
-			return
-		}
-		// Check for SSH patterns (service instance SSH)
-		if sshWebSocketHandler.CanHandle(req.URL.Path) {
-			sshWebSocketHandler.ServeHTTP(w, req)
-
-			return
-		}
-		// Check for generic service patterns
-		if servicesHandler.CanHandle(req.URL.Path) {
-			servicesHandler.ServeHTTP(w, req)
-
-			return
-		}
-		// Check for configuration patterns
-		if configurationHandler.CanHandle(req.URL.Path) {
-			configurationHandler.ServeHTTP(w, req)
-
-			return
-		}
-		// No handler found
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte("endpoint not found"))
+	// Service-specific handlers - register last for pattern matching
+	router.RegisterHandler("/b/", http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		handleServiceRouting(writer, req, handlers)
 	}))
+}
 
+func NewInternalAPI(deps Dependencies) *InternalAPI {
+	// Create all handlers
+	handlers := createHandlers(deps)
+
+	// Create middleware and router
+	router := createRouterWithMiddleware(deps)
+
+	// Register all routes
+	registerRoutes(router, handlers, deps)
+
+	// Create and return the API instance
 	return &InternalAPI{
 		router:                   router,
-		certificateHandler:       certificateHandler,
-		cfHandler:                cfHandler,
-		instanceHandler:          instanceHandler,
-		redisHandler:             redisHandler,
-		rabbitMQWebSocketHandler: rabbitMQWebSocketHandler,
-		sshWebSocketHandler:      sshWebSocketHandler,
-		boshHandler:              boshHandler,
-		blacksmithHandler:        blacksmithHandler,
-		tasksHandler:             tasksHandler,
-		deploymentsHandler:       deploymentsHandler,
-		configurationHandler:     configurationHandler,
-		servicesHandler:          servicesHandler,
+		certificateHandler:       handlers.certificate,
+		cfHandler:                handlers.cf,
+		instanceHandler:          handlers.instance,
+		redisHandler:             handlers.redis,
+		rabbitMQWebSocketHandler: handlers.rabbitMQWebSocket,
+		sshWebSocketHandler:      handlers.sshWebSocket,
+		boshHandler:              handlers.bosh,
+		blacksmithHandler:        handlers.blacksmith,
+		tasksHandler:             handlers.tasks,
+		deploymentsHandler:       handlers.deployments,
+		configurationHandler:     handlers.configuration,
+		servicesHandler:          handlers.services,
 	}
 }
 
 // ServeHTTP implements the http.Handler interface.
-func (api *InternalAPI) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (api *InternalAPI) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// Use the router to find and execute the appropriate handler
 	if handler := api.router.FindHandler(req.URL.Path); handler != nil {
-		handler.ServeHTTP(w, req)
+		handler.ServeHTTP(writer, req)
 
 		return
 	}
 
 	// No handler found, return 404
-	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write([]byte("endpoint not found"))
+	writer.WriteHeader(http.StatusNotFound)
+	_, _ = writer.Write([]byte("endpoint not found"))
 }

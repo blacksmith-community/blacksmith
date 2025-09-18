@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"blacksmith/bosh"
+	"blacksmith/internal/bosh"
 	"gopkg.in/yaml.v2"
 )
 
@@ -110,6 +110,93 @@ func (s *BoshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	return detail, nil
 }
 
+// parseManifestProperties parses manifest properties
+// convertInterfaceMapToStringMap converts map[interface{}]interface{} to map[string]interface{}.
+func convertInterfaceMapToStringMap(input map[interface{}]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range input {
+		if key, ok := k.(string); ok {
+			result[key] = v
+		}
+	}
+
+	return result
+}
+
+// extractBlacksmithMetadata extracts blacksmith metadata from properties.
+func extractBlacksmithMetadata(props interface{}) map[string]interface{} {
+	switch properties := props.(type) {
+	case map[string]interface{}:
+		if blacksmith, ok := properties["blacksmith"].(map[string]interface{}); ok {
+			return blacksmith
+		}
+
+		if blacksmith, ok := properties["blacksmith"].(map[interface{}]interface{}); ok {
+			return convertInterfaceMapToStringMap(blacksmith)
+		}
+	case map[interface{}]interface{}:
+		if blacksmith, ok := properties["blacksmith"].(map[interface{}]interface{}); ok {
+			return convertInterfaceMapToStringMap(blacksmith)
+		}
+	}
+
+	return nil
+}
+
+// parseManifestProperties extracts properties from a manifest.
+func (s *BoshScanner) ParseManifestProperties(manifest string) (map[string]interface{}, error) {
+	var manifestData map[string]interface{}
+
+	err := yaml.Unmarshal([]byte(manifest), &manifestData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal manifest: %w", err)
+	}
+
+	result := make(map[string]interface{})
+
+	// Extract properties (handles both map[string]interface{} and map[interface{}]interface{})
+	if props, ok := manifestData["properties"].(map[string]interface{}); ok {
+		result["properties"] = props
+		if blacksmith := extractBlacksmithMetadata(props); blacksmith != nil {
+			result["blacksmith"] = blacksmith
+		}
+	} else if props, ok := manifestData["properties"].(map[interface{}]interface{}); ok {
+		convertedProps := convertInterfaceMapToStringMap(props)
+
+		result["properties"] = convertedProps
+		if blacksmith := extractBlacksmithMetadata(convertedProps); blacksmith != nil {
+			result["blacksmith"] = blacksmith
+		}
+	}
+
+	// Extract meta
+	if meta, ok := manifestData["meta"].(map[string]interface{}); ok {
+		result["meta"] = meta
+	} else if meta, ok := manifestData["meta"].(map[interface{}]interface{}); ok {
+		// Convert to map[string]interface{}
+		converted := make(map[string]interface{})
+		for k, v := range meta {
+			if key, ok := k.(string); ok {
+				converted[key] = v
+			}
+		}
+
+		result["meta"] = converted
+	}
+
+	// Extract networks
+	if networks := manifestData["networks"]; networks != nil {
+		result["networks"] = networks
+	}
+
+	// Extract instance_groups
+	if instanceGroups := manifestData["instance_groups"]; instanceGroups != nil {
+		result["instance_groups"] = instanceGroups
+	}
+
+	return result, nil
+}
+
 // getDeploymentTimestampsWithFallback gets deployment timestamps with fallback to current time.
 func (s *BoshScanner) getDeploymentTimestampsWithFallback(name string) (time.Time, time.Time, string) {
 	createdAt, updatedAt, latestTaskID, err := s.getDeploymentTimestamps(name)
@@ -157,7 +244,9 @@ func (s *BoshScanner) parseManifestData(detail *DeploymentDetail, manifest strin
 	}
 
 	var manifestData map[string]interface{}
-	if err := yaml.Unmarshal([]byte(manifest), &manifestData); err != nil {
+
+	err := yaml.Unmarshal([]byte(manifest), &manifestData)
+	if err != nil {
 		return
 	}
 
@@ -313,39 +402,6 @@ func (s *BoshScanner) addVMInformation(detail *DeploymentDetail, name string) {
 	}
 }
 
-// parseManifestProperties parses manifest properties
-// convertInterfaceMapToStringMap converts map[interface{}]interface{} to map[string]interface{}.
-func convertInterfaceMapToStringMap(input map[interface{}]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	for k, v := range input {
-		if key, ok := k.(string); ok {
-			result[key] = v
-		}
-	}
-
-	return result
-}
-
-// extractBlacksmithMetadata extracts blacksmith metadata from properties.
-func extractBlacksmithMetadata(props interface{}) map[string]interface{} {
-	switch properties := props.(type) {
-	case map[string]interface{}:
-		if blacksmith, ok := properties["blacksmith"].(map[string]interface{}); ok {
-			return blacksmith
-		}
-
-		if blacksmith, ok := properties["blacksmith"].(map[interface{}]interface{}); ok {
-			return convertInterfaceMapToStringMap(blacksmith)
-		}
-	case map[interface{}]interface{}:
-		if blacksmith, ok := properties["blacksmith"].(map[interface{}]interface{}); ok {
-			return convertInterfaceMapToStringMap(blacksmith)
-		}
-	}
-
-	return nil
-}
-
 func (s *BoshScanner) parseManifestProperties(detail *DeploymentDetail) {
 	if detail.Manifest == "" {
 		return
@@ -436,60 +492,6 @@ func (s *BoshScanner) setDefaultTimestamps(earliestCreate, latestUpdate *time.Ti
 	if latestUpdate.IsZero() {
 		*latestUpdate = *earliestCreate
 	}
-}
-
-// parseManifestProperties extracts properties from a manifest.
-func (s *BoshScanner) ParseManifestProperties(manifest string) (map[string]interface{}, error) {
-	var manifestData map[string]interface{}
-
-	err := yaml.Unmarshal([]byte(manifest), &manifestData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal manifest: %w", err)
-	}
-
-	result := make(map[string]interface{})
-
-	// Extract properties (handles both map[string]interface{} and map[interface{}]interface{})
-	if props, ok := manifestData["properties"].(map[string]interface{}); ok {
-		result["properties"] = props
-		if blacksmith := extractBlacksmithMetadata(props); blacksmith != nil {
-			result["blacksmith"] = blacksmith
-		}
-	} else if props, ok := manifestData["properties"].(map[interface{}]interface{}); ok {
-		convertedProps := convertInterfaceMapToStringMap(props)
-
-		result["properties"] = convertedProps
-		if blacksmith := extractBlacksmithMetadata(convertedProps); blacksmith != nil {
-			result["blacksmith"] = blacksmith
-		}
-	}
-
-	// Extract meta
-	if meta, ok := manifestData["meta"].(map[string]interface{}); ok {
-		result["meta"] = meta
-	} else if meta, ok := manifestData["meta"].(map[interface{}]interface{}); ok {
-		// Convert to map[string]interface{}
-		converted := make(map[string]interface{})
-		for k, v := range meta {
-			if key, ok := k.(string); ok {
-				converted[key] = v
-			}
-		}
-
-		result["meta"] = converted
-	}
-
-	// Extract networks
-	if networks := manifestData["networks"]; networks != nil {
-		result["networks"] = networks
-	}
-
-	// Extract instance_groups
-	if instanceGroups := manifestData["instance_groups"]; instanceGroups != nil {
-		result["instance_groups"] = instanceGroups
-	}
-
-	return result, nil
 }
 
 // Cache methods

@@ -1,7 +1,6 @@
 package reconciler_test
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,12 +12,7 @@ const (
 	testInstanceID = "test-instance-123"
 )
 
-// Static errors for this test file
-var (
-	errNoDataFoundAtPath     = errors.New("no data found at path")
-	errVaultConnectionFailed = errors.New("vault connection failed")
-)
-
+// Static errors for this test file (now using common errors from test_mocks_internal_test.go)
 
 // Simple mock vault for isolated testing.
 type SimpleMockVault struct {
@@ -98,6 +92,7 @@ func (l *SimpleLogger) Infof(format string, args ...interface{})    {}
 func (l *SimpleLogger) Warningf(format string, args ...interface{}) {}
 func (l *SimpleLogger) Errorf(format string, args ...interface{})   {}
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestGetBindingCredentials_Standalone(t *testing.T) {
 	t.Parallel()
 

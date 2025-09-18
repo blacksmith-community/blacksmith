@@ -44,17 +44,17 @@ func (r *Router) RegisterHandlerFunc(pathPrefix string, handlerFunc http.Handler
 }
 
 // ServeHTTP implements the http.Handler interface.
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (r *Router) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// Find the handler for this request
 	handler := r.findHandler(req.URL.Path)
 	if handler != nil {
-		handler.ServeHTTP(w, req)
+		handler.ServeHTTP(writer, req)
 
 		return
 	}
 
 	// No handler found
-	response.WriteError(w, http.StatusNotFound, "endpoint not found")
+	response.WriteError(writer, http.StatusNotFound, "endpoint not found")
 }
 
 // FindHandler returns the handler for a given path, or nil if not found.

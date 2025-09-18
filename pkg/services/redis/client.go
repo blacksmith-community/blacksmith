@@ -37,6 +37,7 @@ func (cm *ClientManager) GetClient(ctx context.Context, instanceID string, creds
 }
 
 // GetClientWithTLSConfig retrieves or creates a Redis client with TLS verification control.
+//nolint:funlen
 func (cm *ClientManager) GetClientWithTLSConfig(ctx context.Context, instanceID string, creds *Credentials, useTLS bool, skipTLSVerify bool) (*redis.Client, error) {
 	key := fmt.Sprintf("%s-%v", instanceID, useTLS)
 

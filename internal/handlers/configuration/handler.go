@@ -82,17 +82,17 @@ func (h *Handler) CanHandle(path string) bool {
 }
 
 // ServeHTTP handles configuration-related endpoints with pattern matching.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// Handle /b/configs endpoint
 	if req.URL.Path == "/b/configs" && req.Method == http.MethodGet {
-		h.GetConfigs(w, req)
+		h.GetConfigs(writer, req)
 
 		return
 	}
 
 	// Handle /b/service-filter-options endpoint
 	if req.URL.Path == "/b/service-filter-options" && req.Method == http.MethodGet {
-		h.GetServiceFilterOptions(w, req)
+		h.GetServiceFilterOptions(writer, req)
 
 		return
 	}
@@ -101,24 +101,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	configPattern := regexp.MustCompile(`^/b/([^/]+)/config$`)
 	if m := configPattern.FindStringSubmatch(req.URL.Path); m != nil {
 		instanceID := m[1]
-		if req.Method == http.MethodGet {
-			h.GetInstanceConfig(w, req, instanceID)
-		} else if req.Method == http.MethodPost || req.Method == http.MethodPut {
-			h.UpdateInstanceConfig(w, req, instanceID)
-		} else {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+
+		switch req.Method {
+		case http.MethodGet:
+			h.GetInstanceConfig(writer, req, instanceID)
+		case http.MethodPost, http.MethodPut:
+			h.UpdateInstanceConfig(writer, req, instanceID)
+		default:
+			writer.WriteHeader(http.StatusMethodNotAllowed)
 		}
 
 		return
 	}
 
 	// No matching endpoint
-	w.WriteHeader(http.StatusNotFound)
-	response.HandleJSON(w, nil, errConfigurationEndpointNotFound)
+	writer.WriteHeader(http.StatusNotFound)
+	response.HandleJSON(writer, nil, errConfigurationEndpointNotFound)
 }
 
 // GetConfigs returns all available configurations.
-func (h *Handler) GetConfigs(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) GetConfigs(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("configs-list")
 	logger.Debug("Fetching all configurations")
 
@@ -154,11 +156,11 @@ func (h *Handler) GetConfigs(w http.ResponseWriter, req *http.Request) {
 		},
 	}
 
-	response.HandleJSON(w, configs, nil)
+	response.HandleJSON(writer, configs, nil)
 }
 
 // GetServiceFilterOptions returns service filter options for UI.
-func (h *Handler) GetServiceFilterOptions(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) GetServiceFilterOptions(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("service-filter-options")
 	logger.Debug("Fetching service filter options")
 
@@ -202,14 +204,14 @@ func (h *Handler) GetServiceFilterOptions(w http.ResponseWriter, req *http.Reque
 		options = filtered
 	}
 
-	response.HandleJSON(w, map[string]interface{}{
+	response.HandleJSON(writer, map[string]interface{}{
 		"options": options,
 		"count":   len(options),
 	}, nil)
 }
 
 // GetInstanceConfig returns configuration for a specific service instance.
-func (h *Handler) GetInstanceConfig(w http.ResponseWriter, req *http.Request, instanceID string) {
+func (h *Handler) GetInstanceConfig(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("instance-config")
 	logger.Debug("Fetching configuration for instance: %s", instanceID)
 
@@ -240,19 +242,21 @@ func (h *Handler) GetInstanceConfig(w http.ResponseWriter, req *http.Request, in
 		"tags": []string{"production", "cache"},
 	}
 
-	response.HandleJSON(w, instanceConfig, nil)
+	response.HandleJSON(writer, instanceConfig, nil)
 }
 
 // UpdateInstanceConfig updates configuration for a specific service instance.
-func (h *Handler) UpdateInstanceConfig(w http.ResponseWriter, req *http.Request, instanceID string) {
+func (h *Handler) UpdateInstanceConfig(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("instance-config-update")
 	logger.Info("Updating configuration for instance: %s", instanceID)
 
 	// Parse the configuration update from request body
 	var configUpdate map[string]interface{}
-	if err := response.ParseJSON(req.Body, &configUpdate); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, fmt.Errorf("%w: %w", errInvalidConfigurationUpdate, err))
+
+	err := response.ParseJSON(req.Body, &configUpdate)
+	if err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, fmt.Errorf("%w: %w", errInvalidConfigurationUpdate, err))
 
 		return
 	}
@@ -273,5 +277,5 @@ func (h *Handler) UpdateInstanceConfig(w http.ResponseWriter, req *http.Request,
 		"task_id":     testTaskID, // If this triggers a BOSH task
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }

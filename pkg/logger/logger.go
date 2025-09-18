@@ -12,7 +12,8 @@ import (
 
 // Static errors for err113 compliance.
 var (
-	ErrInvalidLogLevel = errors.New("invalid log level")
+	ErrInvalidLogLevel    = errors.New("invalid log level")
+	ErrInvalidLogFilePath = errors.New("invalid log file path: contains directory traversal")
 )
 
 // Logger is the main interface that supports both f and non-f methods.
@@ -69,26 +70,27 @@ type Config struct {
 	CallerSkip int    // Number of callers to skip in stack trace
 }
 
-// New creates a new logger instance.
-func New(config Config) (Logger, error) {
-	// Parse log level
-	level := zapcore.InfoLevel
-
-	switch strings.ToLower(config.Level) {
+// parseLogLevel parses the log level string into zapcore.Level.
+func parseLogLevel(level string) zapcore.Level {
+	switch strings.ToLower(level) {
 	case "debug":
-		level = zapcore.DebugLevel
+		return zapcore.DebugLevel
 	case "info":
-		level = zapcore.InfoLevel
+		return zapcore.InfoLevel
 	case "warn", "warning":
-		level = zapcore.WarnLevel
+		return zapcore.WarnLevel
 	case "error":
-		level = zapcore.ErrorLevel
+		return zapcore.ErrorLevel
 	case "fatal":
-		level = zapcore.FatalLevel
+		return zapcore.FatalLevel
+	default:
+		return zapcore.InfoLevel
 	}
+}
 
-	// Create encoder config
-	encoderConfig := zapcore.EncoderConfig{
+// createEncoderConfig creates the standard encoder configuration.
+func createEncoderConfig() zapcore.EncoderConfig {
+	return zapcore.EncoderConfig{
 		TimeKey:        "time",
 		LevelKey:       "level",
 		NameKey:        "logger",
@@ -102,42 +104,65 @@ func New(config Config) (Logger, error) {
 		EncodeDuration: zapcore.StringDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
+}
 
-	// Create encoder based on format
-	var encoder zapcore.Encoder
-	if config.Format == "json" {
-		encoder = zapcore.NewJSONEncoder(encoderConfig)
-	} else {
-		encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+// createEncoder creates the appropriate encoder based on format.
+func createEncoder(format string) zapcore.Encoder {
+	encoderConfig := createEncoderConfig()
+
+	if format == "json" {
+		return zapcore.NewJSONEncoder(encoderConfig)
 	}
 
-	// Create writer
-	var writer zapcore.WriteSyncer
+	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 
-	switch config.OutputPath {
+	return zapcore.NewConsoleEncoder(encoderConfig)
+}
+
+// createWriter creates the appropriate writer based on output path.
+func createWriter(outputPath string) (zapcore.WriteSyncer, error) {
+	switch outputPath {
 	case "", "stdout":
-		writer = zapcore.AddSync(os.Stdout)
+		return zapcore.AddSync(os.Stdout), nil
 	case "stderr":
-		writer = zapcore.AddSync(os.Stderr)
+		return zapcore.AddSync(os.Stderr), nil
 	default:
-		file, err := os.OpenFile(config.OutputPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, DefaultFileMode)
+		// Validate file path to prevent directory traversal
+		if strings.Contains(outputPath, "..") {
+			return nil, ErrInvalidLogFilePath
+		}
+
+		// #nosec G304 - File path is validated to prevent directory traversal
+		file, err := os.OpenFile(outputPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, DefaultFileMode)
 		if err != nil {
 			return nil, fmt.Errorf("failed to open log file: %w", err)
 		}
 
-		writer = zapcore.AddSync(file)
+		return zapcore.AddSync(file), nil
+	}
+}
+
+// getCallerSkip returns the appropriate caller skip value.
+func getCallerSkip(configSkip int) int {
+	if configSkip == 0 {
+		return 1
 	}
 
-	// Create core
+	return configSkip
+}
+
+// New creates a new logger instance.
+func New(config Config) (Logger, error) {
+	level := parseLogLevel(config.Level)
+	encoder := createEncoder(config.Format)
+
+	writer, err := createWriter(config.OutputPath)
+	if err != nil {
+		return nil, err
+	}
+
 	core := zapcore.NewCore(encoder, writer, level)
-
-	// Create logger with caller skip
-	callerSkip := config.CallerSkip
-	if callerSkip == 0 {
-		callerSkip = 1
-	}
-
+	callerSkip := getCallerSkip(config.CallerSkip)
 	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(callerSkip))
 
 	return &Implementation{

@@ -11,7 +11,7 @@ import (
 	. "blacksmith/pkg/reconciler"
 )
 
-// Static errors for this test file
+// Static errors for this test file.
 var (
 	errSyncFailure = errors.New("sync failure")
 )
@@ -107,13 +107,13 @@ type rmMockSynchronizer struct {
 
 func (s *rmMockSynchronizer) SyncIndex(ctx context.Context, instances []InstanceData) error {
 	// record a copy for assertions
-	cp := make([]InstanceData, len(instances))
-	copy(cp, instances)
+	copyData := make([]InstanceData, len(instances))
+	copy(copyData, instances)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.calls = append(s.calls, cp)
+	s.calls = append(s.calls, copyData)
 
 	return s.err
 }
@@ -165,42 +165,42 @@ func newTestManager(t *testing.T) (*ReconcilerManager, *rmMockScanner, *rmMockUp
 	}
 
 	// Use constructor to get limiters, breakers, worker pool
-	m := NewReconcilerManager(cfg, nil, nil, nil, logger, nil)
+	manager := NewReconcilerManager(cfg, nil, nil, nil, logger, nil)
 
 	// Swap in our mocks
 	scan := &rmMockScanner{}
 	upd := &rmMockUpdater{}
 	sync := &rmMockSynchronizer{}
-	m.Scanner = scan
-	m.Updater = upd
-	m.Synchronizer = sync
+	manager.Scanner = scan
+	manager.Updater = upd
+	manager.Synchronizer = sync
 
-	return m, scan, upd, sync
+	return manager, scan, upd, sync
 }
 
 // newTestManagerOnly creates a test manager without returning the mock dependencies.
 // Use this when the test only needs the manager itself.
 func newTestManagerOnly(t *testing.T) *ReconcilerManager {
 	t.Helper()
-	m, scanner, updater, synchronizer := newTestManager(t)
+	manager, scanner, updater, synchronizer := newTestManager(t)
 	// Mocks are configured but not used in these tests
 	_ = scanner
 	_ = updater
 	_ = synchronizer
 
-	return m
+	return manager
 }
 
 func TestReconcilerManager_RunReconciliation_UpdatesStatus(t *testing.T) {
 	t.Parallel()
-	m, scan, _, _ := newTestManager(t)
+	manager, scan, _, _ := newTestManager(t)
 	scan.deployments = []DeploymentInfo{
 		{Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc"},
 	}
 
-	m.RunReconciliation(context.Background())
+	manager.RunReconciliation(context.Background())
 
-	st := m.GetStatus()
+	st := manager.GetStatus()
 	if !st.Running {
 		t.Fatalf("expected Running=true after runReconciliation, got %+v", st)
 	}
@@ -208,7 +208,7 @@ func TestReconcilerManager_RunReconciliation_UpdatesStatus(t *testing.T) {
 
 func TestReconcilerManager_RunReconciliation_SyncsFilteredDeployments(t *testing.T) {
 	t.Parallel()
-	m, scan, upd, sync := newTestManager(t)
+	manager, scan, upd, sync := newTestManager(t)
 
 	// Only names ending with UUID and not platform/system should count
 	scan.deployments = []DeploymentInfo{
@@ -219,7 +219,7 @@ func TestReconcilerManager_RunReconciliation_SyncsFilteredDeployments(t *testing
 	}
 
 	// single synchronous run
-	m.RunReconciliation(context.Background())
+	manager.RunReconciliation(context.Background())
 
 	if scanCalls := scan.getScanCalls(); scanCalls != 1 {
 		t.Fatalf("expected exactly 1 scan call, got %d", scanCalls)
@@ -245,13 +245,13 @@ func TestReconcilerManager_RunReconciliation_SyncsFilteredDeployments(t *testing
 
 func TestReconcilerManager_RunReconciliation_PropagatesErrorsToStatus(t *testing.T) {
 	t.Parallel()
-	m, scan, _, sync := newTestManager(t)
+	manager, scan, _, sync := newTestManager(t)
 	scan.deployments = []DeploymentInfo{{Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc"}}
 	sync.err = errSyncFailure
 
-	m.RunReconciliation(context.Background())
+	manager.RunReconciliation(context.Background())
 
-	st := m.GetStatus()
+	st := manager.GetStatus()
 	if len(st.Errors) == 0 {
 		t.Fatalf("expected status.Errors to contain reconciliation error, got empty")
 	}
@@ -259,31 +259,31 @@ func TestReconcilerManager_RunReconciliation_PropagatesErrorsToStatus(t *testing
 
 func TestReconcilerManager_ForceReconcile_BusyGuard(t *testing.T) {
 	t.Parallel()
-	m := newTestManagerOnly(t)
+	manager := newTestManagerOnly(t)
 
 	// Simulate busy state
-	m.IsReconciling.Store(true)
+	manager.IsReconciling.Store(true)
 
-	err := m.ForceReconcile()
+	err := manager.ForceReconcile()
 	if err == nil {
 		t.Fatalf("expected error when force reconciling while busy")
 	}
 
 	// Clear and ensure it kicks a run
-	m.IsReconciling.Store(false)
+	manager.IsReconciling.Store(false)
 
-	err = m.ForceReconcile()
+	err = manager.ForceReconcile()
 	if err != nil {
 		t.Fatalf("unexpected error from ForceReconcile: %v", err)
 	}
 
 	// ensure any background work is signaled to stop quickly
-	_ = m.Stop()
+	_ = manager.Stop()
 }
 
 func TestReconcilerManager_isServiceDeployment_Naming(t *testing.T) {
 	t.Parallel()
-	m := newTestManagerOnly(t)
+	manager := newTestManagerOnly(t)
 
 	tests := []struct {
 		name string
@@ -298,16 +298,16 @@ func TestReconcilerManager_isServiceDeployment_Naming(t *testing.T) {
 		{"random", "some-deployment-name", false},
 	}
 
-	for _, tt := range tests {
-		if got := m.IsServiceDeployment(tt.dep); got != tt.want {
-			t.Errorf("%s: IsServiceDeployment(%q)=%v, want %v", tt.name, tt.dep, got, tt.want)
+	for _, testCase := range tests {
+		if got := manager.IsServiceDeployment(testCase.dep); got != testCase.want {
+			t.Errorf("%s: IsServiceDeployment(%q)=%v, want %v", testCase.name, testCase.dep, got, testCase.want)
 		}
 	}
 }
 
 func TestReconcilerManager_filterServiceDeployments(t *testing.T) {
 	t.Parallel()
-	m := newTestManagerOnly(t)
+	manager := newTestManagerOnly(t)
 	deps := []DeploymentInfo{
 		{Name: "redis-cache-small-12345678-1234-1234-1234-123456789abc"},
 		{Name: "blacksmith"},
@@ -315,7 +315,7 @@ func TestReconcilerManager_filterServiceDeployments(t *testing.T) {
 		{Name: "grafana"},
 	}
 
-	got := m.FilterServiceDeployments(deps)
+	got := manager.FilterServiceDeployments(deps)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 filtered deployments, got %d: %+v", len(got), got)
 	}
@@ -323,7 +323,7 @@ func TestReconcilerManager_filterServiceDeployments(t *testing.T) {
 
 func TestReconcilerManager_processBatchWithConcurrency_Basic(t *testing.T) {
 	t.Parallel()
-	m := newTestManagerOnly(t)
+	manager := newTestManagerOnly(t)
 	// 5 service-like deployments
 	batch := make([]DeploymentInfo, 0, 5)
 
@@ -336,7 +336,7 @@ func TestReconcilerManager_processBatchWithConcurrency_Basic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	instances, err := m.ProcessBatchWithConcurrency(ctx, batch, nil)
+	instances, err := manager.ProcessBatchWithConcurrency(ctx, batch, nil)
 	if err != nil {
 		t.Fatalf("ProcessBatchWithConcurrency error: %v", err)
 	}

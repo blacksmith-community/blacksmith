@@ -18,6 +18,7 @@ var (
 	ErrInvalidInstanceIDFormat = errors.New("invalid instance ID format")
 	ErrServiceNotFound         = errors.New("service not found")
 	ErrPlanNotFound            = errors.New("plan not found")
+	ErrNoMatchFound            = errors.New("no match found for deployment")
 )
 
 type ServiceMatcher struct {
@@ -34,6 +35,7 @@ func NewServiceMatcher(broker interface{}, logger Logger) *ServiceMatcher {
 }
 
 // MatchDeployment matches a deployment to a service and plan.
+//nolint:funlen
 func (m *ServiceMatcher) MatchDeployment(deployment DeploymentDetail, services []Service) (*MatchResult, error) {
 	m.logger.Debugf("Matching deployment %s", deployment.Name)
 
@@ -52,7 +54,7 @@ func (m *ServiceMatcher) MatchDeployment(deployment DeploymentDetail, services [
 			return result, nil
 		}
 
-		return nil, nil
+		return nil, ErrNoMatchFound
 	}
 
 	instanceID := matches[1]
@@ -113,7 +115,7 @@ func (m *ServiceMatcher) MatchDeployment(deployment DeploymentDetail, services [
 
 	m.logger.Debugf("No match found for deployment %s", deployment.Name)
 
-	return nil, nil
+	return nil, ErrNoMatchFound
 }
 
 // ValidateMatch validates a match result.
@@ -191,7 +193,9 @@ func (m *ServiceMatcher) checkManifestMetadata(deployment DeploymentDetail) *Mat
 	}
 
 	var manifest map[string]interface{}
-	if err := yaml.Unmarshal([]byte(deployment.Manifest), &manifest); err != nil {
+
+	err := yaml.Unmarshal([]byte(deployment.Manifest), &manifest)
+	if err != nil {
 		m.logger.Debugf("Failed to parse manifest: %v", err)
 
 		return nil
@@ -221,15 +225,15 @@ func (m *ServiceMatcher) checkPropertiesSection(manifest map[string]interface{})
 
 // checkInterfaceProperties checks properties in map[interface{}]interface{} format.
 func (m *ServiceMatcher) checkInterfaceProperties(manifest map[string]interface{}) *MatchResult {
-	props, ok := manifest["properties"].(map[interface{}]interface{})
-	if !ok {
+	props, exists := manifest["properties"].(map[interface{}]interface{})
+	if !exists {
 		return nil
 	}
 
 	m.logger.Debugf("Found properties section (map[interface{}]interface{})")
 
-	blacksmith, ok := props["blacksmith"].(map[interface{}]interface{})
-	if !ok {
+	blacksmith, exists := props["blacksmith"].(map[interface{}]interface{})
+	if !exists {
 		return nil
 	}
 
@@ -238,19 +242,19 @@ func (m *ServiceMatcher) checkInterfaceProperties(manifest map[string]interface{
 
 // checkStringProperties checks properties in map[string]interface{} format.
 func (m *ServiceMatcher) checkStringProperties(manifest map[string]interface{}) *MatchResult {
-	props, ok := manifest["properties"].(map[string]interface{})
-	if !ok {
+	props, exists := manifest["properties"].(map[string]interface{})
+	if !exists {
 		return nil
 	}
 
 	m.logger.Debugf("Found properties section (map[string]interface{})")
 
 	// Try both map formats for blacksmith section
-	if blacksmith, ok := props["blacksmith"].(map[string]interface{}); ok {
+	if blacksmith, exists := props["blacksmith"].(map[string]interface{}); exists {
 		return m.extractBlacksmithMetadataFromString(blacksmith)
 	}
 
-	if blacksmith, ok := props["blacksmith"].(map[interface{}]interface{}); ok {
+	if blacksmith, exists := props["blacksmith"].(map[interface{}]interface{}); exists {
 		return m.extractBlacksmithMetadataFromInterface(blacksmith)
 	}
 
@@ -318,13 +322,13 @@ func (m *ServiceMatcher) checkMetaSection(manifest map[string]interface{}, deplo
 
 // checkStringMeta checks meta section in map[string]interface{} format.
 func (m *ServiceMatcher) checkStringMeta(manifest map[string]interface{}, deployment DeploymentDetail) *MatchResult {
-	meta, ok := manifest["meta"].(map[string]interface{})
-	if !ok {
+	meta, exists := manifest["meta"].(map[string]interface{})
+	if !exists {
 		return nil
 	}
 
-	params, ok := meta["params"].(map[string]interface{})
-	if !ok {
+	params, exists := meta["params"].(map[string]interface{})
+	if !exists {
 		return nil
 	}
 
@@ -358,8 +362,8 @@ func (m *ServiceMatcher) checkInterfaceMeta(manifest map[string]interface{}, dep
 
 // inferServiceFromDeploymentName tries to infer service and plan from deployment name.
 func (m *ServiceMatcher) inferServiceFromDeploymentName(deploymentName, instanceID string) *MatchResult {
-	broker, ok := m.broker.(interface{ GetServices() []Service })
-	if !ok {
+	broker, exists := m.broker.(interface{ GetServices() []Service })
+	if !exists {
 		return nil
 	}
 
@@ -433,20 +437,20 @@ func (m *ServiceMatcher) parseManifest(manifest string) (map[string]interface{},
 	if err != nil {
 		m.logger.Errorf("Failed to parse manifest: %s", err)
 
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal manifest: %w", err)
 	}
 
 	return parsed, nil
 }
 
 func (m *ServiceMatcher) checkBlacksmithMetadata(parsed map[string]interface{}, service Service, plan Plan) float64 {
-	props, ok := parsed["properties"].(map[string]interface{})
-	if !ok {
+	props, exists := parsed["properties"].(map[string]interface{})
+	if !exists {
 		return 0
 	}
 
-	blacksmith, ok := props["blacksmith"].(map[string]interface{})
-	if !ok {
+	blacksmith, exists := props["blacksmith"].(map[string]interface{})
+	if !exists {
 		return 0
 	}
 
@@ -462,8 +466,8 @@ func (m *ServiceMatcher) checkBlacksmithMetadata(parsed map[string]interface{}, 
 }
 
 func (m *ServiceMatcher) adjustConfidenceByReleases(parsed map[string]interface{}, service Service, plan Plan, confidence float64) float64 {
-	releases, ok := parsed["releases"].([]interface{})
-	if !ok {
+	releases, exists := parsed["releases"].([]interface{})
+	if !exists {
 		return confidence
 	}
 
@@ -482,8 +486,8 @@ func (m *ServiceMatcher) countMatchingReleases(releases []interface{}, expectedR
 	matchCount := 0
 
 	for _, rel := range releases {
-		relMap, ok := rel.(map[string]interface{})
-		if !ok {
+		relMap, exists := rel.(map[string]interface{})
+		if !exists {
 			continue
 		}
 
@@ -501,8 +505,8 @@ func (m *ServiceMatcher) countMatchingReleases(releases []interface{}, expectedR
 }
 
 func (m *ServiceMatcher) adjustConfidenceByInstanceGroups(parsed map[string]interface{}, service Service, plan Plan, confidence float64) float64 {
-	instanceGroups, ok := parsed["instance_groups"].([]interface{})
-	if !ok {
+	instanceGroups, exists := parsed["instance_groups"].([]interface{})
+	if !exists {
 		return confidence
 	}
 
@@ -521,8 +525,8 @@ func (m *ServiceMatcher) countMatchingInstanceGroups(instanceGroups []interface{
 	matchCount := 0
 
 	for _, group := range instanceGroups {
-		groupMap, ok := group.(map[string]interface{})
-		if !ok {
+		groupMap, exists := group.(map[string]interface{})
+		if !exists {
 			continue
 		}
 
@@ -542,7 +546,7 @@ func (m *ServiceMatcher) countMatchingInstanceGroups(instanceGroups []interface{
 // getServicesFromBroker gets services from the broker.
 func (m *ServiceMatcher) getServicesFromBroker() []Service {
 	// Try to get services from the actual broker if available
-	if broker, ok := m.broker.(interface{ GetServices() []Service }); ok {
+	if broker, exists := m.broker.(interface{ GetServices() []Service }); exists {
 		return broker.GetServices()
 	}
 
@@ -599,7 +603,7 @@ func (m *ServiceMatcher) getExpectedReleases(service Service, _ Plan) []string {
 		"vault":      {"vault", "safe"},
 	}
 
-	if releases, ok := releaseMap[service.ID]; ok {
+	if releases, exists := releaseMap[service.ID]; exists {
 		return releases
 	}
 
@@ -629,8 +633,8 @@ func (m *ServiceMatcher) getExpectedInstanceGroups(service Service, plan Plan) [
 		},
 	}
 
-	if serviceGroups, ok := groupMap[service.ID]; ok {
-		if groups, ok := serviceGroups[plan.ID]; ok {
+	if serviceGroups, exists := groupMap[service.ID]; exists {
+		if groups, exists := serviceGroups[plan.ID]; exists {
 			return groups
 		}
 	}

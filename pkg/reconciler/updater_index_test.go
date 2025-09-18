@@ -10,18 +10,19 @@ import (
 func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 	t.Parallel()
 
-	v := newMemVault()
-	u := NewVaultUpdater(v, NewMockLogger(), BackupConfig{})
+	vault := newMemVault()
+	updater := NewVaultUpdater(vault, NewMockLogger(), BackupConfig{})
 
 	instanceID := "12345678-1234-1234-1234-123456789abc"
 	entry := map[string]interface{}{"service_id": "redis", "plan_id": "cache-small"}
 
-	if err := u.UpdateIndex(instanceID, entry); err != nil {
+	err := updater.UpdateIndex(instanceID, entry)
+	if err != nil {
 		t.Fatalf("updateIndex error: %v", err)
 	}
 
 	// Ensure written to canonical path "db"
-	storedIndex := v.store["db"]
+	storedIndex := vault.store["db"]
 	if storedIndex == nil {
 		t.Fatalf("expected index stored at path 'db', not found")
 	}
@@ -33,7 +34,7 @@ func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 	}
 
 	// Now read back via getFromIndex
-	gotEntry, err := u.GetFromIndex(instanceID)
+	gotEntry, err := updater.GetFromIndex(instanceID)
 	if err != nil {
 		t.Fatalf("getFromIndex error: %v", err)
 	}
@@ -46,18 +47,18 @@ func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 func TestVaultUpdater_UpdateIndex_DeleteEntry(t *testing.T) {
 	t.Parallel()
 
-	v := newMemVault()
-	u := NewVaultUpdater(v, NewMockLogger(), BackupConfig{})
+	vault := newMemVault()
+	updater := NewVaultUpdater(vault, NewMockLogger(), BackupConfig{})
 
 	instanceID := "00000000-0000-0000-0000-0000000000ee"
-	v.store["db"] = map[string]interface{}{instanceID: map[string]interface{}{"service_id": "redis"}}
+	vault.store["db"] = map[string]interface{}{instanceID: map[string]interface{}{"service_id": "redis"}}
 
-	err := u.UpdateIndex(instanceID, nil)
+	err := updater.UpdateIndex(instanceID, nil)
 	if err != nil {
 		t.Fatalf("updateIndex delete error: %v", err)
 	}
 
-	if _, exists := v.store["db"][instanceID]; exists {
+	if _, exists := vault.store["db"][instanceID]; exists {
 		t.Fatalf("expected instance removed from index after delete")
 	}
 }

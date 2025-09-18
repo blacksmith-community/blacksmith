@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 
@@ -69,7 +70,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// For now, return not implemented
 	// TODO: Implement proper routing to the specific handler methods
 	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("RabbitMQ WebSocket endpoints not yet fully implemented"))
+
+	_, err := w.Write([]byte("RabbitMQ WebSocket endpoints not yet fully implemented"))
+	if err != nil {
+		h.logger.Warn("Failed to write response: %v", err)
+	}
 }
 
 // HandleRabbitMQStreaming handles WebSocket connections for rabbitmqctl command streaming.
@@ -77,19 +82,8 @@ func (h *Handler) HandleRabbitMQStreaming(w http.ResponseWriter, request *http.R
 	logger := h.logger.Named("rabbitmqctl-websocket")
 	logger.Info("WebSocket connection request for rabbitmqctl streaming on instance %s", instanceID)
 
-	// Upgrade to WebSocket
-	upgrader := gorillawebsocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true // TODO: implement proper origin checking
-		},
-		ReadBufferSize:  websocketReadBufferSize,
-		WriteBufferSize: websocketWriteBufferSize,
-	}
-
-	conn, err := upgrader.Upgrade(w, request, nil)
+	conn, err := h.upgradeToWebSocket(w, request, logger)
 	if err != nil {
-		logger.Error("WebSocket upgrade failed: %v", err)
-
 		return
 	}
 
@@ -97,65 +91,10 @@ func (h *Handler) HandleRabbitMQStreaming(w http.ResponseWriter, request *http.R
 
 	logger.Info("WebSocket connection established for instance %s", instanceID)
 
-	// Set up message handling
 	ctx, cancel := context.WithCancel(request.Context())
 	defer cancel()
 
-	// Handle incoming messages
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			var message struct {
-				Type      string   `json:"type"`
-				Category  string   `json:"category"`
-				Command   string   `json:"command"`
-				Arguments []string `json:"arguments"`
-			}
-
-			// Read message from WebSocket
-			err := conn.ReadJSON(&message)
-			if err != nil {
-				if gorillawebsocket.IsUnexpectedCloseError(err, gorillawebsocket.CloseGoingAway, gorillawebsocket.CloseAbnormalClosure) {
-					logger.Error("WebSocket read error: %v", err)
-				}
-
-				return
-			}
-
-			// Handle different message types
-			switch message.Type {
-			case commandTypeExecute:
-				h.handleStreamingExecution(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message.Category, message.Command, message.Arguments, logger)
-			case "ping":
-				// Respond to ping
-				response := map[string]interface{}{
-					"type": "pong",
-				}
-
-				err := conn.WriteJSON(response)
-				if err != nil {
-					logger.Error("Failed to send pong: %v", err)
-
-					return
-				}
-			default:
-				// Send error for unknown message type
-				response := map[string]interface{}{
-					"type":  "error",
-					"error": "unknown message type: " + message.Type,
-				}
-
-				err := conn.WriteJSON(response)
-				if err != nil {
-					logger.Error("Failed to send error response: %v", err)
-
-					return
-				}
-			}
-		}
-	}
+	h.handleWebSocketMessages(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, logger)
 }
 
 // HandleRabbitMQPluginsStreaming handles WebSocket connections for rabbitmq-plugins command streaming.
@@ -163,7 +102,22 @@ func (h *Handler) HandleRabbitMQPluginsStreaming(w http.ResponseWriter, request 
 	logger := h.logger.Named("rabbitmq-plugins-websocket")
 	logger.Info("WebSocket connection request for rabbitmq-plugins streaming on instance %s", instanceID)
 
-	// Upgrade to WebSocket
+	conn, err := h.upgradeToWebSocket(w, request, logger)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = conn.Close() }()
+
+	logger.Info("WebSocket connection established for instance %s", instanceID)
+
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+
+	h.handlePluginsWebSocketMessages(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, logger)
+}
+
+func (h *Handler) upgradeToWebSocket(writer http.ResponseWriter, request *http.Request, logger interfaces.Logger) (*gorillawebsocket.Conn, error) {
 	upgrader := gorillawebsocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return true // TODO: implement proper origin checking
@@ -172,75 +126,147 @@ func (h *Handler) HandleRabbitMQPluginsStreaming(w http.ResponseWriter, request 
 		WriteBufferSize: websocketWriteBufferSize,
 	}
 
-	conn, err := upgrader.Upgrade(w, request, nil)
+	conn, err := upgrader.Upgrade(writer, request, nil)
 	if err != nil {
 		logger.Error("WebSocket upgrade failed: %v", err)
 
-		return
+		return nil, fmt.Errorf("failed to upgrade websocket: %w", err)
 	}
 
-	defer func() { _ = conn.Close() }()
+	return conn, nil
+}
 
-	logger.Info("WebSocket connection established for instance %s", instanceID)
-
-	// Set up message handling
-	ctx, cancel := context.WithCancel(request.Context())
-	defer cancel()
-
-	// Handle incoming messages
+func (h *Handler) handleWebSocketMessages(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, logger interfaces.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			var message struct {
-				Type      string   `json:"type"`
-				Category  string   `json:"category"`
-				Command   string   `json:"command"`
-				Arguments []string `json:"arguments"`
-			}
-
-			// Read message from WebSocket
-			err := conn.ReadJSON(&message)
+			err := h.processWebSocketMessage(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, logger)
 			if err != nil {
-				if gorillawebsocket.IsUnexpectedCloseError(err, gorillawebsocket.CloseGoingAway, gorillawebsocket.CloseAbnormalClosure) {
-					logger.Error("WebSocket read error: %v", err)
-				}
-
 				return
 			}
+		}
+	}
+}
 
-			// Handle different message types
-			switch message.Type {
-			case commandTypeExecute:
-				logger.Info("Executing rabbitmq-plugins command: %s.%s with args %v", message.Category, message.Command, message.Arguments)
-				h.handlePluginsStreamingExecution(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message.Category, message.Command, message.Arguments, logger)
+func (h *Handler) processWebSocketMessage(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, logger interfaces.Logger) error {
+	var message struct {
+		Type      string   `json:"type"`
+		Category  string   `json:"category"`
+		Command   string   `json:"command"`
+		Arguments []string `json:"arguments"`
+	}
 
-			case "ping":
-				response := map[string]interface{}{
-					"type": "pong",
-				}
+	err := conn.ReadJSON(&message)
+	if err != nil {
+		if gorillawebsocket.IsUnexpectedCloseError(err, gorillawebsocket.CloseGoingAway, gorillawebsocket.CloseAbnormalClosure) {
+			logger.Error("WebSocket read error: %v", err)
+		}
 
-				err := conn.WriteJSON(response)
-				if err != nil {
-					logger.Error("Failed to send pong response: %v", err)
+		return fmt.Errorf("failed to read websocket message: %w", err)
+	}
 
-					return
-				}
+	return h.handleMessageType(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message, logger)
+}
 
-			default:
-				response := map[string]interface{}{
-					"type":  "error",
-					"error": "unknown message type: " + message.Type,
-				}
+func (h *Handler) handleMessageType(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, message struct {
+	Type      string   `json:"type"`
+	Category  string   `json:"category"`
+	Command   string   `json:"command"`
+	Arguments []string `json:"arguments"`
+}, logger interfaces.Logger) error {
+	switch message.Type {
+	case commandTypeExecute:
+		h.handleStreamingExecution(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message.Category, message.Command, message.Arguments, logger)
 
-				err := conn.WriteJSON(response)
-				if err != nil {
-					logger.Error("Failed to send error response: %v", err)
+		return nil
+	case "ping":
+		return h.sendPongResponse(conn, logger)
+	default:
+		return h.sendUnknownMessageError(conn, message.Type, logger)
+	}
+}
 
-					return
-				}
+func (h *Handler) sendPongResponse(conn *gorillawebsocket.Conn, logger interfaces.Logger) error {
+	response := map[string]interface{}{
+		"type": "pong",
+	}
+
+	err := conn.WriteJSON(response)
+	if err != nil {
+		logger.Error("Failed to send pong: %v", err)
+
+		return fmt.Errorf("failed to send pong response: %w", err)
+	}
+
+	return nil
+}
+
+func (h *Handler) sendUnknownMessageError(conn *gorillawebsocket.Conn, messageType string, logger interfaces.Logger) error {
+	response := map[string]interface{}{
+		"type":  "error",
+		"error": "unknown message type: " + messageType,
+	}
+
+	err := conn.WriteJSON(response)
+	if err != nil {
+		logger.Error("Failed to send error response: %v", err)
+
+		return fmt.Errorf("failed to send error response: %w", err)
+	}
+
+	return nil
+}
+func (h *Handler) handlePluginsWebSocketMessages(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, logger interfaces.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			err := h.processPluginsWebSocketMessage(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, logger)
+			if err != nil {
+				return
 			}
 		}
+	}
+}
+
+func (h *Handler) processPluginsWebSocketMessage(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, logger interfaces.Logger) error {
+	var message struct {
+		Type      string   `json:"type"`
+		Category  string   `json:"category"`
+		Command   string   `json:"command"`
+		Arguments []string `json:"arguments"`
+	}
+
+	err := conn.ReadJSON(&message)
+	if err != nil {
+		if gorillawebsocket.IsUnexpectedCloseError(err, gorillawebsocket.CloseGoingAway, gorillawebsocket.CloseAbnormalClosure) {
+			logger.Error("WebSocket read error: %v", err)
+		}
+
+		return fmt.Errorf("failed to read websocket message: %w", err)
+	}
+
+	return h.handlePluginsMessageType(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message, logger)
+}
+
+func (h *Handler) handlePluginsMessageType(ctx context.Context, conn *gorillawebsocket.Conn, instanceID, deploymentName, instanceName string, instanceIndex int, message struct {
+	Type      string   `json:"type"`
+	Category  string   `json:"category"`
+	Command   string   `json:"command"`
+	Arguments []string `json:"arguments"`
+}, logger interfaces.Logger) error {
+	switch message.Type {
+	case commandTypeExecute:
+		logger.Info("Executing rabbitmq-plugins command: %s.%s with args %v", message.Category, message.Command, message.Arguments)
+		h.handlePluginsStreamingExecution(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message.Category, message.Command, message.Arguments, logger)
+
+		return nil
+	case "ping":
+		return h.sendPongResponse(conn, logger)
+	default:
+		return h.sendUnknownMessageError(conn, message.Type, logger)
 	}
 }

@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 
+	rabbitmqssh "blacksmith/internal/services/rabbitmq"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/services"
-	rabbitmqssh "blacksmith/services/rabbitmq"
 )
 
 // Logger interface for logging operations across all internal packages.
@@ -30,32 +30,38 @@ type Config interface {
 
 // Broker interface for broker operations across all internal packages.
 type Broker interface {
-	// Add broker methods as needed
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsBroker() bool
 }
 
 // CFManager interface for Cloud Foundry operations across all internal packages.
 type CFManager interface {
-	// Add CF manager methods as needed
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsCFManager() bool
 }
 
 // VMMonitor interface for VM monitoring across all internal packages.
 type VMMonitor interface {
-	// Add VM monitor methods as needed
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsVMMonitor() bool
 }
 
 // SSHService interface for SSH operations across all internal packages.
 type SSHService interface {
-	// Add SSH service methods as needed
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsSSHService() bool
 }
 
 // RabbitMQSSHService interface for RabbitMQ SSH operations across all internal packages.
 type RabbitMQSSHService interface {
-	// Add RabbitMQ SSH service methods as needed
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsRabbitMQSSHService() bool
 }
 
 // RabbitMQMetadataService interface for RabbitMQ metadata operations across all internal packages.
 type RabbitMQMetadataService interface {
-	// Add RabbitMQ metadata service methods as needed
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsRabbitMQMetadataService() bool
 }
 
 // RabbitMQExecutorService interface for RabbitMQ executor operations across all internal packages.
@@ -71,7 +77,8 @@ type RabbitMQAuditService interface {
 
 // RabbitMQPluginsMetadataService interface for RabbitMQ plugins metadata operations across all internal packages.
 type RabbitMQPluginsMetadataService interface {
-	// Add RabbitMQ plugins metadata service methods as needed
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsRabbitMQPluginsMetadataService() bool
 }
 
 // RabbitMQPluginsExecutorService interface for RabbitMQ plugins executor operations across all internal packages.
@@ -99,5 +106,6 @@ type ServicesManager interface {
 
 // RedisService interface for Redis operations.
 type RedisService interface {
-	// Add Redis service methods as needed from pkg/services/redis
+	// Placeholder method to distinguish from other interfaces - implement as needed
+	IsRedisService() bool
 }

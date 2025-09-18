@@ -17,6 +17,7 @@ var (
 	ErrFailedToGetServiceOfferings        = errors.New("failed to get service offerings")
 	ErrFailedToGetServicePlans            = errors.New("failed to get service plans")
 	ErrDisableServiceAccessNotImplemented = errors.New("disable service access not yet implemented")
+	ErrServiceBrokerNotFound              = errors.New("service broker not found")
 )
 
 // Logger interface for logging.
@@ -51,21 +52,21 @@ func NewClient(apiURL, username, password, brokerURL, brokerUser, brokerPass str
 
 // TestConnection tests the CF connection.
 func (c *Client) TestConnection() (*RegistrationTestResult, error) {
-	cfInfo, err := c.authClient.TestConnection()
-	if err != nil {
-		// Connection test failed - this is a valid result, not a function error
-		return &RegistrationTestResult{
-			Success: false,
-			Message: "Connection failed",
-			Error:   err.Error(),
-		}, nil //nolint:nilerr // Connection test failure is a valid result, not an error
+	cfInfo, testErr := c.authClient.TestConnection()
+
+	// Build result based on test outcome
+	result := &RegistrationTestResult{
+		Success: testErr == nil,
+		CFInfo:  cfInfo,
+	}
+	if testErr != nil {
+		result.Message = "Connection failed"
+		result.Error = testErr.Error()
+	} else {
+		result.Message = "Connection successful"
 	}
 
-	return &RegistrationTestResult{
-		Success: true,
-		Message: "Connection successful",
-		CFInfo:  cfInfo,
-	}, nil
+	return result, nil
 }
 
 // GetServiceBrokers retrieves all service brokers from CF.
@@ -126,7 +127,7 @@ func (c *Client) FindServiceBroker(name string) (*BrokerInfo, error) {
 		}
 	}
 
-	return nil, nil // Not found
+	return nil, ErrServiceBrokerNotFound
 }
 
 // CreateServiceBroker creates a new service broker in CF.

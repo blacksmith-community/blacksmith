@@ -40,6 +40,7 @@ func WithRetry(ctx context.Context, fn func() error, maxRetries int, baseDelay t
 				delay := retryErr.RetryAfter
 				if delay == 0 {
 					const backoffBase = 2
+
 					delay = time.Duration(math.Pow(backoffBase, float64(attempt))) * baseDelay
 				}
 
@@ -52,6 +53,7 @@ func WithRetry(ctx context.Context, fn func() error, maxRetries int, baseDelay t
 			} else {
 				// For non-retryable errors, apply exponential backoff
 				const backoffBase = 2
+
 				delay := time.Duration(math.Pow(backoffBase, float64(attempt))) * baseDelay
 				select {
 				case <-time.After(delay):

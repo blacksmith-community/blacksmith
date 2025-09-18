@@ -7,6 +7,7 @@ import (
 	"blacksmith/pkg/services/common"
 )
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestIsRedisInstance(t *testing.T) {
 	t.Parallel()
 
@@ -84,7 +85,9 @@ func TestIsRedisInstance(t *testing.T) {
 		})
 	}
 }
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 
+//nolint:funlen
 func TestIsRabbitMQInstance(t *testing.T) {
 	t.Parallel()
 

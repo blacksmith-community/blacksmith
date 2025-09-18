@@ -1,11 +1,18 @@
 package reconciler_test
 
 import (
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
 
 	. "blacksmith/pkg/reconciler"
+)
+
+// Test mock errors.
+var (
+	ErrVaultTestNotImplemented = errors.New("vault test method not implemented")
+	ErrVaultTestDataNotFound   = errors.New("vault test data not found")
 )
 
 // memVault implements VaultInterface for tests using in-memory storage.
@@ -34,7 +41,7 @@ func (m *memVault) Get(path string) (map[string]interface{}, error) {
 
 	data := m.store[path]
 	if data == nil {
-		return nil, nil
+		return nil, ErrVaultTestDataNotFound
 	}
 	// return a shallow copy to prevent external mutation
 	cp := make(map[string]interface{}, len(data))
@@ -65,7 +72,7 @@ func (m *memVault) Put(path string, secret map[string]interface{}) error {
 }
 
 // Unused in these tests but required by the interface.
-func (m *memVault) GetSecret(path string) (map[string]interface{}, error)      { return nil, nil }
+func (m *memVault) GetSecret(path string) (map[string]interface{}, error)      { return nil, ErrVaultTestNotImplemented }
 func (m *memVault) SetSecret(path string, secret map[string]interface{}) error { return nil }
 func (m *memVault) DeleteSecret(path string) error                             { return nil }
 func (m *memVault) ListSecrets(path string) ([]string, error)                  { return []string{}, nil }
@@ -89,28 +96,30 @@ func TestIndexSynchronizer_GetVaultIndex_Empty(t *testing.T) {
 func TestIndexSynchronizer_GetAndSaveVaultIndex_RoundTrip(t *testing.T) {
 	t.Parallel()
 
-	v := newMemVault()
+	vault := newMemVault()
 	// Seed existing index under canonical path "db"
-	v.store["db"] = map[string]interface{}{"inst1": map[string]interface{}{"service_id": "redis"}}
+	vault.store["db"] = map[string]interface{}{"inst1": map[string]interface{}{"service_id": "redis"}}
 
-	s := NewIndexSynchronizer(v, NewMockLogger())
+	synchronizer := NewIndexSynchronizer(vault, NewMockLogger())
 
-	idx, err := s.GetVaultIndex()
+	idx, err := synchronizer.GetVaultIndex()
 	if err != nil {
 		t.Fatalf("getVaultIndex error: %v", err)
 	}
 
-	if _, ok := idx["inst1"]; !ok {
+	if _, exists := idx["inst1"]; !exists {
 		t.Fatalf("expected inst1 present, got: %#v", idx)
 	}
 
 	// Save new index and verify stored
 	newIdx := map[string]interface{}{"inst2": map[string]interface{}{"plan_id": "cache-small"}}
-	if err := s.SaveVaultIndex(newIdx); err != nil {
+
+	err = synchronizer.SaveVaultIndex(newIdx)
+	if err != nil {
 		t.Fatalf("saveVaultIndex error: %v", err)
 	}
 
-	got := v.store["db"]
+	got := vault.store["db"]
 	if !reflect.DeepEqual(got, newIdx) {
 		t.Fatalf("vault stored index mismatch\nwant: %#v\n got: %#v", newIdx, got)
 	}

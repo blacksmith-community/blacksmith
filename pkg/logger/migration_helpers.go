@@ -22,7 +22,7 @@ func CreateNamedLogger(contextParts []string) Logger {
 	}
 
 	// Join context parts with "." separator for hierarchical naming
-	var result Logger = baseLogger
+	result := baseLogger
 
 	for _, part := range contextParts {
 		if part != "" && part != "*" {

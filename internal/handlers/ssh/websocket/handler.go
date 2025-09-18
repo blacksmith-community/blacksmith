@@ -48,10 +48,10 @@ func (h *Handler) CanHandle(path string) bool {
 }
 
 // ServeHTTP handles SSH WebSocket endpoints.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// Handle blacksmith deployment SSH WebSocket
 	if req.URL.Path == "/b/blacksmith/ssh/stream" {
-		h.handleBlacksmithSSH(w, req)
+		h.handleBlacksmithSSH(writer, req)
 
 		return
 	}
@@ -60,7 +60,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	pattern := regexp.MustCompile(`^/b/([^/]+)/ssh/stream$`)
 	if m := pattern.FindStringSubmatch(req.URL.Path); m != nil {
 		instanceID := m[1]
-		h.handleInstanceSSH(w, req, instanceID)
+		h.handleInstanceSSH(writer, req, instanceID)
 
 		return
 	}
@@ -68,33 +68,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Handle SSH status endpoint
 	statusPattern := regexp.MustCompile(`^/b/ssh/status$`)
 	if statusPattern.MatchString(req.URL.Path) {
-		h.handleSSHStatus(w, req)
+		h.handleSSHStatus(writer, req)
 
 		return
 	}
 
 	// No SSH WebSocket endpoint matched
-	response.WriteError(w, http.StatusNotFound, "SSH endpoint not found")
+	response.WriteError(writer, http.StatusNotFound, "SSH endpoint not found")
 }
 
 // handleBlacksmithSSH handles WebSocket SSH for blacksmith deployment.
-func (h *Handler) handleBlacksmithSSH(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("blacksmith-websocket-ssh")
 	logger.Debug("WebSocket SSH connection request for blacksmith deployment")
 
 	// Check if SSH UI Terminal is enabled in configuration
 	if !h.isSSHUIEnabled() {
 		logger.Info("SSH Terminal UI access denied - disabled in configuration")
-		w.WriteHeader(http.StatusForbidden)
-		response.HandleJSON(w, nil, errSSHTerminalUIDisabled)
+		writer.WriteHeader(http.StatusForbidden)
+		response.HandleJSON(writer, nil, errSSHTerminalUIDisabled)
 
 		return
 	}
 
 	// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
 	if req.Method != http.MethodGet && req.Method != http.MethodConnect {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		response.HandleJSON(w, nil, errMethodNotAllowedWebSocket)
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+		response.HandleJSON(writer, nil, errMethodNotAllowedWebSocket)
 
 		return
 	}
@@ -109,32 +109,32 @@ func (h *Handler) handleBlacksmithSSH(w http.ResponseWriter, req *http.Request) 
 
 	// Handle WebSocket SSH connection
 	if h.webSocketHandler != nil {
-		h.webSocketHandler.HandleWebSocket(req.Context(), w, req, deploymentName, instanceName, instanceIndex)
+		h.webSocketHandler.HandleWebSocket(req.Context(), writer, req, deploymentName, instanceName, instanceIndex)
 	} else {
 		logger.Error("WebSocket handler not available")
-		w.WriteHeader(http.StatusInternalServerError)
-		response.HandleJSON(w, nil, errWebSocketSSHServiceNotAvailable)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, errWebSocketSSHServiceNotAvailable)
 	}
 }
 
 // handleInstanceSSH handles WebSocket SSH for service instances.
-func (h *Handler) handleInstanceSSH(w http.ResponseWriter, req *http.Request, instanceID string) {
+func (h *Handler) handleInstanceSSH(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("instance-websocket-ssh")
 	logger.Debug("WebSocket SSH connection request for instance %s", instanceID)
 
 	// Check if SSH UI Terminal is enabled
 	if !h.isSSHUIEnabled() {
 		logger.Info("SSH Terminal UI access denied for instance %s - disabled in configuration", instanceID)
-		w.WriteHeader(http.StatusForbidden)
-		response.HandleJSON(w, nil, errSSHTerminalUIDisabled)
+		writer.WriteHeader(http.StatusForbidden)
+		response.HandleJSON(writer, nil, errSSHTerminalUIDisabled)
 
 		return
 	}
 
 	// Allow classic HTTP/1.1 Upgrade (GET) and HTTP/2 Extended CONNECT
 	if req.Method != http.MethodGet && req.Method != http.MethodConnect {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		response.HandleJSON(w, nil, errMethodNotAllowedWebSocket)
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+		response.HandleJSON(writer, nil, errMethodNotAllowedWebSocket)
 
 		return
 	}
@@ -149,16 +149,16 @@ func (h *Handler) handleInstanceSSH(w http.ResponseWriter, req *http.Request, in
 
 	// Handle WebSocket SSH connection
 	if h.webSocketHandler != nil {
-		h.webSocketHandler.HandleWebSocket(req.Context(), w, req, deploymentName, instanceName, instanceIndex)
+		h.webSocketHandler.HandleWebSocket(req.Context(), writer, req, deploymentName, instanceName, instanceIndex)
 	} else {
 		logger.Error("WebSocket handler not available")
-		w.WriteHeader(http.StatusInternalServerError)
-		response.HandleJSON(w, nil, errWebSocketSSHServiceNotAvailable)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, errWebSocketSSHServiceNotAvailable)
 	}
 }
 
 // handleSSHStatus handles SSH status endpoint.
-func (h *Handler) handleSSHStatus(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) handleSSHStatus(writer http.ResponseWriter, _ *http.Request) {
 	logger := h.logger.Named("websocket-ssh-status")
 	logger.Debug("WebSocket SSH status request")
 
@@ -173,7 +173,7 @@ func (h *Handler) handleSSHStatus(w http.ResponseWriter, req *http.Request) {
 		status["active_sessions"] = h.webSocketHandler.GetActiveSessions()
 	}
 
-	response.HandleJSON(w, status, nil)
+	response.HandleJSON(writer, status, nil)
 }
 
 // isSSHUIEnabled checks if SSH UI Terminal is enabled.

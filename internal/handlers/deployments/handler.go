@@ -78,150 +78,31 @@ func NewHandler(deps Dependencies) *Handler {
 }
 
 // ServeHTTP handles deployment-related endpoints with pattern matching.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	if !h.isDeploymentEndpoint(req.URL.Path) {
-		w.WriteHeader(http.StatusNotFound)
+		writer.WriteHeader(http.StatusNotFound)
 
 		return
 	}
 
 	deploymentName, pathParts := h.parseDeploymentPath(req.URL.Path)
 	if deploymentName == "" {
-		w.WriteHeader(http.StatusNotFound)
+		writer.WriteHeader(http.StatusNotFound)
 
 		return
 	}
 
 	if len(pathParts) == 1 {
-		h.handleRootDeploymentOperations(w, req, deploymentName)
+		h.handleRootDeploymentOperations(writer, req, deploymentName)
 
 		return
 	}
 
-	h.handleSubpathOperations(w, req, deploymentName, pathParts)
-}
-
-// isDeploymentEndpoint checks if the path is a deployment-specific endpoint.
-func (h *Handler) isDeploymentEndpoint(path string) bool {
-	return strings.HasPrefix(path, "/b/deployments/")
-}
-
-// parseDeploymentPath extracts the deployment name and path parts from the URL path.
-func (h *Handler) parseDeploymentPath(path string) (string, []string) {
-	pathParts := strings.Split(strings.TrimPrefix(path, "/b/deployments/"), "/")
-	if len(pathParts) < 1 || pathParts[0] == "" {
-		return "", nil
-	}
-
-	return pathParts[0], pathParts
-}
-
-// handleRootDeploymentOperations handles operations on the deployment itself.
-func (h *Handler) handleRootDeploymentOperations(w http.ResponseWriter, req *http.Request, deploymentName string) {
-	switch req.Method {
-	case http.MethodGet:
-		h.GetDeployment(w, req, deploymentName)
-	case http.MethodDelete:
-		h.DeleteDeployment(w, req, deploymentName)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// handleSubpathOperations handles operations on deployment subresources.
-func (h *Handler) handleSubpathOperations(w http.ResponseWriter, req *http.Request, deploymentName string, pathParts []string) {
-	operation := pathParts[1]
-
-	switch operation {
-	case "manifest":
-		h.handleManifestOperations(w, req, deploymentName)
-	case "vms":
-		h.handleVMsOperations(w, req, deploymentName)
-	case "instances":
-		h.handleInstancesOperations(w, req, deploymentName)
-	case "errands":
-		h.handleErrandsOperations(w, req, deploymentName, pathParts)
-	case "recreate":
-		h.handleLifecycleOperation(w, req, deploymentName, h.RecreateDeployment)
-	case "restart":
-		h.handleLifecycleOperation(w, req, deploymentName, h.RestartDeployment)
-	case "stop":
-		h.handleLifecycleOperation(w, req, deploymentName, h.StopDeployment)
-	case "start":
-		h.handleLifecycleOperation(w, req, deploymentName, h.StartDeployment)
-	default:
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-// handleManifestOperations handles manifest-related operations.
-func (h *Handler) handleManifestOperations(w http.ResponseWriter, req *http.Request, deploymentName string) {
-	switch req.Method {
-	case http.MethodGet:
-		h.GetManifest(w, req, deploymentName)
-	case http.MethodPost:
-		h.UpdateManifest(w, req, deploymentName)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// handleVMsOperations handles VMs-related operations.
-func (h *Handler) handleVMsOperations(w http.ResponseWriter, req *http.Request, deploymentName string) {
-	if req.Method == http.MethodGet {
-		h.GetVMs(w, req, deploymentName)
-	} else {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// handleInstancesOperations handles instances-related operations.
-func (h *Handler) handleInstancesOperations(w http.ResponseWriter, req *http.Request, deploymentName string) {
-	if req.Method == http.MethodGet {
-		h.GetInstances(w, req, deploymentName)
-	} else {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// handleErrandsOperations handles errands-related operations.
-func (h *Handler) handleErrandsOperations(w http.ResponseWriter, req *http.Request, deploymentName string, pathParts []string) {
-	if len(pathParts) > minPathDepth {
-		h.handleSpecificErrand(w, req, deploymentName, pathParts[2])
-	} else {
-		h.handleErrandsList(w, req, deploymentName)
-	}
-}
-
-// handleSpecificErrand handles operations on a specific errand.
-func (h *Handler) handleSpecificErrand(w http.ResponseWriter, req *http.Request, deploymentName, errandName string) {
-	if req.Method == http.MethodPost {
-		h.RunErrand(w, req, deploymentName, errandName)
-	} else {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// handleErrandsList handles operations on the errands list.
-func (h *Handler) handleErrandsList(w http.ResponseWriter, req *http.Request, deploymentName string) {
-	if req.Method == http.MethodGet {
-		h.ListErrands(w, req, deploymentName)
-	} else {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-// handleLifecycleOperation handles lifecycle operations (recreate, restart, stop, start).
-func (h *Handler) handleLifecycleOperation(w http.ResponseWriter, req *http.Request, deploymentName string, operation func(http.ResponseWriter, *http.Request, string)) {
-	if req.Method == http.MethodPost {
-		operation(w, req, deploymentName)
-	} else {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	h.handleSubpathOperations(writer, req, deploymentName, pathParts)
 }
 
 // GetDeployment returns details about a specific deployment.
-func (h *Handler) GetDeployment(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) GetDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-get")
 	logger.Debug("Getting deployment: %s", deploymentName)
 
@@ -237,11 +118,11 @@ func (h *Handler) GetDeployment(w http.ResponseWriter, req *http.Request, deploy
 		Teams: []string{"blacksmith"},
 	}
 
-	response.HandleJSON(w, deployment, nil)
+	response.HandleJSON(writer, deployment, nil)
 }
 
 // DeleteDeployment deletes a deployment.
-func (h *Handler) DeleteDeployment(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) DeleteDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-delete")
 	logger.Info("Deleting deployment: %s", deploymentName)
 
@@ -252,11 +133,11 @@ func (h *Handler) DeleteDeployment(w http.ResponseWriter, req *http.Request, dep
 		"task_id":    testTaskIDCreate,
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // GetManifest returns the manifest for a deployment.
-func (h *Handler) GetManifest(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) GetManifest(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-manifest")
 	logger.Debug("Getting manifest for deployment: %s", deploymentName)
 
@@ -275,18 +156,20 @@ func (h *Handler) GetManifest(w http.ResponseWriter, req *http.Request, deployme
 		},
 	}
 
-	response.HandleJSON(w, manifest, nil)
+	response.HandleJSON(writer, manifest, nil)
 }
 
 // UpdateManifest updates the manifest for a deployment.
-func (h *Handler) UpdateManifest(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) UpdateManifest(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-manifest-update")
 	logger.Info("Updating manifest for deployment: %s", deploymentName)
 
 	var manifest map[string]interface{}
-	if err := json.NewDecoder(req.Body).Decode(&manifest); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(w, nil, fmt.Errorf("%w: %w", errInvalidManifest, err))
+
+	err := json.NewDecoder(req.Body).Decode(&manifest)
+	if err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, fmt.Errorf("%w: %w", errInvalidManifest, err))
 
 		return
 	}
@@ -298,11 +181,11 @@ func (h *Handler) UpdateManifest(w http.ResponseWriter, req *http.Request, deplo
 		"task_id":    testTaskIDUpdate,
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // GetVMs returns the VMs for a deployment.
-func (h *Handler) GetVMs(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) GetVMs(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-vms")
 	logger.Debug("Getting VMs for deployment: %s", deploymentName)
 
@@ -318,14 +201,14 @@ func (h *Handler) GetVMs(w http.ResponseWriter, req *http.Request, deploymentNam
 		},
 	}
 
-	response.HandleJSON(w, map[string]interface{}{
+	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
 		"vms":        vms,
 	}, nil)
 }
 
 // GetInstances returns the instances for a deployment.
-func (h *Handler) GetInstances(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) GetInstances(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-instances")
 	logger.Debug("Getting instances for deployment: %s", deploymentName)
 
@@ -340,28 +223,28 @@ func (h *Handler) GetInstances(w http.ResponseWriter, req *http.Request, deploym
 		},
 	}
 
-	response.HandleJSON(w, map[string]interface{}{
+	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
 		"instances":  instances,
 	}, nil)
 }
 
 // ListErrands lists available errands for a deployment.
-func (h *Handler) ListErrands(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) ListErrands(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-errands-list")
 	logger.Debug("Listing errands for deployment: %s", deploymentName)
 
 	// TODO: Implement actual errand listing
 	errands := []string{"smoke-tests", "cleanup"}
 
-	response.HandleJSON(w, map[string]interface{}{
+	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
 		"errands":    errands,
 	}, nil)
 }
 
 // RunErrand runs a specific errand.
-func (h *Handler) RunErrand(w http.ResponseWriter, req *http.Request, deploymentName string, errandName string) {
+func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deploymentName string, errandName string) {
 	logger := h.logger.Named("deployment-errand-run")
 	logger.Info("Running errand %s for deployment: %s", errandName, deploymentName)
 
@@ -373,11 +256,11 @@ func (h *Handler) RunErrand(w http.ResponseWriter, req *http.Request, deployment
 		"started":    true,
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // RecreateDeployment recreates all VMs in a deployment.
-func (h *Handler) RecreateDeployment(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) RecreateDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-recreate")
 	logger.Info("Recreating deployment: %s", deploymentName)
 
@@ -388,11 +271,11 @@ func (h *Handler) RecreateDeployment(w http.ResponseWriter, req *http.Request, d
 		"operation":  "recreate",
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // RestartDeployment restarts all VMs in a deployment.
-func (h *Handler) RestartDeployment(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) RestartDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-restart")
 	logger.Info("Restarting deployment: %s", deploymentName)
 
@@ -403,11 +286,11 @@ func (h *Handler) RestartDeployment(w http.ResponseWriter, req *http.Request, de
 		"operation":  "restart",
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // StopDeployment stops all VMs in a deployment.
-func (h *Handler) StopDeployment(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) StopDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-stop")
 	logger.Info("Stopping deployment: %s", deploymentName)
 
@@ -418,11 +301,11 @@ func (h *Handler) StopDeployment(w http.ResponseWriter, req *http.Request, deplo
 		"operation":  "stop",
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }
 
 // StartDeployment starts all VMs in a deployment.
-func (h *Handler) StartDeployment(w http.ResponseWriter, req *http.Request, deploymentName string) {
+func (h *Handler) StartDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
 	logger := h.logger.Named("deployment-start")
 	logger.Info("Starting deployment: %s", deploymentName)
 
@@ -433,5 +316,124 @@ func (h *Handler) StartDeployment(w http.ResponseWriter, req *http.Request, depl
 		"operation":  "start",
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
+}
+
+// isDeploymentEndpoint checks if the path is a deployment-specific endpoint.
+func (h *Handler) isDeploymentEndpoint(path string) bool {
+	return strings.HasPrefix(path, "/b/deployments/")
+}
+
+// parseDeploymentPath extracts the deployment name and path parts from the URL path.
+func (h *Handler) parseDeploymentPath(path string) (string, []string) {
+	pathParts := strings.Split(strings.TrimPrefix(path, "/b/deployments/"), "/")
+	if len(pathParts) < 1 || pathParts[0] == "" {
+		return "", nil
+	}
+
+	return pathParts[0], pathParts
+}
+
+// handleRootDeploymentOperations handles operations on the deployment itself.
+func (h *Handler) handleRootDeploymentOperations(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	switch req.Method {
+	case http.MethodGet:
+		h.GetDeployment(writer, req, deploymentName)
+	case http.MethodDelete:
+		h.DeleteDeployment(writer, req, deploymentName)
+	default:
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleSubpathOperations handles operations on deployment subresources.
+func (h *Handler) handleSubpathOperations(writer http.ResponseWriter, req *http.Request, deploymentName string, pathParts []string) {
+	operation := pathParts[1]
+
+	switch operation {
+	case "manifest":
+		h.handleManifestOperations(writer, req, deploymentName)
+	case "vms":
+		h.handleVMsOperations(writer, req, deploymentName)
+	case "instances":
+		h.handleInstancesOperations(writer, req, deploymentName)
+	case "errands":
+		h.handleErrandsOperations(writer, req, deploymentName, pathParts)
+	case "recreate":
+		h.handleLifecycleOperation(writer, req, deploymentName, h.RecreateDeployment)
+	case "restart":
+		h.handleLifecycleOperation(writer, req, deploymentName, h.RestartDeployment)
+	case "stop":
+		h.handleLifecycleOperation(writer, req, deploymentName, h.StopDeployment)
+	case "start":
+		h.handleLifecycleOperation(writer, req, deploymentName, h.StartDeployment)
+	default:
+		writer.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// handleManifestOperations handles manifest-related operations.
+func (h *Handler) handleManifestOperations(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	switch req.Method {
+	case http.MethodGet:
+		h.GetManifest(writer, req, deploymentName)
+	case http.MethodPost:
+		h.UpdateManifest(writer, req, deploymentName)
+	default:
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleVMsOperations handles VMs-related operations.
+func (h *Handler) handleVMsOperations(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	if req.Method == http.MethodGet {
+		h.GetVMs(writer, req, deploymentName)
+	} else {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleInstancesOperations handles instances-related operations.
+func (h *Handler) handleInstancesOperations(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	if req.Method == http.MethodGet {
+		h.GetInstances(writer, req, deploymentName)
+	} else {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleErrandsOperations handles errands-related operations.
+func (h *Handler) handleErrandsOperations(writer http.ResponseWriter, req *http.Request, deploymentName string, pathParts []string) {
+	if len(pathParts) > minPathDepth {
+		h.handleSpecificErrand(writer, req, deploymentName, pathParts[2])
+	} else {
+		h.handleErrandsList(writer, req, deploymentName)
+	}
+}
+
+// handleSpecificErrand handles operations on a specific errand.
+func (h *Handler) handleSpecificErrand(writer http.ResponseWriter, req *http.Request, deploymentName, errandName string) {
+	if req.Method == http.MethodPost {
+		h.RunErrand(writer, req, deploymentName, errandName)
+	} else {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleErrandsList handles operations on the errands list.
+func (h *Handler) handleErrandsList(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	if req.Method == http.MethodGet {
+		h.ListErrands(writer, req, deploymentName)
+	} else {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleLifecycleOperation handles lifecycle operations (recreate, restart, stop, start).
+func (h *Handler) handleLifecycleOperation(writer http.ResponseWriter, req *http.Request, deploymentName string, operation func(http.ResponseWriter, *http.Request, string)) {
+	if req.Method == http.MethodPost {
+		operation(writer, req, deploymentName)
+	} else {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }

@@ -73,7 +73,6 @@ linters:
   - nlreturn # Checks for a new line before return and branch statements to increase code clarity. [fast, auto-fix]
   - noctx # Detects function and method with missing usage of context.Context.
   - noinlineerr # Disallows inline error handling (`if err := ...; err != nil {`).
-  - nolintlint # Reports ill-formed or insufficient nolint directives. [fast, auto-fix]
   - nonamedreturns # Reports all named returns.
   - nosprintfhostport # Checks for misuse of Sprintf to construct a host with port in a URL. [fast]
   - paralleltest # Detects missing usage of t.Parallel() method in your Go test.
@@ -111,6 +110,7 @@ linters:
   #- depguard # Go linter that checks if package imports are in a list of acceptable packages. [fast] # Disabled - needs configuration for this project
   # handled as separate make target: - revive # Fast, configurable, extensible, flexible, and beautiful linter for Go. Drop-in replacement of golint. [auto-fix]
   # no to camel case - tagliatelle # Checks the struct tags.
+  # this doesn't work half the time, false positives or something : - nolintlint # Reports ill-formed or insufficient nolint directives. [fast, auto-fix]
 
   settings:
     cyclop:

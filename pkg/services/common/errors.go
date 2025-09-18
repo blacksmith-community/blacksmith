@@ -33,14 +33,6 @@ type RetryableError struct {
 	RetryAfter time.Duration
 }
 
-func (e *RetryableError) Error() string {
-	return e.Err.Error()
-}
-
-func (e *RetryableError) Unwrap() error {
-	return e.Err
-}
-
 // NewRetryableError creates a new retryable error.
 func NewRetryableError(err error, retryable bool, retryAfter time.Duration) *RetryableError {
 	return &RetryableError{
@@ -48,6 +40,14 @@ func NewRetryableError(err error, retryable bool, retryAfter time.Duration) *Ret
 		Retryable:  retryable,
 		RetryAfter: retryAfter,
 	}
+}
+
+func (e *RetryableError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *RetryableError) Unwrap() error {
+	return e.Err
 }
 
 // ServiceError represents a service-specific error.
@@ -58,10 +58,6 @@ type ServiceError struct {
 	Retryable   bool
 }
 
-func (e *ServiceError) Error() string {
-	return fmt.Sprintf("[%s] %s: %s", e.ServiceType, e.Code, e.Message)
-}
-
 // NewServiceError creates a new service error.
 func NewServiceError(serviceType, code, message string, retryable bool) *ServiceError {
 	return &ServiceError{
@@ -70,4 +66,8 @@ func NewServiceError(serviceType, code, message string, retryable bool) *Service
 		ServiceType: serviceType,
 		Retryable:   retryable,
 	}
+}
+
+func (e *ServiceError) Error() string {
+	return fmt.Sprintf("[%s] %s: %s", e.ServiceType, e.Code, e.Message)
 }

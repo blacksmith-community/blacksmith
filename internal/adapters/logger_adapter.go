@@ -25,18 +25,30 @@ func (l *LoggerAdapter) Wrap(ctxString string) interfaces.Logger {
 }
 
 // Debug logs a debug message.
-func (l *LoggerAdapter) Debug(format string, args ...interface{}) {
-	l.standardLog.Debug(format, args...)
+func (l *LoggerAdapter) Debug(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		l.standardLog.Debugf(msg, args...)
+	} else {
+		l.standardLog.Debug("%s", msg)
+	}
 }
 
 // Info logs an info message.
-func (l *LoggerAdapter) Info(format string, args ...interface{}) {
-	l.standardLog.Info(format, args...)
+func (l *LoggerAdapter) Info(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		l.standardLog.Infof(msg, args...)
+	} else {
+		l.standardLog.Info("%s", msg)
+	}
 }
 
 // Error logs an error message.
-func (l *LoggerAdapter) Error(format string, args ...interface{}) {
-	l.standardLog.Error(format, args...)
+func (l *LoggerAdapter) Error(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		l.standardLog.Errorf(msg, args...)
+	} else {
+		l.standardLog.Error("%s", msg)
+	}
 }
 
 // Debugf logs a debug message with formatting.

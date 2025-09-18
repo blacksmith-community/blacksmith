@@ -128,6 +128,7 @@ type Config struct {
 	Logger         Logger // Optional logger, will use default if nil
 }
 
+//nolint:funlen
 func NewClient(cfg Config) (*NetworkClient, error) {
 	var logger Logger
 	if cfg.Logger != nil {
@@ -218,6 +219,7 @@ func join(s ...string) string {
 	return strings.Join(s, ":")
 }
 
+//nolint:funlen
 func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.ProvisionDetails, host string, creds interface{}) error {
 	cli.logger.Info("Creating Shield schedule for instance %s (service: %s, plan: %s)",
 		instanceID, details.ServiceID, details.PlanID)
@@ -267,22 +269,22 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 		rmqURL := "http://" + net.JoinHostPort(host, "15672")
 		cli.logger.Debug("Configuring RabbitMQ target with URL: %s", rmqURL)
 
-		credsMap, ok := creds.(map[string]interface{})
-		if !ok {
+		credsMap, isValidMap := creds.(map[string]interface{})
+		if !isValidMap {
 			cli.logger.Error("Invalid credentials format for RabbitMQ, expected map[string]interface{}, got %T", creds)
 
 			return ErrInvalidCredentialsFormat
 		}
 
-		adminUser, ok := credsMap["admin_username"].(string)
-		if !ok {
+		adminUser, valid := credsMap["admin_username"].(string)
+		if !valid {
 			cli.logger.Error("Missing or invalid admin_username in RabbitMQ credentials")
 
 			return ErrMissingAdminUsername
 		}
 
-		adminPass, ok := credsMap["admin_password"].(string)
-		if !ok {
+		adminPass, valid := credsMap["admin_password"].(string)
+		if !valid {
 			cli.logger.Error("Missing or invalid admin_password in RabbitMQ credentials")
 
 			return ErrMissingAdminPassword

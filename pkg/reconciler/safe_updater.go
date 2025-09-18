@@ -36,7 +36,9 @@ func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance Instance
 
 	for _, path := range u.protectedPaths {
 		fullPath := fmt.Sprintf("secret/%s%s", instance.ID, path)
-		if data, err := u.getFromVault(fullPath); err == nil && len(data) > 0 {
+
+		data, err := u.getFromVault(fullPath)
+		if err == nil && len(data) > 0 {
 			protectedData[path] = data
 			u.logger.Infof("Protected path %s exists with %d entries, will preserve", fullPath, len(data))
 		}
@@ -76,7 +78,8 @@ func (u *SafeVaultUpdater) UpdateInstance(ctx context.Context, instance Instance
 	}
 
 	// Step 5: Final verification
-	if err := u.verifyInstanceIntegrity(instance.ID); err != nil {
+	err = u.verifyInstanceIntegrity(instance.ID)
+	if err != nil {
 		return nil, fmt.Errorf("instance integrity check failed: %w", err)
 	}
 
@@ -138,7 +141,8 @@ func (u *SafeVaultUpdater) verifyInstanceIntegrity(instanceID string) error {
 	// Check if this is a service that requires credentials
 	if serviceID, ok := indexData["service_id"].(string); ok {
 		if requiresCredentials(serviceID) {
-			if _, err := u.getFromVault(credsPath); err != nil {
+			_, err := u.getFromVault(credsPath)
+			if err != nil {
 				return fmt.Errorf("%w: %s", ErrInstanceMissingCredentials, instanceID)
 			}
 		}
@@ -146,7 +150,9 @@ func (u *SafeVaultUpdater) verifyInstanceIntegrity(instanceID string) error {
 
 	// Check manifest exists
 	manifestPath := instanceID + "/manifest"
-	if _, err := u.getFromVault(manifestPath); err != nil {
+
+	_, err = u.getFromVault(manifestPath)
+	if err != nil {
 		u.logger.Warningf("Instance %s missing manifest (may be okay for some services)", instanceID)
 	}
 

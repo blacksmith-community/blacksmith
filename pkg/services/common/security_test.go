@@ -11,26 +11,26 @@ func TestRateLimiter(t *testing.T) {
 	t.Parallel()
 
 	// Create a rate limiter with 2 requests per second
-	rl := common.NewRateLimiter(2, time.Second)
+	rateLimiter := common.NewRateLimiter(2, time.Second)
 
 	key := "test-key"
 
 	// First two requests should be allowed
-	if !rl.AllowRequest(key) {
+	if !rateLimiter.AllowRequest(key) {
 		t.Error("First request should be allowed")
 	}
 
-	if !rl.AllowRequest(key) {
+	if !rateLimiter.AllowRequest(key) {
 		t.Error("Second request should be allowed")
 	}
 
 	// Third request should be denied
-	if rl.AllowRequest(key) {
+	if rateLimiter.AllowRequest(key) {
 		t.Error("Third request should be denied")
 	}
 
 	// Check remaining requests
-	remaining := rl.GetRemainingRequests(key)
+	remaining := rateLimiter.GetRemainingRequests(key)
 	if remaining != 0 {
 		t.Errorf("Remaining requests = %d, expected 0", remaining)
 	}
@@ -39,12 +39,12 @@ func TestRateLimiter(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 
 	// Should be allowed again
-	if !rl.AllowRequest(key) {
+	if !rateLimiter.AllowRequest(key) {
 		t.Error("Request should be allowed after window expires")
 	}
 
 	// Check remaining requests
-	remaining = rl.GetRemainingRequests(key)
+	remaining = rateLimiter.GetRemainingRequests(key)
 	if remaining != 1 {
 		t.Errorf("Remaining requests = %d, expected 1", remaining)
 	}

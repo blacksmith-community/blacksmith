@@ -115,6 +115,46 @@ func (c *CredentialVCAPRecovery) RecoverCredentialsFromVCAP(ctx context.Context,
 	return ErrNoCredentialsFoundInVCAPServices
 }
 
+// BatchRecoverCredentials attempts to recover credentials for multiple instances.
+func (c *CredentialVCAPRecovery) BatchRecoverCredentials(ctx context.Context, instanceIDs []string) error {
+	recovered := 0
+	failed := 0
+	skipped := 0
+
+	for _, instanceID := range instanceIDs {
+		// Check if credentials already exist
+		credsPath := instanceID + "/credentials"
+		creds, err := c.vault.Get(credsPath)
+
+		if err == nil && len(creds) > 0 {
+			c.logger.Debugf("Instance %s already has credentials, skipping", instanceID)
+
+			skipped++
+
+			continue
+		}
+
+		// Attempt recovery
+		err = c.RecoverCredentialsFromVCAP(ctx, instanceID)
+		if err != nil {
+			c.logger.Errorf("Failed to recover credentials for %s: %s", instanceID, err)
+
+			failed++
+		} else {
+			recovered++
+		}
+	}
+
+	c.logger.Infof("VCAP credential recovery complete - Recovered: %d, Failed: %d, Skipped: %d",
+		recovered, failed, skipped)
+
+	if failed > 0 {
+		return fmt.Errorf("%w for %d instances", ErrFailedToRecoverCredentials, failed)
+	}
+
+	return nil
+}
+
 // extractCredentialsFromApp extracts service credentials from an app's VCAP_SERVICES.
 func (c *CredentialVCAPRecovery) extractCredentialsFromApp(ctx context.Context, appGUID, instanceID string) (map[string]interface{}, error) {
 	c.logger.Debugf("Fetching environment for app %s", appGUID)
@@ -163,57 +203,80 @@ func (c *CredentialVCAPRecovery) extractCredentialsFromApp(ctx context.Context, 
 
 // normalizeCredentials normalizes credentials format based on service type.
 func (c *CredentialVCAPRecovery) normalizeCredentials(creds map[string]interface{}, serviceType string) map[string]interface{} {
-	normalized := make(map[string]interface{})
-
-	// Copy all original credentials
-	for k, v := range creds {
-		normalized[k] = v
-	}
+	normalized := c.copyCredentials(creds)
 
 	// Add service-specific normalizations
 	switch serviceType {
 	case serviceTypeRabbitMQReconciler:
-		// Ensure standard fields exist
-		if username, ok := creds["username"]; ok {
-			normalized["admin_username"] = username
-		}
-
-		if password, ok := creds["password"]; ok {
-			normalized["admin_password"] = password
-		}
-
-		// Extract from protocols if available
-		if protocols, ok := creds["protocols"].(map[string]interface{}); ok {
-			if amqp, ok := protocols["amqp"].(map[string]interface{}); ok {
-				extractAMQPCredentials(amqp, normalized)
-			}
-		}
-
+		c.normalizeRabbitMQCredentials(creds, normalized)
 	case serviceTypeRedisReconciler:
-		// Ensure password field exists
-		if _, ok := normalized["password"]; !ok {
-			// Try to extract from URI if available
-			if uri, ok := creds["uri"].(string); ok {
-				// Parse redis://:[password]@[host]:[port]
-				if strings.HasPrefix(uri, "redis://") {
-					parts := strings.Split(strings.TrimPrefix(uri, "redis://"), "@")
-					if len(parts) == 2 && strings.HasPrefix(parts[0], ":") {
-						normalized["password"] = strings.TrimPrefix(parts[0], ":")
-					}
-				}
-			}
-		}
-
+		c.normalizeRedisCredentials(creds, normalized)
 	case serviceTypePostgreSQL, serviceTypeMySQL:
-		// Ensure database field exists
-		if _, ok := normalized["database"]; !ok {
-			if db, ok := creds["name"]; ok {
-				normalized["database"] = db
-			}
-		}
+		c.normalizeDatabaseCredentials(creds, normalized)
 	}
 
 	return normalized
+}
+
+// copyCredentials creates a copy of the credentials map.
+func (c *CredentialVCAPRecovery) copyCredentials(creds map[string]interface{}) map[string]interface{} {
+	normalized := make(map[string]interface{})
+	for k, v := range creds {
+		normalized[k] = v
+	}
+
+	return normalized
+}
+
+// normalizeRabbitMQCredentials handles RabbitMQ-specific credential normalization.
+func (c *CredentialVCAPRecovery) normalizeRabbitMQCredentials(creds, normalized map[string]interface{}) {
+	// Ensure standard fields exist
+	if username, ok := creds["username"]; ok {
+		normalized["admin_username"] = username
+	}
+
+	if password, ok := creds["password"]; ok {
+		normalized["admin_password"] = password
+	}
+
+	// Extract from protocols if available
+	if protocols, ok := creds["protocols"].(map[string]interface{}); ok {
+		if amqp, ok := protocols["amqp"].(map[string]interface{}); ok {
+			extractAMQPCredentials(amqp, normalized)
+		}
+	}
+}
+
+// normalizeRedisCredentials handles Redis-specific credential normalization.
+func (c *CredentialVCAPRecovery) normalizeRedisCredentials(creds, normalized map[string]interface{}) {
+	// Ensure password field exists
+	if _, ok := normalized["password"]; !ok {
+		c.extractRedisPasswordFromURI(creds, normalized)
+	}
+}
+
+// extractRedisPasswordFromURI extracts password from Redis URI.
+func (c *CredentialVCAPRecovery) extractRedisPasswordFromURI(creds, normalized map[string]interface{}) {
+	uri, ok := creds["uri"].(string)
+	if !ok || !strings.HasPrefix(uri, "redis://") {
+		return
+	}
+
+	// Parse redis://:[password]@[host]:[port]
+	parts := strings.Split(strings.TrimPrefix(uri, "redis://"), "@")
+	if len(parts) == 2 && strings.HasPrefix(parts[0], ":") {
+		normalized["password"] = strings.TrimPrefix(parts[0], ":")
+	}
+}
+
+// normalizeDatabaseCredentials handles database-specific credential normalization.
+func (c *CredentialVCAPRecovery) normalizeDatabaseCredentials(creds, normalized map[string]interface{}) {
+	// Ensure database field exists
+	if _, ok := normalized["database"]; !ok {
+		if db, ok := creds["name"]; ok {
+			normalized["database"] = db
+		}
+	}
 }
 
 // storeRecoveredCredentials stores recovered credentials in Vault.
@@ -260,64 +323,12 @@ func (c *CredentialVCAPRecovery) storeRecoveredCredentials(instanceID string, cr
 	return nil
 }
 
-// BatchRecoverCredentials attempts to recover credentials for multiple instances.
-func (c *CredentialVCAPRecovery) BatchRecoverCredentials(ctx context.Context, instanceIDs []string) error {
-	recovered := 0
-	failed := 0
-	skipped := 0
-
-	for _, instanceID := range instanceIDs {
-		// Check if credentials already exist
-		credsPath := instanceID + "/credentials"
-		creds, err := c.vault.Get(credsPath)
-
-		if err == nil && len(creds) > 0 {
-			c.logger.Debugf("Instance %s already has credentials, skipping", instanceID)
-
-			skipped++
-
-			continue
-		}
-
-		// Attempt recovery
-		if err := c.RecoverCredentialsFromVCAP(ctx, instanceID); err != nil {
-			c.logger.Errorf("Failed to recover credentials for %s: %s", instanceID, err)
-
-			failed++
-		} else {
-			recovered++
-		}
-	}
-
-	c.logger.Infof("VCAP credential recovery complete - Recovered: %d, Failed: %d, Skipped: %d",
-		recovered, failed, skipped)
-
-	if failed > 0 {
-		return fmt.Errorf("%w for %d instances", ErrFailedToRecoverCredentials, failed)
-	}
-
-	return nil
-}
-
 // extractAMQPCredentials extracts credentials from the AMQP protocol map.
 func extractAMQPCredentials(amqp map[string]interface{}, normalized map[string]interface{}) {
-	if host, ok := amqp["host"]; ok {
-		normalized["host"] = host
-	}
-
-	if port, ok := amqp["port"]; ok {
-		normalized["port"] = port
-	}
-
-	if username, ok := amqp["username"]; ok {
-		normalized["username"] = username
-	}
-
-	if password, ok := amqp["password"]; ok {
-		normalized["password"] = password
-	}
-
-	if vhost, ok := amqp["vhost"]; ok {
-		normalized["vhost"] = vhost
+	amqpFields := []string{"host", "port", "username", "password", "vhost"}
+	for _, field := range amqpFields {
+		if value, ok := amqp[field]; ok {
+			normalized[field] = value
+		}
 	}
 }

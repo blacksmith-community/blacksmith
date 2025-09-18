@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"blacksmith/bosh"
+	"blacksmith/internal/bosh"
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"
 )
@@ -183,34 +183,6 @@ func NewReconcilerManager(
 }
 
 // initializeRateLimiters initializes rate limiters for API calls.
-func (r *ReconcilerManager) initializeRateLimiters() {
-	r.boshLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.BOSH.RateLimit.RequestsPerSecond), r.config.APIs.BOSH.RateLimit.Burst)
-	r.cfLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.CF.RateLimit.RequestsPerSecond), r.config.APIs.CF.RateLimit.Burst)
-	r.vaultLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.Vault.RateLimit.RequestsPerSecond), r.config.APIs.Vault.RateLimit.Burst)
-}
-
-// initializeCircuitBreakers initializes circuit breakers for API calls.
-func (r *ReconcilerManager) initializeCircuitBreakers() {
-	r.boshBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
-		Name:        "bosh",
-		MaxRequests: uint32(r.config.APIs.BOSH.CircuitBreaker.MaxConcurrent),
-		Interval:    0, // Use default
-		Timeout:     r.config.APIs.BOSH.CircuitBreaker.Timeout,
-	})
-	r.cfBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
-		Name:        "cf",
-		MaxRequests: uint32(r.config.APIs.CF.CircuitBreaker.MaxConcurrent),
-		Interval:    0, // Use default
-		Timeout:     r.config.APIs.CF.CircuitBreaker.Timeout,
-	})
-	r.vaultBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
-		Name:        "vault",
-		MaxRequests: uint32(r.config.APIs.Vault.CircuitBreaker.MaxConcurrent),
-		Interval:    0, // Use default
-		Timeout:     r.config.APIs.Vault.CircuitBreaker.Timeout,
-	})
-}
-
 // Start starts the reconciler.
 func (r *ReconcilerManager) Start(ctx context.Context) error {
 	if !r.config.Enabled {
@@ -280,84 +252,6 @@ func (r *ReconcilerManager) Start(ctx context.Context) error {
 	})
 
 	return nil
-}
-
-// validateComponents checks if critical components are initialized.
-func (r *ReconcilerManager) validateComponents() error {
-	var errors []string
-
-	// Check Vault
-	if r.vault == nil {
-		errors = append(errors, "Vault not initialized")
-
-		r.logger.Errorf("Vault is not initialized - credential operations will fail")
-	}
-
-	// Check BOSH
-	if r.bosh == nil {
-		errors = append(errors, "BOSH director not initialized")
-
-		r.logger.Errorf("BOSH director is not initialized - deployment scanning will be disabled")
-	}
-
-	// Check scanner
-	if r.Scanner == nil {
-		errors = append(errors, "BOSH scanner not initialized")
-
-		r.logger.Errorf("BOSH scanner is not initialized - deployment scanning will be disabled")
-	}
-
-	// Check updater
-	if r.Updater == nil {
-		errors = append(errors, "Updater not initialized")
-
-		r.logger.Errorf("Updater is not initialized - instance updates will be disabled")
-	}
-
-	// Log CF manager status (not critical)
-	if r.cfManager == nil {
-		r.logger.Infof("CF manager not configured - CF discovery will be skipped")
-	} else {
-		r.logger.Infof("CF manager configured - CF discovery enabled")
-	}
-
-	// Check circuit breakers (not critical, can run without them)
-	if r.boshBreaker == nil {
-		r.logger.Infof("BOSH circuit breaker not initialized - running without circuit protection")
-	}
-
-	if r.vaultBreaker == nil {
-		r.logger.Infof("Vault circuit breaker not initialized - running without circuit protection")
-	}
-
-	if r.cfBreaker == nil && r.cfManager != nil {
-		r.logger.Infof("CF circuit breaker not initialized - running without circuit protection")
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("%w: %s", ErrMissingCriticalComponents, strings.Join(errors, ", "))
-	}
-
-	return nil
-}
-
-// reconciliationLoop runs periodic reconciliation with multiple run prevention.
-func (r *ReconcilerManager) reconciliationLoop(ctx context.Context) {
-	defer r.wg.Done()
-
-	ticker := time.NewTicker(r.config.Interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			r.RunReconciliation(ctx)
-		case <-ctx.Done():
-			r.logger.Infof("Reconciliation loop stopping")
-
-			return
-		}
-	}
 }
 
 // RunReconciliation performs a single reconciliation run with safety checks.
@@ -431,6 +325,342 @@ func (r *ReconcilerManager) RunReconciliation(ctx context.Context) {
 	})
 }
 
+// ProcessBatchWithConcurrency processes a batch with controlled concurrency.
+func (r *ReconcilerManager) ProcessBatchWithConcurrency(
+	ctx context.Context,
+	batch []DeploymentInfo,
+	cfInstances []CFServiceInstanceDetails,
+) ([]InstanceData, error) {
+	channels := r.createProcessingChannels(len(batch))
+
+	r.startDeploymentProcessing(ctx, batch, cfInstances, channels)
+	r.waitForProcessingCompletion(channels.waitGroup, channels.resultChan, channels.errorChan)
+
+	return r.collectProcessingResults(ctx, channels)
+}
+
+// ProcessingChannels holds channels used for batch processing.
+type ProcessingChannels struct {
+	semaphore  chan struct{}
+	resultChan chan InstanceData
+	errorChan  chan error
+	waitGroup  *sync.WaitGroup
+}
+
+// ForceReconcile forces an immediate reconciliation with safety checks.
+func (r *ReconcilerManager) ForceReconcile() error {
+	r.logger.Infof("Force reconciliation requested")
+
+	// Check if already running
+	if r.IsReconciling.Load() {
+		return ErrReconciliationInProgress
+	}
+
+	// Start reconciliation in background with background context
+	go r.RunReconciliation(context.Background())
+
+	return nil
+}
+
+// Stop gracefully stops the reconciler.
+func (r *ReconcilerManager) Stop() error {
+	r.shutdownOnce.Do(func() {
+		r.logger.Infof("Stopping reconciler")
+
+		// Cancel context to signal shutdown
+		r.cancel()
+
+		// Wait for graceful shutdown with timeout
+		done := make(chan struct{})
+
+		go func() {
+			r.wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			r.logger.Infof("Enhanced reconciler stopped gracefully")
+		case <-time.After(r.config.Timeouts.ShutdownGracePeriod):
+			r.logger.Warningf("Enhanced reconciler shutdown timeout exceeded")
+		}
+
+		// Stop worker pool
+		r.workerPool.Stop()
+
+		// Update status
+		r.setStatus(Status{
+			Running:         false,
+			LastRunTime:     time.Time{},
+			LastRunDuration: 0,
+			InstancesFound:  0,
+			InstancesSynced: 0,
+			Errors:          nil,
+		})
+	})
+
+	return nil
+}
+
+func (r *ReconcilerManager) FilterServiceDeployments(deployments []DeploymentInfo) []DeploymentInfo {
+	var filtered []DeploymentInfo
+
+	for _, dep := range deployments {
+		if r.IsServiceDeployment(dep.Name) {
+			filtered = append(filtered, dep)
+		}
+	}
+
+	return filtered
+}
+
+// IsServiceDeployment checks if a deployment name indicates it's a service deployment.
+func (r *ReconcilerManager) IsServiceDeployment(deploymentName string) bool {
+	// Check if deployment name matches service deployment pattern
+	// Format is typically: service-plan-instanceID
+
+	// Quick checks for non-service deployments
+	if deploymentName == "" {
+		return false
+	}
+
+	// System deployments to exclude
+	systemDeployments := []string{
+		"bosh",
+		"cf",
+		"concourse",
+		"prometheus",
+		"grafana",
+		"shield",
+		"vault",
+	}
+
+	for _, sys := range systemDeployments {
+		if deploymentName == sys || strings.HasPrefix(deploymentName, sys+"-") {
+			return false
+		}
+	}
+
+	// Check if it matches the service-plan-uuid pattern
+	// UUID pattern: 8-4-4-4-12 hexadecimal characters
+	uuidPattern := `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+	matched, _ := regexp.MatchString(uuidPattern, deploymentName)
+
+	return matched
+}
+
+func (r *ReconcilerManager) GetStatus() Status {
+	r.statusMu.RLock()
+	defer r.statusMu.RUnlock()
+
+	return r.status
+}
+
+func (r *ReconcilerManager) initializeRateLimiters() {
+	r.boshLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.BOSH.RateLimit.RequestsPerSecond), r.config.APIs.BOSH.RateLimit.Burst)
+	r.cfLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.CF.RateLimit.RequestsPerSecond), r.config.APIs.CF.RateLimit.Burst)
+	r.vaultLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.Vault.RateLimit.RequestsPerSecond), r.config.APIs.Vault.RateLimit.Burst)
+}
+
+// initializeCircuitBreakers initializes circuit breakers for API calls.
+func (r *ReconcilerManager) initializeCircuitBreakers() {
+	r.boshBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "bosh",
+		MaxRequests: r.safeUint32(r.config.APIs.BOSH.CircuitBreaker.MaxConcurrent),
+		Interval:    0, // Use default
+		Timeout:     r.config.APIs.BOSH.CircuitBreaker.Timeout,
+	})
+
+	r.cfBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "cf",
+		MaxRequests: r.safeUint32(r.config.APIs.CF.CircuitBreaker.MaxConcurrent),
+		Interval:    0, // Use default
+		Timeout:     r.config.APIs.CF.CircuitBreaker.Timeout,
+	})
+
+	r.vaultBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "vault",
+		MaxRequests: r.safeUint32(r.config.APIs.Vault.CircuitBreaker.MaxConcurrent),
+		Interval:    0, // Use default
+		Timeout:     r.config.APIs.Vault.CircuitBreaker.Timeout,
+	})
+}
+
+const (
+	defaultCircuitBreakerMaxRequests = 10
+	maxUint32Value                   = 4294967295
+)
+
+// safeUint32 safely converts an int to uint32, preventing integer overflow.
+func (r *ReconcilerManager) safeUint32(value int) uint32 {
+	if value < 0 {
+		return defaultCircuitBreakerMaxRequests // Default fallback for negative values
+	}
+
+	if value > maxUint32Value {
+		return maxUint32Value // Max uint32 value
+	}
+
+	return uint32(value)
+}
+
+// validateComponents checks if critical components are initialized.
+func (r *ReconcilerManager) validateComponents() error {
+	var errors []string
+
+	// Check Vault
+	if r.vault == nil {
+		errors = append(errors, "Vault not initialized")
+
+		r.logger.Errorf("Vault is not initialized - credential operations will fail")
+	}
+
+	// Check BOSH
+	if r.bosh == nil {
+		errors = append(errors, "BOSH director not initialized")
+
+		r.logger.Errorf("BOSH director is not initialized - deployment scanning will be disabled")
+	}
+
+	// Check scanner
+	if r.Scanner == nil {
+		errors = append(errors, "BOSH scanner not initialized")
+
+		r.logger.Errorf("BOSH scanner is not initialized - deployment scanning will be disabled")
+	}
+
+	// Check updater
+	if r.Updater == nil {
+		errors = append(errors, "Updater not initialized")
+
+		r.logger.Errorf("Updater is not initialized - instance updates will be disabled")
+	}
+
+	// Log CF manager status (not critical)
+	if r.cfManager == nil {
+		r.logger.Infof("CF manager not configured - CF discovery will be skipped")
+	} else {
+		r.logger.Infof("CF manager configured - CF discovery enabled")
+	}
+
+	// Check circuit breakers (not critical, can run without them)
+	if r.boshBreaker == nil {
+		r.logger.Infof("BOSH circuit breaker not initialized - running without circuit protection")
+	}
+
+	if r.vaultBreaker == nil {
+		r.logger.Infof("Vault circuit breaker not initialized - running without circuit protection")
+	}
+
+	if r.cfBreaker == nil && r.cfManager != nil {
+		r.logger.Infof("CF circuit breaker not initialized - running without circuit protection")
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("%w: %s", ErrMissingCriticalComponents, strings.Join(errors, ", "))
+	}
+
+	return nil
+}
+
+func (r *ReconcilerManager) setStatus(status Status) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+
+	r.status = status
+}
+
+func (r *ReconcilerManager) updateStatusError(err error) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+
+	r.status.Errors = append(r.status.Errors, err)
+}
+
+// PerformanceTracker implementation
+
+func newPerformanceTracker() *PerformanceTracker {
+	return &PerformanceTracker{
+		apiLatencies: make(map[string]time.Duration),
+		errorCounts:  make(map[string]int),
+		successRate:  1.0,
+	}
+}
+
+func (p *PerformanceTracker) Update(duration time.Duration, success bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.samples++
+	p.lastBatchDuration = duration
+
+	// Update moving average
+	if p.averageBatchDuration == 0 {
+		p.averageBatchDuration = duration
+	} else {
+		p.averageBatchDuration = (p.averageBatchDuration*time.Duration(p.samples-1) + duration) / time.Duration(p.samples)
+	}
+
+	// Update success rate
+	if success {
+		p.successRate = (p.successRate*float64(p.samples-1) + 1.0) / float64(p.samples)
+	} else {
+		p.successRate = (p.successRate * float64(p.samples-1)) / float64(p.samples)
+	}
+}
+
+func (p *PerformanceTracker) GetScore() float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	// Simple scoring based on success rate and performance
+	// High success rate and low latency = high score
+	score := p.successRate
+
+	// Adjust based on average duration (penalize slow operations)
+	if p.averageBatchDuration > 30*time.Second {
+		score *= 0.8
+	} else if p.averageBatchDuration > 60*time.Second {
+		score *= 0.5
+	}
+
+	return score
+}
+
+// Helper functions
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+
+	return b
+}
+
+func randomFloat() float64 {
+	// Implementation would use crypto/rand for better randomness
+	return deploymentConfidenceLow // Placeholder
+}
+
+// reconciliationLoop runs periodic reconciliation with multiple run prevention.
+func (r *ReconcilerManager) reconciliationLoop(ctx context.Context) {
+	defer r.wg.Done()
+
+	ticker := time.NewTicker(r.config.Interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			r.RunReconciliation(ctx)
+		case <-ctx.Done():
+			r.logger.Infof("Reconciliation loop stopping")
+
+			return
+		}
+	}
+}
+
 // executeReconciliationPhases runs all reconciliation phases with proper rate limiting.
 func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, runID uint64) error {
 	// Phase 1: Discover CF instances with rate limiting
@@ -452,7 +682,8 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 	}
 
 	// Phase 5: Synchronize index
-	if err := r.synchronizeIndex(ctx, updatedInstances); err != nil {
+	err = r.synchronizeIndex(ctx, updatedInstances)
+	if err != nil {
 		return fmt.Errorf("phase 5 failed: %w", err)
 	}
 
@@ -488,11 +719,11 @@ func (r *ReconcilerManager) discoverCFInstancesWithRateLimit(ctx context.Context
 
 	if r.cfBreaker != nil {
 		result, err = r.cfBreaker.Execute(func() (interface{}, error) {
-			return r.discoverCFServiceInstances(ctx, nil)
+			return r.discoverCFServiceInstances(ctx)
 		})
 	} else {
 		// Execute directly without circuit breaker
-		result, err = r.discoverCFServiceInstances(ctx, nil)
+		result, err = r.discoverCFServiceInstances(ctx)
 	}
 
 	if err != nil {
@@ -611,79 +842,102 @@ func (r *ReconcilerManager) processBatchesAdaptive(
 	return allInstances, nil
 }
 
-// ProcessBatchWithConcurrency processes a batch with controlled concurrency.
-func (r *ReconcilerManager) ProcessBatchWithConcurrency(
-	ctx context.Context,
-	batch []DeploymentInfo,
-	cfInstances []CFServiceInstanceDetails,
-) ([]InstanceData, error) {
-	// Ensure configuration is valid to prevent channel panics
+// getValidConcurrency ensures concurrency configuration is valid.
+func (r *ReconcilerManager) getValidConcurrency() int {
 	maxConcurrent := r.config.Concurrency.MaxConcurrent
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1 // Safe fallback
 	}
 
-	semaphore := make(chan struct{}, maxConcurrent)
-	resultChan := make(chan InstanceData, len(batch))
-	errorChan := make(chan error, len(batch))
+	return maxConcurrent
+}
 
-	var waitGroup sync.WaitGroup
+// createProcessingChannels creates and initializes processing channels.
+func (r *ReconcilerManager) createProcessingChannels(batchSize int) *ProcessingChannels {
+	return &ProcessingChannels{
+		semaphore:  make(chan struct{}, r.getValidConcurrency()),
+		resultChan: make(chan InstanceData, batchSize),
+		errorChan:  make(chan error, batchSize),
+		waitGroup:  &sync.WaitGroup{},
+	}
+}
 
+// startDeploymentProcessing starts goroutines to process deployments.
+func (r *ReconcilerManager) startDeploymentProcessing(ctx context.Context, batch []DeploymentInfo, cfInstances []CFServiceInstanceDetails, channels *ProcessingChannels) {
 	for _, deployment := range batch {
-		waitGroup.Add(1)
+		channels.waitGroup.Add(1)
 
-		go func(dep DeploymentInfo) {
-			defer waitGroup.Done()
+		go r.processDeploymentConcurrently(ctx, deployment, cfInstances, channels)
+	}
+}
 
-			// Panic recovery for goroutine
-			defer func() {
-				if err := recover(); err != nil {
-					r.logger.Errorf("PANIC in deployment processing goroutine: %v", err)
+// processDeploymentConcurrently processes a single deployment in a goroutine.
+func (r *ReconcilerManager) processDeploymentConcurrently(ctx context.Context, deployment DeploymentInfo, cfInstances []CFServiceInstanceDetails, channels *ProcessingChannels) {
+	defer channels.waitGroup.Done()
+	defer r.handleDeploymentPanic(deployment, channels.errorChan)
 
-					errorChan <- fmt.Errorf("%w processing deployment %s: %v", ErrPanic, dep.Name, err)
-				}
-			}()
-
-			// Acquire semaphore
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				errorChan <- ctx.Err()
-
-				return
-			}
-
-			// Rate limit BOSH API calls (with nil check)
-			if r.boshLimiter != nil {
-				err := r.boshLimiter.Wait(ctx)
-				if err != nil {
-					errorChan <- err
-
-					return
-				}
-			}
-
-			// Process deployment
-			instance, err := r.processDeployment(ctx, dep, cfInstances)
-			if err != nil {
-				errorChan <- err
-
-				return
-			}
-
-			resultChan <- instance
-		}(deployment)
+	if !r.acquireSemaphore(ctx, channels.semaphore, channels.errorChan) {
+		return
 	}
 
-	// Wait for all goroutines to complete
+	defer func() { <-channels.semaphore }()
+
+	if !r.waitForRateLimit(ctx, channels.errorChan) {
+		return
+	}
+
+	instance := r.processDeployment(ctx, deployment, cfInstances)
+	channels.resultChan <- instance
+}
+
+// handleDeploymentPanic handles panic recovery for deployment processing.
+func (r *ReconcilerManager) handleDeploymentPanic(deployment DeploymentInfo, errorChan chan<- error) {
+	if err := recover(); err != nil {
+		r.logger.Errorf("PANIC in deployment processing goroutine: %v", err)
+
+		errorChan <- fmt.Errorf("%w processing deployment %s: %v", ErrPanic, deployment.Name, err)
+	}
+}
+
+// acquireSemaphore attempts to acquire a semaphore slot.
+func (r *ReconcilerManager) acquireSemaphore(ctx context.Context, semaphore chan struct{}, errorChan chan<- error) bool {
+	select {
+	case semaphore <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		errorChan <- ctx.Err()
+
+		return false
+	}
+}
+
+// waitForRateLimit waits for rate limiter if configured.
+func (r *ReconcilerManager) waitForRateLimit(ctx context.Context, errorChan chan<- error) bool {
+	if r.boshLimiter == nil {
+		return true
+	}
+
+	err := r.boshLimiter.Wait(ctx)
+	if err != nil {
+		errorChan <- err
+
+		return false
+	}
+
+	return true
+}
+
+// waitForProcessingCompletion waits for all processing to complete and closes channels.
+func (r *ReconcilerManager) waitForProcessingCompletion(waitGroup *sync.WaitGroup, resultChan chan InstanceData, errorChan chan error) {
 	go func() {
 		waitGroup.Wait()
 		close(resultChan)
 		close(errorChan)
 	}()
+}
 
-	// Collect results
+// collectProcessingResults collects results from processing channels.
+func (r *ReconcilerManager) collectProcessingResults(ctx context.Context, channels *ProcessingChannels) ([]InstanceData, error) {
 	var (
 		instances []InstanceData
 		errors    []error
@@ -691,9 +945,8 @@ func (r *ReconcilerManager) ProcessBatchWithConcurrency(
 
 	for {
 		select {
-		case instance, ok := <-resultChan:
+		case instance, ok := <-channels.resultChan:
 			if !ok {
-				// Check for errors
 				if len(errors) > 0 {
 					r.logger.Warningf("Batch processing completed with %d errors", len(errors))
 				}
@@ -702,7 +955,7 @@ func (r *ReconcilerManager) ProcessBatchWithConcurrency(
 			}
 
 			instances = append(instances, instance)
-		case err := <-errorChan:
+		case err := <-channels.errorChan:
 			if err != nil {
 				errors = append(errors, err)
 			}
@@ -766,61 +1019,6 @@ func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instan
 	}
 
 	return updated, nil
-}
-
-// ForceReconcile forces an immediate reconciliation with safety checks.
-func (r *ReconcilerManager) ForceReconcile() error {
-	r.logger.Infof("Force reconciliation requested")
-
-	// Check if already running
-	if r.IsReconciling.Load() {
-		return ErrReconciliationInProgress
-	}
-
-	// Start reconciliation in background with background context
-	go r.RunReconciliation(context.Background())
-
-	return nil
-}
-
-// Stop gracefully stops the reconciler.
-func (r *ReconcilerManager) Stop() error {
-	r.shutdownOnce.Do(func() {
-		r.logger.Infof("Stopping reconciler")
-
-		// Cancel context to signal shutdown
-		r.cancel()
-
-		// Wait for graceful shutdown with timeout
-		done := make(chan struct{})
-
-		go func() {
-			r.wg.Wait()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			r.logger.Infof("Enhanced reconciler stopped gracefully")
-		case <-time.After(r.config.Timeouts.ShutdownGracePeriod):
-			r.logger.Warningf("Enhanced reconciler shutdown timeout exceeded")
-		}
-
-		// Stop worker pool
-		r.workerPool.Stop()
-
-		// Update status
-		r.setStatus(Status{
-			Running:         false,
-			LastRunTime:     time.Time{},
-			LastRunDuration: 0,
-			InstancesFound:  0,
-			InstancesSynced: 0,
-			Errors:          nil,
-		})
-	})
-
-	return nil
 }
 
 // Helper functions
@@ -963,19 +1161,7 @@ func (r *ReconcilerManager) updatePerformanceMetrics(duration time.Duration) {
 	r.performance.Update(duration, true)
 }
 
-func (r *ReconcilerManager) FilterServiceDeployments(deployments []DeploymentInfo) []DeploymentInfo {
-	var filtered []DeploymentInfo
-
-	for _, dep := range deployments {
-		if r.IsServiceDeployment(dep.Name) {
-			filtered = append(filtered, dep)
-		}
-	}
-
-	return filtered
-}
-
-func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment DeploymentInfo, cfInstances []CFServiceInstanceDetails) (InstanceData, error) {
+func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment DeploymentInfo, cfInstances []CFServiceInstanceDetails) InstanceData {
 	r.logger.Debugf("Processing deployment: %s", deployment.Name)
 
 	detail := r.getDeploymentDetail(ctx, deployment)
@@ -986,7 +1172,7 @@ func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment De
 	r.enrichFromCFData(inst.ID, cfInstances, &inst)
 	r.markUnmatchedService(&inst)
 
-	return inst, nil
+	return inst
 }
 
 func (r *ReconcilerManager) getDeploymentDetail(ctx context.Context, deployment DeploymentInfo) DeploymentDetail {
@@ -1125,14 +1311,14 @@ func (r *ReconcilerManager) synchronizeIndex(ctx context.Context, instances []In
 }
 
 // discoverCFServiceInstances discovers service instances from Cloud Foundry.
-func (r *ReconcilerManager) discoverCFServiceInstances(_ context.Context, filter interface{}) ([]CFServiceInstanceDetails, error) {
+func (r *ReconcilerManager) discoverCFServiceInstances(_ context.Context) ([]CFServiceInstanceDetails, error) {
 	if r.cfManager == nil {
 		r.logger.Debugf("CF manager not configured, skipping CF service discovery")
 
 		return []CFServiceInstanceDetails{}, nil
 	}
 
-	// Narrow interface for CF discovery supported by CFConnectionManager in main package
+	// Narrow interface for CF discovery supported by Manager in internal/cf package
 	type cfDiscovery interface {
 		DiscoverAllServiceInstances(brokerServices []string) ([]CFServiceInstanceDetails, error)
 	}
@@ -1166,125 +1352,4 @@ func (r *ReconcilerManager) discoverCFServiceInstances(_ context.Context, filter
 	r.logger.Infof("CF manager present but does not support discovery; skipping")
 
 	return []CFServiceInstanceDetails{}, nil
-}
-
-// IsServiceDeployment checks if a deployment name indicates it's a service deployment.
-func (r *ReconcilerManager) IsServiceDeployment(deploymentName string) bool {
-	// Check if deployment name matches service deployment pattern
-	// Format is typically: service-plan-instanceID
-
-	// Quick checks for non-service deployments
-	if deploymentName == "" {
-		return false
-	}
-
-	// System deployments to exclude
-	systemDeployments := []string{
-		"bosh",
-		"cf",
-		"concourse",
-		"prometheus",
-		"grafana",
-		"shield",
-		"vault",
-	}
-
-	for _, sys := range systemDeployments {
-		if deploymentName == sys || strings.HasPrefix(deploymentName, sys+"-") {
-			return false
-		}
-	}
-
-	// Check if it matches the service-plan-uuid pattern
-	// UUID pattern: 8-4-4-4-12 hexadecimal characters
-	uuidPattern := `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
-	matched, _ := regexp.MatchString(uuidPattern, deploymentName)
-
-	return matched
-}
-
-func (r *ReconcilerManager) GetStatus() Status {
-	r.statusMu.RLock()
-	defer r.statusMu.RUnlock()
-
-	return r.status
-}
-
-func (r *ReconcilerManager) setStatus(status Status) {
-	r.statusMu.Lock()
-	defer r.statusMu.Unlock()
-
-	r.status = status
-}
-
-func (r *ReconcilerManager) updateStatusError(err error) {
-	r.statusMu.Lock()
-	defer r.statusMu.Unlock()
-
-	r.status.Errors = append(r.status.Errors, err)
-}
-
-// PerformanceTracker implementation
-
-func newPerformanceTracker() *PerformanceTracker {
-	return &PerformanceTracker{
-		apiLatencies: make(map[string]time.Duration),
-		errorCounts:  make(map[string]int),
-		successRate:  1.0,
-	}
-}
-
-func (p *PerformanceTracker) Update(duration time.Duration, success bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	p.samples++
-	p.lastBatchDuration = duration
-
-	// Update moving average
-	if p.averageBatchDuration == 0 {
-		p.averageBatchDuration = duration
-	} else {
-		p.averageBatchDuration = (p.averageBatchDuration*time.Duration(p.samples-1) + duration) / time.Duration(p.samples)
-	}
-
-	// Update success rate
-	if success {
-		p.successRate = (p.successRate*float64(p.samples-1) + 1.0) / float64(p.samples)
-	} else {
-		p.successRate = (p.successRate * float64(p.samples-1)) / float64(p.samples)
-	}
-}
-
-func (p *PerformanceTracker) GetScore() float64 {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	// Simple scoring based on success rate and performance
-	// High success rate and low latency = high score
-	score := p.successRate
-
-	// Adjust based on average duration (penalize slow operations)
-	if p.averageBatchDuration > 30*time.Second {
-		score *= 0.8
-	} else if p.averageBatchDuration > 60*time.Second {
-		score *= 0.5
-	}
-
-	return score
-}
-
-// Helper functions
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-
-	return b
-}
-
-func randomFloat() float64 {
-	// Implementation would use crypto/rand for better randomness
-	return deploymentConfidenceLow // Placeholder
 }

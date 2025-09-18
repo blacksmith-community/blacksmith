@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	// Default timeout for RabbitMQ operations
+	// Default timeout for RabbitMQ operations.
 	defaultRabbitMQOperationTimeout = 30 * time.Second
 )
 
@@ -39,14 +39,9 @@ func NewHandler(logger func(string, ...interface{})) *Handler {
 func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credentials, opts common.ConnectionOptions) (*common.TestResult, error) {
 	start := time.Now()
 
-	creds, err := NewCredentials(vaultCreds)
-	if err != nil {
-		return &common.TestResult{
-			Success:   false,
-			Error:     err.Error(),
-			Timestamp: start.Unix(),
-			Duration:  time.Since(start),
-		}, nil //nolint:nilerr // Invalid credentials is a valid test result, not an error
+	creds, credsErr := NewCredentials(vaultCreds)
+	if credsErr != nil {
+		return nil, fmt.Errorf("invalid credentials: %w", credsErr)
 	}
 
 	// Use override parameters if provided
@@ -58,12 +53,7 @@ func (h *Handler) TestConnection(ctx context.Context, vaultCreds common.Credenti
 	}
 
 	if testErr != nil {
-		return &common.TestResult{
-			Success:   false,
-			Error:     testErr.Error(),
-			Timestamp: start.Unix(),
-			Duration:  time.Since(start),
-		}, nil //nolint:nilerr // Connection test failure is a valid test result, not an error
+		return nil, fmt.Errorf("connection test failed: %w", testErr)
 	}
 
 	// Determine which user and vhost were actually used for the connection
@@ -206,6 +196,7 @@ func (h *Handler) HandleConsume(ctx context.Context, instanceID string, vaultCre
 }
 
 // HandleConsumeWithOptions consumes messages from RabbitMQ with connection options.
+//nolint:funlen
 func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ConsumeRequest, opts common.ConnectionOptions) (*ConsumeResult, error) {
 	creds, err := NewCredentials(vaultCreds)
 	if err != nil {
@@ -372,14 +363,14 @@ func (h *Handler) HandleQueueOpsWithOptions(ctx context.Context, instanceID stri
 	}
 
 	// Get connection with override support
-	_, ch, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
+	_, channel, err := h.connManager.GetConnectionWithOptions(instanceID, creds, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	switch req.Operation {
 	case "create":
-		_, err = ch.QueueDeclare(
+		_, err = channel.QueueDeclare(
 			req.Queue,   // name
 			req.Durable, // durable
 			false,       // auto-delete
@@ -392,7 +383,7 @@ func (h *Handler) HandleQueueOpsWithOptions(ctx context.Context, instanceID stri
 		}
 
 	case "delete":
-		_, err = ch.QueueDelete(
+		_, err = channel.QueueDelete(
 			req.Queue, // name
 			false,     // if-unused
 			false,     // if-empty
@@ -403,7 +394,7 @@ func (h *Handler) HandleQueueOpsWithOptions(ctx context.Context, instanceID stri
 		}
 
 	case "purge":
-		_, err = ch.QueuePurge(
+		_, err = channel.QueuePurge(
 			req.Queue, // name
 			false,     // no-wait
 		)

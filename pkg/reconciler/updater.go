@@ -61,6 +61,617 @@ func NewVaultUpdaterWithCF(vault interface{}, logger Logger, backupConfig Backup
 	}
 }
 
+func (u *VaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData) (*InstanceData, error) {
+	u.logger.Debugf("Updating instance %s in vault", instance.ID)
+
+	// Validate instance ID
+	err := u.validateInstanceID(instance.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create backup if enabled
+	u.createBackupIfEnabled(instance.ID)
+
+	// Initialize instance metadata if needed
+	if instance.Metadata == nil {
+		instance.Metadata = make(map[string]interface{})
+	}
+
+	// Process credentials and bindings
+	err = u.processCredentialsAndBindings(ctx, &instance)
+	if err != nil {
+		return &instance, err
+	}
+
+	// Store all instance data
+	err = u.storeInstanceData(instance)
+	if err != nil {
+		return nil, err
+	}
+
+	u.logger.Infof("Successfully updated instance %s in vault", instance.ID)
+
+	return &instance, nil
+}
+
+// UpdateBatch updates multiple instances in parallel with concurrency control.
+//nolint:funlen
+func (u *VaultUpdater) UpdateBatch(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
+	if len(instances) == 0 {
+		return instances, nil
+	}
+
+	u.logger.Infof("Starting batch update of %d instances", len(instances))
+
+	// Determine batch size (default to 10 if not configured)
+	batchSize := 10
+	if u.config != nil && u.config.Batch.MaxSize > 0 {
+		batchSize = u.config.Batch.MaxSize
+	}
+
+	// Process instances in batches
+	var (
+		allUpdated []InstanceData
+		allErrors  []error
+	)
+
+	for index := 0; index < len(instances); index += batchSize {
+		end := index + batchSize
+		if end > len(instances) {
+			end = len(instances)
+		}
+
+		batch := instances[index:end]
+		u.logger.Debugf("Processing batch of %d instances (batch %d/%d)",
+			len(batch), (index/batchSize)+1, (len(instances)+batchSize-1)/batchSize)
+
+		// Process batch in parallel using goroutines
+		type result struct {
+			instance InstanceData
+			err      error
+		}
+
+		results := make(chan result, len(batch))
+
+		var waitGroup sync.WaitGroup
+
+		for _, inst := range batch {
+			waitGroup.Add(1)
+
+			go func(instance InstanceData) {
+				defer waitGroup.Done()
+
+				// Update the instance
+				updatedInst, err := u.UpdateInstance(ctx, instance)
+
+				if updatedInst != nil {
+					results <- result{
+						instance: *updatedInst,
+						err:      err,
+					}
+				} else {
+					results <- result{
+						instance: instance,
+						err:      err,
+					}
+				}
+			}(inst)
+		}
+
+		// Wait for all goroutines to complete
+		go func() {
+			waitGroup.Wait()
+			close(results)
+		}()
+
+		// Collect results
+		for res := range results {
+			if res.err != nil {
+				u.logger.Errorf("Failed to update instance %s: %v", res.instance.ID, res.err)
+				allErrors = append(allErrors, res.err)
+			} else {
+				allUpdated = append(allUpdated, res.instance)
+			}
+		}
+	}
+
+	u.logger.Infof("Batch update completed: %d successful, %d failed", len(allUpdated), len(allErrors))
+
+	// Return partial success even if some failed
+	if len(allErrors) > 0 && len(allUpdated) == 0 {
+		return nil, fmt.Errorf("all batch updates failed: %w", allErrors[0])
+	}
+
+	return allUpdated, nil
+}
+
+// CheckBindingHealth verifies that all bindings for an instance are healthy.
+func (u *VaultUpdater) CheckBindingHealth(instanceID string) ([]BindingInfo, []string, error) {
+	u.logger.Debugf("Checking binding health for instance %s", instanceID)
+
+	bindingsData, err := u.getBindingsData(instanceID)
+	if err != nil {
+		return nil, nil, nil //nolint:nilerr // No bindings is not an error condition
+	}
+
+	var (
+		healthyBindings     []BindingInfo
+		unhealthyBindingIDs []string
+	)
+
+	for bindingID, bindingData := range bindingsData {
+		binding := u.createBaseBinding(instanceID, bindingID)
+
+		credentials, err := u.getBindingCredentials(instanceID, bindingID)
+		if err != nil {
+			unhealthyBindingIDs = append(unhealthyBindingIDs, bindingID)
+
+			continue
+		}
+
+		if u.validateCredentialCompleteness(credentials) {
+			u.processHealthyBinding(&binding, bindingData)
+			healthyBindings = append(healthyBindings, binding)
+		} else {
+			u.processUnhealthyBinding(&binding, bindingID, instanceID)
+			unhealthyBindingIDs = append(unhealthyBindingIDs, bindingID)
+		}
+	}
+
+	u.logger.Debugf("Binding health check complete for instance %s: %d healthy, %d need reconstruction",
+		instanceID, len(healthyBindings), len(unhealthyBindingIDs))
+
+	return healthyBindings, unhealthyBindingIDs, nil
+}
+
+// StoreBindingCredentials stores binding credentials in the structured vault format.
+func (u *VaultUpdater) StoreBindingCredentials(instanceID, bindingID string, credentials interface{}, metadata map[string]interface{}) error {
+	u.logger.Debugf("Storing binding credentials for instance %s, binding %s", instanceID, bindingID)
+
+	// Convert credentials to map[string]interface{} if needed
+	var credentialsMap map[string]interface{}
+	if credMap, ok := credentials.(map[string]interface{}); ok {
+		credentialsMap = credMap
+	} else {
+		return ErrCredentialsMustBeMap
+	}
+
+	// Store credentials at the standard path
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+
+	err := u.putToVault(credentialsPath, credentialsMap)
+	if err != nil {
+		return fmt.Errorf("failed to store binding credentials: %w", err)
+	}
+
+	// Store binding metadata
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+
+	// Get existing metadata to preserve history
+	existingMetadata, _ := u.getFromVault(metadataPath)
+	if existingMetadata == nil {
+		existingMetadata = make(map[string]interface{})
+	}
+
+	// Merge new metadata with existing
+	for key, value := range metadata {
+		existingMetadata[key] = value
+	}
+
+	// Add binding storage timestamps
+	existingMetadata["stored_at"] = time.Now().Format(time.RFC3339)
+	existingMetadata["last_updated"] = time.Now().Format(time.RFC3339)
+	existingMetadata["stored_by"] = "reconciler"
+
+	err = u.putToVault(metadataPath, existingMetadata)
+	if err != nil {
+		u.logger.Warningf("Failed to store binding metadata: %s", err)
+		// Don't fail the operation for metadata issues
+	}
+
+	// Update the bindings index
+	err = u.updateBindingsIndex(instanceID, bindingID, metadata)
+	if err != nil {
+		u.logger.Warningf("Failed to update bindings index: %s", err)
+		// Don't fail the operation for index issues
+	}
+
+	u.logger.Infof("Successfully stored binding credentials for %s/%s", instanceID, bindingID)
+
+	return nil
+}
+
+// GetBindingCredentials retrieves binding credentials from vault.
+func (u *VaultUpdater) GetBindingCredentials(instanceID, bindingID string) (map[string]interface{}, error) {
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+
+	credentials, err := u.getFromVault(credentialsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
+	}
+
+	return credentials, nil
+}
+
+// GetBindingMetadata retrieves binding metadata from vault.
+func (u *VaultUpdater) GetBindingMetadata(instanceID, bindingID string) (map[string]interface{}, error) {
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+
+	metadata, err := u.getFromVault(metadataPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get binding metadata: %w", err)
+	}
+
+	return metadata, nil
+}
+
+// RemoveBinding removes a binding from vault storage.
+func (u *VaultUpdater) RemoveBinding(instanceID, bindingID string) error {
+	u.logger.Infof("Removing binding %s for instance %s", bindingID, instanceID)
+
+	// Remove credentials
+	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	u.deleteFromVault(credentialsPath)
+	u.logger.Warningf("Removed binding credentials (if they existed)")
+
+	// Archive metadata instead of deleting for audit purposes
+	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
+
+	metadata, err := u.getFromVault(metadataPath)
+	if err == nil {
+		metadata["deleted_at"] = time.Now().Format(time.RFC3339)
+		metadata["status"] = "deleted"
+
+		err := u.putToVault(metadataPath, metadata)
+		if err != nil {
+			u.logger.Errorf("Failed to update metadata for deleted binding %s: %v", bindingID, err)
+		}
+	}
+
+	// Update index to mark as deleted
+	indexPath := instanceID + "/bindings/index"
+
+	existingIndex, err := u.getFromVault(indexPath)
+	if err == nil {
+		if bindingEntry, exists := existingIndex[bindingID]; exists {
+			if entry, ok := bindingEntry.(map[string]interface{}); ok {
+				entry["status"] = "deleted"
+				entry["deleted_at"] = time.Now().Format(time.RFC3339)
+				existingIndex[bindingID] = entry
+
+				err := u.putToVault(indexPath, existingIndex)
+				if err != nil {
+					u.logger.Errorf("Failed to update index for deleted binding %s: %v", bindingID, err)
+				}
+			}
+		}
+	}
+
+	u.logger.Infof("Successfully removed binding %s", bindingID)
+
+	return nil
+}
+
+// ListInstanceBindings returns all bindings for an instance.
+func (u *VaultUpdater) ListInstanceBindings(instanceID string) (map[string]interface{}, error) {
+	indexPath := instanceID + "/bindings/index"
+
+	bindings, err := u.getFromVault(indexPath)
+	if err != nil {
+		// No bindings found is not an error - ignore the error and return empty map
+		return make(map[string]interface{}), nil //nolint:nilerr // No bindings found is not an error condition
+	}
+
+	return bindings, nil
+}
+
+// GetBindingStatus returns the current status of a binding.
+func (u *VaultUpdater) GetBindingStatus(instanceID, bindingID string) (string, error) {
+	metadata, err := u.GetBindingMetadata(instanceID, bindingID)
+	if err != nil {
+		return "unknown", err
+	}
+
+	if status, ok := metadata["status"].(string); ok {
+		return status, nil
+	}
+
+	// Check if credentials exist to determine status
+	_, err = u.GetBindingCredentials(instanceID, bindingID)
+	if err != nil {
+		// Credentials not found indicates missing credentials status - ignore the error
+		return "missing_credentials", nil //nolint:nilerr // Missing credentials is a valid status, not an error
+	}
+
+	return "active", nil
+}
+
+// ReconstructBindingWithBroker uses the broker to reconstruct binding credentials.
+func (u *VaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error {
+	u.logger.Infof("Reconstructing binding %s for instance %s using broker", bindingID, instanceID)
+
+	if broker == nil {
+		return ErrBrokerNotAvailableForReconstruction
+	}
+
+	bindingCreds, err := u.getCredentialsFromBroker(broker, instanceID, bindingID)
+	if err != nil {
+		return err
+	}
+
+	creds := u.buildCredentialsMap(bindingCreds)
+
+	metadata := u.buildReconstructionMetadata(instanceID, bindingID, bindingCreds)
+
+	// Store the reconstructed credentials and metadata using standard layout
+	err = u.StoreBindingCredentials(instanceID, bindingID, creds, metadata)
+	if err != nil {
+		u.logger.Errorf("Failed to store reconstructed binding credentials: %s", err)
+
+		return fmt.Errorf("failed to store reconstructed credentials: %w", err)
+	}
+
+	u.logger.Infof("Successfully reconstructed and stored binding %s", bindingID)
+
+	return nil
+}
+
+// RepairInstanceBindings repairs all unhealthy bindings for an instance using the broker.
+func (u *VaultUpdater) RepairInstanceBindings(instanceID string, broker BrokerInterface) error {
+	u.logger.Infof("Starting binding repair for instance %s", instanceID)
+
+	// Get the current binding health status
+	_, unhealthyBindingIDs, err := u.CheckBindingHealth(instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to check binding health: %w", err)
+	}
+
+	if len(unhealthyBindingIDs) == 0 {
+		u.logger.Infof("No unhealthy bindings found for instance %s", instanceID)
+
+		return nil
+	}
+
+	u.logger.Infof("Found %d unhealthy bindings to repair: %v", len(unhealthyBindingIDs), unhealthyBindingIDs)
+
+	var repairErrors []string
+
+	repairedCount := 0
+
+	for _, bindingID := range unhealthyBindingIDs {
+		u.logger.Infof("Attempting to repair binding %s", bindingID)
+
+		err := u.ReconstructBindingWithBroker(instanceID, bindingID, broker)
+		if err != nil {
+			u.logger.Errorf("Failed to repair binding %s: %s", bindingID, err)
+			repairErrors = append(repairErrors, fmt.Sprintf("binding %s: %s", bindingID, err))
+
+			// Update binding metadata to record the failure
+			u.recordReconstructionFailure(instanceID, bindingID, err)
+		} else {
+			u.logger.Infof("Successfully repaired binding %s", bindingID)
+
+			repairedCount++
+		}
+	}
+
+	u.logger.Infof("Binding repair completed for instance %s: %d repaired, %d failed",
+		instanceID, repairedCount, len(repairErrors))
+
+	if len(repairErrors) > 0 {
+		return fmt.Errorf("%w: %d of %d bindings: %s",
+			ErrFailedToRepairBindings, len(repairErrors), len(unhealthyBindingIDs), strings.Join(repairErrors, "; "))
+	}
+
+	return nil
+}
+
+// UpdateInstanceWithBindingRepair extends UpdateInstance to include broker-based binding repair.
+func (u *VaultUpdater) UpdateInstanceWithBindingRepair(ctx context.Context, instance InstanceData, broker BrokerInterface) (*InstanceData, error) {
+	// First run the standard update
+	updatedInstance, err := u.UpdateInstance(ctx, instance)
+	if err != nil {
+		return nil, err
+	}
+
+	if updatedInstance != nil {
+		instance = *updatedInstance
+	}
+
+	// Check if binding repair is needed and broker is available
+	if needsRepair, ok := instance.Metadata["needs_binding_repair"].(bool); ok && needsRepair && broker != nil {
+		u.logger.Infof("Instance %s needs binding repair, attempting with broker integration", instance.ID)
+		u.handleBindingRepair(ctx, &instance, broker)
+	}
+
+	return &instance, nil
+}
+
+// GetInstance retrieves an instance from vault.
+func (u *VaultUpdater) GetInstance(ctx context.Context, instanceID string) (*InstanceData, error) {
+	u.logger.Debugf("Getting instance %s from vault", instanceID)
+
+	// Get from index
+	indexData, err := u.GetFromIndex(instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInstanceNotFound, instanceID)
+	}
+
+	instance := &InstanceData{
+		ID:       instanceID,
+		Metadata: make(map[string]interface{}),
+	}
+
+	// Parse basic fields
+	u.parseBasicFields(instance, indexData)
+
+	// Parse timestamps
+	u.parseTimestamps(instance, indexData)
+
+	// Store last_synced_at in metadata
+	u.parseLastSyncedAt(instance, indexData)
+
+	// Get manifest and metadata
+	u.loadManifestAndMetadata(instance, instanceID)
+
+	return instance, nil
+}
+
+// MergeMetadata merges existing and new metadata.
+func (u *VaultUpdater) MergeMetadata(existing, newData map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{})
+
+	// Copy existing metadata
+	for k, v := range existing {
+		merged[k] = v
+	}
+
+	// Override with new metadata
+	for key, value := range newData {
+		// Special handling for history - preserve it
+		if key == "history" && merged["history"] != nil {
+			continue
+		}
+
+		merged[key] = value
+	}
+
+	return merged
+}
+
+// DetectChanges compares old and new metadata to detect what changed.
+func (u *VaultUpdater) DetectChanges(old, newData map[string]interface{}) map[string]interface{} {
+	changes := make(map[string]interface{})
+
+	// Check for changes in specific fields
+	fieldsToCheck := []string{"releases", "stemcells", "vms"}
+	for _, field := range fieldsToCheck {
+		changedKey := field + "_changed"
+		changes[changedKey] = u.hasFieldChanged(old, newData, field)
+	}
+
+	// Track field additions/removals
+	u.trackFieldChanges(changes, old, newData)
+
+	return changes
+}
+
+func (u *VaultUpdater) UpdateIndex(instanceID string, data map[string]interface{}) error {
+	u.logger.Debugf("Updating index for instance: %s", instanceID)
+
+	// Type assert vault to VaultInterface to access GetIndex method
+	vault, ok := u.vault.(VaultInterface)
+	if !ok {
+		return ErrVaultNotExpectedType
+	}
+
+	// Get the index from vault at the canonical path
+	indexPath := "db"
+
+	indexData, err := vault.Get(indexPath)
+	if err != nil || indexData == nil {
+		// If index doesn't exist, create it
+		indexData = make(map[string]interface{})
+	}
+
+	// Update the index
+	if data == nil {
+		// Delete the entry
+		delete(indexData, instanceID)
+	} else {
+		// Add/update the entry
+		indexData[instanceID] = data
+	}
+
+	// Save the index back to vault
+	err = vault.Put(indexPath, indexData)
+	if err != nil {
+		return fmt.Errorf("failed to update vault index: %w", err)
+	}
+
+	return nil
+}
+
+func (u *VaultUpdater) GetFromIndex(instanceID string) (map[string]interface{}, error) {
+	u.logger.Debugf("Getting instance from index: %s", instanceID)
+
+	// Type assert vault to VaultInterface to access GetIndex method
+	vault, valid := u.vault.(VaultInterface)
+	if !valid {
+		return nil, ErrVaultNotExpectedType
+	}
+
+	// Get the index from vault at the canonical path
+	indexPath := "db"
+
+	indexData, err := vault.Get(indexPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get vault index: %w", err)
+	}
+
+	if indexData == nil {
+		return nil, ErrIndexNotFound
+	}
+
+	// Look up the instance in the index
+	raw, exists := indexData[instanceID]
+	if !exists {
+		return nil, fmt.Errorf("%w: %s", ErrInstanceNotFound, instanceID)
+	}
+
+	// Convert raw data to map
+	data, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("%w %s", ErrInvalidDataTypeForInstance, instanceID)
+	}
+
+	return data, nil
+}
+
+// backupInfo represents backup metadata for cleanup operations.
+type backupInfo struct {
+	sha256    string
+	timestamp int64
+}
+
+// DecompressAndDecode decompresses and decodes base64 encoded backup data (exported for recovery operations).
+func (u *VaultUpdater) DecompressAndDecode(encodedData string) (map[string]interface{}, error) {
+	// Base64 decode
+	compressedData, err := base64.StdEncoding.DecodeString(encodedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 data: %w", err)
+	}
+
+	// Decompress with gzip
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+
+	defer func() { _ = gzipReader.Close() }()
+
+	var decompressed bytes.Buffer
+
+	_, err = decompressed.ReadFrom(gzipReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress data: %w", err)
+	}
+
+	// Unmarshal JSON
+	var result map[string]interface{}
+
+	err = json.Unmarshal(decompressed.Bytes(), &result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON data: %w", err)
+	}
+
+	u.logger.Debugf("Decompressed data from %d bytes to %d bytes",
+		len(compressedData), decompressed.Len())
+
+	return result, nil
+}
+
 // UpdateInstance updates an instance in vault.
 // handleBindingRepair handles binding repair if needed.
 func (u *VaultUpdater) handleBindingRepair(ctx context.Context, instance *InstanceData, broker BrokerInterface) {
@@ -85,7 +696,8 @@ func (u *VaultUpdater) updateRepairFailureMetadata(ctx context.Context, instance
 	instance.Metadata["binding_repair_error"] = repairErr.Error()
 	instance.Metadata["binding_repair_attempted_at"] = time.Now().Format(time.RFC3339)
 
-	if _, err := u.UpdateInstance(ctx, *instance); err != nil {
+	_, err := u.UpdateInstance(ctx, *instance)
+	if err != nil {
 		u.logger.Errorf("Failed to update instance metadata after binding repair failure: %v", err)
 	}
 }
@@ -101,40 +713,10 @@ func (u *VaultUpdater) updateRepairSuccessMetadata(ctx context.Context, instance
 	delete(instance.Metadata, "binding_repair_error")
 	instance.Metadata["binding_repair_completed_at"] = time.Now().Format(time.RFC3339)
 
-	if _, err := u.UpdateInstance(ctx, *instance); err != nil {
+	_, err := u.UpdateInstance(ctx, *instance)
+	if err != nil {
 		u.logger.Errorf("Failed to update instance metadata after binding repair success: %v", err)
 	}
-}
-
-func (u *VaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData) (*InstanceData, error) {
-	u.logger.Debugf("Updating instance %s in vault", instance.ID)
-
-	// Validate instance ID
-	if err := u.validateInstanceID(instance.ID); err != nil {
-		return nil, err
-	}
-
-	// Create backup if enabled
-	u.createBackupIfEnabled(instance.ID)
-
-	// Initialize instance metadata if needed
-	if instance.Metadata == nil {
-		instance.Metadata = make(map[string]interface{})
-	}
-
-	// Process credentials and bindings
-	if err := u.processCredentialsAndBindings(ctx, &instance); err != nil {
-		return &instance, err
-	}
-
-	// Store all instance data
-	if err := u.storeInstanceData(ctx, instance); err != nil {
-		return nil, err
-	}
-
-	u.logger.Infof("Successfully updated instance %s in vault", instance.ID)
-
-	return &instance, nil
 }
 
 // validateInstanceID validates that the instance ID is not empty.
@@ -151,7 +733,8 @@ func (u *VaultUpdater) validateInstanceID(instanceID string) error {
 // createBackupIfEnabled creates a backup of the instance if backup is enabled.
 func (u *VaultUpdater) createBackupIfEnabled(instanceID string) {
 	if u.backupConfig.Enabled {
-		if err := u.backupInstance(instanceID); err != nil {
+		err := u.backupInstance(instanceID)
+		if err != nil {
 			u.logger.Warningf("Failed to create backup for instance %s: %s (continuing anyway)", instanceID, err)
 		}
 	}
@@ -160,7 +743,8 @@ func (u *VaultUpdater) createBackupIfEnabled(instanceID string) {
 // processCredentialsAndBindings handles credential recovery and binding health checks.
 func (u *VaultUpdater) processCredentialsAndBindings(ctx context.Context, instance *InstanceData) error {
 	// Process credentials
-	if err := u.processInstanceCredentials(ctx, instance); err != nil {
+	err := u.processInstanceCredentials(ctx, instance)
+	if err != nil {
 		return err
 	}
 
@@ -311,9 +895,10 @@ func (u *VaultUpdater) updateBindingHealthMetadata(instance *InstanceData, healt
 }
 
 // storeInstanceData stores all instance data in vault.
-func (u *VaultUpdater) storeInstanceData(ctx context.Context, instance InstanceData) error {
+func (u *VaultUpdater) storeInstanceData(instance InstanceData) error {
 	// Store root data
-	if err := u.storeRootData(instance); err != nil {
+	err := u.storeRootData(instance)
+	if err != nil {
 		return err
 	}
 
@@ -325,7 +910,9 @@ func (u *VaultUpdater) storeInstanceData(ctx context.Context, instance InstanceD
 
 	// Update the main instance data in the index
 	vaultData := u.buildVaultData(instance)
-	if err := u.UpdateIndex(instance.ID, vaultData); err != nil {
+
+	err = u.UpdateIndex(instance.ID, vaultData)
+	if err != nil {
 		return fmt.Errorf("failed to update index for %s: %w", instance.ID, err)
 	}
 
@@ -474,7 +1061,8 @@ func (u *VaultUpdater) addSpaceData(vaultData map[string]interface{}, instance I
 // addTimestampData adds timestamp data to vault data.
 func (u *VaultUpdater) addTimestampData(vaultData map[string]interface{}, instance InstanceData) {
 	if requestedAt, ok := instance.Metadata["cf_created_at"].(string); ok && requestedAt != "" {
-		if t, err := time.Parse(time.RFC3339, requestedAt); err == nil {
+		t, err := time.Parse(time.RFC3339, requestedAt)
+		if err == nil {
 			vaultData["requested_at"] = t.Format(time.RFC3339)
 		}
 	} else if !instance.CreatedAt.IsZero() {
@@ -500,7 +1088,8 @@ func (u *VaultUpdater) addContextData(vaultData map[string]interface{}) {
 	}
 
 	// Marshal context to JSON string for compatibility
-	if contextJSON, err := json.Marshal(contextObj); err == nil {
+	contextJSON, err := json.Marshal(contextObj)
+	if err == nil {
 		vaultData["context"] = string(contextJSON)
 	}
 }
@@ -533,7 +1122,8 @@ func (u *VaultUpdater) storeManifestData(instance InstanceData) {
 		"reconciled_by": "reconciler",
 	}
 
-	if err := u.putToVault(manifestPath, manifestData); err != nil {
+	err := u.putToVault(manifestPath, manifestData)
+	if err != nil {
 		u.logger.Errorf("Failed to store manifest for %s: %s", instance.ID, err)
 	} else {
 		u.logger.Debugf("Stored manifest for instance %s", instance.ID)
@@ -573,140 +1163,12 @@ func (u *VaultUpdater) storeMetadataWithHistory(instance InstanceData) {
 		return
 	}
 
-	if err := u.putToVault(metadataPath, cleanedMetadata); err != nil {
+	err = u.putToVault(metadataPath, cleanedMetadata)
+	if err != nil {
 		u.logger.Errorf("Failed to store metadata for %s: %s", instance.ID, err)
 	} else {
 		u.logger.Debugf("Stored metadata for instance %s", instance.ID)
 	}
-}
-
-// UpdateBatch updates multiple instances in parallel with concurrency control.
-func (u *VaultUpdater) UpdateBatch(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
-	if len(instances) == 0 {
-		return instances, nil
-	}
-
-	u.logger.Infof("Starting batch update of %d instances", len(instances))
-
-	// Determine batch size (default to 10 if not configured)
-	batchSize := 10
-	if u.config != nil && u.config.Batch.MaxSize > 0 {
-		batchSize = u.config.Batch.MaxSize
-	}
-
-	// Process instances in batches
-	var (
-		allUpdated []InstanceData
-		allErrors  []error
-	)
-
-	for index := 0; index < len(instances); index += batchSize {
-		end := index + batchSize
-		if end > len(instances) {
-			end = len(instances)
-		}
-
-		batch := instances[index:end]
-		u.logger.Debugf("Processing batch of %d instances (batch %d/%d)",
-			len(batch), (index/batchSize)+1, (len(instances)+batchSize-1)/batchSize)
-
-		// Process batch in parallel using goroutines
-		type result struct {
-			instance InstanceData
-			err      error
-		}
-
-		results := make(chan result, len(batch))
-
-		var waitGroup sync.WaitGroup
-
-		for _, inst := range batch {
-			waitGroup.Add(1)
-
-			go func(instance InstanceData) {
-				defer waitGroup.Done()
-
-				// Update the instance
-				updatedInst, err := u.UpdateInstance(ctx, instance)
-
-				if updatedInst != nil {
-					results <- result{
-						instance: *updatedInst,
-						err:      err,
-					}
-				} else {
-					results <- result{
-						instance: instance,
-						err:      err,
-					}
-				}
-			}(inst)
-		}
-
-		// Wait for all goroutines to complete
-		go func() {
-			waitGroup.Wait()
-			close(results)
-		}()
-
-		// Collect results
-		for res := range results {
-			if res.err != nil {
-				u.logger.Errorf("Failed to update instance %s: %v", res.instance.ID, res.err)
-				allErrors = append(allErrors, res.err)
-			} else {
-				allUpdated = append(allUpdated, res.instance)
-			}
-		}
-	}
-
-	u.logger.Infof("Batch update completed: %d successful, %d failed", len(allUpdated), len(allErrors))
-
-	// Return partial success even if some failed
-	if len(allErrors) > 0 && len(allUpdated) == 0 {
-		return nil, fmt.Errorf("all batch updates failed: %w", allErrors[0])
-	}
-
-	return allUpdated, nil
-}
-
-// CheckBindingHealth verifies that all bindings for an instance are healthy.
-func (u *VaultUpdater) CheckBindingHealth(instanceID string) ([]BindingInfo, []string, error) {
-	u.logger.Debugf("Checking binding health for instance %s", instanceID)
-
-	bindingsData, err := u.getBindingsData(instanceID)
-	if err != nil {
-		return nil, nil, nil //nolint:nilerr // No bindings is not an error condition
-	}
-
-	var (
-		healthyBindings     []BindingInfo
-		unhealthyBindingIDs []string
-	)
-
-	for bindingID, bindingData := range bindingsData {
-		binding := u.createBaseBinding(instanceID, bindingID)
-
-		credentials, err := u.getBindingCredentials(instanceID, bindingID)
-		if err != nil {
-			unhealthyBindingIDs = append(unhealthyBindingIDs, bindingID)
-
-			continue
-		}
-
-		if u.validateCredentialCompleteness(credentials) {
-			u.processHealthyBinding(&binding, bindingData)
-			healthyBindings = append(healthyBindings, binding)
-		} else {
-			u.processUnhealthyBinding(&binding, bindingID, instanceID)
-			unhealthyBindingIDs = append(unhealthyBindingIDs, bindingID)
-		}
-	}
-
-	u.logger.Debugf("Binding health check complete for instance %s: %d healthy, %d need reconstruction",
-		instanceID, len(healthyBindings), len(unhealthyBindingIDs))
-
-	return healthyBindings, unhealthyBindingIDs, nil
 }
 
 // getBindingsData retrieves binding data from vault.
@@ -785,7 +1247,8 @@ func (u *VaultUpdater) extractBindingMetadata(binding *BindingInfo, bindingData 
 	}
 
 	if createdStr, exists := meta["created_at"].(string); exists {
-		if createdTime, parseErr := time.Parse(time.RFC3339, createdStr); parseErr == nil {
+		createdTime, parseErr := time.Parse(time.RFC3339, createdStr)
+		if parseErr == nil {
 			binding.CreatedAt = createdTime
 		}
 	}
@@ -807,87 +1270,6 @@ func (u *VaultUpdater) validateCredentialCompleteness(credentials map[string]int
 	// As long as we have some credentials, consider it complete
 	// Individual service validation can be more specific if needed
 	return len(credentials) > 0
-}
-
-// StoreBindingCredentials stores binding credentials in the structured vault format.
-func (u *VaultUpdater) StoreBindingCredentials(instanceID, bindingID string, credentials interface{}, metadata map[string]interface{}) error {
-	u.logger.Debugf("Storing binding credentials for instance %s, binding %s", instanceID, bindingID)
-
-	// Convert credentials to map[string]interface{} if needed
-	var credentialsMap map[string]interface{}
-	if credMap, ok := credentials.(map[string]interface{}); ok {
-		credentialsMap = credMap
-	} else {
-		return ErrCredentialsMustBeMap
-	}
-
-	// Store credentials at the standard path
-	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
-
-	err := u.putToVault(credentialsPath, credentialsMap)
-	if err != nil {
-		return fmt.Errorf("failed to store binding credentials: %w", err)
-	}
-
-	// Store binding metadata
-	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
-
-	// Get existing metadata to preserve history
-	existingMetadata, _ := u.getFromVault(metadataPath)
-	if existingMetadata == nil {
-		existingMetadata = make(map[string]interface{})
-	}
-
-	// Merge new metadata with existing
-	for key, value := range metadata {
-		existingMetadata[key] = value
-	}
-
-	// Add binding storage timestamps
-	existingMetadata["stored_at"] = time.Now().Format(time.RFC3339)
-	existingMetadata["last_updated"] = time.Now().Format(time.RFC3339)
-	existingMetadata["stored_by"] = "reconciler"
-
-	err = u.putToVault(metadataPath, existingMetadata)
-	if err != nil {
-		u.logger.Warningf("Failed to store binding metadata: %s", err)
-		// Don't fail the operation for metadata issues
-	}
-
-	// Update the bindings index
-	err = u.updateBindingsIndex(instanceID, bindingID, metadata)
-	if err != nil {
-		u.logger.Warningf("Failed to update bindings index: %s", err)
-		// Don't fail the operation for index issues
-	}
-
-	u.logger.Infof("Successfully stored binding credentials for %s/%s", instanceID, bindingID)
-
-	return nil
-}
-
-// GetBindingCredentials retrieves binding credentials from vault.
-func (u *VaultUpdater) GetBindingCredentials(instanceID, bindingID string) (map[string]interface{}, error) {
-	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
-
-	credentials, err := u.getFromVault(credentialsPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
-	}
-
-	return credentials, nil
-}
-
-// GetBindingMetadata retrieves binding metadata from vault.
-func (u *VaultUpdater) GetBindingMetadata(instanceID, bindingID string) (map[string]interface{}, error) {
-	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
-
-	metadata, err := u.getFromVault(metadataPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get binding metadata: %w", err)
-	}
-
-	return metadata, nil
 }
 
 // updateBindingsIndex maintains an index of all bindings for an instance.
@@ -931,121 +1313,11 @@ func (u *VaultUpdater) updateBindingsIndex(instanceID, bindingID string, metadat
 	return u.putToVault(indexPath, existingIndex)
 }
 
-// RemoveBinding removes a binding from vault storage.
-func (u *VaultUpdater) RemoveBinding(instanceID, bindingID string) error {
-	u.logger.Infof("Removing binding %s for instance %s", bindingID, instanceID)
-
-	// Remove credentials
-	credentialsPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
-	u.deleteFromVault(credentialsPath)
-	u.logger.Warningf("Removed binding credentials (if they existed)")
-
-	// Archive metadata instead of deleting for audit purposes
-	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
-
-	metadata, err := u.getFromVault(metadataPath)
-	if err == nil {
-		metadata["deleted_at"] = time.Now().Format(time.RFC3339)
-		metadata["status"] = "deleted"
-
-		err := u.putToVault(metadataPath, metadata)
-		if err != nil {
-			u.logger.Errorf("Failed to update metadata for deleted binding %s: %v", bindingID, err)
-		}
-	}
-
-	// Update index to mark as deleted
-	indexPath := instanceID + "/bindings/index"
-
-	existingIndex, err := u.getFromVault(indexPath)
-	if err == nil {
-		if bindingEntry, exists := existingIndex[bindingID]; exists {
-			if entry, ok := bindingEntry.(map[string]interface{}); ok {
-				entry["status"] = "deleted"
-				entry["deleted_at"] = time.Now().Format(time.RFC3339)
-				existingIndex[bindingID] = entry
-
-				err := u.putToVault(indexPath, existingIndex)
-				if err != nil {
-					u.logger.Errorf("Failed to update index for deleted binding %s: %v", bindingID, err)
-				}
-			}
-		}
-	}
-
-	u.logger.Infof("Successfully removed binding %s", bindingID)
-
-	return nil
-}
-
 // deleteFromVault removes data from vault (placeholder implementation).
 func (u *VaultUpdater) deleteFromVault(path string) {
 	u.logger.Debugf("Deleting vault path: %s", path)
 	// This would call the actual vault delete method
 	// For now, this is a placeholder implementation
-}
-
-// ListInstanceBindings returns all bindings for an instance.
-func (u *VaultUpdater) ListInstanceBindings(instanceID string) (map[string]interface{}, error) {
-	indexPath := instanceID + "/bindings/index"
-
-	bindings, err := u.getFromVault(indexPath)
-	if err != nil {
-		// No bindings found is not an error - ignore the error and return empty map
-		return make(map[string]interface{}), nil //nolint:nilerr // No bindings found is not an error condition
-	}
-
-	return bindings, nil
-}
-
-// GetBindingStatus returns the current status of a binding.
-func (u *VaultUpdater) GetBindingStatus(instanceID, bindingID string) (string, error) {
-	metadata, err := u.GetBindingMetadata(instanceID, bindingID)
-	if err != nil {
-		return "unknown", err
-	}
-
-	if status, ok := metadata["status"].(string); ok {
-		return status, nil
-	}
-
-	// Check if credentials exist to determine status
-	_, err = u.GetBindingCredentials(instanceID, bindingID)
-	if err != nil {
-		// Credentials not found indicates missing credentials status - ignore the error
-		return "missing_credentials", nil //nolint:nilerr // Missing credentials is a valid status, not an error
-	}
-
-	return "active", nil
-}
-
-// ReconstructBindingWithBroker uses the broker to reconstruct binding credentials.
-func (u *VaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error {
-	u.logger.Infof("Reconstructing binding %s for instance %s using broker", bindingID, instanceID)
-
-	if broker == nil {
-		return ErrBrokerNotAvailableForReconstruction
-	}
-
-	bindingCreds, err := u.getCredentialsFromBroker(broker, instanceID, bindingID)
-	if err != nil {
-		return err
-	}
-
-	creds := u.buildCredentialsMap(bindingCreds)
-
-	metadata := u.buildReconstructionMetadata(instanceID, bindingID, bindingCreds)
-
-	// Store the reconstructed credentials and metadata using standard layout
-	if err := u.StoreBindingCredentials(instanceID, bindingID, creds, metadata); err != nil {
-		u.logger.Errorf("Failed to store reconstructed binding credentials: %s", err)
-
-		return fmt.Errorf("failed to store reconstructed credentials: %w", err)
-	}
-
-	u.logger.Infof("Successfully reconstructed and stored binding %s", bindingID)
-
-	return nil
 }
 
 // getCredentialsFromBroker retrieves binding credentials from the broker.
@@ -1153,56 +1425,6 @@ func (u *VaultUpdater) enrichMetadataFromIndex(metadata map[string]interface{}, 
 	}
 }
 
-// RepairInstanceBindings repairs all unhealthy bindings for an instance using the broker.
-func (u *VaultUpdater) RepairInstanceBindings(instanceID string, broker BrokerInterface) error {
-	u.logger.Infof("Starting binding repair for instance %s", instanceID)
-
-	// Get the current binding health status
-	_, unhealthyBindingIDs, err := u.CheckBindingHealth(instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to check binding health: %w", err)
-	}
-
-	if len(unhealthyBindingIDs) == 0 {
-		u.logger.Infof("No unhealthy bindings found for instance %s", instanceID)
-
-		return nil
-	}
-
-	u.logger.Infof("Found %d unhealthy bindings to repair: %v", len(unhealthyBindingIDs), unhealthyBindingIDs)
-
-	var repairErrors []string
-
-	repairedCount := 0
-
-	for _, bindingID := range unhealthyBindingIDs {
-		u.logger.Infof("Attempting to repair binding %s", bindingID)
-
-		err := u.ReconstructBindingWithBroker(instanceID, bindingID, broker)
-		if err != nil {
-			u.logger.Errorf("Failed to repair binding %s: %s", bindingID, err)
-			repairErrors = append(repairErrors, fmt.Sprintf("binding %s: %s", bindingID, err))
-
-			// Update binding metadata to record the failure
-			u.recordReconstructionFailure(instanceID, bindingID, err)
-		} else {
-			u.logger.Infof("Successfully repaired binding %s", bindingID)
-
-			repairedCount++
-		}
-	}
-
-	u.logger.Infof("Binding repair completed for instance %s: %d repaired, %d failed",
-		instanceID, repairedCount, len(repairErrors))
-
-	if len(repairErrors) > 0 {
-		return fmt.Errorf("%w: %d of %d bindings: %s",
-			ErrFailedToRepairBindings, len(repairErrors), len(unhealthyBindingIDs), strings.Join(repairErrors, "; "))
-	}
-
-	return nil
-}
-
 // recordReconstructionFailure records when a binding reconstruction fails.
 func (u *VaultUpdater) recordReconstructionFailure(instanceID, bindingID string, err error) {
 	metadataPath := fmt.Sprintf("%s/bindings/%s/metadata", instanceID, bindingID)
@@ -1232,43 +1454,7 @@ func (u *VaultUpdater) recordReconstructionFailure(instanceID, bindingID string,
 	}
 }
 
-// UpdateInstanceWithBindingRepair extends UpdateInstance to include broker-based binding repair.
-func (u *VaultUpdater) UpdateInstanceWithBindingRepair(ctx context.Context, instance InstanceData, broker BrokerInterface) (*InstanceData, error) {
-	// First run the standard update
-	updatedInstance, err := u.UpdateInstance(ctx, instance)
-	if err != nil {
-		return nil, err
-	}
-
-	if updatedInstance != nil {
-		instance = *updatedInstance
-	}
-
-	// Check if binding repair is needed and broker is available
-	if needsRepair, ok := instance.Metadata["needs_binding_repair"].(bool); ok && needsRepair && broker != nil {
-		u.logger.Infof("Instance %s needs binding repair, attempting with broker integration", instance.ID)
-		u.handleBindingRepair(ctx, &instance, broker)
-	}
-
-	return &instance, nil
-}
-
-// GetInstance retrieves an instance from vault.
-func (u *VaultUpdater) GetInstance(ctx context.Context, instanceID string) (*InstanceData, error) {
-	u.logger.Debugf("Getting instance %s from vault", instanceID)
-
-	// Get from index
-	indexData, err := u.GetFromIndex(instanceID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInstanceNotFound, instanceID)
-	}
-
-	instance := &InstanceData{
-		ID:       instanceID,
-		Metadata: make(map[string]interface{}),
-	}
-
-	// Parse basic fields
+func (u *VaultUpdater) parseBasicFields(instance *InstanceData, indexData map[string]interface{}) {
 	if v, ok := indexData["service_id"].(string); ok {
 		instance.ServiceID = v
 	}
@@ -1280,31 +1466,42 @@ func (u *VaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 	if v, ok := indexData["deployment_name"].(string); ok {
 		instance.Deployment.Name = v
 	}
+}
 
-	// Parse Unix timestamps - handle both old RFC3339 strings and new Unix timestamps
+func (u *VaultUpdater) parseTimestamps(instance *InstanceData, indexData map[string]interface{}) {
+	u.parseCreatedTimestamp(instance, indexData)
+	u.parseUpdatedTimestamp(instance, indexData)
+}
+
+func (u *VaultUpdater) parseCreatedTimestamp(instance *InstanceData, indexData map[string]interface{}) {
 	if v, ok := indexData["created"].(float64); ok {
 		instance.CreatedAt = time.Unix(int64(v), 0)
 	} else if v, ok := indexData["created"].(int64); ok {
 		instance.CreatedAt = time.Unix(v, 0)
 	} else if v, ok := indexData["created_at"].(string); ok {
 		// Fallback to RFC3339 for backward compatibility
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		t, err := time.Parse(time.RFC3339, v)
+		if err == nil {
 			instance.CreatedAt = t
 		}
 	}
+}
 
+func (u *VaultUpdater) parseUpdatedTimestamp(instance *InstanceData, indexData map[string]interface{}) {
 	if v, ok := indexData["updated"].(float64); ok {
 		instance.UpdatedAt = time.Unix(int64(v), 0)
 	} else if v, ok := indexData["updated"].(int64); ok {
 		instance.UpdatedAt = time.Unix(v, 0)
 	} else if v, ok := indexData["updated_at"].(string); ok {
 		// Fallback to RFC3339 for backward compatibility
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
+		t, err := time.Parse(time.RFC3339, v)
+		if err == nil {
 			instance.UpdatedAt = t
 		}
 	}
+}
 
-	// Store last_synced_at in metadata
+func (u *VaultUpdater) parseLastSyncedAt(instance *InstanceData, indexData map[string]interface{}) {
 	if v, ok := indexData["last_synced_at"]; ok {
 		if instance.Metadata == nil {
 			instance.Metadata = make(map[string]interface{})
@@ -1312,7 +1509,9 @@ func (u *VaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 
 		instance.Metadata["last_synced_at"] = v
 	}
+}
 
+func (u *VaultUpdater) loadManifestAndMetadata(instance *InstanceData, instanceID string) {
 	// Get manifest
 	manifestPath := instanceID + "/manifest"
 
@@ -1334,90 +1533,25 @@ func (u *VaultUpdater) GetInstance(ctx context.Context, instanceID string) (*Ins
 	} else {
 		u.logger.Debugf("No metadata found for instance %s", instanceID)
 	}
-
-	return instance, nil
 }
 
-// MergeMetadata merges existing and new metadata.
-func (u *VaultUpdater) MergeMetadata(existing, newData map[string]interface{}) map[string]interface{} {
-	merged := make(map[string]interface{})
+func (u *VaultUpdater) hasFieldChanged(old, newData map[string]interface{}, fieldName string) bool {
+	oldValue, oldExists := old[fieldName]
+	newValue, newExists := newData[fieldName]
 
-	// Copy existing metadata
-	for k, v := range existing {
-		merged[k] = v
+	switch {
+	case oldExists && newExists:
+		return !u.deepEqual(oldValue, newValue)
+	case newExists:
+		return true
+	default:
+		return false
 	}
-
-	// Override with new metadata
-	for key, value := range newData {
-		// Special handling for history - preserve it
-		if key == "history" && merged["history"] != nil {
-			continue
-		}
-
-		merged[key] = value
-	}
-
-	return merged
 }
 
-// DetectChanges compares old and new metadata to detect what changed.
-func (u *VaultUpdater) DetectChanges(old, newData map[string]interface{}) map[string]interface{} {
-	changes := make(map[string]interface{})
-
-	// Check if releases changed
-	oldReleases, oldHasReleases := old["releases"]
-
-	newReleases, newHasReleases := newData["releases"]
-	switch {
-	case oldHasReleases && newHasReleases:
-		changes["releases_changed"] = !u.deepEqual(oldReleases, newReleases)
-	case newHasReleases:
-		changes["releases_changed"] = true
-	default:
-		changes["releases_changed"] = false
-	}
-
-	// Check if stemcells changed
-	oldStemcells, oldHasStemcells := old["stemcells"]
-
-	newStemcells, newHasStemcells := newData["stemcells"]
-	switch {
-	case oldHasStemcells && newHasStemcells:
-		changes["stemcells_changed"] = !u.deepEqual(oldStemcells, newStemcells)
-	case newHasStemcells:
-		changes["stemcells_changed"] = true
-	default:
-		changes["stemcells_changed"] = false
-	}
-
-	// Check if VMs changed
-	oldVMs, oldHasVMs := old["vms"]
-
-	newVMs, newHasVMs := newData["vms"]
-	switch {
-	case oldHasVMs && newHasVMs:
-		changes["vms_changed"] = !u.deepEqual(oldVMs, newVMs)
-	case newHasVMs:
-		changes["vms_changed"] = true
-	default:
-		changes["vms_changed"] = false
-	}
-
-	// Track field additions/removals
-	addedFields := []string{}
-	removedFields := []string{}
-
-	for k := range newData {
-		if _, exists := old[k]; !exists {
-			addedFields = append(addedFields, k)
-		}
-	}
-
-	for k := range old {
-		if _, exists := newData[k]; !exists {
-			removedFields = append(removedFields, k)
-		}
-	}
+func (u *VaultUpdater) trackFieldChanges(changes map[string]interface{}, old, newData map[string]interface{}) {
+	addedFields := u.findAddedFields(old, newData)
+	removedFields := u.findRemovedFields(old, newData)
 
 	if len(addedFields) > 0 {
 		changes["fields_added"] = addedFields
@@ -1426,8 +1560,30 @@ func (u *VaultUpdater) DetectChanges(old, newData map[string]interface{}) map[st
 	if len(removedFields) > 0 {
 		changes["fields_removed"] = removedFields
 	}
+}
 
-	return changes
+func (u *VaultUpdater) findAddedFields(old, newData map[string]interface{}) []string {
+	addedFields := []string{}
+
+	for k := range newData {
+		if _, exists := old[k]; !exists {
+			addedFields = append(addedFields, k)
+		}
+	}
+
+	return addedFields
+}
+
+func (u *VaultUpdater) findRemovedFields(old, newData map[string]interface{}) []string {
+	removedFields := []string{}
+
+	for k := range old {
+		if _, exists := newData[k]; !exists {
+			removedFields = append(removedFields, k)
+		}
+	}
+
+	return removedFields
 }
 
 // deepEqual performs a simple deep equality check.
@@ -1553,77 +1709,6 @@ func (u *VaultUpdater) getFromVault(path string) (map[string]interface{}, error)
 	return data, nil
 }
 
-func (u *VaultUpdater) UpdateIndex(instanceID string, data map[string]interface{}) error {
-	u.logger.Debugf("Updating index for instance: %s", instanceID)
-
-	// Type assert vault to VaultInterface to access GetIndex method
-	vault, ok := u.vault.(VaultInterface)
-	if !ok {
-		return ErrVaultNotExpectedType
-	}
-
-	// Get the index from vault at the canonical path
-	indexPath := "db"
-
-	indexData, err := vault.Get(indexPath)
-	if err != nil || indexData == nil {
-		// If index doesn't exist, create it
-		indexData = make(map[string]interface{})
-	}
-
-	// Update the index
-	if data == nil {
-		// Delete the entry
-		delete(indexData, instanceID)
-	} else {
-		// Add/update the entry
-		indexData[instanceID] = data
-	}
-
-	// Save the index back to vault
-	if err := vault.Put(indexPath, indexData); err != nil {
-		return fmt.Errorf("failed to update vault index: %w", err)
-	}
-
-	return nil
-}
-
-func (u *VaultUpdater) GetFromIndex(instanceID string) (map[string]interface{}, error) {
-	u.logger.Debugf("Getting instance from index: %s", instanceID)
-
-	// Type assert vault to VaultInterface to access GetIndex method
-	vault, ok := u.vault.(VaultInterface)
-	if !ok {
-		return nil, ErrVaultNotExpectedType
-	}
-
-	// Get the index from vault at the canonical path
-	indexPath := "db"
-
-	indexData, err := vault.Get(indexPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get vault index: %w", err)
-	}
-
-	if indexData == nil {
-		return nil, ErrIndexNotFound
-	}
-
-	// Look up the instance in the index
-	raw, exists := indexData[instanceID]
-	if !exists {
-		return nil, fmt.Errorf("%w: %s", ErrInstanceNotFound, instanceID)
-	}
-
-	// Convert raw data to map
-	data, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("%w %s", ErrInvalidDataTypeForInstance, instanceID)
-	}
-
-	return data, nil
-}
-
 // backupInstance creates a backup of instance data using the new format and storage location.
 func (u *VaultUpdater) backupInstance(instanceID string) error {
 	u.logger.Debugf("Creating backup for instance %s", instanceID)
@@ -1669,7 +1754,8 @@ func (u *VaultUpdater) backupInstance(instanceID string) error {
 	}
 
 	// Store the backup at new location (no secret/ prefix)
-	if err := u.putToVault(backupPath, backupEntry); err != nil {
+	err = u.putToVault(backupPath, backupEntry)
+	if err != nil {
 		return fmt.Errorf("failed to store backup at %s: %w", backupPath, err)
 	}
 
@@ -1733,12 +1819,6 @@ func (u *VaultUpdater) getVaultClientForBackupCleanup() *api.Client {
 	}
 
 	return vaultClient
-}
-
-// backupInfo represents backup metadata for cleanup operations.
-type backupInfo struct {
-	sha256    string
-	timestamp int64
 }
 
 // collectBackupInfoForCleanup collects information about all backups for an instance.
@@ -1849,7 +1929,8 @@ func (u *VaultUpdater) parseTimestampValue(sha256 string, timestampData interfac
 		return int64(value)
 	case json.Number:
 		// Handle json.Number type that might come from Vault
-		if timestamp, err := value.Int64(); err == nil {
+		timestamp, err := value.Int64()
+		if err == nil {
 			return timestamp
 		} else {
 			u.logger.Warningf("Invalid json.Number timestamp in backup %s: %v", sha256, err)
@@ -1874,11 +1955,13 @@ func (u *VaultUpdater) deleteInvalidBackup(instanceID, sha256 string) {
 	dataPath := fmt.Sprintf("secret/data/backups/%s/%s", instanceID, sha256)
 	metadataPath := fmt.Sprintf("secret/metadata/backups/%s/%s", instanceID, sha256)
 
-	if _, err := vaultClient.Logical().Delete(dataPath); err != nil {
+	_, err := vaultClient.Logical().Delete(dataPath)
+	if err != nil {
 		u.logger.Warningf("Failed to delete invalid backup data at %s: %s", dataPath, err)
 	}
 
-	if _, err := vaultClient.Logical().Delete(metadataPath); err != nil {
+	_, err = vaultClient.Logical().Delete(metadataPath)
+	if err != nil {
 		u.logger.Debugf("Failed to delete invalid backup metadata at %s: %s", metadataPath, err)
 	}
 
@@ -1932,12 +2015,13 @@ func (u *VaultUpdater) deleteBackupFiles(vaultClient *api.Client, instanceID, sh
 }
 
 // cleanLegacyInstanceBackups removes old backup data stored at secret/{instanceID}/backups.
+//nolint:funlen
 func (u *VaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 	u.logger.Debugf("Checking for legacy backup data for instance %s", instanceID)
 
 	// Try to access the vault client for direct operations
-	vaultClient, ok := u.vault.(*api.Client)
-	if !ok {
+	vaultClient, valid := u.vault.(*api.Client)
+	if !valid {
 		// Fallback: try to get client through interface conversion
 		if vaultInterface, ok := u.vault.(interface{ GetClient() *api.Client }); ok {
 			vaultClient = vaultInterface.GetClient()
@@ -1965,8 +2049,8 @@ func (u *VaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 	}
 
 	// Get the list of keys (backup timestamps)
-	keysRaw, ok := listResp.Data["keys"]
-	if !ok {
+	keysRaw, valid := listResp.Data["keys"]
+	if !valid {
 		u.logger.Debugf("No keys found in legacy backup list response for instance %s", instanceID)
 
 		return
@@ -2179,13 +2263,15 @@ func (u *VaultUpdater) compressAndEncode(data map[string]interface{}) (string, e
 		return "", fmt.Errorf("failed to create gzip writer: %w", err)
 	}
 
-	if _, err := gzipWriter.Write(jsonData); err != nil {
+	_, err = gzipWriter.Write(jsonData)
+	if err != nil {
 		_ = gzipWriter.Close() // #nosec G104 - Best effort close on error path
 
 		return "", fmt.Errorf("failed to write compressed data: %w", err)
 	}
 
-	if err := gzipWriter.Close(); err != nil {
+	err = gzipWriter.Close()
+	if err != nil {
 		return "", fmt.Errorf("failed to close gzip writer: %w", err)
 	}
 
@@ -2197,39 +2283,6 @@ func (u *VaultUpdater) compressAndEncode(data map[string]interface{}) (string, e
 		float64(len(compressed.Bytes()))/float64(len(jsonData))*compressionRatioPercent)
 
 	return encoded, nil
-}
-
-// DecompressAndDecode decompresses and decodes base64 encoded backup data (exported for recovery operations).
-func (u *VaultUpdater) DecompressAndDecode(encodedData string) (map[string]interface{}, error) {
-	// Base64 decode
-	compressedData, err := base64.StdEncoding.DecodeString(encodedData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64 data: %w", err)
-	}
-
-	// Decompress with gzip
-	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
-	}
-
-	defer func() { _ = gzipReader.Close() }()
-
-	var decompressed bytes.Buffer
-	if _, err := decompressed.ReadFrom(gzipReader); err != nil {
-		return nil, fmt.Errorf("failed to decompress data: %w", err)
-	}
-
-	// Unmarshal JSON
-	var result map[string]interface{}
-	if err := json.Unmarshal(decompressed.Bytes(), &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON data: %w", err)
-	}
-
-	u.logger.Debugf("Decompressed data from %d bytes to %d bytes",
-		len(compressedData), decompressed.Len())
-
-	return result, nil
 }
 
 // deinterfaceMetadata converts map[interface{}]interface{} structures to map[string]interface{}.

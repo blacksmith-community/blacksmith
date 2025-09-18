@@ -10,7 +10,7 @@ import (
 	. "blacksmith/pkg/reconciler"
 )
 
-// Static errors for this test file
+// Static errors for this test file.
 var (
 	errBoomGet = errors.New("boom-get")
 	errBoomPut = errors.New("boom-put")
@@ -24,11 +24,12 @@ func newSync(logger Logger) (Synchronizer, *memVault) {
 	return s, v
 }
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestIndexSynchronizer_SyncIndex_AddAndUpdate(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	s, v := newSync(logger)
+	synchronizer, vault := newSync(logger)
 
 	// Start with empty index; add one instance
 	inst := InstanceData{
@@ -43,18 +44,18 @@ func TestIndexSynchronizer_SyncIndex_AddAndUpdate(t *testing.T) {
 		Metadata:  map[string]interface{}{},
 	}
 
-	err := s.SyncIndex(context.TODO(), []InstanceData{inst})
+	err := synchronizer.SyncIndex(context.TODO(), []InstanceData{inst})
 	if err != nil {
 		t.Fatalf("SyncIndex error: %v", err)
 	}
 
-	idx := v.store["db"]
+	idx := vault.store["db"]
 	if idx == nil {
 		t.Fatalf("expected index stored at 'db'")
 	}
 
-	entry, ok := idx[inst.ID].(map[string]interface{})
-	if !ok {
+	entry, exists := idx[inst.ID].(map[string]interface{})
+	if !exists {
 		t.Fatalf("expected map entry for instance")
 	}
 
@@ -66,8 +67,8 @@ func TestIndexSynchronizer_SyncIndex_AddAndUpdate(t *testing.T) {
 		t.Fatalf("deployment_name mismatch")
 	}
 
-	reconciledVal, ok := entry["reconciled"].(bool)
-	if !ok {
+	reconciledVal, exists := entry["reconciled"].(bool)
+	if !exists {
 		t.Fatalf("reconciled field must be a bool")
 	}
 
@@ -80,23 +81,23 @@ func TestIndexSynchronizer_SyncIndex_AddAndUpdate(t *testing.T) {
 		t.Fatalf("instance missing after first sync")
 	}
 	// seed preserved fields
-	seeded, ok := idx[inst.ID].(map[string]interface{})
-	if !ok {
+	seeded, valid := idx[inst.ID].(map[string]interface{})
+	if !valid {
 		t.Fatalf("expected idx[inst.ID] to be map[string]interface{}, got %T", idx[inst.ID])
 	}
 
 	seeded["parameters"] = map[string]interface{}{"foo": "bar"}
 	seeded["created_at"] = time.Now().Add(-time.Hour).Format(time.RFC3339)
-	v.store["db"][inst.ID] = seeded
+	vault.store["db"][inst.ID] = seeded
 
-	err = s.SyncIndex(context.TODO(), []InstanceData{inst})
+	err = synchronizer.SyncIndex(context.TODO(), []InstanceData{inst})
 	if err != nil {
 		t.Fatalf("second SyncIndex error: %v", err)
 	}
 
-	entry, ok = v.store["db"][inst.ID].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected entry to be map[string]interface{}, got %T", v.store["db"][inst.ID])
+	entry, valid = vault.store["db"][inst.ID].(map[string]interface{})
+	if !valid {
+		t.Fatalf("expected entry to be map[string]interface{}, got %T", vault.store["db"][inst.ID])
 	}
 
 	if _, ok := entry["parameters"].(map[string]interface{}); !ok {
@@ -112,10 +113,10 @@ func TestIndexSynchronizer_SyncIndex_MarksOrphans(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	s, v := newSync(logger)
+	synchronizer, vault := newSync(logger)
 
 	// Pre-existing instance not in new reconciled set should be marked orphaned
-	v.store["db"] = map[string]interface{}{
+	vault.store["db"] = map[string]interface{}{
 		"00000000-0000-0000-0000-0000000000aa": map[string]interface{}{
 			"service_id":      "rabbitmq",
 			"plan_id":         "single-node",
@@ -134,14 +135,14 @@ func TestIndexSynchronizer_SyncIndex_MarksOrphans(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 
-	err := s.SyncIndex(context.TODO(), []InstanceData{inst})
+	err := synchronizer.SyncIndex(context.TODO(), []InstanceData{inst})
 	if err != nil {
 		t.Fatalf("SyncIndex error: %v", err)
 	}
 
-	orphan, ok := v.store["db"]["00000000-0000-0000-0000-0000000000aa"].(map[string]interface{})
+	orphan, ok := vault.store["db"]["00000000-0000-0000-0000-0000000000aa"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected orphan to be map[string]interface{}, got %T", v.store["db"]["00000000-0000-0000-0000-0000000000aa"])
+		t.Fatalf("expected orphan to be map[string]interface{}, got %T", vault.store["db"]["00000000-0000-0000-0000-0000000000aa"])
 	}
 
 	if orphan["orphaned"] != true {
@@ -153,10 +154,10 @@ func TestIndexSynchronizer_SyncIndex_GetError(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	s, v := newSync(logger)
-	v.getErr = errBoomGet
+	synchronizer, vault := newSync(logger)
+	vault.getErr = errBoomGet
 
-	err := s.SyncIndex(context.TODO(), []InstanceData{})
+	err := synchronizer.SyncIndex(context.TODO(), []InstanceData{})
 	if err == nil || !strings.Contains(err.Error(), "failed to get index") {
 		t.Fatalf("expected get error propagated, got: %v", err)
 	}
@@ -166,12 +167,12 @@ func TestIndexSynchronizer_SyncIndex_SaveError(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	s, v := newSync(logger)
-	v.putErr = errBoomPut
+	synchronizer, vault := newSync(logger)
+	vault.putErr = errBoomPut
 
 	inst := InstanceData{ID: "00000000-0000-0000-0000-0000000000cc"}
 
-	err := s.SyncIndex(context.TODO(), []InstanceData{inst})
+	err := synchronizer.SyncIndex(context.TODO(), []InstanceData{inst})
 	if err == nil || !strings.Contains(err.Error(), "failed to save index") {
 		t.Fatalf("expected save error propagated, got: %v", err)
 	}

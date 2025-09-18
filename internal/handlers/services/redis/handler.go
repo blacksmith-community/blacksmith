@@ -45,12 +45,12 @@ func (h *Handler) CanHandle(path string) bool {
 }
 
 // ServeHTTP handles HTTP requests for Redis endpoints.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	pattern := regexp.MustCompile(`^/b/([^/]+)/redis/(.+)$`)
 
 	matches := pattern.FindStringSubmatch(req.URL.Path)
 	if matches == nil {
-		response.WriteError(w, http.StatusNotFound, "endpoint not found")
+		response.WriteError(writer, http.StatusNotFound, "endpoint not found")
 
 		return
 	}
@@ -67,7 +67,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	exists, err := h.vault.Get(req.Context(), instanceID+"/credentials", &creds)
 	if err != nil || !exists {
 		logger.Error("Unable to find credentials for instance %s", instanceID)
-		response.WriteError(w, http.StatusNotFound, "credentials not found")
+		response.WriteError(writer, http.StatusNotFound, "credentials not found")
 
 		return
 	}
@@ -75,7 +75,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Check if this is a Redis instance
 	if !services.IsRedisInstance(common.Credentials(creds)) {
 		logger.Debug("Instance %s is not identified as Redis", instanceID)
-		response.WriteError(w, http.StatusBadRequest, "not a Redis instance")
+		response.WriteError(writer, http.StatusBadRequest, "not a Redis instance")
 
 		return
 	}
@@ -85,8 +85,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		"operation":   operation,
 		"instance_id": instanceID,
 	}
-	if err := h.servicesManager.Security.ValidateRequest(instanceID, operation, params); err != nil {
-		if h.servicesManager.Security.HandleSecurityError(w, err) {
+
+	err = h.servicesManager.Security.ValidateRequest(instanceID, operation, params)
+	if err != nil {
+		if h.servicesManager.Security.HandleSecurityError(writer, err) {
 			return
 		}
 	}
@@ -94,7 +96,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Add rate limit headers
 	if headers := h.servicesManager.Security.GetRateLimitHeaders(instanceID, operation); headers != nil {
 		for key, value := range headers {
-			w.Header().Set(key, value)
+			writer.Header().Set(key, value)
 		}
 	}
 
@@ -102,35 +104,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), DefaultHandlerTimeout)
 	defer cancel()
 
-	h.handleRedisOperation(ctx, w, req, instanceID, operation, creds, logger)
+	h.handleRedisOperation(ctx, writer, req, instanceID, operation, creds, logger)
 }
 
 // handleRedisOperation handles specific Redis operations.
-func (h *Handler) handleRedisOperation(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID, operation string, creds map[string]interface{}, logger interfaces.Logger) {
+func (h *Handler) handleRedisOperation(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID, operation string, creds map[string]interface{}, _ interfaces.Logger) {
 	switch operation {
 	case "test":
-		h.handleTest(ctx, w, req, instanceID, creds)
+		h.handleTest(ctx, writer, req, instanceID, creds)
 	case "info":
-		h.handleInfo(ctx, w, req, instanceID, creds)
+		h.handleInfo(ctx, writer, req, instanceID, creds)
 	case "set":
-		h.handleSet(ctx, w, req, instanceID, creds)
+		h.handleSet(ctx, writer, req, instanceID, creds)
 	case "get":
-		h.handleGet(ctx, w, req, instanceID, creds)
+		h.handleGet(ctx, writer, req, instanceID, creds)
 	case "delete":
-		h.handleDelete(ctx, w, req, instanceID, creds)
+		h.handleDelete(ctx, writer, req, instanceID, creds)
 	case "command":
-		h.handleCommand(ctx, w, req, instanceID, creds)
+		h.handleCommand(ctx, writer, req, instanceID, creds)
 	case "keys":
-		h.handleKeys(ctx, w, req, instanceID, creds)
+		h.handleKeys(ctx, writer, req, instanceID, creds)
 	case "flush":
-		h.handleFlush(ctx, w, req, instanceID, creds)
+		h.handleFlush(ctx, writer, req, instanceID, creds)
 	default:
-		response.WriteError(w, http.StatusBadRequest, "unknown Redis operation: "+operation)
+		response.WriteError(writer, http.StatusBadRequest, "unknown Redis operation: "+operation)
 	}
 }
 
 // handleTest handles Redis connection test.
-func (h *Handler) handleTest(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleTest(ctx context.Context, writer http.ResponseWriter, req *http.Request, _ string, creds map[string]interface{}) {
 	useTLS := req.URL.Query().Get("use_tls") == "true"
 	connectionType := req.URL.Query().Get("connection_type")
 
@@ -144,96 +146,108 @@ func (h *Handler) handleTest(ctx context.Context, w http.ResponseWriter, req *ht
 		Timeout: defaultRedisConnectionTimeout,
 	}
 	result, err := h.servicesManager.Redis.TestConnection(ctx, common.Credentials(creds), opts)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }
 
 // handleInfo handles Redis INFO command.
-func (h *Handler) handleInfo(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleInfo(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
 	useTLS := req.URL.Query().Get("use_tls") == "true"
 	result, err := h.servicesManager.Redis.HandleInfo(ctx, instanceID, common.Credentials(creds), useTLS)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }
 
 // handleSet handles Redis SET operation.
-func (h *Handler) handleSet(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleSet(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
 	var setReq redis.SetRequest
-	if err := json.NewDecoder(req.Body).Decode(&setReq); err != nil {
-		response.WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+
+	err := json.NewDecoder(req.Body).Decode(&setReq)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid request body: "+err.Error())
 
 		return
 	}
 
 	setReq.InstanceID = instanceID
 	result, err := h.servicesManager.Redis.HandleSet(ctx, instanceID, common.Credentials(creds), &setReq)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }
 
 // handleGet handles Redis GET operation.
-func (h *Handler) handleGet(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleGet(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
 	var getReq redis.GetRequest
-	if err := json.NewDecoder(req.Body).Decode(&getReq); err != nil {
-		response.WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+
+	err := json.NewDecoder(req.Body).Decode(&getReq)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid request body: "+err.Error())
 
 		return
 	}
 
 	getReq.InstanceID = instanceID
 	result, err := h.servicesManager.Redis.HandleGet(ctx, instanceID, common.Credentials(creds), &getReq)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }
 
 // handleDelete handles Redis DELETE operation.
-func (h *Handler) handleDelete(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleDelete(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
 	var delReq redis.DeleteRequest
-	if err := json.NewDecoder(req.Body).Decode(&delReq); err != nil {
-		response.WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+
+	err := json.NewDecoder(req.Body).Decode(&delReq)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid request body: "+err.Error())
 
 		return
 	}
 
 	delReq.InstanceID = instanceID
 	result, err := h.servicesManager.Redis.HandleDelete(ctx, instanceID, common.Credentials(creds), &delReq)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }
 
 // handleCommand handles Redis custom command execution.
-func (h *Handler) handleCommand(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleCommand(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
 	var cmdReq redis.CommandRequest
-	if err := json.NewDecoder(req.Body).Decode(&cmdReq); err != nil {
-		response.WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+
+	err := json.NewDecoder(req.Body).Decode(&cmdReq)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid request body: "+err.Error())
 
 		return
 	}
 
 	cmdReq.InstanceID = instanceID
 	result, err := h.servicesManager.Redis.HandleCommand(ctx, instanceID, common.Credentials(creds), &cmdReq)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }
 
 // handleKeys handles Redis KEYS operation.
-func (h *Handler) handleKeys(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleKeys(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
 	var keysReq redis.KeysRequest
-	if err := json.NewDecoder(req.Body).Decode(&keysReq); err != nil {
-		response.WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+
+	err := json.NewDecoder(req.Body).Decode(&keysReq)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid request body: "+err.Error())
 
 		return
 	}
 
 	keysReq.InstanceID = instanceID
 	result, err := h.servicesManager.Redis.HandleKeys(ctx, instanceID, common.Credentials(creds), &keysReq)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }
 
 // handleFlush handles Redis FLUSH operation.
-func (h *Handler) handleFlush(ctx context.Context, w http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
+func (h *Handler) handleFlush(ctx context.Context, writer http.ResponseWriter, req *http.Request, instanceID string, creds map[string]interface{}) {
 	var flushReq redis.FlushRequest
-	if err := json.NewDecoder(req.Body).Decode(&flushReq); err != nil {
-		response.WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+
+	err := json.NewDecoder(req.Body).Decode(&flushReq)
+	if err != nil {
+		response.WriteError(writer, http.StatusBadRequest, "invalid request body: "+err.Error())
 
 		return
 	}
 
 	flushReq.InstanceID = instanceID
 	result, err := h.servicesManager.Redis.HandleFlush(ctx, instanceID, common.Credentials(creds), &flushReq)
-	response.HandleJSON(w, result, err)
+	response.HandleJSON(writer, result, err)
 }

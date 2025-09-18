@@ -191,6 +191,11 @@ func (rm *RetryManager) ExecuteWithBackoff(
 	return result
 }
 
+// GetMetrics returns retry metrics.
+func (rm *RetryManager) GetMetrics() RetryMetrics {
+	return *rm.metrics
+}
+
 // calculateDelay calculates the delay for the next retry attempt.
 func (rm *RetryManager) calculateDelay(attempt int) time.Duration {
 	// Exponential backoff: delay = initialDelay * multiplier^attempt
@@ -287,11 +292,6 @@ func (rm *RetryManager) recordSuccess() {
 // recordFailure records failed retry.
 func (rm *RetryManager) recordFailure() {
 	rm.metrics.failedRetries++
-}
-
-// GetMetrics returns retry metrics.
-func (rm *RetryManager) GetMetrics() RetryMetrics {
-	return *rm.metrics
 }
 
 // BackoffStrategy defines a backoff strategy interface.

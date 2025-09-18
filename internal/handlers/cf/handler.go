@@ -26,12 +26,12 @@ func NewHandler(logger interfaces.Logger, cfManager interfaces.CFManager, vault 
 }
 
 // ServeHTTP handles HTTP requests for CF registration endpoints.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("cf-registration-api")
 
 	// Check if this is a CF registration endpoint
 	if !strings.HasPrefix(req.URL.Path, "/b/cf/") {
-		response.WriteError(w, http.StatusNotFound, "endpoint not found")
+		response.WriteError(writer, http.StatusNotFound, "endpoint not found")
 
 		return
 	}
@@ -41,31 +41,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	logger.Debug("handling CF registration endpoint: %s %s", req.Method, path)
 
 	// Handle different endpoint categories
-	if h.handleCFRegistrationRoutes(w, req, path) {
+	if h.handleCFRegistrationRoutes(writer, req, path) {
 		return
 	}
 
-	if h.handleCFEndpointRoutes(req.Context(), w, req, path) {
+	if h.handleCFEndpointRoutes(req.Context(), writer, req, path) {
 		return
 	}
 
 	// No route matched
 	logger.Debug("unknown CF registration endpoint: %s %s", req.Method, path)
-	response.WriteError(w, http.StatusNotFound, "endpoint not found")
+	response.WriteError(writer, http.StatusNotFound, "endpoint not found")
 }
 
 // handleCFRegistrationRoutes handles CF registration management routes.
 // Returns true if the route was handled, false otherwise.
-func (h *Handler) handleCFRegistrationRoutes(w http.ResponseWriter, req *http.Request, path string) bool {
+func (h *Handler) handleCFRegistrationRoutes(writer http.ResponseWriter, req *http.Request, path string) bool {
 	// Handle /registrations routes
 	if path == "/registrations" && req.Method == http.MethodGet {
-		h.ListRegistrations(w, req)
+		h.ListRegistrations(writer, req)
 
 		return true
 	}
 
 	if path == "/registrations" && req.Method == http.MethodPost {
-		h.CreateRegistration(w, req)
+		h.CreateRegistration(writer, req)
 
 		return true
 	}
@@ -76,15 +76,15 @@ func (h *Handler) handleCFRegistrationRoutes(w http.ResponseWriter, req *http.Re
 
 		switch req.Method {
 		case http.MethodGet:
-			h.GetRegistration(w, req, registrationID)
+			h.GetRegistration(writer, req, registrationID)
 
 			return true
 		case http.MethodPut:
-			h.UpdateRegistration(w, req, registrationID)
+			h.UpdateRegistration(writer, req, registrationID)
 
 			return true
 		case http.MethodDelete:
-			h.DeleteRegistration(w, req, registrationID)
+			h.DeleteRegistration(writer, req, registrationID)
 
 			return true
 		}
@@ -96,7 +96,7 @@ func (h *Handler) handleCFRegistrationRoutes(w http.ResponseWriter, req *http.Re
 
 // handleCFEndpointRoutes handles CF endpoint routes.
 // Returns true if the route was handled, false otherwise.
-func (h *Handler) handleCFEndpointRoutes(ctx context.Context, w http.ResponseWriter, req *http.Request, path string) bool {
+func (h *Handler) handleCFEndpointRoutes(ctx context.Context, writer http.ResponseWriter, req *http.Request, path string) bool {
 	// TODO: Extract and implement CF endpoint routes
 	// This should include:
 	// - List endpoints

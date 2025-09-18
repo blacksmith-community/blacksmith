@@ -1,6 +1,7 @@
 package blacksmith
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,18 +67,18 @@ func (h *Handler) GetLogs(responseWriter http.ResponseWriter, req *http.Request)
 }
 
 // GetCredentials returns Blacksmith deployment credentials.
-func (h *Handler) GetCredentials(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) GetCredentials(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("blacksmith-credentials")
 	logger.Debug("Fetching Blacksmith credentials")
 
 	// TODO: Implement actual credential fetching from Vault
 	// For now, return error indicating not implemented
-	w.WriteHeader(http.StatusNotImplemented)
-	response.HandleJSON(w, nil, ErrCredentialFetchingNotYetImplemented)
+	responseWriter.WriteHeader(http.StatusNotImplemented)
+	response.HandleJSON(responseWriter, nil, ErrCredentialFetchingNotYetImplemented)
 }
 
 // GetConfig returns Blacksmith configuration.
-func (h *Handler) GetConfig(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) GetConfig(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("blacksmith-config")
 	logger.Debug("Fetching Blacksmith configuration")
 
@@ -97,7 +98,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, req *http.Request) {
 		},
 	}
 
-	response.HandleJSON(w, config, nil)
+	response.HandleJSON(responseWriter, config, nil)
 }
 
 // Cleanup performs cleanup operations.
@@ -120,7 +121,8 @@ func (h *Handler) Cleanup(responseWriter http.ResponseWriter, req *http.Request)
 		Target string `json:"target"`
 	}
 
-	if err := json.NewDecoder(req.Body).Decode(&cleanupRequest); err != nil {
+	err := json.NewDecoder(req.Body).Decode(&cleanupRequest)
+	if err != nil {
 		// If no body, use defaults
 		cleanupRequest.DryRun = false
 		cleanupRequest.Target = "all"
@@ -146,11 +148,12 @@ func (h *Handler) Cleanup(responseWriter http.ResponseWriter, req *http.Request)
 	response.HandleJSON(responseWriter, result, nil)
 }
 
+// isCommandAllowed checks if the command is in the allowed list.
+
 // ExecuteCommand executes a command in the Blacksmith deployment context.
 func (h *Handler) ExecuteCommand(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("blacksmith-execute")
 
-	// Only allow POST method
 	if req.Method != http.MethodPost {
 		responseWriter.WriteHeader(http.StatusMethodNotAllowed)
 		response.HandleJSON(responseWriter, nil, ErrMethodNotAllowed)
@@ -158,47 +161,68 @@ func (h *Handler) ExecuteCommand(responseWriter http.ResponseWriter, req *http.R
 		return
 	}
 
-	// Parse command from request
 	var cmdRequest struct {
 		Command   string   `json:"command"`
 		Arguments []string `json:"arguments"`
 	}
 
-	if err := json.NewDecoder(req.Body).Decode(&cmdRequest); err != nil {
+	err := json.NewDecoder(req.Body).Decode(&cmdRequest)
+	if err != nil {
 		responseWriter.WriteHeader(http.StatusBadRequest)
 		response.HandleJSON(responseWriter, nil, fmt.Errorf("%w: %w", ErrInvalidRequestBody, err))
 
 		return
 	}
 
-	// Validate command (whitelist allowed commands)
-	allowedCommands := []string{"status", "version", "health"}
-	allowed := false
-
-	for _, cmd := range allowedCommands {
-		if cmdRequest.Command == cmd {
-			allowed = true
-
-			break
-		}
-	}
-
-	if !allowed {
+	if !h.isCommandAllowed(cmdRequest.Command) {
 		responseWriter.WriteHeader(http.StatusForbidden)
 		response.HandleJSON(responseWriter, nil, fmt.Errorf("%w: %s", ErrCommandNotAllowed, cmdRequest.Command))
 
 		return
 	}
 
-	logger.Info("Executing command: %s %s", cmdRequest.Command, strings.Join(cmdRequest.Arguments, " "))
+	err = h.validateArguments(cmdRequest.Arguments)
+	if err != nil {
+		responseWriter.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(responseWriter, nil, err)
 
-	// Execute the command
-	cmd := exec.Command(cmdRequest.Command, cmdRequest.Arguments...)
+		return
+	}
+
+	logger.Info("Executing command: %s %s", cmdRequest.Command, strings.Join(cmdRequest.Arguments, " "))
+	result := h.executeValidatedCommand(req.Context(), cmdRequest.Command, cmdRequest.Arguments)
+	response.HandleJSON(responseWriter, result, nil)
+}
+
+func (h *Handler) isCommandAllowed(command string) bool {
+	allowedCommands := []string{"status", "version", "health"}
+	for _, cmd := range allowedCommands {
+		if command == cmd {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (h *Handler) validateArguments(args []string) error {
+	for _, arg := range args {
+		if strings.ContainsAny(arg, ";|&$`(){}[]<>*?~!") {
+			return fmt.Errorf("%w: argument contains invalid characters: %s", ErrInvalidRequestBody, arg)
+		}
+	}
+
+	return nil
+}
+
+func (h *Handler) executeValidatedCommand(ctx context.Context, command string, args []string) map[string]interface{} {
+	// #nosec G204 - Command and arguments are validated with whitelist and sanitized
+	cmd := exec.CommandContext(ctx, command, args...)
 	output, err := cmd.CombinedOutput()
 
 	result := map[string]interface{}{
-		"command": cmdRequest.Command,
-		"args":    cmdRequest.Arguments,
+		"command": command,
+		"args":    args,
 		"output":  string(output),
 		"success": err == nil,
 	}
@@ -206,5 +230,5 @@ func (h *Handler) ExecuteCommand(responseWriter http.ResponseWriter, req *http.R
 		result["error"] = err.Error()
 	}
 
-	response.HandleJSON(responseWriter, result, nil)
+	return result
 }

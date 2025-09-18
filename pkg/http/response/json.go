@@ -22,7 +22,8 @@ func HandleJSON(writer http.ResponseWriter, result interface{}, err error) {
 			"error":   err.Error(),
 		}
 
-		if jsonData, jsonErr := json.Marshal(errorResponse); jsonErr == nil {
+		jsonData, jsonErr := json.Marshal(errorResponse)
+		if jsonErr == nil {
 			_, _ = writer.Write(jsonData)
 		} else {
 			_, _ = fmt.Fprintf(writer, `{"success": false, "error": "internal error"}`)
@@ -31,7 +32,8 @@ func HandleJSON(writer http.ResponseWriter, result interface{}, err error) {
 		return
 	}
 
-	if jsonData, jsonErr := json.Marshal(result); jsonErr == nil {
+	jsonData, jsonErr := json.Marshal(result)
+	if jsonErr == nil {
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(jsonData)
 	} else {
@@ -50,7 +52,8 @@ func WriteError(writer http.ResponseWriter, statusCode int, message string) {
 		"error":   message,
 	}
 
-	if jsonData, err := json.Marshal(errorResponse); err == nil {
+	jsonData, err := json.Marshal(errorResponse)
+	if err == nil {
 		_, _ = writer.Write(jsonData)
 	} else {
 		_, _ = fmt.Fprintf(writer, `{"success": false, "error": "internal error"}`)
@@ -62,7 +65,8 @@ func WriteSuccess(writer http.ResponseWriter, data interface{}) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusOK)
 
-	if jsonData, err := json.Marshal(data); err == nil {
+	jsonData, err := json.Marshal(data)
+	if err == nil {
 		_, _ = writer.Write(jsonData)
 	} else {
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -73,7 +77,9 @@ func WriteSuccess(writer http.ResponseWriter, data interface{}) {
 // ParseJSON parses JSON from an io.Reader into the provided target interface.
 func ParseJSON(reader io.Reader, target interface{}) error {
 	decoder := json.NewDecoder(reader)
-	if err := decoder.Decode(target); err != nil {
+
+	err := decoder.Decode(target)
+	if err != nil {
 		return fmt.Errorf("failed to decode JSON: %w", err)
 	}
 

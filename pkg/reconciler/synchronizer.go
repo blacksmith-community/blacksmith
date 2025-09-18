@@ -49,14 +49,16 @@ func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 	stats.orphanCount = s.markOrphanedInstances(idx, reconciledMap)
 	stats.cleanupCount = s.markStaleOrphans(idx)
 
-	if err := s.SaveVaultIndex(idx); err != nil {
+	err = s.SaveVaultIndex(idx)
+	if err != nil {
 		return fmt.Errorf("failed to save index: %w", err)
 	}
 
 	s.logger.Infof("Index synchronized successfully: initial=%d, updated=%d, added=%d, orphaned=%d, stale=%d, final=%d",
 		startCount, stats.updateCount, stats.addCount, stats.orphanCount, stats.cleanupCount, len(idx))
 
-	if err := s.validateIndexInternal(idx); err != nil {
+	err = s.validateIndexInternal(idx)
+	if err != nil {
 		s.logger.Errorf("Index validation failed after sync: %s", err)
 	}
 
@@ -66,6 +68,127 @@ func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 // syncStats tracks synchronization statistics.
 type syncStats struct {
 	updateCount, addCount, orphanCount, cleanupCount int
+}
+
+// ValidateIndex validates the consistency of the vault index.
+func (s *IndexSynchronizer) ValidateIndex(ctx context.Context) error {
+	s.logger.Debugf("Validating index consistency")
+
+	idx, err := s.GetVaultIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get index for validation: %w", err)
+	}
+
+	return s.validateIndexInternal(idx)
+}
+
+// checkEntryWarnings checks for potential issues that aren't errors.
+func (s *IndexSynchronizer) CheckEntryWarnings(id string, data interface{}) string {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	// Check if orphaned
+	if orphaned, ok := dataMap["orphaned"].(bool); ok && orphaned {
+		if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
+			t, err := time.Parse(time.RFC3339, orphanedAt)
+			if err == nil {
+				duration := time.Since(t)
+				if duration > 7*24*time.Hour {
+					return fmt.Sprintf("orphaned for %v", duration.Round(time.Hour))
+				}
+			}
+		}
+
+		return "marked as orphaned"
+	}
+
+	// Check if not recently reconciled
+	if reconciledAt, ok := dataMap["reconciled_at"].(string); ok {
+		t, err := time.Parse(time.RFC3339, reconciledAt)
+		if err == nil {
+			if time.Since(t) > 24*time.Hour {
+				return fmt.Sprintf("not reconciled for %v", time.Since(t).Round(time.Hour))
+			}
+		}
+	} else if reconciled, ok := dataMap["reconciled"].(bool); !ok || !reconciled {
+		return "never reconciled"
+	}
+
+	// Check for missing deployment name
+	if _, hasService := dataMap["service_id"]; hasService {
+		if deploymentName, ok := dataMap["deployment_name"].(string); !ok || deploymentName == "" {
+			return "missing deployment name"
+		}
+	}
+
+	return ""
+}
+
+// isLegacyDeploymentName checks if a deployment name follows legacy patterns.
+func (s *IndexSynchronizer) IsLegacyDeploymentName(deploymentName, planID, instanceID string) bool {
+	// Check various legacy patterns
+	patterns := []string{
+		fmt.Sprintf("^%s[-_]%s$", regexp.QuoteMeta(planID), regexp.QuoteMeta(instanceID)),
+		fmt.Sprintf("^blacksmith[-_]%s[-_]%s$", regexp.QuoteMeta(planID), regexp.QuoteMeta(instanceID)),
+		fmt.Sprintf("^service[-_]%s[-_]%s$", regexp.QuoteMeta(planID), regexp.QuoteMeta(instanceID)),
+	}
+
+	for _, pattern := range patterns {
+		if matched, _ := regexp.MatchString(pattern, deploymentName); matched {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsValidInstanceID validates instance ID format.
+func IsValidInstanceID(id string) bool {
+	// Standard UUID format (v1-v5 and nil UUID)
+	// Accepts any valid UUID format
+	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+	return uuidRegex.MatchString(id)
+}
+
+// Vault interaction methods - these will be replaced with actual vault calls
+
+func (s *IndexSynchronizer) GetVaultIndex() (map[string]interface{}, error) {
+	s.logger.Debugf("Getting vault index from Vault")
+
+	v, ok := s.vault.(VaultInterface)
+	if !ok || v == nil {
+		return nil, ErrVaultInterfaceNotAvailable
+	}
+
+	data, err := v.Get("db")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get index from vault: %w", err)
+	}
+
+	if data == nil {
+		return make(map[string]interface{}), nil
+	}
+
+	return data, nil
+}
+
+func (s *IndexSynchronizer) SaveVaultIndex(idx map[string]interface{}) error {
+	s.logger.Debugf("Saving vault index with %d entries", len(idx))
+
+	v, ok := s.vault.(VaultInterface)
+	if !ok || v == nil {
+		return ErrVaultInterfaceNotAvailable
+	}
+
+	err := v.Put("db", idx)
+	if err != nil {
+		return fmt.Errorf("failed to save index to vault: %w", err)
+	}
+
+	return nil
 }
 
 // buildReconciledMap creates a map of reconciled instance IDs.
@@ -210,13 +333,13 @@ func (s *IndexSynchronizer) markStaleOrphans(idx map[string]interface{}) int {
 
 // processOrphanedEntry processes a single orphaned entry for staleness marking.
 func (s *IndexSynchronizer) processOrphanedEntry(entryID string, data interface{}) bool {
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
+	dataMap, exists := data.(map[string]interface{})
+	if !exists {
 		return false
 	}
 
-	orphaned, ok := dataMap["orphaned"].(bool)
-	if !ok || !orphaned {
+	orphaned, exists := dataMap["orphaned"].(bool)
+	if !exists || !orphaned {
 		return false
 	}
 
@@ -253,18 +376,6 @@ func (s *IndexSynchronizer) markAsStale(entryID string, dataMap map[string]inter
 	}
 
 	return true
-}
-
-// ValidateIndex validates the consistency of the vault index.
-func (s *IndexSynchronizer) ValidateIndex(ctx context.Context) error {
-	s.logger.Debugf("Validating index consistency")
-
-	idx, err := s.GetVaultIndex()
-	if err != nil {
-		return fmt.Errorf("failed to get index for validation: %w", err)
-	}
-
-	return s.validateIndexInternal(idx)
 }
 
 // validateIndexInternal performs the actual validation.
@@ -308,7 +419,7 @@ func (s *IndexSynchronizer) validateIndexInternal(idx map[string]interface{}) er
 }
 
 // validateEntry validates a single index entry.
-func (s *IndexSynchronizer) validateEntry(id string, data interface{}) error {
+func (s *IndexSynchronizer) validateEntry(instanceID string, data interface{}) error {
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		return fmt.Errorf("%w: expected map, got %T", ErrInvalidDataFormat, data)
@@ -316,14 +427,14 @@ func (s *IndexSynchronizer) validateEntry(id string, data interface{}) error {
 
 	// Check required fields for service instances
 	if _, hasService := dataMap["service_id"]; hasService {
-		return s.validateServiceInstance(id, dataMap)
+		return s.validateServiceInstance(instanceID, dataMap)
 	}
 
 	return nil
 }
 
 // validateServiceInstance validates service instance specific fields.
-func (s *IndexSynchronizer) validateServiceInstance(id string, dataMap map[string]interface{}) error {
+func (s *IndexSynchronizer) validateServiceInstance(instanceID string, dataMap map[string]interface{}) error {
 	// Validate required fields
 	requiredFields := []string{"service_id", "plan_id"}
 	for _, field := range requiredFields {
@@ -333,23 +444,23 @@ func (s *IndexSynchronizer) validateServiceInstance(id string, dataMap map[strin
 	}
 
 	// Validate UUID format
-	if !IsValidInstanceID(id) {
+	if !IsValidInstanceID(instanceID) {
 		return ErrInvalidInstanceIDFormat
 	}
 
 	// Validate deployment name if present
-	return s.validateDeploymentName(id, dataMap)
+	return s.validateDeploymentName(instanceID, dataMap)
 }
 
 // validateDeploymentName validates the deployment name format.
-func (s *IndexSynchronizer) validateDeploymentName(id string, dataMap map[string]interface{}) error {
-	deploymentName, ok := dataMap["deployment_name"].(string)
-	if !ok || deploymentName == "" {
+func (s *IndexSynchronizer) validateDeploymentName(instanceID string, dataMap map[string]interface{}) error {
+	deploymentName, exists := dataMap["deployment_name"].(string)
+	if !exists || deploymentName == "" {
 		return nil
 	}
 
 	// Check deployment name format (should be planID-instanceID)
-	expectedPattern := fmt.Sprintf("%s-%s", dataMap["plan_id"], id)
+	expectedPattern := fmt.Sprintf("%s-%s", dataMap["plan_id"], instanceID)
 	if deploymentName == expectedPattern {
 		return nil
 	}
@@ -360,116 +471,9 @@ func (s *IndexSynchronizer) validateDeploymentName(id string, dataMap map[string
 		return ErrPlanIDMustBeString
 	}
 
-	if !s.IsLegacyDeploymentName(deploymentName, planID, id) {
+	if !s.IsLegacyDeploymentName(deploymentName, planID, instanceID) {
 		return fmt.Errorf("%w: expected pattern %s, got %s",
 			ErrDeploymentNameMismatch, expectedPattern, deploymentName)
-	}
-
-	return nil
-}
-
-// checkEntryWarnings checks for potential issues that aren't errors.
-func (s *IndexSynchronizer) CheckEntryWarnings(id string, data interface{}) string {
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
-		return ""
-	}
-
-	// Check if orphaned
-	if orphaned, ok := dataMap["orphaned"].(bool); ok && orphaned {
-		if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
-			if t, err := time.Parse(time.RFC3339, orphanedAt); err == nil {
-				duration := time.Since(t)
-				if duration > 7*24*time.Hour {
-					return fmt.Sprintf("orphaned for %v", duration.Round(time.Hour))
-				}
-			}
-		}
-
-		return "marked as orphaned"
-	}
-
-	// Check if not recently reconciled
-	if reconciledAt, ok := dataMap["reconciled_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, reconciledAt); err == nil {
-			if time.Since(t) > 24*time.Hour {
-				return fmt.Sprintf("not reconciled for %v", time.Since(t).Round(time.Hour))
-			}
-		}
-	} else if reconciled, ok := dataMap["reconciled"].(bool); !ok || !reconciled {
-		return "never reconciled"
-	}
-
-	// Check for missing deployment name
-	if _, hasService := dataMap["service_id"]; hasService {
-		if deploymentName, ok := dataMap["deployment_name"].(string); !ok || deploymentName == "" {
-			return "missing deployment name"
-		}
-	}
-
-	return ""
-}
-
-// isLegacyDeploymentName checks if a deployment name follows legacy patterns.
-func (s *IndexSynchronizer) IsLegacyDeploymentName(deploymentName, planID, instanceID string) bool {
-	// Check various legacy patterns
-	patterns := []string{
-		fmt.Sprintf("^%s[-_]%s$", regexp.QuoteMeta(planID), regexp.QuoteMeta(instanceID)),
-		fmt.Sprintf("^blacksmith[-_]%s[-_]%s$", regexp.QuoteMeta(planID), regexp.QuoteMeta(instanceID)),
-		fmt.Sprintf("^service[-_]%s[-_]%s$", regexp.QuoteMeta(planID), regexp.QuoteMeta(instanceID)),
-	}
-
-	for _, pattern := range patterns {
-		if matched, _ := regexp.MatchString(pattern, deploymentName); matched {
-			return true
-		}
-	}
-
-	return false
-}
-
-// IsValidInstanceID validates instance ID format.
-func IsValidInstanceID(id string) bool {
-	// Standard UUID format (v1-v5 and nil UUID)
-	// Accepts any valid UUID format
-	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-	return uuidRegex.MatchString(id)
-}
-
-// Vault interaction methods - these will be replaced with actual vault calls
-
-func (s *IndexSynchronizer) GetVaultIndex() (map[string]interface{}, error) {
-	s.logger.Debugf("Getting vault index from Vault")
-
-	v, ok := s.vault.(VaultInterface)
-	if !ok || v == nil {
-		return nil, ErrVaultInterfaceNotAvailable
-	}
-
-	data, err := v.Get("db")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get index from vault: %w", err)
-	}
-
-	if data == nil {
-		return make(map[string]interface{}), nil
-	}
-
-	return data, nil
-}
-
-func (s *IndexSynchronizer) SaveVaultIndex(idx map[string]interface{}) error {
-	s.logger.Debugf("Saving vault index with %d entries", len(idx))
-
-	v, ok := s.vault.(VaultInterface)
-	if !ok || v == nil {
-		return ErrVaultInterfaceNotAvailable
-	}
-
-	err := v.Put("db", idx)
-	if err != nil {
-		return fmt.Errorf("failed to save index to vault: %w", err)
 	}
 
 	return nil

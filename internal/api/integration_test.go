@@ -1,4 +1,4 @@
-package api
+package api_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"blacksmith/internal/api"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/services"
 )
@@ -69,28 +70,40 @@ func (m *mockVault) UpdateCFRegistrationStatus(ctx context.Context, registration
 // mockBroker implements interfaces.Broker for testing.
 type mockBroker struct{}
 
+// IsBroker implements the interfaces.Broker interface.
+func (m *mockBroker) IsBroker() bool {
+	return true
+}
+
 // mockCFManager implements interfaces.CFManager for testing.
 type mockCFManager struct{}
 
-// TestBasicEndpointsIntegration tests that the refactored InternalAPI responds to basic endpoints.
-func TestBasicEndpointsIntegration(t *testing.T) {
-	t.Parallel()
-	// Create mock dependencies
-	deps := Dependencies{
+// IsCFManager implements the interfaces.CFManager interface.
+func (m *mockCFManager) IsCFManager() bool {
+	return true
+}
+
+// createTestDependencies creates mock dependencies for testing.
+func createTestDependencies() api.Dependencies {
+	return api.Dependencies{
 		Config:             &mockConfig{},
 		Logger:             &mockLogger{},
 		Vault:              &mockVault{},
 		Broker:             &mockBroker{},
-		ServicesManager:    &services.Manager{}, // Using real services manager but it should be fine for basic routing tests
+		ServicesManager:    &services.Manager{},
 		CFManager:          &mockCFManager{},
 		SecurityMiddleware: &services.SecurityMiddleware{},
 	}
+}
 
-	// Create the InternalAPI
-	api := NewInternalAPI(deps)
-
-	// Test cases for basic endpoints
-	testCases := []struct {
+// getBasicEndpointTestCases returns test cases for basic endpoint testing.
+func getBasicEndpointTestCases() []struct {
+	name           string
+	method         string
+	path           string
+	expectedStatus int
+} {
+	return []struct {
 		name           string
 		method         string
 		path           string
@@ -112,13 +125,13 @@ func TestBasicEndpointsIntegration(t *testing.T) {
 			name:           "Certificate endpoint routing test",
 			method:         "GET",
 			path:           "/b/certificates/list",
-			expectedStatus: http.StatusNotImplemented, // Certificate handler correctly returns 501 Not Implemented
+			expectedStatus: http.StatusNotImplemented,
 		},
 		{
 			name:           "CF registrations endpoint",
 			method:         "GET",
 			path:           "/b/cf/registrations",
-			expectedStatus: http.StatusOK, // CF handler is implemented and returns empty list
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Non-existent endpoint",
@@ -127,30 +140,42 @@ func TestBasicEndpointsIntegration(t *testing.T) {
 			expectedStatus: http.StatusNotFound,
 		},
 	}
+}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+// validateResponse validates the HTTP response for a test case.
+func validateResponse(t *testing.T, responseWriter *httptest.ResponseRecorder, expectedStatus int) {
+	t.Helper()
+
+	if responseWriter.Code != expectedStatus {
+		t.Errorf("Expected status code %d, got %d. Response body: %s",
+			expectedStatus, responseWriter.Code, responseWriter.Body.String())
+	}
+
+	if responseWriter.Code == http.StatusOK {
+		contentType := responseWriter.Header().Get("Content-Type")
+		if !strings.Contains(contentType, "application/json") {
+			t.Errorf("Expected JSON content type, got %s", contentType)
+		}
+	}
+}
+
+// TestBasicEndpointsIntegration tests that the refactored InternalAPI responds to basic endpoints.
+func TestBasicEndpointsIntegration(t *testing.T) {
+	t.Parallel()
+
+	deps := createTestDependencies()
+	apiHandler := api.NewInternalAPI(deps)
+	testCases := getBasicEndpointTestCases()
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			// Create test request
-			req := httptest.NewRequest(tc.method, tc.path, nil)
-			w := httptest.NewRecorder()
 
-			// Call the handler
-			api.ServeHTTP(w, req)
+			req := httptest.NewRequest(testCase.method, testCase.path, nil)
+			responseWriter := httptest.NewRecorder()
 
-			// Check status code
-			if w.Code != tc.expectedStatus {
-				t.Errorf("Expected status code %d, got %d. Response body: %s",
-					tc.expectedStatus, w.Code, w.Body.String())
-			}
-
-			// For successful responses, check that we get JSON
-			if w.Code == http.StatusOK {
-				contentType := w.Header().Get("Content-Type")
-				if !strings.Contains(contentType, "application/json") {
-					t.Errorf("Expected JSON content type, got %s", contentType)
-				}
-			}
+			apiHandler.ServeHTTP(responseWriter, req)
+			validateResponse(t, responseWriter, testCase.expectedStatus)
 		})
 	}
 }
@@ -159,27 +184,18 @@ func TestBasicEndpointsIntegration(t *testing.T) {
 func TestMiddlewareIntegration(t *testing.T) {
 	t.Parallel()
 
-	deps := Dependencies{
-		Config:             &mockConfig{},
-		Logger:             &mockLogger{},
-		Vault:              &mockVault{},
-		Broker:             &mockBroker{},
-		ServicesManager:    &services.Manager{},
-		CFManager:          &mockCFManager{},
-		SecurityMiddleware: &services.SecurityMiddleware{},
-	}
-
-	api := NewInternalAPI(deps)
+	deps := createTestDependencies()
+	apiHandler := api.NewInternalAPI(deps)
 
 	// Test that requests go through the middleware chain
 	req := httptest.NewRequest(http.MethodGet, "/b/instance", nil)
-	w := httptest.NewRecorder()
+	responseWriter := httptest.NewRecorder()
 
-	api.ServeHTTP(w, req)
+	apiHandler.ServeHTTP(responseWriter, req)
 
 	// Check that response has appropriate headers that would be set by middleware
 	// The logging middleware should have processed this request
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected successful response, got %d", w.Code)
+	if responseWriter.Code != http.StatusOK {
+		t.Errorf("Expected successful response, got %d", responseWriter.Code)
 	}
 }

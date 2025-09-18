@@ -50,10 +50,10 @@ func NewHandler(deps Dependencies) *Handler {
 }
 
 // ServeHTTP handles task-related endpoints with pattern matching.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// List all tasks - GET /b/tasks
 	if req.URL.Path == "/b/tasks" && req.Method == http.MethodGet {
-		h.ListTasks(w, req)
+		h.ListTasks(writer, req)
 
 		return
 	}
@@ -62,7 +62,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	detailPattern := regexp.MustCompile(`^/b/tasks/([0-9]+)$`)
 	if m := detailPattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == http.MethodGet {
 		taskID, _ := strconv.Atoi(m[1])
-		h.GetTaskDetails(w, req, taskID)
+		h.GetTaskDetails(writer, req, taskID)
 
 		return
 	}
@@ -71,7 +71,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	outputPattern := regexp.MustCompile(`^/b/tasks/([0-9]+)/output$`)
 	if m := outputPattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == http.MethodGet {
 		taskID, _ := strconv.Atoi(m[1])
-		h.GetTaskOutput(w, req, taskID)
+		h.GetTaskOutput(writer, req, taskID)
 
 		return
 	}
@@ -80,18 +80,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	cancelPattern := regexp.MustCompile(`^/b/tasks/([0-9]+)/cancel$`)
 	if m := cancelPattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == http.MethodPost {
 		taskID, _ := strconv.Atoi(m[1])
-		h.CancelTask(w, req, taskID)
+		h.CancelTask(writer, req, taskID)
 
 		return
 	}
 
 	// No matching endpoint
-	w.WriteHeader(http.StatusNotFound)
-	response.HandleJSON(w, nil, errTaskEndpointNotFound)
+	writer.WriteHeader(http.StatusNotFound)
+	response.HandleJSON(writer, nil, errTaskEndpointNotFound)
 }
 
 // ListTasks returns a list of all BOSH tasks.
-func (h *Handler) ListTasks(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("task-list")
 	logger.Debug("Listing BOSH tasks")
 
@@ -136,7 +136,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, req *http.Request) {
 		tasks = filtered
 	}
 
-	response.HandleJSON(w, map[string]interface{}{
+	response.HandleJSON(writer, map[string]interface{}{
 		"tasks": tasks,
 		"count": len(tasks),
 		"limit": limit,
@@ -144,7 +144,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, req *http.Request) {
 }
 
 // GetTaskDetails returns details for a specific task.
-func (h *Handler) GetTaskDetails(w http.ResponseWriter, req *http.Request, taskID int) {
+func (h *Handler) GetTaskDetails(writer http.ResponseWriter, req *http.Request, taskID int) {
 	logger := h.logger.Named("task-details")
 	logger.Debug("Getting details for task %d", taskID)
 
@@ -159,11 +159,11 @@ func (h *Handler) GetTaskDetails(w http.ResponseWriter, req *http.Request, taskI
 		Result:      "success",
 	}
 
-	response.HandleJSON(w, task, nil)
+	response.HandleJSON(writer, task, nil)
 }
 
 // GetTaskOutput returns the output/logs for a specific task.
-func (h *Handler) GetTaskOutput(w http.ResponseWriter, req *http.Request, taskID int) {
+func (h *Handler) GetTaskOutput(writer http.ResponseWriter, req *http.Request, taskID int) {
 	logger := h.logger.Named("task-output")
 	logger.Debug("Getting output for task %d", taskID)
 
@@ -181,11 +181,11 @@ func (h *Handler) GetTaskOutput(w http.ResponseWriter, req *http.Request, taskID
 		"output":  fmt.Sprintf("Sample output for task %d\nOperation completed successfully", taskID),
 	}
 
-	response.HandleJSON(w, output, nil)
+	response.HandleJSON(writer, output, nil)
 }
 
 // CancelTask cancels a running task.
-func (h *Handler) CancelTask(w http.ResponseWriter, req *http.Request, taskID int) {
+func (h *Handler) CancelTask(writer http.ResponseWriter, req *http.Request, taskID int) {
 	logger := h.logger.Named("task-cancel")
 
 	// Parse optional request body
@@ -194,7 +194,10 @@ func (h *Handler) CancelTask(w http.ResponseWriter, req *http.Request, taskID in
 	}
 
 	// Try to decode body, but it's optional
-	json.NewDecoder(req.Body).Decode(&cancelRequest)
+	err := json.NewDecoder(req.Body).Decode(&cancelRequest)
+	if err != nil && err.Error() != "EOF" {
+		logger.Debug("Could not decode cancel request body: %v", err)
+	}
 
 	logger.Info("Cancelling task %d (force: %v)", taskID, cancelRequest.Force)
 
@@ -207,5 +210,5 @@ func (h *Handler) CancelTask(w http.ResponseWriter, req *http.Request, taskID in
 		"message":   fmt.Sprintf("Task %d cancellation initiated", taskID),
 	}
 
-	response.HandleJSON(w, result, nil)
+	response.HandleJSON(writer, result, nil)
 }

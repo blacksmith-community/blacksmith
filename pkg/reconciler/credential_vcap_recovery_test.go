@@ -94,6 +94,7 @@ func (v *vcapTestVault) DeleteSecret(path string) error {
 }
 func (v *vcapTestVault) ListSecrets(path string) ([]string, error) { return []string{}, nil }
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestVCAPRecovery_RabbitMQ_Success(t *testing.T) {
 	t.Parallel()
 
@@ -170,7 +171,7 @@ func TestVCAPRecovery_RabbitMQ_Success(t *testing.T) {
 		t.Errorf("expected credentials_source_app=%s, got %v", appGUID, meta["credentials_source_app"])
 	}
 }
-
+//nolint:funlen
 func TestVCAPRecovery_MetadataTimestampAndFields(t *testing.T) {
 	t.Parallel()
 
@@ -457,11 +458,13 @@ func TestVCAPRecovery_BatchMixedResults(t *testing.T) {
 		t.Errorf("expected credentials stored for %s", instSuccess)
 	}
 	// Existing untouched
-	if _, err := vault.Get(instExisting + "/credentials"); err != nil {
+	_, err = vault.Get(instExisting + "/credentials")
+	if err != nil {
 		t.Errorf("expected existing credentials retained for %s", instExisting)
 	}
 	// Fail should not have creds
-	if _, err := vault.Get(instFail + "/credentials"); err == nil {
+	_, err = vault.Get(instFail + "/credentials")
+	if err == nil {
 		t.Errorf("did not expect credentials for failing instance %s", instFail)
 	}
 }

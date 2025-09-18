@@ -16,11 +16,9 @@ const (
 	testInstanceMetadataPath = "test-instance/metadata"
 )
 
-// Static errors for this test file
+// Static errors for this test file.
 var (
-	errNotFound              = errors.New("not found")
-	errNoDataFoundAtPath     = errors.New("no data found at path")
-	errVaultConnectionFailed = errors.New("vault connection failed")
+	errNotFound = errors.New("not found")
 )
 
 // MockVault implements VaultInterface for testing.
@@ -122,6 +120,7 @@ func (l *MockTestLogger) Errorf(format string, args ...interface{}) {
 	l.messages = append(l.messages, fmt.Sprintf("[ERROR] "+format, args...))
 }
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -210,7 +209,9 @@ func TestVaultUpdater_PreservesCredentials(t *testing.T) {
 		t.Error("Metadata was not saved")
 	}
 }
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 
+//nolint:funlen
 func TestVaultUpdater_PreservesBindings(t *testing.T) {
 	t.Parallel()
 
@@ -306,8 +307,10 @@ func TestVaultUpdater_PreservesBindings(t *testing.T) {
 	} else {
 		t.Error("Metadata was not saved")
 	}
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 }
 
+//nolint:funlen
 func TestVaultUpdater_CreatesBackup(t *testing.T) {
 	t.Parallel()
 
@@ -395,9 +398,11 @@ func TestVaultUpdater_CreatesBackup(t *testing.T) {
 	// In a real implementation, we would need a more sophisticated mock or integration test
 	if !backupCreated {
 		t.Log("Backup was not created - expected due to mock vault limitations with new export functionality")
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 	}
 }
 
+//nolint:funlen
 func TestVaultUpdater_PreservesHistory(t *testing.T) {
 	t.Parallel()
 
@@ -693,10 +698,12 @@ func (m *MockVaultForBindingTests) SetData(path string, data map[string]interfac
 	m.data[path] = data
 }
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func (m *MockVaultForBindingTests) SetError(path string, err error) {
 	m.errors[path] = err
 }
 
+//nolint:funlen
 func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -779,63 +786,86 @@ func TestVaultUpdater_GetBindingCredentials(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			// Setup
-			vault := NewMockVaultForBindingTests()
-			logger := &MockTestLogger{}
-			updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
 
-			// Setup vault with test data
-			tt.setupVault(vault)
+			updater, vault := setupBindingCredentialsTest(testCase)
+			credentials, err := updater.GetBindingCredentials(testCase.instanceID, testCase.bindingID)
 
-			// Execute
-			credentials, err := updater.GetBindingCredentials(tt.instanceID, tt.bindingID)
-
-			// Verify
-			if tt.expectedErr != "" {
-				if err == nil {
-					t.Errorf("expected error containing '%s', got nil", tt.expectedErr)
-				} else if !strings.Contains(err.Error(), tt.expectedErr) {
-					t.Errorf("expected error containing '%s', got '%s'", tt.expectedErr, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("expected no error, got %v", err)
-				}
-
-				// Check credentials match expected
-				if len(credentials) != len(tt.expectedCred) {
-					t.Errorf("expected %d credential fields, got %d", len(tt.expectedCred), len(credentials))
-				}
-
-				for key, expectedValue := range tt.expectedCred {
-					if actualValue, exists := credentials[key]; !exists {
-						t.Errorf("expected credential field '%s' not found", key)
-					} else if actualValue != expectedValue {
-						t.Errorf("credential field '%s': expected %v, got %v", key, expectedValue, actualValue)
-					}
-				}
-			}
-
-			// Verify correct vault path was called
-			expectedPath := fmt.Sprintf("%s/bindings/%s/credentials", tt.instanceID, tt.bindingID)
-			found := false
-
-			for _, call := range vault.getCalls {
-				if call == expectedPath {
-					found = true
-
-					break
-				}
-			}
-
-			if !found {
-				t.Errorf("expected vault.Get to be called with path '%s', but it wasn't. Actual calls: %v", expectedPath, vault.getCalls)
-			}
+			verifyBindingCredentialsError(t, testCase.expectedErr, err)
+			verifyBindingCredentials(t, testCase.expectedCred, credentials)
+			verifyVaultPathCalled(t, vault, testCase.instanceID, testCase.bindingID)
 		})
 	}
+}
+
+// setupBindingCredentialsTest sets up test dependencies.
+func setupBindingCredentialsTest(testCase struct {
+	name         string
+	instanceID   string
+	bindingID    string
+	setupVault   func(*MockVaultForBindingTests)
+	expectedErr  string
+	expectedCred map[string]interface{}
+}) (*VaultUpdater, *MockVaultForBindingTests) {
+	vault := NewMockVaultForBindingTests()
+	logger := &MockTestLogger{}
+	updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
+	testCase.setupVault(vault)
+
+	return updater, vault
+}
+
+// verifyBindingCredentialsError verifies error expectations.
+func verifyBindingCredentialsError(t *testing.T, expectedErr string, actualErr error) {
+	t.Helper()
+
+	if expectedErr != "" {
+		if actualErr == nil {
+			t.Errorf("expected error containing '%s', got nil", expectedErr)
+		} else if !strings.Contains(actualErr.Error(), expectedErr) {
+			t.Errorf("expected error containing '%s', got '%s'", expectedErr, actualErr.Error())
+		}
+	} else if actualErr != nil {
+		t.Errorf("expected no error, got %v", actualErr)
+	}
+}
+
+// verifyBindingCredentials verifies credential expectations.
+func verifyBindingCredentials(t *testing.T, expected, actual map[string]interface{}) {
+	t.Helper()
+
+	if expected == nil {
+		return
+	}
+
+	if len(actual) != len(expected) {
+		t.Errorf("expected %d credential fields, got %d", len(expected), len(actual))
+	}
+
+	for key, expectedValue := range expected {
+		actualValue, exists := actual[key]
+		if !exists {
+			t.Errorf("expected credential field '%s' not found", key)
+		} else if actualValue != expectedValue {
+			t.Errorf("credential field '%s': expected %v, got %v", key, expectedValue, actualValue)
+		}
+	}
+}
+
+// verifyVaultPathCalled verifies that vault was called with expected path.
+func verifyVaultPathCalled(t *testing.T, vault *MockVaultForBindingTests, instanceID, bindingID string) {
+	t.Helper()
+
+	expectedPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	for _, call := range vault.getCalls {
+		if call == expectedPath {
+			return
+		}
+	}
+
+	t.Errorf("expected vault.Get to be called with path '%s', but it wasn't. Actual calls: %v", expectedPath, vault.getCalls)
 }
 
 func TestVaultUpdater_GetBindingCredentials_PathConstruction(t *testing.T) {
@@ -867,20 +897,20 @@ func TestVaultUpdater_GetBindingCredentials_PathConstruction(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("path_%s_%s", tc.instanceID, tc.bindingID), func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(fmt.Sprintf("path_%s_%s", testCase.instanceID, testCase.bindingID), func(t *testing.T) {
 			t.Parallel()
 			// Clear previous calls
 			vault.getCalls = []string{}
 
 			// Execute (will fail, but we just want to check path construction)
-			_, _ = updater.GetBindingCredentials(tc.instanceID, tc.bindingID)
+			_, _ = updater.GetBindingCredentials(testCase.instanceID, testCase.bindingID)
 
 			// Verify path construction
 			if len(vault.getCalls) != 1 {
 				t.Errorf("expected exactly 1 vault call, got %d", len(vault.getCalls))
-			} else if vault.getCalls[0] != tc.expectedPath {
-				t.Errorf("expected path '%s', got '%s'", tc.expectedPath, vault.getCalls[0])
+			} else if vault.getCalls[0] != testCase.expectedPath {
+				t.Errorf("expected path '%s', got '%s'", testCase.expectedPath, vault.getCalls[0])
 			}
 		})
 	}
@@ -913,6 +943,8 @@ func verifyHistoryPreservation(t *testing.T, vault *MockVault, metadataPath stri
 
 // validateHistoryActions checks that required history actions are present.
 func validateHistoryActions(t *testing.T, history []map[string]interface{}) {
+	t.Helper()
+
 	foundActions := make(map[string]bool)
 	requiredActions := []string{"provision", "update", "reconciliation"}
 

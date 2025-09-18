@@ -11,10 +11,10 @@ import (
 // SecurityMiddleware creates a middleware that handles security validation.
 func SecurityMiddleware(securityManager *services.SecurityMiddleware) pkgmiddleware.Middleware {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			// Skip security validation for certain endpoints (like health checks)
 			if isPublicEndpoint(request.URL.Path) {
-				next.ServeHTTP(w, request)
+				next.ServeHTTP(writer, request)
 
 				return
 			}
@@ -23,7 +23,7 @@ func SecurityMiddleware(securityManager *services.SecurityMiddleware) pkgmiddlew
 			instanceID := extractInstanceIDFromPath(request.URL.Path)
 			if instanceID == "" {
 				// Some endpoints don't have instance IDs, allow them through
-				next.ServeHTTP(w, request)
+				next.ServeHTTP(writer, request)
 
 				return
 			}
@@ -35,8 +35,9 @@ func SecurityMiddleware(securityManager *services.SecurityMiddleware) pkgmiddlew
 				"instance_id": instanceID,
 			}
 
-			if err := securityManager.ValidateRequest(instanceID, "http_request", params); err != nil {
-				if securityManager.HandleSecurityError(w, err) {
+			err := securityManager.ValidateRequest(instanceID, "http_request", params)
+			if err != nil {
+				if securityManager.HandleSecurityError(writer, err) {
 					return
 				}
 			}
@@ -44,11 +45,11 @@ func SecurityMiddleware(securityManager *services.SecurityMiddleware) pkgmiddlew
 			// Add rate limit headers
 			if headers := securityManager.GetRateLimitHeaders(instanceID, "http_request"); headers != nil {
 				for key, value := range headers {
-					w.Header().Set(key, value)
+					writer.Header().Set(key, value)
 				}
 			}
 
-			next.ServeHTTP(w, request)
+			next.ServeHTTP(writer, request)
 		})
 	}
 }

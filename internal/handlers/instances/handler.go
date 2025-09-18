@@ -28,7 +28,7 @@ func NewHandler(logger interfaces.Logger) *Handler {
 }
 
 // GetInstanceDetails handles the /b/instance endpoint.
-func (h *Handler) GetInstanceDetails(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) GetInstanceDetails(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("instance-details")
 	logger.Debug("fetching blacksmith instance details")
 
@@ -36,7 +36,8 @@ func (h *Handler) GetInstanceDetails(w http.ResponseWriter, req *http.Request) {
 	instanceDetails := make(map[string]string)
 
 	// Read AZ
-	if data, err := os.ReadFile("/var/vcap/instance/az"); err == nil {
+	data, err := os.ReadFile("/var/vcap/instance/az")
+	if err == nil {
 		instanceDetails["az"] = strings.TrimSpace(string(data))
 	} else {
 		logger.Debug("unable to read AZ file: %s", err)
@@ -45,7 +46,8 @@ func (h *Handler) GetInstanceDetails(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Read Deployment
-	if data, err := os.ReadFile("/var/vcap/instance/deployment"); err == nil {
+	data, err = os.ReadFile("/var/vcap/instance/deployment")
+	if err == nil {
 		instanceDetails["deployment"] = strings.TrimSpace(string(data))
 	} else {
 		logger.Debug("unable to read deployment file: %s", err)
@@ -54,7 +56,8 @@ func (h *Handler) GetInstanceDetails(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Read Instance ID
-	if data, err := os.ReadFile("/var/vcap/instance/id"); err == nil {
+	data, err = os.ReadFile("/var/vcap/instance/id")
+	if err == nil {
 		instanceDetails["id"] = strings.TrimSpace(string(data))
 	} else {
 		logger.Debug("unable to read instance ID file: %s", err)
@@ -63,7 +66,8 @@ func (h *Handler) GetInstanceDetails(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Read Instance Name
-	if data, err := os.ReadFile("/var/vcap/instance/name"); err == nil {
+	data, err = os.ReadFile("/var/vcap/instance/name")
+	if err == nil {
 		instanceDetails["name"] = strings.TrimSpace(string(data))
 	} else {
 		logger.Debug("unable to read instance name file: %s", err)
@@ -82,11 +86,11 @@ func (h *Handler) GetInstanceDetails(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	response.WriteSuccess(w, instanceDetails)
+	response.WriteSuccess(writer, instanceDetails)
 }
 
 // GetSSHUITerminalStatus handles the /b/config/ssh/ui-terminal-status endpoint.
-func (h *Handler) GetSSHUITerminalStatus(w http.ResponseWriter, req *http.Request, uiTerminalEnabled bool) {
+func (h *Handler) GetSSHUITerminalStatus(writer http.ResponseWriter, req *http.Request, uiTerminalEnabled bool) {
 	statusMessage := "SSH Terminal UI is enabled"
 	if !uiTerminalEnabled {
 		statusMessage = "SSH Terminal UI is disabled in configuration"
@@ -97,7 +101,7 @@ func (h *Handler) GetSSHUITerminalStatus(w http.ResponseWriter, req *http.Reques
 		"message": statusMessage,
 	}
 
-	response.WriteSuccess(w, result)
+	response.WriteSuccess(writer, result)
 }
 
 // getBoshDNSFromHosts reads /etc/hosts and finds BOSH DNS entries for the given instance ID.

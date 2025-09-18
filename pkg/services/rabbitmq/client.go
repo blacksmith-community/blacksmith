@@ -44,6 +44,7 @@ func (cm *ConnectionManager) GetConnection(instanceID string, creds *Credentials
 }
 
 // GetConnectionWithOptions retrieves or creates a RabbitMQ connection with connection options.
+//nolint:funlen
 func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *Credentials, opts common.ConnectionOptions) (*amqp.Connection, *amqp.Channel, error) {
 	// Create key that includes override parameters to separate different connection types
 	key := fmt.Sprintf("%s-%v-%s-%s", instanceID, opts.UseAMQPS, opts.OverrideUser, opts.OverrideVHost)
@@ -115,11 +116,12 @@ func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *
 		)
 	}
 
-	ch, err := conn.Channel()
+	channel, err := conn.Channel()
 	if err != nil {
 		_ = conn.Close()
 
 		const channelRetryDelaySeconds = 2
+
 		return nil, nil, common.NewRetryableError(
 			fmt.Errorf("failed to open channel: %w", err),
 			true,
@@ -130,10 +132,10 @@ func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *
 	// Cache connection and channel
 	cm.mu.Lock()
 	cm.connections[key] = conn
-	cm.channels[key] = ch
+	cm.channels[key] = channel
 	cm.mu.Unlock()
 
-	return conn, ch, nil
+	return conn, channel, nil
 }
 
 // TestConnection tests the connection without caching.
@@ -147,15 +149,15 @@ func (cm *ConnectionManager) TestConnection(creds *Credentials, useAMQPS bool) e
 
 	defer func() { _ = conn.Close() }()
 
-	ch, err := conn.Channel()
+	channel, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("failed to open channel: %w", err)
 	}
 
-	defer func() { _ = ch.Close() }()
+	defer func() { _ = channel.Close() }()
 
 	// Test basic operation
-	err = ch.ExchangeDeclare(
+	err = channel.ExchangeDeclare(
 		"blacksmith.test", // name
 		"direct",          // type
 		false,             // durable
@@ -227,53 +229,6 @@ func (cm *ConnectionManager) TestConnectionWithOverrides(creds *Credentials, use
 	}
 
 	return nil
-}
-
-// buildURI constructs the AMQP connection URI.
-func (cm *ConnectionManager) buildURI(creds *Credentials, useAMQPS bool) string {
-	protocol := "amqp"
-	if useAMQPS {
-		protocol = "amqps"
-	}
-
-	// Check for protocol-specific URIs first
-	if creds.Protocols != nil {
-		if proto, ok := creds.Protocols[protocol]; ok {
-			if uri, ok := proto["uri"].(string); ok && uri != "" {
-				return uri
-			}
-		}
-	}
-
-	// Check for direct URI fields
-	if useAMQPS && creds.TLSURI != "" {
-		return creds.TLSURI
-	}
-
-	if !useAMQPS && creds.URI != "" {
-		return creds.URI
-	}
-
-	// Build URI manually
-	vhost := creds.VHost
-	if vhost == "" {
-		vhost = "/"
-	}
-
-	port := creds.Port
-	if useAMQPS && creds.TLSPort > 0 {
-		port = creds.TLSPort
-	} else if useAMQPS {
-		port = 5671 // Default AMQPS port
-	}
-
-	return fmt.Sprintf("%s://%s:%s@%s:%d/%s",
-		protocol,
-		url.QueryEscape(creds.Username),
-		url.QueryEscape(creds.Password),
-		creds.Host,
-		port,
-		url.QueryEscape(vhost))
 }
 
 // CloseConnection closes and removes a specific connection.
@@ -349,4 +304,51 @@ func (cm *ConnectionManager) GetConnectionInfo() map[string]ConnectionInfo {
 	}
 
 	return info
+}
+
+// buildURI constructs the AMQP connection URI.
+func (cm *ConnectionManager) buildURI(creds *Credentials, useAMQPS bool) string {
+	protocol := "amqp"
+	if useAMQPS {
+		protocol = "amqps"
+	}
+
+	// Check for protocol-specific URIs first
+	if creds.Protocols != nil {
+		if proto, ok := creds.Protocols[protocol]; ok {
+			if uri, ok := proto["uri"].(string); ok && uri != "" {
+				return uri
+			}
+		}
+	}
+
+	// Check for direct URI fields
+	if useAMQPS && creds.TLSURI != "" {
+		return creds.TLSURI
+	}
+
+	if !useAMQPS && creds.URI != "" {
+		return creds.URI
+	}
+
+	// Build URI manually
+	vhost := creds.VHost
+	if vhost == "" {
+		vhost = "/"
+	}
+
+	port := creds.Port
+	if useAMQPS && creds.TLSPort > 0 {
+		port = creds.TLSPort
+	} else if useAMQPS {
+		port = 5671 // Default AMQPS port
+	}
+
+	return fmt.Sprintf("%s://%s:%s@%s:%d/%s",
+		protocol,
+		url.QueryEscape(creds.Username),
+		url.QueryEscape(creds.Password),
+		creds.Host,
+		port,
+		url.QueryEscape(vhost))
 }

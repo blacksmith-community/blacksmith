@@ -52,6 +52,7 @@ func NewCFAuthClient(apiURL, username, password string) *CFAuthClient {
 }
 
 // Authenticate performs CF authentication and obtains access token.
+//nolint:funlen
 func (c *CFAuthClient) Authenticate() error {
 	// First, get the authorization endpoint from CF info
 	infoURL := c.APIURL + "/v2/info"
@@ -94,6 +95,7 @@ func (c *CFAuthClient) Authenticate() error {
 	data.Set("password", c.Password)
 
 	const authTimeoutSeconds = 30
+
 	ctx2, cancel2 := context.WithTimeout(context.Background(), authTimeoutSeconds*time.Second)
 	defer cancel2()
 

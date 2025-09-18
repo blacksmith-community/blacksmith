@@ -23,13 +23,13 @@ func TestIsValidInstanceID_Simple(t *testing.T) {
 		{"", false},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.id, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.id, func(t *testing.T) {
 			t.Parallel()
 
-			result := IsValidInstanceID(tt.id)
-			if result != tt.valid {
-				t.Errorf("IsValidInstanceID(%q) = %v, want %v", tt.id, result, tt.valid)
+			result := IsValidInstanceID(testCase.id)
+			if result != testCase.valid {
+				t.Errorf("IsValidInstanceID(%q) = %v, want %v", testCase.id, result, testCase.valid)
 			}
 		})
 	}
@@ -38,7 +38,7 @@ func TestIsValidInstanceID_Simple(t *testing.T) {
 func TestIsLegacyDeploymentName_Simple(t *testing.T) {
 	t.Parallel()
 
-	s := &IndexSynchronizer{}
+	synchronizer := &IndexSynchronizer{}
 
 	tests := []struct {
 		name       string
@@ -84,23 +84,24 @@ func TestIsLegacyDeploymentName_Simple(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := s.IsLegacyDeploymentName(tt.deployment, tt.planID, tt.instanceID)
-			if result != tt.expect {
+			result := synchronizer.IsLegacyDeploymentName(testCase.deployment, testCase.planID, testCase.instanceID)
+			if result != testCase.expect {
 				t.Errorf("IsLegacyDeploymentName(%q, %q, %q) = %v, want %v",
-					tt.deployment, tt.planID, tt.instanceID, result, tt.expect)
+					testCase.deployment, testCase.planID, testCase.instanceID, result, testCase.expect)
 			}
 		})
 	}
 }
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestCheckEntryWarnings_Simple(t *testing.T) {
 	t.Parallel()
 
-	s := &IndexSynchronizer{}
+	synchronizer := &IndexSynchronizer{}
 
 	tests := []struct {
 		name         string
@@ -162,22 +163,22 @@ func TestCheckEntryWarnings_Simple(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			warning := s.CheckEntryWarnings("test-id", tt.data)
-			if tt.expectWarn && warning == "" {
+			warning := synchronizer.CheckEntryWarnings("test-id", testCase.data)
+			if testCase.expectWarn && warning == "" {
 				t.Error("Expected warning but got none")
 			}
 
-			if !tt.expectWarn && warning != "" {
+			if !testCase.expectWarn && warning != "" {
 				t.Errorf("Unexpected warning: %s", warning)
 			}
 
-			if tt.expectWarn && tt.warnContains != "" {
-				if !contains(warning, tt.warnContains) {
-					t.Errorf("Warning %q doesn't contain expected text %q", warning, tt.warnContains)
+			if testCase.expectWarn && testCase.warnContains != "" {
+				if !contains(warning, testCase.warnContains) {
+					t.Errorf("Warning %q doesn't contain expected text %q", warning, testCase.warnContains)
 				}
 			}
 		})

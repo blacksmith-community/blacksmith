@@ -7,6 +7,7 @@ import (
 	. "blacksmith/pkg/services/redis"
 )
 
+//nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestNewCredentials(t *testing.T) {
 	t.Parallel()
 
