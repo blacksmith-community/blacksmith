@@ -58,6 +58,7 @@ func (h *Handler) TestConnection(req *RegistrationTest) (*RegistrationTestResult
 }
 
 // PerformRegistration performs the full registration process.
+//
 //nolint:funlen
 func (h *Handler) PerformRegistration(req *RegistrationRequest, progressChan chan<- RegistrationProgress) error {
 	defer close(progressChan)

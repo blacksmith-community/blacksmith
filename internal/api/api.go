@@ -205,6 +205,10 @@ func handleServiceRouting(writer http.ResponseWriter, req *http.Request, handler
 func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependencies) {
 	// Certificate endpoints
 	router.RegisterHandler("/b/internal/certificates", http.HandlerFunc(handlers.certificate.HandleCertificatesRequest))
+	router.RegisterHandler("/b/certificates/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotImplemented)
+		_, _ = w.Write([]byte("certificate listing not yet implemented"))
+	}))
 
 	// CF endpoints
 	router.RegisterHandler("/b/cf/", handlers.cf)

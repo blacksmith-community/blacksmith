@@ -35,6 +35,7 @@ func NewServiceMatcher(broker interface{}, logger Logger) *ServiceMatcher {
 }
 
 // MatchDeployment matches a deployment to a service and plan.
+//
 //nolint:funlen
 func (m *ServiceMatcher) MatchDeployment(deployment DeploymentDetail, services []Service) (*MatchResult, error) {
 	m.logger.Debugf("Matching deployment %s", deployment.Name)

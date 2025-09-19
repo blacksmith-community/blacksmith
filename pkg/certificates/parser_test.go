@@ -117,6 +117,7 @@ func TestParseCertificateFromPEM(t *testing.T) {
 		})
 	}
 }
+
 //nolint:funlen
 func TestValidateCertificateFormat(t *testing.T) {
 	t.Parallel()
@@ -486,9 +487,11 @@ func TestParseCertificateChain(t *testing.T) {
 		t.Errorf("Expected error for empty PEM data")
 	}
 }
+
 //nolint:funlen // This test function is intentionally long for comprehensive testing
 
 // Integration test with actual certificate generation.
+//
 //nolint:funlen
 func TestIntegrationCertificateGeneration(t *testing.T) {
 	t.Parallel()

@@ -219,6 +219,7 @@ properties:
 		t.Errorf("Expected instance ID 12345678-1234-1234-1234-123456789abc, got %s", instance.InstanceID)
 	}
 }
+
 //nolint:funlen // This test function is intentionally long for comprehensive testing
 
 //nolint:funlen
@@ -292,12 +293,12 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 			t.Parallel()
 
 			instance, err := matcher.MatchDeployment(testCase.deployment, services)
-			
+
 			if testCase.expectedMatch {
 				if err != nil {
 					t.Fatalf("Unexpected error: %v", err)
 				}
-				
+
 				if instance == nil {
 					t.Error("Expected a match but got nil")
 
@@ -313,7 +314,7 @@ func TestServiceMatcher_MatchDeployment_ByReleases(t *testing.T) {
 				} else if !errors.Is(err, ErrNoMatchFound) {
 					t.Errorf("Expected ErrNoMatchFound but got: %v", err)
 				}
-				
+
 				if instance != nil {
 					t.Errorf("Expected no match but got instance: %+v", instance)
 				}

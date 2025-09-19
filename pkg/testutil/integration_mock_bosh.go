@@ -10,6 +10,7 @@ import (
 // Mock error constants.
 var (
 	ErrIntegrationMockNotImplemented = errors.New("integration mock method not implemented")
+	ErrIntegrationTestError          = errors.New("integration test error")
 )
 
 // IntegrationMockBOSH provides a mock implementation of the BOSH Director interface for integration testing.
@@ -51,10 +52,14 @@ func (imb *IntegrationMockBOSH) GetDeploymentVMs(deployment string) ([]bosh.VM, 
 }
 
 // GetInfo implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) GetInfo() (*bosh.Info, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) GetInfo() (*bosh.Info, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // GetTask implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) GetTask(taskID int) (*bosh.Task, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) GetTask(taskID int) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // CreateDeployment implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) CreateDeployment(manifest string) (*bosh.Task, error) {
@@ -72,7 +77,9 @@ func (imb *IntegrationMockBOSH) GetDeployment(deployment string) (*bosh.Deployme
 }
 
 // GetDeployments implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) GetDeployments() ([]bosh.Deployment, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) GetDeployments() ([]bosh.Deployment, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // GetEvents implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) GetEvents(deployment string) ([]bosh.Event, error) {
@@ -80,22 +87,32 @@ func (imb *IntegrationMockBOSH) GetEvents(deployment string) ([]bosh.Event, erro
 }
 
 // GetReleases implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) GetReleases() ([]bosh.Release, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) GetReleases() ([]bosh.Release, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // UploadRelease implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) UploadRelease(url, sha1 string) (*bosh.Task, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) UploadRelease(url, sha1 string) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // GetStemcells implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) GetStemcells() ([]bosh.Stemcell, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) GetStemcells() ([]bosh.Stemcell, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // UploadStemcell implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) UploadStemcell(url, sha1 string) (*bosh.Task, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) UploadStemcell(url, sha1 string) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // GetTaskOutput implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) GetTaskOutput(taskID int, typ string) (string, error) { return "", nil }
 
 // GetTaskEvents implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) GetTaskEvents(taskID int) ([]bosh.TaskEvent, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) GetTaskEvents(taskID int) ([]bosh.TaskEvent, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // FetchLogs implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) FetchLogs(deployment, job, index string) (string, error) {
@@ -109,7 +126,9 @@ func (imb *IntegrationMockBOSH) UpdateCloudConfig(yaml string) error { return ni
 func (imb *IntegrationMockBOSH) GetCloudConfig() (string, error) { return "", nil }
 
 // Cleanup implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) Cleanup(removeAll bool) (*bosh.Task, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) Cleanup(removeAll bool) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // SSHCommand implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
@@ -138,7 +157,9 @@ func (imb *IntegrationMockBOSH) GetTasks(taskType string, limit int, states []st
 }
 
 // GetAllTasks implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) GetAllTasks(limit int) ([]bosh.Task, error) { return nil, ErrIntegrationMockNotImplemented }
+func (imb *IntegrationMockBOSH) GetAllTasks(limit int) ([]bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
 
 // CancelTask implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) CancelTask(taskID int) error { return nil }

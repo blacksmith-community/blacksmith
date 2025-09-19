@@ -10,7 +10,7 @@ import (
 func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 	t.Parallel()
 
-	vault := newMemVault()
+	vault := NewTestVault(t)
 	updater := NewVaultUpdater(vault, NewMockLogger(), BackupConfig{})
 
 	instanceID := "12345678-1234-1234-1234-123456789abc"
@@ -22,9 +22,9 @@ func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 	}
 
 	// Ensure written to canonical path "db"
-	storedIndex := vault.store["db"]
-	if storedIndex == nil {
-		t.Fatalf("expected index stored at path 'db', not found")
+	storedIndex, err := vault.Get("db")
+	if err != nil {
+		t.Fatalf("expected index stored at path 'db', got error: %v", err)
 	}
 
 	if got, ok := storedIndex[instanceID]; !ok {
@@ -47,18 +47,19 @@ func TestVaultUpdater_UpdateAndGetIndex_CanonicalPath(t *testing.T) {
 func TestVaultUpdater_UpdateIndex_DeleteEntry(t *testing.T) {
 	t.Parallel()
 
-	vault := newMemVault()
+	vault := NewTestVault(t)
 	updater := NewVaultUpdater(vault, NewMockLogger(), BackupConfig{})
 
 	instanceID := "00000000-0000-0000-0000-0000000000ee"
-	vault.store["db"] = map[string]interface{}{instanceID: map[string]interface{}{"service_id": "redis"}}
+	_ = vault.SetSecret("db", map[string]interface{}{instanceID: map[string]interface{}{"service_id": "redis"}})
 
 	err := updater.UpdateIndex(instanceID, nil)
 	if err != nil {
 		t.Fatalf("updateIndex delete error: %v", err)
 	}
 
-	if _, exists := vault.store["db"][instanceID]; exists {
+	idx, _ := vault.Get("db")
+	if _, exists := idx[instanceID]; exists {
 		t.Fatalf("expected instance removed from index after delete")
 	}
 }

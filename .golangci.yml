@@ -46,9 +46,9 @@ linters:
   - gocritic # Provides diagnostics that check for bugs, performance and style issues. [auto-fix]
   - gocyclo # Computes and checks the cyclomatic complexity of functions. [fast]
   - godot # Check if comments end in a period. [fast, auto-fix]
-  - godox # Detects usage of FIXME, TODO and other keywords inside comments. [fast]
+    #TODO: manually go through these- godox # Detects usage of FIXME, TODO and other keywords inside comments. [fast]
   - goheader # Check if file header matches to pattern. [fast, auto-fix]
-  - gomoddirectives # Manage the use of 'replace', 'retract', and 'excludes' directives in go.mod. [fast]
+  # - gomoddirectives # Disabled: We need the vault replace directive due to non-standard versioning
   - gomodguard # Allow and blocklist linter for direct Go module dependencies. This is different from depguard where there are different block types for example version constraints and module recommendations. [fast]
   - goprintffuncname # Checks that printf-like functions are named with `f` at the end. [fast]
   - gosec # Inspects source code for security problems.
@@ -138,3 +138,19 @@ formatters:
 # Issues configuration
 issues:
   max-same-issues: 3
+  exclude-rules:
+    # Allow test suite global variables in test files
+    - path: "_test\\.go$"
+      linters:
+        - gochecknoglobals
+      text: "suite is a global variable"
+    # Allow replace directives for vault due to non-semantic versioning
+    - path: "^go\\.mod$"
+      linters:
+        - gomoddirectives
+      text: "replacement are not allowed: github.com/hashicorp/vault"
+    # Allow longer initialization functions
+    - path: "pkg/testutil/vault_dev_server\\.go$"
+      linters:
+        - funlen
+      source: "^func NewVaultDevServer"

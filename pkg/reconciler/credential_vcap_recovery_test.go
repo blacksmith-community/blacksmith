@@ -171,6 +171,7 @@ func TestVCAPRecovery_RabbitMQ_Success(t *testing.T) {
 		t.Errorf("expected credentials_source_app=%s, got %v", appGUID, meta["credentials_source_app"])
 	}
 }
+
 //nolint:funlen
 func TestVCAPRecovery_MetadataTimestampAndFields(t *testing.T) {
 	t.Parallel()

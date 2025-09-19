@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -23,6 +24,7 @@ import (
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
+	"blacksmith/pkg/services/common"
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
@@ -107,6 +109,10 @@ type Broker struct {
 	Vault   *internalVault.Vault
 	Shield  shield.Client
 	Config  *config.Config
+
+	// Concurrency control for bind/unbind operations
+	instanceMu    sync.RWMutex           // Protects InstanceLocks map
+	InstanceLocks map[string]*sync.Mutex // Per-instance mutexes (exported for initialization)
 }
 
 // IsBroker implements the interfaces.Broker interface.
@@ -435,6 +441,12 @@ func (b *Broker) Bind(
 	domain.Binding,
 	error,
 ) {
+	// Acquire lock for this instance to prevent concurrent bind/unbind
+	mu := b.GetInstanceLock(instanceID)
+
+	mu.Lock()
+	defer mu.Unlock()
+
 	var binding domain.Binding
 
 	logger := logger.Get().Named(fmt.Sprintf("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID))
@@ -475,6 +487,12 @@ func (b *Broker) Unbind(
 	details domain.UnbindDetails,
 	asyncAllowed bool,
 ) (domain.UnbindSpec, error) {
+	// Acquire lock for this instance to prevent concurrent bind/unbind
+	mu := b.GetInstanceLock(instanceID)
+
+	mu.Lock()
+	defer mu.Unlock()
+
 	logger := logger.Get().Named(fmt.Sprintf("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID))
 	logger.Info("Starting unbind operation for instance %s, binding %s", instanceID, bindingID)
 	logger.Debug("Unbind details - Service: %s, Plan: %s", details.ServiceID, details.PlanID)
@@ -656,6 +674,31 @@ func (b *Broker) ServiceWithNoDeploymentCheck(ctx context.Context) (
 	logger.Info("Orphan check complete - removed %d orphaned instances", len(removedDeploymentNames))
 
 	return removedDeploymentNames, nil
+}
+
+// GetInstanceLock returns a mutex for the given instance ID, creating one if it doesn't exist.
+func (b *Broker) GetInstanceLock(instanceID string) *sync.Mutex {
+	b.instanceMu.RLock()
+	mutexForInstance, exists := b.InstanceLocks[instanceID]
+	b.instanceMu.RUnlock()
+
+	if exists {
+		return mutexForInstance
+	}
+
+	// Need to create a new mutex
+	b.instanceMu.Lock()
+	defer b.instanceMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if mutexForInstance, exists = b.InstanceLocks[instanceID]; exists {
+		return mutexForInstance
+	}
+
+	mutexForInstance = &sync.Mutex{}
+	b.InstanceLocks[instanceID] = mutexForInstance
+
+	return mutexForInstance
 }
 
 func (b *Broker) determineServiceDirs(dir []string, logger logger.Logger) ([]string, error) {
@@ -852,11 +895,11 @@ func (b *Broker) initializeBinding(creds interface{}, logger logger.Logger) (*Bi
 
 func (b *Broker) processDynamicCredentials(ctx context.Context, credsMap map[string]interface{}, bindingID string, binding *BindingCredentials, logger logger.Logger) error {
 	if _, hasAPI := credsMap["api_url"]; hasAPI {
-		logger.Info("Service supports dynamic credentials, processing RabbitMQ user for binding %s", bindingID)
+		logger.Info("Service supports dynamic credentials, processing RabbitMQ user for binding", "bindingID", bindingID)
 
 		err := b.handleDynamicRabbitMQCredentials(ctx, credsMap, bindingID, logger)
 		if err != nil {
-			logger.Error("Failed to handle dynamic RabbitMQ credentials: %s", err)
+			logger.Error("Failed to handle dynamic RabbitMQ credentials", "error", err)
 
 			return fmt.Errorf("failed to handle dynamic credentials: %w", err)
 		}
@@ -1845,8 +1888,8 @@ func (b *Broker) createDynamicRabbitMQUser(ctx context.Context, bindingID string
 	usernameDynamic := bindingID
 	passwordDynamic := uuid.New().String()
 
-	logger.Info("Creating dynamic RabbitMQ user for binding %s", bindingID)
-	logger.Debug("Creating user %s in RabbitMQ at %s", usernameDynamic, apiUrl)
+	logger.Info("Creating dynamic RabbitMQ user for binding", "bindingID", bindingID)
+	logger.Debug("Creating user in RabbitMQ", "username", usernameDynamic, "apiUrl", apiUrl)
 
 	// Create user and grant permissions
 	err = b.setupRabbitMQUser(ctx, usernameDynamic, passwordDynamic, adminCreds, apiUrlStr, credMap, logger)
@@ -1902,19 +1945,19 @@ func (b *Broker) setupRabbitMQUser(ctx context.Context, usernameDynamic, passwor
 	// Create user
 	err := CreateUserPassRabbitMQ(ctx, usernameDynamic, passwordDynamic, adminCreds.username, adminCreds.password, apiUrlStr, b.Config, credMap)
 	if err != nil {
-		logger.Error("Failed to create RabbitMQ user: %s", err)
+		logger.Error("Failed to create RabbitMQ user", "error", err)
 
 		return err
 	}
 
-	logger.Debug("Successfully created RabbitMQ user %s", usernameDynamic)
+	logger.Debug("Successfully created RabbitMQ user", "username", usernameDynamic)
 
 	// Grant permissions
 	logger.Debug("Granting permissions to user %s for vhost %s", usernameDynamic, adminCreds.vhost)
 
 	err = GrantUserPermissionsRabbitMQ(ctx, usernameDynamic, adminCreds.username, adminCreds.password, adminCreds.vhost, apiUrlStr, b.Config, credMap)
 	if err != nil {
-		logger.Error("Failed to grant permissions to RabbitMQ user %s: %s", usernameDynamic, err)
+		logger.Error("Failed to grant permissions to RabbitMQ user", "username", usernameDynamic, "error", err)
 
 		return err
 	}
@@ -2011,17 +2054,32 @@ func (b *Broker) deleteRabbitMQUser(ctx context.Context, bindingID string, credM
 		return err
 	}
 
-	logger.Info("Deleting dynamic RabbitMQ user %s", bindingID)
-	logger.Debug("Calling RabbitMQ API at %s to delete user", apiUrl)
+	logger.Info("Deleting dynamic RabbitMQ user", "bindingID", bindingID)
+	logger.Debug("Calling RabbitMQ API to delete user", "apiUrl", apiUrl)
 
-	err = DeletetUserRabbitMQ(ctx, bindingID, adminUsername, adminPassword, apiUrl, b.Config, credMap)
+	// Wrap the delete operation with retry logic
+	const (
+		maxRetries = 3
+		baseDelay  = 1 * time.Second
+	)
+
+	err = common.WithRetry(ctx, func() error {
+		return DeletetUserRabbitMQ(ctx, bindingID, adminUsername, adminPassword, apiUrl, b.Config, credMap)
+	}, maxRetries, baseDelay)
 	if err != nil {
-		logger.Error("Failed to delete RabbitMQ user %s: %s", bindingID, err)
+		// Check if it's a 404 error which should be considered success
+		if strings.Contains(err.Error(), "404") {
+			logger.Info("User %s doesn't exist, considering as successful deletion", bindingID)
 
-		return err
+			return nil
+		}
+
+		logger.Error("Failed to delete RabbitMQ user after retries", "bindingID", bindingID, "error", err)
+
+		return fmt.Errorf("failed to delete RabbitMQ user: %w", err)
 	}
 
-	logger.Debug("Successfully deleted RabbitMQ user %s", bindingID)
+	logger.Debug("Successfully deleted RabbitMQ user", "bindingID", bindingID)
 
 	return nil
 }
@@ -2193,11 +2251,20 @@ func (b *Broker) generateDynamicCredentials(bindingID string) *rabbitMQDynamicCr
 }
 
 func (b *Broker) createRabbitMQUser(ctx context.Context, dynamicCreds *rabbitMQDynamicCreds, adminCreds *rabbitMQAdminCreds, logger logger.Logger) error {
-	logger.Debug("Creating dynamic RabbitMQ user %s", dynamicCreds.username)
+	logger.Debug("Creating dynamic RabbitMQ user", "username", dynamicCreds.username)
 
-	err := CreateUserPassRabbitMQ(ctx, dynamicCreds.username, dynamicCreds.password, adminCreds.username, adminCreds.password, adminCreds.apiURL, b.Config, map[string]interface{}{})
+	// Wrap the create operation with retry logic
+	const (
+		maxRetries = 3
+		baseDelay  = 1 * time.Second
+	)
+
+	err := common.WithRetry(ctx, func() error {
+		return CreateUserPassRabbitMQ(ctx, dynamicCreds.username, dynamicCreds.password,
+			adminCreds.username, adminCreds.password, adminCreds.apiURL, b.Config, map[string]interface{}{})
+	}, maxRetries, baseDelay)
 	if err != nil {
-		return fmt.Errorf("failed to create RabbitMQ user: %w", err)
+		return fmt.Errorf("failed to create RabbitMQ user after retries: %w", err)
 	}
 
 	return nil
@@ -2399,7 +2466,7 @@ func createHTTPClientForService(serviceName string, cfg *config.Config) *http.Cl
 // tryServiceRequest attempts HTTP request with BOSH DNS first, then falls back to IP.
 func tryServiceRequest(req *http.Request, httpClient *http.Client, creds map[string]interface{}, logger logger.Logger) (*http.Response, error) {
 	originalURL := req.URL.String()
-	logger.Debug("Original request URL: %s", originalURL)
+	logger.Debug("Original request URL", "url", originalURL)
 	// Extract connection options from credentials
 	connOptions := extractConnectionOptions(creds, logger)
 	// Try BOSH DNS hostname first
@@ -2428,11 +2495,11 @@ func extractConnectionOptions(creds map[string]interface{}, logger logger.Logger
 	// Extract hostname
 	if h, ok := creds["hostname"].(string); ok && h != "" {
 		options.hostname = h
-		logger.Debug("Found BOSH DNS hostname in credentials: %s", h)
+		logger.Debug("Found BOSH DNS hostname in credentials", "hostname", h)
 	}
 	// Extract IPs from jobs array
 	options.ips = extractIPsFromJobs(creds)
-	logger.Debug("Available IPs for fallback: %v", options.ips)
+	logger.Debug("Available IPs for fallback", "ips", options.ips)
 
 	return options
 }
@@ -2481,7 +2548,7 @@ func tryHostnameConnection(req *http.Request, httpClient *http.Client, hostname,
 		return nil, ErrHostnameURLUnchanged
 	}
 
-	logger.Info("Attempting connection via BOSH DNS: %s", hostnameURL)
+	logger.Info("Attempting connection via BOSH DNS", "url", hostnameURL)
 	req.URL, _ = url.Parse(hostnameURL)
 
 	resp, err := httpClient.Do(req)
@@ -2491,7 +2558,7 @@ func tryHostnameConnection(req *http.Request, httpClient *http.Client, hostname,
 		return resp, nil
 	}
 
-	logger.Debug("BOSH DNS connection failed: %s", err)
+	logger.Debug("BOSH DNS connection failed", "error", err)
 	// Check if this is a TLS certificate error that might be resolved with IP
 	if isTLSError(err) {
 		logger.Info("TLS certificate error detected, will try IP fallback")
@@ -2507,7 +2574,7 @@ func tryIPConnections(req *http.Request, httpClient *http.Client, ips []string, 
 	}
 
 	for i, ipAddress := range ips {
-		logger.Info("Attempting connection via IP (%d/%d): %s", i+1, len(ips), ipAddress)
+		logger.Info("Attempting connection via IP", "attempt", i+1, "total", len(ips), "ip", ipAddress)
 
 		resp, err := tryIPConnection(req, httpClient, ipAddress, originalURL, logger)
 		if err == nil {
@@ -2525,12 +2592,12 @@ func tryIPConnection(req *http.Request, httpClient *http.Client, ipAddress, orig
 
 	resp, err := httpClient.Do(req)
 	if err == nil {
-		logger.Info("Successfully connected via IP address: %s", ipAddress)
+		logger.Info("Successfully connected via IP address", "ip", ipAddress)
 
 		return resp, nil
 	}
 
-	logger.Debug("IP connection failed for %s: %s", ipAddress, err)
+	logger.Debug("IP connection failed", "ip", ipAddress, "error", err)
 
 	return nil, fmt.Errorf("IP connection failed for %s: %w", ipAddress, err)
 }
@@ -2572,11 +2639,151 @@ func isTLSError(err error) bool {
 		strings.Contains(err.Error(), "certificate") ||
 		strings.Contains(err.Error(), "x509:")
 }
+
+func isRetryableHTTPError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+	// Check for retryable HTTP status codes in error message
+	return strings.Contains(errStr, "500") || // Internal Server Error
+		strings.Contains(errStr, "502") || // Bad Gateway
+		strings.Contains(errStr, "503") || // Service Unavailable
+		strings.Contains(errStr, "504") || // Gateway Timeout
+		strings.Contains(errStr, "context deadline exceeded") || // Timeout
+		strings.Contains(errStr, "connection refused") || // Connection issues
+		strings.Contains(errStr, "i/o timeout") // Network timeout
+}
+
+// httpStatusError wraps an error with HTTP status code information.
+type httpStatusError struct {
+	statusCode int
+	err        error
+}
+
+func (e *httpStatusError) Error() string {
+	return e.err.Error()
+}
+
+func (e *httpStatusError) Unwrap() error {
+	return e.err
+}
+
+func (e *httpStatusError) StatusCode() int {
+	return e.statusCode
+}
+
+// retryWithBackoff performs an operation with exponential backoff retry logic.
+func retryWithBackoff(ctx context.Context, maxRetries int, baseDelay time.Duration, operation func(context.Context) error, logger logger.Logger) error {
+	const maxShift = 10 // Max shift to prevent overflow (2^10 = 1024)
+
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Check context before each attempt
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled: %w", ctx.Err())
+		default:
+		}
+
+		// Create timeout context for this attempt
+		attemptCtx, cancel := context.WithTimeout(ctx, defaultDeleteTimeout)
+		err := operation(attemptCtx)
+
+		cancel()
+
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+
+		// Check if we should retry
+		if !shouldRetry(err, attempt, maxRetries) {
+			return err
+		}
+
+		// Calculate delay with exponential backoff
+		// Safe conversion: attempt is always between 0 and maxRetries (3)
+		// Using maxShift to cap the exponential growth
+		shiftAmount := min(attempt, maxShift)
+		if shiftAmount < 0 {
+			shiftAmount = 0
+		}
+		// #nosec G115 - shiftAmount is bounded between 0 and maxShift(10)
+		delay := time.Duration(1<<uint(shiftAmount)) * baseDelay
+		logger.Debug("Retrying after delay", "attempt", attempt+1, "delay", delay)
+
+		select {
+		case <-time.After(delay):
+			continue
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+		}
+	}
+
+	return lastErr
+}
+
+// shouldRetry determines if an error is retryable based on the error type and attempt count.
+func shouldRetry(err error, attempt, maxRetries int) bool {
+	if attempt >= maxRetries {
+		return false
+	}
+
+	// Check if it's an HTTP error
+	if isRetryableHTTPError(err) {
+		return true
+	}
+
+	// Check for specific HTTP status codes in wrapped errors
+	var httpErr interface{ StatusCode() int }
+	if errors.As(err, &httpErr) {
+		statusCode := httpErr.StatusCode()
+
+		return statusCode >= 500 || statusCode == http.StatusRequestTimeout
+	}
+
+	return false
+}
+
 func CreateUserPassRabbitMQ(ctx context.Context, usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl string, cfg *config.Config, creds map[string]interface{}) error {
 	logger := logger.Get().Named("CreateUserPassRabbitMQ")
-	logger.Info("Creating RabbitMQ user: %s", usernameDynamic)
+	logger.Info("Creating RabbitMQ user", "username", usernameDynamic)
 	logger.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
 
+	const (
+		maxRetries = 3
+		baseDelay  = 50 * time.Millisecond
+	)
+
+	createUserFunc := func(attemptCtx context.Context) error {
+		data, err := prepareUserCreationPayload(passwordDynamic, logger)
+		if err != nil {
+			return err
+		}
+
+		request, err := buildUserCreationRequest(attemptCtx, apiUrl, usernameDynamic, adminUsername, adminPassword, data, logger)
+		if err != nil {
+			return err
+		}
+
+		resp, err := executeUserCreationRequest(request, cfg, creds, logger)
+		if err != nil {
+			return err
+		}
+
+		defer func() { _ = resp.Body.Close() }()
+
+		return validateUserCreationResponse(resp, usernameDynamic, logger)
+	}
+
+	return retryWithBackoff(ctx, maxRetries, baseDelay, createUserFunc, logger)
+}
+
+func prepareUserCreationPayload(passwordDynamic string, logger logger.Logger) ([]byte, error) {
 	payload := struct {
 		Password string `json:"password"`
 		Tags     string `json:"tags"`
@@ -2586,27 +2793,33 @@ func CreateUserPassRabbitMQ(ctx context.Context, usernameDynamic, passwordDynami
 	if err != nil {
 		logger.Error("Failed to marshal user creation payload: %s", err)
 
-		return fmt.Errorf("failed to marshal user creation payload: %w", err)
+		return nil, fmt.Errorf("failed to marshal user creation payload: %w", err)
 	}
 
 	logger.Debug("User creation payload: %s", string(data))
 
+	return data, nil
+}
+
+func buildUserCreationRequest(ctx context.Context, apiUrl, usernameDynamic, adminUsername, adminPassword string, data []byte, logger logger.Logger) (*http.Request, error) {
 	createUrl := apiUrl + "/users/" + usernameDynamic
 	logger.Debug("Creating user at URL: %s", createUrl)
 
-	ctx, cancel := context.WithTimeout(ctx, defaultDeleteTimeout)
-	defer cancel()
-
+	// Don't create a timeout context here - let the caller manage the context
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, createUrl, bytes.NewBuffer(data))
 	if err != nil {
 		logger.Error("Failed to create HTTP request for user creation: %s", err)
 
-		return fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	request.SetBasicAuth(adminUsername, adminPassword)
 	request.Header.Set("Content-Type", "application/json")
 
+	return request, nil
+}
+
+func executeUserCreationRequest(request *http.Request, cfg *config.Config, creds map[string]interface{}, logger logger.Logger) (*http.Response, error) {
 	httpClient := createHTTPClientForService("rabbitmq", cfg)
 
 	logger.Debug("Attempting user creation with BOSH DNS fallback to IP")
@@ -2615,25 +2828,35 @@ func CreateUserPassRabbitMQ(ctx context.Context, usernameDynamic, passwordDynami
 	if err != nil {
 		logger.Error("HTTP request failed for user creation: %s", err)
 
-		return err
+		return nil, err
 	}
 
-	defer func() { _ = resp.Body.Close() }()
+	return resp, nil
+}
 
-	if resp.StatusCode != http.StatusCreated {
+func validateUserCreationResponse(resp *http.Response, usernameDynamic string, logger logger.Logger) error {
+	// Accept 201 (Created), 204 (No Content), or 409 (Conflict) as successful
+	// 204 or 409 means the user already exists, which is acceptable for idempotency
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusConflict {
 		body, _ := io.ReadAll(resp.Body)
-		logger.Error("Failed to create user - Status: %d, Response: %s", resp.StatusCode, string(body))
+		err := fmt.Errorf("%w, status code: %d, response: %s", ErrFailedToCreateRabbitMQUser, resp.StatusCode, string(body))
+		logger.Error("Failed to create user", "statusCode", resp.StatusCode, "response", string(body))
 
-		return fmt.Errorf("%w, status code: %d, response: %s", ErrFailedToCreateRabbitMQUser, resp.StatusCode, string(body))
+		// Return error wrapped with status code for retry logic
+		return &httpStatusError{statusCode: resp.StatusCode, err: err}
 	}
 
-	logger.Info("Successfully created RabbitMQ user: %s", usernameDynamic)
+	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusNoContent {
+		logger.Info("RabbitMQ user already exists (idempotent success)", "username", usernameDynamic)
+	} else {
+		logger.Info("Successfully created RabbitMQ user", "username", usernameDynamic)
+	}
 
 	return nil
 }
 func GrantUserPermissionsRabbitMQ(ctx context.Context, usernameDynamic, adminUsername, adminPassword, vhost, apiUrl string, cfg *config.Config, creds map[string]interface{}) error {
 	logger := logger.Get().Named("GrantUserPermissionsRabbitMQ")
-	logger.Debug("Granting permissions to RabbitMQ user: %s", usernameDynamic)
+	logger.Debug("Granting permissions to RabbitMQ user", "username", usernameDynamic)
 	logger.Debug("API URL: %s, Admin user: %s, vhost: %s", apiUrl, adminUsername, vhost)
 	// Create permissions payload
 	payload := struct {
@@ -2655,10 +2878,11 @@ func GrantUserPermissionsRabbitMQ(ctx context.Context, usernameDynamic, adminUse
 	permUrl := apiUrl + "/permissions/" + encodedVhost + "/" + usernameDynamic
 	logger.Debug("Setting permissions at URL: %s", permUrl)
 
-	ctx2, cancel2 := context.WithTimeout(ctx, defaultDeleteTimeout)
-	defer cancel2()
+	// Create timeout context for the entire operation
+	ctx, cancel := context.WithTimeout(ctx, defaultDeleteTimeout)
+	defer cancel()
 
-	request, err := http.NewRequestWithContext(ctx2, http.MethodPut, permUrl, bytes.NewBuffer(data))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, permUrl, bytes.NewBuffer(data))
 	if err != nil {
 		logger.Error("Failed to create HTTP request for permissions: %s", err)
 
@@ -2688,53 +2912,68 @@ func GrantUserPermissionsRabbitMQ(ctx context.Context, usernameDynamic, adminUse
 		return fmt.Errorf("%w, status code: %d, response: %s", ErrFailedToGrantRabbitMQPermissions, resp.StatusCode, string(body))
 	}
 
-	logger.Debug("Successfully granted permissions to RabbitMQ user: %s", usernameDynamic)
+	logger.Debug("Successfully granted permissions to RabbitMQ user", "username", usernameDynamic)
 
 	return nil
 }
 func DeletetUserRabbitMQ(ctx context.Context, bindingID, adminUsername, adminPassword, apiUrl string, cfg *config.Config, creds map[string]interface{}) error {
 	logger := logger.Get().Named("DeleteUserRabbitMQ")
-	logger.Info("Deleting RabbitMQ user: %s", bindingID)
+	logger.Info("Deleting RabbitMQ user", "bindingID", bindingID)
 	logger.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
-	deleteUrl := apiUrl + "/users/" + bindingID
-	logger.Debug("Deleting user at URL: %s", deleteUrl)
 
-	ctx, cancel := context.WithTimeout(ctx, defaultDeleteTimeout)
-	defer cancel()
+	const (
+		maxRetries = 3
+		baseDelay  = 50 * time.Millisecond
+	)
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteUrl, nil)
-	if err != nil {
-		logger.Error("Failed to create HTTP DELETE request: %s", err)
+	deleteUserFunc := func(attemptCtx context.Context) error {
+		deleteUrl := apiUrl + "/users/" + bindingID
+		logger.Debug("Deleting user at URL: %s", deleteUrl)
 
-		return fmt.Errorf("failed to create HTTP DELETE request: %w", err)
-	}
+		request, err := http.NewRequestWithContext(attemptCtx, http.MethodDelete, deleteUrl, nil)
+		if err != nil {
+			logger.Error("Failed to create HTTP DELETE request: %s", err)
 
-	request.SetBasicAuth(adminUsername, adminPassword)
-	request.Header.Set("Content-Type", "application/json")
+			return fmt.Errorf("failed to create HTTP DELETE request: %w", err)
+		}
 
-	httpClient := createHTTPClientForService("rabbitmq", cfg)
+		request.SetBasicAuth(adminUsername, adminPassword)
+		request.Header.Set("Content-Type", "application/json")
 
-	logger.Debug("Attempting user deletion with BOSH DNS fallback to IP")
+		httpClient := createHTTPClientForService("rabbitmq", cfg)
 
-	resp, err := tryServiceRequest(request, httpClient, creds, logger)
-	if err != nil {
-		logger.Error("HTTP request failed for user deletion: %s", err)
+		logger.Debug("Attempting user deletion with BOSH DNS fallback to IP")
 
-		return err
-	}
+		resp, err := tryServiceRequest(request, httpClient, creds, logger)
+		if err != nil {
+			logger.Error("HTTP request failed for user deletion: %s", err)
 
-	defer func() { _ = resp.Body.Close() }()
+			return err
+		}
 
-	if resp.StatusCode != http.StatusNoContent {
+		defer func() { _ = resp.Body.Close() }()
+
+		// Accept both 204 (No Content) and 404 (Not Found) as successful deletion
+		// 404 means the user is already gone, which is the desired end state
+		if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+			if resp.StatusCode == http.StatusNotFound {
+				logger.Info("RabbitMQ user already deleted (idempotent success)", "bindingID", bindingID)
+			} else {
+				logger.Info("Successfully deleted RabbitMQ user", "bindingID", bindingID)
+			}
+
+			return nil
+		}
+
 		body, _ := io.ReadAll(resp.Body)
-		logger.Error("Failed to delete user - Status: %d, Response: %s", resp.StatusCode, string(body))
+		err = fmt.Errorf("%w, status code: %d, response: %s", ErrFailedToDeleteRabbitMQUser, resp.StatusCode, string(body))
+		logger.Error("Failed to delete user", "statusCode", resp.StatusCode, "response", string(body))
 
-		return fmt.Errorf("%w, status code: %d, response: %s", ErrFailedToDeleteRabbitMQUser, resp.StatusCode, string(body))
+		// Create a custom error type that includes status code for retry logic
+		return &httpStatusError{statusCode: resp.StatusCode, err: err}
 	}
 
-	logger.Info("Successfully deleted RabbitMQ user: %s", bindingID)
-
-	return nil
+	return retryWithBackoff(ctx, maxRetries, baseDelay, deleteUserFunc, logger)
 }
 
 // handleRabbitMQUnbind processes the unbind operation for RabbitMQ services.

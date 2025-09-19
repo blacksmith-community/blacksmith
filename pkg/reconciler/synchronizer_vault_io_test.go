@@ -1,87 +1,20 @@
 package reconciler_test
 
 import (
-	"errors"
 	"reflect"
-	"sync"
 	"testing"
 
 	. "blacksmith/pkg/reconciler"
 )
 
-// Test mock errors.
-var (
-	ErrVaultTestNotImplemented = errors.New("vault test method not implemented")
-	ErrVaultTestDataNotFound   = errors.New("vault test data not found")
-)
-
-// memVault implements VaultInterface for tests using in-memory storage.
-type memVault struct {
-	mu       sync.Mutex
-	store    map[string]map[string]interface{}
-	getCalls []string
-	putCalls []string
-	// error injection for negative-path tests
-	getErr error
-	putErr error
-}
-
-func newMemVault() *memVault {
-	return &memVault{store: make(map[string]map[string]interface{})}
-}
-
-func (m *memVault) Get(path string) (map[string]interface{}, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.getCalls = append(m.getCalls, path)
-	if m.getErr != nil {
-		return nil, m.getErr
-	}
-
-	data := m.store[path]
-	if data == nil {
-		return nil, ErrVaultTestDataNotFound
-	}
-	// return a shallow copy to prevent external mutation
-	cp := make(map[string]interface{}, len(data))
-	for k, v := range data {
-		cp[k] = v
-	}
-
-	return cp, nil
-}
-
-func (m *memVault) Put(path string, secret map[string]interface{}) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.putCalls = append(m.putCalls, path)
-	if m.putErr != nil {
-		return m.putErr
-	}
-
-	cp := make(map[string]interface{}, len(secret))
-	for k, v := range secret {
-		cp[k] = v
-	}
-
-	m.store[path] = cp
-
-	return nil
-}
-
-// Unused in these tests but required by the interface.
-func (m *memVault) GetSecret(path string) (map[string]interface{}, error)      { return nil, ErrVaultTestNotImplemented }
-func (m *memVault) SetSecret(path string, secret map[string]interface{}) error { return nil }
-func (m *memVault) DeleteSecret(path string) error                             { return nil }
-func (m *memVault) ListSecrets(path string) ([]string, error)                  { return []string{}, nil }
-
 func TestIndexSynchronizer_GetVaultIndex_Empty(t *testing.T) {
 	t.Parallel()
 
-	v := newMemVault()
+	v := NewTestVault(t)
 	s := NewIndexSynchronizer(v, NewMockLogger())
+
+	// Ensure canonical index path exists but empty
+	_ = v.SetSecret("db", map[string]interface{}{})
 
 	idx, err := s.GetVaultIndex()
 	if err != nil {
@@ -96,9 +29,14 @@ func TestIndexSynchronizer_GetVaultIndex_Empty(t *testing.T) {
 func TestIndexSynchronizer_GetAndSaveVaultIndex_RoundTrip(t *testing.T) {
 	t.Parallel()
 
-	vault := newMemVault()
+	vault := NewTestVault(t)
+	// Ensure canonical index path exists
+	_ = vault.SetSecret("db", map[string]interface{}{})
 	// Seed existing index under canonical path "db"
-	vault.store["db"] = map[string]interface{}{"inst1": map[string]interface{}{"service_id": "redis"}}
+	err := vault.SetSecret("db", map[string]interface{}{"inst1": map[string]interface{}{"service_id": "redis"}})
+	if err != nil {
+		t.Fatalf("failed to set secret: %v", err)
+	}
 
 	synchronizer := NewIndexSynchronizer(vault, NewMockLogger())
 
@@ -119,7 +57,11 @@ func TestIndexSynchronizer_GetAndSaveVaultIndex_RoundTrip(t *testing.T) {
 		t.Fatalf("saveVaultIndex error: %v", err)
 	}
 
-	got := vault.store["db"]
+	got, err := vault.Get("db")
+	if err != nil {
+		t.Fatalf("failed to read stored index: %v", err)
+	}
+
 	if !reflect.DeepEqual(got, newIdx) {
 		t.Fatalf("vault stored index mismatch\nwant: %#v\n got: %#v", newIdx, got)
 	}

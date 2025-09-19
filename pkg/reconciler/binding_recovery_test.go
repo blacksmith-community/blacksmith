@@ -22,7 +22,7 @@ var (
 var _ = Describe("Binding Recovery", func() {
 	var (
 		updater    Updater
-		mockVault  *MockVaultUpdater
+		mockVault  *RealTestVault
 		mockBroker *MockBroker
 		instanceID string
 		bindingID  string
@@ -32,7 +32,7 @@ var _ = Describe("Binding Recovery", func() {
 		instanceID = "test-instance-12345678-1234-1234-1234-123456789abc"
 		bindingID = "test-binding-87654321-4321-4321-4321-cba987654321"
 
-		mockVault = NewMockVaultUpdater()
+		mockVault = NewTestVaultWithPrefix("binding_recovery")
 		mockBroker = NewMockBroker()
 
 		updater = NewVaultUpdater(mockVault, NewMockLogger(), BackupConfig{Enabled: false})
@@ -55,7 +55,7 @@ var _ = Describe("Binding Recovery", func() {
 		Context("when instance has healthy bindings", func() {
 			BeforeEach(func() {
 				// Set up bindings index
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
@@ -63,7 +63,7 @@ var _ = Describe("Binding Recovery", func() {
 				})
 
 				// Set up healthy credentials
-				mockVault.SetData(instanceID+"/bindings/"+bindingID+"/credentials", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings/"+bindingID+"/credentials", map[string]interface{}{
 					"host":     "redis.example.com",
 					"port":     6379,
 					"username": "redis-user",
@@ -84,7 +84,7 @@ var _ = Describe("Binding Recovery", func() {
 		Context("when instance has unhealthy bindings", func() {
 			BeforeEach(func() {
 				// Set up bindings index
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
@@ -111,7 +111,7 @@ var _ = Describe("Binding Recovery", func() {
 				healthyBindingID = "healthy-binding-11111111-1111-1111-1111-111111111111"
 
 				// Set up bindings index with two bindings
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
@@ -123,7 +123,7 @@ var _ = Describe("Binding Recovery", func() {
 				})
 
 				// Healthy binding has credentials
-				mockVault.SetData(instanceID+"/bindings/"+healthyBindingID+"/credentials", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings/"+healthyBindingID+"/credentials", map[string]interface{}{
 					"host":     "redis.example.com",
 					"port":     6379,
 					"username": "redis-user",
@@ -172,7 +172,8 @@ var _ = Describe("Binding Recovery", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify credentials were stored
-			storedData := mockVault.GetData(instanceID + "/bindings/" + bindingID + "/credentials")
+			storedData, err := mockVault.Get(instanceID + "/bindings/" + bindingID + "/credentials")
+			Expect(err).ToNot(HaveOccurred())
 			Expect(storedData).To(HaveKey("host"))
 			Expect(storedData["host"]).To(Equal("redis.example.com"))
 			Expect(storedData["username"]).To(Equal("reconstructed-user"))
@@ -183,7 +184,8 @@ var _ = Describe("Binding Recovery", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify metadata was stored
-			metadataData := mockVault.GetData(instanceID + "/bindings/" + bindingID + "/metadata")
+			metadataData, err := mockVault.Get(instanceID + "/bindings/" + bindingID + "/metadata")
+			Expect(err).ToNot(HaveOccurred())
 			Expect(metadataData).To(HaveKey("reconstruction_source"))
 			Expect(metadataData["reconstruction_source"]).To(Equal("broker"))
 			Expect(metadataData["status"]).To(Equal("reconstructed"))
@@ -206,14 +208,14 @@ var _ = Describe("Binding Recovery", func() {
 		Context("when no unhealthy bindings exist", func() {
 			BeforeEach(func() {
 				// Set up healthy binding
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
 					},
 				})
 
-				mockVault.SetData(instanceID+"/bindings/"+bindingID+"/credentials", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings/"+bindingID+"/credentials", map[string]interface{}{
 					"host":     "redis.example.com",
 					"port":     6379,
 					"username": "redis-user",
@@ -230,7 +232,7 @@ var _ = Describe("Binding Recovery", func() {
 		Context("when unhealthy bindings exist", func() {
 			BeforeEach(func() {
 				// Set up unhealthy binding
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
@@ -254,7 +256,8 @@ var _ = Describe("Binding Recovery", func() {
 				Expect(err).ToNot(HaveOccurred())
 
 				// Verify credentials were stored
-				storedData := mockVault.GetData(instanceID + "/bindings/" + bindingID + "/credentials")
+				storedData, err := mockVault.Get(instanceID + "/bindings/" + bindingID + "/credentials")
+				Expect(err).ToNot(HaveOccurred())
 				Expect(storedData).To(HaveKey("username"))
 				Expect(storedData["username"]).To(Equal("repaired-user"))
 			})
@@ -267,7 +270,7 @@ var _ = Describe("Binding Recovery", func() {
 				failingBindingID = "failing-binding-22222222-2222-2222-2222-222222222222"
 
 				// Set up two unhealthy bindings
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
@@ -297,7 +300,8 @@ var _ = Describe("Binding Recovery", func() {
 				Expect(err.Error()).To(ContainSubstring("failed to repair 1 of 2 bindings"))
 
 				// Verify one binding was repaired
-				repairedData := mockVault.GetData(instanceID + "/bindings/" + bindingID + "/credentials")
+				repairedData, err := mockVault.Get(instanceID + "/bindings/" + bindingID + "/credentials")
+				Expect(err).ToNot(HaveOccurred())
 				Expect(repairedData).To(HaveKey("username"))
 			})
 		})
@@ -341,7 +345,7 @@ var _ = Describe("Binding Recovery", func() {
 				instance.Metadata["needs_binding_repair"] = true
 
 				// Set up successful repair scenario
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
@@ -373,7 +377,7 @@ var _ = Describe("Binding Recovery", func() {
 				instance.Metadata["needs_binding_repair"] = true
 
 				// Set up failed repair scenario
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = mockVault.SetSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": "redis-service",
 						"plan_id":    "small",
@@ -398,29 +402,7 @@ var _ = Describe("Binding Recovery", func() {
 
 // Mock implementations for testing
 
-type MockVaultUpdater struct {
-	data   map[string]map[string]interface{}
-	errors map[string]error
-}
-
-func NewMockVaultUpdater() *MockVaultUpdater {
-	return &MockVaultUpdater{
-		data:   make(map[string]map[string]interface{}),
-		errors: make(map[string]error),
-	}
-}
-
-func (mv *MockVaultUpdater) SetData(path string, data map[string]interface{}) {
-	mv.data[path] = data
-}
-
-func (mv *MockVaultUpdater) GetData(path string) map[string]interface{} {
-	return mv.data[path]
-}
-
-func (mv *MockVaultUpdater) SetError(path string, err error) {
-	mv.errors[path] = err
-}
+// RealTestVault is used for Vault operations; no custom mock needed
 
 type MockBroker struct {
 	credentials map[string]*BindingCredentials

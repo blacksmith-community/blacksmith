@@ -1,6 +1,7 @@
 package reconciler_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ func (m *reconMockBroker) GetBindingCredentials(instanceID, bindingID string) (*
 func TestReconstructBindingWithBroker_StoresCredentialsAndMetadata(t *testing.T) {
 	t.Parallel()
 
-	vault := newMemVault()
+	vault := NewTestVault(t)
 	updater := NewVaultUpdater(vault, NewMockLogger(), BackupConfig{})
 
 	instanceID := "00000000-0000-0000-0000-00000000beef"
@@ -41,13 +42,13 @@ func TestReconstructBindingWithBroker_StoresCredentialsAndMetadata(t *testing.T)
 }
 
 // setupBrokerReconstructTest sets up test data for broker reconstruction.
-func setupBrokerReconstructTest(vault *memVault, instanceID string) {
-	vault.store["db"] = map[string]interface{}{
+func setupBrokerReconstructTest(vault *RealTestVault, instanceID string) {
+	_ = vault.SetSecret("db", map[string]interface{}{
 		instanceID: map[string]interface{}{
 			"service_id": "rabbitmq",
 			"plan_id":    "single-node",
 		},
-	}
+	})
 }
 
 // createMockBroker creates a mock broker for testing.
@@ -67,22 +68,17 @@ func createMockBroker() *reconMockBroker {
 }
 
 // verifyCredentialsStored verifies that credentials are properly stored in vault.
-func verifyCredentialsStored(t *testing.T, vault *memVault, instanceID, bindingID string) {
+func verifyCredentialsStored(t *testing.T, vault *RealTestVault, instanceID, bindingID string) {
 	t.Helper()
 
 	credPath := instanceID + "/bindings/" + bindingID + "/credentials"
 
-	creds := vault.store[credPath]
-	if creds == nil {
-		t.Fatalf("expected credentials stored at %s", credPath)
+	creds, err := vault.Get(credPath)
+	if err != nil {
+		t.Fatalf("expected credentials stored at %s: %v", credPath, err)
 	}
 
-	port, ok := creds["port"].(int)
-	if !ok {
-		t.Fatalf("expected port to be int, got %T", creds["port"])
-	}
-
-	if creds["host"] != "rmq.local" || port != 5672 {
+	if creds["host"] != "rmq.local" || fmt.Sprint(creds["port"]) != "5672" {
 		t.Fatalf("unexpected credentials content: %#v", creds)
 	}
 
@@ -100,14 +96,14 @@ func verifyCredentialsStored(t *testing.T, vault *memVault, instanceID, bindingI
 }
 
 // verifyMetadataStored verifies that metadata is properly stored in vault.
-func verifyMetadataStored(t *testing.T, vault *memVault, instanceID, bindingID string) {
+func verifyMetadataStored(t *testing.T, vault *RealTestVault, instanceID, bindingID string) {
 	t.Helper()
 
 	metaPath := instanceID + "/bindings/" + bindingID + "/metadata"
 
-	meta := vault.store[metaPath]
-	if meta == nil {
-		t.Fatalf("expected metadata stored at %s", metaPath)
+	meta, err := vault.Get(metaPath)
+	if err != nil {
+		t.Fatalf("expected metadata stored at %s: %v", metaPath, err)
 	}
 
 	if meta["binding_id"] != bindingID || meta["instance_id"] != instanceID {
@@ -124,14 +120,14 @@ func verifyMetadataStored(t *testing.T, vault *memVault, instanceID, bindingID s
 }
 
 // verifyBindingsIndex verifies that the bindings index is properly updated.
-func verifyBindingsIndex(t *testing.T, vault *memVault, instanceID, bindingID string) {
+func verifyBindingsIndex(t *testing.T, vault *RealTestVault, instanceID, bindingID string) {
 	t.Helper()
 
 	idxPath := instanceID + "/bindings/index"
 
-	idx := vault.store[idxPath]
-	if idx == nil {
-		t.Fatalf("expected bindings index at %s", idxPath)
+	idx, err := vault.Get(idxPath)
+	if err != nil {
+		t.Fatalf("expected bindings index at %s: %v", idxPath, err)
 	}
 
 	if entry, ok := idx[bindingID].(map[string]interface{}); !ok || entry["status"] != "active" {
@@ -142,7 +138,7 @@ func verifyBindingsIndex(t *testing.T, vault *memVault, instanceID, bindingID st
 func TestReconstructBindingWithBroker_BrokerError(t *testing.T) {
 	t.Parallel()
 
-	vault := newMemVault()
+	vault := NewTestVault(t)
 	updater := NewVaultUpdater(vault, NewMockLogger(), BackupConfig{})
 
 	instanceID := "00000000-0000-0000-0000-00000000dead"
@@ -159,7 +155,9 @@ func TestReconstructBindingWithBroker_BrokerError(t *testing.T) {
 	}
 
 	credPath := instanceID + "/bindings/" + bindingID + "/credentials"
-	if vault.store[credPath] != nil {
+
+	_, err = vault.Get(credPath)
+	if err == nil {
 		t.Fatalf("credentials should not be stored on broker error")
 	}
 }
@@ -167,7 +165,7 @@ func TestReconstructBindingWithBroker_BrokerError(t *testing.T) {
 func TestStoreBindingCredentials_PreservesHistory_And_IndexTransitions(t *testing.T) {
 	t.Parallel()
 
-	vault := newMemVault()
+	vault := NewTestVault(t)
 	updater := NewVaultUpdater(vault, NewMockLogger(), BackupConfig{})
 
 	instanceID := "00000000-0000-0000-0000-00000000cafe"
@@ -175,9 +173,9 @@ func TestStoreBindingCredentials_PreservesHistory_And_IndexTransitions(t *testin
 
 	// Seed existing binding metadata with history
 	metaPath := instanceID + "/bindings/" + bindingID + "/metadata"
-	vault.store[metaPath] = map[string]interface{}{
+	_ = vault.SetSecret(metaPath, map[string]interface{}{
 		"history": []interface{}{map[string]interface{}{"event": "created"}},
-	}
+	})
 
 	creds := map[string]interface{}{
 		"host": "db.local", "port": 5432, "username": "u", "password": "p",
@@ -190,9 +188,9 @@ func TestStoreBindingCredentials_PreservesHistory_And_IndexTransitions(t *testin
 	}
 
 	// Metadata should still have history
-	meta := vault.store[metaPath]
-	if meta == nil {
-		t.Fatalf("expected metadata persisted at %s", metaPath)
+	meta, err := vault.Get(metaPath)
+	if err != nil {
+		t.Fatalf("expected metadata persisted at %s: %v", metaPath, err)
 	}
 
 	if _, ok := meta["history"].([]interface{}); !ok {
@@ -202,9 +200,9 @@ func TestStoreBindingCredentials_PreservesHistory_And_IndexTransitions(t *testin
 	// Index should be created and status active
 	idxPath := instanceID + "/bindings/index"
 
-	idx := vault.store[idxPath]
-	if idx == nil {
-		t.Fatalf("expected bindings index at %s", idxPath)
+	idx, err := vault.Get(idxPath)
+	if err != nil {
+		t.Fatalf("expected bindings index at %s: %v", idxPath, err)
 	}
 
 	if entry, ok := idx[bindingID].(map[string]interface{}); !ok || entry["status"] != "active" {
@@ -217,7 +215,7 @@ func TestStoreBindingCredentials_PreservesHistory_And_IndexTransitions(t *testin
 		t.Fatalf("RemoveBinding error: %v", err)
 	}
 
-	idx = vault.store[idxPath]
+	idx, _ = vault.Get(idxPath)
 	if entry, ok := idx[bindingID].(map[string]interface{}); !ok || entry["status"] != "deleted" {
 		t.Fatalf("expected index status deleted after removal, got: %#v", idx)
 	}

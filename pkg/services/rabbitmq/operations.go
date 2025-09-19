@@ -196,6 +196,7 @@ func (h *Handler) HandleConsume(ctx context.Context, instanceID string, vaultCre
 }
 
 // HandleConsumeWithOptions consumes messages from RabbitMQ with connection options.
+//
 //nolint:funlen
 func (h *Handler) HandleConsumeWithOptions(ctx context.Context, instanceID string, vaultCreds common.Credentials, req *ConsumeRequest, opts common.ConnectionOptions) (*ConsumeResult, error) {
 	creds, err := NewCredentials(vaultCreds)

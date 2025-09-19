@@ -99,8 +99,6 @@ func (cp *CredentialPopulator) EnsureCredentials(ctx context.Context, instanceID
 
 // credentialsExist checks if credentials already exist in Vault.
 
-
-
 // FetchCredsFromBOSH extracts credentials from the deployed BOSH manifest (exported for use by recovery tools).
 func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, boshClient interface{}) (map[string]interface{}, error) {
 	deploymentName := plan.ID + "-" + instanceID
@@ -126,8 +124,6 @@ func (cp *CredentialPopulator) FetchCredsFromBOSH(instanceID string, plan Plan, 
 
 	return creds, nil
 }
-
-
 
 // BatchEnsureCredentials processes multiple instances to ensure they have credentials.
 func (cp *CredentialPopulator) BatchEnsureCredentials(ctx context.Context, instances []string, deployments map[string]DeploymentInfo, boshClient interface{}, broker interface{}) error {

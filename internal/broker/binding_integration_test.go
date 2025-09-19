@@ -15,71 +15,27 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/reconciler"
 	"blacksmith/pkg/testutil"
-	vaultPkg "blacksmith/pkg/vault"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
-// VaultTestAdapter adapts IntegrationMockVault to work with *internalVault.Vault
-type VaultTestAdapter struct {
-	*testutil.IntegrationMockVault
-}
-
-// GetIndex implements the method required by internalVault.Vault
-func (v *VaultTestAdapter) GetIndex(ctx context.Context, name string) (*vaultPkg.Index, error) {
-	indexData, err := v.IntegrationMockVault.GetIndex(name)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert to vaultPkg.Index if needed
-	if idx, ok := indexData.(*vaultPkg.Index); ok {
-		return idx, nil
-	}
-
-	// Create a new index from the data
-	return &vaultPkg.Index{
-		Data: make(map[string]interface{}),
-	}, nil
-}
-
-// Get implements the context-aware Get method
-func (v *VaultTestAdapter) Get(ctx context.Context, path string, out interface{}) (bool, error) {
-	return v.IntegrationMockVault.Get(path, out)
-}
-
-// Put implements the context-aware Put method
-func (v *VaultTestAdapter) Put(ctx context.Context, path string, data interface{}) error {
-	return v.IntegrationMockVault.Put(path, data)
-}
-
-// TrackProgress implements the method required by internalVault.Vault
-func (v *VaultTestAdapter) TrackProgress(ctx context.Context, instanceID, operation, message string, taskID int, params map[interface{}]interface{}) error {
-	return v.IntegrationMockVault.TrackProgress(instanceID, operation, message, taskID, params)
-}
-
-// Index implements the method required by internalVault.Vault
-func (v *VaultTestAdapter) Index(ctx context.Context, instanceID string, data map[string]interface{}) error {
-	return v.IntegrationMockVault.Index(instanceID, data)
-}
-
-// BrokerTestAdapter adapts broker.Broker to work with reconciler.BrokerInterface
+// BrokerTestAdapter adapts broker.Broker to work with reconciler.BrokerInterface.
 type BrokerTestAdapter struct {
 	*broker.Broker
 }
 
-// GetServices implements reconciler.BrokerInterface
+// GetServices implements reconciler.BrokerInterface.
 func (b *BrokerTestAdapter) GetServices() []reconciler.Service {
 	// Return empty services for test
 	return []reconciler.Service{}
 }
 
-// GetBindingCredentials implements reconciler.BrokerInterface without context
+// GetBindingCredentials implements reconciler.BrokerInterface without context.
 func (b *BrokerTestAdapter) GetBindingCredentials(instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
 	creds, err := b.Broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
 	}
 
 	// Convert broker.BindingCredentials to reconciler.BindingCredentials
@@ -98,8 +54,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 	var (
 		brokerInstance *broker.Broker
 		updater        reconciler.Updater
-		mockVault      *testutil.IntegrationMockVault
-		vaultAdapter   *VaultTestAdapter
+		vaultClient    *internalVault.Vault
 		mockBOSH       *testutil.IntegrationMockBOSH
 		mockLogger     logger.Logger
 		instanceID     string
@@ -114,10 +69,9 @@ var _ = Describe("Binding Credentials Integration", func() {
 		testServiceID = "redis-service"
 		testPlanID = "small-plan"
 
-		mockVault = testutil.NewIntegrationMockVault()
-		vaultAdapter = &VaultTestAdapter{IntegrationMockVault: mockVault}
 		mockBOSH = testutil.NewIntegrationMockBOSH()
 		mockLogger = logger.Get().Named("test") // Use default logger for tests
+		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 
 		// Set up test plan
 		testPlan := services.Plan{
@@ -133,28 +87,27 @@ var _ = Describe("Binding Credentials Integration", func() {
 		}
 
 		brokerInstance = &broker.Broker{
-			Plans: map[string]services.Plan{testServiceID + "/" + testPlanID: testPlan},
-			BOSH:  mockBOSH,
-			Vault: &internalVault.Vault{
-				// We'll use a minimal Vault struct that delegates to our adapter
-				// This is a workaround since Vault is a concrete type, not an interface
-			},
+			Plans:  map[string]services.Plan{testServiceID + "/" + testPlanID: testPlan},
+			BOSH:   mockBOSH,
+			Vault:  vaultClient,
 			Config: &config.Config{},
 		}
 
 		// Set up reconciler updater
 		updater = reconciler.NewVaultUpdater(
-			vaultAdapter,
+			vaultClient,
 			mockLogger,
 			reconciler.BackupConfig{},
 		)
 	})
 
+	// No per-test vault cleanup; suite.vault is managed by suite hooks
+
 	Describe("Complete binding recovery workflow", func() {
 		Context("when service instance exists but binding credentials are missing", func() {
 			BeforeEach(func() {
-				// Set up instance data in vault
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				// Set up instance data in real vault
+				_ = suite.vault.WriteSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id":        testServiceID,
 					"plan_id":           testPlanID,
 					"deployment_name":   testPlanID + "-" + instanceID,
@@ -175,7 +128,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 				})
 
 				// Set up binding metadata but missing credentials
-				mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+				_ = suite.vault.WriteSecret(instanceID+"/bindings", map[string]interface{}{
 					bindingID: map[string]interface{}{
 						"service_id": testServiceID,
 						"plan_id":    testPlanID,
@@ -187,7 +140,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 			It("should successfully recover binding credentials", func() {
 				// First, verify the binding metadata exists
 				var bindingMetadata map[string]interface{}
-				exists, err := mockVault.Get(instanceID+"/bindings", &bindingMetadata)
+				exists, err := vaultClient.Get(context.Background(), instanceID+"/bindings", &bindingMetadata)
 				Expect(err).ToNot(HaveOccurred())
 				Expect(exists).To(BeTrue())
 				Expect(bindingMetadata).To(HaveKey(bindingID))
@@ -212,11 +165,10 @@ var _ = Describe("Binding Credentials Integration", func() {
 				Expect(err).ToNot(HaveOccurred())
 
 				// Verify credentials were stored in vault
-				var storedCreds map[string]interface{}
 				path := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
-				exists, err := mockVault.Get(path, &storedCreds)
+				storedCreds, err := suite.vault.ReadSecret(path)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(exists).To(BeTrue())
+				Expect(storedCreds).ToNot(BeNil())
 				Expect(storedCreds).To(HaveKey("host"))
 				Expect(storedCreds).To(HaveKey("port"))
 				Expect(storedCreds["credential_type"]).To(Equal("static"))
@@ -226,7 +178,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 		Context("when handling concurrent binding recovery", func() {
 			BeforeEach(func() {
 				// Set up multiple bindings for the same instance
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				_ = suite.vault.WriteSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id": testServiceID,
 					"plan_id":    testPlanID,
 				})
@@ -242,9 +194,9 @@ var _ = Describe("Binding Credentials Integration", func() {
 				})
 
 				// Create multiple bindings
-				for bindingIndex := 0; bindingIndex < 3; bindingIndex++ {
+				for bindingIndex := range 3 {
 					bid := "binding-concurrent-" + strconv.Itoa(bindingIndex)
-					mockVault.SetData(instanceID+"/bindings", map[string]interface{}{
+					_ = suite.vault.WriteSecret(instanceID+"/bindings", map[string]interface{}{
 						bid: map[string]interface{}{
 							"service_id": testServiceID,
 							"plan_id":    testPlanID,
@@ -256,23 +208,23 @@ var _ = Describe("Binding Credentials Integration", func() {
 
 			It("should handle concurrent credential recovery", func() {
 				const numBindings = 3
-				var wg sync.WaitGroup
+				var waitGroup sync.WaitGroup
 				errors := make(chan error, numBindings)
 
-				for i := 0; i < numBindings; i++ {
-					wg.Add(1)
+				for bindingIndex := range numBindings {
+					waitGroup.Add(1)
 					go func(idx int) {
-						defer wg.Done()
+						defer waitGroup.Done()
 						bid := "binding-concurrent-" + strconv.Itoa(idx)
 						_, err := brokerInstance.GetBindingCredentials(
 							context.Background(), instanceID, bid)
 						if err != nil {
 							errors <- err
 						}
-					}(i)
+					}(bindingIndex)
 				}
 
-				wg.Wait()
+				waitGroup.Wait()
 				close(errors)
 
 				// Check no errors occurred
@@ -301,7 +253,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 
 				brokerInstance.Plans[testServiceID+"/rabbit-plan"] = rabbitPlan
 
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				_ = suite.vault.WriteSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id": testServiceID,
 					"plan_id":    "rabbit-plan",
 				})
@@ -331,7 +283,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 	Describe("Error recovery scenarios", func() {
 		Context("when BOSH deployment doesn't exist", func() {
 			BeforeEach(func() {
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				_ = suite.vault.WriteSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id": testServiceID,
 					"plan_id":    testPlanID,
 				})
@@ -349,7 +301,15 @@ var _ = Describe("Binding Credentials Integration", func() {
 
 		Context("when vault connectivity is lost", func() {
 			BeforeEach(func() {
-				mockVault.SetError(instanceID+"/deployment", "vault sealed")
+				// Simulate outage by closing suite vault then recreating it
+				if suite.vault != nil {
+					suite.vault.Close()
+				}
+				var err error
+				suite.vault, err = testutil.NewVaultDevServer(nil)
+				if err != nil {
+					Fail("failed to restart suite vault: " + err.Error())
+				}
 			})
 
 			It("should return vault error", func() {
@@ -374,7 +334,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 
 				brokerInstance.Plans[testServiceID+"/invalid-plan"] = invalidPlan
 
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				_ = suite.vault.WriteSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id": testServiceID,
 					"plan_id":    "invalid-plan",
 				})
@@ -407,10 +367,10 @@ var _ = Describe("Binding Credentials Integration", func() {
 		Context("when instance needs binding repair", func() {
 			BeforeEach(func() {
 				// Set up instance with missing bindings
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				Expect(vaultClient.Put(context.Background(), instanceID+"/deployment", map[string]interface{}{
 					"service_id": testServiceID,
 					"plan_id":    testPlanID,
-				})
+				})).To(Succeed())
 			})
 
 			It("should trigger binding repair process", func() {

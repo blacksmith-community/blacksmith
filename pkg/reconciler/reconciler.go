@@ -368,7 +368,11 @@ func (r *ReconcilerManager) Stop() error {
 		r.logger.Infof("Stopping reconciler")
 
 		// Cancel context to signal shutdown
-		r.cancel()
+		if r.cancel != nil {
+			r.cancel()
+		} else {
+			r.logger.Debugf("Stop called before Start; no context to cancel")
+		}
 
 		// Wait for graceful shutdown with timeout
 		done := make(chan struct{})

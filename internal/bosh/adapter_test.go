@@ -87,27 +87,47 @@ var (
 // mockDirector is a simple mock implementation for testing.
 type mockDirector struct{}
 
-func (m *mockDirector) GetInfo() (*bosh.Info, error)                              { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetDeployments() ([]bosh.Deployment, error)                { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error) { return nil, ErrMockNotImplemented }
-func (m *mockDirector) CreateDeployment(manifest string) (*bosh.Task, error)      { return nil, ErrMockNotImplemented }
-func (m *mockDirector) DeleteDeployment(name string) (*bosh.Task, error)          { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error)     { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetReleases() ([]bosh.Release, error)                      { return nil, ErrMockNotImplemented }
-func (m *mockDirector) UploadRelease(url, sha1 string) (*bosh.Task, error)        { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetStemcells() ([]bosh.Stemcell, error)                    { return nil, ErrMockNotImplemented }
-func (m *mockDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error)       { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetTask(id int) (*bosh.Task, error)                        { return nil, ErrMockNotImplemented }
+func (m *mockDirector) GetInfo() (*bosh.Info, error)               { return nil, ErrMockNotImplemented }
+func (m *mockDirector) GetDeployments() ([]bosh.Deployment, error) { return nil, ErrMockNotImplemented }
+func (m *mockDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) DeleteDeployment(name string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetReleases() ([]bosh.Release, error) { return nil, ErrMockNotImplemented }
+func (m *mockDirector) UploadRelease(url, sha1 string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetStemcells() ([]bosh.Stemcell, error) { return nil, ErrMockNotImplemented }
+func (m *mockDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetTask(id int) (*bosh.Task, error) { return nil, ErrMockNotImplemented }
 
 func (m *mockDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, ErrMockNotImplemented
 }
-func (m *mockDirector) GetAllTasks(limit int) ([]bosh.Task, error)                   { return nil, ErrMockNotImplemented }
-func (m *mockDirector) CancelTask(taskID int) error                                  { return ErrMockNotImplemented }
-func (m *mockDirector) GetTaskOutput(id int, outputType string) (string, error)      { return "", ErrMockNotImplemented }
-func (m *mockDirector) GetConfig(configType, configName string) (interface{}, error) { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetTaskEvents(id int) ([]bosh.TaskEvent, error)               { return nil, ErrMockNotImplemented }
-func (m *mockDirector) GetEvents(deployment string) ([]bosh.Event, error)            { return nil, ErrMockNotImplemented }
+func (m *mockDirector) GetAllTasks(limit int) ([]bosh.Task, error) { return nil, ErrMockNotImplemented }
+func (m *mockDirector) CancelTask(taskID int) error                { return ErrMockNotImplemented }
+func (m *mockDirector) GetTaskOutput(id int, outputType string) (string, error) {
+	return "", ErrMockNotImplemented
+}
+func (m *mockDirector) GetConfig(configType, configName string) (interface{}, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetTaskEvents(id int) ([]bosh.TaskEvent, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetEvents(deployment string) ([]bosh.Event, error) {
+	return nil, ErrMockNotImplemented
+}
 func (m *mockDirector) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
 	return "", ErrMockNotImplemented
 }
@@ -122,7 +142,9 @@ func (m *mockDirector) GetConfigVersions(configType, name string, limit int) ([]
 func (m *mockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
 	return nil, ErrMockNotImplemented
 }
-func (m *mockDirector) GetConfigContent(configID string) (string, error) { return "", ErrMockNotImplemented }
+func (m *mockDirector) GetConfigContent(configID string) (string, error) {
+	return "", ErrMockNotImplemented
+}
 func (m *mockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
 	return nil, ErrMockNotImplemented
 }
@@ -133,5 +155,9 @@ func (m *mockDirector) SSHCommand(deployment, instance string, index int, comman
 func (m *mockDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return map[string]interface{}{"session_id": "mock-session"}, nil
 }
-func (m *mockDirector) EnableResurrection(deployment string, enabled bool) error { return ErrMockNotImplemented }
-func (m *mockDirector) DeleteResurrectionConfig(deployment string) error         { return ErrMockNotImplemented }
+func (m *mockDirector) EnableResurrection(deployment string, enabled bool) error {
+	return ErrMockNotImplemented
+}
+func (m *mockDirector) DeleteResurrectionConfig(deployment string) error {
+	return ErrMockNotImplemented
+}

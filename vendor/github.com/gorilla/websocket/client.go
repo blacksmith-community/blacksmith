@@ -9,8 +9,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -48,14 +48,38 @@ func NewClient(netConn net.Conn, u *url.URL, requestHeader http.Header, readBufS
 }
 
 // A Dialer contains options for connecting to WebSocket server.
+//
+// It is safe to call Dialer's methods concurrently.
 type Dialer struct {
+	// The following custom dial functions can be set to establish
+	// connections to either the backend server or the proxy (if it
+	// exists). The scheme of the dialed entity (either backend or
+	// proxy) determines which custom dial function is selected:
+	// either NetDialTLSContext for HTTPS or NetDialContext/NetDial
+	// for HTTP. Since the "Proxy" function can determine the scheme
+	// dynamically, it can make sense to set multiple custom dial
+	// functions simultaneously.
+	//
 	// NetDial specifies the dial function for creating TCP connections. If
-	// NetDial is nil, net.Dial is used.
+	// NetDial is nil, net.Dialer DialContext is used.
+	// If "Proxy" field is also set, this function dials the proxy--not
+	// the backend server.
 	NetDial func(network, addr string) (net.Conn, error)
 
 	// NetDialContext specifies the dial function for creating TCP connections. If
-	// NetDialContext is nil, net.DialContext is used.
+	// NetDialContext is nil, NetDial is used.
+	// If "Proxy" field is also set, this function dials the proxy--not
+	// the backend server.
 	NetDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// NetDialTLSContext specifies the dial function for creating TLS/TCP connections. If
+	// NetDialTLSContext is nil, NetDialContext is used.
+	// If NetDialTLSContext is set, Dial assumes the TLS handshake is done there and
+	// TLSClientConfig is ignored.
+	// If "Proxy" field is also set, this function dials the proxy (and performs
+	// the TLS handshake with the proxy, ignoring TLSClientConfig). In this TLS proxy
+	// dialing case the TLSClientConfig could still be necessary for TLS to the backend server.
+	NetDialTLSContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	// Proxy specifies a function to return a proxy for a given
 	// Request. If the function returns a non-nil error, the
@@ -65,6 +89,8 @@ type Dialer struct {
 
 	// TLSClientConfig specifies the TLS configuration to use with tls.Client.
 	// If nil, the default configuration is used.
+	// If NetDialTLSContext is set, Dial assumes the TLS handshake
+	// is done there and TLSClientConfig is ignored.
 	TLSClientConfig *tls.Config
 
 	// HandshakeTimeout specifies the duration for the handshake to complete.
@@ -176,7 +202,7 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 	}
 
 	req := &http.Request{
-		Method:     "GET",
+		Method:     http.MethodGet,
 		URL:        u,
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
@@ -234,52 +260,16 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 		defer cancel()
 	}
 
-	// Get network dial function.
-	var netDial func(network, add string) (net.Conn, error)
-
-	if d.NetDialContext != nil {
-		netDial = func(network, addr string) (net.Conn, error) {
-			return d.NetDialContext(ctx, network, addr)
-		}
-	} else if d.NetDial != nil {
-		netDial = d.NetDial
-	} else {
-		netDialer := &net.Dialer{}
-		netDial = func(network, addr string) (net.Conn, error) {
-			return netDialer.DialContext(ctx, network, addr)
-		}
-	}
-
-	// If needed, wrap the dial function to set the connection deadline.
-	if deadline, ok := ctx.Deadline(); ok {
-		forwardDial := netDial
-		netDial = func(network, addr string) (net.Conn, error) {
-			c, err := forwardDial(network, addr)
-			if err != nil {
-				return nil, err
-			}
-			err = c.SetDeadline(deadline)
-			if err != nil {
-				c.Close()
-				return nil, err
-			}
-			return c, nil
-		}
-	}
-
-	// If needed, wrap the dial function to connect through a proxy.
+	var proxyURL *url.URL
 	if d.Proxy != nil {
-		proxyURL, err := d.Proxy(req)
+		proxyURL, err = d.Proxy(req)
 		if err != nil {
 			return nil, nil, err
 		}
-		if proxyURL != nil {
-			dialer, err := proxy_FromURL(proxyURL, netDialerFunc(netDial))
-			if err != nil {
-				return nil, nil, err
-			}
-			netDial = dialer.Dial
-		}
+	}
+	netDial, err := d.netDialFn(ctx, proxyURL, u)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	hostPort, hostNoPort := hostPortNoPort(u)
@@ -288,23 +278,31 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 		trace.GetConn(hostPort)
 	}
 
-	netConn, err := netDial("tcp", hostPort)
+	netConn, err := netDial(ctx, "tcp", hostPort)
+	if err != nil {
+		return nil, nil, err
+	}
 	if trace != nil && trace.GotConn != nil {
 		trace.GotConn(httptrace.GotConnInfo{
 			Conn: netConn,
 		})
 	}
-	if err != nil {
-		return nil, nil, err
-	}
 
+	// Close the network connection when returning an error. The variable
+	// netConn is set to nil before the success return at the end of the
+	// function.
 	defer func() {
 		if netConn != nil {
-			netConn.Close()
+			// It's safe to ignore the error from Close() because this code is
+			// only executed when returning a more important error to the
+			// application.
+			_ = netConn.Close()
 		}
 	}()
 
-	if u.Scheme == "https" {
+	// Do TLS handshake over established connection if a proxy exists.
+	if proxyURL != nil && u.Scheme == "https" {
+
 		cfg := cloneTLSConfig(d.TLSClientConfig)
 		if cfg.ServerName == "" {
 			cfg.ServerName = hostNoPort
@@ -312,11 +310,12 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 		tlsConn := tls.Client(netConn, cfg)
 		netConn = tlsConn
 
-		var err error
-		if trace != nil {
-			err = doHandshakeWithTrace(trace, tlsConn, cfg)
-		} else {
-			err = doHandshake(tlsConn, cfg)
+		if trace != nil && trace.TLSHandshakeStart != nil {
+			trace.TLSHandshakeStart()
+		}
+		err := doHandshake(ctx, tlsConn, cfg)
+		if trace != nil && trace.TLSHandshakeDone != nil {
+			trace.TLSHandshakeDone(tlsConn.ConnectionState(), err)
 		}
 
 		if err != nil {
@@ -338,6 +337,17 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 
 	resp, err := http.ReadResponse(conn.br, req)
 	if err != nil {
+		if d.TLSClientConfig != nil {
+			for _, proto := range d.TLSClientConfig.NextProtos {
+				if proto != "http/1.1" {
+					return nil, nil, fmt.Errorf(
+						"websocket: protocol %q was given but is not supported;"+
+							"sharing tls.Config with net/http Transport can cause this error: %w",
+						proto, err,
+					)
+				}
+			}
+		}
 		return nil, nil, err
 	}
 
@@ -348,15 +358,15 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 	}
 
 	if resp.StatusCode != 101 ||
-		!strings.EqualFold(resp.Header.Get("Upgrade"), "websocket") ||
-		!strings.EqualFold(resp.Header.Get("Connection"), "upgrade") ||
+		!tokenListContainsValue(resp.Header, "Upgrade", "websocket") ||
+		!tokenListContainsValue(resp.Header, "Connection", "upgrade") ||
 		resp.Header.Get("Sec-Websocket-Accept") != computeAcceptKey(challengeKey) {
 		// Before closing the network connection on return from this
 		// function, slurp up some of the response to aid application
 		// debugging.
 		buf := make([]byte, 1024)
 		n, _ := io.ReadFull(resp.Body, buf)
-		resp.Body = ioutil.NopCloser(bytes.NewReader(buf[:n]))
+		resp.Body = io.NopCloser(bytes.NewReader(buf[:n]))
 		return nil, resp, ErrBadHandshake
 	}
 
@@ -374,16 +384,128 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 		break
 	}
 
-	resp.Body = ioutil.NopCloser(bytes.NewReader([]byte{}))
+	resp.Body = io.NopCloser(bytes.NewReader([]byte{}))
 	conn.subprotocol = resp.Header.Get("Sec-Websocket-Protocol")
 
-	netConn.SetDeadline(time.Time{})
-	netConn = nil // to avoid close in defer.
+	if err := netConn.SetDeadline(time.Time{}); err != nil {
+		return nil, resp, err
+	}
+
+	// Success! Set netConn to nil to stop the deferred function above from
+	// closing the network connection.
+	netConn = nil
+
 	return conn, resp, nil
 }
 
-func doHandshake(tlsConn *tls.Conn, cfg *tls.Config) error {
-	if err := tlsConn.Handshake(); err != nil {
+// Returns the dial function to establish the connection to either the backend
+// server or the proxy (if it exists). If the dialed entity is HTTPS, then the
+// returned dial function *also* performs the TLS handshake to the dialed entity.
+// NOTE: If a proxy exists, it is possible for a second TLS handshake to be
+// necessary over the established connection.
+func (d *Dialer) netDialFn(ctx context.Context, proxyURL *url.URL, backendURL *url.URL) (netDialerFunc, error) {
+	var netDial netDialerFunc
+	if proxyURL != nil {
+		netDial = d.netDialFromURL(proxyURL)
+	} else {
+		netDial = d.netDialFromURL(backendURL)
+	}
+	// If needed, wrap the dial function to set the connection deadline.
+	if deadline, ok := ctx.Deadline(); ok {
+		netDial = netDialWithDeadline(netDial, deadline)
+	}
+	// Proxy dialing is wrapped to implement CONNECT method and possibly proxy auth.
+	if proxyURL != nil {
+		return proxyFromURL(proxyURL, netDial)
+	}
+	return netDial, nil
+}
+
+// Returns function to create the connection depending on the Dialer's
+// custom dialing functions and the passed URL of entity connecting to.
+func (d *Dialer) netDialFromURL(u *url.URL) netDialerFunc {
+	var netDial netDialerFunc
+	switch {
+	case d.NetDialContext != nil:
+		netDial = d.NetDialContext
+	case d.NetDial != nil:
+		netDial = func(ctx context.Context, net, addr string) (net.Conn, error) {
+			return d.NetDial(net, addr)
+		}
+	default:
+		netDial = (&net.Dialer{}).DialContext
+	}
+	// If dialed entity is HTTPS, then either use custom TLS dialing function (if exists)
+	// or wrap the previously computed "netDial" to use TLS config for handshake.
+	if u.Scheme == "https" {
+		if d.NetDialTLSContext != nil {
+			netDial = d.NetDialTLSContext
+		} else {
+			netDial = netDialWithTLSHandshake(netDial, d.TLSClientConfig, u)
+		}
+	}
+	return netDial
+}
+
+// Returns wrapped "netDial" function, performing TLS handshake after connecting.
+func netDialWithTLSHandshake(netDial netDialerFunc, tlsConfig *tls.Config, u *url.URL) netDialerFunc {
+	return func(ctx context.Context, unused, addr string) (net.Conn, error) {
+		hostPort, hostNoPort := hostPortNoPort(u)
+		trace := httptrace.ContextClientTrace(ctx)
+		if trace != nil && trace.GetConn != nil {
+			trace.GetConn(hostPort)
+		}
+		// Creates TCP connection to addr using passed "netDial" function.
+		conn, err := netDial(ctx, "tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+		cfg := cloneTLSConfig(tlsConfig)
+		if cfg.ServerName == "" {
+			cfg.ServerName = hostNoPort
+		}
+		tlsConn := tls.Client(conn, cfg)
+		// Do the TLS handshake using TLSConfig over the wrapped connection.
+		if trace != nil && trace.TLSHandshakeStart != nil {
+			trace.TLSHandshakeStart()
+		}
+		err = doHandshake(ctx, tlsConn, cfg)
+		if trace != nil && trace.TLSHandshakeDone != nil {
+			trace.TLSHandshakeDone(tlsConn.ConnectionState(), err)
+		}
+		if err != nil {
+			tlsConn.Close()
+			return nil, err
+		}
+		return tlsConn, nil
+	}
+}
+
+// Returns wrapped "netDial" function, setting passed deadline.
+func netDialWithDeadline(netDial netDialerFunc, deadline time.Time) netDialerFunc {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := netDial(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		err = c.SetDeadline(deadline)
+		if err != nil {
+			c.Close()
+			return nil, err
+		}
+		return c, nil
+	}
+}
+
+func cloneTLSConfig(cfg *tls.Config) *tls.Config {
+	if cfg == nil {
+		return &tls.Config{}
+	}
+	return cfg.Clone()
+}
+
+func doHandshake(ctx context.Context, tlsConn *tls.Conn, cfg *tls.Config) error {
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return err
 	}
 	if !cfg.InsecureSkipVerify {

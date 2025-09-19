@@ -120,7 +120,10 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 
 // Stop stops the worker pool gracefully.
 func (wp *WorkerPool) Stop() {
-	wp.cancel()
+	if wp.cancel != nil {
+		wp.cancel()
+	}
+
 	wp.wg.Wait()
 	close(wp.taskQueue)
 	close(wp.resultQueue)

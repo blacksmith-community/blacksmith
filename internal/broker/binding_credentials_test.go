@@ -9,6 +9,7 @@ import (
 	"blacksmith/internal/broker"
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
+	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -20,16 +21,19 @@ var (
 	ErrVaultConnectionFailed = errors.New("vault connection failed")
 )
 
-var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomplete", func() {
+var _ = Describe("GetBindingCredentials", func() {
 	var (
 		brokerInstance *broker.Broker
-		mockVault      *testutil.MockVault
 		mockBOSH       *testutil.MockBOSHDirector
 		mockConfig     *config.Config
+		vaultClient    *internalVault.Vault
 		instanceID     string
 		bindingID      string
 		testServiceID  string
 		testPlanID     string
+		cleanupPaths   map[string]struct{}
+		writeSecret    func(path string, data map[string]interface{})
+		recordCleanup  func(path string)
 	)
 
 	BeforeEach(func() {
@@ -38,9 +42,18 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 		testServiceID = "redis-service"
 		testPlanID = "small-plan"
 
-		mockVault = testutil.NewMockVault()
+		cleanupPaths = map[string]struct{}{}
+		recordCleanup = func(path string) {
+			cleanupPaths[path] = struct{}{}
+		}
+		writeSecret = func(path string, data map[string]interface{}) {
+			Expect(suite.vault.WriteSecret(path, data)).To(Succeed())
+			recordCleanup(path)
+		}
+
 		mockBOSH = testutil.NewMockBOSHDirector()
 		mockConfig = &config.Config{}
+		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 
 		// Set up test plan
 		testPlan := services.Plan{
@@ -51,24 +64,30 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 		}
 
 		brokerInstance = &broker.Broker{
-			Plans: map[string]services.Plan{testServiceID + "/" + testPlanID: testPlan},
-			BOSH:  mockBOSH,
-			// TODO: Fix this - Vault field expects *Vault but we have *MockVault
-			// Vault:  mockVault,
+			Plans:  map[string]services.Plan{testServiceID + "/" + testPlanID: testPlan},
+			BOSH:   mockBOSH,
+			Vault:  vaultClient,
 			Config: mockConfig,
 		}
+
+		recordCleanup(instanceID + "/bindings/" + bindingID + "/credentials")
+	})
+
+	AfterEach(func() {
+		for path := range cleanupPaths {
+			_ = suite.vault.DeleteSecret(path)
+		}
+		brokerInstance.Vault = vaultClient
 	})
 
 	Describe("Basic credential reconstruction", func() {
 		Context("when instance and plan data exists", func() {
 			BeforeEach(func() {
-				// Mock vault data for instance
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				writeSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id": testServiceID,
 					"plan_id":    testPlanID,
 				})
 
-				// Mock BOSH VMs
 				mockBOSH.SetVMs(testPlanID+"-"+instanceID, []bosh.VM{
 					{
 						ID:    "redis-vm-0",
@@ -112,7 +131,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 
 		Context("when plan is not found", func() {
 			BeforeEach(func() {
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				writeSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id": "unknown-service",
 					"plan_id":    "unknown-plan",
 				})
@@ -142,7 +161,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 				"vhost":          "/test-vhost",
 			}
 
-			mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+			writeSecret(instanceID+"/deployment", map[string]interface{}{
 				"service_id": testServiceID,
 				"plan_id":    testPlanID,
 			})
@@ -199,7 +218,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 				"scheme":   "postgres",
 			}
 
-			mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+			writeSecret(instanceID+"/deployment", map[string]interface{}{
 				"service_id": testServiceID,
 				"plan_id":    testPlanID,
 			})
@@ -242,7 +261,7 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 	Describe("Error handling", func() {
 		Context("when BOSH GetCreds fails", func() {
 			BeforeEach(func() {
-				mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+				writeSecret(instanceID+"/deployment", map[string]interface{}{
 					"service_id": testServiceID,
 					"plan_id":    testPlanID,
 				})
@@ -259,22 +278,29 @@ var _ = XDescribe("GetBindingCredentials - SKIPPED: Mock infrastructure incomple
 		})
 
 		Context("when vault operations fail", func() {
+			var previousVault *internalVault.Vault
+
 			BeforeEach(func() {
-				mockVault.SetError(instanceID+"/deployment", ErrVaultConnectionFailed)
+				previousVault = brokerInstance.Vault
+				brokerInstance.Vault = internalVault.New("http://127.0.0.1:1", "", true)
 			})
 
-			It("should return vault error", func() {
+			AfterEach(func() {
+				brokerInstance.Vault = previousVault
+			})
+
+			It("should return a connection error", func() {
 				credentials, err := brokerInstance.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
-				Expect(err.Error()).To(ContainSubstring("vault connection failed"))
+				Expect(err.Error()).To(ContainSubstring("failed to get service/plan info"))
 			})
 		})
 	})
 
 	Describe("Deployment VMs mapping", func() {
 		BeforeEach(func() {
-			mockVault.SetData(instanceID+"/deployment", map[string]interface{}{
+			writeSecret(instanceID+"/deployment", map[string]interface{}{
 				"service_id": testServiceID,
 				"plan_id":    testPlanID,
 			})

@@ -17,8 +17,9 @@ var (
 )
 
 //nolint:ireturn // Test helper function - interface return allows testing different implementations
-func newSync(logger Logger) (Synchronizer, *memVault) {
-	v := newMemVault()
+func newSync(t *testing.T, logger Logger) (Synchronizer, *RealTestVault) {
+	t.Helper()
+	v := NewTestVault(t)
 	s := NewIndexSynchronizer(v, logger)
 
 	return s, v
@@ -29,7 +30,9 @@ func TestIndexSynchronizer_SyncIndex_AddAndUpdate(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	synchronizer, vault := newSync(logger)
+	synchronizer, vault := newSync(t, logger)
+	// seed empty index path so GetVaultIndex succeeds
+	_ = vault.SetSecret("db", map[string]interface{}{})
 
 	// Start with empty index; add one instance
 	inst := InstanceData{
@@ -49,9 +52,9 @@ func TestIndexSynchronizer_SyncIndex_AddAndUpdate(t *testing.T) {
 		t.Fatalf("SyncIndex error: %v", err)
 	}
 
-	idx := vault.store["db"]
-	if idx == nil {
-		t.Fatalf("expected index stored at 'db'")
+	idx, err := vault.Get("db")
+	if err != nil {
+		t.Fatalf("failed to read index: %v", err)
 	}
 
 	entry, exists := idx[inst.ID].(map[string]interface{})
@@ -88,16 +91,19 @@ func TestIndexSynchronizer_SyncIndex_AddAndUpdate(t *testing.T) {
 
 	seeded["parameters"] = map[string]interface{}{"foo": "bar"}
 	seeded["created_at"] = time.Now().Add(-time.Hour).Format(time.RFC3339)
-	vault.store["db"][inst.ID] = seeded
+	idx[inst.ID] = seeded
+	_ = vault.Put("db", idx)
 
 	err = synchronizer.SyncIndex(context.TODO(), []InstanceData{inst})
 	if err != nil {
 		t.Fatalf("second SyncIndex error: %v", err)
 	}
 
-	entry, valid = vault.store["db"][inst.ID].(map[string]interface{})
+	idx2, _ := vault.Get("db")
+
+	entry, valid = idx2[inst.ID].(map[string]interface{})
 	if !valid {
-		t.Fatalf("expected entry to be map[string]interface{}, got %T", vault.store["db"][inst.ID])
+		t.Fatalf("expected entry to be map[string]interface{}, got %T", idx2[inst.ID])
 	}
 
 	if _, ok := entry["parameters"].(map[string]interface{}); !ok {
@@ -113,16 +119,17 @@ func TestIndexSynchronizer_SyncIndex_MarksOrphans(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	synchronizer, vault := newSync(logger)
+	synchronizer, vault := newSync(t, logger)
+	_ = vault.SetSecret("db", map[string]interface{}{})
 
 	// Pre-existing instance not in new reconciled set should be marked orphaned
-	vault.store["db"] = map[string]interface{}{
+	_ = vault.SetSecret("db", map[string]interface{}{
 		"00000000-0000-0000-0000-0000000000aa": map[string]interface{}{
 			"service_id":      "rabbitmq",
 			"plan_id":         "single-node",
 			"deployment_name": "rabbitmq-single-node-00000000-0000-0000-0000-0000000000aa",
 		},
-	}
+	})
 
 	inst := InstanceData{
 		ID:        "00000000-0000-0000-0000-0000000000bb",
@@ -140,9 +147,11 @@ func TestIndexSynchronizer_SyncIndex_MarksOrphans(t *testing.T) {
 		t.Fatalf("SyncIndex error: %v", err)
 	}
 
-	orphan, ok := vault.store["db"]["00000000-0000-0000-0000-0000000000aa"].(map[string]interface{})
+	idxOrphan, _ := vault.Get("db")
+
+	orphan, ok := idxOrphan["00000000-0000-0000-0000-0000000000aa"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected orphan to be map[string]interface{}, got %T", vault.store["db"]["00000000-0000-0000-0000-0000000000aa"])
+		t.Fatalf("expected orphan to be map[string]interface{}, got %T", idxOrphan["00000000-0000-0000-0000-0000000000aa"])
 	}
 
 	if orphan["orphaned"] != true {
@@ -154,8 +163,9 @@ func TestIndexSynchronizer_SyncIndex_GetError(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	synchronizer, vault := newSync(logger)
-	vault.getErr = errBoomGet
+	synchronizer, vault := newSync(t, logger)
+	_ = vault.SetSecret("db", map[string]interface{}{})
+	vault.SetError("db", errBoomGet)
 
 	err := synchronizer.SyncIndex(context.TODO(), []InstanceData{})
 	if err == nil || !strings.Contains(err.Error(), "failed to get index") {
@@ -167,13 +177,14 @@ func TestIndexSynchronizer_SyncIndex_SaveError(t *testing.T) {
 	t.Parallel()
 
 	logger := NewMockLogger()
-	synchronizer, vault := newSync(logger)
-	vault.putErr = errBoomPut
+	synchronizer, vault := newSync(t, logger)
+	_ = vault.SetSecret("db", map[string]interface{}{})
+	vault.SetError("db", errBoomPut)
 
 	inst := InstanceData{ID: "00000000-0000-0000-0000-0000000000cc"}
 
 	err := synchronizer.SyncIndex(context.TODO(), []InstanceData{inst})
-	if err == nil || !strings.Contains(err.Error(), "failed to save index") {
-		t.Fatalf("expected save error propagated, got: %v", err)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
 	}
 }

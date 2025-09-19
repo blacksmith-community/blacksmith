@@ -223,6 +223,7 @@ func NewSSHHandler(sshService ssh.SSHService, config Config, logger Logger) *SSH
 }
 
 // HandleWebSocket handles WebSocket upgrade and SSH session management.
+//
 //nolint:funlen
 func (h *SSHHandler) HandleWebSocket(ctx context.Context, writer http.ResponseWriter, request *http.Request, deployment, instance string, index int) {
 	h.logger.Infof("WebSocket SSH connection request for %s/%s/%d", deployment, instance, index)

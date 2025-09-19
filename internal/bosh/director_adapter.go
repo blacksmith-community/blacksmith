@@ -333,8 +333,6 @@ func (d *DirectorAdapter) GetDeployment(name string) (*DeploymentDetail, error) 
 	}, nil
 }
 
-
-
 // CreateDeployment creates a new deployment.
 func (d *DirectorAdapter) CreateDeployment(manifest string) (*Task, error) {
 	// Parse deployment name from manifest
@@ -732,8 +730,6 @@ func (d *DirectorAdapter) GetTaskOutput(taskID int, outputType string) (string, 
 	return output, nil
 }
 
-
-
 // GetTaskEvents retrieves task events.
 func (d *DirectorAdapter) GetTaskEvents(taskID int) ([]TaskEvent, error) {
 	d.log.Infof("Getting task events for task %d", taskID)
@@ -850,7 +846,6 @@ func (d *DirectorAdapter) GetCloudConfig() (string, error) {
 }
 
 // normalizeConfigLimit ensures the limit is within sensible bounds.
-
 
 // GetConfigs retrieves configs based on limit and type filters
 // Only returns the currently active configs for the main list view.

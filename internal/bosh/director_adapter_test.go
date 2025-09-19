@@ -262,7 +262,7 @@ func TestBufferedTaskReporter_Concurrent(t *testing.T) {
 
 // TestBuildFactoryConfig tests the factory config building.
 func TestBuildFactoryConfig(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() with t.Setenv
 	// Set test mode to skip network calls
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
@@ -288,10 +288,9 @@ func TestBuildFactoryConfig(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // Cannot use t.Parallel() when parent test uses t.Setenv
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
+			// Cannot use t.Parallel() when parent test uses t.Setenv
 			config := Config{
 				Address:  tt.address,
 				Username: "admin",
@@ -317,7 +316,7 @@ func TestBuildFactoryConfig(t *testing.T) {
 
 // TestDirectorAdapterCreation tests creating a DirectorAdapter with various configs.
 func TestDirectorAdapterCreation(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() with t.Setenv
 	// Set test mode to skip network calls
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
@@ -347,10 +346,10 @@ func TestDirectorAdapterCreation(t *testing.T) {
 		},
 	}
 
+	//nolint:paralleltest // Cannot use t.Parallel() when parent test uses t.Setenv
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-
+			// Cannot use t.Parallel() when parent test uses t.Setenv
 			_, err := NewDirectorAdapter(testCase.config)
 			if (err != nil) != testCase.wantError {
 				t.Errorf("NewDirectorAdapter() error = %v, wantError %v", err, testCase.wantError)

@@ -96,6 +96,7 @@ func (u *VaultUpdater) UpdateInstance(ctx context.Context, instance InstanceData
 }
 
 // UpdateBatch updates multiple instances in parallel with concurrency control.
+//
 //nolint:funlen
 func (u *VaultUpdater) UpdateBatch(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
 	if len(instances) == 0 {
@@ -2015,6 +2016,7 @@ func (u *VaultUpdater) deleteBackupFiles(vaultClient *api.Client, instanceID, sh
 }
 
 // cleanLegacyInstanceBackups removes old backup data stored at secret/{instanceID}/backups.
+//
 //nolint:funlen
 func (u *VaultUpdater) cleanLegacyInstanceBackups(instanceID string) {
 	u.logger.Debugf("Checking for legacy backup data for instance %s", instanceID)

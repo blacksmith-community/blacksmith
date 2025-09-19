@@ -101,29 +101,48 @@ func (e *ExecutorImpl) ExecuteWithTimeout(request *SSHRequest, timeout time.Dura
 func (e *ExecutorImpl) ExecuteWithStream(request *SSHRequest, output io.Writer) (*SSHResponse, error) {
 	e.logger.Infof("Executing SSH command with streaming output")
 
-	// Resolve timeout: prefer request.Timeout if provided, else executor config
-	timeout := e.config.Timeout
-	if request != nil && request.Timeout > 0 {
-		timeout = time.Duration(request.Timeout) * time.Second
-	}
+	timeout := e.resolveTimeout(request)
 
-	// Create timeout context for the whole streaming execution
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	startTime := time.Now()
 
-	// Create interactive SSH session
+	session, err := e.setupSession(request)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = session.Close() }()
+
+	fullCmd, exitSentinel := e.buildCommandWithSentinel(request)
+
+	err = session.SendInput([]byte(fullCmd))
+	if err != nil {
+		e.logger.Errorf("Failed to send command to SSH session: %v", err)
+
+		return nil, NewSSHError(SSHErrorCodeExecution, "Failed to send command to SSH session", err)
+	}
+
+	return e.streamAndCaptureOutput(ctx, session, output, exitSentinel, timeout, startTime)
+}
+
+func (e *ExecutorImpl) resolveTimeout(request *SSHRequest) time.Duration {
+	if request != nil && request.Timeout > 0 {
+		return time.Duration(request.Timeout) * time.Second
+	}
+
+	return e.config.Timeout
+}
+
+func (e *ExecutorImpl) setupSession(request *SSHRequest) (SSHSession, error) {
 	session, err := e.sshService.CreateSession(request)
 	if err != nil {
 		e.logger.Errorf("Failed to create SSH session: %v", err)
 
 		return nil, fmt.Errorf("failed to create SSH session: %w", err)
 	}
-	// Ensure cleanup
-	defer func() { _ = session.Close() }()
 
-	// Start the session
 	err = session.Start()
 	if err != nil {
 		e.logger.Errorf("Failed to start SSH session: %v", err)
@@ -131,15 +150,17 @@ func (e *ExecutorImpl) ExecuteWithStream(request *SSHRequest, output io.Writer) 
 		return nil, fmt.Errorf("failed to start SSH session: %w", err)
 	}
 
-	// Build the command line with a sentinel to capture the exit code, then exit the shell
-	// Use robust single-quote escaping for each argument
+	return session, nil
+}
+
+func (e *ExecutorImpl) buildCommandWithSentinel(request *SSHRequest) (string, string) {
 	cmdLine := request.Command
 	if len(request.Args) > 0 {
 		parts := make([]string, 0, len(request.Args)+1)
 
 		parts = append(parts, cmdLine)
-		for _, a := range request.Args {
-			parts = append(parts, shellSingleQuote(a))
+		for _, arg := range request.Args {
+			parts = append(parts, shellSingleQuote(arg))
 		}
 
 		cmdLine = strings.Join(parts, " ")
@@ -149,35 +170,25 @@ func (e *ExecutorImpl) ExecuteWithStream(request *SSHRequest, output io.Writer) 
 
 	fullCmd := fmt.Sprintf("set -o pipefail 2>/dev/null; %s; code=$?; echo %s$code; exit $code\n", cmdLine, exitSentinel)
 
-	err = session.SendInput([]byte(fullCmd))
-	if err != nil {
-		e.logger.Errorf("Failed to send command to SSH session: %v", err)
+	return fullCmd, exitSentinel
+}
 
-		return nil, NewSSHError(SSHErrorCodeExecution, "Failed to send command to SSH session", err)
-	}
-
-	// Stream output, detect sentinel and capture exit code
+func (e *ExecutorImpl) streamAndCaptureOutput(ctx context.Context, session SSHSession, output io.Writer, exitSentinel string, timeout time.Duration, startTime time.Time) (*SSHResponse, error) {
 	var (
 		stdoutBuf bytes.Buffer
-		tailBuf   strings.Builder // small sliding window to detect sentinel across chunk boundaries
+		tailBuf   strings.Builder
 		exitCode  = -1
 		writeErr  error
 	)
 
 	for {
-		// Check timeout
-		select {
-		case <-ctx.Done():
-			e.logger.Errorf("SSH command timed out after %v", timeout)
-
-			return createSSHResponse(false, timeoutExitCode, time.Since(startTime), stdoutBuf.String(), ctx.Err(), startTime),
-				NewSSHError(SSHErrorCodeTimeout, "Command execution timed out", ctx.Err())
-		default:
+		err := e.checkTimeout(ctx, timeout, startTime, &stdoutBuf)
+		if err != nil {
+			return nil, err
 		}
 
 		chunk, rerr := session.ReadOutput()
 		if rerr != nil {
-			// Treat read error as execution failure if we haven't seen an exit code
 			if exitCode < 0 {
 				e.logger.Errorf("SSH streaming read error: %v", rerr)
 
@@ -187,81 +198,125 @@ func (e *ExecutorImpl) ExecuteWithStream(request *SSHRequest, output io.Writer) 
 			break
 		}
 
-		if len(chunk) == 0 {
-			// No data this interval; check if session has closed
-			st := session.Status()
-			if st == SessionStatusClosed || st == SessionStatusError {
-				break
-			}
+		if e.shouldBreakOnEmptyChunk(chunk, session) {
+			break
+		}
 
+		if len(chunk) == 0 {
 			continue
 		}
 
-		// Forward to provided writer
-		if output != nil && writeErr == nil {
-			_, writeErr = output.Write(chunk)
-			if writeErr != nil {
-				e.logger.Errorf("Failed to write output to stream: %v", writeErr)
-				// We will still try to finish capturing exit code, but return error later
-			}
-		}
+		writeErr = e.forwardChunkToOutput(chunk, output, writeErr)
+		e.accumulateChunk(chunk, &stdoutBuf, &tailBuf)
+		e.trimTailBuffer(&tailBuf)
 
-		// Accumulate for response and sentinel detection
-		stdoutBuf.Write(chunk)
-		tailBuf.Write(chunk)
+		if code := e.detectExitCode(&tailBuf, exitSentinel); code >= 0 {
+			exitCode = code
 
-		// Keep tailBuf reasonably small to avoid unbounded growth
-		if tailBuf.Len() > maxTailBufferSize {
-			s := tailBuf.String()
-			if len(s) > tailBufferTrimSize {
-				tailBuf.Reset()
-				tailBuf.WriteString(s[len(s)-tailBufferTrimSize:])
-			}
-		}
+			e.removeSentinelFromOutput(&stdoutBuf, exitSentinel)
 
-		// Detect exit sentinel
-		if idx := strings.LastIndex(tailBuf.String(), exitSentinel); idx != -1 {
-			// Extract digits following sentinel up to first non-digit
-			sentinelSuffix := tailBuf.String()[idx+len(exitSentinel):]
-
-			digitCount := 0
-			for digitCount < len(sentinelSuffix) && sentinelSuffix[digitCount] >= '0' && sentinelSuffix[digitCount] <= '9' {
-				digitCount++
-			}
-
-			if digitCount > 0 {
-				// Parse exit code
-				var code int
-
-				_, _ = fmt.Sscanf(sentinelSuffix[:digitCount], "%d", &code)
-				exitCode = code
-
-				// Remove sentinel from accumulated stdout
-				out := stdoutBuf.String()
-				if cut := strings.LastIndex(out, exitSentinel); cut != -1 {
-					// Drop from sentinel start to end of line
-					cleaned := out[:cut]
-
-					stdoutBuf.Reset()
-					stdoutBuf.WriteString(cleaned)
-				}
-
-				break
-			}
+			break
 		}
 	}
 
+	return e.finalizeResponse(exitCode, writeErr, startTime, &stdoutBuf)
+}
+
+func (e *ExecutorImpl) checkTimeout(ctx context.Context, timeout time.Duration, startTime time.Time, stdoutBuf *bytes.Buffer) error {
+	select {
+	case <-ctx.Done():
+		e.logger.Errorf("SSH command timed out after %v", timeout)
+
+		resp := createSSHResponse(false, timeoutExitCode, time.Since(startTime), stdoutBuf.String(), ctx.Err(), startTime)
+
+		return fmt.Errorf("%v: %w", resp, NewSSHError(SSHErrorCodeTimeout, "Command execution timed out", ctx.Err()))
+	default:
+		return nil
+	}
+}
+
+func (e *ExecutorImpl) shouldBreakOnEmptyChunk(chunk []byte, session SSHSession) bool {
+	if len(chunk) == 0 {
+		st := session.Status()
+
+		return st == SessionStatusClosed || st == SessionStatusError
+	}
+
+	return false
+}
+
+func (e *ExecutorImpl) forwardChunkToOutput(chunk []byte, output io.Writer, existingErr error) error {
+	if output != nil && existingErr == nil {
+		_, err := output.Write(chunk)
+		if err != nil {
+			e.logger.Errorf("Failed to write output to stream: %v", err)
+
+			return fmt.Errorf("failed to write output: %w", err)
+		}
+	}
+
+	return existingErr
+}
+
+func (e *ExecutorImpl) accumulateChunk(chunk []byte, stdoutBuf *bytes.Buffer, tailBuf *strings.Builder) {
+	stdoutBuf.Write(chunk)
+	tailBuf.Write(chunk)
+}
+
+func (e *ExecutorImpl) trimTailBuffer(tailBuf *strings.Builder) {
+	if tailBuf.Len() > maxTailBufferSize {
+		s := tailBuf.String()
+		if len(s) > tailBufferTrimSize {
+			tailBuf.Reset()
+			tailBuf.WriteString(s[len(s)-tailBufferTrimSize:])
+		}
+	}
+}
+
+func (e *ExecutorImpl) detectExitCode(tailBuf *strings.Builder, exitSentinel string) int {
+	idx := strings.LastIndex(tailBuf.String(), exitSentinel)
+	if idx == -1 {
+		return -1
+	}
+
+	sentinelSuffix := tailBuf.String()[idx+len(exitSentinel):]
+
+	digitCount := 0
+	for digitCount < len(sentinelSuffix) && sentinelSuffix[digitCount] >= '0' && sentinelSuffix[digitCount] <= '9' {
+		digitCount++
+	}
+
+	if digitCount > 0 {
+		var code int
+
+		_, _ = fmt.Sscanf(sentinelSuffix[:digitCount], "%d", &code)
+
+		return code
+	}
+
+	return -1
+}
+
+func (e *ExecutorImpl) removeSentinelFromOutput(stdoutBuf *bytes.Buffer, exitSentinel string) {
+	out := stdoutBuf.String()
+	if cut := strings.LastIndex(out, exitSentinel); cut != -1 {
+		cleaned := out[:cut]
+
+		stdoutBuf.Reset()
+		stdoutBuf.WriteString(cleaned)
+	}
+}
+
+func (e *ExecutorImpl) finalizeResponse(exitCode int, writeErr error, startTime time.Time, stdoutBuf *bytes.Buffer) (*SSHResponse, error) {
 	duration := time.Since(startTime)
 
 	if writeErr != nil {
-		// Return response with streaming write error surfaced
 		resp := createSSHResponse(exitCode == 0, exitCode, duration, stdoutBuf.String(), writeErr, startTime)
 
 		return resp, NewSSHError(SSHErrorCodeInternal, "Failed to write output to stream", writeErr)
 	}
 
 	if exitCode < 0 {
-		// Session ended without sentinel; treat as unknown failure
 		exitCode = 1
 	}
 

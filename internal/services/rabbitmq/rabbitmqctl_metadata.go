@@ -328,16 +328,16 @@ func (m *MetadataService) initializeCommandMetadata() {
 // initializeCategories creates all command categories.
 func (m *MetadataService) createCategoryDefinitions() []RabbitMQCtlCategory {
 	var categories []RabbitMQCtlCategory
-	
+
 	// Add core management categories
 	categories = append(categories, m.createCoreCategories()...)
-	
+
 	// Add resource management categories
 	categories = append(categories, m.createResourceCategories()...)
-	
+
 	// Add plugin categories
 	categories = append(categories, m.createPluginCategories()...)
-	
+
 	return categories
 }
 
@@ -555,7 +555,7 @@ func (m *MetadataService) initializeClusterCommands() {
 func (m *MetadataService) initializeUsersCommands() {
 	// Add user listing command
 	m.addCommandToCategory("users", m.createListUsersCommand())
-	
+
 	// Add user modification commands
 	for _, cmd := range m.createUserModificationCommands() {
 		m.addCommandToCategory("users", cmd)

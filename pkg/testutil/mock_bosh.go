@@ -58,7 +58,9 @@ func (mb *MockBOSHDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, erro
 func (mb *MockBOSHDirector) GetInfo() (*bosh.Info, error) { return nil, ErrMockNotImplemented }
 
 // GetTask implements the BOSH Director interface.
-func (mb *MockBOSHDirector) GetTask(taskID int) (*bosh.Task, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) GetTask(taskID int) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // CreateDeployment implements the BOSH Director interface.
 func (mb *MockBOSHDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
@@ -76,7 +78,9 @@ func (mb *MockBOSHDirector) GetDeployment(deployment string) (*bosh.DeploymentDe
 }
 
 // GetDeployments implements the BOSH Director interface.
-func (mb *MockBOSHDirector) GetDeployments() ([]bosh.Deployment, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) GetDeployments() ([]bosh.Deployment, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // GetEvents implements the BOSH Director interface.
 func (mb *MockBOSHDirector) GetEvents(deployment string) ([]bosh.Event, error) {
@@ -87,13 +91,19 @@ func (mb *MockBOSHDirector) GetEvents(deployment string) ([]bosh.Event, error) {
 func (mb *MockBOSHDirector) GetReleases() ([]bosh.Release, error) { return nil, ErrMockNotImplemented }
 
 // UploadRelease implements the BOSH Director interface.
-func (mb *MockBOSHDirector) UploadRelease(url, sha1 string) (*bosh.Task, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) UploadRelease(url, sha1 string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // GetStemcells implements the BOSH Director interface.
-func (mb *MockBOSHDirector) GetStemcells() ([]bosh.Stemcell, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) GetStemcells() ([]bosh.Stemcell, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // UploadStemcell implements the BOSH Director interface.
-func (mb *MockBOSHDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // GetTaskOutput implements the BOSH Director interface.
 func (mb *MockBOSHDirector) GetTaskOutput(taskID int, typ string) (string, error) { return "", nil }
@@ -104,7 +114,9 @@ func (mb *MockBOSHDirector) GetConfig(configType, configName string) (interface{
 }
 
 // GetTaskEvents implements the BOSH Director interface.
-func (mb *MockBOSHDirector) GetTaskEvents(taskID int) ([]bosh.TaskEvent, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) GetTaskEvents(taskID int) ([]bosh.TaskEvent, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // FetchLogs implements the BOSH Director interface.
 func (mb *MockBOSHDirector) FetchLogs(deployment, job, index string) (string, error) { return "", nil }
@@ -116,7 +128,9 @@ func (mb *MockBOSHDirector) UpdateCloudConfig(yaml string) error { return nil }
 func (mb *MockBOSHDirector) GetCloudConfig() (string, error) { return "", nil }
 
 // Cleanup implements the BOSH Director interface.
-func (mb *MockBOSHDirector) Cleanup(removeAll bool) (*bosh.Task, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) Cleanup(removeAll bool) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // SSHCommand implements the BOSH Director interface.
 func (mb *MockBOSHDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
@@ -140,7 +154,9 @@ func (mb *MockBOSHDirector) GetTasks(taskType string, limit int, states []string
 }
 
 // GetAllTasks implements the BOSH Director interface.
-func (mb *MockBOSHDirector) GetAllTasks(limit int) ([]bosh.Task, error) { return nil, ErrMockNotImplemented }
+func (mb *MockBOSHDirector) GetAllTasks(limit int) ([]bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 
 // CancelTask implements the BOSH Director interface.
 func (mb *MockBOSHDirector) CancelTask(taskID int) error { return nil }

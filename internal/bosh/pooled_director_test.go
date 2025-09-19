@@ -840,8 +840,8 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 		}},
 		{"SSHSession", func() error {
 			_, err := pooled.SSHSession("test", "instance", 0, nil)
-			if err != nil {
-				return fmt.Errorf("SSHSession failed: %w", err)
+			if !errors.Is(err, ErrMockError) {
+				return fmt.Errorf("expected ErrMockError, got %w", err)
 			}
 
 			return nil
@@ -862,9 +862,14 @@ func runAllTests(t *testing.T, tests []struct {
 }) {
 	t.Helper()
 
+	var waitGroup sync.WaitGroup
+
 	for _, test := range tests {
+		waitGroup.Add(1)
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+
+			defer waitGroup.Done()
 
 			err := test.fn()
 			if err != nil {
@@ -872,6 +877,8 @@ func runAllTests(t *testing.T, tests []struct {
 			}
 		})
 	}
+
+	waitGroup.Wait()
 }
 
 // validatePoolUsage validates that the pool was used correctly.

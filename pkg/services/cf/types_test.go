@@ -107,6 +107,7 @@ func TestValidateRegistrationRequest(t *testing.T) {
 		})
 	}
 }
+
 //nolint:funlen // This test function is intentionally long for comprehensive testing
 
 //nolint:funlen

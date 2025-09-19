@@ -44,6 +44,7 @@ func (cm *ConnectionManager) GetConnection(instanceID string, creds *Credentials
 }
 
 // GetConnectionWithOptions retrieves or creates a RabbitMQ connection with connection options.
+//
 //nolint:funlen
 func (cm *ConnectionManager) GetConnectionWithOptions(instanceID string, creds *Credentials, opts common.ConnectionOptions) (*amqp.Connection, *amqp.Channel, error) {
 	// Create key that includes override parameters to separate different connection types

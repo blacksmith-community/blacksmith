@@ -921,10 +921,11 @@ func getUIHandler(config *config.Config) http.Handler {
 
 func initializeBroker(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, shieldClient shield.Client, logger loggerPkg.Logger) (*broker.Broker, error) {
 	brokerInstance := &broker.Broker{
-		Vault:  vault,
-		BOSH:   boshDirector,
-		Shield: shieldClient,
-		Config: config,
+		Vault:         vault,
+		BOSH:          boshDirector,
+		Shield:        shieldClient,
+		Config:        config,
+		InstanceLocks: make(map[string]*sync.Mutex),
 	}
 
 	var err error

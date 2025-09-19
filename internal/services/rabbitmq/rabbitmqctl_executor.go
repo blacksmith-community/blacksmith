@@ -131,8 +131,6 @@ func (e *ExecutorService) ExecuteCommandSync(ctx context.Context, execCtx Execut
 
 // validateAndPrepareCommand validates and prepares a RabbitMQCommand for execution.
 
-
-
 // BuildRabbitMQCtlCommand builds the full rabbitmqctl command with arguments
 // This is a public version of the existing buildRabbitMQCtlCommand method for use by other services.
 func (e *ExecutorService) BuildRabbitMQCtlCommand(command string, args []string) []string {
