@@ -42,6 +42,24 @@ func New(url, token string, insecure bool) *Vault {
 	}
 }
 
+// SetToken updates the in-memory token and refreshes it on the underlying client if present.
+func (vault *Vault) SetToken(token string) {
+	vault.Token = token
+	if vault.client != nil && token != "" {
+		vault.client.SetToken(token)
+	}
+}
+
+// SetCredentialsPath records the file path used to persist Vault credentials.
+// If an empty value is supplied the default BLACKSMITH_OPER_HOME derived path is used.
+func (vault *Vault) SetCredentialsPath(path string) {
+	if path != "" {
+		vault.credentialsPath = path
+	} else if vault.credentialsPath == "" {
+		vault.updateHomeDirs()
+	}
+}
+
 // GetAPIClient returns the underlying HashiCorp Vault API client.
 func (vault *Vault) GetAPIClient() (*api.Client, error) {
 	err := vault.ensureClient()
@@ -221,6 +239,10 @@ func (vault *Vault) Init(store string) error {
 	if initStatus {
 		logger.Info("vault is already initialized")
 
+		if err := vault.ensureToken(logger); err != nil {
+			logger.Warn("vault token not available: %s", err)
+		}
+
 		return nil
 	}
 
@@ -252,8 +274,7 @@ func (vault *Vault) Init(store string) error {
 	}
 
 	// Update token for future operations
-	vault.Token = initResp.RootToken
-	vault.client.SetToken(initResp.RootToken)
+	vault.SetToken(initResp.RootToken)
 
 	logger.Info("vault initialized successfully")
 
@@ -313,7 +334,65 @@ func (vault *Vault) ensureClient() error {
 		vault.client = client
 	}
 
+	if vault.Token != "" {
+		vault.client.SetToken(vault.Token)
+	}
+
 	return nil
+}
+
+// ensureToken guarantees that the client token is populated using either the
+// configured value or the stored credentials file.
+func (vault *Vault) ensureToken(log logger.Logger) error {
+	if vault.Token != "" {
+		return nil
+	}
+
+	_, err := vault.LoadTokenFromCredentials()
+	if err != nil {
+		return err
+	}
+
+	log.Debug("loaded vault token from credentials file")
+
+	return nil
+}
+
+// LoadTokenFromCredentials loads the root token from the credentials file and
+// applies it to the Vault client. The loaded token is returned for convenience.
+func (vault *Vault) LoadTokenFromCredentials() (string, error) {
+	creds, err := vault.loadCredentialsFile()
+	if err != nil {
+		return "", err
+	}
+
+	if creds.RootToken == "" {
+		return "", vaultPkg.ErrTokenNotFound
+	}
+
+	vault.SetToken(creds.RootToken)
+
+	return creds.RootToken, nil
+}
+
+func (vault *Vault) loadCredentialsFile() (vaultPkg.VaultCreds, error) {
+	if vault.credentialsPath == "" {
+		vault.updateHomeDirs()
+	}
+
+	bytes, err := safeReadFile(vault.credentialsPath)
+	if err != nil {
+		return vaultPkg.VaultCreds{}, err
+	}
+
+	creds := vaultPkg.VaultCreds{}
+
+	err = json.Unmarshal(bytes, &creds)
+	if err != nil {
+		return vaultPkg.VaultCreds{}, fmt.Errorf("failed to unmarshal vault credentials: %w", err)
+	}
+
+	return creds, nil
 }
 
 // storeCredentials stores vault credentials to the file system.

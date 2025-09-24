@@ -40,7 +40,8 @@ func GetWorkDir() string {
 }
 
 func InitManifest(ctx context.Context, plan services.Plan, instanceID string) error {
-	logger.Get().Info("Initializing manifest for plan %s, instance %s", plan.ID, instanceID)
+	log := logger.Get().Named("manifest")
+	log.Info("Initializing manifest for plan %s, instance %s", plan.ID, instanceID)
 
 	err := validateInitScript(plan.InitScriptPath)
 	if err != nil {
@@ -63,14 +64,14 @@ func InitManifest(ctx context.Context, plan services.Plan, instanceID string) er
 func validateInitScript(initScriptPath string) error {
 	_, err := os.Stat(initScriptPath)
 	if err != nil && os.IsNotExist(err) {
-		logger.Get().Debug("No init script found at %s, skipping initialization", initScriptPath)
+		logger.Get().Named("manifest").Debug("No init script found at %s, skipping initialization", initScriptPath)
 
 		return nil
 	}
 
 	err = utils.ValidateExecutablePath(initScriptPath)
 	if err != nil {
-		logger.Get().Error("init script path validation failed: %s", err)
+		logger.Get().Named("manifest").Error("init script path validation failed: %s", err)
 
 		return fmt.Errorf("init script path validation failed: %w", err)
 	}
@@ -79,11 +80,12 @@ func validateInitScript(initScriptPath string) error {
 }
 
 func prepareInitScript(initScriptPath string) error {
-	logger.Get().Info("Running init script: %s", initScriptPath)
+	log := logger.Get().Named("manifest")
+	log.Info("Running init script: %s", initScriptPath)
 
 	err := os.Chmod(initScriptPath, ExecutableScriptPermissions /* #nosec G302 - Scripts need execute permission, path validated above */)
 	if err != nil {
-		logger.Get().Error("failed to make init script executable: %s", err)
+		log.Error("failed to make init script executable: %s", err)
 
 		return fmt.Errorf("failed to chmod init script: %w", err)
 	}
@@ -92,18 +94,17 @@ func prepareInitScript(initScriptPath string) error {
 }
 
 func buildInitCommand(ctx context.Context, plan services.Plan, instanceID string) (*exec.Cmd, error) {
-	ctx, cancel := context.WithTimeout(ctx, InitScriptTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "/bin/bash", plan.InitScriptPath) // #nosec G204 - Path has been validated by validateExecutablePath
+	// Create command without timeout - timeout will be handled at a higher level if needed
+	cmd := exec.Command("/bin/bash", plan.InitScriptPath) // #nosec G204 - Path has been validated by validateExecutablePath
 
 	cmd.Env = buildInitEnvironment(instanceID, plan.ID)
 
-	logger.Get().Debug("Executing init script command: bash %s", plan.InitScriptPath)
-	logger.Get().Debug("Init script environment variables:")
+	log := logger.Get().Named("manifest")
+	log.Debug("Executing init script command: bash %s", plan.InitScriptPath)
+	log.Debug("Init script environment variables:")
 
 	for _, env := range cmd.Env {
-		logger.Get().Debug("  %s", env)
+		log.Debug("  %s", env)
 	}
 
 	return cmd, nil
@@ -134,47 +135,48 @@ func buildInitEnvironment(instanceID, planID string) []string {
 func executeInitScript(cmd *exec.Cmd, initScriptPath string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		logger.Get().Error("Init script failed: %s", err)
-		logger.Get().Debug("Init script output:\n%s", string(out))
+		logger.Get().Named("manifest").Error("Init script failed: %s", err)
+		logger.Get().Named("manifest").Debug("Init script output:\n%s", string(out))
 
 		return fmt.Errorf("init script execution failed: %w", err)
 	}
 
-	logger.Get().Info("Init script completed successfully")
-	logger.Get().Debug("Init script `%s' output:\n%s", initScriptPath, string(out))
+	logger.Get().Named("manifest").Info("Init script completed successfully")
+	logger.Get().Named("manifest").Debug("Init script `%s' output:\n%s", initScriptPath, string(out))
 
 	return nil
 }
 
 func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (string, error) {
-	logger.Get().Info("Generating manifest for plan %s", p.ID)
-	logger.Get().Debug("Starting spruce merge with %d additional manifests", len(manifests))
+	log := logger.Get().Named("manifest")
+	log.Info("Generating manifest for plan %s", p.ID)
+	log.Debug("Starting spruce merge with %d additional manifests", len(manifests))
 
 	merged, err := spruce.Merge(p.Manifest)
 	if err != nil {
-		logger.Get().Error("Failed to merge base manifest: %s", err)
+		log.Error("Failed to merge base manifest: %s", err)
 
 		return "", fmt.Errorf("failed to merge base manifest with spruce: %w", err)
 	}
 
 	for manifestIndex, next := range manifests {
-		logger.Get().Debug("Merging manifest %d of %d", manifestIndex+1, len(manifests))
+		log.Debug("Merging manifest %d of %d", manifestIndex+1, len(manifests))
 
 		merged, err = spruce.Merge(merged, next)
 		if err != nil {
-			logger.Get().Error("Failed to merge manifest %d: %s", manifestIndex+1, err)
+			log.Error("Failed to merge manifest %d: %s", manifestIndex+1, err)
 
 			return "", fmt.Errorf("failed to merge manifest %d with spruce: %w", manifestIndex+1, err)
 		}
 	}
 
-	logger.Get().Debug("Running spruce evaluator on merged manifest")
+	log.Debug("Running spruce evaluator on merged manifest")
 
 	eval := &spruce.Evaluator{Tree: merged}
 
 	err = eval.Run(nil, nil)
 	if err != nil {
-		logger.Get().Error("Failed to evaluate spruce expressions: %s", err)
+		log.Error("Failed to evaluate spruce expressions: %s", err)
 
 		return "", fmt.Errorf("failed to evaluate spruce expressions: %w", err)
 	}
@@ -183,13 +185,13 @@ func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (str
 
 	manifestYAML, err := yaml.Marshal(final)
 	if err != nil {
-		logger.Get().Error("Failed to marshal final manifest to YAML: %s", err)
+		log.Error("Failed to marshal final manifest to YAML: %s", err)
 
 		return "", fmt.Errorf("failed to marshal final manifest to YAML: %w", err)
 	}
 
 	manifestStr := string(manifestYAML)
-	logger.Get().Info("Successfully generated manifest (size: %d bytes)", len(manifestStr))
+	log.Info("Successfully generated manifest (size: %d bytes)", len(manifestStr))
 
 	return manifestStr, nil
 }

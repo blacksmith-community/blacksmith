@@ -120,11 +120,25 @@ func (b *Broker) IsBroker() bool {
 	return true
 }
 
+// GetPlans returns a shallow copy of the broker's service plans keyed by service/plan ID.
+func (b *Broker) GetPlans() map[string]services.Plan {
+	if b == nil || len(b.Plans) == 0 {
+		return map[string]services.Plan{}
+	}
+
+	plansCopy := make(map[string]services.Plan, len(b.Plans))
+	for key, plan := range b.Plans {
+		plansCopy[key] = plan
+	}
+
+	return plansCopy
+}
+
 func WriteDataFile(
 	instanceID string,
 	data []byte,
 ) error {
-	logger := logger.Get().Named("WriteDataFile")
+	logger := logger.Get().Named("broker")
 	filename := manifest.GetWorkDir() + instanceID + ".json"
 	logger.Debug("Writing data file for instance %s to %s (size: %d bytes)", instanceID, filename, len(data))
 
@@ -144,7 +158,7 @@ func WriteYamlFile(
 	instanceID string,
 	data []byte,
 ) error {
-	logger := logger.Get().Named("WriteYamlFile")
+	logger := logger.Get().Named("broker")
 	logger.Debug("Writing YAML file for instance %s (input size: %d bytes)", instanceID, len(data))
 
 	mergedMap := make(map[interface{}]interface{})
@@ -184,7 +198,7 @@ func (b *Broker) FindPlan(
 	serviceID string,
 	planID string,
 ) (services.Plan, error) {
-	logger := logger.Get().Named("FindPlan")
+	logger := logger.Get().Named("broker")
 	key := fmt.Sprintf("%s/%s", serviceID, planID)
 	logger.Debug("Looking up plan with key: %s", key)
 	logger.Debug("Total plans in catalog: %d", len(b.Plans))
@@ -206,7 +220,7 @@ func (b *Broker) FindPlan(
 }
 
 func (b *Broker) Services(ctx context.Context) ([]domain.Service, error) {
-	logger := logger.Get().Named("Services")
+	logger := logger.Get().Named("broker")
 	logger.Info("Retrieving service catalog")
 	logger.Debug("Converting %d brokerapi.Service entries to domain.Service", len(b.Catalog))
 
@@ -247,7 +261,7 @@ func (b *Broker) Services(ctx context.Context) ([]domain.Service, error) {
 }
 
 func (b *Broker) ReadServices(dir ...string) error {
-	logger := logger.Get().Named("Broker.ReadServices")
+	logger := logger.Get().Named("broker")
 	logger.Info("Starting to read and build service catalog")
 	logger.Debug("Service directories provided: %v", dir)
 
@@ -276,7 +290,7 @@ func (b *Broker) Provision(
 	error,
 ) {
 	spec := domain.ProvisionedServiceSpec{IsAsync: true}
-	logger := logger.Get().Named(fmt.Sprintf("%s %s/%s", instanceID, details.ServiceID, details.PlanID))
+	logger := logger.Get().Named("broker")
 
 	logger.Info("Starting provision of service instance %s (service: %s, plan: %s)", instanceID, details.ServiceID, details.PlanID)
 	logger.Debug("Provision details - OrganizationGUID: %s, SpaceGUID: %s", details.OrganizationGUID, details.SpaceGUID)
@@ -323,7 +337,7 @@ func (b *Broker) Deprovision(
 	domain.DeprovisionServiceSpec,
 	error,
 ) {
-	logger := logger.Get().Named(fmt.Sprintf("%s %s/%s", instanceID, details.ServiceID, details.PlanID))
+	logger := logger.Get().Named("broker")
 	logger.Info("deprovisioning plan (%s) service (%s) instance (%s)", details.PlanID, details.ServiceID, instanceID)
 
 	if !asyncAllowed {
@@ -405,7 +419,7 @@ func (b *Broker) LastOperation(
 	domain.LastOperation,
 	error,
 ) {
-	logger := logger.Get().Named(instanceID)
+	logger := logger.Get().Named("broker")
 	logger.Debug("last-operation check received; checking state of service deployment")
 
 	// Get instance and deployment information
@@ -449,7 +463,7 @@ func (b *Broker) Bind(
 
 	var binding domain.Binding
 
-	logger := logger.Get().Named(fmt.Sprintf("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID))
+	logger := logger.Get().Named("broker")
 	logger.Info("Starting bind operation for instance %s, binding %s", instanceID, bindingID)
 	logger.Debug("Bind details - Service: %s, Plan: %s, AppGUID: %s", details.ServiceID, details.PlanID, details.AppGUID)
 
@@ -493,7 +507,7 @@ func (b *Broker) Unbind(
 	mu.Lock()
 	defer mu.Unlock()
 
-	logger := logger.Get().Named(fmt.Sprintf("%s %s %s @%s", instanceID, details.ServiceID, details.PlanID, bindingID))
+	logger := logger.Get().Named("broker")
 	logger.Info("Starting unbind operation for instance %s, binding %s", instanceID, bindingID)
 	logger.Debug("Unbind details - Service: %s, Plan: %s", details.ServiceID, details.PlanID)
 
@@ -518,7 +532,7 @@ func (b *Broker) Update(
 	domain.UpdateServiceSpec,
 	error,
 ) {
-	logger := logger.Get().Named(fmt.Sprintf("%s %s %s", instanceID, details.ServiceID, details.PlanID))
+	logger := logger.Get().Named("broker")
 	logger.Error("Update operation not implemented")
 	logger.Debug("Update request - InstanceID: %s, ServiceID: %s, CurrentPlanID: %s, NewPlanID: %s",
 		instanceID, details.ServiceID, details.PlanID, details.PreviousValues.PlanID)
@@ -530,7 +544,7 @@ func (b *Broker) Update(
 }
 
 func (b *Broker) GetInstance(ctx context.Context, instanceID string, details domain.FetchInstanceDetails) (domain.GetInstanceDetailsSpec, error) {
-	logger := logger.Get().Named("GetInstance")
+	logger := logger.Get().Named("broker")
 	logger.Debug("GetInstance called for instanceID: %s", instanceID)
 	logger.Info("GetInstance operation not implemented")
 	// Not implemented - return empty spec
@@ -538,7 +552,7 @@ func (b *Broker) GetInstance(ctx context.Context, instanceID string, details dom
 }
 
 func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string, details domain.FetchBindingDetails) (domain.GetBindingSpec, error) {
-	logger := logger.Get().Named("GetBinding")
+	logger := logger.Get().Named("broker")
 	logger.Debug("GetBinding called for instanceID: %s, bindingID: %s", instanceID, bindingID)
 	logger.Info("GetBinding operation not implemented")
 	// Not implemented - return empty spec
@@ -546,7 +560,7 @@ func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string, d
 }
 
 func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingID string) (*BindingCredentials, error) {
-	logger := logger.Get().Named(fmt.Sprintf("GetBindingCredentials %s %s", instanceID, bindingID))
+	logger := logger.Get().Named("broker")
 	logger.Info("Starting credential reconstruction for instance %s, binding %s", instanceID, bindingID)
 
 	plan, err := b.retrievePlanFromVault(ctx, instanceID, logger)
@@ -571,13 +585,17 @@ func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingI
 
 	b.populateBindingCredentials(binding, credsMap)
 
+	if err := b.storeBindingCredentials(ctx, instanceID, bindingID, binding.Raw, logger); err != nil {
+		return nil, err
+	}
+
 	logger.Info("Successfully reconstructed credentials for binding %s", bindingID)
 
 	return binding, nil
 }
 
 func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
-	logger := logger.Get().Named("LastBindingOperation")
+	logger := logger.Get().Named("broker")
 	logger.Debug("LastBindingOperation called for instanceID: %s, bindingID: %s", instanceID, bindingID)
 	logger.Debug("Returning success immediately as async bindings are not supported")
 	// Not implemented - return successful immediately since we don't support async bindings
@@ -585,7 +603,7 @@ func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID
 }
 
 func (b *Broker) GetLatestDeploymentTask(deploymentName string) (*bosh.Task, string, error) {
-	logger := logger.Get().Named("GetLatestDeploymentTask " + deploymentName)
+	logger := logger.Get().Named("broker")
 
 	// Get events for this deployment to find task IDs
 	events, err := b.BOSH.GetEvents(deploymentName)
@@ -656,7 +674,7 @@ func (b *Broker) ServiceWithNoDeploymentCheck(ctx context.Context) (
 	[]string,
 	error,
 ) {
-	logger := logger.Get().Named("serviceWithNoDeploymentCheck")
+	logger := logger.Get().Named("broker")
 	logger.Info("Starting check for orphaned service instances with no backing BOSH deployment")
 
 	deploymentNames, err := b.getDeploymentNamesFromBOSH(logger)
@@ -855,6 +873,20 @@ func (b *Broker) retrievePlanFromVault(ctx context.Context, instanceID string, l
 	logger.Debug("Retrieved plan: %s", plan.Name)
 
 	return plan, nil
+}
+
+func (b *Broker) storeBindingCredentials(ctx context.Context, instanceID, bindingID string, credentials map[string]interface{}, logger logger.Logger) error {
+	path := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+	logger.Debug("Storing binding credentials in Vault", "path", path)
+
+	err := b.Vault.Put(ctx, path, credentials)
+	if err != nil {
+		logger.Error("Failed to store binding credentials for %s/%s: %s", instanceID, bindingID, err)
+
+		return fmt.Errorf("failed to store binding credentials: %w", err)
+	}
+
+	return nil
 }
 
 func (b *Broker) getBaseCredentials(instanceID string, plan services.Plan, logger logger.Logger) (interface{}, error) {
@@ -2227,6 +2259,8 @@ func (b *Broker) extractRabbitMQAdminCredentials(credsMap map[string]interface{}
 }
 
 func (b *Broker) extractRabbitMQStaticCredentials(credsMap map[string]interface{}) (*rabbitMQStaticCreds, error) {
+	fmt.Printf("DEBUG credsMap contents: %#v\n", credsMap)
+
 	username, exists := credsMap["username"].(string)
 	if !exists {
 		return nil, ErrUsernameMustBeString
@@ -2302,56 +2336,69 @@ func (b *Broker) updateCredentialsMap(credsMap map[string]interface{}, staticCre
 	credsMap["password"] = dynamicCreds.password
 	credsMap["credential_type"] = "dynamic"
 
+	delete(credsMap, "admin_username")
+	delete(credsMap, "admin_password")
+
 	return nil
 }
 
 func (b *Broker) populateBindingCredentials(binding *BindingCredentials, credsMap map[string]interface{}) {
-	// Populate standard fields
-	if host, ok := credsMap["host"].(string); ok {
-		binding.Host = host
+	binding.Raw = make(map[string]interface{}, len(credsMap))
+	for k, v := range credsMap {
+		if k == "admin_username" || k == "admin_password" {
+			continue
+		}
+
+		binding.Raw[k] = v
 	}
 
-	if port, ok := credsMap["port"].(float64); ok {
-		binding.Port = int(port)
-	} else if port, ok := credsMap["port"].(int); ok {
-		binding.Port = port
-	}
-
-	if username, ok := credsMap["username"].(string); ok {
-		binding.Username = username
-	}
-
-	if password, ok := credsMap["password"].(string); ok {
-		binding.Password = password
-	}
-
-	if uri, ok := credsMap["uri"].(string); ok {
-		binding.URI = uri
-	}
-
-	if apiURL, ok := credsMap["api_url"].(string); ok {
-		binding.APIURL = apiURL
-	}
-
-	if vhost, ok := credsMap["vhost"].(string); ok {
-		binding.Vhost = vhost
-	}
-
-	if database, ok := credsMap["database"].(string); ok {
-		binding.Database = database
-	}
-
-	if scheme, ok := credsMap["scheme"].(string); ok {
-		binding.Scheme = scheme
-	}
-
-	if credType, ok := credsMap["credential_type"].(string); ok {
+	if credType, ok := binding.Raw["credential_type"].(string); ok && credType != "" {
 		binding.CredentialType = credType
 	}
 
-	// Remove admin credentials from the map (they shouldn't be in binding responses)
-	delete(credsMap, "admin_username")
-	delete(credsMap, "admin_password")
+	if binding.CredentialType == "" {
+		binding.CredentialType = "static"
+	}
+
+	binding.Raw["credential_type"] = binding.CredentialType
+
+	if host, ok := binding.Raw["host"].(string); ok {
+		binding.Host = host
+	}
+
+	if port, ok := binding.Raw["port"].(float64); ok {
+		binding.Port = int(port)
+	} else if port, ok := binding.Raw["port"].(int); ok {
+		binding.Port = port
+	}
+
+	if username, ok := binding.Raw["username"].(string); ok {
+		binding.Username = username
+	}
+
+	if password, ok := binding.Raw["password"].(string); ok {
+		binding.Password = password
+	}
+
+	if uri, ok := binding.Raw["uri"].(string); ok {
+		binding.URI = uri
+	}
+
+	if apiURL, ok := binding.Raw["api_url"].(string); ok {
+		binding.APIURL = apiURL
+	}
+
+	if vhost, ok := binding.Raw["vhost"].(string); ok {
+		binding.Vhost = vhost
+	}
+
+	if database, ok := binding.Raw["database"].(string); ok {
+		binding.Database = database
+	}
+
+	if scheme, ok := binding.Raw["scheme"].(string); ok {
+		binding.Scheme = scheme
+	}
 }
 
 // recordInitialRequest records the initial provision request in Vault.
@@ -2422,7 +2469,7 @@ func yamlGsub(
 	interface{},
 	error,
 ) {
-	logger := logger.Get().Named("yamlGsub")
+	logger := logger.Get().Named("broker")
 	logger.Debug("Performing YAML string substitution - orig: %s, replacement: %s", orig, replacement)
 
 	marshaledData, err := yaml.Marshal(obj)
@@ -2750,7 +2797,7 @@ func shouldRetry(err error, attempt, maxRetries int) bool {
 }
 
 func CreateUserPassRabbitMQ(ctx context.Context, usernameDynamic, passwordDynamic, adminUsername, adminPassword, apiUrl string, cfg *config.Config, creds map[string]interface{}) error {
-	logger := logger.Get().Named("CreateUserPassRabbitMQ")
+	logger := logger.Get().Named("broker")
 	logger.Info("Creating RabbitMQ user", "username", usernameDynamic)
 	logger.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
 
@@ -2855,7 +2902,7 @@ func validateUserCreationResponse(resp *http.Response, usernameDynamic string, l
 	return nil
 }
 func GrantUserPermissionsRabbitMQ(ctx context.Context, usernameDynamic, adminUsername, adminPassword, vhost, apiUrl string, cfg *config.Config, creds map[string]interface{}) error {
-	logger := logger.Get().Named("GrantUserPermissionsRabbitMQ")
+	logger := logger.Get().Named("broker")
 	logger.Debug("Granting permissions to RabbitMQ user", "username", usernameDynamic)
 	logger.Debug("API URL: %s, Admin user: %s, vhost: %s", apiUrl, adminUsername, vhost)
 	// Create permissions payload
@@ -2917,7 +2964,7 @@ func GrantUserPermissionsRabbitMQ(ctx context.Context, usernameDynamic, adminUse
 	return nil
 }
 func DeletetUserRabbitMQ(ctx context.Context, bindingID, adminUsername, adminPassword, apiUrl string, cfg *config.Config, creds map[string]interface{}) error {
-	logger := logger.Get().Named("DeleteUserRabbitMQ")
+	logger := logger.Get().Named("broker")
 	logger.Info("Deleting RabbitMQ user", "bindingID", bindingID)
 	logger.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
 

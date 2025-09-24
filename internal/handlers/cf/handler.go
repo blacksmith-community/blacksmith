@@ -12,14 +12,16 @@ import (
 // Handler handles Cloud Foundry registration HTTP requests.
 type Handler struct {
 	logger    interfaces.Logger
+	config    interfaces.Config
 	cfManager interfaces.CFManager
 	vault     interfaces.Vault
 }
 
 // NewHandler creates a new CF registration handler.
-func NewHandler(logger interfaces.Logger, cfManager interfaces.CFManager, vault interfaces.Vault) *Handler {
+func NewHandler(logger interfaces.Logger, config interfaces.Config, cfManager interfaces.CFManager, vault interfaces.Vault) *Handler {
 	return &Handler{
 		logger:    logger,
+		config:    config,
 		cfManager: cfManager,
 		vault:     vault,
 	}
@@ -97,14 +99,27 @@ func (h *Handler) handleCFRegistrationRoutes(writer http.ResponseWriter, req *ht
 // handleCFEndpointRoutes handles CF endpoint routes.
 // Returns true if the route was handled, false otherwise.
 func (h *Handler) handleCFEndpointRoutes(ctx context.Context, writer http.ResponseWriter, req *http.Request, path string) bool {
-	// TODO: Extract and implement CF endpoint routes
-	// This should include:
-	// - List endpoints
+	// Handle /endpoints route - list available CF API endpoints
+	if path == "/endpoints" && req.Method == http.MethodGet {
+		h.ListEndpoints(writer, req)
+		return true
+	}
+
+	// Handle /endpoints/{id}/connect route
+	if strings.Contains(path, "/connect") && req.Method == http.MethodPost {
+		parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
+		if len(parts) == 2 && parts[1] == "connect" {
+			endpointID := parts[0]
+			h.ConnectEndpoint(ctx, writer, req, endpointID)
+			return true
+		}
+	}
+
+	// TODO: Implement other CF endpoint routes
 	// - Get marketplace
 	// - Get organizations
 	// - Get spaces
 	// - Get services
 	// - Get service bindings
-	// - Connect endpoint
 	return false
 }

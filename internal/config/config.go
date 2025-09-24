@@ -590,6 +590,31 @@ func (c *Config) IsSSHUITerminalEnabled() bool {
 	return c.SSH.UITerminalEnabled
 }
 
+// GetEnvironment returns the configured environment label.
+func (c *Config) GetEnvironment() string {
+	return c.Env
+}
+
+// GetBOSHConfig exposes a copy of the BOSH configuration.
+func (c *Config) GetBOSHConfig() BOSHConfig {
+	return c.BOSH
+}
+
+// GetVaultConfig exposes a copy of the Vault configuration.
+func (c *Config) GetVaultConfig() VaultConfig {
+	return c.Vault
+}
+
+// GetBrokerConfig exposes a copy of the broker configuration.
+func (c *Config) GetBrokerConfig() BrokerConfig {
+	return c.Broker
+}
+
+// GetCFConfig exposes a copy of the CF broker configuration.
+func (c *Config) GetCFConfig() CFBrokerConfig {
+	return c.Broker.CF
+}
+
 // GetBrokerTLSEnabled returns whether TLS is enabled for the broker.
 func (c *Config) GetBrokerTLSEnabled() bool {
 	return c.Broker.TLS.Enabled

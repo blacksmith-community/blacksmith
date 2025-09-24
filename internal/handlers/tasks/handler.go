@@ -20,14 +20,16 @@ var (
 
 // Handler handles BOSH task-related endpoints.
 type Handler struct {
-	logger interfaces.Logger
-	config interfaces.Config
+	logger   interfaces.Logger
+	config   interfaces.Config
+	director interfaces.Director
 }
 
 // Dependencies contains all dependencies needed by the Tasks handler.
 type Dependencies struct {
-	Logger interfaces.Logger
-	Config interfaces.Config
+	Logger   interfaces.Logger
+	Config   interfaces.Config
+	Director interfaces.Director
 }
 
 // Task represents a BOSH task.
@@ -44,8 +46,9 @@ type Task struct {
 // NewHandler creates a new Tasks handler.
 func NewHandler(deps Dependencies) *Handler {
 	return &Handler{
-		logger: deps.Logger,
-		config: deps.Config,
+		logger:   deps.Logger,
+		config:   deps.Config,
+		director: deps.Director,
 	}
 }
 

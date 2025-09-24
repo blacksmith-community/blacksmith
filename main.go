@@ -287,9 +287,25 @@ func initializeConfig(configPath string, logger loggerPkg.Logger) *config.Config
 func initializeVault(cfg *config.Config, logger loggerPkg.Logger) *internalVault.Vault {
 	vault := internalVault.New(cfg.Vault.Address, "", cfg.Vault.Insecure)
 
+	// Ensure we know where credentials live and pre-load any configured token.
+	vault.SetCredentialsPath(cfg.Vault.CredPath)
+
+	if cfg.Vault.Token != "" {
+		vault.SetToken(cfg.Vault.Token)
+	}
+
 	// Configure vault auto-unseal behavior
 	if cfg.Vault.AutoUnseal {
 		vault.EnableAutoUnseal(cfg.Vault.CredPath)
+	}
+
+	// Attempt to reuse existing credentials on disk before touching Vault.
+	if vault.Token == "" {
+		if _, err := vault.LoadTokenFromCredentials(); err != nil {
+			logger.Debug("Vault token not yet available from credentials file: %s", err)
+		} else {
+			logger.Debug("Loaded Vault token from credentials file")
+		}
 	}
 
 	err := vault.WaitForVaultReady()
@@ -301,6 +317,14 @@ func initializeVault(cfg *config.Config, logger loggerPkg.Logger) *internalVault
 	err = vault.Init(cfg.Vault.CredPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if vault.Token == "" {
+		if _, err := vault.LoadTokenFromCredentials(); err != nil {
+			logger.Warn("Vault token unavailable after initialization: %s", err)
+		} else {
+			logger.Debug("Loaded Vault token from credentials file after initialization")
+		}
 	}
 
 	err = vault.VerifyMount("secret", true)
@@ -333,7 +357,7 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) *bosh.PooledDir
 	logger.Debug("Set BOSH_CLIENT to: %s", cfg.BOSH.Username)
 
 	// Use logger for BOSH operations
-	boshLogger := logger
+	boshLogger := loggerPkg.Get().Named("bosh")
 
 	boshDirector, err := bosh.CreatePooledDirector(
 		cfg.BOSH.Address,
@@ -972,7 +996,7 @@ func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *intern
 	return cfManager
 }
 
-func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, cfManager *internalCF.Manager,
+func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, cfManager *internalCF.Manager,
 	vmMonitor *vmmonitor.Monitor, sshService *ssh.ServiceImpl, rabbitmqSSHService *rabbitmq.SSHService,
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
 	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
@@ -983,6 +1007,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Logger:                         logger,
 		Vault:                          vault,
 		Broker:                         brokerInstance,
+		Director:                       boshDirector,
 		ServicesManager:                services.NewManagerWithCFConfig(logger.Named("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
 		CFManager:                      cfManager,
 		VMMonitor:                      vmMonitor,
@@ -1002,7 +1027,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Username: config.Broker.Username,
 		Password: config.Broker.Password,
 		WebRoot:  uiHandler,
-		Logger:   logger,
+		Logger:   logger.Named("api"),
 		Internal: internalAPI,
 		Primary: brokerapi.New(
 			brokerInstance,
@@ -1060,7 +1085,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	}()
 
 	// Create the main API handler with refactored InternalAPI
-	apiHandler := createAPIHandler(config, brokerInstance, vault, cfManager, vmMonitor,
+	apiHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, cfManager, vmMonitor,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
 		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, logger)
@@ -1096,7 +1121,7 @@ func main() {
 	}
 
 	// Get the global logger instance
-	logger := loggerPkg.Get()
+	logger := loggerPkg.Get().Named("main")
 
 	// Log build version information at startup
 	logger.Info("blacksmith starting - version: %s, build: %s, commit: %s, go: %s",

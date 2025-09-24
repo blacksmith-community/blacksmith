@@ -330,7 +330,7 @@ func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *b
 
 // provisionAsync handles the actual provisioning work in a background goroutine.
 func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details interface{}, plan services.Plan) {
-	logger := logger.Get().Named("async " + instanceID)
+	logger := logger.Get().Named("broker")
 	logger.Info("Starting async provisioning for instance %s", instanceID)
 
 	// Initialize params for tracking
@@ -380,7 +380,7 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 
 // deprovisionAsync handles the actual deprovisioning work in a background goroutine.
 func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance) {
-	logger := logger.Get().Named("async " + instanceID)
+	logger := logger.Get().Named("broker")
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
 
 	// Track initial state
@@ -431,7 +431,7 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 
 // retryDeleteDeployment attempts to delete a BOSH deployment with retry logic.
 func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName string, instanceID string, maxRetries int) (*bosh.Task, error) {
-	logger := logger.Get().Named("retryDeleteDeployment " + deploymentName)
+	logger := logger.Get().Named("broker")
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		logger.Debug("Deletion attempt %d/%d for deployment %s", attempt, maxRetries, deploymentName)

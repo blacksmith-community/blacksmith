@@ -153,18 +153,23 @@ func (vault *Vault) Index(ctx context.Context, instanceID string, data interface
 		return err
 	}
 
-	switch typedData := data.(type) {
-	case vaultPkg.Instance:
-		idx.Data[instanceID] = typedData
-	case map[string]interface{}:
-		idx.Data[instanceID] = typedData
-	default:
-		dataMap, err := convertToMap(data)
-		if err != nil {
-			return fmt.Errorf("%w: %w", vaultPkg.ErrIndexedValueMalformed, err)
-		}
+	// If data is nil, remove the instance from the index
+	if data == nil {
+		delete(idx.Data, instanceID)
+	} else {
+		switch typedData := data.(type) {
+		case vaultPkg.Instance:
+			idx.Data[instanceID] = typedData
+		case map[string]interface{}:
+			idx.Data[instanceID] = typedData
+		default:
+			dataMap, err := convertToMap(data)
+			if err != nil {
+				return fmt.Errorf("%w: %w", vaultPkg.ErrIndexedValueMalformed, err)
+			}
 
-		idx.Data[instanceID] = dataMap
+			idx.Data[instanceID] = dataMap
+		}
 	}
 
 	err = idx.Save(ctx)
@@ -201,16 +206,33 @@ func (vault *Vault) FindInstance(ctx context.Context, instanceID string) (*vault
 		return nil, false, fmt.Errorf("failed to lookup instance in index: %w", err)
 	}
 
-	var instance vaultPkg.Instance
-
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
-		return nil, false, vaultPkg.ErrInvalidInstanceData
+	// Handle nil data - instance may be in process of deletion
+	if data == nil {
+		// Instance has nil data in index (likely being deleted)
+		return nil, false, nil
 	}
 
-	err = convertToStruct(dataMap, &instance)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to convert instance data: %w", err)
+	var instance vaultPkg.Instance
+
+	// Handle different types that could be stored in the index
+	switch typedData := data.(type) {
+	case vaultPkg.Instance:
+		// Data is already an Instance struct
+		instance = typedData
+	case *vaultPkg.Instance:
+		// Data is a pointer to an Instance struct
+		if typedData != nil {
+			instance = *typedData
+		}
+	case map[string]interface{}:
+		// Data is a map that needs to be converted
+		err = convertToStruct(typedData, &instance)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to convert instance data: %w", err)
+		}
+	default:
+		// Unexpected data type
+		return nil, false, vaultPkg.ErrInvalidInstanceData
 	}
 
 	return &instance, true, nil

@@ -118,7 +118,6 @@ func CreateTestLogger() Logger {
 		Level:      levelDebug,
 		Format:     "console",
 		OutputPath: "stdout",
-		CallerSkip: DefaultCallerSkip, // Skip test framework calls
 	}
 	logger, _ := New(config)
 

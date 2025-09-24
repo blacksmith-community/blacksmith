@@ -2101,7 +2101,7 @@
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
-        <button class="detail-tab" data-tab="instance-logs">Logs</button>
+        <button class="detail-tab" data-tab="logs">Logs</button>
         <button class="detail-tab" data-tab="testing">Testing</button>
       </div>
       <div class="detail-content">
@@ -2421,7 +2421,7 @@
 
       } else if (type === 'manifest') {
         // Fetch manifest details for blacksmith deployment
-        const response = await fetch(`/b/deployments/${deploymentName}/manifest-details`, { cache: 'no-cache' });
+        const response = await fetch(`/b/deployments/${deploymentName}/manifest`, { cache: 'no-cache' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -2485,13 +2485,13 @@
     }
 
     const endpoints = {
-      manifest: `/b/${instanceId}/manifest-details`,
-      credentials: `/b/${instanceId}/creds.json`,  // Use JSON endpoint
+      manifest: `/b/${instanceId}/manifest`,
+      credentials: `/creds`,  // Use centralized credentials endpoint
       events: `/b/${instanceId}/events`,
       vms: `/b/${instanceId}/vms`,
       logs: `/b/${instanceId}/task/log`,
       debug: `/b/${instanceId}/task/debug`,
-      'instance-logs': `/b/${instanceId}/instance-logs`,
+      'logs': `/b/${instanceId}/logs`,
       config: `/b/${instanceId}/config`
     };
 
@@ -2524,8 +2524,10 @@
           return `<pre>${text}</pre>`;
         }
       } else if (type === 'credentials') {
-        const creds = await response.json();  // Parse JSON response
-        return formatCredentials(creds);
+        const allCreds = await response.json();  // Parse JSON response with all credentials
+        // Extract credentials for this specific instance
+        const instanceCreds = allCreds[instanceId] || {};
+        return formatCredentials(instanceCreds);
       } else if (type === 'logs') {
         const text = await response.text();
         try {
@@ -2535,7 +2537,7 @@
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
         }
-      } else if (type === 'instance-logs') {
+      } else if (type === 'logs') {
         const text = await response.text();
         try {
           const logsData = JSON.parse(text);
@@ -3105,7 +3107,7 @@
 
     try {
       // Fetch fresh logs data
-      const response = await fetch(`/b/${instanceId}/instance-logs`, { cache: 'no-cache' });
+      const response = await fetch(`/b/${instanceId}/logs`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -3546,12 +3548,34 @@
 
   // Log parsing and rendering functions
   const parseLogLine = (line) => {
+    // First, strip ANSI color codes from the line
+    // ANSI codes are in the format: ESC[...m where ESC is \x1b or \033
+    let cleanLine = line.replace(/\x1b\[[0-9;]*m/g, '').replace(/\[3[0-9]m/g, '').replace(/\[0m/g, '');
+
+    // Extract component information from brackets (e.g., [vault readiness])
+    let component = '';
+    const componentMatch = cleanLine.match(/\[([^\]]+)\]/);
+    if (componentMatch) {
+      // Check if this looks like a component (not a timestamp or level indicator)
+      const potentialComponent = componentMatch[1];
+      // Components typically have lowercase words, spaces, or hyphens
+      if (!/^\d{4}-\d{2}-\d{2}/.test(potentialComponent) && // Not a date
+          !/^\d+:\d+:\d+/.test(potentialComponent) && // Not a time
+          !/^(INFO|DEBUG|WARN|ERROR|FATAL|TRACE)$/i.test(potentialComponent) && // Not a level
+          !/^task:\d+/.test(potentialComponent) && // Not a BOSH task ID
+          /^[a-z\s\-_]+$/i.test(potentialComponent)) { // Looks like a component name
+        component = potentialComponent;
+        // Remove the component from the line for further processing
+        cleanLine = cleanLine.replace(`[${component}]`, '').trim();
+      }
+    }
+
     // Try different log formats in order of specificity
 
     // JSON format - check first as it's easy to detect
-    if (line.startsWith('{') && line.endsWith('}')) {
+    if (cleanLine.startsWith('{') && cleanLine.endsWith('}')) {
       try {
-        const json = JSON.parse(line);
+        const json = JSON.parse(cleanLine);
 
         // Extract timestamp and convert if needed
         let date = '';
@@ -3589,10 +3613,16 @@
           message += ' ' + JSON.stringify(json.data);
         }
 
+        // Extract component from JSON if not already found
+        if (!component && json.component) {
+          component = json.component;
+        }
+
         return {
           date: date,
           time: time,
           level: level,
+          component: component,
           message: message
         };
       } catch (e) {
@@ -3602,7 +3632,7 @@
 
     // Prometheus/Go-kit format: ts=TIMESTAMP caller=file:line level=LEVEL key=value...
     const prometheusPattern = /^ts=(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(.*)$/;
-    let match = line.match(prometheusPattern);
+    let match = cleanLine.match(prometheusPattern);
     if (match) {
       // Parse key=value pairs
       const kvPairs = match[3];
@@ -3646,37 +3676,40 @@
         date: match[1],
         time: match[2],
         level: level,
+        component: component,
         message: message.trim()
       };
     }
 
     // Component-prefixed format: [Component] YYYY-MM-DDTHH:MM:SS.mmmZ LEVEL - message
     const componentPattern = /^\[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(\w+)\s+-\s+(.*)$/;
-    match = line.match(componentPattern);
+    match = cleanLine.match(componentPattern);
     if (match) {
       return {
         date: match[2],
         time: match[3],
         level: match[4].toUpperCase(),
-        message: `[${match[1]}] ${match[5]}`
+        component: component || match[1],  // Use extracted component or fall back to this format's component
+        message: match[5]
       };
     }
 
     // Bracketed timestamp with path: [YYYY-MM-DDTHH:MM:SS.mmmZ] path message
     const bracketTimestampPattern = /^\[(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\]\s+(.*)$/;
-    match = line.match(bracketTimestampPattern);
+    match = cleanLine.match(bracketTimestampPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: 'INFO',
+        component: component,
         message: match[3]
       };
     }
 
     // RabbitMQ format: YYYY-MM-DD HH:MM:SS.mmm+TZ [level] <pid> message
     const rabbitMQPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+[+-]\d{2}:\d{2})\s+\[(\w+)\]\s+<[^>]+>\s+(.*)$/;
-    match = line.match(rabbitMQPattern);
+    match = cleanLine.match(rabbitMQPattern);
     if (match) {
       // Extract just the time portion without timezone for consistency
       const timeMatch = match[2].match(/(\d{2}:\d{2}:\d{2}\.\d+)/);
@@ -3684,13 +3717,14 @@
         date: match[1],
         time: timeMatch ? timeMatch[1] : match[2].split('+')[0].split('-')[0],
         level: match[3].toUpperCase(),
+        component: component,
         message: match[4]
       };
     }
 
     // Redis format: PID:TYPE DD Mon YYYY HH:MM:SS.mmm # message
     const redisPattern = /^(\d+):([A-Z])\s+(\d{2})\s+(\w{3})\s+(\d{4})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+([#*-])\s+(.*)$/;
-    match = line.match(redisPattern);
+    match = cleanLine.match(redisPattern);
     if (match) {
       // Convert Redis type to level
       const typeToLevel = {
@@ -3715,37 +3749,40 @@
         date: date,
         time: match[6],
         level: level,
+        component: component,
         message: `[${match[1]}] ${match[8]}`
       };
     }
 
     // PostgreSQL format: YYYY-MM-DD HH:MM:SS.mmm TZ [PID] LEVEL: message
     const postgresPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+\w+\s+\[\d+\]\s+(\w+):\s+(.*)$/;
-    match = line.match(postgresPattern);
+    match = cleanLine.match(postgresPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: match[3].toUpperCase(),
+        component: component,
         message: match[4]
       };
     }
 
     // MySQL/MariaDB format: YYYY-MM-DD HH:MM:SS PID [Level] message
     const mysqlPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\d+\s+\[(\w+)\]\s+(.*)$/;
-    match = line.match(mysqlPattern);
+    match = cleanLine.match(mysqlPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: match[3].toUpperCase(),
+        component: component,
         message: match[4]
       };
     }
 
     // MongoDB format: YYYY-MM-DDTHH:MM:SS.mmm+TZ LEVEL [component] message
     const mongoPattern = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)[+-]\d{4}\s+([A-Z])\s+(\w+)\s+\[([^\]]+)\]\s+(.*)$/;
-    match = line.match(mongoPattern);
+    match = cleanLine.match(mongoPattern);
     if (match) {
       const levelMap = {
         'F': 'FATAL',
@@ -3758,26 +3795,28 @@
         date: match[1],
         time: match[2],
         level: levelMap[match[3]] || match[3],
-        message: `[${match[5]}] ${match[6]}`
+        component: component || match[5],
+        message: match[6]
       };
     }
 
     // BOSH Task Output format: Task 12345 | 00:06:55 | Stage: Description (00:00:00)
     const boshTaskPattern = /^Task\s+\d+\s+\|\s+(\d{2}:\d{2}:\d{2})\s+\|\s+(.+)$/;
-    match = line.match(boshTaskPattern);
+    match = cleanLine.match(boshTaskPattern);
     if (match) {
       const currentDate = new Date().toISOString().split('T')[0]; // Use today's date as fallback
       return {
         date: currentDate,
         time: match[1],
         level: 'INFO',
+        component: component,
         message: match[2]
       };
     }
 
     // BOSH Director format: LEVEL, [YYYY-MM-DDTHH:MM:SS.mmm #PID] [task:TASKID] LEVEL -- MODULE: message
     const boshPattern = /^([IDWEF]), \[(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+) #\d+\] (\[(?:task:\d+|)\])\s*(\w+) -- ([^:]+):\s*(.*)$/;
-    match = line.match(boshPattern);
+    match = cleanLine.match(boshPattern);
     if (match) {
       const levelMap = {
         'I': 'INFO',
@@ -3793,25 +3832,27 @@
         date: match[2],
         time: match[3],
         level: level,
-        message: `${taskInfo}[${match[6]}] ${match[7]}`
+        component: component || match[6],
+        message: `${taskInfo}${match[7]}`
       };
     }
 
     // Original Blacksmith format: YYYY-MM-DD HH:MM:SS.mmm LEVEL [context] message
     const blacksmithPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(.*)$/;
-    match = line.match(blacksmithPattern);
+    match = cleanLine.match(blacksmithPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: match[3].trim().toUpperCase(),
+        component: component,
         message: match[4]
       };
     }
 
     // Syslog-style format: Mon DD HH:MM:SS hostname process[pid]: message
     const syslogPattern = /^(\w{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+\S+\s+([^[]+)(?:\[\d+\])?: (.*)$/;
-    match = line.match(syslogPattern);
+    match = cleanLine.match(syslogPattern);
     if (match) {
       const months = {
         'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
@@ -3827,29 +3868,32 @@
         date: date,
         time: match[3],
         level: 'INFO',
-        message: `[${match[4]}] ${match[5]}`
+        component: component || match[4],
+        message: match[5]
       };
     }
 
     // Simple timestamp format: [YYYY-MM-DD HH:MM:SS] message
     const simpleTimestampPattern = /^\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]\s+(.*)$/;
-    match = line.match(simpleTimestampPattern);
+    match = cleanLine.match(simpleTimestampPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: 'INFO',
+        component: component,
         message: match[3]
       };
     }
 
     // ISO 8601 format: YYYY-MM-DDTHH:MM:SS.mmmZ message
     const isoPattern = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)[Z+-][\d:]*\s+(.*)$/;
-    match = line.match(isoPattern);
+    match = cleanLine.match(isoPattern);
     if (match) {
       return {
         timestamp: `${match[1]} ${match[2]}`,
         level: 'INFO',
+        component: component,
         message: match[3]
       };
     }
@@ -3857,11 +3901,11 @@
     // Handle lines that don't match any pattern (continuation lines, etc.)
     // Try to extract level from simple patterns as fallback
     let fallbackLevel = '';
-    let fallbackMessage = line;
+    let fallbackMessage = cleanLine;
 
     // Look for common level indicators
     const levelIndicators = /\b(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\b/i;
-    const levelMatch = line.match(levelIndicators);
+    const levelMatch = cleanLine.match(levelIndicators);
     if (levelMatch) {
       fallbackLevel = levelMatch[1].toUpperCase();
     }
@@ -3869,18 +3913,19 @@
     // Try to extract basic timestamp if present at line start
     let fallbackDate = '';
     let fallbackTime = '';
-    const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/);
+    const timestampMatch = cleanLine.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/);
     if (timestampMatch) {
       fallbackDate = timestampMatch[1];
       fallbackTime = timestampMatch[2];
       // Remove timestamp from message
-      fallbackMessage = line.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*/, '');
+      fallbackMessage = cleanLine.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*/, '');
     }
 
     return {
       date: fallbackDate,
       time: fallbackTime,
       level: fallbackLevel,
+      component: component,
       message: fallbackMessage
     };
   };
@@ -3941,12 +3986,16 @@
       displayTimestamp = logEntry.time;
     }
 
+    // Display component or empty string if not present
+    const displayComponent = logEntry.component || '';
+
     return `
       <tr class="log-row ${levelClass}">
         <td class="log-timestamp">${displayTimestamp}</td>
         <td class="log-level">
           <span class="level-badge ${levelClass}">${logEntry.level}</span>
         </td>
+        <td class="log-component">${displayComponent}</td>
         <td class="log-message">${formattedMessage}</td>
       </tr>
     `;
@@ -3967,6 +4016,7 @@
           <tr>
             <th class="log-col-timestamp">Timestamp</th>
             <th class="log-col-level">Level</th>
+            <th class="log-col-component">Component</th>
             <th class="log-col-message">Message</th>
           </tr>
         </thead>
@@ -4035,6 +4085,7 @@
               <tr>
                 <th class="log-col-timestamp">Timestamp</th>
                 <th class="log-col-level">Level</th>
+                <th class="log-col-component">Component</th>
                 <th class="log-col-message">Message</th>
               </tr>
             </thead>
@@ -4295,7 +4346,7 @@
     try {
       // Get credentials, config/manifest, and vault data for service detection
       const [credsResponse, configResponse, vaultResponse] = await Promise.all([
-        fetch(`/b/${instanceId}/creds.json`, { cache: 'no-cache' }),
+        fetch(`/creds`, { cache: 'no-cache' }),
         fetch(`/b/${instanceId}/config`, { cache: 'no-cache' }).catch(() => null),
         fetch(`/b/${instanceId}/details`, { cache: 'no-cache' }).catch(() => null)
       ]);
@@ -4304,7 +4355,8 @@
         return `<div class="error">Unable to fetch credentials for service testing</div>`;
       }
 
-      const creds = await credsResponse.json();
+      const allCreds = await credsResponse.json();
+      const creds = allCreds[instanceId] || {};
 
       // Get config/manifest data for fallbacks if available
       let manifestData = null;
@@ -5459,7 +5511,7 @@
     const ttl = parseInt(document.getElementById(`redis-ttl-${instanceId}`)?.value) || 0;
 
     if (!key || !value) {
-      alert('Please provide both key and value');
+      window.Feedback.warning('Please provide both key and value.', { toast: true });
       return;
     }
 
@@ -5475,7 +5527,7 @@
     const key = document.getElementById(`redis-get-key-${instanceId}`)?.value;
 
     if (!key) {
-      alert('Please provide a key');
+      window.Feedback.warning('Please provide a key.', { toast: true });
       return;
     }
 
@@ -5491,7 +5543,7 @@
     const keysText = document.getElementById(`redis-delete-keys-${instanceId}`)?.value;
 
     if (!keysText) {
-      alert('Please provide keys to delete');
+      window.Feedback.warning('Please provide keys to delete.', { toast: true });
       return;
     }
 
@@ -5521,7 +5573,7 @@
     const argsText = document.getElementById(`redis-args-${instanceId}`)?.value;
 
     if (!command) {
-      alert('Please provide a command');
+      window.Feedback.warning('Please provide a command.', { toast: true });
       return;
     }
 
@@ -5530,7 +5582,7 @@
       try {
         args = JSON.parse(argsText);
       } catch (e) {
-        alert('Invalid JSON in arguments field');
+        window.Feedback.error('Invalid JSON in arguments field.', { toast: true });
         return;
       }
     }
@@ -5576,7 +5628,7 @@
     const persistent = document.getElementById(`rabbitmq-persistent-${instanceId}`)?.checked || false;
 
     if (!queue || !message) {
-      alert('Please provide both queue name and message');
+      window.Feedback.warning('Please provide both queue name and message.', { toast: true });
       return;
     }
 
@@ -5597,7 +5649,7 @@
     const autoAck = document.getElementById(`rabbitmq-auto-ack-${instanceId}`)?.checked || false;
 
     if (!queue) {
-      alert('Please provide a queue name');
+      window.Feedback.warning('Please provide a queue name.', { toast: true });
       return;
     }
 
@@ -5626,7 +5678,7 @@
     const durable = document.getElementById(`rabbitmq-durable-${instanceId}`)?.checked || false;
 
     if (!queue) {
-      alert('Please provide a queue name');
+      window.Feedback.warning('Please provide a queue name.', { toast: true });
       return;
     }
 
@@ -5654,7 +5706,7 @@
     const useSSL = document.getElementById(`rabbitmq-mgmt-ssl-${instanceId}`)?.checked || false;
 
     if (!path) {
-      alert('Please provide an API path');
+      window.Feedback.warning('Please provide an API path.', { toast: true });
       return;
     }
 
@@ -6358,7 +6410,7 @@
   window.executeRabbitMQPluginsCommand = async (instanceId) => {
     const state = window.rabbitmqPlugins[instanceId];
     if (!state.selectedCommand) {
-      alert('Please select a command first');
+      window.Feedback.warning('Please select a command first.', { toast: true });
       return;
     }
 
@@ -6380,7 +6432,7 @@
             cmdArguments.push(input.value);
           }
         } else if (arg.required) {
-          alert(`${arg.name} is required`);
+          window.Feedback.warning(`${arg.name} is required.`, { toast: true });
           return;
         }
       }
@@ -6604,7 +6656,7 @@
   window.streamRabbitMQPluginsCommand = async (instanceId) => {
     const state = window.rabbitmqPlugins[instanceId];
     if (!state.selectedCommand) {
-      alert('Please select a command first');
+      window.Feedback.warning('Please select a command first.', { toast: true });
       return;
     }
 
@@ -6626,7 +6678,7 @@
             cmdArguments.push(input.value);
           }
         } else if (arg.required) {
-          alert(`${arg.name} is required`);
+          window.Feedback.warning(`${arg.name} is required.`, { toast: true });
           return;
         }
       }
@@ -8320,61 +8372,134 @@
       console.log('Status response:', data);
       console.log('Plans from status:', data.plans);
 
-      // Initialize instances count
-      const instances = {};
+      // Normalize plan metadata from status and catalog responses
+      const statusPlans = (data.plans && typeof data.plans === 'object') ? data.plans : {};
+
+      // Track usage per plan (supports both plain plan IDs and service/plan keys)
+      const planUsage = {};
       if (data.instances && typeof data.instances === 'object') {
         Object.values(data.instances).forEach(instance => {
-          if (instance && instance.plan_id) {
-            instances[instance.plan_id] = (instances[instance.plan_id] || 0) + 1;
+          if (!instance || !instance.plan_id) {
+            return;
           }
-        });
-      }
 
-      // Build plan mapping and add blacksmith data to catalog
-      const plans = {};
-      if (catalog.services && catalog.services.length > 0) {
-        catalog.services.forEach((service, i) => {
-          if (service && service.plans) {
-            service.plans.forEach((plan, j) => {
-              if (plan && plan.id) {
-                const key = service.id + '/' + plan.id;
-                plans[plan.id] = key;
-                console.log(`Processing service [${service.id}] plan [${plan.id}] (as '${plan.name}') using key {${key}}`);
+          const planId = instance.plan_id;
+          planUsage[planId] = (planUsage[planId] || 0) + 1;
 
-                // Add blacksmith-specific data with proper error handling
-                const planData = {
-                  instances: instances[plan.id] || 0,
-                  limit: 0
-                };
-
-                if (data.plans && typeof data.plans === 'object' && data.plans[key]) {
-                  planData.limit = data.plans[key].limit || 0;
-                  console.log(`Found plan data for key ${key}, limit: ${planData.limit}`);
-                } else {
-                  console.warn(`Plan not found in status data for key: ${key}`);
-                }
-
-                catalog.services[i].plans[j].blacksmith = planData;
-              }
-            });
-          }
-        });
-      }
-
-      // Process instances and attach plan data
-      if (data.instances && typeof data.instances === 'object') {
-        Object.keys(data.instances).forEach(i => {
-          const instance = data.instances[i];
-          if (instance && instance.plan_id && plans[instance.plan_id]) {
-            const planKey = plans[instance.plan_id];
-            if (data.plans && data.plans[planKey]) {
-              data.instances[i].plan = data.plans[planKey];
-            } else {
-              console.warn("Plan data not found for instance:", instance);
-              // Provide minimal plan data to prevent errors
-              data.instances[i].plan = { name: instance.plan_id };
+          if (instance.service_id) {
+            const compositeKey = `${instance.service_id}/${planId}`;
+            if (compositeKey !== planId) {
+              planUsage[compositeKey] = (planUsage[compositeKey] || 0) + 1;
             }
           }
+        });
+      }
+
+      // Build plan lookup and attach blacksmith metadata to catalog plans
+      const planLookup = {};
+      if (catalog.services && catalog.services.length > 0) {
+        catalog.services.forEach((service, serviceIndex) => {
+          if (!service || !service.plans) {
+            return;
+          }
+
+          service.plans.forEach((plan, planIndex) => {
+            if (!plan || !plan.id) {
+              return;
+            }
+
+            const planKey = `${service.id}/${plan.id}`;
+            const usageCount = planUsage[plan.id] ?? planUsage[planKey] ?? 0;
+            const statusPlan = statusPlans[planKey];
+            const catalogPlanLimit = typeof plan.limit === 'number' ? plan.limit : null;
+            const catalogServiceLimit = typeof service.limit === 'number' ? service.limit : null;
+            const resolvedLimit = typeof statusPlan?.limit === 'number'
+              ? statusPlan.limit
+              : (catalogPlanLimit ?? catalogServiceLimit ?? 0);
+
+            const planData = {
+              instances: usageCount,
+              limit: resolvedLimit
+            };
+
+            catalog.services[serviceIndex].plans[planIndex].blacksmith = planData;
+
+            const lookupEntry = {
+              key: planKey,
+              plan,
+              service,
+              usage: usageCount,
+              limit: resolvedLimit,
+              statusPlan: statusPlan || null,
+            };
+
+            // Support lookups by both plan ID and composite key
+            planLookup[plan.id] = lookupEntry;
+            planLookup[planKey] = lookupEntry;
+          });
+        });
+      }
+
+      // Process instances and attach plan metadata using catalog fallbacks when needed
+      if (data.instances && typeof data.instances === 'object') {
+        Object.keys(data.instances).forEach(instanceId => {
+          const instance = data.instances[instanceId];
+          if (!instance || !instance.plan_id) {
+            return;
+          }
+
+          let planEntry = planLookup[instance.plan_id];
+          if (!planEntry && instance.service_id) {
+            planEntry = planLookup[`${instance.service_id}/${instance.plan_id}`];
+          }
+
+          if (!planEntry) {
+            // Provide minimal plan data when no catalog metadata is available
+            const serviceMeta = instance.service_id ? {
+              id: instance.service_id,
+              name: instance.service_id,
+            } : undefined;
+
+            data.instances[instanceId].plan = {
+              id: instance.plan_id,
+              name: instance.plan_id,
+              blacksmith: {
+                instances: 0,
+                limit: 0,
+                service: serviceMeta,
+              },
+            };
+
+            return;
+          }
+
+          const { key, plan, service, usage, limit, statusPlan } = planEntry;
+          const planName = plan?.name || plan?.id || instance.plan_id;
+          const enrichedPlan = statusPlan ? { ...statusPlan } : { id: plan?.id || instance.plan_id, name: planName };
+
+          if (enrichedPlan.id === undefined || enrichedPlan.id === null) {
+            enrichedPlan.id = plan?.id || instance.plan_id;
+          }
+
+          if (!enrichedPlan.name) {
+            enrichedPlan.name = planName;
+          }
+
+          if (typeof enrichedPlan.limit !== 'number') {
+            enrichedPlan.limit = limit;
+          }
+
+          enrichedPlan.blacksmith = {
+            instances: usage,
+            limit,
+            service: {
+              id: service?.id,
+              name: service?.name || service?.id,
+            },
+            key,
+          };
+
+          data.instances[instanceId].plan = enrichedPlan;
         });
       }
 
@@ -8430,7 +8555,7 @@
               // Fetch manifest to extract deployment name if not already in vault data
               if (vaultData && !vaultData.deployment_name) {
                 try {
-                  const manifestResponse = await fetch(`/b/${instanceId}/manifest-details`, { cache: 'no-cache' });
+                  const manifestResponse = await fetch(`/b/${instanceId}/manifest`, { cache: 'no-cache' });
                   if (manifestResponse.ok) {
                     const manifestData = await manifestResponse.json();
                     if (manifestData && manifestData.parsed && manifestData.parsed.name) {
@@ -8584,7 +8709,7 @@
                 if (details) {
                   try {
                     // Try to fetch manifest data to get actual deployment name
-                    const manifestResponse = await fetch(`/b/${instanceId}/manifest-details`, { cache: 'no-cache' });
+                    const manifestResponse = await fetch(`/b/${instanceId}/manifest`, { cache: 'no-cache' });
                     if (manifestResponse.ok) {
                       const manifestData = await manifestResponse.json();
                       if (manifestData && manifestData.parsed && manifestData.parsed.name) {
@@ -8692,55 +8817,128 @@
                 console.log('Refreshed catalog and status response:', { catalog, data });
 
                 // Process the data to merge catalog and status info (same logic as initial load)
-                const instances = {};
+                const statusPlans = (data.plans && typeof data.plans === 'object') ? data.plans : {};
+
+                const planUsage = {};
                 if (data.instances && typeof data.instances === 'object') {
                   Object.values(data.instances).forEach(instance => {
-                    if (instance && instance.plan_id) {
-                      instances[instance.plan_id] = (instances[instance.plan_id] || 0) + 1;
+                    if (!instance || !instance.plan_id) {
+                      return;
                     }
-                  });
-                }
 
-                // Build plan mapping and add blacksmith data to catalog
-                const plans = {};
-                if (catalog.services && catalog.services.length > 0) {
-                  catalog.services.forEach((service, i) => {
-                    if (service && service.plans) {
-                      service.plans.forEach((plan, j) => {
-                        if (plan && plan.id) {
-                          const key = service.id + '/' + plan.id;
-                          plans[plan.id] = key;
+                    const planId = instance.plan_id;
+                    planUsage[planId] = (planUsage[planId] || 0) + 1;
 
-                          // Add blacksmith-specific data
-                          const planData = {
-                            instances: instances[plan.id] || 0,
-                            limit: 0
-                          };
-
-                          if (data.plans && typeof data.plans === 'object' && data.plans[key]) {
-                            planData.limit = data.plans[key].limit || 0;
-                          }
-
-                          catalog.services[i].plans[j].blacksmith = planData;
-                        }
-                      });
-                    }
-                  });
-                }
-
-                // Process instances and attach plan data
-                if (data.instances && typeof data.instances === 'object') {
-                  Object.keys(data.instances).forEach(i => {
-                    const instance = data.instances[i];
-                    if (instance && instance.plan_id && plans[instance.plan_id]) {
-                      const planKey = plans[instance.plan_id];
-                      if (data.plans && data.plans[planKey]) {
-                        data.instances[i].plan = data.plans[planKey];
-                      } else {
-                        // Provide minimal plan data to prevent errors
-                        data.instances[i].plan = { name: instance.plan_id };
+                    if (instance.service_id) {
+                      const compositeKey = `${instance.service_id}/${planId}`;
+                      if (compositeKey !== planId) {
+                        planUsage[compositeKey] = (planUsage[compositeKey] || 0) + 1;
                       }
                     }
+                  });
+                }
+
+                const planLookup = {};
+                if (catalog.services && catalog.services.length > 0) {
+                  catalog.services.forEach((service, serviceIndex) => {
+                    if (!service || !service.plans) {
+                      return;
+                    }
+
+                    service.plans.forEach((plan, planIndex) => {
+                      if (!plan || !plan.id) {
+                        return;
+                      }
+
+                      const planKey = `${service.id}/${plan.id}`;
+                      const usageCount = planUsage[plan.id] ?? planUsage[planKey] ?? 0;
+                      const statusPlan = statusPlans[planKey];
+                      const catalogPlanLimit = typeof plan.limit === 'number' ? plan.limit : null;
+                      const catalogServiceLimit = typeof service.limit === 'number' ? service.limit : null;
+                      const resolvedLimit = typeof statusPlan?.limit === 'number'
+                        ? statusPlan.limit
+                        : (catalogPlanLimit ?? catalogServiceLimit ?? 0);
+
+                      const planData = {
+                        instances: usageCount,
+                        limit: resolvedLimit
+                      };
+
+                      catalog.services[serviceIndex].plans[planIndex].blacksmith = planData;
+
+                      const lookupEntry = {
+                        key: planKey,
+                        plan,
+                        service,
+                        usage: usageCount,
+                        limit: resolvedLimit,
+                        statusPlan: statusPlan || null,
+                      };
+
+                      planLookup[plan.id] = lookupEntry;
+                      planLookup[planKey] = lookupEntry;
+                    });
+                  });
+                }
+
+                if (data.instances && typeof data.instances === 'object') {
+                  Object.keys(data.instances).forEach(instanceId => {
+                    const instance = data.instances[instanceId];
+                    if (!instance || !instance.plan_id) {
+                      return;
+                    }
+
+                    let planEntry = planLookup[instance.plan_id];
+                    if (!planEntry && instance.service_id) {
+                      planEntry = planLookup[`${instance.service_id}/${instance.plan_id}`];
+                    }
+
+                    if (!planEntry) {
+                      const serviceMeta = instance.service_id ? {
+                        id: instance.service_id,
+                        name: instance.service_id,
+                      } : undefined;
+
+                      data.instances[instanceId].plan = {
+                        id: instance.plan_id,
+                        name: instance.plan_id,
+                        blacksmith: {
+                          instances: 0,
+                          limit: 0,
+                          service: serviceMeta,
+                        },
+                      };
+
+                      return;
+                    }
+
+                    const { key, plan, service, usage, limit, statusPlan } = planEntry;
+                    const planName = plan?.name || plan?.id || instance.plan_id;
+                    const enrichedPlan = statusPlan ? { ...statusPlan } : { id: plan?.id || instance.plan_id, name: planName };
+
+                    if (enrichedPlan.id === undefined || enrichedPlan.id === null) {
+                      enrichedPlan.id = plan?.id || instance.plan_id;
+                    }
+
+                    if (!enrichedPlan.name) {
+                      enrichedPlan.name = planName;
+                    }
+
+                    if (typeof enrichedPlan.limit !== 'number') {
+                      enrichedPlan.limit = limit;
+                    }
+
+                    enrichedPlan.blacksmith = {
+                      instances: usage,
+                      limit,
+                      service: {
+                        id: service?.id,
+                        name: service?.name || service?.id,
+                      },
+                      key,
+                    };
+
+                    data.instances[instanceId].plan = enrichedPlan;
                   });
                 }
 
@@ -8851,7 +9049,7 @@
               document.querySelectorAll('.manifest-table').forEach((table, index) => {
                 initializeSorting('manifest-table');
               });
-            } else if (tabType === 'instance-logs') {
+            } else if (tabType === 'logs') {
               // Initialize sorting and filtering for each job table
               const logsData = window.instanceLogsData;
               if (logsData) {
@@ -10011,7 +10209,7 @@
           }, 2000);
         } catch (err) {
           console.error('Failed to copy config content:', err);
-          alert('Failed to copy to clipboard');
+          window.Feedback.error('Failed to copy to clipboard.', { toast: true });
         }
       });
     }
@@ -10327,7 +10525,7 @@
           }, 2000);
         } catch (err) {
           console.error('Failed to copy config content:', err);
-          alert('Failed to copy to clipboard');
+          window.Feedback.error('Failed to copy to clipboard.', { toast: true });
         }
       };
       copyButton.addEventListener('click', copyButton._clickHandler);
@@ -11276,7 +11474,7 @@
 
     } catch (error) {
       console.error('Failed to cancel task:', error);
-      alert(`Failed to cancel task: ${error.message}`);
+      window.Feedback.error(`Failed to cancel task: ${error.message}`, { toast: true });
     }
   };
 
@@ -11998,7 +12196,7 @@
     // Validate that we have usable certificate data
     if (!certToInspect || typeof certToInspect !== 'object') {
       console.error('Invalid certificate data structure:', certToInspect);
-      alert('Certificate data is not in the expected format and cannot be inspected.');
+      window.Feedback.error('Certificate data is not in the expected format and cannot be inspected.', { toast: true });
       return;
     }
 
@@ -12177,6 +12375,8 @@
           </table>
         </div>
 
+        <div class="feedback-panel" data-feedback-context="cf-endpoint" role="alert" aria-live="polite"></div>
+
         <!-- Broker Details Table -->
         <div class="broker-details-table-container" id="broker-details-table-container" style="display: none;">
           <table class="broker-details-table">
@@ -12323,7 +12523,7 @@
       }
     } catch (error) {
       console.error('Failed to save CF endpoint:', error);
-      alert('Failed to save CF endpoint: ' + error.message);
+      window.Feedback.error('Failed to save CF endpoint: ' + error.message, { context: 'cf-endpoint', toast: true });
     }
   };
 
@@ -12548,7 +12748,7 @@
 
     const endpoint = endpointInput.value.trim();
     if (!endpoint) {
-      alert('Please enter a service endpoint address');
+      window.Feedback.warning('Please enter a service endpoint address.', { toast: true });
       return;
     }
 
@@ -13780,35 +13980,7 @@
 
     // Show success message
     showSuccess(message) {
-      // Create or update success notification
-      let notification = document.querySelector('.success-notification');
-      if (!notification) {
-        notification = document.createElement('div');
-        notification.className = 'success-notification';
-        notification.style.cssText = `
-          position: fixed;
-          top: 20px;
-          right: 20px;
-          background: var(--text-success);
-          color: var(--bg-secondary);
-          padding: 12px 20px;
-          border-radius: 6px;
-          z-index: 10000;
-          font-weight: 500;
-          box-shadow: var(--shadow-primary);
-        `;
-        document.body.appendChild(notification);
-      }
-
-      notification.textContent = message;
-      notification.style.display = 'block';
-
-      // Auto-hide after 5 seconds
-      setTimeout(() => {
-        if (notification && notification.parentNode) {
-          notification.parentNode.removeChild(notification);
-        }
-      }, 5000);
+      window.Feedback.success(message, { toast: true });
     },
 
     // Delete registration
@@ -13857,13 +14029,11 @@
     },
 
     showSuccess(message) {
-      // Simple alert for now - could be enhanced with toast notifications
-      alert('Success: ' + message);
+      window.Feedback.success(message, { toast: true });
     },
 
     showError(message) {
-      // Simple alert for now - could be enhanced with toast notifications
-      alert('Error: ' + message);
+      window.Feedback.error(message, { toast: true });
     }
   };
 
@@ -13926,43 +14096,167 @@
     }
   };
 
+  // Application-wide feedback helpers
+  window.Feedback = window.Feedback || (() => {
+    const VALID_TYPES = ['info', 'success', 'error', 'warning'];
+    const ICON_MAP = {
+      success: '✅',
+      error: '⚠️',
+      warning: '⚠️',
+      info: 'ℹ️'
+    };
+
+    const normalizeType = (type) => (
+      VALID_TYPES.includes(type) ? type : 'info'
+    );
+
+    const getContainer = (context) => {
+      if (!context) return null;
+      return document.querySelector(`.feedback-panel[data-feedback-context="${context}"]`);
+    };
+
+    const clear = (context) => {
+      const container = getContainer(context);
+      if (!container) return;
+
+      container.classList.remove('is-visible', 'is-info', 'is-success', 'is-error', 'is-warning');
+      container.innerHTML = '';
+    };
+
+    const show = (type, message, options = {}) => {
+      const normalizedType = normalizeType(type);
+      const { context = null, toast } = options;
+      const container = getContainer(context);
+
+      if (container) {
+        container.classList.remove('is-visible', 'is-info', 'is-success', 'is-error', 'is-warning');
+        container.innerHTML = '';
+
+        const icon = document.createElement('span');
+        icon.className = 'feedback-panel-icon';
+        icon.textContent = ICON_MAP[normalizedType] || ICON_MAP.info;
+
+        const text = document.createElement('div');
+        text.className = 'feedback-panel-text';
+        text.textContent = message;
+
+        container.appendChild(icon);
+        container.appendChild(text);
+        container.classList.add('is-visible', `is-${normalizedType}`);
+      }
+
+      const shouldToast = toast === true || (!container && toast !== false);
+      if (shouldToast) {
+        if (typeof showNotification === 'function') {
+          const toastType = normalizedType === 'warning' ? 'info' : normalizedType;
+          showNotification(message, toastType);
+        } else if (normalizedType === 'error') {
+          console.error(message);
+        } else {
+          console.log(message);
+        }
+      }
+    };
+
+    const success = (message, options = {}) => show('success', message, options);
+    const error = (message, options = {}) => show('error', message, options);
+    const info = (message, options = {}) => show('info', message, options);
+    const warning = (message, options = {}) => show('warning', message, options);
+
+    const clearAll = () => {
+      document.querySelectorAll('.feedback-panel').forEach(panel => {
+        panel.classList.remove('is-visible', 'is-info', 'is-success', 'is-error', 'is-warning');
+        panel.innerHTML = '';
+      });
+    };
+
+    return { show, success, error, info, warning, clear, clearAll };
+  })();
+
   // CF Endpoint Management
   const CFEndpointManager = {
     endpoints: {},
     selectedEndpoint: null,
     connectionStates: {}, // Persist connection status
 
+    clearFeedback() {
+      window.Feedback.clear('cf-endpoint');
+    },
+
+    showFeedback(message, type = 'info', options = {}) {
+      window.Feedback.show(type, message, { context: 'cf-endpoint', ...options });
+    },
+
     // Load CF endpoints from configuration
     async loadEndpoints() {
       // Load persistent connection states first
       this.loadConnectionStates();
+      this.clearFeedback();
 
       try {
         const response = await fetch('/b/cf/endpoints');
-        const data = await response.json();
 
-        if (data.endpoints) {
-          this.endpoints = data.endpoints;
-          this.renderEndpointsList();
+        let data = null;
+        const contentType = response.headers?.get('content-type') || '';
 
-          // Restore previously selected endpoint if it exists, otherwise auto-select first endpoint
-          const endpointNames = Object.keys(this.endpoints);
-          if (endpointNames.length > 0) {
-            if (this.selectedEndpoint && endpointNames.includes(this.selectedEndpoint)) {
-              // Restore previously selected endpoint
-              this.selectEndpoint(this.selectedEndpoint);
-            } else if (!this.selectedEndpoint) {
-              // Auto-select first endpoint if none selected
-              this.selectEndpoint(endpointNames[0]);
+        if (contentType.includes('application/json')) {
+          try {
+            data = await response.json();
+          } catch (parseError) {
+            console.warn('CF endpoints response could not be parsed as JSON:', parseError);
+            data = null;
+          }
+        } else if (response.status !== 204) {
+          const text = await response.text();
+          if (text) {
+            try {
+              data = JSON.parse(text);
+            } catch (parseError) {
+              data = { error: text };
             }
           }
+        }
+
+        if (response.ok) {
+          this.endpoints = (data && typeof data.endpoints === 'object' && data.endpoints !== null)
+            ? data.endpoints
+            : {};
+
+          this.renderEndpointsList();
+
+          const endpointNames = Object.keys(this.endpoints);
+          if (endpointNames.length === 0) {
+            this.clearSelection();
+            this.showFeedback('No Cloud Foundry endpoints are configured yet. Use the + button above to add one.', 'info');
+            return;
+          }
+
+          // Restore previously selected endpoint if it exists, otherwise auto-select first endpoint
+          if (this.selectedEndpoint && endpointNames.includes(this.selectedEndpoint)) {
+            // Use setTimeout to ensure DOM is ready before selecting
+            setTimeout(() => this.selectEndpoint(this.selectedEndpoint), 100);
+          } else {
+            // Always auto-select the first endpoint if none is selected or the saved one doesn't exist
+            setTimeout(() => this.selectEndpoint(endpointNames[0]), 100);
+          }
+        } else if (response.status === 404) {
+          console.warn('CF endpoint configuration not found.');
+          this.endpoints = {};
+          this.renderEndpointsList();
+          this.clearSelection();
+          this.showFeedback('No Cloud Foundry endpoints are configured yet. Use the + button above to add one.', 'info');
         } else {
-          console.error('Failed to load CF endpoints:', data.error);
-          this.showError('Failed to load CF endpoints: ' + (data.error || 'Unknown error'));
+          const errorMessage = data?.error || response.statusText || 'Unknown error';
+          throw new Error(errorMessage);
         }
       } catch (error) {
         console.error('Error loading CF endpoints:', error);
         this.showError('Failed to load CF endpoints: ' + error.message);
+
+        const dropdown = document.getElementById('cf-endpoint-select');
+        if (dropdown) {
+          dropdown.innerHTML = '<option value="">Error loading endpoints</option>';
+        }
       }
     },
 
@@ -14060,10 +14354,10 @@
       // Show/hide register button based on endpoint selection
       this.updateRegisterButtonVisibility(endpointName);
 
-      // Auto-connect if not already connected
+      // Auto-connect if not already connected (with a small delay to ensure UI is ready)
       const connectionState = this.connectionStates[endpointName] || { connected: false, testing: false };
       if (!connectionState.connected && !connectionState.testing) {
-        this.toggleConnection();
+        setTimeout(() => this.toggleConnection(), 150);
       }
 
       // Reset to marketplace tab
@@ -14075,6 +14369,17 @@
       this.selectedEndpoint = null;
       // Save the cleared selection to localStorage
       this.saveConnectionStates();
+
+      const connectionBtn = document.getElementById('connection-btn');
+      if (connectionBtn) {
+        connectionBtn.disabled = true;
+        connectionBtn.textContent = 'Connect';
+      }
+
+      const statusIndicator = document.getElementById('status-indicator');
+      if (statusIndicator) {
+        statusIndicator.className = 'status-indicator status-disconnected';
+      }
 
       // Hide broker details table
       const detailsTableContainer = document.getElementById('broker-details-table-container');
@@ -14117,7 +14422,7 @@
     // Show registration modal (delegate to CFRegistrationManager)
     async showRegistrationModal() {
       if (!this.selectedEndpoint) {
-        alert('Please select a CF endpoint first.');
+        window.Feedback.warning('Please select a Cloud Foundry endpoint first.', { context: 'cf-endpoint', toast: true });
         return;
       }
 
@@ -14323,12 +14628,19 @@
         const result = await response.json();
 
         if (result.success) {
-          alert(`Connection test successful!\n\nEndpoint: ${result.endpoint}\nDuration: ${result.duration_ms}ms\nCF Version: ${result.cf_info?.version || 'Unknown'}\nCF Name: ${result.cf_info?.name || 'Unknown'}`);
+          const details = [
+            'Connection test successful',
+            `Endpoint: ${result.endpoint}`,
+            `Duration: ${result.duration_ms}ms`,
+            `CF Version: ${result.cf_info?.version || 'Unknown'}`,
+            `CF Name: ${result.cf_info?.name || 'Unknown'}`
+          ].join('\n');
+          window.Feedback.success(details, { context: 'cf-endpoint', toast: true });
         } else {
-          alert(`Connection test failed:\n\n${result.error}`);
+          window.Feedback.error(`Connection test failed: ${result.error || 'Unknown error'}`, { context: 'cf-endpoint', toast: true });
         }
       } catch (error) {
-        alert(`Connection test failed: ${error.message}`);
+        window.Feedback.error(`Connection test failed: ${error.message}`, { context: 'cf-endpoint', toast: true });
       }
     },
 
@@ -14646,7 +14958,7 @@
     },
 
     showError(message) {
-      alert('Error: ' + message);
+      window.Feedback.error(message, { context: 'cf-endpoint', toast: true });
     }
   };
 
@@ -14729,7 +15041,7 @@
       return result;
     } catch (error) {
       console.error('Error in CertificateInspector.inspect:', error, error.stack);
-      alert('Failed to open certificate inspector: ' + error.message);
+      window.Feedback.error('Failed to open certificate inspector: ' + error.message, { toast: true });
       return false;
     }
   };
@@ -14794,7 +15106,7 @@
 
       // Check session limit
       if (this.sessions.size >= this.maxSessions) {
-        alert(`Maximum number of terminal sessions (${this.maxSessions}) reached. Please close some sessions.`);
+        window.Feedback.warning(`Maximum number of terminal sessions (${this.maxSessions}) reached. Please close some sessions.`, { toast: true });
         return;
       }
 
@@ -15487,7 +15799,7 @@
     // Check if SSH terminal is enabled
     if (!sshTerminalConfig.enabled) {
       console.warn('SSH Terminal is disabled in configuration');
-      alert(sshTerminalConfig.message || 'SSH Terminal UI is disabled in configuration');
+      window.Feedback.warning(sshTerminalConfig.message || 'SSH Terminal UI is disabled in configuration', { toast: true });
       return;
     }
 

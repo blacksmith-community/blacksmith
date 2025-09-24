@@ -15,25 +15,25 @@ func (vault *Vault) WaitForVaultReady() error {
 	vaultLogger := logger.Get().Named("vault readiness")
 
 	// Log that we're waiting for Vault to be available
-	vaultLogger.Info("waiting for Vault to become available at %s", vault.URL)
+	vaultLogger.Infof("waiting for Vault to become available at %s", vault.URL)
 
 	// Retry for up to 20 seconds with 1-second intervals
 	maxRetries := 20
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		vaultLogger.Debug("checking Vault availability (attempt %d/%d)", attempt, maxRetries)
+		vaultLogger.Debugf("checking Vault availability (attempt %d/%d)", attempt, maxRetries)
 
 		// Try to create a vault client for this check
 		client, err := vaultPkg.NewClient(vault.URL, "", vault.Insecure) // No token needed for health check
 		if err != nil {
-			vaultLogger.Debug("failed to create vault client (attempt %d/%d): %s", attempt, maxRetries, err)
+			vaultLogger.Debugf("failed to create vault client (attempt %d/%d): %s", attempt, maxRetries, err)
 		} else {
 			// Use the official Vault API health check
 			health, healthErr := client.Sys().Health()
 			if healthErr != nil {
-				vaultLogger.Debug("vault health check failed (attempt %d/%d): %s", attempt, maxRetries, healthErr)
+				vaultLogger.Debugf("vault health check failed (attempt %d/%d): %s", attempt, maxRetries, healthErr)
 			} else {
 				// Vault is responding and we got health info
-				vaultLogger.Debug("vault health check successful - initialized: %t, sealed: %t", health.Initialized, health.Sealed)
+				vaultLogger.Debugf("vault health check successful - initialized: %t, sealed: %t", health.Initialized, health.Sealed)
 				vaultLogger.Info("Vault is ready and available")
 
 				return nil
@@ -56,7 +56,7 @@ func (vault *Vault) HealthCheck() (*api.HealthResponse, error) {
 	// Ensure client is initialized
 	err := vault.ensureClient()
 	if err != nil {
-		logger.Error("failed to ensure vault client: %s", err)
+		logger.Errorf("failed to ensure vault client: %s", err)
 
 		return nil, err
 	}
@@ -65,12 +65,12 @@ func (vault *Vault) HealthCheck() (*api.HealthResponse, error) {
 
 	health, err := vault.client.Sys().Health()
 	if err != nil {
-		logger.Debug("health check failed: %s", err)
+		logger.Debugf("health check failed: %s", err)
 
 		return nil, fmt.Errorf("vault health check failed: %w", err)
 	}
 
-	logger.Debug("health check results - initialized: %t, sealed: %t, standby: %t",
+	logger.Debugf("health check results - initialized: %t, sealed: %t, standby: %t",
 		health.Initialized, health.Sealed, health.Standby)
 
 	return health, nil
@@ -83,7 +83,7 @@ func (vault *Vault) IsInitialized() (bool, error) {
 	// Ensure client is initialized
 	err := vault.ensureClient()
 	if err != nil {
-		logger.Error("failed to ensure vault client: %s", err)
+		logger.Errorf("failed to ensure vault client: %s", err)
 
 		return false, err
 	}
@@ -92,12 +92,12 @@ func (vault *Vault) IsInitialized() (bool, error) {
 
 	initStatus, err := vault.client.Sys().InitStatus()
 	if err != nil {
-		logger.Error("failed to check vault initialization status: %s", err)
+		logger.Errorf("failed to check vault initialization status: %s", err)
 
 		return false, fmt.Errorf("failed to check vault init status: %w", err)
 	}
 
-	logger.Debug("vault initialization status: %t", initStatus)
+	logger.Debugf("vault initialization status: %t", initStatus)
 
 	return initStatus, nil
 }
@@ -109,7 +109,7 @@ func (vault *Vault) GetSealStatus() (*api.SealStatusResponse, error) {
 	// Ensure client is initialized
 	err := vault.ensureClient()
 	if err != nil {
-		logger.Error("failed to ensure vault client: %s", err)
+		logger.Errorf("failed to ensure vault client: %s", err)
 
 		return nil, err
 	}
@@ -118,12 +118,12 @@ func (vault *Vault) GetSealStatus() (*api.SealStatusResponse, error) {
 
 	sealStatus, err := vault.client.Sys().SealStatus()
 	if err != nil {
-		logger.Error("failed to get vault seal status: %s", err)
+		logger.Errorf("failed to get vault seal status: %s", err)
 
 		return nil, fmt.Errorf("failed to get vault seal status: %w", err)
 	}
 
-	logger.Debug("vault seal status - sealed: %t, threshold: %d, shares: %d",
+	logger.Debugf("vault seal status - sealed: %t, threshold: %d, shares: %d",
 		sealStatus.Sealed, sealStatus.T, sealStatus.N)
 
 	return sealStatus, nil
@@ -135,13 +135,13 @@ func (vault *Vault) IsReady() (bool, error) {
 
 	health, err := vault.HealthCheck()
 	if err != nil {
-		logger.Debug("health check failed during readiness check: %s", err)
+		logger.Debugf("health check failed during readiness check: %s", err)
 
 		return false, err
 	}
 
 	ready := health.Initialized && !health.Sealed
-	logger.Debug("vault readiness status: %t (initialized: %t, sealed: %t)",
+	logger.Debugf("vault readiness status: %t (initialized: %t, sealed: %t)",
 		ready, health.Initialized, health.Sealed)
 
 	return ready, nil
@@ -169,7 +169,7 @@ func (vault *Vault) StartHealthWatcher(ctx context.Context, interval time.Durati
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	logger.Info("starting vault health watcher with %v interval", interval)
+	logger.Infof("starting vault health watcher with %v interval", interval)
 
 	for {
 		select {
@@ -186,6 +186,5 @@ func (vault *Vault) StartHealthWatcher(ctx context.Context, interval time.Durati
 // EnableAutoUnseal enables automatic unsealing with the specified credentials path.
 func (vault *Vault) EnableAutoUnseal(credentialsPath string) {
 	vault.autoUnsealEnabled = true
-	vault.credentialsPath = credentialsPath
-	vault.updateHomeDirs() // Ensure paths are properly set up
+	vault.SetCredentialsPath(credentialsPath)
 }

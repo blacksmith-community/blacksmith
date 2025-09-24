@@ -1,6 +1,7 @@
 package cf
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,67 @@ func (h *Handler) ListRegistrations(writer http.ResponseWriter, req *http.Reques
 	response.HandleJSON(writer, map[string]interface{}{
 		"registrations": registrations,
 		"count":         len(registrations),
+	}, nil)
+}
+
+// ListEndpoints handles GET /b/cf/endpoints.
+// Returns the list of configured CF API endpoints.
+// ListEndpoints handles GET /b/cf/endpoints.
+// Returns the list of configured CF API endpoints.
+func (h *Handler) ListEndpoints(writer http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("cf-list-endpoints")
+	logger.Debug("listing CF endpoints")
+
+	// Get the CF configuration
+	cfConfig := h.config.GetCFConfig()
+
+	// Build endpoints object from the configured APIs
+	// JavaScript expects an object with keys as endpoint IDs
+	endpoints := make(map[string]map[string]string)
+	for key, api := range cfConfig.APIs {
+		endpoints[key] = map[string]string{
+			"key":      key,
+			"name":     api.Name,
+			"endpoint": api.Endpoint,
+		}
+	}
+
+	logger.Debug("returning %d CF endpoints", len(endpoints))
+	response.HandleJSON(writer, map[string]interface{}{
+		"endpoints": endpoints,
+		"count":     len(endpoints),
+	}, nil)
+}
+
+// ConnectEndpoint handles POST /b/cf/endpoints/{id}/connect.
+// ConnectEndpoint handles POST /b/cf/endpoints/{id}/connect.
+func (h *Handler) ConnectEndpoint(ctx context.Context, writer http.ResponseWriter, req *http.Request, endpointID string) {
+	logger := h.logger.Named("cf-connect-endpoint")
+	logger.Debug("connecting to CF endpoint", "endpoint", endpointID)
+
+	// Get the CF configuration
+	cfConfig := h.config.GetCFConfig()
+
+	// Check if the endpoint exists
+	api, exists := cfConfig.APIs[endpointID]
+	if !exists {
+		logger.Debug("endpoint not found", "endpoint", endpointID)
+		writer.WriteHeader(http.StatusNotFound)
+		response.HandleJSON(writer, map[string]interface{}{
+			"error":   "Endpoint not found",
+			"success": false,
+		}, nil)
+		return
+	}
+
+	// For now, we'll just mark the connection as successful
+	// In the future, this could test the actual CF API connection
+	logger.Debug("endpoint connected successfully", "endpoint", endpointID, "name", api.Name)
+	response.HandleJSON(writer, map[string]interface{}{
+		"success":  true,
+		"endpoint": endpointID,
+		"name":     api.Name,
+		"message":  fmt.Sprintf("Connected to %s", api.Name),
 	}, nil)
 }
 

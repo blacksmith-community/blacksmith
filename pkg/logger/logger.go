@@ -67,7 +67,6 @@ type Config struct {
 	Level      string // debug, info, warn, error, fatal
 	Format     string // json, console
 	OutputPath string // stdout, stderr, or file path
-	CallerSkip int    // Number of callers to skip in stack trace
 }
 
 // parseLogLevel parses the log level string into zapcore.Level.
@@ -88,13 +87,20 @@ func parseLogLevel(level string) zapcore.Level {
 	}
 }
 
+// componentNameEncoder formats logger names as [component] tags
+func componentNameEncoder(name string, enc zapcore.PrimitiveArrayEncoder) {
+	if name != "" {
+		enc.AppendString("[" + name + "]")
+	}
+}
+
 // createEncoderConfig creates the standard encoder configuration.
 func createEncoderConfig() zapcore.EncoderConfig {
 	return zapcore.EncoderConfig{
 		TimeKey:        "time",
 		LevelKey:       "level",
 		NameKey:        "logger",
-		CallerKey:      "caller",
+		CallerKey:      zapcore.OmitKey,  // Disable caller info
 		FunctionKey:    zapcore.OmitKey,
 		MessageKey:     "msg",
 		StacktraceKey:  "stacktrace",
@@ -103,6 +109,7 @@ func createEncoderConfig() zapcore.EncoderConfig {
 		EncodeTime:     zapcore.ISO8601TimeEncoder,
 		EncodeDuration: zapcore.StringDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
+		EncodeName:     componentNameEncoder,
 	}
 }
 
@@ -115,6 +122,7 @@ func createEncoder(format string) zapcore.Encoder {
 	}
 
 	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	encoderConfig.ConsoleSeparator = " "
 
 	return zapcore.NewConsoleEncoder(encoderConfig)
 }
@@ -142,14 +150,6 @@ func createWriter(outputPath string) (zapcore.WriteSyncer, error) {
 	}
 }
 
-// getCallerSkip returns the appropriate caller skip value.
-func getCallerSkip(configSkip int) int {
-	if configSkip == 0 {
-		return 1
-	}
-
-	return configSkip
-}
 
 // New creates a new logger instance.
 func New(config Config) (Logger, error) {
@@ -162,8 +162,8 @@ func New(config Config) (Logger, error) {
 	}
 
 	core := zapcore.NewCore(encoder, writer, level)
-	callerSkip := getCallerSkip(config.CallerSkip)
-	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(callerSkip))
+	// Removed zap.AddCaller() and zap.AddCallerSkip() since we don't want caller info in logs
+	logger := zap.New(core)
 
 	return &Implementation{
 		logger: logger,
@@ -223,27 +223,15 @@ func (l *Implementation) Fatalf(format string, args ...interface{}) {
 }
 
 func (l *Implementation) Debug(msg string, args ...interface{}) {
-	if len(args) > 0 {
-		l.sugar.Debugw(msg, args...)
-	} else {
-		l.logger.Debug(msg)
-	}
+	l.logMessage(zapcore.DebugLevel, msg, args...)
 }
 
 func (l *Implementation) Info(msg string, args ...interface{}) {
-	if len(args) > 0 {
-		l.sugar.Infow(msg, args...)
-	} else {
-		l.logger.Info(msg)
-	}
+	l.logMessage(zapcore.InfoLevel, msg, args...)
 }
 
 func (l *Implementation) Warn(msg string, args ...interface{}) {
-	if len(args) > 0 {
-		l.sugar.Warnw(msg, args...)
-	} else {
-		l.logger.Warn(msg)
-	}
+	l.logMessage(zapcore.WarnLevel, msg, args...)
 }
 
 func (l *Implementation) Warning(msg string, args ...interface{}) {
@@ -251,19 +239,11 @@ func (l *Implementation) Warning(msg string, args ...interface{}) {
 }
 
 func (l *Implementation) Error(msg string, args ...interface{}) {
-	if len(args) > 0 {
-		l.sugar.Errorw(msg, args...)
-	} else {
-		l.logger.Error(msg)
-	}
+	l.logMessage(zapcore.ErrorLevel, msg, args...)
 }
 
 func (l *Implementation) Fatal(msg string, args ...interface{}) {
-	if len(args) > 0 {
-		l.sugar.Fatalw(msg, args...)
-	} else {
-		l.logger.Fatal(msg)
-	}
+	l.logMessage(zapcore.FatalLevel, msg, args...)
 }
 
 func (l *Implementation) SetLevel(level string) error {
@@ -322,6 +302,81 @@ func (l *Implementation) Named(name string) Logger {
 		sugar:  l.logger.Named(name).Sugar(),
 		level:  l.level,
 	}
+}
+
+func (l *Implementation) logMessage(level zapcore.Level, msg string, args ...interface{}) {
+	if len(args) == 0 {
+		l.logScalar(level, msg)
+
+		return
+	}
+
+	if isStructuredLogging(msg, args) {
+		l.logStructured(level, msg, args)
+
+		return
+	}
+
+	formatted := formatMessage(msg, args)
+	l.logScalar(level, formatted)
+}
+
+func (l *Implementation) logStructured(level zapcore.Level, msg string, args []interface{}) {
+	switch level {
+	case zapcore.DebugLevel:
+		l.sugar.Debugw(msg, args...)
+	case zapcore.InfoLevel:
+		l.sugar.Infow(msg, args...)
+	case zapcore.WarnLevel:
+		l.sugar.Warnw(msg, args...)
+	case zapcore.ErrorLevel:
+		l.sugar.Errorw(msg, args...)
+	case zapcore.FatalLevel:
+		l.sugar.Fatalw(msg, args...)
+	default:
+		l.sugar.Infow(msg, args...)
+	}
+}
+
+func (l *Implementation) logScalar(level zapcore.Level, message string) {
+	switch level {
+	case zapcore.DebugLevel:
+		l.logger.Debug(message)
+	case zapcore.InfoLevel:
+		l.logger.Info(message)
+	case zapcore.WarnLevel:
+		l.logger.Warn(message)
+	case zapcore.ErrorLevel:
+		l.logger.Error(message)
+	case zapcore.FatalLevel:
+		l.logger.Fatal(message)
+	default:
+		l.logger.Info(message)
+	}
+}
+
+func isStructuredLogging(msg string, args []interface{}) bool {
+	if len(args) == 0 || len(args)%2 != 0 || strings.Contains(msg, "%") {
+		return false
+	}
+
+	for i := 0; i < len(args); i += 2 {
+		if _, ok := args[i].(string); !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func formatMessage(msg string, args []interface{}) string {
+	if strings.Contains(msg, "%") {
+		return fmt.Sprintf(msg, args...)
+	}
+
+	allArgs := append([]interface{}{msg}, args...)
+
+	return fmt.Sprint(allArgs...)
 }
 
 // Global convenience functions that use the global logger

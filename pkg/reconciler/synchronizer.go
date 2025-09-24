@@ -44,6 +44,12 @@ func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 	startCount := len(idx)
 	s.logger.Debugf("Current index has %d entries", startCount)
 
+	// Clean up any nil entries first
+	nilCount := s.cleanupNilEntries(idx)
+	if nilCount > 0 {
+		s.logger.Warningf("Cleaned up %d nil entries from index", nilCount)
+	}
+
 	reconciledMap := s.buildReconciledMap(instances)
 	stats := s.updateIndexWithInstances(idx, instances)
 	stats.orphanCount = s.markOrphanedInstances(idx, reconciledMap)
@@ -54,8 +60,8 @@ func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 		return fmt.Errorf("failed to save index: %w", err)
 	}
 
-	s.logger.Infof("Index synchronized successfully: initial=%d, updated=%d, added=%d, orphaned=%d, stale=%d, final=%d",
-		startCount, stats.updateCount, stats.addCount, stats.orphanCount, stats.cleanupCount, len(idx))
+	s.logger.Infof("Index synchronized successfully: initial=%d, nil-cleaned=%d, updated=%d, added=%d, orphaned=%d, stale=%d, final=%d",
+		startCount, nilCount, stats.updateCount, stats.addCount, stats.orphanCount, stats.cleanupCount, len(idx))
 
 	err = s.validateIndexInternal(idx)
 	if err != nil {
@@ -151,6 +157,22 @@ func IsValidInstanceID(id string) bool {
 	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 	return uuidRegex.MatchString(id)
+}
+
+// cleanupNilEntries removes nil entries from the index.
+func (s *IndexSynchronizer) cleanupNilEntries(idx map[string]interface{}) int {
+	count := 0
+
+	for key, value := range idx {
+		if value == nil {
+			s.logger.Debugf("Removing nil entry %s from index", key)
+			delete(idx, key)
+
+			count++
+		}
+	}
+
+	return count
 }
 
 // Vault interaction methods - these will be replaced with actual vault calls
@@ -420,6 +442,13 @@ func (s *IndexSynchronizer) validateIndexInternal(idx map[string]interface{}) er
 
 // validateEntry validates a single index entry.
 func (s *IndexSynchronizer) validateEntry(instanceID string, data interface{}) error {
+	// Skip nil entries - these can occur during deletion or cleanup
+	if data == nil {
+		s.logger.Debugf("Skipping validation for nil entry %s (likely being deleted)", instanceID)
+
+		return nil
+	}
+
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		return fmt.Errorf("%w: expected map, got %T", ErrInvalidDataFormat, data)

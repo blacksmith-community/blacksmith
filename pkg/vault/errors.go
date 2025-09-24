@@ -13,6 +13,7 @@ var (
 	ErrRegistrationNotFound   = errors.New("registration not found")
 	ErrSealedNoCredentials    = errors.New("vault sealed and no credentials available")
 	ErrSealKeyNotFound        = errors.New("seal key not found in credentials file")
+	ErrTokenNotFound          = errors.New("root token not found in credentials file")
 	ErrStillSealed            = errors.New("vault is still sealed after unseal attempt")
 	ErrSecretMountMissing     = errors.New("secret mount is missing")
 	ErrTooManyRedirects       = errors.New("stopped after 10 redirects")

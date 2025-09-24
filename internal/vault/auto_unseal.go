@@ -2,7 +2,6 @@ package vault
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -156,16 +155,9 @@ func (vault *Vault) performUnseal(logger logger.Logger) error {
 
 // loadSealKey loads the vault seal key from the credentials file.
 func (vault *Vault) loadSealKey() (string, error) {
-	bytes, err := safeReadFile(vault.credentialsPath)
+	creds, err := vault.loadCredentialsFile()
 	if err != nil {
 		return "", err
-	}
-
-	creds := vaultPkg.VaultCreds{}
-
-	err = json.Unmarshal(bytes, &creds)
-	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal vault credentials: %w", err)
 	}
 
 	if creds.SealKey == "" {

@@ -45,6 +45,7 @@ type Dependencies struct {
 	Logger                         interfaces.Logger
 	Vault                          interfaces.Vault
 	Broker                         interfaces.Broker
+	Director                       interfaces.Director
 	ServicesManager                *services.Manager
 	CFManager                      interfaces.CFManager
 	VMMonitor                      interfaces.VMMonitor
@@ -79,7 +80,7 @@ type apiHandlers struct {
 func createHandlers(deps Dependencies) apiHandlers {
 	return apiHandlers{
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
-		cf:                cf.NewHandler(deps.Logger, deps.CFManager, deps.Vault),
+		cf:                cf.NewHandler(deps.Logger, deps.Config, deps.CFManager, deps.Vault),
 		instance:          instances.NewHandler(deps.Logger),
 		redis:             redis.NewHandler(deps.Logger, deps.Vault, deps.ServicesManager),
 		rabbitMQWebSocket: createRabbitMQWebSocketHandler(deps),
@@ -113,32 +114,37 @@ func createSSHWebSocketHandler(deps Dependencies) *sshwebsocket.Handler {
 
 func createBOSHHandler(deps Dependencies) *bosh.Handler {
 	return bosh.NewHandler(bosh.Dependencies{
-		Logger: deps.Logger,
-		Config: deps.Config,
-		Vault:  deps.Vault,
+		Logger:   deps.Logger,
+		Config:   deps.Config,
+		Vault:    deps.Vault,
+		Director: deps.Director,
+		Broker:   deps.Broker,
 	})
 }
 
 func createBlacksmithHandler(deps Dependencies) *blacksmith.Handler {
 	return blacksmith.NewHandler(blacksmith.Dependencies{
-		Logger: deps.Logger,
-		Config: deps.Config,
-		Vault:  deps.Vault,
+		Logger:   deps.Logger,
+		Config:   deps.Config,
+		Vault:    deps.Vault,
+		Director: deps.Director,
 	})
 }
 
 func createTasksHandler(deps Dependencies) *tasks.Handler {
 	return tasks.NewHandler(tasks.Dependencies{
-		Logger: deps.Logger,
-		Config: deps.Config,
+		Logger:   deps.Logger,
+		Config:   deps.Config,
+		Director: deps.Director,
 	})
 }
 
 func createDeploymentsHandler(deps Dependencies) *deployments.Handler {
 	return deployments.NewHandler(deployments.Dependencies{
-		Logger: deps.Logger,
-		Config: deps.Config,
-		Vault:  deps.Vault,
+		Logger:   deps.Logger,
+		Config:   deps.Config,
+		Vault:    deps.Vault,
+		Director: deps.Director,
 	})
 }
 
@@ -152,9 +158,10 @@ func createConfigurationHandler(deps Dependencies) *configuration.Handler {
 
 func createServicesHandler(deps Dependencies) *serviceshandler.Handler {
 	return serviceshandler.NewHandler(serviceshandler.Dependencies{
-		Logger: deps.Logger,
-		Config: deps.Config,
-		Vault:  deps.Vault,
+		Logger:   deps.Logger,
+		Config:   deps.Config,
+		Vault:    deps.Vault,
+		Director: deps.Director,
 	})
 }
 
@@ -225,6 +232,9 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 
 	// Blacksmith management endpoints
 	router.RegisterHandler("/b/blacksmith/logs", http.HandlerFunc(handlers.blacksmith.GetLogs))
+	router.RegisterHandler("/b/blacksmith/vms", http.HandlerFunc(handlers.blacksmith.GetVMs))
+	router.RegisterHandler("/b/blacksmith/events", http.HandlerFunc(handlers.blacksmith.GetEvents))
+	router.RegisterHandler("/b/blacksmith/manifest", http.HandlerFunc(handlers.blacksmith.GetManifest))
 	router.RegisterHandler("/b/blacksmith/credentials", http.HandlerFunc(handlers.blacksmith.GetCredentials))
 	router.RegisterHandler("/b/blacksmith/config", http.HandlerFunc(handlers.blacksmith.GetConfig))
 	router.RegisterHandler("/b/cleanup", http.HandlerFunc(handlers.blacksmith.Cleanup))
@@ -238,6 +248,9 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 	// Configuration endpoints
 	router.RegisterHandler("/b/configs", http.HandlerFunc(handlers.configuration.GetConfigs))
 	router.RegisterHandler("/b/service-filter-options", http.HandlerFunc(handlers.configuration.GetServiceFilterOptions))
+
+	// Credentials endpoint - returns all service instance credentials
+	router.RegisterHandler("/creds", http.HandlerFunc(handlers.services.GetAllCredentials))
 
 	// SSH WebSocket handlers
 	router.RegisterHandler("/b/blacksmith/ssh/stream", handlers.sshWebSocket)

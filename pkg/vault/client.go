@@ -13,7 +13,10 @@ import (
 )
 
 // ErrVaultAlreadyInitialized indicates vault is already initialized.
-var ErrVaultAlreadyInitialized = errors.New("vault is already initialized")
+var (
+	ErrVaultAlreadyInitialized    = errors.New("vault is already initialized")
+	ErrVaultMountListingForbidden = errors.New("vault token lacks permission to list mounts")
+)
 
 // Client wraps the HashiCorp Vault API client.
 type Client struct {
@@ -173,6 +176,12 @@ func (vc *Client) VerifyMount(mount string, createIfMissing bool) error {
 	// Check if mount exists
 	exists, mountInfo, err := vc.checkMountExists(mount)
 	if err != nil {
+		if errors.Is(err, ErrVaultMountListingForbidden) {
+			loggerInstance.Warnf("skipping mount verification for %s: token lacks sys/mounts capability", mount)
+
+			return nil
+		}
+
 		return err
 	}
 
@@ -412,7 +421,14 @@ func (vc *Client) checkMountExists(mount string) (bool, *api.MountOutput, error)
 
 	mounts, err := vc.Sys().ListMounts()
 	if err != nil {
-		loggerInstance.Error("failed to list mounts: %s", err)
+		var responseError *api.ResponseError
+		if errors.As(err, &responseError) && responseError.StatusCode == http.StatusForbidden {
+			loggerInstance.Warnf("permission denied while listing mounts for %s", mount)
+
+			return false, nil, ErrVaultMountListingForbidden
+		}
+
+		loggerInstance.Errorf("failed to list mounts: %s", err)
 
 		return false, nil, fmt.Errorf("failed to list vault mounts: %w", err)
 	}

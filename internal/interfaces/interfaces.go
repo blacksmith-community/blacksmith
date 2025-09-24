@@ -4,9 +4,12 @@ import (
 	"context"
 	"net/http"
 
+	"blacksmith/internal/bosh"
+	"blacksmith/internal/config"
+	"blacksmith/internal/services"
 	rabbitmqssh "blacksmith/internal/services/rabbitmq"
 	"blacksmith/pkg/logger"
-	"blacksmith/pkg/services"
+	pkgservices "blacksmith/pkg/services"
 )
 
 // Logger interface for logging operations across all internal packages.
@@ -26,12 +29,18 @@ type Vault interface {
 // Config interface for configuration access across all internal packages.
 type Config interface {
 	IsSSHUITerminalEnabled() bool
+	GetEnvironment() string
+	GetBOSHConfig() config.BOSHConfig
+	GetVaultConfig() config.VaultConfig
+	GetBrokerConfig() config.BrokerConfig
+	GetCFConfig() config.CFBrokerConfig
 }
 
 // Broker interface for broker operations across all internal packages.
 type Broker interface {
 	// Placeholder method to distinguish from other interfaces - implement as needed
 	IsBroker() bool
+	GetPlans() map[string]services.Plan
 }
 
 // CFManager interface for Cloud Foundry operations across all internal packages.
@@ -100,7 +109,7 @@ type WebSocketHandler interface {
 
 // ServicesManager interface wrapper for external services manager.
 type ServicesManager interface {
-	GetSecurity() *services.SecurityMiddleware
+	GetSecurity() *pkgservices.SecurityMiddleware
 	GetRedis() RedisService
 }
 
@@ -109,3 +118,7 @@ type RedisService interface {
 	// Placeholder method to distinguish from other interfaces - implement as needed
 	IsRedisService() bool
 }
+
+// Director interface for BOSH director operations.
+// This is an alias to the bosh.Director interface.
+type Director = bosh.Director

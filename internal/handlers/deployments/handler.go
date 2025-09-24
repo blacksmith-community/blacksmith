@@ -33,16 +33,18 @@ var (
 
 // Handler handles deployment-related endpoints.
 type Handler struct {
-	logger interfaces.Logger
-	config interfaces.Config
-	vault  interfaces.Vault
+	logger   interfaces.Logger
+	config   interfaces.Config
+	vault    interfaces.Vault
+	director interfaces.Director
 }
 
 // Dependencies contains all dependencies needed by the Deployments handler.
 type Dependencies struct {
-	Logger interfaces.Logger
-	Config interfaces.Config
-	Vault  interfaces.Vault
+	Logger   interfaces.Logger
+	Config   interfaces.Config
+	Vault    interfaces.Vault
+	Director interfaces.Director
 }
 
 // Deployment represents a BOSH deployment.
@@ -71,9 +73,10 @@ type Stemcell struct {
 // NewHandler creates a new Deployments handler.
 func NewHandler(deps Dependencies) *Handler {
 	return &Handler{
-		logger: deps.Logger,
-		config: deps.Config,
-		vault:  deps.Vault,
+		logger:   deps.Logger,
+		config:   deps.Config,
+		vault:    deps.Vault,
+		director: deps.Director,
 	}
 }
 
@@ -141,22 +144,55 @@ func (h *Handler) GetManifest(writer http.ResponseWriter, req *http.Request, dep
 	logger := h.logger.Named("deployment-manifest")
 	logger.Debug("Getting manifest for deployment: %s", deploymentName)
 
-	// TODO: Implement actual manifest fetching
-	manifest := map[string]interface{}{
-		"name": deploymentName,
+	response.HandleJSON(writer, h.buildManifestPayload(deploymentName), nil)
+}
+
+// GetManifestDetails returns a structured manifest payload suitable for UI consumption.
+func (h *Handler) GetManifestDetails(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	logger := h.logger.Named("deployment-manifest-details")
+	logger.Debug("Getting manifest details for deployment: %s", deploymentName)
+
+	response.HandleJSON(writer, h.buildManifestPayload(deploymentName), nil)
+}
+
+func (h *Handler) buildManifestPayload(deploymentName string) map[string]interface{} {
+	manifestText := fmt.Sprintf("name: %s\nreleases:\n- name: blacksmith\n  version: latest\ninstance_groups:\n- name: blacksmith\n  instances: 1\n  vm_type: default\n", deploymentName)
+
+	parsed := map[string]interface{}{
+		"name":          deploymentName,
+		"director_uuid": "placeholder-director-uuid",
 		"releases": []map[string]string{
 			{"name": "blacksmith", "version": "latest"},
+		},
+		"stemcells": []map[string]string{
+			{"name": "bosh-warden-boshlite-ubuntu-jammy-go_agent", "version": "1.1", "os": "ubuntu-jammy"},
 		},
 		"instance_groups": []map[string]interface{}{
 			{
 				"name":      "blacksmith",
 				"instances": 1,
 				"vm_type":   "default",
+				"azs":       []string{"z1"},
 			},
+		},
+		"features": map[string]bool{
+			"use_dns_addresses": true,
+		},
+		"update": map[string]interface{}{
+			"canaries":          1,
+			"max_in_flight":     1,
+			"canary_watch_time": "1000-30000",
+			"update_watch_time": "1000-30000",
+		},
+		"variables": []map[string]string{
+			{"name": "blacksmith_admin_password", "type": "password"},
 		},
 	}
 
-	response.HandleJSON(writer, manifest, nil)
+	return map[string]interface{}{
+		"text":   manifestText,
+		"parsed": parsed,
+	}
 }
 
 // UpdateManifest updates the manifest for a deployment.
@@ -353,6 +389,12 @@ func (h *Handler) handleSubpathOperations(writer http.ResponseWriter, req *http.
 	switch operation {
 	case "manifest":
 		h.handleManifestOperations(writer, req, deploymentName)
+	case "manifest-details":
+		if req.Method == http.MethodGet {
+			h.GetManifestDetails(writer, req, deploymentName)
+		} else {
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+		}
 	case "vms":
 		h.handleVMsOperations(writer, req, deploymentName)
 	case "instances":

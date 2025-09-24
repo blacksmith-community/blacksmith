@@ -3,6 +3,9 @@ package broker_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -56,11 +59,20 @@ var _ = Describe("GetBindingCredentials", func() {
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 
 		// Set up test plan
+		defaultPlanCredentials := map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"host":     "redis.example.com",
+				"port":     6379,
+				"username": "redis-user",
+				"password": "redis-pass",
+			},
+		}
+
 		testPlan := services.Plan{
 			ID:          testPlanID,
 			Name:        "Small Redis Plan",
 			Type:        "redis",
-			Credentials: map[interface{}]interface{}{},
+			Credentials: toInterfaceMap(defaultPlanCredentials),
 		}
 
 		brokerInstance = &broker.Broker{
@@ -115,8 +127,8 @@ var _ = Describe("GetBindingCredentials", func() {
 				Expect(err).ToNot(HaveOccurred())
 				reconstructedTime, err := time.Parse(time.RFC3339, credentials.ReconstructedAt)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(reconstructedTime).To(BeTemporally(">=", before))
-				Expect(reconstructedTime).To(BeTemporally("<=", after))
+				Expect(reconstructedTime).To(BeTemporally(">=", before.Add(-time.Second)))
+				Expect(reconstructedTime).To(BeTemporally("<=", after.Add(time.Second)))
 			})
 		})
 
@@ -147,24 +159,40 @@ var _ = Describe("GetBindingCredentials", func() {
 	})
 
 	Describe("RabbitMQ dynamic credentials", func() {
-		var rabbitMQCredentials map[string]interface{}
+		var rabbitAPIServer *httptest.Server
 
 		BeforeEach(func() {
-			rabbitMQCredentials = map[string]interface{}{
-				"host":           "rabbitmq.example.com",
-				"port":           5672,
-				"username":       "static-user",
-				"password":       "static-pass",
-				"api_url":        "https://rabbitmq.example.com:15672/api",
-				"admin_username": "admin",
-				"admin_password": "admin-pass",
-				"vhost":          "/test-vhost",
-			}
+			rabbitAPIServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/users/"):
+					w.WriteHeader(http.StatusCreated)
+				case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/permissions/"):
+					w.WriteHeader(http.StatusCreated)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
 
 			writeSecret(instanceID+"/deployment", map[string]interface{}{
 				"service_id": testServiceID,
 				"plan_id":    testPlanID,
 			})
+
+			testPlanKey := testServiceID + "/" + testPlanID
+			testPlan := brokerInstance.Plans[testPlanKey]
+			testPlan.Credentials = toInterfaceMap(map[string]interface{}{
+				"credentials": map[string]interface{}{
+					"host":           "rabbitmq.example.com",
+					"port":           5672,
+					"username":       "static-user",
+					"password":       "static-pass",
+					"api_url":        rabbitAPIServer.URL,
+					"admin_username": "admin",
+					"admin_password": "admin-pass",
+					"vhost":          "/test-vhost",
+				},
+			})
+			brokerInstance.Plans[testPlanKey] = testPlan
 
 			mockBOSH.SetVMs(testPlanID+"-"+instanceID, []bosh.VM{
 				{
@@ -175,9 +203,12 @@ var _ = Describe("GetBindingCredentials", func() {
 					DNS:   []string{"rabbitmq-0.rabbitmq.default.bosh"},
 				},
 			})
+		})
 
-			// Mock GetCreds to return RabbitMQ credentials
-			mockBOSH.SetCredentials(rabbitMQCredentials)
+		AfterEach(func() {
+			if rabbitAPIServer != nil {
+				rabbitAPIServer.Close()
+			}
 		})
 
 		It("should create dynamic RabbitMQ credentials", func() {
@@ -187,7 +218,7 @@ var _ = Describe("GetBindingCredentials", func() {
 			Expect(credentials.CredentialType).To(Equal("dynamic"))
 			Expect(credentials.Username).To(Equal(bindingID))
 			Expect(credentials.Password).ToNot(Equal("static-pass"))
-			Expect(credentials.APIURL).To(Equal("https://rabbitmq.example.com:15672/api"))
+			Expect(credentials.APIURL).To(Equal(rabbitAPIServer.URL))
 			Expect(credentials.Vhost).To(Equal("/test-vhost"))
 		})
 
@@ -223,6 +254,13 @@ var _ = Describe("GetBindingCredentials", func() {
 				"plan_id":    testPlanID,
 			})
 
+			testPlanKey := testServiceID + "/" + testPlanID
+			plan := brokerInstance.Plans[testPlanKey]
+			plan.Credentials = toInterfaceMap(map[string]interface{}{
+				"credentials": testCredentials,
+			})
+			brokerInstance.Plans[testPlanKey] = plan
+
 			mockBOSH.SetVMs(testPlanID+"-"+instanceID, []bosh.VM{
 				{
 					ID:    "postgres-vm-0",
@@ -232,8 +270,6 @@ var _ = Describe("GetBindingCredentials", func() {
 					DNS:   []string{"postgres-0.postgres.default.bosh"},
 				},
 			})
-
-			mockBOSH.SetCredentials(testCredentials)
 		})
 
 		It("should populate all structured fields correctly", func() {

@@ -67,7 +67,7 @@ func (ps *Store) StorePlans(ctx context.Context) {
 	// Check for dynamically discovered plan directories
 	foundAdditional, err := ps.processDynamicPlanDirs(ctx, planDirs, loggerInstance)
 	if err != nil {
-		loggerInstance.Error("Failed to process dynamic plan directories: %s", err)
+		loggerInstance.Errorf("Failed to process dynamic plan directories: %s", err)
 	}
 
 	foundAny = foundAny || foundAdditional
@@ -78,11 +78,11 @@ func (ps *Store) StorePlans(ctx context.Context) {
 // StorePlanReferences stores the SHA256 references of plan files for a service instance.
 func (ps *Store) StorePlanReferences(ctx context.Context, instanceID string, plan services.Plan) error {
 	loggerInstance := logger.Get().Named("Plan Storage")
-	loggerInstance.Info("Storing plan references for instance %s (plan: %s)", instanceID, plan.Name)
+	loggerInstance.Infof("Storing plan references for instance %s (plan: %s)", instanceID, plan.Name)
 
 	refs := ps.buildPlanReferences(plan)
 	if len(refs) == 0 {
-		loggerInstance.Info("No plan files found to store references for instance %s", instanceID)
+		loggerInstance.Infof("No plan files found to store references for instance %s", instanceID)
 
 		return nil
 	}
@@ -90,7 +90,7 @@ func (ps *Store) StorePlanReferences(ctx context.Context, instanceID string, pla
 	shaRefs := ps.calculateSHAReferences(refs, loggerInstance)
 
 	if len(shaRefs) == 0 {
-		loggerInstance.Info("No SHA256 references calculated for instance %s", instanceID)
+		loggerInstance.Infof("No SHA256 references calculated for instance %s", instanceID)
 
 		return nil
 	}
@@ -106,7 +106,7 @@ type planRef struct {
 // GetPlanReferences retrieves the SHA256 references for a service instance.
 func (ps *Store) GetPlanReferences(ctx context.Context, instanceID string) (map[string]string, error) {
 	loggerInstance := logger.Get().Named("Plan Storage")
-	loggerInstance.Debug("Retrieving plan references for instance %s", instanceID)
+	loggerInstance.Debugf("Retrieving plan references for instance %s", instanceID)
 
 	vaultPath := instanceID + "/plans/sha256"
 
@@ -121,7 +121,7 @@ func (ps *Store) GetPlanReferences(ctx context.Context, instanceID string) (map[
 		return nil, fmt.Errorf("no plan references found for instance %s: %w", instanceID, ErrNoPlanReferencesFound)
 	}
 
-	loggerInstance.Debug("Retrieved plan references for instance %s: %+v", instanceID, refs)
+	loggerInstance.Debugf("Retrieved plan references for instance %s: %+v", instanceID, refs)
 
 	return refs, nil
 }
@@ -129,7 +129,7 @@ func (ps *Store) GetPlanReferences(ctx context.Context, instanceID string) (map[
 // GetPlanFileByReference retrieves a plan file by its SHA256 reference.
 func (ps *Store) GetPlanFileByReference(ctx context.Context, service string, planName string, fileType string, sha256 string) (string, error) {
 	loggerInstance := logger.Get().Named("Plan Storage")
-	loggerInstance.Debug("Retrieving plan file for %s/%s/%s with SHA256: %s", service, planName, fileType, sha256)
+	loggerInstance.Debugf("Retrieving plan file for %s/%s/%s with SHA256: %s", service, planName, fileType, sha256)
 
 	vaultPath := fmt.Sprintf("plans/%s/%s/%s/%s", service, planName, fileType, sha256)
 
@@ -161,7 +161,7 @@ func (ps *Store) GetPlanFileByReference(ctx context.Context, service string, pla
 		return "", ErrInvalidDataFormatForPlan
 	}
 
-	loggerInstance.Debug("Successfully retrieved plan file from %s", vaultPath)
+	loggerInstance.Debugf("Successfully retrieved plan file from %s", vaultPath)
 
 	return content, nil
 }
@@ -170,7 +170,7 @@ func (ps *Store) GetPlanFileByReference(ctx context.Context, service string, pla
 // It uses the stored SHA256 references to get the exact plan files used during provisioning.
 func (ps *Store) GetPlanFilesForUpgrade(ctx context.Context, instanceID string, service string, planName string) (map[string]string, error) {
 	loggerInstance := logger.Get().Named("Plan Storage")
-	loggerInstance.Info("Retrieving plan files for upgrade of instance %s", instanceID)
+	loggerInstance.Infof("Retrieving plan files for upgrade of instance %s", instanceID)
 
 	// Get the SHA256 references for this instance
 	refs, err := ps.GetPlanReferences(ctx, instanceID)
@@ -184,9 +184,9 @@ func (ps *Store) GetPlanFilesForUpgrade(ctx context.Context, instanceID string, 
 	for fileType, sha256 := range refs {
 		content, err := ps.GetPlanFileByReference(ctx, service, planName, fileType, sha256)
 		if err != nil {
-			loggerInstance.Error("Failed to retrieve %s file for instance %s: %s", fileType, instanceID, err)
+			loggerInstance.Errorf("Failed to retrieve %s file for instance %s: %s", fileType, instanceID, err)
 			// Try to fallback to current plan file if historical version not found
-			loggerInstance.Info("Attempting to use current plan file for %s", fileType)
+			loggerInstance.Infof("Attempting to use current plan file for %s", fileType)
 
 			continue
 		}
@@ -198,7 +198,7 @@ func (ps *Store) GetPlanFilesForUpgrade(ctx context.Context, instanceID string, 
 		return nil, fmt.Errorf("no plan files could be retrieved for instance %s: %w", instanceID, ErrNoPlanFilesCouldBeRetrieved)
 	}
 
-	loggerInstance.Info("Successfully retrieved %d plan files for instance %s upgrade", len(planFiles), instanceID)
+	loggerInstance.Infof("Successfully retrieved %d plan files for instance %s upgrade", len(planFiles), instanceID)
 
 	return planFiles, nil
 }
@@ -220,7 +220,7 @@ func (ps *Store) processCommonPlanDirs(ctx context.Context, planDirs []string, l
 	foundAny := false
 
 	for _, baseDir := range planDirs {
-		loggerInstance.Debug("Checking plan directory: %s", baseDir)
+		loggerInstance.Debugf("Checking plan directory: %s", baseDir)
 
 		if !ps.directoryExists(baseDir, loggerInstance) {
 			continue
@@ -233,11 +233,11 @@ func (ps *Store) processCommonPlanDirs(ctx context.Context, planDirs []string, l
 			continue
 		}
 
-		loggerInstance.Info("Processing plans for service: %s from directory: %s", service, baseDir)
+		loggerInstance.Infof("Processing plans for service: %s from directory: %s", service, baseDir)
 
 		err := ps.processServicePlans(ctx, baseDir, service)
 		if err != nil {
-			loggerInstance.Error("Failed to process plans for service %s: %s", service, err)
+			loggerInstance.Errorf("Failed to process plans for service %s: %s", service, err)
 		}
 	}
 
@@ -247,12 +247,12 @@ func (ps *Store) processCommonPlanDirs(ctx context.Context, planDirs []string, l
 func (ps *Store) directoryExists(baseDir string, loggerInstance logger.Logger) bool {
 	_, err := os.Stat(baseDir)
 	if os.IsNotExist(err) {
-		loggerInstance.Debug("Plan directory %s does not exist, skipping", baseDir)
+		loggerInstance.Debugf("Plan directory %s does not exist, skipping", baseDir)
 
 		return false
 	}
 
-	loggerInstance.Debug("Found plan directory: %s", baseDir)
+	loggerInstance.Debugf("Found plan directory: %s", baseDir)
 
 	return true
 }
@@ -262,7 +262,7 @@ func (ps *Store) extractServiceName(baseDir string, loggerInstance logger.Logger
 
 	const minPathPartsRequired = 5
 	if len(pathParts) < minPathPartsRequired {
-		loggerInstance.Error("Invalid plan directory path: %s", baseDir)
+		loggerInstance.Errorf("Invalid plan directory path: %s", baseDir)
 
 		return ""
 	}
@@ -274,22 +274,22 @@ func (ps *Store) extractServiceName(baseDir string, loggerInstance logger.Logger
 
 func (ps *Store) processDynamicPlanDirs(ctx context.Context, planDirs []string, loggerInstance logger.Logger) (bool, error) {
 	jobsDir := "/var/vcap/jobs"
-	loggerInstance.Debug("Scanning %s for additional blacksmith plan directories", jobsDir)
+	loggerInstance.Debugf("Scanning %s for additional blacksmith plan directories", jobsDir)
 
 	entries, err := os.ReadDir(jobsDir)
 	if err != nil {
-		loggerInstance.Error("Failed to read jobs directory %s: %s", jobsDir, err)
+		loggerInstance.Errorf("Failed to read jobs directory %s: %s", jobsDir, err)
 
 		return false, fmt.Errorf("failed to read jobs directory %s: %w", jobsDir, err)
 	}
 
-	loggerInstance.Debug("Found %d entries in %s", len(entries), jobsDir)
+	loggerInstance.Debugf("Found %d entries in %s", len(entries), jobsDir)
 
 	foundAny := false
 
 	for _, entry := range entries {
 		if isBlacksmithPlanDir(entry) {
-			loggerInstance.Debug("Found potential blacksmith plans job: %s", entry.Name())
+			loggerInstance.Debugf("Found potential blacksmith plans job: %s", entry.Name())
 
 			processed, err := ps.processBlacksmithPlanEntry(ctx, entry, jobsDir, planDirs, loggerInstance)
 			if processed {
@@ -297,7 +297,7 @@ func (ps *Store) processDynamicPlanDirs(ctx context.Context, planDirs []string, 
 			}
 
 			if err != nil {
-				loggerInstance.Error("Failed to process plans for service %s: %s", entry.Name(), err)
+				loggerInstance.Errorf("Failed to process plans for service %s: %s", entry.Name(), err)
 			}
 		}
 	}
@@ -343,14 +343,14 @@ func (ps *Store) calculateSHAReferences(refs []planRef, loggerInstance logger.Lo
 	for _, ref := range refs {
 		_, err := os.Stat(ref.filePath)
 		if os.IsNotExist(err) {
-			loggerInstance.Debug("File %s does not exist, skipping", ref.filePath)
+			loggerInstance.Debugf("File %s does not exist, skipping", ref.filePath)
 
 			continue
 		}
 
 		content, err := os.ReadFile(ref.filePath)
 		if err != nil {
-			loggerInstance.Error("Failed to read file %s: %s", ref.filePath, err)
+			loggerInstance.Errorf("Failed to read file %s: %s", ref.filePath, err)
 
 			continue
 		}
@@ -359,7 +359,7 @@ func (ps *Store) calculateSHAReferences(refs []planRef, loggerInstance logger.Lo
 		shasum := hex.EncodeToString(hash[:])
 
 		shaRefs[ref.fileType] = shasum
-		loggerInstance.Debug("Calculated SHA256 for %s: %s", ref.fileType, shasum)
+		loggerInstance.Debugf("Calculated SHA256 for %s: %s", ref.fileType, shasum)
 	}
 
 	return shaRefs
@@ -367,16 +367,16 @@ func (ps *Store) calculateSHAReferences(refs []planRef, loggerInstance logger.Lo
 
 func (ps *Store) storeSHAReferences(ctx context.Context, instanceID string, shaRefs map[string]string, loggerInstance logger.Logger) error {
 	vaultPath := instanceID + "/plans/sha256"
-	loggerInstance.Debug("Storing plan references at Vault path: %s", vaultPath)
+	loggerInstance.Debugf("Storing plan references at Vault path: %s", vaultPath)
 
 	err := ps.vault.Put(ctx, vaultPath, shaRefs)
 	if err != nil {
-		loggerInstance.Error("Failed to store plan references in Vault: %s", err)
+		loggerInstance.Errorf("Failed to store plan references in Vault: %s", err)
 
 		return fmt.Errorf("failed to store plan references: %w", err)
 	}
 
-	loggerInstance.Info("Successfully stored plan references for instance %s: %+v", instanceID, shaRefs)
+	loggerInstance.Infof("Successfully stored plan references for instance %s: %+v", instanceID, shaRefs)
 
 	return nil
 }
@@ -393,17 +393,17 @@ func (ps *Store) processBlacksmithPlanEntry(ctx context.Context, entry os.DirEnt
 	// Check if plans directory exists
 	_, err := os.Stat(plansPath)
 	if os.IsNotExist(err) {
-		loggerInstance.Debug("Plans directory %s does not exist, skipping", plansPath)
+		loggerInstance.Debugf("Plans directory %s does not exist, skipping", plansPath)
 
 		return false, nil
 	}
 
 	service := strings.TrimSuffix(entry.Name(), "-blacksmith-plans")
-	loggerInstance.Info("Found additional service plans: %s at %s", service, plansPath)
+	loggerInstance.Infof("Found additional service plans: %s at %s", service, plansPath)
 
 	err = ps.processServicePlans(ctx, plansPath, service)
 	if err != nil {
-		loggerInstance.Warn("Failed to process additional service plans from %s: %s", plansPath, err)
+		loggerInstance.Warnf("Failed to process additional service plans from %s: %s", plansPath, err)
 
 		return false, err
 	}
@@ -414,8 +414,8 @@ func (ps *Store) processBlacksmithPlanEntry(ctx context.Context, entry os.DirEnt
 // processServicePlans processes all plan directories for a given service.
 func (ps *Store) processServicePlans(ctx context.Context, baseDir, service string) error {
 	log := logger.Get().Named("Plan Storage")
-	log.Info("Processing service: %s", service)
-	log.Debug("Reading plan directory: %s", baseDir)
+	log.Infof("Processing service: %s", service)
+	log.Debugf("Reading plan directory: %s", baseDir)
 
 	// Read directory contents
 	entries, err := os.ReadDir(baseDir)
@@ -423,19 +423,19 @@ func (ps *Store) processServicePlans(ctx context.Context, baseDir, service strin
 		return fmt.Errorf("failed to read directory %s: %w", baseDir, err)
 	}
 
-	log.Debug("Found %d entries in %s", len(entries), baseDir)
+	log.Debugf("Found %d entries in %s", len(entries), baseDir)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			// Skip non-directory entries like service.yml, meta.yml
-			log.Debug("Skipping non-directory entry: %s", entry.Name())
+			log.Debugf("Skipping non-directory entry: %s", entry.Name())
 
 			continue
 		}
 
 		planName := entry.Name()
 		planDir := filepath.Join(baseDir, planName)
-		log.Debug("Processing plan: %s/%s from %s", service, planName, planDir)
+		log.Debugf("Processing plan: %s/%s from %s", service, planName, planDir)
 
 		// Process the three files in each plan directory
 		ps.storePlanFiles(ctx, planDir, service, planName)
@@ -447,7 +447,7 @@ func (ps *Store) processServicePlans(ctx context.Context, baseDir, service strin
 // storePlanFiles stores the three plan files (manifest.yml, credentials.yml, init) to Vault.
 func (ps *Store) storePlanFiles(ctx context.Context, planDir, service, planName string) {
 	loggerInstance := logger.Get().Named("Plan Storage")
-	loggerInstance.Debug("Storing plan files for %s/%s from directory %s", service, planName, planDir)
+	loggerInstance.Debugf("Storing plan files for %s/%s from directory %s", service, planName, planDir)
 
 	files := ps.getPlanFileDefinitions()
 
@@ -495,12 +495,12 @@ func (ps *Store) processPlanFile(ctx context.Context, planDir, service, planName
 func (ps *Store) planFileExists(filePath string, loggerInstance logger.Logger) bool {
 	_, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
-		loggerInstance.Debug("File %s does not exist, skipping", filePath)
+		loggerInstance.Debugf("File %s does not exist, skipping", filePath)
 
 		return false
 	}
 
-	loggerInstance.Debug("Processing file: %s", filePath)
+	loggerInstance.Debugf("Processing file: %s", filePath)
 
 	return true
 }
@@ -508,7 +508,7 @@ func (ps *Store) planFileExists(filePath string, loggerInstance logger.Logger) b
 func (ps *Store) readPlanFileContent(filePath string, loggerInstance logger.Logger) ([]byte, error) {
 	content, err := utils.SafeReadFile(filePath)
 	if err != nil {
-		loggerInstance.Error("Failed to read file %s: %s", filePath, err)
+		loggerInstance.Errorf("Failed to read file %s: %s", filePath, err)
 
 		return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
 	}
@@ -527,19 +527,19 @@ func (ps *Store) buildVaultPath(service, planName, vaultKey, shasum string) stri
 }
 
 func (ps *Store) planFileAlreadyStored(ctx context.Context, vaultPath, shasum string, loggerInstance logger.Logger) bool {
-	loggerInstance.Debug("Checking if SHA256 %s already exists for %s", shasum, vaultPath)
+	loggerInstance.Debugf("Checking if SHA256 %s already exists for %s", shasum, vaultPath)
 
 	var existingData map[string]interface{}
 
 	exists, err := ps.vault.Get(ctx, vaultPath, &existingData)
 	if err != nil {
-		loggerInstance.Error("Failed to check existing data for %s: %s", vaultPath, err)
+		loggerInstance.Errorf("Failed to check existing data for %s: %s", vaultPath, err)
 
 		return false
 	}
 
 	if exists {
-		loggerInstance.Debug("Plan file %s already exists with SHA256: %s", vaultPath, shasum)
+		loggerInstance.Debugf("Plan file %s already exists with SHA256: %s", vaultPath, shasum)
 
 		return true
 	}
@@ -552,14 +552,14 @@ func (ps *Store) storePlanFileToVault(ctx context.Context, vaultPath string, con
 		dataKey: string(content),
 	}
 
-	loggerInstance.Debug("Storing to Vault: %s", vaultPath)
+	loggerInstance.Debugf("Storing to Vault: %s", vaultPath)
 
 	err := ps.vault.Put(ctx, vaultPath, data)
 	if err != nil {
-		loggerInstance.Error("Failed to store %s in Vault: %s", vaultPath, err)
+		loggerInstance.Errorf("Failed to store %s in Vault: %s", vaultPath, err)
 
 		return
 	}
 
-	loggerInstance.Info("Stored plan file %s (SHA256: %s)", vaultPath, shasum)
+	loggerInstance.Infof("Stored plan file %s (SHA256: %s)", vaultPath, shasum)
 }

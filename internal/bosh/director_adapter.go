@@ -73,6 +73,7 @@ var (
 	ErrDirectorNotUsingUAA            = errors.New("director does not use UAA authentication")
 	ErrUAAURLNotString                = errors.New("UAA URL in director info is not a string")
 	ErrUAAURLNotFoundInInfo           = errors.New("UAA URL not found in director info")
+	ErrUAAClientCredentialsMissing    = errors.New("missing UAA client credentials")
 )
 
 // DirectorAdapter wraps bosh-cli director to implement Director interface
@@ -1337,15 +1338,51 @@ func attemptUAAAutoDetection(config Config, logger boshlog.Logger, factoryConfig
 
 	// If director uses UAA and we have credentials, set up UAA client auth
 	if info.Auth.Type == authTypeUAA && config.Username != "" && config.Password != "" {
-		return setupUAAAuth(config, tempDirector, factoryConfig)
+		cachedInfoProvider := &staticDirectorInfoProvider{info: info}
+
+		return setupUAAAuth(config, cachedInfoProvider, factoryConfig)
 	}
 
 	return nil, ErrUAAAutoDetectionNotApplicable
 }
 
 // setupUAAAuth configures UAA authentication.
-func setupUAAAuth(config Config, director boshdirector.Director, factoryConfig *boshdirector.FactoryConfig) (*boshdirector.FactoryConfig, error) {
-	uaaURL := config.UAA.URL
+type directorInfoProvider interface {
+	Info() (boshdirector.Info, error)
+}
+
+type staticDirectorInfoProvider struct {
+	info boshdirector.Info
+}
+
+func (s *staticDirectorInfoProvider) Info() (boshdirector.Info, error) {
+	return s.info, nil
+}
+
+// setupUAAAuth configures UAA authentication.
+func setupUAAAuth(config Config, director directorInfoProvider, factoryConfig *boshdirector.FactoryConfig) (*boshdirector.FactoryConfig, error) {
+	if director == nil {
+		return nil, errors.New("director info provider is nil")
+	}
+
+	if factoryConfig == nil {
+		return nil, errors.New("factory config is nil")
+	}
+
+	var (
+		uaaURL       string
+		clientID     string
+		clientSecret string
+		caCert       string
+	)
+
+	if config.UAA != nil {
+		uaaURL = config.UAA.URL
+		clientID = config.UAA.ClientID
+		clientSecret = config.UAA.ClientSecret
+		caCert = config.UAA.CACert
+	}
+
 	if uaaURL == "" {
 		info, err := director.Info()
 		if err != nil {
@@ -1355,38 +1392,50 @@ func setupUAAAuth(config Config, director boshdirector.Director, factoryConfig *
 		if info.Auth.Type != authTypeUAA {
 			return nil, ErrDirectorNotUsingUAA
 		}
-		// Type assertion for the URL from the options map
-		if urlInterface, ok := info.Auth.Options["url"]; ok {
-			if urlStr, ok := urlInterface.(string); ok {
-				uaaURL = urlStr
-			} else {
-				return nil, ErrUAAURLNotString
-			}
-		} else {
+
+		urlInterface, ok := info.Auth.Options["url"]
+		if !ok {
 			return nil, ErrUAAURLNotFoundInInfo
 		}
+
+		urlStr, ok := urlInterface.(string)
+		if !ok {
+			return nil, ErrUAAURLNotString
+		}
+
+		uaaURL = urlStr
 	}
 
-	uaaHost, uaaPort := parseUAAURL(uaaURL)
+	if clientID == "" {
+		clientID = config.Username
+	}
 
-	uaaConfig, err := boshuaa.NewConfigFromURL("https://" + net.JoinHostPort(uaaHost, strconv.Itoa(uaaPort)))
+	if clientSecret == "" {
+		clientSecret = config.Password
+	}
+
+	if clientID == "" || clientSecret == "" {
+		return nil, ErrUAAClientCredentialsMissing
+	}
+
+	if caCert == "" {
+		caCert = config.CACert
+	}
+
+	normalizedURL := ensureHTTPScheme(uaaURL)
+
+	uaaConfig, err := boshuaa.NewConfigFromURL(normalizedURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid UAA URL: %w", err)
 	}
 
-	// Set UAA client credentials
-	if config.UAA.ClientID != "" {
-		uaaConfig.Client = config.UAA.ClientID
+	uaaConfig.Client = clientID
+
+	uaaConfig.ClientSecret = clientSecret
+	if caCert != "" {
+		uaaConfig.CACert = caCert
 	}
 
-	if config.UAA.ClientSecret != "" {
-		uaaConfig.ClientSecret = config.UAA.ClientSecret
-	}
-
-	// Configure TLS settings
-	uaaConfig.CACert = config.UAA.CACert
-
-	// Create UAA factory and update director factory config
 	uaaFactory := boshuaa.NewFactory(boshlog.NewLogger(boshlog.LevelError))
 
 	uaaClient, err := uaaFactory.New(uaaConfig)
@@ -1399,34 +1448,12 @@ func setupUAAAuth(config Config, director boshdirector.Director, factoryConfig *
 	return factoryConfig, nil
 }
 
-// parseUAAURL extracts host and port from UAA URL.
-func parseUAAURL(uaaURL string) (string, int) {
-	uaaHost := uaaURL
-	uaaPort := 443 // Default HTTPS port
-
-	// Remove https:// or http:// prefix if present
-	if strings.HasPrefix(uaaHost, "https://") {
-		uaaHost = strings.TrimPrefix(uaaHost, "https://")
-		uaaPort = 443
-	} else if strings.HasPrefix(uaaHost, "http://") {
-		uaaHost = strings.TrimPrefix(uaaHost, "http://")
-		uaaPort = 80
+func ensureHTTPScheme(rawURL string) string {
+	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
+		return rawURL
 	}
 
-	// Extract port if specified
-	if strings.Contains(uaaHost, ":") {
-		parts := strings.Split(uaaHost, ":")
-
-		uaaHost = parts[0]
-		if len(parts) > 1 {
-			p, err := strconv.Atoi(parts[1])
-			if err == nil {
-				uaaPort = p
-			}
-		}
-	}
-
-	return uaaHost, uaaPort
+	return "https://" + rawURL
 }
 
 // createUAAClient creates a new UAA client.

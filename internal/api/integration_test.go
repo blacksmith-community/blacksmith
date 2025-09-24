@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"blacksmith/internal/api"
+	"blacksmith/internal/config"
 	"blacksmith/internal/interfaces"
-	"blacksmith/pkg/services"
+	"blacksmith/internal/services"
+	pkgservices "blacksmith/pkg/services"
 )
 
 // mockLogger implements interfaces.Logger for testing.
@@ -38,6 +40,26 @@ type mockConfig struct{}
 
 func (m *mockConfig) IsSSHUITerminalEnabled() bool {
 	return true
+}
+
+func (m *mockConfig) GetEnvironment() string {
+	return "test"
+}
+
+func (m *mockConfig) GetBOSHConfig() config.BOSHConfig {
+	return config.BOSHConfig{}
+}
+
+func (m *mockConfig) GetVaultConfig() config.VaultConfig {
+	return config.VaultConfig{Address: "http://localhost:8200"}
+}
+
+func (m *mockConfig) GetBrokerConfig() config.BrokerConfig {
+	return config.BrokerConfig{Username: "user", Port: "8080", BindIP: "127.0.0.1"}
+}
+
+func (m *mockConfig) GetCFConfig() config.CFBrokerConfig {
+	return config.CFBrokerConfig{}
 }
 
 // mockVault implements interfaces.Vault for testing.
@@ -75,6 +97,10 @@ func (m *mockBroker) IsBroker() bool {
 	return true
 }
 
+func (m *mockBroker) GetPlans() map[string]services.Plan {
+	return map[string]services.Plan{}
+}
+
 // mockCFManager implements interfaces.CFManager for testing.
 type mockCFManager struct{}
 
@@ -90,9 +116,9 @@ func createTestDependencies() api.Dependencies {
 		Logger:             &mockLogger{},
 		Vault:              &mockVault{},
 		Broker:             &mockBroker{},
-		ServicesManager:    &services.Manager{},
+		ServicesManager:    &pkgservices.Manager{},
 		CFManager:          &mockCFManager{},
-		SecurityMiddleware: &services.SecurityMiddleware{},
+		SecurityMiddleware: &pkgservices.SecurityMiddleware{},
 	}
 }
 

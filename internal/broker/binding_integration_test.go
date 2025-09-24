@@ -3,7 +3,10 @@ package broker_test
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +26,50 @@ import (
 // BrokerTestAdapter adapts broker.Broker to work with reconciler.BrokerInterface.
 type BrokerTestAdapter struct {
 	*broker.Broker
+}
+
+type vaultInterfaceAdapter struct {
+	client *internalVault.Vault
+}
+
+func newVaultInterfaceAdapter(client *internalVault.Vault) *vaultInterfaceAdapter {
+	return &vaultInterfaceAdapter{client: client}
+}
+
+func (v *vaultInterfaceAdapter) Get(path string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+
+	exists, err := v.client.Get(context.Background(), path, &out)
+	if err != nil {
+		return nil, err
+	}
+
+	if !exists {
+		return nil, nil
+	}
+
+	return out, nil
+}
+
+func (v *vaultInterfaceAdapter) Put(path string, secret map[string]interface{}) error {
+	return v.client.Put(context.Background(), path, secret)
+}
+
+func (v *vaultInterfaceAdapter) GetSecret(path string) (map[string]interface{}, error) {
+	return v.Get(path)
+}
+
+func (v *vaultInterfaceAdapter) SetSecret(path string, secret map[string]interface{}) error {
+	return v.client.Put(context.Background(), path, secret)
+}
+
+func (v *vaultInterfaceAdapter) DeleteSecret(path string) error {
+	return v.client.Delete(context.Background(), path)
+}
+
+func (v *vaultInterfaceAdapter) ListSecrets(path string) ([]string, error) {
+	// ListSecrets is not exercised in these integration tests; return empty slice for compatibility.
+	return []string{}, nil
 }
 
 // GetServices implements reconciler.BrokerInterface.
@@ -72,18 +119,23 @@ var _ = Describe("Binding Credentials Integration", func() {
 		mockBOSH = testutil.NewIntegrationMockBOSH()
 		mockLogger = logger.Get().Named("test") // Use default logger for tests
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
+		vaultAdapter := newVaultInterfaceAdapter(vaultClient)
 
 		// Set up test plan
-		testPlan := services.Plan{
-			ID:   testPlanID,
-			Name: "Small Redis Plan",
-			Type: "redis",
-			Credentials: map[interface{}]interface{}{
-				"host":     "redis.{{.Jobs.redis.IPs.0}}",
+		defaultPlanCredentials := map[string]interface{}{
+			"credentials": map[string]interface{}{
+				"host":     "redis.example.com",
 				"port":     6379,
 				"username": "redis-user",
 				"password": "redis-pass",
 			},
+		}
+
+		testPlan := services.Plan{
+			ID:          testPlanID,
+			Name:        "Small Redis Plan",
+			Type:        "redis",
+			Credentials: toInterfaceMap(defaultPlanCredentials),
 		}
 
 		brokerInstance = &broker.Broker{
@@ -95,7 +147,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 
 		// Set up reconciler updater
 		updater = reconciler.NewVaultUpdater(
-			vaultClient,
+			vaultAdapter,
 			mockLogger,
 			reconciler.BackupConfig{},
 		)
@@ -235,20 +287,35 @@ var _ = Describe("Binding Credentials Integration", func() {
 		})
 
 		Context("when RabbitMQ requires dynamic credential creation", func() {
+			var rabbitAPIServer *httptest.Server
+
 			BeforeEach(func() {
+				rabbitAPIServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch {
+					case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/users/"):
+						w.WriteHeader(http.StatusCreated)
+					case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/permissions/"):
+						w.WriteHeader(http.StatusCreated)
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+
 				// Set up RabbitMQ plan
 				rabbitPlan := services.Plan{
 					ID:   "rabbit-plan",
 					Name: "RabbitMQ Plan",
 					Type: "rabbitmq",
-					Credentials: map[interface{}]interface{}{
-						"host":           "{{.Jobs.rabbitmq.IPs.0}}",
-						"port":           5672,
-						"api_url":        "https://{{.Jobs.rabbitmq.IPs.0}}:15672/api",
-						"admin_username": "admin",
-						"admin_password": "admin-secret",
-						"vhost":          "/blacksmith",
-					},
+					Credentials: toInterfaceMap(map[string]interface{}{
+						"credentials": map[string]interface{}{
+							"host":           "rabbitmq.example.com",
+							"port":           5672,
+							"api_url":        rabbitAPIServer.URL,
+							"admin_username": "admin",
+							"admin_password": "admin-secret",
+							"vhost":          "/blacksmith",
+						},
+					}),
 				}
 
 				brokerInstance.Plans[testServiceID+"/rabbit-plan"] = rabbitPlan
@@ -267,6 +334,12 @@ var _ = Describe("Binding Credentials Integration", func() {
 						DNS:   []string{"rabbitmq-0.rabbitmq.default.bosh"},
 					},
 				})
+			})
+
+			AfterEach(func() {
+				if rabbitAPIServer != nil {
+					rabbitAPIServer.Close()
+				}
 			})
 
 			It("should create dynamic user for RabbitMQ", func() {
@@ -300,36 +373,36 @@ var _ = Describe("Binding Credentials Integration", func() {
 		})
 
 		Context("when vault connectivity is lost", func() {
+			var previousVault *internalVault.Vault
+
 			BeforeEach(func() {
-				// Simulate outage by closing suite vault then recreating it
-				if suite.vault != nil {
-					suite.vault.Close()
-				}
-				var err error
-				suite.vault, err = testutil.NewVaultDevServer(nil)
-				if err != nil {
-					Fail("failed to restart suite vault: " + err.Error())
-				}
+				previousVault = brokerInstance.Vault
+				brokerInstance.Vault = internalVault.New("http://127.0.0.1:1", "", true)
+			})
+
+			AfterEach(func() {
+				brokerInstance.Vault = previousVault
 			})
 
 			It("should return vault error", func() {
 				credentials, err := brokerInstance.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
-				Expect(err.Error()).To(ContainSubstring("vault sealed"))
+				Expect(err.Error()).To(ContainSubstring("failed to store binding credentials"))
 			})
 		})
 
 		Context("when plan configuration is invalid", func() {
 			BeforeEach(func() {
-				// Set up plan with invalid credential template
 				invalidPlan := services.Plan{
 					ID:   "invalid-plan",
 					Name: "Invalid Plan",
 					Type: "redis",
-					Credentials: map[interface{}]interface{}{
-						"host": "{{.Invalid.Path}}",
-					},
+					Credentials: toInterfaceMap(map[string]interface{}{
+						"credentials": map[string]interface{}{
+							"host": "{{.Invalid.Path}}",
+						},
+					}),
 				}
 
 				brokerInstance.Plans[testServiceID+"/invalid-plan"] = invalidPlan
@@ -352,10 +425,8 @@ var _ = Describe("Binding Credentials Integration", func() {
 
 			It("should handle template errors gracefully", func() {
 				credentials, err := brokerInstance.GetBindingCredentials(context.Background(), instanceID, bindingID)
-				// The actual behavior depends on implementation
-				// Either error or partial credentials might be returned
 				if err != nil {
-					Expect(err.Error()).To(ContainSubstring("template"))
+					Expect(err.Error()).To(ContainSubstring("failed to get credentials map"))
 				} else {
 					Expect(credentials).ToNot(BeNil())
 				}
