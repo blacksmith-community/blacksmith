@@ -315,15 +315,20 @@ var _ = Describe("RabbitMQ Retry Mechanism", func() {
 			}
 
 			for _, testCase := range testCases {
-				It(fmt.Sprintf("should handle %s correctly", testCase.name), func() {
+				func(testData struct {
+					name          string
+					statusCode    int
+					shouldRetry   bool
+					expectedError bool
+				}) {
 					ctx := context.Background()
 					attemptCount := atomic.Int32{}
-					path := "/api/users/" + testCase.name
+					path := "/api/users/" + testData.name
 
 					serverResponses[path] = func(writer http.ResponseWriter, _ *http.Request) {
 						attemptCount.Add(1)
-						writer.WriteHeader(testCase.statusCode)
-						_, _ = fmt.Fprintf(writer, `{"error":"%s"}`, testCase.name)
+						writer.WriteHeader(testData.statusCode)
+						_, _ = fmt.Fprintf(writer, `{"error":"%s"}`, testData.name)
 					}
 
 					creds := map[string]interface{}{
@@ -332,7 +337,7 @@ var _ = Describe("RabbitMQ Retry Mechanism", func() {
 					}
 
 					err := broker.CreateUserPassRabbitMQ(ctx,
-						testCase.name,
+						testData.name,
 						"password",
 						"admin",
 						"admin-pass",
@@ -340,20 +345,20 @@ var _ = Describe("RabbitMQ Retry Mechanism", func() {
 						brokerInstance.Config,
 						creds)
 
-					if testCase.expectedError {
+					if testData.expectedError {
 						Expect(err).To(HaveOccurred())
 					} else {
 						Expect(err).ToNot(HaveOccurred())
 					}
 
-					if testCase.shouldRetry {
+					if testData.shouldRetry {
 						// Should have retried (4 attempts total)
 						Expect(attemptCount.Load()).To(Equal(int32(4)))
 					} else {
 						// Should not have retried
 						Expect(attemptCount.Load()).To(Equal(int32(1)))
 					}
-				})
+				}(testCase)
 			}
 		})
 	})

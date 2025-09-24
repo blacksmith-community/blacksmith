@@ -3,6 +3,7 @@ package manifest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,6 +31,12 @@ const (
 	InitScriptTimeout = 5 * time.Minute
 )
 
+// Error variables for err113 compliance.
+var (
+	ErrCredentialsFieldNotFound = errors.New("credentials field not found in manifest")
+	ErrCredentialsNotMap        = errors.New("failed to get credentials map: credentials is a string, not a map")
+)
+
 func GetWorkDir() string {
 	var blacksmithWorkDir = os.Getenv("BLACKSMITH_INSTANCE_DATA_DIR")
 	if blacksmithWorkDir == "" {
@@ -53,10 +60,7 @@ func InitManifest(ctx context.Context, plan services.Plan, instanceID string) er
 		return err
 	}
 
-	cmd, err := buildInitCommand(ctx, plan, instanceID)
-	if err != nil {
-		return err
-	}
+	cmd := buildInitCommand(ctx, plan, instanceID)
 
 	return executeInitScript(cmd, plan.InitScriptPath)
 }
@@ -93,9 +97,9 @@ func prepareInitScript(initScriptPath string) error {
 	return nil
 }
 
-func buildInitCommand(ctx context.Context, plan services.Plan, instanceID string) (*exec.Cmd, error) {
+func buildInitCommand(ctx context.Context, plan services.Plan, instanceID string) *exec.Cmd {
 	// Create command without timeout - timeout will be handled at a higher level if needed
-	cmd := exec.Command("/bin/bash", plan.InitScriptPath) // #nosec G204 - Path has been validated by validateExecutablePath
+	cmd := exec.CommandContext(ctx, "/bin/bash", plan.InitScriptPath) // #nosec G204 - Path has been validated by validateExecutablePath
 
 	cmd.Env = buildInitEnvironment(instanceID, plan.ID)
 
@@ -107,13 +111,22 @@ func buildInitCommand(ctx context.Context, plan services.Plan, instanceID string
 		log.Debug("  %s", env)
 	}
 
-	return cmd, nil
+	return cmd
 }
 
 func buildInitEnvironment(instanceID, planID string) []string {
-	env := os.Environ()
+	env := appendSafeBinaryToPath(os.Environ())
+	env = appendVaultToken(env)
+	env = appendBlacksmithVariables(env, instanceID, planID)
 
-	// Add safe binary to PATH for init scripts
+	log := logger.Get().Named("manifest")
+	logEnvironmentVariables(env, log)
+	validateCriticalEnvironment(env, log)
+
+	return env
+}
+
+func appendSafeBinaryToPath(env []string) []string {
 	for i, envVar := range env {
 		if strings.HasPrefix(envVar, "PATH=") {
 			env[i] = envVar + ":/var/vcap/packages/safe/bin"
@@ -122,57 +135,69 @@ func buildInitEnvironment(instanceID, planID string) []string {
 		}
 	}
 
-	// Add Vault token if available in environment
-	vaultToken := os.Getenv("VAULT_TOKEN")
-	if vaultToken != "" {
+	return env
+}
+
+func appendVaultToken(env []string) []string {
+	if vaultToken := os.Getenv("VAULT_TOKEN"); vaultToken != "" {
 		env = append(env, "VAULT_TOKEN="+vaultToken)
 	}
 
-	// Add critical environment variables for init script
-	env = append(env, "CREDENTIALS=secret/"+instanceID)
-	env = append(env, fmt.Sprintf("RAWJSONFILE=%s%s.json", GetWorkDir(), instanceID))
-	env = append(env, fmt.Sprintf("YAMLFILE=%s%s.yml", GetWorkDir(), instanceID))
-	env = append(env, "BLACKSMITH_INSTANCE_DATA_DIR="+GetWorkDir())
-	env = append(env, "INSTANCE_ID="+instanceID)
-	env = append(env, "BLACKSMITH_PLAN="+planID)
+	return env
+}
 
-	// Log critical environment variables for debugging (without exposing secrets)
-	log := logger.Get().Named("manifest")
-	for _, e := range env {
-		if strings.HasPrefix(e, "VAULT_ADDR=") {
-			log.Debug("Environment: %s", e)
-		}
-		if strings.HasPrefix(e, "VAULT_TOKEN=") {
+func appendBlacksmithVariables(env []string, instanceID, planID string) []string {
+	return append(env,
+		"CREDENTIALS=secret/"+instanceID,
+		fmt.Sprintf("RAWJSONFILE=%s%s.json", GetWorkDir(), instanceID),
+		fmt.Sprintf("YAMLFILE=%s%s.yml", GetWorkDir(), instanceID),
+		"BLACKSMITH_INSTANCE_DATA_DIR="+GetWorkDir(),
+		"INSTANCE_ID="+instanceID,
+		"BLACKSMITH_PLAN="+planID,
+	)
+}
+
+func logEnvironmentVariables(env []string, log logger.Logger) {
+	for _, envVar := range env {
+		switch {
+		case strings.HasPrefix(envVar, "VAULT_ADDR="):
+			log.Debug("Environment: %s", envVar)
+		case strings.HasPrefix(envVar, "VAULT_TOKEN="):
 			log.Debug("Environment: VAULT_TOKEN=<redacted>")
-		}
-		if strings.HasPrefix(e, "BOSH_CLIENT_SECRET=") {
+		case strings.HasPrefix(envVar, "BOSH_CLIENT_SECRET="):
 			log.Debug("Environment: BOSH_CLIENT_SECRET=<redacted>")
-		}
-		if strings.HasPrefix(e, "BOSH_ENVIRONMENT=") || strings.HasPrefix(e, "BOSH_CLIENT=") {
-			log.Debug("Environment: %s", e)
+		case strings.HasPrefix(envVar, "BOSH_ENVIRONMENT="), strings.HasPrefix(envVar, "BOSH_CLIENT="):
+			log.Debug("Environment: %s", envVar)
 		}
 	}
+}
 
-	// Validate critical environment variables
-	hasVaultAddr := false
-	hasVaultToken := false
-	for _, e := range env {
-		if strings.HasPrefix(e, "VAULT_ADDR=") && len(e) > len("VAULT_ADDR=") {
-			hasVaultAddr = true
-		}
-		if strings.HasPrefix(e, "VAULT_TOKEN=") && len(e) > len("VAULT_TOKEN=") {
-			hasVaultToken = true
-		}
-	}
+func validateCriticalEnvironment(env []string, log logger.Logger) {
+	hasVaultAddr, hasVaultToken := checkVaultEnvironment(env)
 
 	if !hasVaultAddr {
 		log.Error("WARNING: VAULT_ADDR environment variable is not set")
 	}
+
 	if !hasVaultToken {
 		log.Error("WARNING: VAULT_TOKEN environment variable is not set - init scripts may fail to authenticate with Vault")
 	}
+}
 
-	return env
+func checkVaultEnvironment(env []string) (bool, bool) {
+	var hasAddr, hasToken bool
+
+	for _, envVar := range env {
+		if strings.HasPrefix(envVar, "VAULT_ADDR=") && len(envVar) > len("VAULT_ADDR=") {
+			hasAddr = true
+		}
+
+		if strings.HasPrefix(envVar, "VAULT_TOKEN=") && len(envVar) > len("VAULT_TOKEN=") {
+			hasToken = true
+		}
+	}
+
+	return hasAddr, hasToken
 }
 
 func executeInitScript(cmd *exec.Cmd, initScriptPath string) error {
@@ -534,8 +559,24 @@ func extractCredentialsFromManifest(manifest string, loggerInstance logger.Logge
 
 	yamlCreds := yamlManifest.Get("credentials")
 
+	// Check if credentials exists and is not nil
+	if yamlCreds == nil {
+		loggerInstance.Error("credentials field is missing from manifest")
+
+		return nil, ErrCredentialsFieldNotFound
+	}
+
+	// Try to get as map, but handle gracefully if it's not a map
 	yamlMap, err := yamlCreds.Map()
 	if err != nil {
+		// If it's not a map, check if it's a different type we can handle
+		str, strErr := yamlCreds.String()
+		if strErr == nil {
+			loggerInstance.Error("failed to retrieve `credentials' top-level key: got string instead of map: %s", str)
+
+			return nil, ErrCredentialsNotMap
+		}
+
 		loggerInstance.Error("failed to retrieve `credentials' top-level key: %s", err)
 
 		return nil, fmt.Errorf("failed to get credentials map: %w", err)

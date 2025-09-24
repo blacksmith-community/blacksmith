@@ -26,18 +26,36 @@
         button.disabled = true;
         button.classList.add('opacity-50', 'cursor-not-allowed');
         button.title = sshTerminalConfig.message || 'SSH Terminal is disabled in configuration';
-        // Remove onclick handler
-        button.removeAttribute('onclick');
-        // Add click prevention
-        button.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        });
+        // Mark as processed to avoid re-adding listeners
+        if (!button.dataset.sshDisabled) {
+          button.dataset.sshDisabled = 'true';
+          button.dataset.originalOnclick = button.getAttribute('onclick');
+          button.removeAttribute('onclick');
+          // Store the handler so we can remove it later
+          const preventClick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          };
+          button._preventClickHandler = preventClick;
+          button.addEventListener('click', preventClick);
+        }
       } else {
         button.disabled = false;
         button.classList.remove('opacity-50', 'cursor-not-allowed');
+        // Restore onclick if it was removed
+        if (button.dataset.sshDisabled === 'true') {
+          if (button._preventClickHandler) {
+            button.removeEventListener('click', button._preventClickHandler);
+            delete button._preventClickHandler;
+          }
+          if (button.dataset.originalOnclick) {
+            button.setAttribute('onclick', button.dataset.originalOnclick);
+            delete button.dataset.originalOnclick;
+          }
+          delete button.dataset.sshDisabled;
+        }
         // Restore original title if it was changed
-        if (button.title === 'SSH Terminal is disabled in configuration' || 
+        if (button.title === 'SSH Terminal is disabled in configuration' ||
             button.title === sshTerminalConfig.message) {
           const instanceName = button.closest('tr')?.querySelector('.vm-instance')?.textContent?.trim() || 'instance';
           button.title = `SSH to ${instanceName}`;
@@ -1812,6 +1830,12 @@
           <label>Service Filter:</label>
           <span style="color: #666; font-style: italic;">Catalog data not available</span>
         </div>`}
+        <div class="filter-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="hide-deleted-filter" class="filter-checkbox">
+            <span>Hide Deleted Instances</span>
+          </label>
+        </div>
         <div class="filter-buttons">
           <button id="refresh-services" class="copy-deployment-names-btn" title="Refresh Service Instances">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
@@ -1840,15 +1864,22 @@
             </div>
           ` : '';
 
-        // Check if instance is marked for deletion
-        const deletionStatusHtml = details.deletion_in_progress || details.status === 'deprovision_requested' ? `
+        const isDeleted = details.deleted === true;
+        const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
+
+        const deletedStatusHtml = isDeleted ? `
+            <div class="deleted-status-badge" title="Instance has been deleted">
+              <span class="deleted-status-icon"></span>
+              <span class="deleted-status-text">Deleted</span>
+            </div>
+          ` : '';
+
+        const deletionStatusHtml = isDeleting ? `
             <div class="deletion-status-badge" title="Delete requested at ${details.delete_requested_at || details.deprovision_requested_at || 'Unknown'}">
               <span class="deletion-status-icon"></span>
               <span class="deletion-status-text">Deleting...</span>
             </div>
           ` : '';
-
-        const isDeleting = details.deletion_in_progress || details.status === 'deprovision_requested';
 
         // Use service name for display and data attribute
         // Only use mapped service names for filtering, show service_id for display if no mapping
@@ -1856,12 +1887,13 @@
         const displayServiceName = serviceName || details.service_id;
 
         return `
-            <div class="service-item ${isDeleting ? 'deleting' : ''}" data-instance-id="${id}" data-service="${serviceName}" data-plan="${details.plan?.name || ''}">
+            <div class="service-item ${isDeleting ? 'deleting' : ''} ${isDeleted ? 'deleted' : ''}" data-instance-id="${id}" data-service="${serviceName}" data-plan="${details.plan?.name || ''}" data-deleted="${isDeleted}">
               <div class="service-id">${id}</div>
               ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
               <div class="service-meta">
                 ${displayServiceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
               </div>
+              ${deletedStatusHtml}
               ${deletionStatusHtml}
               ${vmStatusHtml}
             </div>
@@ -1951,6 +1983,7 @@
       Object.keys(vaultData).forEach(key => {
         if (key !== 'context' && key !== 'bosh_properties' && key !== 'bosh_manifest' &&
           key !== 'bosh_vms' && key !== 'history' && key !== 'bosh_releases' && key !== 'bosh_stemcells' &&
+          key !== 'manifest' &&
           !fieldOrder.find(f => f.key === key)) {
           let value = vaultData[key];
 
@@ -2101,7 +2134,7 @@
         <button class="detail-tab" data-tab="manifest">Manifest</button>
         <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="credentials">Credentials</button>
-        <button class="detail-tab" data-tab="logs">Logs</button>
+        <button class="detail-tab" data-tab="instance-logs">Logs</button>
         <button class="detail-tab" data-tab="testing">Testing</button>
       </div>
       <div class="detail-content">
@@ -2416,7 +2449,8 @@
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        const vms = await response.json();
+        const vmsResponse = await response.json();
+        const vms = Array.isArray(vmsResponse) ? vmsResponse : (vmsResponse.vms || []);
         return formatVMs(vms);
 
       } else if (type === 'manifest') {
@@ -2486,12 +2520,12 @@
 
     const endpoints = {
       manifest: `/b/${instanceId}/manifest`,
-      credentials: `/creds`,  // Use centralized credentials endpoint
+      credentials: `/b/${instanceId}/credentials`,
       events: `/b/${instanceId}/events`,
       vms: `/b/${instanceId}/vms`,
       logs: `/b/${instanceId}/task/log`,
       debug: `/b/${instanceId}/task/debug`,
-      'logs': `/b/${instanceId}/logs`,
+      'instance-logs': `/b/${instanceId}/logs`,
       config: `/b/${instanceId}/config`
     };
 
@@ -2518,16 +2552,15 @@
       } else if (type === 'vms') {
         const text = await response.text();
         try {
-          const vms = JSON.parse(text);
+          const vmsResponse = JSON.parse(text);
+          const vms = Array.isArray(vmsResponse) ? vmsResponse : (vmsResponse.vms || []);
           return formatVMs(vms, instanceId);
         } catch (e) {
           return `<pre>${text}</pre>`;
         }
       } else if (type === 'credentials') {
-        const allCreds = await response.json();  // Parse JSON response with all credentials
-        // Extract credentials for this specific instance
-        const instanceCreds = allCreds[instanceId] || {};
-        return formatCredentials(instanceCreds);
+        const creds = await response.json();
+        return formatCredentials(creds);
       } else if (type === 'logs') {
         const text = await response.text();
         try {
@@ -2537,11 +2570,11 @@
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
         }
-      } else if (type === 'logs') {
+      } else if (type === 'instance-logs') {
         const text = await response.text();
         try {
-          const logsData = JSON.parse(text);
-          return formatInstanceLogs(logsData);
+          const responseData = JSON.parse(text);
+          return formatInstanceLogs(responseData.logs || responseData);
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -2787,59 +2820,11 @@
       return `<div class="error">${jobData.error}</div>`;
     }
 
-    const files = jobData.files || {};
-    const logs = jobData.logs || 'No logs available';
+    const files = jobData;
 
-    // If no structured files, show raw logs
+    // If no files available
     if (typeof files !== 'object' || Object.keys(files).length === 0) {
-      // Parse and render as table even for single logs
-      const parsedLogs = typeof logs === 'string'
-        ? logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line))
-        : [];
-
-      // Store for sorting
-      const tableKey = `instance-logs-${jobKey}`;
-      tableOriginalData.set(tableKey, parsedLogs);
-
-      // Store original text for copy
-      if (!window.instanceLogOriginalText) window.instanceLogOriginalText = {};
-      window.instanceLogOriginalText[jobKey] = typeof logs === 'string' ? logs : JSON.stringify(logs, null, 2);
-
-      return `
-        <div class="job-logs-container">
-          <div class="logs-table-container" id="log-display-${jobKey.replace(/\//g, '-')}">
-            <table class="instance-logs-table instance-logs-table-${jobKey.replace(/\//g, '-')}" data-job="${jobKey}">
-              <thead>
-                <tr class="table-controls-row">
-                  <th colspan="3" class="table-controls-header">
-                    <div class="table-controls-container">
-                      <div class="search-filter-container">
-                        ${createSearchFilter(`instance-logs-table-${jobKey.replace(/\//g, '-')}`, 'Search logs...')}
-                      </div>
-                      <button class="copy-btn-logs" onclick="window.copyInstanceLogs('${jobKey}', event)"
-                              title="Copy filtered table rows">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                      </button>
-                      <button class="refresh-btn-logs" onclick="window.refreshInstanceLogs('${jobKey}', event)"
-                              title="Refresh logs">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-                      </button>
-                    </div>
-                  </th>
-                </tr>
-                <tr>
-                  <th class="log-col-timestamp">Timestamp</th>
-                  <th class="log-col-level">Level</th>
-                  <th class="log-col-message">Message</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${parsedLogs.map(row => renderLogRow(row)).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
+      return '<div class="no-data">No log files available for this job</div>';
     }
 
     // Create layout with dropdown selector and content
@@ -2943,7 +2928,7 @@
               </tr>
             </thead>
             <tbody>
-              ${parsedLogs.map(row => renderLogRow(row)).join('')}
+              ${parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('')}
             </tbody>
           </table>
         </div>
@@ -3009,7 +2994,7 @@
     // Update table body
     const tableEl = document.querySelector(`#log-display-${job.replace(/\//g, '-')} tbody`);
     if (tableEl) {
-      tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+      tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
 
       // Re-initialize sorting and filtering
       const tableClass = `instance-logs-table-${job.replace(/\//g, '-')}`;
@@ -3147,7 +3132,7 @@
         // Update table body
         const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
         if (tableEl) {
-          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
           // Re-initialize sorting and restore search filter state after updating table
           setTimeout(() => {
             const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
@@ -3181,7 +3166,7 @@
         // Update table body
         const tableEl = document.querySelector(`#log-display-${jobKey.replace(/\//g, '-')} tbody`);
         if (tableEl) {
-          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row)).join('');
+          tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
           // Re-initialize sorting and restore search filter state after updating table
           setTimeout(() => {
             const tableClass = `instance-logs-table-${jobKey.replace(/\//g, '-')}`;
@@ -3514,7 +3499,7 @@
           </div>
         </div>
         <div class="configs-controls-row-2">
-          <div class="filter-group">
+          <div class="filter-group configs-filters">
             <label>Types:</label>
             <div class="checkbox-group">
               <label><input type="checkbox" value="cloud" checked> Cloud</label>
@@ -3548,54 +3533,100 @@
 
   // Log parsing and rendering functions
   const parseLogLine = (line) => {
-    // First, strip ANSI color codes from the line
-    // ANSI codes are in the format: ESC[...m where ESC is \x1b or \033
-    let cleanLine = line.replace(/\x1b\[[0-9;]*m/g, '').replace(/\[3[0-9]m/g, '').replace(/\[0m/g, '');
+    // Keep the original line for pattern matching - don't modify it
+    const originalLine = line;
 
-    // Extract component information from brackets (e.g., [vault readiness])
-    let component = '';
-    const componentMatch = cleanLine.match(/\[([^\]]+)\]/);
-    if (componentMatch) {
-      // Check if this looks like a component (not a timestamp or level indicator)
-      const potentialComponent = componentMatch[1];
-      // Components typically have lowercase words, spaces, or hyphens
-      if (!/^\d{4}-\d{2}-\d{2}/.test(potentialComponent) && // Not a date
-          !/^\d+:\d+:\d+/.test(potentialComponent) && // Not a time
-          !/^(INFO|DEBUG|WARN|ERROR|FATAL|TRACE)$/i.test(potentialComponent) && // Not a level
-          !/^task:\d+/.test(potentialComponent) && // Not a BOSH task ID
-          /^[a-z\s\-_]+$/i.test(potentialComponent)) { // Looks like a component name
-        component = potentialComponent;
-        // Remove the component from the line for further processing
-        cleanLine = cleanLine.replace(`[${component}]`, '').trim();
+    // Helper function to strip ANSI codes for display (only used after format detection)
+    const stripAnsiCodes = (str) => {
+      return str
+        .replace(/\x1b\[[0-9;]*m/g, '')         // Real ANSI codes
+        .replace(/\^?\[\[[0-9;]*m/g, '')        // Caret notation like ^[[34m
+        .replace(/\[3[0-9]m/g, '')              // Simple color codes
+        .replace(/\[0m/g, '');                  // Reset codes
+    };
+
+    // Helper function to extract component information after format detection
+    const extractComponent = (str) => {
+      const componentMatch = str.match(/\[([^\]]+)\]/);
+      if (componentMatch) {
+        // Check if this looks like a component (not a timestamp or level indicator)
+        const potentialComponent = componentMatch[1];
+        // Components typically have lowercase words, spaces, dots, or hyphens
+        if (!/^\d{4}-\d{2}-\d{2}/.test(potentialComponent) && // Not a date
+            !/^\d+:\d+:\d+/.test(potentialComponent) && // Not a time
+            !/^(INFO|DEBUG|WARN|ERROR|FATAL|TRACE)$/i.test(potentialComponent) && // Not a level
+            !/^task:\d+/.test(potentialComponent) && // Not a BOSH task ID
+            /^[a-z\s\-_.]+$/i.test(potentialComponent)) { // Looks like a component name (added . for main.api)
+          return potentialComponent;
+        }
+      }
+      return '';
+    };
+
+    // Try different log formats in order of specificity using ORIGINAL line
+    let match; // Declare match variable for pattern matching
+
+    // For pattern matching on logs with potential ANSI codes, we'll strip them first
+    const cleanLine = stripAnsiCodes(originalLine);
+
+    // Wrapped Vault format: YYYY-MM-DD HH:MM:SS.mmm WRAPPER_LEVEL [ACTUAL_LEVEL] message
+    // This handles logs where a wrapper level (e.g., INFO) precedes the actual level in brackets
+    // Example: 2025-08-17 18:19:48.072    INFO    [DEBUG] storage.cache: creating LRU cache: size=0
+    const wrappedVaultPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+\w+\s+\[(\w+)\]\s+(.*)$/;
+    match = cleanLine.match(wrappedVaultPattern);
+    if (match) {
+      // Check if the bracketed part is a log level
+      const bracketedPart = match[3].toUpperCase();
+      if (['INFO', 'DEBUG', 'WARN', 'WARNING', 'ERROR', 'FATAL', 'TRACE'].includes(bracketedPart)) {
+        return {
+          date: match[1],
+          time: match[2],
+          level: bracketedPart, // Use the bracketed level as it's the actual level
+          component: '', // Extract component from message if present
+          message: match[4] // Already cleaned of ANSI codes
+        };
       }
     }
 
-    // Try different log formats in order of specificity
+    // Standard Vault format: YYYY-MM-DD HH:MM:SS.mmm [LEVEL] message - check this format next
+    const vaultPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+\[(\w+)\]\s+(.*)$/;
+    match = cleanLine.match(vaultPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim().toUpperCase(),
+        component: '', // Vault logs don't have components
+        message: match[4] // Already cleaned of ANSI codes
+      };
+    }
 
-    // JSON format - check first as it's easy to detect
-    if (cleanLine.startsWith('{') && cleanLine.endsWith('}')) {
+    // JSON format - check using original line
+    if (originalLine.trim().startsWith('{') && originalLine.trim().endsWith('}')) {
       try {
-        const json = JSON.parse(cleanLine);
+        const json = JSON.parse(originalLine.trim());
 
         // Extract timestamp and convert if needed
         let date = '';
         let time = '';
-        if (json.timestamp) {
+        if (json.timestamp || json.time || json.ts) {
+          const timestamp = json.timestamp || json.time || json.ts;
+
           // Check if it's Unix timestamp (numeric or string of numbers with optional decimal)
-          if (/^\d+(\.\d+)?$/.test(json.timestamp.toString())) {
-            const ts = new Date(parseFloat(json.timestamp) * 1000);
+          if (/^\d+(\.\d+)?$/.test(timestamp.toString())) {
+            const ts = new Date(parseFloat(timestamp) * 1000);
             date = ts.toISOString().split('T')[0];
             time = ts.toISOString().split('T')[1].replace('Z', '');
-          } else if (json.timestamp.includes('T')) {
+          } else if (timestamp.includes && timestamp.includes('T')) {
             // ISO format
-            const parts = json.timestamp.split('T');
+            const parts = timestamp.split('T');
             date = parts[0];
             time = parts[1].replace('Z', '').split('+')[0].split('-')[0];
           }
         }
 
         // Extract level (could be level, log_level, severity, etc.)
-        let level = json.level || json.log_level || json.severity || 'INFO';
+        let level = json.level || json.log_level || json.severity || json.lvl || 'INFO';
         if (typeof level === 'number') {
           // Convert numeric levels (0=debug, 1=info, 2=warn, 3=error, 4=fatal)
           const levelMap = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'];
@@ -3604,35 +3635,90 @@
         level = level.toString().toUpperCase();
 
         // Build message from various fields
-        let message = json.message || json.msg || '';
+        let message = json.message || json.msg || json.text || '';
         if (json.source) {
           message = `[${json.source}] ${message}`;
         }
-        if (json.data) {
+        if (json.error && json.error !== message) {
+          message = message ? `${message} (error: ${json.error})` : `error: ${json.error}`;
+        }
+        if (json.data && typeof json.data === 'object') {
           // Append data as formatted JSON
           message += ' ' + JSON.stringify(json.data);
         }
 
-        // Extract component from JSON if not already found
-        if (!component && json.component) {
-          component = json.component;
-        }
+        // Extract component from JSON
+        const component = json.component || json.service || json.logger || '';
 
         return {
           date: date,
           time: time,
           level: level,
           component: component,
-          message: message
+          message: stripAnsiCodes(message)
         };
       } catch (e) {
         // If JSON parsing fails, continue to other formats
       }
     }
 
+    // Blacksmith format with ANSI codes: YYYY-MM-DDTHH:MM:SS.mmmZ ^[[34mLEVEL^[[0m [component] message
+    // The ANSI codes wrap around the log level (e.g., ^[[34mINFO^[[0m or ^[[35mDEBUG^[[0m)
+    // Handle both caret notation (^[[) and actual ANSI (\x1b[)
+    const blacksmithAnsiCaretPattern = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2}\.\d+)Z?\s+\^\[\[\d+m(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|TRACE)\^\[\[0m\s+\[([^\]]+)\]\s+(.*)$/i;
+    match = originalLine.match(blacksmithAnsiCaretPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim().toUpperCase(),
+        component: match[4], // Component from brackets
+        message: stripAnsiCodes(match[5])
+      };
+    }
+
+    // Try with actual ANSI escape sequences (not caret notation)
+    const blacksmithAnsiRealPattern = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2}\.\d+)Z?\s+\x1b\[\d+m(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|TRACE)\x1b\[0m\s+\[([^\]]+)\]\s+(.*)$/i;
+    match = originalLine.match(blacksmithAnsiRealPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim().toUpperCase(),
+        component: match[4], // Component from brackets
+        message: stripAnsiCodes(match[5])
+      };
+    }
+
+    // Blacksmith format without ANSI codes: YYYY-MM-DD HH:MM:SS.mmm LEVEL [component] message
+    const blacksmithWithComponentPattern = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|TRACE)\s+\[([^\]]+)\]\s+(.*)$/i;
+    match = originalLine.match(blacksmithWithComponentPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim().toUpperCase(),
+        component: match[4],
+        message: stripAnsiCodes(match[5])
+      };
+    }
+
+    // Blacksmith format without component: YYYY-MM-DD HH:MM:SS.mmm LEVEL message
+    const blacksmithNoComponentPattern = /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|TRACE)\s+(?!\[)(.*)$/i;
+    match = originalLine.match(blacksmithNoComponentPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim().toUpperCase(),
+        component: '',
+        message: stripAnsiCodes(match[4])
+      };
+    }
+
     // Prometheus/Go-kit format: ts=TIMESTAMP caller=file:line level=LEVEL key=value...
     const prometheusPattern = /^ts=(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(.*)$/;
-    let match = cleanLine.match(prometheusPattern);
+    match = originalLine.match(prometheusPattern);
     if (match) {
       // Parse key=value pairs
       const kvPairs = match[3];
@@ -3676,40 +3762,40 @@
         date: match[1],
         time: match[2],
         level: level,
-        component: component,
-        message: message.trim()
+        component: extractComponent(originalLine),
+        message: stripAnsiCodes(message.trim())
       };
     }
 
     // Component-prefixed format: [Component] YYYY-MM-DDTHH:MM:SS.mmmZ LEVEL - message
     const componentPattern = /^\[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(\w+)\s+-\s+(.*)$/;
-    match = cleanLine.match(componentPattern);
+    match = originalLine.match(componentPattern);
     if (match) {
       return {
         date: match[2],
         time: match[3],
         level: match[4].toUpperCase(),
-        component: component || match[1],  // Use extracted component or fall back to this format's component
-        message: match[5]
+        component: match[1],  // Use the component from this format
+        message: stripAnsiCodes(match[5])
       };
     }
 
     // Bracketed timestamp with path: [YYYY-MM-DDTHH:MM:SS.mmmZ] path message
     const bracketTimestampPattern = /^\[(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\]\s+(.*)$/;
-    match = cleanLine.match(bracketTimestampPattern);
+    match = originalLine.match(bracketTimestampPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: 'INFO',
-        component: component,
-        message: match[3]
+        component: extractComponent(match[3]),
+        message: stripAnsiCodes(match[3])
       };
     }
 
     // RabbitMQ format: YYYY-MM-DD HH:MM:SS.mmm+TZ [level] <pid> message
     const rabbitMQPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+[+-]\d{2}:\d{2})\s+\[(\w+)\]\s+<[^>]+>\s+(.*)$/;
-    match = cleanLine.match(rabbitMQPattern);
+    match = originalLine.match(rabbitMQPattern);
     if (match) {
       // Extract just the time portion without timezone for consistency
       const timeMatch = match[2].match(/(\d{2}:\d{2}:\d{2}\.\d+)/);
@@ -3717,14 +3803,14 @@
         date: match[1],
         time: timeMatch ? timeMatch[1] : match[2].split('+')[0].split('-')[0],
         level: match[3].toUpperCase(),
-        component: component,
-        message: match[4]
+        component: extractComponent(match[4]),
+        message: stripAnsiCodes(match[4])
       };
     }
 
     // Redis format: PID:TYPE DD Mon YYYY HH:MM:SS.mmm # message
     const redisPattern = /^(\d+):([A-Z])\s+(\d{2})\s+(\w{3})\s+(\d{4})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+([#*-])\s+(.*)$/;
-    match = cleanLine.match(redisPattern);
+    match = originalLine.match(redisPattern);
     if (match) {
       // Convert Redis type to level
       const typeToLevel = {
@@ -3749,40 +3835,40 @@
         date: date,
         time: match[6],
         level: level,
-        component: component,
-        message: `[${match[1]}] ${match[8]}`
+        component: extractComponent(match[8]),
+        message: stripAnsiCodes(`[${match[1]}] ${match[8]}`)
       };
     }
 
     // PostgreSQL format: YYYY-MM-DD HH:MM:SS.mmm TZ [PID] LEVEL: message
     const postgresPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d+)\s+\w+\s+\[\d+\]\s+(\w+):\s+(.*)$/;
-    match = cleanLine.match(postgresPattern);
+    match = originalLine.match(postgresPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: match[3].toUpperCase(),
-        component: component,
-        message: match[4]
+        component: extractComponent(match[4]),
+        message: stripAnsiCodes(match[4])
       };
     }
 
     // MySQL/MariaDB format: YYYY-MM-DD HH:MM:SS PID [Level] message
     const mysqlPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+\d+\s+\[(\w+)\]\s+(.*)$/;
-    match = cleanLine.match(mysqlPattern);
+    match = originalLine.match(mysqlPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: match[3].toUpperCase(),
-        component: component,
-        message: match[4]
+        component: extractComponent(match[4]),
+        message: stripAnsiCodes(match[4])
       };
     }
 
     // MongoDB format: YYYY-MM-DDTHH:MM:SS.mmm+TZ LEVEL [component] message
     const mongoPattern = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)[+-]\d{4}\s+([A-Z])\s+(\w+)\s+\[([^\]]+)\]\s+(.*)$/;
-    match = cleanLine.match(mongoPattern);
+    match = originalLine.match(mongoPattern);
     if (match) {
       const levelMap = {
         'F': 'FATAL',
@@ -3795,28 +3881,28 @@
         date: match[1],
         time: match[2],
         level: levelMap[match[3]] || match[3],
-        component: component || match[5],
-        message: match[6]
+        component: match[5], // Use component from format
+        message: stripAnsiCodes(match[6])
       };
     }
 
     // BOSH Task Output format: Task 12345 | 00:06:55 | Stage: Description (00:00:00)
     const boshTaskPattern = /^Task\s+\d+\s+\|\s+(\d{2}:\d{2}:\d{2})\s+\|\s+(.+)$/;
-    match = cleanLine.match(boshTaskPattern);
+    match = originalLine.match(boshTaskPattern);
     if (match) {
       const currentDate = new Date().toISOString().split('T')[0]; // Use today's date as fallback
       return {
         date: currentDate,
         time: match[1],
         level: 'INFO',
-        component: component,
-        message: match[2]
+        component: extractComponent(match[2]),
+        message: stripAnsiCodes(match[2])
       };
     }
 
     // BOSH Director format: LEVEL, [YYYY-MM-DDTHH:MM:SS.mmm #PID] [task:TASKID] LEVEL -- MODULE: message
     const boshPattern = /^([IDWEF]), \[(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+) #\d+\] (\[(?:task:\d+|)\])\s*(\w+) -- ([^:]+):\s*(.*)$/;
-    match = cleanLine.match(boshPattern);
+    match = originalLine.match(boshPattern);
     if (match) {
       const levelMap = {
         'I': 'INFO',
@@ -3832,27 +3918,61 @@
         date: match[2],
         time: match[3],
         level: level,
-        component: component || match[6],
-        message: `${taskInfo}${match[7]}`
+        component: match[6], // Use module from format
+        message: stripAnsiCodes(`${taskInfo}${match[7]}`)
       };
     }
 
-    // Original Blacksmith format: YYYY-MM-DD HH:MM:SS.mmm LEVEL [context] message
-    const blacksmithPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(.*)$/;
-    match = cleanLine.match(blacksmithPattern);
+    // Generic ISO format: YYYY-MM-DDTHH:MM:SS.mmmZ LEVEL message (without component)
+    const genericISOPattern = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}\.\d+)Z?\s+(\w+)\s+(.*)$/;
+    match = originalLine.match(genericISOPattern);
     if (match) {
+      let message = match[4];
+      const component = extractComponent(message);
+
+      // If we extracted a component, remove it from the message
+      if (component) {
+        message = message.replace(`[${component}]`, '').trim();
+      }
+
       return {
         date: match[1],
         time: match[2],
         level: match[3].trim().toUpperCase(),
         component: component,
-        message: match[4]
+        message: stripAnsiCodes(message)
+      };
+    }
+
+    // Original Blacksmith format: YYYY-MM-DD HH:MM:SS.mmm LEVEL [context] message
+    const blacksmithLegacyPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+(.*)$/;
+    match = originalLine.match(blacksmithLegacyPattern);
+    if (match) {
+      let message = match[4];
+
+      // Remove duplicate level information from the message if it starts with a level indicator
+      // This happens when logs have nested structure like: INFO [34mINFO[0m [component] actual message
+      const levelKeywords = ['DEBUG', 'INFO', 'WARN', 'WARNING', 'ERROR', 'FATAL', 'TRACE'];
+      for (const levelKeyword of levelKeywords) {
+        if (message.trim().startsWith(levelKeyword)) {
+          // Remove the duplicate level and any trailing whitespace
+          message = message.trim().substring(levelKeyword.length).trim();
+          break;
+        }
+      }
+
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].trim().toUpperCase(),
+        component: extractComponent(message),
+        message: stripAnsiCodes(message)
       };
     }
 
     // Syslog-style format: Mon DD HH:MM:SS hostname process[pid]: message
     const syslogPattern = /^(\w{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})\s+\S+\s+([^[]+)(?:\[\d+\])?: (.*)$/;
-    match = cleanLine.match(syslogPattern);
+    match = originalLine.match(syslogPattern);
     if (match) {
       const months = {
         'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
@@ -3868,40 +3988,40 @@
         date: date,
         time: match[3],
         level: 'INFO',
-        component: component || match[4],
-        message: match[5]
+        component: match[4], // Use process name as component
+        message: stripAnsiCodes(match[5])
       };
     }
 
     // Simple timestamp format: [YYYY-MM-DD HH:MM:SS] message
     const simpleTimestampPattern = /^\[(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\]\s+(.*)$/;
-    match = cleanLine.match(simpleTimestampPattern);
+    match = originalLine.match(simpleTimestampPattern);
     if (match) {
       return {
         date: match[1],
         time: match[2],
         level: 'INFO',
-        component: component,
-        message: match[3]
+        component: extractComponent(match[3]),
+        message: stripAnsiCodes(match[3])
       };
     }
 
     // ISO 8601 format: YYYY-MM-DDTHH:MM:SS.mmmZ message
     const isoPattern = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)[Z+-][\d:]*\s+(.*)$/;
-    match = cleanLine.match(isoPattern);
+    match = originalLine.match(isoPattern);
     if (match) {
       return {
         timestamp: `${match[1]} ${match[2]}`,
         level: 'INFO',
-        component: component,
-        message: match[3]
+        component: extractComponent(match[3]),
+        message: stripAnsiCodes(match[3])
       };
     }
 
     // Standard format with operation: YYYY-MM-DD HH:MM:SS.mmm  LEVEL  operation  message
     // This handles logs like: 2025-09-24 19:39:29.171  INFO  vault get  DEBUG secret loc...
     const standardWithOpPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\s+([a-z\-_\s]+?)\s+(.*)$/i;
-    match = cleanLine.match(standardWithOpPattern);
+    match = originalLine.match(standardWithOpPattern);
     if (match) {
       // The operation (e.g., "vault get", "vm-monitor") becomes the component
       const operation = match[4].trim();
@@ -3914,32 +4034,40 @@
         date: match[1],
         time: match[2],
         level: match[3].toUpperCase(),
-        component: component || operation,  // Use extracted component or the operation as component
-        message: message
+        component: extractComponent(message) || operation,  // Use extracted component or the operation as component
+        message: stripAnsiCodes(message)
       };
     }
 
     // Standard format without operation: YYYY-MM-DD HH:MM:SS.mmm  LEVEL  message
     const standardPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\s+(.*)$/i;
-    match = cleanLine.match(standardPattern);
+    match = originalLine.match(standardPattern);
     if (match) {
+      let message = match[4];
+      const component = extractComponent(message);
+
+      // If we extracted a component, remove it from the message
+      if (component) {
+        message = message.replace(`[${component}]`, '').trim();
+      }
+
       return {
         date: match[1],
         time: match[2],
         level: match[3].toUpperCase(),
         component: component,
-        message: match[4]
+        message: stripAnsiCodes(message)
       };
     }
 
     // Handle lines that don't match any pattern (continuation lines, etc.)
-    // Try to extract level from simple patterns as fallback
+    // Use original line for fallback processing
     let fallbackLevel = '';
-    let fallbackMessage = cleanLine;
+    let fallbackMessage = stripAnsiCodes(originalLine);
 
     // Look for common level indicators
     const levelIndicators = /\b(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\b/i;
-    const levelMatch = cleanLine.match(levelIndicators);
+    const levelMatch = originalLine.match(levelIndicators);
     if (levelMatch) {
       fallbackLevel = levelMatch[1].toUpperCase();
     }
@@ -3947,19 +4075,19 @@
     // Try to extract basic timestamp if present at line start
     let fallbackDate = '';
     let fallbackTime = '';
-    const timestampMatch = cleanLine.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/);
+    const timestampMatch = originalLine.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/);
     if (timestampMatch) {
       fallbackDate = timestampMatch[1];
       fallbackTime = timestampMatch[2];
       // Remove timestamp from message
-      fallbackMessage = cleanLine.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*/, '');
+      fallbackMessage = stripAnsiCodes(originalLine.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*/, ''));
     }
 
     return {
       date: fallbackDate,
       time: fallbackTime,
-      level: fallbackLevel,
-      component: component,
+      level: fallbackLevel || 'INFO', // Default to INFO if no level found
+      component: extractComponent(fallbackMessage),
       message: fallbackMessage
     };
   };
@@ -4000,7 +4128,46 @@
     return formatted;
   };
 
-  const renderLogRow = (logEntry) => {
+  // Detect which columns should be displayed based on actual log data
+  const detectLogColumns = (parsedLogs) => {
+    if (!parsedLogs || parsedLogs.length === 0) {
+      return {
+        timestamp: false,
+        level: true,
+        component: false,
+        message: true
+      };
+    }
+
+    // Check if any logs have timestamp data (date, time, or timestamp field)
+    const hasTimestamp = parsedLogs.some(log => {
+      return (log.date && log.date.trim()) ||
+             (log.time && log.time.trim()) ||
+             (log.timestamp && log.timestamp.trim());
+    });
+
+    // Check if ANY logs have component data
+    // Show component column if even one log has a component
+    const hasComponent = parsedLogs.some(log => {
+      return log.component && log.component.trim();
+    });
+
+    return {
+      timestamp: hasTimestamp,
+      level: true, // Always show level
+      component: hasComponent, // Show if ANY log has a component
+      message: true // Always show message
+    };
+  };
+
+  const renderLogRow = (logEntry, columns = null) => {
+    // Default to showing all columns if no column config provided (backward compatibility)
+    const activeColumns = columns || {
+      timestamp: true,
+      level: true,
+      component: true,
+      message: true
+    };
     const levelClass = `log-level-${logEntry.level.toLowerCase()}`;
     const formattedMessage = formatLogMessage(logEntry.message);
 
@@ -4020,19 +4187,50 @@
       displayTimestamp = logEntry.time;
     }
 
-    // Display component or empty string if not present
-    const displayComponent = logEntry.component || '';
+    // Build cells dynamically based on active columns
+    const cells = [];
 
-    return `
-      <tr class="log-row ${levelClass}">
-        <td class="log-timestamp">${displayTimestamp}</td>
-        <td class="log-level">
-          <span class="level-badge ${levelClass}">${logEntry.level}</span>
-        </td>
-        <td class="log-component">${displayComponent}</td>
-        <td class="log-message">${formattedMessage}</td>
-      </tr>
-    `;
+    if (activeColumns.timestamp) {
+      cells.push(`<td class="log-timestamp">${displayTimestamp}</td>`);
+    }
+
+    if (activeColumns.level) {
+      cells.push(`<td class="log-level"><span class="level-badge ${levelClass}">${logEntry.level}</span></td>`);
+    }
+
+    if (activeColumns.component) {
+      const displayComponent = logEntry.component || '';
+      cells.push(`<td class="log-component">${displayComponent}</td>`);
+    }
+
+    if (activeColumns.message) {
+      cells.push(`<td class="log-message">${formattedMessage}</td>`);
+    }
+
+    return `<tr class="log-row ${levelClass}">${cells.join('')}</tr>`;
+  };
+
+  // Build table headers dynamically based on active columns
+  const buildTableHeaders = (columns) => {
+    const headers = [];
+
+    if (columns.timestamp) {
+      headers.push('<th class="log-col-timestamp">Timestamp</th>');
+    }
+
+    if (columns.level) {
+      headers.push('<th class="log-col-level">Level</th>');
+    }
+
+    if (columns.component) {
+      headers.push('<th class="log-col-component">Component</th>');
+    }
+
+    if (columns.message) {
+      headers.push('<th class="log-col-message">Message</th>');
+    }
+
+    return headers.join('');
   };
 
   const renderLogsTable = (logs, parsedRows = null, includeSearchFilter = true) => {
@@ -4041,6 +4239,9 @@
       ? logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line))
       : logs);
 
+    // Detect which columns should be displayed
+    const columns = detectLogColumns(rows);
+
     const searchFilterHTML = includeSearchFilter ? createSearchFilter('logs-table', 'Search logs...') : '';
 
     const tableHTML = `
@@ -4048,14 +4249,11 @@
       <table class="logs-table">
         <thead>
           <tr>
-            <th class="log-col-timestamp">Timestamp</th>
-            <th class="log-col-level">Level</th>
-            <th class="log-col-component">Component</th>
-            <th class="log-col-message">Message</th>
+            ${buildTableHeaders(columns)}
           </tr>
         </thead>
         <tbody id="logs-table-body">
-          ${rows.map(row => renderLogRow(row)).join('')}
+          ${rows.map(row => renderLogRow(row, columns)).join('')}
         </tbody>
       </table>
     `;
@@ -4093,6 +4291,10 @@
       return `<option value="${file.path}" ${selected}>${file.path}</option>`;
     }).join('');
 
+    // Use renderLogsTable for dynamic column rendering, but disable the built-in search filter
+    // since we're providing our own in the controls row
+    const logsTableHTML = renderLogsTable(logs, parsedLogs, false);
+
     return `
       <div class="logs-container">
         <div class="logs-controls-row">
@@ -4114,19 +4316,7 @@
           </button>
         </div>
         <div class="logs-table-container" id="blacksmith-logs-display">
-          <table class="logs-table">
-            <thead>
-              <tr>
-                <th class="log-col-timestamp">Timestamp</th>
-                <th class="log-col-level">Level</th>
-                <th class="log-col-component">Component</th>
-                <th class="log-col-message">Message</th>
-              </tr>
-            </thead>
-            <tbody id="logs-table-body">
-              ${parsedLogs.map(row => renderLogRow(row)).join('')}
-            </tbody>
-          </table>
+          ${logsTableHTML}
         </div>
       </div>
     `;
@@ -4380,7 +4570,7 @@
     try {
       // Get credentials, config/manifest, and vault data for service detection
       const [credsResponse, configResponse, vaultResponse] = await Promise.all([
-        fetch(`/creds`, { cache: 'no-cache' }),
+        fetch(`/b/${instanceId}/credentials`, { cache: 'no-cache' }),
         fetch(`/b/${instanceId}/config`, { cache: 'no-cache' }).catch(() => null),
         fetch(`/b/${instanceId}/details`, { cache: 'no-cache' }).catch(() => null)
       ]);
@@ -4389,8 +4579,7 @@
         return `<div class="error">Unable to fetch credentials for service testing</div>`;
       }
 
-      const allCreds = await credsResponse.json();
-      const creds = allCreds[instanceId] || {};
+      const creds = await credsResponse.json();
 
       // Get config/manifest data for fallbacks if available
       let manifestData = null;
@@ -7887,6 +8076,8 @@
             attachSearchFilter('vms-table');
             // Restore search filter state
             restoreSearchFilterState('vms-table', currentSearchFilter);
+            // Initialize resurrection toggle state
+            window.initializeResurrectionToggle('blacksmith', vms);
           }, 100);
         }
       }
@@ -8387,13 +8578,7 @@
 
       const catalog = await catalogResponse.json();
       console.log('Catalog response:', catalog);
-
-      // Check if catalog has services
-      if (!catalog || !catalog.services || catalog.services.length === 0) {
-        console.warn('No services found in catalog');
-        // Plans will show this message when the sub-tab is accessed
-        window.plansData = null;
-      }
+      console.log('Catalog has services:', catalog?.services?.length || 0);
 
       // Then fetch the status
       const statusResponse = await fetchWithHeaders('/b/status');
@@ -8540,10 +8725,13 @@
       // Update the UI
       let identHtml = data.env || 'Unknown Environment';
 
-
-      // Store plans data for later use when Plans sub-tab is accessed
+      // Store plans data BEFORE rendering (renderServicesTemplate needs it)
       if (catalog.services && catalog.services.length > 0) {
         window.plansData = catalog;
+        console.log('Set window.plansData with', catalog.services.length, 'services');
+      } else {
+        window.plansData = null;
+        console.log('No catalog services available, set window.plansData to null');
       }
 
       // Render services
@@ -8622,57 +8810,30 @@
         const setupFilterHandlers = () => {
           const serviceFilter = document.getElementById('service-filter');
           const planFilter = document.getElementById('plan-filter');
+          const hideDeletedFilter = document.getElementById('hide-deleted-filter');
           const clearFiltersBtn = document.getElementById('clear-filters');
           const copyDeploymentNamesBtn = document.getElementById('copy-deployment-names');
           const refreshServicesBtn = document.getElementById('refresh-services');
           const filterCount = document.getElementById('filter-count');
 
-          if (!serviceFilter || !planFilter) return;
-
-          // Create service id to name mapping from catalog
-          const serviceIdToName = {};
-          if (window.plansData && window.plansData.services) {
-            window.plansData.services.forEach(service => {
-              if (service && service.id && service.name) {
-                serviceIdToName[service.id] = service.name;
-              }
-            });
-          }
-
-          // Build plans per service map for the filter
-          const plansPerService = {};
-          const instancesList = Object.entries(window.serviceInstances || {});
-
-          instancesList.forEach(([id, details]) => {
-            if (details.service_id) {
-              // Only use properly mapped service names for filtering
-              const serviceName = serviceIdToName[details.service_id];
-              if (serviceName) {
-                if (!plansPerService[serviceName]) {
-                  plansPerService[serviceName] = new Set();
-                }
-                if (details.plan && details.plan.name) {
-                  plansPerService[serviceName].add(details.plan.name);
-                }
-              }
-            }
-          });
-
-          // Apply filters function
+          // Apply filters function - works even without dropdown filters
           const applyFilters = () => {
-            const selectedService = serviceFilter.value;
-            const selectedPlan = planFilter.value;
+            const selectedService = serviceFilter ? serviceFilter.value : '';
+            const selectedPlan = planFilter ? planFilter.value : '';
+            const hideDeleted = hideDeletedFilter ? hideDeletedFilter.checked : false;
             const allItems = document.querySelectorAll('#services .service-item');
             let visibleCount = 0;
 
             allItems.forEach(item => {
               const itemService = item.dataset.service;
               const itemPlan = item.dataset.plan;
+              const isDeleted = item.dataset.deleted === 'true';
 
               const matchesService = !selectedService || itemService === selectedService;
               const matchesPlan = !selectedPlan || itemPlan === selectedPlan;
+              const matchesDeletedFilter = !hideDeleted || !isDeleted;
 
-              if (matchesService && matchesPlan) {
+              if (matchesService && matchesPlan && matchesDeletedFilter) {
                 item.style.display = '';
                 visibleCount++;
               } else {
@@ -8686,47 +8847,14 @@
             }
           };
 
-          // Service filter change handler
-          serviceFilter.addEventListener('change', (e) => {
-            const selectedService = e.target.value;
-
-            // Update plan filter options
-            planFilter.innerHTML = '<option value="">All Plans</option>';
-
-            if (selectedService && plansPerService[selectedService]) {
-              const plans = Array.from(plansPerService[selectedService]).sort();
-              plans.forEach(plan => {
-                const option = document.createElement('option');
-                option.value = plan;
-                option.textContent = plan;
-                planFilter.appendChild(option);
-              });
-              planFilter.disabled = false;
-            } else {
-              planFilter.disabled = !selectedService;
-            }
-
-            // Apply filters
-            applyFilters();
-          });
-
-          // Plan filter change handler
-          planFilter.addEventListener('change', () => {
-            applyFilters();
-          });
-
-          // Clear filters button
-          if (clearFiltersBtn) {
-            clearFiltersBtn.addEventListener('click', () => {
-              serviceFilter.value = '';
-              planFilter.value = '';
-              planFilter.disabled = true;
-              planFilter.innerHTML = '<option value="">All Plans</option>';
+          // Hide deleted checkbox change handler - always set up if available
+          if (hideDeletedFilter) {
+            hideDeletedFilter.addEventListener('change', () => {
               applyFilters();
             });
           }
 
-          // Copy deployment names button
+          // Copy deployment names button - always set up if available
           if (copyDeploymentNamesBtn) {
             copyDeploymentNamesBtn.addEventListener('click', async (e) => {
               e.preventDefault();
@@ -9030,6 +9158,87 @@
               } finally {
                 button.disabled = false;
               }
+            });
+          }
+
+          // Only set up dropdown filter handlers if filters exist (catalog is available)
+          if (!serviceFilter || !planFilter) {
+            return;
+          }
+
+          // Create service id to name mapping from catalog
+          const serviceIdToName = {};
+          if (window.plansData && window.plansData.services) {
+            window.plansData.services.forEach(service => {
+              if (service && service.id && service.name) {
+                serviceIdToName[service.id] = service.name;
+              }
+            });
+          }
+
+          // Build plans per service map for the filter
+          const plansPerService = {};
+          const instancesList = Object.entries(window.serviceInstances || {});
+
+          instancesList.forEach(([id, details]) => {
+            if (details.service_id) {
+              // Only use properly mapped service names for filtering
+              const serviceName = serviceIdToName[details.service_id];
+              if (serviceName) {
+                if (!plansPerService[serviceName]) {
+                  plansPerService[serviceName] = new Set();
+                }
+                if (details.plan && details.plan.name) {
+                  plansPerService[serviceName].add(details.plan.name);
+                }
+              }
+            }
+          });
+
+          // Service filter change handler
+          serviceFilter.addEventListener('change', (e) => {
+            const selectedService = e.target.value;
+
+            // Update plan filter options
+            planFilter.innerHTML = '<option value="">All Plans</option>';
+
+            if (selectedService && plansPerService[selectedService]) {
+              const plans = Array.from(plansPerService[selectedService]).sort();
+              plans.forEach(plan => {
+                const option = document.createElement('option');
+                option.value = plan;
+                option.textContent = plan;
+                planFilter.appendChild(option);
+              });
+              planFilter.disabled = false;
+            } else {
+              planFilter.disabled = !selectedService;
+            }
+
+            // Apply filters
+            applyFilters();
+          });
+
+          // Plan filter change handler
+          planFilter.addEventListener('change', () => {
+            applyFilters();
+          });
+
+          // Clear filters button
+          if (clearFiltersBtn) {
+            clearFiltersBtn.addEventListener('click', () => {
+              if (serviceFilter) {
+                serviceFilter.value = '';
+              }
+              if (planFilter) {
+                planFilter.value = '';
+                planFilter.disabled = true;
+                planFilter.innerHTML = '<option value="">All Plans</option>';
+              }
+              if (hideDeletedFilter) {
+                hideDeletedFilter.checked = false;
+              }
+              applyFilters();
             });
           }
         };
@@ -9744,8 +9953,11 @@
       window.tasksAutoRefreshInterval = autoRefreshInterval;
     }
 
-    // Populate the task filter dropdown
-    populateTaskFilter();
+    // Populate the task filter dropdown and refresh tasks
+    populateTaskFilter().then(() => {
+      // After populating the dropdown, refresh tasks with the default 'blacksmith' filter
+      refreshTasksTable();
+    });
   };
 
   // Populate task filter dropdown with filter options
@@ -9762,7 +9974,8 @@
 
       if (taskFilter && data && data.options && Array.isArray(data.options)) {
         // Save current selection if not provided
-        const currentSelection = preserveSelection || taskFilter.value || 'blacksmith';
+        // Always default to 'blacksmith' for initial load to ensure all tasks are shown
+        const currentSelection = preserveSelection !== null ? preserveSelection : 'blacksmith';
 
         // Clear existing options
         taskFilter.innerHTML = '';
@@ -9776,6 +9989,11 @@
           if (option === currentSelection) optionElement.selected = true;
           taskFilter.appendChild(optionElement);
         });
+
+        // Ensure blacksmith is always selected if no explicit selection was preserved
+        if (preserveSelection === null && taskFilter.value !== 'blacksmith') {
+          taskFilter.value = 'blacksmith';
+        }
       }
     } catch (error) {
       console.warn('Error loading service filter options:', error);
@@ -9792,7 +10010,12 @@
     const taskType = typeFilter ? typeFilter.value : 'recent';
     const checkedStates = Array.from(stateCheckboxes).map(cb => cb.value);
     const uncheckedStates = Array.from(document.querySelectorAll('#blacksmith .checkbox-group input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
-    const taskFilterValue = taskFilter ? taskFilter.value : 'blacksmith';
+    let taskFilterValue = taskFilter ? taskFilter.value : 'blacksmith';
+
+    // Ensure we always have a valid team filter, default to blacksmith to show all tasks
+    if (!taskFilterValue || taskFilterValue === '') {
+      taskFilterValue = 'blacksmith';
+    }
 
     try {
       let url = `/b/tasks?type=${taskType}&limit=100&team=${encodeURIComponent(taskFilterValue)}`;
@@ -9979,8 +10202,6 @@
       event.preventDefault();
     }
 
-    console.log('Opening task details modal for task:', taskId);
-
     // Create or get the modal
     let modal = document.getElementById('task-details-modal');
     if (!modal) {
@@ -9997,9 +10218,9 @@
               </div>
               <div class="modal-body">
                 <div id="task-details-loading" class="loading">Loading task details...</div>
-                <div id="task-details-content" style="display: none;">
-                  <div class="task-summary">
-                    <div class="task-info-table">
+                <div id="task-details-content" class="task-details-content" style="display: none;">
+                  <div class="task-summary task-summary-section">
+                    <div class="task-info-table task-summary-card">
                       <table class="task-details-table">
                         <thead>
                           <tr>
@@ -10029,24 +10250,24 @@
                     </div>
                   </div>
 
-                  <div class="manifest-tabs-nav">
+                  <div class="manifest-tabs-nav task-tabs-nav">
                     <button class="manifest-tab-btn active" data-tab="task" data-group="task-tabs">Task</button>
                     <button class="manifest-tab-btn" data-tab="debug" data-group="task-tabs">Debug</button>
                     <button class="manifest-tab-btn" data-tab="raw" data-group="task-tabs">Raw</button>
                     <button class="manifest-tab-btn" data-tab="cpi" data-group="task-tabs">CPI</button>
                   </div>
 
-                  <div class="manifest-tab-content">
-                    <div id="task-task-content" class="manifest-tab-pane active" data-tab="task" data-group="task-tabs">
+                  <div class="manifest-tab-content task-tab-content">
+                    <div id="task-task-content" class="manifest-tab-pane task-tab-pane active" data-tab="task" data-group="task-tabs">
                       <div class="loading">Loading task output...</div>
                     </div>
-                    <div id="task-debug-content" class="manifest-tab-pane" data-tab="debug" data-group="task-tabs">
+                    <div id="task-debug-content" class="manifest-tab-pane task-tab-pane" data-tab="debug" data-group="task-tabs">
                       <div class="loading">Loading debug...</div>
                     </div>
-                    <div id="task-raw-content" class="manifest-tab-pane" data-tab="raw" data-group="task-tabs">
+                    <div id="task-raw-content" class="manifest-tab-pane task-tab-pane" data-tab="raw" data-group="task-tabs">
                       <div class="loading">Loading raw data...</div>
                     </div>
-                    <div id="task-cpi-content" class="manifest-tab-pane" data-tab="cpi" data-group="task-tabs">
+                    <div id="task-cpi-content" class="manifest-tab-pane task-tab-pane" data-tab="cpi" data-group="task-tabs">
                       <div class="loading">Loading CPI output...</div>
                     </div>
                   </div>
@@ -10078,6 +10299,9 @@
       });
     }
 
+    // Remember the element that triggered the modal so we can restore focus later
+    window.taskDetailsPreviousFocus = document.activeElement;
+
     // Store current task ID for refresh
     window.currentTaskId = taskId;
 
@@ -10091,6 +10315,12 @@
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
 
+    // Move focus to the modal close button for accessibility
+    const closeButton = modal.querySelector('.modal-close');
+    if (closeButton) {
+      closeButton.focus();
+    }
+
     // Load task details
     await loadTaskDetails(taskId);
 
@@ -10102,6 +10332,11 @@
   window.hideTaskDetailsModal = () => {
     const modal = document.getElementById('task-details-modal');
     if (modal) {
+      const activeElement = document.activeElement;
+      if (activeElement && modal.contains(activeElement) && typeof activeElement.blur === 'function') {
+        activeElement.blur();
+      }
+
       modal.classList.remove('active');
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
@@ -10113,6 +10348,11 @@
       clearInterval(window.taskModalAutoRefresh);
       window.taskModalAutoRefresh = null;
     }
+
+    if (window.taskDetailsPreviousFocus && typeof window.taskDetailsPreviousFocus.focus === 'function') {
+      window.taskDetailsPreviousFocus.focus();
+    }
+    window.taskDetailsPreviousFocus = null;
 
     window.currentTaskId = null;
   };
@@ -10221,7 +10461,7 @@
         const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
         if (targetPane) {
           targetPane.classList.add('active');
-          targetPane.style.display = 'block';
+          targetPane.style.display = '';
         }
       });
     });
@@ -10369,9 +10609,16 @@
 
     // Show the modal
     modal.style.display = 'flex';
+    modal.classList.remove('hidden'); // Remove hidden class
+    modal.classList.remove('opacity-0'); // Remove opacity-0 Tailwind class
+    modal.classList.remove('invisible'); // Remove invisible Tailwind class
     modal.classList.add('active');
+    modal.removeAttribute('inert'); // Remove inert attribute to make interactive
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+
+    // Force z-index to ensure modal is on top
+    modal.style.zIndex = '99999';
 
     // Show loading state
     const loadingDiv = document.getElementById('config-details-loading');
@@ -10455,6 +10702,8 @@
       if (versions.length === 0) {
         versionsList.innerHTML = '<div class="no-versions">No versions found</div>';
       } else {
+        let firstVersionItem = null;
+
         versions.forEach((version, index) => {
           const isActive = version.is_active || version.id === currentId || (index === 0 && currentId && version.id.replace('*', '') === currentId);
           const versionItem = document.createElement('div');
@@ -10465,16 +10714,26 @@
             <div class="version-date">${formatTimestamp(version.created_at)}</div>
             ${version.team ? `<div class="version-team">Team: ${version.team}</div>` : ''}
           `;
-          versionItem.addEventListener('click', () => loadConfigVersion(version.id, versionItem));
+
+          // Create a bound function to avoid closure issues
+          const clickHandler = () => loadConfigVersion(version.id, versionItem);
+          versionItem.addEventListener('click', clickHandler);
+
           versionsList.appendChild(versionItem);
+
+          // Remember the first item for auto-selection
+          if (index === 0) {
+            firstVersionItem = versionItem;
+          }
         });
 
-        // Auto-select the first (most recent) version
-        if (versions.length > 0) {
-          const firstItem = versionsList.querySelector('.version-item');
-          if (firstItem) {
-            firstItem.click();
-          }
+        // Auto-select the first (most recent) version by calling loadConfigVersion directly
+        // instead of triggering a click event to avoid potential event propagation issues
+        if (firstVersionItem && versions.length > 0) {
+          // Small delay to ensure DOM is fully ready
+          setTimeout(() => {
+            loadConfigVersion(versions[0].id, firstVersionItem);
+          }, 10);
         }
       }
 
@@ -10497,21 +10756,33 @@
   };
 
   // Load specific config version content
+  // Add loading state tracking to prevent multiple simultaneous requests
+  let loadingConfigVersion = false;
+
   window.loadConfigVersion = async (versionId, versionItem) => {
-    // Remove the asterisk if present
-    const cleanId = versionId.replace('*', '');
+    // Prevent multiple simultaneous loading requests
+    if (loadingConfigVersion) {
+      return;
+    }
 
-    // Update selected state in the list
-    document.querySelectorAll('.version-item').forEach(item => {
-      item.classList.remove('selected');
-    });
-    versionItem.classList.add('selected');
-
-    // Show loading state in content area
-    const contentPre = document.getElementById('config-content-text');
-    contentPre.textContent = 'Loading config content...';
+    loadingConfigVersion = true;
 
     try {
+      // Remove the asterisk if present
+      const cleanId = versionId.replace('*', '');
+
+      // Update selected state in the list
+      document.querySelectorAll('.version-item').forEach(item => {
+        item.classList.remove('selected');
+      });
+      versionItem.classList.add('selected');
+
+      // Show loading state in content area
+      const contentPre = document.getElementById('config-content-text');
+      if (contentPre) {
+        contentPre.textContent = 'Loading config content...';
+      }
+
       // Fetch config details for this version
       const response = await fetch(`/b/configs/${cleanId}`, { cache: 'no-cache' });
       if (!response.ok) {
@@ -10519,12 +10790,19 @@
       }
       const config = await response.json();
 
-      // Display the content
-      contentPre.textContent = config.content || 'No content available';
+      // Display the content (check if element still exists)
+      if (contentPre) {
+        contentPre.textContent = config.content || 'No content available';
+      }
 
     } catch (error) {
       console.error('Failed to load config version content:', error);
-      contentPre.textContent = `Failed to load config content: ${error.message}`;
+      const contentPre = document.getElementById('config-content-text');
+      if (contentPre) {
+        contentPre.textContent = `Failed to load config content: ${error.message}`;
+      }
+    } finally {
+      loadingConfigVersion = false;
     }
   };
 
@@ -10533,12 +10811,26 @@
     const modal = document.getElementById('config-details-modal');
     if (modal) {
       modal.classList.remove('active');
+      modal.classList.add('hidden'); // Add back hidden class
+      modal.classList.add('opacity-0'); // Add back opacity-0 Tailwind class
+      modal.classList.add('invisible'); // Add back invisible Tailwind class
       modal.style.display = 'none';
+      modal.style.zIndex = ''; // Reset z-index
+      modal.setAttribute('inert', ''); // Add back inert attribute
       modal.setAttribute('aria-hidden', 'true');
       document.body.style.overflow = '';
+
       // Clear stored config info
       window.currentConfigInfo = null;
       window.currentDiffIndex = null;
+
+      // Reset loading state
+      loadingConfigVersion = false;
+
+      // Clear version selection
+      document.querySelectorAll('.version-item').forEach(item => {
+        item.classList.remove('selected');
+      });
     }
   };
 
@@ -10568,28 +10860,39 @@
 
   // Set up config details modal tab switching
   const setupConfigDetailsTabs = () => {
-    const tabGroupId = 'config-tabs';
-    const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
-    const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+    // Support both config-tabs and config-details-tabs (for different modal instances)
+    const tabGroupIds = ['config-tabs', 'config-details-tabs'];
+    let tabButtons = [];
+    let tabPanes = [];
+
+    tabGroupIds.forEach(tabGroupId => {
+      const buttons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
+      const panes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
+      tabButtons.push(...buttons);
+      tabPanes.push(...panes);
+    });
 
     tabButtons.forEach(button => {
       button.addEventListener('click', () => {
         const tabName = button.dataset.tab;
+        const buttonGroupId = button.dataset.group;
 
-        // Update active states
-        tabButtons.forEach(btn => btn.classList.remove('active'));
+        // Update active states (only within the same group)
+        const sameGroupButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${buttonGroupId}"]`);
+        sameGroupButtons.forEach(btn => btn.classList.remove('active'));
         button.classList.add('active');
 
-        // Show/hide content panes
-        tabPanes.forEach(pane => {
+        // Show/hide content panes (only within the same group)
+        const sameGroupPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${buttonGroupId}"]`);
+        sameGroupPanes.forEach(pane => {
           pane.classList.remove('active');
           pane.style.display = 'none';
         });
 
-        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
+        const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${buttonGroupId}"]`);
         if (targetPane) {
           targetPane.classList.add('active');
-          targetPane.style.display = 'block';
+          targetPane.style.display = '';
         }
 
         // Initialize diff tab when clicked
@@ -11041,7 +11344,7 @@
         const targetPane = document.querySelector(`.manifest-tab-pane[data-tab="${tabName}"][data-group="${tabGroupId}"]`);
         if (targetPane) {
           targetPane.classList.add('active');
-          targetPane.style.display = 'block';
+          targetPane.style.display = '';
 
           // Load content if not already loaded
           if (targetPane.innerHTML.includes('Loading') && window.currentTaskId) {
@@ -11065,7 +11368,7 @@
       }
 
       const taskData = await response.json();
-      const task = taskData;
+      const task = taskData.task;
 
       // Update task summary and modal title
       document.getElementById('task-details-modal-title').textContent = `Task Details - Task # ${task.id}`;
@@ -11275,8 +11578,9 @@
   const formatTaskEvents = (events) => {
     if (!events || events.length === 0) {
       return `
-        <div class="logs-table-container">
-          <table class="logs-table">
+        <div class="logs-table-container task-table">
+          <div class="task-tab-scroll">
+            <table class="logs-table">
             <thead>
               <tr>
                 <th>Time</th>
@@ -11292,14 +11596,16 @@
                 <td colspan="6" class="no-data-row">No events recorded</td>
               </tr>
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       `;
     }
 
     return `
-      <div class="logs-table-container">
-        <table class="logs-table">
+      <div class="logs-table-container task-table">
+        <div class="task-tab-scroll">
+          <table class="logs-table">
           <thead>
             <tr>
               <th>Time</th>
@@ -11334,7 +11640,8 @@
               `;
     }).join('')}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     `;
   };
@@ -11345,7 +11652,7 @@
 
     if (!events || events.length === 0) {
       return `
-        <div class="logs-table-container">
+        <div class="logs-table-container task-table">
           <div class="table-controls-container">
             <div class="search-filter-container">
               ${createSearchFilter(tableClass, 'Search task events...')}
@@ -11355,20 +11662,22 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
-          <table class="${tableClass}">
-            <thead>
-              <tr>
-                <th>Timestamp</th>
-                <th>Level</th>
-                <th>Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td colspan="3" class="no-data-row">No task events available</td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="task-tab-scroll">
+            <table class="${tableClass}">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Level</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="3" class="no-data-row">No task events available</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       `;
     }
@@ -11388,7 +11697,7 @@
     }).join('');
 
     return `
-      <div class="logs-table-container">
+      <div class="logs-table-container task-table">
         <div class="table-controls-container">
           <div class="search-filter-container">
             ${createSearchFilter(tableClass, 'Search task events...')}
@@ -11398,18 +11707,20 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
         </div>
-        <table class="${tableClass}">
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Level</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
+        <div class="task-tab-scroll">
+          <table class="${tableClass}">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Level</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
       </div>
     `;
   };
@@ -11420,7 +11731,7 @@
 
     if (!output || output.trim() === '') {
       return `
-        <div class="logs-table-container">
+        <div class="logs-table-container task-table">
           <div class="table-controls-container">
             <div class="search-filter-container">
               ${createSearchFilter(tableClass, `Search ${outputType}...`)}
@@ -11430,20 +11741,22 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
             </button>
           </div>
-          <table class="${tableClass}">
-            <thead>
-              <tr>
-                <th>Timestamp</th>
-                <th>Level</th>
-                <th>Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td colspan="3" class="no-data-row">No ${outputType} output available</td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="task-tab-scroll">
+            <table class="${tableClass}">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Level</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="3" class="no-data-row">No ${outputType} output available</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       `;
     }
@@ -11453,7 +11766,7 @@
     const parsedLines = lines.map(line => parseLogLine(line));
 
     return `
-      <div class="logs-table-container">
+      <div class="logs-table-container task-table">
         <div class="table-controls-container">
           <div class="search-filter-container">
             ${createSearchFilter(tableClass, `Search ${outputType}...`)}
@@ -11463,18 +11776,20 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </button>
         </div>
-        <table class="${tableClass}">
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Level</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${parsedLines.map(row => renderLogRow(row)).join('')}
-          </tbody>
-        </table>
+        <div class="task-tab-scroll">
+          <table class="${tableClass}">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Level</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${parsedLines.map(row => renderLogRow(row)).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
     `;
   };
@@ -11615,7 +11930,7 @@
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const response = await fetch('/b/certificates/trusted', {
+      const response = await fetch('/b/internal/certificates/trusted', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -11752,7 +12067,7 @@
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-      const response = await fetch('/b/certificates/trusted/file', {
+      const response = await fetch('/b/internal/certificates/trusted/file', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -11913,7 +12228,7 @@
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const response = await fetch('/b/certificates/blacksmith', {
+      const response = await fetch('/b/internal/certificates/blacksmith', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -12025,7 +12340,7 @@
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 45000); // Longer timeout for network connections
 
-      const response = await fetch('/b/certificates/endpoint', {
+      const response = await fetch('/b/internal/certificates/endpoint', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -12579,7 +12894,7 @@
       listContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Scanning manifest for certificates...</div>';
       resultsContainer.style.display = 'block';
 
-      const response = await fetch(`/b/certificates/services/${instanceId}`, {
+      const response = await fetch(`/b/internal/certificates/services/${instanceId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -12790,7 +13105,7 @@
       detailsContainer.innerHTML = '<div class="cert-loading"><div class="cert-loading-spinner"></div>Connecting to service endpoint...</div>';
       resultsContainer.style.display = 'block';
 
-      const response = await fetch('/b/certificates/endpoint', {
+      const response = await fetch('/b/internal/certificates/endpoint', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -13101,7 +13416,7 @@
           const targetPane = modal.querySelector(`.cert-tab-pane[data-tab="${targetTab}"][data-group="${tabGroupId}"]`);
           if (targetPane) {
             targetPane.classList.add('active');
-            targetPane.style.display = 'block';
+            targetPane.style.display = '';
           }
         });
       });
@@ -14593,8 +14908,8 @@
                       <tr>
                         <td><strong>${service.name}</strong></td>
                         <td>${service.description || 'N/A'}</td>
-                        <td>${service.plans.length} plan(s)</td>
-                        <td>${service.available ? 'Yes' : 'No'}</td>
+                        <td>${service.plans ? service.plans.length + ' plan(s)' : 'N/A'}</td>
+                        <td>${service.available !== undefined ? (service.available ? 'Yes' : 'No') : 'N/A'}</td>
                       </tr>
                     `).join('')}
                   </tbody>
@@ -15159,6 +15474,7 @@
       const modal = document.getElementById('terminal-modal');
       if (modal) {
         modal.style.display = 'flex';
+        modal.classList.remove('hidden', 'opacity-0', 'invisible');
         modal.classList.add('active');
         modal.setAttribute('aria-hidden', 'false');
         // Ensure modal is interactive: remove inert if present
@@ -15349,13 +15665,17 @@
             heartbeatTimer = null;
           }
           if (!handshakeReceived && retryCount < maxRetries && event.code !== 1000) {
-            // Connection closed before handshake, likely a connection issue
             terminal.writeln(`\r\n[Connection closed unexpectedly - Retrying... (${retryCount + 1}/${maxRetries})]`);
             retryCount++;
             const delay = 1000 * Math.pow(2, retryCount - 1);
             setTimeout(connectWebSocket, delay);
           } else {
             terminal.writeln('\r\n[Disconnected]');
+            if (event.code !== 1000) {
+              const deploymentName = context.boshDeploymentName || context.deploymentName;
+              const instanceName = context.instanceName || context.instanceId;
+              showNotification(`Disconnected: ${deploymentName}/${instanceName}`, 'info');
+            }
             if (retryCount >= maxRetries) {
               terminal.writeln('\r\n[Max retry attempts reached. Please try reconnecting manually.]');
             }
@@ -15457,6 +15777,18 @@
     },
 
     switchToSession(sessionKey) {
+      // Ensure modal is visible
+      const modal = document.getElementById('terminal-modal');
+      if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.remove('hidden', 'opacity-0', 'invisible');
+        modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
+        if (modal.hasAttribute('inert')) {
+          modal.removeAttribute('inert');
+        }
+      }
+
       // Hide all terminals
       document.querySelectorAll('.terminal-instance').forEach(el => {
         el.classList.remove('active');
@@ -15542,9 +15874,12 @@
                 try { active.blur(); } catch (_) { }
               }
               modal.classList.remove('active');
+              modal.classList.add('opacity-0', 'invisible');
               modal.setAttribute('aria-hidden', 'true');
+              modal.setAttribute('inert', '');
               setTimeout(() => {
                 modal.style.display = 'none';
+                modal.classList.add('hidden');
               }, 300);
             }
           }
@@ -15562,9 +15897,12 @@
       const modal = document.getElementById('terminal-modal');
       if (modal) {
         modal.classList.remove('active');
+        modal.classList.add('opacity-0', 'invisible');
         modal.setAttribute('aria-hidden', 'true');
+        modal.setAttribute('inert', '');
         setTimeout(() => {
           modal.style.display = 'none';
+          modal.classList.add('hidden');
         }, 300);
       }
 
@@ -15608,10 +15946,12 @@
           try { active.blur(); } catch (_) { }
         }
         modal.classList.remove('active');
+        modal.classList.add('opacity-0', 'invisible');
         modal.setAttribute('aria-hidden', 'true');
         modal.setAttribute('inert', '');
         setTimeout(() => {
           modal.style.display = 'none';
+          modal.classList.add('hidden');
         }, 300);
       }
     },
@@ -15621,6 +15961,7 @@
       const modal = document.getElementById('terminal-modal');
       if (modal && this.sessions.size > 0) {
         modal.style.display = 'flex';
+        modal.classList.remove('hidden', 'opacity-0', 'invisible');
         modal.setAttribute('aria-hidden', 'false');
         if (modal.hasAttribute('inert')) {
           modal.removeAttribute('inert');
@@ -15663,49 +16004,67 @@
           // Add hover tooltip functionality
           let tooltipTimeout;
           let tooltip;
-          
-          tab.addEventListener('mouseenter', (e) => {
-            tooltipTimeout = setTimeout(() => {
-              // Create tooltip element
-              tooltip = document.createElement('div');
-              tooltip.className = 'terminal-tab-tooltip absolute bg-gray-900 dark:bg-gray-800 text-white text-xs rounded px-2 py-1.5 shadow-lg z-[10001] pointer-events-none whitespace-nowrap';
-              
-              // Build tooltip content
-              const connectionStatus = session.websocket && session.websocket.readyState === WebSocket.OPEN ? 
-                '<span class="text-green-400">● Connected</span>' : 
-                '<span class="text-red-400">● Disconnected</span>';
-              
-              tooltip.innerHTML = `
-                <div class="space-y-1">
-                  <div><strong>Deployment:</strong> ${session.context.boshDeploymentName || session.context.deploymentName}</div>
-                  <div><strong>Instance:</strong> ${session.context.instanceName || session.context.instanceId}</div>
-                  <div><strong>Instance ID:</strong> ${session.context.instanceId}</div>
-                  <div><strong>Status:</strong> ${connectionStatus}</div>
-                </div>
-              `;
-              
-              document.body.appendChild(tooltip);
-              
-              // Position tooltip above the tab
-              const rect = tab.getBoundingClientRect();
-              tooltip.style.left = `${rect.left + rect.width / 2 - tooltip.offsetWidth / 2}px`;
-              tooltip.style.top = `${rect.top - tooltip.offsetHeight - 5}px`;
-              
-              // Add fade-in animation
-              tooltip.style.opacity = '0';
-              setTimeout(() => {
-                if (tooltip) tooltip.style.opacity = '1';
-              }, 10);
-            }, 500); // Show after 500ms delay
-          });
-          
-          tab.addEventListener('mouseleave', () => {
+
+          const cleanupTooltip = () => {
             clearTimeout(tooltipTimeout);
-            if (tooltip) {
+            if (tooltip && tooltip.parentNode) {
               tooltip.remove();
               tooltip = null;
             }
+          };
+
+          tab.addEventListener('mouseenter', (e) => {
+            cleanupTooltip();
+            tooltipTimeout = setTimeout(() => {
+              tooltip = document.createElement('div');
+              tooltip.className = 'terminal-tab-tooltip';
+              tooltip.style.cssText = `
+                position: fixed;
+                background: var(--bg-tertiary, #1f2937);
+                color: var(--text-primary, #f3f4f6);
+                font-size: 12px;
+                padding: 6px 12px;
+                border-radius: 4px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+                z-index: 10001;
+                pointer-events: none;
+                white-space: nowrap;
+                opacity: 0;
+                transition: opacity 0.2s ease-in-out;
+                border: 1px solid var(--border-primary, #374151);
+              `;
+
+              const connectionStatus = session.websocket && session.websocket.readyState === WebSocket.OPEN ? '●' : '●';
+              const statusColor = session.websocket && session.websocket.readyState === WebSocket.OPEN ?
+                'var(--text-success, #10b981)' : 'var(--text-error, #ef4444)';
+
+              const deploymentName = session.context.boshDeploymentName || session.context.deploymentName;
+              const instanceName = session.context.instanceName || session.context.instanceId;
+
+              tooltip.innerHTML = `
+                <span style="color: ${statusColor};">${connectionStatus}</span> ${deploymentName} / ${instanceName}
+              `;
+
+              document.body.appendChild(tooltip);
+
+              const rect = tab.getBoundingClientRect();
+              const tooltipRect = tooltip.getBoundingClientRect();
+              tooltip.style.left = `${Math.max(10, rect.left + rect.width / 2 - tooltipRect.width / 2)}px`;
+              tooltip.style.top = `${Math.max(10, rect.top - tooltipRect.height - 8)}px`;
+
+              requestAnimationFrame(() => {
+                if (tooltip) tooltip.style.opacity = '1';
+              });
+            }, 500);
           });
+
+          tab.addEventListener('mouseleave', cleanupTooltip);
+
+          const originalRemove = tab.remove.bind(tab);
+          tab.remove = function() {
+            cleanupTooltip();
+            originalRemove();
+          };
 
           // Click to activate session and restore
           tab.onclick = (e) => {
@@ -15728,6 +16087,12 @@
       if (minimizedBar) {
         minimizedBar.classList.remove('active');
         document.body.classList.remove('terminal-minimized');
+
+        document.querySelectorAll('.terminal-tab-tooltip').forEach(tooltip => {
+          if (tooltip.parentNode) {
+            tooltip.remove();
+          }
+        });
       }
     },
 
@@ -15788,8 +16153,13 @@
         session.terminal.writeln(`\r\n[Reconnection Error] ${error.message || 'WebSocket connection failed'}`);
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         session.terminal.writeln('\r\n[Disconnected]');
+        if (event.code !== 1000) {
+          const deploymentName = session.context.boshDeploymentName || session.context.deploymentName;
+          const instanceName = session.context.instanceName || session.context.instanceId;
+          showNotification(`Disconnected: ${deploymentName}/${instanceName}`, 'info');
+        }
       };
 
       // Handle terminal input

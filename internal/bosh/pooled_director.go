@@ -13,7 +13,6 @@ var (
 	ErrConnectionPoolTimeout = errors.New("timeout waiting for BOSH connection slot")
 )
 
-
 // PooledDirector wraps a Director with connection pooling.
 type PooledDirector struct {
 	director  Director
@@ -58,6 +57,7 @@ func (p *PooledDirector) GetPoolStats() (*PoolStats, error) {
 		AvgWaitTime:       time.Duration(atomic.LoadInt64(&p.avgWaitTime)),
 		MaxConnections:    cap(p.semaphore),
 	}
+
 	return stats, nil
 }
 

@@ -2,6 +2,7 @@ package broker_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,11 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// Test sentinel errors.
+var (
+	errVaultPathNotFound = errors.New("vault path not found")
+)
+
 // BrokerTestAdapter adapts broker.Broker to work with reconciler.BrokerInterface.
 type BrokerTestAdapter struct {
 	*broker.Broker
@@ -41,18 +47,23 @@ func (v *vaultInterfaceAdapter) Get(path string) (map[string]interface{}, error)
 
 	exists, err := v.client.Get(context.Background(), path, &out)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get vault data from path %q: %w", path, err)
 	}
 
 	if !exists {
-		return nil, nil
+		return nil, errVaultPathNotFound
 	}
 
 	return out, nil
 }
 
 func (v *vaultInterfaceAdapter) Put(path string, secret map[string]interface{}) error {
-	return v.client.Put(context.Background(), path, secret)
+	err := v.client.Put(context.Background(), path, secret)
+	if err != nil {
+		return fmt.Errorf("failed to put secret to vault path %q: %w", path, err)
+	}
+
+	return nil
 }
 
 func (v *vaultInterfaceAdapter) GetSecret(path string) (map[string]interface{}, error) {
@@ -60,11 +71,21 @@ func (v *vaultInterfaceAdapter) GetSecret(path string) (map[string]interface{}, 
 }
 
 func (v *vaultInterfaceAdapter) SetSecret(path string, secret map[string]interface{}) error {
-	return v.client.Put(context.Background(), path, secret)
+	err := v.client.Put(context.Background(), path, secret)
+	if err != nil {
+		return fmt.Errorf("failed to set secret to vault path %q: %w", path, err)
+	}
+
+	return nil
 }
 
 func (v *vaultInterfaceAdapter) DeleteSecret(path string) error {
-	return v.client.Delete(context.Background(), path)
+	err := v.client.Delete(context.Background(), path)
+	if err != nil {
+		return fmt.Errorf("failed to delete secret from vault path %q: %w", path, err)
+	}
+
+	return nil
 }
 
 func (v *vaultInterfaceAdapter) ListSecrets(path string) ([]string, error) {
@@ -290,14 +311,14 @@ var _ = Describe("Binding Credentials Integration", func() {
 			var rabbitAPIServer *httptest.Server
 
 			BeforeEach(func() {
-				rabbitAPIServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				rabbitAPIServer = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 					switch {
-					case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/users/"):
-						w.WriteHeader(http.StatusCreated)
-					case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/permissions/"):
-						w.WriteHeader(http.StatusCreated)
+					case request.Method == http.MethodPut && strings.Contains(request.URL.Path, "/users/"):
+						writer.WriteHeader(http.StatusCreated)
+					case request.Method == http.MethodPut && strings.Contains(request.URL.Path, "/permissions/"):
+						writer.WriteHeader(http.StatusCreated)
 					default:
-						http.NotFound(w, r)
+						http.NotFound(writer, request)
 					}
 				}))
 
@@ -313,6 +334,8 @@ var _ = Describe("Binding Credentials Integration", func() {
 							"api_url":        rabbitAPIServer.URL,
 							"admin_username": "admin",
 							"admin_password": "admin-secret",
+							"username":       "default-user",
+							"password":       "default-pass",
 							"vhost":          "/blacksmith",
 						},
 					}),
@@ -388,7 +411,7 @@ var _ = Describe("Binding Credentials Integration", func() {
 				credentials, err := brokerInstance.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
-				Expect(err.Error()).To(ContainSubstring("failed to store binding credentials"))
+				Expect(err.Error()).To(ContainSubstring("failed to get service/plan info"))
 			})
 		})
 

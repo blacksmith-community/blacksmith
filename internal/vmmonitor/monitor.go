@@ -406,7 +406,6 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 // handleCheckError handles errors that occur during service checks.
 func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err error) {
 	logger := logger.Get().Named("vm-monitor")
-	logger.Error("Failed to check VMs for service %s: %s", svc.ServiceID, err)
 
 	// Detect BOSH 404 "doesn't exist" and mark as deleted immediately
 	errStr := err.Error()
@@ -443,6 +442,9 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 
 		return
 	}
+
+	// For non-404 errors, log as error and handle with retry
+	logger.Error("Failed to check VMs for service %s: %s", svc.ServiceID, err)
 
 	// Default error handling with retry
 	svc.FailureCount++
@@ -490,10 +492,16 @@ func (m *Monitor) markInstanceDeleted(ctx context.Context, svc *ServiceMonitor) 
 		if err != nil {
 			logger.Error("Failed to update index entry for deleted instance %s: %v", svc.ServiceID, err)
 		}
+
 		return
 	}
 
 	logger.Info("Successfully marked instance %s as deleted in vault index", svc.ServiceID)
+
+	// Remove the service from monitoring
+	m.mu.Lock()
+	delete(m.services, svc.ServiceID)
+	m.mu.Unlock()
 }
 
 // calculateOverallStatus determines the overall status from VM states.

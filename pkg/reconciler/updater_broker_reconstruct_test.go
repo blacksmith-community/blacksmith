@@ -8,6 +8,10 @@ import (
 	. "blacksmith/pkg/reconciler"
 )
 
+const (
+	statusActive = "active"
+)
+
 // mockBroker implements BrokerInterface for reconstruction tests.
 type reconMockBroker struct {
 	creds *BindingCredentials
@@ -130,7 +134,7 @@ func verifyBindingsIndex(t *testing.T, vault *RealTestVault, instanceID, binding
 		t.Fatalf("expected bindings index at %s: %v", idxPath, err)
 	}
 
-	if entry, ok := idx[bindingID].(map[string]interface{}); !ok || entry["status"] != "active" {
+	if entry, ok := idx[bindingID].(map[string]interface{}); !ok || entry["status"] != statusActive {
 		t.Fatalf("expected index entry with status active, got: %#v", idx)
 	}
 }
@@ -205,7 +209,7 @@ func TestStoreBindingCredentials_PreservesHistory_And_IndexTransitions(t *testin
 		t.Fatalf("expected bindings index at %s: %v", idxPath, err)
 	}
 
-	if entry, ok := idx[bindingID].(map[string]interface{}); !ok || entry["status"] != "active" {
+	if entry, ok := idx[bindingID].(map[string]interface{}); !ok || entry["status"] != statusActive {
 		t.Fatalf("expected index entry with status active, got: %#v", idx)
 	}
 

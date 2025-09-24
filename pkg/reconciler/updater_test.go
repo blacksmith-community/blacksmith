@@ -22,7 +22,9 @@ type MockTestLogger struct {
 }
 
 func (l *MockTestLogger) Debugf(format string, args ...interface{}) {
-	l.messages = append(l.messages, fmt.Sprintf("[DEBUG] "+format, args...))
+	msg := fmt.Sprintf("[DEBUG] "+format, args...)
+	l.messages = append(l.messages, msg)
+	// fmt.Println(msg) // Print to console for debugging
 }
 
 func (l *MockTestLogger) Infof(format string, args ...interface{}) {
@@ -313,10 +315,21 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 		},
 	}
 
-	_ = vault.SetSecret("test-instance/metadata", map[string]interface{}{
+	err := vault.SetSecret("test-instance/metadata", map[string]interface{}{
 		"service_name": "Test Service",
 		"history":      existingHistory,
 	})
+	if err != nil {
+		t.Fatalf("Failed to set existing metadata: %v", err)
+	}
+
+	// Verify it was actually stored
+	verifyData, verifyErr := vault.Get("test-instance/metadata")
+	if verifyErr != nil {
+		t.Fatalf("Failed to verify metadata storage: %v", verifyErr)
+	}
+
+	t.Logf("Verified metadata after setup: %+v", verifyData)
 
 	// Setup existing instance in index
 	_ = vault.SetSecret("db", map[string]interface{}{
@@ -347,13 +360,18 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 	// Update instance
 	ctx := context.Background()
 
-	_, err := updater.UpdateInstance(ctx, *instance)
+	_, err = updater.UpdateInstance(ctx, *instance)
 	if err != nil {
 		t.Fatalf("UpdateInstance failed: %v", err)
 	}
 
 	// Verify history was preserved and added to (with secret/ prefix)
 	metadataPath := testInstanceMetadataPath
+
+	// Debug: check what's actually in the vault
+	debugData, _ := vault.Get(metadataPath)
+	t.Logf("Debug - Metadata at %s: %+v", metadataPath, debugData)
+
 	verifyHistoryPreservation(t, vault, metadataPath)
 }
 

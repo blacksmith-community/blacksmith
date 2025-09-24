@@ -25,6 +25,7 @@ var (
 	ErrReconciliationInProgress   = errors.New("reconciliation already in progress")
 	ErrUnknownWorkType            = errors.New("unknown work type")
 	ErrSynchronizerNotInitialized = errors.New("synchronizer not initialized")
+	ErrInvalidUpdateResult        = errors.New("invalid update result: expected *InstanceData")
 )
 
 // ReconcilerManager is a production-ready reconciler with full load management.
@@ -191,56 +192,19 @@ func (r *ReconcilerManager) Start(ctx context.Context) error {
 		return nil
 	}
 
-	// Create cancellable context for this reconciler instance
 	ctx, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
 
-	// Log startup configuration for debugging
-	r.logger.Infof("Starting reconciler with configuration:")
-	r.logger.Infof("  Interval: %v", r.config.Interval)
-	r.logger.Infof("  Max Concurrent: %d", r.config.Concurrency.MaxConcurrent)
-	r.logger.Infof("  Worker Pool Size: %d", r.config.Concurrency.WorkerPoolSize)
-	r.logger.Infof("  Queue Size: %d", r.config.Concurrency.QueueSize)
-	r.logger.Infof("  Batch Size: %d", r.config.Batch.Size)
-	r.logger.Infof("  BOSH Rate Limit: %.1f req/s (burst: %d)",
-		r.config.APIs.BOSH.RateLimit.RequestsPerSecond, r.config.APIs.BOSH.RateLimit.Burst)
-	r.logger.Infof("  CF Rate Limit: %.1f req/s (burst: %d)",
-		r.config.APIs.CF.RateLimit.RequestsPerSecond, r.config.APIs.CF.RateLimit.Burst)
-	r.logger.Infof("  Vault Rate Limit: %.1f req/s (burst: %d)",
-		r.config.APIs.Vault.RateLimit.RequestsPerSecond, r.config.APIs.Vault.RateLimit.Burst)
-	r.logger.Infof("  Backup Enabled: %v", r.config.Backup.Enabled)
-	r.logger.Infof("  Debug Mode: %v", r.config.Debug)
+	r.logStartupConfiguration()
 
-	// Validate critical components are initialized
 	err := r.validateComponents()
 	if err != nil {
 		r.logger.Errorf("Component validation warning: %v", err)
 		r.logger.Infof("Reconciler will run in degraded mode with available components")
-		// Continue with degraded functionality rather than failing
 	}
 
-	// Start worker pool
-	r.workerPool.Start(ctx)
-
-	// Start result processor
-	r.wg.Add(1)
-
-	go r.processResults(ctx)
-
-	// Start reconciliation loop
-	r.wg.Add(1)
-
-	go r.reconciliationLoop(ctx)
-
-	// Start metrics collector if enabled
-	if r.config.Metrics.Enabled {
-		r.wg.Add(1)
-
-		go r.collectMetrics(ctx)
-	}
-
-	// Run initial reconciliation
-	go r.RunReconciliation(ctx)
+	r.startBackgroundWorkers(ctx)
+	r.startInitialReconciliation(ctx)
 
 	r.setStatus(Status{
 		Running:         true,
@@ -334,9 +298,15 @@ func (r *ReconcilerManager) ProcessBatchWithConcurrency(
 	channels := r.createProcessingChannels(len(batch))
 
 	r.startDeploymentProcessing(ctx, batch, cfInstances, channels)
-	r.waitForProcessingCompletion(channels.waitGroup, channels.resultChan, channels.errorChan)
 
-	return r.collectProcessingResults(ctx, channels)
+	// Wait synchronously for all goroutines to complete
+	channels.waitGroup.Wait()
+
+	// Close channels after all processing is done
+	close(channels.resultChan)
+	close(channels.errorChan)
+
+	return r.collectProcessingResults(channels)
 }
 
 // ProcessingChannels holds channels used for batch processing.
@@ -415,8 +385,10 @@ func (r *ReconcilerManager) FilterServiceDeployments(deployments []DeploymentInf
 			instanceID := r.extractInstanceID(dep.Name)
 			if instanceID != "" && r.isInstanceDeleted(instanceID) {
 				r.logger.Debugf("Skipping deployment %s as instance %s is marked as deleted", dep.Name, instanceID)
+
 				continue
 			}
+
 			filtered = append(filtered, dep)
 		}
 	}
@@ -426,33 +398,28 @@ func (r *ReconcilerManager) FilterServiceDeployments(deployments []DeploymentInf
 
 // IsServiceDeployment checks if a deployment name indicates it's a service deployment.
 func (r *ReconcilerManager) IsServiceDeployment(deploymentName string) bool {
-	// Check if deployment name matches service deployment pattern
-	// Format is typically: service-plan-instanceID
-
-	// Quick checks for non-service deployments
 	if deploymentName == "" {
 		return false
 	}
 
-	// System deployments to exclude
 	systemDeployments := []string{
+		"blacksmith",
 		"bosh",
 		"cf",
 		"concourse",
-		"prometheus",
 		"grafana",
+		"prometheus",
 		"shield",
 		"vault",
 	}
 
+	lowerName := strings.ToLower(deploymentName)
 	for _, sys := range systemDeployments {
-		if deploymentName == sys || strings.HasPrefix(deploymentName, sys+"-") {
+		if lowerName == sys || strings.HasSuffix(lowerName, "-"+sys) || strings.Contains(lowerName, "-"+sys+"-") {
 			return false
 		}
 	}
 
-	// Check if it matches the service-plan-uuid pattern
-	// UUID pattern: 8-4-4-4-12 hexadecimal characters
 	uuidPattern := `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
 	matched, _ := regexp.MatchString(uuidPattern, deploymentName)
 
@@ -464,6 +431,50 @@ func (r *ReconcilerManager) GetStatus() Status {
 	defer r.statusMu.RUnlock()
 
 	return r.status
+}
+
+func (r *ReconcilerManager) logStartupConfiguration() {
+	r.logger.Infof("Starting reconciler with configuration:")
+	r.logger.Infof("  Interval: %v", r.config.Interval)
+	r.logger.Infof("  Max Concurrent: %d", r.config.Concurrency.MaxConcurrent)
+	r.logger.Infof("  Worker Pool Size: %d", r.config.Concurrency.WorkerPoolSize)
+	r.logger.Infof("  Queue Size: %d", r.config.Concurrency.QueueSize)
+	r.logger.Infof("  Batch Size: %d", r.config.Batch.Size)
+	r.logger.Infof("  BOSH Rate Limit: %.1f req/s (burst: %d)",
+		r.config.APIs.BOSH.RateLimit.RequestsPerSecond, r.config.APIs.BOSH.RateLimit.Burst)
+	r.logger.Infof("  CF Rate Limit: %.1f req/s (burst: %d)",
+		r.config.APIs.CF.RateLimit.RequestsPerSecond, r.config.APIs.CF.RateLimit.Burst)
+	r.logger.Infof("  Vault Rate Limit: %.1f req/s (burst: %d)",
+		r.config.APIs.Vault.RateLimit.RequestsPerSecond, r.config.APIs.Vault.RateLimit.Burst)
+	r.logger.Infof("  Backup Enabled: %v", r.config.Backup.Enabled)
+	r.logger.Infof("  Debug Mode: %v", r.config.Debug)
+}
+
+func (r *ReconcilerManager) startBackgroundWorkers(ctx context.Context) {
+	r.workerPool.Start(ctx)
+
+	r.wg.Add(1)
+
+	go r.processResults(ctx)
+
+	r.wg.Add(1)
+
+	go r.reconciliationLoop(ctx)
+
+	if r.config.Metrics.Enabled {
+		r.wg.Add(1)
+
+		go r.collectMetrics(ctx)
+	}
+}
+
+func (r *ReconcilerManager) startInitialReconciliation(ctx context.Context) {
+	initCtx, initCancel := context.WithTimeout(ctx, r.config.Timeouts.ReconciliationRun)
+
+	go func() {
+		r.RunReconciliation(initCtx)
+		initCancel()
+	}()
 }
 
 // isInstanceDeleted checks if an instance is marked as deleted in the vault index.
@@ -482,32 +493,61 @@ func (r *ReconcilerManager) isInstanceDeleted(instanceID string) bool {
 	idx, err := synchronizer.GetVaultIndex()
 	if err != nil {
 		r.logger.Debugf("Failed to get vault index to check deletion status: %v", err)
+
 		return false
 	}
 
 	// Check if the instance exists and is marked as deleted
 	if data, exists := idx[instanceID]; exists {
-		if dataMap, ok := data.(map[string]interface{}); ok {
-			// Check for deleted status
-			if status, ok := dataMap["status"].(string); ok && status == "deleted" {
-				return true
-			}
-			// Also check for deleted flag
-			if deleted, ok := dataMap["deleted"].(bool); ok && deleted {
-				return true
-			}
-			// Check if marked as orphaned for a long time
-			if orphaned, ok := dataMap["orphaned"].(bool); ok && orphaned {
-				if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
-					t, err := time.Parse(time.RFC3339, orphanedAt)
-					if err == nil && time.Since(t) > 24*time.Hour {
-						// Been orphaned for more than 24 hours, treat as deleted
-						r.logger.Debugf("Instance %s has been orphaned for more than 24 hours, treating as deleted", instanceID)
-						return true
-					}
-				}
-			}
-		}
+		return r.checkInstanceDeletedStatus(instanceID, data)
+	}
+
+	return false
+}
+
+// checkInstanceDeletedStatus checks if an instance is marked as deleted or orphaned for too long.
+func (r *ReconcilerManager) checkInstanceDeletedStatus(instanceID string, data interface{}) bool {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	// Check for deleted status
+	if status, ok := dataMap["status"].(string); ok && status == StatusDeleted {
+		return true
+	}
+
+	// Also check for deleted flag
+	if deleted, ok := dataMap["deleted"].(bool); ok && deleted {
+		return true
+	}
+
+	// Check if marked as orphaned for a long time
+	return r.isInstanceOrphanedTooLong(instanceID, dataMap)
+}
+
+// isInstanceOrphanedTooLong checks if an instance has been orphaned for more than 24 hours.
+func (r *ReconcilerManager) isInstanceOrphanedTooLong(instanceID string, dataMap map[string]interface{}) bool {
+	orphaned, exists := dataMap["orphaned"].(bool)
+	if !exists || !orphaned {
+		return false
+	}
+
+	orphanedAt, ok := dataMap["orphaned_at"].(string)
+	if !ok {
+		return false
+	}
+
+	t, err := time.Parse(time.RFC3339, orphanedAt)
+	if err != nil {
+		return false
+	}
+
+	if time.Since(t) > 24*time.Hour {
+		// Been orphaned for more than 24 hours, treat as deleted
+		r.logger.Debugf("Instance %s has been orphaned for more than 24 hours, treating as deleted", instanceID)
+
+		return true
 	}
 
 	return false
@@ -709,7 +749,14 @@ func (r *ReconcilerManager) reconciliationLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			r.RunReconciliation(ctx)
+			// Create a fresh context for each reconciliation run with timeout
+			// This allows runs to complete independently while respecting cancellation
+			runCtx, runCancel := context.WithTimeout(ctx, r.config.Timeouts.ReconciliationRun)
+
+			go func() {
+				r.RunReconciliation(runCtx)
+				runCancel()
+			}()
 		case <-ctx.Done():
 			r.logger.Infof("Reconciliation loop stopping")
 
@@ -984,17 +1031,8 @@ func (r *ReconcilerManager) waitForRateLimit(ctx context.Context, errorChan chan
 	return true
 }
 
-// waitForProcessingCompletion waits for all processing to complete and closes channels.
-func (r *ReconcilerManager) waitForProcessingCompletion(waitGroup *sync.WaitGroup, resultChan chan InstanceData, errorChan chan error) {
-	go func() {
-		waitGroup.Wait()
-		close(resultChan)
-		close(errorChan)
-	}()
-}
-
 // collectProcessingResults collects results from processing channels.
-func (r *ReconcilerManager) collectProcessingResults(ctx context.Context, channels *ProcessingChannels) ([]InstanceData, error) {
+func (r *ReconcilerManager) collectProcessingResults(channels *ProcessingChannels) ([]InstanceData, error) {
 	var (
 		instances []InstanceData
 		errors    []error
@@ -1016,15 +1054,12 @@ func (r *ReconcilerManager) collectProcessingResults(ctx context.Context, channe
 			if err != nil {
 				errors = append(errors, err)
 			}
-		case <-ctx.Done():
-			return instances, fmt.Errorf("context cancelled during batch processing: %w", ctx.Err())
 		}
 	}
 }
 
 // updateVaultWithRateLimit updates Vault with rate limiting.
 func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instances []InstanceData) ([]InstanceData, error) {
-	// Check if updater is available
 	if r.Updater == nil {
 		return nil, ErrVaultUpdaterNotInitialized
 	}
@@ -1034,57 +1069,26 @@ func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instan
 		updateMutex sync.Mutex
 	)
 
-	// Process updates with rate limiting
-
 	for _, instance := range instances {
-		// Skip if instance is already marked as deleted
-		if status, ok := instance.Metadata["status"].(string); ok && status == "deleted" {
-			r.logger.Debugf("Skipping update for deleted instance %s", instance.ID)
-			// Still add it to updated list so it gets reflected in the index sync
-			updated = append(updated, instance)
+		if r.shouldSkipInstance(instance) {
+			updated = append(updated, r.markInstanceSkipped(instance))
+
 			continue
 		}
 
-		// Also check vault index for deletion status
-		if r.isInstanceDeleted(instance.ID) {
-			r.logger.Debugf("Skipping update for instance %s as it's marked as deleted in vault", instance.ID)
-			// Mark it as deleted in metadata for synchronization
-			instance.Metadata["status"] = "deleted"
-			instance.Metadata["skipped_reason"] = "already_deleted_in_vault"
-			updated = append(updated, instance)
-			continue
+		err := r.waitForVaultRateLimit(ctx)
+		if err != nil {
+			return updated, err
 		}
 
-		// Wait for rate limit (with nil check)
-		if r.vaultLimiter != nil {
-			err := r.vaultLimiter.Wait(ctx)
-			if err != nil {
-				return updated, fmt.Errorf("vault rate limit wait failed: %w", err)
-			}
-		}
-
-		// Execute with or without circuit breaker
-		var (
-			result interface{}
-			err    error
-		)
-
-		if r.vaultBreaker != nil {
-			result, err = r.vaultBreaker.Execute(func() (interface{}, error) {
-				return r.Updater.UpdateInstance(ctx, instance)
-			})
-		} else {
-			// Execute directly without circuit breaker
-			result, err = r.Updater.UpdateInstance(ctx, instance)
-		}
-
+		updatedInstance, err := r.executeVaultUpdate(ctx, instance)
 		if err != nil {
 			r.logger.Errorf("Failed to update instance %s: %v", instance.ID, err)
 
 			continue
 		}
 
-		if updatedInstance, ok := result.(*InstanceData); ok {
+		if updatedInstance != nil {
 			updateMutex.Lock()
 
 			updated = append(updated, *updatedInstance)
@@ -1094,6 +1098,67 @@ func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instan
 	}
 
 	return updated, nil
+}
+
+func (r *ReconcilerManager) shouldSkipInstance(instance InstanceData) bool {
+	if status, ok := instance.Metadata["status"].(string); ok && status == StatusDeleted {
+		r.logger.Debugf("Skipping update for deleted instance %s", instance.ID)
+
+		return true
+	}
+
+	if r.isInstanceDeleted(instance.ID) {
+		r.logger.Debugf("Skipping update for instance %s as it's marked as deleted in vault", instance.ID)
+
+		return true
+	}
+
+	return false
+}
+
+func (r *ReconcilerManager) markInstanceSkipped(instance InstanceData) InstanceData {
+	if r.isInstanceDeleted(instance.ID) {
+		instance.Metadata["status"] = "deleted"
+		instance.Metadata["skipped_reason"] = "already_deleted_in_vault"
+	}
+
+	return instance
+}
+
+func (r *ReconcilerManager) waitForVaultRateLimit(ctx context.Context) error {
+	if r.vaultLimiter != nil {
+		err := r.vaultLimiter.Wait(ctx)
+		if err != nil {
+			return fmt.Errorf("vault rate limit wait failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (r *ReconcilerManager) executeVaultUpdate(ctx context.Context, instance InstanceData) (*InstanceData, error) {
+	var (
+		result interface{}
+		err    error
+	)
+
+	if r.vaultBreaker != nil {
+		result, err = r.vaultBreaker.Execute(func() (interface{}, error) {
+			return r.Updater.UpdateInstance(ctx, instance)
+		})
+	} else {
+		result, err = r.Updater.UpdateInstance(ctx, instance)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to update instance: %w", err)
+	}
+
+	if updatedInstance, ok := result.(*InstanceData); ok {
+		return updatedInstance, nil
+	}
+
+	return nil, ErrInvalidUpdateResult
 }
 
 // Helper functions

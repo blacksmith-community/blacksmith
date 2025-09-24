@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// Constants for status values.
+const (
+	StatusDeleted = "deleted"
+)
+
 // Static errors for err113 compliance.
 var (
 	ErrIndexValidationFailed       = errors.New("index validation failed")
@@ -43,20 +48,21 @@ func (s *IndexSynchronizer) CleanupDeletedInstances(ctx context.Context, dryRun 
 	}
 
 	var toDelete []string
-	for id, data := range idx {
-		dataMap, ok := data.(map[string]interface{})
-		if !ok {
+	for instanceID, data := range idx {
+		dataMap, validMap := data.(map[string]interface{})
+		if !validMap {
 			continue
 		}
 
 		// Only cleanup instances that are explicitly marked as cleanup_eligible
 		if eligible, ok := dataMap["cleanup_eligible"].(bool); ok && eligible {
-			toDelete = append(toDelete, id)
+			toDelete = append(toDelete, instanceID)
 		}
 	}
 
 	if len(toDelete) == 0 {
 		s.logger.Infof("No instances eligible for cleanup")
+
 		return 0, nil
 	}
 
@@ -69,14 +75,18 @@ func (s *IndexSynchronizer) CleanupDeletedInstances(ctx context.Context, dryRun 
 					id, data["deleted_at"], data["days_deleted"])
 			}
 		}
+
 		return len(toDelete), nil
 	}
 
 	// Actually delete the instances
 	deletedCount := 0
+
 	for _, id := range toDelete {
 		delete(idx, id)
+
 		deletedCount++
+
 		s.logger.Infof("Removed instance %s from index", id)
 	}
 
@@ -89,6 +99,7 @@ func (s *IndexSynchronizer) CleanupDeletedInstances(ctx context.Context, dryRun 
 	}
 
 	s.logger.Infof("Successfully cleaned up %d deleted instances", deletedCount)
+
 	return deletedCount, nil
 }
 
@@ -219,24 +230,6 @@ func IsValidInstanceID(id string) bool {
 	return uuidRegex.MatchString(id)
 }
 
-// cleanupNilEntries removes nil entries from the index.
-func (s *IndexSynchronizer) cleanupNilEntries(idx map[string]interface{}) int {
-	count := 0
-
-	for key, value := range idx {
-		if value == nil {
-			s.logger.Debugf("Removing nil entry %s from index", key)
-			delete(idx, key)
-
-			count++
-		}
-	}
-
-	return count
-}
-
-// Vault interaction methods - these will be replaced with actual vault calls
-
 func (s *IndexSynchronizer) GetVaultIndex() (map[string]interface{}, error) {
 	s.logger.Debugf("Getting vault index from Vault")
 
@@ -247,11 +240,33 @@ func (s *IndexSynchronizer) GetVaultIndex() (map[string]interface{}, error) {
 
 	data, err := v.Get("db")
 	if err != nil {
+		if err.Error() == "vault key not found" {
+			s.logger.Infof("Vault index key 'db' does not exist, initializing empty index")
+
+			emptyIndex := make(map[string]interface{})
+
+			err := s.SaveVaultIndex(emptyIndex)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize vault index: %w", err)
+			}
+
+			return emptyIndex, nil
+		}
+
 		return nil, fmt.Errorf("failed to get index from vault: %w", err)
 	}
 
 	if data == nil {
-		return make(map[string]interface{}), nil
+		s.logger.Infof("Vault returned nil data for 'db' key, initializing empty index")
+
+		emptyIndex := make(map[string]interface{})
+
+		err := s.SaveVaultIndex(emptyIndex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize vault index: %w", err)
+		}
+
+		return emptyIndex, nil
 	}
 
 	return data, nil
@@ -273,6 +288,22 @@ func (s *IndexSynchronizer) SaveVaultIndex(idx map[string]interface{}) error {
 	return nil
 }
 
+// cleanupNilEntries removes nil entries from the index.
+func (s *IndexSynchronizer) cleanupNilEntries(idx map[string]interface{}) int {
+	count := 0
+
+	for key, value := range idx {
+		if value == nil {
+			s.logger.Debugf("Removing nil entry %s from index", key)
+			delete(idx, key)
+
+			count++
+		}
+	}
+
+	return count
+}
+
 // buildReconciledMap creates a map of reconciled instance IDs.
 func (s *IndexSynchronizer) buildReconciledMap(instances []InstanceData) map[string]bool {
 	reconciledMap := make(map[string]bool)
@@ -292,7 +323,7 @@ func (s *IndexSynchronizer) updateIndexWithInstances(idx map[string]interface{},
 
 		// Check if the instance has been marked for deletion (deployment not found in BOSH)
 		if needsDeletion, ok := inst.Metadata["needs_deletion_marking"].(bool); ok && needsDeletion {
-			data["status"] = "deleted"
+			data["status"] = StatusDeleted
 			data["deleted_at"] = inst.Metadata["deleted_at"]
 			data["deleted_by"] = inst.Metadata["deleted_by"]
 			data["deletion_reason"] = inst.Metadata["deletion_reason"]
@@ -361,7 +392,7 @@ func (s *IndexSynchronizer) mergeWithExistingInstance(data map[string]interface{
 		}
 
 		// Preserve deleted status if already marked
-		if status, ok := existingMap["status"].(string); ok && status == "deleted" {
+		if status, ok := existingMap["status"].(string); ok && status == StatusDeleted {
 			// Don't override deleted status unless explicitly changing it
 			if _, hasNewStatus := data["status"]; !hasNewStatus {
 				data["status"] = status
@@ -380,15 +411,16 @@ func (s *IndexSynchronizer) addNewInstanceData(data map[string]interface{}, inst
 func (s *IndexSynchronizer) markOrphanedInstances(idx map[string]interface{}, reconciledMap map[string]bool) int {
 	orphanCount := 0
 
-	for id, data := range idx {
-		if !reconciledMap[id] {
+	for instanceID, data := range idx {
+		if !reconciledMap[instanceID] {
 			// Check if already marked as deleted (by VM monitor or reconciler)
 			if s.isMarkedDeleted(data) {
-				s.logger.Debugf("Instance %s already marked as deleted, skipping orphan marking", id)
+				s.logger.Debugf("Instance %s already marked as deleted, skipping orphan marking", instanceID)
+
 				continue
 			}
 
-			if s.markAsOrphaned(id, data) {
+			if s.markAsOrphaned(instanceID, data) {
 				orphanCount++
 			}
 		}
@@ -441,7 +473,7 @@ func (s *IndexSynchronizer) isMarkedDeleted(data interface{}) bool {
 	}
 
 	// Check for deleted status
-	if status, ok := dataMap["status"].(string); ok && status == "deleted" {
+	if status, ok := dataMap["status"].(string); ok && status == StatusDeleted {
 		return true
 	}
 
@@ -457,14 +489,14 @@ func (s *IndexSynchronizer) isMarkedDeleted(data interface{}) bool {
 func (s *IndexSynchronizer) markStaleOrphans(idx map[string]interface{}) int {
 	cleanupCount := 0
 
-	for id, data := range idx {
+	for instanceID, data := range idx {
 		// Process orphaned entries
-		if s.processOrphanedEntry(id, data) {
+		if s.processOrphanedEntry(instanceID, data) {
 			cleanupCount++
 		}
 
 		// Process deleted entries that are very old
-		if s.processDeletedEntry(id, data) {
+		if s.processDeletedEntry(instanceID, data) {
 			cleanupCount++
 		}
 	}
@@ -521,14 +553,14 @@ func (s *IndexSynchronizer) markAsStale(entryID string, dataMap map[string]inter
 
 // processDeletedEntry processes deleted entries that are very old.
 func (s *IndexSynchronizer) processDeletedEntry(entryID string, data interface{}) bool {
-	dataMap, ok := data.(map[string]interface{})
-	if !ok {
+	dataMap, validMap := data.(map[string]interface{})
+	if !validMap {
 		return false
 	}
 
 	// Check if it's marked as deleted
 	status, hasStatus := dataMap["status"].(string)
-	if !hasStatus || status != "deleted" {
+	if !hasStatus || status != StatusDeleted {
 		return false
 	}
 
@@ -553,6 +585,7 @@ func (s *IndexSynchronizer) processDeletedEntry(entryID string, data interface{}
 		dataMap["days_deleted"] = daysSinceDeleted
 
 		s.logger.Infof("Instance %s has been deleted for %d days, marked as cleanup eligible", entryID, daysSinceDeleted)
+
 		return true
 	}
 

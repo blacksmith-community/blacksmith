@@ -135,10 +135,8 @@ func (vault *Vault) AppendHistory(ctx context.Context, instanceID, action, descr
 	}
 	history = append(history, entry)
 
-	// Limit history to last 50 entries
-	if len(history) > vaultPkg.HistoryMaxSize {
-		history = history[len(history)-vaultPkg.HistoryMaxSize:]
-	}
+	// Apply retention policy (time-based + max entries safety cap)
+	history = vaultPkg.FilterHistoryByRetention(history, vaultPkg.DefaultHistoryRetentionDays, vaultPkg.HistoryMaxSize)
 
 	// Store history back in metadata
 	metadata["history"] = history
@@ -342,10 +340,12 @@ func (vault *Vault) UpdateIndexEntry(ctx context.Context, instanceID string, upd
 			entry = existingMap
 		} else {
 			logger.Warning("instance %s has invalid data type in index, recreating", instanceID)
+
 			entry = make(map[string]interface{})
 		}
 	} else {
 		logger.Warning("instance %s not found in index, creating new entry", instanceID)
+
 		entry = make(map[string]interface{})
 	}
 
@@ -356,11 +356,14 @@ func (vault *Vault) UpdateIndexEntry(ctx context.Context, instanceID string, upd
 
 	// Save back to index
 	idx.Data[instanceID] = entry
-	if err := idx.Save(ctx); err != nil {
+
+	err = idx.Save(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to save index after updating instance %s: %w", instanceID, err)
 	}
 
 	logger.Debug("updated index entry for instance %s with %d fields", instanceID, len(updates))
+
 	return nil
 }
 
@@ -376,11 +379,13 @@ func (vault *Vault) MarkInstanceDeleted(ctx context.Context, instanceID string) 
 		"deletion_reason": "deployment not found in BOSH director",
 	}
 
-	if err := vault.UpdateIndexEntry(ctx, instanceID, updates); err != nil {
+	err := vault.UpdateIndexEntry(ctx, instanceID, updates)
+	if err != nil {
 		return fmt.Errorf("failed to mark instance %s as deleted: %w", instanceID, err)
 	}
 
 	logger.Info("successfully marked instance %s as deleted", instanceID)
+
 	return nil
 }
 

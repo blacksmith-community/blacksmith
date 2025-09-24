@@ -285,60 +285,109 @@ func initializeConfig(configPath string, logger loggerPkg.Logger) *config.Config
 
 // initializeVault sets up and initializes Vault client.
 func initializeVault(cfg *config.Config, logger loggerPkg.Logger) *internalVault.Vault {
-	vault := internalVault.New(cfg.Vault.Address, "", cfg.Vault.Insecure)
+	vault := createVaultClient(cfg)
+	loadInitialToken(vault, logger)
 
-	// Ensure we know where credentials live and pre-load any configured token.
+	if !waitForVaultReadiness(vault, logger) {
+		return vault
+	}
+
+	if !initializeVaultInstance(vault, cfg, logger) {
+		return vault
+	}
+
+	loadTokenAfterInit(vault, logger)
+	setVaultTokenEnvVar(vault, logger)
+	verifySecretMount(vault, logger)
+	storePlansToVault(vault, cfg)
+
+	return vault
+}
+
+func createVaultClient(cfg *config.Config) *internalVault.Vault {
+	vault := internalVault.New(cfg.Vault.Address, "", cfg.Vault.Insecure)
 	vault.SetCredentialsPath(cfg.Vault.CredPath)
 
 	if cfg.Vault.Token != "" {
 		vault.SetToken(cfg.Vault.Token)
 	}
 
-	// Configure vault auto-unseal behavior
 	if cfg.Vault.AutoUnseal {
 		vault.EnableAutoUnseal(cfg.Vault.CredPath)
 	}
 
-	// Attempt to reuse existing credentials on disk before touching Vault.
+	return vault
+}
+
+func loadInitialToken(vault *internalVault.Vault, logger loggerPkg.Logger) {
 	if vault.Token == "" {
-		if _, err := vault.LoadTokenFromCredentials(); err != nil {
-			logger.Debug("Vault token not yet available from credentials file: %s", err)
+		_, loadErr := vault.LoadTokenFromCredentials()
+		if loadErr != nil {
+			logger.Debug("Vault token not yet available from credentials file: %s", loadErr)
 		} else {
 			logger.Debug("Loaded Vault token from credentials file")
 		}
 	}
+}
 
+func waitForVaultReadiness(vault *internalVault.Vault, logger loggerPkg.Logger) bool {
 	err := vault.WaitForVaultReady()
 	if err != nil {
 		logger.Error("Vault readiness check failed: %s", err)
-		log.Fatal(err)
+		logger.Error("Continuing with degraded Vault functionality - some operations may not work")
+
+		return false
 	}
 
-	err = vault.Init(cfg.Vault.CredPath)
+	return true
+}
+
+func initializeVaultInstance(vault *internalVault.Vault, cfg *config.Config, logger loggerPkg.Logger) bool {
+	err := vault.Init(cfg.Vault.CredPath)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("Vault initialization failed: %s", err)
+		logger.Error("Continuing with degraded Vault functionality - some operations may not work")
+
+		return false
 	}
 
+	return true
+}
+
+func loadTokenAfterInit(vault *internalVault.Vault, logger loggerPkg.Logger) {
 	if vault.Token == "" {
-		if _, err := vault.LoadTokenFromCredentials(); err != nil {
-			logger.Warn("Vault token unavailable after initialization: %s", err)
+		_, loadErr := vault.LoadTokenFromCredentials()
+		if loadErr != nil {
+			logger.Warn("Vault token unavailable after initialization: %s", loadErr)
 		} else {
 			logger.Debug("Loaded Vault token from credentials file after initialization")
 		}
 	}
+}
 
-	err = vault.VerifyMount("secret", true)
-	if err != nil {
-		log.Fatal(err)
+func setVaultTokenEnvVar(vault *internalVault.Vault, logger loggerPkg.Logger) {
+	if vault.Token != "" {
+		err := os.Setenv("VAULT_TOKEN", vault.Token)
+		if err != nil {
+			logger.Error("Failed to set VAULT_TOKEN environment variable: %s", err)
+		} else {
+			logger.Debug("Set VAULT_TOKEN environment variable for init scripts")
+		}
 	}
+}
 
-	// Store blacksmith plans to Vault after ensuring KVv2
+func verifySecretMount(vault *internalVault.Vault, logger loggerPkg.Logger) {
+	err := vault.VerifyMount("secret", true)
+	if err != nil {
+		logger.Error("Vault secret mount verification failed: %s", err)
+		logger.Error("Continuing with degraded Vault functionality - secret operations may not work")
+	}
+}
+
+func storePlansToVault(vault *internalVault.Vault, cfg *config.Config) {
 	planStorage := planstore.New(vault, cfg)
-
 	planStorage.StorePlans(context.Background())
 	// Don't fail startup if plan storage fails
-
-	return vault
 }
 
 // initializeBOSH creates and configures BOSH director.
@@ -370,8 +419,10 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) *bosh.PooledDir
 		boshLogger,
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to authenticate to BOSH: %s\n", err)
-		os.Exit(exitCodeError)
+		logger.Error("Failed to authenticate to BOSH: %s", err)
+		logger.Error("Continuing with degraded BOSH functionality - deployment operations may not work")
+
+		return nil
 	}
 
 	logger.Info("BOSH director initialized with connection pooling (max: %d connections, timeout: %ds)",
@@ -397,8 +448,10 @@ func updateBOSHCloudConfig(cfg *config.Config, boshDirector bosh.Director, logge
 
 	err := boshDirector.UpdateCloudConfig(cfg.BOSH.CloudConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to update CLOUD-CONFIG: %s\ncloud-config:\n%s\n", err, cfg.BOSH.CloudConfig)
-		os.Exit(exitCodeError)
+		logger.Error("Failed to update CLOUD-CONFIG: %s", err)
+		logger.Error("Continuing without cloud config update - manual intervention may be required")
+
+		return
 	}
 }
 
@@ -410,8 +463,10 @@ func uploadBOSHReleases(cfg *config.Config, boshDirector bosh.Director, logger l
 
 	releases, err := boshDirector.GetReleases()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to retrieve RELEASES list: %s\n", err)
-		os.Exit(exitCodeError)
+		logger.Error("Failed to retrieve RELEASES list: %s", err)
+		logger.Error("Continuing without release uploads - manual intervention may be required")
+
+		return
 	}
 
 	have := make(map[string]bool)
@@ -435,8 +490,10 @@ func uploadBOSHReleases(cfg *config.Config, boshDirector bosh.Director, logger l
 
 		task, err := boshDirector.UploadRelease(release.URL, release.SHA1)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\nFailed to upload RELEASE (%s) sha1 [%s]: %s\n", release.URL, release.SHA1, err)
-			os.Exit(exitCodeError)
+			logger.Error("Failed to upload RELEASE (%s) sha1 [%s]: %s", release.URL, release.SHA1, err)
+			logger.Error("Continuing without this release - manual intervention may be required")
+
+			continue
 		}
 
 		logger.Info("uploading release %s/%s [sha1 %s] in BOSH task %d, from %s", release.Name, release.Version, release.SHA1, task.ID, release.URL)
@@ -451,8 +508,10 @@ func uploadBOSHStemcells(cfg *config.Config, boshDirector bosh.Director, logger 
 
 	stemcells, err := boshDirector.GetStemcells()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to retrieve STEMCELLS list: %s\n", err)
-		os.Exit(exitCodeError)
+		logger.Error("Failed to retrieve STEMCELLS list: %s", err)
+		logger.Error("Continuing without stemcell uploads - manual intervention may be required")
+
+		return
 	}
 
 	have := make(map[string]bool)
@@ -473,8 +532,10 @@ func uploadBOSHStemcells(cfg *config.Config, boshDirector bosh.Director, logger 
 
 		task, err := boshDirector.UploadStemcell(stemcell.URL, stemcell.SHA1)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\nFailed to upload STEMCELL (%s) sha1 [%s]: %s\n", err, stemcell.URL, stemcell.SHA1)
-			os.Exit(exitCodeError)
+			logger.Error("Failed to upload STEMCELL (%s) sha1 [%s]: %s", stemcell.URL, stemcell.SHA1, err)
+			logger.Error("Continuing without this stemcell - manual intervention may be required")
+
+			continue
 		}
 
 		logger.Info("uploading stemcell %s/%s [sha1 %s] in BOSH task %d, from %s", stemcell.Name, stemcell.Version, stemcell.SHA1, task.ID, stemcell.URL)
@@ -516,8 +577,10 @@ func initializeShieldClient(cfg *config.Config, logger loggerPkg.Logger) shield.
 	case "token":
 		shieldCfg.Authentication = &shield.TokenAuth{Token: cfg.Shield.Token}
 	default:
-		fmt.Fprintf(os.Stderr, "Invalid S.H.I.E.L.D. authentication method (must be one of 'local' or 'token'): %s\n", cfg.Shield.AuthMethod)
-		os.Exit(exitCodeError)
+		logger.Error("Invalid S.H.I.E.L.D. authentication method (must be one of 'local' or 'token'): %s", cfg.Shield.AuthMethod)
+		logger.Error("Falling back to NoopClient - Shield functionality disabled")
+
+		return &shield.NoopClient{}
 	}
 
 	logger.Debug("creating S.H.I.E.L.D. client with config: %+v", shieldCfg)
@@ -526,8 +589,10 @@ func initializeShieldClient(cfg *config.Config, logger loggerPkg.Logger) shield.
 
 	networkClient, err := shield.NewClient(shieldCfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create S.H.I.E.L.D. client: %s\n", err)
-		os.Exit(exitCodeError)
+		logger.Error("Failed to create S.H.I.E.L.D. client: %s", err)
+		logger.Error("Falling back to NoopClient - Shield functionality disabled")
+
+		return &shield.NoopClient{}
 	}
 
 	return networkClient
@@ -554,7 +619,15 @@ func initializeServices(cfg *config.Config, brokerInstance *broker.Broker, vault
 	setSSHServiceDefaults(&sshConfig)
 
 	logger.Info("Creating SSH service with timeout=%v, maxConcurrent=%d", sshConfig.Timeout, sshConfig.MaxConcurrent)
-	sshService := ssh.NewSSHService(brokerInstance.BOSH, sshConfig, logger.Named("ssh"))
+
+	var sshService *ssh.ServiceImpl
+	if brokerInstance.BOSH != nil {
+		sshService = ssh.NewSSHService(brokerInstance.BOSH, sshConfig, logger.Named("ssh"))
+	} else {
+		logger.Warn("BOSH director unavailable - SSH service will have degraded functionality")
+
+		sshService = nil
+	}
 
 	logSSHSecurity(cfg, sshConfig, logger)
 
@@ -749,13 +822,20 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 		logger.Info("CF health check loop started")
 	}
 
-	// Start the reconciler
-	err := reconciler.Start(ctx)
-	if err != nil {
-		logger.Error("Failed to start deployment reconciler: %s", err)
-		// Non-fatal error - continue without reconciler
-	} else {
-		logger.Info("Deployment reconciler started successfully")
+	// Start the reconciler asynchronously to avoid blocking startup
+	if reconciler != nil {
+		go func() {
+			logger.Info("Starting deployment reconciler asynchronously")
+
+			err := reconciler.Start(ctx)
+			if err != nil {
+				logger.Error("Failed to start deployment reconciler: %s", err)
+				// Non-fatal error - reconciler will not be available
+			} else {
+				logger.Info("Deployment reconciler started successfully")
+			}
+		}()
+
 		// Ensure reconciler is stopped on shutdown
 		defer func() {
 			err := reconciler.Stop()
@@ -763,19 +843,25 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 				logger.Error("Error stopping reconciler: %s", err)
 			}
 		}()
+	} else {
+		logger.Info("Reconciler disabled - BOSH director unavailable")
 	}
 
 	// Start the VM monitor
-	err = vmMonitor.Start(ctx)
-	if err != nil {
-		logger.Error("Failed to start VM monitor: %s", err)
-		// Non-fatal error - continue without VM monitoring
+	if vmMonitor != nil {
+		err := vmMonitor.Start(ctx)
+		if err != nil {
+			logger.Error("Failed to start VM monitor: %s", err)
+			// Non-fatal error - continue without VM monitoring
+		} else {
+			logger.Info("VM monitor started successfully")
+			// Ensure VM monitor is stopped on shutdown
+			defer func() {
+				vmMonitor.Stop()
+			}()
+		}
 	} else {
-		logger.Info("VM monitor started successfully")
-		// Ensure VM monitor is stopped on shutdown
-		defer func() {
-			vmMonitor.Stop()
-		}()
+		logger.Info("VM monitor disabled - BOSH director unavailable")
 	}
 }
 
@@ -898,7 +984,9 @@ func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, broker
 	httpsServer, err := startHTTPSServer(cfg, apiHandler, logger)
 	if err != nil {
 		logger.Error("Failed to create HTTPS server: %s", err)
-		os.Exit(exitCodeError)
+		logger.Error("Continuing with HTTP only - HTTPS will not be available")
+
+		httpsServer = nil
 	}
 
 	var waitGroup sync.WaitGroup
@@ -930,6 +1018,12 @@ func initializeCore(configPath string, logger loggerPkg.Logger) (*config.Config,
 }
 
 func setupBOSHResources(config *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+	if boshDirector == nil {
+		logger.Warn("BOSH director is nil - skipping BOSH resource setup")
+
+		return
+	}
+
 	updateBOSHCloudConfig(config, boshDirector, logger)
 	uploadBOSHReleases(config, boshDirector, logger)
 	uploadBOSHStemcells(config, boshDirector, logger)
@@ -1044,67 +1138,95 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger) error {
 	config, vault, boshDirector := initializeCore(configPath, logger)
 
+	brokerInstance, err := setupBrokerAndUI(config, vault, boshDirector, logger)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("blacksmith service broker v%s starting up...", buildInfo.Version)
+
+	ctx, cancel, sigChan := setupSignalHandlingAndContext()
+	defer cancel()
+
+	cfManager := initializeCFManager(config, logger)
+	reconciler := setupReconciler(config, brokerInstance, vault, boshDirector, cfManager, logger)
+	vmMonitor := setupVMMonitor(vault, boshDirector, config, logger)
+
+	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
+
+	sshService, apiHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, cfManager, vmMonitor, logger)
+	defer closeSSHService(sshService, logger)
+
+	serverWaitGroup := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
+
+	waitForShutdownSignal(sigChan, ctx, logger)
+
+	cancel()
+	serverWaitGroup.Wait()
+
+	return nil
+}
+
+func setupBrokerAndUI(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) (*broker.Broker, error) {
 	shieldClient := initializeShieldClient(config, logger)
 
 	brokerInstance, err := initializeBroker(config, vault, boshDirector, shieldClient, logger)
 	if err != nil {
-		return fmt.Errorf("failed to initialize broker: %w", err)
+		return nil, fmt.Errorf("failed to initialize broker: %w", err)
 	}
+
+	return brokerInstance, nil
+}
+
+func setupReconciler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, cfManager *internalCF.Manager, logger loggerPkg.Logger) *recovery.ReconcilerAdapter {
+	if boshDirector != nil {
+		return recovery.NewReconcilerAdapter(config, brokerInstance, vault, boshDirector, cfManager)
+	}
+
+	logger.Warn("BOSH director unavailable - reconciler will be disabled")
+
+	return &recovery.ReconcilerAdapter{}
+}
+
+func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirector, config *config.Config, logger loggerPkg.Logger) *vmmonitor.Monitor {
+	if boshDirector != nil {
+		return vmmonitor.New(vault, boshDirector, config)
+	}
+
+	logger.Warn("BOSH director unavailable - VM monitor will be disabled")
+
+	return nil
+}
+
+func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API) {
+	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
 
 	uiHandler := getUIHandler(config)
 
-	logger.Info("blacksmith service broker v%s starting up...", buildInfo.Version)
-
-	// Setup signal handling and context
-	ctx, cancel, sigChan := setupSignalHandlingAndContext()
-	defer cancel()
-
-	// Initialize CF connection manager
-	cfManager := initializeCFManager(config, logger)
-
-	// Initialize the deployment reconciler
-	reconciler := recovery.NewReconcilerAdapter(config, brokerInstance, vault, boshDirector, cfManager)
-
-	// Initialize the VM monitor
-	vmMonitor := vmmonitor.New(vault, boshDirector, config)
-
-	// Start background services
-	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
-
-	// Initialize SSH and RabbitMQ services
-	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
-
-	// Ensure SSH service is closed on shutdown
-	defer func() {
-		if sshService != nil {
-			err := sshService.Close()
-			if err != nil {
-				logger.Error("Error closing SSH service: %s", err)
-			}
-		}
-	}()
-
-	// Create the main API handler with refactored InternalAPI
 	apiHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, cfManager, vmMonitor,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
 		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, logger)
 
-	// Start servers and maintenance loops
-	serverWaitGroup := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
+	return sshService, apiHandler
+}
 
-	// Wait for shutdown signal
+func closeSSHService(sshService *ssh.ServiceImpl, logger loggerPkg.Logger) {
+	if sshService != nil {
+		err := sshService.Close()
+		if err != nil {
+			logger.Error("Error closing SSH service: %s", err)
+		}
+	}
+}
+
+func waitForShutdownSignal(sigChan <-chan os.Signal, ctx context.Context, logger loggerPkg.Logger) {
 	select {
 	case sig := <-sigChan:
 		logger.Info("Received signal %s, shutting down gracefully...", sig)
 	case <-ctx.Done():
 		logger.Info("Context cancelled, shutting down...")
 	}
-
-	cancel()               // Cancel context to stop other goroutines
-	serverWaitGroup.Wait() // Wait for all goroutines to finish
-
-	return nil
 }
 
 func main() {

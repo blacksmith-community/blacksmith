@@ -56,6 +56,13 @@ type ForgesConfig struct {
 	ScanPatterns []string `yaml:"scan-patterns"`
 }
 
+// HistoryRetentionConfig holds configuration for history retention policy.
+type HistoryRetentionConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	RetentionDays int  `yaml:"retention_days"`
+	MaxEntries    int  `yaml:"max_entries"`
+}
+
 // ReconcilerBackupConfig holds backup configuration for the reconciler.
 type ReconcilerBackupConfig struct {
 	Enabled          bool `yaml:"enabled"`
@@ -147,9 +154,10 @@ type VaultConfig struct {
 	CredPath string `yaml:"credentials"`
 	CACert   string `yaml:"cacert"`
 	// Auto-unseal behavior (optional)
-	AutoUnseal          bool   `yaml:"auto_unseal"`
-	HealthCheckInterval string `yaml:"health_check_interval"` // Go duration, e.g., "15s"
-	UnsealCooldown      string `yaml:"unseal_cooldown"`       // Go duration, e.g., "30s"
+	AutoUnseal          bool                    `yaml:"auto_unseal"`
+	HealthCheckInterval string                  `yaml:"health_check_interval"` // Go duration, e.g., "15s"
+	UnsealCooldown      string                  `yaml:"unseal_cooldown"`       // Go duration, e.g., "30s"
+	HistoryRetention    HistoryRetentionConfig  `yaml:"history_retention"`
 }
 
 type ShieldConfig struct {

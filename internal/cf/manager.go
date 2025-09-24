@@ -2,6 +2,7 @@ package cf
 
 import (
 	"errors"
+	"sync"
 
 	"blacksmith/pkg/logger"
 )
@@ -10,6 +11,7 @@ import (
 var (
 	ErrCFEndpointNotConfigured                    = errors.New("CF endpoint not configured")
 	ErrCFEndpointCircuitBreakerOpen               = errors.New("CF endpoint circuit breaker is open")
+	ErrCFEndpointUnhealthy                        = errors.New("CF endpoint is unhealthy")
 	ErrNoCFEndpointsConfigured                    = errors.New("no CF endpoints configured")
 	ErrFailedToGetAppEnvironmentFromAnyCFEndpoint = errors.New("failed to get app environment from any CF endpoint")
 )
@@ -82,6 +84,9 @@ func (m *Manager) initializeClients() {
 
 	m.logger.Info("initializing CF clients for %d endpoints", len(m.endpoints))
 
+	// Use a WaitGroup to wait for all connection attempts to complete
+	var waitGroup sync.WaitGroup
+
 	for name, config := range m.endpoints {
 		if !m.validateEndpointCredentials(name, config) {
 			continue
@@ -90,9 +95,16 @@ func (m *Manager) initializeClients() {
 		client := m.createEndpointClient(config)
 		m.clients[name] = client
 
-		// Attempt initial connection
-		m.attemptInitialConnection(name, client, config)
+		// Increment the WaitGroup counter
+		waitGroup.Add(1)
+
+		// Start initial connection asynchronously
+		go m.attemptInitialConnectionAsync(name, client, config, &waitGroup)
 	}
+
+	// Wait for all connection attempts to complete
+	m.logger.Debug("waiting for initial connection attempts to complete...")
+	waitGroup.Wait()
 
 	m.logInitializationResult()
 }

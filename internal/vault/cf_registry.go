@@ -112,3 +112,10 @@ func (vault *Vault) UpdateCFRegistrationStatus(ctx context.Context, registration
 
 	return vault.SaveCFRegistration(ctx, registration)
 }
+
+// SaveCFRegistrationProgress stores the latest progress record for a registration.
+func (vault *Vault) SaveCFRegistrationProgress(ctx context.Context, registrationID string, progress map[string]interface{}) error {
+	path := "secret/blacksmith/registrations/" + registrationID + "/progress"
+
+	return vault.Put(ctx, path, progress)
+}

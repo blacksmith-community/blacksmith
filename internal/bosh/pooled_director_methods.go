@@ -573,134 +573,166 @@ func (p *PooledDirector) DeleteResurrectionConfig(deploymentName string) error {
 	})
 }
 
-// RestartDeployment implements Director interface with pooling
+// RestartDeployment implements Director interface with pooling.
 func (p *PooledDirector) RestartDeployment(name string, opts RestartOpts) (*Task, error) {
 	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*2)
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
 	defer cancel()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.RestartDeployment(name, opts)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.(*Task), nil
+	task, ok := result.(*Task)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return task, nil
 }
 
-// StopDeployment implements Director interface with pooling
+// StopDeployment implements Director interface with pooling.
 func (p *PooledDirector) StopDeployment(name string, opts StopOpts) (*Task, error) {
 	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*2)
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
 	defer cancel()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.StopDeployment(name, opts)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.(*Task), nil
+	task, ok := result.(*Task)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return task, nil
 }
 
-// StartDeployment implements Director interface with pooling
+// StartDeployment implements Director interface with pooling.
 func (p *PooledDirector) StartDeployment(name string, opts StartOpts) (*Task, error) {
 	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*2)
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
 	defer cancel()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.StartDeployment(name, opts)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.(*Task), nil
+	task, ok := result.(*Task)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return task, nil
 }
 
-// RecreateDeployment implements Director interface with pooling
+// RecreateDeployment implements Director interface with pooling.
 func (p *PooledDirector) RecreateDeployment(name string, opts RecreateOpts) (*Task, error) {
 	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*3)
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*uploadTimeoutMultiplier)
 	defer cancel()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.RecreateDeployment(name, opts)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.(*Task), nil
+	task, ok := result.(*Task)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return task, nil
 }
 
-// ListErrands implements Director interface with pooling
+// ListErrands implements Director interface with pooling.
 func (p *PooledDirector) ListErrands(deployment string) ([]Errand, error) {
 	ctx := context.Background()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.ListErrands(deployment)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.([]Errand), nil
+	errands, ok := result.([]Errand)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return errands, nil
 }
 
-// RunErrand implements Director interface with pooling
+// RunErrand implements Director interface with pooling.
 func (p *PooledDirector) RunErrand(deployment, errand string, opts ErrandOpts) (*ErrandResult, error) {
 	// Use longer timeout for errand operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*3)
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*uploadTimeoutMultiplier)
 	defer cancel()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.RunErrand(deployment, errand, opts)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.(*ErrandResult), nil
+	errandResult, ok := result.(*ErrandResult)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return errandResult, nil
 }
 
-// GetInstances implements Director interface with pooling
+// GetInstances implements Director interface with pooling.
 func (p *PooledDirector) GetInstances(deployment string) ([]Instance, error) {
 	ctx := context.Background()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.GetInstances(deployment)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.([]Instance), nil
+	instances, ok := result.([]Instance)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return instances, nil
 }
 
-// UpdateDeployment implements Director interface with pooling
+// UpdateDeployment implements Director interface with pooling.
 func (p *PooledDirector) UpdateDeployment(name, manifest string) (*Task, error) {
 	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*2)
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
 	defer cancel()
 
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.UpdateDeployment(name, manifest)
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
-	return result.(*Task), nil
+	task, ok := result.(*Task)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
+	}
+
+	return task, nil
 }

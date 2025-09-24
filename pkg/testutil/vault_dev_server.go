@@ -229,7 +229,17 @@ func (v *VaultDevServer) ReadSecret(path string) (map[string]interface{}, error)
 		return nil, ErrSecretNotFound
 	}
 
-	if m, ok := sec.Data["data"].(map[string]interface{}); ok {
+	// Check if the secret was deleted (data field might be nil or empty)
+	if sec.Data == nil {
+		return nil, ErrSecretNotFound
+	}
+
+	data, hasData := sec.Data["data"]
+	if !hasData || data == nil {
+		return nil, ErrSecretNotFound
+	}
+
+	if m, ok := data.(map[string]interface{}); ok {
 		return m, nil
 	}
 

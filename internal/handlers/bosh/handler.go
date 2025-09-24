@@ -1,8 +1,9 @@
 package bosh
 
 import (
+	"context"
+	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"blacksmith/internal/interfaces"
@@ -11,30 +12,33 @@ import (
 
 // Handler handles BOSH-related endpoints.
 type Handler struct {
-	logger   interfaces.Logger
-	config   interfaces.Config
-	vault    interfaces.Vault
-	director interfaces.Director
-	broker   interfaces.Broker
+	logger    interfaces.Logger
+	config    interfaces.Config
+	vault     interfaces.Vault
+	director  interfaces.Director
+	broker    interfaces.Broker
+	vmMonitor interfaces.VMMonitor
 }
 
 // Dependencies contains all dependencies needed by the BOSH handler.
 type Dependencies struct {
-	Logger   interfaces.Logger
-	Config   interfaces.Config
-	Vault    interfaces.Vault
-	Director interfaces.Director
-	Broker   interfaces.Broker
+	Logger    interfaces.Logger
+	Config    interfaces.Config
+	Vault     interfaces.Vault
+	Director  interfaces.Director
+	Broker    interfaces.Broker
+	VMMonitor interfaces.VMMonitor
 }
 
 // NewHandler creates a new BOSH handler.
 func NewHandler(deps Dependencies) *Handler {
 	return &Handler{
-		logger:   deps.Logger,
-		config:   deps.Config,
-		vault:    deps.Vault,
-		director: deps.Director,
-		broker:   deps.Broker,
+		logger:    deps.Logger,
+		config:    deps.Config,
+		vault:     deps.Vault,
+		director:  deps.Director,
+		broker:    deps.Broker,
+		vmMonitor: deps.VMMonitor,
 	}
 }
 
@@ -49,26 +53,27 @@ func (h *Handler) GetPoolStats(responseWriter http.ResponseWriter, req *http.Req
 		logger.Error("Failed to get pool stats: %v", err)
 		// Return basic stats on error
 		stats := map[string]interface{}{
-			"total_connections":   1,
-			"active_connections":  0,
-			"queued_requests":     0,
-			"rejected_requests":   0,
-			"total_requests":      0,
-			"avg_wait_time_ms":    0,
-			"timestamp":           time.Now().Unix(),
+			"total_connections":  1,
+			"active_connections": 0,
+			"queued_requests":    0,
+			"rejected_requests":  0,
+			"total_requests":     0,
+			"avg_wait_time_ms":   0,
+			"timestamp":          time.Now().Unix(),
 		}
 		response.HandleJSON(responseWriter, stats, nil)
+
 		return
 	}
 
 	stats := map[string]interface{}{
-		"total_connections":   poolStats.MaxConnections,
-		"active_connections":  poolStats.ActiveConnections,
-		"queued_requests":     poolStats.QueuedRequests,
-		"rejected_requests":   poolStats.RejectedRequests,
-		"total_requests":      poolStats.TotalRequests,
-		"avg_wait_time_ms":    poolStats.AvgWaitTime.Milliseconds(),
-		"timestamp":           time.Now().Unix(),
+		"total_connections":  poolStats.MaxConnections,
+		"active_connections": poolStats.ActiveConnections,
+		"queued_requests":    poolStats.QueuedRequests,
+		"rejected_requests":  poolStats.RejectedRequests,
+		"total_requests":     poolStats.TotalRequests,
+		"avg_wait_time_ms":   poolStats.AvgWaitTime.Milliseconds(),
+		"timestamp":          time.Now().Unix(),
 	}
 
 	response.HandleJSON(responseWriter, stats, nil)
@@ -81,49 +86,9 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 
 	ctx := req.Context()
 
-	// Attempt to load instance data from Vault index
-	instances := make(map[string]interface{})
-	if h.vault != nil {
-		vaultInstances := make(map[string]interface{})
-
-		exists, err := h.vault.Get(ctx, "db", &vaultInstances)
-		if err != nil {
-			logger.Error("Failed to fetch instances from Vault: %v", err)
-		} else if exists {
-			if vaultInstances != nil {
-				instances = vaultInstances
-			}
-
-			logger.Debug("Loaded %d instances from Vault index", len(instances))
-		} else {
-			logger.Debug("Vault index 'db' does not exist; falling back to BOSH deployments")
-		}
-	} else {
-		logger.Debug("Vault dependency is not configured; falling back to BOSH deployments")
-	}
-
-	// Fallback to BOSH deployments when Vault data is unavailable
-	if len(instances) == 0 && h.director != nil {
-		deployments, err := h.director.GetDeployments()
-		if err != nil {
-			logger.Error("Failed to fetch deployments: %v", err)
-		} else {
-			for _, deployment := range deployments {
-				if deployment.Name == "" || deployment.Name == "blacksmith" {
-					continue
-				}
-
-				instances[deployment.Name] = map[string]interface{}{
-					"instance_id":   deployment.Name,
-					"service_id":    extractServiceType(deployment.Name),
-					"plan_id":       "standard",
-					"organization":  "blacksmith",
-					"space":         "services",
-					"instance_name": deployment.Name,
-				}
-			}
-		}
-	}
+	// Service instances are ONLY tracked in Vault 'db' index
+	// Do not fall back to BOSH deployments as they may include non-service infrastructure deployments
+	instances := h.loadServiceInstances(ctx, logger)
 
 	// Build plan metadata from broker catalog
 	plans := make(map[string]map[string]interface{})
@@ -170,25 +135,141 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 	response.HandleJSON(responseWriter, status, nil)
 }
 
-// extractServiceType attempts to extract service type from deployment name.
-func extractServiceType(deploymentName string) string {
-	// Common patterns: redis-{guid}, rabbitmq-{guid}, postgresql-{guid}
-	if strings.HasPrefix(deploymentName, "redis-") {
-		return "redis"
+// loadServiceInstances loads service instances from Vault and enriches them with VM status.
+func (h *Handler) loadServiceInstances(ctx context.Context, logger interfaces.Logger) map[string]interface{} {
+	instances := make(map[string]interface{})
+
+	if h.vault == nil {
+		logger.Debug("Vault dependency is not configured; no service instances available")
+
+		return instances
 	}
 
-	if strings.HasPrefix(deploymentName, "rabbitmq-") {
-		return "rabbitmq"
+	vaultInstances, err := h.getInstancesFromVault(ctx)
+	if err != nil {
+		logger.Error("Failed to fetch instances from Vault: %v", err)
+
+		return instances
 	}
 
-	if strings.HasPrefix(deploymentName, "postgresql-") {
-		return "postgresql"
-	}
-	// Default to first part before hyphen
-	parts := strings.Split(deploymentName, "-")
-	if len(parts) > 0 {
-		return parts[0]
+	if vaultInstances == nil {
+		logger.Debug("Vault index 'db' does not exist; no service instances available")
+
+		return instances
 	}
 
-	return "unknown"
+	instances = vaultInstances
+	logger.Debug("Loaded %d instances from Vault index", len(instances))
+
+	// Enrich instances with full data including instance_name
+	h.enrichInstancesWithFullData(ctx, instances, logger)
+	h.enrichInstancesWithVMStatus(ctx, instances, logger)
+
+	return instances
+}
+
+// getInstancesFromVault retrieves instances from Vault db index.
+func (h *Handler) getInstancesFromVault(ctx context.Context) (map[string]interface{}, error) {
+	vaultInstances := make(map[string]interface{})
+
+	exists, err := h.vault.Get(ctx, "db", &vaultInstances)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get instances from vault: %w", err)
+	}
+
+	if !exists {
+		return make(map[string]interface{}), nil
+	}
+
+	return vaultInstances, nil
+}
+
+// enrichInstancesWithFullData enriches instances with full vault data including instance_name.
+func (h *Handler) enrichInstancesWithFullData(ctx context.Context, instances map[string]interface{}, logger interfaces.Logger) {
+	logger.Debug("Enriching instances with full vault data")
+
+	for instanceID, instanceData := range instances {
+		// Get full instance data from vault
+		var fullData map[string]interface{}
+
+		exists, err := h.vault.Get(ctx, instanceID, &fullData)
+		if err != nil {
+			logger.Debug("Failed to get full data for %s: %v", instanceID, err)
+
+			continue
+		}
+
+		if !exists {
+			logger.Debug("No full data found for instance %s", instanceID)
+
+			continue
+		}
+
+		// Merge the full data into the instance data
+		if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+			// Add instance_name if it exists in full data
+			if instanceName, ok := fullData["instance_name"].(string); ok && instanceName != "" {
+				instanceMap["instance_name"] = instanceName
+				logger.Debug("Added instance_name '%s' for instance %s", instanceName, instanceID)
+			}
+
+			// Add any other important fields from full data that might be missing
+			if deploymentName, ok := fullData["deployment_name"].(string); ok && deploymentName != "" {
+				instanceMap["deployment_name"] = deploymentName
+			}
+		}
+	}
+}
+
+// enrichInstancesWithVMStatus adds VM health status to service instances.
+func (h *Handler) enrichInstancesWithVMStatus(ctx context.Context, instances map[string]interface{}, logger interfaces.Logger) {
+	if h.vmMonitor == nil {
+		logger.Debug("VMMonitor not available; skipping VM health enrichment")
+
+		return
+	}
+
+	logger.Debug("Enriching instances with VM health status")
+
+	for instanceID, instanceData := range instances {
+		vmStatus, err := h.vmMonitor.GetServiceVMStatus(ctx, instanceID)
+		if err != nil {
+			logger.Debug("No VM status for %s: %v", instanceID, err)
+
+			continue
+		}
+
+		if vmStatus == nil {
+			continue
+		}
+
+		logger.Debug("VM status for %s: %+v", instanceID, vmStatus)
+
+		h.updateInstanceWithVMStatus(instanceID, instanceData, vmStatus, instances)
+	}
+}
+
+// updateInstanceWithVMStatus updates an instance with VM status information.
+func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData interface{}, vmStatus interface{}, instances map[string]interface{}) {
+	instanceMap, ok := instanceData.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// Type assertion for vmStatus - using VMStatus struct from vmmonitor package
+	type VMStatus struct {
+		Status      string    `json:"status"`
+		VMCount     int       `json:"vm_count"`
+		HealthyVMs  int       `json:"healthy_vms"`
+		LastUpdated time.Time `json:"last_updated"`
+	}
+
+	if status, ok := vmStatus.(*VMStatus); ok {
+		instanceMap["vm_status"] = status.Status
+		instanceMap["vm_count"] = status.VMCount
+		instanceMap["vm_healthy"] = status.HealthyVMs
+		instanceMap["vm_last_updated"] = status.LastUpdated.Unix()
+	}
+
+	instances[instanceID] = instanceMap
 }

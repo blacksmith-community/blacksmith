@@ -5,11 +5,14 @@ import (
 	"net/http"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
 	rabbitmqssh "blacksmith/internal/services/rabbitmq"
+	"blacksmith/internal/vmmonitor"
 	"blacksmith/pkg/logger"
 	pkgservices "blacksmith/pkg/services"
+	"blacksmith/pkg/vault"
 )
 
 // Logger interface for logging operations across all internal packages.
@@ -18,12 +21,16 @@ type Logger = logger.Logger
 // Vault interface for vault operations across all internal packages.
 type Vault interface {
 	Get(ctx context.Context, path string, result interface{}) (bool, error)
+	Put(ctx context.Context, path string, data interface{}) error
+	Delete(ctx context.Context, path string) error
+	FindInstance(ctx context.Context, instanceID string) (*vault.Instance, bool, error)
 	// CF Registration methods (matching actual implementation)
 	ListCFRegistrations(ctx context.Context) ([]map[string]interface{}, error)
 	SaveCFRegistration(ctx context.Context, registration map[string]interface{}) error
 	GetCFRegistration(ctx context.Context, registrationID string, out interface{}) (bool, error)
 	DeleteCFRegistration(ctx context.Context, registrationID string) error
 	UpdateCFRegistrationStatus(ctx context.Context, registrationID, status, errorMsg string) error
+	SaveCFRegistrationProgress(ctx context.Context, registrationID string, progress map[string]interface{}) error
 }
 
 // Config interface for configuration access across all internal packages.
@@ -41,6 +48,7 @@ type Broker interface {
 	// Placeholder method to distinguish from other interfaces - implement as needed
 	IsBroker() bool
 	GetPlans() map[string]services.Plan
+	GetVault() Vault
 }
 
 // CFManager interface for Cloud Foundry operations across all internal packages.
@@ -49,29 +57,43 @@ type CFManager interface {
 	GetClient(endpointName string) (interface{}, error)
 	// IsCFManager identifies this as a CFManager implementation
 	IsCFManager() bool
+	// GetStatus returns the current status of all CF endpoints
+	GetStatus() map[string]interface{}
 }
 
 // VMMonitor interface for VM monitoring across all internal packages.
 type VMMonitor interface {
 	// Placeholder method to distinguish from other interfaces - implement as needed
 	IsVMMonitor() bool
+	// GetServiceVMStatus retrieves VM status for a service instance
+	GetServiceVMStatus(ctx context.Context, serviceID string) (*vmmonitor.VMStatus, error)
 }
 
 // SSHService interface for SSH operations across all internal packages.
 type SSHService interface {
-	// Placeholder method to distinguish from other interfaces - implement as needed
+	ssh.SSHService
 	IsSSHService() bool
 }
 
 // RabbitMQSSHService interface for RabbitMQ SSH operations across all internal packages.
 type RabbitMQSSHService interface {
-	// Placeholder method to distinguish from other interfaces - implement as needed
 	IsRabbitMQSSHService() bool
+	ListQueues(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ListConnections(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ListChannels(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ListUsers(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ClusterStatus(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	NodeHealth(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	Status(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	Environment(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ExecuteCommand(deployment, instance string, index int, cmd rabbitmqssh.RabbitMQCommand) (*rabbitmqssh.RabbitMQCommandResult, error)
 }
 
 // RabbitMQMetadataService interface for RabbitMQ metadata operations across all internal packages.
 type RabbitMQMetadataService interface {
-	// Placeholder method to distinguish from other interfaces - implement as needed
+	GetCategories() []rabbitmqssh.RabbitMQCtlCategory
+	GetCategory(name string) (*rabbitmqssh.RabbitMQCtlCategory, error)
+	GetCommand(category, command string) (*rabbitmqssh.RabbitMQCtlCommand, error)
 	IsRabbitMQMetadataService() bool
 }
 
@@ -84,11 +106,14 @@ type RabbitMQExecutorService interface {
 // RabbitMQAuditService interface for RabbitMQ audit operations across all internal packages.
 type RabbitMQAuditService interface {
 	LogStreamingExecution(ctx context.Context, result *rabbitmqssh.StreamingExecutionResult, user, clientIP string) error
+	GetAuditHistory(ctx context.Context, instanceID string, limit int) ([]rabbitmqssh.AuditEntry, error)
 }
 
 // RabbitMQPluginsMetadataService interface for RabbitMQ plugins metadata operations across all internal packages.
 type RabbitMQPluginsMetadataService interface {
-	// Placeholder method to distinguish from other interfaces - implement as needed
+	GetCategories() []rabbitmqssh.RabbitMQPluginsCategory
+	GetCategory(name string) (*rabbitmqssh.RabbitMQPluginsCategory, error)
+	GetCommand(name string) (*rabbitmqssh.RabbitMQPluginsCommand, error)
 	IsRabbitMQPluginsMetadataService() bool
 }
 
@@ -101,6 +126,7 @@ type RabbitMQPluginsExecutorService interface {
 // RabbitMQPluginsAuditService interface for RabbitMQ plugins audit operations across all internal packages.
 type RabbitMQPluginsAuditService interface {
 	LogExecution(ctx context.Context, execution *rabbitmqssh.RabbitMQPluginsExecution, user, clientIP, executionID string, duration int64) error
+	GetHistory(ctx context.Context, instanceID string, limit int) ([]rabbitmqssh.PluginsHistoryEntry, error)
 }
 
 // WebSocketHandler interface for WebSocket operations across all internal packages.

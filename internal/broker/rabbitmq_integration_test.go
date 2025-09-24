@@ -48,12 +48,16 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			Name: "RabbitMQ Test Plan",
 			Type: "rabbitmq",
 			Credentials: map[interface{}]interface{}{
-				"host":           "{{.Jobs.rabbitmq.IPs.0}}",
-				"port":           5672,
-				"api_url":        "https://{{.Jobs.rabbitmq.IPs.0}}:15672/api",
-				"admin_username": "admin",
-				"admin_password": "admin-password",
-				"vhost":          "/test",
+				"credentials": map[interface{}]interface{}{
+					"host":           "{{.Jobs.rabbitmq.IPs.0}}",
+					"port":           5672,
+					"api_url":        "https://{{.Jobs.rabbitmq.IPs.0}}:15672/api",
+					"admin_username": "admin",
+					"admin_password": "admin-password",
+					"username":       "default-user",
+					"password":       "default-pass",
+					"vhost":          "/test",
+				},
 			},
 		}
 
@@ -178,7 +182,10 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			Expect(credentials2.Password).To(Equal(credentials.Password))
 
 			// Step 3: Unbind - should delete user
-			_, err = brokerInstance.Unbind(ctx, instanceID, bindingID, domain.UnbindDetails{}, false)
+			_, err = brokerInstance.Unbind(ctx, instanceID, bindingID, domain.UnbindDetails{
+				ServiceID: "rabbitmq-service",
+				PlanID:    "rabbitmq-plan",
+			}, false)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify user deleted from RabbitMQ
@@ -275,7 +282,10 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 				go func(idx int) {
 					defer waitGroup.Done()
 					bindID := fmt.Sprintf("concurrent-unbind-%d", idx)
-					_, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, domain.UnbindDetails{}, false)
+					_, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, domain.UnbindDetails{
+						ServiceID: "rabbitmq-service",
+						PlanID:    "rabbitmq-plan",
+					}, false)
 				}(bindingIndex)
 			}
 
@@ -324,7 +334,10 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 					if idx < 10 {
 						// Unbind existing
 						bindID := fmt.Sprintf("mixed-binding-%d", idx)
-						_, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, domain.UnbindDetails{}, false)
+						_, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, domain.UnbindDetails{
+							ServiceID: "rabbitmq-service",
+							PlanID:    "rabbitmq-plan",
+						}, false)
 					} else {
 						// Create new binding
 						bindID := fmt.Sprintf("new-binding-%d", idx)
@@ -433,8 +446,29 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			ctx := context.Background()
 			bindingID := "error-recovery-test"
 
-			// Close the mock server to simulate connection error
-			mockRabbitMQ.Close()
+			// Create a temporary server that we can close without affecting other tests
+			tempServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			// Save original broker state
+			originalBOSH := brokerInstance.BOSH
+
+			// Create a temporary mock BOSH with the temp server
+			tempMockBOSH := testutil.NewIntegrationMockBOSH()
+			tempMockBOSH.SetVMs("rabbitmq-plan-"+instanceID, []bosh.VM{
+				{
+					ID:  "rabbitmq-vm-0",
+					Job: "rabbitmq",
+					Index: 0,
+					IPs:   []string{strings.TrimPrefix(tempServer.URL, "http://")},
+					DNS:   []string{"rabbitmq-0.rabbitmq.default.bosh"},
+				},
+			})
+			brokerInstance.BOSH = tempMockBOSH
+
+			// Close the temp server to simulate connection error
+			tempServer.Close()
 
 			// Try to create binding
 			err := suite.vault.WriteSecret(instanceID+"/bindings", map[string]interface{}{
@@ -449,6 +483,9 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(credentials).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring("connection refused"))
+
+			// Restore original broker state
+			brokerInstance.BOSH = originalBOSH
 		})
 
 		It("should recover from transient failures", func() {
@@ -456,9 +493,11 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			bindingID := "transient-failure-test"
 			failureCount := atomic.Int32{}
 
-			// Replace mock server with one that fails first 2 attempts
-			mockRabbitMQ.Close()
-			mockRabbitMQ = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			// Save original broker state
+			originalBOSH := brokerInstance.BOSH
+
+			// Create a temporary server that fails first 2 attempts
+			tempServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if strings.HasPrefix(request.URL.Path, "/api/users/") && request.Method == http.MethodPut {
 					count := failureCount.Add(1)
 					if count <= 2 {
@@ -473,15 +512,19 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 					writer.WriteHeader(http.StatusNotFound)
 				}
 			}))
+			defer tempServer.Close()
 
-			// Update BOSH VMs with new server URL
-			mockBOSH.SetVMs("rabbitmq-plan-"+instanceID, []bosh.VM{
+			// Create a temporary mock BOSH with the temp server
+			tempMockBOSH := testutil.NewIntegrationMockBOSH()
+			tempMockBOSH.SetVMs("rabbitmq-plan-"+instanceID, []bosh.VM{
 				{
 					ID:  "rabbitmq-vm-0",
 					Job: "rabbitmq",
-					IPs: []string{strings.TrimPrefix(mockRabbitMQ.URL, "http://")},
+					Index: 0,
+					IPs: []string{strings.TrimPrefix(tempServer.URL, "http://")},
 				},
 			})
+			brokerInstance.BOSH = tempMockBOSH
 
 			// Set up binding
 			err := suite.vault.WriteSecret(instanceID+"/bindings", map[string]interface{}{
@@ -497,6 +540,9 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			Expect(credentials).ToNot(BeNil())
 			Expect(failureCount.Load()).To(Equal(int32(3))) // Failed twice, succeeded on third
+
+			// Restore original broker state
+			brokerInstance.BOSH = originalBOSH
 		})
 	})
 })

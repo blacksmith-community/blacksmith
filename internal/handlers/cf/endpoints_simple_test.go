@@ -1,6 +1,7 @@
 package cf_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,17 +11,29 @@ import (
 	"blacksmith/pkg/logger"
 )
 
-// TestEndpointsCompile verifies that the endpoint handlers compile and handle nil CFManager correctly
+// TestEndpointsCompile verifies that the endpoint handlers compile and handle nil CFManager correctly.
 func TestEndpointsCompile(t *testing.T) {
+	t.Parallel()
+
 	log := logger.Get()
 	handler := cf.NewHandler(log, nil, nil, nil)
 
-	tests := []struct {
-		name           string
-		testFunc       func(w http.ResponseWriter, r *http.Request)
-		expectedStatus int
-		expectedError  string
-	}{
+	tests := createEndpointCompileTests(handler)
+
+	for _, testCase := range tests {
+		runEndpointCompileTest(t, testCase)
+	}
+}
+
+type endpointCompileTest struct {
+	name           string
+	testFunc       func(w http.ResponseWriter, r *http.Request)
+	expectedStatus int
+	expectedError  string
+}
+
+func createEndpointCompileTests(handler *cf.Handler) []endpointCompileTest {
+	return []endpointCompileTest{
 		{
 			name: "GetMarketplace with nil CFManager",
 			testFunc: func(w http.ResponseWriter, r *http.Request) {
@@ -62,44 +75,67 @@ func TestEndpointsCompile(t *testing.T) {
 			expectedError:  "CF functionality disabled - no CF endpoints configured",
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, "/test", nil)
-			if err != nil {
-				t.Fatalf("Failed to create request: %v", err)
-			}
+func runEndpointCompileTest(t *testing.T, testCase endpointCompileTest) {
+	t.Helper()
 
-			recorder := httptest.NewRecorder()
-			tt.testFunc(recorder, req)
+	t.Run(testCase.name, func(t *testing.T) {
+		t.Parallel()
 
-			if recorder.Code != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, recorder.Code)
-			}
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
 
-			var body map[string]interface{}
-			err = json.NewDecoder(recorder.Body).Decode(&body)
-			if err != nil {
-				t.Fatalf("Failed to parse JSON response: %v", err)
-			}
+		recorder := httptest.NewRecorder()
+		testCase.testFunc(recorder, req)
 
-			if body["error"] != tt.expectedError {
-				t.Errorf("Expected error '%s', got '%v'", tt.expectedError, body["error"])
-			}
-		})
+		validateEndpointCompileResponse(t, recorder, testCase)
+	})
+}
+
+func validateEndpointCompileResponse(t *testing.T, recorder *httptest.ResponseRecorder, testCase endpointCompileTest) {
+	t.Helper()
+
+	if recorder.Code != testCase.expectedStatus {
+		t.Errorf("Expected status %d, got %d", testCase.expectedStatus, recorder.Code)
+	}
+
+	var body map[string]interface{}
+
+	err := json.NewDecoder(recorder.Body).Decode(&body)
+	if err != nil {
+		t.Fatalf("Failed to parse JSON response: %v", err)
+	}
+
+	if body["error"] != testCase.expectedError {
+		t.Errorf("Expected error '%s', got '%v'", testCase.expectedError, body["error"])
 	}
 }
 
-// TestEndpointRouting verifies that the routing logic correctly identifies and routes CF endpoint requests
+// TestEndpointRouting verifies that the routing logic correctly identifies and routes CF endpoint requests.
 func TestEndpointRouting(t *testing.T) {
+	t.Parallel()
+
 	log := logger.Get()
 	handler := cf.NewHandler(log, nil, nil, nil)
 
-	tests := []struct {
-		name        string
-		url         string
-		shouldMatch bool
-	}{
+	tests := createEndpointRoutingTests()
+
+	for _, testCase := range tests {
+		runEndpointRoutingTest(t, handler, testCase)
+	}
+}
+
+type endpointRoutingTest struct {
+	name        string
+	url         string
+	shouldMatch bool
+}
+
+func createEndpointRoutingTests() []endpointRoutingTest {
+	return []endpointRoutingTest{
 		{
 			name:        "Marketplace endpoint",
 			url:         "/b/cf/endpoints/test/marketplace",
@@ -131,28 +167,38 @@ func TestEndpointRouting(t *testing.T) {
 			shouldMatch: false,
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, tt.url, nil)
-			if err != nil {
-				t.Fatalf("Failed to create request: %v", err)
-			}
+func runEndpointRoutingTest(t *testing.T, handler *cf.Handler, testCase endpointRoutingTest) {
+	t.Helper()
 
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, req)
+	t.Run(testCase.name, func(t *testing.T) {
+		t.Parallel()
 
-			if tt.shouldMatch {
-				// Should get 503 (service unavailable) because CFManager is nil
-				if recorder.Code != http.StatusServiceUnavailable {
-					t.Errorf("Expected status 503 for matched route, got %d", recorder.Code)
-				}
-			} else {
-				// Should get 404 for unmatched routes
-				if recorder.Code != http.StatusNotFound {
-					t.Errorf("Expected status 404 for unmatched route, got %d", recorder.Code)
-				}
-			}
-		})
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, testCase.url, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		validateEndpointRoutingResponse(t, recorder, testCase)
+	})
+}
+
+func validateEndpointRoutingResponse(t *testing.T, recorder *httptest.ResponseRecorder, testCase endpointRoutingTest) {
+	t.Helper()
+
+	if testCase.shouldMatch {
+		// Should get 503 (service unavailable) because CFManager is nil
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Errorf("Expected status 503 for matched route, got %d", recorder.Code)
+		}
+	} else {
+		// Should get 404 for unmatched routes
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404 for unmatched route, got %d", recorder.Code)
+		}
 	}
 }

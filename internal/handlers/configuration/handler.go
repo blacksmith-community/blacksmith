@@ -5,22 +5,28 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 )
 
+// Static errors for err113 linter compliance.
+var (
+	errDirectorDependencyNotAvailable = errors.New("director dependency not available")
+)
+
 // Constants for configuration defaults.
 const (
-	// Resource limits.
-	maxInstances = 100
-	maxDiskGB    = 1000
-	maxMemoryGB  = 64
+	// Pagination defaults for config list endpoint.
+	configListDefaultLimit = 50
+	configListMaxLimit     = 200
 
-	// Service instances defaults.
-	redisDefaultInstances      = 5
-	rabbitmqDefaultInstances   = 3
-	postgresqlDefaultInstances = 8
+	// Pagination defaults for config versions endpoint.
+	configVersionsDefaultLimit = 20
+	configVersionsMaxLimit     = 100
 
 	// Redis defaults.
 	redisDefaultTimeout      = 300
@@ -35,6 +41,13 @@ const (
 	testTaskID = 2000
 )
 
+var (
+	configDetailPattern   = regexp.MustCompile(`^/b/configs/([^/]+)$`)
+	configVersionsPattern = regexp.MustCompile(`^/b/configs/([^/]+)/([^/]+)/versions$`)
+	configDiffPattern     = regexp.MustCompile(`^/b/configs/([^/]+)/([^/]+)/diff$`)
+	instanceConfigPattern = regexp.MustCompile(`^/b/([^/]+)/config$`)
+)
+
 // Error variables for err113 compliance.
 var (
 	errConfigurationEndpointNotFound = errors.New("configuration endpoint not found")
@@ -43,16 +56,18 @@ var (
 
 // Handler handles configuration-related endpoints.
 type Handler struct {
-	logger interfaces.Logger
-	config interfaces.Config
-	vault  interfaces.Vault
+	logger   interfaces.Logger
+	config   interfaces.Config
+	vault    interfaces.Vault
+	director interfaces.Director
 }
 
 // Dependencies contains all dependencies needed by the Configuration handler.
 type Dependencies struct {
-	Logger interfaces.Logger
-	Config interfaces.Config
-	Vault  interfaces.Vault
+	Logger   interfaces.Logger
+	Config   interfaces.Config
+	Vault    interfaces.Vault
+	Director interfaces.Director
 }
 
 // ServiceFilterOption represents a service filter option.
@@ -67,9 +82,10 @@ type ServiceFilterOption struct {
 // NewHandler creates a new Configuration handler.
 func NewHandler(deps Dependencies) *Handler {
 	return &Handler{
-		logger: deps.Logger,
-		config: deps.Config,
-		vault:  deps.Vault,
+		logger:   deps.Logger,
+		config:   deps.Config,
+		vault:    deps.Vault,
+		director: deps.Director,
 	}
 }
 
@@ -82,7 +98,29 @@ func (h *Handler) CanHandle(path string) bool {
 }
 
 // ServeHTTP handles configuration-related endpoints with pattern matching.
+
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	// Handle config diff endpoint first to avoid matching generic patterns
+	if m := configDiffPattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == http.MethodGet {
+		h.GetConfigDiff(writer, req, m[1], m[2])
+
+		return
+	}
+
+	// Handle config versions endpoint
+	if m := configVersionsPattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == http.MethodGet {
+		h.GetConfigVersions(writer, req, m[1], m[2])
+
+		return
+	}
+
+	// Handle config detail endpoint
+	if m := configDetailPattern.FindStringSubmatch(req.URL.Path); m != nil && req.Method == http.MethodGet {
+		h.GetConfigDetails(writer, req, m[1])
+
+		return
+	}
+
 	// Handle /b/configs endpoint
 	if req.URL.Path == "/b/configs" && req.Method == http.MethodGet {
 		h.GetConfigs(writer, req)
@@ -98,8 +136,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	}
 
 	// Handle /b/{instance}/config endpoint - service instance configuration
-	configPattern := regexp.MustCompile(`^/b/([^/]+)/config$`)
-	if m := configPattern.FindStringSubmatch(req.URL.Path); m != nil {
+	if m := instanceConfigPattern.FindStringSubmatch(req.URL.Path); m != nil {
 		instanceID := m[1]
 
 		switch req.Method {
@@ -124,39 +161,168 @@ func (h *Handler) GetConfigs(writer http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("configs-list")
 	logger.Debug("Fetching all configurations")
 
-	// TODO: Implement actual configuration fetching
-	// This would typically fetch various configuration sources
-	configs := map[string]interface{}{
-		"services": map[string]interface{}{
-			"redis": map[string]interface{}{
-				"enabled": true,
-				"plans":   []string{"standalone", "cluster"},
-				"version": "7.0",
-			},
-			"rabbitmq": map[string]interface{}{
-				"enabled": true,
-				"plans":   []string{"single", "cluster"},
-				"version": "3.11",
-			},
-			"postgresql": map[string]interface{}{
-				"enabled": true,
-				"plans":   []string{"standalone", "cluster"},
-				"version": "15",
-			},
-		},
-		"features": map[string]interface{}{
-			"auto_backup":       true,
-			"monitoring":        true,
-			"high_availability": false,
-		},
-		"limits": map[string]interface{}{
-			"max_instances": maxInstances,
-			"max_disk_gb":   maxDiskGB,
-			"max_memory_gb": maxMemoryGB,
-		},
+	if h.director == nil {
+		logger.Error("BOSH director dependency is not configured")
+		response.HandleJSON(writer, nil, errDirectorDependencyNotAvailable)
+
+		return
 	}
 
-	response.HandleJSON(writer, configs, nil)
+	query := req.URL.Query()
+	limit := parseLimit(query.Get("limit"), configListDefaultLimit, configListMaxLimit)
+	configTypes := parseTypes(query.Get("types"))
+
+	logger.Debugf("Fetching configs with limit=%d types=%v", limit, configTypes)
+
+	configs, err := h.director.GetConfigs(limit, configTypes)
+	if err != nil {
+		logger.Errorf("Failed to fetch configs: %v", err)
+		response.HandleJSON(writer, nil, fmt.Errorf("failed to fetch configs: %w", err))
+
+		return
+	}
+
+	logger.Infof("Successfully fetched %d configs", len(configs))
+
+	payload := map[string]interface{}{
+		"configs": configs,
+		"count":   len(configs),
+	}
+
+	response.HandleJSON(writer, payload, nil)
+}
+
+// GetConfigDetails returns detailed information for a specific config ID.
+func (h *Handler) GetConfigDetails(writer http.ResponseWriter, req *http.Request, configID string) {
+	logger := h.logger.Named("config-details")
+	logger.Debugf("Fetching config details for ID: %s", configID)
+
+	if h.director == nil {
+		logger.Error("BOSH director dependency is not configured")
+		response.HandleJSON(writer, nil, errDirectorDependencyNotAvailable)
+
+		return
+	}
+
+	config, err := h.director.GetConfigByID(configID)
+	if err != nil {
+		logger.Errorf("Failed to fetch config %s: %v", configID, err)
+
+		switch {
+		case errors.Is(err, bosh.ErrInvalidConfigIDFormat):
+			response.WriteError(writer, http.StatusBadRequest, "invalid config ID: "+configID)
+		case errors.Is(err, bosh.ErrConfigNotFound):
+			response.WriteError(writer, http.StatusNotFound, "config not found: "+configID)
+		default:
+			response.HandleJSON(writer, nil, fmt.Errorf("failed to fetch config: %w", err))
+		}
+
+		return
+	}
+
+	logger.Infof("Successfully fetched config details for ID: %s", configID)
+	response.HandleJSON(writer, config, nil)
+}
+
+// GetConfigVersions returns version history for a config.
+func (h *Handler) GetConfigVersions(writer http.ResponseWriter, req *http.Request, configType, configName string) {
+	logger := h.logger.Named("config-versions")
+	logger.Debugf("Fetching config versions for type=%s name=%s", configType, configName)
+
+	if h.director == nil {
+		logger.Error("BOSH director dependency is not configured")
+		response.HandleJSON(writer, nil, errDirectorDependencyNotAvailable)
+
+		return
+	}
+
+	query := req.URL.Query()
+	limit := parseLimit(query.Get("limit"), configVersionsDefaultLimit, configVersionsMaxLimit)
+
+	logger.Debugf("Fetching versions with limit=%d", limit)
+
+	configs, err := h.director.GetConfigVersions(configType, configName, limit)
+	if err != nil {
+		logger.Errorf("Failed to fetch config versions for %s/%s: %v", configType, configName, err)
+		response.HandleJSON(writer, nil, fmt.Errorf("failed to fetch config versions: %w", err))
+
+		return
+	}
+
+	logger.Infof("Successfully fetched %d config versions for %s/%s", len(configs), configType, configName)
+
+	payload := map[string]interface{}{
+		"configs": configs,
+		"count":   len(configs),
+		"type":    configType,
+		"name":    configName,
+	}
+
+	response.HandleJSON(writer, payload, nil)
+}
+
+// GetConfigDiff returns a diff between two config versions.
+func (h *Handler) GetConfigDiff(writer http.ResponseWriter, req *http.Request, configType, configName string) {
+	logger := h.logger.Named("config-diff")
+	logger.Debugf("Computing config diff for type=%s name=%s", configType, configName)
+
+	if h.director == nil {
+		logger.Error("BOSH director dependency is not configured")
+		response.HandleJSON(writer, nil, errDirectorDependencyNotAvailable)
+
+		return
+	}
+
+	fromID, toID, parametersValid := h.parseDiffParameters(writer, req, logger)
+	if !parametersValid {
+		return
+	}
+
+	diff, ok := h.computeDiff(writer, logger, configType, configName, fromID, toID)
+	if !ok {
+		return
+	}
+
+	payload := h.buildDiffPayload(configType, configName, fromID, toID, diff)
+	h.enrichDiffPayloadWithMetadata(payload, fromID, toID)
+
+	logger.Infof("Successfully computed config diff (has_changes=%v)", diff.HasChanges)
+	response.HandleJSON(writer, payload, nil)
+}
+
+func parseLimit(value string, defaultLimit, maxLimit int) int {
+	if value == "" {
+		return defaultLimit
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultLimit
+	}
+
+	if parsed <= 0 || parsed > maxLimit {
+		return defaultLimit
+	}
+
+	return parsed
+}
+
+func parseTypes(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	rawTypes := strings.Split(value, ",")
+	types := make([]string, 0, len(rawTypes))
+
+	for _, t := range rawTypes {
+		trimmed := strings.TrimSpace(t)
+		if trimmed != "" {
+			types = append(types, trimmed)
+		}
+	}
+
+	return types
 }
 
 // GetServiceFilterOptions returns service filter options for UI.
@@ -164,39 +330,23 @@ func (h *Handler) GetServiceFilterOptions(writer http.ResponseWriter, req *http.
 	logger := h.logger.Named("service-filter-options")
 	logger.Debug("Fetching service filter options")
 
-	// TODO: Implement actual service filter options fetching
-	// This would typically be used by a UI to populate filter dropdowns
-	options := []ServiceFilterOption{
-		{
-			Service:   "redis",
-			Plans:     []string{"standalone", "cluster", "cache"},
-			Tags:      []string{"cache", "keyvalue", "nosql"},
-			Bindable:  true,
-			Instances: redisDefaultInstances,
-		},
-		{
-			Service:   "rabbitmq",
-			Plans:     []string{"single", "cluster", "ha"},
-			Tags:      []string{"messaging", "amqp", "queue"},
-			Bindable:  true,
-			Instances: rabbitmqDefaultInstances,
-		},
-		{
-			Service:   "postgresql",
-			Plans:     []string{"standalone", "cluster", "read-replica"},
-			Tags:      []string{"sql", "database", "relational"},
-			Bindable:  true,
-			Instances: postgresqlDefaultInstances,
-		},
+	// Return simple string options for task filtering
+	// These represent different contexts for filtering BOSH tasks
+	options := []string{
+		"blacksmith",        // Main blacksmith deployment
+		"service-instances", // All service instances
+		"redis",             // Redis service
+		"rabbitmq",          // RabbitMQ service
+		"postgresql",        // PostgreSQL service
 	}
 
 	// Apply any query filters
 	service := req.URL.Query().Get("service")
 	if service != "" {
-		var filtered []ServiceFilterOption
+		var filtered []string
 
 		for _, opt := range options {
-			if opt.Service == service {
+			if opt == service {
 				filtered = append(filtered, opt)
 			}
 		}
@@ -278,4 +428,65 @@ func (h *Handler) UpdateInstanceConfig(writer http.ResponseWriter, req *http.Req
 	}
 
 	response.HandleJSON(writer, result, nil)
+}
+
+func (h *Handler) parseDiffParameters(writer http.ResponseWriter, req *http.Request, logger interfaces.Logger) (string, string, bool) {
+	query := req.URL.Query()
+	fromID := strings.TrimSpace(query.Get("from"))
+	toID := strings.TrimSpace(query.Get("to"))
+
+	if fromID == "" || toID == "" {
+		logger.Errorf("Missing required diff parameters: from=%s to=%s", fromID, toID)
+		response.WriteError(writer, http.StatusBadRequest, "missing required parameters: 'from' and 'to'")
+
+		return "", "", false
+	}
+
+	logger.Debugf("Computing diff from %s to %s", fromID, toID)
+
+	return fromID, toID, true
+}
+
+func (h *Handler) computeDiff(writer http.ResponseWriter, logger interfaces.Logger, configType, configName, fromID, toID string) (*bosh.ConfigDiff, bool) {
+	diff, err := h.director.ComputeConfigDiff(fromID, toID)
+	if err != nil {
+		logger.Errorf("Failed to compute config diff for %s/%s: %v", configType, configName, err)
+		response.HandleJSON(writer, nil, fmt.Errorf("failed to compute config diff: %w", err))
+
+		return nil, false
+	}
+
+	return diff, true
+}
+
+func (h *Handler) buildDiffPayload(configType, configName, fromID, toID string, diff *bosh.ConfigDiff) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        configType,
+		"name":        configName,
+		"from_id":     fromID,
+		"to_id":       toID,
+		"has_changes": diff.HasChanges,
+		"changes":     diff.Changes,
+		"diff_string": diff.DiffString,
+	}
+}
+
+func (h *Handler) enrichDiffPayloadWithMetadata(payload map[string]interface{}, fromID, toID string) {
+	fromConfig, err := h.director.GetConfigByID(fromID)
+	if err == nil && fromConfig != nil {
+		payload["from_metadata"] = map[string]interface{}{
+			"id":         fromConfig.ID,
+			"created_at": fromConfig.CreatedAt,
+			"is_active":  fromConfig.IsActive,
+		}
+	}
+
+	toConfig, err := h.director.GetConfigByID(toID)
+	if err == nil && toConfig != nil {
+		payload["to_metadata"] = map[string]interface{}{
+			"id":         toConfig.ID,
+			"created_at": toConfig.CreatedAt,
+			"is_active":  toConfig.IsActive,
+		}
+	}
 }

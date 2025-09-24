@@ -3,6 +3,7 @@ package instances
 import (
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 
 	"blacksmith/internal/interfaces"
@@ -13,6 +14,9 @@ import (
 const (
 	// Minimum parts required for processing.
 	minRequiredParts = 2
+
+	// Service names.
+	serviceNameBlacksmith = "blacksmith"
 )
 
 // Handler handles instance-related HTTP requests.
@@ -48,11 +52,17 @@ func (h *Handler) GetInstanceDetails(writer http.ResponseWriter, req *http.Reque
 	// Read Deployment
 	data, err = os.ReadFile("/var/vcap/instance/deployment")
 	if err == nil {
-		instanceDetails["deployment"] = strings.TrimSpace(string(data))
+		deploymentName := strings.TrimSpace(string(data))
+		// If deployment name is just a GUID, provide a more user-friendly name
+		if isGUID(deploymentName) {
+			instanceDetails["deployment"] = serviceNameBlacksmith
+		} else {
+			instanceDetails["deployment"] = deploymentName
+		}
 	} else {
 		logger.Debug("unable to read deployment file: %s", err)
 
-		instanceDetails["deployment"] = ""
+		instanceDetails["deployment"] = serviceNameBlacksmith
 	}
 
 	// Read Instance ID
@@ -72,7 +82,7 @@ func (h *Handler) GetInstanceDetails(writer http.ResponseWriter, req *http.Reque
 	} else {
 		logger.Debug("unable to read instance name file: %s", err)
 		// Use "blacksmith" as default instance group name
-		instanceDetails["name"] = "blacksmith" // TODO: Get from serviceTypeBlacksmith constant
+		instanceDetails["name"] = serviceNameBlacksmith
 	}
 
 	// Get BOSH DNS from /etc/hosts if we have an instance ID
@@ -145,4 +155,11 @@ func (h *Handler) getBoshDNSFromHosts(instanceID string) string {
 	logger.Debug("no BOSH DNS entry found in /etc/hosts for instance %s", instanceID)
 
 	return ""
+}
+
+// isGUID checks if a string matches the GUID/UUID pattern.
+func isGUID(s string) bool {
+	guidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+	return guidRegex.MatchString(s)
 }

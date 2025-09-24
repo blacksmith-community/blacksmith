@@ -236,12 +236,12 @@
   </div>
 
   <!-- Config Details Modal -->
-  <div id="config-details-modal" class="modal-overlay hidden fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-[10000] opacity-0 invisible transition-all duration-300" role="dialog" aria-labelledby="config-details-modal-title" inert>
+  <div id="config-details-modal" class="modal-overlay hidden fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-[10003] opacity-0 invisible transition-all duration-300" role="dialog" aria-labelledby="config-details-modal-title" inert>
     <div class="modal bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl w-[90vw] max-w-6xl max-h-[90vh] m-5 flex flex-col overflow-hidden transform scale-95 transition-transform duration-300">
       <div class="modal-content flex-1 flex flex-col overflow-hidden">
         <div class="modal-header flex justify-between items-center px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex-shrink-0">
-          <h3 id="config-details-modal-title" class="text-lg font-semibold text-gray-900 dark:text-gray-100">Config Details</h3>
-          <button class="modal-close p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200 text-xl leading-none" onclick="hideConfigDetailsModal()" aria-label="Close modal">&times;</button>
+          <h3 id="config-details-modal-title" class="text-lg font-semibold text-gray-900 dark:text-white">Config Details</h3>
+          <button class="modal-close p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200 text-xl leading-none" onclick="hideConfigVersionsModal()" aria-label="Close modal">&times;</button>
         </div>
         <div class="modal-body flex-1 overflow-hidden flex flex-col">
           <div id="config-details-loading" class="loading text-center text-gray-500 dark:text-gray-400 p-5 italic animate-pulse">Loading config details...</div>
@@ -261,7 +261,7 @@
                     </tr>
                   </thead>
                   <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
-                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-150">
+                    <tr>
                       <td id="config-id" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
                       <td id="config-name" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>
                       <td id="config-type" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 text-gray-900 dark:text-gray-100 whitespace-nowrap font-mono text-xs"></td>

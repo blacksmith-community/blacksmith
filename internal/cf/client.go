@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
@@ -172,16 +173,9 @@ func (m *Manager) GetClient(endpointName string) (interface{}, error) {
 		return client.client, nil
 	}
 
-	// Try to reconnect if possible
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	err := client.TryReconnect(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("CF endpoint '%s' is unhealthy and reconnection failed: %w", endpointName, err)
-	}
-
-	return client.client, nil
+	// Don't attempt reconnection during request processing - fail fast
+	// Reconnection attempts are handled by the background health check loop
+	return nil, fmt.Errorf("CF endpoint '%s' is currently unhealthy: %w", endpointName, ErrCFEndpointUnhealthy)
 }
 
 // GetHealthyClients returns all healthy CF clients.
@@ -210,8 +204,13 @@ func (m *Manager) createEndpointClient(config CFAPIConfig) *EndpointClient {
 	}
 }
 
-// attemptInitialConnection tries to connect to a CF endpoint during initialization.
-func (m *Manager) attemptInitialConnection(name string, client *EndpointClient, _ CFAPIConfig) {
+
+// attemptInitialConnectionAsync tries to connect to a CF endpoint asynchronously during initialization.
+func (m *Manager) attemptInitialConnectionAsync(name string, client *EndpointClient, _ CFAPIConfig, wg *sync.WaitGroup) {
+	defer wg.Done() // Signal completion when this function returns
+
+	m.logger.Debug("starting async connection attempt for CF endpoint: %s", name)
+
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
 

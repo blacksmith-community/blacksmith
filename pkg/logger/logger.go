@@ -87,7 +87,7 @@ func parseLogLevel(level string) zapcore.Level {
 	}
 }
 
-// componentNameEncoder formats logger names as [component] tags
+// componentNameEncoder formats logger names as [component] tags.
 func componentNameEncoder(name string, enc zapcore.PrimitiveArrayEncoder) {
 	if name != "" {
 		enc.AppendString("[" + name + "]")
@@ -332,6 +332,12 @@ func (l *Implementation) logStructured(level zapcore.Level, msg string, args []i
 		l.sugar.Errorw(msg, args...)
 	case zapcore.FatalLevel:
 		l.sugar.Fatalw(msg, args...)
+	case zapcore.DPanicLevel:
+		l.sugar.DPanicw(msg, args...)
+	case zapcore.PanicLevel:
+		l.sugar.Panicw(msg, args...)
+	case zapcore.InvalidLevel:
+		l.sugar.Infow(msg, args...)
 	default:
 		l.sugar.Infow(msg, args...)
 	}
@@ -349,6 +355,12 @@ func (l *Implementation) logScalar(level zapcore.Level, message string) {
 		l.logger.Error(message)
 	case zapcore.FatalLevel:
 		l.logger.Fatal(message)
+	case zapcore.DPanicLevel:
+		l.logger.DPanic(message)
+	case zapcore.PanicLevel:
+		l.logger.Panic(message)
+	case zapcore.InvalidLevel:
+		l.logger.Info(message)
 	default:
 		l.logger.Info(message)
 	}

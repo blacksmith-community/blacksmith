@@ -239,7 +239,8 @@ func (vault *Vault) Init(store string) error {
 	if initStatus {
 		logger.Info("vault is already initialized")
 
-		if err := vault.ensureToken(logger); err != nil {
+		err := vault.ensureToken(logger)
+		if err != nil {
 			logger.Warn("vault token not available: %s", err)
 		}
 
@@ -323,6 +324,23 @@ func (vault *Vault) VerifyMount(store string, createIfMissing bool) error {
 	return nil
 }
 
+// LoadTokenFromCredentials loads the root token from the credentials file and
+// applies it to the Vault client. The loaded token is returned for convenience.
+func (vault *Vault) LoadTokenFromCredentials() (string, error) {
+	creds, err := vault.loadCredentialsFile()
+	if err != nil {
+		return "", err
+	}
+
+	if creds.RootToken == "" {
+		return "", vaultPkg.ErrTokenNotFound
+	}
+
+	vault.SetToken(creds.RootToken)
+
+	return creds.RootToken, nil
+}
+
 // ensureClient ensures the vault client is initialized.
 func (vault *Vault) ensureClient() error {
 	if vault.client == nil {
@@ -356,23 +374,6 @@ func (vault *Vault) ensureToken(log logger.Logger) error {
 	log.Debug("loaded vault token from credentials file")
 
 	return nil
-}
-
-// LoadTokenFromCredentials loads the root token from the credentials file and
-// applies it to the Vault client. The loaded token is returned for convenience.
-func (vault *Vault) LoadTokenFromCredentials() (string, error) {
-	creds, err := vault.loadCredentialsFile()
-	if err != nil {
-		return "", err
-	}
-
-	if creds.RootToken == "" {
-		return "", vaultPkg.ErrTokenNotFound
-	}
-
-	vault.SetToken(creds.RootToken)
-
-	return creds.RootToken, nil
 }
 
 func (vault *Vault) loadCredentialsFile() (vaultPkg.VaultCreds, error) {

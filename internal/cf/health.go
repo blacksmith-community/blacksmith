@@ -10,7 +10,7 @@ import (
 
 // Circuit breaker and retry constants.
 const (
-	maxRetryAttempts       = 5
+	maxRetryAttempts       = 10
 	baseRetryDelay         = 2 * time.Second
 	maxRetryDelay          = 2 * time.Minute
 	healthCheckInterval    = 30 * time.Second

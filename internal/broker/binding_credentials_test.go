@@ -162,14 +162,14 @@ var _ = Describe("GetBindingCredentials", func() {
 		var rabbitAPIServer *httptest.Server
 
 		BeforeEach(func() {
-			rabbitAPIServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rabbitAPIServer = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				switch {
-				case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/users/"):
-					w.WriteHeader(http.StatusCreated)
-				case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/permissions/"):
-					w.WriteHeader(http.StatusCreated)
+				case request.Method == http.MethodPut && strings.Contains(request.URL.Path, "/users/"):
+					writer.WriteHeader(http.StatusCreated)
+				case request.Method == http.MethodPut && strings.Contains(request.URL.Path, "/permissions/"):
+					writer.WriteHeader(http.StatusCreated)
 				default:
-					http.NotFound(w, r)
+					http.NotFound(writer, request)
 				}
 			}))
 

@@ -7,6 +7,12 @@ import (
 
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
+	cfservices "blacksmith/pkg/services/cf"
+)
+
+const (
+	cfPathOrgs   = "orgs"
+	cfPathSpaces = "spaces"
 )
 
 // Handler handles Cloud Foundry registration HTTP requests.
@@ -15,16 +21,34 @@ type Handler struct {
 	config    interfaces.Config
 	cfManager interfaces.CFManager
 	vault     interfaces.Vault
+
+	newCFOperations func() cfOperations
+	persistProgress func(ctx context.Context, registrationID string, progress cfservices.RegistrationProgress) error
 }
 
 // NewHandler creates a new CF registration handler.
 func NewHandler(logger interfaces.Logger, config interfaces.Config, cfManager interfaces.CFManager, vault interfaces.Vault) *Handler {
-	return &Handler{
+	handler := &Handler{
 		logger:    logger,
 		config:    config,
 		cfManager: cfManager,
 		vault:     vault,
 	}
+
+	handler.newCFOperations = func() cfOperations {
+		brokerCfg := config.GetBrokerConfig().CF
+		if !brokerCfg.Enabled {
+			return nil
+		}
+
+		loggerFn := logger.Named("cf-services").Debug
+
+		return cfservices.NewHandler(brokerCfg.BrokerURL, brokerCfg.BrokerUser, brokerCfg.BrokerPass, loggerFn)
+	}
+
+	handler.persistProgress = handler.saveRegistrationProgress
+
+	return handler
 }
 
 // ServeHTTP handles HTTP requests for CF registration endpoints.
@@ -74,19 +98,29 @@ func (h *Handler) handleCFRegistrationRoutes(writer http.ResponseWriter, req *ht
 
 	// Handle /registrations/{id} routes
 	if strings.HasPrefix(path, "/registrations/") {
-		registrationID := strings.TrimPrefix(path, "/registrations/")
+		remainder := strings.TrimPrefix(path, "/registrations/")
+		parts := strings.Split(remainder, "/")
+		registrationID := parts[0]
 
-		switch req.Method {
-		case http.MethodGet:
-			h.GetRegistration(writer, req, registrationID)
+		if len(parts) == 1 {
+			switch req.Method {
+			case http.MethodGet:
+				h.GetRegistration(writer, req, registrationID)
 
-			return true
-		case http.MethodPut:
-			h.UpdateRegistration(writer, req, registrationID)
+				return true
+			case http.MethodPut:
+				h.UpdateRegistration(writer, req, registrationID)
 
-			return true
-		case http.MethodDelete:
-			h.DeleteRegistration(writer, req, registrationID)
+				return true
+			case http.MethodDelete:
+				h.DeleteRegistration(writer, req, registrationID)
+
+				return true
+			}
+		}
+
+		if len(parts) == 2 && parts[1] == "register" && req.Method == http.MethodPost {
+			h.StartRegistration(writer, req, registrationID)
 
 			return true
 		}
@@ -99,69 +133,76 @@ func (h *Handler) handleCFRegistrationRoutes(writer http.ResponseWriter, req *ht
 // handleCFEndpointRoutes handles CF endpoint routes.
 // Returns true if the route was handled, false otherwise.
 func (h *Handler) handleCFEndpointRoutes(ctx context.Context, writer http.ResponseWriter, req *http.Request, path string) bool {
-	// Handle /endpoints route - list available CF API endpoints
 	if path == "/endpoints" && req.Method == http.MethodGet {
 		h.ListEndpoints(writer, req)
+
 		return true
 	}
 
-	// Handle /endpoints/{id}/connect route
-	if strings.Contains(path, "/connect") && req.Method == http.MethodPost {
-		parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
-		if len(parts) == 2 && parts[1] == "connect" {
-			endpointID := parts[0]
-			h.ConnectEndpoint(ctx, writer, req, endpointID)
-			return true
+	if req.Method == http.MethodPost && strings.Contains(path, "/connect") {
+		return h.handleConnectRoute(ctx, writer, req, path)
+	}
+
+	if req.Method == http.MethodGet {
+		if strings.Contains(path, "/marketplace") {
+			return h.handleMarketplaceRoute(writer, req, path)
+		}
+
+		if strings.HasPrefix(path, "/endpoints/") && strings.Contains(path, "/orgs") {
+			return h.handleOrgsRoutes(writer, req, path)
 		}
 	}
 
-	// Handle /endpoints/{name}/marketplace route
-	if strings.Contains(path, "/marketplace") && req.Method == http.MethodGet {
-		parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
-		if len(parts) == 2 && parts[1] == "marketplace" {
-			endpointName := parts[0]
-			h.GetMarketplace(writer, req, endpointName)
-			return true
-		}
+	return false
+}
+
+func (h *Handler) handleConnectRoute(ctx context.Context, writer http.ResponseWriter, req *http.Request, path string) bool {
+	parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
+	if len(parts) == 2 && parts[1] == "connect" {
+		h.ConnectEndpoint(ctx, writer, req, parts[0])
+
+		return true
 	}
 
-	// Handle /endpoints/{name}/orgs route
-	if strings.HasPrefix(path, "/endpoints/") && strings.Contains(path, "/orgs") && req.Method == http.MethodGet {
-		parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
+	return false
+}
 
-		// /endpoints/{name}/orgs
-		if len(parts) == 2 && parts[1] == "orgs" {
-			endpointName := parts[0]
-			h.GetOrganizations(writer, req, endpointName)
-			return true
-		}
+func (h *Handler) handleMarketplaceRoute(writer http.ResponseWriter, req *http.Request, path string) bool {
+	parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
+	if len(parts) == 2 && parts[1] == "marketplace" {
+		h.GetMarketplace(writer, req, parts[0])
 
-		// /endpoints/{name}/orgs/{org_guid}/spaces
-		if len(parts) == 4 && parts[1] == "orgs" && parts[3] == "spaces" {
-			endpointName := parts[0]
-			orgGUID := parts[2]
-			h.GetSpaces(writer, req, endpointName, orgGUID)
-			return true
-		}
+		return true
+	}
 
-		// /endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/services
-		if len(parts) == 6 && parts[1] == "orgs" && parts[3] == "spaces" && parts[5] == "services" {
-			endpointName := parts[0]
-			orgGUID := parts[2]
-			spaceGUID := parts[4]
-			h.GetServices(writer, req, endpointName, orgGUID, spaceGUID)
-			return true
-		}
+	return false
+}
 
-		// /endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/service_instances/{service_guid}/bindings
-		if len(parts) == 8 && parts[1] == "orgs" && parts[3] == "spaces" && parts[5] == "service_instances" && parts[7] == "bindings" {
-			endpointName := parts[0]
-			orgGUID := parts[2]
-			spaceGUID := parts[4]
-			serviceGUID := parts[6]
-			h.GetServiceBindings(writer, req, endpointName, orgGUID, spaceGUID, serviceGUID)
-			return true
-		}
+func (h *Handler) handleOrgsRoutes(writer http.ResponseWriter, req *http.Request, path string) bool {
+	parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
+
+	if len(parts) == 2 && parts[1] == cfPathOrgs {
+		h.GetOrganizations(writer, req, parts[0])
+
+		return true
+	}
+
+	if len(parts) == 4 && parts[1] == cfPathOrgs && parts[3] == cfPathSpaces {
+		h.GetSpaces(writer, req, parts[0], parts[2])
+
+		return true
+	}
+
+	if len(parts) == 6 && parts[1] == cfPathOrgs && parts[3] == cfPathSpaces && parts[5] == "services" {
+		h.GetServices(writer, req, parts[0], parts[2], parts[4])
+
+		return true
+	}
+
+	if len(parts) == 8 && parts[1] == cfPathOrgs && parts[3] == cfPathSpaces && parts[5] == "service_instances" && parts[7] == "bindings" {
+		h.GetServiceBindings(writer, req, parts[0], parts[2], parts[4], parts[6])
+
+		return true
 	}
 
 	return false

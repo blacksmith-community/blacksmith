@@ -20,6 +20,12 @@ import (
 const (
 	// Retry backoff multiplier.
 	retryBackoffMultiplier = 5 * time.Second
+
+	// Task monitoring polling interval.
+	taskPollInterval = 10 * time.Second
+
+	// Task monitoring timeout duration.
+	taskMonitorTimeout = 2 * time.Hour
 )
 
 // Static errors for err113 compliance.
@@ -71,6 +77,8 @@ func (p *provisioningPhase) parseParameters(ctx context.Context, details interfa
 
 // setupBOSHDefaults sets up BOSH director connection and defaults.
 func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services.Plan) (map[interface{}]interface{}, bool) {
+	startTime := time.Now()
+
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Setting up deployment defaults", 0, p.params, p.logger)
 
 	defaults := make(map[interface{}]interface{})
@@ -78,49 +86,60 @@ func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services
 	p.params["instance_id"] = p.instanceID
 
 	// Get BOSH director UUID
-	p.logger.Debug("querying BOSH director for director UUID")
+	p.logger.Debug("Querying BOSH director for director UUID")
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Connecting to BOSH director", 0, p.params, p.logger)
+
+	boshStartTime := time.Now()
 
 	info, err := p.broker.BOSH.GetInfo()
 	if err != nil {
-		p.logger.Error("failed to get information about BOSH director: %s", err)
+		p.logger.Error("Failed to get information about BOSH director: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Failed to connect to BOSH: %s", err), p.params, p.logger)
 
 		return nil, false
 	}
 
+	p.logger.Debug("BOSH director query completed in %v (UUID: %s)", time.Since(boshStartTime), info.UUID)
 	defaults["director_uuid"] = info.UUID
+
+	p.logger.Debug("Setup BOSH defaults completed in %v", time.Since(startTime))
 
 	return defaults, true
 }
 
 // initializeService runs the service initialization script.
 func (p *provisioningPhase) initializeService(ctx context.Context, plan services.Plan) bool {
+	startTime := time.Now()
+
 	// Set credentials environment variable
 	err := os.Setenv("CREDENTIALS", "secret/"+p.instanceID)
 	if err != nil {
-		p.logger.Error("failed to set CREDENTIALS environment variable: %s", err)
+		p.logger.Error("Failed to set CREDENTIALS environment variable: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", "Failed to set environment variables", p.params, p.logger)
 
 		return false
 	}
 
 	// Run init script
-	p.logger.Debug("running service init script")
+	p.logger.Info("Running service init script for plan %s", plan.ID)
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Initializing service deployment", 0, p.params, p.logger)
+
+	initStartTime := time.Now()
 
 	err = manifest.InitManifest(ctx, plan, p.instanceID)
 	if err != nil {
-		p.logger.Error("service deployment initialization script failed: %s", err)
+		p.logger.Error("Service deployment initialization script failed: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Service initialization failed: %s", err), p.params, p.logger)
 
 		return false
 	}
 
+	p.logger.Debug("Init script execution completed in %v", time.Since(initStartTime))
+
 	// Store init script output in vault if script was run
 	_, statErr := os.Stat(plan.InitScriptPath)
 	if statErr == nil {
-		p.logger.Debug("storing init script in vault at %s/init", p.instanceID)
+		p.logger.Debug("Storing init script in vault at %s/init", p.instanceID)
 
 		initScriptContent, readErr := os.ReadFile(plan.InitScriptPath)
 		if readErr == nil {
@@ -129,17 +148,21 @@ func (p *provisioningPhase) initializeService(ctx context.Context, plan services
 				"executed_at": time.Now().Format(time.RFC3339),
 			})
 			if err != nil {
-				p.logger.Error("failed to store init script in vault: %s", err)
+				p.logger.Error("Failed to store init script in vault: %s", err)
 				// Continue anyway as this is non-fatal
 			}
 		}
 	}
+
+	p.logger.Debug("Service initialization completed in %v", time.Since(startTime))
 
 	return true
 }
 
 // generateAndStoreManifest generates the BOSH manifest and stores it in Vault.
 func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan services.Plan, defaults map[interface{}]interface{}) (string, bool) {
+	startTime := time.Now()
+
 	p.logger.Info("Generating BOSH deployment manifest for %s", defaults["name"])
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Generating BOSH deployment manifest", 0, p.params, p.logger)
 
@@ -151,16 +174,28 @@ func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan s
 		return "", false
 	}
 
-	// Store manifest in vault
+	genDuration := time.Since(startTime)
+	p.logger.Debug("Manifest generated in %v (size: %d bytes)", genDuration, len(manifestStr))
+
+	// Store manifest in vault immediately - this is critical for UI visibility
+	p.logger.Info("Storing deployment manifest in Vault at %s/manifest", p.instanceID)
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Storing deployment manifest in Vault", 0, p.params, p.logger)
 
+	storeStartTime := time.Now()
+
 	err = p.broker.Vault.Put(ctx, p.instanceID+"/manifest", map[string]interface{}{
-		"manifest": manifestStr,
+		"manifest":  manifestStr,
+		"stored_at": time.Now().Format(time.RFC3339),
 	})
 	if err != nil {
-		p.logger.Error("failed to store manifest in the vault: %s", err)
-		// Continue anyway as this is non-fatal
+		p.logger.Error("FATAL: Failed to store manifest in Vault at %s/manifest: %s", p.instanceID, err)
+		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Failed to store manifest in Vault: %s", err), p.params, p.logger)
+
+		return "", false
 	}
+
+	storeDuration := time.Since(storeStartTime)
+	p.logger.Info("Manifest successfully stored in Vault in %v (total manifest generation+storage: %v)", storeDuration, time.Since(startTime))
 
 	return manifestStr, true
 }
@@ -316,6 +351,112 @@ func (d *deprovisioningPhase) removeFromIndex(ctx context.Context, message strin
 	return true
 }
 
+// storeDeletedTimestamp stores the deleted_at timestamp in Vault metadata.
+func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
+	d.logger.Debug("storing deleted_at timestamp in Vault")
+
+	deletedAt := time.Now()
+
+	// Get existing metadata
+	var metadata map[string]interface{}
+
+	exists, err := d.broker.Vault.Get(ctx, d.instanceID+"/metadata", &metadata)
+	if err != nil || !exists {
+		metadata = make(map[string]interface{})
+	}
+
+	// Add deleted_at
+	metadata["deleted_at"] = deletedAt.Format(time.RFC3339)
+
+	// Store updated metadata
+	err = d.broker.Vault.Put(ctx, d.instanceID+"/metadata", metadata)
+	if err != nil {
+		d.logger.Error("failed to store deleted_at timestamp: %s", err)
+	}
+}
+
+// handleTaskSuccess performs cleanup after successful task completion.
+func (d *deprovisioningPhase) handleTaskSuccess(ctx context.Context) {
+	// Verify deployment is actually gone
+	_, deploymentErr := d.broker.BOSH.GetDeployment(d.deploymentName)
+	if deploymentErr == nil {
+		d.logger.Error("Task succeeded but deployment %s still exists, not removing from index", d.deploymentName)
+
+		return
+	}
+
+	d.logger.Info("Deployment %s confirmed deleted, performing cleanup", d.deploymentName)
+
+	// Store deleted_at timestamp
+	d.storeDeletedTimestamp(ctx)
+
+	// Remove from index
+	if !d.removeFromIndex(ctx, "Removing from service index after confirmed deletion") {
+		d.logger.Error("Failed to remove instance from index after successful deletion")
+
+		return
+	}
+
+	d.logger.Info("Successfully completed cleanup for instance %s", d.instanceID)
+}
+
+// monitorAndCleanupTask monitors BOSH task completion and performs cleanup.
+//
+// This function implements background monitoring to ensure cleanup happens even if
+// Cloud Foundry stops polling LastOperation. It polls the task status every 10 seconds
+// and performs cleanup when the task completes successfully.
+//
+// This provides defense-in-depth alongside the LastOperation cleanup mechanism.
+func (d *deprovisioningPhase) monitorAndCleanupTask(ctx context.Context, task *bosh.Task) {
+	d.logger.Info("Monitoring BOSH task %d for completion", task.ID)
+
+	ticker := time.NewTicker(taskPollInterval)
+	defer ticker.Stop()
+
+	timeout := time.After(taskMonitorTimeout)
+
+	for {
+		select {
+		case <-ctx.Done():
+			d.logger.Info("Context cancelled, stopping task monitoring for instance %s", d.instanceID)
+
+			return
+
+		case <-timeout:
+			d.logger.Warning("Timeout waiting for task %d completion after 2 hours", task.ID)
+
+			return
+
+		case <-ticker.C:
+			// Poll BOSH for task status
+			boshTask, err := d.broker.BOSH.GetTask(task.ID)
+			if err != nil {
+				d.logger.Error("Failed to get task %d status: %s", task.ID, err)
+
+				continue
+			}
+
+			d.logger.Debug("Task %d state: %s", task.ID, boshTask.State)
+
+			switch boshTask.State {
+			case "done":
+				d.logger.Info("Task %d completed successfully, performing cleanup", task.ID)
+				d.handleTaskSuccess(ctx)
+
+				return
+
+			case "error", "cancelled", "timeout":
+				d.logger.Error("Task %d failed with state: %s", task.ID, boshTask.State)
+
+				return
+
+			default:
+				continue
+			}
+		}
+	}
+}
+
 // trackDeletionProgress tracks the ongoing deletion task.
 func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *bosh.Task) {
 	d.logger.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
@@ -330,8 +471,9 @@ func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *b
 
 // provisionAsync handles the actual provisioning work in a background goroutine.
 func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details interface{}, plan services.Plan) {
+	startTime := time.Now()
 	logger := logger.Get().Named("broker")
-	logger.Info("Starting async provisioning for instance %s", instanceID)
+	logger.Info("Starting async provisioning for instance %s (plan: %s)", instanceID, plan.ID)
 
 	// Initialize params for tracking
 	params := make(map[interface{}]interface{})
@@ -352,33 +494,77 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 		params:     params,
 	}
 
-	// Execute provisioning phases
+	// Execute provisioning phases with timing
+	phaseStart := time.Now()
+
 	if !phase.parseParameters(ctx, details) {
 		return
 	}
+
+	logger.Debug("Phase 1/5: Parameter parsing completed in %v", time.Since(phaseStart))
+
+	phaseStart = time.Now()
 
 	defaults, success := phase.setupBOSHDefaults(ctx, plan)
 	if !success {
 		return
 	}
 
+	logger.Debug("Phase 2/5: BOSH defaults setup completed in %v (cumulative: %v)", time.Since(phaseStart), time.Since(startTime))
+
+	phaseStart = time.Now()
+
 	if !phase.initializeService(ctx, plan) {
 		return
 	}
+
+	logger.Debug("Phase 3/5: Service initialization completed in %v (cumulative: %v)", time.Since(phaseStart), time.Since(startTime))
+
+	phaseStart = time.Now()
 
 	manifest, ok := phase.generateAndStoreManifest(ctx, plan, defaults)
 	if !ok {
 		return
 	}
 
+	logger.Info("Phase 4/5: Manifest generation and storage completed in %v (cumulative: %v) - manifest now available in UI", time.Since(phaseStart), time.Since(startTime))
+
+	phaseStart = time.Now()
+
 	if !phase.uploadReleases(ctx, manifest) {
 		return
 	}
 
+	logger.Debug("Phase 5/5: Release upload completed in %v (cumulative: %v)", time.Since(phaseStart), time.Since(startTime))
+
+	phaseStart = time.Now()
+
 	phase.createDeployment(ctx, plan, manifest)
+	logger.Info("Deployment creation completed in %v (total provisioning time: %v)", time.Since(phaseStart), time.Since(startTime))
 }
 
 // deprovisionAsync handles the actual deprovisioning work in a background goroutine.
+//
+// Cleanup Strategy:
+// This function implements a dual cleanup mechanism for reliability:
+//
+//  1. Background Task Monitoring: After starting the BOSH delete task, we launch
+//     a background goroutine that polls the task status every 10 seconds. When the
+//     task completes successfully and the deployment is confirmed deleted, this
+//     goroutine performs cleanup (stores deleted_at timestamp and removes instance
+//     from Vault index).
+//
+//  2. LastOperation Polling: Cloud Foundry polls the LastOperation endpoint, which
+//     also checks task status. When it detects successful completion, it performs
+//     the same cleanup operations.
+//
+// This dual approach ensures cleanup happens reliably even if:
+// - Cloud Foundry stops polling LastOperation
+// - The broker process restarts between task completion and next poll
+// - There's a timing/race condition in the polling mechanism
+//
+// Both cleanup paths are idempotent (Index removal and timestamp storage can be
+// repeated safely), so there's no harm if both execute.
 func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance) {
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
@@ -427,6 +613,14 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 
 	// Track the ongoing deletion
 	phase.trackDeletionProgress(ctx, task)
+
+	// Launch background task monitor for cleanup
+	// Create a detached context that survives the HTTP request lifecycle
+	// This ensures cleanup happens even if the request context is cancelled
+	monitorCtx := context.WithoutCancel(ctx)
+	go phase.monitorAndCleanupTask(monitorCtx, task)
+
+	logger.Info("Launched background task monitor for instance %s (task %d)", instanceID, task.ID)
 }
 
 // retryDeleteDeployment attempts to delete a BOSH deployment with retry logic.

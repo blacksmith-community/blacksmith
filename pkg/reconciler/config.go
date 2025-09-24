@@ -32,7 +32,8 @@ const (
 	deploymentConfidenceMid  = 0.7
 	deploymentConfidenceLow  = 0.5
 	deploymentConfidenceMin  = 0.3
-	historyMaxSize           = 100
+	historyMaxSize           = 1000
+	historyRetentionDays     = 30
 	compressionRatioPercent  = 100
 
 	// Deployment type weights.
@@ -99,6 +100,9 @@ type ReconcilerConfig struct {
 
 	// Backup configuration (existing)
 	Backup BackupConfig `yaml:"backup"`
+
+	// History retention configuration
+	HistoryRetention HistoryRetentionConfig `yaml:"history_retention"`
 
 	// Monitoring and metrics
 	Metrics MetricsConfig `yaml:"metrics"`
@@ -196,6 +200,7 @@ func (c *ReconcilerConfig) LoadDefaults() {
 	c.loadBatchDefaults()
 	c.loadTimeoutDefaults()
 	c.loadMetricsDefaults()
+	c.loadHistoryRetentionDefaults()
 }
 
 // GetEffectiveBatchSize calculates the effective batch size based on performance score.
@@ -226,6 +231,7 @@ func (c *ReconcilerConfig) Validate() error {
 	c.validateRetrySettings()
 	c.validateAPIConfigurations()
 	c.validateTimeoutSettings()
+	c.validateHistoryRetentionSettings()
 
 	return nil
 }
@@ -348,6 +354,17 @@ func (c *ReconcilerConfig) loadMetricsDefaults() {
 	}
 }
 
+func (c *ReconcilerConfig) loadHistoryRetentionDefaults() {
+	if c.HistoryRetention.RetentionDays == 0 {
+		c.HistoryRetention.RetentionDays = historyRetentionDays
+		c.HistoryRetention.Enabled = true
+	}
+
+	if c.HistoryRetention.MaxEntries == 0 {
+		c.HistoryRetention.MaxEntries = historyMaxSize
+	}
+}
+
 // validateBasicSettings validates basic configuration settings.
 func (c *ReconcilerConfig) validateBasicSettings() {
 	if c.Interval < 10*time.Second {
@@ -467,6 +484,18 @@ func (c *ReconcilerConfig) validateTimeoutSettings() {
 
 	if c.Timeouts.ShutdownGracePeriod <= 0 {
 		c.Timeouts.ShutdownGracePeriod = defaultShutdownGracePeriod
+	}
+}
+
+func (c *ReconcilerConfig) validateHistoryRetentionSettings() {
+	if c.HistoryRetention.Enabled {
+		if c.HistoryRetention.RetentionDays <= 0 {
+			c.HistoryRetention.RetentionDays = historyRetentionDays
+		}
+
+		if c.HistoryRetention.MaxEntries <= 0 {
+			c.HistoryRetention.MaxEntries = historyMaxSize
+		}
 	}
 }
 

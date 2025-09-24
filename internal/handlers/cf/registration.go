@@ -7,16 +7,32 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
+	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
+	cfservices "blacksmith/pkg/services/cf"
+)
+
+// Constants for CF registration operations.
+const (
+	// Buffer size for progress tracking channel.
+	progressChannelBuffer = 100
 )
 
 // Static errors for err113 linter compliance.
 var (
-	errFailedToReadRequestBody = errors.New("failed to read request body")
-	errRegistrationIDRequired  = errors.New("registration ID is required")
-	errRegistrationNotFound    = errors.New("registration not found")
+	errFailedToReadRequestBody      = errors.New("failed to read request body")
+	errRegistrationIDRequired       = errors.New("registration ID is required")
+	errRegistrationNotFound         = errors.New("registration not found")
+	errCFOperationsNotConfigured    = errors.New("cf operations not configured")
+	errCFRegistrationDisabled       = errors.New("cf registration is disabled")
+	errPasswordRequiredRegistration = errors.New("password is required to start registration")
 )
+
+type cfOperations interface {
+	PerformRegistration(req *cfservices.RegistrationRequest, progressChan chan<- cfservices.RegistrationProgress) error
+}
 
 // ListRegistrations handles GET /b/cf/registrations.
 func (h *Handler) ListRegistrations(writer http.ResponseWriter, req *http.Request) {
@@ -85,6 +101,7 @@ func (h *Handler) ConnectEndpoint(ctx context.Context, writer http.ResponseWrite
 			"error":   "Endpoint not found",
 			"success": false,
 		}, nil)
+
 		return
 	}
 
@@ -95,7 +112,7 @@ func (h *Handler) ConnectEndpoint(ctx context.Context, writer http.ResponseWrite
 		"success":  true,
 		"endpoint": endpointID,
 		"name":     api.Name,
-		"message":  fmt.Sprintf("Connected to %s", api.Name),
+		"message":  "Connected to " + api.Name,
 	}, nil)
 }
 
@@ -283,4 +300,223 @@ func (h *Handler) DeleteRegistration(writer http.ResponseWriter, req *http.Reque
 		"message": "Registration deleted successfully",
 		"id":      registrationID,
 	}, nil)
+}
+
+// StartRegistration handles POST /b/cf/registrations/{id}/register.
+func (h *Handler) StartRegistration(writer http.ResponseWriter, req *http.Request, registrationID string) {
+	logger := h.logger.Named("cf-start-registration")
+	logger.Debug("starting CF registration process for %s", registrationID)
+
+	if registrationID == "" {
+		response.HandleJSON(writer, nil, errRegistrationIDRequired)
+
+		return
+	}
+
+	ctx := req.Context()
+
+	registration, success := h.validateAndGetRegistration(writer, ctx, logger, registrationID)
+	if !success {
+		return
+	}
+
+	if h.checkAlreadyRegistering(writer, logger, registration, registrationID) {
+		return
+	}
+
+	operations, operationsFound := h.getCFOperations(writer, logger)
+	if !operationsFound {
+		return
+	}
+
+	regReq, ok := h.buildRegistrationRequest(writer, req, logger, registrationID, registration)
+	if !ok {
+		return
+	}
+
+	h.startAsyncRegistration(writer, ctx, logger, registrationID, regReq, operations)
+}
+
+func (h *Handler) validateAndGetRegistration(writer http.ResponseWriter, ctx context.Context, logger interfaces.Logger, registrationID string) (map[string]interface{}, bool) {
+	var registration map[string]interface{}
+
+	regExists, err := h.vault.GetCFRegistration(ctx, registrationID, &registration)
+	if err != nil {
+		logger.Error("failed to retrieve registration %s: %v", registrationID, err)
+		response.HandleJSON(writer, nil, fmt.Errorf("failed to get registration: %w", err))
+
+		return nil, false
+	}
+
+	if !regExists {
+		logger.Debug("registration %s not found", registrationID)
+		response.WriteError(writer, http.StatusNotFound, "registration not found")
+
+		return nil, false
+	}
+
+	return registration, true
+}
+
+func (h *Handler) checkAlreadyRegistering(writer http.ResponseWriter, logger interfaces.Logger, registration map[string]interface{}, registrationID string) bool {
+	status := getStringFromMap(registration, "status")
+	if status == "registering" || status == "active" {
+		logger.Debug("registration %s already in status %s", registrationID, status)
+		response.HandleJSON(writer, map[string]interface{}{
+			"message": "registration already " + status,
+			"status":  status,
+			"id":      registrationID,
+		}, nil)
+
+		return true
+	}
+
+	return false
+}
+
+func (h *Handler) getCFOperations(writer http.ResponseWriter, logger interfaces.Logger) (cfOperations, bool) {
+	opHandler := h.newCFOperations
+	if opHandler == nil {
+		response.HandleJSON(writer, nil, errCFOperationsNotConfigured)
+
+		return nil, false
+	}
+
+	operations := opHandler()
+	if operations == nil {
+		logger.Error("CF operations handler unavailable")
+		response.HandleJSON(writer, nil, errCFRegistrationDisabled)
+
+		return nil, false
+	}
+
+	return operations, true
+}
+
+func (h *Handler) buildRegistrationRequest(writer http.ResponseWriter, req *http.Request, logger interfaces.Logger, registrationID string, registration map[string]interface{}) (*cfservices.RegistrationRequest, bool) {
+	brokerConfig := h.config.GetBrokerConfig().CF
+	regReq := &cfservices.RegistrationRequest{
+		ID:         registrationID,
+		Name:       getStringFromMap(registration, "name"),
+		APIURL:     getStringFromMap(registration, "api_url"),
+		Username:   getStringFromMap(registration, "username"),
+		BrokerName: getStringFromMap(registration, "broker_name"),
+		Metadata:   make(map[string]string),
+	}
+
+	if regReq.BrokerName == "" {
+		regReq.BrokerName = brokerConfig.DefaultName
+	}
+
+	if regReq.BrokerName == "" {
+		regReq.BrokerName = "blacksmith"
+	}
+
+	regReq.Password = getStringFromMap(registration, "password")
+	if regReq.Password == "" && req.Body != nil {
+		var requestData map[string]interface{}
+
+		err := json.NewDecoder(req.Body).Decode(&requestData)
+		if err == nil {
+			if password, ok := requestData["password"].(string); ok {
+				regReq.Password = password
+			}
+		}
+	}
+
+	if regReq.Password == "" {
+		logger.Error("registration %s missing password for CF authentication", registrationID)
+		response.HandleJSON(writer, nil, errPasswordRequiredRegistration)
+
+		return nil, false
+	}
+
+	return regReq, true
+}
+
+func (h *Handler) startAsyncRegistration(writer http.ResponseWriter, ctx context.Context, logger interfaces.Logger, registrationID string, regReq *cfservices.RegistrationRequest, operations cfOperations) {
+	go h.performAsyncRegistration(ctx, registrationID, regReq, operations)
+
+	err := h.vault.UpdateCFRegistrationStatus(ctx, registrationID, "registering", "")
+	if err != nil {
+		logger.Error("failed to update registration status for %s: %v", registrationID, err)
+	}
+
+	response.HandleJSON(writer, map[string]interface{}{
+		"message": "registration process started",
+		"status":  "registering",
+		"id":      registrationID,
+	}, nil)
+}
+
+func (h *Handler) performAsyncRegistration(ctx context.Context, registrationID string, regReq *cfservices.RegistrationRequest, operations cfOperations) {
+	logger := h.logger.Named("cf-async-registration")
+	logger.Info("starting async CF registration", "id", registrationID)
+
+	progressChan := make(chan cfservices.RegistrationProgress, progressChannelBuffer)
+	go h.trackRegistrationProgress(ctx, registrationID, progressChan)
+
+	err := operations.PerformRegistration(regReq, progressChan)
+	if err != nil {
+		logger.Error("CF registration failed", "id", registrationID, "error", err)
+
+		statusErr := h.vault.UpdateCFRegistrationStatus(ctx, registrationID, "failed", err.Error())
+		if statusErr != nil {
+			logger.Error("failed to update registration status to failed", "id", registrationID, "error", statusErr)
+		}
+
+		return
+	}
+
+	statusErr := h.vault.UpdateCFRegistrationStatus(ctx, registrationID, "active", "")
+	if statusErr != nil {
+		logger.Error("failed to update registration status to active", "id", registrationID, "error", statusErr)
+	}
+
+	logger.Info("CF registration completed", "id", registrationID)
+}
+
+func (h *Handler) trackRegistrationProgress(ctx context.Context, registrationID string, progressChan <-chan cfservices.RegistrationProgress) {
+	logger := h.logger.Named("cf-progress-tracker")
+
+	for progress := range progressChan {
+		if h.persistProgress != nil {
+			err := h.persistProgress(ctx, registrationID, progress)
+			if err != nil {
+				logger.Error("failed to persist progress", "id", registrationID, "error", err)
+			}
+		}
+	}
+
+	logger.Debug("completed progress tracking", "id", registrationID)
+}
+
+func (h *Handler) saveRegistrationProgress(ctx context.Context, registrationID string, progress cfservices.RegistrationProgress) error {
+	progressData := map[string]interface{}{
+		"step":      progress.Step,
+		"status":    progress.Status,
+		"message":   progress.Message,
+		"timestamp": progress.Timestamp.Format(time.RFC3339),
+	}
+
+	if progress.Error != "" {
+		progressData["error"] = progress.Error
+	}
+
+	err := h.vault.SaveCFRegistrationProgress(ctx, registrationID, progressData)
+	if err != nil {
+		return fmt.Errorf("failed to save CF registration progress for registration %q: %w", registrationID, err)
+	}
+
+	return nil
+}
+
+func getStringFromMap(data map[string]interface{}, key string) string {
+	if value, ok := data[key]; ok {
+		if str, ok := value.(string); ok {
+			return str
+		}
+	}
+
+	return ""
 }

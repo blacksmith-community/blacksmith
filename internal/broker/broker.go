@@ -19,6 +19,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/config"
+	"blacksmith/internal/interfaces"
 	"blacksmith/internal/manifest"
 	"blacksmith/internal/planstore"
 	"blacksmith/internal/services"
@@ -51,6 +52,10 @@ const (
 	// Default retry attempts.
 	defaultDeleteRetryAttempts = 3
 	credentialTypeDynamic      = "dynamic"
+
+	// Task states.
+	taskStateDone  = "done"
+	taskStateError = "error"
 )
 
 // Static errors for err113 compliance.
@@ -132,6 +137,11 @@ func (b *Broker) GetPlans() map[string]services.Plan {
 	}
 
 	return plansCopy
+}
+
+// GetVault returns the vault instance for certificate operations.
+func (b *Broker) GetVault() interfaces.Vault {
+	return b.Vault
 }
 
 func WriteDataFile(
@@ -361,7 +371,10 @@ func (b *Broker) Deprovision(
 	b.descheduleShieldBackup(instanceID, details, logger)
 
 	// Launch async deprovisioning in background
-	go b.deprovisionAsync(ctx, instanceID, instance)
+	// Create a detached context that survives the HTTP request lifecycle
+	// This ensures deprovisioning can continue even if the request context is cancelled
+	asyncCtx := context.WithoutCancel(ctx)
+	go b.deprovisionAsync(asyncCtx, instanceID, instance)
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
 
@@ -420,27 +433,41 @@ func (b *Broker) LastOperation(
 	error,
 ) {
 	logger := logger.Get().Named("broker")
-	logger.Debug("last-operation check received; checking state of service deployment")
+	logger.Debug("LastOperation called for instance %s", instanceID)
 
 	// Get instance and deployment information
 	instance, deploymentName, err := b.getInstanceForOperation(ctx, instanceID, logger)
 	if err != nil {
+		logger.Error("Error getting instance for operation: %s", err)
+
 		return domain.LastOperation{}, err
 	}
 
 	// Handle case where instance was deleted
 	if instance == nil {
+		logger.Info("Instance %s not found in index, returning succeeded", instanceID)
+
 		return domain.LastOperation{
 			State:       domain.Succeeded,
 			Description: "Instance has been deleted",
 		}, nil
 	}
 
+	logger.Debug("Instance %s found, deployment: %s", instanceID, deploymentName)
+
 	// Get the latest task for this deployment
 	latestTask, operationType, err := b.getLatestTask(deploymentName, logger)
 	if err != nil {
+		// Only log as error if it's not the expected "no tasks found" case
+		// (that case is already logged at DEBUG level in getLatestTask)
+		if !errors.Is(err, ErrNoTasksFoundForDeployment) {
+			logger.Error("Error getting latest task for deployment %s: %s", deploymentName, err)
+		}
+
 		return b.handleTaskRetrievalError(deploymentName, logger)
 	}
+
+	logger.Debug("Latest task for %s: ID=%d, type=%s, state=%s", deploymentName, latestTask.ID, operationType, latestTask.State)
 
 	// Handle the operation based on task ID and type
 	return b.handleOperationStatus(ctx, instanceID, deploymentName, latestTask, operationType, logger)
@@ -585,7 +612,8 @@ func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingI
 
 	b.populateBindingCredentials(binding, credsMap)
 
-	if err := b.storeBindingCredentials(ctx, instanceID, bindingID, binding.Raw, logger); err != nil {
+	err = b.storeBindingCredentials(ctx, instanceID, bindingID, binding.Raw, logger)
+	if err != nil {
 		return nil, err
 	}
 
@@ -787,17 +815,111 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 
 	now := time.Now()
 
-	err := b.Vault.Index(ctx, instanceID, map[string]interface{}{
+	baseData := map[string]interface{}{
 		"service_id":               details.ServiceID,
 		"plan_id":                  details.PlanID,
 		"deprovision_requested_at": now.Format(time.RFC3339),
 		"status":                   "deprovision_requested",
-	})
+	}
+
+	entry := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+
+	err := b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
 		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
 	}
 
 	return nil
+}
+
+func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, rawContext json.RawMessage, logger logger.Logger) map[string]interface{} {
+	existing := b.getExistingIndexEntry(ctx, instanceID, logger)
+
+	for key, value := range base {
+		existing[key] = value
+	}
+
+	for key, value := range b.extractContextFields(rawContext, logger) {
+		if value != "" {
+			existing[key] = value
+		}
+	}
+
+	return existing
+}
+
+func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) map[string]interface{} {
+	entry := make(map[string]interface{})
+
+	idx, err := b.Vault.GetIndex(ctx, "db")
+	if err != nil {
+		logger.Debug("unable to load existing index entry for %s: %v", instanceID, err)
+
+		return entry
+	}
+
+	raw, err := idx.Lookup(instanceID)
+	if err != nil {
+		return entry
+	}
+
+	switch typed := raw.(type) {
+	case map[string]interface{}:
+		for key, value := range typed {
+			entry[key] = value
+		}
+	case map[interface{}]interface{}:
+		for key, value := range typed {
+			keyStr, ok := key.(string)
+			if !ok {
+				continue
+			}
+
+			entry[keyStr] = value
+		}
+	case vaultPkg.Instance:
+		if typed.ServiceID != "" {
+			entry["service_id"] = typed.ServiceID
+		}
+
+		if typed.PlanID != "" {
+			entry["plan_id"] = typed.PlanID
+		}
+	default:
+		if converted, ok := typed.(map[string]string); ok {
+			for key, value := range converted {
+				entry[key] = value
+			}
+		}
+	}
+
+	return entry
+}
+
+func (b *Broker) extractContextFields(rawContext json.RawMessage, logger logger.Logger) map[string]string {
+	if len(rawContext) == 0 {
+		return map[string]string{}
+	}
+
+	var parsed map[string]interface{}
+
+	err := json.Unmarshal(rawContext, &parsed)
+	if err != nil {
+		logger.Debug("failed to parse context for index enrichment: %v", err)
+
+		return map[string]string{}
+	}
+
+	keys := []string{"organization_name", "space_name", "instance_name", "platform"}
+	fields := make(map[string]string, len(keys))
+
+	for _, key := range keys {
+		if value, ok := parsed[key].(string); ok && strings.TrimSpace(value) != "" {
+			fields[key] = value
+		}
+	}
+
+	return fields
 }
 
 func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, logger logger.Logger) (*vaultPkg.Instance, error) {
@@ -1059,13 +1181,25 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 
 	now := time.Now()
 
-	err := b.Vault.Index(ctx, instanceID, map[string]interface{}{
+	baseData := map[string]interface{}{
 		"service_id":   details.ServiceID,
 		"plan_id":      details.PlanID,
 		"created":      now.Unix(), // Keep for backward compatibility
 		"requested_at": now.Format(time.RFC3339),
 		"status":       "request_received",
-	})
+	}
+
+	if details.OrganizationGUID != "" {
+		baseData["organization_guid"] = details.OrganizationGUID
+	}
+
+	if details.SpaceGUID != "" {
+		baseData["space_guid"] = details.SpaceGUID
+	}
+
+	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.RawContext, logger)
+
+	err := b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to record service request in vault: %s", err)
 
@@ -1118,13 +1252,25 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 
 	now := time.Now()
 
-	err := b.Vault.Index(ctx, instanceID, map[string]interface{}{
+	baseData := map[string]interface{}{
 		"service_id":   details.ServiceID,
 		"plan_id":      plan.ID,
 		"created":      now.Unix(), // Keep for backward compatibility
 		"requested_at": now.Format(time.RFC3339),
 		"status":       status,
-	})
+	}
+
+	if details.OrganizationGUID != "" {
+		baseData["organization_guid"] = details.OrganizationGUID
+	}
+
+	if details.SpaceGUID != "" {
+		baseData["space_guid"] = details.SpaceGUID
+	}
+
+	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.RawContext, logger)
+
+	err := b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to update service status in vault index: %s", err)
 
@@ -1312,7 +1458,10 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 	}
 
 	// Launch async provisioning in background
-	go b.provisionAsync(ctx, instanceID, detailsMap, *plan)
+	// Create a detached context that survives the HTTP request lifecycle
+	// This ensures provisioning can continue even if the request context is cancelled
+	asyncCtx := context.WithoutCancel(ctx)
+	go b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
 }
 
 func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string, logger logger.Logger) error {
@@ -1596,7 +1745,12 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 func (b *Broker) getLatestTask(deploymentName string, logger logger.Logger) (*bosh.Task, string, error) {
 	latestTask, operationType, err := b.GetLatestDeploymentTask(deploymentName)
 	if err != nil {
-		logger.Error("failed to get latest task for deployment %s: %s", deploymentName, err)
+		// Check if this is the expected "no tasks found" error during early deployment stages
+		if errors.Is(err, ErrNoTasksFoundForDeployment) {
+			logger.Debug("no tasks found for deployment %s (expected during early deployment stages): %s", deploymentName, err)
+		} else {
+			logger.Error("failed to get latest task for deployment %s: %s", deploymentName, err)
+		}
 
 		return nil, "", err
 	}
@@ -1718,7 +1872,7 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 	}
 
 	switch task.State {
-	case "done":
+	case taskStateDone:
 		err := b.OnProvisionCompleted(ctx, logger, instanceID)
 		if err != nil {
 			return domain.LastOperation{}, ErrProvisionTaskCompletedPostHookFailed
@@ -1728,7 +1882,7 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 
 		return domain.LastOperation{State: domain.Succeeded}, nil
 
-	case "error":
+	case taskStateError:
 		logger.Error("provision operation failed!")
 		b.cleanupFailedDeployment(deploymentName, logger)
 
@@ -1752,9 +1906,9 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 	}
 
 	switch task.State {
-	case "done":
+	case taskStateDone:
 		return b.handleSuccessfulDeprovision(ctx, instanceID, deploymentName, logger)
-	case "error":
+	case taskStateError:
 		return b.handleFailedDeprovision(deploymentName, logger)
 	default:
 		logger.Debug("deprovision operation is still in progress")
@@ -1780,9 +1934,10 @@ func (b *Broker) cleanupFailedDeployment(deploymentName string, logger logger.Lo
 }
 
 func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (domain.LastOperation, error) {
-	logger.Debug("deprovision operation succeeded, verifying deployment is actually deleted")
+	logger.Info("handleSuccessfulDeprovision called for instance %s, deployment %s", instanceID, deploymentName)
 
-	// Verify deployment is actually gone before declaring success
+	logger.Debug("Verifying deployment is actually deleted")
+
 	_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
 	if deploymentErr == nil {
 		logger.Error("Deprovision task succeeded but deployment %s still exists", deploymentName)
@@ -1790,18 +1945,21 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 		return domain.LastOperation{State: domain.Failed}, nil
 	}
 
-	logger.Info("Deployment %s has been successfully deleted, removing from Blacksmith index", deploymentName)
+	logger.Info("Deployment %s confirmed deleted", deploymentName)
 
 	// Store deleted_at timestamp
+	logger.Debug("Storing deleted_at timestamp")
 	b.storeDeletedTimestamp(ctx, instanceID, logger)
 
 	// Remove from index after confirmed deletion
-	logger.Debug("removing instance from service index after confirmed deletion")
+	logger.Info("Removing instance %s from service index after confirmed deletion", instanceID)
 
 	err := b.Vault.Index(ctx, instanceID, nil)
 	if err != nil {
-		logger.Error("failed to remove service from vault index: %s", err)
+		logger.Error("Failed to remove service from vault index: %s", err)
 		// Continue anyway, the deployment is gone
+	} else {
+		logger.Info("Successfully removed instance %s from index", instanceID)
 	}
 
 	logger.Debug("keeping secrets in vault for audit purposes")
@@ -2235,6 +2393,9 @@ func (b *Broker) extractRabbitMQAdminCredentials(credsMap map[string]interface{}
 		return nil, ErrAPIURLNotFoundOrNotString
 	}
 
+	// Expand templates in the API URL if present
+	apiURL = b.expandTemplateString(apiURL, credsMap)
+
 	adminUsername, exists := credsMap["admin_username"].(string)
 	if !exists {
 		return nil, ErrAdminUsernameNotFoundOrNotString
@@ -2258,9 +2419,64 @@ func (b *Broker) extractRabbitMQAdminCredentials(credsMap map[string]interface{}
 	}, nil
 }
 
-func (b *Broker) extractRabbitMQStaticCredentials(credsMap map[string]interface{}) (*rabbitMQStaticCreds, error) {
-	fmt.Printf("DEBUG credsMap contents: %#v\n", credsMap)
+func (b *Broker) expandTemplateString(templateStr string, credsMap map[string]interface{}) string {
+	// If no template markers are found, return the original string
+	if !strings.Contains(templateStr, "{{") {
+		return templateStr
+	}
 
+	// For RabbitMQ, if the host is already resolved but still contains template,
+	// look for IPs in the credentials map from the manifest processing
+	if strings.Contains(templateStr, "{{.Jobs.rabbitmq.IPs.0}}") {
+		return b.expandRabbitMQTemplate(templateStr, credsMap)
+	}
+
+	// Return the original string if no expansion was possible
+	return templateStr
+}
+
+func (b *Broker) expandRabbitMQTemplate(templateStr string, credsMap map[string]interface{}) string {
+	// First check if host is already resolved
+	if host, ok := credsMap["host"].(string); ok && !strings.Contains(host, "{{") {
+		return strings.ReplaceAll(templateStr, "{{.Jobs.rabbitmq.IPs.0}}", host)
+	}
+
+	// Otherwise look for the IP in job data that might be in the credentials
+	// This would be populated by the manifest generation from BOSH VMs
+	ip := b.extractIPFromJobs(credsMap)
+	if ip != "" {
+		return strings.ReplaceAll(templateStr, "{{.Jobs.rabbitmq.IPs.0}}", ip)
+	}
+
+	return templateStr
+}
+
+func (b *Broker) extractIPFromJobs(credsMap map[string]interface{}) string {
+	jobs, jobsExist := credsMap["jobs"].([]interface{})
+	if !jobsExist || len(jobs) == 0 {
+		return ""
+	}
+
+	for _, job := range jobs {
+		jobMap, isJobMap := job.(map[string]interface{})
+		if !isJobMap {
+			continue
+		}
+
+		ips, ipsExist := jobMap["IPs"].([]interface{})
+		if !ipsExist || len(ips) == 0 {
+			continue
+		}
+
+		if ip, isString := ips[0].(string); isString {
+			return ip
+		}
+	}
+
+	return ""
+}
+
+func (b *Broker) extractRabbitMQStaticCredentials(credsMap map[string]interface{}) (*rabbitMQStaticCreds, error) {
 	username, exists := credsMap["username"].(string)
 	if !exists {
 		return nil, ErrUsernameMustBeString
@@ -2343,25 +2559,34 @@ func (b *Broker) updateCredentialsMap(credsMap map[string]interface{}, staticCre
 }
 
 func (b *Broker) populateBindingCredentials(binding *BindingCredentials, credsMap map[string]interface{}) {
-	binding.Raw = make(map[string]interface{}, len(credsMap))
-	for k, v := range credsMap {
-		if k == "admin_username" || k == "admin_password" {
-			continue
-		}
+	binding.Raw = filterAdminCredentials(credsMap)
+	setCredentialType(binding)
+	populateBasicFields(binding)
+	populateServiceFields(binding)
+}
 
-		binding.Raw[k] = v
+func filterAdminCredentials(credsMap map[string]interface{}) map[string]interface{} {
+	filtered := make(map[string]interface{}, len(credsMap))
+	for k, v := range credsMap {
+		if k != "admin_username" && k != "admin_password" {
+			filtered[k] = v
+		}
 	}
 
+	return filtered
+}
+
+func setCredentialType(binding *BindingCredentials) {
 	if credType, ok := binding.Raw["credential_type"].(string); ok && credType != "" {
 		binding.CredentialType = credType
-	}
-
-	if binding.CredentialType == "" {
+	} else {
 		binding.CredentialType = "static"
 	}
 
 	binding.Raw["credential_type"] = binding.CredentialType
+}
 
+func populateBasicFields(binding *BindingCredentials) {
 	if host, ok := binding.Raw["host"].(string); ok {
 		binding.Host = host
 	}
@@ -2379,7 +2604,9 @@ func (b *Broker) populateBindingCredentials(binding *BindingCredentials, credsMa
 	if password, ok := binding.Raw["password"].(string); ok {
 		binding.Password = password
 	}
+}
 
+func populateServiceFields(binding *BindingCredentials) {
 	if uri, ok := binding.Raw["uri"].(string); ok {
 		binding.URI = uri
 	}
@@ -2666,12 +2893,19 @@ func tryFinalConnection(req *http.Request, httpClient *http.Client, originalURL,
 func replaceHostInURL(originalURL, newHost string) string {
 	parsedURL, err := url.Parse(originalURL)
 	if err == nil {
-		// Preserve the port if it exists
-		_, port, err := net.SplitHostPort(parsedURL.Host)
+		// Check if newHost already contains a port
+		_, _, err := net.SplitHostPort(newHost)
 		if err == nil {
-			parsedURL.Host = net.JoinHostPort(newHost, port)
-		} else {
+			// newHost already has a port, use it directly
 			parsedURL.Host = newHost
+		} else {
+			// newHost doesn't have a port, preserve the original port if it exists
+			_, port, err := net.SplitHostPort(parsedURL.Host)
+			if err == nil {
+				parsedURL.Host = net.JoinHostPort(newHost, port)
+			} else {
+				parsedURL.Host = newHost
+			}
 		}
 
 		return parsedURL.String()
@@ -2700,7 +2934,8 @@ func isRetryableHTTPError(err error) bool {
 		strings.Contains(errStr, "504") || // Gateway Timeout
 		strings.Contains(errStr, "context deadline exceeded") || // Timeout
 		strings.Contains(errStr, "connection refused") || // Connection issues
-		strings.Contains(errStr, "i/o timeout") // Network timeout
+		strings.Contains(errStr, "i/o timeout") || // Network timeout
+		strings.Contains(errStr, "EOF") // Network connection closed
 }
 
 // httpStatusError wraps an error with HTTP status code information.

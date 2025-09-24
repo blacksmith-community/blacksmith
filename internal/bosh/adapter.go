@@ -365,7 +365,7 @@ type UAAConfig struct {
 	CACert            string
 }
 
-// Operation options structures
+// Operation options structures.
 type RestartOpts struct {
 	Canaries    string `json:"canaries,omitempty"`
 	MaxInFlight string `json:"max_in_flight,omitempty"`
@@ -405,7 +405,7 @@ type ErrandOpts struct {
 	Instances   []string `json:"instances,omitempty"`
 }
 
-// Result structures
+// Result structures.
 type Errand struct {
 	Name string `json:"name"`
 }

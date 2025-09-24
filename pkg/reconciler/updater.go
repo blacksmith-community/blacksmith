@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"blacksmith/pkg/vault"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -21,6 +22,11 @@ import (
 var (
 	ErrMissingCredentials = errors.New("missing credentials")
 )
+
+const (
+	sourceReconciler = "reconciler"
+)
+
 var (
 	ErrInstanceIDCannotBeEmpty             = errors.New("instance ID cannot be empty")
 	ErrDeinterfaceMetadataUnexpectedType   = errors.New("deinterfaceMetadata returned unexpected type")
@@ -263,7 +269,7 @@ func (u *VaultUpdater) StoreBindingCredentials(instanceID, bindingID string, cre
 	// Add binding storage timestamps
 	existingMetadata["stored_at"] = time.Now().Format(time.RFC3339)
 	existingMetadata["last_updated"] = time.Now().Format(time.RFC3339)
-	existingMetadata["stored_by"] = "reconciler"
+	existingMetadata["stored_by"] = sourceReconciler
 
 	err = u.putToVault(metadataPath, existingMetadata)
 	if err != nil {
@@ -322,7 +328,7 @@ func (u *VaultUpdater) RemoveBinding(instanceID, bindingID string) error {
 	metadata, err := u.getFromVault(metadataPath)
 	if err == nil {
 		metadata["deleted_at"] = time.Now().Format(time.RFC3339)
-		metadata["status"] = "deleted"
+		metadata["status"] = StatusDeleted
 
 		err := u.putToVault(metadataPath, metadata)
 		if err != nil {
@@ -337,7 +343,7 @@ func (u *VaultUpdater) RemoveBinding(instanceID, bindingID string) error {
 	if err == nil {
 		if bindingEntry, exists := existingIndex[bindingID]; exists {
 			if entry, ok := bindingEntry.(map[string]interface{}); ok {
-				entry["status"] = "deleted"
+				entry["status"] = StatusDeleted
 				entry["deleted_at"] = time.Now().Format(time.RFC3339)
 				existingIndex[bindingID] = entry
 
@@ -530,11 +536,6 @@ func (u *VaultUpdater) MergeMetadata(existing, newData map[string]interface{}) m
 
 	// Override with new metadata
 	for key, value := range newData {
-		// Special handling for history - preserve it
-		if key == "history" && merged["history"] != nil {
-			continue
-		}
-
 		merged[key] = value
 	}
 
@@ -1120,7 +1121,7 @@ func (u *VaultUpdater) storeManifestData(instance InstanceData) {
 		"manifest":      instance.Deployment.Manifest,
 		"updated_at":    time.Now().Unix(),
 		"reconciled":    true,
-		"reconciled_by": "reconciler",
+		"reconciled_by": sourceReconciler,
 	}
 
 	err := u.putToVault(manifestPath, manifestData)
@@ -1147,11 +1148,33 @@ func (u *VaultUpdater) storeMetadataWithHistory(instance InstanceData) {
 		existingMeta = make(map[string]interface{})
 	}
 
+	u.logger.Debugf("storeMetadataWithHistory: existing metadata has %d keys", len(existingMeta))
+
+	if existingHistory, ok := existingMeta["history"]; ok {
+		u.logger.Debugf("storeMetadataWithHistory: existing has history of type %T", existingHistory)
+
+		if h, ok := existingHistory.([]interface{}); ok {
+			u.logger.Debugf("storeMetadataWithHistory: existing history has %d entries", len(h))
+		}
+	}
+
 	// Merge with new metadata
 	mergedMetadata := u.MergeMetadata(existingMeta, instance.Metadata)
 
+	u.logger.Debugf("storeMetadataWithHistory: merged metadata has %d keys", len(mergedMetadata))
+
+	if mergedHistory, ok := mergedMetadata["history"]; ok {
+		u.logger.Debugf("storeMetadataWithHistory: merged has history of type %T", mergedHistory)
+
+		if h, ok := mergedHistory.([]interface{}); ok {
+			u.logger.Debugf("storeMetadataWithHistory: merged history has %d entries", len(h))
+		}
+	}
+
 	// Detect changes and add reconciliation history
-	changes := u.DetectChanges(existingMeta, instance.Metadata)
+	// Note: Compare against mergedMetadata to properly detect changes
+	// since history and other fields may only exist in existing metadata
+	changes := u.DetectChanges(existingMeta, mergedMetadata)
 	u.addReconciliationHistory(mergedMetadata, changes)
 
 	// Clean and store metadata
@@ -1600,7 +1623,6 @@ func (u *VaultUpdater) deepEqual(a, b interface{}) bool {
 func (u *VaultUpdater) addReconciliationHistory(metadata map[string]interface{}, changes map[string]interface{}) {
 	var history []map[string]interface{}
 
-	// Extract existing history
 	if h, ok := metadata["history"].([]interface{}); ok {
 		for _, entry := range h {
 			if e, ok := entry.(map[string]interface{}); ok {
@@ -1646,14 +1668,17 @@ func (u *VaultUpdater) addReconciliationHistory(metadata map[string]interface{},
 		entry["changes"] = changes
 	}
 
+	u.logger.Debugf("addReconciliationHistory: history before append has %d entries", len(history))
 	history = append(history, entry)
+	u.logger.Debugf("addReconciliationHistory: history after adding reconciliation entry has %d entries", len(history))
 
-	// Limit history to last 100 entries
-	if len(history) > historyMaxSize {
-		history = history[len(history)-historyMaxSize:]
-	}
+	// Apply retention policy (time-based + max entries safety cap)
+	u.logger.Debugf("Calling FilterHistoryByRetention with retentionDays=%d, maxSize=%d", historyRetentionDays, historyMaxSize)
+	history = vault.FilterHistoryByRetention(history, historyRetentionDays, historyMaxSize)
+	u.logger.Debugf("History after retention filter: %d entries", len(history))
 
 	metadata["history"] = history
+	u.logger.Debugf("addReconciliationHistory: metadata now has history with %d entries", len(history))
 }
 
 // Vault interaction methods with proper implementation

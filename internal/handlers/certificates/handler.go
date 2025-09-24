@@ -12,9 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/certificates"
 	"blacksmith/pkg/logger"
 	"gopkg.in/yaml.v2"
+)
+
+// Constants for certificate handler operations.
+const (
+	// Maximum manifest preview length for logging.
+	manifestPreviewLength = 500
 )
 
 // Static errors for err113 compliance.
@@ -32,15 +39,23 @@ var (
 type Handler struct {
 	config interface{}
 	logger logger.Logger
-	broker interface{}
+	broker interfaces.Broker
 }
 
 // NewHandler creates a new certificate API handler.
 func NewHandler(config interface{}, logger logger.Logger, broker interface{}) *Handler {
+	// Try to cast broker to interfaces.Broker
+	var typedBroker interfaces.Broker
+	if broker != nil {
+		if b, ok := broker.(interfaces.Broker); ok {
+			typedBroker = b
+		}
+	}
+
 	return &Handler{
 		config: config,
 		logger: logger,
-		broker: broker,
+		broker: typedBroker,
 	}
 }
 
@@ -515,37 +530,125 @@ func (h *Handler) sendParsedCertificateResponse(writer http.ResponseWriter, name
 func (h *Handler) handleServiceCertificates(writer http.ResponseWriter, req *http.Request) {
 	log := logger.Get().Named("certificates-service")
 
+	h.logCertificateScanRequest(log, req)
+
 	if req.Method != http.MethodGet {
 		h.writeErrorResponse(writer, http.StatusMethodNotAllowed, "method not allowed")
 
 		return
 	}
 
+	serviceID, isValid := h.validateAndExtractServiceID(writer, req, log)
+	if !isValid {
+		return
+	}
+
+	brokerWithVault, hasVault := h.validateBrokerAndVault(writer, log)
+	if !hasVault {
+		return
+	}
+
+	manifestData, retrieved := h.retrieveManifestData(writer, req, brokerWithVault, serviceID, log)
+	if !retrieved {
+		return
+	}
+
+	h.extractAndSendCertificates(writer, req, manifestData, log)
+}
+
+// logCertificateScanRequest logs certificate scan request details.
+func (h *Handler) logCertificateScanRequest(log interface {
+	Info(msg string, args ...interface{})
+}, req *http.Request) {
+	log.Info("=== Certificate Scan Request ===")
+	log.Info("URL Path: %s", req.URL.Path)
+}
+
+// validateAndExtractServiceID validates the request and extracts service ID.
+func (h *Handler) validateAndExtractServiceID(writer http.ResponseWriter, req *http.Request, log interface {
+	Info(msg string, args ...interface{})
+	Debug(msg string, args ...interface{})
+}) (string, bool) {
 	serviceID, err := h.extractServiceIDFromPath(req.URL.Path)
+	log.Info("Extracted ServiceID: '%s', Error: %v", serviceID, err)
+
 	if err != nil {
 		h.writeErrorResponse(writer, http.StatusBadRequest, err.Error())
 
-		return
+		return "", false
 	}
 
 	log.Debug("fetching certificates for service %s", serviceID)
 
-	brokerWithVault, available := h.checkBrokerVaultAvailability()
-	if !available {
-		h.sendEmptyServiceCertificateResponse(writer, log)
+	return serviceID, true
+}
 
-		return
+// validateBrokerAndVault validates broker and vault availability.
+func (h *Handler) validateBrokerAndVault(writer http.ResponseWriter, log interface {
+	Info(msg string, args ...interface{})
+	Warn(msg string, args ...interface{})
+}) (interfaces.Broker, bool) {
+	brokerWithVault, available := h.checkBrokerVaultAvailability()
+	log.Info("Broker available: %v, Broker is nil: %v", available, h.broker == nil)
+
+	if brokerWithVault != nil {
+		log.Info("Vault available: %v", brokerWithVault.GetVault() != nil)
 	}
 
-	manifestData, err := h.getManifestFromVault(req.Context(), brokerWithVault, serviceID)
+	if !available {
+		log.Warn("broker or vault not available for certificate retrieval")
+		h.sendEmptyServiceCertificateResponse(writer, log)
+
+		return nil, false
+	}
+
+	return brokerWithVault, true
+}
+
+// retrieveManifestData retrieves manifest data from vault.
+func (h *Handler) retrieveManifestData(writer http.ResponseWriter, req *http.Request, broker interfaces.Broker, serviceID string, log interface {
+	Info(msg string, args ...interface{})
+	Error(msg string, args ...interface{})
+	Debug(msg string, args ...interface{})
+}) (string, bool) {
+	log.Info("Attempting to retrieve manifest from vault path: %s/manifest", serviceID)
+
+	manifestData, err := h.getManifestFromVault(req.Context(), broker, serviceID)
 	if err != nil {
 		log.Error("unable to find manifest for instance %s: %v", serviceID, err)
 		h.writeErrorResponse(writer, http.StatusNotFound, "manifest not available for this instance")
 
-		return
+		return "", false
 	}
 
+	log.Info("Manifest retrieved: %d bytes", len(manifestData))
+	h.logManifestPreview(log, manifestData)
+
+	return manifestData, true
+}
+
+// logManifestPreview logs a preview of the manifest data.
+func (h *Handler) logManifestPreview(log interface {
+	Debug(msg string, args ...interface{})
+}, manifestData string) {
+	if len(manifestData) > 0 && len(manifestData) <= manifestPreviewLength {
+		log.Debug("Manifest content (first %d chars): %s", manifestPreviewLength, manifestData)
+	} else if len(manifestData) > manifestPreviewLength {
+		log.Debug("Manifest content preview: %s...", manifestData[:manifestPreviewLength])
+	}
+}
+
+// extractAndSendCertificates extracts certificates from manifest and sends response.
+func (h *Handler) extractAndSendCertificates(writer http.ResponseWriter, req *http.Request, manifestData string, log interface {
+	Info(msg string, args ...interface{})
+}) {
 	certList := h.extractCertificatesFromManifest(req.Context(), manifestData)
+	log.Info("Certificates found: %d", len(certList))
+
+	for i, cert := range certList {
+		log.Info("  [%d] %s at path: %s", i+1, cert.Name, cert.Path)
+	}
+
 	h.sendServiceCertificateResponse(writer, certList)
 }
 
@@ -560,23 +663,17 @@ func (h *Handler) extractServiceIDFromPath(urlPath string) (string, error) {
 	return matches[1], nil
 }
 
-type brokerWithVault interface {
-	GetVault() interface {
-		Get(ctx context.Context, path string, out interface{}) (bool, error)
-	}
-}
-
-func (h *Handler) checkBrokerVaultAvailability() (brokerWithVault, bool) {
+func (h *Handler) checkBrokerVaultAvailability() (interfaces.Broker, bool) {
 	if h.broker == nil {
 		return nil, false
 	}
 
-	brokerWithVault, ok := h.broker.(brokerWithVault)
-	if !ok || brokerWithVault.GetVault() == nil {
+	vault := h.broker.GetVault()
+	if vault == nil {
 		return nil, false
 	}
 
-	return brokerWithVault, true
+	return h.broker, true
 }
 
 func (h *Handler) sendEmptyServiceCertificateResponse(writer http.ResponseWriter, log interface {
@@ -605,12 +702,17 @@ func (h *Handler) sendEmptyServiceCertificateResponse(writer http.ResponseWriter
 	}
 }
 
-func (h *Handler) getManifestFromVault(ctx context.Context, broker brokerWithVault, serviceID string) (string, error) {
+func (h *Handler) getManifestFromVault(ctx context.Context, broker interfaces.Broker, serviceID string) (string, error) {
 	var manifestData struct {
 		Manifest string `json:"manifest"`
 	}
 
-	exists, err := broker.GetVault().Get(ctx, serviceID+"/manifest", &manifestData)
+	vault := broker.GetVault()
+	if vault == nil {
+		return "", ErrManifestNotFound
+	}
+
+	exists, err := vault.Get(ctx, serviceID+"/manifest", &manifestData)
 	if err != nil || !exists {
 		return "", ErrManifestNotFound
 	}
@@ -637,7 +739,15 @@ func (h *Handler) sendServiceCertificateResponse(writer http.ResponseWriter, cer
 // extractCertificatesFromManifest parses a YAML manifest and extracts certificates.
 func (h *Handler) extractCertificatesFromManifest(ctx context.Context, manifest string) []certificates.CertificateListItem {
 	log := logger.Get().Named("extract-manifest-certs")
+	log.Info("Starting certificate extraction from manifest (%d bytes)", len(manifest))
+
 	certList := []certificates.CertificateListItem{}
+
+	if len(manifest) == 0 {
+		log.Warn("manifest is empty, no certificates to extract")
+
+		return certList
+	}
 
 	// Parse YAML manifest
 	var data map[interface{}]interface{}
@@ -649,10 +759,12 @@ func (h *Handler) extractCertificatesFromManifest(ctx context.Context, manifest 
 		return certList
 	}
 
+	log.Info("YAML parsed successfully, root has %d keys", len(data))
+
 	// Find certificates recursively in the YAML structure
 	h.findCertificatesInYAML(ctx, data, "", &certList)
 
-	log.Debug("found %d certificates in manifest", len(certList))
+	log.Info("Certificate extraction complete: found %d certificates", len(certList))
 
 	return certList
 }

@@ -97,6 +97,7 @@ func (s *BoshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 				NotFoundReason: fmt.Sprintf("Deployment not found in BOSH director: %v", err),
 			}, nil
 		}
+
 		return nil, fmt.Errorf("failed to get deployment %s: %w", name, err)
 	}
 

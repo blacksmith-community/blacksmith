@@ -2,14 +2,14 @@ package broker_test
 
 func toInterfaceSlice(values []interface{}) []interface{} {
 	out := make([]interface{}, len(values))
-	for i, value := range values {
+	for index, value := range values {
 		switch typed := value.(type) {
 		case map[string]interface{}:
-			out[i] = toInterfaceMap(typed)
+			out[index] = toInterfaceMap(typed)
 		case []interface{}:
-			out[i] = toInterfaceSlice(typed)
+			out[index] = toInterfaceSlice(typed)
 		default:
-			out[i] = typed
+			out[index] = typed
 		}
 	}
 
@@ -26,8 +26,8 @@ func toInterfaceMap(values map[string]interface{}) map[interface{}]interface{} {
 			out[key] = toInterfaceSlice(typed)
 		case []string:
 			converted := make([]interface{}, len(typed))
-			for i, v := range typed {
-				converted[i] = v
+			for idx, v := range typed {
+				converted[idx] = v
 			}
 
 			out[key] = converted

@@ -63,10 +63,10 @@ func WriteError(writer http.ResponseWriter, statusCode int, message string) {
 // WriteSuccess writes a JSON success response with the specified data.
 func WriteSuccess(writer http.ResponseWriter, data interface{}) {
 	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(http.StatusOK)
 
 	jsonData, err := json.Marshal(data)
 	if err == nil {
+		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write(jsonData)
 	} else {
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -89,10 +89,10 @@ func ParseJSON(reader io.Reader, target interface{}) error {
 // JSON writes a JSON response with the given status code and data.
 func JSON(writer http.ResponseWriter, statusCode int, data interface{}) {
 	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(statusCode)
 
 	jsonData, err := json.Marshal(data)
 	if err == nil {
+		writer.WriteHeader(statusCode)
 		_, _ = writer.Write(jsonData)
 	} else {
 		writer.WriteHeader(http.StatusInternalServerError)

@@ -177,6 +177,13 @@ type CFServiceInstanceDetails struct {
 	MaintenanceInfo map[string]interface{}
 }
 
+// HistoryRetentionConfig holds configuration for history retention policy.
+type HistoryRetentionConfig struct {
+	Enabled       bool
+	RetentionDays int
+	MaxEntries    int
+}
+
 // BackupConfig contains backup configuration.
 type BackupConfig struct {
 	Enabled          bool

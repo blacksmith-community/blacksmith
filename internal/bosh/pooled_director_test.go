@@ -493,6 +493,7 @@ func TestPooledDirector_ConcurrentRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.TotalRequests != 10 {
 		t.Errorf("Expected 10 total requests, got %d", stats.TotalRequests)
 	}
@@ -532,6 +533,7 @@ func TestPooledDirector_Timeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.RejectedRequests != 1 {
 		t.Errorf("Expected 1 rejected request, got %d", stats.RejectedRequests)
 	}
@@ -565,6 +567,7 @@ func TestPooledDirector_QueuedRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.QueuedRequests <= 0 {
 		t.Log("Warning: Expected some queued requests, got", stats.QueuedRequests)
 	}
@@ -577,6 +580,7 @@ func TestPooledDirector_QueuedRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if finalStats.ActiveConnections != 0 {
 		t.Errorf("Expected 0 active connections, got %d", finalStats.ActiveConnections)
 	}
@@ -597,6 +601,7 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.MaxConnections != 4 {
 		t.Errorf("Expected default pool size of 4, got %d", stats.MaxConnections)
 	}
@@ -608,6 +613,7 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats2.MaxConnections != 4 {
 		t.Errorf("Expected default pool size of 4, got %d", stats2.MaxConnections)
 	}
@@ -616,21 +622,29 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	t.Parallel()
 
-	mockDirector := &MockDirector{
-		delay: 50 * time.Millisecond,
-	}
+	mockDirector := &MockDirector{delay: 50 * time.Millisecond}
 	pooled := bosh.NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
 
-	// Initial stats should be zero
+	verifyInitialPoolStats(t, pooled)
+	_, done := launchConcurrentRequests(pooled)
+	verifyMidExecutionPoolStats(t, pooled, done)
+	verifyFinalPoolStats(t, pooled)
+}
+
+func verifyInitialPoolStats(t *testing.T, pooled bosh.Director) {
+	t.Helper()
+
 	stats, err := pooled.GetPoolStats()
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.TotalRequests != 0 || stats.ActiveConnections != 0 || stats.QueuedRequests != 0 {
 		t.Error("Expected initial stats to be zero")
 	}
+}
 
-	// Start 3 concurrent requests (2 active, 1 queued)
+func launchConcurrentRequests(pooled bosh.Director) (chan bool, chan bool) {
 	started := make(chan bool, 3)
 	done := make(chan bool, 3)
 
@@ -644,19 +658,23 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 		}()
 	}
 
-	// Wait for all to start
 	for range 3 {
 		<-started
 	}
 
-	// Give a moment for queueing
 	time.Sleep(10 * time.Millisecond)
 
-	// Check stats during execution
+	return started, done
+}
+
+func verifyMidExecutionPoolStats(t *testing.T, pooled bosh.Director, done chan bool) {
+	t.Helper()
+
 	midStats, err := pooled.GetPoolStats()
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if midStats.ActiveConnections != 2 {
 		t.Errorf("Expected 2 active connections, got %d", midStats.ActiveConnections)
 	}
@@ -665,16 +683,19 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 		t.Errorf("Expected 1 queued request, got %d", midStats.QueuedRequests)
 	}
 
-	// Wait for completion
 	for range 3 {
 		<-done
 	}
+}
 
-	// Final stats
+func verifyFinalPoolStats(t *testing.T, pooled bosh.Director) {
+	t.Helper()
+
 	finalStats, err := pooled.GetPoolStats()
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if finalStats.TotalRequests != 3 {
 		t.Errorf("Expected 3 total requests, got %d", finalStats.TotalRequests)
 	}
@@ -972,32 +993,6 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 	}
 }
 
-// runAllTests runs all test cases in parallel.
-func runAllTests(t *testing.T, tests []struct {
-	name string
-	fn   func() error
-}) {
-	t.Helper()
-
-	var waitGroup sync.WaitGroup
-
-	for _, test := range tests {
-		waitGroup.Add(1)
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			defer waitGroup.Done()
-
-			err := test.fn()
-			if err != nil {
-				t.Errorf("%s failed: %v", test.name, err)
-			}
-		})
-	}
-
-	waitGroup.Wait()
-}
-
 // validatePoolUsage validates that the pool was used correctly.
 func validatePoolUsage(t *testing.T, mockDirector *MockDirector, pooled *bosh.PooledDirector, expectedCalls int) {
 	t.Helper()
@@ -1010,6 +1005,7 @@ func validatePoolUsage(t *testing.T, mockDirector *MockDirector, pooled *bosh.Po
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.TotalRequests != int64(expectedCalls) {
 		t.Errorf("Expected %d total requests in stats, got %d", expectedCalls, stats.TotalRequests)
 	}
@@ -1026,17 +1022,11 @@ func TestPooledDirector_AllMethods(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		// Deployment operations
 		getDeploymentTests(pooled),
-		// Release and stemcell operations
 		getReleaseAndStemcellTests(pooled),
-		// Task operations
 		getTaskTests(pooled),
-		// Event operations
 		getEventTests(pooled),
-		// Config operations
 		getConfigTests(pooled),
-		// SSH and other operations
 		getSSHAndOtherTests(pooled),
 	}
 
@@ -1049,7 +1039,14 @@ func TestPooledDirector_AllMethods(t *testing.T) {
 		allTests = append(allTests, group...)
 	}
 
-	runAllTests(t, allTests)
+	// Run tests sequentially to avoid timeout issues
+	for _, test := range allTests {
+		err := test.fn()
+		if err != nil {
+			t.Errorf("%s failed: %v", test.name, err)
+		}
+	}
+
 	validatePoolUsage(t, mockDirector, pooled, len(allTests))
 }
 
@@ -1146,6 +1143,7 @@ func validateStressTestResults(t *testing.T, pooled *bosh.PooledDirector, succes
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.TotalRequests != int64(expectedRequests) {
 		t.Errorf("Expected %d total requests, got %d", expectedRequests, stats.TotalRequests)
 	}
@@ -1211,6 +1209,7 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.RejectedRequests != 1 {
 		t.Errorf("Expected 1 rejected request, got %d", stats.RejectedRequests)
 	}
@@ -1244,6 +1243,7 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.ActiveConnections != 3 {
 		t.Errorf("Expected 3 active connections, got %d", stats.ActiveConnections)
 	}
@@ -1256,6 +1256,7 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if finalStats.ActiveConnections != 0 {
 		t.Errorf("Expected 0 active connections after completion, got %d", finalStats.ActiveConnections)
 	}
@@ -1291,6 +1292,7 @@ func TestPooledDirector_ErrorPropagation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get pool stats: %v", err)
 	}
+
 	if stats.TotalRequests != 2 {
 		t.Errorf("Expected 2 total requests, got %d", stats.TotalRequests)
 	}
