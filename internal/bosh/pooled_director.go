@@ -13,15 +13,6 @@ var (
 	ErrConnectionPoolTimeout = errors.New("timeout waiting for BOSH connection slot")
 )
 
-// PoolStats contains statistics about pool usage.
-type PoolStats struct {
-	ActiveConnections int32         `json:"active_connections"`
-	QueuedRequests    int32         `json:"queued_requests"`
-	TotalRequests     int64         `json:"total_requests"`
-	RejectedRequests  int64         `json:"rejected_requests"`
-	AvgWaitTime       time.Duration `json:"avg_wait_time"`
-	MaxConnections    int           `json:"max_connections"`
-}
 
 // PooledDirector wraps a Director with connection pooling.
 type PooledDirector struct {
@@ -58,8 +49,8 @@ func NewPooledDirector(director Director, maxConnections int, timeout time.Durat
 }
 
 // GetPoolStats returns current pool statistics.
-func (p *PooledDirector) GetPoolStats() PoolStats {
-	return PoolStats{
+func (p *PooledDirector) GetPoolStats() (*PoolStats, error) {
+	stats := &PoolStats{
 		ActiveConnections: atomic.LoadInt32(&p.activeConnections),
 		QueuedRequests:    atomic.LoadInt32(&p.queuedRequests),
 		TotalRequests:     atomic.LoadInt64(&p.totalRequests),
@@ -67,6 +58,7 @@ func (p *PooledDirector) GetPoolStats() PoolStats {
 		AvgWaitTime:       time.Duration(atomic.LoadInt64(&p.avgWaitTime)),
 		MaxConnections:    cap(p.semaphore),
 	}
+	return stats, nil
 }
 
 // acquireConnection waits for an available connection slot.

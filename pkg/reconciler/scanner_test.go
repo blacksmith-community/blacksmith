@@ -173,6 +173,42 @@ func (d *mockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff,
 	return nil, ErrScannerNotImplemented
 }
 
+func (d *mockDirector) RestartDeployment(name string, opts bosh.RestartOpts) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) StopDeployment(name string, opts bosh.StopOpts) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) StartDeployment(name string, opts bosh.StartOpts) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) RecreateDeployment(name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) ListErrands(deployment string) ([]bosh.Errand, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) RunErrand(deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) GetInstances(deployment string) ([]bosh.Instance, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
+func (d *mockDirector) GetPoolStats() (*bosh.PoolStats, error) {
+	return nil, ErrScannerNotImplemented
+}
+
 func TestBOSHScanner_ScanDeployments(t *testing.T) {
 	t.Parallel()
 

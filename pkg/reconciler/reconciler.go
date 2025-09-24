@@ -411,6 +411,12 @@ func (r *ReconcilerManager) FilterServiceDeployments(deployments []DeploymentInf
 
 	for _, dep := range deployments {
 		if r.IsServiceDeployment(dep.Name) {
+			// Extract instance ID to check if it's marked as deleted
+			instanceID := r.extractInstanceID(dep.Name)
+			if instanceID != "" && r.isInstanceDeleted(instanceID) {
+				r.logger.Debugf("Skipping deployment %s as instance %s is marked as deleted", dep.Name, instanceID)
+				continue
+			}
 			filtered = append(filtered, dep)
 		}
 	}
@@ -458,6 +464,53 @@ func (r *ReconcilerManager) GetStatus() Status {
 	defer r.statusMu.RUnlock()
 
 	return r.status
+}
+
+// isInstanceDeleted checks if an instance is marked as deleted in the vault index.
+func (r *ReconcilerManager) isInstanceDeleted(instanceID string) bool {
+	if r.Synchronizer == nil {
+		return false
+	}
+
+	// Get the synchronizer's vault index
+	synchronizer, ok := r.Synchronizer.(*IndexSynchronizer)
+	if !ok {
+		return false
+	}
+
+	// Get the current index
+	idx, err := synchronizer.GetVaultIndex()
+	if err != nil {
+		r.logger.Debugf("Failed to get vault index to check deletion status: %v", err)
+		return false
+	}
+
+	// Check if the instance exists and is marked as deleted
+	if data, exists := idx[instanceID]; exists {
+		if dataMap, ok := data.(map[string]interface{}); ok {
+			// Check for deleted status
+			if status, ok := dataMap["status"].(string); ok && status == "deleted" {
+				return true
+			}
+			// Also check for deleted flag
+			if deleted, ok := dataMap["deleted"].(bool); ok && deleted {
+				return true
+			}
+			// Check if marked as orphaned for a long time
+			if orphaned, ok := dataMap["orphaned"].(bool); ok && orphaned {
+				if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
+					t, err := time.Parse(time.RFC3339, orphanedAt)
+					if err == nil && time.Since(t) > 24*time.Hour {
+						// Been orphaned for more than 24 hours, treat as deleted
+						r.logger.Debugf("Instance %s has been orphaned for more than 24 hours, treating as deleted", instanceID)
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 func (r *ReconcilerManager) initializeRateLimiters() {
@@ -984,6 +1037,24 @@ func (r *ReconcilerManager) updateVaultWithRateLimit(ctx context.Context, instan
 	// Process updates with rate limiting
 
 	for _, instance := range instances {
+		// Skip if instance is already marked as deleted
+		if status, ok := instance.Metadata["status"].(string); ok && status == "deleted" {
+			r.logger.Debugf("Skipping update for deleted instance %s", instance.ID)
+			// Still add it to updated list so it gets reflected in the index sync
+			updated = append(updated, instance)
+			continue
+		}
+
+		// Also check vault index for deletion status
+		if r.isInstanceDeleted(instance.ID) {
+			r.logger.Debugf("Skipping update for instance %s as it's marked as deleted in vault", instance.ID)
+			// Mark it as deleted in metadata for synchronization
+			instance.Metadata["status"] = "deleted"
+			instance.Metadata["skipped_reason"] = "already_deleted_in_vault"
+			updated = append(updated, instance)
+			continue
+		}
+
 		// Wait for rate limit (with nil check)
 		if r.vaultLimiter != nil {
 			err := r.vaultLimiter.Wait(ctx)
@@ -1171,6 +1242,26 @@ func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment De
 	detail := r.getDeploymentDetail(ctx, deployment)
 	instanceID := r.extractInstanceID(deployment.Name)
 
+	// Check if deployment was not found in BOSH
+	if detail.NotFound {
+		r.logger.Warningf("Deployment %s not found in BOSH, marking instance %s as deleted", deployment.Name, instanceID)
+
+		// Create an instance with deleted status
+		inst := r.createInstanceData(instanceID, detail, deployment.Name)
+		inst.Metadata["status"] = "deleted"
+		inst.Metadata["deleted_at"] = time.Now().Format(time.RFC3339)
+		inst.Metadata["deleted_by"] = "reconciler"
+		inst.Metadata["deletion_reason"] = detail.NotFoundReason
+
+		// Mark in Vault if we have access
+		if r.Updater != nil {
+			// We'll handle this in the updater
+			inst.Metadata["needs_deletion_marking"] = true
+		}
+
+		return inst
+	}
+
 	inst := r.createInstanceData(instanceID, detail, deployment.Name)
 	r.matchService(detail, &inst)
 	r.enrichFromCFData(inst.ID, cfInstances, &inst)
@@ -1197,8 +1288,14 @@ func (r *ReconcilerManager) getDeploymentDetail(ctx context.Context, deployment 
 
 	if details != nil {
 		detail = *details
-		r.logger.Debugf("Got deployment details for %s: %d releases, %d stemcells, %d VMs",
-			deployment.Name, len(detail.Releases), len(detail.Stemcells), len(detail.VMs))
+
+		// Check if deployment was not found in BOSH
+		if detail.NotFound {
+			r.logger.Warningf("Deployment %s not found in BOSH director, marking as deleted", deployment.Name)
+		} else {
+			r.logger.Debugf("Got deployment details for %s: %d releases, %d stemcells, %d VMs",
+				deployment.Name, len(detail.Releases), len(detail.Stemcells), len(detail.VMs))
+		}
 	}
 
 	return detail

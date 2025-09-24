@@ -122,12 +122,55 @@ func buildInitEnvironment(instanceID, planID string) []string {
 		}
 	}
 
+	// Add Vault token if available in environment
+	vaultToken := os.Getenv("VAULT_TOKEN")
+	if vaultToken != "" {
+		env = append(env, "VAULT_TOKEN="+vaultToken)
+	}
+
+	// Add critical environment variables for init script
 	env = append(env, "CREDENTIALS=secret/"+instanceID)
 	env = append(env, fmt.Sprintf("RAWJSONFILE=%s%s.json", GetWorkDir(), instanceID))
 	env = append(env, fmt.Sprintf("YAMLFILE=%s%s.yml", GetWorkDir(), instanceID))
 	env = append(env, "BLACKSMITH_INSTANCE_DATA_DIR="+GetWorkDir())
 	env = append(env, "INSTANCE_ID="+instanceID)
 	env = append(env, "BLACKSMITH_PLAN="+planID)
+
+	// Log critical environment variables for debugging (without exposing secrets)
+	log := logger.Get().Named("manifest")
+	for _, e := range env {
+		if strings.HasPrefix(e, "VAULT_ADDR=") {
+			log.Debug("Environment: %s", e)
+		}
+		if strings.HasPrefix(e, "VAULT_TOKEN=") {
+			log.Debug("Environment: VAULT_TOKEN=<redacted>")
+		}
+		if strings.HasPrefix(e, "BOSH_CLIENT_SECRET=") {
+			log.Debug("Environment: BOSH_CLIENT_SECRET=<redacted>")
+		}
+		if strings.HasPrefix(e, "BOSH_ENVIRONMENT=") || strings.HasPrefix(e, "BOSH_CLIENT=") {
+			log.Debug("Environment: %s", e)
+		}
+	}
+
+	// Validate critical environment variables
+	hasVaultAddr := false
+	hasVaultToken := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "VAULT_ADDR=") && len(e) > len("VAULT_ADDR=") {
+			hasVaultAddr = true
+		}
+		if strings.HasPrefix(e, "VAULT_TOKEN=") && len(e) > len("VAULT_TOKEN=") {
+			hasVaultToken = true
+		}
+	}
+
+	if !hasVaultAddr {
+		log.Error("WARNING: VAULT_ADDR environment variable is not set")
+	}
+	if !hasVaultToken {
+		log.Error("WARNING: VAULT_TOKEN environment variable is not set - init scripts may fail to authenticate with Vault")
+	}
 
 	return env
 }

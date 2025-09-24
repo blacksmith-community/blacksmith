@@ -45,7 +45,9 @@ type Broker interface {
 
 // CFManager interface for Cloud Foundry operations across all internal packages.
 type CFManager interface {
-	// Placeholder method to distinguish from other interfaces - implement as needed
+	// GetClient returns a CF API client for the specified endpoint
+	GetClient(endpointName string) (interface{}, error)
+	// IsCFManager identifies this as a CFManager implementation
 	IsCFManager() bool
 }
 

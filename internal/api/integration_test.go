@@ -109,6 +109,11 @@ func (m *mockCFManager) IsCFManager() bool {
 	return true
 }
 
+// GetClient implements the interfaces.CFManager interface.
+func (m *mockCFManager) GetClient(endpointName string) (interface{}, error) {
+	return nil, nil
+}
+
 // createTestDependencies creates mock dependencies for testing.
 func createTestDependencies() api.Dependencies {
 	return api.Dependencies{

@@ -100,7 +100,7 @@ func createEncoderConfig() zapcore.EncoderConfig {
 		TimeKey:        "time",
 		LevelKey:       "level",
 		NameKey:        "logger",
-		CallerKey:      zapcore.OmitKey,  // Disable caller info
+		CallerKey:      zapcore.OmitKey, // Disable caller info
 		FunctionKey:    zapcore.OmitKey,
 		MessageKey:     "msg",
 		StacktraceKey:  "stacktrace",
@@ -149,7 +149,6 @@ func createWriter(outputPath string) (zapcore.WriteSyncer, error) {
 		return zapcore.AddSync(file), nil
 	}
 }
-
 
 // New creates a new logger instance.
 func New(config Config) (Logger, error) {

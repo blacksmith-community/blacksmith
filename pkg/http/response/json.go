@@ -85,3 +85,17 @@ func ParseJSON(reader io.Reader, target interface{}) error {
 
 	return nil
 }
+
+// JSON writes a JSON response with the given status code and data.
+func JSON(writer http.ResponseWriter, statusCode int, data interface{}) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(statusCode)
+
+	jsonData, err := json.Marshal(data)
+	if err == nil {
+		_, _ = writer.Write(jsonData)
+	} else {
+		writer.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprintf(writer, `{"success": false, "error": "failed to marshal response"}`)
+	}
+}

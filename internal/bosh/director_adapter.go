@@ -56,6 +56,7 @@ var (
 	ErrGetConfigFailed                = errors.New("failed to get config")
 	ErrConfigYAMLParseFailed          = errors.New("failed to parse config YAML")
 	ErrDeploymentNameExtractionFailed = errors.New("could not extract deployment name from manifest")
+	ErrDeploymentNotFound             = errors.New("deployment not found")
 	ErrNoTaskFoundDeploymentDeletion  = errors.New("no task found for deployment deletion")
 	ErrNoTaskFoundReleaseUpload       = errors.New("no task found for release upload")
 	ErrNoTaskFoundStemcellUpload      = errors.New("no task found for stemcell upload")
@@ -413,8 +414,14 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 
 	dep, err := d.director.FindDeployment(deployment)
 	if err != nil {
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+		// Check if it's a 404 error (deployment doesn't exist)
+		errStr := err.Error()
+		if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
+			d.log.Infof("Deployment %s not found in BOSH director (404)", deployment)
+			return nil, fmt.Errorf("%w: %s", ErrDeploymentNotFound, deployment)
+		}
 
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
 		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
 	}
 
@@ -2720,6 +2727,346 @@ func camelToSnake(str string) string {
 	}
 
 	return result.String()
+}
+
+// RestartDeployment restarts all VMs in a deployment
+func (d *DirectorAdapter) RestartDeployment(name string, opts RestartOpts) (*Task, error) {
+	d.log.Infof("Restarting deployment: %s", name)
+
+	dep, err := d.director.FindDeployment(name)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	// Use empty slug to restart all instances
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug("", "")
+
+	boshOpts := boshdirector.RestartOpts{
+		Canaries:    opts.Canaries,
+		MaxInFlight: opts.MaxInFlight,
+		Converge:    opts.Converge,
+		SkipDrain:   opts.SkipDrain,
+		Force:       opts.Force,
+	}
+
+	err = dep.Restart(slug, boshOpts)
+	if err != nil {
+		d.log.Errorf("Failed to restart deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to restart deployment: %w", err)
+	}
+
+	// Get the latest task for this deployment
+	tasks, err := d.director.RecentTasks(1, boshdirector.TasksFilter{
+		Deployment: name,
+	})
+	if err != nil || len(tasks) == 0 {
+		return nil, fmt.Errorf("failed to get task for restart operation")
+	}
+
+	task := convertBoshTask(tasks[0])
+	d.log.Infof("Successfully initiated restart for deployment %s, task ID: %d", name, task.ID)
+	return task, nil
+}
+
+// StopDeployment stops all VMs in a deployment
+func (d *DirectorAdapter) StopDeployment(name string, opts StopOpts) (*Task, error) {
+	d.log.Infof("Stopping deployment: %s", name)
+
+	dep, err := d.director.FindDeployment(name)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	// Use empty slug to stop all instances
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug("", "")
+
+	boshOpts := boshdirector.StopOpts{
+		Canaries:    opts.Canaries,
+		MaxInFlight: opts.MaxInFlight,
+		Force:       opts.Force,
+		SkipDrain:   opts.SkipDrain,
+		Hard:        opts.Hard,
+		Converge:    opts.Converge,
+	}
+
+	err = dep.Stop(slug, boshOpts)
+	if err != nil {
+		d.log.Errorf("Failed to stop deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to stop deployment: %w", err)
+	}
+
+	// Get the latest task for this deployment
+	tasks, err := d.director.RecentTasks(1, boshdirector.TasksFilter{
+		Deployment: name,
+	})
+	if err != nil || len(tasks) == 0 {
+		return nil, fmt.Errorf("failed to get task for stop operation")
+	}
+
+	task := convertBoshTask(tasks[0])
+	d.log.Infof("Successfully initiated stop for deployment %s, task ID: %d", name, task.ID)
+	return task, nil
+}
+
+// StartDeployment starts all VMs in a deployment
+func (d *DirectorAdapter) StartDeployment(name string, opts StartOpts) (*Task, error) {
+	d.log.Infof("Starting deployment: %s", name)
+
+	dep, err := d.director.FindDeployment(name)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	// Use empty slug to start all instances
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug("", "")
+
+	boshOpts := boshdirector.StartOpts{
+		Canaries:    opts.Canaries,
+		MaxInFlight: opts.MaxInFlight,
+		Converge:    opts.Converge,
+	}
+
+	err = dep.Start(slug, boshOpts)
+	if err != nil {
+		d.log.Errorf("Failed to start deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to start deployment: %w", err)
+	}
+
+	// Get the latest task for this deployment
+	tasks, err := d.director.RecentTasks(1, boshdirector.TasksFilter{
+		Deployment: name,
+	})
+	if err != nil || len(tasks) == 0 {
+		return nil, fmt.Errorf("failed to get task for start operation")
+	}
+
+	task := convertBoshTask(tasks[0])
+	d.log.Infof("Successfully initiated start for deployment %s, task ID: %d", name, task.ID)
+	return task, nil
+}
+
+// RecreateDeployment recreates all VMs in a deployment
+func (d *DirectorAdapter) RecreateDeployment(name string, opts RecreateOpts) (*Task, error) {
+	d.log.Infof("Recreating deployment: %s", name)
+
+	dep, err := d.director.FindDeployment(name)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	// Use empty slug to recreate all instances
+	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug("", "")
+
+	boshOpts := boshdirector.RecreateOpts{
+		Canaries:    opts.Canaries,
+		MaxInFlight: opts.MaxInFlight,
+		SkipDrain:   opts.SkipDrain,
+		Force:       opts.Force,
+		Fix:         opts.Fix,
+		DryRun:      opts.DryRun,
+		Converge:    opts.Converge,
+	}
+
+	err = dep.Recreate(slug, boshOpts)
+	if err != nil {
+		d.log.Errorf("Failed to recreate deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to recreate deployment: %w", err)
+	}
+
+	// Get the latest task for this deployment
+	tasks, err := d.director.RecentTasks(1, boshdirector.TasksFilter{
+		Deployment: name,
+	})
+	if err != nil || len(tasks) == 0 {
+		return nil, fmt.Errorf("failed to get task for recreate operation")
+	}
+
+	task := convertBoshTask(tasks[0])
+	d.log.Infof("Successfully initiated recreate for deployment %s, task ID: %d", name, task.ID)
+	return task, nil
+}
+
+// ListErrands returns the list of errands for a deployment
+func (d *DirectorAdapter) ListErrands(deployment string) ([]Errand, error) {
+	d.log.Infof("Listing errands for deployment: %s", deployment)
+
+	dep, err := d.director.FindDeployment(deployment)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	boshErrands, err := dep.Errands()
+	if err != nil {
+		d.log.Errorf("Failed to list errands for deployment %s: %v", deployment, err)
+		return nil, fmt.Errorf("failed to list errands: %w", err)
+	}
+
+	// Convert BOSH errands to our format
+	errands := make([]Errand, len(boshErrands))
+	for i, errand := range boshErrands {
+		errands[i] = Errand{
+			Name: errand.Name,
+		}
+	}
+
+	d.log.Infof("Found %d errands for deployment %s", len(errands), deployment)
+	return errands, nil
+}
+
+// RunErrand runs a specific errand for a deployment
+func (d *DirectorAdapter) RunErrand(deployment, errand string, opts ErrandOpts) (*ErrandResult, error) {
+	d.log.Infof("Running errand %s for deployment: %s", errand, deployment)
+
+	dep, err := d.director.FindDeployment(deployment)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	// Convert instances to proper slugs if provided
+	var instanceSlugs []boshdirector.InstanceGroupOrInstanceSlug
+	for _, instance := range opts.Instances {
+		instanceSlugs = append(instanceSlugs, boshdirector.NewInstanceGroupOrInstanceSlug(instance, ""))
+	}
+
+	results, err := dep.RunErrand(errand, opts.KeepAlive, opts.WhenChanged, instanceSlugs)
+	if err != nil {
+		d.log.Errorf("Failed to run errand %s for deployment %s: %v", errand, deployment, err)
+		return nil, fmt.Errorf("failed to run errand: %w", err)
+	}
+
+	// Return the first result (most common case)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no errand results returned")
+	}
+
+	result := &ErrandResult{
+		InstanceGroup:   results[0].InstanceGroup,
+		InstanceID:      results[0].InstanceID,
+		ExitCode:        results[0].ExitCode,
+		Stdout:          results[0].Stdout,
+		Stderr:          results[0].Stderr,
+		LogsBlobstoreID: results[0].LogsBlobstoreID,
+		LogsSHA1:        results[0].LogsSHA1,
+	}
+
+	d.log.Infof("Successfully ran errand %s for deployment %s, exit code: %d", errand, deployment, result.ExitCode)
+	return result, nil
+}
+
+// GetInstances returns instances for a deployment
+func (d *DirectorAdapter) GetInstances(deployment string) ([]Instance, error) {
+	d.log.Infof("Getting instances for deployment: %s", deployment)
+
+	dep, err := d.director.FindDeployment(deployment)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	// Get VM info which includes instance information
+	vmInfos, err := dep.InstanceInfos()
+	if err != nil {
+		d.log.Errorf("Failed to get instance info for deployment %s: %v", deployment, err)
+		return nil, fmt.Errorf("failed to get instance info: %w", err)
+	}
+
+	// Convert to our Instance format
+	instances := make([]Instance, len(vmInfos))
+	for i, vmInfo := range vmInfos {
+		index := "0"
+		if vmInfo.Index != nil {
+			index = fmt.Sprintf("%d", *vmInfo.Index)
+		}
+
+		instances[i] = Instance{
+			ID:           vmInfo.AgentID,
+			Group:        vmInfo.JobName,
+			Index:        index,
+			State:        vmInfo.State,
+			ProcessState: vmInfo.ProcessState,
+			IPs:          vmInfo.IPs,
+			AZ:           vmInfo.AZ,
+			VMType:       vmInfo.VMType,
+			ResourcePool: vmInfo.ResourcePool,
+			Bootstrap:    vmInfo.Bootstrap,
+			Ignore:       vmInfo.Ignore,
+			VMCreatedAt:  vmInfo.VMCreatedAt,
+		}
+	}
+
+	d.log.Infof("Found %d instances for deployment %s", len(instances), deployment)
+	return instances, nil
+}
+
+// UpdateDeployment updates a deployment with a new manifest
+func (d *DirectorAdapter) UpdateDeployment(name, manifest string) (*Task, error) {
+	d.log.Infof("Updating deployment: %s", name)
+
+	dep, err := d.director.FindDeployment(name)
+	if err != nil {
+		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to find deployment: %w", err)
+	}
+
+	// Update with default options
+	updateOpts := boshdirector.UpdateOpts{
+		Recreate:    false,
+		Fix:         false,
+		SkipDrain:   []boshdirector.SkipDrain{},
+		Canaries:    "",
+		MaxInFlight: "",
+	}
+
+	err = dep.Update([]byte(manifest), updateOpts)
+	if err != nil {
+		d.log.Errorf("Failed to update deployment %s: %v", name, err)
+		return nil, fmt.Errorf("failed to update deployment: %w", err)
+	}
+
+	// Get the latest task for this deployment
+	tasks, err := d.director.RecentTasks(1, boshdirector.TasksFilter{
+		Deployment: name,
+	})
+	if err != nil || len(tasks) == 0 {
+		return nil, fmt.Errorf("failed to get task for update operation")
+	}
+
+	task := convertBoshTask(tasks[0])
+	d.log.Infof("Successfully initiated update for deployment %s, task ID: %d", name, task.ID)
+	return task, nil
+}
+
+// GetPoolStats returns pool statistics (not applicable for DirectorAdapter)
+func (d *DirectorAdapter) GetPoolStats() (*PoolStats, error) {
+	// DirectorAdapter doesn't use connection pooling, return basic stats
+	return &PoolStats{
+		MaxConnections:    1,
+		ActiveConnections: 1,
+		QueuedRequests:    0,
+		RejectedRequests:  0,
+		TotalRequests:     0,
+		AvgWaitTime:       0,
+	}, nil
+}
+
+// convertBoshTask converts a BOSH CLI task to our Task format
+func convertBoshTask(boshTask boshdirector.Task) *Task {
+	startedAt := boshTask.StartedAt()
+	return &Task{
+		ID:          boshTask.ID(),
+		State:       boshTask.State(),
+		Description: boshTask.Description(),
+		Timestamp:   startedAt.Unix(),
+		StartedAt:   startedAt,
+		Result:      boshTask.Result(),
+		User:        boshTask.User(),
+	}
 }
 
 // Ensure DirectorAdapter implements Director interface.

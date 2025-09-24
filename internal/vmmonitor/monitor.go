@@ -44,6 +44,8 @@ type vmVault interface {
 	GetIndex(ctx context.Context, name string) (*vaultPkg.Index, error)
 	Get(ctx context.Context, path string, out interface{}) (bool, error)
 	Put(ctx context.Context, path string, data interface{}) error
+	UpdateIndexEntry(ctx context.Context, instanceID string, updates map[string]interface{}) error
+	MarkInstanceDeleted(ctx context.Context, instanceID string) error
 }
 
 // ServiceMonitor tracks the monitoring state of a service instance.
@@ -408,7 +410,8 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 
 	// Detect BOSH 404 "doesn't exist" and mark as deleted immediately
 	errStr := err.Error()
-	if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
+	if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") ||
+		strings.Contains(errStr, "deployment not found") || errors.Is(err, bosh.ErrDeploymentNotFound) {
 		logger.Info("Deployment %s not found (404). Marking instance %s as deleted and stopping monitoring.", svc.DeploymentName, svc.ServiceID)
 
 		// Mark deleted in index and store VM status as deleted
@@ -472,20 +475,25 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 func (m *Monitor) markInstanceDeleted(ctx context.Context, svc *ServiceMonitor) {
 	logger := logger.Get().Named("vm-monitor")
 
-	idx, err := m.vault.GetIndex(ctx, "db")
+	// Mark the instance as deleted in the vault index
+	err := m.vault.MarkInstanceDeleted(ctx, svc.ServiceID)
 	if err != nil {
-		logger.Error("Failed to get index to mark deletion for %s: %v", svc.ServiceID, err)
-
+		logger.Error("Failed to mark instance %s as deleted: %v", svc.ServiceID, err)
+		// Try alternative approach with more details
+		err = m.vault.UpdateIndexEntry(ctx, svc.ServiceID, map[string]interface{}{
+			"status":          "deleted",
+			"deleted_at":      time.Now().Format(time.RFC3339),
+			"deleted_by":      "vm-monitor",
+			"deletion_reason": fmt.Sprintf("deployment %s not found in BOSH director", svc.DeploymentName),
+			"last_deployment": svc.DeploymentName,
+		})
+		if err != nil {
+			logger.Error("Failed to update index entry for deleted instance %s: %v", svc.ServiceID, err)
+		}
 		return
 	}
 
-	if _, exists := idx.Data[svc.ServiceID]; exists {
-		logger.Info("Service %s found in index and marked as deleted", svc.ServiceID)
-
-		// We don't actually delete from the index here since that would require
-		// extending the vmVault interface. The service deletion will be handled
-		// by other parts of the system that have full vault access.
-	}
+	logger.Info("Successfully marked instance %s as deleted in vault index", svc.ServiceID)
 }
 
 // calculateOverallStatus determines the overall status from VM states.

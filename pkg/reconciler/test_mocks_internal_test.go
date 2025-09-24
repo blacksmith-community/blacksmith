@@ -66,7 +66,6 @@ func (l *MockLoggerLocal) Errorf(format string, args ...interface{}) {
 // RunBindingCredentialsPathConstructionTests exercises GetBindingCredentials path logic across specs.
 func RunBindingCredentialsPathConstructionTests(t *testing.T, logger Logger) {
 	t.Helper()
-	t.Parallel()
 
 	vault := NewTestVault(t)
 	updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})

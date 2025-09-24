@@ -43,13 +43,32 @@ func (h *Handler) GetPoolStats(responseWriter http.ResponseWriter, req *http.Req
 	logger := h.logger.Named("bosh-pool-stats")
 	logger.Debug("BOSH pool stats request")
 
-	// TODO: Implement actual BOSH pool stats fetching
-	// For now, return placeholder data
+	// Get pool statistics from director
+	poolStats, err := h.director.GetPoolStats()
+	if err != nil {
+		logger.Error("Failed to get pool stats: %v", err)
+		// Return basic stats on error
+		stats := map[string]interface{}{
+			"total_connections":   1,
+			"active_connections":  0,
+			"queued_requests":     0,
+			"rejected_requests":   0,
+			"total_requests":      0,
+			"avg_wait_time_ms":    0,
+			"timestamp":           time.Now().Unix(),
+		}
+		response.HandleJSON(responseWriter, stats, nil)
+		return
+	}
+
 	stats := map[string]interface{}{
-		"total_vms":     0,
-		"available_vms": 0,
-		"used_vms":      0,
-		"timestamp":     time.Now().Unix(),
+		"total_connections":   poolStats.MaxConnections,
+		"active_connections":  poolStats.ActiveConnections,
+		"queued_requests":     poolStats.QueuedRequests,
+		"rejected_requests":   poolStats.RejectedRequests,
+		"total_requests":      poolStats.TotalRequests,
+		"avg_wait_time_ms":    poolStats.AvgWaitTime.Milliseconds(),
+		"timestamp":           time.Now().Unix(),
 	}
 
 	response.HandleJSON(responseWriter, stats, nil)

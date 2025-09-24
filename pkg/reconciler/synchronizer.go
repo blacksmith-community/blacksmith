@@ -32,6 +32,66 @@ func NewIndexSynchronizer(vault interface{}, logger Logger) *IndexSynchronizer {
 	}
 }
 
+// CleanupDeletedInstances removes instances marked as cleanup_eligible from the index.
+// This should only be called by administrators or scheduled processes after careful consideration.
+func (s *IndexSynchronizer) CleanupDeletedInstances(ctx context.Context, dryRun bool) (int, error) {
+	s.logger.Infof("Starting cleanup of deleted instances (dryRun=%v)", dryRun)
+
+	idx, err := s.GetVaultIndex()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get index for cleanup: %w", err)
+	}
+
+	var toDelete []string
+	for id, data := range idx {
+		dataMap, ok := data.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Only cleanup instances that are explicitly marked as cleanup_eligible
+		if eligible, ok := dataMap["cleanup_eligible"].(bool); ok && eligible {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	if len(toDelete) == 0 {
+		s.logger.Infof("No instances eligible for cleanup")
+		return 0, nil
+	}
+
+	s.logger.Infof("Found %d instances eligible for cleanup", len(toDelete))
+
+	if dryRun {
+		for _, id := range toDelete {
+			if data, ok := idx[id].(map[string]interface{}); ok {
+				s.logger.Infof("Would delete: %s (deleted_at: %v, days_deleted: %v)",
+					id, data["deleted_at"], data["days_deleted"])
+			}
+		}
+		return len(toDelete), nil
+	}
+
+	// Actually delete the instances
+	deletedCount := 0
+	for _, id := range toDelete {
+		delete(idx, id)
+		deletedCount++
+		s.logger.Infof("Removed instance %s from index", id)
+	}
+
+	// Save the updated index
+	if deletedCount > 0 {
+		err = s.SaveVaultIndex(idx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to save index after cleanup: %w", err)
+		}
+	}
+
+	s.logger.Infof("Successfully cleaned up %d deleted instances", deletedCount)
+	return deletedCount, nil
+}
+
 // SyncIndex synchronizes the vault index with reconciled instances.
 func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceData) error {
 	s.logger.Debugf("Synchronizing index with %d instances", len(instances))
@@ -230,6 +290,20 @@ func (s *IndexSynchronizer) updateIndexWithInstances(idx map[string]interface{},
 	for _, inst := range instances {
 		data := s.buildInstanceData(inst)
 
+		// Check if the instance has been marked for deletion (deployment not found in BOSH)
+		if needsDeletion, ok := inst.Metadata["needs_deletion_marking"].(bool); ok && needsDeletion {
+			data["status"] = "deleted"
+			data["deleted_at"] = inst.Metadata["deleted_at"]
+			data["deleted_by"] = inst.Metadata["deleted_by"]
+			data["deletion_reason"] = inst.Metadata["deletion_reason"]
+			s.logger.Infof("Marking instance %s as deleted (deployment not found in BOSH)", inst.ID)
+		}
+
+		// Copy status field from metadata if present
+		if status, ok := inst.Metadata["status"].(string); ok {
+			data["status"] = status
+		}
+
 		if existing, exists := idx[inst.ID]; exists {
 			s.mergeWithExistingInstance(data, existing)
 
@@ -274,10 +348,23 @@ func (s *IndexSynchronizer) buildInstanceData(inst InstanceData) map[string]inte
 // mergeWithExistingInstance merges new data with existing instance data.
 func (s *IndexSynchronizer) mergeWithExistingInstance(data map[string]interface{}, existing interface{}) {
 	if existingMap, ok := existing.(map[string]interface{}); ok {
-		preserveFields := []string{"created_at", "organization_id", "space_id", "parameters"}
+		// Preserve important fields from existing data
+		preserveFields := []string{
+			"created_at", "organization_id", "space_id", "parameters",
+			"deleted_at", "deleted_by", "deletion_reason", // Preserve deletion info
+			"orphaned_at", "orphaned_reason", // Preserve orphan info if exists
+		}
 		for _, field := range preserveFields {
 			if val, hasField := existingMap[field]; hasField {
 				data[field] = val
+			}
+		}
+
+		// Preserve deleted status if already marked
+		if status, ok := existingMap["status"].(string); ok && status == "deleted" {
+			// Don't override deleted status unless explicitly changing it
+			if _, hasNewStatus := data["status"]; !hasNewStatus {
+				data["status"] = status
 			}
 		}
 	}
@@ -295,6 +382,12 @@ func (s *IndexSynchronizer) markOrphanedInstances(idx map[string]interface{}, re
 
 	for id, data := range idx {
 		if !reconciledMap[id] {
+			// Check if already marked as deleted (by VM monitor or reconciler)
+			if s.isMarkedDeleted(data) {
+				s.logger.Debugf("Instance %s already marked as deleted, skipping orphan marking", id)
+				continue
+			}
+
 			if s.markAsOrphaned(id, data) {
 				orphanCount++
 			}
@@ -340,12 +433,38 @@ func (s *IndexSynchronizer) isServiceInstance(dataMap map[string]interface{}) bo
 	return hasService && hasPlan
 }
 
-// markStaleOrphans marks old orphaned entries as stale but preserves them.
+// isMarkedDeleted checks if an instance has been marked as deleted.
+func (s *IndexSynchronizer) isMarkedDeleted(data interface{}) bool {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	// Check for deleted status
+	if status, ok := dataMap["status"].(string); ok && status == "deleted" {
+		return true
+	}
+
+	// Also check for deleted flag (backward compatibility)
+	if deleted, ok := dataMap["deleted"].(bool); ok && deleted {
+		return true
+	}
+
+	return false
+}
+
+// markStaleOrphans marks old orphaned entries as stale and old deleted entries for cleanup.
 func (s *IndexSynchronizer) markStaleOrphans(idx map[string]interface{}) int {
 	cleanupCount := 0
 
 	for id, data := range idx {
+		// Process orphaned entries
 		if s.processOrphanedEntry(id, data) {
+			cleanupCount++
+		}
+
+		// Process deleted entries that are very old
+		if s.processDeletedEntry(id, data) {
 			cleanupCount++
 		}
 	}
@@ -398,6 +517,46 @@ func (s *IndexSynchronizer) markAsStale(entryID string, dataMap map[string]inter
 	}
 
 	return true
+}
+
+// processDeletedEntry processes deleted entries that are very old.
+func (s *IndexSynchronizer) processDeletedEntry(entryID string, data interface{}) bool {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	// Check if it's marked as deleted
+	status, hasStatus := dataMap["status"].(string)
+	if !hasStatus || status != "deleted" {
+		return false
+	}
+
+	// Check how long it's been deleted
+	deletedAt, ok := dataMap["deleted_at"].(string)
+	if !ok {
+		return false
+	}
+
+	t, err := time.Parse(time.RFC3339, deletedAt)
+	if err != nil {
+		return false
+	}
+
+	daysSinceDeleted := int(time.Since(t).Hours() / HoursPerDay)
+
+	// Mark for cleanup if deleted more than 60 days ago
+	const DaysBeforeCleanup = 60
+	if daysSinceDeleted > DaysBeforeCleanup {
+		dataMap["cleanup_eligible"] = true
+		dataMap["cleanup_eligible_since"] = time.Now().Format(time.RFC3339)
+		dataMap["days_deleted"] = daysSinceDeleted
+
+		s.logger.Infof("Instance %s has been deleted for %d days, marked as cleanup eligible", entryID, daysSinceDeleted)
+		return true
+	}
+
+	return false
 }
 
 // validateIndexInternal performs the actual validation.

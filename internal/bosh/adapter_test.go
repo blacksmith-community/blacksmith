@@ -161,3 +161,30 @@ func (m *mockDirector) EnableResurrection(deployment string, enabled bool) error
 func (m *mockDirector) DeleteResurrectionConfig(deployment string) error {
 	return ErrMockNotImplemented
 }
+func (m *mockDirector) RestartDeployment(name string, opts bosh.RestartOpts) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) StopDeployment(name string, opts bosh.StopOpts) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) StartDeployment(name string, opts bosh.StartOpts) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) RecreateDeployment(name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) ListErrands(deployment string) ([]bosh.Errand, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) RunErrand(deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetInstances(deployment string) ([]bosh.Instance, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+func (m *mockDirector) GetPoolStats() (*bosh.PoolStats, error) {
+	return nil, ErrMockNotImplemented
+}

@@ -3898,6 +3898,40 @@
       };
     }
 
+    // Standard format with operation: YYYY-MM-DD HH:MM:SS.mmm  LEVEL  operation  message
+    // This handles logs like: 2025-09-24 19:39:29.171  INFO  vault get  DEBUG secret loc...
+    const standardWithOpPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\s+([a-z\-_\s]+?)\s+(.*)$/i;
+    match = cleanLine.match(standardWithOpPattern);
+    if (match) {
+      // The operation (e.g., "vault get", "vm-monitor") becomes the component
+      const operation = match[4].trim();
+      // Remove any redundant level from the beginning of the message
+      let message = match[5];
+      // If message starts with another level indicator, remove it
+      message = message.replace(/^(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\s+/i, '');
+
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].toUpperCase(),
+        component: component || operation,  // Use extracted component or the operation as component
+        message: message
+      };
+    }
+
+    // Standard format without operation: YYYY-MM-DD HH:MM:SS.mmm  LEVEL  message
+    const standardPattern = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(INFO|DEBUG|WARN|WARNING|ERROR|FATAL|TRACE)\s+(.*)$/i;
+    match = cleanLine.match(standardPattern);
+    if (match) {
+      return {
+        date: match[1],
+        time: match[2],
+        level: match[3].toUpperCase(),
+        component: component,
+        message: match[4]
+      };
+    }
+
     // Handle lines that don't match any pattern (continuation lines, etc.)
     // Try to extract level from simple patterns as fallback
     let fallbackLevel = '';

@@ -188,3 +188,48 @@ func (imb *IntegrationMockBOSH) GetConfigContent(configID string) (string, error
 func (imb *IntegrationMockBOSH) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
 	return nil, ErrIntegrationMockNotImplemented
 }
+
+// RestartDeployment implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) RestartDeployment(name string, opts bosh.RestartOpts) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// StopDeployment implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) StopDeployment(name string, opts bosh.StopOpts) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// StartDeployment implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) StartDeployment(name string, opts bosh.StartOpts) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// RecreateDeployment implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) RecreateDeployment(name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// ListErrands implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) ListErrands(deployment string) ([]bosh.Errand, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// RunErrand implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) RunErrand(deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// GetInstances implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) GetInstances(deployment string) ([]bosh.Instance, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// UpdateDeployment implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
+// GetPoolStats implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) GetPoolStats() (*bosh.PoolStats, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}

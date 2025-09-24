@@ -142,7 +142,7 @@ func (c *EndpointClient) TryReconnect(ctx context.Context) error {
 // GetClient returns the CF client if healthy, otherwise attempts reconnection
 //
 //nolint:ireturn // capi.Client is an external interface from github.com/fivetwenty-io/capi
-func (m *Manager) GetClient(endpointName string) (capi.Client, error) {
+func (m *Manager) GetClient(endpointName string) (interface{}, error) {
 	m.mutex.RLock()
 	client, exists := m.clients[endpointName]
 	m.mutex.RUnlock()

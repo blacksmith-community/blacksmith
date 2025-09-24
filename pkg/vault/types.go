@@ -8,7 +8,7 @@ type VaultCreds struct {
 
 // Instance represents a service instance stored in Vault.
 type Instance struct {
-	ID        string
-	ServiceID string
-	PlanID    string
+	ID        string `json:"instance_id,omitempty"`
+	ServiceID string `json:"service_id,omitempty"`
+	PlanID    string `json:"plan_id,omitempty"`
 }

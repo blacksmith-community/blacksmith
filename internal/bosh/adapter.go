@@ -60,6 +60,25 @@ type Director interface {
 	// Resurrection operations
 	EnableResurrection(deployment string, enabled bool) error
 	DeleteResurrectionConfig(deployment string) error
+
+	// Deployment control operations
+	RestartDeployment(name string, opts RestartOpts) (*Task, error)
+	StopDeployment(name string, opts StopOpts) (*Task, error)
+	StartDeployment(name string, opts StartOpts) (*Task, error)
+	RecreateDeployment(name string, opts RecreateOpts) (*Task, error)
+
+	// Errand operations
+	ListErrands(deployment string) ([]Errand, error)
+	RunErrand(deployment, errand string, opts ErrandOpts) (*ErrandResult, error)
+
+	// Instance operations
+	GetInstances(deployment string) ([]Instance, error)
+
+	// Deployment update
+	UpdateDeployment(name, manifest string) (*Task, error)
+
+	// Pool statistics (for PooledDirector)
+	GetPoolStats() (*PoolStats, error)
 }
 
 // Info represents BOSH director information.
@@ -344,4 +363,83 @@ type UAAConfig struct {
 	ClientSecret      string
 	SkipSSLValidation bool
 	CACert            string
+}
+
+// Operation options structures
+type RestartOpts struct {
+	Canaries    string `json:"canaries,omitempty"`
+	MaxInFlight string `json:"max_in_flight,omitempty"`
+	Converge    bool   `json:"converge"`
+	SkipDrain   bool   `json:"skip_drain"`
+	Force       bool   `json:"force"`
+}
+
+type StopOpts struct {
+	Canaries    string `json:"canaries,omitempty"`
+	MaxInFlight string `json:"max_in_flight,omitempty"`
+	Force       bool   `json:"force"`
+	SkipDrain   bool   `json:"skip_drain"`
+	Hard        bool   `json:"hard"`
+	Converge    bool   `json:"converge"`
+}
+
+type StartOpts struct {
+	Canaries    string `json:"canaries,omitempty"`
+	MaxInFlight string `json:"max_in_flight,omitempty"`
+	Converge    bool   `json:"converge"`
+}
+
+type RecreateOpts struct {
+	Canaries    string `json:"canaries,omitempty"`
+	MaxInFlight string `json:"max_in_flight,omitempty"`
+	SkipDrain   bool   `json:"skip_drain"`
+	Force       bool   `json:"force"`
+	Fix         bool   `json:"fix"`
+	DryRun      bool   `json:"dry_run"`
+	Converge    bool   `json:"converge"`
+}
+
+type ErrandOpts struct {
+	KeepAlive   bool     `json:"keep_alive"`
+	WhenChanged bool     `json:"when_changed"`
+	Instances   []string `json:"instances,omitempty"`
+}
+
+// Result structures
+type Errand struct {
+	Name string `json:"name"`
+}
+
+type ErrandResult struct {
+	InstanceGroup   string `json:"instance_group"`
+	InstanceID      string `json:"instance_id"`
+	ExitCode        int    `json:"exit_code"`
+	Stdout          string `json:"stdout"`
+	Stderr          string `json:"stderr"`
+	LogsBlobstoreID string `json:"logs_blobstore_id"`
+	LogsSHA1        string `json:"logs_sha1"`
+}
+
+type Instance struct {
+	ID           string    `json:"id"`
+	Group        string    `json:"group"`
+	Index        string    `json:"index"`
+	State        string    `json:"state"`
+	ProcessState string    `json:"process_state"`
+	IPs          []string  `json:"ips"`
+	AZ           string    `json:"az"`
+	VMType       string    `json:"vm_type"`
+	ResourcePool string    `json:"resource_pool"`
+	Bootstrap    bool      `json:"bootstrap"`
+	Ignore       bool      `json:"ignore"`
+	VMCreatedAt  time.Time `json:"vm_created_at"`
+}
+
+type PoolStats struct {
+	MaxConnections    int           `json:"max_connections"`
+	ActiveConnections int32         `json:"active_connections"`
+	QueuedRequests    int32         `json:"queued_requests"`
+	RejectedRequests  int64         `json:"rejected_requests"`
+	TotalRequests     int64         `json:"total_requests"`
+	AvgWaitTime       time.Duration `json:"avg_wait_time"`
 }

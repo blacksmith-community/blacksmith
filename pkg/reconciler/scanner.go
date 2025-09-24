@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,6 +84,19 @@ func (s *BoshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	// Get basic deployment info
 	dep, err := s.director.GetDeployment(name)
 	if err != nil {
+		// Check if it's a 404 error (deployment doesn't exist)
+		errStr := err.Error()
+		if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
+			s.logger.Warningf("Deployment %s not found in BOSH director (404)", name)
+			// Return a detail with NotFound flag set
+			return &DeploymentDetail{
+				DeploymentInfo: DeploymentInfo{
+					Name: name,
+				},
+				NotFound:       true,
+				NotFoundReason: fmt.Sprintf("Deployment not found in BOSH director: %v", err),
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to get deployment %s: %w", name, err)
 	}
 

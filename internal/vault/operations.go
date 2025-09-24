@@ -324,6 +324,66 @@ func (vault *Vault) GetVaultDB(ctx context.Context) (*vaultPkg.Index, error) {
 	return idx, nil
 }
 
+// UpdateIndexEntry updates specific fields for an instance in the vault index.
+func (vault *Vault) UpdateIndexEntry(ctx context.Context, instanceID string, updates map[string]interface{}) error {
+	logger := logger.Get().Named("vault")
+	logger.Debug("updating index entry for instance %s", instanceID)
+
+	idx, err := vault.GetIndex(ctx, "db")
+	if err != nil {
+		return fmt.Errorf("failed to get vault index: %w", err)
+	}
+
+	// Get existing entry or create new one
+	var entry map[string]interface{}
+	if existing, exists := idx.Data[instanceID]; exists {
+		// Type assert existing entry
+		if existingMap, ok := existing.(map[string]interface{}); ok {
+			entry = existingMap
+		} else {
+			logger.Warning("instance %s has invalid data type in index, recreating", instanceID)
+			entry = make(map[string]interface{})
+		}
+	} else {
+		logger.Warning("instance %s not found in index, creating new entry", instanceID)
+		entry = make(map[string]interface{})
+	}
+
+	// Apply updates
+	for key, value := range updates {
+		entry[key] = value
+	}
+
+	// Save back to index
+	idx.Data[instanceID] = entry
+	if err := idx.Save(ctx); err != nil {
+		return fmt.Errorf("failed to save index after updating instance %s: %w", instanceID, err)
+	}
+
+	logger.Debug("updated index entry for instance %s with %d fields", instanceID, len(updates))
+	return nil
+}
+
+// MarkInstanceDeleted marks an instance as deleted in the vault index.
+func (vault *Vault) MarkInstanceDeleted(ctx context.Context, instanceID string) error {
+	logger := logger.Get().Named("vault")
+	logger.Info("marking instance %s as deleted in vault index", instanceID)
+
+	updates := map[string]interface{}{
+		"status":          "deleted",
+		"deleted_at":      time.Now().Format(time.RFC3339),
+		"deleted_by":      "vm-monitor",
+		"deletion_reason": "deployment not found in BOSH director",
+	}
+
+	if err := vault.UpdateIndexEntry(ctx, instanceID, updates); err != nil {
+		return fmt.Errorf("failed to mark instance %s as deleted: %w", instanceID, err)
+	}
+
+	logger.Info("successfully marked instance %s as deleted", instanceID)
+	return nil
+}
+
 // Helper function to convert interface{} recursively.
 func deinterface(option interface{}) interface{} {
 	switch option := option.(type) {

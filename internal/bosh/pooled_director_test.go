@@ -339,6 +339,96 @@ func (m *MockDirector) DeleteResurrectionConfig(deploymentName string) error {
 	return nil
 }
 
+func (m *MockDirector) RestartDeployment(name string, opts bosh.RestartOpts) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.Task{ID: 1}, nil
+}
+
+func (m *MockDirector) StopDeployment(name string, opts bosh.StopOpts) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.Task{ID: 1}, nil
+}
+
+func (m *MockDirector) StartDeployment(name string, opts bosh.StartOpts) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.Task{ID: 1}, nil
+}
+
+func (m *MockDirector) RecreateDeployment(name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.Task{ID: 1}, nil
+}
+
+func (m *MockDirector) ListErrands(deployment string) ([]bosh.Errand, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return []bosh.Errand{}, nil
+}
+
+func (m *MockDirector) RunErrand(deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.ErrandResult{}, nil
+}
+
+func (m *MockDirector) GetInstances(deployment string) ([]bosh.Instance, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return []bosh.Instance{}, nil
+}
+
+func (m *MockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.Task{ID: 1}, nil
+}
+
+func (m *MockDirector) GetPoolStats() (*bosh.PoolStats, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.PoolStats{}, nil
+}
+
 func (m *MockDirector) incrementCallCount() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -399,7 +489,10 @@ func TestPooledDirector_ConcurrentRequests(t *testing.T) {
 	}
 
 	// Verify pool stats
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.TotalRequests != 10 {
 		t.Errorf("Expected 10 total requests, got %d", stats.TotalRequests)
 	}
@@ -435,7 +528,10 @@ func TestPooledDirector_Timeout(t *testing.T) {
 	}
 
 	// Check rejected requests counter
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.RejectedRequests != 1 {
 		t.Errorf("Expected 1 rejected request, got %d", stats.RejectedRequests)
 	}
@@ -465,7 +561,10 @@ func TestPooledDirector_QueuedRequests(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Check that we have queued requests
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.QueuedRequests <= 0 {
 		t.Log("Warning: Expected some queued requests, got", stats.QueuedRequests)
 	}
@@ -474,7 +573,10 @@ func TestPooledDirector_QueuedRequests(t *testing.T) {
 	waitGroup.Wait()
 
 	// Final stats should show no active or queued
-	finalStats := pooled.GetPoolStats()
+	finalStats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if finalStats.ActiveConnections != 0 {
 		t.Errorf("Expected 0 active connections, got %d", finalStats.ActiveConnections)
 	}
@@ -491,7 +593,10 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 	// Test with 0 (should default to 4)
 	pooled := bosh.NewPooledDirector(mockDirector, 0, 5*time.Second, nil)
 
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.MaxConnections != 4 {
 		t.Errorf("Expected default pool size of 4, got %d", stats.MaxConnections)
 	}
@@ -499,7 +604,10 @@ func TestPooledDirector_DefaultPoolSize(t *testing.T) {
 	// Test with negative (should default to 4)
 	pooled2 := bosh.NewPooledDirector(mockDirector, -1, 5*time.Second, nil)
 
-	stats2 := pooled2.GetPoolStats()
+	stats2, err := pooled2.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats2.MaxConnections != 4 {
 		t.Errorf("Expected default pool size of 4, got %d", stats2.MaxConnections)
 	}
@@ -514,7 +622,10 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	pooled := bosh.NewPooledDirector(mockDirector, 2, 5*time.Second, nil)
 
 	// Initial stats should be zero
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.TotalRequests != 0 || stats.ActiveConnections != 0 || stats.QueuedRequests != 0 {
 		t.Error("Expected initial stats to be zero")
 	}
@@ -542,7 +653,10 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Check stats during execution
-	midStats := pooled.GetPoolStats()
+	midStats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if midStats.ActiveConnections != 2 {
 		t.Errorf("Expected 2 active connections, got %d", midStats.ActiveConnections)
 	}
@@ -557,7 +671,10 @@ func TestPooledDirector_MetricsAccuracy(t *testing.T) {
 	}
 
 	// Final stats
-	finalStats := pooled.GetPoolStats()
+	finalStats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if finalStats.TotalRequests != 3 {
 		t.Errorf("Expected 3 total requests, got %d", finalStats.TotalRequests)
 	}
@@ -889,7 +1006,10 @@ func validatePoolUsage(t *testing.T, mockDirector *MockDirector, pooled *bosh.Po
 		t.Errorf("Expected %d calls, got %d", expectedCalls, mockDirector.getCallCount())
 	}
 
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.TotalRequests != int64(expectedCalls) {
 		t.Errorf("Expected %d total requests in stats, got %d", expectedCalls, stats.TotalRequests)
 	}
@@ -1022,7 +1142,10 @@ func validateStressTestResults(t *testing.T, pooled *bosh.PooledDirector, succes
 		t.Errorf("Expected %d successful requests, got %d", expectedRequests, successCount)
 	}
 
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.TotalRequests != int64(expectedRequests) {
 		t.Errorf("Expected %d total requests, got %d", expectedRequests, stats.TotalRequests)
 	}
@@ -1084,7 +1207,10 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 	}
 
 	// Check stats
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.RejectedRequests != 1 {
 		t.Errorf("Expected 1 rejected request, got %d", stats.RejectedRequests)
 	}
@@ -1114,7 +1240,10 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Check active connections
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.ActiveConnections != 3 {
 		t.Errorf("Expected 3 active connections, got %d", stats.ActiveConnections)
 	}
@@ -1123,7 +1252,10 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 	waitGroup.Wait()
 
 	// Verify clean shutdown
-	finalStats := pooled.GetPoolStats()
+	finalStats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if finalStats.ActiveConnections != 0 {
 		t.Errorf("Expected 0 active connections after completion, got %d", finalStats.ActiveConnections)
 	}
@@ -1155,7 +1287,10 @@ func TestPooledDirector_ErrorPropagation(t *testing.T) {
 	}
 
 	// Stats should show completed requests even with errors
-	stats := pooled.GetPoolStats()
+	stats, err := pooled.GetPoolStats()
+	if err != nil {
+		t.Fatalf("Failed to get pool stats: %v", err)
+	}
 	if stats.TotalRequests != 2 {
 		t.Errorf("Expected 2 total requests, got %d", stats.TotalRequests)
 	}

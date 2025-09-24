@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"strings"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
+	"gopkg.in/yaml.v2"
 )
 
 // Constants for deployment test data.
@@ -28,7 +30,11 @@ const (
 
 // Error variables for err113 compliance.
 var (
-	errInvalidManifest = errors.New("invalid manifest")
+	errInvalidManifest    = errors.New("invalid manifest")
+	errDeploymentNotFound = errors.New("deployment not found")
+	errTaskCreationFailed = errors.New("failed to create task")
+	errErrandNotFound     = errors.New("errand not found")
+	errInvalidOptions     = errors.New("invalid operation options")
 )
 
 // Handler handles deployment-related endpoints.
@@ -109,19 +115,40 @@ func (h *Handler) GetDeployment(writer http.ResponseWriter, req *http.Request, d
 	logger := h.logger.Named("deployment-get")
 	logger.Debug("Getting deployment: %s", deploymentName)
 
-	// TODO: Implement actual BOSH deployment fetching
-	deployment := Deployment{
-		Name: deploymentName,
-		Releases: []Release{
-			{Name: "blacksmith", Version: "1.0.0"},
-		},
-		Stemcells: []Stemcell{
-			{Name: "bosh-warden-boshlite-ubuntu-jammy-go_agent", Version: "1.1", OS: "ubuntu-jammy"},
-		},
-		Teams: []string{"blacksmith"},
+	// Get basic deployment info from the deployments list
+	deployments, err := h.director.GetDeployments()
+	if err != nil {
+		logger.Error("Failed to get deployments list: %v", err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
 	}
 
-	response.HandleJSON(writer, deployment, nil)
+	// Find our specific deployment
+	var deployment *bosh.Deployment
+	for i, dep := range deployments {
+		if dep.Name == deploymentName {
+			deployment = &deployments[i]
+			break
+		}
+	}
+
+	if deployment == nil {
+		logger.Error("Deployment not found: %s", deploymentName)
+		writer.WriteHeader(http.StatusNotFound)
+		response.HandleJSON(writer, nil, fmt.Errorf("deployment not found: %s", deploymentName))
+		return
+	}
+
+	// Convert to response format
+	result := Deployment{
+		Name:      deployment.Name,
+		Releases:  convertReleases(deployment.Releases),
+		Stemcells: convertStemcells(deployment.Stemcells),
+		Teams:     deployment.Teams,
+	}
+
+	response.HandleJSON(writer, result, nil)
 }
 
 // DeleteDeployment deletes a deployment.
@@ -129,11 +156,19 @@ func (h *Handler) DeleteDeployment(writer http.ResponseWriter, req *http.Request
 	logger := h.logger.Named("deployment-delete")
 	logger.Info("Deleting deployment: %s", deploymentName)
 
-	// TODO: Implement actual BOSH deployment deletion
+	task, err := h.director.DeleteDeployment(deploymentName)
+	if err != nil {
+		logger.Error("Failed to delete deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
 	result := map[string]interface{}{
 		"deployment": deploymentName,
 		"deleted":    true,
-		"task_id":    testTaskIDCreate,
+		"task_id":    task.ID,
+		"state":      task.State,
 	}
 
 	response.HandleJSON(writer, result, nil)
@@ -210,11 +245,27 @@ func (h *Handler) UpdateManifest(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
-	// TODO: Implement actual manifest update
+	// Convert manifest to YAML string
+	manifestBytes, err := yaml.Marshal(manifest)
+	if err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(writer, nil, fmt.Errorf("failed to marshal manifest: %w", err))
+		return
+	}
+
+	task, err := h.director.UpdateDeployment(deploymentName, string(manifestBytes))
+	if err != nil {
+		logger.Error("Failed to update deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
 	result := map[string]interface{}{
 		"deployment": deploymentName,
 		"updated":    true,
-		"task_id":    testTaskIDUpdate,
+		"task_id":    task.ID,
+		"state":      task.State,
 	}
 
 	response.HandleJSON(writer, result, nil)
@@ -225,21 +276,32 @@ func (h *Handler) GetVMs(writer http.ResponseWriter, req *http.Request, deployme
 	logger := h.logger.Named("deployment-vms")
 	logger.Debug("Getting VMs for deployment: %s", deploymentName)
 
-	// TODO: Implement actual VM fetching
-	vms := []map[string]interface{}{
-		{
-			"instance":   "blacksmith/0",
-			"state":      "running",
-			"vm_cid":     "vm-1234",
-			"vm_type":    "default",
-			"ips":        []string{"10.0.0.1"},
+	vms, err := h.director.GetDeploymentVMs(deploymentName)
+	if err != nil {
+		logger.Error("Failed to get VMs for deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
+	// Convert VM structs to response format
+	vmList := make([]map[string]interface{}, len(vms))
+	for i, vm := range vms {
+		vmList[i] = map[string]interface{}{
+			"instance":   fmt.Sprintf("%s/%d", vm.Job, vm.Index),
+			"state":      vm.State,
+			"vm_cid":     vm.CID,
+			"vm_type":    vm.VMType,
+			"ips":        vm.IPs,
 			"deployment": deploymentName,
-		},
+			"az":         vm.AZ,
+			"active":     vm.Active,
+		}
 	}
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
-		"vms":        vms,
+		"vms":        vmList,
 	}, nil)
 }
 
@@ -248,20 +310,29 @@ func (h *Handler) GetInstances(writer http.ResponseWriter, req *http.Request, de
 	logger := h.logger.Named("deployment-instances")
 	logger.Debug("Getting instances for deployment: %s", deploymentName)
 
-	// TODO: Implement actual instance fetching
-	instances := []map[string]interface{}{
-		{
-			"instance":   "blacksmith/0",
-			"state":      "running",
-			"vm_cid":     "vm-1234",
-			"process":    []string{"blacksmith"},
-			"deployment": deploymentName,
-		},
+	instances, err := h.director.GetInstances(deploymentName)
+	if err != nil {
+		logger.Error("Failed to get instances for deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
+	// Convert to response format
+	instanceList := make([]map[string]interface{}, len(instances))
+	for i, instance := range instances {
+		instanceList[i] = map[string]interface{}{
+			"instance":      fmt.Sprintf("%s/%s", instance.Group, instance.Index),
+			"state":         instance.State,
+			"process_state": instance.ProcessState,
+			"ips":           instance.IPs,
+			"deployment":    deploymentName,
+		}
 	}
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
-		"instances":  instances,
+		"instances":  instanceList,
 	}, nil)
 }
 
@@ -270,12 +341,23 @@ func (h *Handler) ListErrands(writer http.ResponseWriter, req *http.Request, dep
 	logger := h.logger.Named("deployment-errands-list")
 	logger.Debug("Listing errands for deployment: %s", deploymentName)
 
-	// TODO: Implement actual errand listing
-	errands := []string{"smoke-tests", "cleanup"}
+	errands, err := h.director.ListErrands(deploymentName)
+	if err != nil {
+		logger.Error("Failed to list errands for deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
+	// Extract errand names
+	errandNames := make([]string, len(errands))
+	for i, errand := range errands {
+		errandNames[i] = errand.Name
+	}
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
-		"errands":    errands,
+		"errands":    errandNames,
 	}, nil)
 }
 
@@ -284,15 +366,24 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 	logger := h.logger.Named("deployment-errand-run")
 	logger.Info("Running errand %s for deployment: %s", errandName, deploymentName)
 
-	// TODO: Implement actual errand execution
-	result := map[string]interface{}{
-		"deployment": deploymentName,
-		"errand":     errandName,
-		"task_id":    testTaskIDRestart,
-		"started":    true,
+	opts := parseErrandOpts(req)
+	result, err := h.director.RunErrand(deploymentName, errandName, opts)
+	if err != nil {
+		logger.Error("Failed to run errand %s for deployment %s: %v", errandName, deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
 	}
 
-	response.HandleJSON(writer, result, nil)
+	response.HandleJSON(writer, map[string]interface{}{
+		"deployment":   deploymentName,
+		"errand":       errandName,
+		"exit_code":    result.ExitCode,
+		"stdout":       result.Stdout,
+		"stderr":       result.Stderr,
+		"instance":     result.InstanceGroup,
+		"instance_id":  result.InstanceID,
+	}, nil)
 }
 
 // RecreateDeployment recreates all VMs in a deployment.
@@ -300,11 +391,20 @@ func (h *Handler) RecreateDeployment(writer http.ResponseWriter, req *http.Reque
 	logger := h.logger.Named("deployment-recreate")
 	logger.Info("Recreating deployment: %s", deploymentName)
 
-	// TODO: Implement actual deployment recreation
+	opts := parseRecreateOpts(req)
+	task, err := h.director.RecreateDeployment(deploymentName, opts)
+	if err != nil {
+		logger.Error("Failed to recreate deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
 	result := map[string]interface{}{
 		"deployment": deploymentName,
-		"task_id":    testTaskIDRecreate,
+		"task_id":    task.ID,
 		"operation":  "recreate",
+		"state":      task.State,
 	}
 
 	response.HandleJSON(writer, result, nil)
@@ -315,11 +415,20 @@ func (h *Handler) RestartDeployment(writer http.ResponseWriter, req *http.Reques
 	logger := h.logger.Named("deployment-restart")
 	logger.Info("Restarting deployment: %s", deploymentName)
 
-	// TODO: Implement actual deployment restart
+	opts := parseRestartOpts(req)
+	task, err := h.director.RestartDeployment(deploymentName, opts)
+	if err != nil {
+		logger.Error("Failed to restart deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
 	result := map[string]interface{}{
 		"deployment": deploymentName,
-		"task_id":    testTaskIDStop,
+		"task_id":    task.ID,
 		"operation":  "restart",
+		"state":      task.State,
 	}
 
 	response.HandleJSON(writer, result, nil)
@@ -330,11 +439,20 @@ func (h *Handler) StopDeployment(writer http.ResponseWriter, req *http.Request, 
 	logger := h.logger.Named("deployment-stop")
 	logger.Info("Stopping deployment: %s", deploymentName)
 
-	// TODO: Implement actual deployment stop
+	opts := parseStopOpts(req)
+	task, err := h.director.StopDeployment(deploymentName, opts)
+	if err != nil {
+		logger.Error("Failed to stop deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
 	result := map[string]interface{}{
 		"deployment": deploymentName,
-		"task_id":    testTaskIDStart,
+		"task_id":    task.ID,
 		"operation":  "stop",
+		"state":      task.State,
 	}
 
 	response.HandleJSON(writer, result, nil)
@@ -345,11 +463,20 @@ func (h *Handler) StartDeployment(writer http.ResponseWriter, req *http.Request,
 	logger := h.logger.Named("deployment-start")
 	logger.Info("Starting deployment: %s", deploymentName)
 
-	// TODO: Implement actual deployment start
+	opts := parseStartOpts(req)
+	task, err := h.director.StartDeployment(deploymentName, opts)
+	if err != nil {
+		logger.Error("Failed to start deployment %s: %v", deploymentName, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		response.HandleJSON(writer, nil, err)
+		return
+	}
+
 	result := map[string]interface{}{
 		"deployment": deploymentName,
-		"task_id":    testTaskIDDelete,
+		"task_id":    task.ID,
 		"operation":  "start",
+		"state":      task.State,
 	}
 
 	response.HandleJSON(writer, result, nil)
@@ -478,4 +605,170 @@ func (h *Handler) handleLifecycleOperation(writer http.ResponseWriter, req *http
 	} else {
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// Helper conversion functions
+func convertReleases(releases []string) []Release {
+	result := make([]Release, len(releases))
+	for i, release := range releases {
+		// Parse release string format: "name/version"
+		parts := strings.SplitN(release, "/", 2)
+		if len(parts) == 2 {
+			result[i] = Release{
+				Name:    parts[0],
+				Version: parts[1],
+			}
+		} else {
+			result[i] = Release{
+				Name:    release,
+				Version: "unknown",
+			}
+		}
+	}
+	return result
+}
+
+func convertStemcells(stemcells []string) []Stemcell {
+	result := make([]Stemcell, len(stemcells))
+	for i, stemcell := range stemcells {
+		// Parse stemcell string format: "name/version"
+		parts := strings.SplitN(stemcell, "/", 2)
+		if len(parts) == 2 {
+			result[i] = Stemcell{
+				Name:    parts[0],
+				Version: parts[1],
+				OS:      extractOSFromStemcell(parts[0]),
+			}
+		} else {
+			result[i] = Stemcell{
+				Name:    stemcell,
+				Version: "unknown",
+				OS:      extractOSFromStemcell(stemcell),
+			}
+		}
+	}
+	return result
+}
+
+func extractOSFromStemcell(name string) string {
+	// Extract OS from stemcell name (e.g., "bosh-warden-boshlite-ubuntu-jammy-go_agent" -> "ubuntu-jammy")
+	if strings.Contains(name, "ubuntu") {
+		parts := strings.Split(name, "-")
+		for i, part := range parts {
+			if part == "ubuntu" && i+1 < len(parts) {
+				return fmt.Sprintf("ubuntu-%s", parts[i+1])
+			}
+		}
+		return "ubuntu"
+	}
+	return "linux"
+}
+
+// Request parsing helper functions
+func parseRestartOpts(req *http.Request) bosh.RestartOpts {
+	opts := bosh.RestartOpts{
+		Converge: true, // Default to converged operations
+	}
+
+	query := req.URL.Query()
+	if v := query.Get("skip_drain"); v != "" {
+		opts.SkipDrain = v == "true"
+	}
+	if v := query.Get("force"); v != "" {
+		opts.Force = v == "true"
+	}
+	if v := query.Get("canaries"); v != "" {
+		opts.Canaries = v
+	}
+	if v := query.Get("max_in_flight"); v != "" {
+		opts.MaxInFlight = v
+	}
+
+	return opts
+}
+
+func parseStopOpts(req *http.Request) bosh.StopOpts {
+	opts := bosh.StopOpts{
+		Converge: true,
+	}
+
+	query := req.URL.Query()
+	if v := query.Get("force"); v != "" {
+		opts.Force = v == "true"
+	}
+	if v := query.Get("skip_drain"); v != "" {
+		opts.SkipDrain = v == "true"
+	}
+	if v := query.Get("hard"); v != "" {
+		opts.Hard = v == "true"
+	}
+	if v := query.Get("canaries"); v != "" {
+		opts.Canaries = v
+	}
+	if v := query.Get("max_in_flight"); v != "" {
+		opts.MaxInFlight = v
+	}
+
+	return opts
+}
+
+func parseStartOpts(req *http.Request) bosh.StartOpts {
+	opts := bosh.StartOpts{
+		Converge: true,
+	}
+
+	query := req.URL.Query()
+	if v := query.Get("canaries"); v != "" {
+		opts.Canaries = v
+	}
+	if v := query.Get("max_in_flight"); v != "" {
+		opts.MaxInFlight = v
+	}
+
+	return opts
+}
+
+func parseRecreateOpts(req *http.Request) bosh.RecreateOpts {
+	opts := bosh.RecreateOpts{
+		Converge: true,
+	}
+
+	query := req.URL.Query()
+	if v := query.Get("skip_drain"); v != "" {
+		opts.SkipDrain = v == "true"
+	}
+	if v := query.Get("force"); v != "" {
+		opts.Force = v == "true"
+	}
+	if v := query.Get("fix"); v != "" {
+		opts.Fix = v == "true"
+	}
+	if v := query.Get("dry_run"); v != "" {
+		opts.DryRun = v == "true"
+	}
+	if v := query.Get("canaries"); v != "" {
+		opts.Canaries = v
+	}
+	if v := query.Get("max_in_flight"); v != "" {
+		opts.MaxInFlight = v
+	}
+
+	return opts
+}
+
+func parseErrandOpts(req *http.Request) bosh.ErrandOpts {
+	opts := bosh.ErrandOpts{}
+
+	query := req.URL.Query()
+	if v := query.Get("keep_alive"); v != "" {
+		opts.KeepAlive = v == "true"
+	}
+	if v := query.Get("when_changed"); v != "" {
+		opts.WhenChanged = v == "true"
+	}
+	if v := query.Get("instances"); v != "" {
+		opts.Instances = strings.Split(v, ",")
+	}
+
+	return opts
 }

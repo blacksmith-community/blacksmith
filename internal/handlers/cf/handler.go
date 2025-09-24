@@ -115,11 +115,54 @@ func (h *Handler) handleCFEndpointRoutes(ctx context.Context, writer http.Respon
 		}
 	}
 
-	// TODO: Implement other CF endpoint routes
-	// - Get marketplace
-	// - Get organizations
-	// - Get spaces
-	// - Get services
-	// - Get service bindings
+	// Handle /endpoints/{name}/marketplace route
+	if strings.Contains(path, "/marketplace") && req.Method == http.MethodGet {
+		parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
+		if len(parts) == 2 && parts[1] == "marketplace" {
+			endpointName := parts[0]
+			h.GetMarketplace(writer, req, endpointName)
+			return true
+		}
+	}
+
+	// Handle /endpoints/{name}/orgs route
+	if strings.HasPrefix(path, "/endpoints/") && strings.Contains(path, "/orgs") && req.Method == http.MethodGet {
+		parts := strings.Split(strings.TrimPrefix(path, "/endpoints/"), "/")
+
+		// /endpoints/{name}/orgs
+		if len(parts) == 2 && parts[1] == "orgs" {
+			endpointName := parts[0]
+			h.GetOrganizations(writer, req, endpointName)
+			return true
+		}
+
+		// /endpoints/{name}/orgs/{org_guid}/spaces
+		if len(parts) == 4 && parts[1] == "orgs" && parts[3] == "spaces" {
+			endpointName := parts[0]
+			orgGUID := parts[2]
+			h.GetSpaces(writer, req, endpointName, orgGUID)
+			return true
+		}
+
+		// /endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/services
+		if len(parts) == 6 && parts[1] == "orgs" && parts[3] == "spaces" && parts[5] == "services" {
+			endpointName := parts[0]
+			orgGUID := parts[2]
+			spaceGUID := parts[4]
+			h.GetServices(writer, req, endpointName, orgGUID, spaceGUID)
+			return true
+		}
+
+		// /endpoints/{name}/orgs/{org_guid}/spaces/{space_guid}/service_instances/{service_guid}/bindings
+		if len(parts) == 8 && parts[1] == "orgs" && parts[3] == "spaces" && parts[5] == "service_instances" && parts[7] == "bindings" {
+			endpointName := parts[0]
+			orgGUID := parts[2]
+			spaceGUID := parts[4]
+			serviceGUID := parts[6]
+			h.GetServiceBindings(writer, req, endpointName, orgGUID, spaceGUID, serviceGUID)
+			return true
+		}
+	}
+
 	return false
 }

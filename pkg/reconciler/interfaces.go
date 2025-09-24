@@ -110,6 +110,10 @@ type DeploymentDetail struct {
 	Properties map[string]interface{}
 	Networks   []string
 	VMs        []VMInfo
+
+	// Deployment status tracking
+	NotFound       bool   // True if deployment was not found in BOSH (404)
+	NotFoundReason string // Reason for not found status
 }
 
 // VMInfo contains VM information.
