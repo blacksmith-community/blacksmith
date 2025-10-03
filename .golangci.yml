@@ -120,6 +120,8 @@ linters:
       # Minimal complexity of if statements to report.
       # Default: 5
       min-complexity: 10
+    funlen:
+      lines: 70
 
   # Exclude paths from linting
   exclusions:
@@ -137,20 +139,4 @@ formatters:
 
 # Issues configuration
 issues:
-  max-same-issues: 3
-  exclude-rules:
-    # Allow test suite global variables in test files
-    - path: "_test\\.go$"
-      linters:
-        - gochecknoglobals
-      text: "suite is a global variable"
-    # Allow replace directives for vault due to non-semantic versioning
-    - path: "^go\\.mod$"
-      linters:
-        - gomoddirectives
-      text: "replacement are not allowed: github.com/hashicorp/vault"
-    # Allow longer initialization functions
-    - path: "pkg/testutil/vault_dev_server\\.go$"
-      linters:
-        - funlen
-      source: "^func NewVaultDevServer"
+  max-same-issues: 12
