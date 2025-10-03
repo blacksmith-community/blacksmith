@@ -458,8 +458,8 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			tempMockBOSH := testutil.NewIntegrationMockBOSH()
 			tempMockBOSH.SetVMs("rabbitmq-plan-"+instanceID, []bosh.VM{
 				{
-					ID:  "rabbitmq-vm-0",
-					Job: "rabbitmq",
+					ID:    "rabbitmq-vm-0",
+					Job:   "rabbitmq",
 					Index: 0,
 					IPs:   []string{strings.TrimPrefix(tempServer.URL, "http://")},
 					DNS:   []string{"rabbitmq-0.rabbitmq.default.bosh"},
@@ -518,10 +518,10 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			tempMockBOSH := testutil.NewIntegrationMockBOSH()
 			tempMockBOSH.SetVMs("rabbitmq-plan-"+instanceID, []bosh.VM{
 				{
-					ID:  "rabbitmq-vm-0",
-					Job: "rabbitmq",
+					ID:    "rabbitmq-vm-0",
+					Job:   "rabbitmq",
 					Index: 0,
-					IPs: []string{strings.TrimPrefix(tempServer.URL, "http://")},
+					IPs:   []string{strings.TrimPrefix(tempServer.URL, "http://")},
 				},
 			})
 			brokerInstance.BOSH = tempMockBOSH

@@ -22,9 +22,9 @@ const (
 )
 
 var (
-	rabbitMQTestingPathPattern  = regexp.MustCompile(`^/b/([^/]+)/rabbitmq/(.+)$`)
-	errCredentialsNotFound      = errors.New("credentials not found")
-	errNotRabbitMQInstance      = errors.New("not a RabbitMQ instance")
+	rabbitMQTestingPathPattern = regexp.MustCompile(`^/b/([^/]+)/rabbitmq/(.+)$`)
+	errCredentialsNotFound     = errors.New("credentials not found")
+	errNotRabbitMQInstance     = errors.New("not a RabbitMQ instance")
 )
 
 type Handler struct {

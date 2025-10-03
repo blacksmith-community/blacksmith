@@ -204,7 +204,6 @@ func (m *Manager) createEndpointClient(config CFAPIConfig) *EndpointClient {
 	}
 }
 
-
 // attemptInitialConnectionAsync tries to connect to a CF endpoint asynchronously during initialization.
 func (m *Manager) attemptInitialConnectionAsync(name string, client *EndpointClient, _ CFAPIConfig, wg *sync.WaitGroup) {
 	defer wg.Done() // Signal completion when this function returns

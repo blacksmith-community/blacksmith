@@ -154,10 +154,10 @@ type VaultConfig struct {
 	CredPath string `yaml:"credentials"`
 	CACert   string `yaml:"cacert"`
 	// Auto-unseal behavior (optional)
-	AutoUnseal          bool                    `yaml:"auto_unseal"`
-	HealthCheckInterval string                  `yaml:"health_check_interval"` // Go duration, e.g., "15s"
-	UnsealCooldown      string                  `yaml:"unseal_cooldown"`       // Go duration, e.g., "30s"
-	HistoryRetention    HistoryRetentionConfig  `yaml:"history_retention"`
+	AutoUnseal          bool                   `yaml:"auto_unseal"`
+	HealthCheckInterval string                 `yaml:"health_check_interval"` // Go duration, e.g., "15s"
+	UnsealCooldown      string                 `yaml:"unseal_cooldown"`       // Go duration, e.g., "30s"
+	HistoryRetention    HistoryRetentionConfig `yaml:"history_retention"`
 }
 
 type ShieldConfig struct {
