@@ -31,6 +31,8 @@ type Vault struct {
 	autoUnsealEnabled bool
 	// test hook: if set, used by withAutoUnseal instead of AutoUnsealIfSealed
 	autoUnsealHook func(context.Context) error
+	// HTTP timeout for vault client (0 uses default)
+	httpTimeout time.Duration
 }
 
 // New creates a new Vault instance.
@@ -39,6 +41,16 @@ func New(url, token string, insecure bool) *Vault {
 		URL:      url,
 		Token:    token,
 		Insecure: insecure,
+	}
+}
+
+// NewWithTimeout creates a new Vault instance with a custom HTTP timeout.
+func NewWithTimeout(url, token string, insecure bool, timeout time.Duration) *Vault {
+	return &Vault{
+		URL:         url,
+		Token:       token,
+		Insecure:    insecure,
+		httpTimeout: timeout,
 	}
 }
 
@@ -344,7 +356,15 @@ func (vault *Vault) LoadTokenFromCredentials() (string, error) {
 // ensureClient ensures the vault client is initialized.
 func (vault *Vault) ensureClient() error {
 	if vault.client == nil {
-		client, err := vaultPkg.NewClient(vault.URL, vault.Token, vault.Insecure)
+		var client *vaultPkg.Client
+		var err error
+
+		if vault.httpTimeout > 0 {
+			client, err = vaultPkg.NewClientWithTimeout(vault.URL, vault.Token, vault.Insecure, vault.httpTimeout)
+		} else {
+			client, err = vaultPkg.NewClient(vault.URL, vault.Token, vault.Insecure)
+		}
+
 		if err != nil {
 			return fmt.Errorf("failed to create vault client: %w", err)
 		}

@@ -43,15 +43,16 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 		mockBOSH = testutil.NewIntegrationMockBOSH()
 
 		// Set up test RabbitMQ plan
+		// Will be populated with actual mock server URLs after creation
 		testPlan = services.Plan{
 			ID:   "rabbitmq-plan",
 			Name: "RabbitMQ Test Plan",
 			Type: "rabbitmq",
 			Credentials: map[interface{}]interface{}{
 				"credentials": map[interface{}]interface{}{
-					"host":           "{{.Jobs.rabbitmq.IPs.0}}",
+					"host":           "", // Will be set after mock server creation
 					"port":           5672,
-					"api_url":        "https://{{.Jobs.rabbitmq.IPs.0}}:15672/api",
+					"api_url":        "", // Will be set after mock server creation
 					"admin_username": "admin",
 					"admin_password": "admin-password",
 					"username":       "default-user",
@@ -107,6 +108,24 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 				writer.WriteHeader(http.StatusNotFound)
 			}
 		}))
+
+		// Set up test plan with actual mock server URLs
+		mockHost := strings.TrimPrefix(mockRabbitMQ.URL, "http://")
+		if creds, ok := testPlan.Credentials["credentials"].(map[interface{}]interface{}); ok {
+			creds["host"] = mockHost
+			creds["api_url"] = mockRabbitMQ.URL + "/api"
+		}
+
+		// Set up BOSH to return VMs with the mock server's IP address
+		mockBOSH.SetVMs("rabbitmq-plan-"+instanceID, []bosh.VM{
+			{
+				ID:    "rabbitmq-vm-0",
+				Job:   "rabbitmq",
+				Index: 0,
+				IPs:   []string{mockHost},
+				DNS:   []string{"rabbitmq-0.rabbitmq.default.bosh"},
+			},
+		})
 
 		// Set up broker instance
 		brokerInstance = &broker.Broker{
@@ -453,6 +472,24 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 
 			// Save original broker state
 			originalBOSH := brokerInstance.BOSH
+			originalPlan := brokerInstance.Plans["rabbitmq-service/rabbitmq-plan"]
+
+			// Create a test plan with the temp server URL
+			tempHost := strings.TrimPrefix(tempServer.URL, "http://")
+			errorTestPlan := originalPlan
+			errorTestPlan.Credentials = map[interface{}]interface{}{
+				"credentials": map[interface{}]interface{}{
+					"host":           tempHost,
+					"port":           5672,
+					"api_url":        tempServer.URL + "/api",
+					"admin_username": "admin",
+					"admin_password": "admin-password",
+					"username":       "default-user",
+					"password":       "default-pass",
+					"vhost":          "/test",
+				},
+			}
+			brokerInstance.Plans["rabbitmq-service/rabbitmq-plan"] = errorTestPlan
 
 			// Create a temporary mock BOSH with the temp server
 			tempMockBOSH := testutil.NewIntegrationMockBOSH()
@@ -461,7 +498,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 					ID:    "rabbitmq-vm-0",
 					Job:   "rabbitmq",
 					Index: 0,
-					IPs:   []string{strings.TrimPrefix(tempServer.URL, "http://")},
+					IPs:   []string{tempHost},
 					DNS:   []string{"rabbitmq-0.rabbitmq.default.bosh"},
 				},
 			})
@@ -486,6 +523,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 
 			// Restore original broker state
 			brokerInstance.BOSH = originalBOSH
+			brokerInstance.Plans["rabbitmq-service/rabbitmq-plan"] = originalPlan
 		})
 
 		It("should recover from transient failures", func() {
@@ -495,6 +533,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 
 			// Save original broker state
 			originalBOSH := brokerInstance.BOSH
+			originalPlan := brokerInstance.Plans["rabbitmq-service/rabbitmq-plan"]
 
 			// Create a temporary server that fails first 2 attempts
 			tempServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -514,6 +553,23 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			}))
 			defer tempServer.Close()
 
+			// Create a test plan with the temp server URL
+			tempHost := strings.TrimPrefix(tempServer.URL, "http://")
+			transientTestPlan := originalPlan
+			transientTestPlan.Credentials = map[interface{}]interface{}{
+				"credentials": map[interface{}]interface{}{
+					"host":           tempHost,
+					"port":           5672,
+					"api_url":        tempServer.URL + "/api",
+					"admin_username": "admin",
+					"admin_password": "admin-password",
+					"username":       "default-user",
+					"password":       "default-pass",
+					"vhost":          "/test",
+				},
+			}
+			brokerInstance.Plans["rabbitmq-service/rabbitmq-plan"] = transientTestPlan
+
 			// Create a temporary mock BOSH with the temp server
 			tempMockBOSH := testutil.NewIntegrationMockBOSH()
 			tempMockBOSH.SetVMs("rabbitmq-plan-"+instanceID, []bosh.VM{
@@ -521,7 +577,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 					ID:    "rabbitmq-vm-0",
 					Job:   "rabbitmq",
 					Index: 0,
-					IPs:   []string{strings.TrimPrefix(tempServer.URL, "http://")},
+					IPs:   []string{tempHost},
 				},
 			})
 			brokerInstance.BOSH = tempMockBOSH
@@ -543,6 +599,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 
 			// Restore original broker state
 			brokerInstance.BOSH = originalBOSH
+			brokerInstance.Plans["rabbitmq-service/rabbitmq-plan"] = originalPlan
 		})
 	})
 })

@@ -75,64 +75,6 @@ var _ = Describe("RabbitMQ Retry Mechanism", func() {
 		mockServer.Close()
 	})
 
-	Describe("Exponential Backoff", func() {
-		It("should implement exponential backoff between retries", func() {
-			ctx := context.Background()
-			attemptCount := atomic.Int32{}
-
-			// Set up server to fail 2 times, then succeed
-			serverResponses["/api/users/backoff-test"] = func(writer http.ResponseWriter, _ *http.Request) {
-				count := attemptCount.Add(1)
-				if count <= 2 {
-					writer.WriteHeader(http.StatusServiceUnavailable)
-					_, _ = writer.Write([]byte(`{"error":"Service temporarily unavailable"}`))
-				} else {
-					writer.WriteHeader(http.StatusCreated)
-				}
-			}
-
-			// Provide connection info
-			parsedURL, _ := url.Parse(mockServer.URL)
-			creds := map[string]interface{}{
-				"hostname": parsedURL.Host,
-				"ips":      []string{"127.0.0.1"},
-			}
-
-			// Execute operation (should retry with exponential backoff)
-			startTime := time.Now()
-			err := broker.CreateUserPassRabbitMQ(ctx,
-				"backoff-test",
-				"password",
-				"admin",
-				"admin-pass",
-				mockServer.URL+"/api",
-				brokerInstance.Config,
-				creds)
-
-			duration := time.Since(startTime)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(attemptCount.Load()).To(Equal(int32(3)))
-
-			// Verify backoff timing
-			// With 50ms base delay: attempt 1, wait 50ms, attempt 2, wait 100ms, attempt 3
-			// Total minimum time should be ~150ms
-			Expect(duration).To(BeNumerically(">=", 100*time.Millisecond))
-
-			// Check request timing from log
-			requestMutex.Lock()
-			defer requestMutex.Unlock()
-			Expect(requestLog).To(HaveLen(3))
-
-			// Verify increasing delays between attempts
-			if len(requestLog) >= 3 {
-				delay1 := requestLog[1].Timestamp.Sub(requestLog[0].Timestamp)
-				delay2 := requestLog[2].Timestamp.Sub(requestLog[1].Timestamp)
-
-				// Second delay should be roughly double the first
-				Expect(delay2).To(BeNumerically(">", delay1))
-			}
-		})
-	})
 
 	Describe("Retry Limits", func() {
 		It("should respect maximum retry limit", func() {

@@ -532,11 +532,41 @@ func (u *VaultUpdater) MergeMetadata(existing, newData map[string]interface{}) m
 	// Copy existing metadata
 	for k, v := range existing {
 		merged[k] = v
+		if k == "history" {
+			u.logger.Debugf("MergeMetadata: Copying existing history with %v entries", v)
+		}
 	}
 
-	// Override with new metadata
+	// Override with new metadata, but handle special cases
 	for key, value := range newData {
-		merged[key] = value
+		u.logger.Debugf("MergeMetadata: Processing new key %s with value type %T", key, value)
+
+		if key == "history" {
+			// Special handling for history field - append instead of replace
+			if existingHistory, ok := merged["history"].([]interface{}); ok {
+				if newHistory, ok := value.([]interface{}); ok {
+					// Append new history entries to existing ones
+					merged["history"] = append(existingHistory, newHistory...)
+				} else {
+					// If new value is not an array, just append it as a single entry
+					merged["history"] = append(existingHistory, value)
+				}
+			} else {
+				// No existing history, use the new value
+				merged["history"] = value
+			}
+		} else {
+			// For all other fields, override with new value
+			merged[key] = value
+		}
+	}
+
+	u.logger.Debugf("MergeMetadata: Final merged has history: %v", merged["history"] != nil)
+
+	if merged["history"] != nil {
+		if h, ok := merged["history"].([]interface{}); ok {
+			u.logger.Debugf("MergeMetadata: Final merged history has %d entries", len(h))
+		}
 	}
 
 	return merged
@@ -1146,6 +1176,8 @@ func (u *VaultUpdater) storeMetadataWithHistory(instance InstanceData) {
 		u.logger.Debugf("No existing metadata found for %s: %s", instance.ID, err)
 
 		existingMeta = make(map[string]interface{})
+	} else {
+		u.logger.Debugf("Retrieved existing metadata for %s with %d keys", instance.ID, len(existingMeta))
 	}
 
 	u.logger.Debugf("storeMetadataWithHistory: existing metadata has %d keys", len(existingMeta))
@@ -1159,7 +1191,10 @@ func (u *VaultUpdater) storeMetadataWithHistory(instance InstanceData) {
 	}
 
 	// Merge with new metadata
+	u.logger.Debugf("Before merge - existing metadata has history: %v", existingMeta["history"] != nil)
+	u.logger.Debugf("Before merge - instance metadata has history: %v", instance.Metadata["history"] != nil)
 	mergedMetadata := u.MergeMetadata(existingMeta, instance.Metadata)
+	u.logger.Debugf("After merge - merged metadata has history: %v", mergedMetadata["history"] != nil)
 
 	u.logger.Debugf("storeMetadataWithHistory: merged metadata has %d keys", len(mergedMetadata))
 
@@ -1623,14 +1658,27 @@ func (u *VaultUpdater) deepEqual(a, b interface{}) bool {
 func (u *VaultUpdater) addReconciliationHistory(metadata map[string]interface{}, changes map[string]interface{}) {
 	var history []map[string]interface{}
 
+	u.logger.Debugf("addReconciliationHistory: metadata has history: %v", metadata["history"] != nil)
+
+	if metadata["history"] != nil {
+		u.logger.Debugf("addReconciliationHistory: history type is %T", metadata["history"])
+	}
+
 	if h, ok := metadata["history"].([]interface{}); ok {
+		u.logger.Debugf("addReconciliationHistory: found []interface{} history with %d entries", len(h))
+
 		for _, entry := range h {
 			if e, ok := entry.(map[string]interface{}); ok {
 				history = append(history, e)
+			} else {
+				u.logger.Debugf("addReconciliationHistory: skipping entry of type %T", entry)
 			}
 		}
 	} else if h, ok := metadata["history"].([]map[string]interface{}); ok {
+		u.logger.Debugf("addReconciliationHistory: found []map[string]interface{} history with %d entries", len(h))
 		history = h
+	} else {
+		u.logger.Debugf("addReconciliationHistory: history is not a recognized array type")
 	}
 
 	// Build description based on changes

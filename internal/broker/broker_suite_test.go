@@ -2,7 +2,9 @@ package broker_test
 
 import (
 	"testing"
+	"time"
 
+	"blacksmith/internal/broker"
 	"blacksmith/pkg/testutil"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -17,6 +19,10 @@ type testSuite struct {
 var suite = &testSuite{}
 
 var _ = BeforeSuite(func() {
+	// Speed up tests by reducing timeouts and retry delays
+	broker.SetDefaultDeleteTimeout(1 * time.Second)
+	broker.SetDefaultRetryBaseDelay(10 * time.Millisecond)
+
 	var err error
 	suite.vault, err = testutil.NewVaultDevServer(nil)
 	if err != nil {

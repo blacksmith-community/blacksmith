@@ -368,10 +368,6 @@ func TestVaultUpdater_PreservesHistory(t *testing.T) {
 	// Verify history was preserved and added to (with secret/ prefix)
 	metadataPath := testInstanceMetadataPath
 
-	// Debug: check what's actually in the vault
-	debugData, _ := vault.Get(metadataPath)
-	t.Logf("Debug - Metadata at %s: %+v", metadataPath, debugData)
-
 	verifyHistoryPreservation(t, vault, metadataPath)
 }
 

@@ -43,9 +43,6 @@ const (
 	defaultFilePermissions   = 0600
 	defaultScriptPermissions = 0700
 
-	// Timeouts.
-	defaultDeleteTimeout = 30 * time.Second
-
 	// Debug output limits.
 	debugDataPreviewLength = 500
 
@@ -106,6 +103,22 @@ var (
 	ErrNoIPAddressesAvailable                = errors.New("no IP addresses available")
 	ErrAllIPConnectionsFailed                = errors.New("all IP connections failed")
 )
+
+// Configurable timeouts (can be overridden in tests)
+var (
+	defaultDeleteTimeout = 30 * time.Second
+	defaultRetryBaseDelay = 50 * time.Millisecond
+)
+
+// SetDefaultDeleteTimeout allows tests to override the default timeout
+func SetDefaultDeleteTimeout(timeout time.Duration) {
+	defaultDeleteTimeout = timeout
+}
+
+// SetDefaultRetryBaseDelay allows tests to override the retry base delay
+func SetDefaultRetryBaseDelay(delay time.Duration) {
+	defaultRetryBaseDelay = delay
+}
 
 type Broker struct {
 	Catalog []domain.Service
@@ -589,6 +602,25 @@ func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string, d
 func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingID string) (*BindingCredentials, error) {
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting credential reconstruction for instance %s, binding %s", instanceID, bindingID)
+
+	// Check if credentials already exist in vault
+	credPath := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
+
+	var existingCreds map[string]interface{}
+
+	exists, err := b.Vault.Get(ctx, credPath, &existingCreds)
+	if err != nil {
+		logger.Debug("Error checking for existing credentials: %s", err)
+	} else if exists {
+		logger.Info("Found existing credentials for binding %s, returning from vault", bindingID)
+
+		binding := &BindingCredentials{Raw: existingCreds}
+		b.populateBindingCredentials(binding, existingCreds)
+
+		return binding, nil
+	}
+
+	logger.Debug("No existing credentials found, creating new credentials")
 
 	plan, err := b.retrievePlanFromVault(ctx, instanceID, logger)
 	if err != nil {
@@ -3036,10 +3068,7 @@ func CreateUserPassRabbitMQ(ctx context.Context, usernameDynamic, passwordDynami
 	logger.Info("Creating RabbitMQ user", "username", usernameDynamic)
 	logger.Debug("API URL: %s, Admin user: %s", apiUrl, adminUsername)
 
-	const (
-		maxRetries = 3
-		baseDelay  = 50 * time.Millisecond
-	)
+	const maxRetries = 3
 
 	createUserFunc := func(attemptCtx context.Context) error {
 		data, err := prepareUserCreationPayload(passwordDynamic, logger)
@@ -3062,7 +3091,7 @@ func CreateUserPassRabbitMQ(ctx context.Context, usernameDynamic, passwordDynami
 		return validateUserCreationResponse(resp, usernameDynamic, logger)
 	}
 
-	return retryWithBackoff(ctx, maxRetries, baseDelay, createUserFunc, logger)
+	return retryWithBackoff(ctx, maxRetries, defaultRetryBaseDelay, createUserFunc, logger)
 }
 
 func prepareUserCreationPayload(passwordDynamic string, logger logger.Logger) ([]byte, error) {

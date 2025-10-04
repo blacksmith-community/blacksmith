@@ -28,8 +28,15 @@ type Client struct {
 	KVVersion string // "1" or "2" - defaults to "2"
 }
 
-// NewClient creates a new vault client using the HashiCorp API.
+// NewClient creates a new vault client using the HashiCorp API with default timeout.
 func NewClient(url, token string, insecure bool) (*Client, error) {
+	const defaultTimeoutSeconds = 60
+
+	return NewClientWithTimeout(url, token, insecure, defaultTimeoutSeconds*time.Second)
+}
+
+// NewClientWithTimeout creates a new vault client with a custom timeout duration.
+func NewClientWithTimeout(url, token string, insecure bool, timeout time.Duration) (*Client, error) {
 	loggerInstance := logger.Get().Named("vault client init")
 	loggerInstance.Debug("creating new vault client for %s", url)
 
@@ -46,10 +53,8 @@ func NewClient(url, token string, insecure bool) (*Client, error) {
 		MinVersion:         tls.VersionTLS12, // Enforce TLS 1.2 minimum
 	}
 
-	const httpTimeoutSeconds = 60
-
 	httpClient := &http.Client{
-		Timeout: httpTimeoutSeconds * time.Second,
+		Timeout: timeout,
 		Transport: &http.Transport{
 			TLSClientConfig: tlsConfig,
 		},

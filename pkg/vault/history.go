@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -24,8 +25,7 @@ func FilterHistoryByRetention(history []map[string]interface{}, retentionDays, m
 	for _, entry := range history {
 		timestamp, ok := entry["timestamp"]
 		if !ok {
-			// Debug: log entries without timestamp
-			// fmt.Printf("DEBUG: History entry %d has no timestamp, skipping: %+v\n", idx, entry)
+			// Skip entries without timestamp
 			continue
 		}
 
@@ -37,16 +37,21 @@ func FilterHistoryByRetention(history []map[string]interface{}, retentionDays, m
 			timestampValue = int64(typedTimestamp)
 		case int:
 			timestampValue = int64(typedTimestamp)
+		case json.Number:
+			val, err := typedTimestamp.Int64()
+			if err != nil {
+				continue
+			}
+
+			timestampValue = val
 		default:
 			continue
 		}
 
 		if retentionDays > 0 && timestampValue < cutoffTime {
-			// fmt.Printf("DEBUG: History entry %d with timestamp %d is older than cutoff %d, skipping\n", idx, timestampValue, cutoffTime)
 			continue
 		}
 
-		// fmt.Printf("DEBUG: Adding history entry %d to filtered list\n", idx)
 		filtered = append(filtered, entry)
 	}
 
