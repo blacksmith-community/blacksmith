@@ -1914,6 +1914,601 @@
     `;
   };
 
+  // =====================================================
+  // Upgrade Tab Functions
+  // =====================================================
+
+  // Track if upgrade tab has been initialized
+  let upgradeTabInitialized = false;
+
+  // Track selected instances for upgrade
+  let selectedUpgradeInstances = new Set();
+
+  // Render the upgrade tab filters
+  const renderUpgradeFilters = () => {
+    return `
+      <div class="filter-row">
+        <label for="upgrade-service-filter">Service:</label>
+        <select id="upgrade-service-filter">
+          <option value="">All Services</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="upgrade-plan-filter">Plan:</label>
+        <select id="upgrade-plan-filter" disabled>
+          <option value="">All Plans</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="upgrade-stemcell-filter">Target Stemcell:</label>
+        <select id="upgrade-stemcell-filter">
+          <option value="">Select Stemcell...</option>
+        </select>
+      </div>
+      <div class="upgrade-actions">
+        <button id="upgrade-select-all" class="btn-secondary">Select All</button>
+        <button id="upgrade-deselect-all" class="btn-secondary">Deselect All</button>
+        <button id="upgrade-start" class="btn-primary" disabled>Upgrade Selected (0)</button>
+      </div>
+    `;
+  };
+
+  // Render upgrade instance list
+  const renderUpgradeInstances = (instances, serviceFilter, planFilter) => {
+    if (!instances || Object.keys(instances).length === 0) {
+      return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
+    }
+
+    // Create service id to name mapping
+    const serviceIdToName = {};
+    if (window.plansData && window.plansData.services) {
+      window.plansData.services.forEach(service => {
+        if (service && service.id && service.name) {
+          serviceIdToName[service.id] = service.name;
+        }
+      });
+    }
+
+    // Filter instances
+    const filteredInstances = Object.entries(instances).filter(([id, details]) => {
+      // Skip deleted instances
+      if (details.deleted) return false;
+
+      // Apply service filter
+      if (serviceFilter && details.service_id !== serviceFilter) return false;
+
+      // Apply plan filter
+      if (planFilter && details.plan?.id !== planFilter && details.plan_id !== planFilter) return false;
+
+      return true;
+    });
+
+    if (filteredInstances.length === 0) {
+      return '<div class="no-instances p-4 text-center text-gray-500">No instances match the current filters.</div>';
+    }
+
+    const listHtml = filteredInstances.map(([id, details]) => {
+      const serviceName = serviceIdToName[details.service_id] || details.service_id;
+      const planName = details.plan?.name || details.plan_id || 'unknown';
+      const isSelected = selectedUpgradeInstances.has(id);
+
+      return `
+        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}">
+          <label class="upgrade-instance-checkbox">
+            <input type="checkbox" ${isSelected ? 'checked' : ''} />
+            <span class="checkmark"></span>
+          </label>
+          <div class="upgrade-instance-info">
+            <div class="upgrade-instance-id">${id}</div>
+            <div class="upgrade-instance-meta">${serviceName} / ${planName}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="upgrade-instance-count">${filteredInstances.length} instance${filteredInstances.length !== 1 ? 's' : ''}</div>
+      <div class="upgrade-instances-list">${listHtml}</div>
+    `;
+  };
+
+  // Update the upgrade button state
+  const updateUpgradeButton = () => {
+    const button = document.getElementById('upgrade-start');
+    const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+
+    if (!button) return;
+
+    const count = selectedUpgradeInstances.size;
+    const hasStemcell = stemcellSelect && stemcellSelect.value;
+
+    button.textContent = `Upgrade Selected (${count})`;
+    button.disabled = count === 0 || !hasStemcell;
+  };
+
+  // Refresh the instance list based on current filters
+  const refreshUpgradeInstanceList = () => {
+    const instancesContainer = document.querySelector('#upgrade .upgrade-instances');
+    if (!instancesContainer) return;
+
+    const serviceFilter = document.getElementById('upgrade-service-filter')?.value || '';
+    const planFilter = document.getElementById('upgrade-plan-filter')?.value || '';
+
+    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter);
+
+    // Set up checkbox handlers
+    setupUpgradeInstanceHandlers();
+    updateUpgradeButton();
+  };
+
+  // Set up handlers for upgrade instance checkboxes
+  const setupUpgradeInstanceHandlers = () => {
+    document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      const instanceId = item.dataset.instanceId;
+
+      // Handle click on the entire item
+      item.addEventListener('click', (e) => {
+        if (e.target.type !== 'checkbox') {
+          checkbox.checked = !checkbox.checked;
+        }
+
+        if (checkbox.checked) {
+          selectedUpgradeInstances.add(instanceId);
+          item.classList.add('selected');
+        } else {
+          selectedUpgradeInstances.delete(instanceId);
+          item.classList.remove('selected');
+        }
+
+        updateUpgradeButton();
+      });
+    });
+  };
+
+  // Initialize the upgrade tab
+  const initUpgradeTab = async () => {
+    if (upgradeTabInitialized) return;
+
+    const upgradePanel = document.getElementById('upgrade');
+    if (!upgradePanel) return;
+
+    const filtersContainer = upgradePanel.querySelector('.upgrade-filters');
+    if (!filtersContainer) return;
+
+    // Render filters
+    filtersContainer.innerHTML = renderUpgradeFilters();
+
+    // Load stemcells from API
+    try {
+      const response = await fetch('/b/bosh/stemcells');
+      if (response.ok) {
+        const stemcells = await response.json();
+        const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+        if (stemcellSelect && stemcells) {
+          stemcells.forEach(s => {
+            const option = document.createElement('option');
+            option.value = `${s.operating_system}/${s.version}`;
+            option.textContent = `${s.operating_system}/${s.version}`;
+            stemcellSelect.appendChild(option);
+          });
+
+          // Update button state when stemcell changes
+          stemcellSelect.addEventListener('change', updateUpgradeButton);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load stemcells:', err);
+    }
+
+    // Populate service filter from catalog data
+    const serviceSelect = document.getElementById('upgrade-service-filter');
+    if (serviceSelect && window.plansData && window.plansData.services) {
+      window.plansData.services.forEach(service => {
+        const option = document.createElement('option');
+        option.value = service.id;
+        option.textContent = service.name;
+        serviceSelect.appendChild(option);
+      });
+
+      // Add change handler for service filter
+      serviceSelect.addEventListener('change', () => {
+        updatePlanFilter(serviceSelect.value);
+        refreshUpgradeInstanceList();
+      });
+    }
+
+    // Add change handler for plan filter
+    const planSelect = document.getElementById('upgrade-plan-filter');
+    if (planSelect) {
+      planSelect.addEventListener('change', refreshUpgradeInstanceList);
+    }
+
+    // Set up Select All button
+    const selectAllBtn = document.getElementById('upgrade-select-all');
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          const checkbox = item.querySelector('input[type="checkbox"]');
+          const instanceId = item.dataset.instanceId;
+          checkbox.checked = true;
+          selectedUpgradeInstances.add(instanceId);
+          item.classList.add('selected');
+        });
+        updateUpgradeButton();
+      });
+    }
+
+    // Set up Deselect All button
+    const deselectAllBtn = document.getElementById('upgrade-deselect-all');
+    if (deselectAllBtn) {
+      deselectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          const checkbox = item.querySelector('input[type="checkbox"]');
+          checkbox.checked = false;
+          item.classList.remove('selected');
+        });
+        selectedUpgradeInstances.clear();
+        updateUpgradeButton();
+      });
+    }
+
+    // Initial render of instances
+    refreshUpgradeInstanceList();
+
+    // Set up upgrade button handler
+    setupUpgradeButtonHandler();
+
+    // Fetch existing tasks and start refresh
+    fetchUpgradeTasks();
+    startTasksRefresh();
+
+    upgradeTabInitialized = true;
+    console.log('Upgrade tab initialized');
+  };
+
+  // Update plan filter based on selected service
+  const updatePlanFilter = (serviceId) => {
+    const planSelect = document.getElementById('upgrade-plan-filter');
+    if (!planSelect) return;
+
+    // Clear existing options
+    planSelect.innerHTML = '<option value="">All Plans</option>';
+
+    if (!serviceId) {
+      planSelect.disabled = true;
+      return;
+    }
+
+    // Find the service and its plans
+    if (window.plansData && window.plansData.services) {
+      const service = window.plansData.services.find(s => s.id === serviceId);
+      if (service && service.plans) {
+        service.plans.forEach(plan => {
+          const option = document.createElement('option');
+          option.value = plan.id;
+          option.textContent = plan.name;
+          planSelect.appendChild(option);
+        });
+        planSelect.disabled = false;
+      }
+    }
+  };
+
+  // =====================================================
+  // Upgrade Task Management (Steps 7-9)
+  // =====================================================
+
+  // Store for upgrade tasks
+  let upgradeTasks = [];
+  let selectedTaskId = null;
+  let upgradeTasksRefreshInterval = null;
+
+  // Render the task list in the right panel
+  const renderUpgradeTaskList = () => {
+    const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
+    if (!tasksContainer) return;
+
+    if (upgradeTasks.length === 0) {
+      tasksContainer.innerHTML = '<div class="no-tasks p-4 text-center text-gray-500">No upgrade tasks yet. Select instances and click Upgrade to start.</div>';
+      return;
+    }
+
+    const taskListHtml = upgradeTasks.map(task => {
+      const isSelected = task.id === selectedTaskId;
+      const statusClass = getTaskStatusClass(task.status);
+      const statusIcon = getTaskStatusIcon(task.status);
+      const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count) / task.total_count * 100) : 0;
+
+      return `
+        <div class="upgrade-task-item ${isSelected ? 'selected' : ''} ${statusClass}" data-task-id="${task.id}">
+          <div class="upgrade-task-header">
+            <span class="upgrade-task-status">${statusIcon}</span>
+            <span class="upgrade-task-stemcell">${task.target_stemcell}</span>
+          </div>
+          <div class="upgrade-task-progress">
+            <div class="upgrade-task-progress-bar" style="width: ${progress}%"></div>
+          </div>
+          <div class="upgrade-task-stats">
+            <span class="success">${task.completed_count} done</span>
+            <span class="failed">${task.failed_count} failed</span>
+            <span class="total">${task.total_count} total</span>
+          </div>
+          <div class="upgrade-task-time">${formatTaskTime(task.created_at)}</div>
+        </div>
+      `;
+    }).join('');
+
+    tasksContainer.innerHTML = `<div class="upgrade-task-list">${taskListHtml}</div>`;
+
+    // Set up click handlers for tasks
+    setupTaskClickHandlers();
+  };
+
+  // Get CSS class for task status
+  const getTaskStatusClass = (status) => {
+    switch (status) {
+      case 'completed': return 'status-completed';
+      case 'running': return 'status-running';
+      case 'failed': return 'status-failed';
+      case 'pending': return 'status-pending';
+      default: return '';
+    }
+  };
+
+  // Get icon for task status
+  const getTaskStatusIcon = (status) => {
+    switch (status) {
+      case 'completed': return '<span class="status-icon success">&#10003;</span>';
+      case 'running': return '<span class="status-icon running">&#8635;</span>';
+      case 'failed': return '<span class="status-icon failed">&#10007;</span>';
+      case 'pending': return '<span class="status-icon pending">&#8987;</span>';
+      default: return '';
+    }
+  };
+
+  // Format task timestamp
+  const formatTaskTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+  };
+
+  // Set up click handlers for task items
+  const setupTaskClickHandlers = () => {
+    document.querySelectorAll('#upgrade .upgrade-task-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const taskId = item.dataset.taskId;
+        selectUpgradeTask(taskId);
+      });
+    });
+  };
+
+  // Select a task and show its details
+  const selectUpgradeTask = async (taskId) => {
+    selectedTaskId = taskId;
+
+    // Update UI to show selected task
+    document.querySelectorAll('#upgrade .upgrade-task-item').forEach(item => {
+      item.classList.toggle('selected', item.dataset.taskId === taskId);
+    });
+
+    // Fetch full task details
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}`);
+      if (response.ok) {
+        const task = await response.json();
+        renderTaskDetail(task);
+      }
+    } catch (err) {
+      console.error('Failed to fetch task details:', err);
+    }
+  };
+
+  // Render task detail view
+  const renderTaskDetail = (task) => {
+    const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
+    if (!tasksContainer) return;
+
+    const instances = task.instances || [];
+    const instancesHtml = instances.map(instance => {
+      const statusIcon = getInstanceStatusIcon(instance.status);
+      const statusClass = getInstanceStatusClass(instance.status);
+
+      return `
+        <div class="upgrade-task-instance ${statusClass}">
+          <span class="instance-status">${statusIcon}</span>
+          <div class="instance-info">
+            <div class="instance-id">${instance.instance_name || instance.instance_id}</div>
+            <div class="instance-deployment">${instance.deployment_name || ''}</div>
+            ${instance.bosh_task_id ? `<div class="instance-bosh-task">BOSH Task: ${instance.bosh_task_id}</div>` : ''}
+            ${instance.error ? `<div class="instance-error">${instance.error}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count) / task.total_count * 100) : 0;
+
+    tasksContainer.innerHTML = `
+      <div class="upgrade-task-detail">
+        <div class="task-detail-header">
+          <button class="back-to-list" onclick="window.backToTaskList()">&#8592; Back to Tasks</button>
+          <h3>Task Details</h3>
+        </div>
+        <div class="task-detail-summary">
+          <div class="summary-row">
+            <span class="label">Target Stemcell:</span>
+            <span class="value">${task.target_stemcell.os}/${task.target_stemcell.version}</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Status:</span>
+            <span class="value status-${task.status}">${task.status}</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Progress:</span>
+            <span class="value">${task.completed_count + task.failed_count}/${task.total_count} (${progress}%)</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Created:</span>
+            <span class="value">${formatTaskTime(task.created_at)}</span>
+          </div>
+        </div>
+        <div class="task-detail-instances">
+          <h4>Instances (${instances.length})</h4>
+          <div class="instances-list">${instancesHtml}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  // Get icon for instance status
+  const getInstanceStatusIcon = (status) => {
+    switch (status) {
+      case 'success': return '<span class="status-icon success">&#10003;</span>';
+      case 'running': return '<span class="status-icon running">&#8635;</span>';
+      case 'failed': return '<span class="status-icon failed">&#10007;</span>';
+      case 'pending': return '<span class="status-icon pending">&#8987;</span>';
+      default: return '';
+    }
+  };
+
+  // Get CSS class for instance status
+  const getInstanceStatusClass = (status) => {
+    switch (status) {
+      case 'success': return 'instance-success';
+      case 'running': return 'instance-running';
+      case 'failed': return 'instance-failed';
+      case 'pending': return 'instance-pending';
+      default: return '';
+    }
+  };
+
+  // Go back to task list from detail view
+  window.backToTaskList = () => {
+    selectedTaskId = null;
+    renderUpgradeTaskList();
+  };
+
+  // Fetch upgrade tasks from API
+  const fetchUpgradeTasks = async () => {
+    try {
+      const response = await fetch('/b/upgrade/tasks');
+      if (response.ok) {
+        upgradeTasks = await response.json();
+
+        // If we're viewing a task detail, refresh it
+        if (selectedTaskId) {
+          const selectedTask = upgradeTasks.find(t => t.id === selectedTaskId);
+          if (selectedTask) {
+            // Fetch full details and re-render
+            const detailResponse = await fetch(`/b/upgrade/tasks/${selectedTaskId}`);
+            if (detailResponse.ok) {
+              const task = await detailResponse.json();
+              renderTaskDetail(task);
+            }
+          }
+        } else {
+          renderUpgradeTaskList();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch upgrade tasks:', err);
+    }
+  };
+
+  // Start upgrade for selected instances
+  const startUpgrade = async () => {
+    const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+    if (!stemcellSelect || !stemcellSelect.value) {
+      alert('Please select a target stemcell');
+      return;
+    }
+
+    if (selectedUpgradeInstances.size === 0) {
+      alert('Please select at least one instance to upgrade');
+      return;
+    }
+
+    const [os, version] = stemcellSelect.value.split('/');
+    const instanceIds = Array.from(selectedUpgradeInstances);
+
+    const requestBody = {
+      instance_ids: instanceIds,
+      target_stemcell: {
+        os: os,
+        version: version
+      }
+    };
+
+    try {
+      const upgradeButton = document.getElementById('upgrade-start');
+      if (upgradeButton) {
+        upgradeButton.disabled = true;
+        upgradeButton.textContent = 'Starting...';
+      }
+
+      const response = await fetch('/b/upgrade/tasks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (response.ok) {
+        const task = await response.json();
+        console.log('Upgrade task created:', task.id);
+
+        // Clear selection
+        selectedUpgradeInstances.clear();
+        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          const checkbox = item.querySelector('input[type="checkbox"]');
+          if (checkbox) checkbox.checked = false;
+          item.classList.remove('selected');
+        });
+        updateUpgradeButton();
+
+        // Refresh task list and select new task
+        await fetchUpgradeTasks();
+        selectUpgradeTask(task.id);
+      } else {
+        const error = await response.text();
+        alert(`Failed to start upgrade: ${error}`);
+      }
+    } catch (err) {
+      console.error('Failed to start upgrade:', err);
+      alert(`Failed to start upgrade: ${err.message}`);
+    } finally {
+      updateUpgradeButton();
+    }
+  };
+
+  // Set up upgrade button handler (called from initUpgradeTab)
+  const setupUpgradeButtonHandler = () => {
+    const upgradeButton = document.getElementById('upgrade-start');
+    if (upgradeButton) {
+      upgradeButton.addEventListener('click', startUpgrade);
+    }
+  };
+
+  // Start periodic refresh of tasks
+  const startTasksRefresh = () => {
+    if (upgradeTasksRefreshInterval) {
+      clearInterval(upgradeTasksRefreshInterval);
+    }
+    // Refresh every 5 seconds
+    upgradeTasksRefreshInterval = setInterval(fetchUpgradeTasks, 5000);
+  };
+
+  // Stop periodic refresh
+  const stopTasksRefresh = () => {
+    if (upgradeTasksRefreshInterval) {
+      clearInterval(upgradeTasksRefreshInterval);
+      upgradeTasksRefreshInterval = null;
+    }
+  };
+
   // Service detail rendering functions
   const renderServiceDetail = (id, details, vaultData) => {
     // vaultData now contains merged data from both secret/{instance-id} and secret/{instance-id}/metadata
@@ -8538,6 +9133,9 @@
 
       // Tab-specific initialization
       // (broker now handled as a sub-tab under blacksmith)
+      if (tabId === 'upgrade') {
+        initUpgradeTab();
+      }
 
       // Re-initialize sorting for any tables in the newly activated tab
       setTimeout(() => {

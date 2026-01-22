@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
 )
@@ -77,6 +79,52 @@ func (h *Handler) GetPoolStats(responseWriter http.ResponseWriter, req *http.Req
 	}
 
 	response.HandleJSON(responseWriter, stats, nil)
+}
+
+// GetStemcells returns available stemcells from the BOSH director.
+func (h *Handler) GetStemcells(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("bosh-stemcells")
+	logger.Debug("BOSH stemcells request")
+
+	stemcells, err := h.director.GetStemcells()
+	if err != nil {
+		logger.Error("Failed to get stemcells: %v", err)
+		response.HandleJSON(responseWriter, nil, err)
+		return
+	}
+
+	// Return the 10 most recent stemcells per OS
+	result := filterRecentStemcells(stemcells, 10)
+
+	logger.Debug("Returning %d stemcells", len(result))
+	response.HandleJSON(responseWriter, result, nil)
+}
+
+// filterRecentStemcells returns the N most recent stemcells per OS.
+func filterRecentStemcells(stemcells []bosh.Stemcell, limit int) []bosh.Stemcell {
+	// Group by OS
+	byOS := make(map[string][]bosh.Stemcell)
+	for _, s := range stemcells {
+		byOS[s.OS] = append(byOS[s.OS], s)
+	}
+
+	// Sort each group by version descending and take top N
+	var result []bosh.Stemcell
+	for _, group := range byOS {
+		// Sort by version descending (string comparison works for semver-like versions)
+		sort.Slice(group, func(i, j int) bool {
+			return group[i].Version > group[j].Version
+		})
+
+		// Take up to limit
+		count := limit
+		if len(group) < limit {
+			count = len(group)
+		}
+		result = append(result, group[:count]...)
+	}
+
+	return result
 }
 
 // GetStatus returns BOSH/Blacksmith status information including service instances.

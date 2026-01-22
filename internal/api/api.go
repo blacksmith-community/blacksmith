@@ -15,6 +15,7 @@ import (
 	"blacksmith/internal/handlers/deployments"
 	"blacksmith/internal/handlers/instances"
 	serviceshandler "blacksmith/internal/handlers/services"
+	upgradehandler "blacksmith/internal/handlers/upgrade"
 	rabbitmqtesting "blacksmith/internal/handlers/services/rabbitmq/testing"
 	"blacksmith/internal/handlers/services/rabbitmq/websocket"
 	"blacksmith/internal/handlers/services/redis"
@@ -47,6 +48,7 @@ type InternalAPI struct {
 	deploymentsHandler       *deployments.Handler
 	configurationHandler     *configuration.Handler
 	servicesHandler          *serviceshandler.Handler
+	upgradeHandler           *upgradehandler.Handler
 }
 
 // Dependencies contains all the dependencies needed by the internal API.
@@ -86,6 +88,7 @@ type apiHandlers struct {
 	deployments       *deployments.Handler
 	configuration     *configuration.Handler
 	services          *serviceshandler.Handler
+	upgrade           *upgradehandler.Handler
 }
 
 func createHandlers(deps Dependencies) apiHandlers {
@@ -103,6 +106,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 		deployments:       createDeploymentsHandler(deps),
 		configuration:     createConfigurationHandler(deps),
 		services:          createServicesHandler(deps),
+		upgrade:           createUpgradeHandler(deps),
 	}
 }
 
@@ -194,6 +198,14 @@ func createServicesHandler(deps Dependencies) *serviceshandler.Handler {
 		Director:    deps.Director,
 		SSH:         deps.SSHService,
 		RabbitMQSSH: deps.RabbitMQSSHService,
+	})
+}
+
+func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
+	return upgradehandler.NewHandler(upgradehandler.Dependencies{
+		Logger:   deps.Logger,
+		Director: deps.Director,
+		Vault:    deps.Vault,
 	})
 }
 
@@ -289,6 +301,7 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 
 	// BOSH endpoints
 	router.RegisterHandler("/b/bosh/pool-stats", http.HandlerFunc(handlers.bosh.GetPoolStats))
+	router.RegisterHandler("/b/bosh/stemcells", http.HandlerFunc(handlers.bosh.GetStemcells))
 	router.RegisterHandler("/b/status", http.HandlerFunc(handlers.bosh.GetStatus))
 
 	// Blacksmith management endpoints
@@ -309,6 +322,9 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 	// Configuration endpoints
 	router.RegisterHandler("/b/configs", handlers.configuration)
 	router.RegisterHandler("/b/service-filter-options", http.HandlerFunc(handlers.configuration.GetServiceFilterOptions))
+
+	// Upgrade endpoints
+	router.RegisterHandler("/b/upgrade/", handlers.upgrade)
 
 	// SSH WebSocket handlers
 	router.RegisterHandler("/b/blacksmith/ssh/stream", handlers.sshWebSocket)
@@ -346,6 +362,7 @@ func NewInternalAPI(deps Dependencies) *InternalAPI {
 		deploymentsHandler:       handlers.deployments,
 		configurationHandler:     handlers.configuration,
 		servicesHandler:          handlers.services,
+		upgradeHandler:           handlers.upgrade,
 	}
 }
 
