@@ -1524,6 +1524,39 @@
     return s;
   };
 
+  // Helper function to get creation timestamp from instance details
+  // Tries multiple fields: created (Unix timestamp), created_at (RFC3339 string), requested_at (RFC3339 string)
+  const getCreatedTimestamp = (details) => {
+    // Try created (Unix timestamp)
+    if (details.created && typeof details.created === 'number' && details.created > 0) {
+      return details.created;
+    }
+    // Try created_at (RFC3339 string)
+    if (details.created_at) {
+      const date = new Date(details.created_at);
+      if (!isNaN(date.getTime())) {
+        return Math.floor(date.getTime() / 1000);
+      }
+    }
+    // Try requested_at (RFC3339 string)
+    if (details.requested_at) {
+      const date = new Date(details.requested_at);
+      if (!isNaN(date.getTime())) {
+        return Math.floor(date.getTime() / 1000);
+      }
+    }
+    return null;
+  };
+
+  // Format creation timestamp for display
+  const formatCreatedTimestamp = (details) => {
+    const timestamp = getCreatedTimestamp(details);
+    if (timestamp) {
+      return strftime("%Y-%m-%d %H:%M:%S", timestamp);
+    }
+    return 'Unknown';
+  };
+
   // Template rendering functions
   const renderBlacksmithTemplate = (data) => {
     const deploymentName = data.deployment || 'blacksmith';
@@ -1832,7 +1865,7 @@
         </div>`}
         <div class="filter-row">
           <label class="checkbox-label">
-            <input type="checkbox" id="hide-deleted-filter" class="filter-checkbox">
+            <input type="checkbox" id="hide-deleted-filter" class="filter-checkbox" checked>
             <span>Hide Deleted Instances</span>
           </label>
         </div>
@@ -1891,7 +1924,7 @@
               <div class="service-id">${id}</div>
               ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
               <div class="service-meta">
-                ${displayServiceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
+                ${displayServiceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${formatCreatedTimestamp(details)}
               </div>
               ${deletedStatusHtml}
               ${deletionStatusHtml}
@@ -2617,7 +2650,7 @@
       });
     } else {
       // If no vault data, show basic info from details
-      const createdAt = details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown';
+      const createdAt = formatCreatedTimestamp(details);
       tableRows = [
         `<tr>
           <td class="info-key" style="font-size: 16px;">
@@ -9839,6 +9872,9 @@
               applyFilters();
             });
           }
+
+          // Apply filters on initial load (to respect default checkbox state)
+          applyFilters();
         };
 
         // Set up detail tab handlers

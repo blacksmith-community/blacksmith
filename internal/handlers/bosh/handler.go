@@ -272,6 +272,18 @@ func (h *Handler) enrichInstancesWithFullData(ctx context.Context, instances map
 			if deploymentName, ok := fullData["deployment_name"].(string); ok && deploymentName != "" {
 				instanceMap["deployment_name"] = deploymentName
 			}
+
+			// Add created timestamp if it exists in full data
+			// The created field can be stored as int64, float64, or json.Number depending on how it was serialized
+			if created, ok := fullData["created"]; ok && created != nil {
+				instanceMap["created"] = created
+				logger.Debug("Added created timestamp for instance %s", instanceID)
+			}
+
+			// Also copy created_at if it exists (RFC3339 format)
+			if createdAt, ok := fullData["created_at"].(string); ok && createdAt != "" {
+				instanceMap["created_at"] = createdAt
+			}
 		}
 	}
 }
