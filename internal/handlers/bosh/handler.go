@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -101,10 +102,16 @@ func (h *Handler) GetStemcells(responseWriter http.ResponseWriter, req *http.Req
 }
 
 // filterRecentStemcells returns the N most recent stemcells per OS.
+// It filters to only include stemcells from CPIs ending in ".bosh" suffix
+// (e.g., "env-name.aws.bosh") to avoid duplicates from legacy CPIs.
 func filterRecentStemcells(stemcells []bosh.Stemcell, limit int) []bosh.Stemcell {
-	// Group by OS
+	// Group by OS, filtering to only include stemcells with CPI ending in ".bosh"
 	byOS := make(map[string][]bosh.Stemcell)
 	for _, s := range stemcells {
+		// Only include stemcells from CPIs with ".bosh" suffix
+		if !strings.HasSuffix(s.CPI, ".bosh") {
+			continue
+		}
 		byOS[s.OS] = append(byOS[s.OS], s)
 	}
 
