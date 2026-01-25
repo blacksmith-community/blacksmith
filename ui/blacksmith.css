@@ -10362,11 +10362,17 @@ span.config-type.resurrection {
 #upgrade {
   display: none;
   flex-direction: row;
+  flex-wrap: nowrap;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
-#upgrade.active {
-  display: flex;
+#upgrade.active,
+#upgrade.tab-panel.active {
+  display: flex !important;
+  flex-direction: row;
+  overflow: hidden;
 }
 
 #upgrade .upgrade-left-panel {
@@ -10377,6 +10383,7 @@ span.config-type.resurrection {
   overflow: hidden;
   background-color: var(--bg-sidebar);
   flex-shrink: 0;
+  height: 100%;
 }
 
 #upgrade .upgrade-left-panel h2 {
@@ -10483,6 +10490,8 @@ span.config-type.resurrection {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  height: 100%;
+  min-width: 300px;
 }
 
 #upgrade .upgrade-right-panel h2 {
