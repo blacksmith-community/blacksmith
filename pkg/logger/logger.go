@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -51,8 +52,11 @@ type Implementation struct {
 	level  zapcore.Level
 }
 
-// Global logger instance.
-var globalLogger Logger //nolint:gochecknoglobals // Global logger is needed for package-level logging
+// Global logger instance with mutex for thread safety.
+var (
+	globalLogger Logger       //nolint:gochecknoglobals // Global logger is needed for package-level logging
+	globalMu     sync.RWMutex //nolint:gochecknoglobals // Mutex to protect globalLogger
+)
 
 func init() { //nolint:gochecknoinits // Required for global logger initialization
 	// Initialize with a default logger
@@ -175,11 +179,15 @@ func New(config Config) (Logger, error) {
 
 // Get returns the global logger.
 func Get() Logger {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
 	return globalLogger
 }
 
 // Set sets the global logger.
 func Set(logger Logger) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
 	globalLogger = logger
 }
 
@@ -190,6 +198,8 @@ func Configure(config Config) error {
 		return err
 	}
 
+	globalMu.Lock()
+	defer globalMu.Unlock()
 	globalLogger = logger
 
 	return nil

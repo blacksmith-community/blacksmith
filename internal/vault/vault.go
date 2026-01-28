@@ -13,6 +13,7 @@ import (
 
 	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
+
 	"github.com/hashicorp/vault/api"
 )
 
@@ -25,6 +26,7 @@ type Vault struct {
 	// auto-unseal management
 	credentialsPath   string
 	mu                sync.Mutex
+	clientMu          sync.RWMutex // protects client field for thread-safe access
 	unsealInProgress  int32
 	lastUnsealAttempt time.Time
 	unsealCooldown    time.Duration
@@ -57,8 +59,11 @@ func NewWithTimeout(url, token string, insecure bool, timeout time.Duration) *Va
 // SetToken updates the in-memory token and refreshes it on the underlying client if present.
 func (vault *Vault) SetToken(token string) {
 	vault.Token = token
-	if vault.client != nil && token != "" {
-		vault.client.SetToken(token)
+	vault.clientMu.RLock()
+	client := vault.client
+	vault.clientMu.RUnlock()
+	if client != nil && token != "" {
+		client.SetToken(token)
 	}
 }
 
@@ -354,23 +359,46 @@ func (vault *Vault) LoadTokenFromCredentials() (string, error) {
 }
 
 // ensureClient ensures the vault client is initialized.
+// This method is thread-safe using RWMutex for proper synchronization.
 func (vault *Vault) ensureClient() error {
-	if vault.client == nil {
-		var client *vaultPkg.Client
-		var err error
-
-		if vault.httpTimeout > 0 {
-			client, err = vaultPkg.NewClientWithTimeout(vault.URL, vault.Token, vault.Insecure, vault.httpTimeout)
-		} else {
-			client, err = vaultPkg.NewClient(vault.URL, vault.Token, vault.Insecure)
+	// Fast path with read lock: check if client already initialized
+	vault.clientMu.RLock()
+	if vault.client != nil {
+		client := vault.client
+		vault.clientMu.RUnlock()
+		if vault.Token != "" {
+			client.SetToken(vault.Token)
 		}
-
-		if err != nil {
-			return fmt.Errorf("failed to create vault client: %w", err)
-		}
-
-		vault.client = client
+		return nil
 	}
+	vault.clientMu.RUnlock()
+
+	// Slow path: need to initialize client under write lock
+	vault.clientMu.Lock()
+	defer vault.clientMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if vault.client != nil {
+		if vault.Token != "" {
+			vault.client.SetToken(vault.Token)
+		}
+		return nil
+	}
+
+	var client *vaultPkg.Client
+	var err error
+
+	if vault.httpTimeout > 0 {
+		client, err = vaultPkg.NewClientWithTimeout(vault.URL, vault.Token, vault.Insecure, vault.httpTimeout)
+	} else {
+		client, err = vaultPkg.NewClient(vault.URL, vault.Token, vault.Insecure)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to create vault client: %w", err)
+	}
+
+	vault.client = client
 
 	if vault.Token != "" {
 		vault.client.SetToken(vault.Token)

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -20,6 +21,11 @@ import (
 	"github.com/smallfish/simpleyaml"
 	"gopkg.in/yaml.v3"
 )
+
+// spruceMu serializes calls to the spruce library which uses global state
+// that is not thread-safe. This is necessary because spruce.SetupOperators()
+// and spruce.Evaluator.Run() modify global variables without synchronization.
+var spruceMu sync.Mutex
 
 const (
 	// If BLACKSMITH_INSTANCE_DATA_DIR environment variable is not set, use this as a default.
@@ -220,6 +226,11 @@ func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (str
 	log := logger.Get().Named("manifest")
 	log.Info("Generating manifest for plan %s", p.ID)
 	log.Debug("Starting spruce merge with %d additional manifests", len(manifests))
+
+	// Serialize spruce operations because the library uses global state
+	// that is not thread-safe (StaticIPOperator.Setup, Evaluator globals).
+	spruceMu.Lock()
+	defer spruceMu.Unlock()
 
 	merged, err := spruce.Merge(p.Manifest)
 	if err != nil {

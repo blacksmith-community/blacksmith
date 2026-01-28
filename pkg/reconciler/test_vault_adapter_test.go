@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	vaultpkg "blacksmith/pkg/vault"
+
 	"github.com/hashicorp/vault/api"
 )
 
@@ -21,6 +23,7 @@ var (
 type RealTestVault struct {
 	prefix   string
 	wrapper  *vaultpkg.Client
+	mu       sync.RWMutex // protects getCalls, putCalls, and errors
 	getCalls []string
 	putCalls []string
 	errors   map[string]error
@@ -74,9 +77,11 @@ func NewTestVaultWithPrefix(prefix string) *RealTestVault {
 func (v *RealTestVault) Get(path string) (map[string]interface{}, error) {
 	prefixedPath := v.pref(path)
 
+	v.mu.Lock()
 	v.getCalls = append(v.getCalls, prefixedPath)
-
 	err := v.errors[prefixedPath]
+	v.mu.Unlock()
+
 	if err != nil {
 		return nil, err
 	}
@@ -96,9 +101,11 @@ func (v *RealTestVault) Get(path string) (map[string]interface{}, error) {
 func (v *RealTestVault) Put(path string, secret map[string]interface{}) error {
 	prefixedPath := v.pref(path)
 
+	v.mu.Lock()
 	v.putCalls = append(v.putCalls, prefixedPath)
-
 	err := v.errors[prefixedPath]
+	v.mu.Unlock()
+
 	if err != nil {
 		return err
 	}
@@ -122,7 +129,10 @@ func (v *RealTestVault) SetSecret(path string, secret map[string]interface{}) er
 func (v *RealTestVault) DeleteSecret(path string) error {
 	prefixedPath := v.pref(path)
 
+	v.mu.RLock()
 	err := v.errors[prefixedPath]
+	v.mu.RUnlock()
+
 	if err != nil {
 		return err
 	}
@@ -138,7 +148,10 @@ func (v *RealTestVault) DeleteSecret(path string) error {
 func (v *RealTestVault) ListSecrets(path string) ([]string, error) {
 	prefixedPath := v.pref(path)
 
+	v.mu.RLock()
 	err := v.errors[prefixedPath]
+	v.mu.RUnlock()
+
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +171,8 @@ func (v *RealTestVault) GetClient() *api.Client {
 
 // Test helpers for compatibility with legacy tests.
 func (v *RealTestVault) SetError(path string, err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.errors[v.pref(path)] = err
 }
 
