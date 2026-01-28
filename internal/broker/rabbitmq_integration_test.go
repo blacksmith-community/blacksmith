@@ -396,9 +396,15 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			operationTimes := make(map[string][]time.Time)
 			var timesMutex sync.Mutex
 
+			// Pre-initialize all map entries before starting goroutines
+			// to avoid concurrent map writes during setup and goroutine execution
 			for instanceIdx := range numInstances {
 				instID := fmt.Sprintf("instance-%d", instanceIdx)
 				operationTimes[instID] = make([]time.Time, 0, operationsPerInstance*2)
+			}
+
+			for instanceIdx := range numInstances {
+				instID := fmt.Sprintf("instance-%d", instanceIdx)
 
 				// Set up instance
 				err := suite.vault.WriteSecret(instID+"/deployment", map[string]interface{}{

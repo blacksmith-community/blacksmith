@@ -9,16 +9,23 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
+
 	"github.com/geofffranks/spruce"
 	"github.com/smallfish/simpleyaml"
 	"gopkg.in/yaml.v3"
 )
+
+// spruceMu serializes calls to the spruce library which uses global state
+// that is not thread-safe. This is necessary because spruce.SetupOperators()
+// and spruce.Evaluator.Run() modify global variables without synchronization.
+var spruceMu sync.Mutex
 
 const (
 	// If BLACKSMITH_INSTANCE_DATA_DIR environment variable is not set, use this as a default.
@@ -219,6 +226,11 @@ func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (str
 	log := logger.Get().Named("manifest")
 	log.Info("Generating manifest for plan %s", p.ID)
 	log.Debug("Starting spruce merge with %d additional manifests", len(manifests))
+
+	// Serialize spruce operations because the library uses global state
+	// that is not thread-safe (StaticIPOperator.Setup, Evaluator globals).
+	spruceMu.Lock()
+	defer spruceMu.Unlock()
 
 	merged, err := spruce.Merge(p.Manifest)
 	if err != nil {
@@ -439,10 +451,22 @@ func buildJobsFromVMs(vms []bosh.VM, plan services.Plan, deployment string, logg
 
 	var dnsname string
 
-	network := os.Getenv("BOSH_NETWORK")
-	networkDNS := strings.ReplaceAll(network, ".", "")
+	// Fallback to BOSH_NETWORK if VM doesn't have network info from manifest
+	defaultNetwork := os.Getenv("BOSH_NETWORK")
 
 	for _, instance := range vms {
+		// Use network from VM (extracted from deployment manifest) or fallback to default
+		network := instance.Network
+		if network == "" {
+			network = defaultNetwork
+			loggerInstance.Debug("VM %s has no network info, using default BOSH_NETWORK: %s", instance.ID, network)
+		} else {
+			loggerInstance.Debug("VM %s using network from manifest: %s", instance.ID, network)
+		}
+
+		// Remove dots from network component for valid DNS names (matching the pattern in env.rb)
+		networkDNS := strings.ReplaceAll(network, ".", "")
+
 		job := createJobFromVM(instance, plan, deployment, networkDNS)
 		loggerInstance.Debug("found job {name: %s, deployment: %s, id: %s, plan_id: %s, plan_name: %s, fqdn: %s, ips: [%s], dns: [%s]", job.Name, job.Deployment, job.ID, job.PlanID, job.PlanName, job.FQDN, strings.Join(instance.IPs, ", "), strings.Join(instance.DNS, ", "))
 		dnsname = job.FQDN

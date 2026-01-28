@@ -462,14 +462,15 @@ func (vc *Client) upgradeMountToKVv2(mount string) error {
 	loggerInstance.Info("Detected KV v1 mount at %s, upgrading to KV v2", mount)
 
 	// Create the tune configuration for upgrading to KV v2
-	tuneConfig := api.MountConfigInput{
-		Options: map[string]string{
-			"version": "2",
-		},
+	options := map[string]string{
+		"version": "2",
+	}
+	tuneConfig := api.TuneMountConfigInput{
+		Options: &options,
 	}
 
 	// Perform the upgrade
-	err := vc.Sys().TuneMount(mount, tuneConfig)
+	err := vc.Sys().TuneMountAllowNil(mount, tuneConfig)
 	if err != nil {
 		loggerInstance.Error("Failed to upgrade mount %s from KV v1 to KV v2: %s", mount, err)
 		// Don't fail entirely - KV v1 can still work

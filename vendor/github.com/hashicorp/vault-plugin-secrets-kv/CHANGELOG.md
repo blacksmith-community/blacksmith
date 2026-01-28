@@ -1,5 +1,3 @@
-## Unreleased
-
 ## v0.24.0
 
 CHANGES:

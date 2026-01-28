@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"sync"
 
@@ -196,7 +198,7 @@ func pathInvalid(b *versionedKVBackend) []*framework.Path {
 	}
 
 	return []*framework.Path{
-		&framework.Path{
+		{
 			Pattern: ".*",
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.UpdateOperation: &framework.PathOperation{Callback: handler, Unpublished: true},
@@ -383,7 +385,6 @@ func (b *versionedKVBackend) getVersionKey(ctx context.Context, key string, vers
 // getKeyMetadata returns the metadata object for the provided key, if no object
 // exits it will return nil.
 func (b *versionedKVBackend) getKeyMetadata(ctx context.Context, s logical.Storage, key string) (*KeyMetadata, error) {
-
 	wrapper, err := b.getKeyEncryptor(ctx, s)
 	if err != nil {
 		return nil, err
@@ -447,14 +448,23 @@ type AdditionalKVMetadata struct {
 	value interface{}
 }
 
+// kvVersionsMapToSlice is intended to take meta.Versions and return a readable slice
+// of versions. Note that this is UNSORTED, so could return e.g.:
+// [1]
+// [1,2,3]
+// [2,3,1]
+func kvVersionsMapToSlice(versions map[uint64]*VersionMetadata) []uint64 {
+	return slices.Collect(maps.Keys(versions))
+}
+
 func recordKvObservation(ctx context.Context, b *framework.Backend, req *logical.Request, observationType string,
-	additionalMetadata ...AdditionalKVMetadata) {
+	additionalMetadata ...AdditionalKVMetadata,
+) {
 	metadata := map[string]interface{}{
 		"path":       req.Path,
 		"client_id":  req.ClientID,
 		"entity_id":  req.EntityID,
 		"request_id": req.ID,
-		"modified":   kvObservationIsWrite(observationType),
 	}
 	for _, meta := range additionalMetadata {
 		metadata[meta.key] = meta.value
@@ -462,8 +472,8 @@ func recordKvObservation(ctx context.Context, b *framework.Backend, req *logical
 
 	err := b.RecordObservation(ctx, observationType, metadata)
 
-	if err != nil && errors.Is(err, framework.ErrNoObservations) {
-		b.Logger().Error("Error recording observation", "observationType", observationType, "error", err)
+	if err != nil && !errors.Is(err, framework.ErrNoObservations) {
+		b.Logger().Error("error recording observation", "observationType", observationType, "error", err)
 	}
 }
 
@@ -478,8 +488,8 @@ func kvEvent(ctx context.Context,
 	dataPath string,
 	modified bool,
 	kvVersion int,
-	additionalMetadataPairs ...string) {
-
+	additionalMetadataPairs ...string,
+) {
 	metadata := []string{
 		logical.EventMetadataModified, strconv.FormatBool(modified),
 		logical.EventMetadataOperation, operation,
@@ -501,6 +511,18 @@ func ptypesTimestampToString(t *timestamp.Timestamp) string {
 	}
 
 	return ptypes.TimestampString(t)
+}
+
+func getAttribution(req *logical.Request) *Attribution {
+	// Get actor
+	attr := &Attribution{
+		Actor:     req.DisplayName,
+		EntityId:  req.EntityID,
+		ClientId:  req.ClientID,
+		Operation: string(req.Operation),
+	}
+
+	return attr
 }
 
 var backendHelp string = `

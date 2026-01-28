@@ -418,6 +418,9 @@ func (b *versionedKVBackend) pathDataWrite() framework.OperationFunc {
 			return nil, err
 		}
 
+		// Extract Attribution data from request and add to metadata
+		meta.LastUpdatedBy = getAttribution(req)
+
 		// Add version to the key metadata and calculate version to delete
 		// based on the max_versions specified by either the secret's key
 		// metadata or the engine's config
@@ -449,7 +452,11 @@ func (b *versionedKVBackend) pathDataWrite() framework.OperationFunc {
 			"current_version", fmt.Sprintf("%d", meta.CurrentVersion),
 			"oldest_version", fmt.Sprintf("%d", meta.OldestVersion),
 		)
-		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretWrite)
+		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretWrite,
+			AdditionalKVMetadata{key: "is_new_secret", value: meta.CurrentVersion == 1 && meta.OldestVersion == 1},
+			AdditionalKVMetadata{key: "oldest_version", value: meta.OldestVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)},
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion})
 
 		return resp, nil
 	}
@@ -619,6 +626,9 @@ func (b *versionedKVBackend) pathDataPatch() framework.OperationFunc {
 			return nil, err
 		}
 
+		// Extract Attribution data from request and add to metadata
+		meta.LastUpdatedBy = getAttribution(req)
+
 		// Add version to the key metadata and calculate version to delete
 		// based on the max_versions specified by either the secret's key
 		// metadata or the engine's config
@@ -650,7 +660,10 @@ func (b *versionedKVBackend) pathDataPatch() framework.OperationFunc {
 			"current_version", fmt.Sprintf("%d", meta.CurrentVersion),
 			"oldest_version", fmt.Sprintf("%d", meta.OldestVersion),
 		)
-		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretPatch)
+		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretPatch,
+			AdditionalKVMetadata{key: "oldest_version", value: meta.OldestVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)},
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion})
 		return resp, nil
 	}
 }
@@ -691,6 +704,11 @@ func (b *versionedKVBackend) pathDataDelete() framework.OperationFunc {
 
 		lv.DeletionTime = ptypes.TimestampNow()
 
+		// Extract Attribution data from request
+		attribution := getAttribution(req)
+		lv.DeletedBy = attribution
+		meta.LastUpdatedBy = attribution
+
 		err = b.writeKeyMetadata(ctx, req.Storage, meta)
 		if err != nil {
 			return nil, err
@@ -700,7 +718,10 @@ func (b *versionedKVBackend) pathDataDelete() framework.OperationFunc {
 			"current_version", fmt.Sprintf("%d", meta.CurrentVersion),
 			"oldest_version", fmt.Sprintf("%d", meta.OldestVersion),
 		)
-		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretDelete)
+		recordKvObservation(ctx, b.Backend, req, ObservationTypeKVv2SecretDelete,
+			AdditionalKVMetadata{key: "oldest_version", value: meta.OldestVersion},
+			AdditionalKVMetadata{key: "current_version", value: meta.CurrentVersion},
+			AdditionalKVMetadata{key: "versions", value: kvVersionsMapToSlice(meta.Versions)})
 		return nil, nil
 	}
 }
@@ -716,6 +737,7 @@ func (k *KeyMetadata) AddVersion(createdTime, deletionTime *timestamp.Timestamp,
 	vm := &VersionMetadata{
 		CreatedTime:  createdTime,
 		DeletionTime: deletionTime,
+		CreatedBy:    k.LastUpdatedBy,
 	}
 
 	k.CurrentVersion++
@@ -757,8 +779,9 @@ func max(a, b uint32) uint32 {
 	return a
 }
 
-const dataHelpSyn = `Write, Patch, Read, and Delete data in the Key-Value Store.`
-const dataHelpDesc = `
+const (
+	dataHelpSyn  = `Write, Patch, Read, and Delete data in the Key-Value Store.`
+	dataHelpDesc = `
 This path takes a key name and based on the operation stores, retrieves or
 deletes versions of data.
 
@@ -781,3 +804,4 @@ Delete operations are a soft delete. They will mark the latest version as
 deleted, but the underlying data will not be fully removed. Delete operations
 can be undone.
 `
+)

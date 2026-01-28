@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
@@ -776,6 +776,37 @@ func getAccessorsOnDuplicateAliases(aliases []*identity.Alias) []string {
 	return mountAccessors
 }
 
+// fetchEntityInTxn retrieves an identity entity by its ID within the context of a MemDB transaction.
+// If the entity is not found by its direct ID, it attempts performs a lookup using the merged entity index.
+// The returned entity may be a clone or the original reference, depending on the value of the `clone` parameter.
+func (i *IdentityStore) fetchEntityInTxn(txn *memdb.Txn, entityID string, clone bool) (*identity.Entity, error) {
+	if entityID == "" {
+		return nil, fmt.Errorf("empty entity ID")
+	}
+	if txn == nil {
+		return nil, fmt.Errorf("nil txn")
+	}
+
+	entity, err := i.MemDBEntityByIDInTxn(txn, entityID, clone)
+	if err != nil {
+		i.logger.Error("failed to lookup entity using its ID", "error", err)
+		return nil, err
+	}
+
+	if entity == nil {
+		// If there was no corresponding entity object found, it is
+		// possible that the entity got merged into another entity. Try
+		// finding entity based on the merged entity index.
+		entity, err = i.MemDBEntityByMergedEntityIDInTxn(txn, entityID, clone)
+		if err != nil {
+			i.logger.Error("failed to lookup entity in merged entity ID index", "error", err)
+			return nil, err
+		}
+	}
+
+	return entity, nil
+}
+
 // upsertEntityInTxn either creates or updates an existing entity. The
 // operations will be updated in both MemDB and storage. If 'persist' is set to
 // false, then storage will not be updated. When an alias is transferred from
@@ -798,13 +829,6 @@ func (i *IdentityStore) upsertEntityInTxn(ctx context.Context, txn *memdb.Txn, e
 	if entity.NamespaceID == "" {
 		entity.NamespaceID = namespace.RootNamespaceID
 	}
-
-	ns, err := i.namespacer.NamespaceByID(ctx, entity.NamespaceID)
-	if err != nil {
-		return false, err
-	}
-
-	nsCtx := namespace.ContextWithNamespace(ctx, ns)
 
 	if previousEntity != nil && previousEntity.NamespaceID != entity.NamespaceID {
 		return false, errors.New("entity and previous entity are not in the same namespace")
@@ -886,7 +910,7 @@ func (i *IdentityStore) upsertEntityInTxn(ctx context.Context, txn *memdb.Txn, e
 				"alias_by_factors", aliasByFactors)
 
 			persistMerge := persist || persistMerges
-			respErr, intErr := i.mergeEntityAsPartOfUpsert(nsCtx, txn, entity, aliasByFactors.CanonicalID, persistMerge)
+			respErr, intErr := i.mergeEntityAsPartOfUpsert(ctx, txn, entity, aliasByFactors.CanonicalID, persistMerge)
 			switch {
 			case respErr != nil:
 				return false, respErr
@@ -916,7 +940,7 @@ func (i *IdentityStore) upsertEntityInTxn(ctx context.Context, txn *memdb.Txn, e
 		// are in case-sensitive mode so we can report these to the operator ahead
 		// of them disabling case-sensitive mode. Note that alias resolvers don't
 		// ever modify right now so ignore the bool.
-		_, conflictErr := i.conflictResolver.ResolveAliases(nsCtx, entity, aliasByFactors, alias)
+		_, conflictErr := i.conflictResolver.ResolveAliases(ctx, entity, aliasByFactors, alias)
 
 		// This appears to be accounting for any duplicate aliases for the same
 		// Entity. In that case we would have skipped over the merge above in the
@@ -948,7 +972,7 @@ func (i *IdentityStore) upsertEntityInTxn(ctx context.Context, txn *memdb.Txn, e
 
 		if persist {
 			// Persist the previous entity object
-			if err := i.persistEntity(nsCtx, previousEntity); err != nil {
+			if err := i.persistEntity(ctx, previousEntity); err != nil {
 				return false, err
 			}
 		}
@@ -967,7 +991,7 @@ func (i *IdentityStore) upsertEntityInTxn(ctx context.Context, txn *memdb.Txn, e
 	}
 
 	if persist {
-		if err := i.persistEntity(nsCtx, entity); err != nil {
+		if err := i.persistEntity(ctx, entity); err != nil {
 			return false, err
 		}
 	}
@@ -978,7 +1002,7 @@ func (i *IdentityStore) upsertEntityInTxn(ctx context.Context, txn *memdb.Txn, e
 	// can persist the change.
 	if i.localNode.HAState() == consts.Active {
 		for _, alias := range localAliasesToDrop {
-			if err := i.localAliasPacker.DeleteItem(nsCtx, alias.CanonicalID); err != nil {
+			if err := i.localAliasPacker.DeleteItem(ctx, alias.CanonicalID); err != nil {
 				i.logger.Warn("failed to delete entity from local alias packer", "entity_id", alias.CanonicalID)
 			}
 		}
@@ -1539,6 +1563,19 @@ func (i *IdentityStore) MemDBEntityByMergedEntityID(mergedEntityID string, clone
 	}
 
 	txn := i.db.Txn(false)
+
+	return i.MemDBEntityByMergedEntityIDInTxn(txn, mergedEntityID, clone)
+}
+
+// MemDBEntityByMergedEntityIDInTxn fetches an identity.Entity from MemDB by looking up the provided
+// merged entity ID within the context of the provided transaction. If 'clone' is set to true,
+// a clone of the fetched entity is returned to prevent unintended modifications to the original
+// entity stored in MemDB. If no entity is found with the given merged entity ID, nil is returned.
+// An error is returned if there are issues during the lookup or if the type assertion fails.
+func (i *IdentityStore) MemDBEntityByMergedEntityIDInTxn(txn *memdb.Txn, mergedEntityID string, clone bool) (*identity.Entity, error) {
+	if mergedEntityID == "" {
+		return nil, fmt.Errorf("missing merged entity id")
+	}
 
 	entityRaw, err := txn.First(entitiesTable, "merged_entity_ids", mergedEntityID)
 	if err != nil {

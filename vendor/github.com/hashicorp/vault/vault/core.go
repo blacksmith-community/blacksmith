@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
@@ -323,7 +323,7 @@ type Core struct {
 	// migrationInfo will be populated, which on enterprise may be necessary for
 	// seal rewrap.
 	migrationInfo     *migrationInformation
-	sealMigrationDone *uint32
+	sealMigrationDone atomic.Pointer[time.Time]
 
 	// barrier is the security barrier wrapping the physical backend
 	barrier SecurityBarrier
@@ -753,6 +753,7 @@ type Core struct {
 
 	// Activation flags for enterprise features that require a one-time activation
 	FeatureActivationFlags *activationflags.FeatureActivationFlags
+	licenseReloadCh        chan error
 }
 
 func (c *Core) ActiveNodeClockSkewMillis() int64 {
@@ -941,6 +942,7 @@ type CoreConfig struct {
 	PeriodicLeaderRefreshInterval time.Duration
 
 	ClusterAddrBridge *raft.ClusterAddrBridge
+	LicenseReload     chan error
 }
 
 // GetServiceRegistration returns the config's ServiceRegistration, or nil if it does
@@ -1058,7 +1060,7 @@ func CreateCore(conf *CoreConfig) (*Core, error) {
 		authLock:             authLock,
 		router:               NewRouter(),
 		sealed:               new(uint32),
-		sealMigrationDone:    new(uint32),
+		sealMigrationDone:    atomic.Pointer[time.Time]{},
 		standby:              true,
 		standbyStopCh:        new(atomic.Value),
 		baseLogger:           conf.Logger,
@@ -1389,17 +1391,45 @@ func NewCore(conf *CoreConfig) (*Core, error) {
 	observationSystemConfig := conf.ObservationSystemConfig
 	if observationSystemConfig != nil {
 		if observationSystemConfig.LedgerPath != "" {
-			observations, err := observations.NewObservationSystem(nodeID, observationSystemConfig.LedgerPath, observationsLogger)
+			config := &observations.NewObservationSystemConfig{
+				ObservationSystemConfig: observationSystemConfig,
+				LocalNodeId:             nodeID,
+				Logger:                  observationsLogger,
+			}
+			err = c.AddObservationSystemToCore(config)
 			if err != nil {
 				return nil, err
 			}
-			c.observations = observations
-			c.observations.Start()
 		}
 	}
 
 	c.clusterAddrBridge = conf.ClusterAddrBridge
+	c.licenseReloadCh = conf.LicenseReload
 	return c, nil
+}
+
+func (c *Core) AddObservationSystemToCore(config *observations.NewObservationSystemConfig) error {
+	observations, err := observations.NewObservationSystem(config)
+	if err != nil {
+		return err
+	}
+	c.observations = observations
+
+	c.reloadFuncsLock.Lock()
+
+	// While it's only possible to configure one observation system now, making the key
+	// include the path future-proofs us going forward.
+	key := "observations|" + config.LedgerPath
+	c.reloadFuncs[key] = append(c.reloadFuncs[key], func() error {
+		config.Logger.Info("reloading observation system", "path", config.LedgerPath)
+		return observations.Reload()
+	})
+
+	c.reloadFuncsLock.Unlock()
+
+	c.observations.Start()
+
+	return nil
 }
 
 // configureListeners configures the Core with the listeners from the CoreConfig.
@@ -1930,7 +1960,8 @@ func (c *Core) getUnsealKey(ctx context.Context, seal Seal) ([]byte, error) {
 // if the preceding conditions are true but we cannot decrypt the master key
 // in storage using the configured seal.
 func (c *Core) sealMigrated(ctx context.Context) (bool, error) {
-	if atomic.LoadUint32(c.sealMigrationDone) == 1 {
+	sealMigDone := c.sealMigrationDone.Load()
+	if sealMigDone != nil && !sealMigDone.IsZero() {
 		return true, nil
 	}
 
@@ -2072,7 +2103,7 @@ func (c *Core) migrateSeal(ctx context.Context) error {
 	}
 
 	// Flag migration performed for seal-rewrap later
-	atomic.StoreUint32(c.sealMigrationDone, 1)
+	c.SetSealMigrationDone()
 
 	c.logger.Info("seal migration complete")
 	return nil
@@ -2569,10 +2600,11 @@ func (s standardUnsealStrategy) unseal(ctx context.Context, logger log.Logger, c
 		if err := c.runUnsealSetupForPrimary(ctx, logger); err != nil {
 			return err
 		}
-	} else if c.IsMultisealEnabled() {
-		sealGenInfo := c.SealAccess().GetAccess().GetSealGenerationInfo()
-		if sealGenInfo != nil && !sealGenInfo.IsRewrapped() {
-			atomic.StoreUint32(c.sealMigrationDone, 1)
+	}
+
+	if c.IsMultisealEnabled() {
+		if err := c.handleMultisealRewrapping(ctx, logger); err != nil {
+			return err
 		}
 	}
 
@@ -2584,7 +2616,6 @@ func (s standardUnsealStrategy) unseal(ctx context.Context, logger log.Logger, c
 		if err := c.startForwarding(ctx); err != nil {
 			return err
 		}
-
 	}
 
 	c.clusterParamsLock.Lock()
@@ -2742,59 +2773,66 @@ func runUnsealSetupFunctions(ctx context.Context, setupFunctions []func(context.
 // runUnsealSetupForPrimary runs some setup code specific to clusters that are
 // in the primary role (as defined by the (*Core).isPrimary method).
 func (c *Core) runUnsealSetupForPrimary(ctx context.Context, logger log.Logger) error {
-	if err := c.setupPluginReload(); err != nil {
+	return c.setupPluginReload()
+}
+
+func (c *Core) handleMultisealRewrapping(ctx context.Context, logger log.Logger) error {
+	// Retrieve the seal generation information from storage
+	existingGenerationInfo, err := PhysicalSealGenInfo(ctx, c.physical)
+	if err != nil {
+		logger.Error("cannot read existing seal generation info from storage", "error", err)
 		return err
 	}
 
-	if c.IsMultisealEnabled() {
-		// Retrieve the seal generation information from storage
-		existingGenerationInfo, err := PhysicalSealGenInfo(ctx, c.physical)
-		if err != nil {
-			logger.Error("cannot read existing seal generation info from storage", "error", err)
+	sealGenerationInfo := c.seal.GetAccess().GetSealGenerationInfo()
+	shouldRewrap := !sealGenerationInfo.IsRewrapped()
+	var reason string
+	switch {
+	case existingGenerationInfo == nil:
+		reason = "First time storing seal generation information"
+		fallthrough
+	case existingGenerationInfo.Generation < sealGenerationInfo.Generation:
+		if reason == "" {
+			reason = fmt.Sprintf("Seal generation incremented from %d to %d",
+				existingGenerationInfo.Generation, sealGenerationInfo.Generation)
+		}
+		fallthrough
+	case !existingGenerationInfo.Enabled:
+		if reason == "" {
+			reason = fmt.Sprintf("Seal just become enabled again after previously being disabled")
+		}
+		if err := c.SetPhysicalSealGenInfo(ctx, sealGenerationInfo); err != nil {
+			logger.Error("failed to store seal generation info", "error", err)
 			return err
 		}
-
-		sealGenerationInfo := c.seal.GetAccess().GetSealGenerationInfo()
-		shouldRewrap := !sealGenerationInfo.IsRewrapped()
-		switch {
-		case existingGenerationInfo == nil:
-			// This is the first time we store seal generation information
-			fallthrough
-		case existingGenerationInfo.Generation < sealGenerationInfo.Generation || !existingGenerationInfo.Enabled:
-			// We have incremented the seal generation or we've just become enabled again after previously being disabled,
-			// trust the operator in the latter case
+		shouldRewrap = true
+	case existingGenerationInfo.Generation == sealGenerationInfo.Generation:
+		// Same generation, update the rewrapped flag in case the previous active node
+		// changed its value. In other words, a rewrap may have happened, or a rewrap may have been
+		// started but not completed.
+		c.seal.GetAccess().GetSealGenerationInfo().SetRewrapped(existingGenerationInfo.IsRewrapped())
+		if !existingGenerationInfo.Enabled {
+			// Weren't enabled but are now, persist the flag
 			if err := c.SetPhysicalSealGenInfo(ctx, sealGenerationInfo); err != nil {
 				logger.Error("failed to store seal generation info", "error", err)
 				return err
 			}
-			shouldRewrap = true
-		case existingGenerationInfo.Generation == sealGenerationInfo.Generation:
-			// Same generation, update the rewrapped flag in case the previous active node
-			// changed its value. In other words, a rewrap may have happened, or a rewrap may have been
-			// started but not completed.
-			c.seal.GetAccess().GetSealGenerationInfo().SetRewrapped(existingGenerationInfo.IsRewrapped())
-			if !existingGenerationInfo.Enabled {
-				// Weren't enabled but are now, persist the flag
-				if err := c.SetPhysicalSealGenInfo(ctx, sealGenerationInfo); err != nil {
-					logger.Error("failed to store seal generation info", "error", err)
-					return err
-				}
-			}
-			shouldRewrap = !existingGenerationInfo.IsRewrapped()
-		case existingGenerationInfo.Generation > sealGenerationInfo.Generation:
-			// Our seal information is out of date. The previous active node used a newer generation.
-			logger.Error("A newer seal generation was found in storage. The seal configuration in this node should be updated to match that of the previous active node, and this node should be restarted.")
-			return errors.New("newer seal generation found in storage, in memory seal configuration is out of date")
 		}
-		if shouldRewrap {
-			// Set the migration done flag so that a seal-rewrap gets triggered later.
-			// Note that in the case where multi seal is not supported, Core.migrateSeal() takes care of
-			// triggering the rewrap when necessary.
-			logger.Trace("seal generation information indicates that a seal-rewrap is needed", "generation", sealGenerationInfo.Generation)
-			atomic.StoreUint32(c.sealMigrationDone, 1)
-		}
-		startPartialSealRewrapping(c)
+		reason = "A rewrap may have happened, or a rewrap may have been started but not completed"
+		shouldRewrap = !existingGenerationInfo.IsRewrapped()
+	case existingGenerationInfo.Generation > sealGenerationInfo.Generation:
+		// Our seal information is out of date. The previous active node used a newer generation.
+		logger.Error("A newer seal generation was found in storage. The seal configuration in this node should be updated to match that of the previous active node, and this node should be restarted.")
+		return errors.New("newer seal generation found in storage, in memory seal configuration is out of date")
 	}
+	if shouldRewrap {
+		// Set the migration done flag so that a seal-rewrap gets triggered later.
+		// Note that in the case where multi seal is not supported, Core.migrateSeal() takes care of
+		// triggering the rewrap when necessary.
+		logger.Info("seal generation information indicates that a seal-rewrap is needed", "generation", sealGenerationInfo.Generation, "reason", reason)
+		c.SetSealMigrationDone()
+	}
+	startPartialSealRewrapping(c)
 
 	return nil
 }
@@ -2902,10 +2940,8 @@ func (c *Core) postUnseal(ctx context.Context, ctxCancelFunc context.CancelFunc,
 		close(jobs)
 	}
 
-	if atomic.LoadUint32(c.sealMigrationDone) == 1 {
-		if err := c.postSealMigration(ctx); err != nil {
-			c.logger.Warn("post-unseal post seal migration failed", "error", err)
-		}
+	if err := c.postSealMigration(ctx); err != nil {
+		c.logger.Warn("post-unseal post seal migration failed", "error", err)
 	}
 
 	if os.Getenv(EnvVaultDisableLocalAuthMountEntities) != "" {
@@ -3966,14 +4002,45 @@ func (c *Core) loadLoginMFAConfigs(ctx context.Context) error {
 	return nil
 }
 
+// MFACachedAuthResponse represents an authentication response that has been
+// temporarily cached during a two-phase MFA (Multi-Factor Authentication) login flow.
+//
+// This struct is used when an MFA enforcement is configured and a login request
+// lacks MFA credentials. Instead of completing the authentication immediately,
+// Vault caches the auth response and returns an MFARequirement to the client.
+// The client must then complete MFA validation using the mfa/validate endpoint
+// to retrieve the cached authentication and receive their token.
+//
+// The cached response includes the original authentication details along with
+// request metadata needed for MFA validation, such as the client's IP address
+// for methods like Duo that require connection information.
+//
+// This struct is also used to cache self-enrollment TOTP MFA secrets generated
+// during login when self-enrollment is enabled. This allows Vault to avoid
+// persisting the newly generated MFA secret until it has been successfully used
+// for validating an MFA-enforced login request.
 type MFACachedAuthResponse struct {
-	CachedAuth            *logical.Auth
-	RequestPath           string
-	RequestNSID           string
-	RequestNSPath         string
-	RequestConnRemoteAddr string
-	TimeOfStorage         time.Time
-	RequestID             string
+	CachedAuth              *logical.Auth
+	RequestPath             string
+	RequestNSID             string
+	RequestNSPath           string
+	RequestConnRemoteAddr   string
+	TimeOfStorage           time.Time
+	RequestID               string
+	SelfEnrollmentMFASecret *selfEnrollmentPendingMFASecret
+}
+
+// selfEnrollmentPendingMFASecret holds information about a TOTP Login MFA secret
+// that has been generated during a login request with self-enrollment enabled.
+// This secret is temporarily stored in memory until the user successfully
+// completes the MFA validation step. It is not persisted to avoid storing
+// unverified secrets.
+type selfEnrollmentPendingMFASecret struct {
+	// Fields here need to be exported because copystructure is used to copy this object.
+	MethodID string
+	Secret   *mfa.Secret
+	// Store the secret key string separately to avoid anyone accidentally persisting it on an Entity.
+	Key string
 }
 
 func (c *Core) setupCachedMFAResponseAuth() {
@@ -4364,48 +4431,53 @@ func (c *Core) LoadNodeID() (string, error) {
 
 // DetermineRoleFromLoginRequest will determine the role that should be applied to a quota for a given
 // login request
-func (c *Core) DetermineRoleFromLoginRequest(ctx context.Context, mountPoint string, data map[string]interface{}) string {
+func (c *Core) DetermineRoleFromLoginRequest(ctx context.Context, mountPoint string, data map[string]interface{}, conn *logical.Connection, headers map[string][]string) string {
 	c.authLock.RLock()
 	defer c.authLock.RUnlock()
-	matchingBackend := c.router.MatchingBackend(ctx, mountPoint)
-	if matchingBackend == nil || matchingBackend.Type() != logical.TypeCredential {
-		// Role based quotas do not apply to this request
-		return ""
-	}
-	return c.doResolveRoleLocked(ctx, mountPoint, matchingBackend, data)
+	return c.doResolveRoleLocked(ctx, mountPoint, data, conn, headers)
 }
 
 // DetermineRoleFromLoginRequestFromReader will determine the role that should
 // be applied to a quota for a given login request. The reader will only be
 // consumed if the matching backend for the mount point exists and is a secret
 // backend
-func (c *Core) DetermineRoleFromLoginRequestFromReader(ctx context.Context, mountPoint string, reader io.Reader) string {
+func (c *Core) DetermineRoleFromLoginRequestFromReader(ctx context.Context, mountPoint string, reader io.Reader, conn *logical.Connection, header http.Header) string {
 	c.authLock.RLock()
 	defer c.authLock.RUnlock()
-	matchingBackend := c.router.MatchingBackend(ctx, mountPoint)
-	if matchingBackend == nil || matchingBackend.Type() != logical.TypeCredential {
-		// Role based quotas do not apply to this request
-		return ""
-	}
-
 	data := make(map[string]interface{})
 	err := jsonutil.DecodeJSONFromReader(reader, &data)
 	if err != nil {
 		return ""
 	}
-	return c.doResolveRoleLocked(ctx, mountPoint, matchingBackend, data)
+	return c.doResolveRoleLocked(ctx, mountPoint, data, conn, header)
 }
 
-// doResolveRoleLocked does a login and resolve role request on the matching
-// backend. Callers should have a read lock on c.authLock
-func (c *Core) doResolveRoleLocked(ctx context.Context, mountPoint string, matchingBackend logical.Backend, data map[string]interface{}) string {
-	resp, err := matchingBackend.HandleRequest(ctx, &logical.Request{
+// doResolveRoleLocked does a resolve role request on the matching backend.
+// Callers should have a read lock on c.authLock.
+func (c *Core) doResolveRoleLocked(ctx context.Context, mountPoint string, data map[string]interface{}, conn *logical.Connection, headers http.Header) string {
+	be, me := c.router.MatchingBackendAndMountEntry(ctx, mountPoint)
+	if be == nil || be.Type() != logical.TypeCredential {
+		// Role based quotas do not apply to this request
+		return ""
+	}
+
+	var passthroughRequestHeaders []string
+	if rawVal, ok := me.synthesizedConfigCache.Load("passthrough_request_headers"); ok {
+		passthroughRequestHeaders = rawVal.([]string)
+	}
+
+	req := &logical.Request{
 		MountPoint: mountPoint,
 		Path:       "login",
 		Operation:  logical.ResolveRoleOperation,
 		Data:       data,
 		Storage:    c.router.MatchingStorageByAPIPath(ctx, mountPoint+"login"),
-	})
+		Connection: conn,
+	}
+	if len(passthroughRequestHeaders) > 0 {
+		req.Headers = filteredHeaders(headers, passthroughRequestHeaders, deniedPassthroughRequestHeaders)
+	}
+	resp, err := be.HandleRequest(ctx, req)
 	if err != nil || resp.Data["role"] == nil {
 		return ""
 	}
@@ -4751,6 +4823,11 @@ func (c *Core) shutdownRemovedNode() {
 	go func() {
 		c.ShutdownCoreError(errRemovedHANode)
 	}()
+}
+
+func (c *Core) SetSealMigrationDone() {
+	now := time.Now()
+	c.sealMigrationDone.Store(&now)
 }
 
 var errRemovedHANode = errors.New("node has been removed from the HA cluster")

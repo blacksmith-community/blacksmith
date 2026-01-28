@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
@@ -69,10 +69,11 @@ type acmeBillingSystemViewImpl struct {
 }
 
 var (
-	_ logical.ACMEBillingSystemView = (*acmeBillingSystemViewImpl)(nil)
-	_ extendedSystemView            = (*acmeBillingSystemViewImpl)(nil)
-	_ logical.ManagedKeySystemView  = (*acmeBillingSystemViewImpl)(nil)
-	_ entropy.Sourcer               = (*acmeBillingSystemViewImpl)(nil)
+	_ logical.ACMEBillingSystemView         = (*acmeBillingSystemViewImpl)(nil)
+	_ extendedSystemView                    = (*acmeBillingSystemViewImpl)(nil)
+	_ logical.ManagedKeySystemView          = (*acmeBillingSystemViewImpl)(nil)
+	_ entropy.Sourcer                       = (*acmeBillingSystemViewImpl)(nil)
+	_ logical.PkiCertificateCountSystemView = (*acmeBillingSystemViewImpl)(nil)
 )
 
 // Scenario 2 above.
@@ -83,9 +84,10 @@ type acmeBillingSystemViewImplNoSourcer struct {
 }
 
 var (
-	_ logical.ACMEBillingSystemView = (*acmeBillingSystemViewImplNoSourcer)(nil)
-	_ extendedSystemView            = (*acmeBillingSystemViewImplNoSourcer)(nil)
-	_ logical.ManagedKeySystemView  = (*acmeBillingSystemViewImplNoSourcer)(nil)
+	_ logical.ACMEBillingSystemView         = (*acmeBillingSystemViewImplNoSourcer)(nil)
+	_ extendedSystemView                    = (*acmeBillingSystemViewImplNoSourcer)(nil)
+	_ logical.ManagedKeySystemView          = (*acmeBillingSystemViewImplNoSourcer)(nil)
+	_ logical.PkiCertificateCountSystemView = (*acmeBillingSystemViewImplNoSourcer)(nil)
 )
 
 // Scenario 3 above.
@@ -95,8 +97,9 @@ type acmeBillingSystemViewImplNoManagedKeys struct {
 }
 
 var (
-	_ logical.ACMEBillingSystemView = (*acmeBillingSystemViewImplNoManagedKeys)(nil)
-	_ extendedSystemView            = (*acmeBillingSystemViewImplNoManagedKeys)(nil)
+	_ logical.ACMEBillingSystemView         = (*acmeBillingSystemViewImplNoManagedKeys)(nil)
+	_ extendedSystemView                    = (*acmeBillingSystemViewImplNoManagedKeys)(nil)
+	_ logical.PkiCertificateCountSystemView = (*acmeBillingSystemViewImplNoManagedKeys)(nil)
 )
 
 // NewAcmeBillingSystemView creates the appropriate implementation based on
@@ -136,7 +139,11 @@ func (a *acmeBillingImpl) CreateActivityCountEventForIdentifiers(ctx context.Con
 		return nil
 	}
 	activityLog.logger.Debug(fmt.Sprintf("Handling ACME client count event for [%v] -> %v", identifiers, clientID))
-	activityLog.AddActivityToFragment(clientID, a.entry.NamespaceID, time.Now().Unix(), ACMEActivityType, a.entry.Accessor)
+	activityLog.AddActivityToFragment(clientID, a.entry.NamespaceID, time.Now().Unix(), ACMEActivityType, a.entry.Accessor, time.Now().Unix())
 
 	return nil
+}
+
+func (a *acmeBillingImpl) GetPkiCertificateCounter() logical.PkiCertificateCounter {
+	return a.core.GetPkiCertificateCounter()
 }

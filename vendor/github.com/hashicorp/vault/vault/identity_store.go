@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
@@ -118,12 +118,12 @@ func NewIdentityStore(ctx context.Context, core *Core, config *logical.BackendCo
 		InitializeFunc: iStore.initialize,
 		ActivationFunc: iStore.activateDeduplication,
 		PathsSpecial: &logical.Paths{
-			Unauthenticated: []string{
+			Unauthenticated: append([]string{
 				"oidc/.well-known/*",
 				"oidc/+/.well-known/*",
 				"oidc/provider/+/.well-known/*",
 				"oidc/provider/+/token",
-			},
+			}, identityStoreLoginMFAEntUnauthedPaths()...),
 			LocalStorage: []string{
 				localAliasesBucketsPrefix,
 			},
@@ -165,6 +165,7 @@ func (i *IdentityStore) paths() []*framework.Path {
 		mfaDuoPaths(i),
 		mfaPingIDPaths(i),
 		mfaLoginEnforcementPaths(i),
+		mfaLoginEnterprisePaths(i),
 	)
 }
 
@@ -333,6 +334,11 @@ func mfaTOTPPaths(i *IdentityStore) []*framework.Path {
 				Type:        framework.TypeInt,
 				Default:     1,
 				Description: `The number of delay periods that are allowed when validating a TOTP token. This value can either be 0 or 1.`,
+			},
+			"enable_self_enrollment": {
+				Type:        framework.TypeBool,
+				Default:     false,
+				Description: `If true, users are able to generate a TOTP Login MFA secret for themselves while logging in. Defaults to false.`,
 			},
 		},
 		i,
@@ -1382,13 +1388,14 @@ func (i *IdentityStore) CreateOrFetchEntity(ctx context.Context, alias *logical.
 
 		// Create a new alias
 		newAlias := &identity.Alias{
-			CanonicalID:   entity.ID,
-			Name:          alias.Name,
-			MountAccessor: alias.MountAccessor,
-			Metadata:      alias.Metadata,
-			MountPath:     mountValidationResp.MountPath,
-			MountType:     mountValidationResp.MountType,
-			Local:         alias.Local,
+			CanonicalID:    entity.ID,
+			Name:           alias.Name,
+			MountAccessor:  alias.MountAccessor,
+			Metadata:       alias.Metadata,
+			MountPath:      mountValidationResp.MountPath,
+			MountType:      mountValidationResp.MountType,
+			Local:          alias.Local,
+			CustomMetadata: alias.CustomMetadata,
 		}
 
 		err = i.sanitizeAlias(ctx, newAlias)
