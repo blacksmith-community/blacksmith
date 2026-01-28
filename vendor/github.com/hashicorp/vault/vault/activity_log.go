@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
@@ -64,18 +64,18 @@ const (
 	activitySegmentWriteTimeout = 1 * time.Minute
 
 	// Number of client records to store per segment. Each ClientRecord may
-	// consume upto 99 bytes; rounding it to 100bytes. This []byte undergo JSON marshalling
+	// consume upto 115 bytes; rounding it to 120 bytes. This []byte undergo JSON marshalling
 	// before adding them in storage increasing the size by approximately 4/3 times. Considering the storage
-	// limit of 512KB per storage entry, we can roughly store 512KB/(100bytes * 4/3) yielding approximately 3820 records.
-	ActivitySegmentClientCapacity = 3820
+	// limit of 512KB per storage entry, we can roughly store 512KB/(120 bytes * 4/3) yielding approximately 3200 records.
+	ActivitySegmentClientCapacity = 3200
 
 	// Maximum number of segments per month. This allows for 700K entities per
-	// month; 700K/3820 (ActivitySegmentClientCapacity). These limits are geared towards controlling the storage
+	// month; 700K/3200 (ActivitySegmentClientCapacity). These limits are geared towards controlling the storage
 	// implications of persisting activity logs. If we hit a scenario where the
 	// storage consequences are less important in comparison to the accuracy of
 	// the client activity, these limits can be further relaxed or even be
 	// removed.
-	activityLogMaxSegmentPerMonth = 184
+	activityLogMaxSegmentPerMonth = 220
 
 	// trackedTWESegmentPeriod is a time period of a little over a month, and represents
 	// the amount of time that needs to pass after a 1.9 or later upgrade to result in
@@ -288,8 +288,11 @@ type ActivityLogExportRecord struct {
 	// MountPath is the path of the auth mount associated with the token used
 	MountPath string `json:"mount_path" mapstructure:"mount_path"`
 
-	// Timestamp denotes the time at which the activity occurred formatted using RFC3339
-	Timestamp string `json:"timestamp" mapstructure:"timestamp"`
+	// TokenCreationTime denotes the token creation timestamp formatted using RFC3339
+	TokenCreationTime string `json:"token_creation_time" mapstructure:"token_creation_time"`
+
+	// ClientFirstUsedTime denotes the timestamp at which the activity first occurred in the query period formatted using RFC3339
+	ClientFirstUsedTime string `json:"client_first_used_time,omitempty" mapstructure:"client_first_used_time"`
 
 	// Policies are the list of policy names attached to the token used
 	Policies []string `json:"policies" mapstructure:"policies"`
@@ -1770,22 +1773,23 @@ func (c *Core) ResetActivityLog() []*activity.LogFragment {
 	return allFragments
 }
 
-func (a *ActivityLog) AddEntityToFragment(entityID string, namespaceID string, timestamp int64) {
-	a.AddClientToFragment(entityID, namespaceID, timestamp, false, "")
+// AddEntityToFragment adds an entity for frgament for testing purposes
+func (a *ActivityLog) AddEntityToFragment(entityID string, namespaceID string, timestamp int64, usageTime int64) {
+	a.AddClientToFragment(entityID, namespaceID, timestamp, false, "", usageTime)
 }
 
 // AddClientToFragment checks a client ID for uniqueness and
 // if not already present, adds it to the current fragment.
 //
 // See note below about AddActivityToFragment.
-func (a *ActivityLog) AddClientToFragment(clientID string, namespaceID string, timestamp int64, isTWE bool, mountAccessor string) {
+func (a *ActivityLog) AddClientToFragment(clientID string, namespaceID string, timestamp int64, isTWE bool, mountAccessor string, usageTime int64) {
 	// TWE == token without entity
 	if isTWE {
-		a.AddActivityToFragment(clientID, namespaceID, timestamp, nonEntityTokenActivityType, mountAccessor)
+		a.AddActivityToFragment(clientID, namespaceID, timestamp, nonEntityTokenActivityType, mountAccessor, usageTime)
 		return
 	}
 
-	a.AddActivityToFragment(clientID, namespaceID, timestamp, entityActivityType, mountAccessor)
+	a.AddActivityToFragment(clientID, namespaceID, timestamp, entityActivityType, mountAccessor, usageTime)
 }
 
 // AddActivityToFragment adds a client count event of any type to
@@ -1793,7 +1797,7 @@ func (a *ActivityLog) AddClientToFragment(clientID string, namespaceID string, t
 // all types; if not already present, we will add it to the current
 // fragment. The timestamp is a Unix timestamp *without* nanoseconds,
 // as that is what token.CreationTime uses.
-func (a *ActivityLog) AddActivityToFragment(clientID string, namespaceID string, timestamp int64, activityType string, mountAccessor string) {
+func (a *ActivityLog) AddActivityToFragment(clientID string, namespaceID string, timestamp int64, activityType string, mountAccessor string, usageTime int64) {
 	// Check whether entity ID already recorded
 	var present bool
 
@@ -1831,6 +1835,7 @@ func (a *ActivityLog) AddActivityToFragment(clientID string, namespaceID string,
 		Timestamp:     timestamp,
 		MountAccessor: mountAccessor,
 		ClientType:    activityType,
+		UsageTime:     usageTime,
 	}
 
 	// Track whether the clientID corresponds to a token without an entity or not.
@@ -1957,76 +1962,14 @@ func (a *ActivityLog) DefaultStartTime(endTime time.Time) time.Time {
 }
 
 func (a *ActivityLog) handleQuery(ctx context.Context, startTime, endTime time.Time, limitNamespaces int) (map[string]interface{}, error) {
-	var computePartial bool
-
-	// Change the start time to the beginning of the month, and the end time to be the end
-	// of the month.
+	// Normalize the start time to the beginning of the month, and the end time to be the end of the month.
 	startTime = timeutil.StartOfMonth(startTime)
 	endTime = timeutil.EndOfMonth(endTime)
 
-	// At the max, we only want to return data up until the end of the current month.
-	// Adjust the end time be the current month if a future date has been provided.
-	endOfCurrentMonth := timeutil.EndOfMonth(a.clock.Now().UTC())
-	adjustedEndTime := endTime
-	if endTime.After(endOfCurrentMonth) {
-		adjustedEndTime = endOfCurrentMonth
-	}
-
-	// If the endTime of the query is the current month, request data from the queryStore
-	// with the endTime equal to the end of the last month, and add in the current month
-	// data.
-	precomputedQueryEndTime := adjustedEndTime
-	if timeutil.IsCurrentMonth(adjustedEndTime, a.clock.Now().UTC()) {
-		precomputedQueryEndTime = timeutil.EndOfMonth(timeutil.MonthsPreviousTo(1, timeutil.StartOfMonth(adjustedEndTime)))
-		computePartial = true
-	}
-
-	pq := &activity.PrecomputedQuery{}
-	if startTime.After(precomputedQueryEndTime) && timeutil.IsCurrentMonth(startTime, a.clock.Now().UTC()) {
-		// We're only calculating the partial month client count. Skip the precomputation
-		// get call.
-		pq = &activity.PrecomputedQuery{
-			StartTime:  startTime,
-			EndTime:    endTime,
-			Namespaces: make([]*activity.NamespaceRecord, 0),
-			Months:     make([]*activity.MonthRecord, 0),
-		}
-	} else {
-		storedQuery, err := a.queryStore.Get(ctx, startTime, precomputedQueryEndTime)
-		if err != nil {
-			return nil, err
-		}
-		if storedQuery == nil {
-			// If the storedQuery is nil, that means there's no historical data to process. But, it's possible there's
-			// still current month data to process, so rather than returning a 204, let's proceed along like we're
-			// just querying the current month.
-			storedQuery = &activity.PrecomputedQuery{
-				StartTime:  startTime,
-				EndTime:    endTime,
-				Namespaces: make([]*activity.NamespaceRecord, 0),
-				Months:     make([]*activity.MonthRecord, 0),
-			}
-		}
-		pq = storedQuery
-	}
-
-	var partialByMonth map[int64]*processMonth
-	if computePartial {
-		// Traverse through current month's activitylog data and group clients
-		// into months and namespaces
-		a.fragmentLock.RLock()
-		partialByMonth, _ = a.populateNamespaceAndMonthlyBreakdowns()
-		a.fragmentLock.RUnlock()
-
-		// Estimate the current month totals. These record contains is complete with all the
-		// current month data, grouped by namespace and mounts
-		currentMonth, err := a.computeCurrentMonthForBillingPeriod(partialByMonth, startTime, adjustedEndTime)
-		if err != nil {
-			return nil, err
-		}
-
-		// Combine the existing months precomputed query with the current month data
-		pq.CombineWithCurrentMonth(currentMonth)
+	// Compute the total clients in the billing period, and get the breakdown by namespace.
+	pq, err := a.computeClientsInBillingPeriod(ctx, startTime, endTime)
+	if err != nil {
+		return nil, err
 	}
 
 	// Convert the namespace data into a protobuf format that can be returned in the response
@@ -2066,7 +2009,7 @@ func (a *ActivityLog) handleQuery(ctx context.Context, startTime, endTime time.T
 	a.sortActivityLogMonthsResponse(months)
 
 	// Modify the final month output to make response more consumable based on API request
-	months = a.modifyResponseMonths(months, startTime, adjustedEndTime)
+	months = a.modifyResponseMonths(months, startTime, endTime)
 	responseData["months"] = months
 
 	return responseData, nil
@@ -2214,7 +2157,7 @@ func (a *ActivityLog) HandleTokenUsage(ctx context.Context, entry *logical.Token
 	}
 
 	// Parse an entry's client ID and add it to the activity log
-	a.AddClientToFragment(clientID, entry.NamespaceID, entry.CreationTime, isTWE, mountAccessor)
+	a.AddClientToFragment(clientID, entry.NamespaceID, entry.CreationTime, isTWE, mountAccessor, time.Now().Unix())
 	return nil
 }
 
@@ -3192,12 +3135,12 @@ func (a *ActivityLog) writeExport(ctx context.Context, rw http.ResponseWriter, f
 			ts := time.Unix(e.Timestamp, 0)
 
 			record := &ActivityLogExportRecord{
-				ClientID:      e.ClientID,
-				ClientType:    e.ClientType,
-				NamespaceID:   e.NamespaceID,
-				NamespacePath: nsDisplayPath,
-				Timestamp:     ts.UTC().Format(time.RFC3339),
-				MountAccessor: e.MountAccessor,
+				ClientID:          e.ClientID,
+				ClientType:        e.ClientType,
+				NamespaceID:       e.NamespaceID,
+				NamespacePath:     nsDisplayPath,
+				TokenCreationTime: ts.UTC().Format(time.RFC3339),
+				MountAccessor:     e.MountAccessor,
 
 				// Default following to empty versus nil, will be overwritten if necessary
 				Policies:                  []string{},
@@ -3205,6 +3148,13 @@ func (a *ActivityLog) writeExport(ctx context.Context, rw http.ResponseWriter, f
 				EntityAliasMetadata:       map[string]string{},
 				EntityAliasCustomMetadata: map[string]string{},
 				EntityGroupIDs:            []string{},
+			}
+
+			// if a client does not have usage time (clients used before upgrade to 1.21 and not seen yet after the upgrade),
+			// do not include first used time in response.
+			if e.UsageTime != 0 {
+				clientFirstUsedTimeStamp := time.Unix(e.UsageTime, 0)
+				record.ClientFirstUsedTime = clientFirstUsedTimeStamp.UTC().Format(time.RFC3339)
 			}
 
 			if e.MountAccessor != "" {
@@ -3481,7 +3431,8 @@ func baseActivityExportCSVHeader() []string {
 		"mount_accessor",
 		"mount_path",
 		"mount_type",
-		"timestamp",
+		"token_creation_time",
+		"client_first_used_time",
 	}
 }
 

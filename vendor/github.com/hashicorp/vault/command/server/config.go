@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package server
@@ -447,6 +447,11 @@ func (c *Config) Merge(c2 *Config) *Config {
 		if c2.Observations.LedgerPath != "" {
 			result.Observations.LedgerPath = c2.Observations.LedgerPath
 		}
+		result.Observations.TypePrefixDenylist = append(result.Observations.TypePrefixDenylist, c2.Observations.TypePrefixDenylist...)
+		result.Observations.TypePrefixAllowlist = append(result.Observations.TypePrefixAllowlist, c2.Observations.TypePrefixAllowlist...)
+		if c2.Observations.FileMode != "" {
+			result.Observations.FileMode = c2.Observations.FileMode
+		}
 	}
 
 	result.ImpreciseLeaseRoleTracking = c.ImpreciseLeaseRoleTracking
@@ -648,6 +653,14 @@ func ParseConfigCheckDuplicate(d, source string) (cfg *Config, duplicate bool, e
 	// Parse!
 	obj, duplicate, err := random.ParseAndCheckForDuplicateHclAttributes(d)
 	if err != nil {
+		if strings.Contains(err.Error(), "was already set. Each argument can only be defined once") {
+			knownPossibleAttributeDupErrors := []string{"retry_join", "transform", "listener"}
+			for _, s := range knownPossibleAttributeDupErrors {
+				if strings.Contains(err.Error(), fmt.Sprintf("The argument %q at", s)) {
+					return nil, duplicate, fmt.Errorf("%w (if using the attribute syntax %s = [...], change it to the block syntax %s { ... })", err, s, s)
+				}
+			}
+		}
 		return nil, duplicate, err
 	}
 

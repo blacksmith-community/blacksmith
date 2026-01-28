@@ -35,6 +35,11 @@ func pathMetadata(b *versionedKVBackend) *framework.Path {
 				Type:        framework.TypeString,
 				Description: "Location of the secret.",
 			},
+			"exclude_deleted": {
+				Type:        framework.TypeBool,
+				Description: "If true, exclude keys where the current version is deleted when listing keys.",
+				Default:     false,
+			},
 			"cas_required": {
 				Type: framework.TypeBool,
 				Description: `
@@ -130,6 +135,11 @@ version-agnostic information about a secret.
 								Description: "User-provided key-value pairs that are used to describe arbitrary and version-agnostic information about a secret.",
 								Required:    true,
 							},
+							"last_updated_by": {
+								Type:        framework.TypeMap,
+								Description: "Attribution information of the last actor to update this secret",
+								Required:    false,
+							},
 						},
 					}},
 				},
@@ -194,6 +204,7 @@ func (b *versionedKVBackend) metadataExistenceCheck() framework.ExistenceFunc {
 func (b *versionedKVBackend) pathMetadataList() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		key := data.Get("path").(string)
+		excludeDeleted := data.Get("exclude_deleted").(bool)
 
 		// Get an encrypted key storage object
 		wrapper, err := b.getKeyEncryptor(ctx, req.Storage)
@@ -205,7 +216,46 @@ func (b *versionedKVBackend) pathMetadataList() framework.OperationFunc {
 
 		// Use encrypted key storage to list the keys
 		keys, err := es.List(ctx, key)
-		return logical.ListResponse(keys), err
+		if err != nil {
+			return nil, err
+		}
+
+		// If exclude_deleted flag is not set, return all keys
+		if !excludeDeleted {
+			return logical.ListResponse(keys), nil
+		}
+
+		// Filter out keys with deletion_time set on their current version
+		var filteredKeys []string
+
+		for _, keyName := range keys {
+			fullPath := key + keyName
+			if strings.HasSuffix(keyName, "/") {
+				// Include directories in the filtered list
+				filteredKeys = append(filteredKeys, keyName)
+				continue
+			}
+
+			meta, err := b.getKeyMetadata(ctx, req.Storage, fullPath)
+			if err != nil {
+				// Include the key in case of error to avoid hiding potentially valid keys
+				filteredKeys = append(filteredKeys, keyName)
+				continue
+			}
+
+			if meta != nil {
+				// Check if the current version has deletion_time set
+				currentVersion := meta.Versions[meta.CurrentVersion]
+				if currentVersion != nil && currentVersion.DeletionTime != nil {
+					// If the current version is deleted, skip this key
+					continue
+				}
+			}
+			// Include the key (either no metadata found or current version not deleted)
+			filteredKeys = append(filteredKeys, keyName)
+		}
+
+		return logical.ListResponse(filteredKeys), nil
 	}
 }
 
@@ -227,6 +277,8 @@ func (b *versionedKVBackend) pathMetadataRead() framework.OperationFunc {
 				"created_time":  ptypesTimestampToString(v.CreatedTime),
 				"deletion_time": ptypesTimestampToString(v.DeletionTime),
 				"destroyed":     v.Destroyed,
+				"deleted_by":    v.DeletedBy,
+				"created_by":    v.CreatedBy,
 			}
 		}
 
@@ -251,6 +303,7 @@ func (b *versionedKVBackend) pathMetadataRead() framework.OperationFunc {
 				"cas_required":         meta.CasRequired,
 				"delete_version_after": deleteVersionAfter.String(),
 				"custom_metadata":      meta.CustomMetadata,
+				"last_updated_by":      meta.LastUpdatedBy,
 			},
 		}, nil
 	}

@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package http
@@ -84,7 +84,15 @@ const (
 	VaultSnapshotReadParam = "read_snapshot_id"
 	// VaultSnapshotRecoverParam is the query parameter sent when Vault should
 	// recover the data from a loaded snapshot
+	// Deprecated: use VaultSnapshotRecoverHeader
 	VaultSnapshotRecoverParam = "recover_snapshot_id"
+	// VaultRecoverSourcePathHeader contains an optional source path
+	// to read the data from when performing a recover operation
+	VaultRecoverSourcePathHeader = consts.RecoverSourcePathHeader
+	// VaultSnapshotRecoverHeader holds the snapshot ID to use for a read, list, or
+	// recover from snapshot operation. This replaces the use of query parameters
+	// to pass the snapshot ID
+	VaultSnapshotRecoverHeader = "X-Vault-Recover-Snapshot-Id"
 
 	// CustomMaxJSONDepth specifies the maximum nesting depth of a JSON object.
 	// This limit is designed to prevent stack exhaustion attacks from deeply
@@ -122,6 +130,15 @@ const (
 	// systems that require handling larger datasets, though pagination is the
 	// recommended practice for such cases.
 	CustomMaxJSONArrayElementCount = 10000
+
+	// CustomMaxJSONToken sets the maximum total number of tokens (e.g., keys, values,
+	// braces, brackets) permitted in a single JSON payload. This limit is a crucial
+	// defense against complexity-based denial-of-service (DoS) attacks, where a
+	// payload could exhaust CPU and memory with an enormous number of small elements,
+	// even while respecting all other individual limits. The default of 500,000
+	// tokens provides a robust safeguard against malicious inputs without interfering
+	// with legitimate, large-scale API operations. This value is configurable.
+	CustomMaxJSONToken = 500000
 )
 
 var (
@@ -170,6 +187,7 @@ func init() {
 		"sys/storage/raft/snapshot-force",
 		"!sys/storage/raft/snapshot-auto/config",
 		"sys/storage/raft/snapshot-load",
+		"!sys/storage/raft/snapshot-auto/snapshot-load",
 	})
 	websocketPaths.AddPaths(websocketRawPaths)
 }
@@ -290,6 +308,8 @@ func handler(props *vault.HandlerProperties) http.Handler {
 	// Build up a chain of wrapping handlers.
 	wrappedHandler := wrapHelpHandler(mux, core)
 	wrappedHandler = wrapCORSHandler(wrappedHandler, core)
+	wrappedHandler = withRoleRateLimitQuotaWrapping(wrappedHandler, core)
+	wrappedHandler = wrapJSONLimitsHandler(wrappedHandler, props)
 	wrappedHandler = rateLimitQuotaWrapping(wrappedHandler, core)
 	wrappedHandler = entWrapGenericHandler(core, wrappedHandler, props)
 	wrappedHandler = wrapMaxRequestSizeHandler(wrappedHandler, props)
@@ -671,7 +691,14 @@ func WrapForwardedForHandler(h http.Handler, l *configutil.Listener) http.Handle
 							}
 							v = decoded
 						case "BASE64":
-							decoded, err := base64.StdEncoding.DecodeString(v)
+							// Support RFC 9440/8941 Structured Headers byte sequence values (":MIIC...==:").
+							// If the value is wrapped in leading/trailing colons, unwrap before decoding.
+							base64Value := v
+							if len(v) >= 2 && v[0] == ':' && v[len(v)-1] == ':' {
+								base64Value = v[1 : len(v)-1]
+							}
+
+							decoded, err := base64.StdEncoding.DecodeString(base64Value)
 							if err != nil {
 								respondError(w, http.StatusBadRequest, fmt.Errorf("failed to base64 decode the client certificate: %w", err))
 								return
@@ -1503,7 +1530,7 @@ func requiresSnapshot(r *http.Request) bool {
 	case http.MethodGet, "LIST":
 		return query.Has(VaultSnapshotReadParam)
 	case http.MethodPut, http.MethodPost:
-		return query.Has(VaultSnapshotRecoverParam)
+		return query.Has(VaultSnapshotRecoverParam) || r.Header.Get(VaultSnapshotRecoverParam) != ""
 	}
 	return false
 }

@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 syntax = "proto3";
@@ -55,6 +55,8 @@ message TOTPConfig {
   int32 qr_size = 7;
   // @inject_tag: sentinel:"-"
   uint32 max_validation_attempts = 8;
+  // @inject_tag: sentinel:"-"
+  bool enable_self_enrollment = 9;
 }
 
 // DuoConfig represents the configuration information required to perform

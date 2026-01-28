@@ -1,17 +1,16 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
 
 import (
-    "context"
-    "fmt"
+	"context"
+	"fmt"
 
-    "github.com/hashicorp/vault/helper/namespace"
-    "github.com/hashicorp/vault/sdk/helper/consts"
-    "github.com/hashicorp/vault/sdk/helper/pluginutil"
-    "github.com/hashicorp/vault/sdk/rotation"
-    "github.com/hashicorp/vault/sdk/logical"
+	"github.com/hashicorp/vault/helper/namespace"
+	"github.com/hashicorp/vault/sdk/helper/consts"
+	"github.com/hashicorp/vault/sdk/helper/pluginutil"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 var _ logical.ExtendedSystemView = (*extendedSystemViewImpl)(nil)
@@ -141,11 +140,5 @@ func (e extendedSystemViewImpl) DeregisterWellKnownRedirect(ctx context.Context,
 
 // GetPinnedPluginVersion implements logical.ExtendedSystemView.
 func (e extendedSystemViewImpl) GetPinnedPluginVersion(ctx context.Context, pluginType consts.PluginType, pluginName string) (*pluginutil.PinnedVersion, error) {
-    return e.core.pluginCatalog.GetPinnedVersion(ctx, pluginType, pluginName)
-}
-
-// GetRotationInformation implements logical.ExtendedSystemView.
-// Community builds do not support this; return a nil response and an error.
-func (e extendedSystemViewImpl) GetRotationInformation(ctx context.Context, req *rotation.RotationInfoRequest) (*rotation.RotationInfoResponse, error) {
-    return nil, fmt.Errorf("rotation information not available in OSS")
+	return e.core.pluginCatalog.GetPinnedVersion(ctx, pluginType, pluginName)
 }

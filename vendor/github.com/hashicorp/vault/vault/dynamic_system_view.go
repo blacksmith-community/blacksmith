@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
@@ -355,6 +355,17 @@ func (d dynamicSystemView) GenerateIdentityToken(ctx context.Context, req *plugi
 	}, nil
 }
 
+func (d dynamicSystemView) GetRotationInformation(ctx context.Context, req *rotation.RotationInfoRequest) (*rotation.RotationInfoResponse, error) {
+	// sanity check
+	mountEntry := d.mountEntry
+	if mountEntry == nil {
+		return nil, fmt.Errorf("no mount entry")
+	}
+	nsCtx := namespace.ContextWithNamespace(ctx, mountEntry.Namespace())
+
+	return d.core.GetRotationInformation(nsCtx, mountEntry.APIPath(), req)
+}
+
 func (d dynamicSystemView) RegisterRotationJob(ctx context.Context, req *rotation.RotationJobConfigureRequest) (string, error) {
 	mountEntry := d.mountEntry
 	if mountEntry == nil {
@@ -384,10 +395,4 @@ func (d dynamicSystemView) DeregisterRotationJob(ctx context.Context, req *rotat
 	nsCtx := namespace.ContextWithNamespace(ctx, mountEntry.Namespace())
 
 	return d.core.DeregisterRotationJob(nsCtx, req)
-}
-
-// GetRotationInformation returns rotation information for a given rotation ID.
-// In OSS builds or test harness, return a not supported error to satisfy interface.
-func (d dynamicSystemView) GetRotationInformation(ctx context.Context, req *rotation.RotationInfoRequest) (*rotation.RotationInfoResponse, error) {
-    return nil, fmt.Errorf("rotation information not available in OSS")
 }
