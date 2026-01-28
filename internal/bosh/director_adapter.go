@@ -458,6 +458,21 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
 	}
 
+	// Get the manifest to extract network information per instance group
+	d.log.Debugf("Retrieving manifest for deployment %s to extract network info", deployment)
+
+	manifestYAML, err := dep.Manifest()
+	if err != nil {
+		d.log.Errorf("Failed to get manifest for deployment %s: %v", deployment, err)
+		// Continue without network info rather than failing completely
+		manifestYAML = ""
+	}
+
+	networkByJob := extractNetworksByJob(manifestYAML)
+	if len(networkByJob) > 0 {
+		d.log.Debugf("Extracted networks by job: %v", networkByJob)
+	}
+
 	d.log.Debugf("Retrieving detailed VM information for deployment %s (format=full)", deployment)
 
 	vmInfos, err := dep.VMInfos()
@@ -477,7 +492,12 @@ func (d *DirectorAdapter) GetDeploymentVMs(deployment string) ([]VM, error) {
 
 	vms := make([]VM, len(vmInfos))
 	for index, vmInfo := range vmInfos {
-		vms[index] = d.convertVMInfo(vmInfo)
+		vm := d.convertVMInfo(vmInfo)
+		// Set network from manifest if available
+		if network, ok := networkByJob[vmInfo.JobName]; ok {
+			vm.Network = network
+		}
+		vms[index] = vm
 	}
 
 	d.log.Infof("Successfully retrieved %d VMs for deployment %s", len(vms), deployment)
@@ -3173,6 +3193,37 @@ func convertBoshTask(boshTask boshdirector.Task) *Task {
 		Result:      boshTask.Result(),
 		User:        boshTask.User(),
 	}
+}
+
+// extractNetworksByJob parses a BOSH deployment manifest and returns a map of instance group name -> network name.
+func extractNetworksByJob(manifestYAML string) map[string]string {
+	result := make(map[string]string)
+
+	if manifestYAML == "" {
+		return result
+	}
+
+	var manifest struct {
+		InstanceGroups []struct {
+			Name     string `yaml:"name"`
+			Networks []struct {
+				Name string `yaml:"name"`
+			} `yaml:"networks"`
+		} `yaml:"instance_groups"`
+	}
+
+	if err := yaml.Unmarshal([]byte(manifestYAML), &manifest); err != nil {
+		return result
+	}
+
+	for _, ig := range manifest.InstanceGroups {
+		if len(ig.Networks) > 0 {
+			// Use the first network for each instance group
+			result[ig.Name] = ig.Networks[0].Name
+		}
+	}
+
+	return result
 }
 
 // Ensure DirectorAdapter implements Director interface.

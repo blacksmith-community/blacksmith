@@ -136,6 +136,9 @@ type VM struct {
 	VMType       string `json:"vm_type"`       // Name of VM type
 	ResourcePool string `json:"resource_pool"` // Name of the resource pool used for the VM
 
+	// Network name (extracted from deployment manifest for DNS hostname construction)
+	Network string `json:"network"` // Network name from deployment manifest
+
 	// Disk information
 	DiskCID  string   `json:"disk_cid"`  // Cloud ID of the associated persistent disk
 	DiskCIDs []string `json:"disk_cids"` // List of Cloud IDs of the VM's disks

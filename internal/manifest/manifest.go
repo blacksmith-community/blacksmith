@@ -15,6 +15,7 @@ import (
 	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
+
 	"github.com/geofffranks/spruce"
 	"github.com/smallfish/simpleyaml"
 	"gopkg.in/yaml.v3"
@@ -439,10 +440,22 @@ func buildJobsFromVMs(vms []bosh.VM, plan services.Plan, deployment string, logg
 
 	var dnsname string
 
-	network := os.Getenv("BOSH_NETWORK")
-	networkDNS := strings.ReplaceAll(network, ".", "")
+	// Fallback to BOSH_NETWORK if VM doesn't have network info from manifest
+	defaultNetwork := os.Getenv("BOSH_NETWORK")
 
 	for _, instance := range vms {
+		// Use network from VM (extracted from deployment manifest) or fallback to default
+		network := instance.Network
+		if network == "" {
+			network = defaultNetwork
+			loggerInstance.Debug("VM %s has no network info, using default BOSH_NETWORK: %s", instance.ID, network)
+		} else {
+			loggerInstance.Debug("VM %s using network from manifest: %s", instance.ID, network)
+		}
+
+		// Remove dots from network component for valid DNS names (matching the pattern in env.rb)
+		networkDNS := strings.ReplaceAll(network, ".", "")
+
 		job := createJobFromVM(instance, plan, deployment, networkDNS)
 		loggerInstance.Debug("found job {name: %s, deployment: %s, id: %s, plan_id: %s, plan_name: %s, fqdn: %s, ips: [%s], dns: [%s]", job.Name, job.Deployment, job.ID, job.PlanID, job.PlanName, job.FQDN, strings.Join(instance.IPs, ", "), strings.Join(instance.DNS, ", "))
 		dnsname = job.FQDN
