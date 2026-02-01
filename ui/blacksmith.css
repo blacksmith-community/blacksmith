@@ -10356,7 +10356,7 @@ span.config-type.resurrection {
 }
 
 /* =====================================================
-   Upgrade Tab Styles
+   Batch Operations Tab Styles
    ===================================================== */
 
 #upgrade {
@@ -10517,7 +10517,7 @@ span.config-type.resurrection {
   padding: 2em;
 }
 
-/* Upgrade Instance List Styles */
+/* Batch Operations Instance List Styles */
 #upgrade .upgrade-instance-count {
   padding: 0.5rem 1rem;
   font-size: 0.75rem;
@@ -10590,7 +10590,7 @@ span.config-type.resurrection {
 }
 
 /* =====================================================
-   Upgrade Task List Styles
+   Batch Jobs List Styles
    ===================================================== */
 
 #upgrade .upgrade-task-list {
@@ -10634,6 +10634,16 @@ span.config-type.resurrection {
   font-weight: 600;
   color: var(--text-primary);
   font-size: 0.875rem;
+}
+
+#upgrade .upgrade-task-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
 }
 
 #upgrade .upgrade-task-progress {
@@ -10853,6 +10863,55 @@ span.config-type.resurrection {
   margin-top: 0.25rem;
 }
 
+#upgrade .upgrade-task-instance .bosh-task-btn {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #fff;
+  background: #0071bc;
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.625rem;
+  margin-top: 0.375rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+#upgrade .upgrade-task-instance .bosh-task-btn:hover {
+  background: #005a96;
+  transform: translateY(-1px);
+}
+
+[data-theme="dark"] #upgrade .upgrade-task-instance .bosh-task-btn {
+  background: #3b82f6;
+  color: #fff;
+}
+
+[data-theme="dark"] #upgrade .upgrade-task-instance .bosh-task-btn:hover {
+  background: #2563eb;
+}
+
+[data-theme="dark"] #upgrade .upgrade-task-instance .instance-cancel-btn {
+  background: #dc2626;
+}
+
+[data-theme="dark"] #upgrade .upgrade-task-instance .instance-cancel-btn:hover {
+  background: #b91c1c;
+}
+
+[data-theme="dark"] #upgrade .job-control-btn.pause-btn {
+  background: #d97706;
+}
+
+[data-theme="dark"] #upgrade .job-control-btn.resume-btn {
+  background: #059669;
+}
+
+[data-theme="dark"] #upgrade .job-control-btn.cancel-btn {
+  background: #dc2626;
+}
+
 #upgrade .upgrade-task-instance .instance-error {
   font-size: 0.75rem;
   color: #ef4444;
@@ -10874,4 +10933,126 @@ span.config-type.resurrection {
 
 #upgrade .upgrade-task-instance.instance-pending {
   border-left: 3px solid #6b7280;
+}
+
+#upgrade .upgrade-task-instance.instance-cancelled {
+  border-left: 3px solid #f59e0b;
+}
+
+#upgrade .upgrade-task-instance.instance-skipped {
+  border-left: 3px solid #9ca3af;
+}
+
+/* Instance actions container */
+#upgrade .upgrade-task-instance .instance-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.25rem;
+  flex-wrap: wrap;
+}
+
+/* Instance cancel button */
+#upgrade .upgrade-task-instance .instance-cancel-btn {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #fff;
+  background: #ef4444;
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.625rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+#upgrade .upgrade-task-instance .instance-cancel-btn:hover {
+  background: #dc2626;
+  transform: translateY(-1px);
+}
+
+/* Job control buttons container */
+#upgrade .job-control-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+/* Job control buttons */
+#upgrade .job-control-btn {
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  padding: 0.375rem 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+#upgrade .job-control-btn.pause-btn {
+  background: #f59e0b;
+  color: #fff;
+}
+
+#upgrade .job-control-btn.pause-btn:hover {
+  background: #d97706;
+}
+
+#upgrade .job-control-btn.resume-btn {
+  background: #10b981;
+  color: #fff;
+}
+
+#upgrade .job-control-btn.resume-btn:hover {
+  background: #059669;
+}
+
+#upgrade .job-control-btn.cancel-btn {
+  background: #ef4444;
+  color: #fff;
+}
+
+#upgrade .job-control-btn.cancel-btn:hover {
+  background: #dc2626;
+}
+
+#upgrade .job-control-btn.skip-btn {
+  background: #8b5cf6;
+  color: #fff;
+}
+
+#upgrade .job-control-btn.skip-btn:hover {
+  background: #7c3aed;
+}
+
+/* Task detail header flex layout */
+#upgrade .task-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+#upgrade .task-detail-header h3 {
+  margin: 0;
+}
+
+/* Status colors for paused and cancelled */
+#upgrade .status-paused {
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+#upgrade .status-cancelled {
+  color: #ef4444;
+  font-weight: 500;
+}
+
+/* Cancelled status icon */
+#upgrade .status-icon.cancelled {
+  color: #f59e0b;
+}
+
+#upgrade .status-icon.skipped {
+  color: #9ca3af;
 }

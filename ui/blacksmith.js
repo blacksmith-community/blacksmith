@@ -1948,13 +1948,13 @@
   };
 
   // =====================================================
-  // Upgrade Tab Functions
+  // Batch Operations Tab Functions
   // =====================================================
 
-  // Track if upgrade tab has been initialized
+  // Track if batch operations tab has been initialized
   let upgradeTabInitialized = false;
 
-  // Track selected instances for upgrade
+  // Track selected instances for batch operations
   let selectedUpgradeInstances = new Set();
 
   // Render the upgrade tab filters
@@ -2197,7 +2197,7 @@
     startTasksRefresh();
 
     upgradeTabInitialized = true;
-    console.log('Upgrade tab initialized');
+    console.log('Batch Operations tab initialized');
   };
 
   // Update plan filter based on selected service
@@ -2229,10 +2229,10 @@
   };
 
   // =====================================================
-  // Upgrade Task Management (Steps 7-9)
+  // Batch Jobs Management (Steps 7-9)
   // =====================================================
 
-  // Store for upgrade tasks
+  // Store for batch jobs
   let upgradeTasks = [];
   let selectedTaskId = null;
   let upgradeTasksRefreshInterval = null;
@@ -2252,12 +2252,13 @@
       const statusClass = getTaskStatusClass(task.status);
       const statusIcon = getTaskStatusIcon(task.status);
       const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count) / task.total_count * 100) : 0;
+      const taskName = task.name || task.target_stemcell;
 
       return `
         <div class="upgrade-task-item ${isSelected ? 'selected' : ''} ${statusClass}" data-task-id="${task.id}">
           <div class="upgrade-task-header">
             <span class="upgrade-task-status">${statusIcon}</span>
-            <span class="upgrade-task-stemcell">${task.target_stemcell}</span>
+            <span class="upgrade-task-name">${taskName}</span>
           </div>
           <div class="upgrade-task-progress">
             <div class="upgrade-task-progress-bar" style="width: ${progress}%"></div>
@@ -2347,6 +2348,7 @@
     const instancesHtml = instances.map(instance => {
       const statusIcon = getInstanceStatusIcon(instance.status);
       const statusClass = getInstanceStatusClass(instance.status);
+      const showCancelBtn = instance.status === 'running' && instance.bosh_task_id;
 
       return `
         <div class="upgrade-task-instance ${statusClass}">
@@ -2354,20 +2356,41 @@
           <div class="instance-info">
             <div class="instance-id">${instance.instance_name || instance.instance_id}</div>
             <div class="instance-deployment">${instance.deployment_name || ''}</div>
-            ${instance.bosh_task_id ? `<div class="instance-bosh-task">BOSH Task: ${instance.bosh_task_id}</div>` : ''}
+            <div class="instance-actions">
+              ${instance.bosh_task_id ? `<button class="bosh-task-btn" onclick="showTaskDetails(${instance.bosh_task_id}, event)">BOSH Task: ${instance.bosh_task_id}</button>` : ''}
+              ${showCancelBtn ? `<button class="instance-cancel-btn" onclick="window.cancelInstance('${task.id}', '${instance.instance_id}', event)">Cancel</button>` : ''}
+            </div>
             ${instance.error ? `<div class="instance-error">${instance.error}</div>` : ''}
           </div>
         </div>
       `;
     }).join('');
 
-    const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count) / task.total_count * 100) : 0;
+    const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0)) / task.total_count * 100) : 0;
+    const isRunning = task.status === 'running';
+    const isPaused = task.status === 'paused';
+    const canControl = isRunning || isPaused;
+
+    // Build control buttons based on task status
+    let controlButtonsHtml = '';
+    if (canControl) {
+      controlButtonsHtml = `
+        <div class="job-control-buttons">
+          ${isRunning ? `<button class="job-control-btn pause-btn" onclick="window.pauseTask('${task.id}', event)">Pause</button>` : ''}
+          ${isPaused ? `<button class="job-control-btn resume-btn" onclick="window.resumeTask('${task.id}', event)">Resume</button>` : ''}
+          <button class="job-control-btn cancel-btn" onclick="window.cancelTask('${task.id}', event)">Cancel Job</button>
+        </div>
+      `;
+    }
+
+    const jobName = task.name || `Upgrade to ${task.target_stemcell.os}/${task.target_stemcell.version}`;
 
     tasksContainer.innerHTML = `
       <div class="upgrade-task-detail">
         <div class="task-detail-header">
-          <button class="back-to-list" onclick="window.backToTaskList()">&#8592; Back to Tasks</button>
-          <h3>Task Details</h3>
+          <button class="back-to-list" onclick="window.backToTaskList()">&#8592; Back to Jobs</button>
+          <h3>${jobName}</h3>
+          ${controlButtonsHtml}
         </div>
         <div class="task-detail-summary">
           <div class="summary-row">
@@ -2376,11 +2399,11 @@
           </div>
           <div class="summary-row">
             <span class="label">Status:</span>
-            <span class="value status-${task.status}">${task.status}</span>
+            <span class="value status-${task.status}">${task.status}${isPaused ? ' (waiting to resume)' : ''}</span>
           </div>
           <div class="summary-row">
             <span class="label">Progress:</span>
-            <span class="value">${task.completed_count + task.failed_count}/${task.total_count} (${progress}%)</span>
+            <span class="value">${task.completed_count}/${task.total_count} completed${task.failed_count ? `, ${task.failed_count} failed` : ''}${task.cancelled_count ? `, ${task.cancelled_count} cancelled` : ''}${task.skipped_count ? `, ${task.skipped_count} skipped` : ''} (${progress}%)</span>
           </div>
           <div class="summary-row">
             <span class="label">Created:</span>
@@ -2402,6 +2425,8 @@
       case 'running': return '<span class="status-icon running">&#8635;</span>';
       case 'failed': return '<span class="status-icon failed">&#10007;</span>';
       case 'pending': return '<span class="status-icon pending">&#8987;</span>';
+      case 'cancelled': return '<span class="status-icon cancelled">&#10006;</span>';
+      case 'skipped': return '<span class="status-icon skipped">&#8594;</span>';
       default: return '';
     }
   };
@@ -2413,6 +2438,8 @@
       case 'running': return 'instance-running';
       case 'failed': return 'instance-failed';
       case 'pending': return 'instance-pending';
+      case 'cancelled': return 'instance-cancelled';
+      case 'skipped': return 'instance-skipped';
       default: return '';
     }
   };
@@ -2421,6 +2448,84 @@
   window.backToTaskList = () => {
     selectedTaskId = null;
     renderUpgradeTaskList();
+  };
+
+  // Pause a running task
+  window.pauseTask = async (taskId, event) => {
+    if (event) event.stopPropagation();
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}/pause`, { method: 'POST' });
+      if (response.ok) {
+        console.log('Task paused:', taskId);
+        fetchUpgradeTasks(); // Refresh the view
+      } else {
+        const data = await response.json();
+        alert('Failed to pause task: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to pause task:', err);
+      alert('Failed to pause task: ' + err.message);
+    }
+  };
+
+  // Resume a paused task
+  window.resumeTask = async (taskId, event) => {
+    if (event) event.stopPropagation();
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}/resume`, { method: 'POST' });
+      if (response.ok) {
+        console.log('Task resumed:', taskId);
+        fetchUpgradeTasks(); // Refresh the view
+      } else {
+        const data = await response.json();
+        alert('Failed to resume task: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to resume task:', err);
+      alert('Failed to resume task: ' + err.message);
+    }
+  };
+
+  // Cancel a running or paused task
+  window.cancelTask = async (taskId, event) => {
+    if (event) event.stopPropagation();
+    if (!confirm('Are you sure you want to cancel this job? This will cancel the current BOSH task and skip remaining instances.')) {
+      return;
+    }
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}/cancel`, { method: 'POST' });
+      if (response.ok) {
+        console.log('Task cancelled:', taskId);
+        fetchUpgradeTasks(); // Refresh the view
+      } else {
+        const data = await response.json();
+        alert('Failed to cancel task: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to cancel task:', err);
+      alert('Failed to cancel task: ' + err.message);
+    }
+  };
+
+  // Cancel a specific instance within a task (skip current and continue to next)
+  window.cancelInstance = async (taskId, instanceId, event) => {
+    if (event) event.stopPropagation();
+    if (!confirm('Skip this instance? This will cancel the current BOSH task and continue to the next instance.')) {
+      return;
+    }
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}/instances/${instanceId}/cancel`, { method: 'POST' });
+      if (response.ok) {
+        console.log('Instance cancelled:', instanceId);
+        fetchUpgradeTasks(); // Refresh the view
+      } else {
+        const data = await response.json();
+        alert('Failed to cancel instance: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to cancel instance:', err);
+      alert('Failed to cancel instance: ' + err.message);
+    }
   };
 
   // Fetch upgrade tasks from API
@@ -2466,7 +2571,16 @@
     const [os, version] = stemcellSelect.value.split('/');
     const instanceIds = Array.from(selectedUpgradeInstances);
 
+    // Prompt for job name
+    const defaultName = `Upgrade to ${os}/${version}`;
+    const jobName = prompt('Enter a name for this batch job:', defaultName);
+    if (jobName === null) {
+      // User cancelled
+      return;
+    }
+
     const requestBody = {
+      name: jobName || defaultName,
       instance_ids: instanceIds,
       target_stemcell: {
         os: os,

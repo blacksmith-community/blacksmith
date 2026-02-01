@@ -104,12 +104,18 @@ func (h *Handler) GetStemcells(responseWriter http.ResponseWriter, req *http.Req
 // filterRecentStemcells returns the N most recent stemcells per OS.
 // It filters to only include stemcells from CPIs ending in ".bosh" suffix
 // (e.g., "env-name.aws.bosh") to avoid duplicates from legacy CPIs.
+// It also excludes Windows stemcells since Blacksmith services (Redis, RabbitMQ) run on Linux.
 func filterRecentStemcells(stemcells []bosh.Stemcell, limit int) []bosh.Stemcell {
 	// Group by OS, filtering to only include stemcells with CPI ending in ".bosh"
+	// and excluding Windows stemcells
 	byOS := make(map[string][]bosh.Stemcell)
 	for _, s := range stemcells {
 		// Only include stemcells from CPIs with ".bosh" suffix
 		if !strings.HasSuffix(s.CPI, ".bosh") {
+			continue
+		}
+		// Exclude Windows stemcells (Blacksmith services run on Linux)
+		if strings.Contains(strings.ToLower(s.OS), "windows") {
 			continue
 		}
 		byOS[s.OS] = append(byOS[s.OS], s)
@@ -271,6 +277,27 @@ func (h *Handler) enrichInstancesWithFullData(ctx context.Context, instances map
 			// Add any other important fields from full data that might be missing
 			if deploymentName, ok := fullData["deployment_name"].(string); ok && deploymentName != "" {
 				instanceMap["deployment_name"] = deploymentName
+			}
+
+			// Add service_id if it exists in full data but not in instance data
+			if _, hasServiceID := instanceMap["service_id"]; !hasServiceID {
+				if serviceID, ok := fullData["service_id"].(string); ok && serviceID != "" {
+					instanceMap["service_id"] = serviceID
+				}
+			}
+
+			// Add plan_id if it exists in full data but not in instance data
+			if _, hasPlanID := instanceMap["plan_id"]; !hasPlanID {
+				if planID, ok := fullData["plan_id"].(string); ok && planID != "" {
+					instanceMap["plan_id"] = planID
+				}
+			}
+
+			// Add plan object if it exists in full data but not in instance data
+			if _, hasPlan := instanceMap["plan"]; !hasPlan {
+				if plan, ok := fullData["plan"]; ok && plan != nil {
+					instanceMap["plan"] = plan
+				}
 			}
 
 			// Add created timestamp if it exists in full data

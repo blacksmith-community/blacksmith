@@ -12,13 +12,20 @@ import (
 	"github.com/google/uuid"
 )
 
+// Vault path for storing upgrade tasks.
+const upgradeTasksVaultPath = "upgrade-tasks"
+
 // Error variables for err113 compliance.
 var (
-	ErrTaskNotFound      = errors.New("upgrade task not found")
-	ErrNoInstances       = errors.New("no instances specified for upgrade")
-	ErrInvalidStemcell   = errors.New("invalid stemcell target")
-	ErrInstanceNotFound  = errors.New("instance not found")
-	ErrDeploymentMissing = errors.New("deployment name missing for instance")
+	ErrTaskNotFound       = errors.New("upgrade task not found")
+	ErrNoInstances        = errors.New("no instances specified for upgrade")
+	ErrInvalidStemcell    = errors.New("invalid stemcell target")
+	ErrInstanceNotFound   = errors.New("instance not found")
+	ErrDeploymentMissing  = errors.New("deployment name missing for instance")
+	ErrTaskNotRunning     = errors.New("task is not running")
+	ErrTaskNotPaused      = errors.New("task is not paused")
+	ErrInstanceNotRunning = errors.New("instance is not running")
+	ErrNoBOSHTask         = errors.New("instance has no BOSH task")
 )
 
 // Manager manages upgrade tasks.
@@ -33,17 +40,28 @@ type Manager struct {
 	taskQueue chan *UpgradeTask
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
+
+	// Cancellation tracking - maps taskID to cancel channel
+	taskCancelCh   map[string]chan struct{}
+	taskCancelLock sync.RWMutex
 }
 
 // NewManager creates a new upgrade manager.
 func NewManager(logger interfaces.Logger, director interfaces.Director, vault interfaces.Vault) *Manager {
 	m := &Manager{
-		tasks:     make(map[string]*UpgradeTask),
-		logger:    logger.Named("upgrade-manager"),
-		director:  director,
-		vault:     vault,
-		taskQueue: make(chan *UpgradeTask, 100),
-		stopCh:    make(chan struct{}),
+		tasks:        make(map[string]*UpgradeTask),
+		logger:       logger.Named("upgrade-manager"),
+		director:     director,
+		vault:        vault,
+		taskQueue:    make(chan *UpgradeTask, 100),
+		stopCh:       make(chan struct{}),
+		taskCancelCh: make(map[string]chan struct{}),
+	}
+
+	// Load persisted tasks from vault
+	ctx := context.Background()
+	if err := m.loadPersistedTasks(ctx); err != nil {
+		m.logger.Error("Failed to load persisted tasks: %v", err)
 	}
 
 	// Start the task processor
@@ -81,6 +99,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 
 	task := &UpgradeTask{
 		ID:             uuid.New().String(),
+		Name:           req.Name,
 		Status:         TaskStatusPending,
 		TargetStemcell: req.TargetStemcell,
 		Instances:      instances,
@@ -93,6 +112,12 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 	m.mu.Lock()
 	m.tasks[task.ID] = task
 	m.mu.Unlock()
+
+	// Persist task to vault
+	if err := m.persistTask(ctx, task); err != nil {
+		m.logger.Error("Failed to persist task %s: %v", task.ID, err)
+		// Continue anyway - task is in memory
+	}
 
 	// Queue the task for processing
 	select {
@@ -201,6 +226,21 @@ func (m *Manager) processTaskQueue() {
 
 // processTask processes a single upgrade task.
 func (m *Manager) processTask(task *UpgradeTask) {
+	ctx := context.Background()
+
+	// Create cancel channel for this task
+	cancelCh := make(chan struct{})
+	m.taskCancelLock.Lock()
+	m.taskCancelCh[task.ID] = cancelCh
+	m.taskCancelLock.Unlock()
+
+	// Cleanup cancel channel when done
+	defer func() {
+		m.taskCancelLock.Lock()
+		delete(m.taskCancelCh, task.ID)
+		m.taskCancelLock.Unlock()
+	}()
+
 	// Recover from any panics to prevent crashing the entire blacksmith process
 	defer func() {
 		if r := recover(); r != nil {
@@ -210,6 +250,11 @@ func (m *Manager) processTask(task *UpgradeTask) {
 			completedAt := time.Now()
 			task.CompletedAt = &completedAt
 			m.mu.Unlock()
+
+			// Persist failed state
+			if err := m.persistTask(ctx, task); err != nil {
+				m.logger.Error("Failed to persist task %s after panic: %v", task.ID, err)
+			}
 		}
 	}()
 
@@ -222,43 +267,98 @@ func (m *Manager) processTask(task *UpgradeTask) {
 	task.Status = TaskStatusRunning
 	m.mu.Unlock()
 
+	// Persist running state
+	if err := m.persistTask(ctx, task); err != nil {
+		m.logger.Error("Failed to persist task %s running state: %v", task.ID, err)
+	}
+
 	// Process each instance sequentially
 	for i := range task.Instances {
 		instance := &task.Instances[i]
 
-		// Skip already failed instances
+		// Check if task was cancelled
+		m.mu.RLock()
+		if task.Status == TaskStatusCancelled {
+			m.mu.RUnlock()
+			m.logger.Info("Task %s was cancelled, stopping processing", task.ID)
+			return
+		}
+		m.mu.RUnlock()
+
+		// Check if task is paused - wait for resume or cancel
+		for {
+			m.mu.RLock()
+			isPaused := task.Paused
+			isCancelled := task.Status == TaskStatusCancelled
+			m.mu.RUnlock()
+
+			if isCancelled {
+				m.logger.Info("Task %s was cancelled while paused, stopping processing", task.ID)
+				return
+			}
+
+			if !isPaused {
+				break
+			}
+
+			m.logger.Debug("Task %s is paused, waiting for resume...", task.ID)
+			select {
+			case <-cancelCh:
+				// Check status again after signal
+				continue
+			case <-m.stopCh:
+				m.logger.Info("Manager stopping while task %s is paused", task.ID)
+				return
+			case <-time.After(1 * time.Second):
+				// Periodic check
+				continue
+			}
+		}
+
+		// Skip already processed instances
 		if instance.Status == InstanceStatusFailed {
 			m.mu.Lock()
 			task.FailedCount++
 			m.mu.Unlock()
-
+			continue
+		}
+		if instance.Status == InstanceStatusSuccess ||
+			instance.Status == InstanceStatusCancelled ||
+			instance.Status == InstanceStatusSkipped {
 			continue
 		}
 
-		m.upgradeInstance(task, instance)
+		m.upgradeInstance(task, instance, cancelCh)
 	}
 
-	// Update task status
-	completedAt := time.Now()
-
+	// Update task status (only if not already cancelled)
 	m.mu.Lock()
-	task.CompletedAt = &completedAt
+	if task.Status != TaskStatusCancelled {
+		completedAt := time.Now()
+		task.CompletedAt = &completedAt
 
-	if task.FailedCount > 0 && task.CompletedCount == 0 {
-		task.Status = TaskStatusFailed
-	} else if task.FailedCount > 0 {
-		task.Status = TaskStatusCompleted // Partial success
-	} else {
-		task.Status = TaskStatusCompleted
+		if task.FailedCount > 0 && task.CompletedCount == 0 {
+			task.Status = TaskStatusFailed
+		} else if task.FailedCount > 0 || task.CancelledCount > 0 {
+			task.Status = TaskStatusCompleted // Partial success
+		} else {
+			task.Status = TaskStatusCompleted
+		}
 	}
 	m.mu.Unlock()
 
-	m.logger.Info("Upgrade task %s completed: %d/%d succeeded, %d failed",
-		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount)
+	// Persist completed state
+	if err := m.persistTask(ctx, task); err != nil {
+		m.logger.Error("Failed to persist task %s completed state: %v", task.ID, err)
+	}
+
+	m.logger.Info("Upgrade task %s completed: %d/%d succeeded, %d failed, %d cancelled",
+		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount)
 }
 
 // upgradeInstance upgrades a single instance.
-func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) {
+func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) {
+	ctx := context.Background()
 	m.logger.Info("Upgrading instance %s (deployment: %s)", instance.InstanceID, instance.DeploymentName)
 
 	now := time.Now()
@@ -268,6 +368,9 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 	instance.Status = InstanceStatusRunning
 	m.mu.Unlock()
 
+	// Persist running state immediately so the UI shows the instance as running
+	m.persistTask(ctx, task) //nolint:errcheck
+
 	// Validate deployment name
 	if instance.DeploymentName == "" {
 		m.mu.Lock()
@@ -276,6 +379,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Instance %s has no deployment name", instance.InstanceID)
+		m.persistTask(ctx, task) //nolint:errcheck
 
 		return
 	}
@@ -291,6 +395,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Failed to get deployment %s: %v", instance.DeploymentName, err)
+		m.persistTask(ctx, task) //nolint:errcheck
 
 		return
 	}
@@ -302,6 +407,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Deployment %s returned nil without error", instance.DeploymentName)
+		m.persistTask(ctx, task) //nolint:errcheck
 
 		return
 	}
@@ -321,6 +427,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Failed to merge stemcell overlay for %s: %v", instance.DeploymentName, err)
+		m.persistTask(ctx, task) //nolint:errcheck
 
 		return
 	}
@@ -339,6 +446,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Failed to update deployment %s: %v", instance.DeploymentName, err)
+		m.persistTask(ctx, task) //nolint:errcheck
 
 		return
 	}
@@ -348,15 +456,24 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 	m.mu.Unlock()
 	m.logger.Info("Started BOSH task %d for deployment %s", boshTask.ID, instance.DeploymentName)
 
+	// Persist immediately so the BOSH task ID is visible in the UI
+	m.persistTask(ctx, task) //nolint:errcheck
+
 	// Wait for BOSH task to complete
-	err = m.waitForBOSHTask(boshTask.ID, instance)
+	err = m.waitForBOSHTask(boshTask.ID, instance, cancelCh)
 	if err != nil {
 		m.mu.Lock()
-		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("BOSH task failed: %v", err)
-		task.FailedCount++
+		// Don't overwrite status if instance was already cancelled by CancelTask
+		if instance.Status != InstanceStatusCancelled {
+			instance.Status = InstanceStatusFailed
+			instance.Error = fmt.Sprintf("BOSH task failed: %v", err)
+			task.FailedCount++
+			m.logger.Error("BOSH task %d failed for %s: %v", boshTask.ID, instance.DeploymentName, err)
+		} else {
+			m.logger.Info("Instance %s was cancelled, BOSH task error: %v", instance.InstanceID, err)
+		}
 		m.mu.Unlock()
-		m.logger.Error("BOSH task %d failed for %s: %v", boshTask.ID, instance.DeploymentName, err)
+		m.persistTask(ctx, task) //nolint:errcheck
 
 		return
 	}
@@ -370,11 +487,14 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade) 
 	task.CompletedCount++
 	m.mu.Unlock()
 	m.logger.Info("Successfully upgraded instance %s", instance.InstanceID)
+
+	// Persist progress
+	m.persistTask(ctx, task) //nolint:errcheck
 }
 
 // waitForBOSHTask waits for a BOSH task to complete.
-func (m *Manager) waitForBOSHTask(taskID int, instance *InstanceUpgrade) error {
-	ticker := time.NewTicker(10 * time.Second)
+func (m *Manager) waitForBOSHTask(taskID int, instance *InstanceUpgrade, cancelCh <-chan struct{}) error {
+	ticker := time.NewTicker(5 * time.Second) // Poll every 5 seconds for faster response
 	defer ticker.Stop()
 
 	// Timeout after 30 minutes
@@ -400,6 +520,9 @@ func (m *Manager) waitForBOSHTask(taskID int, instance *InstanceUpgrade) error {
 			default:
 				m.logger.Debug("BOSH task %d still %s", taskID, task.State)
 			}
+		case <-cancelCh:
+			m.logger.Info("Received cancel signal for BOSH task %d", taskID)
+			return fmt.Errorf("BOSH task %d cancelled by user", taskID)
 		case <-m.stopCh:
 			return fmt.Errorf("manager stopped while waiting for BOSH task %d", taskID)
 		}
@@ -436,14 +559,274 @@ func (m *Manager) GetTaskWithRunningInstance(instanceID string) (*UpgradeTask, *
 	return nil, nil
 }
 
+// PauseTask pauses a running task. Current instance continues, but next instances won't start.
+func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	task, exists := m.tasks[taskID]
+	if !exists {
+		return ErrTaskNotFound
+	}
+
+	if task.Status != TaskStatusRunning {
+		return ErrTaskNotRunning
+	}
+
+	task.Paused = true
+	task.Status = TaskStatusPaused
+	m.logger.Info("Paused task %s", taskID)
+
+	// Persist the paused state
+	if err := m.persistTask(ctx, task); err != nil {
+		m.logger.Error("Failed to persist paused state for task %s: %v", taskID, err)
+	}
+
+	return nil
+}
+
+// ResumeTask resumes a paused task.
+func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
+	m.mu.Lock()
+	task, exists := m.tasks[taskID]
+	if !exists {
+		m.mu.Unlock()
+		return ErrTaskNotFound
+	}
+
+	if task.Status != TaskStatusPaused {
+		m.mu.Unlock()
+		return ErrTaskNotPaused
+	}
+
+	task.Paused = false
+	task.Status = TaskStatusRunning
+	m.logger.Info("Resumed task %s", taskID)
+	m.mu.Unlock()
+
+	// Persist the resumed state
+	if err := m.persistTask(ctx, task); err != nil {
+		m.logger.Error("Failed to persist resumed state for task %s: %v", taskID, err)
+	}
+
+	// Signal the task to continue processing
+	m.taskCancelLock.RLock()
+	if cancelCh, exists := m.taskCancelCh[taskID]; exists {
+		select {
+		case cancelCh <- struct{}{}:
+		default:
+		}
+	}
+	m.taskCancelLock.RUnlock()
+
+	return nil
+}
+
+// CancelTask cancels a running or paused task.
+func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
+	m.mu.Lock()
+	task, exists := m.tasks[taskID]
+	if !exists {
+		m.mu.Unlock()
+		return ErrTaskNotFound
+	}
+
+	if task.Status != TaskStatusRunning && task.Status != TaskStatusPaused {
+		m.mu.Unlock()
+		return ErrTaskNotRunning
+	}
+
+	m.logger.Info("Cancelling task %s", taskID)
+
+	// Find and cancel any running instance's BOSH task
+	for i := range task.Instances {
+		instance := &task.Instances[i]
+		if instance.Status == InstanceStatusRunning && instance.BOSHTaskID > 0 {
+			m.logger.Info("Cancelling BOSH task %d for instance %s", instance.BOSHTaskID, instance.InstanceID)
+			if err := m.director.CancelTask(instance.BOSHTaskID); err != nil {
+				m.logger.Error("Failed to cancel BOSH task %d: %v", instance.BOSHTaskID, err)
+			}
+			instance.Status = InstanceStatusCancelled
+			instance.Error = "cancelled by user"
+			task.CancelledCount++
+		} else if instance.Status == InstanceStatusPending {
+			instance.Status = InstanceStatusSkipped
+			instance.Error = "skipped due to task cancellation"
+			task.SkippedCount++
+		}
+	}
+
+	task.Status = TaskStatusCancelled
+	completedAt := time.Now()
+	task.CompletedAt = &completedAt
+	m.mu.Unlock()
+
+	// Signal cancellation
+	m.taskCancelLock.Lock()
+	if cancelCh, exists := m.taskCancelCh[taskID]; exists {
+		close(cancelCh)
+		delete(m.taskCancelCh, taskID)
+	}
+	m.taskCancelLock.Unlock()
+
+	// Persist the cancelled state
+	if err := m.persistTask(ctx, task); err != nil {
+		m.logger.Error("Failed to persist cancelled state for task %s: %v", taskID, err)
+	}
+
+	return nil
+}
+
+// CancelInstance cancels a specific running instance within a task.
+func (m *Manager) CancelInstance(ctx context.Context, taskID, instanceID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	task, exists := m.tasks[taskID]
+	if !exists {
+		return ErrTaskNotFound
+	}
+
+	// Find the instance
+	var instance *InstanceUpgrade
+	for i := range task.Instances {
+		if task.Instances[i].InstanceID == instanceID {
+			instance = &task.Instances[i]
+			break
+		}
+	}
+
+	if instance == nil {
+		return ErrInstanceNotFound
+	}
+
+	if instance.Status != InstanceStatusRunning {
+		return ErrInstanceNotRunning
+	}
+
+	if instance.BOSHTaskID == 0 {
+		return ErrNoBOSHTask
+	}
+
+	m.logger.Info("Cancelling BOSH task %d for instance %s in task %s", instance.BOSHTaskID, instanceID, taskID)
+
+	// Cancel the BOSH task
+	if err := m.director.CancelTask(instance.BOSHTaskID); err != nil {
+		m.logger.Error("Failed to cancel BOSH task %d: %v", instance.BOSHTaskID, err)
+		return fmt.Errorf("failed to cancel BOSH task: %w", err)
+	}
+
+	instance.Status = InstanceStatusCancelled
+	instance.Error = "cancelled by user"
+	task.CancelledCount++
+
+	// Persist the updated state
+	if err := m.persistTask(ctx, task); err != nil {
+		m.logger.Error("Failed to persist instance cancellation for task %s: %v", taskID, err)
+	}
+
+	return nil
+}
+
 // ManagerInterface defines the interface for the upgrade manager.
 type ManagerInterface interface {
 	CreateTask(ctx context.Context, req CreateTaskRequest) (*UpgradeTask, error)
 	GetTask(taskID string) (*UpgradeTask, error)
 	ListTasks() []*UpgradeTask
 	GetInstancesForTask(taskID string) ([]InstanceUpgrade, error)
+	PauseTask(ctx context.Context, taskID string) error
+	ResumeTask(ctx context.Context, taskID string) error
+	CancelTask(ctx context.Context, taskID string) error
+	CancelInstance(ctx context.Context, taskID, instanceID string) error
 	Stop()
 }
 
 // Ensure Manager implements ManagerInterface.
 var _ ManagerInterface = (*Manager)(nil)
+
+// loadPersistedTasks loads all upgrade tasks from vault on startup.
+func (m *Manager) loadPersistedTasks(ctx context.Context) error {
+	m.logger.Debug("Loading persisted upgrade tasks from vault")
+
+	var tasksIndex map[string]interface{}
+
+	exists, err := m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
+	if err != nil {
+		return fmt.Errorf("failed to get tasks index from vault: %w", err)
+	}
+
+	if !exists {
+		m.logger.Debug("No persisted upgrade tasks found")
+
+		return nil
+	}
+
+	loadedCount := 0
+
+	for taskID := range tasksIndex {
+		var task UpgradeTask
+
+		taskPath := upgradeTasksVaultPath + "/" + taskID
+
+		taskExists, err := m.vault.Get(ctx, taskPath, &task)
+		if err != nil {
+			m.logger.Error("Failed to load task %s: %v", taskID, err)
+
+			continue
+		}
+
+		if !taskExists {
+			m.logger.Debug("Task %s not found at path %s", taskID, taskPath)
+
+			continue
+		}
+
+		m.tasks[taskID] = &task
+		loadedCount++
+	}
+
+	m.logger.Info("Loaded %d persisted upgrade tasks", loadedCount)
+
+	return nil
+}
+
+// persistTask saves an upgrade task to vault.
+func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
+	m.logger.Debug("Persisting task %s to vault", task.ID)
+
+	// Save the full task data
+	taskPath := upgradeTasksVaultPath + "/" + task.ID
+
+	err := m.vault.Put(ctx, taskPath, task)
+	if err != nil {
+		return fmt.Errorf("failed to save task to vault: %w", err)
+	}
+
+	// Update the tasks index
+	var tasksIndex map[string]interface{}
+
+	exists, err := m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
+	if err != nil {
+		m.logger.Error("Failed to get tasks index: %v", err)
+		tasksIndex = make(map[string]interface{})
+	}
+
+	if !exists {
+		tasksIndex = make(map[string]interface{})
+	}
+
+	// Add task reference to index
+	tasksIndex[task.ID] = map[string]interface{}{
+		"status":     task.Status,
+		"created_at": task.CreatedAt.Unix(),
+	}
+
+	err = m.vault.Put(ctx, upgradeTasksVaultPath, tasksIndex)
+	if err != nil {
+		return fmt.Errorf("failed to update tasks index: %w", err)
+	}
+
+	m.logger.Debug("Task %s persisted successfully", task.ID)
+
+	return nil
+}

@@ -53,6 +53,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.CreateTask(w, r)
 	case path == "/tasks" && r.Method == http.MethodGet:
 		h.ListTasks(w, r)
+	case strings.HasSuffix(path, "/pause") && r.Method == http.MethodPost:
+		taskID := strings.TrimPrefix(strings.TrimSuffix(path, "/pause"), "/tasks/")
+		h.PauseTask(w, r, taskID)
+	case strings.HasSuffix(path, "/resume") && r.Method == http.MethodPost:
+		taskID := strings.TrimPrefix(strings.TrimSuffix(path, "/resume"), "/tasks/")
+		h.ResumeTask(w, r, taskID)
+	case strings.HasSuffix(path, "/cancel") && r.Method == http.MethodPost:
+		// Check if it's instance cancel or task cancel
+		pathParts := strings.Split(strings.TrimPrefix(path, "/tasks/"), "/")
+		if len(pathParts) >= 3 && pathParts[1] == "instances" {
+			// /tasks/{taskID}/instances/{instanceID}/cancel
+			h.CancelInstance(w, r, pathParts[0], pathParts[2])
+		} else {
+			// /tasks/{taskID}/cancel
+			taskID := strings.TrimPrefix(strings.TrimSuffix(path, "/cancel"), "/tasks/")
+			h.CancelTask(w, r, taskID)
+		}
 	case strings.HasPrefix(path, "/tasks/") && r.Method == http.MethodGet:
 		taskID := strings.TrimPrefix(path, "/tasks/")
 		h.GetTask(w, r, taskID)
@@ -130,4 +147,72 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request, taskID string)
 	}
 
 	response.HandleJSON(w, task, nil)
+}
+
+// PauseTask handles POST /b/upgrade/tasks/{id}/pause - pauses a running task.
+func (h *Handler) PauseTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	h.logger.Info("Pause upgrade task request: %s", taskID)
+
+	err := h.manager.PauseTask(r.Context(), taskID)
+	if err != nil {
+		h.logger.Error("Failed to pause upgrade task %s: %v", taskID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"success": false, "error": "` + err.Error() + `"}`))
+
+		return
+	}
+
+	response.HandleJSON(w, map[string]interface{}{"success": true, "message": "task paused"}, nil)
+}
+
+// ResumeTask handles POST /b/upgrade/tasks/{id}/resume - resumes a paused task.
+func (h *Handler) ResumeTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	h.logger.Info("Resume upgrade task request: %s", taskID)
+
+	err := h.manager.ResumeTask(r.Context(), taskID)
+	if err != nil {
+		h.logger.Error("Failed to resume upgrade task %s: %v", taskID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"success": false, "error": "` + err.Error() + `"}`))
+
+		return
+	}
+
+	response.HandleJSON(w, map[string]interface{}{"success": true, "message": "task resumed"}, nil)
+}
+
+// CancelTask handles POST /b/upgrade/tasks/{id}/cancel - cancels a running or paused task.
+func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request, taskID string) {
+	h.logger.Info("Cancel upgrade task request: %s", taskID)
+
+	err := h.manager.CancelTask(r.Context(), taskID)
+	if err != nil {
+		h.logger.Error("Failed to cancel upgrade task %s: %v", taskID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"success": false, "error": "` + err.Error() + `"}`))
+
+		return
+	}
+
+	response.HandleJSON(w, map[string]interface{}{"success": true, "message": "task cancelled"}, nil)
+}
+
+// CancelInstance handles POST /b/upgrade/tasks/{id}/instances/{instanceID}/cancel - cancels a specific instance.
+func (h *Handler) CancelInstance(w http.ResponseWriter, r *http.Request, taskID, instanceID string) {
+	h.logger.Info("Cancel instance request: task=%s, instance=%s", taskID, instanceID)
+
+	err := h.manager.CancelInstance(r.Context(), taskID, instanceID)
+	if err != nil {
+		h.logger.Error("Failed to cancel instance %s in task %s: %v", instanceID, taskID, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"success": false, "error": "` + err.Error() + `"}`))
+
+		return
+	}
+
+	response.HandleJSON(w, map[string]interface{}{"success": true, "message": "instance cancelled"}, nil)
 }

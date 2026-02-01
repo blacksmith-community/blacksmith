@@ -12,6 +12,8 @@ const (
 	TaskStatusPending TaskStatus = "pending"
 	// TaskStatusRunning indicates the task is currently running.
 	TaskStatusRunning TaskStatus = "running"
+	// TaskStatusPaused indicates the task is paused.
+	TaskStatusPaused TaskStatus = "paused"
 	// TaskStatusCompleted indicates the task completed successfully.
 	TaskStatusCompleted TaskStatus = "completed"
 	// TaskStatusFailed indicates the task failed.
@@ -32,6 +34,10 @@ const (
 	InstanceStatusSuccess InstanceStatus = "success"
 	// InstanceStatusFailed indicates the instance upgrade failed.
 	InstanceStatusFailed InstanceStatus = "failed"
+	// InstanceStatusCancelled indicates the instance upgrade was cancelled.
+	InstanceStatusCancelled InstanceStatus = "cancelled"
+	// InstanceStatusSkipped indicates the instance upgrade was skipped (due to job cancellation).
+	InstanceStatusSkipped InstanceStatus = "skipped"
 )
 
 // InstanceUpgrade represents the upgrade status for a single instance.
@@ -51,12 +57,16 @@ type InstanceUpgrade struct {
 // UpgradeTask represents a batch upgrade task.
 type UpgradeTask struct {
 	ID              string            `json:"id"`
+	Name            string            `json:"name,omitempty"`
 	Status          TaskStatus        `json:"status"`
+	Paused          bool              `json:"paused"`
 	TargetStemcell  StemcellTarget    `json:"target_stemcell"`
 	Instances       []InstanceUpgrade `json:"instances"`
 	TotalCount      int               `json:"total_count"`
 	CompletedCount  int               `json:"completed_count"`
 	FailedCount     int               `json:"failed_count"`
+	CancelledCount  int               `json:"cancelled_count"`
+	SkippedCount    int               `json:"skipped_count"`
 	CreatedAt       time.Time         `json:"created_at"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
@@ -71,6 +81,7 @@ type StemcellTarget struct {
 
 // CreateTaskRequest represents a request to create an upgrade task.
 type CreateTaskRequest struct {
+	Name           string         `json:"name,omitempty"`
 	InstanceIDs    []string       `json:"instance_ids"`
 	TargetStemcell StemcellTarget `json:"target_stemcell"`
 }
@@ -78,6 +89,7 @@ type CreateTaskRequest struct {
 // TaskSummary represents a summary of an upgrade task for list views.
 type TaskSummary struct {
 	ID             string     `json:"id"`
+	Name           string     `json:"name,omitempty"`
 	Status         TaskStatus `json:"status"`
 	TargetStemcell string     `json:"target_stemcell"`
 	TotalCount     int        `json:"total_count"`
@@ -90,6 +102,7 @@ type TaskSummary struct {
 func (t *UpgradeTask) ToSummary() TaskSummary {
 	return TaskSummary{
 		ID:             t.ID,
+		Name:           t.Name,
 		Status:         t.Status,
 		TargetStemcell: t.TargetStemcell.OS + "/" + t.TargetStemcell.Version,
 		TotalCount:     t.TotalCount,
