@@ -10847,6 +10847,27 @@ span.config-type.resurrection {
   margin-top: 0.125rem;
 }
 
+#upgrade .upgrade-instance-stemcell-container {
+  margin-left: auto;
+  padding-left: 0.75rem;
+}
+
+#upgrade .upgrade-instance-stemcell {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  border-radius: 0.25rem;
+  border: 1px solid var(--border-primary);
+}
+
+#upgrade .upgrade-instance-stemcell.unknown {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 #upgrade .no-instances {
   padding: 2rem;
   text-align: center;

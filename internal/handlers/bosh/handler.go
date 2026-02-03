@@ -10,6 +10,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/vmmonitor"
 	"blacksmith/pkg/http/response"
 )
 
@@ -344,25 +345,24 @@ func (h *Handler) enrichInstancesWithVMStatus(ctx context.Context, instances map
 }
 
 // updateInstanceWithVMStatus updates an instance with VM status information.
-func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData interface{}, vmStatus interface{}, instances map[string]interface{}) {
+func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData interface{}, vmStatus *vmmonitor.VMStatus, instances map[string]interface{}) {
 	instanceMap, ok := instanceData.(map[string]interface{})
 	if !ok {
 		return
 	}
 
-	// Type assertion for vmStatus - using VMStatus struct from vmmonitor package
-	type VMStatus struct {
-		Status      string    `json:"status"`
-		VMCount     int       `json:"vm_count"`
-		HealthyVMs  int       `json:"healthy_vms"`
-		LastUpdated time.Time `json:"last_updated"`
-	}
+	instanceMap["vm_status"] = vmStatus.Status
+	instanceMap["vm_count"] = vmStatus.VMCount
+	instanceMap["vm_healthy"] = vmStatus.HealthyVMs
+	instanceMap["vm_last_updated"] = vmStatus.LastUpdated.Unix()
 
-	if status, ok := vmStatus.(*VMStatus); ok {
-		instanceMap["vm_status"] = status.Status
-		instanceMap["vm_count"] = status.VMCount
-		instanceMap["vm_healthy"] = status.HealthyVMs
-		instanceMap["vm_last_updated"] = status.LastUpdated.Unix()
+	// Include stemcell info if available
+	if vmStatus.Stemcell != nil {
+		instanceMap["stemcell"] = map[string]interface{}{
+			"name":    vmStatus.Stemcell.Name,
+			"os":      vmStatus.Stemcell.OS,
+			"version": vmStatus.Stemcell.Version,
+		}
 	}
 
 	instances[instanceID] = instanceMap

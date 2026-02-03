@@ -2230,8 +2230,14 @@
       const planName = details.plan?.name || details.plan_id || 'unknown';
       const isSelected = selectedUpgradeInstances.has(id);
 
+      // Get current stemcell version if available
+      const stemcellInfo = details.stemcell;
+      const stemcellDisplay = stemcellInfo
+        ? `<span class="upgrade-instance-stemcell" title="${stemcellInfo.name || ''}">${stemcellInfo.os || ''}/${stemcellInfo.version || ''}</span>`
+        : '<span class="upgrade-instance-stemcell unknown">unknown</span>';
+
       return `
-        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}">
+        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}" data-stemcell-os="${stemcellInfo?.os || ''}" data-stemcell-version="${stemcellInfo?.version || ''}">
           <label class="upgrade-instance-checkbox">
             <input type="checkbox" ${isSelected ? 'checked' : ''} />
             <span class="checkmark"></span>
@@ -2239,6 +2245,9 @@
           <div class="upgrade-instance-info">
             <div class="upgrade-instance-id">${id}</div>
             <div class="upgrade-instance-meta">${serviceName} / ${planName}</div>
+          </div>
+          <div class="upgrade-instance-stemcell-container">
+            ${stemcellDisplay}
           </div>
         </div>
       `;

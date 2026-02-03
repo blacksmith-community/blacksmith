@@ -59,6 +59,13 @@ type ServiceMonitor struct {
 	IsHealthy      bool
 }
 
+// StemcellInfo contains basic stemcell information for a service instance.
+type StemcellInfo struct {
+	Name    string `json:"name"`    // e.g., "bosh-google-kvm-ubuntu-jammy-go_agent"
+	OS      string `json:"os"`      // e.g., "ubuntu-jammy"
+	Version string `json:"version"` // e.g., "1.73"
+}
+
 // VMStatus represents the aggregated status of VMs for a service.
 type VMStatus struct {
 	Status      string                 `json:"status"`
@@ -67,6 +74,7 @@ type VMStatus struct {
 	LastUpdated time.Time              `json:"last_updated"`
 	NextUpdate  time.Time              `json:"next_update"`
 	VMs         []bosh.VM              `json:"vms,omitempty"`
+	Stemcell    *StemcellInfo          `json:"stemcell,omitempty"`
 	Details     map[string]interface{} `json:"details,omitempty"`
 }
 
@@ -200,7 +208,70 @@ func (m *Monitor) GetServiceVMStatus(ctx context.Context, serviceID string) (*VM
 		status.NextUpdate = time.Unix(int64(next), 0)
 	}
 
+	// Extract stemcell info from the first VM if available
+	status.Stemcell = extractStemcellFromVMs(statusData["vms"])
+
 	return status, nil
+}
+
+// extractStemcellFromVMs extracts stemcell info from the first VM in the list.
+func extractStemcellFromVMs(vmsData interface{}) *StemcellInfo {
+	vms, ok := vmsData.([]interface{})
+	if !ok || len(vms) == 0 {
+		return nil
+	}
+
+	// Get first VM
+	firstVM, ok := vms[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// Extract stemcell data
+	stemcellData, ok := firstVM["stemcell"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	stemcell := &StemcellInfo{}
+	if name, ok := stemcellData["name"].(string); ok {
+		stemcell.Name = name
+		// Extract OS from name (e.g., "bosh-google-kvm-ubuntu-jammy-go_agent" -> "ubuntu-jammy")
+		stemcell.OS = extractOSFromStemcellName(name)
+	}
+	if version, ok := stemcellData["version"].(string); ok {
+		stemcell.Version = version
+	}
+
+	// Only return if we have at least version
+	if stemcell.Version == "" {
+		return nil
+	}
+
+	return stemcell
+}
+
+// extractOSFromStemcellName extracts the OS name from a full stemcell name.
+// e.g., "bosh-google-kvm-ubuntu-jammy-go_agent" -> "ubuntu-jammy"
+func extractOSFromStemcellName(name string) string {
+	// Common OS patterns in stemcell names
+	osPatterns := []string{
+		"ubuntu-jammy",
+		"ubuntu-bionic",
+		"ubuntu-xenial",
+		"ubuntu-trusty",
+		"centos-7",
+		"windows2019",
+		"windows2016",
+	}
+
+	for _, pattern := range osPatterns {
+		if strings.Contains(name, pattern) {
+			return pattern
+		}
+	}
+
+	return ""
 }
 
 // TriggerRefresh forces an immediate refresh of a service's VMs.
