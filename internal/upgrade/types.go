@@ -111,3 +111,18 @@ func (t *UpgradeTask) ToSummary() TaskSummary {
 		CreatedAt:      t.CreatedAt,
 	}
 }
+
+// Settings represents upgrade manager settings.
+type Settings struct {
+	MaxBatchJobs int `json:"max_batch_jobs"` // 0 means no limit
+}
+
+// SettingsResponse represents the settings API response.
+type SettingsResponse struct {
+	MaxBatchJobs int `json:"max_batch_jobs"`
+}
+
+// UpdateSettingsRequest represents a request to update settings.
+type UpdateSettingsRequest struct {
+	MaxBatchJobs int `json:"max_batch_jobs"`
+}

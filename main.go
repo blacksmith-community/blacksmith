@@ -390,8 +390,8 @@ func storePlansToVault(vault *internalVault.Vault, cfg *config.Config) {
 	// Don't fail startup if plan storage fails
 }
 
-// initializeBOSH creates and configures BOSH director.
-func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) *bosh.PooledDirector {
+// initializeBOSH creates and configures BOSH directors (pooled and batch).
+func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDirector, *bosh.BatchDirector) {
 	// Set BOSH environment variables for CLI compatibility
 	err := os.Setenv("BOSH_CLIENT", cfg.BOSH.Username)
 	if err != nil {
@@ -408,13 +408,15 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) *bosh.PooledDir
 	// Use logger for BOSH operations
 	boshLogger := loggerPkg.Get().Named("bosh")
 
-	boshDirector, err := bosh.CreatePooledDirector(
+	// Create both pooled director (for general operations) and batch director (for batch upgrades)
+	boshDirector, batchDirector, err := bosh.CreatePooledAndBatchDirectors(
 		cfg.BOSH.Address,
 		cfg.BOSH.Username,
 		cfg.BOSH.Password,
 		cfg.BOSH.CACert,
 		cfg.BOSH.SkipSslValidation,
 		cfg.BOSH.MaxConnections,
+		cfg.BOSH.MaxBatchConnections,
 		time.Duration(cfg.BOSH.ConnectionTimeout)*time.Second,
 		boshLogger,
 	)
@@ -422,13 +424,13 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) *bosh.PooledDir
 		logger.Error("Failed to authenticate to BOSH: %s", err)
 		logger.Error("Continuing with degraded BOSH functionality - deployment operations may not work")
 
-		return nil
+		return nil, nil
 	}
 
-	logger.Info("BOSH director initialized with connection pooling (max: %d connections, timeout: %ds)",
-		cfg.BOSH.MaxConnections, cfg.BOSH.ConnectionTimeout)
+	logger.Info("BOSH director initialized with connection pooling (general: %d, batch: %d, timeout: %ds)",
+		cfg.BOSH.MaxConnections, cfg.BOSH.MaxBatchConnections, cfg.BOSH.ConnectionTimeout)
 
-	return boshDirector
+	return boshDirector, batchDirector
 }
 
 // updateBOSHCloudConfig updates BOSH cloud config if provided.
@@ -1008,13 +1010,13 @@ func setupSignalHandlingAndContext() (context.Context, context.CancelFunc, chan 
 	return ctx, cancel, sigChan
 }
 
-func initializeCore(configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector) {
+func initializeCore(configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector, *bosh.BatchDirector) {
 	config := initializeConfig(configPath, logger)
 	vault := initializeVault(config, logger)
-	boshDirector := initializeBOSH(config, logger)
+	boshDirector, batchDirector := initializeBOSH(config, logger)
 	setupBOSHResources(config, boshDirector, logger)
 
-	return config, vault, boshDirector
+	return config, vault, boshDirector, batchDirector
 }
 
 func setupBOSHResources(config *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
@@ -1090,18 +1092,29 @@ func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *intern
 	return cfManager
 }
 
-func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, cfManager *internalCF.Manager,
+func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager,
 	vmMonitor *vmmonitor.Monitor, sshService *ssh.ServiceImpl, rabbitmqSSHService *rabbitmq.SSHService,
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
 	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
 	rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService, rabbitmqPluginsAuditService *rabbitmq.PluginsAuditService,
 	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, logger loggerPkg.Logger) *broker.API {
+	// Create callback to sync BatchDirector pool with max_batch_jobs setting
+	var onMaxBatchJobsChanged func(maxJobs int)
+	if batchDirector != nil {
+		onMaxBatchJobsChanged = func(maxJobs int) {
+			batchDirector.UpdateMaxBatchJobs(maxJobs)
+			logger.Info("Updated BatchDirector pool size to %d", maxJobs)
+		}
+	}
+
 	internalAPI := api.NewInternalAPI(api.Dependencies{
 		Config:                         config,
 		Logger:                         logger,
 		Vault:                          vault,
 		Broker:                         brokerInstance,
 		Director:                       boshDirector,
+		BatchDirector:                  batchDirector,
+		OnMaxBatchJobsChanged:          onMaxBatchJobsChanged,
 		ServicesManager:                services.NewManagerWithCFConfig(logger.Named("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
 		CFManager:                      cfManager,
 		VMMonitor:                      vmMonitor,
@@ -1136,7 +1149,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 
 // runService runs the main service logic.
 func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger) error {
-	config, vault, boshDirector := initializeCore(configPath, logger)
+	config, vault, boshDirector, batchDirector := initializeCore(configPath, logger)
 
 	brokerInstance, err := setupBrokerAndUI(config, vault, boshDirector, logger)
 	if err != nil {
@@ -1154,7 +1167,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
 
-	sshService, apiHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, cfManager, vmMonitor, logger)
+	sshService, apiHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, logger)
 	defer closeSSHService(sshService, logger)
 
 	serverWaitGroup := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
@@ -1198,12 +1211,12 @@ func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirecto
 	return nil
 }
 
-func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API) {
+func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API) {
 	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
 
 	uiHandler := getUIHandler(config)
 
-	apiHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, cfManager, vmMonitor,
+	apiHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
 		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, logger)

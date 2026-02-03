@@ -2308,6 +2308,36 @@ func (d *DirectorAdapter) GetPoolStats() (*PoolStats, error) {
 	}, nil
 }
 
+// FindRunningTaskForDeployment finds a currently running task for the given deployment.
+// It queries recent tasks and returns the first one that is queued, processing, or cancelling.
+// Returns nil if no running task is found.
+func (d *DirectorAdapter) FindRunningTaskForDeployment(deploymentName string) (*Task, error) {
+	d.log.Debugf("Finding running task for deployment: %s", deploymentName)
+
+	tasks, err := d.director.RecentTasks(30, boshdirector.TasksFilter{
+		Deployment: deploymentName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent tasks: %w", err)
+	}
+
+	for _, t := range tasks {
+		state := t.State()
+		if state == "queued" || state == "processing" || state == "cancelling" {
+			d.log.Debugf("Found running task %d for deployment %s (state: %s)", t.ID(), deploymentName, state)
+			return &Task{
+				ID:          t.ID(),
+				State:       state,
+				Description: t.Description(),
+				Deployment:  deploymentName,
+			}, nil
+		}
+	}
+
+	d.log.Debugf("No running task found for deployment %s", deploymentName)
+	return nil, nil
+}
+
 func (d *DirectorAdapter) updateExistingDeployment(dep boshdirector.Deployment, deploymentName, manifest string) (*Task, error) {
 	d.log.Debugf("Updating existing deployment %s", deploymentName)
 

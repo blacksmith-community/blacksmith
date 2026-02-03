@@ -125,6 +125,206 @@
     setTheme(newTheme);
   };
 
+  // =================================================================
+  // Custom Dialog Modal Functions (replaces browser confirm/prompt)
+  // =================================================================
+
+  // Ensure dialog modal HTML exists in DOM
+  const ensureDialogModal = () => {
+    if (document.getElementById('dialog-modal-overlay')) return;
+
+    const modalHTML = `
+      <div id="dialog-modal-overlay" class="dialog-modal-overlay">
+        <div class="dialog-modal">
+          <div class="dialog-modal-header">
+            <svg class="dialog-modal-icon warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+            <h3 class="dialog-modal-title"></h3>
+          </div>
+          <div class="dialog-modal-body">
+            <p class="dialog-modal-message"></p>
+            <input type="text" class="dialog-modal-input" style="display: none;">
+          </div>
+          <div class="dialog-modal-footer">
+            <button class="dialog-modal-btn dialog-modal-btn-cancel">Cancel</button>
+            <button class="dialog-modal-btn dialog-modal-btn-confirm">Confirm</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+  };
+
+  // Show a confirm dialog (returns Promise<boolean>)
+  const showConfirmDialog = (options = {}) => {
+    return new Promise((resolve) => {
+      ensureDialogModal();
+
+      const overlay = document.getElementById('dialog-modal-overlay');
+      const titleEl = overlay.querySelector('.dialog-modal-title');
+      const messageEl = overlay.querySelector('.dialog-modal-message');
+      const inputEl = overlay.querySelector('.dialog-modal-input');
+      const cancelBtn = overlay.querySelector('.dialog-modal-btn-cancel');
+      const confirmBtn = overlay.querySelector('.dialog-modal-btn-confirm');
+      const iconEl = overlay.querySelector('.dialog-modal-icon');
+
+      // Set content
+      titleEl.textContent = options.title || 'Confirm';
+      messageEl.textContent = options.message || 'Are you sure?';
+      inputEl.style.display = 'none';
+      inputEl.value = '';
+
+      // Set button text
+      cancelBtn.textContent = options.cancelText || 'Cancel';
+      confirmBtn.textContent = options.confirmText || 'Confirm';
+
+      // Set button style (danger or default)
+      confirmBtn.classList.remove('dialog-modal-btn-confirm', 'dialog-modal-btn-danger');
+      confirmBtn.classList.add(options.danger ? 'dialog-modal-btn-danger' : 'dialog-modal-btn-confirm');
+
+      // Set icon style
+      iconEl.classList.remove('warning', 'info');
+      iconEl.classList.add(options.danger ? 'warning' : 'info');
+
+      // Show modal
+      overlay.classList.add('active');
+
+      // Cleanup function
+      const cleanup = () => {
+        overlay.classList.remove('active');
+        cancelBtn.removeEventListener('click', handleCancel);
+        confirmBtn.removeEventListener('click', handleConfirm);
+        overlay.removeEventListener('click', handleOverlayClick);
+        document.removeEventListener('keydown', handleKeydown);
+      };
+
+      const handleCancel = () => {
+        cleanup();
+        resolve(false);
+      };
+
+      const handleConfirm = () => {
+        cleanup();
+        resolve(true);
+      };
+
+      const handleOverlayClick = (e) => {
+        if (e.target === overlay) {
+          cleanup();
+          resolve(false);
+        }
+      };
+
+      const handleKeydown = (e) => {
+        if (e.key === 'Escape') {
+          cleanup();
+          resolve(false);
+        } else if (e.key === 'Enter') {
+          cleanup();
+          resolve(true);
+        }
+      };
+
+      cancelBtn.addEventListener('click', handleCancel);
+      confirmBtn.addEventListener('click', handleConfirm);
+      overlay.addEventListener('click', handleOverlayClick);
+      document.addEventListener('keydown', handleKeydown);
+
+      // Focus the confirm button
+      confirmBtn.focus();
+    });
+  };
+
+  // Show a prompt dialog (returns Promise<string|null>)
+  const showPromptDialog = (options = {}) => {
+    return new Promise((resolve) => {
+      ensureDialogModal();
+
+      const overlay = document.getElementById('dialog-modal-overlay');
+      const titleEl = overlay.querySelector('.dialog-modal-title');
+      const messageEl = overlay.querySelector('.dialog-modal-message');
+      const inputEl = overlay.querySelector('.dialog-modal-input');
+      const cancelBtn = overlay.querySelector('.dialog-modal-btn-cancel');
+      const confirmBtn = overlay.querySelector('.dialog-modal-btn-confirm');
+      const iconEl = overlay.querySelector('.dialog-modal-icon');
+
+      // Set content
+      titleEl.textContent = options.title || 'Input';
+      messageEl.textContent = options.message || 'Please enter a value:';
+      inputEl.style.display = 'block';
+      inputEl.value = options.defaultValue || '';
+      inputEl.placeholder = options.placeholder || '';
+
+      // Set button text
+      cancelBtn.textContent = options.cancelText || 'Cancel';
+      confirmBtn.textContent = options.confirmText || 'OK';
+
+      // Use default button style for prompts
+      confirmBtn.classList.remove('dialog-modal-btn-danger');
+      confirmBtn.classList.add('dialog-modal-btn-confirm');
+
+      // Set icon to info
+      iconEl.classList.remove('warning');
+      iconEl.classList.add('info');
+
+      // Show modal
+      overlay.classList.add('active');
+
+      // Cleanup function
+      const cleanup = () => {
+        overlay.classList.remove('active');
+        cancelBtn.removeEventListener('click', handleCancel);
+        confirmBtn.removeEventListener('click', handleConfirm);
+        overlay.removeEventListener('click', handleOverlayClick);
+        inputEl.removeEventListener('keydown', handleInputKeydown);
+        document.removeEventListener('keydown', handleKeydown);
+      };
+
+      const handleCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const handleConfirm = () => {
+        const value = inputEl.value;
+        cleanup();
+        resolve(value);
+      };
+
+      const handleOverlayClick = (e) => {
+        if (e.target === overlay) {
+          cleanup();
+          resolve(null);
+        }
+      };
+
+      const handleInputKeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleConfirm();
+        }
+      };
+
+      const handleKeydown = (e) => {
+        if (e.key === 'Escape') {
+          cleanup();
+          resolve(null);
+        }
+      };
+
+      cancelBtn.addEventListener('click', handleCancel);
+      confirmBtn.addEventListener('click', handleConfirm);
+      overlay.addEventListener('click', handleOverlayClick);
+      inputEl.addEventListener('keydown', handleInputKeydown);
+      document.addEventListener('keydown', handleKeydown);
+
+      // Focus the input
+      inputEl.focus();
+      inputEl.select();
+    });
+  };
+
   // Universal Table Initialization - Auto-sort functionality
   const initializeAllTables = () => {
     // Find all tables in the document
@@ -1978,6 +2178,11 @@
           <option value="">Select Stemcell...</option>
         </select>
       </div>
+      <div class="filter-row">
+        <label for="upgrade-max-batch-jobs">Max Parallel Jobs:</label>
+        <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="No limit" title="Maximum number of batch jobs that can run in parallel. Leave empty or 0 for no limit.">
+        <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
+      </div>
       <div class="upgrade-actions">
         <button id="upgrade-select-all" class="btn-secondary">Select All</button>
         <button id="upgrade-deselect-all" class="btn-secondary">Deselect All</button>
@@ -2196,8 +2401,71 @@
     fetchUpgradeTasks();
     startTasksRefresh();
 
+    // Load upgrade settings
+    loadUpgradeSettings();
+
+    // Set up save settings button handler
+    const saveSettingsBtn = document.getElementById('upgrade-save-settings');
+    if (saveSettingsBtn) {
+      saveSettingsBtn.addEventListener('click', saveUpgradeSettings);
+    }
+
     upgradeTabInitialized = true;
     console.log('Batch Operations tab initialized');
+  };
+
+  // Load upgrade settings from API
+  const loadUpgradeSettings = async () => {
+    try {
+      const response = await fetch('/b/upgrade/settings');
+      if (response.ok) {
+        const settings = await response.json();
+        const maxBatchJobsInput = document.getElementById('upgrade-max-batch-jobs');
+        if (maxBatchJobsInput && settings.max_batch_jobs > 0) {
+          maxBatchJobsInput.value = settings.max_batch_jobs;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load upgrade settings:', err);
+    }
+  };
+
+  // Save upgrade settings to API
+  const saveUpgradeSettings = async () => {
+    const maxBatchJobsInput = document.getElementById('upgrade-max-batch-jobs');
+    const saveBtn = document.getElementById('upgrade-save-settings');
+    if (!maxBatchJobsInput || !saveBtn) return;
+
+    const value = parseInt(maxBatchJobsInput.value, 10) || 0;
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    try {
+      const response = await fetch('/b/upgrade/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_batch_jobs: value })
+      });
+
+      if (response.ok) {
+        saveBtn.textContent = 'Saved!';
+        setTimeout(() => {
+          saveBtn.textContent = 'Save';
+          saveBtn.disabled = false;
+        }, 1500);
+      } else {
+        const data = await response.json();
+        alert(`Failed to save settings: ${data.error || 'Unknown error'}`);
+        saveBtn.textContent = 'Save';
+        saveBtn.disabled = false;
+      }
+    } catch (err) {
+      console.error('Failed to save upgrade settings:', err);
+      alert(`Failed to save settings: ${err.message}`);
+      saveBtn.textContent = 'Save';
+      saveBtn.disabled = false;
+    }
   };
 
   // Update plan filter based on selected service
@@ -2348,7 +2616,6 @@
     const instancesHtml = instances.map(instance => {
       const statusIcon = getInstanceStatusIcon(instance.status);
       const statusClass = getInstanceStatusClass(instance.status);
-      const showCancelBtn = instance.status === 'running' && instance.bosh_task_id;
 
       return `
         <div class="upgrade-task-instance ${statusClass}">
@@ -2358,7 +2625,6 @@
             <div class="instance-deployment">${instance.deployment_name || ''}</div>
             <div class="instance-actions">
               ${instance.bosh_task_id ? `<button class="bosh-task-btn" onclick="showTaskDetails(${instance.bosh_task_id}, event)">BOSH Task: ${instance.bosh_task_id}</button>` : ''}
-              ${showCancelBtn ? `<button class="instance-cancel-btn" onclick="window.cancelInstance('${task.id}', '${instance.instance_id}', event)">Cancel</button>` : ''}
             </div>
             ${instance.error ? `<div class="instance-error">${instance.error}</div>` : ''}
           </div>
@@ -2489,9 +2755,17 @@
   // Cancel a running or paused task
   window.cancelTask = async (taskId, event) => {
     if (event) event.stopPropagation();
-    if (!confirm('Are you sure you want to cancel this job? This will cancel the current BOSH task and skip remaining instances.')) {
-      return;
-    }
+
+    const confirmed = await showConfirmDialog({
+      title: 'Cancel Batch Job',
+      message: 'Are you sure you want to cancel this job? This will cancel the current BOSH task and skip remaining instances.',
+      confirmText: 'Cancel Job',
+      cancelText: 'Keep Running',
+      danger: true
+    });
+
+    if (!confirmed) return;
+
     try {
       const response = await fetch(`/b/upgrade/tasks/${taskId}/cancel`, { method: 'POST' });
       if (response.ok) {
@@ -2504,27 +2778,6 @@
     } catch (err) {
       console.error('Failed to cancel task:', err);
       alert('Failed to cancel task: ' + err.message);
-    }
-  };
-
-  // Cancel a specific instance within a task (skip current and continue to next)
-  window.cancelInstance = async (taskId, instanceId, event) => {
-    if (event) event.stopPropagation();
-    if (!confirm('Skip this instance? This will cancel the current BOSH task and continue to the next instance.')) {
-      return;
-    }
-    try {
-      const response = await fetch(`/b/upgrade/tasks/${taskId}/instances/${instanceId}/cancel`, { method: 'POST' });
-      if (response.ok) {
-        console.log('Instance cancelled:', instanceId);
-        fetchUpgradeTasks(); // Refresh the view
-      } else {
-        const data = await response.json();
-        alert('Failed to cancel instance: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Failed to cancel instance:', err);
-      alert('Failed to cancel instance: ' + err.message);
     }
   };
 
@@ -2573,7 +2826,15 @@
 
     // Prompt for job name
     const defaultName = `Upgrade to ${os}/${version}`;
-    const jobName = prompt('Enter a name for this batch job:', defaultName);
+    const jobName = await showPromptDialog({
+      title: 'Create Batch Job',
+      message: `Enter a name for this batch job (${instanceIds.length} instance${instanceIds.length > 1 ? 's' : ''} selected):`,
+      defaultValue: defaultName,
+      placeholder: 'Batch job name',
+      confirmText: 'Start Upgrade',
+      cancelText: 'Cancel'
+    });
+
     if (jobName === null) {
       // User cancelled
       return;
@@ -3144,13 +3405,13 @@
 
     try {
       if (type === 'blacksmith-logs') {
-        // Fetch blacksmith logs
-        const response = await fetch('/b/blacksmith/logs', { cache: 'no-cache' });
+        // Fetch blacksmith logs with pagination (initial load)
+        const response = await fetch('/b/blacksmith/logs?limit=5000&offset=0', { cache: 'no-cache' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         const data = await response.json();
-        return formatBlacksmithLogs(data.logs);
+        return formatBlacksmithLogs(data.logs, null, data);
 
       } else if (type === 'events') {
         // Direct fetch for events
@@ -5003,9 +5264,29 @@
     return tableHTML;
   };
 
-  const formatBlacksmithLogs = (logs, logFile = null) => {
+  // Global state for blacksmith logs pagination
+  window.blacksmithLogsPagination = {
+    totalLines: 0,
+    currentOffset: 0,
+    hasMore: false,
+    isLoading: false,
+    currentFile: '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log'
+  };
+
+  const formatBlacksmithLogs = (logs, logFile = null, paginationData = null) => {
     if (!logs || logs === '') {
       return '<div class="no-data">No logs available</div>';
+    }
+
+    // Store pagination state
+    if (paginationData) {
+      window.blacksmithLogsPagination = {
+        totalLines: paginationData.total_lines || 0,
+        currentOffset: (paginationData.offset || 0) + (paginationData.limit || 5000),
+        hasMore: paginationData.has_more || false,
+        isLoading: false,
+        currentFile: logFile || '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log'
+      };
     }
 
     // Parse logs and store for sorting
@@ -5037,6 +5318,18 @@
     // since we're providing our own in the controls row
     const logsTableHTML = renderLogsTable(logs, parsedLogs, false);
 
+    // Show line count info
+    const lineCountInfo = paginationData
+      ? `Showing ${parsedLogs.length.toLocaleString()} of ${paginationData.total_lines.toLocaleString()} lines`
+      : `${parsedLogs.length.toLocaleString()} lines`;
+
+    // Load more indicator (shown at the top when there are older logs)
+    const loadMoreHTML = (paginationData && paginationData.has_more)
+      ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
+           <span class="load-more-text">Click or scroll up to load older logs</span>
+         </div>`
+      : '';
+
     return `
       <div class="logs-container">
         <div class="logs-controls-row">
@@ -5048,6 +5341,7 @@
               ${logFileOptions}
             </select>
           </div>
+          <span class="logs-line-count" title="Line count">${lineCountInfo}</span>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.logs-table', event)"
                   title="Copy filtered table rows">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -5058,6 +5352,7 @@
           </button>
         </div>
         <div class="logs-table-container" id="blacksmith-logs-display">
+          ${loadMoreHTML}
           ${logsTableHTML}
         </div>
       </div>
@@ -8662,14 +8957,23 @@
     displayContainer.innerHTML = '<div class="loading">Loading...</div>';
 
     try {
-      // Fetch the logs for the selected file
-      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(logFilePath)}`, { cache: 'no-cache' });
+      // Fetch the logs for the selected file with pagination
+      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(logFilePath)}&limit=5000&offset=0`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();
       const logs = data.logs;
+
+      // Update pagination state
+      window.blacksmithLogsPagination = {
+        totalLines: data.total_lines || 0,
+        currentOffset: (data.offset || 0) + (data.limit || 5000),
+        hasMore: data.has_more || false,
+        isLoading: false,
+        currentFile: logFilePath
+      };
 
       if (!logs || logs === '') {
         displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
@@ -8679,15 +8983,34 @@
       // Save the selected log file to localStorage
       LogSelectionManager.saveBlacksmithLog(logFilePath);
 
-      // Update the display with formatted logs
-      // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
-      const tableHTML = renderLogsTable(logs, null, false);
-      displayContainer.innerHTML = tableHTML;
+      // Parse logs
+      const parsedLogs = logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+      tableOriginalData.set('blacksmith-logs', parsedLogs);
+      tableOriginalData.set('logs-table', parsedLogs);
 
-      // Re-attach the search filter functionality to the existing search filter
-      // and initialize sorting
+      // Load more indicator
+      const loadMoreHTML = data.has_more
+        ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
+             <span class="load-more-text">Click or scroll up to load older logs</span>
+           </div>`
+        : '';
+
+      // Update line count display
+      const lineCountEl = document.querySelector('.logs-line-count');
+      if (lineCountEl) {
+        lineCountEl.textContent = `Showing ${parsedLogs.length.toLocaleString()} of ${data.total_lines.toLocaleString()} lines`;
+      }
+
+      // Update the display with formatted logs
+      const tableHTML = renderLogsTable(logs, parsedLogs, false);
+      displayContainer.innerHTML = loadMoreHTML + tableHTML;
+
+      // Re-attach the search filter functionality and initialize sorting
       initializeSorting('logs-table');
       attachSearchFilter('logs-table');
+
+      // Set up scroll listener for lazy loading
+      setupLogsScrollListener();
 
     } catch (error) {
       console.error('Failed to fetch log file:', error);
@@ -9195,14 +9518,23 @@
     button.disabled = true;
 
     try {
-      // Fetch the logs for the current file
-      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(currentLogFile)}`, { cache: 'no-cache' });
+      // Fetch the logs with pagination (reset to initial state)
+      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(currentLogFile)}&limit=5000&offset=0`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();
       const logs = data.logs;
+
+      // Update pagination state
+      window.blacksmithLogsPagination = {
+        totalLines: data.total_lines || 0,
+        currentOffset: (data.offset || 0) + (data.limit || 5000),
+        hasMore: data.has_more || false,
+        isLoading: false,
+        currentFile: currentLogFile
+      };
 
       if (!logs || logs === '') {
         displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
@@ -9214,16 +9546,31 @@
         tableOriginalData.set('blacksmith-logs', parsedLogs);
         tableOriginalData.set('logs-table', parsedLogs);  // Also store under table class name as fallback
 
+        // Load more indicator
+        const loadMoreHTML = data.has_more
+          ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
+               <span class="load-more-text">Click or scroll up to load older logs</span>
+             </div>`
+          : '';
+
+        // Update line count display
+        const lineCountEl = document.querySelector('.logs-line-count');
+        if (lineCountEl) {
+          lineCountEl.textContent = `Showing ${parsedLogs.length.toLocaleString()} of ${data.total_lines.toLocaleString()} lines`;
+        }
+
         // Update the display with formatted logs
-        // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
         const tableHTML = renderLogsTable(logs, parsedLogs, false);
-        displayContainer.innerHTML = tableHTML;
+        displayContainer.innerHTML = loadMoreHTML + tableHTML;
 
         // Re-attach the search filter functionality and initialize sorting
         initializeSorting('logs-table');
         attachSearchFilter('logs-table');
         // Restore search filter state
         restoreSearchFilterState('logs-table', currentSearchFilter);
+
+        // Set up scroll listener for lazy loading
+        setupLogsScrollListener();
       }
 
       // Visual feedback for successful refresh
@@ -9245,6 +9592,116 @@
       // Remove spinning animation
       button.classList.remove('refreshing');
       button.disabled = false;
+    }
+  };
+
+  // Load more blacksmith logs (older logs)
+  window.loadMoreBlacksmithLogs = async () => {
+    const pagination = window.blacksmithLogsPagination;
+    if (!pagination || !pagination.hasMore || pagination.isLoading) {
+      return;
+    }
+
+    const displayContainer = document.getElementById('blacksmith-logs-display');
+    const loadMoreEl = document.getElementById('logs-load-more');
+    if (!displayContainer) return;
+
+    // Set loading state
+    pagination.isLoading = true;
+    if (loadMoreEl) {
+      loadMoreEl.innerHTML = '<span class="load-more-text">Loading older logs...</span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/b/blacksmith/logs?file=${encodeURIComponent(pagination.currentFile)}&limit=2000&offset=${pagination.currentOffset}`,
+        { cache: 'no-cache' }
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const newLogs = data.logs;
+
+      if (newLogs && newLogs !== '') {
+        // Parse new logs
+        const newParsedLogs = newLogs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+
+        // Get existing parsed logs and prepend new ones
+        const existingLogs = tableOriginalData.get('blacksmith-logs') || [];
+        const combinedLogs = [...newParsedLogs, ...existingLogs];
+        tableOriginalData.set('blacksmith-logs', combinedLogs);
+        tableOriginalData.set('logs-table', combinedLogs);
+
+        // Get the table body and prepend new rows
+        const tableBody = displayContainer.querySelector('.logs-table tbody, #logs-table-body');
+        if (tableBody) {
+          // Render new rows
+          const columns = detectLogColumns(newParsedLogs);
+          const newRowsHTML = newParsedLogs.map(row => renderLogRow(row, columns)).join('');
+
+          // Create a temporary container to parse the HTML
+          const temp = document.createElement('tbody');
+          temp.innerHTML = newRowsHTML;
+
+          // Insert new rows at the beginning
+          const firstChild = tableBody.firstChild;
+          while (temp.firstChild) {
+            tableBody.insertBefore(temp.firstChild, firstChild);
+          }
+        }
+
+        // Update pagination state
+        pagination.currentOffset += data.limit || 2000;
+        pagination.hasMore = data.has_more || false;
+
+        // Update line count display
+        const lineCountEl = document.querySelector('.logs-line-count');
+        if (lineCountEl) {
+          lineCountEl.textContent = `Showing ${combinedLogs.length.toLocaleString()} of ${pagination.totalLines.toLocaleString()} lines`;
+        }
+
+        // Update or remove load more indicator
+        if (loadMoreEl) {
+          if (pagination.hasMore) {
+            loadMoreEl.innerHTML = '<span class="load-more-text">Click or scroll up to load older logs</span>';
+          } else {
+            loadMoreEl.innerHTML = '<span class="load-more-text">All logs loaded</span>';
+            loadMoreEl.style.opacity = '0.5';
+            loadMoreEl.style.cursor = 'default';
+            loadMoreEl.onclick = null;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load more logs:', error);
+      if (loadMoreEl) {
+        loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Failed to load: ${error.message}</span>`;
+      }
+    } finally {
+      pagination.isLoading = false;
+    }
+  };
+
+  // Set up scroll listener for lazy loading logs
+  const setupLogsScrollListener = () => {
+    const displayContainer = document.getElementById('blacksmith-logs-display');
+    if (!displayContainer) return;
+
+    // Remove existing listener if any
+    displayContainer.removeEventListener('scroll', handleLogsScroll);
+    displayContainer.addEventListener('scroll', handleLogsScroll);
+  };
+
+  // Handle scroll event for lazy loading
+  const handleLogsScroll = (event) => {
+    const container = event.target;
+    const pagination = window.blacksmithLogsPagination;
+
+    // Check if scrolled near the top (within 100px)
+    if (container.scrollTop < 100 && pagination && pagination.hasMore && !pagination.isLoading) {
+      window.loadMoreBlacksmithLogs();
     }
   };
 
@@ -10399,6 +10856,8 @@
             } else if (tabType === 'blacksmith-logs') {
               initializeSorting('logs-table');
               attachSearchFilter('logs-table');
+              // Set up scroll listener for lazy loading
+              setupLogsScrollListener();
             } else if (tabType === 'logs') {
               initializeSorting('deployment-log-table');
               attachSearchFilter('deployment-log-table');

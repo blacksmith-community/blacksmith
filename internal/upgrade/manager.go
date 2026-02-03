@@ -12,20 +12,19 @@ import (
 	"github.com/google/uuid"
 )
 
-// Vault path for storing upgrade tasks.
-const upgradeTasksVaultPath = "upgrade-tasks"
+// Vault paths for storing upgrade data.
+const (
+	upgradeTasksVaultPath    = "upgrade-tasks"
+	upgradeSettingsVaultPath = "upgrade-settings"
+)
 
 // Error variables for err113 compliance.
 var (
-	ErrTaskNotFound       = errors.New("upgrade task not found")
-	ErrNoInstances        = errors.New("no instances specified for upgrade")
-	ErrInvalidStemcell    = errors.New("invalid stemcell target")
-	ErrInstanceNotFound   = errors.New("instance not found")
-	ErrDeploymentMissing  = errors.New("deployment name missing for instance")
-	ErrTaskNotRunning     = errors.New("task is not running")
-	ErrTaskNotPaused      = errors.New("task is not paused")
-	ErrInstanceNotRunning = errors.New("instance is not running")
-	ErrNoBOSHTask         = errors.New("instance has no BOSH task")
+	ErrTaskNotFound    = errors.New("upgrade task not found")
+	ErrNoInstances     = errors.New("no instances specified for upgrade")
+	ErrInvalidStemcell = errors.New("invalid stemcell target")
+	ErrTaskNotRunning  = errors.New("task is not running")
+	ErrTaskNotPaused   = errors.New("task is not paused")
 )
 
 // Manager manages upgrade tasks.
@@ -44,6 +43,16 @@ type Manager struct {
 	// Cancellation tracking - maps taskID to cancel channel
 	taskCancelCh   map[string]chan struct{}
 	taskCancelLock sync.RWMutex
+
+	// Settings
+	settings     Settings
+	settingsLock sync.RWMutex
+
+	// Parallel job control - nil means no limit
+	jobSemaphore chan struct{}
+
+	// Callback when max_batch_jobs changes (used to update BatchDirector pool)
+	onMaxBatchJobsChanged func(maxJobs int)
 }
 
 // NewManager creates a new upgrade manager.
@@ -58,16 +67,24 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		taskCancelCh: make(map[string]chan struct{}),
 	}
 
-	// Load persisted tasks from vault
+	// Load persisted settings from vault
 	ctx := context.Background()
+	if err := m.loadSettings(ctx); err != nil {
+		m.logger.Error("Failed to load settings: %v", err)
+	}
+
+	// Initialize job semaphore based on settings
+	m.updateJobSemaphore()
+
+	// Load persisted tasks from vault
 	if err := m.loadPersistedTasks(ctx); err != nil {
 		m.logger.Error("Failed to load persisted tasks: %v", err)
 	}
 
-	// Start the task processor
+	// Start the task dispatcher
 	m.wg.Add(1)
 
-	go m.processTaskQueue()
+	go m.dispatchTasks()
 
 	return m
 }
@@ -208,8 +225,8 @@ func (m *Manager) ListTasks() []*UpgradeTask {
 	return tasks
 }
 
-// processTaskQueue processes tasks from the queue.
-func (m *Manager) processTaskQueue() {
+// dispatchTasks dispatches tasks from the queue to be processed in parallel.
+func (m *Manager) dispatchTasks() {
 	defer m.wg.Done()
 
 	for {
@@ -219,7 +236,31 @@ func (m *Manager) processTaskQueue() {
 
 			return
 		case task := <-m.taskQueue:
-			m.processTask(task)
+			// Spawn a goroutine for each task to allow parallel processing
+			m.wg.Add(1)
+
+			go func(t *UpgradeTask) {
+				defer m.wg.Done()
+
+				// Acquire semaphore slot if max batch jobs is set
+				m.settingsLock.RLock()
+				semaphore := m.jobSemaphore
+				m.settingsLock.RUnlock()
+
+				if semaphore != nil {
+					select {
+					case semaphore <- struct{}{}:
+						// Got a slot
+						defer func() { <-semaphore }()
+					case <-m.stopCh:
+						m.logger.Info("Manager stopping, task %s not started", t.ID)
+
+						return
+					}
+				}
+
+				m.processTask(t)
+			}(task)
 		}
 	}
 }
@@ -356,7 +397,10 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount)
 }
 
-// upgradeInstance upgrades a single instance.
+// upgradeInstance upgrades a single instance using 2 goroutines:
+// 1. Goroutine 1: Runs UpdateDeployment (blocking until BOSH task completes)
+// 2. Goroutine 2: Polls to find and store the BOSH task ID for UI display
+// Main thread waits for completion or task-level cancel signal.
 func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) {
 	ctx := context.Background()
 	m.logger.Info("Upgrading instance %s (deployment: %s)", instance.InstanceID, instance.DeploymentName)
@@ -380,13 +424,11 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		m.mu.Unlock()
 		m.logger.Error("Instance %s has no deployment name", instance.InstanceID)
 		m.persistTask(ctx, task) //nolint:errcheck
-
 		return
 	}
 
 	// Get current deployment manifest
 	m.logger.Debug("Getting deployment %s for instance %s", instance.DeploymentName, instance.InstanceID)
-
 	deployment, err := m.director.GetDeployment(instance.DeploymentName)
 	if err != nil {
 		m.mu.Lock()
@@ -396,7 +438,6 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		m.mu.Unlock()
 		m.logger.Error("Failed to get deployment %s: %v", instance.DeploymentName, err)
 		m.persistTask(ctx, task) //nolint:errcheck
-
 		return
 	}
 
@@ -408,7 +449,6 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		m.mu.Unlock()
 		m.logger.Error("Deployment %s returned nil without error", instance.DeploymentName)
 		m.persistTask(ctx, task) //nolint:errcheck
-
 		return
 	}
 
@@ -428,104 +468,127 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		m.mu.Unlock()
 		m.logger.Error("Failed to merge stemcell overlay for %s: %v", instance.DeploymentName, err)
 		m.persistTask(ctx, task) //nolint:errcheck
-
 		return
 	}
 
 	m.logger.Debug("Stemcell overlay merged successfully for %s, new manifest size: %d bytes",
 		instance.DeploymentName, len(newManifest))
 
-	// Update deployment (redeploy)
-	m.logger.Debug("Updating deployment %s with new stemcell", instance.DeploymentName)
+	// === START 2 GOROUTINES APPROACH ===
 
-	boshTask, err := m.director.UpdateDeployment(instance.DeploymentName, newManifest)
-	if err != nil {
-		m.mu.Lock()
-		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("failed to update deployment: %v", err)
-		task.FailedCount++
-		m.mu.Unlock()
-		m.logger.Error("Failed to update deployment %s: %v", instance.DeploymentName, err)
-		m.persistTask(ctx, task) //nolint:errcheck
+	// Channel to receive result from update goroutine
+	updateDoneCh := make(chan error, 1)
 
-		return
+	// Channel to signal task ID finder to stop
+	stopTaskFinderCh := make(chan struct{})
+
+	// Goroutine 1: Run UpdateDeployment (blocking)
+	m.logger.Debug("Starting deployment update goroutine for %s", instance.DeploymentName)
+	go func() {
+		_, err := m.director.UpdateDeployment(instance.DeploymentName, newManifest)
+		updateDoneCh <- err
+	}()
+
+	// Goroutine 2: Poll to find BOSH task ID for UI display
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stopTaskFinderCh:
+				return
+			case <-ticker.C:
+				// Skip if we already have the task ID
+				m.mu.RLock()
+				hasTaskID := instance.BOSHTaskID > 0
+				m.mu.RUnlock()
+				if hasTaskID {
+					return
+				}
+
+				// Find running task for this deployment
+				runningTask, err := m.director.FindRunningTaskForDeployment(instance.DeploymentName)
+				if err != nil {
+					m.logger.Debug("Error finding running task for %s: %v", instance.DeploymentName, err)
+					continue
+				}
+
+				if runningTask != nil {
+					m.mu.Lock()
+					instance.BOSHTaskID = runningTask.ID
+					m.mu.Unlock()
+					m.logger.Info("Found BOSH task %d for deployment %s", runningTask.ID, instance.DeploymentName)
+					m.persistTask(ctx, task) //nolint:errcheck
+					return
+				}
+			}
+		}
+	}()
+
+	// Main thread: Wait for completion or task-level cancel signal
+	var updateErr error
+	select {
+	case updateErr = <-updateDoneCh:
+		// Update completed (success or failure)
+		m.logger.Debug("Update goroutine completed for %s", instance.DeploymentName)
+
+	case <-cancelCh:
+		// Task-level cancel
+		m.logger.Info("Task-level cancel for instance %s", instance.InstanceID)
+		m.cancelRunningTaskForDeployment(instance.DeploymentName)
+		updateErr = <-updateDoneCh
+
+	case <-m.stopCh:
+		// Manager stopped
+		m.logger.Info("Manager stopped while upgrading instance %s", instance.InstanceID)
+		m.cancelRunningTaskForDeployment(instance.DeploymentName)
+		updateErr = <-updateDoneCh
 	}
 
-	m.mu.Lock()
-	instance.BOSHTaskID = boshTask.ID
-	m.mu.Unlock()
-	m.logger.Info("Started BOSH task %d for deployment %s", boshTask.ID, instance.DeploymentName)
+	// Stop the task finder goroutine
+	close(stopTaskFinderCh)
 
-	// Persist immediately so the BOSH task ID is visible in the UI
-	m.persistTask(ctx, task) //nolint:errcheck
-
-	// Wait for BOSH task to complete
-	err = m.waitForBOSHTask(boshTask.ID, instance, cancelCh)
-	if err != nil {
+	// Handle result
+	if updateErr != nil {
 		m.mu.Lock()
-		// Don't overwrite status if instance was already cancelled by CancelTask
-		if instance.Status != InstanceStatusCancelled {
-			instance.Status = InstanceStatusFailed
-			instance.Error = fmt.Sprintf("BOSH task failed: %v", err)
-			task.FailedCount++
-			m.logger.Error("BOSH task %d failed for %s: %v", boshTask.ID, instance.DeploymentName, err)
-		} else {
-			m.logger.Info("Instance %s was cancelled, BOSH task error: %v", instance.InstanceID, err)
-		}
+		instance.Status = InstanceStatusFailed
+		instance.Error = fmt.Sprintf("BOSH task failed: %v", updateErr)
+		task.FailedCount++
+		m.logger.Error("Update failed for %s: %v", instance.DeploymentName, updateErr)
 		m.mu.Unlock()
 		m.persistTask(ctx, task) //nolint:errcheck
-
 		return
 	}
 
 	// Success
-	completedAt := time.Now()
-
 	m.mu.Lock()
+	completedAt := time.Now()
 	instance.CompletedAt = &completedAt
 	instance.Status = InstanceStatusSuccess
 	task.CompletedCount++
-	m.mu.Unlock()
 	m.logger.Info("Successfully upgraded instance %s", instance.InstanceID)
+	m.mu.Unlock()
 
 	// Persist progress
 	m.persistTask(ctx, task) //nolint:errcheck
 }
 
-// waitForBOSHTask waits for a BOSH task to complete.
-func (m *Manager) waitForBOSHTask(taskID int, instance *InstanceUpgrade, cancelCh <-chan struct{}) error {
-	ticker := time.NewTicker(5 * time.Second) // Poll every 5 seconds for faster response
-	defer ticker.Stop()
+// cancelRunningTaskForDeployment finds and cancels any running BOSH task for the deployment.
+func (m *Manager) cancelRunningTaskForDeployment(deploymentName string) {
+	runningTask, err := m.director.FindRunningTaskForDeployment(deploymentName)
+	if err != nil {
+		m.logger.Error("Failed to find running task for %s: %v", deploymentName, err)
+		return
+	}
 
-	// Timeout after 30 minutes
-	timeout := time.After(30 * time.Minute)
-
-	for {
-		select {
-		case <-timeout:
-			return fmt.Errorf("timeout waiting for BOSH task %d", taskID)
-		case <-ticker.C:
-			task, err := m.director.GetTask(taskID)
-			if err != nil {
-				m.logger.Error("Failed to get BOSH task %d status: %v", taskID, err)
-
-				continue
-			}
-
-			switch task.State {
-			case "done":
-				return nil
-			case "error", "cancelled", "timeout":
-				return fmt.Errorf("BOSH task %d ended with state: %s, result: %s", taskID, task.State, task.Result)
-			default:
-				m.logger.Debug("BOSH task %d still %s", taskID, task.State)
-			}
-		case <-cancelCh:
-			m.logger.Info("Received cancel signal for BOSH task %d", taskID)
-			return fmt.Errorf("BOSH task %d cancelled by user", taskID)
-		case <-m.stopCh:
-			return fmt.Errorf("manager stopped while waiting for BOSH task %d", taskID)
+	if runningTask != nil {
+		m.logger.Info("Cancelling BOSH task %d for deployment %s", runningTask.ID, deploymentName)
+		if err := m.director.CancelTask(runningTask.ID); err != nil {
+			m.logger.Error("Failed to cancel BOSH task %d: %v", runningTask.ID, err)
 		}
+	} else {
+		m.logger.Debug("No running task found to cancel for %s", deploymentName)
 	}
 }
 
@@ -677,57 +740,6 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// CancelInstance cancels a specific running instance within a task.
-func (m *Manager) CancelInstance(ctx context.Context, taskID, instanceID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	task, exists := m.tasks[taskID]
-	if !exists {
-		return ErrTaskNotFound
-	}
-
-	// Find the instance
-	var instance *InstanceUpgrade
-	for i := range task.Instances {
-		if task.Instances[i].InstanceID == instanceID {
-			instance = &task.Instances[i]
-			break
-		}
-	}
-
-	if instance == nil {
-		return ErrInstanceNotFound
-	}
-
-	if instance.Status != InstanceStatusRunning {
-		return ErrInstanceNotRunning
-	}
-
-	if instance.BOSHTaskID == 0 {
-		return ErrNoBOSHTask
-	}
-
-	m.logger.Info("Cancelling BOSH task %d for instance %s in task %s", instance.BOSHTaskID, instanceID, taskID)
-
-	// Cancel the BOSH task
-	if err := m.director.CancelTask(instance.BOSHTaskID); err != nil {
-		m.logger.Error("Failed to cancel BOSH task %d: %v", instance.BOSHTaskID, err)
-		return fmt.Errorf("failed to cancel BOSH task: %w", err)
-	}
-
-	instance.Status = InstanceStatusCancelled
-	instance.Error = "cancelled by user"
-	task.CancelledCount++
-
-	// Persist the updated state
-	if err := m.persistTask(ctx, task); err != nil {
-		m.logger.Error("Failed to persist instance cancellation for task %s: %v", taskID, err)
-	}
-
-	return nil
-}
-
 // ManagerInterface defines the interface for the upgrade manager.
 type ManagerInterface interface {
 	CreateTask(ctx context.Context, req CreateTaskRequest) (*UpgradeTask, error)
@@ -737,7 +749,8 @@ type ManagerInterface interface {
 	PauseTask(ctx context.Context, taskID string) error
 	ResumeTask(ctx context.Context, taskID string) error
 	CancelTask(ctx context.Context, taskID string) error
-	CancelInstance(ctx context.Context, taskID, instanceID string) error
+	GetSettings() Settings
+	UpdateSettings(ctx context.Context, settings Settings) error
 	Stop()
 }
 
@@ -829,4 +842,80 @@ func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
 	m.logger.Debug("Task %s persisted successfully", task.ID)
 
 	return nil
+}
+
+// loadSettings loads settings from vault.
+func (m *Manager) loadSettings(ctx context.Context) error {
+	m.logger.Debug("Loading upgrade settings from vault")
+
+	var settings Settings
+
+	exists, err := m.vault.Get(ctx, upgradeSettingsVaultPath, &settings)
+	if err != nil {
+		return fmt.Errorf("failed to get settings from vault: %w", err)
+	}
+
+	if exists {
+		m.settingsLock.Lock()
+		m.settings = settings
+		m.settingsLock.Unlock()
+		m.logger.Info("Loaded upgrade settings: max_batch_jobs=%d", settings.MaxBatchJobs)
+	} else {
+		m.logger.Debug("No persisted upgrade settings found, using defaults")
+	}
+
+	return nil
+}
+
+// GetSettings returns the current settings.
+func (m *Manager) GetSettings() Settings {
+	m.settingsLock.RLock()
+	defer m.settingsLock.RUnlock()
+
+	return m.settings
+}
+
+// UpdateSettings updates the settings and persists them.
+func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
+	m.settingsLock.Lock()
+	m.settings = settings
+	m.settingsLock.Unlock()
+
+	// Update the job semaphore
+	m.updateJobSemaphore()
+
+	// Notify callback (e.g., to update BatchDirector pool size)
+	if m.onMaxBatchJobsChanged != nil {
+		m.onMaxBatchJobsChanged(settings.MaxBatchJobs)
+	}
+
+	// Persist settings
+	err := m.vault.Put(ctx, upgradeSettingsVaultPath, settings)
+	if err != nil {
+		return fmt.Errorf("failed to save settings to vault: %w", err)
+	}
+
+	m.logger.Info("Updated upgrade settings: max_batch_jobs=%d", settings.MaxBatchJobs)
+
+	return nil
+}
+
+// SetOnMaxBatchJobsChanged sets a callback that is called when max_batch_jobs changes.
+// This is used to synchronize the BatchDirector pool size with max_batch_jobs.
+func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
+	m.onMaxBatchJobsChanged = callback
+}
+
+// updateJobSemaphore updates the job semaphore based on current settings.
+func (m *Manager) updateJobSemaphore() {
+	m.settingsLock.Lock()
+	defer m.settingsLock.Unlock()
+
+	if m.settings.MaxBatchJobs > 0 {
+		m.jobSemaphore = make(chan struct{}, m.settings.MaxBatchJobs)
+		m.logger.Info("Set max parallel batch jobs to %d", m.settings.MaxBatchJobs)
+	} else {
+		m.jobSemaphore = nil
+		m.logger.Info("No limit on parallel batch jobs")
+	}
 }

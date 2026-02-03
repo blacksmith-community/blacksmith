@@ -58,6 +58,8 @@ type Dependencies struct {
 	Vault                          interfaces.Vault
 	Broker                         interfaces.Broker
 	Director                       interfaces.Director
+	BatchDirector                  interfaces.Director      // Separate director for batch upgrade operations
+	OnMaxBatchJobsChanged          func(maxJobs int)        // Callback to update BatchDirector pool size
 	ServicesManager                *services.Manager
 	CFManager                      interfaces.CFManager
 	VMMonitor                      interfaces.VMMonitor
@@ -202,10 +204,16 @@ func createServicesHandler(deps Dependencies) *serviceshandler.Handler {
 }
 
 func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
+	// Use BatchDirector for batch upgrades if available, otherwise fall back to regular Director
+	director := deps.BatchDirector
+	if director == nil {
+		director = deps.Director
+	}
 	return upgradehandler.NewHandler(upgradehandler.Dependencies{
-		Logger:   deps.Logger,
-		Director: deps.Director,
-		Vault:    deps.Vault,
+		Logger:                deps.Logger,
+		Director:              director,
+		Vault:                 deps.Vault,
+		OnMaxBatchJobsChanged: deps.OnMaxBatchJobsChanged,
 	})
 }
 
