@@ -12,6 +12,8 @@ import (
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/vmmonitor"
 	"blacksmith/pkg/http/response"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Handler handles BOSH-related endpoints.
@@ -225,6 +227,7 @@ func (h *Handler) loadServiceInstances(ctx context.Context, logger interfaces.Lo
 
 	// Enrich instances with full data including instance_name
 	h.enrichInstancesWithFullData(ctx, instances, logger)
+	h.enrichInstancesWithManifestStemcell(ctx, instances, logger)
 	h.enrichInstancesWithVMStatus(ctx, instances, logger)
 
 	return instances
@@ -316,6 +319,77 @@ func (h *Handler) enrichInstancesWithFullData(ctx context.Context, instances map
 	}
 }
 
+// enrichInstancesWithManifestStemcell extracts stemcell info from Vault manifest.
+// This is the authoritative source as manifest is kept current by the reconciler.
+func (h *Handler) enrichInstancesWithManifestStemcell(ctx context.Context, instances map[string]interface{}, logger interfaces.Logger) {
+	if h.vault == nil {
+		return
+	}
+
+	logger.Debug("Enriching instances with manifest stemcell info")
+
+	for instanceID, instanceData := range instances {
+		instanceMap, ok := instanceData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Read manifest from Vault
+		var manifestData map[string]interface{}
+
+		path := instanceID + "/manifest"
+
+		exists, err := h.vault.Get(ctx, path, &manifestData)
+		if err != nil || !exists {
+			continue
+		}
+
+		manifestText, ok := manifestData["manifest"].(string)
+		if !ok || manifestText == "" {
+			continue
+		}
+
+		// Extract stemcell from manifest
+		stemcell := extractStemcellFromManifest(manifestText)
+		if stemcell != nil {
+			instanceMap["stemcell"] = map[string]interface{}{
+				"name":    stemcell.Name,
+				"os":      stemcell.OS,
+				"version": stemcell.Version,
+			}
+			logger.Debug("Added manifest stemcell for instance %s: %s", instanceID, stemcell.Version)
+		}
+	}
+}
+
+// extractStemcellFromManifest parses YAML manifest and extracts stemcell info.
+func extractStemcellFromManifest(manifest string) *vmmonitor.StemcellInfo {
+	var parsed struct {
+		Stemcells []struct {
+			Alias   string `yaml:"alias"`
+			Name    string `yaml:"name"`
+			OS      string `yaml:"os"`
+			Version string `yaml:"version"`
+		} `yaml:"stemcells"`
+	}
+
+	if err := yaml.Unmarshal([]byte(manifest), &parsed); err != nil {
+		return nil
+	}
+
+	if len(parsed.Stemcells) == 0 {
+		return nil
+	}
+
+	s := parsed.Stemcells[0]
+
+	return &vmmonitor.StemcellInfo{
+		Name:    s.Name,
+		OS:      s.OS,
+		Version: s.Version,
+	}
+}
+
 // enrichInstancesWithVMStatus adds VM health status to service instances.
 func (h *Handler) enrichInstancesWithVMStatus(ctx context.Context, instances map[string]interface{}, logger interfaces.Logger) {
 	if h.vmMonitor == nil {
@@ -356,12 +430,14 @@ func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData int
 	instanceMap["vm_healthy"] = vmStatus.HealthyVMs
 	instanceMap["vm_last_updated"] = vmStatus.LastUpdated.Unix()
 
-	// Include stemcell info if available
+	// Include stemcell info if available AND not already set by manifest enrichment
 	if vmStatus.Stemcell != nil {
-		instanceMap["stemcell"] = map[string]interface{}{
-			"name":    vmStatus.Stemcell.Name,
-			"os":      vmStatus.Stemcell.OS,
-			"version": vmStatus.Stemcell.Version,
+		if _, hasStemcell := instanceMap["stemcell"]; !hasStemcell {
+			instanceMap["stemcell"] = map[string]interface{}{
+				"name":    vmStatus.Stemcell.Name,
+				"os":      vmStatus.Stemcell.OS,
+				"version": vmStatus.Stemcell.Version,
+			}
 		}
 	}
 

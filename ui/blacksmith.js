@@ -8705,7 +8705,7 @@
                     <td>
                       <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
                         <span>${stemcell.version || 'latest'}</span>
-                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
+                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${String(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
