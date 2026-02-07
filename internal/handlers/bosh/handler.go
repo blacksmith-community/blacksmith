@@ -85,6 +85,24 @@ func (h *Handler) GetPoolStats(responseWriter http.ResponseWriter, req *http.Req
 	response.HandleJSON(responseWriter, stats, nil)
 }
 
+// GetVMMonitorStatus returns the current state of the VM monitor for debugging.
+func (h *Handler) GetVMMonitorStatus(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("vm-monitor-status")
+	logger.Debug("VM monitor status request")
+
+	if h.vmMonitor == nil {
+		response.HandleJSON(responseWriter, map[string]interface{}{
+			"error":   "VM monitor not configured",
+			"running": false,
+		}, nil)
+
+		return
+	}
+
+	status := h.vmMonitor.GetStatus()
+	response.HandleJSON(responseWriter, status, nil)
+}
+
 // GetStemcells returns available stemcells from the BOSH director.
 func (h *Handler) GetStemcells(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("bosh-stemcells")

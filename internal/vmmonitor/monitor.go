@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -356,7 +357,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	defer m.wg.Done()
 
 	logger := logger.Get().Named("vm-monitor")
-	logger.Debug("VM monitor loop started")
+	logger.Info("VM monitor loop started")
 
 	ticker := time.NewTicker(1 * time.Minute) // Check every minute for services due
 	defer ticker.Stop()
@@ -364,10 +365,20 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Debug("VM monitor loop stopping")
+			logger.Info("VM monitor loop stopping (context cancelled)")
 
 			return
 		case <-ticker.C:
+			// Log state before each check cycle
+			m.mu.RLock()
+			serviceCount := len(m.services)
+			m.mu.RUnlock()
+			logger.Debug("Monitor tick: %d services tracked", serviceCount)
+
+			if serviceCount == 0 {
+				logger.Warning("VM monitor has no services to track - services map is empty")
+			}
+
 			m.checkScheduledServices(ctx)
 		}
 	}
@@ -380,6 +391,7 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	m.mu.RLock()
 
 	servicesDue := make([]*ServiceMonitor, 0)
+	totalServices := len(m.services)
 	now := time.Now()
 
 	for _, svc := range m.services {
@@ -391,10 +403,12 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	m.mu.RUnlock()
 
 	if len(servicesDue) == 0 {
+		logger.Debug("No services due for check (total tracked: %d)", totalServices)
+
 		return
 	}
 
-	logger.Debug("Checking %d services due for monitoring", len(servicesDue))
+	logger.Info("Starting check cycle: %d services due out of %d total", len(servicesDue), totalServices)
 
 	// Process services with concurrency limit
 	const maxConcurrentChecks = 3
@@ -402,6 +416,10 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	sem := make(chan struct{}, maxConcurrentChecks) // Max 3 concurrent checks
 
 	var waitGroup sync.WaitGroup
+
+	var completed int32
+
+	startTime := time.Now()
 
 	for _, svc := range servicesDue {
 		waitGroup.Add(1)
@@ -411,12 +429,26 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 		go func(s *ServiceMonitor) {
 			defer waitGroup.Done()
 			defer func() { <-sem }()
+			defer func() {
+				// Track worker completion
+				count := atomic.AddInt32(&completed, 1)
+				logger.Debug("Worker completed check for %s (%d/%d done)", s.ServiceID, count, len(servicesDue))
+			}()
+			// Recover from panics to prevent goroutine death
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("Panic in checkService for %s: %v", s.ServiceID, r)
+				}
+			}()
 
 			m.checkService(ctx, s)
 		}(svc)
 	}
 
 	waitGroup.Wait()
+
+	elapsed := time.Since(startTime)
+	logger.Info("Check cycle completed: %d services checked in %v", len(servicesDue), elapsed)
 }
 
 // checkService performs health check for a specific service.
@@ -657,4 +689,75 @@ func (m *Monitor) storeVMStatus(ctx context.Context, serviceID string, status VM
 	}
 
 	return nil
+}
+
+// MonitorStatus represents the current state of the VM monitor for debugging.
+type MonitorStatus struct {
+	Running        bool                   `json:"running"`
+	ServiceCount   int                    `json:"service_count"`
+	NormalInterval string                 `json:"normal_interval"`
+	FailedInterval string                 `json:"failed_interval"`
+	Services       []ServiceStatus        `json:"services"`
+	Summary        map[string]interface{} `json:"summary"`
+}
+
+// ServiceStatus represents the monitoring state of a single service.
+type ServiceStatus struct {
+	ServiceID      string    `json:"service_id"`
+	DeploymentName string    `json:"deployment_name"`
+	LastStatus     string    `json:"last_status"`
+	LastCheck      time.Time `json:"last_check"`
+	NextCheck      time.Time `json:"next_check"`
+	IsDue          bool      `json:"is_due"`
+	FailureCount   int       `json:"failure_count"`
+	IsHealthy      bool      `json:"is_healthy"`
+}
+
+// GetStatus returns current vm-monitor state for debugging and monitoring.
+func (m *Monitor) GetStatus() MonitorStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	services := make([]ServiceStatus, 0, len(m.services))
+
+	var dueCount, healthyCount, failingCount int
+
+	for _, svc := range m.services {
+		isDue := now.After(svc.NextCheck) || svc.NextCheck.IsZero()
+		if isDue {
+			dueCount++
+		}
+
+		if svc.IsHealthy {
+			healthyCount++
+		} else {
+			failingCount++
+		}
+
+		services = append(services, ServiceStatus{
+			ServiceID:      svc.ServiceID,
+			DeploymentName: svc.DeploymentName,
+			LastStatus:     svc.LastStatus,
+			LastCheck:      svc.LastCheck,
+			NextCheck:      svc.NextCheck,
+			IsDue:          isDue,
+			FailureCount:   svc.FailureCount,
+			IsHealthy:      svc.IsHealthy,
+		})
+	}
+
+	return MonitorStatus{
+		Running:        m.cancel != nil,
+		ServiceCount:   len(m.services),
+		NormalInterval: m.normalInterval.String(),
+		FailedInterval: m.failedInterval.String(),
+		Services:       services,
+		Summary: map[string]interface{}{
+			"total":        len(m.services),
+			"due_for_check": dueCount,
+			"healthy":      healthyCount,
+			"failing":      failingCount,
+		},
+	}
 }
