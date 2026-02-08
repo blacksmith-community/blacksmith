@@ -825,6 +825,7 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 	}
 
 	// Start the reconciler asynchronously to avoid blocking startup
+	// NOTE: Cleanup is handled in runService() to ensure it runs on shutdown, not when this function returns
 	if reconciler != nil {
 		go func() {
 			logger.Info("Starting deployment reconciler asynchronously")
@@ -837,19 +838,12 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 				logger.Info("Deployment reconciler started successfully")
 			}
 		}()
-
-		// Ensure reconciler is stopped on shutdown
-		defer func() {
-			err := reconciler.Stop()
-			if err != nil {
-				logger.Error("Error stopping reconciler: %s", err)
-			}
-		}()
 	} else {
 		logger.Info("Reconciler disabled - BOSH director unavailable")
 	}
 
 	// Start the VM monitor
+	// NOTE: Cleanup is handled in runService() to ensure it runs on shutdown, not when this function returns
 	if vmMonitor != nil {
 		err := vmMonitor.Start(ctx)
 		if err != nil {
@@ -857,10 +851,6 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 			// Non-fatal error - continue without VM monitoring
 		} else {
 			logger.Info("VM monitor started successfully")
-			// Ensure VM monitor is stopped on shutdown
-			defer func() {
-				vmMonitor.Stop()
-			}()
 		}
 	} else {
 		logger.Info("VM monitor disabled - BOSH director unavailable")
@@ -1166,6 +1156,20 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	vmMonitor := setupVMMonitor(vault, boshDirector, config, logger)
 
 	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
+
+	// Ensure background services are stopped on shutdown
+	// These defers run when runService() returns (on shutdown), not immediately
+	if reconciler != nil {
+		defer func() {
+			if err := reconciler.Stop(); err != nil {
+				logger.Error("Error stopping reconciler: %s", err)
+			}
+		}()
+	}
+
+	if vmMonitor != nil {
+		defer vmMonitor.Stop()
+	}
 
 	sshService, apiHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, logger)
 	defer closeSSHService(sshService, logger)
