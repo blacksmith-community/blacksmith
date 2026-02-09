@@ -1155,6 +1155,11 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	reconciler := setupReconciler(config, brokerInstance, vault, boshDirector, cfManager, logger)
 	vmMonitor := setupVMMonitor(vault, boshDirector, config, logger)
 
+	// Connect vm-monitor to broker so broker can notify on provision completion
+	if vmMonitor != nil {
+		brokerInstance.SetVMMonitor(vmMonitor)
+	}
+
 	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
 
 	// Ensure background services are stopped on shutdown

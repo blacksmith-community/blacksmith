@@ -238,8 +238,20 @@ func (h *Handler) loadServiceInstances(ctx context.Context, logger interfaces.Lo
 		return instances
 	}
 
-	instances = vaultInstances
-	logger.Debug("Loaded %d instances from Vault index", len(instances))
+	// Filter out deleted instances
+	for instanceID, instanceData := range vaultInstances {
+		if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+			if status, _ := instanceMap["status"].(string); status == "deleted" {
+				logger.Debug("Skipping deleted instance %s", instanceID)
+
+				continue
+			}
+		}
+
+		instances[instanceID] = instanceData
+	}
+
+	logger.Debug("Loaded %d instances from Vault index (after filtering deleted)", len(instances))
 
 	// Enrich instances with full data including instance_name
 	h.enrichInstancesWithFullData(ctx, instances, logger)

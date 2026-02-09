@@ -58,6 +58,7 @@ type ServiceMonitor struct {
 	NextCheck      time.Time
 	FailureCount   int
 	IsHealthy      bool
+	IsProvisioning bool // true until status is "running" or "failing", uses 5-min interval
 }
 
 // StemcellInfo contains basic stemcell information for a service instance.
@@ -173,6 +174,32 @@ func (m *Monitor) Stop() {
 // IsVMMonitor implements the interfaces.VMMonitor interface.
 func (m *Monitor) IsVMMonitor() bool {
 	return true
+}
+
+// AddService adds a new service to monitoring (called by broker on provision).
+// The service is added with IsProvisioning=true and will be checked every 5 minutes
+// until it reaches "running" or "failing" status.
+func (m *Monitor) AddService(ctx context.Context, instanceID, planID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.services[instanceID]; exists {
+		return nil // Already monitoring
+	}
+
+	deploymentName := planID + "-" + instanceID
+	m.services[instanceID] = &ServiceMonitor{
+		ServiceID:      instanceID,
+		DeploymentName: deploymentName,
+		LastStatus:     "unknown",
+		NextCheck:      time.Now(), // Check immediately
+		IsHealthy:      true,
+		IsProvisioning: true, // Start in provisioning mode (5-min interval)
+	}
+
+	logger.Get().Named("vm-monitor").Info("Added service %s to monitoring (provisioning mode)", instanceID)
+
+	return nil
 }
 
 // GetServiceVMStatus retrieves VM status for a service.
@@ -322,6 +349,11 @@ func (m *Monitor) scanAllServices(ctx context.Context) error {
 
 	for instanceID, instanceData := range idx.Data {
 		if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+			// Skip deleted instances
+			if status, _ := instanceMap["status"].(string); status == "deleted" {
+				continue
+			}
+
 			planID, hasPlan := instanceMap["plan_id"].(string)
 			if !hasPlan {
 				continue
@@ -352,6 +384,81 @@ func (m *Monitor) scanAllServices(ctx context.Context) error {
 	return nil
 }
 
+// rescanServices periodically rescans Vault index to discover new services and remove deleted ones.
+// This is a safety net for edge cases (missed broker notifications, manual Vault changes, recovery).
+func (m *Monitor) rescanServices(ctx context.Context) {
+	logger := logger.Get().Named("vm-monitor")
+
+	idx, err := m.vault.GetIndex(ctx, "db")
+	if err != nil {
+		logger.Error("Failed to get vault index for rescan: %v", err)
+
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	added, removed := 0, 0
+
+	// Add new services from index
+	for instanceID, instanceData := range idx.Data {
+		if _, exists := m.services[instanceID]; exists {
+			continue // Already monitoring
+		}
+
+		instanceMap, ok := instanceData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Skip deleted instances
+		if status, _ := instanceMap["status"].(string); status == "deleted" {
+			continue
+		}
+
+		planID, hasPlan := instanceMap["plan_id"].(string)
+		if !hasPlan {
+			continue
+		}
+
+		deploymentName := planID + "-" + instanceID
+		m.services[instanceID] = &ServiceMonitor{
+			ServiceID:      instanceID,
+			DeploymentName: deploymentName,
+			LastStatus:     "unknown",
+			NextCheck:      time.Now(),
+			IsHealthy:      true,
+			IsProvisioning: false, // Not provisioning (discovered via rescan)
+		}
+		added++
+	}
+
+	// Remove deleted services from m.services
+	for instanceID := range m.services {
+		instanceData, exists := idx.Data[instanceID]
+		if !exists {
+			delete(m.services, instanceID)
+			removed++
+
+			continue
+		}
+
+		if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+			if status, _ := instanceMap["status"].(string); status == "deleted" {
+				delete(m.services, instanceID)
+				removed++
+			}
+		}
+	}
+
+	if added > 0 || removed > 0 {
+		logger.Info("Rescan complete: added %d, removed %d services", added, removed)
+	} else {
+		logger.Debug("Rescan complete: no changes")
+	}
+}
+
 // monitorLoop runs the continuous monitoring loop.
 func (m *Monitor) monitorLoop(ctx context.Context) {
 	defer m.wg.Done()
@@ -360,7 +467,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	logger.Info("VM monitor loop started")
 
 	ticker := time.NewTicker(1 * time.Minute) // Check every minute for services due
+	rescanTicker := time.NewTicker(m.normalInterval) // Rescan Vault index every normalInterval (1 hour)
 	defer ticker.Stop()
+	defer rescanTicker.Stop()
 
 	for {
 		select {
@@ -380,6 +489,9 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 			}
 
 			m.checkScheduledServices(ctx)
+		case <-rescanTicker.C:
+			logger.Info("Periodic rescan of Vault index")
+			m.rescanServices(ctx)
 		}
 	}
 }
@@ -476,8 +588,18 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 		VMs:         vms,
 	}
 
+	// Check if provisioning is complete (reached stable state)
+	if svc.IsProvisioning && (status == vmStatusRunning || status == "failing") {
+		svc.IsProvisioning = false
+		logger.Info("Service %s provisioning complete, switching to normal interval", svc.ServiceID)
+	}
+
 	// Determine next check interval
-	if status != vmStatusRunning {
+	// Use failedInterval (5 min) during provisioning or when status is not running
+	if svc.IsProvisioning {
+		// Still provisioning - use 5-min interval
+		vmStatus.NextUpdate = time.Now().Add(m.failedInterval)
+	} else if status != vmStatusRunning {
 		svc.IsHealthy = false
 		svc.FailureCount++
 		vmStatus.NextUpdate = time.Now().Add(m.failedInterval)
@@ -711,6 +833,7 @@ type ServiceStatus struct {
 	IsDue          bool      `json:"is_due"`
 	FailureCount   int       `json:"failure_count"`
 	IsHealthy      bool      `json:"is_healthy"`
+	IsProvisioning bool      `json:"is_provisioning"`
 }
 
 // GetStatus returns current vm-monitor state for debugging and monitoring.
@@ -744,6 +867,7 @@ func (m *Monitor) GetStatus() MonitorStatus {
 			IsDue:          isDue,
 			FailureCount:   svc.FailureCount,
 			IsHealthy:      svc.IsHealthy,
+			IsProvisioning: svc.IsProvisioning,
 		})
 	}
 
