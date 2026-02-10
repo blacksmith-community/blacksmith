@@ -699,3 +699,252 @@ func (s *IndexSynchronizer) validateDeploymentName(instanceID string, dataMap ma
 
 	return nil
 }
+
+// SyncIndexWithValidation synchronizes the vault index with BOSH deployment validation.
+// This method adds safety checks to prevent incorrectly marking services as orphaned:
+// 1. Only marks orphans if we got a valid BOSH scan (deploymentNames not empty)
+// 2. Un-orphans services whose deployments are found to exist
+// 3. Cleans up services that have been orphaned for too long (24+ hours or 24+ checks)
+func (s *IndexSynchronizer) SyncIndexWithValidation(ctx context.Context, instances []InstanceData, deploymentNames map[string]bool) error {
+	s.logger.Debugf("Synchronizing index with %d instances and %d known deployments", len(instances), len(deploymentNames))
+
+	idx, err := s.GetVaultIndex()
+	if err != nil {
+		return fmt.Errorf("failed to get index: %w", err)
+	}
+
+	startCount := len(idx)
+	s.logger.Debugf("Current index has %d entries", startCount)
+
+	// Clean up any nil entries first
+	nilCount := s.cleanupNilEntries(idx)
+	if nilCount > 0 {
+		s.logger.Warningf("Cleaned up %d nil entries from index", nilCount)
+	}
+
+	reconciledMap := s.buildReconciledMap(instances)
+	stats := s.updateIndexWithInstances(idx, instances)
+
+	// Process orphan logic with deployment validation
+	orphanStats := s.processOrphansWithValidation(idx, reconciledMap, deploymentNames)
+
+	// Cleanup old orphans (24+ hours or 24+ checks)
+	cleanupCount := s.cleanupStaleOrphans(idx)
+
+	err = s.SaveVaultIndex(idx)
+	if err != nil {
+		return fmt.Errorf("failed to save index: %w", err)
+	}
+
+	s.logger.Infof("Index synchronized: initial=%d, nil-cleaned=%d, updated=%d, added=%d, orphaned=%d, un-orphaned=%d, cleaned=%d, final=%d",
+		startCount, nilCount, stats.updateCount, stats.addCount, orphanStats.newOrphans, orphanStats.unorphaned, cleanupCount, len(idx))
+
+	err = s.validateIndexInternal(idx)
+	if err != nil {
+		s.logger.Errorf("Index validation failed after sync: %s", err)
+	}
+
+	return nil
+}
+
+// orphanProcessingStats tracks statistics from orphan processing.
+type orphanProcessingStats struct {
+	newOrphans int
+	unorphaned int
+	stillOrphan int
+}
+
+// processOrphansWithValidation processes orphan logic with BOSH deployment validation.
+// It checks each service instance against the known deployment names and:
+// - Un-orphans services whose deployments are found
+// - Only marks new orphans if we got a valid BOSH scan
+// - Increments orphan check count for still-orphaned services
+func (s *IndexSynchronizer) processOrphansWithValidation(idx map[string]interface{}, reconciledMap map[string]bool, deploymentNames map[string]bool) orphanProcessingStats {
+	stats := orphanProcessingStats{}
+
+	// If deployment names is empty, we likely had a failed BOSH scan
+	// Don't mark any new orphans to avoid false positives
+	scanIsValid := len(deploymentNames) > 0
+
+	if !scanIsValid {
+		s.logger.Warningf("BOSH deployment scan returned empty - skipping orphan marking to avoid false positives")
+	}
+
+	for instanceID, data := range idx {
+		dataMap, ok := data.(map[string]interface{})
+		if !ok || !s.isServiceInstance(dataMap) {
+			continue
+		}
+
+		// Skip if already marked as deleted
+		if s.isMarkedDeleted(data) {
+			continue
+		}
+
+		deploymentName, _ := dataMap["deployment_name"].(string)
+		deploymentExists := deploymentNames[deploymentName]
+		wasOrphaned, _ := dataMap["orphaned"].(bool)
+		inReconciled := reconciledMap[instanceID]
+
+		if wasOrphaned {
+			if deploymentExists || inReconciled {
+				// UN-ORPHAN: Deployment found!
+				s.unorphanInstance(instanceID, dataMap)
+				stats.unorphaned++
+			} else {
+				// Still orphaned, increment check count
+				s.incrementOrphanCount(dataMap)
+				stats.stillOrphan++
+			}
+		} else if !inReconciled && !deploymentExists {
+			// Potentially orphaned
+			if scanIsValid {
+				// Only mark as orphaned if we got a valid scan
+				if s.markAsOrphaned(instanceID, data) {
+					stats.newOrphans++
+				}
+			}
+		}
+	}
+
+	return stats
+}
+
+// unorphanInstance clears the orphan flags from an instance.
+// This is called when a previously orphaned service's deployment is found in BOSH.
+func (s *IndexSynchronizer) unorphanInstance(instanceID string, dataMap map[string]interface{}) {
+	delete(dataMap, "orphaned")
+	delete(dataMap, "orphaned_at")
+	delete(dataMap, "orphaned_reason")
+	delete(dataMap, "orphan_check_count")
+	delete(dataMap, "stale")
+	delete(dataMap, "stale_since")
+	delete(dataMap, "days_orphaned")
+	delete(dataMap, "preservation_reason")
+
+	dataMap["reconciled"] = true
+	dataMap["reconciled_at"] = time.Now().Format(time.RFC3339)
+	dataMap["unorphaned_at"] = time.Now().Format(time.RFC3339)
+
+	s.logger.Infof("Instance %s un-orphaned - deployment found in BOSH", instanceID)
+}
+
+// incrementOrphanCount increments the orphan check count for a still-orphaned instance.
+func (s *IndexSynchronizer) incrementOrphanCount(dataMap map[string]interface{}) {
+	count := 0
+	if existing, ok := dataMap["orphan_check_count"].(int); ok {
+		count = existing
+	} else if existing, ok := dataMap["orphan_check_count"].(float64); ok {
+		// JSON unmarshaling may produce float64
+		count = int(existing)
+	}
+
+	dataMap["orphan_check_count"] = count + 1
+}
+
+// cleanupStaleOrphans removes instances that have been orphaned for too long.
+// An instance is considered stale if it has been orphaned for more than 24 hours
+// OR has been checked 24+ times without the deployment being found.
+func (s *IndexSynchronizer) cleanupStaleOrphans(idx map[string]interface{}) int {
+	var toDelete []string
+
+	for instanceID, data := range idx {
+		dataMap, ok := data.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		orphaned, _ := dataMap["orphaned"].(bool)
+		if !orphaned {
+			continue
+		}
+
+		shouldDelete := false
+		var reason string
+
+		// Check time-based: orphaned > 24 hours
+		if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
+			if t, err := time.Parse(time.RFC3339, orphanedAt); err == nil {
+				if time.Since(t) > 24*time.Hour {
+					shouldDelete = true
+					reason = fmt.Sprintf("orphaned for >24 hours (since %s)", orphanedAt)
+				}
+			}
+		}
+
+		// Check count-based: orphaned 24+ check cycles
+		if !shouldDelete {
+			count := 0
+			if c, ok := dataMap["orphan_check_count"].(int); ok {
+				count = c
+			} else if c, ok := dataMap["orphan_check_count"].(float64); ok {
+				count = int(c)
+			}
+
+			if count >= 24 {
+				shouldDelete = true
+				reason = fmt.Sprintf("orphaned for 24+ check cycles (count: %d)", count)
+			}
+		}
+
+		if shouldDelete {
+			s.logger.Infof("Removing orphaned instance %s from index: %s", instanceID, reason)
+			toDelete = append(toDelete, instanceID)
+		}
+	}
+
+	for _, id := range toDelete {
+		delete(idx, id)
+	}
+
+	return len(toDelete)
+}
+
+// ResetOrphanTimers resets the orphan timer for all orphaned services.
+// This is called on Blacksmith startup to give operators a 24-hour grace period
+// to investigate and fix any orphaned services before they are cleaned up.
+// This prevents orphaned services from being immediately deleted after a redeploy.
+func (s *IndexSynchronizer) ResetOrphanTimers() (int, error) {
+	s.logger.Infof("Resetting orphan timers on startup")
+
+	idx, err := s.GetVaultIndex()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get index: %w", err)
+	}
+
+	count := 0
+	now := time.Now().Format(time.RFC3339)
+
+	for instanceID, data := range idx {
+		dataMap, ok := data.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		orphaned, _ := dataMap["orphaned"].(bool)
+		if !orphaned {
+			continue
+		}
+
+		// Reset orphan timer to current time
+		dataMap["orphaned_at"] = now
+		dataMap["orphan_check_count"] = 0
+
+		// Clear stale flags if any
+		delete(dataMap, "stale")
+		delete(dataMap, "stale_since")
+		delete(dataMap, "days_orphaned")
+
+		s.logger.Debugf("Reset orphan timer for instance %s", instanceID)
+		count++
+	}
+
+	if count > 0 {
+		err = s.SaveVaultIndex(idx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to save index after resetting orphan timers: %w", err)
+		}
+	}
+
+	return count, nil
+}

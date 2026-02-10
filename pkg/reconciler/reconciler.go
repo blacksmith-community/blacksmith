@@ -203,6 +203,10 @@ func (r *ReconcilerManager) Start(ctx context.Context) error {
 		r.logger.Infof("Reconciler will run in degraded mode with available components")
 	}
 
+	// Reset orphan timers on startup to give operators a 24-hour grace period
+	// This prevents orphaned services from being immediately cleaned up after a redeploy
+	r.resetOrphanTimersOnStartup()
+
 	r.startBackgroundWorkers(ctx)
 	r.startInitialReconciliation(ctx)
 
@@ -216,6 +220,34 @@ func (r *ReconcilerManager) Start(ctx context.Context) error {
 	})
 
 	return nil
+}
+
+// resetOrphanTimersOnStartup resets orphan timers for all orphaned services.
+// This gives operators a 24-hour grace period after each Blacksmith redeploy
+// to investigate and fix any orphaned services before cleanup kicks in.
+func (r *ReconcilerManager) resetOrphanTimersOnStartup() {
+	if r.Synchronizer == nil {
+		r.logger.Debugf("Synchronizer not available, skipping orphan timer reset")
+		return
+	}
+
+	syncer, ok := r.Synchronizer.(*IndexSynchronizer)
+	if !ok {
+		r.logger.Warningf("Cannot reset orphan timers: synchronizer type assertion failed")
+		return
+	}
+
+	count, err := syncer.ResetOrphanTimers()
+	if err != nil {
+		r.logger.Errorf("Failed to reset orphan timers: %v", err)
+		return
+	}
+
+	if count > 0 {
+		r.logger.Infof("Reset orphan timers for %d services - 24h grace period started", count)
+	} else {
+		r.logger.Debugf("No orphaned services found, no timers to reset")
+	}
 }
 
 // RunReconciliation performs a single reconciliation run with safety checks.
@@ -505,14 +537,19 @@ func (r *ReconcilerManager) isInstanceDeleted(instanceID string) bool {
 	return false
 }
 
-// checkInstanceDeletedStatus checks if an instance is marked as deleted or orphaned for too long.
+// checkInstanceDeletedStatus checks if an instance is explicitly marked as deleted.
+// NOTE: We intentionally do NOT treat "orphaned too long" as deleted here.
+// Previously, orphaned services were treated as deleted after 24 hours, which caused
+// FilterServiceDeployments to skip their existing BOSH deployments, creating a vicious
+// cycle where services could never be un-orphaned. Now, orphaned services are still
+// processed so they can be un-orphaned if their deployment is found.
 func (r *ReconcilerManager) checkInstanceDeletedStatus(instanceID string, data interface{}) bool {
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		return false
 	}
 
-	// Check for deleted status
+	// Check for explicit deleted status only
 	if status, ok := dataMap["status"].(string); ok && status == StatusDeleted {
 		return true
 	}
@@ -522,8 +559,10 @@ func (r *ReconcilerManager) checkInstanceDeletedStatus(instanceID string, data i
 		return true
 	}
 
-	// Check if marked as orphaned for a long time
-	return r.isInstanceOrphanedTooLong(instanceID, dataMap)
+	// NOTE: Do NOT check isInstanceOrphanedTooLong here.
+	// Orphaned services should still be processed so they can be un-orphaned
+	// when their BOSH deployment is found during reconciliation.
+	return false
 }
 
 // isInstanceOrphanedTooLong checks if an instance has been orphaned for more than 24 hours.
@@ -773,6 +812,10 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 	// Phase 2: Scan BOSH deployments with rate limiting and batching
 	deployments := r.scanDeploymentsWithRateLimit(ctx)
 
+	// Build deployment name set for orphan validation
+	// This allows us to verify if a deployment exists before marking it as orphaned
+	deploymentNameSet := r.buildDeploymentNameSet(deployments)
+
 	// Phase 3: Process in batches with adaptive sizing
 	instances, err := r.processBatchesAdaptive(ctx, cfInstances, deployments)
 	if err != nil {
@@ -785,8 +828,9 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 		return fmt.Errorf("phase 4 failed: %w", err)
 	}
 
-	// Phase 5: Synchronize index
-	err = r.synchronizeIndex(ctx, updatedInstances)
+	// Phase 5: Synchronize index with deployment validation
+	// Pass deployment names so orphan marking can verify deployments exist
+	err = r.synchronizeIndexWithValidation(ctx, updatedInstances, deploymentNameSet)
 	if err != nil {
 		return fmt.Errorf("phase 5 failed: %w", err)
 	}
@@ -1463,6 +1507,7 @@ func (r *ReconcilerManager) markUnmatchedService(inst *InstanceData) {
 }
 
 // synchronizeIndex synchronizes the vault index with the given instances.
+// Deprecated: Use synchronizeIndexWithValidation for safer orphan handling.
 func (r *ReconcilerManager) synchronizeIndex(ctx context.Context, instances []InstanceData) error {
 	if r.Synchronizer == nil {
 		return ErrSynchronizerNotInitialized
@@ -1474,6 +1519,45 @@ func (r *ReconcilerManager) synchronizeIndex(ctx context.Context, instances []In
 	}
 
 	return nil
+}
+
+// synchronizeIndexWithValidation synchronizes the vault index with deployment validation.
+// This method passes the set of known deployment names to the synchronizer so it can:
+// 1. Only mark services as orphaned if we got a valid BOSH scan (deploymentNames not empty)
+// 2. Un-orphan services whose deployments are found to exist
+// 3. Clean up services that have been orphaned for too long
+func (r *ReconcilerManager) synchronizeIndexWithValidation(ctx context.Context, instances []InstanceData, deploymentNames map[string]bool) error {
+	if r.Synchronizer == nil {
+		return ErrSynchronizerNotInitialized
+	}
+
+	// Try to use the enhanced sync method with validation
+	if syncer, ok := r.Synchronizer.(*IndexSynchronizer); ok {
+		err := syncer.SyncIndexWithValidation(ctx, instances, deploymentNames)
+		if err != nil {
+			return fmt.Errorf("failed to sync index with validation: %w", err)
+		}
+
+		return nil
+	}
+
+	// Fallback to standard sync if type assertion fails
+	r.logger.Warningf("Synchronizer does not support validation, falling back to standard sync")
+
+	return r.Synchronizer.SyncIndex(ctx, instances)
+}
+
+// buildDeploymentNameSet creates a set of deployment names from the scanned deployments.
+// This is used to verify if a deployment exists before marking a service as orphaned.
+func (r *ReconcilerManager) buildDeploymentNameSet(deployments []DeploymentInfo) map[string]bool {
+	set := make(map[string]bool, len(deployments))
+	for _, dep := range deployments {
+		set[dep.Name] = true
+	}
+
+	r.logger.Debugf("Built deployment name set with %d entries", len(set))
+
+	return set
 }
 
 // discoverCFServiceInstances discovers service instances from Cloud Foundry.
