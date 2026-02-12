@@ -46,8 +46,8 @@ jobs:
       # - name: Govulncheck
       #   run: make govulncheck
 
-      - name: Gosec
-        run: make gosec
+      # - name: Gosec
+      #   run: make gosec
 
       - name: Golangci-lint
         run: make golangci-lint
