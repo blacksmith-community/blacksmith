@@ -67,9 +67,6 @@ func (l *MockLoggerLocal) Errorf(format string, args ...interface{}) {
 func RunBindingCredentialsPathConstructionTests(t *testing.T, logger Logger) {
 	t.Helper()
 
-	vault := NewTestVault(t)
-	updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
-
 	testCases := []struct {
 		instanceID   string
 		bindingID    string
@@ -93,23 +90,30 @@ func RunBindingCredentialsPathConstructionTests(t *testing.T, logger Logger) {
 	}
 
 	for _, testCase := range testCases {
-		t.Run(fmt.Sprintf("path_%s_%s", testCase.instanceID, testCase.bindingID), func(t *testing.T) {
+		// Capture testCase for parallel execution
+		tc := testCase
+		t.Run(fmt.Sprintf("path_%s_%s", tc.instanceID, tc.bindingID), func(t *testing.T) {
 			t.Parallel()
+
+			// Create separate vault and updater per subtest to avoid race conditions
+			vault := NewTestVault(t)
+			updater := NewVaultUpdater(vault, logger, BackupConfig{Enabled: false})
+
 			// Write then read to verify correct path construction
 			creds := map[string]interface{}{"k": "v"}
 
-			err := vault.SetSecret(testCase.expectedPath, creds)
+			err := vault.SetSecret(tc.expectedPath, creds)
 			if err != nil {
 				t.Fatalf("failed to set secret: %v", err)
 			}
 
-			got, err := updater.GetBindingCredentials(testCase.instanceID, testCase.bindingID)
+			got, err := updater.GetBindingCredentials(tc.instanceID, tc.bindingID)
 			if err != nil {
 				t.Fatalf("unexpected error retrieving credentials: %v", err)
 			}
 
 			if got["k"] != "v" {
-				t.Fatalf("expected to read back value from %s", testCase.expectedPath)
+				t.Fatalf("expected to read back value from %s", tc.expectedPath)
 			}
 		})
 	}

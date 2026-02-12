@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,24 +19,36 @@ const (
 
 // MockTestLogger implements Logger interface for testing.
 type MockTestLogger struct {
+	mu       sync.Mutex
 	messages []string
 }
 
 func (l *MockTestLogger) Debugf(format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	msg := fmt.Sprintf("[DEBUG] "+format, args...)
 	l.messages = append(l.messages, msg)
-	// fmt.Println(msg) // Print to console for debugging
 }
 
 func (l *MockTestLogger) Infof(format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.messages = append(l.messages, fmt.Sprintf("[INFO] "+format, args...))
 }
 
 func (l *MockTestLogger) Warningf(format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.messages = append(l.messages, fmt.Sprintf("[WARN] "+format, args...))
 }
 
 func (l *MockTestLogger) Errorf(format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.messages = append(l.messages, fmt.Sprintf("[ERROR] "+format, args...))
 }
 
