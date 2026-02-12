@@ -213,9 +213,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("Get upgrade settings request")
 
 	settings := h.manager.GetSettings()
-	response.HandleJSON(w, upgrade.SettingsResponse{
-		MaxBatchJobs: settings.MaxBatchJobs,
-	}, nil)
+	response.HandleJSON(w, upgrade.SettingsResponse(settings), nil)
 }
 
 // UpdateSettings handles PUT /b/upgrade/settings - updates upgrade settings.
@@ -231,9 +229,7 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings := upgrade.Settings{
-		MaxBatchJobs: req.MaxBatchJobs,
-	}
+	settings := upgrade.Settings(req)
 
 	if err := h.manager.UpdateSettings(r.Context(), settings); err != nil {
 		h.logger.Error("Failed to update settings: %v", err)

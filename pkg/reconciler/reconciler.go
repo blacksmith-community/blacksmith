@@ -565,33 +565,6 @@ func (r *ReconcilerManager) checkInstanceDeletedStatus(instanceID string, data i
 	return false
 }
 
-// isInstanceOrphanedTooLong checks if an instance has been orphaned for more than 24 hours.
-func (r *ReconcilerManager) isInstanceOrphanedTooLong(instanceID string, dataMap map[string]interface{}) bool {
-	orphaned, exists := dataMap["orphaned"].(bool)
-	if !exists || !orphaned {
-		return false
-	}
-
-	orphanedAt, ok := dataMap["orphaned_at"].(string)
-	if !ok {
-		return false
-	}
-
-	t, err := time.Parse(time.RFC3339, orphanedAt)
-	if err != nil {
-		return false
-	}
-
-	if time.Since(t) > 24*time.Hour {
-		// Been orphaned for more than 24 hours, treat as deleted
-		r.logger.Debugf("Instance %s has been orphaned for more than 24 hours, treating as deleted", instanceID)
-
-		return true
-	}
-
-	return false
-}
-
 func (r *ReconcilerManager) initializeRateLimiters() {
 	r.boshLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.BOSH.RateLimit.RequestsPerSecond), r.config.APIs.BOSH.RateLimit.Burst)
 	r.cfLimiter = rate.NewLimiter(rate.Limit(r.config.APIs.CF.RateLimit.RequestsPerSecond), r.config.APIs.CF.RateLimit.Burst)
@@ -1504,21 +1477,6 @@ func (r *ReconcilerManager) markUnmatchedService(inst *InstanceData) {
 	if inst.ServiceID == "" || inst.PlanID == "" {
 		inst.Metadata["unmatched_service"] = true
 	}
-}
-
-// synchronizeIndex synchronizes the vault index with the given instances.
-// Deprecated: Use synchronizeIndexWithValidation for safer orphan handling.
-func (r *ReconcilerManager) synchronizeIndex(ctx context.Context, instances []InstanceData) error {
-	if r.Synchronizer == nil {
-		return ErrSynchronizerNotInitialized
-	}
-
-	err := r.Synchronizer.SyncIndex(ctx, instances)
-	if err != nil {
-		return fmt.Errorf("failed to sync index with synchronizer: %w", err)
-	}
-
-	return nil
 }
 
 // synchronizeIndexWithValidation synchronizes the vault index with deployment validation.

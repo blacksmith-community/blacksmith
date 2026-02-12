@@ -81,45 +81,6 @@ func NewHandler(deps Dependencies) *Handler {
 	}
 }
 
-// readSpecificLogFile validates and reads a specific log file.
-func readSpecificLogFile(logFile string, logger interfaces.Logger) (string, error) {
-	allowedLogFiles := []string{
-		"/var/vcap/sys/log/blacksmith/blacksmith.stdout.log",
-		"/var/vcap/sys/log/blacksmith/blacksmith.stderr.log",
-		"/var/vcap/sys/log/blacksmith/vault.stdout.log",
-		"/var/vcap/sys/log/blacksmith/vault.stderr.log",
-		"/var/vcap/sys/log/blacksmith.vault/bpm.log",
-		"/var/vcap/sys/log/blacksmith/bpm.log",
-		"/var/vcap/sys/log/blacksmith/pre-start.stdout.log",
-		"/var/vcap/sys/log/blacksmith/pre-start.stderr.log",
-	}
-
-	if !isLogFileAllowed(logFile, allowedLogFiles) {
-		logger.Error("Unauthorized log file access attempt: %s", logFile)
-
-		return "", ErrUnauthorizedLogFileAccess
-	}
-
-	logger.Debug("Fetching logs from file: %s", logFile)
-
-	return readLogFileContent(logFile, logger)
-}
-
-// readDefaultLogFile reads the default log file.
-func readDefaultLogFile(logger interfaces.Logger) string {
-	defaultLogFile := "/var/vcap/sys/log/blacksmith/blacksmith.stdout.log"
-	logger.Debug("Reading default log file: %s", defaultLogFile)
-
-	content, err := readLogFileContent(defaultLogFile, logger)
-	if err != nil {
-		logger.Error("Failed to read default log file: %s", err)
-
-		return "" // Return empty logs on error for default file
-	}
-
-	return content
-}
-
 // isLogFileAllowed checks if a log file is in the allowed list.
 func isLogFileAllowed(logFile string, allowedFiles []string) bool {
 	for _, allowedFile := range allowedFiles {
@@ -129,23 +90,6 @@ func isLogFileAllowed(logFile string, allowedFiles []string) bool {
 	}
 
 	return false
-}
-
-// readLogFileContent reads the content of a log file.
-func readLogFileContent(logFile string, logger interfaces.Logger) (string, error) {
-	// #nosec G304 - logFile is validated against whitelist before calling this function
-	content, err := os.ReadFile(logFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			logger.Debug("Log file does not exist: %s", logFile)
-
-			return "", nil // Empty logs if file doesn't exist
-		}
-
-		return "", fmt.Errorf("%w: %w", ErrFailedToReadLogFile, err)
-	}
-
-	return string(content), nil
 }
 
 // logPaginationResult holds the result of paginated log reading.
