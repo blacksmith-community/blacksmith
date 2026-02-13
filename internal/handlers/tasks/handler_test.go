@@ -121,6 +121,10 @@ func (f *fakeDirector) CancelTask(taskID int) error {
 	return nil
 }
 
+func (f *fakeDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+	return nil, nil
+}
+
 func TestListTasksSuccess(t *testing.T) {
 	t.Parallel()
 

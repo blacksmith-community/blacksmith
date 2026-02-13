@@ -226,6 +226,11 @@ func (mb *MockBOSHDirector) UpdateDeployment(name, manifest string) (*bosh.Task,
 	return nil, ErrMockNotImplemented
 }
 
+// FindRunningTaskForDeployment implements the BOSH Director interface.
+func (mb *MockBOSHDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+
 // GetPoolStats implements the BOSH Director interface.
 func (mb *MockBOSHDirector) GetPoolStats() (*bosh.PoolStats, error) {
 	return nil, ErrMockNotImplemented

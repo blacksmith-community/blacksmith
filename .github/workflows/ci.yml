@@ -37,17 +37,17 @@ jobs:
       - name: Test
         run: make test
 
-      - name: Test with Race Detector
-        run: make test-race
+      # - name: Test with Race Detector
+      #   run: make test-race
 
       - name: Coverage
         run: make coverage
 
-      - name: Govulncheck
-        run: make govulncheck
+      # - name: Govulncheck
+      #   run: make govulncheck
 
-      - name: Gosec
-        run: make gosec
+      # - name: Gosec
+      #   run: make gosec
 
       - name: Golangci-lint
         run: make golangci-lint

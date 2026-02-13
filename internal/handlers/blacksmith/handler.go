@@ -1,13 +1,16 @@
 package blacksmith
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"blacksmith/internal/bosh"
@@ -28,6 +31,8 @@ var (
 
 const (
 	deploymentNameBlacksmith = "blacksmith"
+	defaultLogLimit          = 5000 // Default number of log lines to return
+	maxLogLimit              = 20000 // Maximum number of log lines per request
 )
 
 // credentialsSummary holds the credential information returned by GetCredentials.
@@ -76,45 +81,6 @@ func NewHandler(deps Dependencies) *Handler {
 	}
 }
 
-// readSpecificLogFile validates and reads a specific log file.
-func readSpecificLogFile(logFile string, logger interfaces.Logger) (string, error) {
-	allowedLogFiles := []string{
-		"/var/vcap/sys/log/blacksmith/blacksmith.stdout.log",
-		"/var/vcap/sys/log/blacksmith/blacksmith.stderr.log",
-		"/var/vcap/sys/log/blacksmith/vault.stdout.log",
-		"/var/vcap/sys/log/blacksmith/vault.stderr.log",
-		"/var/vcap/sys/log/blacksmith.vault/bpm.log",
-		"/var/vcap/sys/log/blacksmith/bpm.log",
-		"/var/vcap/sys/log/blacksmith/pre-start.stdout.log",
-		"/var/vcap/sys/log/blacksmith/pre-start.stderr.log",
-	}
-
-	if !isLogFileAllowed(logFile, allowedLogFiles) {
-		logger.Error("Unauthorized log file access attempt: %s", logFile)
-
-		return "", ErrUnauthorizedLogFileAccess
-	}
-
-	logger.Debug("Fetching logs from file: %s", logFile)
-
-	return readLogFileContent(logFile, logger)
-}
-
-// readDefaultLogFile reads the default log file.
-func readDefaultLogFile(logger interfaces.Logger) string {
-	defaultLogFile := "/var/vcap/sys/log/blacksmith/blacksmith.stdout.log"
-	logger.Debug("Reading default log file: %s", defaultLogFile)
-
-	content, err := readLogFileContent(defaultLogFile, logger)
-	if err != nil {
-		logger.Error("Failed to read default log file: %s", err)
-
-		return "" // Return empty logs on error for default file
-	}
-
-	return content
-}
-
 // isLogFileAllowed checks if a log file is in the allowed list.
 func isLogFileAllowed(logFile string, allowedFiles []string) bool {
 	for _, allowedFile := range allowedFiles {
@@ -126,59 +92,173 @@ func isLogFileAllowed(logFile string, allowedFiles []string) bool {
 	return false
 }
 
-// readLogFileContent reads the content of a log file.
-func readLogFileContent(logFile string, logger interfaces.Logger) (string, error) {
+// logPaginationResult holds the result of paginated log reading.
+type logPaginationResult struct {
+	Lines      []string `json:"lines"`
+	TotalLines int      `json:"total_lines"`
+	Offset     int      `json:"offset"`
+	Limit      int      `json:"limit"`
+	HasMore    bool     `json:"has_more"`
+}
+
+// readLogFilePaginated reads a log file with pagination (tail-like behavior).
+// offset is from the end of the file, limit is the number of lines to return.
+func readLogFilePaginated(logFile string, offset, limit int, logger interfaces.Logger) (*logPaginationResult, error) {
 	// #nosec G304 - logFile is validated against whitelist before calling this function
-	content, err := os.ReadFile(logFile)
+	file, err := os.Open(logFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			logger.Debug("Log file does not exist: %s", logFile)
-
-			return "", nil // Empty logs if file doesn't exist
+			return &logPaginationResult{
+				Lines:      []string{},
+				TotalLines: 0,
+				Offset:     offset,
+				Limit:      limit,
+				HasMore:    false,
+			}, nil
 		}
+		return nil, fmt.Errorf("%w: %w", ErrFailedToReadLogFile, err)
+	}
+	defer file.Close()
 
-		return "", fmt.Errorf("%w: %w", ErrFailedToReadLogFile, err)
+	// First pass: count total lines
+	totalLines := 0
+	scanner := bufio.NewScanner(file)
+	// Increase buffer size for long lines
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024) // 1MB max line size
+	for scanner.Scan() {
+		totalLines++
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to count lines: %w", err)
 	}
 
-	return string(content), nil
+	// Calculate which lines to read
+	// offset is from the end, so offset=0 means the last 'limit' lines
+	startLine := totalLines - offset - limit
+	if startLine < 0 {
+		startLine = 0
+	}
+	endLine := totalLines - offset
+	if endLine < 0 {
+		endLine = 0
+	}
+	if endLine > totalLines {
+		endLine = totalLines
+	}
+
+	// Second pass: read the specific lines
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("failed to seek to start: %w", err)
+	}
+
+	lines := make([]string, 0, limit)
+	scanner = bufio.NewScanner(file)
+	scanner.Buffer(buf, 1024*1024)
+	currentLine := 0
+	for scanner.Scan() {
+		if currentLine >= startLine && currentLine < endLine {
+			lines = append(lines, scanner.Text())
+		}
+		currentLine++
+		if currentLine >= endLine {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read lines: %w", err)
+	}
+
+	hasMore := startLine > 0
+
+	logger.Debug("Read %d lines from %s (total: %d, offset: %d, startLine: %d, endLine: %d, hasMore: %v)",
+		len(lines), logFile, totalLines, offset, startLine, endLine, hasMore)
+
+	return &logPaginationResult{
+		Lines:      lines,
+		TotalLines: totalLines,
+		Offset:     offset,
+		Limit:      limit,
+		HasMore:    hasMore,
+	}, nil
 }
 
-// GetLogs returns Blacksmith deployment logs.
+// GetLogs returns Blacksmith deployment logs with pagination support.
 func (h *Handler) GetLogs(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("blacksmith-logs")
 	logger.Debug("Fetching Blacksmith logs")
 
+	query := req.URL.Query()
+
 	// Check if a specific log file is requested
-	logFile := req.URL.Query().Get("file")
-
-	var (
-		logs string
-		err  error
-	)
-
-	if logFile != "" {
-		logs, err = readSpecificLogFile(logFile, logger)
-	} else {
-		logs = readDefaultLogFile(logger)
+	logFile := query.Get("file")
+	if logFile == "" {
+		logFile = "/var/vcap/sys/log/blacksmith/blacksmith.stdout.log"
 	}
 
-	if err != nil {
-		logsData := map[string]interface{}{
+	// Validate the log file path
+	allowedLogFiles := []string{
+		"/var/vcap/sys/log/blacksmith/blacksmith.stdout.log",
+		"/var/vcap/sys/log/blacksmith/blacksmith.stderr.log",
+		"/var/vcap/sys/log/blacksmith/vault.stdout.log",
+		"/var/vcap/sys/log/blacksmith/vault.stderr.log",
+		"/var/vcap/sys/log/blacksmith.vault/bpm.log",
+		"/var/vcap/sys/log/blacksmith/bpm.log",
+		"/var/vcap/sys/log/blacksmith/pre-start.stdout.log",
+		"/var/vcap/sys/log/blacksmith/pre-start.stderr.log",
+	}
+	if !isLogFileAllowed(logFile, allowedLogFiles) {
+		logger.Error("Unauthorized log file access attempt: %s", logFile)
+		response.HandleJSON(responseWriter, map[string]interface{}{
 			"logs":  "",
-			"error": err.Error(),
-		}
-		response.HandleJSON(responseWriter, logsData, nil)
-
+			"error": "unauthorized log file access",
+		}, nil)
 		return
 	}
 
-	// Return as JSON with the logs
-	logsData := map[string]interface{}{
-		"logs":  logs,
-		"error": nil,
+	// Parse pagination parameters
+	limit := defaultLogLimit
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+			if limit > maxLogLimit {
+				limit = maxLogLimit
+			}
+		}
 	}
 
-	response.HandleJSON(responseWriter, logsData, nil)
+	offset := 0
+	if offsetStr := query.Get("offset"); offsetStr != "" {
+		if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+			offset = parsedOffset
+		}
+	}
+
+	logger.Debug("Fetching logs from %s with limit=%d, offset=%d", logFile, limit, offset)
+
+	// Read paginated logs
+	result, err := readLogFilePaginated(logFile, offset, limit, logger)
+	if err != nil {
+		logger.Error("Failed to read log file: %v", err)
+		response.HandleJSON(responseWriter, map[string]interface{}{
+			"logs":  "",
+			"error": err.Error(),
+		}, nil)
+		return
+	}
+
+	// Join lines for backward compatibility, but also include pagination info
+	logs := strings.Join(result.Lines, "\n")
+
+	response.HandleJSON(responseWriter, map[string]interface{}{
+		"logs":        logs,
+		"total_lines": result.TotalLines,
+		"offset":      result.Offset,
+		"limit":       result.Limit,
+		"has_more":    result.HasMore,
+		"error":       nil,
+	}, nil)
 }
 
 // processResurrectionConfig extracts the resurrection state from the config.

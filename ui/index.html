@@ -66,6 +66,7 @@
           aria-controls="blacksmith">Blacksmith</button>
         <button class="tab-button flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="services" role="tab" aria-selected="false" aria-controls="services">Service
           Instances</button>
+        <button class="tab-button flex-1 bg-transparent border-0 border-b-3 border-b-transparent px-6 py-4 cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-400 transition-all duration-300 hover:bg-blue-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset" data-tab="upgrade" role="tab" aria-selected="false" aria-controls="upgrade">Batch Operations</button>
       </div>
 
       <!-- Tab content panels -->
@@ -94,6 +95,23 @@
 
         <div id="services" class="tab-panel flex-1 flex flex-col" role="tabpanel" aria-hidden="true">
           <div class="loading p-8 text-center">loading, please wait...</div>
+        </div>
+
+        <div id="upgrade" class="tab-panel flex-1 flex flex-row" role="tabpanel" aria-hidden="true">
+          <div class="upgrade-left-panel">
+            <h2>Stemcell</h2>
+            <div class="upgrade-filters">
+              <div class="loading p-4 text-center">loading...</div>
+            </div>
+            <div class="upgrade-instances">
+            </div>
+          </div>
+          <div class="upgrade-right-panel">
+            <h2>Batch Jobs</h2>
+            <div class="upgrade-tasks">
+              <div class="no-tasks p-4 text-center text-gray-500">No batch jobs yet. Select instances and a stemcell, then click Upgrade to start.</div>
+            </div>
+          </div>
         </div>
 
       </div>

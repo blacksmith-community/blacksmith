@@ -159,3 +159,23 @@ func CreatePooledDirector(address, username, password, caCert string, skipSSL bo
 	// Wrap with pooling
 	return NewPooledDirector(baseDirector, maxConnections, timeout, logger), nil
 }
+
+// CreatePooledAndBatchDirectors creates both a PooledDirector for general use
+// and a BatchDirector for batch upgrade operations. They share the same base
+// director but have separate connection pools.
+func CreatePooledAndBatchDirectors(address, username, password, caCert string, skipSSL bool, maxConnections, maxBatchJobs int, timeout time.Duration, logger Logger) (*PooledDirector, *BatchDirector, error) {
+	// Create base director (shared between both)
+	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create pooled director for general operations
+	pooledDirector := NewPooledDirector(baseDirector, maxConnections, timeout, logger)
+
+	// Create batch director for batch upgrade operations
+	// Uses its own pool, bypassing the general pool for UpdateDeployment
+	batchDirector := NewBatchDirector(baseDirector, maxBatchJobs, timeout, logger)
+
+	return pooledDirector, batchDirector, nil
+}

@@ -205,6 +205,10 @@ func (d *mockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, erro
 	return nil, ErrScannerNotImplemented
 }
 
+func (d *mockDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+	return nil, nil
+}
+
 func (d *mockDirector) GetPoolStats() (*bosh.PoolStats, error) {
 	return nil, ErrScannerNotImplemented
 }

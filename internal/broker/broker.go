@@ -128,6 +128,9 @@ type Broker struct {
 	Shield  shield.Client
 	Config  *config.Config
 
+	// VM monitoring integration
+	vmMonitor interfaces.VMMonitor
+
 	// Concurrency control for bind/unbind operations
 	instanceMu    sync.RWMutex           // Protects InstanceLocks map
 	InstanceLocks map[string]*sync.Mutex // Per-instance mutexes (exported for initialization)
@@ -155,6 +158,12 @@ func (b *Broker) GetPlans() map[string]services.Plan {
 // GetVault returns the vault instance for certificate operations.
 func (b *Broker) GetVault() interfaces.Vault {
 	return b.Vault
+}
+
+// SetVMMonitor sets the VM monitor for the broker.
+// This is called after broker initialization to enable vm-monitor integration.
+func (b *Broker) SetVMMonitor(vmMonitor interfaces.VMMonitor) {
+	b.vmMonitor = vmMonitor
 }
 
 func WriteDataFile(
@@ -412,6 +421,18 @@ func (b *Broker) OnProvisionCompleted(
 	details, deployment, err := b.getInstanceDetails(ctx, instanceID, logger)
 	if err != nil {
 		return err
+	}
+
+	// Notify vm-monitor to start monitoring this service
+	// Extract planID from deployment name (format: planID-instanceID)
+	if b.vmMonitor != nil {
+		planID := strings.TrimSuffix(deployment, "-"+instanceID)
+		if addErr := b.vmMonitor.AddService(ctx, instanceID, planID); addErr != nil {
+			logger.Error("failed to add service %s to vm-monitor: %s", instanceID, addErr)
+			// Continue anyway, this is non-fatal
+		} else {
+			logger.Debug("added service %s to vm-monitor for monitoring", instanceID)
+		}
 	}
 
 	// Get deployment VMs

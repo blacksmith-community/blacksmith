@@ -159,6 +159,10 @@ func (f *fakeDirector) UpdateDeployment(name, manifest string) (*bosh.Task, erro
 	return &bosh.Task{ID: 1, State: "done"}, nil
 }
 
+func (f *fakeDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+	return nil, nil
+}
+
 func TestUpdateManifestCachesToVault(t *testing.T) {
 	t.Parallel()
 

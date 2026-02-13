@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/vmmonitor"
 	"blacksmith/pkg/http/response"
 )
 
@@ -77,6 +81,82 @@ func (h *Handler) GetPoolStats(responseWriter http.ResponseWriter, req *http.Req
 	}
 
 	response.HandleJSON(responseWriter, stats, nil)
+}
+
+// GetVMMonitorStatus returns the current state of the VM monitor for debugging.
+func (h *Handler) GetVMMonitorStatus(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("vm-monitor-status")
+	logger.Debug("VM monitor status request")
+
+	if h.vmMonitor == nil {
+		response.HandleJSON(responseWriter, map[string]interface{}{
+			"error":   "VM monitor not configured",
+			"running": false,
+		}, nil)
+
+		return
+	}
+
+	status := h.vmMonitor.GetStatus()
+	response.HandleJSON(responseWriter, status, nil)
+}
+
+// GetStemcells returns available stemcells from the BOSH director.
+func (h *Handler) GetStemcells(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("bosh-stemcells")
+	logger.Debug("BOSH stemcells request")
+
+	stemcells, err := h.director.GetStemcells()
+	if err != nil {
+		logger.Error("Failed to get stemcells: %v", err)
+		response.HandleJSON(responseWriter, nil, err)
+		return
+	}
+
+	// Return the 10 most recent stemcells per OS
+	result := filterRecentStemcells(stemcells, 10)
+
+	logger.Debug("Returning %d stemcells", len(result))
+	response.HandleJSON(responseWriter, result, nil)
+}
+
+// filterRecentStemcells returns the N most recent stemcells per OS.
+// It filters to only include stemcells from CPIs ending in ".bosh" suffix
+// (e.g., "env-name.aws.bosh") to avoid duplicates from legacy CPIs.
+// It also excludes Windows stemcells since Blacksmith services (Redis, RabbitMQ) run on Linux.
+func filterRecentStemcells(stemcells []bosh.Stemcell, limit int) []bosh.Stemcell {
+	// Group by OS, filtering to only include stemcells with CPI ending in ".bosh"
+	// and excluding Windows stemcells
+	byOS := make(map[string][]bosh.Stemcell)
+	for _, s := range stemcells {
+		// Only include stemcells from CPIs with ".bosh" suffix
+		if !strings.HasSuffix(s.CPI, ".bosh") {
+			continue
+		}
+		// Exclude Windows stemcells (Blacksmith services run on Linux)
+		if strings.Contains(strings.ToLower(s.OS), "windows") {
+			continue
+		}
+		byOS[s.OS] = append(byOS[s.OS], s)
+	}
+
+	// Sort each group by version descending and take top N
+	var result []bosh.Stemcell
+	for _, group := range byOS {
+		// Sort by version descending (string comparison works for semver-like versions)
+		sort.Slice(group, func(i, j int) bool {
+			return group[i].Version > group[j].Version
+		})
+
+		// Take up to limit
+		count := limit
+		if len(group) < limit {
+			count = len(group)
+		}
+		result = append(result, group[:count]...)
+	}
+
+	return result
 }
 
 // GetStatus returns BOSH/Blacksmith status information including service instances.
@@ -158,11 +238,24 @@ func (h *Handler) loadServiceInstances(ctx context.Context, logger interfaces.Lo
 		return instances
 	}
 
-	instances = vaultInstances
-	logger.Debug("Loaded %d instances from Vault index", len(instances))
+	// Filter out deleted instances
+	for instanceID, instanceData := range vaultInstances {
+		if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+			if status, _ := instanceMap["status"].(string); status == "deleted" {
+				logger.Debug("Skipping deleted instance %s", instanceID)
+
+				continue
+			}
+		}
+
+		instances[instanceID] = instanceData
+	}
+
+	logger.Debug("Loaded %d instances from Vault index (after filtering deleted)", len(instances))
 
 	// Enrich instances with full data including instance_name
 	h.enrichInstancesWithFullData(ctx, instances, logger)
+	// Stemcell info is now provided by vm-monitor via enrichInstancesWithVMStatus
 	h.enrichInstancesWithVMStatus(ctx, instances, logger)
 
 	return instances
@@ -217,6 +310,39 @@ func (h *Handler) enrichInstancesWithFullData(ctx context.Context, instances map
 			if deploymentName, ok := fullData["deployment_name"].(string); ok && deploymentName != "" {
 				instanceMap["deployment_name"] = deploymentName
 			}
+
+			// Add service_id if it exists in full data but not in instance data
+			if _, hasServiceID := instanceMap["service_id"]; !hasServiceID {
+				if serviceID, ok := fullData["service_id"].(string); ok && serviceID != "" {
+					instanceMap["service_id"] = serviceID
+				}
+			}
+
+			// Add plan_id if it exists in full data but not in instance data
+			if _, hasPlanID := instanceMap["plan_id"]; !hasPlanID {
+				if planID, ok := fullData["plan_id"].(string); ok && planID != "" {
+					instanceMap["plan_id"] = planID
+				}
+			}
+
+			// Add plan object if it exists in full data but not in instance data
+			if _, hasPlan := instanceMap["plan"]; !hasPlan {
+				if plan, ok := fullData["plan"]; ok && plan != nil {
+					instanceMap["plan"] = plan
+				}
+			}
+
+			// Add created timestamp if it exists in full data
+			// The created field can be stored as int64, float64, or json.Number depending on how it was serialized
+			if created, ok := fullData["created"]; ok && created != nil {
+				instanceMap["created"] = created
+				logger.Debug("Added created timestamp for instance %s", instanceID)
+			}
+
+			// Also copy created_at if it exists (RFC3339 format)
+			if createdAt, ok := fullData["created_at"].(string); ok && createdAt != "" {
+				instanceMap["created_at"] = createdAt
+			}
 		}
 	}
 }
@@ -250,25 +376,24 @@ func (h *Handler) enrichInstancesWithVMStatus(ctx context.Context, instances map
 }
 
 // updateInstanceWithVMStatus updates an instance with VM status information.
-func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData interface{}, vmStatus interface{}, instances map[string]interface{}) {
+func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData interface{}, vmStatus *vmmonitor.VMStatus, instances map[string]interface{}) {
 	instanceMap, ok := instanceData.(map[string]interface{})
 	if !ok {
 		return
 	}
 
-	// Type assertion for vmStatus - using VMStatus struct from vmmonitor package
-	type VMStatus struct {
-		Status      string    `json:"status"`
-		VMCount     int       `json:"vm_count"`
-		HealthyVMs  int       `json:"healthy_vms"`
-		LastUpdated time.Time `json:"last_updated"`
-	}
+	instanceMap["vm_status"] = vmStatus.Status
+	instanceMap["vm_count"] = vmStatus.VMCount
+	instanceMap["vm_healthy"] = vmStatus.HealthyVMs
+	instanceMap["vm_last_updated"] = vmStatus.LastUpdated.Unix()
 
-	if status, ok := vmStatus.(*VMStatus); ok {
-		instanceMap["vm_status"] = status.Status
-		instanceMap["vm_count"] = status.VMCount
-		instanceMap["vm_healthy"] = status.HealthyVMs
-		instanceMap["vm_last_updated"] = status.LastUpdated.Unix()
+	// Include stemcell info from vm-monitor
+	if vmStatus.Stemcell != nil {
+		instanceMap["stemcell"] = map[string]interface{}{
+			"name":    vmStatus.Stemcell.Name,
+			"os":      vmStatus.Stemcell.OS,
+			"version": vmStatus.Stemcell.Version,
+		}
 	}
 
 	instances[instanceID] = instanceMap

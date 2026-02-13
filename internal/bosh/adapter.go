@@ -77,6 +77,10 @@ type Director interface {
 	// Deployment update
 	UpdateDeployment(name, manifest string) (*Task, error)
 
+	// FindRunningTaskForDeployment finds a currently running task for the given deployment.
+	// Returns nil if no running task is found.
+	FindRunningTaskForDeployment(deploymentName string) (*Task, error)
+
 	// Pool statistics (for PooledDirector)
 	GetPoolStats() (*PoolStats, error)
 }

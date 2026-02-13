@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -57,6 +58,14 @@ type ServiceMonitor struct {
 	NextCheck      time.Time
 	FailureCount   int
 	IsHealthy      bool
+	IsProvisioning bool // true until status is "running" or "failing", uses 5-min interval
+}
+
+// StemcellInfo contains basic stemcell information for a service instance.
+type StemcellInfo struct {
+	Name    string `json:"name"`    // e.g., "bosh-google-kvm-ubuntu-jammy-go_agent"
+	OS      string `json:"os"`      // e.g., "ubuntu-jammy"
+	Version string `json:"version"` // e.g., "1.73"
 }
 
 // VMStatus represents the aggregated status of VMs for a service.
@@ -67,6 +76,7 @@ type VMStatus struct {
 	LastUpdated time.Time              `json:"last_updated"`
 	NextUpdate  time.Time              `json:"next_update"`
 	VMs         []bosh.VM              `json:"vms,omitempty"`
+	Stemcell    *StemcellInfo          `json:"stemcell,omitempty"`
 	Details     map[string]interface{} `json:"details,omitempty"`
 }
 
@@ -166,6 +176,32 @@ func (m *Monitor) IsVMMonitor() bool {
 	return true
 }
 
+// AddService adds a new service to monitoring (called by broker on provision).
+// The service is added with IsProvisioning=true and will be checked every 5 minutes
+// until it reaches "running" or "failing" status.
+func (m *Monitor) AddService(ctx context.Context, instanceID, planID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.services[instanceID]; exists {
+		return nil // Already monitoring
+	}
+
+	deploymentName := planID + "-" + instanceID
+	m.services[instanceID] = &ServiceMonitor{
+		ServiceID:      instanceID,
+		DeploymentName: deploymentName,
+		LastStatus:     "unknown",
+		NextCheck:      time.Now(), // Check immediately
+		IsHealthy:      true,
+		IsProvisioning: true, // Start in provisioning mode (5-min interval)
+	}
+
+	logger.Get().Named("vm-monitor").Info("Added service %s to monitoring (provisioning mode)", instanceID)
+
+	return nil
+}
+
 // GetServiceVMStatus retrieves VM status for a service.
 func (m *Monitor) GetServiceVMStatus(ctx context.Context, serviceID string) (*VMStatus, error) {
 	var statusData map[string]interface{}
@@ -200,7 +236,70 @@ func (m *Monitor) GetServiceVMStatus(ctx context.Context, serviceID string) (*VM
 		status.NextUpdate = time.Unix(int64(next), 0)
 	}
 
+	// Extract stemcell info from the first VM if available
+	status.Stemcell = extractStemcellFromVMs(statusData["vms"])
+
 	return status, nil
+}
+
+// extractStemcellFromVMs extracts stemcell info from the first VM in the list.
+func extractStemcellFromVMs(vmsData interface{}) *StemcellInfo {
+	vms, ok := vmsData.([]interface{})
+	if !ok || len(vms) == 0 {
+		return nil
+	}
+
+	// Get first VM
+	firstVM, ok := vms[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// Extract stemcell data
+	stemcellData, ok := firstVM["stemcell"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	stemcell := &StemcellInfo{}
+	if name, ok := stemcellData["name"].(string); ok {
+		stemcell.Name = name
+		// Extract OS from name (e.g., "bosh-google-kvm-ubuntu-jammy-go_agent" -> "ubuntu-jammy")
+		stemcell.OS = extractOSFromStemcellName(name)
+	}
+	if version, ok := stemcellData["version"].(string); ok {
+		stemcell.Version = version
+	}
+
+	// Only return if we have at least version
+	if stemcell.Version == "" {
+		return nil
+	}
+
+	return stemcell
+}
+
+// extractOSFromStemcellName extracts the OS name from a full stemcell name.
+// e.g., "bosh-google-kvm-ubuntu-jammy-go_agent" -> "ubuntu-jammy"
+func extractOSFromStemcellName(name string) string {
+	// Common OS patterns in stemcell names
+	osPatterns := []string{
+		"ubuntu-jammy",
+		"ubuntu-bionic",
+		"ubuntu-xenial",
+		"ubuntu-trusty",
+		"centos-7",
+		"windows2019",
+		"windows2016",
+	}
+
+	for _, pattern := range osPatterns {
+		if strings.Contains(name, pattern) {
+			return pattern
+		}
+	}
+
+	return ""
 }
 
 // TriggerRefresh forces an immediate refresh of a service's VMs.
@@ -250,6 +349,11 @@ func (m *Monitor) scanAllServices(ctx context.Context) error {
 
 	for instanceID, instanceData := range idx.Data {
 		if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+			// Skip deleted instances
+			if status, _ := instanceMap["status"].(string); status == "deleted" {
+				continue
+			}
+
 			planID, hasPlan := instanceMap["plan_id"].(string)
 			if !hasPlan {
 				continue
@@ -280,24 +384,114 @@ func (m *Monitor) scanAllServices(ctx context.Context) error {
 	return nil
 }
 
+// rescanServices periodically rescans Vault index to discover new services and remove deleted ones.
+// This is a safety net for edge cases (missed broker notifications, manual Vault changes, recovery).
+func (m *Monitor) rescanServices(ctx context.Context) {
+	logger := logger.Get().Named("vm-monitor")
+
+	idx, err := m.vault.GetIndex(ctx, "db")
+	if err != nil {
+		logger.Error("Failed to get vault index for rescan: %v", err)
+
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	added, removed := 0, 0
+
+	// Add new services from index
+	for instanceID, instanceData := range idx.Data {
+		if _, exists := m.services[instanceID]; exists {
+			continue // Already monitoring
+		}
+
+		instanceMap, ok := instanceData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		// Skip deleted instances
+		if status, _ := instanceMap["status"].(string); status == "deleted" {
+			continue
+		}
+
+		planID, hasPlan := instanceMap["plan_id"].(string)
+		if !hasPlan {
+			continue
+		}
+
+		deploymentName := planID + "-" + instanceID
+		m.services[instanceID] = &ServiceMonitor{
+			ServiceID:      instanceID,
+			DeploymentName: deploymentName,
+			LastStatus:     "unknown",
+			NextCheck:      time.Now(),
+			IsHealthy:      true,
+			IsProvisioning: false, // Not provisioning (discovered via rescan)
+		}
+		added++
+	}
+
+	// Remove deleted services from m.services
+	for instanceID := range m.services {
+		instanceData, exists := idx.Data[instanceID]
+		if !exists {
+			delete(m.services, instanceID)
+			removed++
+
+			continue
+		}
+
+		if instanceMap, ok := instanceData.(map[string]interface{}); ok {
+			if status, _ := instanceMap["status"].(string); status == "deleted" {
+				delete(m.services, instanceID)
+				removed++
+			}
+		}
+	}
+
+	if added > 0 || removed > 0 {
+		logger.Info("Rescan complete: added %d, removed %d services", added, removed)
+	} else {
+		logger.Debug("Rescan complete: no changes")
+	}
+}
+
 // monitorLoop runs the continuous monitoring loop.
 func (m *Monitor) monitorLoop(ctx context.Context) {
 	defer m.wg.Done()
 
 	logger := logger.Get().Named("vm-monitor")
-	logger.Debug("VM monitor loop started")
+	logger.Info("VM monitor loop started")
 
 	ticker := time.NewTicker(1 * time.Minute) // Check every minute for services due
+	rescanTicker := time.NewTicker(m.normalInterval) // Rescan Vault index every normalInterval (1 hour)
 	defer ticker.Stop()
+	defer rescanTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Debug("VM monitor loop stopping")
+			logger.Info("VM monitor loop stopping (context cancelled)")
 
 			return
 		case <-ticker.C:
+			// Log state before each check cycle
+			m.mu.RLock()
+			serviceCount := len(m.services)
+			m.mu.RUnlock()
+			logger.Debug("Monitor tick: %d services tracked", serviceCount)
+
+			if serviceCount == 0 {
+				logger.Warning("VM monitor has no services to track - services map is empty")
+			}
+
 			m.checkScheduledServices(ctx)
+		case <-rescanTicker.C:
+			logger.Info("Periodic rescan of Vault index")
+			m.rescanServices(ctx)
 		}
 	}
 }
@@ -309,6 +503,7 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	m.mu.RLock()
 
 	servicesDue := make([]*ServiceMonitor, 0)
+	totalServices := len(m.services)
 	now := time.Now()
 
 	for _, svc := range m.services {
@@ -320,10 +515,12 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	m.mu.RUnlock()
 
 	if len(servicesDue) == 0 {
+		logger.Debug("No services due for check (total tracked: %d)", totalServices)
+
 		return
 	}
 
-	logger.Debug("Checking %d services due for monitoring", len(servicesDue))
+	logger.Info("Starting check cycle: %d services due out of %d total", len(servicesDue), totalServices)
 
 	// Process services with concurrency limit
 	const maxConcurrentChecks = 3
@@ -331,6 +528,10 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	sem := make(chan struct{}, maxConcurrentChecks) // Max 3 concurrent checks
 
 	var waitGroup sync.WaitGroup
+
+	var completed int32
+
+	startTime := time.Now()
 
 	for _, svc := range servicesDue {
 		waitGroup.Add(1)
@@ -340,12 +541,26 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 		go func(s *ServiceMonitor) {
 			defer waitGroup.Done()
 			defer func() { <-sem }()
+			defer func() {
+				// Track worker completion
+				count := atomic.AddInt32(&completed, 1)
+				logger.Debug("Worker completed check for %s (%d/%d done)", s.ServiceID, count, len(servicesDue))
+			}()
+			// Recover from panics to prevent goroutine death
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("Panic in checkService for %s: %v", s.ServiceID, r)
+				}
+			}()
 
 			m.checkService(ctx, s)
 		}(svc)
 	}
 
 	waitGroup.Wait()
+
+	elapsed := time.Since(startTime)
+	logger.Info("Check cycle completed: %d services checked in %v", len(servicesDue), elapsed)
 }
 
 // checkService performs health check for a specific service.
@@ -373,8 +588,18 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 		VMs:         vms,
 	}
 
+	// Check if provisioning is complete (reached stable state)
+	if svc.IsProvisioning && (status == vmStatusRunning || status == "failing") {
+		svc.IsProvisioning = false
+		logger.Info("Service %s provisioning complete, switching to normal interval", svc.ServiceID)
+	}
+
 	// Determine next check interval
-	if status != vmStatusRunning {
+	// Use failedInterval (5 min) during provisioning or when status is not running
+	if svc.IsProvisioning {
+		// Still provisioning - use 5-min interval
+		vmStatus.NextUpdate = time.Now().Add(m.failedInterval)
+	} else if status != vmStatusRunning {
 		svc.IsHealthy = false
 		svc.FailureCount++
 		vmStatus.NextUpdate = time.Now().Add(m.failedInterval)
@@ -586,4 +811,77 @@ func (m *Monitor) storeVMStatus(ctx context.Context, serviceID string, status VM
 	}
 
 	return nil
+}
+
+// MonitorStatus represents the current state of the VM monitor for debugging.
+type MonitorStatus struct {
+	Running        bool                   `json:"running"`
+	ServiceCount   int                    `json:"service_count"`
+	NormalInterval string                 `json:"normal_interval"`
+	FailedInterval string                 `json:"failed_interval"`
+	Services       []ServiceStatus        `json:"services"`
+	Summary        map[string]interface{} `json:"summary"`
+}
+
+// ServiceStatus represents the monitoring state of a single service.
+type ServiceStatus struct {
+	ServiceID      string    `json:"service_id"`
+	DeploymentName string    `json:"deployment_name"`
+	LastStatus     string    `json:"last_status"`
+	LastCheck      time.Time `json:"last_check"`
+	NextCheck      time.Time `json:"next_check"`
+	IsDue          bool      `json:"is_due"`
+	FailureCount   int       `json:"failure_count"`
+	IsHealthy      bool      `json:"is_healthy"`
+	IsProvisioning bool      `json:"is_provisioning"`
+}
+
+// GetStatus returns current vm-monitor state for debugging and monitoring.
+func (m *Monitor) GetStatus() MonitorStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now()
+	services := make([]ServiceStatus, 0, len(m.services))
+
+	var dueCount, healthyCount, failingCount int
+
+	for _, svc := range m.services {
+		isDue := now.After(svc.NextCheck) || svc.NextCheck.IsZero()
+		if isDue {
+			dueCount++
+		}
+
+		if svc.IsHealthy {
+			healthyCount++
+		} else {
+			failingCount++
+		}
+
+		services = append(services, ServiceStatus{
+			ServiceID:      svc.ServiceID,
+			DeploymentName: svc.DeploymentName,
+			LastStatus:     svc.LastStatus,
+			LastCheck:      svc.LastCheck,
+			NextCheck:      svc.NextCheck,
+			IsDue:          isDue,
+			FailureCount:   svc.FailureCount,
+			IsHealthy:      svc.IsHealthy,
+			IsProvisioning: svc.IsProvisioning,
+		})
+	}
+
+	return MonitorStatus{
+		Running:        m.cancel != nil,
+		ServiceCount:   len(m.services),
+		NormalInterval: m.normalInterval.String(),
+		FailedInterval: m.failedInterval.String(),
+		Services:       services,
+		Summary: map[string]interface{}{
+			"total":        len(m.services),
+			"due_for_check": dueCount,
+			"healthy":      healthyCount,
+			"failing":      failingCount,
+		},
+	}
 }

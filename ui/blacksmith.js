@@ -125,6 +125,206 @@
     setTheme(newTheme);
   };
 
+  // =================================================================
+  // Custom Dialog Modal Functions (replaces browser confirm/prompt)
+  // =================================================================
+
+  // Ensure dialog modal HTML exists in DOM
+  const ensureDialogModal = () => {
+    if (document.getElementById('dialog-modal-overlay')) return;
+
+    const modalHTML = `
+      <div id="dialog-modal-overlay" class="dialog-modal-overlay">
+        <div class="dialog-modal">
+          <div class="dialog-modal-header">
+            <svg class="dialog-modal-icon warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+            <h3 class="dialog-modal-title"></h3>
+          </div>
+          <div class="dialog-modal-body">
+            <p class="dialog-modal-message"></p>
+            <input type="text" class="dialog-modal-input" style="display: none;">
+          </div>
+          <div class="dialog-modal-footer">
+            <button class="dialog-modal-btn dialog-modal-btn-cancel">Cancel</button>
+            <button class="dialog-modal-btn dialog-modal-btn-confirm">Confirm</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+  };
+
+  // Show a confirm dialog (returns Promise<boolean>)
+  const showConfirmDialog = (options = {}) => {
+    return new Promise((resolve) => {
+      ensureDialogModal();
+
+      const overlay = document.getElementById('dialog-modal-overlay');
+      const titleEl = overlay.querySelector('.dialog-modal-title');
+      const messageEl = overlay.querySelector('.dialog-modal-message');
+      const inputEl = overlay.querySelector('.dialog-modal-input');
+      const cancelBtn = overlay.querySelector('.dialog-modal-btn-cancel');
+      const confirmBtn = overlay.querySelector('.dialog-modal-btn-confirm');
+      const iconEl = overlay.querySelector('.dialog-modal-icon');
+
+      // Set content
+      titleEl.textContent = options.title || 'Confirm';
+      messageEl.textContent = options.message || 'Are you sure?';
+      inputEl.style.display = 'none';
+      inputEl.value = '';
+
+      // Set button text
+      cancelBtn.textContent = options.cancelText || 'Cancel';
+      confirmBtn.textContent = options.confirmText || 'Confirm';
+
+      // Set button style (danger or default)
+      confirmBtn.classList.remove('dialog-modal-btn-confirm', 'dialog-modal-btn-danger');
+      confirmBtn.classList.add(options.danger ? 'dialog-modal-btn-danger' : 'dialog-modal-btn-confirm');
+
+      // Set icon style
+      iconEl.classList.remove('warning', 'info');
+      iconEl.classList.add(options.danger ? 'warning' : 'info');
+
+      // Show modal
+      overlay.classList.add('active');
+
+      // Cleanup function
+      const cleanup = () => {
+        overlay.classList.remove('active');
+        cancelBtn.removeEventListener('click', handleCancel);
+        confirmBtn.removeEventListener('click', handleConfirm);
+        overlay.removeEventListener('click', handleOverlayClick);
+        document.removeEventListener('keydown', handleKeydown);
+      };
+
+      const handleCancel = () => {
+        cleanup();
+        resolve(false);
+      };
+
+      const handleConfirm = () => {
+        cleanup();
+        resolve(true);
+      };
+
+      const handleOverlayClick = (e) => {
+        if (e.target === overlay) {
+          cleanup();
+          resolve(false);
+        }
+      };
+
+      const handleKeydown = (e) => {
+        if (e.key === 'Escape') {
+          cleanup();
+          resolve(false);
+        } else if (e.key === 'Enter') {
+          cleanup();
+          resolve(true);
+        }
+      };
+
+      cancelBtn.addEventListener('click', handleCancel);
+      confirmBtn.addEventListener('click', handleConfirm);
+      overlay.addEventListener('click', handleOverlayClick);
+      document.addEventListener('keydown', handleKeydown);
+
+      // Focus the confirm button
+      confirmBtn.focus();
+    });
+  };
+
+  // Show a prompt dialog (returns Promise<string|null>)
+  const showPromptDialog = (options = {}) => {
+    return new Promise((resolve) => {
+      ensureDialogModal();
+
+      const overlay = document.getElementById('dialog-modal-overlay');
+      const titleEl = overlay.querySelector('.dialog-modal-title');
+      const messageEl = overlay.querySelector('.dialog-modal-message');
+      const inputEl = overlay.querySelector('.dialog-modal-input');
+      const cancelBtn = overlay.querySelector('.dialog-modal-btn-cancel');
+      const confirmBtn = overlay.querySelector('.dialog-modal-btn-confirm');
+      const iconEl = overlay.querySelector('.dialog-modal-icon');
+
+      // Set content
+      titleEl.textContent = options.title || 'Input';
+      messageEl.textContent = options.message || 'Please enter a value:';
+      inputEl.style.display = 'block';
+      inputEl.value = options.defaultValue || '';
+      inputEl.placeholder = options.placeholder || '';
+
+      // Set button text
+      cancelBtn.textContent = options.cancelText || 'Cancel';
+      confirmBtn.textContent = options.confirmText || 'OK';
+
+      // Use default button style for prompts
+      confirmBtn.classList.remove('dialog-modal-btn-danger');
+      confirmBtn.classList.add('dialog-modal-btn-confirm');
+
+      // Set icon to info
+      iconEl.classList.remove('warning');
+      iconEl.classList.add('info');
+
+      // Show modal
+      overlay.classList.add('active');
+
+      // Cleanup function
+      const cleanup = () => {
+        overlay.classList.remove('active');
+        cancelBtn.removeEventListener('click', handleCancel);
+        confirmBtn.removeEventListener('click', handleConfirm);
+        overlay.removeEventListener('click', handleOverlayClick);
+        inputEl.removeEventListener('keydown', handleInputKeydown);
+        document.removeEventListener('keydown', handleKeydown);
+      };
+
+      const handleCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const handleConfirm = () => {
+        const value = inputEl.value;
+        cleanup();
+        resolve(value);
+      };
+
+      const handleOverlayClick = (e) => {
+        if (e.target === overlay) {
+          cleanup();
+          resolve(null);
+        }
+      };
+
+      const handleInputKeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleConfirm();
+        }
+      };
+
+      const handleKeydown = (e) => {
+        if (e.key === 'Escape') {
+          cleanup();
+          resolve(null);
+        }
+      };
+
+      cancelBtn.addEventListener('click', handleCancel);
+      confirmBtn.addEventListener('click', handleConfirm);
+      overlay.addEventListener('click', handleOverlayClick);
+      inputEl.addEventListener('keydown', handleInputKeydown);
+      document.addEventListener('keydown', handleKeydown);
+
+      // Focus the input
+      inputEl.focus();
+      inputEl.select();
+    });
+  };
+
   // Universal Table Initialization - Auto-sort functionality
   const initializeAllTables = () => {
     // Find all tables in the document
@@ -1524,6 +1724,39 @@
     return s;
   };
 
+  // Helper function to get creation timestamp from instance details
+  // Tries multiple fields: created (Unix timestamp), created_at (RFC3339 string), requested_at (RFC3339 string)
+  const getCreatedTimestamp = (details) => {
+    // Try created (Unix timestamp)
+    if (details.created && typeof details.created === 'number' && details.created > 0) {
+      return details.created;
+    }
+    // Try created_at (RFC3339 string)
+    if (details.created_at) {
+      const date = new Date(details.created_at);
+      if (!isNaN(date.getTime())) {
+        return Math.floor(date.getTime() / 1000);
+      }
+    }
+    // Try requested_at (RFC3339 string)
+    if (details.requested_at) {
+      const date = new Date(details.requested_at);
+      if (!isNaN(date.getTime())) {
+        return Math.floor(date.getTime() / 1000);
+      }
+    }
+    return null;
+  };
+
+  // Format creation timestamp for display
+  const formatCreatedTimestamp = (details) => {
+    const timestamp = getCreatedTimestamp(details);
+    if (timestamp) {
+      return strftime("%Y-%m-%d %H:%M:%S", timestamp);
+    }
+    return 'Unknown';
+  };
+
   // Template rendering functions
   const renderBlacksmithTemplate = (data) => {
     const deploymentName = data.deployment || 'blacksmith';
@@ -1832,7 +2065,7 @@
         </div>`}
         <div class="filter-row">
           <label class="checkbox-label">
-            <input type="checkbox" id="hide-deleted-filter" class="filter-checkbox">
+            <input type="checkbox" id="hide-deleted-filter" class="filter-checkbox" checked>
             <span>Hide Deleted Instances</span>
           </label>
         </div>
@@ -1891,7 +2124,7 @@
               <div class="service-id">${id}</div>
               ${details.instance_name ? `<div class="service-instance-name">${details.instance_name}</div>` : ''}
               <div class="service-meta">
-                ${displayServiceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown'}
+                ${displayServiceName} / ${details.plan?.name || details.plan_id || 'unknown'} @ ${formatCreatedTimestamp(details)}
               </div>
               ${deletedStatusHtml}
               ${deletionStatusHtml}
@@ -1912,6 +2145,785 @@
         <div class="no-selection">Select a service instance to view details</div>
       </div>
     `;
+  };
+
+  // =====================================================
+  // Batch Operations Tab Functions
+  // =====================================================
+
+  // Track if batch operations tab has been initialized
+  let upgradeTabInitialized = false;
+
+  // Track selected instances for batch operations
+  let selectedUpgradeInstances = new Set();
+
+  // Render the upgrade tab filters
+  const renderUpgradeFilters = () => {
+    return `
+      <div class="filter-row">
+        <label for="upgrade-service-filter">Service:</label>
+        <select id="upgrade-service-filter">
+          <option value="">All Services</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="upgrade-plan-filter">Plan:</label>
+        <select id="upgrade-plan-filter" disabled>
+          <option value="">All Plans</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="upgrade-stemcell-filter">Target Stemcell:</label>
+        <select id="upgrade-stemcell-filter">
+          <option value="">Select Stemcell...</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="upgrade-max-batch-jobs">Max Parallel Jobs:</label>
+        <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="No limit" title="Maximum number of batch jobs that can run in parallel. Leave empty or 0 for no limit.">
+        <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
+      </div>
+      <div class="upgrade-actions">
+        <button id="upgrade-select-all" class="btn-secondary">Select All</button>
+        <button id="upgrade-deselect-all" class="btn-secondary">Deselect All</button>
+        <button id="upgrade-start" class="btn-primary" disabled>Upgrade Selected (0)</button>
+      </div>
+    `;
+  };
+
+  // Render upgrade instance list
+  const renderUpgradeInstances = (instances, serviceFilter, planFilter) => {
+    if (!instances || Object.keys(instances).length === 0) {
+      return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
+    }
+
+    // Create service id to name mapping
+    const serviceIdToName = {};
+    if (window.plansData && window.plansData.services) {
+      window.plansData.services.forEach(service => {
+        if (service && service.id && service.name) {
+          serviceIdToName[service.id] = service.name;
+        }
+      });
+    }
+
+    // Filter instances
+    const filteredInstances = Object.entries(instances).filter(([id, details]) => {
+      // Skip deleted instances
+      if (details.deleted) return false;
+
+      // Apply service filter
+      if (serviceFilter && details.service_id !== serviceFilter) return false;
+
+      // Apply plan filter
+      if (planFilter && details.plan?.id !== planFilter && details.plan_id !== planFilter) return false;
+
+      return true;
+    });
+
+    if (filteredInstances.length === 0) {
+      return '<div class="no-instances p-4 text-center text-gray-500">No instances match the current filters.</div>';
+    }
+
+    const listHtml = filteredInstances.map(([id, details]) => {
+      const serviceName = serviceIdToName[details.service_id] || details.service_id;
+      const planName = details.plan?.name || details.plan_id || 'unknown';
+      const isSelected = selectedUpgradeInstances.has(id);
+
+      // Get current stemcell version if available
+      const stemcellInfo = details.stemcell;
+      const stemcellDisplay = stemcellInfo
+        ? `<span class="upgrade-instance-stemcell" title="${stemcellInfo.name || ''}">${stemcellInfo.os || ''}/${stemcellInfo.version || ''}</span>`
+        : '<span class="upgrade-instance-stemcell unknown">unknown</span>';
+
+      return `
+        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}" data-stemcell-os="${stemcellInfo?.os || ''}" data-stemcell-version="${stemcellInfo?.version || ''}">
+          <label class="upgrade-instance-checkbox">
+            <input type="checkbox" ${isSelected ? 'checked' : ''} />
+            <span class="checkmark"></span>
+          </label>
+          <div class="upgrade-instance-info">
+            <div class="upgrade-instance-id">${id}</div>
+            <div class="upgrade-instance-meta">${serviceName} / ${planName}</div>
+          </div>
+          <div class="upgrade-instance-stemcell-container">
+            ${stemcellDisplay}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="upgrade-instance-count">${filteredInstances.length} instance${filteredInstances.length !== 1 ? 's' : ''}</div>
+      <div class="upgrade-instances-list">${listHtml}</div>
+    `;
+  };
+
+  // Update the upgrade button state
+  const updateUpgradeButton = () => {
+    const button = document.getElementById('upgrade-start');
+    const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+
+    if (!button) return;
+
+    const count = selectedUpgradeInstances.size;
+    const hasStemcell = stemcellSelect && stemcellSelect.value;
+
+    button.textContent = `Upgrade Selected (${count})`;
+    button.disabled = count === 0 || !hasStemcell;
+  };
+
+  // Refresh the instance list based on current filters
+  const refreshUpgradeInstanceList = () => {
+    const instancesContainer = document.querySelector('#upgrade .upgrade-instances');
+    if (!instancesContainer) return;
+
+    const serviceFilter = document.getElementById('upgrade-service-filter')?.value || '';
+    const planFilter = document.getElementById('upgrade-plan-filter')?.value || '';
+
+    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter);
+
+    // Set up checkbox handlers
+    setupUpgradeInstanceHandlers();
+    updateUpgradeButton();
+  };
+
+  // Set up handlers for upgrade instance checkboxes
+  const setupUpgradeInstanceHandlers = () => {
+    document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+      const checkbox = item.querySelector('input[type="checkbox"]');
+      const instanceId = item.dataset.instanceId;
+
+      // Handle click on the entire item
+      item.addEventListener('click', (e) => {
+        if (e.target.type !== 'checkbox') {
+          checkbox.checked = !checkbox.checked;
+        }
+
+        if (checkbox.checked) {
+          selectedUpgradeInstances.add(instanceId);
+          item.classList.add('selected');
+        } else {
+          selectedUpgradeInstances.delete(instanceId);
+          item.classList.remove('selected');
+        }
+
+        updateUpgradeButton();
+      });
+    });
+  };
+
+  // Initialize the upgrade tab
+  const initUpgradeTab = async () => {
+    if (upgradeTabInitialized) return;
+
+    const upgradePanel = document.getElementById('upgrade');
+    if (!upgradePanel) return;
+
+    const filtersContainer = upgradePanel.querySelector('.upgrade-filters');
+    if (!filtersContainer) return;
+
+    // Render filters
+    filtersContainer.innerHTML = renderUpgradeFilters();
+
+    // Load stemcells from API
+    try {
+      const response = await fetch('/b/bosh/stemcells');
+      if (response.ok) {
+        const stemcells = await response.json();
+        const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+        if (stemcellSelect && stemcells) {
+          stemcells.forEach(s => {
+            const option = document.createElement('option');
+            option.value = `${s.operating_system}/${s.version}`;
+            option.textContent = `${s.operating_system}/${s.version}`;
+            stemcellSelect.appendChild(option);
+          });
+
+          // Update button state when stemcell changes
+          stemcellSelect.addEventListener('change', updateUpgradeButton);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load stemcells:', err);
+    }
+
+    // Populate service filter from catalog data
+    const serviceSelect = document.getElementById('upgrade-service-filter');
+    if (serviceSelect && window.plansData && window.plansData.services) {
+      window.plansData.services.forEach(service => {
+        const option = document.createElement('option');
+        option.value = service.id;
+        option.textContent = service.name;
+        serviceSelect.appendChild(option);
+      });
+
+      // Add change handler for service filter
+      serviceSelect.addEventListener('change', () => {
+        updatePlanFilter(serviceSelect.value);
+        refreshUpgradeInstanceList();
+      });
+    }
+
+    // Add change handler for plan filter
+    const planSelect = document.getElementById('upgrade-plan-filter');
+    if (planSelect) {
+      planSelect.addEventListener('change', refreshUpgradeInstanceList);
+    }
+
+    // Set up Select All button
+    const selectAllBtn = document.getElementById('upgrade-select-all');
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          const checkbox = item.querySelector('input[type="checkbox"]');
+          const instanceId = item.dataset.instanceId;
+          checkbox.checked = true;
+          selectedUpgradeInstances.add(instanceId);
+          item.classList.add('selected');
+        });
+        updateUpgradeButton();
+      });
+    }
+
+    // Set up Deselect All button
+    const deselectAllBtn = document.getElementById('upgrade-deselect-all');
+    if (deselectAllBtn) {
+      deselectAllBtn.addEventListener('click', () => {
+        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          const checkbox = item.querySelector('input[type="checkbox"]');
+          checkbox.checked = false;
+          item.classList.remove('selected');
+        });
+        selectedUpgradeInstances.clear();
+        updateUpgradeButton();
+      });
+    }
+
+    // Initial render of instances
+    refreshUpgradeInstanceList();
+
+    // Set up upgrade button handler
+    setupUpgradeButtonHandler();
+
+    // Fetch existing tasks and start refresh
+    fetchUpgradeTasks();
+    startTasksRefresh();
+
+    // Load upgrade settings
+    loadUpgradeSettings();
+
+    // Set up save settings button handler
+    const saveSettingsBtn = document.getElementById('upgrade-save-settings');
+    if (saveSettingsBtn) {
+      saveSettingsBtn.addEventListener('click', saveUpgradeSettings);
+    }
+
+    upgradeTabInitialized = true;
+    console.log('Batch Operations tab initialized');
+  };
+
+  // Load upgrade settings from API
+  const loadUpgradeSettings = async () => {
+    try {
+      const response = await fetch('/b/upgrade/settings');
+      if (response.ok) {
+        const settings = await response.json();
+        const maxBatchJobsInput = document.getElementById('upgrade-max-batch-jobs');
+        if (maxBatchJobsInput && settings.max_batch_jobs > 0) {
+          maxBatchJobsInput.value = settings.max_batch_jobs;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load upgrade settings:', err);
+    }
+  };
+
+  // Save upgrade settings to API
+  const saveUpgradeSettings = async () => {
+    const maxBatchJobsInput = document.getElementById('upgrade-max-batch-jobs');
+    const saveBtn = document.getElementById('upgrade-save-settings');
+    if (!maxBatchJobsInput || !saveBtn) return;
+
+    const value = parseInt(maxBatchJobsInput.value, 10) || 0;
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    try {
+      const response = await fetch('/b/upgrade/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_batch_jobs: value })
+      });
+
+      if (response.ok) {
+        saveBtn.textContent = 'Saved!';
+        setTimeout(() => {
+          saveBtn.textContent = 'Save';
+          saveBtn.disabled = false;
+        }, 1500);
+      } else {
+        const data = await response.json();
+        alert(`Failed to save settings: ${data.error || 'Unknown error'}`);
+        saveBtn.textContent = 'Save';
+        saveBtn.disabled = false;
+      }
+    } catch (err) {
+      console.error('Failed to save upgrade settings:', err);
+      alert(`Failed to save settings: ${err.message}`);
+      saveBtn.textContent = 'Save';
+      saveBtn.disabled = false;
+    }
+  };
+
+  // Update plan filter based on selected service
+  const updatePlanFilter = (serviceId) => {
+    const planSelect = document.getElementById('upgrade-plan-filter');
+    if (!planSelect) return;
+
+    // Clear existing options
+    planSelect.innerHTML = '<option value="">All Plans</option>';
+
+    if (!serviceId) {
+      planSelect.disabled = true;
+      return;
+    }
+
+    // Find the service and its plans
+    if (window.plansData && window.plansData.services) {
+      const service = window.plansData.services.find(s => s.id === serviceId);
+      if (service && service.plans) {
+        service.plans.forEach(plan => {
+          const option = document.createElement('option');
+          option.value = plan.id;
+          option.textContent = plan.name;
+          planSelect.appendChild(option);
+        });
+        planSelect.disabled = false;
+      }
+    }
+  };
+
+  // =====================================================
+  // Batch Jobs Management (Steps 7-9)
+  // =====================================================
+
+  // Store for batch jobs
+  let upgradeTasks = [];
+  let selectedTaskId = null;
+  let upgradeTasksRefreshInterval = null;
+
+  // Render the task list in the right panel
+  const renderUpgradeTaskList = () => {
+    const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
+    if (!tasksContainer) return;
+
+    if (upgradeTasks.length === 0) {
+      tasksContainer.innerHTML = '<div class="no-tasks p-4 text-center text-gray-500">No upgrade tasks yet. Select instances and click Upgrade to start.</div>';
+      return;
+    }
+
+    const taskListHtml = upgradeTasks.map(task => {
+      const isSelected = task.id === selectedTaskId;
+      const statusClass = getTaskStatusClass(task.status);
+      const statusIcon = getTaskStatusIcon(task.status);
+      const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count) / task.total_count * 100) : 0;
+      const taskName = task.name || task.target_stemcell;
+
+      return `
+        <div class="upgrade-task-item ${isSelected ? 'selected' : ''} ${statusClass}" data-task-id="${task.id}">
+          <div class="upgrade-task-header">
+            <span class="upgrade-task-status">${statusIcon}</span>
+            <span class="upgrade-task-name">${taskName}</span>
+          </div>
+          <div class="upgrade-task-progress">
+            <div class="upgrade-task-progress-bar" style="width: ${progress}%"></div>
+          </div>
+          <div class="upgrade-task-stats">
+            <span class="success">${task.completed_count} done</span>
+            <span class="failed">${task.failed_count} failed</span>
+            <span class="total">${task.total_count} total</span>
+          </div>
+          <div class="upgrade-task-time">${formatTaskTime(task.created_at)}</div>
+        </div>
+      `;
+    }).join('');
+
+    tasksContainer.innerHTML = `<div class="upgrade-task-list">${taskListHtml}</div>`;
+
+    // Set up click handlers for tasks
+    setupTaskClickHandlers();
+  };
+
+  // Get CSS class for task status
+  const getTaskStatusClass = (status) => {
+    switch (status) {
+      case 'completed': return 'status-completed';
+      case 'running': return 'status-running';
+      case 'failed': return 'status-failed';
+      case 'pending': return 'status-pending';
+      default: return '';
+    }
+  };
+
+  // Get icon for task status
+  const getTaskStatusIcon = (status) => {
+    switch (status) {
+      case 'completed': return '<span class="status-icon success">&#10003;</span>';
+      case 'running': return '<span class="status-icon running">&#8635;</span>';
+      case 'failed': return '<span class="status-icon failed">&#10007;</span>';
+      case 'pending': return '<span class="status-icon pending">&#8987;</span>';
+      default: return '';
+    }
+  };
+
+  // Format task timestamp
+  const formatTaskTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+  };
+
+  // Set up click handlers for task items
+  const setupTaskClickHandlers = () => {
+    document.querySelectorAll('#upgrade .upgrade-task-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const taskId = item.dataset.taskId;
+        selectUpgradeTask(taskId);
+      });
+    });
+  };
+
+  // Select a task and show its details
+  const selectUpgradeTask = async (taskId) => {
+    selectedTaskId = taskId;
+
+    // Update UI to show selected task
+    document.querySelectorAll('#upgrade .upgrade-task-item').forEach(item => {
+      item.classList.toggle('selected', item.dataset.taskId === taskId);
+    });
+
+    // Fetch full task details
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}`);
+      if (response.ok) {
+        const task = await response.json();
+        renderTaskDetail(task);
+      }
+    } catch (err) {
+      console.error('Failed to fetch task details:', err);
+    }
+  };
+
+  // Render task detail view
+  const renderTaskDetail = (task) => {
+    const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
+    if (!tasksContainer) return;
+
+    const instances = task.instances || [];
+    const instancesHtml = instances.map(instance => {
+      const statusIcon = getInstanceStatusIcon(instance.status);
+      const statusClass = getInstanceStatusClass(instance.status);
+
+      return `
+        <div class="upgrade-task-instance ${statusClass}">
+          <span class="instance-status">${statusIcon}</span>
+          <div class="instance-info">
+            <div class="instance-id">${instance.instance_name || instance.instance_id}</div>
+            <div class="instance-deployment">${instance.deployment_name || ''}</div>
+            <div class="instance-actions">
+              ${instance.bosh_task_id ? `<button class="bosh-task-btn" onclick="showTaskDetails(${instance.bosh_task_id}, event)">BOSH Task: ${instance.bosh_task_id}</button>` : ''}
+            </div>
+            ${instance.error ? `<div class="instance-error">${instance.error}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0)) / task.total_count * 100) : 0;
+    const isRunning = task.status === 'running';
+    const isPaused = task.status === 'paused';
+    const canControl = isRunning || isPaused;
+
+    // Build control buttons based on task status
+    let controlButtonsHtml = '';
+    if (canControl) {
+      controlButtonsHtml = `
+        <div class="job-control-buttons">
+          ${isRunning ? `<button class="job-control-btn pause-btn" onclick="window.pauseTask('${task.id}', event)">Pause</button>` : ''}
+          ${isPaused ? `<button class="job-control-btn resume-btn" onclick="window.resumeTask('${task.id}', event)">Resume</button>` : ''}
+          <button class="job-control-btn cancel-btn" onclick="window.cancelTask('${task.id}', event)">Cancel Job</button>
+        </div>
+      `;
+    }
+
+    const jobName = task.name || `Upgrade to ${task.target_stemcell.os}/${task.target_stemcell.version}`;
+
+    tasksContainer.innerHTML = `
+      <div class="upgrade-task-detail">
+        <div class="task-detail-header">
+          <button class="back-to-list" onclick="window.backToTaskList()">&#8592; Back to Jobs</button>
+          <h3>${jobName}</h3>
+          ${controlButtonsHtml}
+        </div>
+        <div class="task-detail-summary">
+          <div class="summary-row">
+            <span class="label">Target Stemcell:</span>
+            <span class="value">${task.target_stemcell.os}/${task.target_stemcell.version}</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Status:</span>
+            <span class="value status-${task.status}">${task.status}${isPaused ? ' (waiting to resume)' : ''}</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Progress:</span>
+            <span class="value">${task.completed_count}/${task.total_count} completed${task.failed_count ? `, ${task.failed_count} failed` : ''}${task.cancelled_count ? `, ${task.cancelled_count} cancelled` : ''}${task.skipped_count ? `, ${task.skipped_count} skipped` : ''} (${progress}%)</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Created:</span>
+            <span class="value">${formatTaskTime(task.created_at)}</span>
+          </div>
+        </div>
+        <div class="task-detail-instances">
+          <h4>Instances (${instances.length})</h4>
+          <div class="instances-list">${instancesHtml}</div>
+        </div>
+      </div>
+    `;
+  };
+
+  // Get icon for instance status
+  const getInstanceStatusIcon = (status) => {
+    switch (status) {
+      case 'success': return '<span class="status-icon success">&#10003;</span>';
+      case 'running': return '<span class="status-icon running">&#8635;</span>';
+      case 'failed': return '<span class="status-icon failed">&#10007;</span>';
+      case 'pending': return '<span class="status-icon pending">&#8987;</span>';
+      case 'cancelled': return '<span class="status-icon cancelled">&#10006;</span>';
+      case 'skipped': return '<span class="status-icon skipped">&#8594;</span>';
+      default: return '';
+    }
+  };
+
+  // Get CSS class for instance status
+  const getInstanceStatusClass = (status) => {
+    switch (status) {
+      case 'success': return 'instance-success';
+      case 'running': return 'instance-running';
+      case 'failed': return 'instance-failed';
+      case 'pending': return 'instance-pending';
+      case 'cancelled': return 'instance-cancelled';
+      case 'skipped': return 'instance-skipped';
+      default: return '';
+    }
+  };
+
+  // Go back to task list from detail view
+  window.backToTaskList = () => {
+    selectedTaskId = null;
+    renderUpgradeTaskList();
+  };
+
+  // Pause a running task
+  window.pauseTask = async (taskId, event) => {
+    if (event) event.stopPropagation();
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}/pause`, { method: 'POST' });
+      if (response.ok) {
+        console.log('Task paused:', taskId);
+        fetchUpgradeTasks(); // Refresh the view
+      } else {
+        const data = await response.json();
+        alert('Failed to pause task: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to pause task:', err);
+      alert('Failed to pause task: ' + err.message);
+    }
+  };
+
+  // Resume a paused task
+  window.resumeTask = async (taskId, event) => {
+    if (event) event.stopPropagation();
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}/resume`, { method: 'POST' });
+      if (response.ok) {
+        console.log('Task resumed:', taskId);
+        fetchUpgradeTasks(); // Refresh the view
+      } else {
+        const data = await response.json();
+        alert('Failed to resume task: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to resume task:', err);
+      alert('Failed to resume task: ' + err.message);
+    }
+  };
+
+  // Cancel a running or paused task
+  window.cancelTask = async (taskId, event) => {
+    if (event) event.stopPropagation();
+
+    const confirmed = await showConfirmDialog({
+      title: 'Cancel Batch Job',
+      message: 'Are you sure you want to cancel this job? This will cancel the current BOSH task and skip remaining instances.',
+      confirmText: 'Cancel Job',
+      cancelText: 'Keep Running',
+      danger: true
+    });
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`/b/upgrade/tasks/${taskId}/cancel`, { method: 'POST' });
+      if (response.ok) {
+        console.log('Task cancelled:', taskId);
+        fetchUpgradeTasks(); // Refresh the view
+      } else {
+        const data = await response.json();
+        alert('Failed to cancel task: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Failed to cancel task:', err);
+      alert('Failed to cancel task: ' + err.message);
+    }
+  };
+
+  // Fetch upgrade tasks from API
+  const fetchUpgradeTasks = async () => {
+    try {
+      const response = await fetch('/b/upgrade/tasks');
+      if (response.ok) {
+        upgradeTasks = await response.json();
+
+        // If we're viewing a task detail, refresh it
+        if (selectedTaskId) {
+          const selectedTask = upgradeTasks.find(t => t.id === selectedTaskId);
+          if (selectedTask) {
+            // Fetch full details and re-render
+            const detailResponse = await fetch(`/b/upgrade/tasks/${selectedTaskId}`);
+            if (detailResponse.ok) {
+              const task = await detailResponse.json();
+              renderTaskDetail(task);
+            }
+          }
+        } else {
+          renderUpgradeTaskList();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch upgrade tasks:', err);
+    }
+  };
+
+  // Start upgrade for selected instances
+  const startUpgrade = async () => {
+    const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+    if (!stemcellSelect || !stemcellSelect.value) {
+      alert('Please select a target stemcell');
+      return;
+    }
+
+    if (selectedUpgradeInstances.size === 0) {
+      alert('Please select at least one instance to upgrade');
+      return;
+    }
+
+    const [os, version] = stemcellSelect.value.split('/');
+    const instanceIds = Array.from(selectedUpgradeInstances);
+
+    // Prompt for job name
+    const defaultName = `Upgrade to ${os}/${version}`;
+    const jobName = await showPromptDialog({
+      title: 'Create Batch Job',
+      message: `Enter a name for this batch job (${instanceIds.length} instance${instanceIds.length > 1 ? 's' : ''} selected):`,
+      defaultValue: defaultName,
+      placeholder: 'Batch job name',
+      confirmText: 'Start Upgrade',
+      cancelText: 'Cancel'
+    });
+
+    if (jobName === null) {
+      // User cancelled
+      return;
+    }
+
+    const requestBody = {
+      name: jobName || defaultName,
+      instance_ids: instanceIds,
+      target_stemcell: {
+        os: os,
+        version: version
+      }
+    };
+
+    try {
+      const upgradeButton = document.getElementById('upgrade-start');
+      if (upgradeButton) {
+        upgradeButton.disabled = true;
+        upgradeButton.textContent = 'Starting...';
+      }
+
+      const response = await fetch('/b/upgrade/tasks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (response.ok) {
+        const task = await response.json();
+        console.log('Upgrade task created:', task.id);
+
+        // Clear selection
+        selectedUpgradeInstances.clear();
+        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          const checkbox = item.querySelector('input[type="checkbox"]');
+          if (checkbox) checkbox.checked = false;
+          item.classList.remove('selected');
+        });
+        updateUpgradeButton();
+
+        // Refresh task list and select new task
+        await fetchUpgradeTasks();
+        selectUpgradeTask(task.id);
+      } else {
+        const error = await response.text();
+        alert(`Failed to start upgrade: ${error}`);
+      }
+    } catch (err) {
+      console.error('Failed to start upgrade:', err);
+      alert(`Failed to start upgrade: ${err.message}`);
+    } finally {
+      updateUpgradeButton();
+    }
+  };
+
+  // Set up upgrade button handler (called from initUpgradeTab)
+  const setupUpgradeButtonHandler = () => {
+    const upgradeButton = document.getElementById('upgrade-start');
+    if (upgradeButton) {
+      upgradeButton.addEventListener('click', startUpgrade);
+    }
+  };
+
+  // Start periodic refresh of tasks
+  const startTasksRefresh = () => {
+    if (upgradeTasksRefreshInterval) {
+      clearInterval(upgradeTasksRefreshInterval);
+    }
+    // Refresh every 5 seconds
+    upgradeTasksRefreshInterval = setInterval(fetchUpgradeTasks, 5000);
+  };
+
+  // Stop periodic refresh
+  const stopTasksRefresh = () => {
+    if (upgradeTasksRefreshInterval) {
+      clearInterval(upgradeTasksRefreshInterval);
+      upgradeTasksRefreshInterval = null;
+    }
   };
 
   // Service detail rendering functions
@@ -2022,7 +3034,7 @@
       });
     } else {
       // If no vault data, show basic info from details
-      const createdAt = details.created ? strftime("%Y-%m-%d %H:%M:%S", details.created) : 'Unknown';
+      const createdAt = formatCreatedTimestamp(details);
       tableRows = [
         `<tr>
           <td class="info-key" style="font-size: 16px;">
@@ -2402,13 +3414,13 @@
 
     try {
       if (type === 'blacksmith-logs') {
-        // Fetch blacksmith logs
-        const response = await fetch('/b/blacksmith/logs', { cache: 'no-cache' });
+        // Fetch blacksmith logs with pagination (initial load)
+        const response = await fetch('/b/blacksmith/logs?limit=5000&offset=0', { cache: 'no-cache' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         const data = await response.json();
-        return formatBlacksmithLogs(data.logs);
+        return formatBlacksmithLogs(data.logs, null, data);
 
       } else if (type === 'events') {
         // Direct fetch for events
@@ -4261,9 +5273,29 @@
     return tableHTML;
   };
 
-  const formatBlacksmithLogs = (logs, logFile = null) => {
+  // Global state for blacksmith logs pagination
+  window.blacksmithLogsPagination = {
+    totalLines: 0,
+    currentOffset: 0,
+    hasMore: false,
+    isLoading: false,
+    currentFile: '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log'
+  };
+
+  const formatBlacksmithLogs = (logs, logFile = null, paginationData = null) => {
     if (!logs || logs === '') {
       return '<div class="no-data">No logs available</div>';
+    }
+
+    // Store pagination state
+    if (paginationData) {
+      window.blacksmithLogsPagination = {
+        totalLines: paginationData.total_lines || 0,
+        currentOffset: (paginationData.offset || 0) + (paginationData.limit || 5000),
+        hasMore: paginationData.has_more || false,
+        isLoading: false,
+        currentFile: logFile || '/var/vcap/sys/log/blacksmith/blacksmith.stdout.log'
+      };
     }
 
     // Parse logs and store for sorting
@@ -4295,6 +5327,18 @@
     // since we're providing our own in the controls row
     const logsTableHTML = renderLogsTable(logs, parsedLogs, false);
 
+    // Show line count info
+    const lineCountInfo = paginationData
+      ? `Showing ${parsedLogs.length.toLocaleString()} of ${paginationData.total_lines.toLocaleString()} lines`
+      : `${parsedLogs.length.toLocaleString()} lines`;
+
+    // Load more indicator (shown at the top when there are older logs)
+    const loadMoreHTML = (paginationData && paginationData.has_more)
+      ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
+           <span class="load-more-text">Click or scroll up to load older logs</span>
+         </div>`
+      : '';
+
     return `
       <div class="logs-container">
         <div class="logs-controls-row">
@@ -4306,6 +5350,7 @@
               ${logFileOptions}
             </select>
           </div>
+          <span class="logs-line-count" title="Line count">${lineCountInfo}</span>
           <button class="copy-btn-logs" onclick="window.copyTableRowsAsText('.logs-table', event)"
                   title="Copy filtered table rows">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -4316,6 +5361,7 @@
           </button>
         </div>
         <div class="logs-table-container" id="blacksmith-logs-display">
+          ${loadMoreHTML}
           ${logsTableHTML}
         </div>
       </div>
@@ -7659,7 +8705,7 @@
                     <td>
                       <span class="copy-wrapper inline-flex items-center gap-2 justify-between w-full">
                         <span>${stemcell.version || 'latest'}</span>
-                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
+                        <button class="copy-btn-inline p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-200" onclick="window.copyValue(event, '${String(stemcell.version || 'latest').replace(/'/g, "\\'")}')"
                                 title="Copy to clipboard">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -7920,14 +8966,23 @@
     displayContainer.innerHTML = '<div class="loading">Loading...</div>';
 
     try {
-      // Fetch the logs for the selected file
-      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(logFilePath)}`, { cache: 'no-cache' });
+      // Fetch the logs for the selected file with pagination
+      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(logFilePath)}&limit=5000&offset=0`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();
       const logs = data.logs;
+
+      // Update pagination state
+      window.blacksmithLogsPagination = {
+        totalLines: data.total_lines || 0,
+        currentOffset: (data.offset || 0) + (data.limit || 5000),
+        hasMore: data.has_more || false,
+        isLoading: false,
+        currentFile: logFilePath
+      };
 
       if (!logs || logs === '') {
         displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
@@ -7937,15 +8992,34 @@
       // Save the selected log file to localStorage
       LogSelectionManager.saveBlacksmithLog(logFilePath);
 
-      // Update the display with formatted logs
-      // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
-      const tableHTML = renderLogsTable(logs, null, false);
-      displayContainer.innerHTML = tableHTML;
+      // Parse logs
+      const parsedLogs = logs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+      tableOriginalData.set('blacksmith-logs', parsedLogs);
+      tableOriginalData.set('logs-table', parsedLogs);
 
-      // Re-attach the search filter functionality to the existing search filter
-      // and initialize sorting
+      // Load more indicator
+      const loadMoreHTML = data.has_more
+        ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
+             <span class="load-more-text">Click or scroll up to load older logs</span>
+           </div>`
+        : '';
+
+      // Update line count display
+      const lineCountEl = document.querySelector('.logs-line-count');
+      if (lineCountEl) {
+        lineCountEl.textContent = `Showing ${parsedLogs.length.toLocaleString()} of ${data.total_lines.toLocaleString()} lines`;
+      }
+
+      // Update the display with formatted logs
+      const tableHTML = renderLogsTable(logs, parsedLogs, false);
+      displayContainer.innerHTML = loadMoreHTML + tableHTML;
+
+      // Re-attach the search filter functionality and initialize sorting
       initializeSorting('logs-table');
       attachSearchFilter('logs-table');
+
+      // Set up scroll listener for lazy loading
+      setupLogsScrollListener();
 
     } catch (error) {
       console.error('Failed to fetch log file:', error);
@@ -8453,14 +9527,23 @@
     button.disabled = true;
 
     try {
-      // Fetch the logs for the current file
-      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(currentLogFile)}`, { cache: 'no-cache' });
+      // Fetch the logs with pagination (reset to initial state)
+      const response = await fetch(`/b/blacksmith/logs?file=${encodeURIComponent(currentLogFile)}&limit=5000&offset=0`, { cache: 'no-cache' });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();
       const logs = data.logs;
+
+      // Update pagination state
+      window.blacksmithLogsPagination = {
+        totalLines: data.total_lines || 0,
+        currentOffset: (data.offset || 0) + (data.limit || 5000),
+        hasMore: data.has_more || false,
+        isLoading: false,
+        currentFile: currentLogFile
+      };
 
       if (!logs || logs === '') {
         displayContainer.innerHTML = '<div class="no-data">No logs available for this file</div>';
@@ -8472,16 +9555,31 @@
         tableOriginalData.set('blacksmith-logs', parsedLogs);
         tableOriginalData.set('logs-table', parsedLogs);  // Also store under table class name as fallback
 
+        // Load more indicator
+        const loadMoreHTML = data.has_more
+          ? `<div id="logs-load-more" class="logs-load-more" onclick="window.loadMoreBlacksmithLogs()">
+               <span class="load-more-text">Click or scroll up to load older logs</span>
+             </div>`
+          : '';
+
+        // Update line count display
+        const lineCountEl = document.querySelector('.logs-line-count');
+        if (lineCountEl) {
+          lineCountEl.textContent = `Showing ${parsedLogs.length.toLocaleString()} of ${data.total_lines.toLocaleString()} lines`;
+        }
+
         // Update the display with formatted logs
-        // Pass false for includeSearchFilter since the search filter already exists in logs-controls-row
         const tableHTML = renderLogsTable(logs, parsedLogs, false);
-        displayContainer.innerHTML = tableHTML;
+        displayContainer.innerHTML = loadMoreHTML + tableHTML;
 
         // Re-attach the search filter functionality and initialize sorting
         initializeSorting('logs-table');
         attachSearchFilter('logs-table');
         // Restore search filter state
         restoreSearchFilterState('logs-table', currentSearchFilter);
+
+        // Set up scroll listener for lazy loading
+        setupLogsScrollListener();
       }
 
       // Visual feedback for successful refresh
@@ -8503,6 +9601,116 @@
       // Remove spinning animation
       button.classList.remove('refreshing');
       button.disabled = false;
+    }
+  };
+
+  // Load more blacksmith logs (older logs)
+  window.loadMoreBlacksmithLogs = async () => {
+    const pagination = window.blacksmithLogsPagination;
+    if (!pagination || !pagination.hasMore || pagination.isLoading) {
+      return;
+    }
+
+    const displayContainer = document.getElementById('blacksmith-logs-display');
+    const loadMoreEl = document.getElementById('logs-load-more');
+    if (!displayContainer) return;
+
+    // Set loading state
+    pagination.isLoading = true;
+    if (loadMoreEl) {
+      loadMoreEl.innerHTML = '<span class="load-more-text">Loading older logs...</span>';
+    }
+
+    try {
+      const response = await fetch(
+        `/b/blacksmith/logs?file=${encodeURIComponent(pagination.currentFile)}&limit=2000&offset=${pagination.currentOffset}`,
+        { cache: 'no-cache' }
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const newLogs = data.logs;
+
+      if (newLogs && newLogs !== '') {
+        // Parse new logs
+        const newParsedLogs = newLogs.split('\n').filter(line => line.trim()).map(line => parseLogLine(line));
+
+        // Get existing parsed logs and prepend new ones
+        const existingLogs = tableOriginalData.get('blacksmith-logs') || [];
+        const combinedLogs = [...newParsedLogs, ...existingLogs];
+        tableOriginalData.set('blacksmith-logs', combinedLogs);
+        tableOriginalData.set('logs-table', combinedLogs);
+
+        // Get the table body and prepend new rows
+        const tableBody = displayContainer.querySelector('.logs-table tbody, #logs-table-body');
+        if (tableBody) {
+          // Render new rows
+          const columns = detectLogColumns(newParsedLogs);
+          const newRowsHTML = newParsedLogs.map(row => renderLogRow(row, columns)).join('');
+
+          // Create a temporary container to parse the HTML
+          const temp = document.createElement('tbody');
+          temp.innerHTML = newRowsHTML;
+
+          // Insert new rows at the beginning
+          const firstChild = tableBody.firstChild;
+          while (temp.firstChild) {
+            tableBody.insertBefore(temp.firstChild, firstChild);
+          }
+        }
+
+        // Update pagination state
+        pagination.currentOffset += data.limit || 2000;
+        pagination.hasMore = data.has_more || false;
+
+        // Update line count display
+        const lineCountEl = document.querySelector('.logs-line-count');
+        if (lineCountEl) {
+          lineCountEl.textContent = `Showing ${combinedLogs.length.toLocaleString()} of ${pagination.totalLines.toLocaleString()} lines`;
+        }
+
+        // Update or remove load more indicator
+        if (loadMoreEl) {
+          if (pagination.hasMore) {
+            loadMoreEl.innerHTML = '<span class="load-more-text">Click or scroll up to load older logs</span>';
+          } else {
+            loadMoreEl.innerHTML = '<span class="load-more-text">All logs loaded</span>';
+            loadMoreEl.style.opacity = '0.5';
+            loadMoreEl.style.cursor = 'default';
+            loadMoreEl.onclick = null;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load more logs:', error);
+      if (loadMoreEl) {
+        loadMoreEl.innerHTML = `<span class="load-more-text" style="color: var(--error-color);">Failed to load: ${error.message}</span>`;
+      }
+    } finally {
+      pagination.isLoading = false;
+    }
+  };
+
+  // Set up scroll listener for lazy loading logs
+  const setupLogsScrollListener = () => {
+    const displayContainer = document.getElementById('blacksmith-logs-display');
+    if (!displayContainer) return;
+
+    // Remove existing listener if any
+    displayContainer.removeEventListener('scroll', handleLogsScroll);
+    displayContainer.addEventListener('scroll', handleLogsScroll);
+  };
+
+  // Handle scroll event for lazy loading
+  const handleLogsScroll = (event) => {
+    const container = event.target;
+    const pagination = window.blacksmithLogsPagination;
+
+    // Check if scrolled near the top (within 100px)
+    if (container.scrollTop < 100 && pagination && pagination.hasMore && !pagination.isLoading) {
+      window.loadMoreBlacksmithLogs();
     }
   };
 
@@ -8538,6 +9746,9 @@
 
       // Tab-specific initialization
       // (broker now handled as a sub-tab under blacksmith)
+      if (tabId === 'upgrade') {
+        initUpgradeTab();
+      }
 
       // Re-initialize sorting for any tables in the newly activated tab
       setTimeout(() => {
@@ -9241,6 +10452,9 @@
               applyFilters();
             });
           }
+
+          // Apply filters on initial load (to respect default checkbox state)
+          applyFilters();
         };
 
         // Set up detail tab handlers
@@ -9651,6 +10865,8 @@
             } else if (tabType === 'blacksmith-logs') {
               initializeSorting('logs-table');
               attachSearchFilter('logs-table');
+              // Set up scroll listener for lazy loading
+              setupLogsScrollListener();
             } else if (tabType === 'logs') {
               initializeSorting('deployment-log-table');
               attachSearchFilter('deployment-log-table');

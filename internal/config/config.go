@@ -199,8 +199,9 @@ type BOSHConfig struct {
 	CCPath            string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???
 	CloudConfig       string
 	Network           string    `yaml:"network"`
-	MaxConnections    int       `yaml:"max_connections"`    // Max concurrent BOSH API connections
-	ConnectionTimeout int       `yaml:"connection_timeout"` // Timeout waiting for connection slot (seconds)
+	MaxConnections      int       `yaml:"max_connections"`       // Max concurrent BOSH API connections
+	MaxBatchConnections int       `yaml:"max_batch_connections"` // Max concurrent batch upgrade connections (separate pool)
+	ConnectionTimeout   int       `yaml:"connection_timeout"`    // Timeout waiting for connection slot (seconds)
 	SSH               SSHConfig `yaml:"ssh,omitempty"`      // Deprecated: Use top-level SSH config instead
 }
 
@@ -398,6 +399,10 @@ func setBOSHDefaults(config *Config) error {
 	// BOSH connection pool defaults
 	if config.BOSH.MaxConnections == 0 {
 		config.BOSH.MaxConnections = 4 // Default to 4 concurrent connections
+	}
+
+	if config.BOSH.MaxBatchConnections == 0 {
+		config.BOSH.MaxBatchConnections = 10 // Default to 10 concurrent batch upgrade connections
 	}
 
 	if config.BOSH.ConnectionTimeout == 0 {
