@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pivotal-cf/brokerapi/v8/domain"
 	"github.com/shieldproject/shield/client/v2/shield"
 )
 
@@ -36,8 +35,8 @@ var (
 type Client interface {
 	io.Closer
 
-	CreateSchedule(instance string, details domain.ProvisionDetails, url string, creds interface{}) error
-	DeleteSchedule(instance string, details domain.DeprovisionDetails) error
+	CreateSchedule(instance, serviceID, planID, url string, creds interface{}) error
+	DeleteSchedule(instance, serviceID, planID string) error
 }
 
 // Logger interface for shield package.
@@ -85,10 +84,10 @@ type NoopClient struct{}
 func (cli *NoopClient) Close() error {
 	return nil
 }
-func (cli *NoopClient) CreateSchedule(instance string, details domain.ProvisionDetails, url string, creds interface{}) error {
+func (cli *NoopClient) CreateSchedule(instance, serviceID, planID, url string, creds interface{}) error {
 	return nil
 }
-func (cli *NoopClient) DeleteSchedule(instance string, details domain.DeprovisionDetails) error {
+func (cli *NoopClient) DeleteSchedule(instance, serviceID, planID string) error {
 	return nil
 }
 
@@ -220,11 +219,10 @@ func join(s ...string) string {
 }
 
 //nolint:funlen
-func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.ProvisionDetails, host string, creds interface{}) error {
+func (cli *NetworkClient) CreateSchedule(instanceID, serviceID, planID, host string, creds interface{}) error {
 	cli.logger.Info("Creating Shield schedule for instance %s (service: %s, plan: %s)",
-		instanceID, details.ServiceID, details.PlanID)
-	cli.logger.Debug("Instance details - Org: %s, Space: %s, Host: %s",
-		details.OrganizationGUID, details.SpaceGUID, host)
+		instanceID, serviceID, planID)
+	cli.logger.Debug("Instance details - Host: %s", host)
 
 	cli.logger.Debug("Re-authenticating with Shield for schedule creation")
 
@@ -243,28 +241,28 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 	}
 
 	// Verify that the target should be backed up.
-	cli.logger.Debug("Checking if service '%s' is enabled for backup", details.ServiceID)
+	cli.logger.Debug("Checking if service '%s' is enabled for backup", serviceID)
 
 	enabled := false
 
 	for _, target := range cli.enabledOnTargets {
-		enabled = target == details.ServiceID || enabled
+		enabled = target == serviceID || enabled
 	}
 
 	if !enabled {
-		cli.logger.Info("Service '%s' is not enabled for Shield backup, skipping schedule creation", details.ServiceID)
+		cli.logger.Info("Service '%s' is not enabled for Shield backup, skipping schedule creation", serviceID)
 
 		return nil
 	}
 
-	cli.logger.Debug("Service '%s' is enabled for backup, proceeding with schedule creation", details.ServiceID)
+	cli.logger.Debug("Service '%s' is enabled for backup, proceeding with schedule creation", serviceID)
 
 	// Generate the target configurations.
-	cli.logger.Debug("Generating target configuration for service '%s'", details.ServiceID)
+	cli.logger.Debug("Generating target configuration for service '%s'", serviceID)
 
 	var config map[string]interface{}
 
-	switch details.ServiceID {
+	switch serviceID {
 	case "rabbitmq":
 		rmqURL := "http://" + net.JoinHostPort(host, "15672")
 		cli.logger.Debug("Configuring RabbitMQ target with URL: %s", rmqURL)
@@ -298,18 +296,18 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 
 		cli.logger.Debug("RabbitMQ target configuration created successfully")
 	default:
-		cli.logger.Info("No Shield backup configuration available for service '%s', skipping", details.ServiceID)
+		cli.logger.Info("No Shield backup configuration available for service '%s', skipping", serviceID)
 
 		return nil
 	}
 
-	targetName := join("targets", details.ServiceID, details.PlanID, instanceID)
+	targetName := join("targets", serviceID, planID, instanceID)
 	cli.logger.Debug("Creating Shield target: %s", targetName)
 	target := &shield.Target{
 		Name:    targetName,
 		Summary: "This target is managed by Blacksmith.",
 
-		Plugin: serviceMapping[details.ServiceID],
+		Plugin: serviceMapping[serviceID],
 		Agent:  cli.agent,
 		Config: config,
 	}
@@ -323,7 +321,7 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 
 	cli.logger.Info("Successfully created Shield target '%s' (UUID: %s)", target.Name, target.UUID)
 
-	jobName := join("jobs", details.ServiceID, details.PlanID, instanceID)
+	jobName := join("jobs", serviceID, planID, instanceID)
 	cli.logger.Debug("Creating Shield job: %s (schedule: %s, retain: %s)", jobName, cli.schedule, cli.retain)
 	job := &shield.Job{
 		Name:    jobName,
@@ -348,9 +346,9 @@ func (cli *NetworkClient) CreateSchedule(instanceID string, details domain.Provi
 	return nil
 }
 
-func (cli *NetworkClient) DeleteSchedule(instanceID string, details domain.DeprovisionDetails) error {
+func (cli *NetworkClient) DeleteSchedule(instanceID, serviceID, planID string) error {
 	cli.logger.Info("Deleting Shield schedule for instance %s (service: %s, plan: %s)",
-		instanceID, details.ServiceID, details.PlanID)
+		instanceID, serviceID, planID)
 
 	cli.logger.Debug("Re-authenticating with Shield for schedule deletion")
 
@@ -363,7 +361,7 @@ func (cli *NetworkClient) DeleteSchedule(instanceID string, details domain.Depro
 
 	cli.logger.Debug("Shield re-authentication successful")
 
-	name := join("jobs", details.ServiceID, details.PlanID, instanceID)
+	name := join("jobs", serviceID, planID, instanceID)
 	cli.logger.Debug("Finding Shield job: %s", name)
 
 	job, err := cli.shield.FindJob(cli.tenant, name, false)

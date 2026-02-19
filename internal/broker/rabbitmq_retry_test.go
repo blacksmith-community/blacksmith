@@ -75,7 +75,6 @@ var _ = Describe("RabbitMQ Retry Mechanism", func() {
 		mockServer.Close()
 	})
 
-
 	Describe("Retry Limits", func() {
 		It("should respect maximum retry limit", func() {
 			ctx := context.Background()

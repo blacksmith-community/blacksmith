@@ -102,15 +102,15 @@ func (api API) routeToPrimary(writer http.ResponseWriter, req *http.Request, use
 }
 
 func (api API) ensureBrokerAPIVersion(req *http.Request) {
-	brokerAPIVersion := req.Header.Get("X-Broker-Api-Version")
+	brokerAPIVersion := req.Header.Get("X-Broker-API-Version")
 	if brokerAPIVersion == "" {
 		if api.Logger != nil {
-			api.Logger.Info("adding missing X-Broker-Api-Version header for %s", req.URL.Path)
+			api.Logger.Info("adding missing X-Broker-API-Version header for %s", req.URL.Path)
 		}
 
-		req.Header.Set("X-Broker-Api-Version", "2.16")
+		req.Header.Set("X-Broker-API-Version", "2.17")
 	} else if api.Logger != nil {
-		api.Logger.Debug("X-Broker-Api-Version header already present: %s", brokerAPIVersion)
+		api.Logger.Debug("X-Broker-API-Version header already present: %s", brokerAPIVersion)
 	}
 }
 

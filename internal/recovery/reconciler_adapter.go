@@ -442,7 +442,7 @@ type brokerWrapper struct {
 func (b *brokerWrapper) GetServices() []reconciler.Service {
 	services := make([]reconciler.Service, 0, len(b.broker.Catalog))
 
-	// Use the Catalog field which contains brokerapi.Service entries
+	// Use the Catalog field which contains osbapi.Service entries
 	for _, svc := range b.broker.Catalog {
 		service := reconciler.Service{
 			ID:          svc.ID,
@@ -464,25 +464,9 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 				plan.Properties["free"] = *servicePlan.Free
 			}
 
-			// Convert brokerapi.ServicePlanMetadata to Properties
+			// Convert osbapi plan metadata (map[string]any) to Properties
 			if servicePlan.Metadata != nil {
-				plan.Properties["displayName"] = servicePlan.Metadata.DisplayName
-				plan.Properties["bullets"] = servicePlan.Metadata.Bullets
-
-				// Convert costs if present
-				if len(servicePlan.Metadata.Costs) > 0 {
-					costs := make([]map[string]interface{}, len(servicePlan.Metadata.Costs))
-					for i, cost := range servicePlan.Metadata.Costs {
-						costs[i] = map[string]interface{}{
-							"amount": cost.Amount,
-							"unit":   cost.Unit,
-						}
-					}
-
-					plan.Properties["costs"] = costs
-				}
-				// Add any additional metadata
-				for k, v := range servicePlan.Metadata.AdditionalMetadata {
+				for k, v := range servicePlan.Metadata {
 					plan.Properties[k] = v
 				}
 			}

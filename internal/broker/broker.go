@@ -29,9 +29,8 @@ import (
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	"github.com/google/uuid"
-	"github.com/pivotal-cf/brokerapi/v8/domain"
-	"github.com/pivotal-cf/brokerapi/v8/domain/apiresponses"
 	"gopkg.in/yaml.v2"
 )
 
@@ -60,7 +59,6 @@ var (
 	ErrPlanNotFound                          = errors.New("plan not found")
 	ErrNoForgeDirectoriesFoundViaScan        = errors.New("no forge directories found via auto-scan")
 	ErrNoServiceDirectoriesProvided          = errors.New("no service directories provided")
-	ErrAsyncOperationsRequired               = errors.New("this service broker requires async operations")
 	ErrFailedToTrackServiceRequestInVault    = errors.New("failed to track service request in Vault")
 	ErrFailedToUpdateServiceStatusInVault    = errors.New("failed to update service status in Vault")
 	ErrFailedToStoreServiceMetadata          = errors.New("failed to store service metadata")
@@ -106,7 +104,7 @@ var (
 
 // Configurable timeouts (can be overridden in tests)
 var (
-	defaultDeleteTimeout = 30 * time.Second
+	defaultDeleteTimeout  = 30 * time.Second
 	defaultRetryBaseDelay = 50 * time.Millisecond
 )
 
@@ -121,7 +119,7 @@ func SetDefaultRetryBaseDelay(delay time.Duration) {
 }
 
 type Broker struct {
-	Catalog []domain.Service
+	Catalog []osbapi.Service
 	Plans   map[string]services.Plan
 	BOSH    bosh.Director
 	Vault   *internalVault.Vault
@@ -251,45 +249,14 @@ func (b *Broker) FindPlan(
 	return services.Plan{}, fmt.Errorf("%w: %s", ErrPlanNotFound, key)
 }
 
-func (b *Broker) Services(ctx context.Context) ([]domain.Service, error) {
+func (b *Broker) GetCatalog(ctx context.Context) (*osbapi.Catalog, error) {
 	logger := logger.Get().Named("broker")
 	logger.Info("Retrieving service catalog")
-	logger.Debug("Converting %d brokerapi.Service entries to domain.Service", len(b.Catalog))
+	logger.Debug("Catalog contains %d services", len(b.Catalog))
 
-	// Convert brokerapi.Service to domain.Service
-	services := make([]domain.Service, len(b.Catalog))
-	for index, svc := range b.Catalog {
-		services[index] = domain.Service{
-			ID:                   svc.ID,
-			Name:                 svc.Name,
-			Description:          svc.Description,
-			Bindable:             svc.Bindable,
-			InstancesRetrievable: svc.InstancesRetrievable,
-			BindingsRetrievable:  svc.BindingsRetrievable,
-			PlanUpdatable:        svc.PlanUpdatable,
-			Plans:                make([]domain.ServicePlan, len(svc.Plans)),
-			Tags:                 svc.Tags,
-			Requires:             svc.Requires,
-			Metadata:             svc.Metadata,
-			DashboardClient:      svc.DashboardClient,
-		}
-		for j, plan := range svc.Plans {
-			services[index].Plans[j] = domain.ServicePlan{
-				ID:          plan.ID,
-				Name:        plan.Name,
-				Description: plan.Description,
-				Free:        plan.Free,
-				Bindable:    plan.Bindable,
-				Metadata:    plan.Metadata,
-			}
-		}
+	logger.Info("Successfully retrieved %d services from catalog", len(b.Catalog))
 
-		logger.Debug("Converted service %s with %d plans", services[index].Name, len(services[index].Plans))
-	}
-
-	logger.Info("Successfully retrieved %d services from catalog", len(services))
-
-	return services, nil
+	return &osbapi.Catalog{Services: b.Catalog}, nil
 }
 
 func (b *Broker) ReadServices(dir ...string) error {
@@ -315,13 +282,13 @@ func (b *Broker) ReadServices(dir ...string) error {
 func (b *Broker) Provision(
 	ctx context.Context,
 	instanceID string,
-	details domain.ProvisionDetails,
+	details osbapi.ProvisionRequest,
 	asyncAllowed bool,
 ) (
-	domain.ProvisionedServiceSpec,
+	osbapi.ProvisionResponse,
+	bool,
 	error,
 ) {
-	spec := domain.ProvisionedServiceSpec{IsAsync: true}
 	logger := logger.Get().Named("broker")
 
 	logger.Info("Starting provision of service instance %s (service: %s, plan: %s)", instanceID, details.ServiceID, details.PlanID)
@@ -331,25 +298,25 @@ func (b *Broker) Provision(
 	if !asyncAllowed {
 		logger.Error("Async operations required but not allowed by client")
 
-		return spec, ErrAsyncOperationsRequired
+		return osbapi.ProvisionResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
 	// Record the initial request
 	err := b.recordInitialRequest(ctx, instanceID, details, logger)
 	if err != nil {
-		return spec, err
+		return osbapi.ProvisionResponse{}, false, err
 	}
 
 	// Find and validate plan
 	plan, err := b.validatePlan(ctx, instanceID, details, logger)
 	if err != nil {
-		return spec, err
+		return osbapi.ProvisionResponse{}, false, err
 	}
 
 	// Store instance data
 	_, err = b.storeInstanceData(ctx, instanceID, details, plan, logger)
 	if err != nil {
-		return spec, err
+		return osbapi.ProvisionResponse{}, false, err
 	}
 
 	// Launch async provisioning
@@ -357,16 +324,17 @@ func (b *Broker) Provision(
 
 	logger.Info("Accepted provisioning request for service instance %s", instanceID)
 
-	return spec, nil
+	return osbapi.ProvisionResponse{}, true, nil
 }
 
 func (b *Broker) Deprovision(
 	ctx context.Context,
 	instanceID string,
-	details domain.DeprovisionDetails,
+	details osbapi.DeprovisionRequest,
 	asyncAllowed bool,
 ) (
-	domain.DeprovisionServiceSpec,
+	osbapi.DeprovisionResponse,
+	bool,
 	error,
 ) {
 	logger := logger.Get().Named("broker")
@@ -375,7 +343,7 @@ func (b *Broker) Deprovision(
 	if !asyncAllowed {
 		logger.Error("Async operations required but not allowed by client")
 
-		return domain.DeprovisionServiceSpec{}, ErrAsyncOperationsRequired
+		return osbapi.DeprovisionResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
 	err := b.recordDeprovisionRequest(ctx, instanceID, details, logger)
@@ -386,11 +354,11 @@ func (b *Broker) Deprovision(
 
 	instance, err := b.validateInstanceExists(ctx, instanceID, logger)
 	if err != nil {
-		return domain.DeprovisionServiceSpec{}, err
+		return osbapi.DeprovisionResponse{}, false, err
 	}
 
 	b.storeDeleteRequestedTimestamp(ctx, instanceID, logger)
-	b.descheduleShieldBackup(instanceID, details, logger)
+	b.descheduleShieldBackup(instanceID, details.ServiceID, details.PlanID, logger)
 
 	// Launch async deprovisioning in background
 	// Create a detached context that survives the HTTP request lifecycle
@@ -400,7 +368,7 @@ func (b *Broker) Deprovision(
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
 
-	return domain.DeprovisionServiceSpec{IsAsync: true}, nil
+	return osbapi.DeprovisionResponse{}, true, nil
 }
 
 func (b *Broker) OnProvisionCompleted(
@@ -448,7 +416,7 @@ func (b *Broker) OnProvisionCompleted(
 	}
 
 	// Schedule backup
-	err = b.scheduleBackup(ctx, instanceID, details, vms[0].IPs[0], logger)
+	err = b.scheduleBackup(ctx, instanceID, details.ServiceID, details.PlanID, vms[0].IPs[0], logger)
 	if err != nil {
 		return err
 	}
@@ -461,9 +429,9 @@ func (b *Broker) OnProvisionCompleted(
 func (b *Broker) LastOperation(
 	ctx context.Context,
 	instanceID string,
-	details domain.PollDetails,
+	details osbapi.LastOperationRequest,
 ) (
-	domain.LastOperation,
+	osbapi.LastOperationResponse,
 	error,
 ) {
 	logger := logger.Get().Named("broker")
@@ -474,15 +442,15 @@ func (b *Broker) LastOperation(
 	if err != nil {
 		logger.Error("Error getting instance for operation: %s", err)
 
-		return domain.LastOperation{}, err
+		return osbapi.LastOperationResponse{}, err
 	}
 
 	// Handle case where instance was deleted
 	if instance == nil {
 		logger.Info("Instance %s not found in index, returning succeeded", instanceID)
 
-		return domain.LastOperation{
-			State:       domain.Succeeded,
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateSucceeded,
 			Description: "Instance has been deleted",
 		}, nil
 	}
@@ -510,10 +478,11 @@ func (b *Broker) LastOperation(
 func (b *Broker) Bind(
 	ctx context.Context,
 	instanceID, bindingID string,
-	details domain.BindDetails,
+	details osbapi.BindRequest,
 	asyncAllowed bool,
 ) (
-	domain.Binding,
+	osbapi.BindResponse,
+	bool,
 	error,
 ) {
 	// Acquire lock for this instance to prevent concurrent bind/unbind
@@ -522,7 +491,7 @@ func (b *Broker) Bind(
 	mu.Lock()
 	defer mu.Unlock()
 
-	var binding domain.Binding
+	var binding osbapi.BindResponse
 
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting bind operation for instance %s, binding %s", instanceID, bindingID)
@@ -531,37 +500,39 @@ func (b *Broker) Bind(
 	// Find the plan
 	plan, err := b.findPlanForBinding(details, logger)
 	if err != nil {
-		return binding, err
+		return binding, false, err
 	}
 
 	// Get credentials
 	creds, err := b.getInstanceCredentials(instanceID, plan, logger)
 	if err != nil {
-		return binding, err
+		return binding, false, err
 	}
 
 	// Process RabbitMQ dynamic credentials if applicable
 	processedCreds, err := b.processRabbitMQCredentials(ctx, bindingID, creds, logger)
 	if err != nil {
-		return binding, err
+		return binding, false, err
 	}
 
 	// Clean up admin credentials from final output
 	b.cleanupAdminCredentials(processedCreds)
 
-	binding.Credentials = processedCreds
+	if credsMap, ok := processedCreds.(map[string]interface{}); ok {
+		binding.Credentials = credsMap
+	}
 	logger.Debug("credentials are: %v", binding)
 	logger.Info("Successfully completed bind operation for binding %s", bindingID)
 
-	return binding, nil
+	return binding, false, nil
 }
 
 func (b *Broker) Unbind(
 	ctx context.Context,
 	instanceID, bindingID string,
-	details domain.UnbindDetails,
+	details osbapi.UnbindRequest,
 	asyncAllowed bool,
-) (domain.UnbindSpec, error) {
+) (osbapi.UnbindResponse, bool, error) {
 	// Acquire lock for this instance to prevent concurrent bind/unbind
 	mu := b.GetInstanceLock(instanceID)
 
@@ -575,49 +546,53 @@ func (b *Broker) Unbind(
 	if strings.Contains(details.PlanID, "rabbitmq") {
 		err := b.handleRabbitMQUnbind(ctx, instanceID, bindingID, details, logger)
 		if err != nil {
-			return domain.UnbindSpec{}, err
+			return osbapi.UnbindResponse{}, false, err
 		}
 	}
 
 	logger.Info("Successfully completed unbind operation for binding %s", bindingID)
 
-	return domain.UnbindSpec{}, nil
+	return osbapi.UnbindResponse{}, false, nil
 }
 
 func (b *Broker) Update(
 	ctx context.Context,
 	instanceID string,
-	details domain.UpdateDetails,
+	details osbapi.UpdateRequest,
 	asyncAllowed bool,
 ) (
-	domain.UpdateServiceSpec,
+	osbapi.UpdateResponse,
+	bool,
 	error,
 ) {
 	logger := logger.Get().Named("broker")
 	logger.Error("Update operation not implemented")
+	prevPlanID := ""
+	if details.PreviousValues != nil {
+		prevPlanID = details.PreviousValues.PlanID
+	}
 	logger.Debug("Update request - InstanceID: %s, ServiceID: %s, CurrentPlanID: %s, NewPlanID: %s",
-		instanceID, details.ServiceID, details.PlanID, details.PreviousValues.PlanID)
-	logger.Debug("Async allowed: %v, Raw parameters: %s", asyncAllowed, string(details.RawParameters))
+		instanceID, details.ServiceID, details.PlanID, prevPlanID)
 
 	// FIXME: implement this!
 
-	return domain.UpdateServiceSpec{}, ErrNotImplemented
+	return osbapi.UpdateResponse{}, false, ErrNotImplemented
 }
 
-func (b *Broker) GetInstance(ctx context.Context, instanceID string, details domain.FetchInstanceDetails) (domain.GetInstanceDetailsSpec, error) {
+func (b *Broker) GetInstance(ctx context.Context, instanceID string, details osbapi.FetchInstanceRequest) (osbapi.FetchInstanceResponse, error) {
 	logger := logger.Get().Named("broker")
 	logger.Debug("GetInstance called for instanceID: %s", instanceID)
 	logger.Info("GetInstance operation not implemented")
 	// Not implemented - return empty spec
-	return domain.GetInstanceDetailsSpec{}, ErrGetInstanceNotImplemented
+	return osbapi.FetchInstanceResponse{}, ErrGetInstanceNotImplemented
 }
 
-func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string, details domain.FetchBindingDetails) (domain.GetBindingSpec, error) {
+func (b *Broker) GetBinding(ctx context.Context, instanceID, bindingID string, details osbapi.FetchBindingRequest) (osbapi.FetchBindingResponse, error) {
 	logger := logger.Get().Named("broker")
 	logger.Debug("GetBinding called for instanceID: %s, bindingID: %s", instanceID, bindingID)
 	logger.Info("GetBinding operation not implemented")
 	// Not implemented - return empty spec
-	return domain.GetBindingSpec{}, ErrGetBindingNotImplemented
+	return osbapi.FetchBindingResponse{}, ErrGetBindingNotImplemented
 }
 
 func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingID string) (*BindingCredentials, error) {
@@ -675,12 +650,12 @@ func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingI
 	return binding, nil
 }
 
-func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details domain.PollDetails) (domain.LastOperation, error) {
+func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID string, details osbapi.LastOperationRequest) (osbapi.LastOperationResponse, error) {
 	logger := logger.Get().Named("broker")
 	logger.Debug("LastBindingOperation called for instanceID: %s, bindingID: %s", instanceID, bindingID)
 	logger.Debug("Returning success immediately as async bindings are not supported")
 	// Not implemented - return successful immediately since we don't support async bindings
-	return domain.LastOperation{State: domain.Succeeded}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 }
 
 func (b *Broker) GetLatestDeploymentTask(deploymentName string) (*bosh.Task, string, error) {
@@ -863,7 +838,7 @@ func (b *Broker) buildCatalogAndPlans(serviceList []services.Service, logger log
 	logger.Info("Successfully built catalog with %d services and %d total plans", len(b.Catalog), totalPlans)
 }
 
-func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string, details domain.DeprovisionDetails, logger logger.Logger) error {
+func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, logger logger.Logger) error {
 	logger.Debug("recording deprovision request in vault immediately")
 
 	now := time.Now()
@@ -885,14 +860,14 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	return nil
 }
 
-func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, rawContext json.RawMessage, logger logger.Logger) map[string]interface{} {
+func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, contextData map[string]any, logger logger.Logger) map[string]interface{} {
 	existing := b.getExistingIndexEntry(ctx, instanceID, logger)
 
 	for key, value := range base {
 		existing[key] = value
 	}
 
-	for key, value := range b.extractContextFields(rawContext, logger) {
+	for key, value := range b.extractContextFields(contextData, logger) {
 		if value != "" {
 			existing[key] = value
 		}
@@ -949,17 +924,8 @@ func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string, l
 	return entry
 }
 
-func (b *Broker) extractContextFields(rawContext json.RawMessage, logger logger.Logger) map[string]string {
-	if len(rawContext) == 0 {
-		return map[string]string{}
-	}
-
-	var parsed map[string]interface{}
-
-	err := json.Unmarshal(rawContext, &parsed)
-	if err != nil {
-		logger.Debug("failed to parse context for index enrichment: %v", err)
-
+func (b *Broker) extractContextFields(contextData map[string]any, logger logger.Logger) map[string]string {
+	if len(contextData) == 0 {
 		return map[string]string{}
 	}
 
@@ -967,7 +933,7 @@ func (b *Broker) extractContextFields(rawContext json.RawMessage, logger logger.
 	fields := make(map[string]string, len(keys))
 
 	for _, key := range keys {
-		if value, ok := parsed[key].(string); ok && strings.TrimSpace(value) != "" {
+		if value, ok := contextData[key].(string); ok && strings.TrimSpace(value) != "" {
 			fields[key] = value
 		}
 	}
@@ -986,7 +952,7 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 	if !exists {
 		logger.Debug("Instance not found in vault index")
 
-		return nil, apiresponses.ErrInstanceDoesNotExist
+		return nil, osbapi.ErrInstanceNotFound
 	}
 
 	return instance, nil
@@ -1016,10 +982,10 @@ func (b *Broker) storeDeleteRequestedTimestamp(ctx context.Context, instanceID s
 	}
 }
 
-func (b *Broker) descheduleShieldBackup(instanceID string, details domain.DeprovisionDetails, logger logger.Logger) {
+func (b *Broker) descheduleShieldBackup(instanceID, serviceID, planID string, logger logger.Logger) {
 	logger.Debug("descheduling S.H.I.E.L.D. backup")
 
-	err := b.Shield.DeleteSchedule(instanceID, details)
+	err := b.Shield.DeleteSchedule(instanceID, serviceID, planID)
 	if err != nil {
 		logger.Error("failed to deschedule S.H.I.E.L.D. backup for instance %s: %s", instanceID, err)
 		// Continue anyway, this is non-fatal
@@ -1229,7 +1195,7 @@ func (b *Broker) removeOrphanedInstance(ctx context.Context, instanceID, deploym
 	}
 }
 
-func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, details domain.ProvisionDetails, logger logger.Logger) error {
+func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, logger logger.Logger) error {
 	logger.Debug("recording service request in vault immediately")
 
 	now := time.Now()
@@ -1250,7 +1216,7 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 		baseData["space_guid"] = details.SpaceGUID
 	}
 
-	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.RawContext, logger)
+	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
 
 	err := b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
@@ -1264,7 +1230,7 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 	return nil
 }
 
-func (b *Broker) validatePlan(ctx context.Context, instanceID string, details domain.ProvisionDetails, logger logger.Logger) (*services.Plan, error) {
+func (b *Broker) validatePlan(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, logger logger.Logger) (*services.Plan, error) {
 	logger.Info("Looking up plan %s for service %s", details.PlanID, details.ServiceID)
 
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
@@ -1291,7 +1257,7 @@ func (b *Broker) validatePlan(ctx context.Context, instanceID string, details do
 	if plan.OverLimit(database) {
 		logger.Error("Service limit exceeded for %s/%s (limit: %d)", plan.Service.Name, plan.Name, plan.Limit)
 
-		return nil, apiresponses.ErrPlanQuotaExceeded
+		return nil, osbapi.ErrPlanQuotaExceeded
 	}
 
 	logger.Debug("Service limit check passed")
@@ -1300,7 +1266,7 @@ func (b *Broker) validatePlan(ctx context.Context, instanceID string, details do
 	return &plan, b.updateInstanceStatus(ctx, instanceID, details, &plan, "validated", logger)
 }
 
-func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, details domain.ProvisionDetails, plan *services.Plan, status string, logger logger.Logger) error {
+func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, status string, logger logger.Logger) error {
 	logger.Debug("updating service instance status in vault 'db' index to '%s'", status)
 
 	now := time.Now()
@@ -1321,7 +1287,7 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 		baseData["space_guid"] = details.SpaceGUID
 	}
 
-	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.RawContext, logger)
+	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
 
 	err := b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
@@ -1333,7 +1299,7 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 	return nil
 }
 
-func (b *Broker) storeInstanceData(ctx context.Context, instanceID string, details domain.ProvisionDetails, plan *services.Plan, logger logger.Logger) (string, error) {
+func (b *Broker) storeInstanceData(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, logger logger.Logger) (string, error) {
 	deploymentName := fmt.Sprintf("%s-%s", details.PlanID, instanceID)
 	logger.Debug("deployment name: %s", deploymentName)
 
@@ -1355,7 +1321,7 @@ func (b *Broker) storeInstanceData(ctx context.Context, instanceID string, detai
 	return deploymentName, nil
 }
 
-func (b *Broker) storeDeploymentDetails(ctx context.Context, instanceID, deploymentName string, details domain.ProvisionDetails, logger logger.Logger) error {
+func (b *Broker) storeDeploymentDetails(ctx context.Context, instanceID, deploymentName string, details osbapi.ProvisionRequest, logger logger.Logger) error {
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
 	logger.Debug("storing details at Vault path: %s", vaultPath)
 
@@ -1376,7 +1342,7 @@ func (b *Broker) storeDeploymentDetails(ctx context.Context, instanceID, deploym
 	return nil
 }
 
-func (b *Broker) storeDeploymentInfo(ctx context.Context, instanceID, deploymentName string, details domain.ProvisionDetails, logger logger.Logger) {
+func (b *Broker) storeDeploymentInfo(ctx context.Context, instanceID, deploymentName string, details osbapi.ProvisionRequest, logger logger.Logger) {
 	deploymentInfo := b.buildDeploymentInfo(instanceID, deploymentName, details)
 
 	// Store deployment info at instance level
@@ -1400,7 +1366,7 @@ func (b *Broker) storeDeploymentInfo(ctx context.Context, instanceID, deployment
 	}
 }
 
-func (b *Broker) buildDeploymentInfo(instanceID, deploymentName string, details domain.ProvisionDetails) map[string]interface{} {
+func (b *Broker) buildDeploymentInfo(instanceID, deploymentName string, details osbapi.ProvisionRequest) map[string]interface{} {
 	deploymentInfo := map[string]interface{}{
 		"requested_at":      time.Now().Format(time.RFC3339),
 		"organization_guid": details.OrganizationGUID,
@@ -1412,48 +1378,31 @@ func (b *Broker) buildDeploymentInfo(instanceID, deploymentName string, details 
 	}
 
 	// Parse and add context if available
-	b.addContextData(deploymentInfo, details.RawContext)
+	b.addContextData(deploymentInfo, details.Context)
 
 	return deploymentInfo
 }
 
-func (b *Broker) buildRootData(deploymentInfo map[string]interface{}, details domain.ProvisionDetails) map[string]interface{} {
+func (b *Broker) buildRootData(deploymentInfo map[string]interface{}, details osbapi.ProvisionRequest) map[string]interface{} {
 	rootData := make(map[string]interface{})
 	for k, v := range deploymentInfo {
 		rootData[k] = v
 	}
 
 	// Add context and parameters if present
-	if len(details.RawContext) > 0 {
-		var contextData map[string]interface{}
-
-		err := json.Unmarshal(details.RawContext, &contextData)
-		if err == nil {
-			rootData["context"] = contextData
-		}
+	if len(details.Context) > 0 {
+		rootData["context"] = details.Context
 	}
 
-	if len(details.RawParameters) > 0 {
-		var paramsData interface{}
-
-		err := json.Unmarshal(details.RawParameters, &paramsData)
-		if err == nil {
-			rootData["parameters"] = paramsData
-		}
+	if len(details.Parameters) > 0 {
+		rootData["parameters"] = details.Parameters
 	}
 
 	return rootData
 }
 
-func (b *Broker) addContextData(deploymentInfo map[string]interface{}, rawContext json.RawMessage) {
-	if len(rawContext) == 0 {
-		return
-	}
-
-	var contextData map[string]interface{}
-
-	err := json.Unmarshal(rawContext, &contextData)
-	if err != nil {
+func (b *Broker) addContextData(deploymentInfo map[string]interface{}, contextData map[string]any) {
+	if len(contextData) == 0 {
 		return
 	}
 
@@ -1465,17 +1414,24 @@ func (b *Broker) addContextData(deploymentInfo map[string]interface{}, rawContex
 	}
 }
 
-func (b *Broker) writeDebugFiles(instanceID string, details domain.ProvisionDetails, logger logger.Logger) {
-	if len(details.RawParameters) == 0 {
+func (b *Broker) writeDebugFiles(instanceID string, details osbapi.ProvisionRequest, logger logger.Logger) {
+	if len(details.Parameters) == 0 {
 		return
 	}
 
-	err := WriteDataFile(instanceID, details.RawParameters)
+	paramBytes, err := json.Marshal(details.Parameters)
+	if err != nil {
+		logger.Error("failed to marshal parameters for debugging: %s", err)
+
+		return
+	}
+
+	err = WriteDataFile(instanceID, paramBytes)
 	if err != nil {
 		logger.Error("failed to write data file for debugging: %s", err)
 	}
 
-	err = WriteYamlFile(instanceID, details.RawParameters)
+	err = WriteYamlFile(instanceID, paramBytes)
 	if err != nil {
 		logger.Error("failed to write YAML file for debugging: %s", err)
 	}
@@ -1493,7 +1449,7 @@ func (b *Broker) storePlanReferences(ctx context.Context, instanceID string, pla
 	}
 }
 
-func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details domain.ProvisionDetails, plan *services.Plan, logger logger.Logger) {
+func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, logger logger.Logger) {
 	// Update status to show provisioning is starting
 	err := b.updateInstanceStatus(ctx, instanceID, details, plan, "provisioning_started", logger)
 	if err != nil {
@@ -1507,7 +1463,7 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 		"plan_id":           details.PlanID,
 		"organization_guid": details.OrganizationGUID,
 		"space_guid":        details.SpaceGUID,
-		"raw_parameters":    details.RawParameters,
+		"parameters":        details.Parameters,
 	}
 
 	// Launch async provisioning in background
@@ -1572,7 +1528,7 @@ func (b *Broker) updateIndexTimestamp(ctx context.Context, instanceID string, cr
 	return nil
 }
 
-func (b *Broker) getInstanceDetails(ctx context.Context, instanceID string, logger logger.Logger) (domain.ProvisionDetails, string, error) {
+func (b *Broker) getInstanceDetails(ctx context.Context, instanceID string, logger logger.Logger) (osbapi.ProvisionRequest, string, error) {
 	logger.Debug("fetching instance provision details from Vault")
 
 	// Get instance from index to construct deployment name
@@ -1580,7 +1536,7 @@ func (b *Broker) getInstanceDetails(ctx context.Context, instanceID string, logg
 	if err != nil || !exists {
 		logger.Error("could not find instance in vault index: %s", err)
 
-		return domain.ProvisionDetails{}, "", ErrCouldNotFindInstanceInVaultIndex
+		return osbapi.ProvisionRequest{}, "", ErrCouldNotFindInstanceInVaultIndex
 	}
 
 	// Construct deployment name and vault path
@@ -1590,13 +1546,13 @@ func (b *Broker) getInstanceDetails(ctx context.Context, instanceID string, logg
 	// Get details from vault
 	details, err := b.extractDetailsFromVault(ctx, vaultPath, instanceID, logger)
 	if err != nil {
-		return domain.ProvisionDetails{}, "", err
+		return osbapi.ProvisionRequest{}, "", err
 	}
 
 	return details, deploymentName, nil
 }
 
-func (b *Broker) extractDetailsFromVault(ctx context.Context, vaultPath, instanceID string, logger logger.Logger) (domain.ProvisionDetails, error) {
+func (b *Broker) extractDetailsFromVault(ctx context.Context, vaultPath, instanceID string, logger logger.Logger) (osbapi.ProvisionRequest, error) {
 	var detailsMetadata map[string]interface{}
 
 	exists, err := b.Vault.Get(ctx, vaultPath, &detailsMetadata)
@@ -1608,36 +1564,40 @@ func (b *Broker) extractDetailsFromVault(ctx context.Context, vaultPath, instanc
 		if err != nil {
 			logger.Error("failed to fetch instance metadata from Vault: %s", err)
 
-			return domain.ProvisionDetails{}, fmt.Errorf("failed to fetch instance metadata from vault: %w", err)
+			return osbapi.ProvisionRequest{}, fmt.Errorf("failed to fetch instance metadata from vault: %w", err)
 		}
 	}
 
 	if !exists {
-		return domain.ProvisionDetails{}, fmt.Errorf("%w (path: %s)", ErrCouldNotFindInstanceMetadataInVault, vaultPath)
+		return osbapi.ProvisionRequest{}, fmt.Errorf("%w (path: %s)", ErrCouldNotFindInstanceMetadataInVault, vaultPath)
 	}
 
 	return b.parseProvisionDetails(ctx, detailsMetadata, instanceID)
 }
 
-func (b *Broker) parseProvisionDetails(ctx context.Context, detailsMetadata map[string]interface{}, instanceID string) (domain.ProvisionDetails, error) {
-	var details domain.ProvisionDetails
+func (b *Broker) parseProvisionDetails(ctx context.Context, detailsMetadata map[string]interface{}, instanceID string) (osbapi.ProvisionRequest, error) {
+	var details osbapi.ProvisionRequest
 
 	if detailsData, ok := detailsMetadata["details"]; ok {
-		// Convert the details back to ProvisionDetails struct
-		if detailsMap, ok := detailsData.(map[string]interface{}); ok {
-			if serviceID, ok := detailsMap["service_id"].(string); ok {
-				details.ServiceID = serviceID
-			}
+		// Round-trip through JSON to restore all fields from the stored map
+		detailsMap, ok := detailsData.(map[string]interface{})
+		if !ok {
+			return osbapi.ProvisionRequest{}, fmt.Errorf("%w: unexpected details type %T", ErrCouldNotParseInstanceProvisionDetails, detailsData)
+		}
 
-			if planID, ok := detailsMap["plan_id"].(string); ok {
-				details.PlanID = planID
-			}
+		jsonBytes, err := json.Marshal(detailsMap)
+		if err != nil {
+			return osbapi.ProvisionRequest{}, fmt.Errorf("%w: marshal: %s", ErrCouldNotParseInstanceProvisionDetails, err)
+		}
+
+		if err := json.Unmarshal(jsonBytes, &details); err != nil {
+			return osbapi.ProvisionRequest{}, fmt.Errorf("%w: unmarshal: %s", ErrCouldNotParseInstanceProvisionDetails, err)
 		}
 	} else {
 		// Fallback: try to read as old format
 		_, err := b.Vault.Get(ctx, instanceID, &details)
 		if err != nil {
-			return domain.ProvisionDetails{}, ErrCouldNotParseInstanceProvisionDetails
+			return osbapi.ProvisionRequest{}, ErrCouldNotParseInstanceProvisionDetails
 		}
 	}
 
@@ -1665,7 +1625,7 @@ func (b *Broker) getDeploymentVMs(deployment string, logger logger.Logger) ([]bo
 	return vms, nil
 }
 
-func (b *Broker) processCredentials(ctx context.Context, instanceID string, details domain.ProvisionDetails, logger logger.Logger) error {
+func (b *Broker) processCredentials(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, logger logger.Logger) error {
 	logger.Debug("fetching instance plan details")
 
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)
@@ -1743,7 +1703,7 @@ func (b *Broker) retryCredentialStorage(ctx context.Context, instanceID string, 
 	return nil
 }
 
-func (b *Broker) scheduleBackup(ctx context.Context, instanceID string, details domain.ProvisionDetails, vmIP string, logger logger.Logger) error {
+func (b *Broker) scheduleBackup(ctx context.Context, instanceID, serviceID, planID, vmIP string, logger logger.Logger) error {
 	logger.Debug("scheduling S.H.I.E.L.D. backup for instance '%s'", instanceID)
 
 	// Get credentials for backup scheduling
@@ -1752,7 +1712,7 @@ func (b *Broker) scheduleBackup(ctx context.Context, instanceID string, details 
 		return err
 	}
 
-	err = b.Shield.CreateSchedule(instanceID, details, vmIP, creds)
+	err = b.Shield.CreateSchedule(instanceID, serviceID, planID, vmIP, creds)
 	if err != nil {
 		logger.Error("failed to schedule S.H.I.E.L.D. backup: %s", err)
 
@@ -1814,22 +1774,22 @@ func (b *Broker) getLatestTask(deploymentName string, logger logger.Logger) (*bo
 	return latestTask, operationType, nil
 }
 
-func (b *Broker) handleTaskRetrievalError(deploymentName string, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleTaskRetrievalError(deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	// If we can't get task info, check if deployment exists
 	_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
 	if deploymentErr != nil {
 		// Deployment doesn't exist - this is expected during provisioning
 		logger.Debug("deployment %s does not exist", deploymentName)
 
-		return domain.LastOperation{State: domain.InProgress}, nil //nolint:nilerr // Deployment not existing during provisioning is expected
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil //nolint:nilerr // Deployment not existing during provisioning is expected
 	}
 	// Deployment exists but no tasks found - assume succeeded
 	logger.Debug("deployment %s exists but no recent tasks found", deploymentName)
 
-	return domain.LastOperation{State: domain.Succeeded}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 }
 
-func (b *Broker) handleOperationStatus(ctx context.Context, instanceID, deploymentName string, latestTask *bosh.Task, operationType string, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleOperationStatus(ctx context.Context, instanceID, deploymentName string, latestTask *bosh.Task, operationType string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	taskID := latestTask.ID
 
 	switch taskID {
@@ -1844,7 +1804,7 @@ func (b *Broker) handleOperationStatus(ctx context.Context, instanceID, deployme
 	}
 }
 
-func (b *Broker) handleTaskIDZero(ctx context.Context, instanceID, deploymentName, operationType string, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleTaskIDZero(ctx context.Context, instanceID, deploymentName, operationType string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Debug("task ID is 0, checking if deployment exists")
 
 	// Check if deployment exists
@@ -1853,7 +1813,7 @@ func (b *Broker) handleTaskIDZero(ctx context.Context, instanceID, deploymentNam
 		// Deployment doesn't exist - still in progress
 		logger.Debug("deployment %s does not exist, operation still in progress", deploymentName)
 
-		return domain.LastOperation{State: domain.InProgress}, nil //nolint:nilerr // Deployment not existing means operation is still in progress
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil //nolint:nilerr // Deployment not existing means operation is still in progress
 	}
 
 	// Deployment exists with task ID 0 - completed deployment from before the fix
@@ -1868,17 +1828,17 @@ func (b *Broker) handleTaskIDZero(ctx context.Context, instanceID, deploymentNam
 		}
 	}
 
-	return domain.LastOperation{State: domain.Succeeded}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 }
 
-func (b *Broker) handleTaskIDNegativeOne(logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleTaskIDNegativeOne(logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	// Task failed during initialization
 	logger.Error("operation failed during initialization")
 
-	return domain.LastOperation{State: domain.Failed}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
 }
 
-func (b *Broker) handleTaskIDOne(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleTaskIDOne(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Debug("checking status of new deployment creation")
 
 	_, err := b.BOSH.GetDeployment(deploymentName)
@@ -1886,7 +1846,7 @@ func (b *Broker) handleTaskIDOne(ctx context.Context, instanceID, deploymentName
 		// Deployment doesn't exist yet - still being created
 		logger.Debug("deployment %s still being created", deploymentName)
 
-		return domain.LastOperation{State: domain.InProgress}, nil //nolint:nilerr // Deployment not existing means it's still being created
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil //nolint:nilerr // Deployment not existing means it's still being created
 	}
 
 	// Deployment exists, mark as succeeded
@@ -1895,13 +1855,13 @@ func (b *Broker) handleTaskIDOne(ctx context.Context, instanceID, deploymentName
 	// Run post-provision hook
 	err = b.OnProvisionCompleted(ctx, logger, instanceID)
 	if err != nil {
-		return domain.LastOperation{}, ErrProvisionTaskCompletedPostHookFailed
+		return osbapi.LastOperationResponse{}, ErrProvisionTaskCompletedPostHookFailed
 	}
 
-	return domain.LastOperation{State: domain.Succeeded}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 }
 
-func (b *Broker) handleRegularTask(ctx context.Context, instanceID, deploymentName string, taskID int, operationType string, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleRegularTask(ctx context.Context, instanceID, deploymentName string, taskID int, operationType string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	switch operationType {
 	case "provision":
 		return b.handleProvisionTask(ctx, instanceID, deploymentName, taskID, logger)
@@ -1910,52 +1870,52 @@ func (b *Broker) handleRegularTask(ctx context.Context, instanceID, deploymentNa
 	default:
 		logger.Error("invalid state '%s' found in the vault", operationType)
 
-		return domain.LastOperation{}, fmt.Errorf("%w: %s", ErrInvalidStateType, operationType)
+		return osbapi.LastOperationResponse{}, fmt.Errorf("%w: %s", ErrInvalidStateType, operationType)
 	}
 }
 
-func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Debug("retrieving task %d from BOSH director", taskID)
 
 	task, err := b.BOSH.GetTask(taskID)
 	if err != nil {
 		logger.Error("failed to retrieve task %d from BOSH director: %s", taskID, err)
 
-		return domain.LastOperation{}, ErrUnrecognizedBackendBOSHTask
+		return osbapi.LastOperationResponse{}, ErrUnrecognizedBackendBOSHTask
 	}
 
 	switch task.State {
 	case taskStateDone:
 		err := b.OnProvisionCompleted(ctx, logger, instanceID)
 		if err != nil {
-			return domain.LastOperation{}, ErrProvisionTaskCompletedPostHookFailed
+			return osbapi.LastOperationResponse{}, ErrProvisionTaskCompletedPostHookFailed
 		}
 
 		logger.Debug("provision operation succeeded")
 
-		return domain.LastOperation{State: domain.Succeeded}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 
 	case taskStateError:
 		logger.Error("provision operation failed!")
 		b.cleanupFailedDeployment(deploymentName, logger)
 
-		return domain.LastOperation{State: domain.Failed}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
 
 	default:
 		logger.Debug("provision operation is still in progress")
 
-		return domain.LastOperation{State: domain.InProgress}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil
 	}
 }
 
-func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Debug("retrieving task %d from BOSH director", taskID)
 
 	task, err := b.BOSH.GetTask(taskID)
 	if err != nil {
 		logger.Error("failed to retrieve task %d from BOSH director: %s", taskID, err)
 
-		return domain.LastOperation{}, ErrUnrecognizedBackendBOSHTask
+		return osbapi.LastOperationResponse{}, ErrUnrecognizedBackendBOSHTask
 	}
 
 	switch task.State {
@@ -1966,7 +1926,7 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 	default:
 		logger.Debug("deprovision operation is still in progress")
 
-		return domain.LastOperation{State: domain.InProgress}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil
 	}
 }
 
@@ -1986,7 +1946,7 @@ func (b *Broker) cleanupFailedDeployment(deploymentName string, logger logger.Lo
 	}
 }
 
-func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Info("handleSuccessfulDeprovision called for instance %s, deployment %s", instanceID, deploymentName)
 
 	logger.Debug("Verifying deployment is actually deleted")
@@ -1995,7 +1955,7 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 	if deploymentErr == nil {
 		logger.Error("Deprovision task succeeded but deployment %s still exists", deploymentName)
 
-		return domain.LastOperation{State: domain.Failed}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
 	}
 
 	logger.Info("Deployment %s confirmed deleted", deploymentName)
@@ -2018,10 +1978,10 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 	logger.Debug("keeping secrets in vault for audit purposes")
 	// Note: We intentionally do NOT call b.Vault.Clear(instanceID) here
 	// to preserve secrets for auditing purposes
-	return domain.LastOperation{State: domain.Succeeded}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 }
 
-func (b *Broker) handleFailedDeprovision(deploymentName string, logger logger.Logger) (domain.LastOperation, error) {
+func (b *Broker) handleFailedDeprovision(deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Error("deprovision operation failed!")
 
 	// Check if deployment still exists after failed deletion
@@ -2034,7 +1994,7 @@ func (b *Broker) handleFailedDeprovision(deploymentName string, logger logger.Lo
 
 	logger.Debug("keeping instance in index and secrets in vault due to deletion failure")
 	// Do NOT remove from index if deletion failed - instance may still be recoverable
-	return domain.LastOperation{State: domain.Failed}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
 }
 
 func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, logger logger.Logger) {
@@ -2061,7 +2021,7 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 	}
 }
 
-func (b *Broker) findPlanForBinding(details domain.BindDetails, logger logger.Logger) (*services.Plan, error) {
+func (b *Broker) findPlanForBinding(details osbapi.BindRequest, logger logger.Logger) (*services.Plan, error) {
 	logger.Info("Looking up plan %s for service %s", details.PlanID, details.ServiceID)
 	logger.Debug("Searching in blacksmith catalog for binding plan")
 
@@ -2242,7 +2202,7 @@ func (b *Broker) cleanupAdminCredentials(creds interface{}) {
 	}
 }
 
-func (b *Broker) handleRabbitMQUnbind(ctx context.Context, instanceID, bindingID string, details domain.UnbindDetails, logger logger.Logger) error {
+func (b *Broker) handleRabbitMQUnbind(ctx context.Context, instanceID, bindingID string, details osbapi.UnbindRequest, logger logger.Logger) error {
 	logger.Info("Processing unbind for RabbitMQ service")
 	logger.Debug("RabbitMQ plan detected, will delete dynamic user")
 

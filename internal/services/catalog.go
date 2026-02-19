@@ -12,7 +12,7 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
-	"github.com/pivotal-cf/brokerapi/v8/domain"
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	"gopkg.in/yaml.v2"
 )
 
@@ -625,26 +625,24 @@ func hasServiceDefinitions(path string) bool {
 	return false
 }
 
-func Catalog(services []Service) []domain.Service {
+func Catalog(services []Service) []osbapi.Service {
 	loggerInstance := logger.Get().Named("Catalog")
 	loggerInstance.Info("Creating broker catalog from %d services", len(services))
 
-	brokerServices := make([]domain.Service, len(services))
+	brokerServices := make([]osbapi.Service, len(services))
 	for index, service := range services {
 		loggerInstance.Debug("Processing service %d/%d - ID: %s, Name: %s", index+1, len(services), service.ID, service.Name)
-
-		var metadata domain.ServiceMetadata
 
 		brokerServices[index].ID = service.ID
 		brokerServices[index].Name = service.Name
 		brokerServices[index].Description = service.Description
 		brokerServices[index].Bindable = service.Bindable
 		brokerServices[index].Tags = make([]string, len(service.Tags))
-		brokerServices[index].Metadata = &metadata
+		brokerServices[index].Metadata = nil
 		copy(brokerServices[index].Tags, service.Tags)
 		loggerInstance.Debug("Service %s - Bindable: %v, Tags: %v", service.Name, service.Bindable, service.Tags)
 
-		brokerServices[index].Plans = make([]domain.ServicePlan, len(service.Plans))
+		brokerServices[index].Plans = make([]osbapi.Plan, len(service.Plans))
 		loggerInstance.Debug("Processing %d plans for service %s", len(service.Plans), service.Name)
 
 		for planIndex, servicePlan := range service.Plans {

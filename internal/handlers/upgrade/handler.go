@@ -19,10 +19,10 @@ type Handler struct {
 
 // Dependencies contains all dependencies needed by the upgrade handler.
 type Dependencies struct {
-	Logger                  interfaces.Logger
-	Director                interfaces.Director
-	Vault                   interfaces.Vault
-	OnMaxBatchJobsChanged   func(maxJobs int) // Callback to update BatchDirector pool size
+	Logger                interfaces.Logger
+	Director              interfaces.Director
+	Vault                 interfaces.Vault
+	OnMaxBatchJobsChanged func(maxJobs int) // Callback to update BatchDirector pool size
 }
 
 // NewHandler creates a new upgrade handler.

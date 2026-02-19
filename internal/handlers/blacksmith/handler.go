@@ -31,7 +31,7 @@ var (
 
 const (
 	deploymentNameBlacksmith = "blacksmith"
-	defaultLogLimit          = 5000 // Default number of log lines to return
+	defaultLogLimit          = 5000  // Default number of log lines to return
 	maxLogLimit              = 20000 // Maximum number of log lines per request
 )
 

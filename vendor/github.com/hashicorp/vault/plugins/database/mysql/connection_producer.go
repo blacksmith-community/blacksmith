@@ -319,11 +319,10 @@ func (c *mySQLConnectionProducer) rewriteProtocolForGCP(inDSN string) (string, e
 }
 
 func registerDriverMySQL(driverName, credentials string) (cleanup func() error, err error) {
-    // UsePrivateIP=false, UsePSC=false for tests
-    opts, err := connutil.GetCloudSQLAuthOptions(credentials, false, false)
-    if err != nil {
-        return nil, err
-    }
+	opts, err := connutil.GetCloudSQLAuthOptions(credentials, false, false)
+	if err != nil {
+		return nil, err
+	}
 
 	return cloudmysql.RegisterDriver(driverName, opts...)
 }

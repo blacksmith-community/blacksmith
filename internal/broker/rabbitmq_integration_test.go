@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/pivotal-cf/brokerapi/v8/domain"
 )
 
 var _ = Describe("RabbitMQ Integration Tests", func() {
@@ -201,7 +201,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 			Expect(credentials2.Password).To(Equal(credentials.Password))
 
 			// Step 3: Unbind - should delete user
-			_, err = brokerInstance.Unbind(ctx, instanceID, bindingID, domain.UnbindDetails{
+			_, _, err = brokerInstance.Unbind(ctx, instanceID, bindingID, osbapi.UnbindRequest{
 				ServiceID: "rabbitmq-service",
 				PlanID:    "rabbitmq-plan",
 			}, false)
@@ -301,7 +301,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 				go func(idx int) {
 					defer waitGroup.Done()
 					bindID := fmt.Sprintf("concurrent-unbind-%d", idx)
-					_, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, domain.UnbindDetails{
+					_, _, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, osbapi.UnbindRequest{
 						ServiceID: "rabbitmq-service",
 						PlanID:    "rabbitmq-plan",
 					}, false)
@@ -353,7 +353,7 @@ var _ = Describe("RabbitMQ Integration Tests", func() {
 					if idx < 10 {
 						// Unbind existing
 						bindID := fmt.Sprintf("mixed-binding-%d", idx)
-						_, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, domain.UnbindDetails{
+						_, _, errors[idx] = brokerInstance.Unbind(ctx, instanceID, bindID, osbapi.UnbindRequest{
 							ServiceID: "rabbitmq-service",
 							PlanID:    "rabbitmq-plan",
 						}, false)

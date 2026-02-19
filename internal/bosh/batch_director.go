@@ -17,9 +17,9 @@ var (
 // This allows batch upgrade jobs to use their own pool without competing with
 // normal API operations for connection slots.
 type BatchDirector struct {
-	director  Director          // Base director (not pooled)
-	semaphore chan struct{}     // Batch operation semaphore
-	timeout   time.Duration     // Timeout for acquiring slot
+	director  Director      // Base director (not pooled)
+	semaphore chan struct{} // Batch operation semaphore
+	timeout   time.Duration // Timeout for acquiring slot
 	logger    Logger
 
 	// Metrics

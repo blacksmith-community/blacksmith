@@ -87,7 +87,7 @@ var _ = Describe("Services", func() {
 				Ω(ss).Should(HaveLen(3))
 			})
 
-			It("converts to brokerapi.* objects", func() {
+			It("converts to osbapi.* objects", func() {
 				ss, err := services.ReadServices("../../test/ok", "../../test/also/ok")
 				Ω(err).ShouldNot(HaveOccurred())
 

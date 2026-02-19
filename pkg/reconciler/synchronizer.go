@@ -749,8 +749,8 @@ func (s *IndexSynchronizer) SyncIndexWithValidation(ctx context.Context, instanc
 
 // orphanProcessingStats tracks statistics from orphan processing.
 type orphanProcessingStats struct {
-	newOrphans int
-	unorphaned int
+	newOrphans  int
+	unorphaned  int
 	stillOrphan int
 }
 

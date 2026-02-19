@@ -1,13 +1,13 @@
 module blacksmith
 
-go 1.25.1
+go 1.26.0
 
 require (
-	code.cloudfoundry.org/lager v2.0.0+incompatible
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cloudfoundry/bosh-cli/v7 v7.9.8
 	github.com/cloudfoundry/bosh-utils v0.0.552
 	github.com/fivetwenty-io/capi/v3 v3.199.0
+	github.com/fivetwenty-io/osbapi/v2 v2.0.0
 	github.com/geofffranks/spruce v1.31.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
@@ -17,7 +17,6 @@ require (
 	github.com/hashicorp/vault/sdk v0.19.0
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.38.0
-	github.com/pivotal-cf/brokerapi/v8 v8.2.3
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/smallfish/simpleyaml v0.1.0
@@ -169,7 +168,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
 	github.com/gophercloud/gophercloud v0.1.0 // indirect
-	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c // indirect
 	github.com/hashicorp/cap v0.9.0 // indirect
 	github.com/hashicorp/cli v1.1.7 // indirect
@@ -315,7 +313,7 @@ require (
 	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/starkandwayne/goutils v0.0.0-20190115202530-896b8a6904be // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/stretchr/testify v1.10.0 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tencentcloud/tencentcloud-sdk-go v1.0.162 // indirect
 	github.com/tink-crypto/tink-go/v2 v2.2.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect

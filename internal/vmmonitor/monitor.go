@@ -466,7 +466,7 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	logger := logger.Get().Named("vm-monitor")
 	logger.Info("VM monitor loop started")
 
-	ticker := time.NewTicker(1 * time.Minute) // Check every minute for services due
+	ticker := time.NewTicker(1 * time.Minute)        // Check every minute for services due
 	rescanTicker := time.NewTicker(m.normalInterval) // Rescan Vault index every normalInterval (1 hour)
 	defer ticker.Stop()
 	defer rescanTicker.Stop()
@@ -878,10 +878,10 @@ func (m *Monitor) GetStatus() MonitorStatus {
 		FailedInterval: m.failedInterval.String(),
 		Services:       services,
 		Summary: map[string]interface{}{
-			"total":        len(m.services),
+			"total":         len(m.services),
 			"due_for_check": dueCount,
-			"healthy":      healthyCount,
-			"failing":      failingCount,
+			"healthy":       healthyCount,
+			"failing":       failingCount,
 		},
 	}
 }

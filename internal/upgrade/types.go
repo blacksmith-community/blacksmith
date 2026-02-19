@@ -56,21 +56,21 @@ type InstanceUpgrade struct {
 
 // UpgradeTask represents a batch upgrade task.
 type UpgradeTask struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name,omitempty"`
-	Status          TaskStatus        `json:"status"`
-	Paused          bool              `json:"paused"`
-	TargetStemcell  StemcellTarget    `json:"target_stemcell"`
-	Instances       []InstanceUpgrade `json:"instances"`
-	TotalCount      int               `json:"total_count"`
-	CompletedCount  int               `json:"completed_count"`
-	FailedCount     int               `json:"failed_count"`
-	CancelledCount  int               `json:"cancelled_count"`
-	SkippedCount    int               `json:"skipped_count"`
-	CreatedAt       time.Time         `json:"created_at"`
-	StartedAt       *time.Time        `json:"started_at,omitempty"`
-	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
-	CreatedBy       string            `json:"created_by,omitempty"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name,omitempty"`
+	Status         TaskStatus        `json:"status"`
+	Paused         bool              `json:"paused"`
+	TargetStemcell StemcellTarget    `json:"target_stemcell"`
+	Instances      []InstanceUpgrade `json:"instances"`
+	TotalCount     int               `json:"total_count"`
+	CompletedCount int               `json:"completed_count"`
+	FailedCount    int               `json:"failed_count"`
+	CancelledCount int               `json:"cancelled_count"`
+	SkippedCount   int               `json:"skipped_count"`
+	CreatedAt      time.Time         `json:"created_at"`
+	StartedAt      *time.Time        `json:"started_at,omitempty"`
+	CompletedAt    *time.Time        `json:"completed_at,omitempty"`
+	CreatedBy      string            `json:"created_by,omitempty"`
 }
 
 // StemcellTarget represents the target stemcell for an upgrade.

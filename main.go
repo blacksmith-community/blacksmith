@@ -35,8 +35,7 @@ import (
 	"blacksmith/pkg/services"
 	"blacksmith/shield"
 	"blacksmith/websocket"
-	"code.cloudfoundry.org/lager"
-	"github.com/pivotal-cf/brokerapi/v8"
+	osbapibroker "github.com/fivetwenty-io/osbapi/v2/pkg/broker"
 )
 
 // Configuration default constants.
@@ -1126,14 +1125,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		WebRoot:  uiHandler,
 		Logger:   logger.Named("api"),
 		Internal: internalAPI,
-		Primary: brokerapi.New(
-			brokerInstance,
-			lager.NewLogger("blacksmith-broker"),
-			brokerapi.BrokerCredentials{
-				Username: config.Broker.Username,
-				Password: config.Broker.Password,
-			},
-		),
+		Primary:  osbapibroker.NewHandler(brokerInstance),
 	}
 }
 

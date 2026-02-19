@@ -51,9 +51,6 @@ cloud.google.com/go/longrunning/autogen/longrunningpb
 cloud.google.com/go/monitoring/apiv3
 cloud.google.com/go/monitoring/apiv3/v2/monitoringpb
 cloud.google.com/go/monitoring/internal
-# code.cloudfoundry.org/lager v2.0.0+incompatible
-## explicit
-code.cloudfoundry.org/lager
 # code.cloudfoundry.org/tlsconfig v0.31.0
 ## explicit; go 1.23.0
 code.cloudfoundry.org/tlsconfig
@@ -592,6 +589,11 @@ github.com/fivetwenty-io/capi/v3/internal/client
 github.com/fivetwenty-io/capi/v3/internal/http
 github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
+# github.com/fivetwenty-io/osbapi/v2 v2.0.0
+## explicit; go 1.26.0
+github.com/fivetwenty-io/osbapi/v2/internal/server
+github.com/fivetwenty-io/osbapi/v2/pkg/broker
+github.com/fivetwenty-io/osbapi/v2/pkg/osbapi
 # github.com/fsnotify/fsnotify v1.9.0
 ## explicit; go 1.17
 github.com/fsnotify/fsnotify
@@ -810,9 +812,6 @@ github.com/gophercloud/gophercloud/openstack/identity/v2/tokens
 github.com/gophercloud/gophercloud/openstack/identity/v3/tokens
 github.com/gophercloud/gophercloud/openstack/utils
 github.com/gophercloud/gophercloud/pagination
-# github.com/gorilla/mux v1.8.1
-## explicit; go 1.20
-github.com/gorilla/mux
 # github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 ## explicit; go 1.20
 github.com/gorilla/websocket
@@ -1408,15 +1407,6 @@ github.com/pierrec/lz4/internal/xxh32
 # github.com/pires/go-proxyproto v0.8.0
 ## explicit; go 1.18
 github.com/pires/go-proxyproto
-# github.com/pivotal-cf/brokerapi/v8 v8.2.3
-## explicit; go 1.19
-github.com/pivotal-cf/brokerapi/v8
-github.com/pivotal-cf/brokerapi/v8/auth
-github.com/pivotal-cf/brokerapi/v8/domain
-github.com/pivotal-cf/brokerapi/v8/domain/apiresponses
-github.com/pivotal-cf/brokerapi/v8/handlers
-github.com/pivotal-cf/brokerapi/v8/middlewares
-github.com/pivotal-cf/brokerapi/v8/utils
 # github.com/pivotal-cf/paraphernalia v0.0.0-20180203224945-a64ae2051c20
 ## explicit
 github.com/pivotal-cf/paraphernalia/secure/tlsconfig
@@ -1531,7 +1521,7 @@ github.com/starkandwayne/goutils/tree
 # github.com/stretchr/objx v0.5.2
 ## explicit; go 1.20
 github.com/stretchr/objx
-# github.com/stretchr/testify v1.10.0
+# github.com/stretchr/testify v1.11.1
 ## explicit; go 1.17
 github.com/stretchr/testify/assert
 github.com/stretchr/testify/assert/yaml

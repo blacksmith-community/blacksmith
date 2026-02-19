@@ -189,20 +189,20 @@ type Uploadable struct {
 }
 
 type BOSHConfig struct {
-	Address           string       `yaml:"address"`
-	Username          string       `yaml:"username"`
-	Password          string       `yaml:"password"`
-	SkipSslValidation bool         `yaml:"skip_ssl_validation"`
-	CACert            string       `yaml:"cacert"`
-	Stemcells         []Uploadable `yaml:"stemcells"`
-	Releases          []Uploadable `yaml:"releases"`
-	CCPath            string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???
-	CloudConfig       string
-	Network           string    `yaml:"network"`
+	Address             string       `yaml:"address"`
+	Username            string       `yaml:"username"`
+	Password            string       `yaml:"password"`
+	SkipSslValidation   bool         `yaml:"skip_ssl_validation"`
+	CACert              string       `yaml:"cacert"`
+	Stemcells           []Uploadable `yaml:"stemcells"`
+	Releases            []Uploadable `yaml:"releases"`
+	CCPath              string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???
+	CloudConfig         string
+	Network             string    `yaml:"network"`
 	MaxConnections      int       `yaml:"max_connections"`       // Max concurrent BOSH API connections
 	MaxBatchConnections int       `yaml:"max_batch_connections"` // Max concurrent batch upgrade connections (separate pool)
 	ConnectionTimeout   int       `yaml:"connection_timeout"`    // Timeout waiting for connection slot (seconds)
-	SSH               SSHConfig `yaml:"ssh,omitempty"`      // Deprecated: Use top-level SSH config instead
+	SSH                 SSHConfig `yaml:"ssh,omitempty"`         // Deprecated: Use top-level SSH config instead
 }
 
 // SSHConfig holds SSH-related configuration.

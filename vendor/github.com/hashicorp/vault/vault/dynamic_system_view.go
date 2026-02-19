@@ -386,8 +386,6 @@ func (d dynamicSystemView) DeregisterRotationJob(ctx context.Context, req *rotat
 	return d.core.DeregisterRotationJob(nsCtx, req)
 }
 
-// GetRotationInformation returns rotation information for a given rotation ID.
-// In OSS builds or test harness, return a not supported error to satisfy interface.
-func (d dynamicSystemView) GetRotationInformation(ctx context.Context, req *rotation.RotationInfoRequest) (*rotation.RotationInfoResponse, error) {
-    return nil, fmt.Errorf("rotation information not available in OSS")
+func (d dynamicSystemView) GetRotationInformation(_ context.Context, _ *rotation.RotationInfoRequest) (*rotation.RotationInfoResponse, error) {
+	return nil, fmt.Errorf("GetRotationInformation is not implemented")
 }

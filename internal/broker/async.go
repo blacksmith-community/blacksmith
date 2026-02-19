@@ -13,7 +13,6 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
-	"gopkg.in/yaml.v2"
 )
 
 // Constants for async operations.
@@ -64,10 +63,9 @@ func (p *provisioningPhase) parseParameters(ctx context.Context, details interfa
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Parsing service parameters", 0, p.params, p.logger)
 
 	if detailsMap, ok := details.(map[string]interface{}); ok {
-		if rawParams, ok := detailsMap["raw_parameters"].([]byte); ok {
-			err := yaml.Unmarshal(rawParams, &p.params)
-			if err != nil {
-				p.logger.Debug("Error unmarshalling params: %s", err)
+		if params, ok := detailsMap["parameters"].(map[string]interface{}); ok {
+			for k, v := range params {
+				p.params[k] = v
 			}
 		}
 	}
