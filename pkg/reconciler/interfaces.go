@@ -11,6 +11,8 @@ type Manager interface {
 	Stop() error
 	ForceReconcile() error
 	GetStatus() Status
+	UpdateInterval(interval time.Duration)
+	GetInterval() time.Duration
 }
 
 // Scanner discovers deployments from BOSH.

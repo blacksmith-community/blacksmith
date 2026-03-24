@@ -130,6 +130,14 @@ func (v *testVaultAdapter) SaveCFRegistrationProgress(context.Context, string, m
 	return nil
 }
 
+func (v *testVaultAdapter) SetKVMaxVersions(context.Context, int) error {
+	return nil
+}
+
+func (v *testVaultAdapter) GetKVMaxVersions(context.Context) (int, error) {
+	return 0, nil
+}
+
 // fakeDirector embeds the shared testutil.MockBOSHDirector to satisfy the Director interface.
 type fakeDirector struct {
 	*testutil.MockBOSHDirector

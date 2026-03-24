@@ -73,6 +73,10 @@ type ReconcilerManager struct {
 	wg           sync.WaitGroup
 	shutdownOnce sync.Once
 
+	// Ticker for reconciliation loop (stored for runtime interval updates)
+	ticker   *time.Ticker
+	tickerMu sync.Mutex
+
 	// Metrics and monitoring
 	metrics     MetricsCollector
 	performance *PerformanceTracker
@@ -465,6 +469,25 @@ func (r *ReconcilerManager) GetStatus() Status {
 	return r.status
 }
 
+// UpdateInterval changes the reconciliation interval at runtime.
+func (r *ReconcilerManager) UpdateInterval(interval time.Duration) {
+	r.tickerMu.Lock()
+	defer r.tickerMu.Unlock()
+
+	r.config.Interval = interval
+
+	if r.ticker != nil {
+		r.ticker.Reset(interval)
+	}
+
+	r.logger.Infof("Reconciler interval updated to %v", interval)
+}
+
+// GetInterval returns the current reconciliation interval.
+func (r *ReconcilerManager) GetInterval() time.Duration {
+	return r.config.Interval
+}
+
 func (r *ReconcilerManager) logStartupConfiguration() {
 	r.logger.Infof("Starting reconciler with configuration:")
 	r.logger.Infof("  Interval: %v", r.config.Interval)
@@ -755,12 +778,15 @@ func randomFloat() float64 {
 func (r *ReconcilerManager) reconciliationLoop(ctx context.Context) {
 	defer r.wg.Done()
 
-	ticker := time.NewTicker(r.config.Interval)
-	defer ticker.Stop()
+	r.tickerMu.Lock()
+	r.ticker = time.NewTicker(r.config.Interval)
+	r.tickerMu.Unlock()
+
+	defer r.ticker.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-r.ticker.C:
 			// Create a fresh context for each reconciliation run with timeout
 			// This allows runs to complete independently while respecting cancellation
 			runCtx, runCancel := context.WithTimeout(ctx, r.config.Timeouts.ReconciliationRun)

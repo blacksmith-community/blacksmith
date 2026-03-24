@@ -1775,6 +1775,110 @@ td a {
   flex-grow: 1;
 }
 
+/* Blacksmith settings form styles */
+.blacksmith-settings {
+  padding: 0;
+}
+
+.settings-section {
+  padding: 16px;
+}
+
+.settings-section-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.settings-row {
+  margin-bottom: 20px;
+}
+
+.settings-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.settings-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: 400px;
+}
+
+.settings-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border-table);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: monospace;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--text-link);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.settings-apply-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--text-link);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.settings-apply-btn:hover {
+  opacity: 0.85;
+}
+
+.settings-apply-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.settings-feedback {
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+  min-height: 18px;
+}
+
+.settings-feedback.success {
+  color: #22c55e;
+}
+
+.settings-feedback.error {
+  color: #ef4444;
+}
+
+.settings-divider {
+  height: 1px;
+  background: var(--border-table);
+  margin: 0 16px;
+}
+
 /* Special styling for Blacksmith tab panel - same structure as service detail */
 #blacksmith.tab-panel.active {
   display: flex !important;

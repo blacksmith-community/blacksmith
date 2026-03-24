@@ -1852,10 +1852,10 @@
         <button class="detail-tab" data-tab="vms">VMs</button>
         <button class="detail-tab" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="tasks">Tasks</button>
-        <button class="detail-tab" data-tab="configs">Configs</button>
+        <button class="detail-tab" data-tab="configs">Bosh Configs</button>
         <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
-        <button class="detail-tab" data-tab="config">Config</button>
+        <button class="detail-tab" data-tab="config">Blacksmith Configuration</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>
@@ -3435,6 +3435,144 @@
     return html;
   };
 
+  // Render Blacksmith settings form + read-only config
+  const renderBlacksmithSettings = (settings, config) => {
+    const maxVersions = settings.vault_max_versions || 0;
+    const reconcilerInterval = settings.reconciler_interval || '';
+
+    let html = '<div class="blacksmith-settings">';
+
+    // Editable Settings Section
+    html += `
+      <div class="settings-section">
+        <h3 class="settings-section-header">Runtime Settings</h3>
+        <div class="settings-row">
+          <label class="settings-label" for="settings-max-versions">Vault Max Versions</label>
+          <div class="settings-input-group">
+            <input type="number" id="settings-max-versions" class="settings-input" value="${maxVersions}" min="0" max="1000" placeholder="0 = unlimited" />
+            <button id="apply-max-versions" class="settings-apply-btn">Apply</button>
+          </div>
+          <span class="settings-hint">Controls how many versions are kept per secret path (0 = unlimited). Only affects future writes.</span>
+          <span id="feedback-max-versions" class="settings-feedback"></span>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settings-reconciler-interval">Reconciler Interval</label>
+          <div class="settings-input-group">
+            <input type="text" id="settings-reconciler-interval" class="settings-input" value="${reconcilerInterval}" placeholder="e.g. 1h, 30m, 5m" />
+            <button id="apply-reconciler-interval" class="settings-apply-btn">Apply</button>
+          </div>
+          <span class="settings-hint">How often the reconciler syncs BOSH deployments with Vault (minimum 10s). Persisted across restarts.</span>
+          <span id="feedback-reconciler-interval" class="settings-feedback"></span>
+        </div>
+      </div>
+    `;
+
+    // Divider
+    html += '<div class="settings-divider"></div>';
+
+    // Read-only Configuration Section
+    html += `
+      <div class="settings-section">
+        <h3 class="settings-section-header">Current Configuration (read-only)</h3>
+        ${formatConfig(config)}
+      </div>
+    `;
+
+    html += '</div>';
+    return html;
+  };
+
+  // Set up event handlers for the Blacksmith settings form
+  const setupBlacksmithSettingsHandlers = () => {
+    const applyMaxVersions = document.getElementById('apply-max-versions');
+    const applyReconcilerInterval = document.getElementById('apply-reconciler-interval');
+
+    if (applyMaxVersions) {
+      applyMaxVersions.addEventListener('click', async () => {
+        const input = document.getElementById('settings-max-versions');
+        const feedback = document.getElementById('feedback-max-versions');
+        const value = parseInt(input.value, 10);
+
+        if (isNaN(value) || value < 0 || value > 1000) {
+          feedback.textContent = 'Must be between 0 and 1000';
+          feedback.className = 'settings-feedback error';
+          return;
+        }
+
+        applyMaxVersions.disabled = true;
+        applyMaxVersions.textContent = 'Applying...';
+        feedback.textContent = '';
+
+        try {
+          const res = await fetch('/b/blacksmith/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vault_max_versions: value })
+          });
+          const data = await res.json();
+
+          if (res.ok && data.success) {
+            feedback.textContent = 'Applied successfully';
+            feedback.className = 'settings-feedback success';
+          } else {
+            feedback.textContent = data.error || 'Failed to apply';
+            feedback.className = 'settings-feedback error';
+          }
+        } catch (err) {
+          feedback.textContent = 'Request failed: ' + err.message;
+          feedback.className = 'settings-feedback error';
+        } finally {
+          applyMaxVersions.disabled = false;
+          applyMaxVersions.textContent = 'Apply';
+        }
+      });
+    }
+
+    if (applyReconcilerInterval) {
+      applyReconcilerInterval.addEventListener('click', async () => {
+        const input = document.getElementById('settings-reconciler-interval');
+        const feedback = document.getElementById('feedback-reconciler-interval');
+        const value = input.value.trim();
+
+        if (!value) {
+          feedback.textContent = 'Please enter an interval (e.g. 1h, 30m, 5m)';
+          feedback.className = 'settings-feedback error';
+          return;
+        }
+
+        applyReconcilerInterval.disabled = true;
+        applyReconcilerInterval.textContent = 'Applying...';
+        feedback.textContent = '';
+
+        try {
+          const res = await fetch('/b/blacksmith/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reconciler_interval: value })
+          });
+          const data = await res.json();
+
+          if (res.ok && data.success) {
+            feedback.textContent = 'Applied successfully';
+            feedback.className = 'settings-feedback success';
+            if (data.reconciler_interval) {
+              input.value = data.reconciler_interval;
+            }
+          } else {
+            feedback.textContent = data.error || 'Failed to apply';
+            feedback.className = 'settings-feedback error';
+          }
+        } catch (err) {
+          feedback.textContent = 'Request failed: ' + err.message;
+          feedback.className = 'settings-feedback error';
+        } finally {
+          applyReconcilerInterval.disabled = false;
+          applyReconcilerInterval.textContent = 'Apply';
+        }
+      });
+    }
+  };
+
   // Helper function to extract the latest deployment task ID from events
   const getLatestDeploymentTaskId = (events) => {
     if (!events || events.length === 0) {
@@ -3578,13 +3716,14 @@
         return formatManifestDetails(manifestData, `blacksmith-${deploymentName}`);
 
       } else if (type === 'config') {
-        // Fetch blacksmith configuration
-        const response = await fetch('/b/blacksmith/config');
-        if (!response.ok) {
-          throw new Error(`Failed to load config: ${response.statusText}`);
-        }
-        const config = await response.json();
-        return formatConfig(config);
+        // Fetch settings and config in parallel
+        const [settingsRes, configRes] = await Promise.all([
+          fetch('/b/blacksmith/settings', { cache: 'no-cache' }),
+          fetch('/b/blacksmith/config')
+        ]);
+        const settings = settingsRes.ok ? await settingsRes.json() : {};
+        const config = configRes.ok ? await configRes.json() : {};
+        return renderBlacksmithSettings(settings, config);
       } else if (type === 'certificates') {
         // Render certificates tab content
         return renderCertificatesTab();
@@ -10983,6 +11122,9 @@
               initializeSorting('tasks-table');
               attachSearchFilter('tasks-table');
               initializeTasksTab();
+            } else if (tabType === 'config') {
+              // Initialize settings form handlers
+              setupBlacksmithSettingsHandlers();
             } else if (tabType === 'configs') {
               // Initialize configs functionality
               initializeSorting('configs-table');

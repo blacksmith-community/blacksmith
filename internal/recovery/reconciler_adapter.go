@@ -334,6 +334,9 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 		r.logger.Error("Vault is nil - reconciler will run with severely limited functionality")
 	}
 
+	// Load persisted settings from Vault (e.g., reconciler interval)
+	r.loadSettingsFromVault(ctx)
+
 	// Create wrapped components
 	wrappedBroker := &brokerWrapper{broker: r.broker}
 	wrappedVault := &vaultWrapper{vault: r.vault}
@@ -399,6 +402,57 @@ func (r *ReconcilerAdapter) ForceReconcile() error {
 	}
 
 	return nil
+}
+
+// UpdateInterval changes the reconciler interval at runtime and persists it to Vault.
+func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Duration) error {
+	if r.manager != nil {
+		r.manager.UpdateInterval(interval)
+	}
+
+	r.config.Interval = interval
+
+	// Persist to Vault so it survives redeployment
+	if r.vault != nil {
+		err := r.vault.Put(ctx, "blacksmith/settings", map[string]interface{}{
+			"reconciler_interval": interval.String(),
+		})
+		if err != nil {
+			r.logger.Error("Failed to persist reconciler interval to Vault: %s", err)
+			return fmt.Errorf("failed to persist interval: %w", err)
+		}
+	}
+
+	r.logger.Info("Reconciler interval updated to %v and persisted to Vault", interval)
+
+	return nil
+}
+
+// GetInterval returns the current reconciler interval.
+func (r *ReconcilerAdapter) GetInterval() time.Duration {
+	return r.config.Interval
+}
+
+// loadSettingsFromVault loads persisted settings from Vault and applies them to config.
+func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
+	if r.vault == nil {
+		return
+	}
+
+	var settings map[string]interface{}
+
+	exists, err := r.vault.Get(ctx, "blacksmith/settings", &settings)
+	if err != nil || !exists {
+		return
+	}
+
+	if intervalStr, ok := settings["reconciler_interval"].(string); ok {
+		d, err := time.ParseDuration(intervalStr)
+		if err == nil && d >= 10*time.Second {
+			r.config.Interval = d
+			r.logger.Info("Loaded reconciler interval from Vault: %v", d)
+		}
+	}
 }
 
 // isVaultReady checks if Vault is ready for operations.
