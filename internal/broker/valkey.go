@@ -33,6 +33,16 @@ const (
 	valkeyOpTimeout   = 10 * time.Second
 )
 
+// valkeyConnInfo holds the connection details extracted from a credential map.
+type valkeyConnInfo struct {
+	adminPassword string
+	host          string
+	port          int
+	tlsPort       int
+	useTLS        bool
+	hosts         []string // non-nil for cluster
+}
+
 // IsValkeyService returns true if the credential map indicates a Valkey service.
 // Exported for testing.
 func IsValkeyService(credMap map[string]interface{}) bool {
@@ -40,21 +50,8 @@ func IsValkeyService(credMap map[string]interface{}) bool {
 	return ok && serviceType == "valkey"
 }
 
-// processValkeyCredentials creates a per-binding ACL user on the Valkey
-// instance and replaces the shared credentials with binding-specific ones.
-// For non-Valkey services the credentials are returned unchanged.
-func (b *Broker) processValkeyCredentials(ctx context.Context, bindingID string, creds interface{}, logger logger.Logger) (interface{}, error) {
-	credMap, ok := creds.(map[string]interface{})
-	if !ok {
-		return creds, nil
-	}
-
-	if !IsValkeyService(credMap) {
-		return creds, nil
-	}
-
-	logger.Info("Processing Valkey ACL credentials for binding %s", bindingID)
-
+// extractValkeyConnInfo extracts connection details from a credential map.
+func extractValkeyConnInfo(credMap map[string]interface{}) (*valkeyConnInfo, error) {
 	adminPassword, ok := credMap["admin_password"].(string)
 	if !ok || adminPassword == "" {
 		return nil, ErrValkeyAdminPasswordMissing
@@ -65,40 +62,76 @@ func (b *Broker) processValkeyCredentials(ctx context.Context, bindingID string,
 		return nil, ErrValkeyHostMissing
 	}
 
-	port := 6379
-	if p, ok := credMap["port"].(int); ok && p > 0 {
-		port = p
-	} else if p, ok := credMap["port"].(float64); ok && p > 0 {
-		port = int(p)
+	port := extractIntField(credMap, "port", 6379)
+	tlsPort := extractIntField(credMap, "tls_port", 0)
+
+	return &valkeyConnInfo{
+		adminPassword: adminPassword,
+		host:          host,
+		port:          port,
+		tlsPort:       tlsPort,
+		useTLS:        tlsPort > 0,
+		hosts:         ExtractHosts(credMap),
+	}, nil
+}
+
+// extractIntField reads an int from the credential map, handling both int and
+// float64 types (YAML/JSON unmarshaling may produce either).
+func extractIntField(credMap map[string]interface{}, key string, defaultVal int) int {
+	if p, ok := credMap[key].(int); ok && p > 0 {
+		return p
 	}
 
-	tlsPort := 0
-	if p, ok := credMap["tls_port"].(int); ok {
-		tlsPort = p
-	} else if p, ok := credMap["tls_port"].(float64); ok {
-		tlsPort = int(p)
+	if p, ok := credMap[key].(float64); ok && p > 0 {
+		return int(p)
 	}
 
-	useTLS := tlsPort > 0
+	return defaultVal
+}
+
+// createACLUser dispatches to standalone or cluster variant based on
+// whether hosts are present in the connection info.
+func (b *Broker) createACLUser(ctx context.Context, conn *valkeyConnInfo, username, password string, logger logger.Logger) error {
+	if len(conn.hosts) > 0 {
+		return b.createValkeyACLUserOnAllNodes(ctx, conn.hosts, conn.port, conn.adminPassword, username, password, conn.useTLS, conn.tlsPort, logger)
+	}
+
+	return b.createValkeyACLUser(ctx, conn.host, conn.port, conn.adminPassword, username, password, conn.useTLS, conn.tlsPort, logger)
+}
+
+// deleteACLUser dispatches to standalone or cluster variant based on
+// whether hosts are present in the connection info.
+func (b *Broker) deleteACLUser(ctx context.Context, conn *valkeyConnInfo, username string, logger logger.Logger) error {
+	if len(conn.hosts) > 0 {
+		return b.deleteValkeyACLUserOnAllNodes(ctx, conn.hosts, conn.port, conn.adminPassword, username, conn.useTLS, conn.tlsPort, logger)
+	}
+
+	return b.deleteValkeyACLUser(ctx, conn.host, conn.port, conn.adminPassword, username, conn.useTLS, conn.tlsPort, logger)
+}
+
+// processValkeyCredentials creates a per-binding ACL user on the Valkey
+// instance and replaces the shared credentials with binding-specific ones.
+// For non-Valkey services the credentials are returned unchanged.
+func (b *Broker) processValkeyCredentials(ctx context.Context, bindingID string, creds interface{}, logger logger.Logger) (interface{}, error) {
+	credMap, ok := creds.(map[string]interface{})
+	if !ok || !IsValkeyService(credMap) {
+		return creds, nil
+	}
+
+	logger.Info("Processing Valkey ACL credentials for binding %s", bindingID)
+
+	conn, err := extractValkeyConnInfo(credMap)
+	if err != nil {
+		return nil, err
+	}
 
 	dynamicUsername := bindingID
 	dynamicPassword := uuid.New().String()
 
-	// Determine standalone vs cluster
-	hosts := ExtractHosts(credMap)
-	if len(hosts) > 0 {
-		err := b.createValkeyACLUserOnAllNodes(ctx, hosts, port, adminPassword, dynamicUsername, dynamicPassword, useTLS, tlsPort, logger)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		err := b.createValkeyACLUser(ctx, host, port, adminPassword, dynamicUsername, dynamicPassword, useTLS, tlsPort, logger)
-		if err != nil {
-			return nil, err
-		}
+	if err := b.createACLUser(ctx, conn, dynamicUsername, dynamicPassword, logger); err != nil {
+		return nil, err
 	}
 
-	// Replace credentials with per-binding values
 	credMap["username"] = dynamicUsername
 	credMap["password"] = dynamicPassword
 	credMap["credential_type"] = credentialTypeDynamic
@@ -109,44 +142,16 @@ func (b *Broker) processValkeyCredentials(ctx context.Context, bindingID string,
 // handleDynamicValkeyCredentials is the GetBindingCredentials-path handler,
 // mirroring handleDynamicRabbitMQCredentials.
 func (b *Broker) handleDynamicValkeyCredentials(ctx context.Context, credsMap map[string]interface{}, bindingID string, logger logger.Logger) error {
-	adminPassword, ok := credsMap["admin_password"].(string)
-	if !ok || adminPassword == "" {
-		return ErrValkeyAdminPasswordMissing
+	conn, err := extractValkeyConnInfo(credsMap)
+	if err != nil {
+		return err
 	}
-
-	host, ok := credsMap["host"].(string)
-	if !ok || host == "" {
-		return ErrValkeyHostMissing
-	}
-
-	port := 6379
-	if p, ok := credsMap["port"].(int); ok && p > 0 {
-		port = p
-	} else if p, ok := credsMap["port"].(float64); ok && p > 0 {
-		port = int(p)
-	}
-
-	tlsPort := 0
-	if p, ok := credsMap["tls_port"].(int); ok {
-		tlsPort = p
-	} else if p, ok := credsMap["tls_port"].(float64); ok {
-		tlsPort = int(p)
-	}
-
-	useTLS := tlsPort > 0
 
 	dynamicUsername := bindingID
 	dynamicPassword := uuid.New().String()
 
-	hosts := ExtractHosts(credsMap)
-	if len(hosts) > 0 {
-		if err := b.createValkeyACLUserOnAllNodes(ctx, hosts, port, adminPassword, dynamicUsername, dynamicPassword, useTLS, tlsPort, logger); err != nil {
-			return err
-		}
-	} else {
-		if err := b.createValkeyACLUser(ctx, host, port, adminPassword, dynamicUsername, dynamicPassword, useTLS, tlsPort, logger); err != nil {
-			return err
-		}
+	if err := b.createACLUser(ctx, conn, dynamicUsername, dynamicPassword, logger); err != nil {
+		return err
 	}
 
 	credsMap["username"] = dynamicUsername
@@ -174,38 +179,12 @@ func (b *Broker) handleValkeyUnbind(ctx context.Context, instanceID, bindingID s
 		return err
 	}
 
-	adminPassword, ok := credMap["admin_password"].(string)
-	if !ok || adminPassword == "" {
-		return ErrValkeyAdminPasswordMissing
+	conn, err := extractValkeyConnInfo(credMap)
+	if err != nil {
+		return err
 	}
 
-	host, ok := credMap["host"].(string)
-	if !ok || host == "" {
-		return ErrValkeyHostMissing
-	}
-
-	port := 6379
-	if p, ok := credMap["port"].(int); ok && p > 0 {
-		port = p
-	} else if p, ok := credMap["port"].(float64); ok && p > 0 {
-		port = int(p)
-	}
-
-	tlsPort := 0
-	if p, ok := credMap["tls_port"].(int); ok {
-		tlsPort = p
-	} else if p, ok := credMap["tls_port"].(float64); ok {
-		tlsPort = int(p)
-	}
-
-	useTLS := tlsPort > 0
-
-	hosts := ExtractHosts(credMap)
-	if len(hosts) > 0 {
-		return b.deleteValkeyACLUserOnAllNodes(ctx, hosts, port, adminPassword, bindingID, useTLS, tlsPort, logger)
-	}
-
-	return b.deleteValkeyACLUser(ctx, host, port, adminPassword, bindingID, useTLS, tlsPort, logger)
+	return b.deleteACLUser(ctx, conn, bindingID, logger)
 }
 
 // getValkeyCredentials retrieves the raw credential map for a Valkey instance.
@@ -240,18 +219,14 @@ func (b *Broker) createValkeyACLUser(ctx context.Context, host string, port int,
 		}
 		defer client.Close()
 
-		// ACL SETUSER <username> on ><password> ~* &* +@all -@admin
 		result := client.Do(ctx, "ACL", "SETUSER", username, "on", ">"+password, "~*", "&*", "+@all", "-@admin")
 		if result.Err() != nil {
 			logger.Error("ACL SETUSER failed: %s", result.Err())
 			return fmt.Errorf("%w: SETUSER: %w", ErrValkeyACLCommandFailed, result.Err())
 		}
 
-		// ACL SAVE to persist
-		saveResult := client.Do(ctx, "ACL", "SAVE")
-		if saveResult.Err() != nil {
-			logger.Error("ACL SAVE failed: %s", saveResult.Err())
-			return fmt.Errorf("%w: SAVE: %w", ErrValkeyACLCommandFailed, saveResult.Err())
+		if err := aclSave(ctx, client, logger); err != nil {
+			return err
 		}
 
 		logger.Debug("Successfully created ACL user %s", username)
@@ -280,6 +255,8 @@ func (b *Broker) createValkeyACLUserOnAllNodes(ctx context.Context, hosts []stri
 }
 
 // deleteValkeyACLUser deletes an ACL user from one Valkey node.
+// ACL DELUSER is naturally idempotent — it returns 0 for non-existent users
+// without raising an error.
 func (b *Broker) deleteValkeyACLUser(ctx context.Context, host string, port int, adminPassword, username string, useTLS bool, tlsPort int, logger logger.Logger) error {
 	logger.Info("Deleting Valkey ACL user %s on %s:%d", username, host, port)
 
@@ -292,21 +269,12 @@ func (b *Broker) deleteValkeyACLUser(ctx context.Context, host string, port int,
 
 		result := client.Do(ctx, "ACL", "DELUSER", username)
 		if result.Err() != nil {
-			// User not found is success (idempotent)
-			if strings.Contains(result.Err().Error(), "ERR The user") {
-				logger.Info("ACL user %s does not exist, treating as success", username)
-				return nil
-			}
-
 			logger.Error("ACL DELUSER failed: %s", result.Err())
-
 			return fmt.Errorf("%w: DELUSER: %w", ErrValkeyACLCommandFailed, result.Err())
 		}
 
-		saveResult := client.Do(ctx, "ACL", "SAVE")
-		if saveResult.Err() != nil {
-			logger.Error("ACL SAVE failed: %s", saveResult.Err())
-			return fmt.Errorf("%w: SAVE: %w", ErrValkeyACLCommandFailed, saveResult.Err())
+		if err := aclSave(ctx, client, logger); err != nil {
+			return err
 		}
 
 		logger.Debug("Successfully deleted ACL user %s", username)
@@ -329,6 +297,17 @@ func (b *Broker) deleteValkeyACLUserOnAllNodes(ctx context.Context, hosts []stri
 
 	if len(errs) > 0 {
 		return fmt.Errorf("%w: %s", ErrFailedToDeleteValkeyACLUser, strings.Join(errs, "; "))
+	}
+
+	return nil
+}
+
+// aclSave persists the current ACL state to the aclfile.
+func aclSave(ctx context.Context, client *redis.Client, logger logger.Logger) error {
+	result := client.Do(ctx, "ACL", "SAVE")
+	if result.Err() != nil {
+		logger.Error("ACL SAVE failed: %s", result.Err())
+		return fmt.Errorf("%w: SAVE: %w", ErrValkeyACLCommandFailed, result.Err())
 	}
 
 	return nil
@@ -364,7 +343,7 @@ func connectToValkeyAdmin(ctx context.Context, host string, port int, adminPassw
 
 	if err := client.Ping(pingCtx).Err(); err != nil {
 		client.Close()
-		return nil, fmt.Errorf("Valkey ping failed at %s: %w", opts.Addr, err)
+		return nil, fmt.Errorf("valkey ping failed at %s: %w", opts.Addr, err)
 	}
 
 	return client, nil
