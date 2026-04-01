@@ -546,6 +546,12 @@ func (b *Broker) Bind(
 		return binding, err
 	}
 
+	// Process Valkey dynamic credentials if applicable
+	processedCreds, err = b.processValkeyCredentials(ctx, bindingID, processedCreds, logger)
+	if err != nil {
+		return binding, err
+	}
+
 	// Clean up admin credentials from final output
 	b.cleanupAdminCredentials(processedCreds)
 
@@ -574,6 +580,13 @@ func (b *Broker) Unbind(
 
 	if strings.Contains(details.PlanID, "rabbitmq") {
 		err := b.handleRabbitMQUnbind(ctx, instanceID, bindingID, details, logger)
+		if err != nil {
+			return domain.UnbindSpec{}, err
+		}
+	}
+
+	if strings.Contains(details.PlanID, "valkey") {
+		err := b.handleValkeyUnbind(ctx, instanceID, bindingID, details, logger)
 		if err != nil {
 			return domain.UnbindSpec{}, err
 		}
@@ -1138,6 +1151,21 @@ func (b *Broker) processDynamicCredentials(ctx context.Context, credsMap map[str
 		binding.CredentialType = "dynamic"
 
 		logger.Debug("Successfully processed dynamic RabbitMQ credentials")
+	}
+
+	if serviceType, ok := credsMap["service_type"].(string); ok && serviceType == "valkey" {
+		logger.Info("Processing Valkey ACL user for binding", "bindingID", bindingID)
+
+		err := b.handleDynamicValkeyCredentials(ctx, credsMap, bindingID, logger)
+		if err != nil {
+			logger.Error("Failed to handle dynamic Valkey credentials", "error", err)
+
+			return fmt.Errorf("failed to handle dynamic Valkey credentials: %w", err)
+		}
+
+		binding.CredentialType = "dynamic"
+
+		logger.Debug("Successfully processed dynamic Valkey credentials")
 	}
 
 	return nil
@@ -2269,6 +2297,7 @@ func (b *Broker) cleanupAdminCredentials(creds interface{}) {
 	if credMap, ok := creds.(map[string]interface{}); ok {
 		delete(credMap, "admin_username")
 		delete(credMap, "admin_password")
+		delete(credMap, "service_type")
 	}
 }
 
@@ -2653,7 +2682,7 @@ func (b *Broker) populateBindingCredentials(binding *BindingCredentials, credsMa
 func filterAdminCredentials(credsMap map[string]interface{}) map[string]interface{} {
 	filtered := make(map[string]interface{}, len(credsMap))
 	for k, v := range credsMap {
-		if k != "admin_username" && k != "admin_password" {
+		if k != "admin_username" && k != "admin_password" && k != "service_type" {
 			filtered[k] = v
 		}
 	}
