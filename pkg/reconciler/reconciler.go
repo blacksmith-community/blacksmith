@@ -485,6 +485,9 @@ func (r *ReconcilerManager) UpdateInterval(interval time.Duration) {
 
 // GetInterval returns the current reconciliation interval.
 func (r *ReconcilerManager) GetInterval() time.Duration {
+	r.tickerMu.Lock()
+	defer r.tickerMu.Unlock()
+
 	return r.config.Interval
 }
 
