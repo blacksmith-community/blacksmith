@@ -1208,7 +1208,7 @@ func setupReconciler(config *config.Config, brokerInstance *broker.Broker, vault
 
 	logger.Warn("BOSH director unavailable - reconciler will be disabled")
 
-	return &recovery.ReconcilerAdapter{}
+	return nil
 }
 
 func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirector, config *config.Config, logger loggerPkg.Logger) *vmmonitor.Monitor {
