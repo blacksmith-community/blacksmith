@@ -90,13 +90,22 @@ The reconciler can be configured through both the `blacksmith.conf` file and env
 | Environment Variable | Config File | Default | Description |
 |---------------------|-------------|---------|-------------|
 | `BLACKSMITH_RECONCILER_ENABLED` | `reconciler.enabled` | `true` | Enable/disable the reconciler |
-| `BLACKSMITH_RECONCILER_INTERVAL` | `reconciler.interval` | `1h` | Time between reconciliation runs |
+| `BLACKSMITH_RECONCILER_INTERVAL` | `reconciler.interval` | `1h` | Time between reconciliation runs (Go duration or bare seconds) |
 | `BLACKSMITH_RECONCILER_MAX_CONCURRENCY` | `reconciler.max_concurrency` | `5` | Maximum concurrent deployment processing |
 | `BLACKSMITH_RECONCILER_BATCH_SIZE` | `reconciler.batch_size` | `10` | Number of deployments to process per batch |
 | `BLACKSMITH_RECONCILER_RETRY_ATTEMPTS` | `reconciler.retry_attempts` | `3` | Number of retry attempts for failed operations |
 | `BLACKSMITH_RECONCILER_RETRY_DELAY` | `reconciler.retry_delay` | `10s` | Delay between retry attempts |
 | `BLACKSMITH_RECONCILER_CACHE_TTL` | `reconciler.cache_ttl` | `5m` | Cache time-to-live for deployment details |
 | `BLACKSMITH_RECONCILER_DEBUG` | `reconciler.debug` | `false` | Enable detailed debug logging |
+
+#### Interval Format and Precedence
+
+The `reconciler.interval` accepts Go duration strings (`"1h"`, `"30m"`, `"5m30s"`) or bare numeric seconds (`3600`). When determining the effective interval, the following precedence applies:
+
+1. `BLACKSMITH_RECONCILER_INTERVAL` environment variable (highest priority)
+2. Vault-persisted setting at `blacksmith/settings` (set via API)
+3. YAML config `reconciler.interval`
+4. Default: `1h`
 
 #### Backup Configuration
 
