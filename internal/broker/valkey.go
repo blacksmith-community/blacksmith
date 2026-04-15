@@ -23,7 +23,7 @@ var (
 	ErrFailedToDeleteValkeyACLUser = errors.New("failed to delete Valkey ACL user")
 	ErrValkeyAdminPasswordMissing  = errors.New("admin_password required for Valkey service")
 	ErrValkeyHostMissing           = errors.New("host required for Valkey service")
-	ErrValkeyACLCommandFailed      = errors.New("Valkey ACL command failed")
+	ErrValkeyACLCommandFailed      = errors.New("valkey ACL command failed")
 )
 
 const (
