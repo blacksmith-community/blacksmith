@@ -31,6 +31,9 @@ type Vault interface {
 	DeleteCFRegistration(ctx context.Context, registrationID string) error
 	UpdateCFRegistrationStatus(ctx context.Context, registrationID, status, errorMsg string) error
 	SaveCFRegistrationProgress(ctx context.Context, registrationID string, progress map[string]interface{}) error
+	// KV v2 mount configuration
+	SetKVMaxVersions(ctx context.Context, maxVersions int) error
+	GetKVMaxVersions(ctx context.Context) (int, error)
 }
 
 // Config interface for configuration access across all internal packages.

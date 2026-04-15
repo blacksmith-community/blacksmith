@@ -215,6 +215,59 @@ func (vault *Vault) Put(ctx context.Context, path string, data interface{}) erro
 	return nil
 }
 
+// SetKVMaxVersions sets the max_versions configuration for the KV v2 mount.
+func (vault *Vault) SetKVMaxVersions(ctx context.Context, maxVersions int) error {
+	logger := logger.Get().Named("vault kv-config")
+
+	apiClient, err := vault.GetAPIClient()
+	if err != nil {
+		return fmt.Errorf("failed to get vault API client: %w", err)
+	}
+
+	_, err = apiClient.Logical().Write("secret/config", map[string]interface{}{
+		"max_versions": maxVersions,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to set max_versions: %w", err)
+	}
+
+	logger.Info("set vault KV v2 max_versions to %d", maxVersions)
+
+	return nil
+}
+
+// GetKVMaxVersions reads the max_versions configuration from the KV v2 mount.
+func (vault *Vault) GetKVMaxVersions(ctx context.Context) (int, error) {
+	apiClient, err := vault.GetAPIClient()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get vault API client: %w", err)
+	}
+
+	secret, err := apiClient.Logical().Read("secret/config")
+	if err != nil {
+		return 0, fmt.Errorf("failed to read KV config: %w", err)
+	}
+
+	if secret == nil || secret.Data == nil {
+		return 0, nil
+	}
+
+	// max_versions can come back as json.Number or float64
+	if mv, ok := secret.Data["max_versions"]; ok {
+		switch v := mv.(type) {
+		case json.Number:
+			n, _ := v.Int64()
+			return int(n), nil
+		case float64:
+			return int(v), nil
+		case int:
+			return v, nil
+		}
+	}
+
+	return 0, nil
+}
+
 // Delete removes data from vault at the specified path.
 func (vault *Vault) Delete(ctx context.Context, path string) error {
 	logger := logger.Get().Named("vault delete")

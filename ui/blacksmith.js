@@ -1852,10 +1852,10 @@
         <button class="detail-tab" data-tab="vms">VMs</button>
         <button class="detail-tab" data-tab="events">Events</button>
         <button class="detail-tab" data-tab="tasks">Tasks</button>
-        <button class="detail-tab" data-tab="configs">Configs</button>
+        <button class="detail-tab" data-tab="configs">Bosh Configs</button>
         <button class="detail-tab" data-tab="certificates">Certificates</button>
         <button class="detail-tab" data-tab="manifest">Manifest</button>
-        <button class="detail-tab" data-tab="config">Config</button>
+        <button class="detail-tab" data-tab="config">Blacksmith Configuration</button>
       </div>
       <div class="detail-content">
         <div class="loading">Loading...</div>
@@ -2157,6 +2157,20 @@
   // Track selected instances for batch operations
   let selectedUpgradeInstances = new Set();
 
+  // Compare two stemcell version strings (e.g., "1.824", "456.30")
+  // Returns: negative if a < b, 0 if equal, positive if a > b
+  const compareStemcellVersions = (a, b) => {
+    const partsA = a.split('.').map(Number);
+    const partsB = b.split('.').map(Number);
+    const maxLen = Math.max(partsA.length, partsB.length);
+    for (let i = 0; i < maxLen; i++) {
+      const numA = partsA[i] || 0;
+      const numB = partsB[i] || 0;
+      if (numA !== numB) return numA - numB;
+    }
+    return 0;
+  };
+
   // Render the upgrade tab filters
   const renderUpgradeFilters = () => {
     return `
@@ -2170,6 +2184,12 @@
         <label for="upgrade-plan-filter">Plan:</label>
         <select id="upgrade-plan-filter" disabled>
           <option value="">All Plans</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <label for="upgrade-stemcell-floor">Min Stemcell:</label>
+        <select id="upgrade-stemcell-floor">
+          <option value="">No minimum</option>
         </select>
       </div>
       <div class="filter-row">
@@ -2188,11 +2208,20 @@
         <button id="upgrade-deselect-all" class="btn-secondary">Deselect All</button>
         <button id="upgrade-start" class="btn-primary" disabled>Upgrade Selected (0)</button>
       </div>
+      <div class="upgrade-range-selection">
+        <label>Select Range:</label>
+        <div class="range-inputs">
+          <input type="number" id="upgrade-range-start" min="1" placeholder="Start" title="Start row number">
+          <span class="range-separator">to</span>
+          <input type="number" id="upgrade-range-end" min="1" placeholder="End" title="End row number">
+          <button id="upgrade-select-range" class="btn-primary">Select Range</button>
+        </div>
+      </div>
     `;
   };
 
   // Render upgrade instance list
-  const renderUpgradeInstances = (instances, serviceFilter, planFilter) => {
+  const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor) => {
     if (!instances || Object.keys(instances).length === 0) {
       return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
     }
@@ -2218,14 +2247,30 @@
       // Apply plan filter
       if (planFilter && details.plan?.id !== planFilter && details.plan_id !== planFilter) return false;
 
+      // Apply stemcell floor filter
+      if (stemcellFloor) {
+        if (!details.stemcell || !details.stemcell.version) return false;
+        if (compareStemcellVersions(details.stemcell.version, stemcellFloor) < 0) return false;
+      }
+
       return true;
+    });
+
+    // Sort by service name (alphabetically), then by instance ID for stable order
+    filteredInstances.sort((a, b) => {
+      const serviceA = serviceIdToName[a[1].service_id] || a[1].service_id;
+      const serviceB = serviceIdToName[b[1].service_id] || b[1].service_id;
+      const serviceCompare = serviceA.localeCompare(serviceB);
+      if (serviceCompare !== 0) return serviceCompare;
+      return a[0].localeCompare(b[0]);
     });
 
     if (filteredInstances.length === 0) {
       return '<div class="no-instances p-4 text-center text-gray-500">No instances match the current filters.</div>';
     }
 
-    const listHtml = filteredInstances.map(([id, details]) => {
+    const listHtml = filteredInstances.map(([id, details], index) => {
+      const rowNumber = index + 1;
       const serviceName = serviceIdToName[details.service_id] || details.service_id;
       const planName = details.plan?.name || details.plan_id || 'unknown';
       const isSelected = selectedUpgradeInstances.has(id);
@@ -2237,7 +2282,8 @@
         : '<span class="upgrade-instance-stemcell unknown">unknown</span>';
 
       return `
-        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}" data-stemcell-os="${stemcellInfo?.os || ''}" data-stemcell-version="${stemcellInfo?.version || ''}">
+        <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-row-number="${rowNumber}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}" data-stemcell-os="${stemcellInfo?.os || ''}" data-stemcell-version="${stemcellInfo?.version || ''}">
+          <span class="upgrade-instance-row-number">${rowNumber}</span>
           <label class="upgrade-instance-checkbox">
             <input type="checkbox" ${isSelected ? 'checked' : ''} />
             <span class="checkmark"></span>
@@ -2254,7 +2300,7 @@
     }).join('');
 
     return `
-      <div class="upgrade-instance-count">${filteredInstances.length} instance${filteredInstances.length !== 1 ? 's' : ''}</div>
+      <div class="upgrade-instance-count">${filteredInstances.length} instance${filteredInstances.length !== 1 ? 's' : ''} (rows 1-${filteredInstances.length})</div>
       <div class="upgrade-instances-list">${listHtml}</div>
     `;
   };
@@ -2280,8 +2326,9 @@
 
     const serviceFilter = document.getElementById('upgrade-service-filter')?.value || '';
     const planFilter = document.getElementById('upgrade-plan-filter')?.value || '';
+    const stemcellFloor = document.getElementById('upgrade-stemcell-floor')?.value || '';
 
-    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter);
+    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor);
 
     // Set up checkbox handlers
     setupUpgradeInstanceHandlers();
@@ -2371,6 +2418,32 @@
       planSelect.addEventListener('change', refreshUpgradeInstanceList);
     }
 
+    // Populate and set up stemcell floor filter
+    const populateStemcellFloorFilter = () => {
+      const floorSelect = document.getElementById('upgrade-stemcell-floor');
+      if (!floorSelect || !window.serviceInstances) return;
+
+      const versions = new Set();
+      Object.values(window.serviceInstances).forEach(details => {
+        if (!details.deleted && details.stemcell && details.stemcell.version) {
+          versions.add(details.stemcell.version);
+        }
+      });
+
+      const sortedVersions = Array.from(versions).sort(compareStemcellVersions);
+
+      floorSelect.innerHTML = '<option value="">No minimum</option>';
+      sortedVersions.forEach(version => {
+        const option = document.createElement('option');
+        option.value = version;
+        option.textContent = version;
+        floorSelect.appendChild(option);
+      });
+
+      floorSelect.addEventListener('change', refreshUpgradeInstanceList);
+    };
+    populateStemcellFloorFilter();
+
     // Set up Select All button
     const selectAllBtn = document.getElementById('upgrade-select-all');
     if (selectAllBtn) {
@@ -2396,6 +2469,35 @@
           item.classList.remove('selected');
         });
         selectedUpgradeInstances.clear();
+        updateUpgradeButton();
+      });
+    }
+
+    // Set up Select Range button
+    const selectRangeBtn = document.getElementById('upgrade-select-range');
+    if (selectRangeBtn) {
+      selectRangeBtn.addEventListener('click', () => {
+        const startInput = document.getElementById('upgrade-range-start');
+        const endInput = document.getElementById('upgrade-range-end');
+        const start = parseInt(startInput?.value, 10);
+        const end = parseInt(endInput?.value, 10);
+
+        if (isNaN(start) || isNaN(end) || start < 1 || end < start) {
+          alert('Please enter a valid range (start must be >= 1 and end must be >= start).');
+          return;
+        }
+
+        document.querySelectorAll('#upgrade .upgrade-instance-item').forEach(item => {
+          const rowNumber = parseInt(item.dataset.rowNumber, 10);
+          if (rowNumber >= start && rowNumber <= end) {
+            const checkbox = item.querySelector('input[type="checkbox"]');
+            const instanceId = item.dataset.instanceId;
+            checkbox.checked = true;
+            selectedUpgradeInstances.add(instanceId);
+            item.classList.add('selected');
+          }
+        });
+
         updateUpgradeButton();
       });
     }
@@ -3333,6 +3435,144 @@
     return html;
   };
 
+  // Render Blacksmith settings form + read-only config
+  const renderBlacksmithSettings = (settings, config) => {
+    const maxVersions = settings.vault_max_versions || 0;
+    const reconcilerInterval = settings.reconciler_interval || '';
+
+    let html = '<div class="blacksmith-settings">';
+
+    // Editable Settings Section
+    html += `
+      <div class="settings-section">
+        <h3 class="settings-section-header">Runtime Settings</h3>
+        <div class="settings-row">
+          <label class="settings-label" for="settings-max-versions">Vault Max Versions</label>
+          <div class="settings-input-group">
+            <input type="number" id="settings-max-versions" class="settings-input" value="${maxVersions}" min="0" max="1000" placeholder="0 = unlimited" />
+            <button id="apply-max-versions" class="settings-apply-btn">Apply</button>
+          </div>
+          <span class="settings-hint">Controls how many versions are kept per secret path (0 = unlimited). Only affects future writes.</span>
+          <span id="feedback-max-versions" class="settings-feedback"></span>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settings-reconciler-interval">Reconciler Interval</label>
+          <div class="settings-input-group">
+            <input type="text" id="settings-reconciler-interval" class="settings-input" value="${reconcilerInterval}" placeholder="e.g. 1h, 30m, 5m" />
+            <button id="apply-reconciler-interval" class="settings-apply-btn">Apply</button>
+          </div>
+          <span class="settings-hint">How often the reconciler syncs BOSH deployments with Vault (minimum 10s). Persisted across restarts.</span>
+          <span id="feedback-reconciler-interval" class="settings-feedback"></span>
+        </div>
+      </div>
+    `;
+
+    // Divider
+    html += '<div class="settings-divider"></div>';
+
+    // Read-only Configuration Section
+    html += `
+      <div class="settings-section">
+        <h3 class="settings-section-header">Current Configuration (read-only)</h3>
+        ${formatConfig(config)}
+      </div>
+    `;
+
+    html += '</div>';
+    return html;
+  };
+
+  // Set up event handlers for the Blacksmith settings form
+  const setupBlacksmithSettingsHandlers = () => {
+    const applyMaxVersions = document.getElementById('apply-max-versions');
+    const applyReconcilerInterval = document.getElementById('apply-reconciler-interval');
+
+    if (applyMaxVersions) {
+      applyMaxVersions.addEventListener('click', async () => {
+        const input = document.getElementById('settings-max-versions');
+        const feedback = document.getElementById('feedback-max-versions');
+        const value = parseInt(input.value, 10);
+
+        if (isNaN(value) || value < 0 || value > 1000) {
+          feedback.textContent = 'Must be between 0 and 1000';
+          feedback.className = 'settings-feedback error';
+          return;
+        }
+
+        applyMaxVersions.disabled = true;
+        applyMaxVersions.textContent = 'Applying...';
+        feedback.textContent = '';
+
+        try {
+          const res = await fetch('/b/blacksmith/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vault_max_versions: value })
+          });
+          const data = await res.json();
+
+          if (res.ok && data.success) {
+            feedback.textContent = 'Applied successfully';
+            feedback.className = 'settings-feedback success';
+          } else {
+            feedback.textContent = data.error || 'Failed to apply';
+            feedback.className = 'settings-feedback error';
+          }
+        } catch (err) {
+          feedback.textContent = 'Request failed: ' + err.message;
+          feedback.className = 'settings-feedback error';
+        } finally {
+          applyMaxVersions.disabled = false;
+          applyMaxVersions.textContent = 'Apply';
+        }
+      });
+    }
+
+    if (applyReconcilerInterval) {
+      applyReconcilerInterval.addEventListener('click', async () => {
+        const input = document.getElementById('settings-reconciler-interval');
+        const feedback = document.getElementById('feedback-reconciler-interval');
+        const value = input.value.trim();
+
+        if (!value) {
+          feedback.textContent = 'Please enter an interval (e.g. 1h, 30m, 5m)';
+          feedback.className = 'settings-feedback error';
+          return;
+        }
+
+        applyReconcilerInterval.disabled = true;
+        applyReconcilerInterval.textContent = 'Applying...';
+        feedback.textContent = '';
+
+        try {
+          const res = await fetch('/b/blacksmith/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reconciler_interval: value })
+          });
+          const data = await res.json();
+
+          if (res.ok && data.success) {
+            feedback.textContent = 'Applied successfully';
+            feedback.className = 'settings-feedback success';
+            if (data.reconciler_interval) {
+              input.value = data.reconciler_interval;
+            }
+          } else {
+            feedback.textContent = data.error || 'Failed to apply';
+            feedback.className = 'settings-feedback error';
+          }
+        } catch (err) {
+          feedback.textContent = 'Request failed: ' + err.message;
+          feedback.className = 'settings-feedback error';
+        } finally {
+          applyReconcilerInterval.disabled = false;
+          applyReconcilerInterval.textContent = 'Apply';
+        }
+      });
+    }
+  };
+
   // Helper function to extract the latest deployment task ID from events
   const getLatestDeploymentTaskId = (events) => {
     if (!events || events.length === 0) {
@@ -3476,13 +3716,14 @@
         return formatManifestDetails(manifestData, `blacksmith-${deploymentName}`);
 
       } else if (type === 'config') {
-        // Fetch blacksmith configuration
-        const response = await fetch('/b/blacksmith/config');
-        if (!response.ok) {
-          throw new Error(`Failed to load config: ${response.statusText}`);
-        }
-        const config = await response.json();
-        return formatConfig(config);
+        // Fetch settings and config in parallel
+        const [settingsRes, configRes] = await Promise.all([
+          fetch('/b/blacksmith/settings', { cache: 'no-cache' }),
+          fetch('/b/blacksmith/config')
+        ]);
+        const settings = settingsRes.ok ? await settingsRes.json() : {};
+        const config = configRes.ok ? await configRes.json() : {};
+        return renderBlacksmithSettings(settings, config);
       } else if (type === 'certificates') {
         // Render certificates tab content
         return renderCertificatesTab();
@@ -10881,6 +11122,9 @@
               initializeSorting('tasks-table');
               attachSearchFilter('tasks-table');
               initializeTasksTab();
+            } else if (tabType === 'config') {
+              // Initialize settings form handlers
+              setupBlacksmithSettingsHandlers();
             } else if (tabType === 'configs') {
               // Initialize configs functionality
               initializeSorting('configs-table');

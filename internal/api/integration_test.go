@@ -163,6 +163,14 @@ func (v *testVaultAdapter) SaveCFRegistrationProgress(ctx context.Context, regis
 	return nil
 }
 
+func (v *testVaultAdapter) SetKVMaxVersions(ctx context.Context, maxVersions int) error {
+	return nil
+}
+
+func (v *testVaultAdapter) GetKVMaxVersions(ctx context.Context) (int, error) {
+	return 0, nil
+}
+
 // createTestDependencies creates mock dependencies for testing.
 func createTestDependencies(t *testing.T) api.Dependencies {
 	t.Helper()

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"time"
+
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/http/response"
@@ -55,29 +57,38 @@ type credentialsSummary struct {
 	} `json:"Broker,omitempty"`
 }
 
+// ReconcilerInterface defines the reconciler methods needed by the handler.
+type ReconcilerInterface interface {
+	UpdateInterval(ctx context.Context, interval time.Duration) error
+	GetInterval() time.Duration
+}
+
 // Handler handles Blacksmith-specific management endpoints.
 type Handler struct {
-	logger   interfaces.Logger
-	config   interfaces.Config
-	vault    interfaces.Vault
-	director interfaces.Director
+	logger     interfaces.Logger
+	config     interfaces.Config
+	vault      interfaces.Vault
+	director   interfaces.Director
+	reconciler ReconcilerInterface
 }
 
 // Dependencies contains all dependencies needed by the Blacksmith handler.
 type Dependencies struct {
-	Logger   interfaces.Logger
-	Config   interfaces.Config
-	Vault    interfaces.Vault
-	Director interfaces.Director
+	Logger     interfaces.Logger
+	Config     interfaces.Config
+	Vault      interfaces.Vault
+	Director   interfaces.Director
+	Reconciler ReconcilerInterface
 }
 
 // NewHandler creates a new Blacksmith management handler.
 func NewHandler(deps Dependencies) *Handler {
 	return &Handler{
-		logger:   deps.Logger,
-		config:   deps.Config,
-		vault:    deps.Vault,
-		director: deps.Director,
+		logger:     deps.Logger,
+		config:     deps.Config,
+		vault:      deps.Vault,
+		director:   deps.Director,
+		reconciler: deps.Reconciler,
 	}
 }
 
@@ -402,6 +413,141 @@ func (h *Handler) GetConfig(responseWriter http.ResponseWriter, req *http.Reques
 	configData := utils.DeinterfaceMap(intermediate)
 
 	response.HandleJSON(responseWriter, configData, nil)
+}
+
+// HandleSettings dispatches GET/POST for /b/blacksmith/settings.
+func (h *Handler) HandleSettings(responseWriter http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		h.GetSettings(responseWriter, req)
+	case http.MethodPost:
+		h.UpdateSettings(responseWriter, req)
+	default:
+		responseWriter.WriteHeader(http.StatusMethodNotAllowed)
+		response.HandleJSON(responseWriter, nil, ErrMethodNotAllowed)
+	}
+}
+
+// GetSettings returns current Blacksmith settings (vault max_versions, reconciler interval).
+func (h *Handler) GetSettings(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("blacksmith-settings")
+	ctx := req.Context()
+
+	result := map[string]interface{}{}
+
+	// Read vault max_versions
+	if h.vault != nil {
+		maxVersions, err := h.vault.GetKVMaxVersions(ctx)
+		if err != nil {
+			logger.Error("Failed to read vault max_versions: %v", err)
+			result["vault_max_versions"] = 0
+			result["vault_max_versions_error"] = err.Error()
+		} else {
+			result["vault_max_versions"] = maxVersions
+		}
+	}
+
+	// Read reconciler interval
+	if h.reconciler != nil {
+		result["reconciler_interval"] = h.reconciler.GetInterval().String()
+	}
+
+	response.HandleJSON(responseWriter, result, nil)
+}
+
+// UpdateSettings updates Blacksmith settings.
+func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("blacksmith-settings")
+	ctx := req.Context()
+
+	var body struct {
+		VaultMaxVersions   *int    `json:"vault_max_versions"`
+		ReconcilerInterval *string `json:"reconciler_interval"`
+	}
+
+	err := json.NewDecoder(req.Body).Decode(&body)
+	if err != nil {
+		responseWriter.WriteHeader(http.StatusBadRequest)
+		response.HandleJSON(responseWriter, nil, fmt.Errorf("%w: %w", ErrInvalidRequestBody, err))
+
+		return
+	}
+
+	result := map[string]interface{}{"success": true}
+
+	// Update vault max_versions if provided
+	if body.VaultMaxVersions != nil {
+		mv := *body.VaultMaxVersions
+		if mv < 0 || mv > 1000 {
+			responseWriter.WriteHeader(http.StatusBadRequest)
+			response.HandleJSON(responseWriter, map[string]interface{}{
+				"error": "vault_max_versions must be between 0 and 1000 (0 = unlimited)",
+			}, nil)
+
+			return
+		}
+
+		if h.vault == nil {
+			responseWriter.WriteHeader(http.StatusServiceUnavailable)
+			response.HandleJSON(responseWriter, map[string]interface{}{
+				"error": "vault is not available",
+			}, nil)
+
+			return
+		}
+
+		err := h.vault.SetKVMaxVersions(ctx, mv)
+		if err != nil {
+			logger.Error("Failed to set vault max_versions: %v", err)
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			response.HandleJSON(responseWriter, map[string]interface{}{
+				"error": "failed to set vault max_versions: " + err.Error(),
+			}, nil)
+
+			return
+		}
+
+		logger.Info("Vault max_versions updated to %d", mv)
+		result["vault_max_versions"] = mv
+	}
+
+	// Update reconciler interval if provided
+	if body.ReconcilerInterval != nil {
+		d, err := time.ParseDuration(*body.ReconcilerInterval)
+		if err != nil || d < 10*time.Second {
+			responseWriter.WriteHeader(http.StatusBadRequest)
+			response.HandleJSON(responseWriter, map[string]interface{}{
+				"error": "reconciler_interval must be a valid duration >= 10s (e.g. '5m', '1h')",
+			}, nil)
+
+			return
+		}
+
+		if h.reconciler == nil {
+			responseWriter.WriteHeader(http.StatusServiceUnavailable)
+			response.HandleJSON(responseWriter, map[string]interface{}{
+				"error": "reconciler is not available",
+			}, nil)
+
+			return
+		}
+
+		err = h.reconciler.UpdateInterval(ctx, d)
+		if err != nil {
+			logger.Error("Failed to update reconciler interval: %v", err)
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			response.HandleJSON(responseWriter, map[string]interface{}{
+				"error": "failed to update reconciler interval: " + err.Error(),
+			}, nil)
+
+			return
+		}
+
+		logger.Info("Reconciler interval updated to %v", d)
+		result["reconciler_interval"] = d.String()
+	}
+
+	response.HandleJSON(responseWriter, result, nil)
 }
 
 // Cleanup performs cleanup operations.

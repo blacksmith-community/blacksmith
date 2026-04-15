@@ -1083,7 +1083,7 @@ func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *intern
 }
 
 func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager,
-	vmMonitor *vmmonitor.Monitor, sshService *ssh.ServiceImpl, rabbitmqSSHService *rabbitmq.SSHService,
+	vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, sshService *ssh.ServiceImpl, rabbitmqSSHService *rabbitmq.SSHService,
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
 	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
 	rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService, rabbitmqPluginsAuditService *rabbitmq.PluginsAuditService,
@@ -1118,6 +1118,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		RabbitMQPluginsAuditService:    rabbitmqPluginsAuditService,
 		WebSocketHandler:               webSocketHandler,
 		SecurityMiddleware:             services.NewSecurityMiddleware(logger.Named("security").Debug),
+		Reconciler:                     reconciler,
 	})
 
 	return &broker.API{
@@ -1176,7 +1177,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 		defer vmMonitor.Stop()
 	}
 
-	sshService, apiHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, logger)
+	sshService, apiHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
 
 	serverWaitGroup := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
@@ -1220,12 +1221,12 @@ func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirecto
 	return nil
 }
 
-func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API) {
+func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API) {
 	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
 
 	uiHandler := getUIHandler(config)
 
-	apiHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor,
+	apiHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
 		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, logger)

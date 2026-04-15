@@ -73,6 +73,7 @@ type Dependencies struct {
 	RabbitMQPluginsAuditService    interfaces.RabbitMQPluginsAuditService
 	WebSocketHandler               interfaces.WebSocketHandler
 	SecurityMiddleware             *services.SecurityMiddleware
+	Reconciler                     blacksmith.ReconcilerInterface
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
@@ -159,10 +160,11 @@ func createBOSHHandler(deps Dependencies) *bosh.Handler {
 
 func createBlacksmithHandler(deps Dependencies) *blacksmith.Handler {
 	return blacksmith.NewHandler(blacksmith.Dependencies{
-		Logger:   deps.Logger,
-		Config:   deps.Config,
-		Vault:    deps.Vault,
-		Director: deps.Director,
+		Logger:     deps.Logger,
+		Config:     deps.Config,
+		Vault:      deps.Vault,
+		Director:   deps.Director,
+		Reconciler: deps.Reconciler,
 	})
 }
 
@@ -320,6 +322,7 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 	router.RegisterHandler("/b/blacksmith/manifest", http.HandlerFunc(handlers.blacksmith.GetManifest))
 	router.RegisterHandler("/b/blacksmith/credentials", http.HandlerFunc(handlers.blacksmith.GetCredentials))
 	router.RegisterHandler("/b/blacksmith/config", http.HandlerFunc(handlers.blacksmith.GetConfig))
+	router.RegisterHandler("/b/blacksmith/settings", http.HandlerFunc(handlers.blacksmith.HandleSettings))
 	router.RegisterHandler("/b/cleanup", http.HandlerFunc(handlers.blacksmith.Cleanup))
 
 	// Task endpoints
