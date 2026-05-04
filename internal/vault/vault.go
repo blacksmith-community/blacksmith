@@ -33,6 +33,8 @@ type Vault struct {
 	autoUnsealEnabled bool
 	// test hook: if set, used by withAutoUnseal instead of AutoUnsealIfSealed
 	autoUnsealHook func(context.Context) error
+	// test hook: if set, called by VerifyMount instead of client.VerifyMount
+	verifyMountFn func(store string, createIfMissing bool) error
 	// HTTP timeout for vault client (0 uses default)
 	httpTimeout time.Duration
 }
@@ -382,7 +384,16 @@ func (vault *Vault) VerifyMount(store string, createIfMissing bool) error {
 		return err
 	}
 
-	err = vault.client.VerifyMount(store, createIfMissing)
+	verifyFn := vault.verifyMountFn
+	if verifyFn == nil {
+		verifyFn = func(s string, c bool) error {
+			return vault.client.VerifyMount(s, c)
+		}
+	}
+
+	err = vault.withAutoUnseal(context.Background(), func() error {
+		return verifyFn(store, createIfMissing)
+	})
 	if err != nil {
 		logger.Error("failed to verify mount %s: %s", store, err)
 

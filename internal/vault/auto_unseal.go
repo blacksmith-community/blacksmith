@@ -232,6 +232,11 @@ func (vault *Vault) SetAutoUnsealHook(hook func(context.Context) error) {
 	vault.autoUnsealHook = hook
 }
 
+// SetVerifyMountFn overrides the VerifyMount implementation for testing.
+func (vault *Vault) SetVerifyMountFn(fn func(store string, createIfMissing bool) error) {
+	vault.verifyMountFn = fn
+}
+
 // WithAutoUnseal is a public wrapper for testing purposes.
 func (vault *Vault) WithAutoUnseal(ctx context.Context, operation func() error) error {
 	return vault.withAutoUnseal(ctx, operation)
