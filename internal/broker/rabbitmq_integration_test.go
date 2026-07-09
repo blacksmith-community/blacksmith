@@ -18,7 +18,7 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/pivotal-cf/brokerapi/v8/domain"
+	"code.cloudfoundry.org/brokerapi/v13/domain"
 )
 
 var _ = Describe("RabbitMQ Integration Tests", func() {

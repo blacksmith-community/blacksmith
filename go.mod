@@ -3,7 +3,7 @@ module blacksmith
 go 1.25.5
 
 require (
-	code.cloudfoundry.org/lager v2.0.0+incompatible
+	code.cloudfoundry.org/brokerapi/v13 v13.0.25
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cloudfoundry/bosh-cli/v7 v7.9.8
 	github.com/cloudfoundry/bosh-utils v0.0.552
@@ -17,7 +17,6 @@ require (
 	github.com/hashicorp/vault/sdk v0.20.0
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.38.0
-	github.com/pivotal-cf/brokerapi/v8 v8.2.3
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/shieldproject/shield v8.7.0+incompatible
 	github.com/smallfish/simpleyaml v0.1.0
@@ -169,7 +168,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
 	github.com/gophercloud/gophercloud v0.1.0 // indirect
-	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c // indirect
 	github.com/hashicorp/cap v0.11.0 // indirect
 	github.com/hashicorp/cli v1.1.7 // indirect

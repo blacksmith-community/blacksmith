@@ -30,8 +30,8 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
 	"github.com/google/uuid"
-	"github.com/pivotal-cf/brokerapi/v8/domain"
-	"github.com/pivotal-cf/brokerapi/v8/domain/apiresponses"
+	"code.cloudfoundry.org/brokerapi/v13/domain"
+	"code.cloudfoundry.org/brokerapi/v13/domain/apiresponses"
 	"gopkg.in/yaml.v2"
 )
 
