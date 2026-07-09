@@ -1,6 +1,6 @@
 module blacksmith
 
-go 1.25.5
+go 1.25.12
 
 require (
 	code.cloudfoundry.org/brokerapi/v13 v13.0.25
