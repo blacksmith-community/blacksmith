@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
-	"github.com/pivotal-cf/brokerapi/v8/domain"
+	"code.cloudfoundry.org/brokerapi/v13/domain"
 )
 
 var (

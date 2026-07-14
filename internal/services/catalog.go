@@ -12,7 +12,7 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
-	"github.com/pivotal-cf/brokerapi/v8/domain"
+	"code.cloudfoundry.org/brokerapi/v13/domain"
 	"gopkg.in/yaml.v2"
 )
 

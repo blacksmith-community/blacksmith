@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -35,8 +36,8 @@ import (
 	"blacksmith/pkg/services"
 	"blacksmith/shield"
 	"blacksmith/websocket"
-	"code.cloudfoundry.org/lager"
-	"github.com/pivotal-cf/brokerapi/v8"
+
+	"code.cloudfoundry.org/brokerapi/v13"
 )
 
 // Configuration default constants.
@@ -1129,7 +1130,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Internal: internalAPI,
 		Primary: brokerapi.New(
 			brokerInstance,
-			lager.NewLogger("blacksmith-broker"),
+			slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})),
 			brokerapi.BrokerCredentials{
 				Username: config.Broker.Username,
 				Password: config.Broker.Password,

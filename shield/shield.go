@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pivotal-cf/brokerapi/v8/domain"
+	"code.cloudfoundry.org/brokerapi/v13/domain"
 	"github.com/shieldproject/shield/client/v2/shield"
 )
 
