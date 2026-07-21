@@ -182,9 +182,7 @@ func (vc *Client) VerifyMount(mount string, createIfMissing bool) error {
 	exists, mountInfo, err := vc.checkMountExists(mount)
 	if err != nil {
 		if errors.Is(err, ErrVaultMountListingForbidden) {
-			loggerInstance.Warnf("skipping mount verification for %s: token lacks sys/mounts capability", mount)
-
-			return nil
+			return vc.verifyMountWithoutListCapability(mount, createIfMissing)
 		}
 
 		return err
@@ -418,6 +416,37 @@ func (vc *Client) handleExistingMount(mount string, mountInfo *api.MountOutput) 
 
 		return nil
 	}
+}
+
+// verifyMountWithoutListCapability handles the case where the token cannot
+// list sys/mounts, so mount existence cannot be confirmed. Rather than
+// silently assuming the mount is present (which previously left fresh
+// vault stores without a secret/ mount and caused provisioning to fail
+// deep in the call stack), this attempts a best-effort mount creation -
+// which uses a separate, more narrowly grantable capability - and reports
+// loudly when even that cannot succeed.
+func (vc *Client) verifyMountWithoutListCapability(mount string, createIfMissing bool) error {
+	loggerInstance := logger.Get().Named("Verify Mount")
+	loggerInstance.Error(
+		"cannot verify mount %s: token lacks sys/mounts list capability", mount,
+	)
+
+	if !createIfMissing {
+		return fmt.Errorf("%w: %s (unable to verify due to forbidden mount listing)", ErrVaultMountListingForbidden, mount)
+	}
+
+	createErr := vc.createKVv2Mount(mount)
+	if createErr != nil {
+		loggerInstance.Error(
+			"mount %s could not be created or confirmed after listing was forbidden: %s", mount, createErr,
+		)
+
+		return fmt.Errorf("%w: %s: %w", ErrVaultMountListingForbidden, mount, createErr)
+	}
+
+	loggerInstance.Info("mount %s confirmed via best-effort create despite forbidden listing", mount)
+
+	return nil
 }
 
 // checkMountExists checks if a mount exists and returns its information.
