@@ -179,6 +179,16 @@ func (b *Broker) handleValkeyUnbind(ctx context.Context, instanceID, bindingID s
 		return err
 	}
 
+	// Symmetry with the bind path (processDynamicCredentials): dynamic per-binding users are
+	// only ever created when the plan's credentials carry the ACL trigger fields
+	// (service_type: valkey + admin_password). A classic plan (shared-password credentials)
+	// never minted a user for this binding, so there is nothing to delete -- and we could not
+	// even connect as admin. Succeed as a no-op instead of failing the unbind.
+	if !IsValkeyService(credMap) {
+		logger.Info("Plan credentials carry no ACL trigger fields (classic plan) - no per-binding user to delete for binding %s", bindingID)
+		return nil
+	}
+
 	conn, err := extractValkeyConnInfo(credMap)
 	if err != nil {
 		return err
