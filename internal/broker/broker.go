@@ -1281,6 +1281,24 @@ func (b *Broker) removeOrphanedInstance(ctx context.Context, instanceID, deploym
 	}
 }
 
+// storeDeploymentNameInIndex records the BOSH deployment name in the 'db' index.
+// LastOperation resolves an instance through that index, and the name recorded
+// here is what keeps it from having to re-derive one from a mutable plan ID.
+func (b *Broker) storeDeploymentNameInIndex(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
+	baseData := map[string]interface{}{
+		"deployment_name": deploymentName,
+	}
+
+	entry := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+	entry["deployment_name"] = deploymentName
+
+	err := b.Vault.Index(ctx, instanceID, entry)
+	if err != nil {
+		logger.Error("failed to record deployment name in vault index: %s", err)
+		// Non-fatal: LastOperation falls back to deriving the name from the plan ID.
+	}
+}
+
 func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, details domain.ProvisionDetails, logger logger.Logger) error {
 	logger.Debug("recording service request in vault immediately")
 
@@ -1397,6 +1415,10 @@ func (b *Broker) storeInstanceData(ctx context.Context, instanceID string, detai
 
 	// Store deployment info and root data
 	b.storeDeploymentInfo(ctx, instanceID, deploymentName, details, logger)
+
+	// Record the deployment name in the 'db' index as well. LastOperation reads
+	// the index, and this is the only authoritative copy of the name there.
+	b.storeDeploymentNameInIndex(ctx, instanceID, deploymentName, logger)
 
 	// Write debug files
 	b.writeDebugFiles(instanceID, details, logger)
@@ -1845,7 +1867,17 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 		return nil, "", nil // Return nil instance to indicate deletion
 	}
 
-	deploymentName := instance.PlanID + "-" + instanceID
+	// Prefer the deployment name recorded at provision time. Deriving it from
+	// PlanID is only a fallback for instances indexed before that field existed:
+	// the reconciler can rewrite PlanID, and a plan ID that extends another one
+	// (valkey-standalone vs valkey-standalone-classic) then yields the name of a
+	// deployment that was never created, so LastOperation polls forever.
+	deploymentName := instance.DeploymentName
+	if deploymentName == "" {
+		deploymentName = instance.PlanID + "-" + instanceID
+		logger.Debug("no deployment_name recorded for instance %s; derived %s from plan ID", instanceID, deploymentName)
+	}
+
 	logger.Debug("checking deployment: %s", deploymentName)
 
 	return instance, deploymentName, nil

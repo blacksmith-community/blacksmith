@@ -71,9 +71,14 @@ func (m *ServiceMatcher) MatchDeployment(deployment DeploymentDetail, services [
 	// Try to match the full service-plan pattern
 	for _, service := range services {
 		for _, plan := range service.Plans {
-			// Build expected prefix: service-plan
-			expectedPrefix := fmt.Sprintf("%s-%s", service.ID, plan.ID)
-			if servicePlanPrefix == expectedPrefix {
+			// Plan IDs loaded from a forge are already service-prefixed
+			// (services.ReadPlans sets plan.ID = service.ID + "-" + plan.ID), and the
+			// deployment is named "<plan.ID>-<uuid>". Accept that form as well as the
+			// bare "<service.ID>-<plan.ID>" one, otherwise this exact match never fires
+			// for real forge plans and every deployment falls through to the weaker
+			// prefix-based inference below.
+			if servicePlanPrefix == plan.ID ||
+				servicePlanPrefix == fmt.Sprintf("%s-%s", service.ID, plan.ID) {
 				m.logger.Debugf("Found exact match: service=%s, plan=%s", service.ID, plan.ID)
 
 				result := &MatchResult{
@@ -368,21 +373,32 @@ func (m *ServiceMatcher) inferServiceFromDeploymentName(deploymentName, instance
 		return nil
 	}
 
+	// Take the LONGEST matching plan ID, not the first. One plan ID can extend
+	// another (valkey-standalone vs valkey-standalone-classic); first-match would
+	// always attribute the longer plan's deployments to the shorter plan.
+	var best *MatchResult
+
 	for _, service := range broker.GetServices() {
 		for _, plan := range service.Plans {
-			if strings.HasPrefix(deploymentName, plan.ID+"-") {
-				return &MatchResult{
-					ServiceID:   service.ID,
-					PlanID:      plan.ID,
-					InstanceID:  instanceID,
-					Confidence:  deploymentConfidenceMid,
-					MatchReason: "meta_params_inference",
-				}
+			if !strings.HasPrefix(deploymentName, plan.ID+"-") {
+				continue
+			}
+
+			if best != nil && len(plan.ID) <= len(best.PlanID) {
+				continue
+			}
+
+			best = &MatchResult{
+				ServiceID:   service.ID,
+				PlanID:      plan.ID,
+				InstanceID:  instanceID,
+				Confidence:  deploymentConfidenceMid,
+				MatchReason: "meta_params_inference",
 			}
 		}
 	}
 
-	return nil
+	return best
 }
 
 // tryPatternMatching attempts pattern matching with service/plan names.
