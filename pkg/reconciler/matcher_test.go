@@ -453,3 +453,78 @@ func TestIsValidUUID(t *testing.T) {
 		})
 	}
 }
+
+// Production plan IDs are already service-prefixed by the catalog loader
+// (services.ReadPlans does planData.ID = service.ID + "-" + planData.ID), so a
+// deployment is named "<plan.ID>-<uuid>", not "<service.ID>-<plan.ID>-<uuid>".
+//
+// These cases also cover plan IDs that extend another plan ID, where matching on
+// the first prefix hit silently attributes the instance to the shorter plan.
+func TestServiceMatcher_MatchDeployment_ServicePrefixedPlanIDs(t *testing.T) {
+	t.Parallel()
+
+	services := []Service{
+		{
+			ID:   "valkey",
+			Name: "valkey",
+			Plans: []Plan{
+				{ID: "valkey-standalone", Name: "standalone"},
+				{ID: "valkey-standalone-classic", Name: "standalone-classic"},
+				{ID: "valkey-cluster", Name: "cluster"},
+				{ID: "valkey-cluster-classic", Name: "cluster-classic"},
+			},
+		},
+	}
+
+	matcher := NewServiceMatcher(&mockBroker{services: services}, NewMockLogger())
+
+	tests := []struct {
+		name           string
+		deploymentName string
+		expectedPlanID string
+	}{
+		{
+			name:           "plain plan matches itself",
+			deploymentName: "valkey-standalone-12345678-1234-1234-1234-123456789abc",
+			expectedPlanID: "valkey-standalone",
+		},
+		{
+			name:           "extending plan id is not swallowed by the shorter one",
+			deploymentName: "valkey-standalone-classic-12345678-1234-1234-1234-123456789abc",
+			expectedPlanID: "valkey-standalone-classic",
+		},
+		{
+			name:           "cluster plain plan matches itself",
+			deploymentName: "valkey-cluster-12345678-1234-1234-1234-123456789abc",
+			expectedPlanID: "valkey-cluster",
+		},
+		{
+			name:           "extending cluster plan id is not swallowed",
+			deploymentName: "valkey-cluster-classic-12345678-1234-1234-1234-123456789abc",
+			expectedPlanID: "valkey-cluster-classic",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := matcher.MatchDeployment(
+				DeploymentDetail{DeploymentInfo: DeploymentInfo{Name: testCase.deploymentName}},
+				services,
+			)
+			if err != nil {
+				t.Fatalf("MatchDeployment(%s) returned error: %v", testCase.deploymentName, err)
+			}
+
+			if result.PlanID != testCase.expectedPlanID {
+				t.Errorf("plan ID = %q, want %q (deployment %s)",
+					result.PlanID, testCase.expectedPlanID, testCase.deploymentName)
+			}
+
+			if result.ServiceID != "valkey" {
+				t.Errorf("service ID = %q, want %q", result.ServiceID, "valkey")
+			}
+		})
+	}
+}
