@@ -11400,6 +11400,10 @@ span.config-type.resurrection {
   border-left: 3px solid #9ca3af;
 }
 
+#upgrade .upgrade-task-instance.instance-timed-out {
+  border-left: 3px solid #a855f7;
+}
+
 /* Instance actions container */
 #upgrade .upgrade-task-instance .instance-actions {
   display: flex;
@@ -11512,4 +11516,8 @@ span.config-type.resurrection {
 
 #upgrade .status-icon.skipped {
   color: #9ca3af;
+}
+
+#upgrade .status-icon.timed-out {
+  color: #a855f7;
 }

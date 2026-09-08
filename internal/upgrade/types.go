@@ -38,6 +38,9 @@ const (
 	InstanceStatusCancelled InstanceStatus = "cancelled"
 	// InstanceStatusSkipped indicates the instance upgrade was skipped (due to job cancellation).
 	InstanceStatusSkipped InstanceStatus = "skipped"
+	// InstanceStatusTimedOut indicates blacksmith stopped watching after the per-instance
+	// deadline; the BOSH deployment may still be running and must be verified manually.
+	InstanceStatusTimedOut InstanceStatus = "timed_out"
 )
 
 // InstanceUpgrade represents the upgrade status for a single instance.
@@ -67,6 +70,7 @@ type UpgradeTask struct {
 	FailedCount     int               `json:"failed_count"`
 	CancelledCount  int               `json:"cancelled_count"`
 	SkippedCount    int               `json:"skipped_count"`
+	TimedOutCount   int               `json:"timed_out_count"`
 	CreatedAt       time.Time         `json:"created_at"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	CompletedAt     *time.Time        `json:"completed_at,omitempty"`

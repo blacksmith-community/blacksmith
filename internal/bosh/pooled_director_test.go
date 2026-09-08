@@ -419,6 +419,12 @@ func (m *MockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, erro
 	return &bosh.Task{ID: 1}, nil
 }
 
+func (m *MockDirector) UpdateDeploymentAsync(name, manifest string) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	return &bosh.Task{ID: 1, State: "queued"}, nil
+}
+
 func (m *MockDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
 	m.incrementCallCount()
 

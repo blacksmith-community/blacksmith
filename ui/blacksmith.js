@@ -2743,7 +2743,7 @@
       `;
     }).join('');
 
-    const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0)) / task.total_count * 100) : 0;
+    const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0) + (task.timed_out_count || 0)) / task.total_count * 100) : 0;
     const isRunning = task.status === 'running';
     const isPaused = task.status === 'paused';
     const canControl = isRunning || isPaused;
@@ -2780,7 +2780,7 @@
           </div>
           <div class="summary-row">
             <span class="label">Progress:</span>
-            <span class="value">${task.completed_count}/${task.total_count} completed${task.failed_count ? `, ${task.failed_count} failed` : ''}${task.cancelled_count ? `, ${task.cancelled_count} cancelled` : ''}${task.skipped_count ? `, ${task.skipped_count} skipped` : ''} (${progress}%)</span>
+            <span class="value">${task.completed_count}/${task.total_count} completed${task.failed_count ? `, ${task.failed_count} failed` : ''}${task.cancelled_count ? `, ${task.cancelled_count} cancelled` : ''}${task.skipped_count ? `, ${task.skipped_count} skipped` : ''}${task.timed_out_count ? `, ${task.timed_out_count} timed out` : ''} (${progress}%)</span>
           </div>
           <div class="summary-row">
             <span class="label">Created:</span>
@@ -2804,6 +2804,7 @@
       case 'pending': return '<span class="status-icon pending">&#8987;</span>';
       case 'cancelled': return '<span class="status-icon cancelled">&#10006;</span>';
       case 'skipped': return '<span class="status-icon skipped">&#8594;</span>';
+      case 'timed_out': return '<span class="status-icon timed-out" title="Deadline exceeded; BOSH deployment may still be running — verify manually">&#9201;</span>';
       default: return '';
     }
   };
@@ -2817,6 +2818,7 @@
       case 'pending': return 'instance-pending';
       case 'cancelled': return 'instance-cancelled';
       case 'skipped': return 'instance-skipped';
+      case 'timed_out': return 'instance-timed-out';
       default: return '';
     }
   };

@@ -205,6 +205,10 @@ func (d *mockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, erro
 	return nil, ErrScannerNotImplemented
 }
 
+func (d *mockDirector) UpdateDeploymentAsync(name, manifest string) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
 func (d *mockDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
 	return nil, nil
 }

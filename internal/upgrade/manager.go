@@ -27,6 +27,19 @@ var (
 	ErrTaskNotPaused   = errors.New("task is not paused")
 )
 
+// Watch tuning (vars, not consts, so tests can shrink them).
+var (
+	// instanceDeadline bounds how long we watch a single instance's BOSH task before giving
+	// up, marking it timed-out, and moving on to the next instance. The deployment is left
+	// running. No service upgrade should take longer than this.
+	instanceDeadline = 60 * time.Minute
+	// pollInterval is how often we poll the BOSH task state.
+	pollInterval = 5 * time.Second
+	// perCallTimeout bounds a single GetTask poll so one stalled connection cannot hang the
+	// watch; the next tick retries on a fresh connection.
+	perCallTimeout = 30 * time.Second
+)
+
 // Manager manages upgrade tasks.
 type Manager struct {
 	mu       sync.RWMutex
@@ -365,7 +378,8 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		}
 		if instance.Status == InstanceStatusSuccess ||
 			instance.Status == InstanceStatusCancelled ||
-			instance.Status == InstanceStatusSkipped {
+			instance.Status == InstanceStatusSkipped ||
+			instance.Status == InstanceStatusTimedOut {
 			continue
 		}
 
@@ -378,10 +392,10 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		completedAt := time.Now()
 		task.CompletedAt = &completedAt
 
-		if task.FailedCount > 0 && task.CompletedCount == 0 {
+		// Only a job with NO successes and NO timeouts (i.e. everything hard-failed) is
+		// "failed". Timeouts count as partial completion (the deploy may still finish).
+		if task.CompletedCount == 0 && task.TimedOutCount == 0 && task.FailedCount > 0 {
 			task.Status = TaskStatusFailed
-		} else if task.FailedCount > 0 || task.CancelledCount > 0 {
-			task.Status = TaskStatusCompleted // Partial success
 		} else {
 			task.Status = TaskStatusCompleted
 		}
@@ -474,104 +488,132 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 	m.logger.Debug("Stemcell overlay merged successfully for %s, new manifest size: %d bytes",
 		instance.DeploymentName, len(newManifest))
 
-	// === START 2 GOROUTINES APPROACH ===
+	// === FIRE, THEN WATCH THE TASK OURSELVES ===
+	// We deliberately do NOT use the blocking dep.Update() (UpdateDeployment): it has no
+	// request timeout and hangs forever on a stalled connection, wedging the whole job and
+	// leaking its batch slot. Instead we fire the update (returns immediately with a task id)
+	// and poll GetTask with our own per-call timeout and an overall per-instance deadline.
+	m.logger.Debug("Firing deployment update for %s", instance.DeploymentName)
 
-	// Channel to receive result from update goroutine
-	updateDoneCh := make(chan error, 1)
-
-	// Channel to signal task ID finder to stop
-	stopTaskFinderCh := make(chan struct{})
-
-	// Goroutine 1: Run UpdateDeployment (blocking)
-	m.logger.Debug("Starting deployment update goroutine for %s", instance.DeploymentName)
-	go func() {
-		_, err := m.director.UpdateDeployment(instance.DeploymentName, newManifest)
-		updateDoneCh <- err
-	}()
-
-	// Goroutine 2: Poll to find BOSH task ID for UI display
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-stopTaskFinderCh:
-				return
-			case <-ticker.C:
-				// Skip if we already have the task ID
-				m.mu.RLock()
-				hasTaskID := instance.BOSHTaskID > 0
-				m.mu.RUnlock()
-				if hasTaskID {
-					return
-				}
-
-				// Find running task for this deployment
-				runningTask, err := m.director.FindRunningTaskForDeployment(instance.DeploymentName)
-				if err != nil {
-					m.logger.Debug("Error finding running task for %s: %v", instance.DeploymentName, err)
-					continue
-				}
-
-				if runningTask != nil {
-					m.mu.Lock()
-					instance.BOSHTaskID = runningTask.ID
-					m.mu.Unlock()
-					m.logger.Info("Found BOSH task %d for deployment %s", runningTask.ID, instance.DeploymentName)
-					m.persistTask(ctx, task) //nolint:errcheck
-					return
-				}
-			}
-		}
-	}()
-
-	// Main thread: Wait for completion or task-level cancel signal
-	var updateErr error
-	select {
-	case updateErr = <-updateDoneCh:
-		// Update completed (success or failure)
-		m.logger.Debug("Update goroutine completed for %s", instance.DeploymentName)
-
-	case <-cancelCh:
-		// Task-level cancel
-		m.logger.Info("Task-level cancel for instance %s", instance.InstanceID)
-		m.cancelRunningTaskForDeployment(instance.DeploymentName)
-		updateErr = <-updateDoneCh
-
-	case <-m.stopCh:
-		// Manager stopped
-		m.logger.Info("Manager stopped while upgrading instance %s", instance.InstanceID)
-		m.cancelRunningTaskForDeployment(instance.DeploymentName)
-		updateErr = <-updateDoneCh
-	}
-
-	// Stop the task finder goroutine
-	close(stopTaskFinderCh)
-
-	// Handle result
-	if updateErr != nil {
+	fired, err := m.director.UpdateDeploymentAsync(instance.DeploymentName, newManifest)
+	if err != nil {
 		m.mu.Lock()
 		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("BOSH task failed: %v", updateErr)
+		instance.Error = fmt.Sprintf("failed to start deployment update: %v", err)
 		task.FailedCount++
-		m.logger.Error("Update failed for %s: %v", instance.DeploymentName, updateErr)
 		m.mu.Unlock()
+		m.logger.Error("Failed to fire update for %s: %v", instance.DeploymentName, err)
 		m.persistTask(ctx, task) //nolint:errcheck
+
 		return
 	}
 
-	// Success
 	m.mu.Lock()
-	completedAt := time.Now()
-	instance.CompletedAt = &completedAt
-	instance.Status = InstanceStatusSuccess
-	task.CompletedCount++
-	m.logger.Info("Successfully upgraded instance %s", instance.InstanceID)
+	instance.BOSHTaskID = fired.ID
+	m.mu.Unlock()
+	m.logger.Info("Deployment update for %s running as BOSH task %d", instance.DeploymentName, fired.ID)
+	m.persistTask(ctx, task) //nolint:errcheck
+
+	outcome, msg := m.watchTask(instance, fired.ID, cancelCh)
+
+	m.mu.Lock()
+	switch outcome {
+	case InstanceStatusSuccess:
+		completedAt := time.Now()
+		instance.CompletedAt = &completedAt
+		instance.Status = InstanceStatusSuccess
+		task.CompletedCount++
+		m.logger.Info("Successfully upgraded instance %s", instance.InstanceID)
+	case InstanceStatusTimedOut:
+		instance.Status = InstanceStatusTimedOut
+		instance.Error = msg
+		task.TimedOutCount++
+		m.logger.Error("Instance %s timed out: %s", instance.InstanceID, msg)
+	case InstanceStatusCancelled:
+		instance.Status = InstanceStatusCancelled
+		task.CancelledCount++
+		m.logger.Info("Instance %s cancelled", instance.InstanceID)
+	default: // InstanceStatusFailed
+		instance.Status = InstanceStatusFailed
+		instance.Error = msg
+		task.FailedCount++
+		m.logger.Error("Instance %s failed: %s", instance.InstanceID, msg)
+	}
 	m.mu.Unlock()
 
-	// Persist progress
 	m.persistTask(ctx, task) //nolint:errcheck
+}
+
+// watchTask polls the BOSH task until it reaches a terminal state, the per-instance deadline
+// elapses, or a cancel/stop signal arrives. Each GetTask call is bounded by perCallTimeout so
+// a single stalled poll cannot hang the watch — the next tick retries on a fresh connection.
+// On deadline the BOSH deployment is LEFT RUNNING (not cancelled) and the instance is marked
+// timed-out for manual verification. Returns the resolved status and a message.
+func (m *Manager) watchTask(instance *InstanceUpgrade, taskID int, cancelCh <-chan struct{}) (InstanceStatus, string) {
+	deadline := time.After(instanceDeadline)
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	// pollState fetches the task state with a per-call timeout. A stalled call is abandoned
+	// (its goroutine leaks until the underlying HTTP call returns) and reported as not-ready,
+	// so the next tick retries on a new connection.
+	pollState := func() (state string, ok bool) {
+		type res struct {
+			state string
+			ok    bool
+		}
+
+		ch := make(chan res, 1)
+
+		go func() {
+			t, err := m.director.GetTask(taskID)
+			if err != nil || t == nil {
+				ch <- res{"", false}
+
+				return
+			}
+
+			ch <- res{t.State, true}
+		}()
+
+		select {
+		case r := <-ch:
+			return r.state, r.ok
+		case <-time.After(perCallTimeout):
+			m.logger.Debug("GetTask(%d) for %s stalled past %s; retrying next tick",
+				taskID, instance.DeploymentName, perCallTimeout)
+
+			return "", false
+		}
+	}
+
+	for {
+		if state, ok := pollState(); ok {
+			switch state {
+			case "done":
+				return InstanceStatusSuccess, ""
+			case "error", "errored", "cancelled", "cancelling":
+				return InstanceStatusFailed, fmt.Sprintf("BOSH task %d finished in state %q", taskID, state)
+			}
+			// queued/processing → keep watching
+		}
+
+		select {
+		case <-ticker.C:
+			// poll again
+		case <-deadline:
+			return InstanceStatusTimedOut, fmt.Sprintf(
+				"exceeded %s deadline; BOSH task %d may still be running — verify manually",
+				instanceDeadline, taskID)
+		case <-cancelCh:
+			m.cancelRunningTaskForDeployment(instance.DeploymentName)
+
+			return InstanceStatusCancelled, ""
+		case <-m.stopCh:
+			return InstanceStatusCancelled, "manager stopped"
+		}
+	}
 }
 
 // cancelRunningTaskForDeployment finds and cancels any running BOSH task for the deployment.
@@ -625,22 +667,27 @@ func (m *Manager) GetTaskWithRunningInstance(instanceID string) (*UpgradeTask, *
 // PauseTask pauses a running task. Current instance continues, but next instances won't start.
 func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	task, exists := m.tasks[taskID]
 	if !exists {
+		m.mu.Unlock()
+
 		return ErrTaskNotFound
 	}
 
 	if task.Status != TaskStatusRunning {
+		m.mu.Unlock()
+
 		return ErrTaskNotRunning
 	}
 
 	task.Paused = true
 	task.Status = TaskStatusPaused
 	m.logger.Info("Paused task %s", taskID)
+	// Release before persisting: persistTask snapshots under its own RLock, so we must not
+	// hold the write lock across it (would deadlock and would hold the lock during I/O).
+	m.mu.Unlock()
 
-	// Persist the paused state
 	if err := m.persistTask(ctx, task); err != nil {
 		m.logger.Error("Failed to persist paused state for task %s: %v", taskID, err)
 	}
@@ -803,14 +850,24 @@ func (m *Manager) loadPersistedTasks(ctx context.Context) error {
 	return nil
 }
 
-// persistTask saves an upgrade task to vault.
+// persistTask saves an upgrade task to vault. It marshals a consistent SNAPSHOT taken under
+// the read lock, so it never races the goroutines that mutate the task under the write lock.
+// Callers must NOT hold m.mu when calling this (it takes m.mu.RLock and does I/O).
 func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
 	m.logger.Debug("Persisting task %s to vault", task.ID)
 
-	// Save the full task data
-	taskPath := upgradeTasksVaultPath + "/" + task.ID
+	// Snapshot under RLock: copy the struct + deep-copy the Instances slice so marshaling
+	// reads stable data. (Instance time pointers are set once and never mutated afterward.)
+	m.mu.RLock()
+	snapshot := *task
+	snapshot.Instances = make([]InstanceUpgrade, len(task.Instances))
+	copy(snapshot.Instances, task.Instances)
+	m.mu.RUnlock()
 
-	err := m.vault.Put(ctx, taskPath, task)
+	// Save the full task data
+	taskPath := upgradeTasksVaultPath + "/" + snapshot.ID
+
+	err := m.vault.Put(ctx, taskPath, &snapshot)
 	if err != nil {
 		return fmt.Errorf("failed to save task to vault: %w", err)
 	}
@@ -828,10 +885,10 @@ func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
 		tasksIndex = make(map[string]interface{})
 	}
 
-	// Add task reference to index
-	tasksIndex[task.ID] = map[string]interface{}{
-		"status":     task.Status,
-		"created_at": task.CreatedAt.Unix(),
+	// Add task reference to index (from the snapshot, not the live task)
+	tasksIndex[snapshot.ID] = map[string]interface{}{
+		"status":     snapshot.Status,
+		"created_at": snapshot.CreatedAt.Unix(),
 	}
 
 	err = m.vault.Put(ctx, upgradeTasksVaultPath, tasksIndex)
@@ -839,7 +896,7 @@ func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
 		return fmt.Errorf("failed to update tasks index: %w", err)
 	}
 
-	m.logger.Debug("Task %s persisted successfully", task.ID)
+	m.logger.Debug("Task %s persisted successfully", snapshot.ID)
 
 	return nil
 }

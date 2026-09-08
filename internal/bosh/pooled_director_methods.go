@@ -395,6 +395,12 @@ func (p *PooledDirector) UpdateDeployment(name, manifest string) (*Task, error) 
 	return task, nil
 }
 
+// UpdateDeploymentAsync fires the update without watching. It returns as soon as the task is
+// created, so it does not need the long-running pool slot the blocking UpdateDeployment uses.
+func (p *PooledDirector) UpdateDeploymentAsync(name, manifest string) (*Task, error) {
+	return p.director.UpdateDeploymentAsync(name, manifest)
+}
+
 // FindRunningTaskForDeployment implements Director interface - no pooling for read operations.
 func (p *PooledDirector) FindRunningTaskForDeployment(deploymentName string) (*Task, error) {
 	return p.director.FindRunningTaskForDeployment(deploymentName)

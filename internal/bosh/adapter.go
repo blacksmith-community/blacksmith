@@ -77,6 +77,13 @@ type Director interface {
 	// Deployment update
 	UpdateDeployment(name, manifest string) (*Task, error)
 
+	// UpdateDeploymentAsync fires a deployment update and returns the created BOSH task
+	// WITHOUT watching it to completion. The caller is responsible for polling the task
+	// (e.g. via GetTask) to observe completion. This avoids the unbounded blocking watch
+	// inside bosh-cli's dep.Update(), which has no request timeout and can hang forever
+	// on a stalled connection.
+	UpdateDeploymentAsync(name, manifest string) (*Task, error)
+
 	// FindRunningTaskForDeployment finds a currently running task for the given deployment.
 	// Returns nil if no running task is found.
 	FindRunningTaskForDeployment(deploymentName string) (*Task, error)

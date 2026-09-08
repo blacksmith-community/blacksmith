@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -134,6 +136,13 @@ type DirectorAdapter struct {
 	director boshdirector.Director
 	logger   boshlog.Logger
 	log      Logger // Application logger for Info/Debug logging
+
+	// Fields for firing deployment updates without the blocking bosh-cli watch
+	// (UpdateDeploymentAsync). Auth is REUSED from bosh-cli (authAdjustment stamps the
+	// same Authorization header dep.Update() would), so we never reinvent UAA/basic auth.
+	rawEndpoint    string // e.g. https://10.0.0.1:25555
+	rawClient      *http.Client
+	authAdjustment boshdirector.AuthRequestAdjustment
 }
 
 // NewDirectorAdapter creates a new bosh-cli based Director.
@@ -182,13 +191,123 @@ func NewDirectorAdapter(config Config) (Director, error) {
 		return nil, fmt.Errorf("failed to create director: %w", err)
 	}
 
+	// Build the pieces needed to fire deployment updates ourselves (UpdateDeploymentAsync),
+	// reusing bosh-cli's auth (token/basic) and CA trust so we do not reinvent either.
+	rawEndpoint, rawClient, authAdjustment, err := buildRawUpdateClient(factoryConfig)
+	if err != nil {
+		appLogger.Errorf("Failed to build raw update client: %v", err)
+
+		return nil, fmt.Errorf("failed to build raw update client: %w", err)
+	}
+
 	appLogger.Infof("Successfully created BOSH director adapter")
 
 	return &DirectorAdapter{
-		director: director,
-		logger:   logger,
-		log:      appLogger,
+		director:       director,
+		logger:         logger,
+		log:            appLogger,
+		rawEndpoint:    rawEndpoint,
+		rawClient:      rawClient,
+		authAdjustment: authAdjustment,
 	}, nil
+}
+
+// buildRawUpdateClient constructs an authenticated HTTP client + endpoint for firing
+// deployment updates directly (bypassing bosh-cli's blocking dep.Update watch). It reuses
+// the factory config's auth (TokenFunc for UAA, Client/ClientSecret for basic) and CA pool.
+// Unlike bosh-cli's client, this one sets an overall request Timeout so the POST itself
+// cannot hang forever.
+func buildRawUpdateClient(fc *boshdirector.FactoryConfig) (string, *http.Client, boshdirector.AuthRequestAdjustment, error) {
+	adjustment := boshdirector.NewAuthRequestAdjustment(fc.TokenFunc, fc.Client, fc.ClientSecret)
+
+	certPool, err := fc.CACertPool()
+	if err != nil {
+		return "", nil, adjustment, fmt.Errorf("failed to build CA cert pool: %w", err)
+	}
+
+	client := &http.Client{
+		Timeout: 60 * time.Second, // the request timeout bosh-cli's director client lacks
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: certPool, MinVersion: tls.VersionTLS12},
+		},
+		// Do not follow the 302 to /tasks/<id>; we read the Location header ourselves.
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	endpoint := "https://" + net.JoinHostPort(fc.Host, strconv.Itoa(fc.Port))
+
+	return endpoint, client, adjustment, nil
+}
+
+// UpdateDeploymentAsync fires a deployment update and returns the created task WITHOUT
+// watching it. It POSTs the manifest exactly as bosh-cli's dep.Update() would, then reads
+// the task id from the 302 Location header (/tasks/<id>). The caller polls the task itself.
+func (d *DirectorAdapter) UpdateDeploymentAsync(name, manifest string) (*Task, error) {
+	d.log.Infof("Firing deployment update (async) for %s", name)
+
+	req, err := http.NewRequest(http.MethodPost, d.rawEndpoint+"/deployments", strings.NewReader(manifest))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build update request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "text/yaml")
+
+	if err := d.authAdjustment.Adjust(req, false); err != nil {
+		return nil, fmt.Errorf("failed to set auth on update request: %w", err)
+	}
+
+	resp, err := d.rawClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fire deployment update: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// Task-creating requests redirect to the new task: 302 Location: /tasks/<id>.
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+
+		return nil, fmt.Errorf("unexpected status %d firing deployment update for %s: %s",
+			resp.StatusCode, name, strings.TrimSpace(string(body)))
+	}
+
+	taskID, err := parseTaskIDFromLocation(resp.Header.Get("Location"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse task id for %s: %w", name, err)
+	}
+
+	d.log.Infof("Deployment update for %s created BOSH task %d", name, taskID)
+
+	return &Task{ID: taskID, State: "queued", Deployment: name}, nil
+}
+
+// parseTaskIDFromLocation extracts <id> from a Director task Location like "/tasks/1234".
+func parseTaskIDFromLocation(location string) (int, error) {
+	if location == "" {
+		return 0, errors.New("empty Location header on deployment update response")
+	}
+
+	trimmed := strings.TrimRight(location, "/")
+	idx := strings.LastIndex(trimmed, "/tasks/")
+	if idx >= 0 {
+		trimmed = trimmed[idx+len("/tasks/"):]
+	} else {
+		trimmed = trimmed[strings.LastIndex(trimmed, "/")+1:]
+	}
+
+	// The remaining segment may carry a query string; keep only the leading digits.
+	end := 0
+	for end < len(trimmed) && trimmed[end] >= '0' && trimmed[end] <= '9' {
+		end++
+	}
+
+	id, err := strconv.Atoi(trimmed[:end])
+	if err != nil {
+		return 0, fmt.Errorf("no task id in Location %q: %w", location, err)
+	}
+
+	return id, nil
 }
 
 // Logger interface for application logging.

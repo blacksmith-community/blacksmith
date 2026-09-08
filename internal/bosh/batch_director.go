@@ -118,6 +118,22 @@ func (b *BatchDirector) UpdateDeployment(name, manifest string) (*Task, error) {
 	return b.director.UpdateDeployment(name, manifest)
 }
 
+// UpdateDeploymentAsync fires the update through the batch pool but holds the slot only for
+// the POST (which returns immediately), NOT for the whole deployment watch. This is what
+// prevents the slot leak: a hung watch can no longer pin a batch slot forever, because the
+// caller now watches the task itself (with its own timeout/deadline) outside the pool.
+func (b *BatchDirector) UpdateDeploymentAsync(name, manifest string) (*Task, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), b.timeout)
+	defer cancel()
+
+	if err := b.acquireSlot(ctx); err != nil {
+		return nil, fmt.Errorf("failed to acquire batch slot: %w", err)
+	}
+	defer b.releaseSlot()
+
+	return b.director.UpdateDeploymentAsync(name, manifest)
+}
+
 // FindRunningTaskForDeployment passes through (read operation).
 func (b *BatchDirector) FindRunningTaskForDeployment(deploymentName string) (*Task, error) {
 	return b.director.FindRunningTaskForDeployment(deploymentName)

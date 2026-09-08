@@ -185,6 +185,9 @@ func (m *mockDirector) GetInstances(deployment string) ([]bosh.Instance, error) 
 func (m *mockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
 	return nil, ErrMockNotImplemented
 }
+func (m *mockDirector) UpdateDeploymentAsync(name, manifest string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 func (m *mockDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
 	return nil, ErrMockNotImplemented
 }
