@@ -1298,9 +1298,12 @@ func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.Fac
 func createBasicFactoryConfig(config Config) *boshdirector.FactoryConfig {
 	host, port := parseHostAndPort(config.Address, defaultBOSHDirectorPort)
 
+	// The CA must reach the director HTTP client itself, not only the UAA
+	// client, or every director call is verified against the system roots.
 	return &boshdirector.FactoryConfig{
-		Host: host,
-		Port: port,
+		Host:   host,
+		Port:   port,
+		CACert: config.CACert,
 	}
 }
 
