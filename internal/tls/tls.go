@@ -207,10 +207,9 @@ func CreateTLSConfig(tlsConfig config.TLSConfig) (*tls.Config, error) {
 	}
 
 	config := &tls.Config{ // #nosec G402 - MinVersion is enforced to be >= TLS 1.2 above
-		MinVersion:               minVersion,
-		MaxVersion:               maxVersion,
-		PreferServerCipherSuites: true,
-		Certificates:             []tls.Certificate{cert},
+		MinVersion:   minVersion,
+		MaxVersion:   maxVersion,
+		Certificates: []tls.Certificate{cert},
 	}
 
 	// Set cipher suites if specified
