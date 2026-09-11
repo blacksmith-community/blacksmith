@@ -70,6 +70,11 @@ var (
 	ErrConfigNotFound                 = errors.New("config not found")
 	ErrConfigYAMLParseFailed          = errors.New("failed to parse config YAML")
 	ErrDeploymentNameExtractionFailed = errors.New("could not extract deployment name from manifest")
+	// ErrDeploymentNotFound is returned by GetDeployment when the director
+	// answers 404 for the deployment. Callers must use errors.Is against this
+	// sentinel to decide that a deployment does not exist; any other error means
+	// existence is unknown, and a successful response with an empty manifest
+	// means the deployment exists but its first deploy has not finished yet.
 	ErrDeploymentNotFound             = errors.New("deployment not found")
 	ErrNoTaskFoundDeploymentDeletion  = errors.New("no task found for deployment deletion")
 	ErrNoTaskFoundReleaseUpload       = errors.New("no task found for release upload")
@@ -328,12 +333,10 @@ func (d *DirectorAdapter) GetDeployment(name string) (*DeploymentDetail, error) 
 
 	dep, err := d.director.FindDeployment(name)
 	if err != nil {
-		// Check if it's a "not found" error (deployment doesn't exist)
-		errStr := err.Error()
-		if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
+		if isDirectorNotFoundError(err) {
 			d.log.Debugf("Deployment %s not found (expected during early provisioning stages)", name)
 
-			return nil, fmt.Errorf("failed to get deployment %s: %w", name, err)
+			return nil, fmt.Errorf("%w: %s: %w", ErrDeploymentNotFound, name, err)
 		}
 
 		d.log.Errorf("Failed to find deployment %s: %v", name, err)
@@ -343,14 +346,16 @@ func (d *DirectorAdapter) GetDeployment(name string) (*DeploymentDetail, error) 
 
 	d.log.Debugf("Retrieving manifest for deployment %s", name)
 
+	// FindDeployment does not talk to the director; the GET /deployments/:name
+	// request happens here, so a 404 for a missing deployment surfaces from
+	// Manifest(). A deployment whose first deploy is still running answers 200
+	// with an empty manifest, which is an existing deployment, not a missing one.
 	manifest, err := dep.Manifest()
 	if err != nil {
-		// Check if it's a "not found" error (manifest doesn't exist)
-		errStr := err.Error()
-		if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
-			d.log.Debugf("Manifest for deployment %s not found (expected during early provisioning stages)", name)
+		if isDirectorNotFoundError(err) {
+			d.log.Debugf("Deployment %s not found (expected during early provisioning stages)", name)
 
-			return nil, fmt.Errorf("failed to get manifest for deployment %s: %w", name, err)
+			return nil, fmt.Errorf("%w: %s: %w", ErrDeploymentNotFound, name, err)
 		}
 
 		d.log.Errorf("Failed to get manifest for deployment %s: %v", name, err)
@@ -358,12 +363,25 @@ func (d *DirectorAdapter) GetDeployment(name string) (*DeploymentDetail, error) 
 		return nil, fmt.Errorf("failed to get manifest for deployment %s: %w", name, err)
 	}
 
-	d.log.Infof("Successfully retrieved deployment %s (manifest size: %d bytes)", name, len(manifest))
+	if manifest == "" {
+		d.log.Infof("Successfully retrieved deployment %s (no manifest yet; a deploy is still in flight)", name)
+	} else {
+		d.log.Infof("Successfully retrieved deployment %s (manifest size: %d bytes)", name, len(manifest))
+	}
 
 	return &DeploymentDetail{
 		Name:     name,
 		Manifest: manifest,
 	}, nil
+}
+
+// isDirectorNotFoundError reports whether a bosh-cli error is the director's
+// 404 for a missing deployment. bosh-cli does not export typed errors, so the
+// status code and the director's "doesn't exist" description are the only signals.
+func isDirectorNotFoundError(err error) bool {
+	errStr := err.Error()
+
+	return strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'")
 }
 
 // CreateDeployment creates a new deployment.
