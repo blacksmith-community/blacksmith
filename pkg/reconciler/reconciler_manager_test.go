@@ -132,13 +132,10 @@ func (s *rmMockSynchronizer) getCalls() [][]InstanceData {
 	return callsCopy
 }
 
-// Helper to build a minimally wired manager with our mocks.
-func newTestManager(t *testing.T) (*ReconcilerManager, *rmMockScanner, *rmMockUpdater, *rmMockSynchronizer) {
-	t.Helper()
-
-	logger := NewMockLogger()
-
-	cfg := ReconcilerConfig{
+// newTestManagerConfig returns the small, fast configuration shared by the
+// manager tests.
+func newTestManagerConfig() ReconcilerConfig {
+	return ReconcilerConfig{
 		Enabled: true,
 		// Intentionally small; validation will warn but manager still initializes
 		Interval: 50 * time.Millisecond,
@@ -163,9 +160,16 @@ func newTestManager(t *testing.T) (*ReconcilerManager, *rmMockScanner, *rmMockUp
 		},
 		Metrics: MetricsConfig{Enabled: false},
 	}
+}
+
+// Helper to build a minimally wired manager with our mocks.
+func newTestManager(t *testing.T) (*ReconcilerManager, *rmMockScanner, *rmMockUpdater, *rmMockSynchronizer) {
+	t.Helper()
+
+	logger := NewMockLogger()
 
 	// Use constructor to get limiters, breakers, worker pool
-	manager := NewReconcilerManager(cfg, nil, nil, nil, logger, nil)
+	manager := NewReconcilerManager(newTestManagerConfig(), nil, nil, nil, logger, nil)
 
 	// Swap in our mocks
 	scan := &rmMockScanner{}

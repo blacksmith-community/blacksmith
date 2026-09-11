@@ -47,6 +47,11 @@ type ReconcilerManager struct {
 	status   Status
 	statusMu sync.RWMutex
 
+	// cfDiscoveryComplete records whether the current run obtained the CF
+	// service instance list, so an empty list can be told apart from a failed
+	// or unconfigured discovery.
+	cfDiscoveryComplete atomic.Bool
+
 	// Multiple run prevention
 	IsReconciling  atomic.Bool
 	runCounter     atomic.Uint64
@@ -841,6 +846,8 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 
 // discoverCFInstancesWithRateLimit discovers CF instances with rate limiting.
 func (r *ReconcilerManager) discoverCFInstancesWithRateLimit(ctx context.Context) []CFServiceInstanceDetails {
+	r.cfDiscoveryComplete.Store(false)
+
 	// Skip if CF is not configured
 	if r.cfManager == nil {
 		r.logger.Debugf("CF manager not configured, skipping CF discovery")
@@ -880,6 +887,8 @@ func (r *ReconcilerManager) discoverCFInstancesWithRateLimit(ctx context.Context
 	}
 
 	if instances, ok := result.([]CFServiceInstanceDetails); ok {
+		r.cfDiscoveryComplete.Store(true)
+
 		return instances
 	}
 
@@ -1150,6 +1159,12 @@ func (r *ReconcilerManager) shouldSkipInstance(instance InstanceData) bool {
 		return true
 	}
 
+	if isUnclaimedDeployment(instance) {
+		r.logger.Debugf("Skipping vault update for unclaimed deployment %s (instance %s)", instance.Deployment.Name, instance.ID)
+
+		return true
+	}
+
 	if r.isInstanceDeleted(instance.ID) {
 		r.logger.Debugf("Skipping update for instance %s as it's marked as deleted in vault", instance.ID)
 
@@ -1372,10 +1387,63 @@ func (r *ReconcilerManager) processDeployment(ctx context.Context, deployment De
 
 	inst := r.createInstanceData(instanceID, detail, deployment.Name)
 	r.matchService(detail, &inst)
-	r.enrichFromCFData(inst.ID, cfInstances, &inst)
+	cfMatched := r.enrichFromCFData(inst.ID, cfInstances, &inst)
 	r.markUnmatchedService(&inst)
+	r.markUnclaimedDeployment(&inst, cfMatched)
 
 	return inst
+}
+
+// markUnclaimedDeployment flags a deployment that has neither a vault index
+// entry nor a Cloud Foundry service instance. Adopting it would recreate an
+// index entry the broker treats as live for a service instance that no longer
+// exists, which is how a deprovision that raced a provision ends up as a
+// zombie. Such deployments are reported for operators rather than recovered.
+// When CF discovery did not run, or the index cannot be read, the historical
+// adoption behaviour is kept.
+func (r *ReconcilerManager) markUnclaimedDeployment(inst *InstanceData, cfMatched bool) {
+	if cfMatched || inst.ID == "" || !r.cfDiscoveryComplete.Load() {
+		return
+	}
+
+	indexed, known := r.isInstanceIndexed(inst.ID)
+	if !known || indexed {
+		return
+	}
+
+	inst.Metadata[MetadataUnclaimedDeployment] = true
+	inst.Metadata["unclaimed_reason"] = "deployment has no vault index entry and no Cloud Foundry service instance"
+
+	r.logger.Warningf("Deployment %s (instance %s) has no vault index entry and no CF service instance; reporting it as an orphaned deployment instead of adopting it",
+		inst.Deployment.Name, inst.ID)
+}
+
+// isInstanceIndexed reports whether the instance has a vault index entry. The
+// second result is false when the index could not be read, in which case the
+// first result carries no information.
+func (r *ReconcilerManager) isInstanceIndexed(instanceID string) (bool, bool) {
+	synchronizer, ok := r.Synchronizer.(*IndexSynchronizer)
+	if !ok || synchronizer == nil {
+		return false, false
+	}
+
+	idx, err := synchronizer.GetVaultIndex()
+	if err != nil {
+		r.logger.Debugf("Failed to get vault index to check whether %s is indexed: %v", instanceID, err)
+
+		return false, false
+	}
+
+	_, exists := idx[instanceID]
+
+	return exists, true
+}
+
+// isUnclaimedDeployment reports whether markUnclaimedDeployment flagged the instance.
+func isUnclaimedDeployment(inst InstanceData) bool {
+	unclaimed, ok := inst.Metadata[MetadataUnclaimedDeployment].(bool)
+
+	return ok && unclaimed
 }
 
 func (r *ReconcilerManager) getDeploymentDetail(ctx context.Context, deployment DeploymentInfo) DeploymentDetail {
@@ -1469,9 +1537,11 @@ func (r *ReconcilerManager) matchService(detail DeploymentDetail, inst *Instance
 	inst.Metadata["match_reason"] = match.MatchReason
 }
 
-func (r *ReconcilerManager) enrichFromCFData(instanceID string, cfInstances []CFServiceInstanceDetails, inst *InstanceData) {
+// enrichFromCFData copies CF service instance details onto the instance and
+// reports whether a matching CF service instance was found.
+func (r *ReconcilerManager) enrichFromCFData(instanceID string, cfInstances []CFServiceInstanceDetails, inst *InstanceData) bool {
 	if instanceID == "" {
-		return
+		return false
 	}
 
 	for _, cfInstance := range cfInstances {
@@ -1481,8 +1551,10 @@ func (r *ReconcilerManager) enrichFromCFData(instanceID string, cfInstances []CF
 
 		r.applyCFInstanceData(cfInstance, inst)
 
-		break
+		return true
 	}
+
+	return false
 }
 
 func (r *ReconcilerManager) applyCFInstanceData(cfInstance CFServiceInstanceDetails, inst *InstanceData) {
