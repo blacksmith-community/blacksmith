@@ -370,6 +370,21 @@ func (vault *Vault) UpdateIndexEntry(ctx context.Context, instanceID string, upd
 // MarkInstanceDeleted marks an instance as deleted in the vault index.
 func (vault *Vault) MarkInstanceDeleted(ctx context.Context, instanceID string) error {
 	logger := logger.Get().Named("vault")
+
+	// Only an instance that is still indexed can be marked. Creating a bare
+	// tombstone for one that a deprovision or the reconciler already removed
+	// leaves an entry with no service, plan, or deployment fields behind.
+	_, exists, err := vault.FindInstance(ctx, instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to check whether instance %s is indexed: %w", instanceID, err)
+	}
+
+	if !exists {
+		logger.Info("instance %s is not in the vault index, nothing to mark as deleted", instanceID)
+
+		return nil
+	}
+
 	logger.Info("marking instance %s as deleted in vault index", instanceID)
 
 	updates := map[string]interface{}{
@@ -379,7 +394,7 @@ func (vault *Vault) MarkInstanceDeleted(ctx context.Context, instanceID string) 
 		"deletion_reason": "deployment not found in BOSH director",
 	}
 
-	err := vault.UpdateIndexEntry(ctx, instanceID, updates)
+	err = vault.UpdateIndexEntry(ctx, instanceID, updates)
 	if err != nil {
 		return fmt.Errorf("failed to mark instance %s as deleted: %w", instanceID, err)
 	}

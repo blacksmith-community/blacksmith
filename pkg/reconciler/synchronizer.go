@@ -14,6 +14,9 @@ const (
 	StatusDeleted = "deleted"
 )
 
+// fieldReconciledAt is the index entry field holding the last reconcile time.
+const fieldReconciledAt = "reconciled_at"
+
 // Static errors for err113 compliance.
 var (
 	ErrIndexValidationFailed       = errors.New("index validation failed")
@@ -166,6 +169,12 @@ func (s *IndexSynchronizer) CheckEntryWarnings(id string, data interface{}) stri
 		return ""
 	}
 
+	// A tombstone is an expected state: the orphan sweep removes it once it is
+	// old enough, and logs that removal, so there is nothing to warn about.
+	if s.isMarkedDeleted(dataMap) {
+		return ""
+	}
+
 	// Check if orphaned
 	if orphaned, ok := dataMap["orphaned"].(bool); ok && orphaned {
 		if orphanedAt, ok := dataMap["orphaned_at"].(string); ok {
@@ -182,7 +191,7 @@ func (s *IndexSynchronizer) CheckEntryWarnings(id string, data interface{}) stri
 	}
 
 	// Check if not recently reconciled
-	if reconciledAt, ok := dataMap["reconciled_at"].(string); ok {
+	if reconciledAt, ok := dataMap[fieldReconciledAt].(string); ok {
 		t, err := time.Parse(time.RFC3339, reconciledAt)
 		if err == nil {
 			if time.Since(t) > 24*time.Hour {
@@ -370,7 +379,7 @@ func (s *IndexSynchronizer) buildInstanceData(inst InstanceData) map[string]inte
 	data := map[string]interface{}{
 		"deployment_name": inst.Deployment.Name,
 		"reconciled":      true,
-		"reconciled_at":   time.Now().Format(time.RFC3339),
+		fieldReconciledAt: time.Now().Format(time.RFC3339),
 		"reconciled_by":   "deployment_reconciler",
 	}
 
@@ -758,8 +767,8 @@ func (s *IndexSynchronizer) SyncIndexWithValidation(ctx context.Context, instanc
 
 // orphanProcessingStats tracks statistics from orphan processing.
 type orphanProcessingStats struct {
-	newOrphans int
-	unorphaned int
+	newOrphans  int
+	unorphaned  int
 	stillOrphan int
 }
 
@@ -832,7 +841,7 @@ func (s *IndexSynchronizer) unorphanInstance(instanceID string, dataMap map[stri
 	delete(dataMap, "preservation_reason")
 
 	dataMap["reconciled"] = true
-	dataMap["reconciled_at"] = time.Now().Format(time.RFC3339)
+	dataMap[fieldReconciledAt] = time.Now().Format(time.RFC3339)
 	dataMap["unorphaned_at"] = time.Now().Format(time.RFC3339)
 
 	s.logger.Infof("Instance %s un-orphaned - deployment found in BOSH", instanceID)

@@ -28,6 +28,12 @@ const OrphanSweepMinimumAge = 2 * time.Hour
 // alone or from an empty manifest, and a running BOSH task or a recent
 // provision task record keeps the entry.
 //
+// Only the index entry is removed. The instance's secrets under
+// secret/<instance-id>/ are left in place, matching what a normal deprovision
+// does: handleSuccessfulDeprovision removes the index entry and deliberately
+// skips Vault.Clear so the credentials survive for auditing. Sweeping those
+// secrets here would delete data that a completed deprovision keeps.
+//
 // It returns the number of entries removed.
 func (r *ReconcilerManager) sweepOrphanedIndexEntries(_ context.Context, reconciled []InstanceData, deploymentNames map[string]bool) int {
 	if r.bosh == nil {
@@ -91,20 +97,22 @@ func (r *ReconcilerManager) sweepOrphanedIndexEntries(_ context.Context, reconci
 }
 
 // shouldSweepIndexEntry decides whether one index entry is a confirmed orphan.
+//
+// A tombstone (status deleted) is the vm-monitor's record that the director
+// already answered 404 for the deployment. When it still names a deployment
+// the director is asked again; when it carries no deployment name at all there
+// is nothing left to confirm and its age alone decides.
 func (r *ReconcilerManager) shouldSweepIndexEntry(synchronizer *IndexSynchronizer, instanceID string, data interface{}, reconciledIDs, deploymentNames map[string]bool) bool {
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		return false
 	}
 
-	if reconciledIDs[instanceID] || synchronizer.isMarkedDeleted(dataMap) {
+	if reconciledIDs[instanceID] {
 		return false
 	}
 
-	deploymentName := indexEntryDeploymentName(instanceID, dataMap)
-	if deploymentName == "" || deploymentNames[deploymentName] {
-		return false
-	}
+	tombstone := synchronizer.isMarkedDeleted(dataMap)
 
 	age, known := indexEntryAge(dataMap)
 	if !known || age < OrphanSweepMinimumAge {
@@ -113,7 +121,22 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(synchronizer *IndexSynchronize
 		return false
 	}
 
-	if r.provisionRecordInFlight(synchronizer, instanceID) {
+	deploymentName := indexEntryDeploymentName(instanceID, dataMap)
+	if deploymentName == "" {
+		if tombstone {
+			r.logger.Infof("Orphan cleanup: removing tombstone index entry %s, it names no deployment and was marked deleted %s ago", instanceID, age.Round(time.Minute))
+
+			return true
+		}
+
+		return false
+	}
+
+	if deploymentNames[deploymentName] {
+		return false
+	}
+
+	if !tombstone && r.provisionRecordInFlight(synchronizer, instanceID) {
 		r.logger.Debugf("Orphan sweep: keeping %s, its provision task record is still in progress", instanceID)
 
 		return false
@@ -145,7 +168,11 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(synchronizer *IndexSynchronize
 		return false
 	}
 
-	r.logger.Infof("Orphan cleanup: removing index entry %s, the director confirmed deployment %s does not exist and no task is in flight", instanceID, deploymentName)
+	if tombstone {
+		r.logger.Infof("Orphan cleanup: removing tombstone index entry %s, the director confirmed deployment %s does not exist and no task is in flight", instanceID, deploymentName)
+	} else {
+		r.logger.Infof("Orphan cleanup: removing index entry %s, the director confirmed deployment %s does not exist and no task is in flight", instanceID, deploymentName)
+	}
 
 	return true
 }
@@ -192,9 +219,14 @@ func (r *ReconcilerManager) provisionRecordInFlight(synchronizer *IndexSynchroni
 }
 
 // indexEntryDeploymentName returns the deployment name recorded on the entry,
-// falling back to the plan ID prefix used before the field existed.
+// falling back to the name the vm-monitor records on a tombstone and then to
+// the plan ID prefix used before the field existed.
 func indexEntryDeploymentName(instanceID string, dataMap map[string]interface{}) string {
 	if name, ok := dataMap["deployment_name"].(string); ok && name != "" {
+		return name
+	}
+
+	if name, ok := dataMap["last_deployment"].(string); ok && name != "" {
 		return name
 	}
 
@@ -206,12 +238,12 @@ func indexEntryDeploymentName(instanceID string, dataMap map[string]interface{})
 }
 
 // indexEntryAge returns the time since the entry was last written by the
-// broker or the reconciler, using the newest timestamp it carries. The second
-// result is false when the entry has no usable timestamp.
+// broker, the reconciler, or the vm-monitor, using the newest timestamp it
+// carries. The second result is false when the entry has no usable timestamp.
 func indexEntryAge(dataMap map[string]interface{}) (time.Duration, bool) {
 	var newest time.Time
 
-	for _, field := range []string{"requested_at", "created_at", "reconciled_at", "discovered_at", "updated_at", "unorphaned_at", "deprovision_requested_at"} {
+	for _, field := range []string{"requested_at", "created_at", fieldReconciledAt, "discovered_at", "updated_at", "unorphaned_at", "deprovision_requested_at", "deleted_at"} {
 		value, ok := dataMap[field].(string)
 		if !ok {
 			continue

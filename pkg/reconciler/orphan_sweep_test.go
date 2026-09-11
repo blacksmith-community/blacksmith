@@ -19,6 +19,11 @@ const (
 	sweepZombieName   = "valkey-standalone-" + sweepZombieID
 	sweepSurvivorID   = "00000000-0000-4000-8000-00000000abcd"
 	sweepSurvivorName = "valkey-standalone-" + sweepSurvivorID
+
+	statusField         = "status"
+	deletedAtField      = "deleted_at"
+	deletedByField      = "deleted_by"
+	deletionReasonField = "deletion_reason"
 )
 
 // sweepFixture wires a manager with a scripted director, a real
@@ -213,5 +218,159 @@ func TestOrphanSweep_RemovesEntryWithStaleProvisionRecord(t *testing.T) {
 
 	if fixture.indexHas(t, sweepZombieID) {
 		t.Fatalf("expected entry %s to be removed despite its stale provision record", sweepZombieID)
+	}
+}
+
+// tombstoneEntry builds the bare entry the vm-monitor leaves behind: status
+// deleted with no service, plan, or deployment fields.
+func tombstoneEntry(deletedAgo time.Duration, extra map[string]interface{}) map[string]interface{} {
+	entry := map[string]interface{}{
+		statusField:         StatusDeleted,
+		deletedAtField:      time.Now().Add(-deletedAgo).Format(time.RFC3339),
+		deletedByField:      "vm-monitor",
+		deletionReasonField: "deployment not found in BOSH director",
+	}
+
+	for key, value := range extra {
+		entry[key] = value
+	}
+
+	return entry
+}
+
+// seedZombieEntry replaces the fixture's zombie entry with the given one.
+func (f *sweepFixture) seedZombieEntry(t *testing.T, entry map[string]interface{}) {
+	t.Helper()
+
+	idx, err := f.synchronizer.GetVaultIndex()
+	if err != nil {
+		t.Fatalf("failed to read index: %v", err)
+	}
+
+	idx[sweepZombieID] = entry
+
+	err = f.synchronizer.SaveVaultIndex(idx)
+	if err != nil {
+		t.Fatalf("failed to seed entry: %v", err)
+	}
+}
+
+// A tombstone that names no deployment is the vm-monitor's record of a 404;
+// once it is old enough its age alone lets the sweep remove it.
+func TestOrphanSweep_RemovesBareTombstoneByAge(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.seedZombieEntry(t, tombstoneEntry(3*time.Hour, nil))
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected bare tombstone %s to be removed", sweepZombieID)
+	}
+
+	if calls := fixture.director.Calls("GetDeployment"); len(calls) != 0 {
+		t.Fatalf("expected no director call for a tombstone without a deployment name, got %v", calls)
+	}
+}
+
+// A fresh tombstone stays until it is older than the sweep minimum age.
+func TestOrphanSweep_KeepsYoungTombstone(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.seedZombieEntry(t, tombstoneEntry(time.Minute, nil))
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if !fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected young tombstone %s to be kept", sweepZombieID)
+	}
+}
+
+// A tombstone that still names its deployment is confirmed with the director
+// and removed on a real 404.
+func TestOrphanSweep_RemovesNamedTombstoneAfterDirectorConfirms(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.seedZombieEntry(t, tombstoneEntry(3*time.Hour, map[string]interface{}{"last_deployment": sweepZombieName}))
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected named tombstone %s to be removed after the director confirmed the 404", sweepZombieID)
+	}
+
+	if calls := fixture.director.Calls("GetDeployment"); len(calls) != 1 || calls[0] != sweepZombieName {
+		t.Fatalf("expected one GetDeployment confirmation for %s, got %v", sweepZombieName, calls)
+	}
+}
+
+// A named tombstone whose deployment still exists on the director is kept.
+func TestOrphanSweep_KeepsNamedTombstoneWhenDeploymentExists(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.seedZombieEntry(t, tombstoneEntry(3*time.Hour, map[string]interface{}{"deployment_name": sweepZombieName}))
+	fixture.director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+		return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
+	}
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if !fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected named tombstone %s to be kept while its deployment exists", sweepZombieID)
+	}
+}
+
+// A named tombstone with a running BOSH task on its deployment is kept.
+func TestOrphanSweep_KeepsNamedTombstoneWhileTaskRuns(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.seedZombieEntry(t, tombstoneEntry(3*time.Hour, map[string]interface{}{"deployment_name": sweepZombieName}))
+	fixture.director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+		return &bosh.Task{ID: 191, State: "processing", Description: "create deployment"}, nil
+	}
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if !fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected named tombstone %s to be kept while a task runs", sweepZombieID)
+	}
+}
+
+// credentialField is the secret key the retention test writes and reads back.
+const credentialField = "password"
+
+// The sweep removes the index entry only. A normal deprovision keeps the
+// instance's secrets for auditing, so the sweep keeps them too.
+func TestOrphanSweep_KeepsInstanceSecretsAfterRemovingTombstone(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.seedZombieEntry(t, tombstoneEntry(3*time.Hour, nil))
+
+	credentials := map[string]interface{}{credentialField: "keep-me"}
+
+	err := fixture.vault.Put(sweepZombieID+"/credentials", credentials)
+	if err != nil {
+		t.Fatalf("failed to seed credentials: %v", err)
+	}
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected tombstone %s to be removed from the index", sweepZombieID)
+	}
+
+	kept, err := fixture.vault.Get(sweepZombieID + "/credentials")
+	if err != nil {
+		t.Fatalf("expected the instance credentials to survive the sweep: %v", err)
+	}
+
+	if kept[credentialField] != "keep-me" {
+		t.Fatalf("expected the credentials to be unchanged, got %v", kept)
 	}
 }

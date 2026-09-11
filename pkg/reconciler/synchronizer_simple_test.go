@@ -139,6 +139,16 @@ func TestCheckEntryWarnings_Simple(t *testing.T) {
 			warnContains: "never reconciled",
 		},
 		{
+			name: "deleted tombstone awaiting sweep",
+			data: map[string]interface{}{
+				statusField:         StatusDeleted,
+				deletedAtField:      time.Now().Format(time.RFC3339),
+				deletedByField:      "vm-monitor",
+				deletionReasonField: "deployment not found in BOSH director",
+			},
+			expectWarn: false,
+		},
+		{
 			name: "missing deployment name",
 			data: map[string]interface{}{
 				"service_id":    "service-1",

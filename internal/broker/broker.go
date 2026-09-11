@@ -1279,6 +1279,12 @@ func (b *Broker) processOrphanedInstances(ctx context.Context, vaultDB *vaultPkg
 	for instanceID, serviceInstance := range vaultDB.Data {
 		logger.Debug("Checking instance: %s", instanceID)
 
+		if isDeletedTombstone(serviceInstance) {
+			logger.Debug("Instance %s is a deleted tombstone awaiting the reconciler sweep, skipping", instanceID)
+
+			continue
+		}
+
 		deploymentName, err := b.validateAndGetDeploymentName(instanceID, serviceInstance, logger)
 		if err != nil {
 			continue // Error already logged
@@ -1325,6 +1331,26 @@ func (b *Broker) validateAndGetDeploymentName(instanceID string, serviceInstance
 	logger.Debug("Looking for deployment: %s", deploymentName)
 
 	return deploymentName, nil
+}
+
+// isDeletedTombstone reports whether an index entry is a tombstone left by the
+// vm-monitor or the reconciler, through either the "deleted" status or the
+// older boolean flag. Such an entry may carry no service or plan fields at
+// all, so it is not an orphan candidate here; the reconciler's orphan sweep
+// owns its removal.
+func isDeletedTombstone(serviceInstance interface{}) bool {
+	serviceData, valid := serviceInstance.(map[string]interface{})
+	if !valid {
+		return false
+	}
+
+	if status, ok := serviceData["status"].(string); ok && status == "deleted" {
+		return true
+	}
+
+	deleted, ok := serviceData["deleted"].(bool)
+
+	return ok && deleted
 }
 
 func (b *Broker) isOrphanedInstance(deploymentName string, deploymentNames map[string]bool) bool {

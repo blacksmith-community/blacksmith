@@ -16,6 +16,7 @@ type ScriptedBOSHDirector struct {
 
 	GetInfoFn                      func() (*bosh.Info, error)
 	GetDeploymentFn                func(name string) (*bosh.DeploymentDetail, error)
+	GetDeploymentsFn               func() ([]bosh.Deployment, error)
 	CreateDeploymentFn             func(manifest string) (*bosh.Task, error)
 	DeleteDeploymentFn             func(name string) (*bosh.Task, error)
 	GetTaskFn                      func(taskID int) (*bosh.Task, error)
@@ -66,6 +67,17 @@ func (s *ScriptedBOSHDirector) GetDeployment(name string) (*bosh.DeploymentDetai
 	}
 
 	return s.IntegrationMockBOSH.GetDeployment(name)
+}
+
+// GetDeployments runs GetDeploymentsFn when set.
+func (s *ScriptedBOSHDirector) GetDeployments() ([]bosh.Deployment, error) {
+	s.record("GetDeployments", "")
+
+	if s.GetDeploymentsFn != nil {
+		return s.GetDeploymentsFn()
+	}
+
+	return s.IntegrationMockBOSH.GetDeployments()
 }
 
 // CreateDeployment runs CreateDeploymentFn when set.
