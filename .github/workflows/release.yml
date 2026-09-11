@@ -7,7 +7,7 @@ on:
       - '[0-9]+.[0-9]+.[0-9]+'
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
 
 jobs:
   validate-tag:

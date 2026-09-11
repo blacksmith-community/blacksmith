@@ -1070,10 +1070,12 @@ func initializeCFManager(config *config.Config, logger loggerPkg.Logger) *intern
 	internalAPIs := make(map[string]internalCF.ExternalCFAPIConfig)
 	for name, apiConfig := range config.Broker.CF.APIs {
 		internalAPIs[name] = internalCF.ExternalCFAPIConfig{
-			Name:     apiConfig.Name,
-			Endpoint: apiConfig.Endpoint,
-			Username: apiConfig.Username,
-			Password: apiConfig.Password,
+			Name:              apiConfig.Name,
+			Endpoint:          apiConfig.Endpoint,
+			Username:          apiConfig.Username,
+			Password:          apiConfig.Password,
+			CACert:            apiConfig.CACert,
+			SkipSSLValidation: apiConfig.SkipSSLValidation,
 		}
 	}
 

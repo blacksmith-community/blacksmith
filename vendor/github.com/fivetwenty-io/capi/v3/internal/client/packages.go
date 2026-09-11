@@ -6,28 +6,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
+	"net/http"
 	"net/url"
 
-	"github.com/fivetwenty-io/capi/v3/internal/http"
+	"github.com/fivetwenty-io/capi/v3/internal/constants"
+	http_internal "github.com/fivetwenty-io/capi/v3/internal/http"
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// PackagesClient implements the capi.PackagesClient interface
+// PackagesClient implements the capi.PackagesClient interface.
 type PackagesClient struct {
-	httpClient *http.Client
+	httpClient *http_internal.Client
 }
 
-// NewPackagesClient creates a new PackagesClient
-func NewPackagesClient(httpClient *http.Client) *PackagesClient {
+// NewPackagesClient creates a new PackagesClient.
+func NewPackagesClient(httpClient *http_internal.Client) *PackagesClient {
 	return &PackagesClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create creates a new package
+// Create creates a new package.
 func (c *PackagesClient) Create(ctx context.Context, request *capi.PackageCreateRequest) (*capi.Package, error) {
-	path := "/v3/packages"
+	path := constants.APIPathPackages
 
 	resp, err := c.httpClient.Post(ctx, path, request)
 	if err != nil {
@@ -35,16 +36,18 @@ func (c *PackagesClient) Create(ctx context.Context, request *capi.PackageCreate
 	}
 
 	var pkg capi.Package
-	if err := json.Unmarshal(resp.Body, &pkg); err != nil {
+
+	err = json.Unmarshal(resp.Body, &pkg)
+	if err != nil {
 		return nil, fmt.Errorf("parsing package response: %w", err)
 	}
 
 	return &pkg, nil
 }
 
-// Get retrieves a specific package
+// Get retrieves a specific package.
 func (c *PackagesClient) Get(ctx context.Context, guid string) (*capi.Package, error) {
-	path := fmt.Sprintf("/v3/packages/%s", guid)
+	path := "/v3/packages/" + guid
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
@@ -52,21 +55,25 @@ func (c *PackagesClient) Get(ctx context.Context, guid string) (*capi.Package, e
 	}
 
 	var pkg capi.Package
-	if err := json.Unmarshal(resp.Body, &pkg); err != nil {
+
+	err = json.Unmarshal(resp.Body, &pkg)
+	if err != nil {
 		return nil, fmt.Errorf("parsing package response: %w", err)
 	}
 
 	return &pkg, nil
 }
 
-// List lists all packages
-func (c *PackagesClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.Package], error) {
-	path := "/v3/packages"
+// List lists all packages.
+func (c *PackagesClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.PackageListOption) (*capi.ListResponse[capi.Package], error) {
+	path := constants.APIPathPackages
 
 	var queryParams url.Values
 	if params != nil {
 		queryParams = params.ToValues()
 	}
+
+	queryParams = capi.ApplyQueryOptions(queryParams, opts)
 
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
 	if err != nil {
@@ -74,16 +81,18 @@ func (c *PackagesClient) List(ctx context.Context, params *capi.QueryParams) (*c
 	}
 
 	var result capi.ListResponse[capi.Package]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing packages list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// Update updates a package's metadata
+// Update updates a package's metadata.
 func (c *PackagesClient) Update(ctx context.Context, guid string, request *capi.PackageUpdateRequest) (*capi.Package, error) {
-	path := fmt.Sprintf("/v3/packages/%s", guid)
+	path := "/v3/packages/" + guid
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
@@ -91,62 +100,51 @@ func (c *PackagesClient) Update(ctx context.Context, guid string, request *capi.
 	}
 
 	var pkg capi.Package
-	if err := json.Unmarshal(resp.Body, &pkg); err != nil {
+
+	err = json.Unmarshal(resp.Body, &pkg)
+	if err != nil {
 		return nil, fmt.Errorf("parsing package response: %w", err)
 	}
 
 	return &pkg, nil
 }
 
-// Delete deletes a package
-func (c *PackagesClient) Delete(ctx context.Context, guid string) error {
-	path := fmt.Sprintf("/v3/packages/%s", guid)
+// Delete issues DELETE /v3/packages/{guid}. CF v3 returns 202 Accepted with a
+// Location header pointing at /v3/jobs/{jobGuid}. We extract the job GUID from
+// the header and return a Job with its GUID populated; callers use Jobs().Get
+// or Jobs().PollUntilComplete for full state. Same pattern as Apps().Delete
+// and Roles().Delete.
+func (c *PackagesClient) Delete(ctx context.Context, guid string) (*capi.Job, error) {
+	path := "/v3/packages/" + guid
 
-	_, err := c.httpClient.Delete(ctx, path)
+	resp, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
-		return fmt.Errorf("deleting package: %w", err)
+		return nil, fmt.Errorf("deleting package: %w", err)
 	}
 
-	return nil
+	return jobFromLocationHeader(resp, "deleting package")
 }
 
-// Upload uploads bits to a package
+// Upload uploads bits to a package.
 func (c *PackagesClient) Upload(ctx context.Context, guid string, zipFile []byte) (*capi.Package, error) {
 	path := fmt.Sprintf("/v3/packages/%s/upload", guid)
 
-	// Create multipart form data
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// Add the file field
-	part, err := writer.CreateFormFile("bits", "package.zip")
+	respBody, err := uploadMultipartFile(ctx, c.httpClient, path, "package.zip", zipFile, "package")
 	if err != nil {
-		return nil, fmt.Errorf("creating form file: %w", err)
-	}
-
-	if _, err := part.Write(zipFile); err != nil {
-		return nil, fmt.Errorf("writing file to form: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("closing multipart writer: %w", err)
-	}
-
-	// Use PostRaw to send multipart form data
-	resp, err := c.httpClient.PostRaw(ctx, path, buf.Bytes(), writer.FormDataContentType())
-	if err != nil {
-		return nil, fmt.Errorf("uploading package: %w", err)
+		return nil, err
 	}
 
 	var pkg capi.Package
-	if err := json.Unmarshal(resp.Body, &pkg); err != nil {
+
+	err = json.Unmarshal(respBody, &pkg)
+	if err != nil {
 		return nil, fmt.Errorf("parsing package response: %w", err)
 	}
 
 	return &pkg, nil
 }
 
-// Download downloads a package
+// Download downloads a package.
 func (c *PackagesClient) Download(ctx context.Context, guid string) ([]byte, error) {
 	path := fmt.Sprintf("/v3/packages/%s/download", guid)
 
@@ -164,17 +162,17 @@ func (c *PackagesClient) Download(ctx context.Context, guid string) ([]byte, err
 	return content, nil
 }
 
-// Copy copies a package to another app
+// Copy copies a package to another app.
 func (c *PackagesClient) Copy(ctx context.Context, sourceGUID string, request *capi.PackageCopyRequest) (*capi.Package, error) {
-	path := "/v3/packages"
+	path := constants.APIPathPackages
 
 	// Build query parameters
 	queryParams := url.Values{}
 	queryParams.Set("source_guid", sourceGUID)
 
 	// Use Do method directly to pass query parameters properly
-	resp, err := c.httpClient.Do(ctx, &http.Request{
-		Method: "POST",
+	resp, err := c.httpClient.Do(ctx, &http_internal.Request{
+		Method: http.MethodPost,
 		Path:   path,
 		Query:  queryParams,
 		Body:   request,
@@ -184,7 +182,9 @@ func (c *PackagesClient) Copy(ctx context.Context, sourceGUID string, request *c
 	}
 
 	var pkg capi.Package
-	if err := json.Unmarshal(resp.Body, &pkg); err != nil {
+
+	err = json.Unmarshal(resp.Body, &pkg)
+	if err != nil {
 		return nil, fmt.Errorf("parsing package response: %w", err)
 	}
 

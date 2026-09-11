@@ -10,19 +10,19 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// SpaceQuotasClient implements capi.SpaceQuotasClient
+// SpaceQuotasClient implements capi.SpaceQuotasClient.
 type SpaceQuotasClient struct {
 	httpClient *http.Client
 }
 
-// NewSpaceQuotasClient creates a new space quotas client
+// NewSpaceQuotasClient creates a new space quotas client.
 func NewSpaceQuotasClient(httpClient *http.Client) *SpaceQuotasClient {
 	return &SpaceQuotasClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create implements capi.SpaceQuotasClient.Create
+// Create implements capi.SpaceQuotasClient.Create.
 func (c *SpaceQuotasClient) Create(ctx context.Context, request *capi.SpaceQuotaV3CreateRequest) (*capi.SpaceQuotaV3, error) {
 	resp, err := c.httpClient.Post(ctx, "/v3/space_quotas", request)
 	if err != nil {
@@ -30,35 +30,42 @@ func (c *SpaceQuotasClient) Create(ctx context.Context, request *capi.SpaceQuota
 	}
 
 	var quota capi.SpaceQuotaV3
-	if err := json.Unmarshal(resp.Body, &quota); err != nil {
+
+	err = json.Unmarshal(resp.Body, &quota)
+	if err != nil {
 		return nil, fmt.Errorf("parsing space quota response: %w", err)
 	}
 
 	return &quota, nil
 }
 
-// Get implements capi.SpaceQuotasClient.Get
+// Get implements capi.SpaceQuotasClient.Get.
 func (c *SpaceQuotasClient) Get(ctx context.Context, guid string) (*capi.SpaceQuotaV3, error) {
-	path := fmt.Sprintf("/v3/space_quotas/%s", guid)
+	path := "/v3/space_quotas/" + guid
+
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("getting space quota: %w", err)
 	}
 
 	var quota capi.SpaceQuotaV3
-	if err := json.Unmarshal(resp.Body, &quota); err != nil {
+
+	err = json.Unmarshal(resp.Body, &quota)
+	if err != nil {
 		return nil, fmt.Errorf("parsing space quota response: %w", err)
 	}
 
 	return &quota, nil
 }
 
-// List implements capi.SpaceQuotasClient.List
-func (c *SpaceQuotasClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.SpaceQuotaV3], error) {
+// List implements capi.SpaceQuotasClient.List.
+func (c *SpaceQuotasClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.SpaceQuotaListOption) (*capi.ListResponse[capi.SpaceQuotaV3], error) {
 	var query url.Values
 	if params != nil {
 		query = params.ToValues()
 	}
+
+	query = capi.ApplyQueryOptions(query, opts)
 
 	resp, err := c.httpClient.Get(ctx, "/v3/space_quotas", query)
 	if err != nil {
@@ -66,41 +73,51 @@ func (c *SpaceQuotasClient) List(ctx context.Context, params *capi.QueryParams) 
 	}
 
 	var result capi.ListResponse[capi.SpaceQuotaV3]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing space quotas list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// Update implements capi.SpaceQuotasClient.Update
+// Update implements capi.SpaceQuotasClient.Update.
 func (c *SpaceQuotasClient) Update(ctx context.Context, guid string, request *capi.SpaceQuotaV3UpdateRequest) (*capi.SpaceQuotaV3, error) {
-	path := fmt.Sprintf("/v3/space_quotas/%s", guid)
+	path := "/v3/space_quotas/" + guid
+
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
 		return nil, fmt.Errorf("updating space quota: %w", err)
 	}
 
 	var quota capi.SpaceQuotaV3
-	if err := json.Unmarshal(resp.Body, &quota); err != nil {
+
+	err = json.Unmarshal(resp.Body, &quota)
+	if err != nil {
 		return nil, fmt.Errorf("parsing space quota response: %w", err)
 	}
 
 	return &quota, nil
 }
 
-// Delete implements capi.SpaceQuotasClient.Delete
-func (c *SpaceQuotasClient) Delete(ctx context.Context, guid string) error {
-	path := fmt.Sprintf("/v3/space_quotas/%s", guid)
-	_, err := c.httpClient.Delete(ctx, path)
+// Delete issues DELETE /v3/space_quotas/{guid}. CF v3 returns 202 Accepted with
+// a Location header pointing at /v3/jobs/{jobGuid}. We extract the job GUID from
+// the header and return a Job with its GUID populated; callers use Jobs().Get or
+// Jobs().PollUntilComplete for full state. Same pattern as Apps().Delete and
+// Roles().Delete.
+func (c *SpaceQuotasClient) Delete(ctx context.Context, guid string) (*capi.Job, error) {
+	path := "/v3/space_quotas/" + guid
+
+	resp, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
-		return fmt.Errorf("deleting space quota: %w", err)
+		return nil, fmt.Errorf("deleting space quota: %w", err)
 	}
 
-	return nil
+	return jobFromLocationHeader(resp, "deleting space quota")
 }
 
-// ApplyToSpaces implements capi.SpaceQuotasClient.ApplyToSpaces
+// ApplyToSpaces implements capi.SpaceQuotasClient.ApplyToSpaces.
 func (c *SpaceQuotasClient) ApplyToSpaces(ctx context.Context, quotaGUID string, spaceGUIDs []string) (*capi.ToManyRelationship, error) {
 	path := fmt.Sprintf("/v3/space_quotas/%s/relationships/spaces", quotaGUID)
 
@@ -117,16 +134,19 @@ func (c *SpaceQuotasClient) ApplyToSpaces(ctx context.Context, quotaGUID string,
 	}
 
 	var relationship capi.ToManyRelationship
-	if err := json.Unmarshal(resp.Body, &relationship); err != nil {
+
+	err = json.Unmarshal(resp.Body, &relationship)
+	if err != nil {
 		return nil, fmt.Errorf("parsing relationship response: %w", err)
 	}
 
 	return &relationship, nil
 }
 
-// RemoveFromSpace implements capi.SpaceQuotasClient.RemoveFromSpace
+// RemoveFromSpace implements capi.SpaceQuotasClient.RemoveFromSpace.
 func (c *SpaceQuotasClient) RemoveFromSpace(ctx context.Context, quotaGUID string, spaceGUID string) error {
 	path := fmt.Sprintf("/v3/space_quotas/%s/relationships/spaces/%s", quotaGUID, spaceGUID)
+
 	_, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
 		return fmt.Errorf("removing space from quota: %w", err)

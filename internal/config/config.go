@@ -141,10 +141,12 @@ type CompressionConfig struct {
 
 // CFAPIConfig represents a Cloud Foundry API endpoint configuration.
 type CFAPIConfig struct {
-	Name     string `yaml:"name"`     // Display name for the CF endpoint
-	Endpoint string `yaml:"endpoint"` // CF API endpoint URL
-	Username string `yaml:"username"` // CF API username
-	Password string `yaml:"password"` // CF API password
+	Name              string `yaml:"name"`                // Display name for the CF endpoint
+	Endpoint          string `yaml:"endpoint"`            // CF API endpoint URL
+	Username          string `yaml:"username"`            // CF API username
+	Password          string `yaml:"password"`            // CF API password
+	CACert            string `yaml:"cacert"`              // PEM CA bundle that signs the CF API and UAA certificates
+	SkipSSLValidation bool   `yaml:"skip_ssl_validation"` // Disable TLS verification for this endpoint (development only)
 }
 
 type VaultConfig struct {

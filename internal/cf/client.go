@@ -4,25 +4,25 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"sync"
 	"time"
 
+	"blacksmith/pkg/logger"
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 	"github.com/fivetwenty-io/capi/v3/pkg/cfclient"
 )
+
+// capiDevModeEnv is the environment variable the capi library requires before
+// it honours Config.SkipTLSVerify; without it the client refuses to start.
+const capiDevModeEnv = "CAPI_DEV_MODE"
 
 // connect establishes a connection to the CF endpoint.
 func (c *EndpointClient) connect(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, connectionTimeout)
 	defer cancel()
 
-	config := &capi.Config{
-		APIEndpoint: c.config.Endpoint,
-		Username:    c.config.Username,
-		Password:    c.config.Password,
-	}
-
-	client, err := cfclient.New(config)
+	client, err := cfclient.New(ctx, c.capiConfig())
 	if err != nil {
 		return fmt.Errorf("failed to create CF client: %w", err)
 	}
@@ -36,6 +36,36 @@ func (c *EndpointClient) connect(ctx context.Context) error {
 	c.client = client
 
 	return nil
+}
+
+// capiConfig translates the endpoint configuration into a capi client config.
+// A configured CA bundle keeps verification enabled while trusting a private
+// CA; skip_ssl_validation disables verification entirely.
+func (c *EndpointClient) capiConfig() *capi.Config {
+	return &capi.Config{
+		APIEndpoint:   c.config.Endpoint,
+		Username:      c.config.Username,
+		Password:      c.config.Password,
+		CACertPEM:     c.config.CACert,
+		SkipTLSVerify: c.config.SkipSSLValidation,
+	}
+}
+
+// allowInsecureTLS opens the capi library's development-only gate so that
+// SkipTLSVerify takes effect. The gate is process wide, but capi only skips
+// verification for clients whose own config asks for it, so endpoints that
+// leave skip_ssl_validation false are still verified.
+func allowInsecureTLS(log logger.Logger) {
+	log.Warn("TLS certificate verification is disabled for this CF endpoint; configure cacert instead outside development")
+
+	if os.Getenv(capiDevModeEnv) != "" {
+		return
+	}
+
+	err := os.Setenv(capiDevModeEnv, "true")
+	if err != nil {
+		log.Error("failed to set %s, skip_ssl_validation will not take effect: %v", capiDevModeEnv, err)
+	}
 }
 
 // markHealthy marks the client as healthy and resets retry state.
@@ -197,6 +227,10 @@ func (m *Manager) GetHealthyClients() map[string]capi.Client {
 // createEndpointClient creates a new CF endpoint client.
 func (m *Manager) createEndpointClient(config CFAPIConfig) *EndpointClient {
 	logger := m.logger.Named("cf-client-" + config.Name)
+
+	if config.SkipSSLValidation {
+		allowInsecureTLS(logger)
+	}
 
 	return &EndpointClient{
 		config: config,

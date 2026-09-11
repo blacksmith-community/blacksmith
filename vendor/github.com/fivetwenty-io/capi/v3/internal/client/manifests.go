@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -10,25 +11,36 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// ManifestsClient implements capi.ManifestsClient
+// ManifestsClient implements capi.ManifestsClient.
+// Static errors for err113 compliance.
+var (
+	ErrSpaceGUIDRequired       = errors.New("space GUID is required")
+	ErrAppGUIDRequired         = errors.New("app GUID is required")
+	ErrManifestContentRequired = errors.New("manifest content is required")
+	ErrNoJobLocationReturned   = errors.New("no job location returned")
+	ErrAPIError                = errors.New("API error")
+	ErrAPIStatusError          = errors.New("API status error")
+)
+
 type ManifestsClient struct {
 	httpClient *internalhttp.Client
 }
 
-// NewManifestsClient creates a new ManifestsClient
+// NewManifestsClient creates a new ManifestsClient.
 func NewManifestsClient(httpClient *internalhttp.Client) *ManifestsClient {
 	return &ManifestsClient{
 		httpClient: httpClient,
 	}
 }
 
-// ApplyManifest applies a manifest to a space
+// ApplyManifest applies a manifest to a space.
 func (c *ManifestsClient) ApplyManifest(ctx context.Context, spaceGUID string, manifest []byte) (*capi.Job, error) {
 	if spaceGUID == "" {
-		return nil, fmt.Errorf("space GUID is required")
+		return nil, ErrSpaceGUIDRequired
 	}
+
 	if len(manifest) == 0 {
-		return nil, fmt.Errorf("manifest content is required")
+		return nil, ErrManifestContentRequired
 	}
 
 	url := fmt.Sprintf("/v3/spaces/%s/actions/apply_manifest", spaceGUID)
@@ -55,12 +67,14 @@ func (c *ManifestsClient) ApplyManifest(ctx context.Context, spaceGUID string, m
 	// Get job location from header
 	jobLocation := resp.Headers.Get("Location")
 	if jobLocation == "" {
-		return nil, fmt.Errorf("no job location returned")
+		return nil, ErrNoJobLocationReturned
 	}
 
 	// Parse job ID from location
 	var jobID string
-	if _, err := fmt.Sscanf(jobLocation, "/v3/jobs/%s", &jobID); err != nil {
+
+	_, err = fmt.Sscanf(jobLocation, "/v3/jobs/%s", &jobID)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse job location: %w", err)
 	}
 
@@ -73,10 +87,10 @@ func (c *ManifestsClient) ApplyManifest(ctx context.Context, spaceGUID string, m
 	}, nil
 }
 
-// GenerateManifest generates a manifest for an app
+// GenerateManifest generates a manifest for an app.
 func (c *ManifestsClient) GenerateManifest(ctx context.Context, appGUID string) ([]byte, error) {
 	if appGUID == "" {
-		return nil, fmt.Errorf("app GUID is required")
+		return nil, ErrAppGUIDRequired
 	}
 
 	url := fmt.Sprintf("/v3/apps/%s/manifest", appGUID)
@@ -94,13 +108,14 @@ func (c *ManifestsClient) GenerateManifest(ctx context.Context, appGUID string) 
 	return resp.Body, nil
 }
 
-// CreateManifestDiff creates a diff between current and proposed manifest
+// CreateManifestDiff creates a diff between current and proposed manifest.
 func (c *ManifestsClient) CreateManifestDiff(ctx context.Context, spaceGUID string, manifest []byte) (*capi.ManifestDiff, error) {
 	if spaceGUID == "" {
-		return nil, fmt.Errorf("space GUID is required")
+		return nil, ErrSpaceGUIDRequired
 	}
+
 	if len(manifest) == 0 {
-		return nil, fmt.Errorf("manifest content is required")
+		return nil, ErrManifestContentRequired
 	}
 
 	url := fmt.Sprintf("/v3/spaces/%s/manifest_diff", spaceGUID)
@@ -125,7 +140,9 @@ func (c *ManifestsClient) CreateManifestDiff(ctx context.Context, spaceGUID stri
 	}
 
 	var diffResponse capi.ManifestDiffResponse
-	if err := json.Unmarshal(resp.Body, &diffResponse); err != nil {
+
+	err = json.Unmarshal(resp.Body, &diffResponse)
+	if err != nil {
 		return nil, fmt.Errorf("failed to decode manifest diff: %w", err)
 	}
 
@@ -134,7 +151,7 @@ func (c *ManifestsClient) CreateManifestDiff(ctx context.Context, spaceGUID stri
 	}, nil
 }
 
-// parseErrorResponse handles non-success HTTP responses
+// parseErrorResponse handles non-success HTTP responses.
 func parseErrorResponse(resp *internalhttp.Response) error {
 	var apiError struct {
 		Errors []struct {
@@ -144,9 +161,10 @@ func parseErrorResponse(resp *internalhttp.Response) error {
 		} `json:"errors"`
 	}
 
-	if err := json.Unmarshal(resp.Body, &apiError); err == nil && len(apiError.Errors) > 0 {
-		return fmt.Errorf("%s: %s", apiError.Errors[0].Title, apiError.Errors[0].Detail)
+	err := json.Unmarshal(resp.Body, &apiError)
+	if err == nil && len(apiError.Errors) > 0 {
+		return fmt.Errorf("%s: %s: %w", apiError.Errors[0].Title, apiError.Errors[0].Detail, ErrAPIError)
 	}
 
-	return fmt.Errorf("API error: status %d - %s", resp.StatusCode, string(resp.Body))
+	return fmt.Errorf("status %d - %s: %w", resp.StatusCode, string(resp.Body), ErrAPIStatusError)
 }

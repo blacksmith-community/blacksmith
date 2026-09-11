@@ -10,19 +10,19 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// SecurityGroupsClient implements capi.SecurityGroupsClient
+// SecurityGroupsClient implements capi.SecurityGroupsClient.
 type SecurityGroupsClient struct {
 	httpClient *http.Client
 }
 
-// NewSecurityGroupsClient creates a new security groups client
+// NewSecurityGroupsClient creates a new security groups client.
 func NewSecurityGroupsClient(httpClient *http.Client) *SecurityGroupsClient {
 	return &SecurityGroupsClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create implements capi.SecurityGroupsClient.Create
+// Create implements capi.SecurityGroupsClient.Create.
 func (c *SecurityGroupsClient) Create(ctx context.Context, request *capi.SecurityGroupCreateRequest) (*capi.SecurityGroup, error) {
 	path := "/v3/security_groups"
 
@@ -31,33 +31,37 @@ func (c *SecurityGroupsClient) Create(ctx context.Context, request *capi.Securit
 		return nil, fmt.Errorf("creating security group: %w", err)
 	}
 
-	var sg capi.SecurityGroup
-	if err := json.Unmarshal(resp.Body, &sg); err != nil {
+	var securityGroup capi.SecurityGroup
+
+	err = json.Unmarshal(resp.Body, &securityGroup)
+	if err != nil {
 		return nil, fmt.Errorf("parsing security group response: %w", err)
 	}
 
-	return &sg, nil
+	return &securityGroup, nil
 }
 
-// Get implements capi.SecurityGroupsClient.Get
+// Get implements capi.SecurityGroupsClient.Get.
 func (c *SecurityGroupsClient) Get(ctx context.Context, guid string) (*capi.SecurityGroup, error) {
-	path := fmt.Sprintf("/v3/security_groups/%s", guid)
+	path := "/v3/security_groups/" + guid
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("getting security group: %w", err)
 	}
 
-	var sg capi.SecurityGroup
-	if err := json.Unmarshal(resp.Body, &sg); err != nil {
+	var securityGroup capi.SecurityGroup
+
+	err = json.Unmarshal(resp.Body, &securityGroup)
+	if err != nil {
 		return nil, fmt.Errorf("parsing security group: %w", err)
 	}
 
-	return &sg, nil
+	return &securityGroup, nil
 }
 
-// List implements capi.SecurityGroupsClient.List
-func (c *SecurityGroupsClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.SecurityGroup], error) {
+// List implements capi.SecurityGroupsClient.List.
+func (c *SecurityGroupsClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.SecurityGroupListOption) (*capi.ListResponse[capi.SecurityGroup], error) {
 	path := "/v3/security_groups"
 
 	var queryParams url.Values
@@ -65,54 +69,58 @@ func (c *SecurityGroupsClient) List(ctx context.Context, params *capi.QueryParam
 		queryParams = params.ToValues()
 	}
 
+	queryParams = capi.ApplyQueryOptions(queryParams, opts)
+
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
 	if err != nil {
 		return nil, fmt.Errorf("listing security groups: %w", err)
 	}
 
 	var list capi.ListResponse[capi.SecurityGroup]
-	if err := json.Unmarshal(resp.Body, &list); err != nil {
+
+	err = json.Unmarshal(resp.Body, &list)
+	if err != nil {
 		return nil, fmt.Errorf("parsing security groups list: %w", err)
 	}
 
 	return &list, nil
 }
 
-// Update implements capi.SecurityGroupsClient.Update
+// Update implements capi.SecurityGroupsClient.Update.
 func (c *SecurityGroupsClient) Update(ctx context.Context, guid string, request *capi.SecurityGroupUpdateRequest) (*capi.SecurityGroup, error) {
-	path := fmt.Sprintf("/v3/security_groups/%s", guid)
+	path := "/v3/security_groups/" + guid
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
 		return nil, fmt.Errorf("updating security group: %w", err)
 	}
 
-	var sg capi.SecurityGroup
-	if err := json.Unmarshal(resp.Body, &sg); err != nil {
+	var securityGroup capi.SecurityGroup
+
+	err = json.Unmarshal(resp.Body, &securityGroup)
+	if err != nil {
 		return nil, fmt.Errorf("parsing security group response: %w", err)
 	}
 
-	return &sg, nil
+	return &securityGroup, nil
 }
 
-// Delete implements capi.SecurityGroupsClient.Delete
+// Delete implements capi.SecurityGroupsClient.Delete.
+// CF V3 DELETE /v3/security_groups/{guid} returns 202 Accepted with an empty
+// body and the async job reference in the Location header. See Apps.Delete
+// for the canonical Location-extraction pattern.
 func (c *SecurityGroupsClient) Delete(ctx context.Context, guid string) (*capi.Job, error) {
-	path := fmt.Sprintf("/v3/security_groups/%s", guid)
+	path := "/v3/security_groups/" + guid
 
 	resp, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("deleting security group: %w", err)
 	}
 
-	var job capi.Job
-	if err := json.Unmarshal(resp.Body, &job); err != nil {
-		return nil, fmt.Errorf("parsing job response: %w", err)
-	}
-
-	return &job, nil
+	return jobFromLocationHeader(resp, "deleting security group")
 }
 
-// BindRunningSpaces implements capi.SecurityGroupsClient.BindRunningSpaces
+// BindRunningSpaces implements capi.SecurityGroupsClient.BindRunningSpaces.
 func (c *SecurityGroupsClient) BindRunningSpaces(ctx context.Context, guid string, spaceGUIDs []string) (*capi.ToManyRelationship, error) {
 	path := fmt.Sprintf("/v3/security_groups/%s/relationships/running_spaces", guid)
 
@@ -129,14 +137,16 @@ func (c *SecurityGroupsClient) BindRunningSpaces(ctx context.Context, guid strin
 	}
 
 	var relationship capi.ToManyRelationship
-	if err := json.Unmarshal(resp.Body, &relationship); err != nil {
+
+	err = json.Unmarshal(resp.Body, &relationship)
+	if err != nil {
 		return nil, fmt.Errorf("parsing relationship response: %w", err)
 	}
 
 	return &relationship, nil
 }
 
-// UnbindRunningSpace implements capi.SecurityGroupsClient.UnbindRunningSpace
+// UnbindRunningSpace implements capi.SecurityGroupsClient.UnbindRunningSpace.
 func (c *SecurityGroupsClient) UnbindRunningSpace(ctx context.Context, guid string, spaceGUID string) error {
 	path := fmt.Sprintf("/v3/security_groups/%s/relationships/running_spaces/%s", guid, spaceGUID)
 
@@ -148,7 +158,7 @@ func (c *SecurityGroupsClient) UnbindRunningSpace(ctx context.Context, guid stri
 	return nil
 }
 
-// BindStagingSpaces implements capi.SecurityGroupsClient.BindStagingSpaces
+// BindStagingSpaces implements capi.SecurityGroupsClient.BindStagingSpaces.
 func (c *SecurityGroupsClient) BindStagingSpaces(ctx context.Context, guid string, spaceGUIDs []string) (*capi.ToManyRelationship, error) {
 	path := fmt.Sprintf("/v3/security_groups/%s/relationships/staging_spaces", guid)
 
@@ -165,14 +175,16 @@ func (c *SecurityGroupsClient) BindStagingSpaces(ctx context.Context, guid strin
 	}
 
 	var relationship capi.ToManyRelationship
-	if err := json.Unmarshal(resp.Body, &relationship); err != nil {
+
+	err = json.Unmarshal(resp.Body, &relationship)
+	if err != nil {
 		return nil, fmt.Errorf("parsing relationship response: %w", err)
 	}
 
 	return &relationship, nil
 }
 
-// UnbindStagingSpace implements capi.SecurityGroupsClient.UnbindStagingSpace
+// UnbindStagingSpace implements capi.SecurityGroupsClient.UnbindStagingSpace.
 func (c *SecurityGroupsClient) UnbindStagingSpace(ctx context.Context, guid string, spaceGUID string) error {
 	path := fmt.Sprintf("/v3/security_groups/%s/relationships/staging_spaces/%s", guid, spaceGUID)
 

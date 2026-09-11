@@ -4,9 +4,11 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/fivetwenty-io/capi/v3/internal/constants"
 )
 
-// TokenManager manages authentication tokens
+// TokenManager manages authentication tokens.
 type TokenManager interface {
 	// GetToken returns a valid access token, refreshing if necessary
 	GetToken(ctx context.Context) (string, error)
@@ -16,7 +18,7 @@ type TokenManager interface {
 	SetToken(token string, expiresAt time.Time)
 }
 
-// Token represents an OAuth2 token
+// Token represents an OAuth2 token.
 type Token struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type"`
@@ -26,46 +28,50 @@ type Token struct {
 	ExpiresAt    time.Time `json:"-"`
 }
 
-// Valid returns true if the token is valid and not expired
+// Valid returns true if the token is valid and not expired.
 func (t *Token) Valid() bool {
 	if t == nil || t.AccessToken == "" {
 		return false
 	}
+
 	if t.ExpiresAt.IsZero() {
 		return true // No expiry set, assume valid
 	}
 	// Add 30 second buffer before expiry
-	return time.Now().Add(30 * time.Second).Before(t.ExpiresAt)
+	return time.Now().Add(constants.TokenExpirationBuffer).Before(t.ExpiresAt)
 }
 
-// TokenStore provides thread-safe token storage
+// TokenStore provides thread-safe token storage.
 type TokenStore struct {
 	mu    sync.RWMutex
 	token *Token
 }
 
-// NewTokenStore creates a new token store
+// NewTokenStore creates a new token store.
 func NewTokenStore() *TokenStore {
 	return &TokenStore{}
 }
 
-// Get returns the current token
+// Get returns the current token.
 func (s *TokenStore) Get() *Token {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	return s.token
 }
 
-// Set stores a new token
+// Set stores a new token.
 func (s *TokenStore) Set(token *Token) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.token = token
 }
 
-// Clear removes the stored token
+// Clear removes the stored token.
 func (s *TokenStore) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.token = nil
 }

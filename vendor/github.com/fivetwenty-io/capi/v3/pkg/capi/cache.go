@@ -3,24 +3,34 @@ package capi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/fivetwenty-io/capi/v3/internal/constants"
 )
 
-// CacheEntry represents a cached item
+// CacheEntry represents a cached item.
+// Static errors for err113 compliance.
+var (
+	ErrKeyNotFound  = errors.New("key not found")
+	ErrEntryExpired = errors.New("entry expired")
+)
+
 type CacheEntry struct {
 	Data      []byte
 	ExpiresAt time.Time
 	ETag      string
 }
 
-// IsExpired checks if the cache entry has expired
+// IsExpired checks if the cache entry has expired.
 func (e *CacheEntry) IsExpired() bool {
 	return time.Now().After(e.ExpiresAt)
 }
 
-// Cache defines the interface for cache implementations
+// Cache defines the interface for cache implementations.
 type Cache interface {
 	// Get retrieves an item from the cache
 	Get(ctx context.Context, key string) (*CacheEntry, error)
@@ -38,14 +48,14 @@ type Cache interface {
 	Has(ctx context.Context, key string) bool
 }
 
-// MemoryCache implements an in-memory cache
+// MemoryCache implements an in-memory cache.
 type MemoryCache struct {
 	mu      sync.RWMutex
 	items   map[string]*CacheEntry
 	maxSize int
 }
 
-// NewMemoryCache creates a new in-memory cache
+// NewMemoryCache creates a new in-memory cache.
 func NewMemoryCache(maxSize int) *MemoryCache {
 	return &MemoryCache{
 		items:   make(map[string]*CacheEntry),
@@ -53,69 +63,100 @@ func NewMemoryCache(maxSize int) *MemoryCache {
 	}
 }
 
-// Get retrieves an item from the cache
+// Get retrieves an item from the cache.
 func (c *MemoryCache) Get(ctx context.Context, key string) (*CacheEntry, error) {
+	err := ctx.Err()
+	if err != nil {
+		return nil, fmt.Errorf("cache get: %w", err)
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	entry, exists := c.items[key]
 	if !exists {
-		return nil, fmt.Errorf("key not found: %s", key)
+		return nil, fmt.Errorf("%w: %s", ErrKeyNotFound, key)
 	}
 
 	if entry.IsExpired() {
 		// Don't return expired entries
-		return nil, fmt.Errorf("entry expired: %s", key)
+		return nil, fmt.Errorf("%w: %s", ErrEntryExpired, key)
 	}
 
 	return entry, nil
 }
 
-// Set stores an item in the cache
+// Set stores an item in the cache.
 func (c *MemoryCache) Set(ctx context.Context, key string, entry *CacheEntry) error {
+	err := ctx.Err()
+	if err != nil {
+		return fmt.Errorf("cache set: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Simple size management - remove oldest entry if at capacity
+	// Simple size management — remove soonest-to-expire entry if at capacity.
 	if c.maxSize > 0 && len(c.items) >= c.maxSize {
-		// Find and remove the oldest entry
-		var oldestKey string
-		var oldestTime time.Time
+		// Find and remove the soonest-to-expire entry.
+		var (
+			soonestKey  string
+			soonestTime time.Time
+		)
+
 		for k, v := range c.items {
-			if oldestTime.IsZero() || v.ExpiresAt.Before(oldestTime) {
-				oldestKey = k
-				oldestTime = v.ExpiresAt
+			if soonestTime.IsZero() || v.ExpiresAt.Before(soonestTime) {
+				soonestKey = k
+				soonestTime = v.ExpiresAt
 			}
 		}
-		if oldestKey != "" {
-			delete(c.items, oldestKey)
+
+		if soonestKey != "" {
+			delete(c.items, soonestKey)
 		}
 	}
 
 	c.items[key] = entry
+
 	return nil
 }
 
-// Delete removes an item from the cache
+// Delete removes an item from the cache.
 func (c *MemoryCache) Delete(ctx context.Context, key string) error {
+	err := ctx.Err()
+	if err != nil {
+		return fmt.Errorf("cache delete: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	delete(c.items, key)
+
 	return nil
 }
 
-// Clear removes all items from the cache
+// Clear removes all items from the cache.
 func (c *MemoryCache) Clear(ctx context.Context) error {
+	err := ctx.Err()
+	if err != nil {
+		return fmt.Errorf("cache clear: %w", err)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.items = make(map[string]*CacheEntry)
+
 	return nil
 }
 
-// Has checks if a key exists in the cache
+// Has checks if a key exists in the cache.
 func (c *MemoryCache) Has(ctx context.Context, key string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -127,7 +168,7 @@ func (c *MemoryCache) Has(ctx context.Context, key string) bool {
 	return !entry.IsExpired()
 }
 
-// Cleanup removes expired entries from the cache
+// Cleanup removes expired entries from the cache.
 func (c *MemoryCache) Cleanup() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -139,7 +180,7 @@ func (c *MemoryCache) Cleanup() {
 	}
 }
 
-// StartCleanupRoutine starts a background routine to clean up expired entries
+// StartCleanupRoutine starts a background routine to clean up expired entries.
 func (c *MemoryCache) StartCleanupRoutine(ctx context.Context, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -156,7 +197,7 @@ func (c *MemoryCache) StartCleanupRoutine(ctx context.Context, interval time.Dur
 	}()
 }
 
-// CacheOptions configures caching behavior
+// CacheOptions configures caching behavior.
 type CacheOptions struct {
 	// TTL is the default time-to-live for cache entries
 	TTL time.Duration
@@ -171,49 +212,74 @@ type CacheOptions struct {
 	CleanupInterval time.Duration
 }
 
-// DefaultCacheOptions returns default cache options
+// DefaultCacheOptions returns default cache options.
 func DefaultCacheOptions() *CacheOptions {
 	return &CacheOptions{
-		TTL:             5 * time.Minute,
-		MaxSize:         1000,
+		TTL:             constants.DefaultCacheTTL,
+		MaxSize:         constants.DefaultCacheSize,
 		EnableETags:     true,
 		CleanupInterval: 1 * time.Minute,
 	}
 }
 
-// CacheManager manages caching for the API client
+// CacheManager manages caching for the API client.
 type CacheManager struct {
 	cache   Cache
 	options *CacheOptions
 	stats   *CacheStats
+	// cancel stops the background cleanup goroutine started in
+	// NewCacheManager. nil when no cleanup routine was started.
+	cancel context.CancelFunc
 }
 
-// CacheStats tracks cache statistics
+// CacheStats tracks cache statistics using atomic counters so callers can read
+// individual fields without holding a lock.
 type CacheStats struct {
-	Hits    int64
-	Misses  int64
-	Sets    int64
-	Deletes int64
-	mu      sync.RWMutex
+	hits    atomic.Int64
+	misses  atomic.Int64
+	sets    atomic.Int64
+	deletes atomic.Int64
 }
 
-// GetHitRate returns the cache hit rate
-func (s *CacheStats) GetHitRate() float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// Hits returns the total number of cache hits.
+func (s *CacheStats) Hits() int64 {
+	return s.hits.Load()
+}
 
-	total := s.Hits + s.Misses
+// Misses returns the total number of cache misses.
+func (s *CacheStats) Misses() int64 {
+	return s.misses.Load()
+}
+
+// Sets returns the total number of cache set operations.
+func (s *CacheStats) Sets() int64 {
+	return s.sets.Load()
+}
+
+// Deletes returns the total number of cache delete operations.
+func (s *CacheStats) Deletes() int64 {
+	return s.deletes.Load()
+}
+
+// GetHitRate returns the cache hit rate.
+func (s *CacheStats) GetHitRate() float64 {
+	hits := s.hits.Load()
+	misses := s.misses.Load()
+	total := hits + misses
+
 	if total == 0 {
 		return 0
 	}
-	return float64(s.Hits) / float64(total)
+
+	return float64(hits) / float64(total)
 }
 
-// NewCacheManager creates a new cache manager
+// NewCacheManager creates a new cache manager.
 func NewCacheManager(cache Cache, options *CacheOptions) *CacheManager {
 	if options == nil {
 		options = DefaultCacheOptions()
 	}
+
 	if cache == nil {
 		cache = NewMemoryCache(options.MaxSize)
 	}
@@ -224,43 +290,56 @@ func NewCacheManager(cache Cache, options *CacheOptions) *CacheManager {
 		stats:   &CacheStats{},
 	}
 
-	// Start cleanup routine for memory cache
+	// Start cleanup routine for memory cache, tied to a cancelable context so
+	// Close can stop the goroutine instead of leaking it for process lifetime.
 	if memCache, ok := cache.(*MemoryCache); ok && options.CleanupInterval > 0 {
-		memCache.StartCleanupRoutine(context.Background(), options.CleanupInterval)
+		ctx, cancel := context.WithCancel(context.Background())
+		manager.cancel = cancel
+
+		memCache.StartCleanupRoutine(ctx, options.CleanupInterval)
 	}
 
 	return manager
 }
 
-// GetCacheKey generates a cache key for a request
-func (m *CacheManager) GetCacheKey(method, path string, params interface{}) string {
+// Close stops the background cleanup goroutine, if one was started. It is safe
+// to call more than once and on a manager that never started a routine.
+func (m *CacheManager) Close() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+}
+
+// GetCacheKey generates a cache key for a request.
+func (m *CacheManager) GetCacheKey(method, path string, params any) string {
 	key := fmt.Sprintf("%s:%s", method, path)
+
 	if params != nil {
-		if data, err := json.Marshal(params); err == nil {
+		data, err := json.Marshal(params)
+		if err == nil {
 			key = fmt.Sprintf("%s:%s", key, string(data))
 		}
 	}
+
 	return key
 }
 
-// Get retrieves an item from the cache
+// Get retrieves an item from the cache.
 func (m *CacheManager) Get(ctx context.Context, key string) ([]byte, error) {
 	entry, err := m.cache.Get(ctx, key)
 	if err != nil {
-		m.stats.mu.Lock()
-		m.stats.Misses++
-		m.stats.mu.Unlock()
-		return nil, err
+		m.stats.misses.Add(1)
+
+		return nil, fmt.Errorf("failed to get cached entry: %w", err)
 	}
 
-	m.stats.mu.Lock()
-	m.stats.Hits++
-	m.stats.mu.Unlock()
+	m.stats.hits.Add(1)
 
 	return entry.Data, nil
 }
 
-// Set stores an item in the cache
+// Set stores an item in the cache.
 func (m *CacheManager) Set(ctx context.Context, key string, data []byte, ttl time.Duration) error {
 	if ttl == 0 {
 		ttl = m.options.TTL
@@ -271,14 +350,17 @@ func (m *CacheManager) Set(ctx context.Context, key string, data []byte, ttl tim
 		ExpiresAt: time.Now().Add(ttl),
 	}
 
-	m.stats.mu.Lock()
-	m.stats.Sets++
-	m.stats.mu.Unlock()
+	m.stats.sets.Add(1)
 
-	return m.cache.Set(ctx, key, entry)
+	err := m.cache.Set(ctx, key, entry)
+	if err != nil {
+		return fmt.Errorf("failed to set cache entry: %w", err)
+	}
+
+	return nil
 }
 
-// SetWithETag stores an item in the cache with an ETag
+// SetWithETag stores an item in the cache with an ETag.
 func (m *CacheManager) SetWithETag(ctx context.Context, key string, data []byte, etag string, ttl time.Duration) error {
 	if ttl == 0 {
 		ttl = m.options.TTL
@@ -290,40 +372,54 @@ func (m *CacheManager) SetWithETag(ctx context.Context, key string, data []byte,
 		ETag:      etag,
 	}
 
-	m.stats.mu.Lock()
-	m.stats.Sets++
-	m.stats.mu.Unlock()
+	m.stats.sets.Add(1)
 
-	return m.cache.Set(ctx, key, entry)
+	err := m.cache.Set(ctx, key, entry)
+	if err != nil {
+		return fmt.Errorf("failed to set cache entry: %w", err)
+	}
+
+	return nil
 }
 
-// Delete removes an item from the cache
+// Delete removes an item from the cache.
 func (m *CacheManager) Delete(ctx context.Context, key string) error {
-	m.stats.mu.Lock()
-	m.stats.Deletes++
-	m.stats.mu.Unlock()
+	m.stats.deletes.Add(1)
 
-	return m.cache.Delete(ctx, key)
+	err := m.cache.Delete(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to delete cache entry: %w", err)
+	}
+
+	return nil
 }
 
-// Clear removes all items from the cache
+// Clear removes all items from the cache.
 func (m *CacheManager) Clear(ctx context.Context) error {
-	return m.cache.Clear(ctx)
+	err := m.cache.Clear(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to clear cache: %w", err)
+	}
+
+	return nil
 }
 
-// GetStats returns cache statistics
+// GetStats returns cache statistics.
 func (m *CacheManager) GetStats() *CacheStats {
 	return m.stats
 }
 
-// InvalidatePattern removes all cache entries matching a pattern
-func (m *CacheManager) InvalidatePattern(ctx context.Context, pattern string) error {
-	// This is a simplified implementation
-	// In a production system, you might want to use a more sophisticated pattern matching
-	return m.cache.Clear(ctx)
+// InvalidateAll removes all entries from the cache.
+func (m *CacheManager) InvalidateAll(ctx context.Context) error {
+	err := m.cache.Clear(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to clear cache: %w", err)
+	}
+
+	return nil
 }
 
-// CachingPolicy defines when to cache responses
+// CachingPolicy defines when to cache responses.
 type CachingPolicy struct {
 	// CacheGET enables caching for GET requests
 	CacheGET bool
@@ -347,13 +443,13 @@ type CachingPolicy struct {
 	IncludePaths []string
 }
 
-// DefaultCachingPolicy returns a default caching policy
+// DefaultCachingPolicy returns a default caching policy.
 func DefaultCachingPolicy() *CachingPolicy {
 	return &CachingPolicy{
 		CacheGET:    true,
 		CachePOST:   false,
 		CacheErrors: false,
-		MinTTL:      30 * time.Second,
+		MinTTL:      constants.CacheMinTTL,
 		MaxTTL:      1 * time.Hour,
 		ExcludePaths: []string{
 			"/v3/jobs",
@@ -362,7 +458,7 @@ func DefaultCachingPolicy() *CachingPolicy {
 	}
 }
 
-// ShouldCache determines if a response should be cached
+// ShouldCache determines if a response should be cached.
 func (p *CachingPolicy) ShouldCache(method, path string, statusCode int) bool {
 	// Check if the method is cacheable
 	switch method {
@@ -397,6 +493,7 @@ func (p *CachingPolicy) ShouldCache(method, path string, statusCode int) bool {
 				return true
 			}
 		}
+
 		return false
 	}
 

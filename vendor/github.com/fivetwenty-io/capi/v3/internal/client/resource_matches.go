@@ -9,19 +9,19 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// ResourceMatchesClient implements capi.ResourceMatchesClient
+// ResourceMatchesClient implements capi.ResourceMatchesClient.
 type ResourceMatchesClient struct {
 	httpClient *http.Client
 }
 
-// NewResourceMatchesClient creates a new resource matches client
+// NewResourceMatchesClient creates a new resource matches client.
 func NewResourceMatchesClient(httpClient *http.Client) *ResourceMatchesClient {
 	return &ResourceMatchesClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create implements capi.ResourceMatchesClient.Create
+// Create implements capi.ResourceMatchesClient.Create.
 func (c *ResourceMatchesClient) Create(ctx context.Context, request *capi.ResourceMatchesRequest) (*capi.ResourceMatches, error) {
 	resp, err := c.httpClient.Post(ctx, "/v3/resource_matches", request)
 	if err != nil {
@@ -29,7 +29,9 @@ func (c *ResourceMatchesClient) Create(ctx context.Context, request *capi.Resour
 	}
 
 	var matches capi.ResourceMatches
-	if err := json.Unmarshal(resp.Body, &matches); err != nil {
+
+	err = json.Unmarshal(resp.Body, &matches)
+	if err != nil {
 		return nil, fmt.Errorf("parsing resource matches response: %w", err)
 	}
 

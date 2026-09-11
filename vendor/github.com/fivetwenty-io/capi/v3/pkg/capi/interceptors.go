@@ -4,19 +4,22 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/fivetwenty-io/capi/v3/internal/constants"
 )
 
-// Request represents an HTTP request that can be intercepted
+// Request represents an HTTP request that can be intercepted.
 type Request struct {
-	Method  string
-	Path    string
-	Headers http.Header
-	Body    []byte
-	Context context.Context
+	Method   string
+	Path     string
+	Headers  http.Header
+	Body     []byte
+	Metadata map[string]any
 }
 
-// Response represents an HTTP response that can be intercepted
+// Response represents an HTTP response that can be intercepted.
 type Response struct {
 	StatusCode int
 	Headers    http.Header
@@ -24,19 +27,19 @@ type Response struct {
 	Error      error
 }
 
-// RequestInterceptor is called before a request is sent
+// RequestInterceptor is called before a request is sent.
 type RequestInterceptor func(ctx context.Context, req *Request) error
 
-// ResponseInterceptor is called after a response is received
+// ResponseInterceptor is called after a response is received.
 type ResponseInterceptor func(ctx context.Context, req *Request, resp *Response) error
 
-// InterceptorChain manages a chain of interceptors
+// InterceptorChain manages a chain of interceptors.
 type InterceptorChain struct {
 	requestInterceptors  []RequestInterceptor
 	responseInterceptors []ResponseInterceptor
 }
 
-// NewInterceptorChain creates a new interceptor chain
+// NewInterceptorChain creates a new interceptor chain.
 func NewInterceptorChain() *InterceptorChain {
 	return &InterceptorChain{
 		requestInterceptors:  make([]RequestInterceptor, 0),
@@ -44,53 +47,58 @@ func NewInterceptorChain() *InterceptorChain {
 	}
 }
 
-// AddRequestInterceptor adds a request interceptor to the chain
+// AddRequestInterceptor adds a request interceptor to the chain.
 func (c *InterceptorChain) AddRequestInterceptor(interceptor RequestInterceptor) {
 	c.requestInterceptors = append(c.requestInterceptors, interceptor)
 }
 
-// AddResponseInterceptor adds a response interceptor to the chain
+// AddResponseInterceptor adds a response interceptor to the chain.
 func (c *InterceptorChain) AddResponseInterceptor(interceptor ResponseInterceptor) {
 	c.responseInterceptors = append(c.responseInterceptors, interceptor)
 }
 
-// ExecuteRequestInterceptors runs all request interceptors
+// ExecuteRequestInterceptors runs all request interceptors.
 func (c *InterceptorChain) ExecuteRequestInterceptors(ctx context.Context, req *Request) error {
 	for _, interceptor := range c.requestInterceptors {
-		if err := interceptor(ctx, req); err != nil {
+		err := interceptor(ctx, req)
+		if err != nil {
 			return fmt.Errorf("request interceptor failed: %w", err)
 		}
 	}
+
 	return nil
 }
 
-// ExecuteResponseInterceptors runs all response interceptors
+// ExecuteResponseInterceptors runs all response interceptors.
 func (c *InterceptorChain) ExecuteResponseInterceptors(ctx context.Context, req *Request, resp *Response) error {
 	for _, interceptor := range c.responseInterceptors {
-		if err := interceptor(ctx, req, resp); err != nil {
+		err := interceptor(ctx, req, resp)
+		if err != nil {
 			return fmt.Errorf("response interceptor failed: %w", err)
 		}
 	}
+
 	return nil
 }
 
 // Common Interceptors
 
-// LoggingInterceptor logs requests and responses
+// LoggingInterceptor logs requests and responses.
 func LoggingInterceptor(logger Logger) RequestInterceptor {
 	return func(ctx context.Context, req *Request) error {
-		logger.Debug("API Request", map[string]interface{}{
+		logger.Debug("API Request", map[string]any{
 			"method": req.Method,
 			"path":   req.Path,
 		})
+
 		return nil
 	}
 }
 
-// LoggingResponseInterceptor logs responses
+// LoggingResponseInterceptor logs responses.
 func LoggingResponseInterceptor(logger Logger) ResponseInterceptor {
 	return func(ctx context.Context, req *Request, resp *Response) error {
-		fields := map[string]interface{}{
+		fields := map[string]any{
 			"method":      req.Method,
 			"path":        req.Path,
 			"status_code": resp.StatusCode,
@@ -101,17 +109,23 @@ func LoggingResponseInterceptor(logger Logger) ResponseInterceptor {
 		} else {
 			logger.Debug("API Response", fields)
 		}
+
 		return nil
 	}
 }
 
-// RateLimitInterceptor implements client-side rate limiting
+// RateLimitInterceptor implements client-side rate limiting.
+//
+// It starts a background refill goroutine that lives for the lifetime of the
+// process: the returned interceptor has no shutdown hook, so call this once at
+// client setup and reuse the result rather than per request, which would leak
+// a goroutine each call.
 func RateLimitInterceptor(requestsPerSecond int) RequestInterceptor {
 	// Simple token bucket implementation
 	bucket := make(chan struct{}, requestsPerSecond)
 
 	// Fill the bucket initially
-	for i := 0; i < requestsPerSecond; i++ {
+	for range requestsPerSecond {
 		bucket <- struct{}{}
 	}
 
@@ -139,25 +153,30 @@ func RateLimitInterceptor(requestsPerSecond int) RequestInterceptor {
 	}
 }
 
-// RetryInterceptor adds retry logic for failed requests
+// RetryInterceptor adds retry logic for failed requests.
 type RetryConfig struct {
-	MaxRetries   int
-	RetryDelay   time.Duration
-	MaxDelay     time.Duration
+	// MaxRetries is the maximum number of retry attempts after the initial try.
+	MaxRetries int
+	// RetryDelay is the base delay between retries (may be jittered/backed off).
+	RetryDelay time.Duration
+	// MaxDelay caps the maximum backoff delay between retries.
+	MaxDelay time.Duration
+	// RetryOnCodes lists HTTP status codes that should trigger a retry
+	// (e.g., 429, 500, 502, 503, 504).
 	RetryOnCodes []int
 }
 
-// DefaultRetryConfig returns default retry configuration
+// DefaultRetryConfig returns default retry configuration.
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
-		MaxRetries:   3,
+		MaxRetries:   constants.LowRetryMax,
 		RetryDelay:   1 * time.Second,
-		MaxDelay:     30 * time.Second,
+		MaxDelay:     constants.ExtendedRetryWaitMax,
 		RetryOnCodes: []int{429, 500, 502, 503, 504},
 	}
 }
 
-// RetryResponseInterceptor implements retry logic
+// RetryResponseInterceptor implements retry logic.
 func RetryResponseInterceptor(config *RetryConfig) ResponseInterceptor {
 	if config == nil {
 		config = DefaultRetryConfig()
@@ -166,9 +185,11 @@ func RetryResponseInterceptor(config *RetryConfig) ResponseInterceptor {
 	return func(ctx context.Context, req *Request, resp *Response) error {
 		// Check if we should retry based on status code
 		shouldRetry := false
+
 		for _, code := range config.RetryOnCodes {
 			if resp.StatusCode == code {
 				shouldRetry = true
+
 				break
 			}
 		}
@@ -182,13 +203,14 @@ func RetryResponseInterceptor(config *RetryConfig) ResponseInterceptor {
 		if resp.Headers == nil {
 			resp.Headers = make(http.Header)
 		}
+
 		resp.Headers.Set("X-Should-Retry", "true")
 
 		return nil
 	}
 }
 
-// AuthenticationInterceptor adds authentication headers
+// AuthenticationInterceptor adds authentication headers.
 func AuthenticationInterceptor(tokenProvider func(context.Context) (string, error)) RequestInterceptor {
 	return func(ctx context.Context, req *Request) error {
 		token, err := tokenProvider(ctx)
@@ -199,13 +221,14 @@ func AuthenticationInterceptor(tokenProvider func(context.Context) (string, erro
 		if req.Headers == nil {
 			req.Headers = make(http.Header)
 		}
+
 		req.Headers.Set("Authorization", "Bearer "+token)
 
 		return nil
 	}
 }
 
-// HeaderInterceptor adds custom headers to requests
+// HeaderInterceptor adds custom headers to requests.
 func HeaderInterceptor(headers map[string]string) RequestInterceptor {
 	return func(ctx context.Context, req *Request) error {
 		if req.Headers == nil {
@@ -220,28 +243,20 @@ func HeaderInterceptor(headers map[string]string) RequestInterceptor {
 	}
 }
 
-// contextKey is a custom type for context keys to avoid collisions
+// contextKey is a custom type for context keys to avoid collisions.
 type contextKey string
 
-const (
-	contextKeyCancel    contextKey = "cancel"
-	contextKeyStartTime contextKey = "start_time"
-)
-
-// TimeoutInterceptor adds a timeout to requests
+// TimeoutInterceptor adds a timeout to requests.
 func TimeoutInterceptor(timeout time.Duration) RequestInterceptor {
 	return func(ctx context.Context, req *Request) error {
-		// Create a new context with timeout
-		newCtx, cancel := context.WithTimeout(ctx, timeout)
-
-		// Store the cancel function in the context for cleanup
-		req.Context = context.WithValue(newCtx, contextKeyCancel, cancel)
-
+		// The timeout context should be handled by the caller
+		// This interceptor can validate timeout or prepare for it
+		// but the actual timeout context should be created by the HTTP client
 		return nil
 	}
 }
 
-// MetricsInterceptor collects metrics about API calls
+// MetricsInterceptor collects metrics about API calls.
 type Metrics struct {
 	TotalRequests   int64
 	TotalErrors     int64
@@ -250,45 +265,66 @@ type Metrics struct {
 	LastRequestTime time.Time
 }
 
-// MetricsCollector collects API metrics
+// MetricsCollector collects API metrics. Safe for concurrent use: the metrics
+// map and the per-endpoint counters are mutated from response interceptors that
+// run on every request, so all access is guarded by mu.
 type MetricsCollector struct {
+	mu       sync.Mutex
 	metrics  map[string]*Metrics
 	onChange func(endpoint string, metrics *Metrics)
 }
 
-// NewMetricsCollector creates a new metrics collector
+// NewMetricsCollector creates a new metrics collector.
 func NewMetricsCollector() *MetricsCollector {
 	return &MetricsCollector{
 		metrics: make(map[string]*Metrics),
 	}
 }
 
-// SetOnChange sets a callback for when metrics change
+// SetOnChange sets a callback for when metrics change.
 func (m *MetricsCollector) SetOnChange(fn func(endpoint string, metrics *Metrics)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.onChange = fn
 }
 
-// GetMetrics returns metrics for an endpoint
+// GetMetrics returns a copy of the metrics for an endpoint, or nil if none.
+// A copy is returned so callers cannot observe a torn read of counters that
+// concurrent requests are still updating.
 func (m *MetricsCollector) GetMetrics(endpoint string) *Metrics {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if metrics, ok := m.metrics[endpoint]; ok {
-		return metrics
+		snapshot := *metrics
+
+		return &snapshot
 	}
+
 	return nil
 }
 
-// MetricsRequestInterceptor records request start time
+// MetricsRequestInterceptor records request start time.
 func MetricsRequestInterceptor(collector *MetricsCollector) RequestInterceptor {
 	return func(ctx context.Context, req *Request) error {
-		// Store the start time in the context
-		req.Context = context.WithValue(req.Context, contextKeyStartTime, time.Now())
+		// Store the start time in the request metadata
+		if req.Metadata == nil {
+			req.Metadata = make(map[string]any)
+		}
+
+		req.Metadata["start_time"] = time.Now()
+
 		return nil
 	}
 }
 
-// MetricsResponseInterceptor records response metrics
+// MetricsResponseInterceptor records response metrics.
 func MetricsResponseInterceptor(collector *MetricsCollector) ResponseInterceptor {
 	return func(ctx context.Context, req *Request, resp *Response) error {
 		endpoint := fmt.Sprintf("%s %s", req.Method, req.Path)
+
+		collector.mu.Lock()
 
 		// Get or create metrics for this endpoint
 		metrics, ok := collector.metrics[endpoint]
@@ -301,11 +337,13 @@ func MetricsResponseInterceptor(collector *MetricsCollector) ResponseInterceptor
 		metrics.TotalRequests++
 		metrics.LastRequestTime = time.Now()
 
-		// Calculate latency if start time is available
-		if startTime, ok := req.Context.Value(contextKeyStartTime).(time.Time); ok {
-			latency := time.Since(startTime)
-			metrics.TotalLatency += latency
-			metrics.AverageLatency = metrics.TotalLatency / time.Duration(metrics.TotalRequests)
+		// Calculate latency if start time is available in request metadata
+		if req.Metadata != nil {
+			if startTime, ok := req.Metadata["start_time"].(time.Time); ok {
+				latency := time.Since(startTime)
+				metrics.TotalLatency += latency
+				metrics.AverageLatency = metrics.TotalLatency / time.Duration(metrics.TotalRequests)
+			}
 		}
 
 		// Count errors
@@ -313,87 +351,115 @@ func MetricsResponseInterceptor(collector *MetricsCollector) ResponseInterceptor
 			metrics.TotalErrors++
 		}
 
-		// Notify listener if set
-		if collector.onChange != nil {
-			collector.onChange(endpoint, metrics)
+		// Snapshot for the callback, then release the lock before invoking it
+		// so an onChange handler that calls back into the collector cannot
+		// deadlock.
+		onChange := collector.onChange
+		snapshot := *metrics
+		collector.mu.Unlock()
+
+		if onChange != nil {
+			onChange(endpoint, &snapshot)
 		}
 
 		return nil
 	}
 }
 
-// CircuitBreakerInterceptor implements circuit breaker pattern
+// CircuitBreakerInterceptor implements circuit breaker pattern.
 type CircuitBreakerConfig struct {
 	Threshold        int           // Number of failures before opening
 	Timeout          time.Duration // Time before trying again
 	SuccessThreshold int           // Number of successes to close
 }
 
-// CircuitBreaker tracks circuit state
+// circuitStateClosed is the CircuitBreaker.state value for the closed state
+// (requests pass through normally). The open and half-open states are
+// constants.StatusOpen and constants.StatusHalfOpen; closed has no analog in
+// the shared constants package because it is local to this breaker.
+const circuitStateClosed = "closed"
+
+// CircuitBreaker tracks circuit state. Safe for concurrent use: the request
+// and response interceptors that read and mutate the state below run on every
+// request, so all access is guarded by mu.
 type CircuitBreaker struct {
+	mu          sync.Mutex
 	config      *CircuitBreakerConfig
 	failures    int
 	successes   int
-	state       string // "closed", "open", "half-open"
+	state       string // circuitStateClosed, constants.StatusOpen, constants.StatusHalfOpen
 	lastFailure time.Time
+	// now returns the current time. It is an unexported seam defaulting to
+	// time.Now; tests override it to drive the timeout transition
+	// deterministically without sleeping on the wall clock.
+	now func() time.Time
 }
 
-// NewCircuitBreaker creates a new circuit breaker
+// NewCircuitBreaker creates a new circuit breaker.
 func NewCircuitBreaker(config *CircuitBreakerConfig) *CircuitBreaker {
 	if config == nil {
 		config = &CircuitBreakerConfig{
-			Threshold:        5,
-			Timeout:          30 * time.Second,
-			SuccessThreshold: 2,
+			Threshold:        constants.CircuitBreakerThreshold,
+			Timeout:          constants.CircuitBreakerTimeout,
+			SuccessThreshold: constants.CircuitBreakerSuccessThreshold,
 		}
 	}
+
 	return &CircuitBreaker{
 		config: config,
-		state:  "closed",
+		state:  circuitStateClosed,
+		now:    time.Now,
 	}
 }
 
-// CircuitBreakerRequestInterceptor checks circuit state before requests
+// CircuitBreakerRequestInterceptor checks circuit state before requests.
 func CircuitBreakerRequestInterceptor(breaker *CircuitBreaker) RequestInterceptor {
 	return func(ctx context.Context, req *Request) error {
-		switch breaker.state {
-		case "open":
+		breaker.mu.Lock()
+		defer breaker.mu.Unlock()
+
+		if breaker.state == constants.StatusOpen {
 			// Check if timeout has passed
-			if time.Since(breaker.lastFailure) > breaker.config.Timeout {
-				breaker.state = "half-open"
+			if breaker.now().Sub(breaker.lastFailure) > breaker.config.Timeout {
+				breaker.state = constants.StatusHalfOpen
 				breaker.successes = 0
 			} else {
-				return fmt.Errorf("circuit breaker is open")
+				return ErrCircuitBreakerOpen
 			}
 		}
+
 		return nil
 	}
 }
 
-// CircuitBreakerResponseInterceptor updates circuit state based on responses
+// CircuitBreakerResponseInterceptor updates circuit state based on responses.
 func CircuitBreakerResponseInterceptor(breaker *CircuitBreaker) ResponseInterceptor {
 	return func(ctx context.Context, req *Request, resp *Response) error {
+		breaker.mu.Lock()
+		defer breaker.mu.Unlock()
+
 		if resp.Error != nil || resp.StatusCode >= 500 {
 			// Record failure
 			breaker.failures++
-			breaker.lastFailure = time.Now()
+			breaker.lastFailure = breaker.now()
 
 			if breaker.failures >= breaker.config.Threshold {
-				breaker.state = "open"
+				breaker.state = constants.StatusOpen
 			}
 
-			if breaker.state == "half-open" {
-				breaker.state = "open"
+			if breaker.state == constants.StatusHalfOpen {
+				breaker.state = constants.StatusOpen
 			}
 		} else {
 			// Record success
-			if breaker.state == "half-open" {
+			switch breaker.state {
+			case constants.StatusHalfOpen:
 				breaker.successes++
 				if breaker.successes >= breaker.config.SuccessThreshold {
-					breaker.state = "closed"
+					breaker.state = circuitStateClosed
 					breaker.failures = 0
 				}
-			} else if breaker.state == "closed" {
+			case circuitStateClosed:
 				breaker.failures = 0
 			}
 		}
