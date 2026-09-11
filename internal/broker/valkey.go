@@ -13,9 +13,9 @@ import (
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/services/common"
 
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
-	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
 var (

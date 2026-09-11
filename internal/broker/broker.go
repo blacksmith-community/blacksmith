@@ -593,6 +593,7 @@ func (b *Broker) Update(
 ) {
 	logger := logger.Get().Named("broker")
 	logger.Error("Update operation not implemented")
+
 	prevPlanID := ""
 	if details.PreviousValues != nil {
 		prevPlanID = details.PreviousValues.PlanID
@@ -893,7 +894,7 @@ func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base ma
 		existing[key] = value
 	}
 
-	for key, value := range b.extractContextFields(contextData, logger) {
+	for key, value := range b.extractContextFields(contextData) {
 		if value != "" {
 			existing[key] = value
 		}
@@ -950,7 +951,7 @@ func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string, l
 	return entry
 }
 
-func (b *Broker) extractContextFields(contextData map[string]any, logger logger.Logger) map[string]string {
+func (b *Broker) extractContextFields(contextData map[string]any) map[string]string {
 	if len(contextData) == 0 {
 		return map[string]string{}
 	}
@@ -1756,11 +1757,12 @@ func (b *Broker) parseProvisionDetails(ctx context.Context, detailsMetadata map[
 
 		jsonBytes, err := json.Marshal(detailsMap)
 		if err != nil {
-			return osbapi.ProvisionRequest{}, fmt.Errorf("%w: marshal: %s", ErrCouldNotParseInstanceProvisionDetails, err)
+			return osbapi.ProvisionRequest{}, fmt.Errorf("%w: marshal: %w", ErrCouldNotParseInstanceProvisionDetails, err)
 		}
 
-		if err := json.Unmarshal(jsonBytes, &details); err != nil {
-			return osbapi.ProvisionRequest{}, fmt.Errorf("%w: unmarshal: %s", ErrCouldNotParseInstanceProvisionDetails, err)
+		err = json.Unmarshal(jsonBytes, &details)
+		if err != nil {
+			return osbapi.ProvisionRequest{}, fmt.Errorf("%w: unmarshal: %w", ErrCouldNotParseInstanceProvisionDetails, err)
 		}
 	} else {
 		// Fallback: try to read as old format
