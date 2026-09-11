@@ -29,9 +29,9 @@ import (
 	"blacksmith/pkg/utils"
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
-	"github.com/google/uuid"
 	"code.cloudfoundry.org/brokerapi/v13/domain"
 	"code.cloudfoundry.org/brokerapi/v13/domain/apiresponses"
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v2"
 )
 
@@ -106,7 +106,7 @@ var (
 
 // Configurable timeouts (can be overridden in tests)
 var (
-	defaultDeleteTimeout = 30 * time.Second
+	defaultDeleteTimeout  = 30 * time.Second
 	defaultRetryBaseDelay = 50 * time.Millisecond
 )
 
@@ -134,6 +134,12 @@ type Broker struct {
 	// Concurrency control for bind/unbind operations
 	instanceMu    sync.RWMutex           // Protects InstanceLocks map
 	InstanceLocks map[string]*sync.Mutex // Per-instance mutexes (exported for initialization)
+
+	// activeProvisions records instance IDs whose provisionAsync goroutine is
+	// still running in this process, keyed by instance ID. Deprovision consults
+	// it so a delete that arrives while the create is still being handed to BOSH
+	// is rejected instead of racing the deploy.
+	activeProvisions sync.Map
 }
 
 // IsBroker implements the interfaces.Broker interface.
@@ -378,7 +384,14 @@ func (b *Broker) Deprovision(
 		return domain.DeprovisionServiceSpec{}, ErrAsyncOperationsRequired
 	}
 
-	err := b.recordDeprovisionRequest(ctx, instanceID, details, logger)
+	// Reject before anything is written to the vault so a refused request
+	// leaves no deprovision trace on the index entry.
+	err := b.rejectIfOperationInProgress(ctx, instanceID, logger)
+	if err != nil {
+		return domain.DeprovisionServiceSpec{}, err
+	}
+
+	err = b.recordDeprovisionRequest(ctx, instanceID, details, logger)
 	if err != nil {
 		logger.Error("failed to record deprovision request in vault: %s", err)
 		// Continue anyway, this is non-fatal for existing instances
@@ -1005,6 +1018,57 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 	return instance, nil
 }
 
+// rejectIfOperationInProgress returns the OSB concurrency error when the
+// instance still has an operation running: either its provisionAsync goroutine
+// has not finished in this process, or BOSH still reports a queued or running
+// task for the deployment. Accepting a deprovision in that window would tear
+// down the vault index while the create deployment task keeps running, which
+// leaves an orphaned deployment behind.
+//
+// Instances that are not in the index are left to the regular flow, which
+// still records the request and answers with the OSB "does not exist" error.
+func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID string, logger logger.Logger) error {
+	if _, running := b.activeProvisions.Load(instanceID); running {
+		logger.Warning("Rejecting deprovision of instance %s: provisioning is still in progress", instanceID)
+
+		return apiresponses.ErrConcurrentInstanceAccess
+	}
+
+	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
+	if err != nil || !exists {
+		// validateInstanceExists reports lookup failures and missing instances.
+		return nil //nolint:nilerr // the caller re-runs the lookup and surfaces the error
+	}
+
+	deploymentName := deploymentNameForInstance(instanceID, instance)
+
+	task, err := b.BOSH.FindRunningTaskForDeployment(deploymentName)
+	if err != nil {
+		logger.Error("could not determine whether deployment %s has a running BOSH task: %s", deploymentName, err)
+
+		return fmt.Errorf("failed to check for a running BOSH task on deployment %s: %w", deploymentName, err)
+	}
+
+	if task != nil {
+		logger.Warning("Rejecting deprovision of instance %s: BOSH task %d (%s) is still %s", instanceID, task.ID, task.Description, task.State)
+
+		return apiresponses.ErrConcurrentInstanceAccess
+	}
+
+	return nil
+}
+
+// deploymentNameForInstance prefers the deployment name recorded at provision
+// time. Deriving it from PlanID is only a fallback for instances indexed before
+// that field existed, because the reconciler can rewrite PlanID afterwards.
+func deploymentNameForInstance(instanceID string, instance *vaultPkg.Instance) string {
+	if instance.DeploymentName != "" {
+		return instance.DeploymentName
+	}
+
+	return instance.PlanID + "-" + instanceID
+}
+
 func (b *Broker) storeDeleteRequestedTimestamp(ctx context.Context, instanceID string, logger logger.Logger) {
 	logger.Debug("storing delete_requested_at timestamp in Vault")
 
@@ -1584,6 +1648,11 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 		"raw_parameters":    details.RawParameters,
 	}
 
+	// Mark the provision as in flight before the goroutine starts so a
+	// deprovision that arrives immediately after the 202 is already rejected.
+	// provisionAsync clears the mark when it returns.
+	b.activeProvisions.Store(instanceID, time.Now())
+
 	// Launch async provisioning in background
 	// Create a detached context that survives the HTTP request lifecycle
 	// This ensures provisioning can continue even if the request context is cancelled
@@ -1872,9 +1941,8 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 	// the reconciler can rewrite PlanID, and a plan ID that extends another one
 	// (valkey-standalone vs valkey-standalone-classic) then yields the name of a
 	// deployment that was never created, so LastOperation polls forever.
-	deploymentName := instance.DeploymentName
-	if deploymentName == "" {
-		deploymentName = instance.PlanID + "-" + instanceID
+	deploymentName := deploymentNameForInstance(instanceID, instance)
+	if instance.DeploymentName == "" {
 		logger.Debug("no deployment_name recorded for instance %s; derived %s from plan ID", instanceID, deploymentName)
 	}
 

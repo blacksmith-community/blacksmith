@@ -131,8 +131,8 @@ func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 		return fmt.Errorf("failed to save index: %w", err)
 	}
 
-	s.logger.Infof("Index synchronized successfully: initial=%d, nil-cleaned=%d, updated=%d, added=%d, orphaned=%d, stale=%d, final=%d",
-		startCount, nilCount, stats.updateCount, stats.addCount, stats.orphanCount, stats.cleanupCount, len(idx))
+	s.logger.Infof("Index synchronized successfully: initial=%d, nil-cleaned=%d, updated=%d, added=%d, unclaimed=%d, orphaned=%d, stale=%d, final=%d",
+		startCount, nilCount, stats.updateCount, stats.addCount, stats.unclaimedCount, stats.orphanCount, stats.cleanupCount, len(idx))
 
 	err = s.validateIndexInternal(idx)
 	if err != nil {
@@ -144,7 +144,7 @@ func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceD
 
 // syncStats tracks synchronization statistics.
 type syncStats struct {
-	updateCount, addCount, orphanCount, cleanupCount int
+	updateCount, addCount, orphanCount, cleanupCount, unclaimedCount int
 }
 
 // ValidateIndex validates the consistency of the vault index.
@@ -319,6 +319,15 @@ func (s *IndexSynchronizer) updateIndexWithInstances(idx map[string]interface{},
 	var stats syncStats
 
 	for _, inst := range instances {
+		if _, exists := idx[inst.ID]; !exists && isUnclaimedDeployment(inst) {
+			stats.unclaimedCount++
+
+			s.logger.Warningf("Not adding deployment %s (instance %s) to the index: it has no Cloud Foundry service instance and is left for operators as an orphaned deployment",
+				inst.Deployment.Name, inst.ID)
+
+			continue
+		}
+
 		data := s.buildInstanceData(inst)
 
 		// Check if the instance has been marked for deletion (deployment not found in BOSH)
@@ -736,8 +745,8 @@ func (s *IndexSynchronizer) SyncIndexWithValidation(ctx context.Context, instanc
 		return fmt.Errorf("failed to save index: %w", err)
 	}
 
-	s.logger.Infof("Index synchronized: initial=%d, nil-cleaned=%d, updated=%d, added=%d, orphaned=%d, un-orphaned=%d, cleaned=%d, final=%d",
-		startCount, nilCount, stats.updateCount, stats.addCount, orphanStats.newOrphans, orphanStats.unorphaned, cleanupCount, len(idx))
+	s.logger.Infof("Index synchronized: initial=%d, nil-cleaned=%d, updated=%d, added=%d, unclaimed=%d, orphaned=%d, un-orphaned=%d, cleaned=%d, final=%d",
+		startCount, nilCount, stats.updateCount, stats.addCount, stats.unclaimedCount, orphanStats.newOrphans, orphanStats.unorphaned, cleanupCount, len(idx))
 
 	err = s.validateIndexInternal(idx)
 	if err != nil {

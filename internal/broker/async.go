@@ -231,8 +231,19 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 
 	p.logger.Info("Deployment started successfully, initial task ID: %d", task.ID)
 
-	// Get the actual task ID from BOSH events if the returned task ID is a placeholder
 	deploymentName := plan.ID + "-" + p.instanceID
+
+	// A deprovision may have removed the instance while the deploy was running.
+	// Recording the task now would resurrect the index entry for a service
+	// instance Cloud Foundry no longer has, so tear the deployment down instead.
+	if !p.instanceStillIndexed(ctx) {
+		p.logger.Warning("Instance %s was deprovisioned while deployment %s was being created; deleting the deployment instead of recording it", p.instanceID, deploymentName)
+		p.broker.tearDownAbandonedDeployment(ctx, p.instanceID, deploymentName, p.logger)
+
+		return false
+	}
+
+	// Get the actual task ID from BOSH events if the returned task ID is a placeholder
 	actualTaskID := task.ID
 
 	if task.ID <= 1 {
@@ -264,6 +275,53 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	return true
 }
 
+// instanceStillIndexed reports whether the instance is still present in the
+// vault index. When the lookup itself fails the instance is assumed to be
+// present, so a vault hiccup never turns a finished provision into a delete.
+func (p *provisioningPhase) instanceStillIndexed(ctx context.Context) bool {
+	_, exists, err := p.broker.Vault.FindInstance(ctx, p.instanceID)
+	if err != nil {
+		p.logger.Error("could not check whether instance %s is still indexed, assuming it is: %s", p.instanceID, err)
+
+		return true
+	}
+
+	return exists
+}
+
+// tearDownAbandonedDeployment deletes a deployment whose instance was removed
+// from the index while the create deployment task was still running. It runs
+// the same delete-with-retry and background monitoring as deprovisionAsync and
+// leaves the instance out of the index.
+func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
+	err := b.Vault.TrackProgress(ctx, instanceID, "deprovision", "Deleting deployment that finished after the instance was deprovisioned", 0, nil)
+	if err != nil {
+		logger.Error("failed to track abandoned deployment cleanup: %s", err)
+	}
+
+	phase := &deprovisioningPhase{
+		broker:         b,
+		instanceID:     instanceID,
+		deploymentName: deploymentName,
+		logger:         logger,
+	}
+
+	task, ok := phase.deleteDeploymentWithRetry(ctx)
+	if !ok {
+		return
+	}
+
+	if task.ID == 0 {
+		phase.handleDeploymentCleanedDuringRetry(ctx)
+
+		return
+	}
+
+	phase.trackDeletionProgress(ctx, task)
+
+	go phase.monitorAndCleanupTask(context.WithoutCancel(ctx), task)
+}
+
 // deprovisioningPhase represents a phase in the deprovisioning process.
 type deprovisioningPhase struct {
 	broker         *Broker
@@ -276,11 +334,26 @@ type deprovisioningPhase struct {
 func (d *deprovisioningPhase) checkDeploymentExists(ctx context.Context) (bool, bool) {
 	d.broker.trackProgress(ctx, d.instanceID, "deprovision", "Checking BOSH deployment status", 0, nil, d.logger)
 
-	manifest, err := d.broker.BOSH.GetDeployment(d.deploymentName)
-	if err != nil || manifest.Manifest == "" {
-		d.logger.Info("Deployment %s not found, marking as deleted", d.deploymentName)
+	deployment, err := d.broker.BOSH.GetDeployment(d.deploymentName)
+	if err != nil {
+		if errors.Is(err, bosh.ErrDeploymentNotFound) {
+			d.logger.Info("Deployment %s not found, marking as deleted", d.deploymentName)
 
-		return false, d.handleDeploymentNotFound(ctx)
+			return false, d.handleDeploymentNotFound(ctx)
+		}
+
+		// Existence is unknown. Treating this as "not found" would drop the
+		// index entry while the deployment keeps running on the director.
+		d.logger.Error("Failed to check whether deployment %s exists: %s", d.deploymentName, err)
+		d.broker.failWithTracking(ctx, d.instanceID, "deprovision", fmt.Sprintf("Failed to check deployment status: %s", err), nil, d.logger)
+
+		return false, false
+	}
+
+	// An empty manifest means the first deploy has not finished yet. The
+	// deployment exists and must be deleted like any other.
+	if deployment.Manifest == "" {
+		d.logger.Info("Deployment %s exists but has no manifest yet (deploy still in flight); proceeding with deletion", d.deploymentName)
 	}
 
 	return true, true
@@ -471,6 +544,8 @@ func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *b
 
 // provisionAsync handles the actual provisioning work in a background goroutine.
 func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details interface{}, plan services.Plan) {
+	defer b.activeProvisions.Delete(instanceID)
+
 	startTime := time.Now()
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async provisioning for instance %s (plan: %s)", instanceID, plan.ID)
@@ -577,7 +652,7 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 		return
 	}
 
-	deploymentName := instance.PlanID + "-" + instanceID
+	deploymentName := deploymentNameForInstance(instanceID, instance)
 	logger.Info("Deleting BOSH deployment %s", deploymentName)
 
 	// Create deprovisioning phase helper
@@ -633,11 +708,16 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName strin
 		// Check if deployment still exists
 		_, err := b.BOSH.GetDeployment(deploymentName)
 		if err != nil {
-			// Deployment not found is success for deletion
-			// Note: We treat any GetDeployment error as "not found" for deletion purposes
-			logger.Info("Deployment %s no longer exists, deletion successful", deploymentName)
+			if errors.Is(err, bosh.ErrDeploymentNotFound) {
+				// Deployment not found is success for deletion
+				logger.Info("Deployment %s no longer exists, deletion successful", deploymentName)
 
-			return &bosh.Task{ID: 0, State: "done"}, nil //nolint:nilerr // Deployment not found is success for deletion
+				return &bosh.Task{ID: 0, State: "done"}, nil
+			}
+
+			// Existence is unknown; let the delete attempt decide rather than
+			// declaring success on a director error.
+			logger.Warning("Could not confirm whether deployment %s exists (%s); attempting deletion anyway", deploymentName, err)
 		}
 
 		// Attempt deletion

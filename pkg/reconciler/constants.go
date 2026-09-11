@@ -2,6 +2,11 @@ package reconciler
 
 import "time"
 
+// MetadataUnclaimedDeployment marks an InstanceData built from a BOSH
+// deployment that has neither a vault index entry nor a Cloud Foundry service
+// instance. The reconciler reports such deployments instead of adopting them.
+const MetadataUnclaimedDeployment = "unclaimed_deployment"
+
 // API Configuration Constants.
 const (
 	// BOSH API defaults.
