@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
-	"code.cloudfoundry.org/brokerapi/v13/domain"
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
 var (
@@ -165,7 +165,7 @@ func (b *Broker) handleDynamicValkeyCredentials(ctx context.Context, credsMap ma
 }
 
 // handleValkeyUnbind deletes the per-binding ACL user from the Valkey instance.
-func (b *Broker) handleValkeyUnbind(ctx context.Context, instanceID, bindingID string, details domain.UnbindDetails, logger logger.Logger) error {
+func (b *Broker) handleValkeyUnbind(ctx context.Context, instanceID, bindingID string, details osbapi.UnbindRequest, logger logger.Logger) error {
 	logger.Info("Processing unbind for Valkey service")
 
 	plan, err := b.FindPlan(details.ServiceID, details.PlanID)

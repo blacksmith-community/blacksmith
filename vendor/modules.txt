@@ -51,17 +51,6 @@ cloud.google.com/go/longrunning/autogen/longrunningpb
 cloud.google.com/go/monitoring/apiv3
 cloud.google.com/go/monitoring/apiv3/v2/monitoringpb
 cloud.google.com/go/monitoring/internal
-# code.cloudfoundry.org/brokerapi/v13 v13.0.25
-## explicit; go 1.25.0
-code.cloudfoundry.org/brokerapi/v13
-code.cloudfoundry.org/brokerapi/v13/auth
-code.cloudfoundry.org/brokerapi/v13/domain
-code.cloudfoundry.org/brokerapi/v13/domain/apiresponses
-code.cloudfoundry.org/brokerapi/v13/handlers
-code.cloudfoundry.org/brokerapi/v13/internal/blog
-code.cloudfoundry.org/brokerapi/v13/internal/middleware
-code.cloudfoundry.org/brokerapi/v13/middlewares
-code.cloudfoundry.org/brokerapi/v13/utils
 # code.cloudfoundry.org/tlsconfig v0.31.0
 ## explicit; go 1.23.0
 code.cloudfoundry.org/tlsconfig
@@ -600,6 +589,11 @@ github.com/fivetwenty-io/capi/v3/internal/constants
 github.com/fivetwenty-io/capi/v3/internal/http
 github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
+# github.com/fivetwenty-io/osbapi/v2 v2.0.0
+## explicit; go 1.26.0
+github.com/fivetwenty-io/osbapi/v2/internal/server
+github.com/fivetwenty-io/osbapi/v2/pkg/broker
+github.com/fivetwenty-io/osbapi/v2/pkg/osbapi
 # github.com/fsnotify/fsnotify v1.10.1
 ## explicit; go 1.23
 github.com/fsnotify/fsnotify
@@ -1303,12 +1297,6 @@ github.com/modern-go/reflect2
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/nats-io/nats.go v1.45.0
-## explicit; go 1.23.0
-# github.com/nats-io/nkeys v0.4.11
-## explicit; go 1.23.0
-# github.com/nats-io/nuid v1.0.1
-## explicit
 # github.com/nicolai86/scaleway-sdk v1.10.2-0.20180628010248-798f60e20bb2
 ## explicit
 github.com/nicolai86/scaleway-sdk
@@ -1411,8 +1399,6 @@ github.com/pkg/browser
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
-# github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
-## explicit
 # github.com/posener/complete v1.2.3
 ## explicit; go 1.13
 github.com/posener/complete

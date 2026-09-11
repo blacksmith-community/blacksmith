@@ -15,12 +15,12 @@ import (
 	"blacksmith/internal/handlers/deployments"
 	"blacksmith/internal/handlers/instances"
 	serviceshandler "blacksmith/internal/handlers/services"
-	upgradehandler "blacksmith/internal/handlers/upgrade"
 	rabbitmqtesting "blacksmith/internal/handlers/services/rabbitmq/testing"
 	"blacksmith/internal/handlers/services/rabbitmq/websocket"
 	"blacksmith/internal/handlers/services/redis"
 	sshwebsocket "blacksmith/internal/handlers/ssh/websocket"
 	"blacksmith/internal/handlers/tasks"
+	upgradehandler "blacksmith/internal/handlers/upgrade"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/middleware"
 	"blacksmith/internal/routing"
@@ -58,8 +58,8 @@ type Dependencies struct {
 	Vault                          interfaces.Vault
 	Broker                         interfaces.Broker
 	Director                       interfaces.Director
-	BatchDirector                  interfaces.Director      // Separate director for batch upgrade operations
-	OnMaxBatchJobsChanged          func(maxJobs int)        // Callback to update BatchDirector pool size
+	BatchDirector                  interfaces.Director // Separate director for batch upgrade operations
+	OnMaxBatchJobsChanged          func(maxJobs int)   // Callback to update BatchDirector pool size
 	ServicesManager                *services.Manager
 	CFManager                      interfaces.CFManager
 	VMMonitor                      interfaces.VMMonitor

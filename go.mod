@@ -3,11 +3,11 @@ module blacksmith
 go 1.26.0
 
 require (
-	code.cloudfoundry.org/brokerapi/v13 v13.0.25
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cloudfoundry/bosh-cli/v7 v7.9.8
 	github.com/cloudfoundry/bosh-utils v0.0.552
 	github.com/fivetwenty-io/capi/v3 v3.229.1
+	github.com/fivetwenty-io/osbapi/v2 v2.0.0
 	github.com/geofffranks/spruce v1.31.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0
@@ -267,9 +267,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/nats-io/nats.go v1.45.0 // indirect
-	github.com/nats-io/nkeys v0.4.11 // indirect
-	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/nicolai86/scaleway-sdk v1.10.2-0.20180628010248-798f60e20bb2 // indirect
 	github.com/nu7hatch/gouuid v0.0.0-20131221200532-179d4d0c4d8d // indirect
 	github.com/nxadm/tail v1.4.11 // indirect
@@ -289,7 +286,6 @@ require (
 	github.com/pivotal-cf/paraphernalia v0.0.0-20180203224945-a64ae2051c20 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/posener/complete v1.2.3 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/pquerna/otp v1.2.1-0.20191009055518-468c2dd2b58d // indirect

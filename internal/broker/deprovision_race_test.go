@@ -18,8 +18,7 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
 
-	"code.cloudfoundry.org/brokerapi/v13/domain"
-	"code.cloudfoundry.org/brokerapi/v13/domain/apiresponses"
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -39,8 +38,8 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		serviceID      string
 		planID         string
 		deploymentName string
-		provisionSpec  domain.ProvisionDetails
-		deprovisionArg domain.DeprovisionDetails
+		provisionSpec  osbapi.ProvisionRequest
+		deprovisionArg osbapi.DeprovisionRequest
 	)
 
 	indexEntry := func() (*vaultPkg.Instance, bool) {
@@ -113,13 +112,13 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 			InstanceLocks: make(map[string]*sync.Mutex),
 		}
 
-		provisionSpec = domain.ProvisionDetails{
+		provisionSpec = osbapi.ProvisionRequest{
 			ServiceID:        serviceID,
 			PlanID:           planID,
 			OrganizationGUID: "org-guid",
 			SpaceGUID:        "space-guid",
 		}
-		deprovisionArg = domain.DeprovisionDetails{ServiceID: serviceID, PlanID: planID}
+		deprovisionArg = osbapi.DeprovisionRequest{ServiceID: serviceID, PlanID: planID}
 	})
 
 	AfterEach(func() {
@@ -150,13 +149,13 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 
 		It("answers with the OSB concurrency error and leaves the index intact", func() {
-			_, err := brokerInstance.Provision(ctx, instanceID, provisionSpec, true)
+			_, _, err := brokerInstance.Provision(ctx, instanceID, provisionSpec, true)
 			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(func() []string { return director.Calls("GetInfo") }).ShouldNot(BeEmpty())
 
-			_, err = brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
-			Expect(err).To(MatchError(apiresponses.ErrConcurrentInstanceAccess))
+			_, _, err = brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+			Expect(err).To(MatchError(osbapi.ErrConcurrencyError))
 
 			_, exists := indexEntry()
 			Expect(exists).To(BeTrue())
@@ -165,7 +164,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 
 		It("accepts the deprovision once the provision goroutine has ended", func() {
-			_, err := brokerInstance.Provision(ctx, instanceID, provisionSpec, true)
+			_, _, err := brokerInstance.Provision(ctx, instanceID, provisionSpec, true)
 			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(func() []string { return director.Calls("GetInfo") }).ShouldNot(BeEmpty())
@@ -178,7 +177,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
 			}
 
-			_, err = brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+			_, _, err = brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
 			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(indexEntryExists).Should(BeFalse())
@@ -199,8 +198,8 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 
 		It("answers with the OSB concurrency error and leaves the index intact", func() {
-			_, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
-			Expect(err).To(MatchError(apiresponses.ErrConcurrentInstanceAccess))
+			_, _, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+			Expect(err).To(MatchError(osbapi.ErrConcurrencyError))
 
 			instance, exists := indexEntry()
 			Expect(exists).To(BeTrue())
@@ -228,7 +227,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 
 		It("deletes the deployment instead of treating it as already gone", func() {
-			_, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+			_, _, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
 			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(func() []string { return director.Calls("DeleteDeployment") }).Should(Equal([]string{deploymentName}))
@@ -251,7 +250,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 
 		It("removes the index entry without issuing a delete", func() {
-			_, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+			_, _, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
 			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(indexEntryExists).Should(BeFalse())
@@ -272,7 +271,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 
 		It("fails the deprovision and keeps the index entry", func() {
-			_, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
+			_, _, err := brokerInstance.Deprovision(ctx, instanceID, deprovisionArg, true)
 			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(taskState).Should(Equal("failed"))
@@ -317,7 +316,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		})
 
 		It("deletes the finished deployment instead of recording it as provisioned", func() {
-			_, err := brokerInstance.Provision(ctx, instanceID, provisionSpec, true)
+			_, _, err := brokerInstance.Provision(ctx, instanceID, provisionSpec, true)
 			Expect(err).ToNot(HaveOccurred())
 
 			Eventually(deployStarted, 10*time.Second).Should(BeClosed())
