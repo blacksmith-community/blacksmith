@@ -6,28 +6,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
+	"net/http"
 	"net/url"
 
-	"github.com/fivetwenty-io/capi/v3/internal/http"
+	"github.com/fivetwenty-io/capi/v3/internal/constants"
+	http_internal "github.com/fivetwenty-io/capi/v3/internal/http"
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// DropletsClient implements the capi.DropletsClient interface
+// DropletsClient implements the capi.DropletsClient interface.
 type DropletsClient struct {
-	httpClient *http.Client
+	httpClient *http_internal.Client
 }
 
-// NewDropletsClient creates a new DropletsClient
-func NewDropletsClient(httpClient *http.Client) *DropletsClient {
+// NewDropletsClient creates a new DropletsClient.
+func NewDropletsClient(httpClient *http_internal.Client) *DropletsClient {
 	return &DropletsClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create creates a new droplet
+// Create creates a new droplet.
 func (c *DropletsClient) Create(ctx context.Context, request *capi.DropletCreateRequest) (*capi.Droplet, error) {
-	path := "/v3/droplets"
+	path := constants.APIPathDroplets
 
 	resp, err := c.httpClient.Post(ctx, path, request)
 	if err != nil {
@@ -35,16 +36,18 @@ func (c *DropletsClient) Create(ctx context.Context, request *capi.DropletCreate
 	}
 
 	var droplet capi.Droplet
-	if err := json.Unmarshal(resp.Body, &droplet); err != nil {
+
+	err = json.Unmarshal(resp.Body, &droplet)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplet response: %w", err)
 	}
 
 	return &droplet, nil
 }
 
-// Get retrieves a specific droplet
+// Get retrieves a specific droplet.
 func (c *DropletsClient) Get(ctx context.Context, guid string) (*capi.Droplet, error) {
-	path := fmt.Sprintf("/v3/droplets/%s", guid)
+	path := "/v3/droplets/" + guid
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
@@ -52,21 +55,25 @@ func (c *DropletsClient) Get(ctx context.Context, guid string) (*capi.Droplet, e
 	}
 
 	var droplet capi.Droplet
-	if err := json.Unmarshal(resp.Body, &droplet); err != nil {
+
+	err = json.Unmarshal(resp.Body, &droplet)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplet response: %w", err)
 	}
 
 	return &droplet, nil
 }
 
-// List lists all droplets
-func (c *DropletsClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.Droplet], error) {
-	path := "/v3/droplets"
+// List lists all droplets.
+func (c *DropletsClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.DropletListOption) (*capi.ListResponse[capi.Droplet], error) {
+	path := constants.APIPathDroplets
 
 	var queryParams url.Values
 	if params != nil {
 		queryParams = params.ToValues()
 	}
+
+	queryParams = capi.ApplyQueryOptions(queryParams, opts)
 
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
 	if err != nil {
@@ -74,14 +81,16 @@ func (c *DropletsClient) List(ctx context.Context, params *capi.QueryParams) (*c
 	}
 
 	var result capi.ListResponse[capi.Droplet]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplets list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// ListForApp lists droplets for a specific app
+// ListForApp lists droplets for a specific app.
 func (c *DropletsClient) ListForApp(ctx context.Context, appGUID string, params *capi.QueryParams) (*capi.ListResponse[capi.Droplet], error) {
 	path := fmt.Sprintf("/v3/apps/%s/droplets", appGUID)
 
@@ -96,14 +105,16 @@ func (c *DropletsClient) ListForApp(ctx context.Context, appGUID string, params 
 	}
 
 	var result capi.ListResponse[capi.Droplet]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplets list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// ListForPackage lists droplets for a specific package
+// ListForPackage lists droplets for a specific package.
 func (c *DropletsClient) ListForPackage(ctx context.Context, packageGUID string, params *capi.QueryParams) (*capi.ListResponse[capi.Droplet], error) {
 	path := fmt.Sprintf("/v3/packages/%s/droplets", packageGUID)
 
@@ -118,16 +129,18 @@ func (c *DropletsClient) ListForPackage(ctx context.Context, packageGUID string,
 	}
 
 	var result capi.ListResponse[capi.Droplet]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplets list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// Update updates a droplet's metadata
+// Update updates a droplet's metadata.
 func (c *DropletsClient) Update(ctx context.Context, guid string, request *capi.DropletUpdateRequest) (*capi.Droplet, error) {
-	path := fmt.Sprintf("/v3/droplets/%s", guid)
+	path := "/v3/droplets/" + guid
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
@@ -135,36 +148,42 @@ func (c *DropletsClient) Update(ctx context.Context, guid string, request *capi.
 	}
 
 	var droplet capi.Droplet
-	if err := json.Unmarshal(resp.Body, &droplet); err != nil {
+
+	err = json.Unmarshal(resp.Body, &droplet)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplet response: %w", err)
 	}
 
 	return &droplet, nil
 }
 
-// Delete deletes a droplet
-func (c *DropletsClient) Delete(ctx context.Context, guid string) error {
-	path := fmt.Sprintf("/v3/droplets/%s", guid)
+// Delete issues DELETE /v3/droplets/{guid}. CF v3 returns 202 Accepted with a
+// Location header pointing at /v3/jobs/{jobGuid}. We extract the job GUID from
+// the header and return a Job with its GUID populated; callers use Jobs().Get
+// or Jobs().PollUntilComplete for full state. Same pattern as Apps().Delete
+// and Roles().Delete.
+func (c *DropletsClient) Delete(ctx context.Context, guid string) (*capi.Job, error) {
+	path := "/v3/droplets/" + guid
 
-	_, err := c.httpClient.Delete(ctx, path)
+	resp, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
-		return fmt.Errorf("deleting droplet: %w", err)
+		return nil, fmt.Errorf("deleting droplet: %w", err)
 	}
 
-	return nil
+	return jobFromLocationHeader(resp, "deleting droplet")
 }
 
-// Copy copies a droplet to another app
+// Copy copies a droplet to another app.
 func (c *DropletsClient) Copy(ctx context.Context, sourceGUID string, request *capi.DropletCopyRequest) (*capi.Droplet, error) {
-	path := "/v3/droplets"
+	path := constants.APIPathDroplets
 
 	// Build query parameters
 	queryParams := url.Values{}
 	queryParams.Set("source_guid", sourceGUID)
 
 	// Use Do method directly to pass query parameters properly
-	resp, err := c.httpClient.Do(ctx, &http.Request{
-		Method: "POST",
+	resp, err := c.httpClient.Do(ctx, &http_internal.Request{
+		Method: http.MethodPost,
 		Path:   path,
 		Query:  queryParams,
 		Body:   request,
@@ -174,14 +193,16 @@ func (c *DropletsClient) Copy(ctx context.Context, sourceGUID string, request *c
 	}
 
 	var droplet capi.Droplet
-	if err := json.Unmarshal(resp.Body, &droplet); err != nil {
+
+	err = json.Unmarshal(resp.Body, &droplet)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplet response: %w", err)
 	}
 
 	return &droplet, nil
 }
 
-// Download downloads a droplet
+// Download downloads a droplet.
 func (c *DropletsClient) Download(ctx context.Context, guid string) ([]byte, error) {
 	path := fmt.Sprintf("/v3/droplets/%s/download", guid)
 
@@ -199,36 +220,19 @@ func (c *DropletsClient) Download(ctx context.Context, guid string) ([]byte, err
 	return content, nil
 }
 
-// Upload uploads bits to a droplet
+// Upload uploads bits to a droplet.
 func (c *DropletsClient) Upload(ctx context.Context, guid string, bits []byte) (*capi.Droplet, error) {
 	path := fmt.Sprintf("/v3/droplets/%s/upload", guid)
 
-	// Create multipart form data
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// Add the file field
-	part, err := writer.CreateFormFile("bits", "droplet.tgz")
+	respBody, err := uploadMultipartFile(ctx, c.httpClient, path, "droplet.tgz", bits, "droplet")
 	if err != nil {
-		return nil, fmt.Errorf("creating form file: %w", err)
-	}
-
-	if _, err := part.Write(bits); err != nil {
-		return nil, fmt.Errorf("writing file to form: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("closing multipart writer: %w", err)
-	}
-
-	// Use PostRaw to send multipart form data
-	resp, err := c.httpClient.PostRaw(ctx, path, buf.Bytes(), writer.FormDataContentType())
-	if err != nil {
-		return nil, fmt.Errorf("uploading droplet: %w", err)
+		return nil, err
 	}
 
 	var droplet capi.Droplet
-	if err := json.Unmarshal(resp.Body, &droplet); err != nil {
+
+	err = json.Unmarshal(respBody, &droplet)
+	if err != nil {
 		return nil, fmt.Errorf("parsing droplet response: %w", err)
 	}
 

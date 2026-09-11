@@ -10,19 +10,19 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// BuildsClient implements the capi.BuildsClient interface
+// BuildsClient implements the capi.BuildsClient interface.
 type BuildsClient struct {
 	httpClient *http.Client
 }
 
-// NewBuildsClient creates a new BuildsClient
+// NewBuildsClient creates a new BuildsClient.
 func NewBuildsClient(httpClient *http.Client) *BuildsClient {
 	return &BuildsClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create creates a new build
+// Create creates a new build.
 func (c *BuildsClient) Create(ctx context.Context, request *capi.BuildCreateRequest) (*capi.Build, error) {
 	path := "/v3/builds"
 
@@ -32,16 +32,18 @@ func (c *BuildsClient) Create(ctx context.Context, request *capi.BuildCreateRequ
 	}
 
 	var build capi.Build
-	if err := json.Unmarshal(resp.Body, &build); err != nil {
+
+	err = json.Unmarshal(resp.Body, &build)
+	if err != nil {
 		return nil, fmt.Errorf("parsing build response: %w", err)
 	}
 
 	return &build, nil
 }
 
-// Get retrieves a specific build
+// Get retrieves a specific build.
 func (c *BuildsClient) Get(ctx context.Context, guid string) (*capi.Build, error) {
-	path := fmt.Sprintf("/v3/builds/%s", guid)
+	path := "/v3/builds/" + guid
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
@@ -49,15 +51,17 @@ func (c *BuildsClient) Get(ctx context.Context, guid string) (*capi.Build, error
 	}
 
 	var build capi.Build
-	if err := json.Unmarshal(resp.Body, &build); err != nil {
+
+	err = json.Unmarshal(resp.Body, &build)
+	if err != nil {
 		return nil, fmt.Errorf("parsing build response: %w", err)
 	}
 
 	return &build, nil
 }
 
-// List lists all builds
-func (c *BuildsClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.Build], error) {
+// List lists all builds.
+func (c *BuildsClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.BuildListOption) (*capi.ListResponse[capi.Build], error) {
 	path := "/v3/builds"
 
 	var queryParams url.Values
@@ -65,20 +69,24 @@ func (c *BuildsClient) List(ctx context.Context, params *capi.QueryParams) (*cap
 		queryParams = params.ToValues()
 	}
 
+	queryParams = capi.ApplyQueryOptions(queryParams, opts)
+
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
 	if err != nil {
 		return nil, fmt.Errorf("listing builds: %w", err)
 	}
 
 	var result capi.ListResponse[capi.Build]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing builds list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// ListForApp lists builds for a specific app
+// ListForApp lists builds for a specific app.
 func (c *BuildsClient) ListForApp(ctx context.Context, appGUID string, params *capi.QueryParams) (*capi.ListResponse[capi.Build], error) {
 	path := fmt.Sprintf("/v3/apps/%s/builds", appGUID)
 
@@ -93,16 +101,18 @@ func (c *BuildsClient) ListForApp(ctx context.Context, appGUID string, params *c
 	}
 
 	var result capi.ListResponse[capi.Build]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing builds list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// Update updates a build's metadata
+// Update updates a build's metadata.
 func (c *BuildsClient) Update(ctx context.Context, guid string, request *capi.BuildUpdateRequest) (*capi.Build, error) {
-	path := fmt.Sprintf("/v3/builds/%s", guid)
+	path := "/v3/builds/" + guid
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
@@ -110,7 +120,9 @@ func (c *BuildsClient) Update(ctx context.Context, guid string, request *capi.Bu
 	}
 
 	var build capi.Build
-	if err := json.Unmarshal(resp.Body, &build); err != nil {
+
+	err = json.Unmarshal(resp.Body, &build)
+	if err != nil {
 		return nil, fmt.Errorf("parsing build response: %w", err)
 	}
 

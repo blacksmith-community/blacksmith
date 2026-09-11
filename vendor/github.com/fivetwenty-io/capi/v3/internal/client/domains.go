@@ -5,24 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/fivetwenty-io/capi/v3/internal/http"
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// DomainsClient implements the capi.DomainsClient interface
+// DomainsClient implements the capi.DomainsClient interface.
 type DomainsClient struct {
 	httpClient *http.Client
 }
 
-// NewDomainsClient creates a new DomainsClient
+// NewDomainsClient creates a new DomainsClient.
 func NewDomainsClient(httpClient *http.Client) *DomainsClient {
 	return &DomainsClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create creates a new domain
+// Create creates a new domain.
 func (c *DomainsClient) Create(ctx context.Context, request *capi.DomainCreateRequest) (*capi.Domain, error) {
 	path := "/v3/domains"
 
@@ -32,16 +33,18 @@ func (c *DomainsClient) Create(ctx context.Context, request *capi.DomainCreateRe
 	}
 
 	var domain capi.Domain
-	if err := json.Unmarshal(resp.Body, &domain); err != nil {
+
+	err = json.Unmarshal(resp.Body, &domain)
+	if err != nil {
 		return nil, fmt.Errorf("parsing domain response: %w", err)
 	}
 
 	return &domain, nil
 }
 
-// Get retrieves a specific domain
+// Get retrieves a specific domain.
 func (c *DomainsClient) Get(ctx context.Context, guid string) (*capi.Domain, error) {
-	path := fmt.Sprintf("/v3/domains/%s", guid)
+	path := "/v3/domains/" + guid
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
@@ -49,15 +52,17 @@ func (c *DomainsClient) Get(ctx context.Context, guid string) (*capi.Domain, err
 	}
 
 	var domain capi.Domain
-	if err := json.Unmarshal(resp.Body, &domain); err != nil {
+
+	err = json.Unmarshal(resp.Body, &domain)
+	if err != nil {
 		return nil, fmt.Errorf("parsing domain response: %w", err)
 	}
 
 	return &domain, nil
 }
 
-// List lists all domains
-func (c *DomainsClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.Domain], error) {
+// List lists all domains.
+func (c *DomainsClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.DomainListOption) (*capi.ListResponse[capi.Domain], error) {
 	path := "/v3/domains"
 
 	var queryParams url.Values
@@ -65,22 +70,26 @@ func (c *DomainsClient) List(ctx context.Context, params *capi.QueryParams) (*ca
 		queryParams = params.ToValues()
 	}
 
+	queryParams = capi.ApplyQueryOptions(queryParams, opts)
+
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
 	if err != nil {
 		return nil, fmt.Errorf("listing domains: %w", err)
 	}
 
 	var result capi.ListResponse[capi.Domain]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing domains list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// Update updates a domain's metadata
+// Update updates a domain's metadata.
 func (c *DomainsClient) Update(ctx context.Context, guid string, request *capi.DomainUpdateRequest) (*capi.Domain, error) {
-	path := fmt.Sprintf("/v3/domains/%s", guid)
+	path := "/v3/domains/" + guid
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
@@ -88,31 +97,31 @@ func (c *DomainsClient) Update(ctx context.Context, guid string, request *capi.D
 	}
 
 	var domain capi.Domain
-	if err := json.Unmarshal(resp.Body, &domain); err != nil {
+
+	err = json.Unmarshal(resp.Body, &domain)
+	if err != nil {
 		return nil, fmt.Errorf("parsing domain response: %w", err)
 	}
 
 	return &domain, nil
 }
 
-// Delete deletes a domain
+// Delete deletes a domain.
+// CF V3 DELETE /v3/domains/{guid} returns 202 Accepted with an empty body
+// and the async job reference in the Location header. See Apps.Delete for
+// the canonical Location-extraction pattern.
 func (c *DomainsClient) Delete(ctx context.Context, guid string) (*capi.Job, error) {
-	path := fmt.Sprintf("/v3/domains/%s", guid)
+	path := "/v3/domains/" + guid
 
 	resp, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("deleting domain: %w", err)
 	}
 
-	var job capi.Job
-	if err := json.Unmarshal(resp.Body, &job); err != nil {
-		return nil, fmt.Errorf("parsing job response: %w", err)
-	}
-
-	return &job, nil
+	return jobFromLocationHeader(resp, "deleting domain")
 }
 
-// ShareWithOrganization shares a domain with specified organizations
+// ShareWithOrganization shares a domain with specified organizations.
 func (c *DomainsClient) ShareWithOrganization(ctx context.Context, guid string, orgGUIDs []string) (*capi.ToManyRelationship, error) {
 	path := fmt.Sprintf("/v3/domains/%s/relationships/shared_organizations", guid)
 
@@ -134,14 +143,16 @@ func (c *DomainsClient) ShareWithOrganization(ctx context.Context, guid string, 
 	}
 
 	var relationship capi.ToManyRelationship
-	if err := json.Unmarshal(resp.Body, &relationship); err != nil {
+
+	err = json.Unmarshal(resp.Body, &relationship)
+	if err != nil {
 		return nil, fmt.Errorf("parsing relationship response: %w", err)
 	}
 
 	return &relationship, nil
 }
 
-// UnshareFromOrganization unshares a domain from a specific organization
+// UnshareFromOrganization unshares a domain from a specific organization.
 func (c *DomainsClient) UnshareFromOrganization(ctx context.Context, guid string, orgGUID string) error {
 	path := fmt.Sprintf("/v3/domains/%s/relationships/shared_organizations/%s", guid, orgGUID)
 
@@ -153,7 +164,7 @@ func (c *DomainsClient) UnshareFromOrganization(ctx context.Context, guid string
 	return nil
 }
 
-// CheckRouteReservations checks if a route is reserved for a domain
+// CheckRouteReservations checks if a route is reserved for a domain.
 func (c *DomainsClient) CheckRouteReservations(ctx context.Context, guid string, request *capi.RouteReservationRequest) (*capi.RouteReservation, error) {
 	path := fmt.Sprintf("/v3/domains/%s/route_reservations", guid)
 
@@ -162,11 +173,13 @@ func (c *DomainsClient) CheckRouteReservations(ctx context.Context, guid string,
 	if request.Host != "" {
 		queryParams.Set("host", request.Host)
 	}
+
 	if request.Path != "" {
 		queryParams.Set("path", request.Path)
 	}
+
 	if request.Port != nil {
-		queryParams.Set("port", fmt.Sprintf("%d", *request.Port))
+		queryParams.Set("port", strconv.Itoa(*request.Port))
 	}
 
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
@@ -175,7 +188,9 @@ func (c *DomainsClient) CheckRouteReservations(ctx context.Context, guid string,
 	}
 
 	var reservation capi.RouteReservation
-	if err := json.Unmarshal(resp.Body, &reservation); err != nil {
+
+	err = json.Unmarshal(resp.Body, &reservation)
+	if err != nil {
 		return nil, fmt.Errorf("parsing route reservation response: %w", err)
 	}
 

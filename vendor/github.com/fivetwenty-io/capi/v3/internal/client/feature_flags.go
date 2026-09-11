@@ -10,36 +10,38 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// FeatureFlagsClient implements capi.FeatureFlagsClient
+// FeatureFlagsClient implements capi.FeatureFlagsClient.
 type FeatureFlagsClient struct {
 	httpClient *http.Client
 }
 
-// NewFeatureFlagsClient creates a new feature flags client
+// NewFeatureFlagsClient creates a new feature flags client.
 func NewFeatureFlagsClient(httpClient *http.Client) *FeatureFlagsClient {
 	return &FeatureFlagsClient{
 		httpClient: httpClient,
 	}
 }
 
-// Get implements capi.FeatureFlagsClient.Get
+// Get implements capi.FeatureFlagsClient.Get.
 func (c *FeatureFlagsClient) Get(ctx context.Context, name string) (*capi.FeatureFlag, error) {
-	path := fmt.Sprintf("/v3/feature_flags/%s", name)
+	path := "/v3/feature_flags/" + name
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("getting feature flag: %w", err)
 	}
 
-	var ff capi.FeatureFlag
-	if err := json.Unmarshal(resp.Body, &ff); err != nil {
+	var featureFlag capi.FeatureFlag
+
+	err = json.Unmarshal(resp.Body, &featureFlag)
+	if err != nil {
 		return nil, fmt.Errorf("parsing feature flag: %w", err)
 	}
 
-	return &ff, nil
+	return &featureFlag, nil
 }
 
-// List implements capi.FeatureFlagsClient.List
+// List implements capi.FeatureFlagsClient.List.
 func (c *FeatureFlagsClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.FeatureFlag], error) {
 	path := "/v3/feature_flags"
 
@@ -54,26 +56,30 @@ func (c *FeatureFlagsClient) List(ctx context.Context, params *capi.QueryParams)
 	}
 
 	var list capi.ListResponse[capi.FeatureFlag]
-	if err := json.Unmarshal(resp.Body, &list); err != nil {
+
+	err = json.Unmarshal(resp.Body, &list)
+	if err != nil {
 		return nil, fmt.Errorf("parsing feature flags list: %w", err)
 	}
 
 	return &list, nil
 }
 
-// Update implements capi.FeatureFlagsClient.Update
+// Update implements capi.FeatureFlagsClient.Update.
 func (c *FeatureFlagsClient) Update(ctx context.Context, name string, request *capi.FeatureFlagUpdateRequest) (*capi.FeatureFlag, error) {
-	path := fmt.Sprintf("/v3/feature_flags/%s", name)
+	path := "/v3/feature_flags/" + name
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
 		return nil, fmt.Errorf("updating feature flag: %w", err)
 	}
 
-	var ff capi.FeatureFlag
-	if err := json.Unmarshal(resp.Body, &ff); err != nil {
+	var featureFlag capi.FeatureFlag
+
+	err = json.Unmarshal(resp.Body, &featureFlag)
+	if err != nil {
 		return nil, fmt.Errorf("parsing feature flag response: %w", err)
 	}
 
-	return &ff, nil
+	return &featureFlag, nil
 }

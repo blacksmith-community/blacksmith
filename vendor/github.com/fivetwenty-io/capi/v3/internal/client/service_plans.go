@@ -10,37 +10,39 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// ServicePlansClient implements the capi.ServicePlansClient interface
+// ServicePlansClient implements the capi.ServicePlansClient interface.
 type ServicePlansClient struct {
 	httpClient *http.Client
 }
 
-// NewServicePlansClient creates a new ServicePlansClient
+// NewServicePlansClient creates a new ServicePlansClient.
 func NewServicePlansClient(httpClient *http.Client) *ServicePlansClient {
 	return &ServicePlansClient{
 		httpClient: httpClient,
 	}
 }
 
-// Get retrieves a specific service plan
-func (c *ServicePlansClient) Get(ctx context.Context, guid string) (*capi.ServicePlan, error) {
-	path := fmt.Sprintf("/v3/service_plans/%s", guid)
+// Get retrieves a specific service plan.
+func (c *ServicePlansClient) Get(ctx context.Context, guid string, opts ...capi.ServicePlanGetOption) (*capi.ServicePlan, error) {
+	path := "/v3/service_plans/" + guid
 
-	resp, err := c.httpClient.Get(ctx, path, nil)
+	resp, err := c.httpClient.Get(ctx, path, capi.ApplyQueryOptions(nil, opts))
 	if err != nil {
 		return nil, fmt.Errorf("getting service plan: %w", err)
 	}
 
 	var plan capi.ServicePlan
-	if err := json.Unmarshal(resp.Body, &plan); err != nil {
+
+	err = json.Unmarshal(resp.Body, &plan)
+	if err != nil {
 		return nil, fmt.Errorf("parsing service plan response: %w", err)
 	}
 
 	return &plan, nil
 }
 
-// List lists all service plans
-func (c *ServicePlansClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.ServicePlan], error) {
+// List lists all service plans.
+func (c *ServicePlansClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.ServicePlanListOption) (*capi.ListResponse[capi.ServicePlan], error) {
 	path := "/v3/service_plans"
 
 	var queryParams url.Values
@@ -48,22 +50,26 @@ func (c *ServicePlansClient) List(ctx context.Context, params *capi.QueryParams)
 		queryParams = params.ToValues()
 	}
 
+	queryParams = capi.ApplyQueryOptions(queryParams, opts)
+
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
 	if err != nil {
 		return nil, fmt.Errorf("listing service plans: %w", err)
 	}
 
 	var result capi.ListResponse[capi.ServicePlan]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing service plans list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// Update updates a service plan (metadata only)
+// Update updates a service plan (metadata only).
 func (c *ServicePlansClient) Update(ctx context.Context, guid string, request *capi.ServicePlanUpdateRequest) (*capi.ServicePlan, error) {
-	path := fmt.Sprintf("/v3/service_plans/%s", guid)
+	path := "/v3/service_plans/" + guid
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
@@ -71,16 +77,18 @@ func (c *ServicePlansClient) Update(ctx context.Context, guid string, request *c
 	}
 
 	var plan capi.ServicePlan
-	if err := json.Unmarshal(resp.Body, &plan); err != nil {
+
+	err = json.Unmarshal(resp.Body, &plan)
+	if err != nil {
 		return nil, fmt.Errorf("parsing service plan response: %w", err)
 	}
 
 	return &plan, nil
 }
 
-// Delete deletes a service plan
+// Delete deletes a service plan.
 func (c *ServicePlansClient) Delete(ctx context.Context, guid string) error {
-	path := fmt.Sprintf("/v3/service_plans/%s", guid)
+	path := "/v3/service_plans/" + guid
 
 	_, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
@@ -90,7 +98,7 @@ func (c *ServicePlansClient) Delete(ctx context.Context, guid string) error {
 	return nil
 }
 
-// GetVisibility retrieves the visibility settings for a service plan
+// GetVisibility retrieves the visibility settings for a service plan.
 func (c *ServicePlansClient) GetVisibility(ctx context.Context, guid string) (*capi.ServicePlanVisibility, error) {
 	path := fmt.Sprintf("/v3/service_plans/%s/visibility", guid)
 
@@ -100,14 +108,16 @@ func (c *ServicePlansClient) GetVisibility(ctx context.Context, guid string) (*c
 	}
 
 	var visibility capi.ServicePlanVisibility
-	if err := json.Unmarshal(resp.Body, &visibility); err != nil {
+
+	err = json.Unmarshal(resp.Body, &visibility)
+	if err != nil {
 		return nil, fmt.Errorf("parsing service plan visibility response: %w", err)
 	}
 
 	return &visibility, nil
 }
 
-// UpdateVisibility updates the visibility settings for a service plan
+// UpdateVisibility updates the visibility settings for a service plan.
 func (c *ServicePlansClient) UpdateVisibility(ctx context.Context, guid string, request *capi.ServicePlanVisibilityUpdateRequest) (*capi.ServicePlanVisibility, error) {
 	path := fmt.Sprintf("/v3/service_plans/%s/visibility", guid)
 
@@ -117,14 +127,16 @@ func (c *ServicePlansClient) UpdateVisibility(ctx context.Context, guid string, 
 	}
 
 	var visibility capi.ServicePlanVisibility
-	if err := json.Unmarshal(resp.Body, &visibility); err != nil {
+
+	err = json.Unmarshal(resp.Body, &visibility)
+	if err != nil {
 		return nil, fmt.Errorf("parsing service plan visibility response: %w", err)
 	}
 
 	return &visibility, nil
 }
 
-// ApplyVisibility applies visibility settings to a service plan
+// ApplyVisibility applies visibility settings to a service plan.
 func (c *ServicePlansClient) ApplyVisibility(ctx context.Context, guid string, request *capi.ServicePlanVisibilityApplyRequest) (*capi.ServicePlanVisibility, error) {
 	path := fmt.Sprintf("/v3/service_plans/%s/visibility", guid)
 
@@ -134,14 +146,16 @@ func (c *ServicePlansClient) ApplyVisibility(ctx context.Context, guid string, r
 	}
 
 	var visibility capi.ServicePlanVisibility
-	if err := json.Unmarshal(resp.Body, &visibility); err != nil {
+
+	err = json.Unmarshal(resp.Body, &visibility)
+	if err != nil {
 		return nil, fmt.Errorf("parsing service plan visibility response: %w", err)
 	}
 
 	return &visibility, nil
 }
 
-// RemoveOrgFromVisibility removes an organization from the service plan visibility
+// RemoveOrgFromVisibility removes an organization from the service plan visibility.
 func (c *ServicePlansClient) RemoveOrgFromVisibility(ctx context.Context, guid string, orgGUID string) error {
 	path := fmt.Sprintf("/v3/service_plans/%s/visibility/%s", guid, orgGUID)
 

@@ -5,27 +5,27 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+
+	"github.com/fivetwenty-io/capi/v3/internal/constants"
 )
 
-// PaginationIterator provides an iterator interface for paginated responses
+// PaginationIterator provides an iterator interface for paginated responses.
 type PaginationIterator[T any] struct {
 	client       PaginationClient[T]
-	ctx          context.Context
 	currentPage  *ListResponse[T]
 	currentIndex int
 	params       *QueryParams
 	path         string
 }
 
-// PaginationClient is an interface that resource clients must implement to support pagination
+// PaginationClient is an interface that resource clients must implement to support pagination.
 type PaginationClient[T any] interface {
 	// ListWithPath performs a list request with the given path and params
 	ListWithPath(ctx context.Context, path string, params *QueryParams) (*ListResponse[T], error)
 }
 
-// NewPaginationIterator creates a new pagination iterator
+// NewPaginationIterator creates a new pagination iterator.
 func NewPaginationIterator[T any](
-	ctx context.Context,
 	client PaginationClient[T],
 	path string,
 	params *QueryParams,
@@ -37,16 +37,16 @@ func NewPaginationIterator[T any](
 	if params.PerPage == 0 {
 		params.PerPage = 50
 	}
+
 	return &PaginationIterator[T]{
 		client:       client,
-		ctx:          ctx,
 		params:       params,
 		path:         path,
 		currentIndex: -1,
 	}
 }
 
-// HasNext returns true if there are more items to iterate
+// HasNext returns true if there are more items to iterate.
 func (it *PaginationIterator[T]) HasNext() bool {
 	// If we haven't fetched any page yet
 	if it.currentPage == nil {
@@ -62,14 +62,15 @@ func (it *PaginationIterator[T]) HasNext() bool {
 	return it.currentPage.Pagination.Next != nil && it.currentPage.Pagination.Next.Href != ""
 }
 
-// Next returns the next item in the iteration
-func (it *PaginationIterator[T]) Next() (*T, error) {
+// Next returns the next item in the iteration.
+func (it *PaginationIterator[T]) Next(ctx context.Context) (*T, error) {
 	// If we haven't fetched any page yet, fetch the first page
 	if it.currentPage == nil {
-		page, err := it.client.ListWithPath(it.ctx, it.path, it.params)
+		page, err := it.client.ListWithPath(ctx, it.path, it.params)
 		if err != nil {
 			return nil, fmt.Errorf("fetching first page: %w", err)
 		}
+
 		it.currentPage = page
 		it.currentIndex = -1
 	}
@@ -77,18 +78,20 @@ func (it *PaginationIterator[T]) Next() (*T, error) {
 	// If we have items in the current page
 	if it.currentIndex+1 < len(it.currentPage.Resources) {
 		it.currentIndex++
+
 		return &it.currentPage.Resources[it.currentIndex], nil
 	}
 
 	// If there's a next page, fetch it
 	if it.currentPage.Pagination.Next != nil && it.currentPage.Pagination.Next.Href != "" {
 		nextURL := it.currentPage.Pagination.Next.Href
+
 		nextParams, err := it.extractParamsFromURL(nextURL)
 		if err != nil {
 			return nil, fmt.Errorf("parsing next page URL: %w", err)
 		}
 
-		page, err := it.client.ListWithPath(it.ctx, it.path, nextParams)
+		page, err := it.client.ListWithPath(ctx, it.path, nextParams)
 		if err != nil {
 			return nil, fmt.Errorf("fetching next page: %w", err)
 		}
@@ -101,43 +104,47 @@ func (it *PaginationIterator[T]) Next() (*T, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no more items")
+	return nil, ErrNoMoreItems
 }
 
-// All fetches all pages and returns all resources
-func (it *PaginationIterator[T]) All() ([]T, error) {
+// All fetches all pages and returns all resources.
+func (it *PaginationIterator[T]) All(ctx context.Context) ([]T, error) {
 	var allResources []T
 
 	for it.HasNext() {
-		resource, err := it.Next()
+		resource, err := it.Next(ctx)
 		if err != nil {
 			return nil, err
 		}
+
 		allResources = append(allResources, *resource)
 	}
 
 	return allResources, nil
 }
 
-// ForEach applies a function to each item in the iteration
-func (it *PaginationIterator[T]) ForEach(fn func(T) error) error {
+// ForEach applies a function to each item in the iteration.
+func (it *PaginationIterator[T]) ForEach(ctx context.Context, callback func(T) error) error {
 	for it.HasNext() {
-		resource, err := it.Next()
+		resource, err := it.Next(ctx)
 		if err != nil {
 			return err
 		}
-		if err := fn(*resource); err != nil {
+
+		err = callback(*resource)
+		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
-// extractParamsFromURL extracts query parameters from a URL
+// extractParamsFromURL extracts query parameters from a URL.
 func (it *PaginationIterator[T]) extractParamsFromURL(urlStr string) (*QueryParams, error) {
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse pagination URL: %w", err)
 	}
 
 	params := &QueryParams{
@@ -146,15 +153,21 @@ func (it *PaginationIterator[T]) extractParamsFromURL(urlStr string) (*QueryPara
 
 	queryValues := parsedURL.Query()
 
-	// Extract pagination parameters
+	// Extract pagination parameters. A non-numeric value is ignored rather
+	// than silently recorded as page 0, which would corrupt a follow-up
+	// request built from these params.
 	if page := queryValues.Get("page"); page != "" {
-		pageNum, _ := strconv.Atoi(page)
-		params.Page = pageNum
+		pageNum, err := strconv.Atoi(page)
+		if err == nil {
+			params.Page = pageNum
+		}
 	}
 
 	if perPage := queryValues.Get("per_page"); perPage != "" {
-		perPageNum, _ := strconv.Atoi(perPage)
-		params.PerPage = perPageNum
+		perPageNum, err := strconv.Atoi(perPage)
+		if err == nil {
+			params.PerPage = perPageNum
+		}
 	}
 
 	if orderBy := queryValues.Get("order_by"); orderBy != "" {
@@ -171,7 +184,7 @@ func (it *PaginationIterator[T]) extractParamsFromURL(urlStr string) (*QueryPara
 	return params, nil
 }
 
-// PaginationOptions provides configuration for pagination operations
+// PaginationOptions provides configuration for pagination operations.
 type PaginationOptions struct {
 	// PageSize sets the number of items per page (default: 50, max: 5000)
 	PageSize int
@@ -186,32 +199,17 @@ type PaginationOptions struct {
 	ConcurrentWorkers int
 }
 
-// DefaultPaginationOptions returns default pagination options
+// DefaultPaginationOptions returns default pagination options.
 func DefaultPaginationOptions() *PaginationOptions {
 	return &PaginationOptions{
-		PageSize:          50,
+		PageSize:          constants.StandardPageSize,
 		MaxPages:          0,
 		Concurrent:        false,
-		ConcurrentWorkers: 3,
+		ConcurrentWorkers: constants.DefaultConcurrencyLimit,
 	}
 }
 
-// PaginationHelper provides utility functions for pagination
-type PaginationHelper struct {
-	options *PaginationOptions
-}
-
-// NewPaginationHelper creates a new pagination helper
-func NewPaginationHelper(options *PaginationOptions) *PaginationHelper {
-	if options == nil {
-		options = DefaultPaginationOptions()
-	}
-	return &PaginationHelper{
-		options: options,
-	}
-}
-
-// FetchAllPages fetches all pages for a given resource type
+// FetchAllPages fetches all pages for a given resource type.
 func FetchAllPages[T any](
 	ctx context.Context,
 	client PaginationClient[T],
@@ -222,23 +220,21 @@ func FetchAllPages[T any](
 	if options == nil {
 		options = DefaultPaginationOptions()
 	}
+
 	if params == nil {
 		params = &QueryParams{}
 	}
+
 	if params.PerPage == 0 {
 		params.PerPage = options.PageSize
 	}
 
 	var allResources []T
+
 	currentPage := 1
 	params.Page = currentPage
 
-	for {
-		// Check if we've reached the max pages limit
-		if options.MaxPages > 0 && currentPage > options.MaxPages {
-			break
-		}
-
+	for options.MaxPages == 0 || currentPage <= options.MaxPages {
 		// Fetch the current page
 		response, err := client.ListWithPath(ctx, path, params)
 		if err != nil {
@@ -261,7 +257,7 @@ func FetchAllPages[T any](
 	return allResources, nil
 }
 
-// StreamPages streams pages through a channel
+// StreamPages streams pages through a channel.
 func StreamPages[T any](
 	ctx context.Context,
 	client PaginationClient[T],
@@ -277,9 +273,11 @@ func StreamPages[T any](
 		if options == nil {
 			options = DefaultPaginationOptions()
 		}
+
 		if params == nil {
 			params = &QueryParams{}
 		}
+
 		if params.PerPage == 0 {
 			params.PerPage = options.PageSize
 		}
@@ -292,6 +290,7 @@ func StreamPages[T any](
 			select {
 			case <-ctx.Done():
 				resultChan <- PageResult[T]{Err: ctx.Err()}
+
 				return
 			default:
 			}
@@ -305,6 +304,7 @@ func StreamPages[T any](
 			response, err := client.ListWithPath(ctx, path, params)
 			if err != nil {
 				resultChan <- PageResult[T]{Err: fmt.Errorf("fetching page %d: %w", currentPage, err)}
+
 				return
 			}
 
@@ -330,7 +330,7 @@ func StreamPages[T any](
 	return resultChan
 }
 
-// PageResult represents a single page of results
+// PageResult represents a single page of results.
 type PageResult[T any] struct {
 	Page    int
 	Items   []T

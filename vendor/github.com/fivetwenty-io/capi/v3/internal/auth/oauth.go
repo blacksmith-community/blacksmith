@@ -3,15 +3,43 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/fivetwenty-io/capi/v3/internal/constants"
 )
 
-// OAuth2Config represents OAuth2 configuration
+// Static errors for err113 compliance.
+var (
+	ErrNoValidCredentials       = errors.New("no valid credentials available for token refresh")
+	ErrTokenRequestFailed       = errors.New("token request failed")
+	ErrTokenRequestStatusFailed = errors.New("token request failed with status")
+)
+
+// maxErrorBodyLen bounds how much of an unparsed token-endpoint response body
+// is echoed into an error, limiting exposure of unexpected response content.
+const maxErrorBodyLen = 512
+
+// paramGrantType is the OAuth2 token-request form field naming the grant type.
+const paramGrantType = "grant_type"
+
+// truncateBody returns body capped at maxErrorBodyLen, appending an ellipsis
+// marker when truncated, for safe inclusion in error messages.
+func truncateBody(body []byte) string {
+	if len(body) <= maxErrorBodyLen {
+		return string(body)
+	}
+
+	return string(body[:maxErrorBodyLen]) + "...(truncated)"
+}
+
+// OAuth2Config represents OAuth2 configuration.
+
 type OAuth2Config struct {
 	TokenURL     string
 	ClientID     string
@@ -24,17 +52,17 @@ type OAuth2Config struct {
 	HTTPClient   *http.Client
 }
 
-// OAuth2TokenManager implements TokenManager using OAuth2
+// OAuth2TokenManager implements TokenManager using OAuth2.
 type OAuth2TokenManager struct {
 	config *OAuth2Config
 	store  *TokenStore
 }
 
-// NewOAuth2TokenManager creates a new OAuth2 token manager
+// NewOAuth2TokenManager creates a new OAuth2 token manager.
 func NewOAuth2TokenManager(config *OAuth2Config) *OAuth2TokenManager {
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: constants.DefaultHTTPTimeout,
 		}
 	}
 
@@ -54,7 +82,7 @@ func NewOAuth2TokenManager(config *OAuth2Config) *OAuth2TokenManager {
 	return manager
 }
 
-// GetToken returns a valid access token, refreshing if necessary
+// GetToken returns a valid access token, refreshing if necessary.
 func (m *OAuth2TokenManager) GetToken(ctx context.Context) (string, error) {
 	token := m.store.Get()
 
@@ -67,13 +95,14 @@ func (m *OAuth2TokenManager) GetToken(ctx context.Context) (string, error) {
 	return m.refreshToken(ctx)
 }
 
-// RefreshToken forces a token refresh
+// RefreshToken forces a token refresh.
 func (m *OAuth2TokenManager) RefreshToken(ctx context.Context) error {
 	_, err := m.refreshToken(ctx)
+
 	return err
 }
 
-// SetToken manually sets the access token
+// SetToken manually sets the access token.
 func (m *OAuth2TokenManager) SetToken(token string, expiresAt time.Time) {
 	m.store.Set(&Token{
 		AccessToken: token,
@@ -82,13 +111,20 @@ func (m *OAuth2TokenManager) SetToken(token string, expiresAt time.Time) {
 	})
 }
 
-// refreshToken performs the actual token refresh/acquisition
+// GetTokenStore returns the token store for this manager.
+func (m *OAuth2TokenManager) GetTokenStore() *TokenStore {
+	return m.store
+}
+
+// refreshToken performs the actual token refresh/acquisition.
 func (m *OAuth2TokenManager) refreshToken(ctx context.Context) (string, error) {
 	// Check what credentials we have available
 	token := m.store.Get()
 
-	var newToken *Token
-	var err error
+	var (
+		newToken *Token
+		err      error
+	)
 
 	switch {
 	case token != nil && token.RefreshToken != "":
@@ -104,7 +140,7 @@ func (m *OAuth2TokenManager) refreshToken(ctx context.Context) (string, error) {
 		// Use password grant
 		newToken, err = m.doPasswordGrant(ctx)
 	default:
-		return "", fmt.Errorf("no valid credentials available for token refresh")
+		return "", ErrNoValidCredentials
 	}
 
 	if err != nil {
@@ -122,10 +158,10 @@ func (m *OAuth2TokenManager) refreshToken(ctx context.Context) (string, error) {
 	return newToken.AccessToken, nil
 }
 
-// doClientCredentialsGrant performs client credentials OAuth2 flow
+// doClientCredentialsGrant performs client credentials OAuth2 flow.
 func (m *OAuth2TokenManager) doClientCredentialsGrant(ctx context.Context) (*Token, error) {
 	data := url.Values{
-		"grant_type": {"client_credentials"},
+		paramGrantType: {"client_credentials"},
 	}
 
 	if len(m.config.Scopes) > 0 {
@@ -135,12 +171,12 @@ func (m *OAuth2TokenManager) doClientCredentialsGrant(ctx context.Context) (*Tok
 	return m.doTokenRequest(ctx, data)
 }
 
-// doPasswordGrant performs password OAuth2 flow
+// doPasswordGrant performs password OAuth2 flow.
 func (m *OAuth2TokenManager) doPasswordGrant(ctx context.Context) (*Token, error) {
 	data := url.Values{
-		"grant_type": {"password"},
-		"username":   {m.config.Username},
-		"password":   {m.config.Password},
+		paramGrantType: {"password"},
+		"username":     {m.config.Username},
+		"password":     {m.config.Password},
 	}
 
 	if len(m.config.Scopes) > 0 {
@@ -150,19 +186,19 @@ func (m *OAuth2TokenManager) doPasswordGrant(ctx context.Context) (*Token, error
 	return m.doTokenRequest(ctx, data)
 }
 
-// doRefreshTokenGrant performs refresh token OAuth2 flow
+// doRefreshTokenGrant performs refresh token OAuth2 flow.
 func (m *OAuth2TokenManager) doRefreshTokenGrant(ctx context.Context, refreshToken string) (*Token, error) {
 	data := url.Values{
-		"grant_type":    {"refresh_token"},
+		paramGrantType:  {"refresh_token"},
 		"refresh_token": {refreshToken},
 	}
 
 	return m.doTokenRequest(ctx, data)
 }
 
-// doTokenRequest performs the actual HTTP request to get a token
+// doTokenRequest performs the actual HTTP request to get a token.
 func (m *OAuth2TokenManager) doTokenRequest(ctx context.Context, data url.Values) (*Token, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", m.config.TokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("creating token request: %w", err)
 	}
@@ -178,7 +214,11 @@ func (m *OAuth2TokenManager) doTokenRequest(ctx context.Context, data url.Values
 	if err != nil {
 		return nil, fmt.Errorf("executing token request: %w", err)
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		// Silently discard close error: no logger in scope; request already completed.
+		_ = resp.Body.Close()
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -190,27 +230,33 @@ func (m *OAuth2TokenManager) doTokenRequest(ctx context.Context, data url.Values
 			Error            string `json:"error"`
 			ErrorDescription string `json:"error_description"`
 		}
-		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error != "" {
-			return nil, fmt.Errorf("token request failed: %s - %s", errResp.Error, errResp.ErrorDescription)
+
+		err := json.Unmarshal(body, &errResp)
+		if err == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("%w: %s - %s", ErrTokenRequestFailed, errResp.Error, errResp.ErrorDescription)
 		}
-		return nil, fmt.Errorf("token request failed with status %d: %s", resp.StatusCode, string(body))
+
+		return nil, fmt.Errorf("%w %d: %s", ErrTokenRequestStatusFailed, resp.StatusCode, truncateBody(body))
 	}
 
 	var token Token
-	if err := json.Unmarshal(body, &token); err != nil {
+
+	err = json.Unmarshal(body, &token)
+	if err != nil {
 		return nil, fmt.Errorf("parsing token response: %w", err)
 	}
 
 	return &token, nil
 }
 
-// UAATokenManager provides UAA-specific token management
+// UAATokenManager provides UAA-specific token management.
 type UAATokenManager struct {
 	*OAuth2TokenManager
+
 	uaaURL string
 }
 
-// NewUAATokenManager creates a token manager for UAA
+// NewUAATokenManager creates a token manager for UAA.
 func NewUAATokenManager(uaaURL, clientID, clientSecret string) *UAATokenManager {
 	tokenURL := strings.TrimSuffix(uaaURL, "/") + "/oauth/token"
 
@@ -225,7 +271,7 @@ func NewUAATokenManager(uaaURL, clientID, clientSecret string) *UAATokenManager 
 	}
 }
 
-// NewUAATokenManagerWithPassword creates a token manager for UAA with username/password
+// NewUAATokenManagerWithPassword creates a token manager for UAA with username/password.
 func NewUAATokenManagerWithPassword(uaaURL, clientID, clientSecret, username, password string) *UAATokenManager {
 	tokenURL := strings.TrimSuffix(uaaURL, "/") + "/oauth/token"
 

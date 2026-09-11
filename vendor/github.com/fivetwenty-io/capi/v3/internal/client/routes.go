@@ -10,19 +10,19 @@ import (
 	"github.com/fivetwenty-io/capi/v3/pkg/capi"
 )
 
-// RoutesClient implements the capi.RoutesClient interface
+// RoutesClient implements the capi.RoutesClient interface.
 type RoutesClient struct {
 	httpClient *http.Client
 }
 
-// NewRoutesClient creates a new RoutesClient
+// NewRoutesClient creates a new RoutesClient.
 func NewRoutesClient(httpClient *http.Client) *RoutesClient {
 	return &RoutesClient{
 		httpClient: httpClient,
 	}
 }
 
-// Create creates a new route
+// Create creates a new route.
 func (c *RoutesClient) Create(ctx context.Context, request *capi.RouteCreateRequest) (*capi.Route, error) {
 	path := "/v3/routes"
 
@@ -32,32 +32,36 @@ func (c *RoutesClient) Create(ctx context.Context, request *capi.RouteCreateRequ
 	}
 
 	var route capi.Route
-	if err := json.Unmarshal(resp.Body, &route); err != nil {
+
+	err = json.Unmarshal(resp.Body, &route)
+	if err != nil {
 		return nil, fmt.Errorf("parsing route response: %w", err)
 	}
 
 	return &route, nil
 }
 
-// Get retrieves a specific route
-func (c *RoutesClient) Get(ctx context.Context, guid string) (*capi.Route, error) {
-	path := fmt.Sprintf("/v3/routes/%s", guid)
+// Get retrieves a specific route.
+func (c *RoutesClient) Get(ctx context.Context, guid string, opts ...capi.RouteGetOption) (*capi.Route, error) {
+	path := "/v3/routes/" + guid
 
-	resp, err := c.httpClient.Get(ctx, path, nil)
+	resp, err := c.httpClient.Get(ctx, path, capi.ApplyQueryOptions(nil, opts))
 	if err != nil {
 		return nil, fmt.Errorf("getting route: %w", err)
 	}
 
 	var route capi.Route
-	if err := json.Unmarshal(resp.Body, &route); err != nil {
+
+	err = json.Unmarshal(resp.Body, &route)
+	if err != nil {
 		return nil, fmt.Errorf("parsing route response: %w", err)
 	}
 
 	return &route, nil
 }
 
-// List lists all routes
-func (c *RoutesClient) List(ctx context.Context, params *capi.QueryParams) (*capi.ListResponse[capi.Route], error) {
+// List lists all routes.
+func (c *RoutesClient) List(ctx context.Context, params *capi.QueryParams, opts ...capi.RouteListOption) (*capi.ListResponse[capi.Route], error) {
 	path := "/v3/routes"
 
 	var queryParams url.Values
@@ -65,22 +69,26 @@ func (c *RoutesClient) List(ctx context.Context, params *capi.QueryParams) (*cap
 		queryParams = params.ToValues()
 	}
 
+	queryParams = capi.ApplyQueryOptions(queryParams, opts)
+
 	resp, err := c.httpClient.Get(ctx, path, queryParams)
 	if err != nil {
 		return nil, fmt.Errorf("listing routes: %w", err)
 	}
 
 	var result capi.ListResponse[capi.Route]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing routes list response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// Update updates a route's metadata
+// Update updates a route's metadata.
 func (c *RoutesClient) Update(ctx context.Context, guid string, request *capi.RouteUpdateRequest) (*capi.Route, error) {
-	path := fmt.Sprintf("/v3/routes/%s", guid)
+	path := "/v3/routes/" + guid
 
 	resp, err := c.httpClient.Patch(ctx, path, request)
 	if err != nil {
@@ -88,48 +96,54 @@ func (c *RoutesClient) Update(ctx context.Context, guid string, request *capi.Ro
 	}
 
 	var route capi.Route
-	if err := json.Unmarshal(resp.Body, &route); err != nil {
+
+	err = json.Unmarshal(resp.Body, &route)
+	if err != nil {
 		return nil, fmt.Errorf("parsing route response: %w", err)
 	}
 
 	return &route, nil
 }
 
-// Delete deletes a route
+// Delete deletes a route.
+//
+// DELETE /v3/routes/{guid} is async: CF returns 202 Accepted with an empty
+// body and a Location header pointing at /v3/jobs/{jobGuid}. We extract the
+// job GUID from that header and return a Job with its GUID populated;
+// callers use Jobs().Get or Jobs().PollUntilComplete for full state. Same
+// pattern as AppsClient.Delete — both async deletes share the Location-only
+// response shape.
 func (c *RoutesClient) Delete(ctx context.Context, guid string) (*capi.Job, error) {
-	path := fmt.Sprintf("/v3/routes/%s", guid)
+	path := "/v3/routes/" + guid
 
 	resp, err := c.httpClient.Delete(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("deleting route: %w", err)
 	}
 
-	var job capi.Job
-	if err := json.Unmarshal(resp.Body, &job); err != nil {
-		return nil, fmt.Errorf("parsing job response: %w", err)
-	}
-
-	return &job, nil
+	return jobFromLocationHeader(resp, "deleting route")
 }
 
-// ListDestinations lists all destinations for a route
-func (c *RoutesClient) ListDestinations(ctx context.Context, guid string) (*capi.RouteDestinations, error) {
+// ListDestinations lists all destinations for a route.
+func (c *RoutesClient) ListDestinations(ctx context.Context, guid string, opts ...capi.RouteDestinationsOption) (*capi.RouteDestinations, error) {
 	path := fmt.Sprintf("/v3/routes/%s/destinations", guid)
 
-	resp, err := c.httpClient.Get(ctx, path, nil)
+	resp, err := c.httpClient.Get(ctx, path, capi.ApplyQueryOptions(nil, opts))
 	if err != nil {
 		return nil, fmt.Errorf("listing route destinations: %w", err)
 	}
 
 	var destinations capi.RouteDestinations
-	if err := json.Unmarshal(resp.Body, &destinations); err != nil {
+
+	err = json.Unmarshal(resp.Body, &destinations)
+	if err != nil {
 		return nil, fmt.Errorf("parsing destinations response: %w", err)
 	}
 
 	return &destinations, nil
 }
 
-// InsertDestinations adds new destinations to a route
+// InsertDestinations adds new destinations to a route.
 func (c *RoutesClient) InsertDestinations(ctx context.Context, guid string, destinations []capi.RouteDestination) (*capi.RouteDestinations, error) {
 	path := fmt.Sprintf("/v3/routes/%s/destinations", guid)
 
@@ -145,14 +159,16 @@ func (c *RoutesClient) InsertDestinations(ctx context.Context, guid string, dest
 	}
 
 	var result capi.RouteDestinations
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing destinations response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// ReplaceDestinations replaces all destinations for a route
+// ReplaceDestinations replaces all destinations for a route.
 func (c *RoutesClient) ReplaceDestinations(ctx context.Context, guid string, destinations []capi.RouteDestination) (*capi.RouteDestinations, error) {
 	path := fmt.Sprintf("/v3/routes/%s/destinations", guid)
 
@@ -168,14 +184,16 @@ func (c *RoutesClient) ReplaceDestinations(ctx context.Context, guid string, des
 	}
 
 	var result capi.RouteDestinations
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing destinations response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// UpdateDestination updates a specific destination
+// UpdateDestination updates a specific destination.
 func (c *RoutesClient) UpdateDestination(ctx context.Context, guid string, destGUID string, protocol string) (*capi.RouteDestination, error) {
 	path := fmt.Sprintf("/v3/routes/%s/destinations/%s", guid, destGUID)
 
@@ -191,14 +209,16 @@ func (c *RoutesClient) UpdateDestination(ctx context.Context, guid string, destG
 	}
 
 	var destination capi.RouteDestination
-	if err := json.Unmarshal(resp.Body, &destination); err != nil {
+
+	err = json.Unmarshal(resp.Body, &destination)
+	if err != nil {
 		return nil, fmt.Errorf("parsing destination response: %w", err)
 	}
 
 	return &destination, nil
 }
 
-// RemoveDestination removes a specific destination from a route
+// RemoveDestination removes a specific destination from a route.
 func (c *RoutesClient) RemoveDestination(ctx context.Context, guid string, destGUID string) error {
 	path := fmt.Sprintf("/v3/routes/%s/destinations/%s", guid, destGUID)
 
@@ -210,7 +230,7 @@ func (c *RoutesClient) RemoveDestination(ctx context.Context, guid string, destG
 	return nil
 }
 
-// ListSharedSpaces lists spaces that a route is shared with
+// ListSharedSpaces lists spaces that a route is shared with.
 func (c *RoutesClient) ListSharedSpaces(ctx context.Context, guid string) (*capi.ListResponse[capi.Space], error) {
 	path := fmt.Sprintf("/v3/routes/%s/relationships/shared_spaces", guid)
 
@@ -220,14 +240,16 @@ func (c *RoutesClient) ListSharedSpaces(ctx context.Context, guid string) (*capi
 	}
 
 	var result capi.ListResponse[capi.Space]
-	if err := json.Unmarshal(resp.Body, &result); err != nil {
+
+	err = json.Unmarshal(resp.Body, &result)
+	if err != nil {
 		return nil, fmt.Errorf("parsing shared spaces response: %w", err)
 	}
 
 	return &result, nil
 }
 
-// ShareWithSpace shares a route with specified spaces
+// ShareWithSpace shares a route with specified spaces.
 func (c *RoutesClient) ShareWithSpace(ctx context.Context, guid string, spaceGUIDs []string) (*capi.ToManyRelationship, error) {
 	path := fmt.Sprintf("/v3/routes/%s/relationships/shared_spaces", guid)
 
@@ -249,14 +271,16 @@ func (c *RoutesClient) ShareWithSpace(ctx context.Context, guid string, spaceGUI
 	}
 
 	var relationship capi.ToManyRelationship
-	if err := json.Unmarshal(resp.Body, &relationship); err != nil {
+
+	err = json.Unmarshal(resp.Body, &relationship)
+	if err != nil {
 		return nil, fmt.Errorf("parsing relationship response: %w", err)
 	}
 
 	return &relationship, nil
 }
 
-// UnshareFromSpace unshares a route from a specific space
+// UnshareFromSpace unshares a route from a specific space.
 func (c *RoutesClient) UnshareFromSpace(ctx context.Context, guid string, spaceGUID string) error {
 	path := fmt.Sprintf("/v3/routes/%s/relationships/shared_spaces/%s", guid, spaceGUID)
 
@@ -268,9 +292,9 @@ func (c *RoutesClient) UnshareFromSpace(ctx context.Context, guid string, spaceG
 	return nil
 }
 
-// TransferOwnership transfers route ownership to a different space
+// TransferOwnership transfers route ownership to a different space.
 func (c *RoutesClient) TransferOwnership(ctx context.Context, guid string, spaceGUID string) (*capi.Route, error) {
-	path := fmt.Sprintf("/v3/routes/%s", guid)
+	path := "/v3/routes/" + guid
 
 	request := struct {
 		Relationships capi.RouteRelationships `json:"relationships"`
@@ -290,7 +314,9 @@ func (c *RoutesClient) TransferOwnership(ctx context.Context, guid string, space
 	}
 
 	var route capi.Route
-	if err := json.Unmarshal(resp.Body, &route); err != nil {
+
+	err = json.Unmarshal(resp.Body, &route)
+	if err != nil {
 		return nil, fmt.Errorf("parsing route response: %w", err)
 	}
 
