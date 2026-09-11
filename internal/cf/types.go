@@ -45,11 +45,21 @@ func (ec *EndpointClient) GetConfig() CFAPIConfig {
 	return ec.config
 }
 
+// LastError returns the most recent connection error, or nil when healthy.
+func (ec *EndpointClient) LastError() error {
+	ec.mutex.RLock()
+	defer ec.mutex.RUnlock()
+
+	return ec.lastError
+}
+
 // CFAPIConfig represents CF API endpoint configuration.
 // This is imported from the main config package to maintain compatibility.
 type CFAPIConfig struct {
-	Name     string `yaml:"name"`     // Display name for the CF endpoint
-	Endpoint string `yaml:"endpoint"` // CF API endpoint URL
-	Username string `yaml:"username"` // CF API username
-	Password string `yaml:"password"` // CF API password
+	Name              string `yaml:"name"`                // Display name for the CF endpoint
+	Endpoint          string `yaml:"endpoint"`            // CF API endpoint URL
+	Username          string `yaml:"username"`            // CF API username
+	Password          string `yaml:"password"`            // CF API password
+	CACert            string `yaml:"cacert"`              // PEM CA bundle that signs the CF API and UAA certificates
+	SkipSSLValidation bool   `yaml:"skip_ssl_validation"` // Disable TLS verification for this endpoint (development only)
 }
