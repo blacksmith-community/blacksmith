@@ -839,7 +839,10 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 		return fmt.Errorf("phase 5 failed: %w", err)
 	}
 
-	r.logger.Infof("Run #%d processed %d instances successfully", runID, len(updatedInstances))
+	// Phase 6: Remove index entries whose deployment the director confirms gone
+	swept := r.sweepOrphanedIndexEntries(ctx, updatedInstances, deploymentNameSet)
+
+	r.logger.Infof("Run #%d processed %d instances successfully (%d orphaned index entries removed)", runID, len(updatedInstances), swept)
 
 	return nil
 }
