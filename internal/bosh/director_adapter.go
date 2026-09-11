@@ -264,15 +264,18 @@ func (d *DirectorAdapter) UpdateDeploymentAsync(name, manifest string) (*Task, e
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Task-creating requests redirect to the new task: 302 Location: /tasks/<id>.
-	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusMovedPermanently {
+	// Task-creating requests redirect to the new task with a Location: /tasks/<id> header.
+	// The BOSH Director uses 303 See Other (some paths/versions 301/302/307/308) — accept any
+	// 3xx that carries a Location, rather than assuming a single status code.
+	location := resp.Header.Get("Location")
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 || location == "" {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 
-		return nil, fmt.Errorf("unexpected status %d firing deployment update for %s: %s",
-			resp.StatusCode, name, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("unexpected status %d (location %q) firing deployment update for %s: %s",
+			resp.StatusCode, location, name, strings.TrimSpace(string(body)))
 	}
 
-	taskID, err := parseTaskIDFromLocation(resp.Header.Get("Location"))
+	taskID, err := parseTaskIDFromLocation(location)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse task id for %s: %w", name, err)
 	}
