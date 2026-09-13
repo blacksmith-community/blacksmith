@@ -10703,12 +10703,15 @@ span.config-type.resurrection {
   flex-direction: row;
   flex-wrap: nowrap;
   flex-shrink: 0;
+  max-height: 45%; /* cap so the instance list below always stays visible */
+  overflow: hidden;
   border-bottom: 1px solid var(--border-primary);
 }
 
 #upgrade .upgrade-services-panel {
   flex: 0 0 35%;
   max-width: 35%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -10718,9 +10721,19 @@ span.config-type.resurrection {
 #upgrade .upgrade-targets-panel {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Panel content scrolls internally (higher specificity than .upgrade-filters flex-shrink:0),
+   so a tall Targets panel (Advanced expanded) scrolls instead of hiding the instances. */
+#upgrade .upgrade-services-panel .upgrade-services,
+#upgrade .upgrade-targets-panel .upgrade-targets {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 #upgrade .upgrade-main h2,

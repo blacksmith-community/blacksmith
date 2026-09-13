@@ -443,20 +443,31 @@ func (h *Handler) enrichInstancesWithReleaseVersion(instances map[string]interfa
 	}
 
 	// deployment name -> the "-forge" release as "name/version" (for the summary column) and
-	// the full release list (for the "advanced" per-release version pickers).
+	// the blacksmith-MANAGED release list (for the "advanced" per-release version pickers).
+	// dep.Releases() also carries releases injected by BOSH runtime configs (os-conf, syslog,
+	// bosh-dns, …) which the forge does NOT declare and blacksmith must not touch — filtered out.
 	forgeByDep := make(map[string]string, len(deployments))
-	allByDep := make(map[string][]string, len(deployments))
+	managedByDep := make(map[string][]string, len(deployments))
 
 	for _, dep := range deployments {
-		allByDep[dep.Name] = dep.Releases
+		managed := make([]string, 0, len(dep.Releases))
 
 		for _, rel := range dep.Releases { // each is "name/version"
-			if idx := strings.Index(rel, "/"); idx > 0 && strings.HasSuffix(rel[:idx], "-forge") {
-				forgeByDep[dep.Name] = rel
+			name := rel
+			if idx := strings.Index(rel, "/"); idx > 0 {
+				name = rel[:idx]
+			}
 
-				break
+			if strings.HasSuffix(name, "-forge") {
+				forgeByDep[dep.Name] = rel
+			}
+
+			if isManagedRelease(name) {
+				managed = append(managed, rel)
 			}
 		}
+
+		managedByDep[dep.Name] = managed
 	}
 
 	for instanceID, instanceData := range instances {
@@ -474,12 +485,30 @@ func (h *Handler) enrichInstancesWithReleaseVersion(instances map[string]interfa
 			instanceMap["release_version"] = forge
 		}
 
-		if all, ok := allByDep[depName]; ok {
-			instanceMap["release_versions"] = all
+		if managed, ok := managedByDep[depName]; ok {
+			instanceMap["release_versions"] = managed
 		}
 
 		instances[instanceID] = instanceMap
 	}
+}
+
+// managedSidecarReleases are the non-forge releases the Blacksmith forges DECLARE in their plan
+// manifests (and thus upgradeable via this feature). Everything else on a deployment (os-conf,
+// syslog, bosh-dns, …) comes from BOSH runtime configs and is NOT managed here. Keep in sync if
+// a forge adds a release to its plan manifest.
+var managedSidecarReleases = map[string]bool{
+	"bpm":                      true, // redis, valkey, rabbitmq
+	"routing":                  true, // rabbitmq (route_registrar)
+	"bosh-dns-aliases":         true, // rabbitmq
+	"loggregator-agent":        true, // rabbitmq (autoscale)
+	"rabbitmq-metrics-emitter": true, // rabbitmq (autoscale)
+}
+
+// isManagedRelease reports whether a release name is blacksmith-managed (a forge, or a declared
+// sidecar) and therefore eligible for the batch release-upgrade UI.
+func isManagedRelease(name string) bool {
+	return strings.HasSuffix(name, "-forge") || managedSidecarReleases[name]
 }
 
 // updateInstanceWithVMStatus updates an instance with VM status information.
