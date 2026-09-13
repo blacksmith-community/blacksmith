@@ -64,6 +64,7 @@ type UpgradeTask struct {
 	Status          TaskStatus        `json:"status"`
 	Paused          bool              `json:"paused"`
 	TargetStemcell  StemcellTarget    `json:"target_stemcell"`
+	TargetReleases  []ReleaseTarget   `json:"target_releases,omitempty"`
 	Instances       []InstanceUpgrade `json:"instances"`
 	TotalCount      int               `json:"total_count"`
 	CompletedCount  int               `json:"completed_count"`
@@ -83,11 +84,26 @@ type StemcellTarget struct {
 	Version string `json:"version"`
 }
 
-// CreateTaskRequest represents a request to create an upgrade task.
+// IsSet reports whether a stemcell target was actually chosen (both OS and version). An
+// upgrade may target releases only, in which case the stemcell target is left empty.
+func (s StemcellTarget) IsSet() bool {
+	return s.OS != "" && s.Version != ""
+}
+
+// ReleaseTarget is a BOSH release name + version to upgrade an instance to. Only the forge
+// release is operator-selectable; the target version must already be uploaded to the director.
+type ReleaseTarget struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// CreateTaskRequest represents a request to create an upgrade task. A task must set at least
+// one target — a stemcell, one or more releases, or both.
 type CreateTaskRequest struct {
-	Name           string         `json:"name,omitempty"`
-	InstanceIDs    []string       `json:"instance_ids"`
-	TargetStemcell StemcellTarget `json:"target_stemcell"`
+	Name           string          `json:"name,omitempty"`
+	InstanceIDs    []string        `json:"instance_ids"`
+	TargetStemcell StemcellTarget  `json:"target_stemcell"` // empty OS/Version = keep current stemcell
+	TargetReleases []ReleaseTarget `json:"target_releases"` // empty = keep current releases
 }
 
 // TaskSummary represents a summary of an upgrade task for list views.

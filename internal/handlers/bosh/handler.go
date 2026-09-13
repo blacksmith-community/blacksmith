@@ -159,6 +159,62 @@ func filterRecentStemcells(stemcells []bosh.Stemcell, limit int) []bosh.Stemcell
 	return result
 }
 
+// GetReleases returns available BOSH releases from the director, filtered to Blacksmith
+// forge releases and grouped by name — for the batch release-upgrade dropdown. Only versions
+// already uploaded to the director are returned (a service can only be upgraded to a version
+// that exists on the director).
+func (h *Handler) GetReleases(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("bosh-releases")
+	logger.Debug("BOSH releases request")
+
+	releases, err := h.director.GetReleases()
+	if err != nil {
+		logger.Error("Failed to get releases: %v", err)
+		response.HandleJSON(responseWriter, nil, err)
+
+		return
+	}
+
+	result := filterForgeReleases(releases)
+
+	logger.Debug("Returning %d forge releases", len(result))
+	response.HandleJSON(responseWriter, result, nil)
+}
+
+// filterForgeReleases keeps only Blacksmith forge releases (name suffix "-forge"), groups their
+// versions by release name (the director adapter returns each version as a separate Release
+// entry with the same Name), and sorts each release's versions descending.
+func filterForgeReleases(releases []bosh.Release) []bosh.Release {
+	byName := make(map[string][]bosh.ReleaseVersion)
+
+	order := make([]string, 0)
+
+	for _, r := range releases {
+		if !strings.HasSuffix(r.Name, "-forge") {
+			continue
+		}
+
+		if _, seen := byName[r.Name]; !seen {
+			order = append(order, r.Name)
+		}
+
+		byName[r.Name] = append(byName[r.Name], r.ReleaseVersions...)
+	}
+
+	result := make([]bosh.Release, 0, len(order))
+
+	for _, name := range order {
+		versions := byName[name]
+		sort.Slice(versions, func(i, j int) bool {
+			return versions[i].Version > versions[j].Version
+		})
+
+		result = append(result, bosh.Release{Name: name, ReleaseVersions: versions})
+	}
+
+	return result
+}
+
 // GetStatus returns BOSH/Blacksmith status information including service instances.
 func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Request) {
 	logger := h.logger.Named("bosh-status")
@@ -257,6 +313,8 @@ func (h *Handler) loadServiceInstances(ctx context.Context, logger interfaces.Lo
 	h.enrichInstancesWithFullData(ctx, instances, logger)
 	// Stemcell info is now provided by vm-monitor via enrichInstancesWithVMStatus
 	h.enrichInstancesWithVMStatus(ctx, instances, logger)
+	// Current forge release version (for the batch release-upgrade UI column)
+	h.enrichInstancesWithReleaseVersion(instances, logger)
 
 	return instances
 }
@@ -372,6 +430,49 @@ func (h *Handler) enrichInstancesWithVMStatus(ctx context.Context, instances map
 		logger.Debug("VM status for %s: %+v", instanceID, vmStatus)
 
 		h.updateInstanceWithVMStatus(instanceID, instanceData, vmStatus, instances)
+	}
+}
+
+// enrichInstancesWithReleaseVersion adds each instance's CURRENT forge release version
+// (e.g. "valkey-forge/1.4.3") for the batch release-upgrade UI. It uses a single bulk
+// GetDeployments() call (which carries concrete resolved release versions), so it's one BOSH
+// read for the whole list — the manifest itself only says "latest", so we read the deployment.
+func (h *Handler) enrichInstancesWithReleaseVersion(instances map[string]interface{}, logger interfaces.Logger) {
+	deployments, err := h.director.GetDeployments()
+	if err != nil {
+		logger.Debug("Could not list deployments for release enrichment: %v", err)
+
+		return
+	}
+
+	// deployment name -> the "-forge" release as "name/version"
+	forgeByDep := make(map[string]string, len(deployments))
+
+	for _, dep := range deployments {
+		for _, rel := range dep.Releases { // each is "name/version"
+			if idx := strings.Index(rel, "/"); idx > 0 && strings.HasSuffix(rel[:idx], "-forge") {
+				forgeByDep[dep.Name] = rel
+
+				break
+			}
+		}
+	}
+
+	for instanceID, instanceData := range instances {
+		instanceMap, ok := instanceData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		depName, _ := instanceMap["deployment_name"].(string)
+		if depName == "" {
+			continue
+		}
+
+		if forge, ok := forgeByDep[depName]; ok {
+			instanceMap["release_version"] = forge
+			instances[instanceID] = instanceMap
+		}
 	}
 }
 

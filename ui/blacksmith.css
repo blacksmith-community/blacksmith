@@ -10686,18 +10686,45 @@ span.config-type.resurrection {
   overflow: hidden;
 }
 
-#upgrade .upgrade-left-panel {
-  width: 400px;
-  border-right: 1px solid var(--border-primary);
+/* Left region (60%): Services + Targets on top, wide Instances below, footer action. */
+#upgrade .upgrade-main {
+  flex: 6;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background-color: var(--bg-sidebar);
-  flex-shrink: 0;
   height: 100%;
+  border-right: 1px solid var(--border-primary);
+  background-color: var(--bg-sidebar);
 }
 
-#upgrade .upgrade-left-panel h2 {
+#upgrade .upgrade-top {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+#upgrade .upgrade-services-panel {
+  flex: 0 0 35%;
+  max-width: 35%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border-primary);
+}
+
+#upgrade .upgrade-targets-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#upgrade .upgrade-main h2,
+#upgrade .upgrade-right-panel h2 {
   padding: 1em;
   margin: 0;
   background-color: var(--bg-secondary);
@@ -10705,6 +10732,33 @@ span.config-type.resurrection {
   font-size: 14pt;
   font-weight: 600;
   flex-shrink: 0;
+}
+
+/* Targets panel: stacked Stemcell / Releases groups. */
+#upgrade .upgrade-target-group {
+  margin-bottom: 1em;
+}
+
+#upgrade .upgrade-target-group:last-child {
+  margin-bottom: 0;
+}
+
+#upgrade .upgrade-target-group h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0.25rem;
+}
+
+/* Footer action row under the instance list. */
+#upgrade .upgrade-footer {
+  padding: 0.75em 1em;
+  border-top: 1px solid var(--border-primary);
+  background-color: var(--bg-secondary);
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
 }
 
 #upgrade .upgrade-filters {
@@ -10913,7 +10967,7 @@ span.config-type.resurrection {
 }
 
 #upgrade .upgrade-right-panel {
-  flex: 1;
+  flex: 4;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -11026,7 +11080,8 @@ span.config-type.resurrection {
   padding-left: 0.75rem;
 }
 
-#upgrade .upgrade-instance-stemcell {
+#upgrade .upgrade-instance-stemcell,
+#upgrade .upgrade-instance-release {
   display: inline-block;
   padding: 0.125rem 0.5rem;
   font-size: 0.6875rem;
@@ -11035,6 +11090,15 @@ span.config-type.resurrection {
   color: var(--text-secondary);
   border-radius: 0.25rem;
   border: 1px solid var(--border-primary);
+}
+
+#upgrade .upgrade-instance-release-container {
+  padding-left: 0.75rem;
+}
+
+#upgrade .upgrade-instance-release.unknown {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 #upgrade .upgrade-instance-stemcell.unknown {

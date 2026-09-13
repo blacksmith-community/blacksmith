@@ -2172,7 +2172,8 @@
   };
 
   // Render the upgrade tab filters
-  const renderUpgradeFilters = () => {
+  // Left "Services" panel: filters + selection controls.
+  const renderUpgradeServices = () => {
     return `
       <div class="filter-row">
         <label for="upgrade-service-filter">Service:</label>
@@ -2187,18 +2188,6 @@
         </select>
       </div>
       <div class="filter-row">
-        <label for="upgrade-stemcell-floor">Min Stemcell:</label>
-        <select id="upgrade-stemcell-floor">
-          <option value="">No minimum</option>
-        </select>
-      </div>
-      <div class="filter-row">
-        <label for="upgrade-stemcell-filter">Target Stemcell:</label>
-        <select id="upgrade-stemcell-filter">
-          <option value="">Select Stemcell...</option>
-        </select>
-      </div>
-      <div class="filter-row">
         <label for="upgrade-max-batch-jobs">Max Parallel Jobs:</label>
         <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="No limit" title="Maximum number of batch jobs that can run in parallel. Leave empty or 0 for no limit.">
         <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
@@ -2206,7 +2195,6 @@
       <div class="upgrade-actions">
         <button id="upgrade-select-all" class="btn-secondary">Select All</button>
         <button id="upgrade-deselect-all" class="btn-secondary">Deselect All</button>
-        <button id="upgrade-start" class="btn-primary" disabled>Upgrade Selected (0)</button>
       </div>
       <div class="upgrade-range-selection">
         <label>Select Range:</label>
@@ -2220,8 +2208,45 @@
     `;
   };
 
+  // Middle "Targets" panel: two stacked groups (Stemcell, Releases), each with a Target
+  // (upgrade TO) and a Min floor filter. At least one target must be chosen.
+  const renderUpgradeTargets = () => {
+    return `
+      <div class="upgrade-target-group">
+        <h3>Stemcell</h3>
+        <div class="filter-row">
+          <label for="upgrade-stemcell-filter">Target:</label>
+          <select id="upgrade-stemcell-filter">
+            <option value="">— keep current —</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="upgrade-stemcell-floor">Min (floor):</label>
+          <select id="upgrade-stemcell-floor">
+            <option value="">No minimum</option>
+          </select>
+        </div>
+      </div>
+      <div class="upgrade-target-group">
+        <h3>Releases</h3>
+        <div class="filter-row">
+          <label for="upgrade-release-filter">Target:</label>
+          <select id="upgrade-release-filter" disabled title="Select a single service to choose a release">
+            <option value="">— keep current —</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="upgrade-release-floor">Min (floor):</label>
+          <select id="upgrade-release-floor">
+            <option value="">No minimum</option>
+          </select>
+        </div>
+      </div>
+    `;
+  };
+
   // Render upgrade instance list
-  const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor) => {
+  const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor, releaseFloor) => {
     if (!instances || Object.keys(instances).length === 0) {
       return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
     }
@@ -2253,6 +2278,13 @@
         if (compareStemcellVersions(details.stemcell.version, stemcellFloor) < 0) return false;
       }
 
+      // Apply release floor filter (compare the version part of "name/version")
+      if (releaseFloor) {
+        const rv = (details.release_version || '').split('/').pop();
+        if (!rv) return false;
+        if (compareStemcellVersions(rv, releaseFloor) < 0) return false;
+      }
+
       return true;
     });
 
@@ -2281,6 +2313,12 @@
         ? `<span class="upgrade-instance-stemcell" title="${stemcellInfo.name || ''}">${stemcellInfo.os || ''}/${stemcellInfo.version || ''}</span>`
         : '<span class="upgrade-instance-stemcell unknown">unknown</span>';
 
+      // Get current forge release version if available (e.g. "valkey-forge/1.4.3")
+      const releaseInfo = details.release_version || '';
+      const releaseDisplay = releaseInfo
+        ? `<span class="upgrade-instance-release">${releaseInfo}</span>`
+        : '<span class="upgrade-instance-release unknown">unknown</span>';
+
       return `
         <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-row-number="${rowNumber}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}" data-stemcell-os="${stemcellInfo?.os || ''}" data-stemcell-version="${stemcellInfo?.version || ''}">
           <span class="upgrade-instance-row-number">${rowNumber}</span>
@@ -2294,6 +2332,9 @@
           </div>
           <div class="upgrade-instance-stemcell-container">
             ${stemcellDisplay}
+          </div>
+          <div class="upgrade-instance-release-container">
+            ${releaseDisplay}
           </div>
         </div>
       `;
@@ -2309,14 +2350,17 @@
   const updateUpgradeButton = () => {
     const button = document.getElementById('upgrade-start');
     const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+    const releaseSelect = document.getElementById('upgrade-release-filter');
 
     if (!button) return;
 
     const count = selectedUpgradeInstances.size;
     const hasStemcell = stemcellSelect && stemcellSelect.value;
+    const hasRelease = releaseSelect && releaseSelect.value;
 
     button.textContent = `Upgrade Selected (${count})`;
-    button.disabled = count === 0 || !hasStemcell;
+    // At least one target (stemcell or release) is required.
+    button.disabled = count === 0 || (!hasStemcell && !hasRelease);
   };
 
   // Refresh the instance list based on current filters
@@ -2327,8 +2371,9 @@
     const serviceFilter = document.getElementById('upgrade-service-filter')?.value || '';
     const planFilter = document.getElementById('upgrade-plan-filter')?.value || '';
     const stemcellFloor = document.getElementById('upgrade-stemcell-floor')?.value || '';
+    const releaseFloor = document.getElementById('upgrade-release-floor')?.value || '';
 
-    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor);
+    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
 
     // Set up checkbox handlers
     setupUpgradeInstanceHandlers();
@@ -2367,11 +2412,13 @@
     const upgradePanel = document.getElementById('upgrade');
     if (!upgradePanel) return;
 
-    const filtersContainer = upgradePanel.querySelector('.upgrade-filters');
-    if (!filtersContainer) return;
+    const servicesContainer = upgradePanel.querySelector('.upgrade-services');
+    const targetsContainer = upgradePanel.querySelector('.upgrade-targets');
+    if (!servicesContainer || !targetsContainer) return;
 
-    // Render filters
-    filtersContainer.innerHTML = renderUpgradeFilters();
+    // Render the Services (filters/selection) and Targets (stemcell/releases) panels
+    servicesContainer.innerHTML = renderUpgradeServices();
+    targetsContainer.innerHTML = renderUpgradeTargets();
 
     // Load stemcells from API
     try {
@@ -2395,6 +2442,81 @@
       console.error('Failed to load stemcells:', err);
     }
 
+    // Load forge releases from the director (grouped by name). The Target Release dropdown is
+    // scoped to the selected service's forge — one service type per batch job.
+    window.upgradeForgeReleases = [];
+    window.upgradeCurrentForge = '';
+    try {
+      const rresp = await fetch('/b/bosh/releases');
+      if (rresp.ok) {
+        window.upgradeForgeReleases = (await rresp.json()) || [];
+      }
+    } catch (err) {
+      console.error('Failed to load releases:', err);
+    }
+
+    // Wire release Target + Min once (populate* below only rebuild their options).
+    const releaseSelectEl = document.getElementById('upgrade-release-filter');
+    if (releaseSelectEl) releaseSelectEl.addEventListener('change', updateUpgradeButton);
+    const releaseFloorEl = document.getElementById('upgrade-release-floor');
+    if (releaseFloorEl) releaseFloorEl.addEventListener('change', refreshUpgradeInstanceList);
+
+    // Populate the Target Release dropdown for the selected service's forge (e.g. valkey -> valkey-forge).
+    const populateReleaseFilter = (serviceId) => {
+      const sel = document.getElementById('upgrade-release-filter');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">— keep current —</option>';
+      window.upgradeCurrentForge = '';
+      if (!serviceId) {
+        sel.disabled = true;
+        sel.title = 'Select a single service to choose a release';
+        updateUpgradeButton();
+        return;
+      }
+      const svc = (window.plansData?.services || []).find(s => s.id === serviceId);
+      const svcName = (svc?.name || '').toLowerCase();
+      const forge = (window.upgradeForgeReleases || []).find(r => r.name === svcName + '-forge');
+      if (!forge || !forge.release_versions || forge.release_versions.length === 0) {
+        sel.disabled = true;
+        sel.title = 'No uploaded ' + (svcName || 'service') + '-forge releases on the director';
+        updateUpgradeButton();
+        return;
+      }
+      window.upgradeCurrentForge = forge.name;
+      sel.disabled = false;
+      sel.title = '';
+      forge.release_versions.forEach(rv => {
+        const opt = document.createElement('option');
+        opt.value = rv.version;
+        opt.textContent = forge.name + '/' + rv.version;
+        sel.appendChild(opt);
+      });
+      updateUpgradeButton();
+    };
+
+    // Populate the Min Release floor filter with the release versions present on the selected service.
+    const populateReleaseFloorFilter = (serviceId) => {
+      const floorSelect = document.getElementById('upgrade-release-floor');
+      if (!floorSelect || !window.serviceInstances) return;
+      const versions = new Set();
+      Object.values(window.serviceInstances).forEach(details => {
+        if (details.deleted) return;
+        if (serviceId && details.service_id !== serviceId) return;
+        const rv = (details.release_version || '').split('/').pop();
+        if (rv) versions.add(rv);
+      });
+      const sorted = Array.from(versions).sort(compareStemcellVersions);
+      floorSelect.innerHTML = '<option value="">No minimum</option>';
+      sorted.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        floorSelect.appendChild(opt);
+      });
+    };
+    populateReleaseFilter('');
+    populateReleaseFloorFilter('');
+
     // Populate service filter from catalog data
     const serviceSelect = document.getElementById('upgrade-service-filter');
     if (serviceSelect && window.plansData && window.plansData.services) {
@@ -2408,6 +2530,8 @@
       // Add change handler for service filter
       serviceSelect.addEventListener('change', () => {
         updatePlanFilter(serviceSelect.value);
+        populateReleaseFilter(serviceSelect.value);
+        populateReleaseFloorFilter(serviceSelect.value);
         refreshUpgradeInstanceList();
       });
     }
@@ -2924,8 +3048,13 @@
   // Start upgrade for selected instances
   const startUpgrade = async () => {
     const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
-    if (!stemcellSelect || !stemcellSelect.value) {
-      alert('Please select a target stemcell');
+    const releaseSelect = document.getElementById('upgrade-release-filter');
+
+    const stemcellValue = stemcellSelect && stemcellSelect.value ? stemcellSelect.value : '';
+    const releaseValue = releaseSelect && releaseSelect.value ? releaseSelect.value : '';
+
+    if (!stemcellValue && !releaseValue) {
+      alert('Please choose at least one target: a stemcell and/or a release');
       return;
     }
 
@@ -2934,11 +3063,19 @@
       return;
     }
 
-    const [os, version] = stemcellSelect.value.split('/');
+    const [os, version] = stemcellValue ? stemcellValue.split('/') : ['', ''];
     const instanceIds = Array.from(selectedUpgradeInstances);
 
-    // Prompt for job name
-    const defaultName = `Upgrade to ${os}/${version}`;
+    // Release target (forge scoped to the selected service); empty if none chosen.
+    const targetReleases = (releaseValue && window.upgradeCurrentForge)
+      ? [{ name: window.upgradeCurrentForge, version: releaseValue }]
+      : [];
+
+    // Prompt for job name — default reflects whichever targets are set.
+    const targetParts = [];
+    if (stemcellValue) targetParts.push(`stemcell ${os}/${version}`);
+    if (targetReleases.length) targetParts.push(`${window.upgradeCurrentForge}/${releaseValue}`);
+    const defaultName = `Upgrade to ${targetParts.join(' + ')}`;
     const jobName = await showPromptDialog({
       title: 'Create Batch Job',
       message: `Enter a name for this batch job (${instanceIds.length} instance${instanceIds.length > 1 ? 's' : ''} selected):`,
@@ -2959,7 +3096,8 @@
       target_stemcell: {
         os: os,
         version: version
-      }
+      },
+      target_releases: targetReleases
     };
 
     try {

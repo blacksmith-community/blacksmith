@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -194,6 +195,41 @@ func TestUpgradeInstance_TimesOutAndContinues(t *testing.T) {
 
 	if task.TimedOutCount != 2 {
 		t.Fatalf("expected TimedOutCount=2, got %d", task.TimedOutCount)
+	}
+}
+
+// A task with neither a stemcell nor releases is rejected.
+func TestCreateTask_RequiresATarget(t *testing.T) {
+	m := NewManager(&logger.NoOpLogger{}, &fakeDirector{manifest: testManifest}, &fakeVault{})
+
+	_, err := m.CreateTask(context.Background(), CreateTaskRequest{InstanceIDs: []string{"i-1"}})
+	if !errors.Is(err, ErrNoUpgradeTarget) {
+		t.Fatalf("expected ErrNoUpgradeTarget, got %v", err)
+	}
+}
+
+// A release-only upgrade (no stemcell target) merges the release overlay and completes.
+func TestUpgradeInstance_ReleaseOnlyCompletes(t *testing.T) {
+	setFastWatch(t, time.Second)
+
+	dir := &fakeDirector{manifest: releaseManifest, taskID: 100, state: "done"}
+	m := NewManager(&logger.NoOpLogger{}, dir, &fakeVault{})
+
+	task := &UpgradeTask{
+		ID:             "rel-task",
+		Status:         TaskStatusPending,
+		TargetReleases: []ReleaseTarget{{Name: "valkey-forge", Version: "1.4.4"}},
+		Instances: []InstanceUpgrade{
+			{InstanceID: "i-1", DeploymentName: "test-dep", Status: InstanceStatusPending},
+		},
+		TotalCount: 1,
+		CreatedAt:  time.Now(),
+	}
+
+	go m.processTask(task)
+
+	if !waitForInstanceStatus(m, task, 0, InstanceStatusSuccess, 2*time.Second) {
+		t.Fatalf("release-only: expected success, got %q", instStatus(m, task, 0))
 	}
 }
 

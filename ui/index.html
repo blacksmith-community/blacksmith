@@ -98,18 +98,29 @@
         </div>
 
         <div id="upgrade" class="tab-panel flex-1 flex flex-row" role="tabpanel" aria-hidden="true">
-          <div class="upgrade-left-panel">
-            <h2>Stemcell</h2>
-            <div class="upgrade-filters">
-              <div class="loading p-4 text-center">loading...</div>
+          <div class="upgrade-main">
+            <div class="upgrade-top">
+              <div class="upgrade-services-panel">
+                <h2>Services</h2>
+                <div class="upgrade-services upgrade-filters">
+                  <div class="loading p-4 text-center">loading...</div>
+                </div>
+              </div>
+              <div class="upgrade-targets-panel">
+                <h2>Targets</h2>
+                <div class="upgrade-targets upgrade-filters"></div>
+              </div>
             </div>
             <div class="upgrade-instances">
+            </div>
+            <div class="upgrade-footer">
+              <button id="upgrade-start" class="btn-primary" disabled>Upgrade Selected (0)</button>
             </div>
           </div>
           <div class="upgrade-right-panel">
             <h2>Batch Jobs</h2>
             <div class="upgrade-tasks">
-              <div class="no-tasks p-4 text-center text-gray-500">No batch jobs yet. Select instances and a stemcell, then click Upgrade to start.</div>
+              <div class="no-tasks p-4 text-center text-gray-500">No batch jobs yet. Select instances and a target (stemcell and/or release), then click Upgrade to start.</div>
             </div>
           </div>
         </div>

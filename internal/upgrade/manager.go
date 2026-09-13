@@ -22,7 +22,9 @@ const (
 var (
 	ErrTaskNotFound    = errors.New("upgrade task not found")
 	ErrNoInstances     = errors.New("no instances specified for upgrade")
+	ErrNoUpgradeTarget = errors.New("no upgrade target: set a stemcell, releases, or both")
 	ErrInvalidStemcell = errors.New("invalid stemcell target")
+	ErrInvalidRelease  = errors.New("invalid release target: name and version required")
 	ErrTaskNotRunning  = errors.New("task is not running")
 	ErrTaskNotPaused   = errors.New("task is not paused")
 )
@@ -114,12 +116,25 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		return nil, ErrNoInstances
 	}
 
-	if req.TargetStemcell.OS == "" || req.TargetStemcell.Version == "" {
+	// A task must set at least one target: a stemcell, one or more releases, or both.
+	if !req.TargetStemcell.IsSet() && len(req.TargetReleases) == 0 {
+		return nil, ErrNoUpgradeTarget
+	}
+
+	// If a stemcell is provided at all, both OS and version must be set.
+	if (req.TargetStemcell.OS != "") != (req.TargetStemcell.Version != "") {
 		return nil, ErrInvalidStemcell
 	}
 
-	m.logger.Info("Creating upgrade task for %d instances to stemcell %s/%s",
-		len(req.InstanceIDs), req.TargetStemcell.OS, req.TargetStemcell.Version)
+	// Each release target needs a name and a version.
+	for _, r := range req.TargetReleases {
+		if r.Name == "" || r.Version == "" {
+			return nil, ErrInvalidRelease
+		}
+	}
+
+	m.logger.Info("Creating upgrade task for %d instances (stemcell=%q, releases=%d)",
+		len(req.InstanceIDs), req.TargetStemcell.OS+"/"+req.TargetStemcell.Version, len(req.TargetReleases))
 
 	// Build instance list with deployment names
 	instances, err := m.buildInstanceList(ctx, req.InstanceIDs)
@@ -132,6 +147,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		Name:           req.Name,
 		Status:         TaskStatusPending,
 		TargetStemcell: req.TargetStemcell,
+		TargetReleases: req.TargetReleases,
 		Instances:      instances,
 		TotalCount:     len(instances),
 		CompletedCount: 0,
@@ -468,24 +484,48 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 
 	m.logger.Debug("Got deployment %s, manifest size: %d bytes", instance.DeploymentName, len(deployment.Manifest))
 
-	// Merge stemcell overlay
-	m.logger.Debug("Merging stemcell overlay for %s: %s/%s",
-		instance.DeploymentName, task.TargetStemcell.OS, task.TargetStemcell.Version)
+	// Apply whichever target overlays are set, onto the instance's CURRENT manifest: stemcell
+	// (optional) then releases (optional). Overlaying onto the live manifest keeps every other
+	// release (bpm, …) and instance-group setting exactly as-is — a surgical bump.
+	newManifest := deployment.Manifest
 
-	newManifest, err := MergeStemcellOverlay(deployment.Manifest,
-		task.TargetStemcell.OS, task.TargetStemcell.Version)
-	if err != nil {
-		m.mu.Lock()
-		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("failed to merge stemcell overlay: %v", err)
-		task.FailedCount++
-		m.mu.Unlock()
-		m.logger.Error("Failed to merge stemcell overlay for %s: %v", instance.DeploymentName, err)
-		m.persistTask(ctx, task) //nolint:errcheck
-		return
+	if task.TargetStemcell.IsSet() {
+		m.logger.Debug("Merging stemcell overlay for %s: %s/%s",
+			instance.DeploymentName, task.TargetStemcell.OS, task.TargetStemcell.Version)
+
+		newManifest, err = MergeStemcellOverlay(newManifest,
+			task.TargetStemcell.OS, task.TargetStemcell.Version)
+		if err != nil {
+			m.mu.Lock()
+			instance.Status = InstanceStatusFailed
+			instance.Error = fmt.Sprintf("failed to merge stemcell overlay: %v", err)
+			task.FailedCount++
+			m.mu.Unlock()
+			m.logger.Error("Failed to merge stemcell overlay for %s: %v", instance.DeploymentName, err)
+			m.persistTask(ctx, task) //nolint:errcheck
+
+			return
+		}
 	}
 
-	m.logger.Debug("Stemcell overlay merged successfully for %s, new manifest size: %d bytes",
+	if len(task.TargetReleases) > 0 {
+		m.logger.Debug("Merging %d release overlay(s) for %s", len(task.TargetReleases), instance.DeploymentName)
+
+		newManifest, err = MergeReleaseOverlay(newManifest, task.TargetReleases)
+		if err != nil {
+			m.mu.Lock()
+			instance.Status = InstanceStatusFailed
+			instance.Error = fmt.Sprintf("failed to merge release overlay: %v", err)
+			task.FailedCount++
+			m.mu.Unlock()
+			m.logger.Error("Failed to merge release overlay for %s: %v", instance.DeploymentName, err)
+			m.persistTask(ctx, task) //nolint:errcheck
+
+			return
+		}
+	}
+
+	m.logger.Debug("Target overlays merged for %s, new manifest size: %d bytes",
 		instance.DeploymentName, len(newManifest))
 
 	// === FIRE, THEN WATCH THE TASK OURSELVES ===

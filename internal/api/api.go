@@ -312,6 +312,7 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 	// BOSH endpoints
 	router.RegisterHandler("/b/bosh/pool-stats", http.HandlerFunc(handlers.bosh.GetPoolStats))
 	router.RegisterHandler("/b/bosh/stemcells", http.HandlerFunc(handlers.bosh.GetStemcells))
+	router.RegisterHandler("/b/bosh/releases", http.HandlerFunc(handlers.bosh.GetReleases))
 	router.RegisterHandler("/b/bosh/vm-monitor", http.HandlerFunc(handlers.bosh.GetVMMonitorStatus))
 	router.RegisterHandler("/b/status", http.HandlerFunc(handlers.bosh.GetStatus))
 
