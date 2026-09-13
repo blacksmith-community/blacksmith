@@ -22,7 +22,24 @@ func MergeReleaseOverlay(manifestYAML string, releases []ReleaseTarget) (string,
 		return "", fmt.Errorf("failed to parse manifest YAML: %w", err)
 	}
 
-	overlay := createReleaseOverlay(releases)
+	// Only bump releases ALREADY present in this instance's manifest — never append a new
+	// release. This keeps heterogeneous batch selections safe (e.g. applying a rabbitmq-only
+	// "routing" target to an instance that doesn't use routing is simply skipped).
+	present := existingReleaseNames(manifest)
+
+	filtered := make([]ReleaseTarget, 0, len(releases))
+
+	for _, r := range releases {
+		if present[r.Name] {
+			filtered = append(filtered, r)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return manifestYAML, nil
+	}
+
+	overlay := createReleaseOverlay(filtered)
 
 	merged, err := spruce.Merge(manifest, overlay)
 	if err != nil {
@@ -40,6 +57,25 @@ func MergeReleaseOverlay(manifestYAML string, releases []ReleaseTarget) (string,
 	}
 
 	return string(result), nil
+}
+
+// existingReleaseNames returns the set of release names present in the manifest's releases block.
+func existingReleaseNames(manifest map[interface{}]interface{}) map[string]bool {
+	names := make(map[string]bool)
+
+	rels, _ := manifest["releases"].([]interface{})
+	for _, r := range rels {
+		rm, ok := r.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+
+		if name, ok := rm["name"].(string); ok {
+			names[name] = true
+		}
+	}
+
+	return names
 }
 
 // createReleaseOverlay builds a `releases:` overlay from the target list.

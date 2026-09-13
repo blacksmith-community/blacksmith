@@ -2241,6 +2241,12 @@
             <option value="">No minimum</option>
           </select>
         </div>
+        <details class="upgrade-advanced">
+          <summary>Advanced — other releases</summary>
+          <div class="upgrade-advanced-releases">
+            <div class="upgrade-advanced-empty">Select a service to choose other releases.</div>
+          </div>
+        </details>
       </div>
     `;
   };
@@ -2357,10 +2363,11 @@
     const count = selectedUpgradeInstances.size;
     const hasStemcell = stemcellSelect && stemcellSelect.value;
     const hasRelease = releaseSelect && releaseSelect.value;
+    const hasAdvanced = Array.from(document.querySelectorAll('[id^="upgrade-advrel-"]')).some(s => s.value);
 
     button.textContent = `Upgrade Selected (${count})`;
-    // At least one target (stemcell or release) is required.
-    button.disabled = count === 0 || (!hasStemcell && !hasRelease);
+    // At least one target (stemcell, forge release, or an advanced release) is required.
+    button.disabled = count === 0 || (!hasStemcell && !hasRelease && !hasAdvanced);
   };
 
   // Refresh the instance list based on current filters
@@ -2514,8 +2521,52 @@
         floorSelect.appendChild(opt);
       });
     };
+
+    // Populate the "Advanced — other releases" pickers: one version dropdown per non-forge
+    // release the selected service's instances actually use (bpm, and rabbitmq's routing/etc.).
+    const populateAdvancedReleases = (serviceId) => {
+      const container = document.querySelector('#upgrade .upgrade-advanced-releases');
+      if (!container) return;
+      if (!serviceId) {
+        container.innerHTML = '<div class="upgrade-advanced-empty">Select a service to choose other releases.</div>';
+        updateUpgradeButton();
+        return;
+      }
+      // Union of non-forge release names across this service's instances.
+      const names = new Set();
+      Object.values(window.serviceInstances || {}).forEach(details => {
+        if (details.deleted || details.service_id !== serviceId) return;
+        (details.release_versions || []).forEach(rv => {
+          const name = (rv || '').split('/')[0];
+          if (name && !name.endsWith('-forge')) names.add(name);
+        });
+      });
+      if (names.size === 0) {
+        container.innerHTML = '<div class="upgrade-advanced-empty">No other releases for this service.</div>';
+        updateUpgradeButton();
+        return;
+      }
+      const relByName = {};
+      (window.upgradeForgeReleases || []).forEach(r => { relByName[r.name] = r; });
+      container.innerHTML = Array.from(names).sort().map(name => {
+        const rel = relByName[name];
+        const versions = (rel && rel.release_versions) ? rel.release_versions : [];
+        const opts = ['<option value="">— keep current —</option>']
+          .concat(versions.map(rv => `<option value="${rv.version}">${rv.version}</option>`))
+          .join('');
+        const disabled = versions.length === 0 ? 'disabled title="no uploaded versions on the director"' : '';
+        return `<div class="filter-row">
+          <label for="upgrade-advrel-${name}">${name}:</label>
+          <select id="upgrade-advrel-${name}" data-release-name="${name}" ${disabled}>${opts}</select>
+        </div>`;
+      }).join('');
+      container.querySelectorAll('select').forEach(sel => sel.addEventListener('change', updateUpgradeButton));
+      updateUpgradeButton();
+    };
+
     populateReleaseFilter('');
     populateReleaseFloorFilter('');
+    populateAdvancedReleases('');
 
     // Populate service filter from catalog data
     const serviceSelect = document.getElementById('upgrade-service-filter');
@@ -2532,6 +2583,7 @@
         updatePlanFilter(serviceSelect.value);
         populateReleaseFilter(serviceSelect.value);
         populateReleaseFloorFilter(serviceSelect.value);
+        populateAdvancedReleases(serviceSelect.value);
         refreshUpgradeInstanceList();
       });
     }
@@ -3052,8 +3104,18 @@
 
     const stemcellValue = stemcellSelect && stemcellSelect.value ? stemcellSelect.value : '';
     const releaseValue = releaseSelect && releaseSelect.value ? releaseSelect.value : '';
+    const [os, version] = stemcellValue ? stemcellValue.split('/') : ['', ''];
 
-    if (!stemcellValue && !releaseValue) {
+    // Collect release targets: the forge (scoped to the service) + any "advanced" sidecar picks.
+    const targetReleases = [];
+    if (releaseValue && window.upgradeCurrentForge) {
+      targetReleases.push({ name: window.upgradeCurrentForge, version: releaseValue });
+    }
+    document.querySelectorAll('[id^="upgrade-advrel-"]').forEach(sel => {
+      if (sel.value) targetReleases.push({ name: sel.dataset.releaseName, version: sel.value });
+    });
+
+    if (!stemcellValue && targetReleases.length === 0) {
       alert('Please choose at least one target: a stemcell and/or a release');
       return;
     }
@@ -3063,18 +3125,12 @@
       return;
     }
 
-    const [os, version] = stemcellValue ? stemcellValue.split('/') : ['', ''];
     const instanceIds = Array.from(selectedUpgradeInstances);
-
-    // Release target (forge scoped to the selected service); empty if none chosen.
-    const targetReleases = (releaseValue && window.upgradeCurrentForge)
-      ? [{ name: window.upgradeCurrentForge, version: releaseValue }]
-      : [];
 
     // Prompt for job name — default reflects whichever targets are set.
     const targetParts = [];
     if (stemcellValue) targetParts.push(`stemcell ${os}/${version}`);
-    if (targetReleases.length) targetParts.push(`${window.upgradeCurrentForge}/${releaseValue}`);
+    targetReleases.forEach(r => targetParts.push(`${r.name}/${r.version}`));
     const defaultName = `Upgrade to ${targetParts.join(' + ')}`;
     const jobName = await showPromptDialog({
       title: 'Create Batch Job',

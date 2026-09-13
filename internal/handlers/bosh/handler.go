@@ -175,25 +175,22 @@ func (h *Handler) GetReleases(responseWriter http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	result := filterForgeReleases(releases)
+	result := groupReleasesByName(releases)
 
-	logger.Debug("Returning %d forge releases", len(result))
+	logger.Debug("Returning %d releases", len(result))
 	response.HandleJSON(responseWriter, result, nil)
 }
 
-// filterForgeReleases keeps only Blacksmith forge releases (name suffix "-forge"), groups their
-// versions by release name (the director adapter returns each version as a separate Release
-// entry with the same Name), and sorts each release's versions descending.
-func filterForgeReleases(releases []bosh.Release) []bosh.Release {
+// groupReleasesByName groups release versions by release name (the director adapter returns each
+// version as a separate Release entry with the same Name) and sorts each release's versions
+// descending. All releases are returned — the UI scopes the forge dropdown to the service's
+// forge and the "advanced" pickers to the sidecar releases (bpm, routing, …) each service uses.
+func groupReleasesByName(releases []bosh.Release) []bosh.Release {
 	byName := make(map[string][]bosh.ReleaseVersion)
 
 	order := make([]string, 0)
 
 	for _, r := range releases {
-		if !strings.HasSuffix(r.Name, "-forge") {
-			continue
-		}
-
 		if _, seen := byName[r.Name]; !seen {
 			order = append(order, r.Name)
 		}
@@ -445,10 +442,14 @@ func (h *Handler) enrichInstancesWithReleaseVersion(instances map[string]interfa
 		return
 	}
 
-	// deployment name -> the "-forge" release as "name/version"
+	// deployment name -> the "-forge" release as "name/version" (for the summary column) and
+	// the full release list (for the "advanced" per-release version pickers).
 	forgeByDep := make(map[string]string, len(deployments))
+	allByDep := make(map[string][]string, len(deployments))
 
 	for _, dep := range deployments {
+		allByDep[dep.Name] = dep.Releases
+
 		for _, rel := range dep.Releases { // each is "name/version"
 			if idx := strings.Index(rel, "/"); idx > 0 && strings.HasSuffix(rel[:idx], "-forge") {
 				forgeByDep[dep.Name] = rel
@@ -471,8 +472,13 @@ func (h *Handler) enrichInstancesWithReleaseVersion(instances map[string]interfa
 
 		if forge, ok := forgeByDep[depName]; ok {
 			instanceMap["release_version"] = forge
-			instances[instanceID] = instanceMap
 		}
+
+		if all, ok := allByDep[depName]; ok {
+			instanceMap["release_versions"] = all
+		}
+
+		instances[instanceID] = instanceMap
 	}
 }
 

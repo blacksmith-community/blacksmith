@@ -65,6 +65,43 @@ func TestMergeReleaseOverlay_UpdatesForgeKeepsOthers(t *testing.T) {
 	}
 }
 
+// A target for a release NOT in the manifest must be skipped (not appended) — the safety
+// property that makes heterogeneous batch selections harmless.
+func TestMergeReleaseOverlay_SkipsAbsentReleases(t *testing.T) {
+	out, err := MergeReleaseOverlay(releaseManifest, []ReleaseTarget{
+		{Name: "valkey-forge", Version: "1.4.4"}, // present → bumped
+		{Name: "routing", Version: "0.999.0"},    // absent  → must NOT be added
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vers := releaseVersions(t, out)
+	if vers["valkey-forge"] != "1.4.4" {
+		t.Fatalf("valkey-forge = %q, want 1.4.4", vers["valkey-forge"])
+	}
+
+	if _, added := vers["routing"]; added {
+		t.Fatalf("routing was appended to a manifest that didn't have it:\n%s", out)
+	}
+}
+
+// Bumping multiple present releases at once works.
+func TestMergeReleaseOverlay_BumpsMultiplePresent(t *testing.T) {
+	out, err := MergeReleaseOverlay(releaseManifest, []ReleaseTarget{
+		{Name: "valkey-forge", Version: "1.4.4"},
+		{Name: "bpm", Version: "1.4.21"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vers := releaseVersions(t, out)
+	if vers["valkey-forge"] != "1.4.4" || vers["bpm"] != "1.4.21" {
+		t.Fatalf("expected valkey-forge=1.4.4 bpm=1.4.21, got %v", vers)
+	}
+}
+
 func TestMergeReleaseOverlay_NoTargetsIsNoOp(t *testing.T) {
 	out, err := MergeReleaseOverlay(releaseManifest, nil)
 	if err != nil {

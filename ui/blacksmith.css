@@ -10751,6 +10751,24 @@ span.config-type.resurrection {
   padding-bottom: 0.25rem;
 }
 
+#upgrade .upgrade-advanced {
+  margin-top: 0.5rem;
+}
+
+#upgrade .upgrade-advanced > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 0.25rem 0;
+}
+
+#upgrade .upgrade-advanced-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 0.25rem 0;
+}
+
 /* Footer action row under the instance list. */
 #upgrade .upgrade-footer {
   padding: 0.75em 1em;
@@ -10869,7 +10887,8 @@ span.config-type.resurrection {
   gap: 0.5rem;
 }
 
-#upgrade .upgrade-actions button {
+#upgrade .upgrade-actions button,
+#upgrade .upgrade-footer button {
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
   border-radius: 0.375rem;
@@ -10877,27 +10896,32 @@ span.config-type.resurrection {
   transition: all 0.2s;
 }
 
-#upgrade .upgrade-actions .btn-secondary {
+#upgrade .upgrade-actions .btn-secondary,
+#upgrade .upgrade-footer .btn-secondary {
   background-color: var(--bg-hover);
   border: 1px solid var(--border-primary);
   color: var(--text-primary);
 }
 
-#upgrade .upgrade-actions .btn-secondary:hover {
+#upgrade .upgrade-actions .btn-secondary:hover,
+#upgrade .upgrade-footer .btn-secondary:hover {
   background-color: var(--bg-secondary);
 }
 
-#upgrade .upgrade-actions .btn-primary {
+#upgrade .upgrade-actions .btn-primary,
+#upgrade .upgrade-footer .btn-primary {
   background-color: #2563eb;
   border: 1px solid #2563eb;
   color: white;
 }
 
-#upgrade .upgrade-actions .btn-primary:hover {
+#upgrade .upgrade-actions .btn-primary:hover,
+#upgrade .upgrade-footer .btn-primary:hover {
   background-color: #1d4ed8;
 }
 
-#upgrade .upgrade-actions .btn-primary:disabled {
+#upgrade .upgrade-actions .btn-primary:disabled,
+#upgrade .upgrade-footer .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
