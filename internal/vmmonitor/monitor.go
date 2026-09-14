@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -279,11 +280,17 @@ func extractStemcellFromVMs(vmsData interface{}) *StemcellInfo {
 	return stemcell
 }
 
+// stemcellOSFallback matches an OS token inside a BOSH stemcell name for OSes not in the
+// explicit list below — e.g. future Ubuntu codenames (ubuntu-noble, ubuntu-oracular, …),
+// centos-N, or windowsNNNN. This future-proofs against new stemcells without a code change.
+var stemcellOSFallback = regexp.MustCompile(`ubuntu-[a-z]+|centos-[0-9]+|windows[0-9]+`)
+
 // extractOSFromStemcellName extracts the OS name from a full stemcell name.
 // e.g., "bosh-google-kvm-ubuntu-jammy-go_agent" -> "ubuntu-jammy"
 func extractOSFromStemcellName(name string) string {
-	// Common OS patterns in stemcell names
+	// Common OS patterns in stemcell names (checked first for exact, expected tokens).
 	osPatterns := []string{
+		"ubuntu-noble",
 		"ubuntu-jammy",
 		"ubuntu-bionic",
 		"ubuntu-xenial",
@@ -299,7 +306,8 @@ func extractOSFromStemcellName(name string) string {
 		}
 	}
 
-	return ""
+	// Generic fallback so a brand-new stemcell OS still resolves instead of showing "/version".
+	return stemcellOSFallback.FindString(name)
 }
 
 // TriggerRefresh forces an immediate refresh of a service's VMs.
