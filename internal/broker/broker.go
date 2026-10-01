@@ -35,8 +35,23 @@ import (
 )
 
 const (
-	operationTypeProvision = "provision"
-	operationTypeUpdate    = "update"
+	// Operation types. They double as the OSB operation data the broker
+	// returns when it accepts a request, which the platform sends back on
+	// every last_operation poll, and as the action recorded at <instance>/task.
+	operationTypeProvision   = "provision"
+	operationTypeDeprovision = "deprovision"
+
+	// The task ID the director adapter returns before it knows the real one.
+	placeholderTaskID = 1
+
+	// The state TrackProgress records for an operation that failed.
+	recordedStateFailed = "failed"
+
+	// Deployment-level BOSH event actions that name the task of a deploy or
+	// a delete of the deployment itself.
+	boshEventObjectDeployment = "deployment"
+	boshEventActionCreate     = "create"
+	boshEventActionDelete     = "delete"
 
 	// File permissions.
 	defaultFilePermissions   = 0600
@@ -50,8 +65,10 @@ const (
 	credentialTypeDynamic      = "dynamic"
 
 	// Task states.
-	taskStateDone  = "done"
-	taskStateError = "error"
+	taskStateDone      = "done"
+	taskStateError     = "error"
+	taskStateCancelled = "cancelled"
+	taskStateTimeout   = "timeout"
 )
 
 // Static errors for err113 compliance.
@@ -70,7 +87,6 @@ var (
 	ErrFailedToScheduleShieldBackup          = errors.New("failed to schedule S.H.I.E.L.D. backup")
 	ErrProvisionTaskCompletedPostHookFailed  = errors.New("provision task was successfully completed but the post-hook failed")
 	ErrUnrecognizedBackendBOSHTask           = errors.New("unrecognized backend BOSH task")
-	ErrInvalidStateType                      = errors.New("invalid state type")
 	ErrAdminUsernameMustBeString             = errors.New("admin_username must be a string")
 	ErrAdminPasswordMustBeString             = errors.New("admin_password must be a string")
 	ErrVHostMustBeString                     = errors.New("vhost must be a string")
@@ -87,7 +103,6 @@ var (
 	ErrGetInstanceNotImplemented             = errors.New("GetInstance not implemented")
 	ErrGetBindingNotImplemented              = errors.New("GetBinding not implemented")
 	ErrCredentialsNotInExpectedFormat        = errors.New("credentials not in expected format")
-	ErrNoTasksFoundForDeployment             = errors.New("no tasks found for deployment")
 	ErrNoDataFoundForInstance                = errors.New("no data found for instance")
 	ErrMissingServiceIDOrPlanID              = errors.New("missing service_id or plan_id in vault data")
 	ErrAPIURLNotFoundOrNotString             = errors.New("api_url not found or not a string")
@@ -138,6 +153,12 @@ type Broker struct {
 	// it so a delete that arrives while the create is still being handed to BOSH
 	// is rejected instead of racing the deploy.
 	activeProvisions sync.Map
+
+	// activeDeprovisions records instance IDs whose deprovisionAsync goroutine
+	// is still running in this process. LastOperation consults it to tell a
+	// delete that has not returned its task ID yet from one the broker lost
+	// when it restarted.
+	activeDeprovisions sync.Map
 }
 
 // IsBroker implements the interfaces.Broker interface.
@@ -326,11 +347,14 @@ func (b *Broker) Provision(
 	}
 
 	// Launch async provisioning
-	b.launchAsyncProvisioning(ctx, instanceID, details, plan, logger)
+	err = b.launchAsyncProvisioning(ctx, instanceID, details, plan, logger)
+	if err != nil {
+		return osbapi.ProvisionResponse{}, false, err
+	}
 
 	logger.Info("Accepted provisioning request for service instance %s", instanceID)
 
-	return osbapi.ProvisionResponse{}, true, nil
+	return osbapi.ProvisionResponse{Operation: operationTypeProvision}, true, nil
 }
 
 func (b *Broker) Deprovision(
@@ -352,6 +376,14 @@ func (b *Broker) Deprovision(
 		return osbapi.DeprovisionResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
+	// A repeated request for a deprovision this process is still running is
+	// accepted again rather than starting a second delete.
+	if b.deprovisionActive(instanceID) {
+		logger.Info("Deprovision of instance %s is already in progress", instanceID)
+
+		return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
+	}
+
 	// Reject before anything is written to the vault so a refused request
 	// leaves no deprovision trace on the index entry.
 	err := b.rejectIfOperationInProgress(ctx, instanceID, logger)
@@ -370,8 +402,22 @@ func (b *Broker) Deprovision(
 		return osbapi.DeprovisionResponse{}, false, err
 	}
 
+	// Record the deprovision as the instance's current operation before
+	// answering, so a poll that arrives right after the 202 is answered for
+	// this deprovision and not from the provision recorded before it.
+	err = b.Vault.TrackProgress(ctx, instanceID, operationTypeDeprovision, "Deprovision request accepted", 0, nil)
+	if err != nil {
+		logger.Error("failed to record the accepted deprovision in vault: %s", err)
+
+		return osbapi.DeprovisionResponse{}, false, fmt.Errorf("failed to record the deprovision of instance %s: %w", instanceID, err)
+	}
+
 	b.storeDeleteRequestedTimestamp(ctx, instanceID, logger)
 	b.descheduleShieldBackup(instanceID, details.ServiceID, details.PlanID, logger)
+
+	// Mark the deprovision as in flight before the goroutine starts;
+	// deprovisionAsync clears the mark when it returns.
+	b.activeDeprovisions.Store(instanceID, time.Now())
 
 	// Launch async deprovisioning in background
 	// Create a detached context that survives the HTTP request lifecycle
@@ -381,7 +427,7 @@ func (b *Broker) Deprovision(
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
 
-	return osbapi.DeprovisionResponse{}, true, nil
+	return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
 }
 
 func (b *Broker) OnProvisionCompleted(
@@ -470,22 +516,21 @@ func (b *Broker) LastOperation(
 
 	logger.Debug("Instance %s found, deployment: %s", instanceID, deploymentName)
 
-	// Get the latest task for this deployment
-	latestTask, operationType, err := b.getLatestTask(deploymentName, logger)
+	recorded, err := b.readRecordedOperation(ctx, instanceID)
 	if err != nil {
-		// Only log as error if it's not the expected "no tasks found" case
-		// (that case is already logged at DEBUG level in getLatestTask)
-		if !errors.Is(err, ErrNoTasksFoundForDeployment) {
-			logger.Error("Error getting latest task for deployment %s: %s", deploymentName, err)
-		}
+		logger.Error("Error reading the recorded operation for instance %s: %s", instanceID, err)
 
-		return b.handleTaskRetrievalError(deploymentName, logger)
+		return osbapi.LastOperationResponse{}, err
 	}
 
-	logger.Debug("Latest task for %s: ID=%d, type=%s, state=%s", deploymentName, latestTask.ID, operationType, latestTask.State)
+	operation := pollOperation(details.Operation, recorded)
+	logger.Debug("Polling %s of instance %s (recorded action '%s', state '%s', task %d)", operation, instanceID, recorded.Action, recorded.State, recorded.TaskID)
 
-	// Handle the operation based on task ID and type
-	return b.handleOperationStatus(ctx, instanceID, deploymentName, latestTask, operationType, logger)
+	if operation == operationTypeDeprovision {
+		return b.deprovisionStatus(ctx, instanceID, deploymentName, recorded, logger)
+	}
+
+	return b.provisionStatus(ctx, instanceID, deploymentName, recorded, logger)
 }
 
 func (b *Broker) Bind(
@@ -683,74 +728,6 @@ func (b *Broker) LastBindingOperation(ctx context.Context, instanceID, bindingID
 	logger.Debug("Returning success immediately as async bindings are not supported")
 	// Not implemented - return successful immediately since we don't support async bindings
 	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
-}
-
-func (b *Broker) GetLatestDeploymentTask(deploymentName string) (*bosh.Task, string, error) {
-	logger := logger.Get().Named("broker")
-
-	// Get events for this deployment to find task IDs
-	events, err := b.BOSH.GetEvents(deploymentName)
-	if err != nil {
-		logger.Error("failed to get events for deployment %s: %s", deploymentName, err)
-
-		return nil, "", fmt.Errorf("failed to get events for deployment %s: %w", deploymentName, err)
-	}
-
-	// Extract unique task IDs from events and determine the latest one
-	taskIDs := make(map[int]bool)
-
-	var maxTaskID int
-
-	for _, event := range events {
-		if event.TaskID != "" {
-			// Parse task ID from string to int
-			taskID, err := strconv.Atoi(event.TaskID)
-			if err == nil {
-				taskIDs[taskID] = true
-
-				if taskID > maxTaskID {
-					maxTaskID = taskID
-				}
-			}
-		}
-	}
-
-	if maxTaskID == 0 {
-		logger.Debug("no task IDs found in events for deployment %s", deploymentName)
-
-		return nil, "", fmt.Errorf("%w: %s", ErrNoTasksFoundForDeployment, deploymentName)
-	}
-
-	logger.Debug("found %d unique task IDs in events, latest is %d", len(taskIDs), maxTaskID)
-
-	// Get the latest task details
-	latestTask, err := b.BOSH.GetTask(maxTaskID)
-	if err != nil {
-		logger.Error("failed to get task %d: %s", maxTaskID, err)
-
-		return nil, "", fmt.Errorf("failed to get task %d: %w", maxTaskID, err)
-	}
-
-	// Determine operation type from task description
-	desc := strings.ToLower(latestTask.Description)
-
-	var operationType string
-
-	switch {
-	case strings.Contains(desc, "delet") || strings.Contains(desc, "deprovision"):
-		operationType = "deprovision"
-	case strings.Contains(desc, "creat") || strings.Contains(desc, "deploy") || strings.Contains(desc, "provision"):
-		operationType = operationTypeProvision
-	case strings.Contains(desc, "update"):
-		operationType = operationTypeUpdate
-	default:
-		// Default to provision for other operations
-		operationType = operationTypeProvision
-	}
-
-	logger.Debug("latest task for deployment %s: task %d (%s) - %s", deploymentName, latestTask.ID, operationType, latestTask.Description)
-
-	return latestTask, operationType, nil
 }
 
 func (b *Broker) ServiceWithNoDeploymentCheck(ctx context.Context) (
@@ -1614,7 +1591,7 @@ func (b *Broker) storePlanReferences(ctx context.Context, instanceID string, pla
 	}
 }
 
-func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, logger logger.Logger) {
+func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, logger logger.Logger) error {
 	// Update status to show provisioning is starting
 	err := b.updateInstanceStatus(ctx, instanceID, details, plan, "provisioning_started", logger)
 	if err != nil {
@@ -1631,6 +1608,15 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 		"parameters":        details.Parameters,
 	}
 
+	// Record the provision as the instance's current operation before
+	// answering, so every poll finds the operation the broker accepted.
+	err = b.Vault.TrackProgress(ctx, instanceID, operationTypeProvision, "Provision request accepted", 0, nil)
+	if err != nil {
+		logger.Error("failed to record the accepted provision in vault: %s", err)
+
+		return fmt.Errorf("failed to record the provision of instance %s: %w", instanceID, err)
+	}
+
 	// Mark the provision as in flight before the goroutine starts so a
 	// deprovision that arrives immediately after the 202 is already rejected.
 	// provisionAsync clears the mark when it returns.
@@ -1641,6 +1627,8 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 	// This ensures provisioning can continue even if the request context is cancelled
 	asyncCtx := context.WithoutCancel(ctx)
 	go b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
+
+	return nil
 }
 
 func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string, logger logger.Logger) error {
@@ -1939,123 +1927,252 @@ func (b *Broker) getInstanceForOperation(ctx context.Context, instanceID string,
 	return instance, deploymentName, nil
 }
 
-func (b *Broker) getLatestTask(deploymentName string, logger logger.Logger) (*bosh.Task, string, error) {
-	latestTask, operationType, err := b.GetLatestDeploymentTask(deploymentName)
+// recordedOperation is the progress the broker keeps for an instance's
+// current operation at <instance>/task: the action it accepted, the tracked
+// state, the BOSH task it started once that is known, and a description.
+type recordedOperation struct {
+	Action      string
+	State       string
+	TaskID      int
+	Description string
+}
+
+// hasTask reports whether a real BOSH task ID was recorded. Zero means no task
+// yet, and one is the placeholder the director adapter hands back when it has
+// not found the task, so neither identifies a task the broker started.
+func (r recordedOperation) hasTask() bool {
+	return r.TaskID > placeholderTaskID
+}
+
+func (b *Broker) readRecordedOperation(ctx context.Context, instanceID string) (recordedOperation, error) {
+	state, taskID, task, err := b.Vault.State(ctx, instanceID)
 	if err != nil {
-		// Check if this is the expected "no tasks found" error during early deployment stages
-		if errors.Is(err, ErrNoTasksFoundForDeployment) {
-			logger.Debug("no tasks found for deployment %s (expected during early deployment stages): %s", deploymentName, err)
-		} else {
-			logger.Error("failed to get latest task for deployment %s: %s", deploymentName, err)
-		}
-
-		return nil, "", err
+		return recordedOperation{}, fmt.Errorf("failed to read the recorded operation for instance %s: %w", instanceID, err)
 	}
 
-	taskID := latestTask.ID
-	logger.Debug("latest task for deployment %s: task %d, type '%s', state '%s'", deploymentName, taskID, operationType, latestTask.State)
+	recorded := recordedOperation{State: state, TaskID: taskID}
+	recorded.Action, _ = task["action"].(string)
+	recorded.Description, _ = task["description"].(string)
 
-	return latestTask, operationType, nil
+	return recorded, nil
 }
 
-func (b *Broker) handleTaskRetrievalError(deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	// If we can't get task info, check if deployment exists
-	_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
-	if deploymentErr != nil {
-		// Deployment doesn't exist - this is expected during provisioning
-		logger.Debug("deployment %s does not exist", deploymentName)
-
-		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil //nolint:nilerr // Deployment not existing during provisioning is expected
+// pollOperation picks the operation a last_operation poll asks about. The
+// operation data the broker returned when it accepted the request wins. A poll
+// without it, such as one for a request accepted before the broker returned
+// operation data, falls back to the action the broker last recorded.
+func pollOperation(requested string, recorded recordedOperation) string {
+	switch requested {
+	case operationTypeProvision, operationTypeDeprovision:
+		return requested
 	}
-	// Deployment exists but no tasks found - assume succeeded
-	logger.Debug("deployment %s exists but no recent tasks found", deploymentName)
 
-	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
-}
-
-func (b *Broker) handleOperationStatus(ctx context.Context, instanceID, deploymentName string, latestTask *bosh.Task, operationType string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	taskID := latestTask.ID
-
-	switch taskID {
-	case 0:
-		return b.handleTaskIDZero(ctx, instanceID, deploymentName, operationType, logger)
-	case -1:
-		return b.handleTaskIDNegativeOne(logger)
-	case 1:
-		return b.handleTaskIDOne(ctx, instanceID, deploymentName, logger)
-	default:
-		return b.handleRegularTask(ctx, instanceID, deploymentName, taskID, operationType, logger)
+	if recorded.Action == operationTypeDeprovision {
+		return operationTypeDeprovision
 	}
+
+	return operationTypeProvision
 }
 
-func (b *Broker) handleTaskIDZero(ctx context.Context, instanceID, deploymentName, operationType string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	logger.Debug("task ID is 0, checking if deployment exists")
+// provisionStatus answers a provision poll from the provision the broker
+// recorded. Only the create deployment task the broker started can finish it,
+// so a task someone runs by hand on the deployment can neither complete the
+// provision early nor hide a failed deploy.
+func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	if recorded.Action != operationTypeProvision {
+		recorded = recordedOperation{}
+	}
 
-	// Check if deployment exists
-	_, err := b.BOSH.GetDeployment(deploymentName)
+	switch {
+	case recorded.State == recordedStateFailed:
+		logger.Error("provision of instance %s failed: %s", instanceID, recorded.Description)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
+	case recorded.hasTask():
+		return b.handleProvisionTask(ctx, instanceID, deploymentName, recorded.TaskID, logger)
+	case b.provisionActive(instanceID):
+		logger.Debug("provision of instance %s has not handed a task to BOSH yet", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: recorded.Description}, nil
+	}
+
+	return b.recoverProvision(ctx, instanceID, deploymentName, logger)
+}
+
+// recoverProvision answers for a provision whose goroutine is gone without
+// having recorded a create deployment task, which happens when the broker
+// restarts while bosh-cli waits on the deploy. BOSH records the deploy as a
+// deployment-level "create" event, so that event names the task the broker
+// started. Once found, the task is recorded so later polls use it directly.
+func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	taskID, err := b.findDeploymentEventTask(deploymentName, boshEventActionCreate, logger)
 	if err != nil {
-		// Deployment doesn't exist - still in progress
-		logger.Debug("deployment %s does not exist, operation still in progress", deploymentName)
-
-		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil //nolint:nilerr // Deployment not existing means operation is still in progress
+		return osbapi.LastOperationResponse{}, err
 	}
 
-	// Deployment exists with task ID 0 - completed deployment from before the fix
-	logger.Info("deployment %s exists with task ID 0, marking as succeeded", deploymentName)
+	if taskID > 0 {
+		logger.Info("Recovered create deployment task %d for instance %s from the events of deployment %s", taskID, instanceID, deploymentName)
+		b.recordTask(ctx, instanceID, operationTypeProvision, fmt.Sprintf("BOSH deployment in progress (task %d)", taskID), taskID, logger)
 
-	// Run post-provision hook if this was a provision operation
-	if operationType == operationTypeProvision {
-		err := b.OnProvisionCompleted(ctx, logger, instanceID)
-		if err != nil {
-			logger.Error("provision succeeded but post-hook failed: %s", err)
-			// Don't fail the operation, just log the error
-		}
-	}
-
-	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
-}
-
-func (b *Broker) handleTaskIDNegativeOne(logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	// Task failed during initialization
-	logger.Error("operation failed during initialization")
-
-	return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
-}
-
-func (b *Broker) handleTaskIDOne(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	logger.Debug("checking status of new deployment creation")
-
-	_, err := b.BOSH.GetDeployment(deploymentName)
-	if err != nil {
-		// Deployment doesn't exist yet - still being created
-		logger.Debug("deployment %s still being created", deploymentName)
-
-		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil //nolint:nilerr // Deployment not existing means it's still being created
-	}
-
-	// Deployment exists, mark as succeeded
-	logger.Debug("deployment %s created successfully", deploymentName)
-
-	// Run post-provision hook
-	err = b.OnProvisionCompleted(ctx, logger, instanceID)
-	if err != nil {
-		return osbapi.LastOperationResponse{}, ErrProvisionTaskCompletedPostHookFailed
-	}
-
-	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
-}
-
-func (b *Broker) handleRegularTask(ctx context.Context, instanceID, deploymentName string, taskID int, operationType string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	switch operationType {
-	case "provision":
 		return b.handleProvisionTask(ctx, instanceID, deploymentName, taskID, logger)
-	case "deprovision":
-		return b.handleDeprovisionTask(ctx, instanceID, deploymentName, taskID, logger)
-	default:
-		logger.Error("invalid state '%s' found in the vault", operationType)
-
-		return osbapi.LastOperationResponse{}, fmt.Errorf("%w: %s", ErrInvalidStateType, operationType)
 	}
+
+	return b.interruptedOperationStatus(instanceID, deploymentName, "Provisioning was interrupted before the deployment was handed to BOSH", logger)
+}
+
+// deprovisionStatus answers a deprovision poll from the deprovision the broker
+// recorded. It finishes only on the delete deployment task the broker started,
+// and it never runs the provision completion hook.
+func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	if recorded.Action != operationTypeDeprovision {
+		recorded = recordedOperation{}
+	}
+
+	switch {
+	case recorded.State == recordedStateFailed:
+		logger.Error("deprovision of instance %s failed: %s", instanceID, recorded.Description)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
+	case recorded.hasTask():
+		return b.handleDeprovisionTask(ctx, instanceID, deploymentName, recorded.TaskID, logger)
+	case b.deprovisionActive(instanceID):
+		logger.Debug("deprovision of instance %s has no delete task recorded yet", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: recorded.Description}, nil
+	}
+
+	return b.recoverDeprovision(ctx, instanceID, deploymentName, logger)
+}
+
+// recoverDeprovision answers for a deprovision whose goroutine is gone without
+// having recorded a delete task, which happens when the broker restarts while
+// bosh-cli waits on the delete. BOSH records the delete as a deployment-level
+// "delete" event, so that event names the task the broker started. Without
+// one, a deployment the director no longer has needs nothing more deleted.
+func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	taskID, err := b.findDeploymentEventTask(deploymentName, boshEventActionDelete, logger)
+	if err != nil {
+		return osbapi.LastOperationResponse{}, err
+	}
+
+	if taskID > 0 {
+		logger.Info("Recovered delete deployment task %d for instance %s from the events of deployment %s", taskID, instanceID, deploymentName)
+		b.recordTask(ctx, instanceID, operationTypeDeprovision, fmt.Sprintf("BOSH deletion in progress (task %d)", taskID), taskID, logger)
+
+		return b.handleDeprovisionTask(ctx, instanceID, deploymentName, taskID, logger)
+	}
+
+	_, err = b.BOSH.GetDeployment(deploymentName)
+	if errors.Is(err, bosh.ErrDeploymentNotFound) {
+		logger.Info("Deployment %s is gone and no delete task was recorded for instance %s", deploymentName, instanceID)
+
+		return b.handleSuccessfulDeprovision(ctx, instanceID, deploymentName, logger)
+	}
+
+	if err != nil {
+		logger.Error("could not check whether deployment %s exists: %s", deploymentName, err)
+
+		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to check whether deployment %s exists: %w", deploymentName, err)
+	}
+
+	return b.interruptedOperationStatus(instanceID, deploymentName, "Deprovisioning was interrupted before the deployment delete started; the deployment still exists, so the delete can be retried", logger)
+}
+
+// interruptedOperationStatus answers for an operation that no goroutine in
+// this process is running and that left no BOSH task behind. A task still
+// running on the deployment may yet be the one the broker started, so that
+// keeps the answer in progress; otherwise nothing will finish the operation.
+func (b *Broker) interruptedOperationStatus(instanceID, deploymentName, description string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	running, err := b.BOSH.FindRunningTaskForDeployment(deploymentName)
+	if err != nil {
+		logger.Error("could not determine whether deployment %s has a running BOSH task: %s", deploymentName, err)
+
+		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to check for a running BOSH task on deployment %s: %w", deploymentName, err)
+	}
+
+	if running != nil {
+		logger.Debug("instance %s has no recorded task, but BOSH task %d (%s) is still %s", instanceID, running.ID, running.Description, running.State)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil
+	}
+
+	logger.Error("%s (instance %s, deployment %s)", description, instanceID, deploymentName)
+
+	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
+}
+
+// findDeploymentEventTask returns the newest task that BOSH recorded a
+// deployment-level event with the given action for, or zero when there is
+// none. Unlike the newest task overall, this cannot be a task someone ran by
+// hand on the deployment, such as ssh, restart, recreate, or cck.
+func (b *Broker) findDeploymentEventTask(deploymentName, action string, logger logger.Logger) (int, error) {
+	events, err := b.BOSH.GetEvents(deploymentName)
+	if err != nil {
+		logger.Error("failed to get events for deployment %s: %s", deploymentName, err)
+
+		return 0, fmt.Errorf("failed to get events for deployment %s: %w", deploymentName, err)
+	}
+
+	var taskID int
+
+	for _, event := range events {
+		if event.ObjectType != boshEventObjectDeployment || event.Action != action {
+			continue
+		}
+
+		eventTaskID, err := strconv.Atoi(event.TaskID)
+		if err != nil {
+			continue
+		}
+
+		if eventTaskID > taskID {
+			taskID = eventTaskID
+		}
+	}
+
+	return taskID, nil
+}
+
+// resolveDeploymentTask returns the task named by the deployment-level event
+// with the given action, or zero when the events cannot be read or name none.
+func (b *Broker) resolveDeploymentTask(deploymentName, action string, logger logger.Logger) int {
+	taskID, err := b.findDeploymentEventTask(deploymentName, action, logger)
+	if err != nil {
+		logger.Info("Could not look up the %s deployment task of %s, LastOperation will look again: %s", action, deploymentName, err)
+
+		return 0
+	}
+
+	if taskID == 0 {
+		logger.Info("No %s deployment event names a task for %s yet, LastOperation will look again", action, deploymentName)
+	}
+
+	return taskID
+}
+
+// recordTask stores a BOSH task ID for the instance's current operation.
+func (b *Broker) recordTask(ctx context.Context, instanceID, operation, description string, taskID int, logger logger.Logger) {
+	err := b.Vault.TrackProgress(ctx, instanceID, operation, description, taskID, nil)
+	if err != nil {
+		logger.Error("failed to record task %d for instance %s: %s", taskID, instanceID, err)
+	}
+}
+
+func (b *Broker) provisionActive(instanceID string) bool {
+	_, running := b.activeProvisions.Load(instanceID)
+
+	return running
+}
+
+func (b *Broker) deprovisionActive(instanceID string) bool {
+	_, running := b.activeDeprovisions.Load(instanceID)
+
+	return running
+}
+
+// isFailedTaskState reports whether a BOSH task ended without succeeding.
+func isFailedTaskState(state string) bool {
+	return state == taskStateError || state == taskStateCancelled || state == taskStateTimeout
 }
 
 func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
@@ -2068,8 +2185,8 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 		return osbapi.LastOperationResponse{}, ErrUnrecognizedBackendBOSHTask
 	}
 
-	switch task.State {
-	case taskStateDone:
+	switch {
+	case task.State == taskStateDone:
 		err := b.OnProvisionCompleted(ctx, logger, instanceID)
 		if err != nil {
 			return osbapi.LastOperationResponse{}, ErrProvisionTaskCompletedPostHookFailed
@@ -2079,16 +2196,23 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 
 		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 
-	case taskStateError:
-		logger.Error("provision operation failed!")
-		b.cleanupFailedDeployment(deploymentName, logger)
+	case isFailedTaskState(task.State):
+		description := fmt.Sprintf("BOSH deployment task %d is %s", taskID, task.State)
+		logger.Error("provision operation failed: %s", description)
 
-		return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
+		// Record the failure so later polls answer from it and the cleanup
+		// starts only once. bosh-cli waits for the delete task to finish, so
+		// the cleanup runs in the background rather than holding up the poll.
+		b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
+
+		go b.cleanupFailedDeployment(deploymentName, logger)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
 
 	default:
 		logger.Debug("provision operation is still in progress")
 
-		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: fmt.Sprintf("BOSH deployment in progress (task %d)", taskID)}, nil
 	}
 }
 
@@ -2102,15 +2226,17 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 		return osbapi.LastOperationResponse{}, ErrUnrecognizedBackendBOSHTask
 	}
 
-	switch task.State {
-	case taskStateDone:
+	switch {
+	case task.State == taskStateDone:
 		return b.handleSuccessfulDeprovision(ctx, instanceID, deploymentName, logger)
-	case taskStateError:
+	case isFailedTaskState(task.State):
+		logger.Error("deprovision operation failed: BOSH task %d is %s", taskID, task.State)
+
 		return b.handleFailedDeprovision(deploymentName, logger)
 	default:
 		logger.Debug("deprovision operation is still in progress")
 
-		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: fmt.Sprintf("BOSH deletion in progress (task %d)", taskID)}, nil
 	}
 }
 
@@ -2139,7 +2265,16 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 	if deploymentErr == nil {
 		logger.Error("Deprovision task succeeded but deployment %s still exists", deploymentName)
 
-		return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: fmt.Sprintf("The delete task finished but deployment %s still exists", deploymentName)}, nil
+	}
+
+	// Only the director's own "not found" confirms the delete. Any other
+	// error leaves existence unknown, so the instance stays indexed and the
+	// platform polls again.
+	if !errors.Is(deploymentErr, bosh.ErrDeploymentNotFound) {
+		logger.Error("could not confirm that deployment %s is deleted: %s", deploymentName, deploymentErr)
+
+		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to confirm that deployment %s is deleted: %w", deploymentName, deploymentErr)
 	}
 
 	logger.Info("Deployment %s confirmed deleted", deploymentName)
@@ -2169,16 +2304,20 @@ func (b *Broker) handleFailedDeprovision(deploymentName string, logger logger.Lo
 	logger.Error("deprovision operation failed!")
 
 	// Check if deployment still exists after failed deletion
+	description := "The BOSH delete task failed"
+
 	_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
 	if deploymentErr == nil {
 		logger.Error("Deployment %s still exists after failed deletion task", deploymentName)
+
+		description = fmt.Sprintf("The BOSH delete task failed and deployment %s still exists", deploymentName)
 	} else {
 		logger.Info("Deployment %s does not exist despite failed deletion task", deploymentName)
 	}
 
 	logger.Debug("keeping instance in index and secrets in vault due to deletion failure")
 	// Do NOT remove from index if deletion failed - instance may still be recoverable
-	return osbapi.LastOperationResponse{State: osbapi.StateFailed}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
 }
 
 func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, logger logger.Logger) {
@@ -3484,7 +3623,6 @@ type BindingCredentials struct {
 
 // GetBindingCredentials reconstructs the binding credentials for a given instance and binding
 // This function is used by the reconciler to restore missing or corrupted binding data.
-// GetLatestDeploymentTask retrieves the most recent task for a deployment from BOSH.
 // getServiceAndPlanFromVault retrieves service and plan IDs from vault storage.
 // handleDynamicRabbitMQCredentials processes dynamic RabbitMQ user creation for bindings.
 // populateBindingCredentials fills the structured fields from the raw credential map.

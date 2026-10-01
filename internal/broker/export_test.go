@@ -47,3 +47,11 @@ func (b *Broker) ProvisionActive(instanceID string) bool {
 
 	return running
 }
+
+// DeprovisionActive reports whether the deprovisionAsync goroutine for
+// instanceID is still running in this process.
+func (b *Broker) DeprovisionActive(instanceID string) bool {
+	_, running := b.activeDeprovisions.Load(instanceID)
+
+	return running
+}

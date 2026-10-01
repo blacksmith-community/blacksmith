@@ -219,17 +219,28 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	p.logger.Info("Deploying service instance to BOSH director")
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Creating BOSH deployment", 0, p.params, p.logger)
 
+	deploymentName := plan.ID + "-" + p.instanceID
+
 	task, err := p.broker.BOSH.CreateDeployment(manifestStr)
 	if err != nil {
 		p.logger.Error("Failed to create service deployment: %s", err)
+
+		// bosh-cli reports a deploy task that failed as an error. When BOSH
+		// started the task, record it, so LastOperation answers from the
+		// task's own state and cleans up the failed deployment.
+		createTaskID := p.broker.resolveDeploymentTask(deploymentName, boshEventActionCreate, p.logger)
+		if createTaskID > 0 {
+			p.broker.recordTask(ctx, p.instanceID, operationTypeProvision, fmt.Sprintf("BOSH deployment task %d did not succeed: %s", createTaskID, err), createTaskID, p.logger)
+
+			return false
+		}
+
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Deployment creation failed: %s", err), p.params, p.logger)
 
 		return false
 	}
 
-	p.logger.Info("Deployment started successfully, initial task ID: %d", task.ID)
-
-	deploymentName := plan.ID + "-" + p.instanceID
+	p.logger.Info("Deployment finished on the director, reported task ID: %d", task.ID)
 
 	// A deprovision may have removed the instance while the deploy was running.
 	// Recording the task now would resurrect the index entry for a service
@@ -241,27 +252,24 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 		return false
 	}
 
-	// Get the actual task ID from BOSH events if the returned task ID is a placeholder
-	actualTaskID := task.ID
-
-	if task.ID <= 1 {
-		// This is a placeholder task ID (0 or 1), get the real one from BOSH events
-		p.logger.Debug("Task ID is placeholder (%d), retrieving real task ID from BOSH events", task.ID)
-
-		latestTask, _, err := p.broker.GetLatestDeploymentTask(deploymentName)
-		if err != nil {
-			p.logger.Info("Could not get latest task ID immediately, will use placeholder: %s", err)
-			// Continue with placeholder ID - the LastOperation will pick up the real one later
-		} else {
-			actualTaskID = latestTask.ID
-			p.logger.Info("Retrieved actual task ID from BOSH events: %d (was %d)", actualTaskID, task.ID)
-		}
+	// The adapter reports the deployment's newest task, which can be one
+	// someone ran on the deployment while bosh-cli waited on the deploy. The
+	// deployment-level create event names the deploy task itself. When no
+	// event names it yet, zero is recorded and LastOperation looks again.
+	actualTaskID := p.broker.resolveDeploymentTask(deploymentName, boshEventActionCreate, p.logger)
+	if actualTaskID != task.ID {
+		p.logger.Info("Recording create deployment task %d from BOSH events for %s (the director adapter reported task %d)", actualTaskID, deploymentName, task.ID)
 	}
 
 	// Update tracking with deployment status - store the actual task ID
 	p.logger.Debug("about to store task ID %d in vault for instance %s", actualTaskID, p.instanceID)
 
-	err = p.broker.Vault.TrackProgress(ctx, p.instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", actualTaskID), actualTaskID, p.params)
+	description := fmt.Sprintf("BOSH deployment in progress (task %d)", actualTaskID)
+	if actualTaskID == 0 {
+		description = "BOSH deployment returned; waiting for BOSH events to name the deploy task"
+	}
+
+	err = p.broker.Vault.TrackProgress(ctx, p.instanceID, "provision", description, actualTaskID, p.params)
 	if err != nil {
 		p.logger.Error("CRITICAL: failed to store service status in the vault: %s", err)
 	} else {
@@ -315,9 +323,14 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 		return
 	}
 
-	phase.trackDeletionProgress(ctx, task)
+	deleteTask := phase.resolveDeleteTask(ctx)
+	if deleteTask == nil {
+		return
+	}
 
-	go phase.monitorAndCleanupTask(context.WithoutCancel(ctx), task)
+	phase.trackDeletionProgress(ctx, deleteTask)
+
+	go phase.monitorAndCleanupTask(context.WithoutCancel(ctx), deleteTask)
 }
 
 // deprovisioningPhase represents a phase in the deprovisioning process.
@@ -456,6 +469,12 @@ func (d *deprovisioningPhase) handleTaskSuccess(ctx context.Context) {
 		return
 	}
 
+	if !errors.Is(deploymentErr, bosh.ErrDeploymentNotFound) {
+		d.logger.Error("Could not confirm that deployment %s is deleted, leaving the index entry for LastOperation: %s", d.deploymentName, deploymentErr)
+
+		return
+	}
+
 	d.logger.Info("Deployment %s confirmed deleted, performing cleanup", d.deploymentName)
 
 	// Store deleted_at timestamp
@@ -526,6 +545,23 @@ func (d *deprovisioningPhase) monitorAndCleanupTask(ctx context.Context, task *b
 			}
 		}
 	}
+}
+
+// resolveDeleteTask names the delete task the broker started. bosh-cli returns
+// once the delete task has finished, and the adapter then reports the
+// deployment's newest task, which can be one someone or vm-monitor ran on the
+// deployment in the meantime. The deployment-level delete event names the
+// delete task itself. When no event names it, nil is returned after recording
+// that, and LastOperation looks again on the next poll.
+func (d *deprovisioningPhase) resolveDeleteTask(ctx context.Context) *bosh.Task {
+	taskID := d.broker.resolveDeploymentTask(d.deploymentName, boshEventActionDelete, d.logger)
+	if taskID == 0 {
+		d.broker.trackProgress(ctx, d.instanceID, "deprovision", "BOSH deletion returned; waiting for BOSH events to name the delete task", 0, nil, d.logger)
+
+		return nil
+	}
+
+	return &bosh.Task{ID: taskID, Description: "delete deployment " + d.deploymentName}
 }
 
 // trackDeletionProgress tracks the ongoing deletion task.
@@ -639,6 +675,8 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 // Both cleanup paths are idempotent (Index removal and timestamp storage can be
 // repeated safely), so there's no harm if both execute.
 func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance) {
+	defer b.activeDeprovisions.Delete(instanceID)
+
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
 
@@ -684,16 +722,21 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 		return
 	}
 
+	deleteTask := phase.resolveDeleteTask(ctx)
+	if deleteTask == nil {
+		return
+	}
+
 	// Track the ongoing deletion
-	phase.trackDeletionProgress(ctx, task)
+	phase.trackDeletionProgress(ctx, deleteTask)
 
 	// Launch background task monitor for cleanup
 	// Create a detached context that survives the HTTP request lifecycle
 	// This ensures cleanup happens even if the request context is cancelled
 	monitorCtx := context.WithoutCancel(ctx)
-	go phase.monitorAndCleanupTask(monitorCtx, task)
+	go phase.monitorAndCleanupTask(monitorCtx, deleteTask)
 
-	logger.Info("Launched background task monitor for instance %s (task %d)", instanceID, task.ID)
+	logger.Info("Launched background task monitor for instance %s (task %d)", instanceID, deleteTask.ID)
 }
 
 // retryDeleteDeployment attempts to delete a BOSH deployment with retry logic.
@@ -728,8 +771,10 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName strin
 
 		logger.Error("Deletion attempt %d failed for deployment %s: %s", attempt, deploymentName, err)
 
-		// Track retry attempt
-		trackErr := b.Vault.TrackProgress(ctx, instanceID, "deprovision", fmt.Sprintf("Deletion retry %d/%d failed: %s", attempt, maxRetries, err), -1, nil)
+		// Track the retry attempt without a task, which keeps the operation in
+		// progress. Only the caller records the deprovision as failed, once
+		// every attempt is spent.
+		trackErr := b.Vault.TrackProgress(ctx, instanceID, "deprovision", fmt.Sprintf("Deletion retry %d/%d failed: %s", attempt, maxRetries, err), 0, nil)
 		if trackErr != nil {
 			logger.Error("failed to track retry attempt: %s", trackErr)
 		}
