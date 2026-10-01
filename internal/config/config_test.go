@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -63,5 +66,44 @@ broker:
 
 	if prod.SkipSSLValidation {
 		t.Error("expected skip_ssl_validation to default to false")
+	}
+}
+
+func TestReadConfigRejectsVaultAddressWithCredentials(t *testing.T) {
+	t.Parallel()
+
+	const fakeVaultPassword = "hunter2-vault"
+
+	tests := []struct {
+		name    string
+		address string
+		want    error
+	}{
+		{name: "userinfo with password", address: "https://vault-user:" + fakeVaultPassword + "@vault.example.com:8200", want: config.ErrVaultAddressHasCredentials},
+		{name: "userinfo without password", address: "https://vault-user@vault.example.com:8200", want: config.ErrVaultAddressHasCredentials},
+		{name: "unparseable address", address: "https://vault-user:" + fakeVaultPassword + "@vault example.com:bad", want: config.ErrVaultAddressInvalid},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			raw := "vault:\n  address: \"" + testCase.address + "\"\nbosh:\n  address: https://10.0.0.6:25555\n  username: admin\n  password: bosh-secret\n"
+			path := filepath.Join(t.TempDir(), "blacksmith.yml")
+
+			err := os.WriteFile(path, []byte(raw), 0o600)
+			if err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			_, err = config.ReadConfig(path)
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("expected %v, got %v", testCase.want, err)
+			}
+
+			if strings.Contains(err.Error(), fakeVaultPassword) {
+				t.Errorf("error message carries the vault password: %q", err.Error())
+			}
+		})
 	}
 }

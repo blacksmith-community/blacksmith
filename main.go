@@ -1128,7 +1128,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		WebRoot:  uiHandler,
 		Logger:   logger.Named("api"),
 		Internal: internalAPI,
-		Primary:  osbapibroker.NewHandler(brokerInstance),
+		Primary:  osbapibroker.NewHandler(brokerInstance, osbapibroker.WithLogger(broker.NewOSBAPILogger(logger.Named("osbapi")))),
 	}
 }
 

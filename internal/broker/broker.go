@@ -529,7 +529,7 @@ func (b *Broker) Bind(
 	}
 
 	// Process Valkey dynamic credentials if applicable
-	processedCreds, err = b.processValkeyCredentials(ctx, bindingID, processedCreds, logger)
+	processedCreds, err = b.processValkeyCredentials(ctx, instanceID, bindingID, processedCreds, logger)
 	if err != nil {
 		return binding, false, err
 	}
@@ -660,7 +660,7 @@ func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingI
 		return nil, err
 	}
 
-	err = b.processDynamicCredentials(ctx, credsMap, bindingID, binding, logger)
+	err = b.processDynamicCredentials(ctx, instanceID, credsMap, bindingID, binding, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1168,7 +1168,7 @@ func (b *Broker) initializeBinding(creds interface{}, logger logger.Logger) (*Bi
 	return binding, credMap, nil
 }
 
-func (b *Broker) processDynamicCredentials(ctx context.Context, credsMap map[string]interface{}, bindingID string, binding *BindingCredentials, logger logger.Logger) error {
+func (b *Broker) processDynamicCredentials(ctx context.Context, instanceID string, credsMap map[string]interface{}, bindingID string, binding *BindingCredentials, logger logger.Logger) error {
 	if _, hasAPI := credsMap["api_url"]; hasAPI {
 		logger.Info("Service supports dynamic credentials, processing RabbitMQ user for binding", "bindingID", bindingID)
 
@@ -1187,7 +1187,7 @@ func (b *Broker) processDynamicCredentials(ctx context.Context, credsMap map[str
 	if serviceType, ok := credsMap["service_type"].(string); ok && serviceType == "valkey" {
 		logger.Info("Processing Valkey ACL user for binding", "bindingID", bindingID)
 
-		err := b.handleDynamicValkeyCredentials(ctx, credsMap, bindingID, logger)
+		err := b.handleDynamicValkeyCredentials(ctx, instanceID, credsMap, bindingID, logger)
 		if err != nil {
 			logger.Error("Failed to handle dynamic Valkey credentials", "error", err)
 

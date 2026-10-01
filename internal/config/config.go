@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 
 	"blacksmith/pkg/logger"
@@ -12,10 +13,12 @@ import (
 
 // Static errors for err113 compliance.
 var (
-	ErrVaultAddressNotSet = errors.New("vault address is not set")
-	ErrBOSHAddressNotSet  = errors.New("BOSH address is not set")
-	ErrBOSHUsernameNotSet = errors.New("BOSH username is not set")
-	ErrBOSHPasswordNotSet = errors.New("BOSH password is not set")
+	ErrVaultAddressNotSet         = errors.New("vault address is not set")
+	ErrVaultAddressInvalid        = errors.New("vault address is not a valid URL")
+	ErrVaultAddressHasCredentials = errors.New("vault address must not embed user credentials")
+	ErrBOSHAddressNotSet          = errors.New("BOSH address is not set")
+	ErrBOSHUsernameNotSet         = errors.New("BOSH username is not set")
+	ErrBOSHPasswordNotSet         = errors.New("BOSH password is not set")
 )
 
 type Config struct {
@@ -365,6 +368,18 @@ func setCompressionDefaults(config *Config) {
 func validateRequiredFields(config *Config) error {
 	if config.Vault.Address == "" {
 		return ErrVaultAddressNotSet
+	}
+
+	// Vault and spruce both echo the address in their errors, which reach
+	// operators and the platform verbatim, so it must never carry a password.
+	// Neither error wraps the parse failure, since that text quotes the address.
+	vaultURL, err := url.Parse(config.Vault.Address)
+	if err != nil {
+		return ErrVaultAddressInvalid
+	}
+
+	if vaultURL.User != nil {
+		return ErrVaultAddressHasCredentials
 	}
 
 	if config.BOSH.Address == "" {
