@@ -171,6 +171,9 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 
 			close(releaseDirector)
 			Eventually(taskState).Should(Equal("failed"))
+			// The goroutine records the failed task before it returns and
+			// clears its in-flight marker, so wait for the marker as well.
+			Eventually(func() bool { return brokerInstance.ProvisionActive(instanceID) }).Should(BeFalse())
 
 			director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no running task is a nil task without an error
 			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {

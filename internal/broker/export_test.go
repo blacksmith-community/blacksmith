@@ -39,3 +39,11 @@ func SetValkeyACLRetry(retries int, baseWait time.Duration) func() {
 		valkeyACLRetries, valkeyACLBaseWait = previousRetries, previousWait
 	}
 }
+
+// ProvisionActive reports whether the provisionAsync goroutine for instanceID
+// is still running in this process.
+func (b *Broker) ProvisionActive(instanceID string) bool {
+	_, running := b.activeProvisions.Load(instanceID)
+
+	return running
+}
