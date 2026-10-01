@@ -1,6 +1,7 @@
 package osbapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -71,4 +72,28 @@ func DecodeOriginatingIdentity(header string) (OriginatingIdentity, error) {
 	}
 
 	return identity, nil
+}
+
+// contextKey is a private type for context keys defined in this package to
+// avoid collisions with keys from other packages.
+type contextKey struct{ name string }
+
+// originatingIdentityKey is the context key under which a decoded
+// OriginatingIdentity is stored by the OSB server middleware.
+var originatingIdentityKey = contextKey{name: "originatingIdentity"}
+
+// ContextWithOriginatingIdentity returns a copy of ctx with the given
+// OriginatingIdentity attached. Brokers may use this to attach an identity
+// in tests or in custom middleware.
+func ContextWithOriginatingIdentity(ctx context.Context, id OriginatingIdentity) context.Context {
+	return context.WithValue(ctx, originatingIdentityKey, id)
+}
+
+// OriginatingIdentityFromContext retrieves the OriginatingIdentity attached
+// to ctx by the server middleware. The boolean is false when the request
+// carried no X-Broker-API-Originating-Identity header (or when the header
+// was malformed and the middleware chose to discard it).
+func OriginatingIdentityFromContext(ctx context.Context) (OriginatingIdentity, bool) {
+	id, ok := ctx.Value(originatingIdentityKey).(OriginatingIdentity)
+	return id, ok
 }

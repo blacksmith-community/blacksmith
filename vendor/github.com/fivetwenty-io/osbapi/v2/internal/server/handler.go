@@ -7,6 +7,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -28,7 +29,8 @@ func WithBasicAuth(username, password string) Option {
 	}
 }
 
-// WithLogger sets the logger for the handler.
+// WithLogger sets the logger for the handler. Without it, or when logger is
+// nil, the handler logs through slog.Default().
 func WithLogger(logger osbapi.Logger) Option {
 	return func(h *handler) {
 		h.logger = logger
@@ -60,6 +62,9 @@ func NewHandler(broker osbapi.ServiceBroker, opts ...Option) http.Handler {
 	}
 	for _, opt := range opts {
 		opt(h)
+	}
+	if h.logger == nil {
+		h.logger = slogLogger{}
 	}
 
 	mux := http.NewServeMux()
@@ -115,6 +120,21 @@ func (h *handler) applyMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// 3. Originating identity extraction (OSB v2.17 §5.1).
+		// The header is optional; absent = leave context untouched. A malformed
+		// header is logged and dropped so a misbehaving platform cannot block
+		// otherwise-valid traffic — brokers that need the identity should
+		// check OriginatingIdentityFromContext and treat absence as untrusted.
+		if raw := r.Header.Get(osbapi.HeaderOriginatingIdentity); raw != "" {
+			id, err := osbapi.DecodeOriginatingIdentity(raw)
+			if err != nil {
+				h.logger.Warn("invalid X-Broker-API-Originating-Identity header",
+					map[string]any{"error": err.Error()})
+			} else {
+				r = r.WithContext(osbapi.ContextWithOriginatingIdentity(r.Context(), id))
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -165,7 +185,7 @@ func atoi(s string) int {
 func (h *handler) catalogHandler(w http.ResponseWriter, r *http.Request) {
 	catalog, err := h.broker.GetCatalog(r.Context())
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "catalog", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, catalog)
@@ -186,7 +206,7 @@ func (h *handler) provisionHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, isAsync, err := h.broker.Provision(r.Context(), instanceID, req, async)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "provision", err)
 		return
 	}
 
@@ -207,7 +227,7 @@ func (h *handler) fetchInstanceHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.broker.GetInstance(r.Context(), instanceID, req)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "fetch_instance", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -228,7 +248,7 @@ func (h *handler) updateHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, isAsync, err := h.broker.Update(r.Context(), instanceID, req, async)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "update", err)
 		return
 	}
 
@@ -251,7 +271,7 @@ func (h *handler) deprovisionHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, isAsync, err := h.broker.Deprovision(r.Context(), instanceID, req, async)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "deprovision", err)
 		return
 	}
 
@@ -273,7 +293,7 @@ func (h *handler) lastOperationHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.broker.LastOperation(r.Context(), instanceID, req)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "last_operation", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -283,14 +303,20 @@ func (h *handler) lastOperationHandler(w http.ResponseWriter, r *http.Request) {
 // Error handling
 // ---------------------------------------------------------------------------
 
-// handleError maps broker errors to appropriate HTTP responses.
-func (h *handler) handleError(w http.ResponseWriter, err error) {
+// handleError maps broker errors to appropriate HTTP responses. Every error
+// that maps to a 5xx is logged with the request's context, and an untyped
+// error's message becomes the response description so the platform shows the
+// operator the cause rather than a bare "internal server error".
+func (h *handler) handleError(w http.ResponseWriter, r *http.Request, op string, err error) {
 	// Check for typed OSBError first.
 	var osbErr *osbapi.OSBError
 	if errors.As(err, &osbErr) {
 		status := osbErr.StatusCode
 		if status == 0 {
 			status = http.StatusInternalServerError
+		}
+		if status >= http.StatusInternalServerError {
+			h.logServerError(r, op, status, err)
 		}
 		writeError(w, status, osbErr)
 		return
@@ -343,10 +369,32 @@ func (h *handler) handleError(w http.ResponseWriter, err error) {
 		})
 
 	default:
+		h.logServerError(r, op, http.StatusInternalServerError, err)
 		writeError(w, http.StatusInternalServerError, &osbapi.OSBError{
-			Description: "internal server error",
+			Description: err.Error(),
 		})
 	}
+}
+
+// logServerError logs a broker error that is about to be answered with a 5xx
+// status. The error field carries the whole wrapped chain as err.Error()
+// renders it, and error_type names the outermost error's concrete type.
+func (h *handler) logServerError(r *http.Request, op string, status int, err error) {
+	fields := map[string]any{
+		"operation":  op,
+		"method":     r.Method,
+		"path":       r.URL.Path,
+		"status":     status,
+		"error":      err.Error(),
+		"error_type": fmt.Sprintf("%T", err),
+	}
+	if id := r.PathValue("instance_id"); id != "" {
+		fields["instance_id"] = id
+	}
+	if id := r.PathValue("binding_id"); id != "" {
+		fields["binding_id"] = id
+	}
+	h.logger.Error("broker "+op+" failed", fields)
 }
 
 // ---------------------------------------------------------------------------

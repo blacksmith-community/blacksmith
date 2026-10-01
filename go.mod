@@ -7,7 +7,7 @@ require (
 	github.com/cloudfoundry/bosh-cli/v7 v7.9.8
 	github.com/cloudfoundry/bosh-utils v0.0.552
 	github.com/fivetwenty-io/capi/v3 v3.229.1
-	github.com/fivetwenty-io/osbapi/v2 v2.0.0
+	github.com/fivetwenty-io/osbapi/v2 v2.0.2
 	github.com/geofffranks/spruce v1.31.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/google/uuid v1.6.0

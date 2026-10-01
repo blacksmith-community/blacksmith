@@ -29,7 +29,7 @@ func (h *handler) bindHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
-		h.handleError(w, err)
+		h.handleError(w, r, "bind", err)
 		return
 	}
 
@@ -52,7 +52,7 @@ func (h *handler) fetchBindingHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.broker.GetBinding(r.Context(), instanceID, bindingID, req)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "fetch_binding", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -72,7 +72,7 @@ func (h *handler) unbindHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, isAsync, err := h.broker.Unbind(r.Context(), instanceID, bindingID, req, async)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "unbind", err)
 		return
 	}
 
@@ -96,7 +96,7 @@ func (h *handler) bindingLastOperationHandler(w http.ResponseWriter, r *http.Req
 
 	resp, err := h.broker.LastBindingOperation(r.Context(), instanceID, bindingID, req)
 	if err != nil {
-		h.handleError(w, err)
+		h.handleError(w, r, "binding_last_operation", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)

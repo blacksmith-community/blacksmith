@@ -21,7 +21,8 @@ func WithBasicAuth(username, password string) Option {
 	return server.WithBasicAuth(username, password)
 }
 
-// WithLogger configures structured logging for the handler.
+// WithLogger configures structured logging for the handler. Without it, the
+// handler logs through slog.Default().
 func WithLogger(logger osbapi.Logger) Option {
 	return server.WithLogger(logger)
 }
