@@ -83,12 +83,25 @@ func (e *valkeyStepError) Unwrap() error {
 }
 
 // valkeyLikelyCause returns a short hint for failures whose cause is known,
-// or "" when the error says nothing more than its own text.
+// or "" when the error says nothing more than its own text. It reads the reply
+// text rather than the go-redis type, because a redacted copy of the reply
+// keeps its text and loses its type.
 func valkeyLikelyCause(step string, err error) string {
-	var redisErr redis.Error
-	if errors.As(err, &redisErr) && strings.HasPrefix(redisErr.Error(), "MISCONF") {
+	msg := err.Error()
+
+	switch {
+	case strings.HasPrefix(msg, "MISCONF"):
 		return "the Valkey node cannot persist to disk (RDB snapshots or AOF writes are failing), " +
 			"so it refuses writes and PING; check the node's server log and free space on its persistent disk"
+	case strings.HasPrefix(msg, "NOPERM"):
+		return "the admin user lacks ACL permission to run this command (it needs +@admin or +acl); " +
+			"check the 'user default' line, or the admin user's line, in the node's ACL file or valkey.conf"
+	case strings.HasPrefix(msg, "NOAUTH"):
+		return "the node requires a password and the broker did not authenticate; " +
+			"check that admin_password is present in the instance's credentials and that requirepass on the node matches it"
+	case strings.Contains(msg, "error trying to save the ACLs"):
+		return "the node could not write its ACL file, so the directory holding aclfile is probably missing or not writable by the valkey user; " +
+			"check the aclfile path and its directory permissions and free space on the node"
 	}
 
 	switch step {
@@ -96,16 +109,26 @@ func valkeyLikelyCause(step string, err error) string {
 		return "the node is down, unreachable from the broker, or not listening on this port; " +
 			"check the instance's VMs and the network path from the broker"
 	case valkeyStepAuth:
+		if strings.HasPrefix(msg, "ERR max number of clients") {
+			return "the node is at its maxclients limit and refused the connection; " +
+				"check the number of client connections on the node and its maxclients setting"
+		}
+
+		if strings.HasPrefix(msg, "ERR") {
+			return "the node answered AUTH with an error that is not a password mismatch; check the node's server log"
+		}
+
 		return "the instance's admin_password does not match the password the node requires"
 	}
 
 	return ""
 }
 
-// valkeyNonRetryablePrefixes are error reply codes that repeating the same
-// command cannot fix: a node that cannot persist to disk, a wrong admin
-// password, a missing login, or a user without permission.
-var valkeyNonRetryablePrefixes = []string{"MISCONF", "WRONGPASS", "NOAUTH", "NOPERM"} //nolint:gochecknoglobals // constant list
+// valkeyAuthNonRetryablePrefixes are the AUTH replies a retry cannot change: a
+// wrong admin password, a missing login, or a user without permission. Other
+// AUTH error replies, such as a node at maxclients, can clear on their own.
+// MISCONF is non-retryable on every step.
+var valkeyAuthNonRetryablePrefixes = []string{"WRONGPASS", "NOAUTH", "NOPERM"} //nolint:gochecknoglobals // constant list
 
 // isNonRetryableValkeyError reports whether err is a server reply that a retry
 // cannot change. Dial failures, resets, and timeouts are not, because a node
@@ -113,24 +136,26 @@ var valkeyNonRetryablePrefixes = []string{"MISCONF", "WRONGPASS", "NOAUTH", "NOP
 func isNonRetryableValkeyError(err error) bool {
 	var stepErr *valkeyStepError
 	if errors.As(err, &stepErr) {
-		if stepErr.step == valkeyStepAuth && stepErr.serverReply {
+		msg := stepErr.err.Error()
+
+		if strings.HasPrefix(msg, "MISCONF") {
 			return true
 		}
 
 		// The step error may hold a redacted copy of the reply, so read its text.
-		return hasNonRetryablePrefix(stepErr.err.Error())
+		return stepErr.step == valkeyStepAuth && stepErr.serverReply && hasPrefixIn(msg, valkeyAuthNonRetryablePrefixes)
 	}
 
 	var redisErr redis.Error
 	if errors.As(err, &redisErr) {
-		return hasNonRetryablePrefix(redisErr.Error())
+		return strings.HasPrefix(redisErr.Error(), "MISCONF")
 	}
 
 	return false
 }
 
-func hasNonRetryablePrefix(msg string) bool {
-	for _, prefix := range valkeyNonRetryablePrefixes {
+func hasPrefixIn(msg string, prefixes []string) bool {
+	for _, prefix := range prefixes {
 		if strings.HasPrefix(msg, prefix) {
 			return true
 		}

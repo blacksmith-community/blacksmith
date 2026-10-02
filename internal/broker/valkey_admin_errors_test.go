@@ -30,6 +30,10 @@ const (
 		"writes if RDB snapshotting fails (stop-writes-on-bgsave-error option).\r\n"
 )
 
+// closeConnection is a reply that makes the fake close the connection without
+// answering, the way a node that resets or times out does.
+const closeConnection = "close-the-connection"
+
 // fakeValkey is a minimal RESP server standing in for a Valkey node. It
 // answers each command with the reply set for it, or +OK, and records the
 // commands it received (without their arguments, which carry passwords).
@@ -86,6 +90,10 @@ func (f *fakeValkey) handle(conn net.Conn) {
 		reply := "+OK\r\n"
 		if replyFn, ok := f.replies[name]; ok {
 			reply = replyFn(args)
+		}
+
+		if reply == closeConnection {
+			return
 		}
 
 		_, err = io.WriteString(conn, reply)
@@ -289,22 +297,109 @@ var _ = Describe("Valkey ACL admin failures", func() {
 		})
 	})
 
-	for _, code := range []string{"NOAUTH Authentication required.", "NOPERM this user has no permissions to run the 'acl' command"} {
+	for _, code := range []string{"NOAUTH Authentication required.", "NOPERM this user has no permissions to run the 'auth' command", "WRONGPASS invalid username-password pair or user is disabled."} {
 		code := code
 
-		It("makes one attempt when the node answers PING with "+strings.Fields(code)[0], func() {
+		It("makes one attempt when the node answers AUTH with "+strings.Fields(code)[0], func() {
 			restoreRetry()
 			restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
 
-			fake := newFakeValkey(map[string]func([]string) string{"PING": fixedReply("-" + code + "\r\n")})
+			fake := newFakeValkey(map[string]func([]string) string{"AUTH": fixedReply("-" + code + "\r\n")})
 			defer fake.close()
 
 			err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
 
 			Expect(err).To(HaveOccurred())
-			Expect(fake.received()).To(Equal([]string{"AUTH", "PING"}))
+			Expect(err.Error()).NotTo(ContainSubstring("max retries exceeded"))
+			Expect(fake.received()).To(Equal([]string{"AUTH"}))
 		})
 	}
+
+	It("makes four attempts when the connection closes before AUTH is answered", func() {
+		restoreRetry()
+		restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
+
+		fake := newFakeValkey(map[string]func([]string) string{"AUTH": fixedReply(closeConnection)})
+		defer fake.close()
+
+		err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("max retries exceeded"))
+		Expect(fake.received()).To(Equal([]string{"AUTH", "AUTH", "AUTH", "AUTH"}))
+		Expect(recorder.errorLines()).To(HaveLen(4))
+	})
+
+	for _, reply := range []string{
+		"ERR max number of clients reached",
+		"ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?",
+	} {
+		reply := reply
+
+		It("keeps retrying and does not blame the password when AUTH answers "+reply[:24], func() {
+			restoreRetry()
+			restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
+
+			fake := newFakeValkey(map[string]func([]string) string{"AUTH": fixedReply("-" + reply + "\r\n")})
+			defer fake.close()
+
+			err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("max retries exceeded"))
+			Expect(err.Error()).NotTo(ContainSubstring("admin_password does not match"))
+			Expect(fake.received()).To(Equal([]string{"AUTH", "AUTH", "AUTH", "AUTH"}))
+		})
+	}
+
+	It("says the node is at maxclients when AUTH answers that", func() {
+		fake := newFakeValkey(map[string]func([]string) string{"AUTH": fixedReply("-ERR max number of clients reached\r\n")})
+		defer fake.close()
+
+		err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("likely cause: the node is at its maxclients limit"))
+	})
+
+	It("explains NOPERM on ACL SETUSER with the missing permission and where to look", func() {
+		fake := newFakeValkey(map[string]func([]string) string{
+			"ACL SETUSER": fixedReply("-NOPERM User default has no permissions to run the 'acl|setuser' command\r\n"),
+		})
+		defer fake.close()
+
+		err := brokerInstance.CreateValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, valkeyTestUserPassword, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("valkey ACL SETUSER"))
+		Expect(err.Error()).To(ContainSubstring("likely cause: the admin user lacks ACL permission to run this command"))
+		Expect(err.Error()).To(ContainSubstring("check the 'user default' line"))
+	})
+
+	It("explains NOAUTH with the credential to check", func() {
+		fake := newFakeValkey(map[string]func([]string) string{"PING": fixedReply("-NOAUTH Authentication required.\r\n")})
+		defer fake.close()
+
+		err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("likely cause: the node requires a password and the broker did not authenticate"))
+		Expect(err.Error()).To(ContainSubstring("check that admin_password is present"))
+	})
+
+	It("explains an ACL SAVE failure with the ACL file directory to check", func() {
+		fake := newFakeValkey(map[string]func([]string) string{
+			"ACL SAVE": fixedReply("-ERR There was an error trying to save the ACLs. Please check the server logs for more information\r\n"),
+		})
+		defer fake.close()
+
+		err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("valkey ACL SAVE"))
+		Expect(err.Error()).To(ContainSubstring("likely cause: the node could not write its ACL file"))
+		Expect(err.Error()).To(ContainSubstring("check the aclfile path and its directory permissions"))
+	})
 
 	It("names the dial step and points at reachability when nothing listens", func() {
 		listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", valkeyTestHost+":0")
