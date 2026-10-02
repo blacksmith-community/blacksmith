@@ -362,6 +362,35 @@ var _ = Describe("Valkey ACL admin failures", func() {
 		Expect(err.Error()).To(ContainSubstring("likely cause: the node is at its maxclients limit"))
 	})
 
+	It("makes one attempt when the node answers ACL SETUSER with NOPERM", func() {
+		restoreRetry()
+		restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
+
+		fake := newFakeValkey(map[string]func([]string) string{
+			"ACL SETUSER": fixedReply("-NOPERM User default has no permissions to run the 'acl|setuser' command\r\n"),
+		})
+		defer fake.close()
+
+		err := brokerInstance.CreateValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, valkeyTestUserPassword, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).NotTo(ContainSubstring("max retries exceeded"))
+		Expect(fake.received()).To(Equal([]string{"AUTH", "PING", "ACL SETUSER"}))
+	})
+
+	It("makes one attempt when the node answers PING with NOAUTH", func() {
+		restoreRetry()
+		restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
+
+		fake := newFakeValkey(map[string]func([]string) string{"PING": fixedReply("-NOAUTH Authentication required.\r\n")})
+		defer fake.close()
+
+		err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(fake.received()).To(Equal([]string{"AUTH", "PING"}))
+	})
+
 	It("explains NOPERM on ACL SETUSER with the missing permission and where to look", func() {
 		fake := newFakeValkey(map[string]func([]string) string{
 			"ACL SETUSER": fixedReply("-NOPERM User default has no permissions to run the 'acl|setuser' command\r\n"),

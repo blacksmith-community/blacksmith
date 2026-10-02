@@ -124,11 +124,11 @@ func valkeyLikelyCause(step string, err error) string {
 	return ""
 }
 
-// valkeyAuthNonRetryablePrefixes are the AUTH replies a retry cannot change: a
-// wrong admin password, a missing login, or a user without permission. Other
-// AUTH error replies, such as a node at maxclients, can clear on their own.
-// MISCONF is non-retryable on every step.
-var valkeyAuthNonRetryablePrefixes = []string{"WRONGPASS", "NOAUTH", "NOPERM"} //nolint:gochecknoglobals // constant list
+// valkeyNonRetryablePrefixes are the error reply codes that repeating the same
+// command cannot fix on any step: a node that cannot persist to disk, a wrong
+// admin password, a missing login, or a user without permission. Other error
+// replies, such as a node at maxclients, can clear on their own.
+var valkeyNonRetryablePrefixes = []string{"MISCONF", "WRONGPASS", "NOAUTH", "NOPERM"} //nolint:gochecknoglobals // constant list
 
 // isNonRetryableValkeyError reports whether err is a server reply that a retry
 // cannot change. Dial failures, resets, and timeouts are not, because a node
@@ -136,19 +136,13 @@ var valkeyAuthNonRetryablePrefixes = []string{"WRONGPASS", "NOAUTH", "NOPERM"} /
 func isNonRetryableValkeyError(err error) bool {
 	var stepErr *valkeyStepError
 	if errors.As(err, &stepErr) {
-		msg := stepErr.err.Error()
-
-		if strings.HasPrefix(msg, "MISCONF") {
-			return true
-		}
-
 		// The step error may hold a redacted copy of the reply, so read its text.
-		return stepErr.step == valkeyStepAuth && stepErr.serverReply && hasPrefixIn(msg, valkeyAuthNonRetryablePrefixes)
+		return hasPrefixIn(stepErr.err.Error(), valkeyNonRetryablePrefixes)
 	}
 
 	var redisErr redis.Error
 	if errors.As(err, &redisErr) {
-		return strings.HasPrefix(redisErr.Error(), "MISCONF")
+		return hasPrefixIn(redisErr.Error(), valkeyNonRetryablePrefixes)
 	}
 
 	return false
