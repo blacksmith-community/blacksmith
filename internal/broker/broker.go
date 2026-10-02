@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,9 +57,6 @@ const (
 	// File permissions.
 	defaultFilePermissions   = 0600
 	defaultScriptPermissions = 0700
-
-	// Debug output limits.
-	debugDataPreviewLength = 500
 
 	// Default retry attempts.
 	defaultDeleteRetryAttempts = 3
@@ -223,7 +221,7 @@ func WriteYamlFile(
 	err := yaml.Unmarshal(data, &mergedMap)
 	if err != nil {
 		logger.Error("Failed to unmarshal data for YAML file: %s", err)
-		logger.Debug("Raw data (first 500 chars): %s", string(data[:min(len(data), debugDataPreviewLength)]))
+		logger.Debug("Unparseable YAML data for instance %s is %d bytes; its content is not logged because it can hold credentials", instanceID, len(data))
 
 		return fmt.Errorf("failed to unmarshal YAML data: %w", err)
 	}
@@ -231,7 +229,7 @@ func WriteYamlFile(
 	yamlBytes, err := yaml.Marshal(mergedMap)
 	if err != nil {
 		logger.Error("Failed to marshal data to YAML: %s", err)
-		logger.Debug("Map content: %+v", mergedMap)
+		logger.Debug("Merged map for instance %s has %d top-level keys; its content is not logged because it can hold credentials", instanceID, len(mergedMap))
 
 		return fmt.Errorf("failed to marshal data to YAML: %w", err)
 	}
@@ -585,7 +583,7 @@ func (b *Broker) Bind(
 	if credsMap, ok := processedCreds.(map[string]interface{}); ok {
 		binding.Credentials = credsMap
 	}
-	logger.Debug("credentials are: %v", binding)
+	logBindingCredentialKeys(logger, bindingID, binding.Credentials)
 	logger.Info("Successfully completed bind operation for binding %s", bindingID)
 
 	return binding, false, nil
@@ -3416,7 +3414,7 @@ func prepareUserCreationPayload(passwordDynamic string, logger logger.Logger) ([
 		return nil, fmt.Errorf("failed to marshal user creation payload: %w", err)
 	}
 
-	logger.Debug("User creation payload: %s", string(data))
+	logger.Debug("Built RabbitMQ user creation payload (%d bytes; content not logged because it carries the password)", len(data))
 
 	return data, nil
 }
@@ -3627,3 +3625,22 @@ type BindingCredentials struct {
 // handleDynamicRabbitMQCredentials processes dynamic RabbitMQ user creation for bindings.
 // populateBindingCredentials fills the structured fields from the raw credential map.
 // ServiceWithNoDeploymentCheck checks for services with no deployments.
+
+// sortedKeys returns the keys of m in order, so logs can name a credentials
+// map's fields without printing its values.
+func sortedKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+// logBindingCredentialKeys logs the names of a binding's credential fields and
+// never their values, which include the per-binding username and password.
+func logBindingCredentialKeys(log logger.Logger, bindingID string, creds map[string]interface{}) {
+	log.Debug("Binding %s carries credential keys: %s", bindingID, strings.Join(sortedKeys(creds), ", "))
+}

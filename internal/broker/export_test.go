@@ -55,3 +55,13 @@ func (b *Broker) DeprovisionActive(instanceID string) bool {
 
 	return running
 }
+
+// LogBindingCredentialKeys exposes the bind path's credential logging.
+func LogBindingCredentialKeys(log logger.Logger, bindingID string, creds map[string]interface{}) {
+	logBindingCredentialKeys(log, bindingID, creds)
+}
+
+// PrepareUserCreationPayload exposes the RabbitMQ user payload builder.
+func PrepareUserCreationPayload(password string, log logger.Logger) ([]byte, error) {
+	return prepareUserCreationPayload(password, log)
+}

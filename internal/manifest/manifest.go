@@ -112,11 +112,6 @@ func buildInitCommand(ctx context.Context, plan services.Plan, instanceID string
 
 	log := logger.Get().Named("manifest")
 	log.Debug("Executing init script command: bash %s", plan.InitScriptPath)
-	log.Debug("Init script environment variables:")
-
-	for _, env := range cmd.Env {
-		log.Debug("  %s", env)
-	}
 
 	return cmd
 }
@@ -217,7 +212,7 @@ func executeInitScript(cmd *exec.Cmd, initScriptPath string) error {
 	}
 
 	logger.Get().Named("manifest").Info("Init script completed successfully")
-	logger.Get().Named("manifest").Debug("Init script `%s' output:\n%s", initScriptPath, string(out))
+	logger.Get().Named("manifest").Debug("Init script `%s' produced %d bytes of output (not logged because it can echo credentials)", initScriptPath, len(out))
 
 	return nil
 }
@@ -629,7 +624,7 @@ func extractCredentialsFromManifest(manifest string, loggerInstance logger.Logge
 		// If it's not a map, check if it's a different type we can handle
 		str, strErr := yamlCreds.String()
 		if strErr == nil {
-			loggerInstance.Error("failed to retrieve `credentials' top-level key: got string instead of map: %s", str)
+			loggerInstance.Error("failed to retrieve `credentials' top-level key: got string instead of map (string of %d bytes, value not logged)", len(str))
 
 			return nil, ErrCredentialsNotMap
 		}

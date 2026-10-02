@@ -39,7 +39,7 @@ func (api API) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 func (api API) logIncomingRequest(req *http.Request) {
 	if api.Logger != nil {
 		api.Logger.Info("request: %s %s from %s", req.Method, req.URL.Path, req.RemoteAddr)
-		api.Logger.Debug("request headers: %v", req.Header)
+		api.Logger.Debug("request headers: %v", redactedHeaders(req.Header))
 	}
 }
 
@@ -128,4 +128,21 @@ type NullHandler struct{}
 func (n NullHandler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	writer.WriteHeader(http.StatusNotFound)
 	_, _ = fmt.Fprintf(writer, "404 not found\n")
+}
+
+// redactedHeaders copies h with the values of credential-bearing headers
+// replaced, so debug logs show which headers arrived without their secrets.
+func redactedHeaders(h http.Header) http.Header {
+	out := make(http.Header, len(h))
+
+	for name, values := range h {
+		switch http.CanonicalHeaderKey(name) {
+		case "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "X-Vault-Token":
+			out[name] = []string{"<redacted>"}
+		default:
+			out[name] = values
+		}
+	}
+
+	return out
 }
