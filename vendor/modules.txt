@@ -589,7 +589,7 @@ github.com/fivetwenty-io/capi/v3/internal/constants
 github.com/fivetwenty-io/capi/v3/internal/http
 github.com/fivetwenty-io/capi/v3/pkg/capi
 github.com/fivetwenty-io/capi/v3/pkg/cfclient
-# github.com/fivetwenty-io/osbapi/v2 v2.0.2
+# github.com/fivetwenty-io/osbapi/v2 v2.0.3
 ## explicit; go 1.26.0
 github.com/fivetwenty-io/osbapi/v2/internal/server
 github.com/fivetwenty-io/osbapi/v2/pkg/broker

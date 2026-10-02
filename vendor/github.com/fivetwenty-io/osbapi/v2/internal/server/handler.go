@@ -363,8 +363,23 @@ func (h *handler) handleError(w http.ResponseWriter, r *http.Request, op string,
 			Description: err.Error(),
 		})
 
-	case errors.Is(err, osbapi.ErrBadRequest):
+	case errors.Is(err, osbapi.ErrBindingAlreadyExists):
+		writeError(w, http.StatusConflict, &osbapi.OSBError{
+			Description: err.Error(),
+		})
+
+	case errors.Is(err, osbapi.ErrBadRequest), errors.Is(err, osbapi.ErrInvalidParameters):
 		writeError(w, http.StatusBadRequest, &osbapi.OSBError{
+			Description: err.Error(),
+		})
+
+	case errors.Is(err, osbapi.ErrUnauthorized):
+		writeError(w, http.StatusUnauthorized, &osbapi.OSBError{
+			Description: err.Error(),
+		})
+
+	case errors.Is(err, osbapi.ErrPlanQuotaExceeded):
+		writeError(w, http.StatusUnprocessableEntity, &osbapi.OSBError{
 			Description: err.Error(),
 		})
 
