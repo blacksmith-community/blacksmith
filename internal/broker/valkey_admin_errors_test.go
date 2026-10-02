@@ -232,7 +232,7 @@ var _ = Describe("Valkey ACL admin failures", func() {
 			Expect(err.Error()).To(ContainSubstring("likely cause: the Valkey node cannot persist to disk"))
 			Expect(err.Error()).To(ContainSubstring("check the node's server log and free space on its persistent disk"))
 			Expect(err.Error()).NotTo(ContainSubstring(valkeyTestAdminPassword))
-			Expect(fake.received()).To(Equal([]string{"AUTH", "PING", "AUTH", "PING"}))
+			Expect(fake.received()).To(Equal([]string{"AUTH", "PING"}))
 		})
 
 		It("logs every failed attempt with the instance, binding, address, transport, and cause", func() {
@@ -242,12 +242,12 @@ var _ = Describe("Valkey ACL admin failures", func() {
 			Expect(err).To(HaveOccurred())
 
 			lines := recorder.errorLines()
-			Expect(lines).To(HaveLen(2))
+			Expect(lines).To(HaveLen(1))
 
-			for index, line := range lines {
+			for _, line := range lines {
 				Expect(line).To(ContainSubstring("Failed to delete Valkey ACL user for instance " + valkeyTestInstanceID + " binding " + valkeyTestBindingID))
 				Expect(line).To(ContainSubstring("at " + addr + " (tls=false)"))
-				Expect(line).To(ContainSubstring(fmt.Sprintf("attempt %d of 2", index+1)))
+				Expect(line).To(ContainSubstring("attempt 1 of 2, not retrying"))
 				Expect(line).To(ContainSubstring("valkey PING " + addr + " (plaintext) failed: MISCONF"))
 				Expect(line).NotTo(ContainSubstring(valkeyTestAdminPassword))
 			}
@@ -259,7 +259,7 @@ var _ = Describe("Valkey ACL admin failures", func() {
 			Expect(errors.Is(err, broker.ErrFailedToCreateValkeyACLUser)).To(BeTrue())
 			Expect(err.Error()).To(ContainSubstring("valkey PING " + valkeyTestHost + ":"))
 			Expect(err.Error()).To(ContainSubstring("likely cause: the Valkey node cannot persist to disk"))
-			Expect(recorder.errorLines()).To(HaveLen(2))
+			Expect(recorder.errorLines()).To(HaveLen(1))
 			Expect(recorder.errorLines()[0]).To(ContainSubstring("Failed to create Valkey ACL user for instance " + valkeyTestInstanceID))
 		})
 
@@ -272,9 +272,39 @@ var _ = Describe("Valkey ACL admin failures", func() {
 			Expect(errors.Is(err, broker.ErrFailedToDeleteValkeyACLUser)).To(BeTrue())
 			Expect(err.Error()).To(HavePrefix("failed to delete Valkey ACL user " + valkeyTestBindingID + " on 2 of 2 cluster nodes: "))
 			Expect(strings.Count(err.Error(), "MISCONF Valkey")).To(Equal(2))
-			Expect(recorder.errorLines()).To(HaveLen(4))
+			Expect(recorder.errorLines()).To(HaveLen(2))
+			Expect(fake.received()).To(Equal([]string{"AUTH", "PING", "AUTH", "PING"}))
+			Expect(err.Error()).NotTo(ContainSubstring("max retries exceeded"))
+		})
+
+		It("makes exactly one attempt even with retries configured", func() {
+			restoreRetry()
+			restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
+
+			err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).NotTo(ContainSubstring("max retries exceeded"))
+			Expect(fake.received()).To(Equal([]string{"AUTH", "PING"}))
 		})
 	})
+
+	for _, code := range []string{"NOAUTH Authentication required.", "NOPERM this user has no permissions to run the 'acl' command"} {
+		code := code
+
+		It("makes one attempt when the node answers PING with "+strings.Fields(code)[0], func() {
+			restoreRetry()
+			restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
+
+			fake := newFakeValkey(map[string]func([]string) string{"PING": fixedReply("-" + code + "\r\n")})
+			defer fake.close()
+
+			err := brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(fake.port()), valkeyTestBindingID, recorder)
+
+			Expect(err).To(HaveOccurred())
+			Expect(fake.received()).To(Equal([]string{"AUTH", "PING"}))
+		})
+	}
 
 	It("names the dial step and points at reachability when nothing listens", func() {
 		listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", valkeyTestHost+":0")
@@ -293,6 +323,25 @@ var _ = Describe("Valkey ACL admin failures", func() {
 		Expect(recorder.errorLines()[1]).To(ContainSubstring("attempt 2 of 2"))
 	})
 
+	It("still makes four attempts when the dial is refused", func() {
+		restoreRetry()
+		restoreRetry = broker.SetValkeyACLRetry(3, time.Millisecond)
+
+		listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", valkeyTestHost+":0")
+		Expect(err).NotTo(HaveOccurred())
+
+		addr, ok := listener.Addr().(*net.TCPAddr)
+		Expect(ok).To(BeTrue())
+		Expect(listener.Close()).To(Succeed())
+
+		err = brokerInstance.DeleteValkeyACLUser(ctx, valkeyTestInstanceID, valkeyCredMap(addr.Port), valkeyTestBindingID, recorder)
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("max retries exceeded"))
+		Expect(recorder.errorLines()).To(HaveLen(4))
+		Expect(recorder.errorLines()[3]).To(ContainSubstring("attempt 4 of 4"))
+	})
+
 	It("names the AUTH step and points at the admin password when AUTH is rejected", func() {
 		fake := newFakeValkey(map[string]func([]string) string{
 			"AUTH": fixedReply("-WRONGPASS invalid username-password pair or user is disabled.\r\n"),
@@ -305,7 +354,8 @@ var _ = Describe("Valkey ACL admin failures", func() {
 		Expect(err.Error()).To(ContainSubstring(fmt.Sprintf("valkey AUTH %s:%d (plaintext) failed: WRONGPASS", valkeyTestHost, fake.port())))
 		Expect(err.Error()).To(ContainSubstring("likely cause: the instance's admin_password does not match"))
 		Expect(err.Error()).NotTo(ContainSubstring(valkeyTestAdminPassword))
-		Expect(fake.received()).To(Equal([]string{"AUTH", "AUTH"}))
+		Expect(fake.received()).To(Equal([]string{"AUTH"}))
+		Expect(recorder.errorLines()).To(HaveLen(1))
 	})
 
 	It("redacts the binding password when Valkey echoes a rejected SETUSER modifier", func() {

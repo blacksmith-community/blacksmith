@@ -57,6 +57,9 @@ type valkeyStepError struct {
 	addr   string
 	useTLS bool
 	err    error
+	// serverReply is true when the node answered the step with an error
+	// reply, as opposed to a refused dial, a reset, or a timeout.
+	serverReply bool
 }
 
 func (e *valkeyStepError) Error() string {
@@ -97,6 +100,43 @@ func valkeyLikelyCause(step string, err error) string {
 	}
 
 	return ""
+}
+
+// valkeyNonRetryablePrefixes are error reply codes that repeating the same
+// command cannot fix: a node that cannot persist to disk, a wrong admin
+// password, a missing login, or a user without permission.
+var valkeyNonRetryablePrefixes = []string{"MISCONF", "WRONGPASS", "NOAUTH", "NOPERM"} //nolint:gochecknoglobals // constant list
+
+// isNonRetryableValkeyError reports whether err is a server reply that a retry
+// cannot change. Dial failures, resets, and timeouts are not, because a node
+// that is restarting can recover.
+func isNonRetryableValkeyError(err error) bool {
+	var stepErr *valkeyStepError
+	if errors.As(err, &stepErr) {
+		if stepErr.step == valkeyStepAuth && stepErr.serverReply {
+			return true
+		}
+
+		// The step error may hold a redacted copy of the reply, so read its text.
+		return hasNonRetryablePrefix(stepErr.err.Error())
+	}
+
+	var redisErr redis.Error
+	if errors.As(err, &redisErr) {
+		return hasNonRetryablePrefix(redisErr.Error())
+	}
+
+	return false
+}
+
+func hasNonRetryablePrefix(msg string) bool {
+	for _, prefix := range valkeyNonRetryablePrefixes {
+		if strings.HasPrefix(msg, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // redactedError carries an error message with a secret removed. It drops the
@@ -346,6 +386,13 @@ func withValkeyACLRetry(ctx context.Context, action, instanceID, bindingID strin
 
 		err := attemptFn()
 		if err != nil {
+			if isNonRetryableValkeyError(err) {
+				logger.Error("Failed to %s Valkey ACL user for instance %s binding %s at %s (tls=%t), attempt %d of %d, not retrying because the node's reply will not change: %s",
+					action, instanceID, bindingID, conn.addr(host), conn.useTLS, attempt, attempts, err)
+
+				return common.NewRetryableError(err, false, 0)
+			}
+
 			logger.Error("Failed to %s Valkey ACL user for instance %s binding %s at %s (tls=%t), attempt %d of %d: %s",
 				action, instanceID, bindingID, conn.addr(host), conn.useTLS, attempt, attempts, err)
 		}
@@ -513,16 +560,21 @@ func connectToValkeyAdmin(ctx context.Context, conn *valkeyConnInfo, host string
 		_ = client.Close()
 
 		step := valkeyStepPing
+		serverReply := false
 
 		switch {
 		case authErr != nil:
 			step = valkeyStepAuth
+
+			var replyErr redis.Error
+
+			serverReply = errors.As(authErr, &replyErr)
 			err = redactSecret(authErr, conn.adminPassword)
 		case !connected:
 			step = valkeyStepDial
 		}
 
-		return nil, &valkeyStepError{step: step, addr: addr, useTLS: conn.useTLS, err: err}
+		return nil, &valkeyStepError{step: step, addr: addr, useTLS: conn.useTLS, err: err, serverReply: serverReply}
 	}
 
 	return client, nil
