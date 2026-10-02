@@ -565,16 +565,32 @@ func (b *Broker) Bind(
 		return binding, false, err
 	}
 
+	binding, err = b.completeBind(ctx, instanceID, bindingID, creds, logger)
+	if err != nil {
+		return binding, false, err
+	}
+
+	logger.Info("Successfully completed bind operation for binding %s", bindingID)
+
+	return binding, false, nil
+}
+
+// completeBind turns an instance's admin credentials into the credentials a
+// binding returns. It creates the per-binding RabbitMQ or Valkey user when the
+// service needs one, drops the admin fields, and logs the key names only.
+func (b *Broker) completeBind(ctx context.Context, instanceID, bindingID string, creds interface{}, logger logger.Logger) (osbapi.BindResponse, error) {
+	var binding osbapi.BindResponse
+
 	// Process RabbitMQ dynamic credentials if applicable
 	processedCreds, err := b.processRabbitMQCredentials(ctx, bindingID, creds, logger)
 	if err != nil {
-		return binding, false, err
+		return binding, err
 	}
 
 	// Process Valkey dynamic credentials if applicable
 	processedCreds, err = b.processValkeyCredentials(ctx, instanceID, bindingID, processedCreds, logger)
 	if err != nil {
-		return binding, false, err
+		return binding, err
 	}
 
 	// Clean up admin credentials from final output
@@ -583,10 +599,10 @@ func (b *Broker) Bind(
 	if credsMap, ok := processedCreds.(map[string]interface{}); ok {
 		binding.Credentials = credsMap
 	}
-	logBindingCredentialKeys(logger, bindingID, binding.Credentials)
-	logger.Info("Successfully completed bind operation for binding %s", bindingID)
 
-	return binding, false, nil
+	logBindingCredentialKeys(logger, bindingID, binding.Credentials)
+
+	return binding, nil
 }
 
 func (b *Broker) Unbind(

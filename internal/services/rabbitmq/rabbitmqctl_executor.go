@@ -67,7 +67,7 @@ func NewExecutorService(sshService *SSHService, metadataService *MetadataService
 
 // ExecuteCommand executes a rabbitmqctl command with streaming output.
 func (e *ExecutorService) ExecuteCommand(ctx context.Context, execCtx ExecutionContext, deployment, instance string, index int, category, command string, arguments []string) (*StreamingExecutionResult, error) {
-	e.logger.Infof("Executing rabbitmqctl command: %s.%s with args %v", category, command, arguments)
+	e.logger.Infof("Executing rabbitmqctl command: %s.%s with %d args", category, command, len(arguments))
 
 	// Validate command
 	cmd, err := e.metadataService.GetCommand(category, command)
@@ -109,7 +109,7 @@ func (e *ExecutorService) ExecuteCommand(ctx context.Context, execCtx ExecutionC
 
 // ExecuteCommandSync executes a command synchronously and returns the complete result.
 func (e *ExecutorService) ExecuteCommandSync(ctx context.Context, execCtx ExecutionContext, deployment, instance string, index int, category, command string, arguments []string) (*RabbitMQCtlExecution, error) {
-	e.logger.Infof("Executing rabbitmqctl command synchronously: %s.%s with args %v", category, command, arguments)
+	e.logger.Infof("Executing rabbitmqctl command synchronously: %s.%s with %d args", category, command, len(arguments))
 
 	// Validate and prepare command
 	cmd, err := e.validateAndPrepareCommand(category, command, arguments)
@@ -152,7 +152,7 @@ func (e *ExecutorService) BuildRabbitMQCtlCommand(command string, args []string)
 	// Wrap with su - vcap -c to run as vcap user
 	fullCmd := []string{"/bin/sudo", "su", "-", "vcap", "-c", innerCommand}
 
-	e.logger.Debugf("Built RabbitMQ command: %v", fullCmd)
+	e.logger.Debugf("Built RabbitMQ command %s with %d args", command, len(args))
 
 	return fullCmd
 }

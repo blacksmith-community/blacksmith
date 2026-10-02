@@ -65,3 +65,14 @@ func LogBindingCredentialKeys(log logger.Logger, bindingID string, creds map[str
 func PrepareUserCreationPayload(password string, log logger.Logger) ([]byte, error) {
 	return prepareUserCreationPayload(password, log)
 }
+
+// CompleteBind exposes the tail of Bind, from the instance's admin credentials
+// to the credentials the binding returns.
+func (b *Broker) CompleteBind(ctx context.Context, instanceID, bindingID string, creds map[string]interface{}, log logger.Logger) (map[string]interface{}, error) {
+	binding, err := b.completeBind(ctx, instanceID, bindingID, creds, log)
+
+	return binding.Credentials, err
+}
+
+// RedactedQuery exposes the query string redaction used by the request logs.
+func RedactedQuery(rawQuery string) string { return redactedQuery(rawQuery) }

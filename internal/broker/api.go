@@ -3,6 +3,7 @@ package broker
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"blacksmith/pkg/logger"
@@ -81,7 +82,7 @@ func (api API) routeRequest(writer http.ResponseWriter, req *http.Request, usern
 func (api API) routeToInternal(writer http.ResponseWriter, req *http.Request, username string) {
 	if api.Logger != nil {
 		api.Logger.Info("routing request to Internal API: %s %s", req.Method, req.URL.Path)
-		api.Logger.Debug("internal API request details: user=%s, path=%s, query=%s", username, req.URL.Path, req.URL.RawQuery)
+		api.Logger.Debug("internal API request details: user=%s, path=%s, query=%s", username, req.URL.Path, redactedQuery(req.URL.RawQuery))
 	}
 
 	api.Internal.ServeHTTP(writer, req)
@@ -95,7 +96,7 @@ func (api API) routeToPrimary(writer http.ResponseWriter, req *http.Request, use
 	api.ensureBrokerAPIVersion(req)
 
 	if api.Logger != nil {
-		api.Logger.Debug("service Broker request details: user=%s, path=%s, query=%s", username, req.URL.Path, req.URL.RawQuery)
+		api.Logger.Debug("service Broker request details: user=%s, path=%s, query=%s", username, req.URL.Path, redactedQuery(req.URL.RawQuery))
 	}
 
 	api.Primary.ServeHTTP(writer, req)
@@ -145,4 +146,39 @@ func redactedHeaders(h http.Header) http.Header {
 	}
 
 	return out
+}
+
+// redactedQuery returns rawQuery with the values of credential-bearing
+// parameters replaced, so debug logs show which parameters arrived without
+// their secrets. A parameter is credential-bearing when its name contains
+// password, secret, token, or key, in any case.
+func redactedQuery(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+
+	pairs := strings.Split(rawQuery, "&")
+
+	for i, pair := range pairs {
+		name, _, hasValue := strings.Cut(pair, "=")
+		if !hasValue {
+			continue
+		}
+
+		decoded, err := url.QueryUnescape(name)
+		if err != nil {
+			decoded = name
+		}
+
+		lower := strings.ToLower(decoded)
+		for _, marker := range []string{"password", "secret", "token", "key"} {
+			if strings.Contains(lower, marker) {
+				pairs[i] = name + "=<redacted>"
+
+				break
+			}
+		}
+	}
+
+	return strings.Join(pairs, "&")
 }

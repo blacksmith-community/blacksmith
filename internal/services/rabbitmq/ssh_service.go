@@ -68,7 +68,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 	fullCommand := r.buildFullCommand(cmd)
 	sshReq := r.createSSHRequest(deployment, instance, index, fullCommand, cmd.Timeout)
 
-	r.logger.Debugf("SSH Request: %+v", sshReq)
+	r.logger.Debugf("SSH request for command %s on %s/%s/%d (command line of %d bytes not logged)", cmd.Name, deployment, instance, index, len(fullCommand))
 
 	sshResp, err := r.sshService.ExecuteCommand(sshReq)
 	if err != nil {
@@ -334,7 +334,7 @@ func (r *SSHService) buildRabbitMQCtlCommand(cmd RabbitMQCommand) []string {
 	// Wrap with su - vcap -c to run as vcap user
 	fullCmd := []string{"/bin/sudo", "su", "-", "vcap", "-c", innerCommand}
 
-	r.logger.Debugf("Built RabbitMQ command: %v", fullCmd)
+	r.logger.Debugf("Built RabbitMQ command %s with %d args", cmd.Name, len(cmd.Args))
 
 	return fullCmd
 }

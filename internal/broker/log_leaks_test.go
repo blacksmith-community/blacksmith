@@ -1,6 +1,7 @@
 package broker_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -81,6 +82,24 @@ var _ = Describe("Log leak prevention", func() {
 		Expect(capture.output()).NotTo(ContainSubstring("acl-user"))
 	})
 
+	It("keeps the generated Valkey binding password out of the log while completing a bind", func() {
+		fake := newFakeValkey(nil)
+		defer fake.close()
+
+		creds, err := (&broker.Broker{}).CompleteBind(context.Background(), valkeyTestInstanceID, "binding-leak-1", valkeyCredMap(fake.port()), capture)
+
+		Expect(err).NotTo(HaveOccurred())
+
+		password, ok := creds["password"].(string)
+		Expect(ok).To(BeTrue())
+		Expect(password).NotTo(BeEmpty())
+		Expect(creds).NotTo(HaveKey("admin_password"))
+
+		Expect(capture.output()).To(ContainSubstring("binding-leak-1"))
+		Expect(capture.output()).NotTo(ContainSubstring(password))
+		Expect(capture.output()).NotTo(ContainSubstring(valkeyTestAdminPassword))
+	})
+
 	It("logs only sizes when a YAML file fails to parse", func() {
 		err := broker.WriteYamlFile("inst-1", []byte("password: "+leakSentinelPassword+"\n  bad: [unclosed\n"))
 
@@ -99,15 +118,61 @@ var _ = Describe("Log leak prevention", func() {
 		Expect(capture.output()).NotTo(ContainSubstring(leakSentinelPassword))
 	})
 
-	It("redacts the Authorization header in the request header debug log", func() {
-		api := broker.API{Logger: capture}
-		req := httptest.NewRequest(http.MethodGet, "/v2/catalog", nil)
-		req.Header.Set("Authorization", "Basic "+leakSentinelAuth)
-		req.Header.Set("X-Broker-API-Version", "2.17")
+	for _, header := range []struct {
+		label, name, value string
+		canonical          bool
+	}{
+		{"Authorization", "Authorization", "Basic " + leakSentinelAuth, true},
+		{"Cookie", "Cookie", "session=" + leakSentinelAuth, true},
+		{"Set-Cookie", "Set-Cookie", "session=" + leakSentinelAuth, true},
+		{"Proxy-Authorization", "Proxy-Authorization", "Basic " + leakSentinelAuth, true},
+		{"X-Vault-Token", "X-Vault-Token", leakSentinelAuth, true},
+		{"lowercase x-vault-token", "x-vault-token", leakSentinelAuth, false},
+		{"lowercase authorization", "authorization", "Basic " + leakSentinelAuth, false},
+	} {
+		header := header
 
-		api.ServeHTTP(httptest.NewRecorder(), req)
+		It("redacts the "+header.label+" header in the request debug log", func() {
+			api := broker.API{Logger: capture}
+			req := httptest.NewRequest(http.MethodGet, "/v2/catalog", nil)
 
-		Expect(capture.output()).To(ContainSubstring("X-Broker-Api-Version"))
-		Expect(capture.output()).NotTo(ContainSubstring(leakSentinelAuth))
+			if header.canonical {
+				req.Header.Set(header.name, header.value)
+			} else {
+				req.Header[header.name] = []string{header.value}
+			}
+
+			req.Header.Set("X-Broker-API-Version", "2.17")
+
+			api.ServeHTTP(httptest.NewRecorder(), req)
+
+			Expect(capture.output()).To(ContainSubstring("X-Broker-Api-Version"))
+			Expect(capture.output()).NotTo(ContainSubstring(header.value))
+		})
+	}
+
+	for _, path := range []string{"/b/rabbitmq/test", "/v2/catalog"} {
+		path := path
+
+		It("redacts credential query parameters in the debug log for "+path, func() {
+			api := broker.API{
+				Logger: capture, Username: "broker", Password: "broker-pw",
+				Internal: broker.NullHandler{}, Primary: broker.NullHandler{},
+			}
+			req := httptest.NewRequest(http.MethodGet, path+"?connection_password="+leakSentinelPassword+
+				"&API_Token="+leakSentinelPassword+"&client_secret="+leakSentinelPassword+"&ssh%5Fkey="+leakSentinelPassword+"&operation=test", nil)
+			req.SetBasicAuth("broker", "broker-pw")
+
+			api.ServeHTTP(httptest.NewRecorder(), req)
+
+			Expect(capture.output()).To(ContainSubstring("connection_password=<redacted>"))
+			Expect(capture.output()).To(ContainSubstring("operation=test"))
+			Expect(capture.output()).NotTo(ContainSubstring(leakSentinelPassword))
+		})
+	}
+
+	It("leaves query strings without credential names alone", func() {
+		Expect(broker.RedactedQuery("a=1&b=2")).To(Equal("a=1&b=2"))
+		Expect(broker.RedactedQuery("")).To(Equal(""))
 	})
 })
