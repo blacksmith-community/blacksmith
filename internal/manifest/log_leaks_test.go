@@ -3,6 +3,9 @@ package manifest
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -95,5 +98,41 @@ func TestExtractCredentialsNeverLogsAStringValue(t *testing.T) {
 
 	if strings.Contains(out, leakSentinelPassword) || strings.Contains(err.Error(), leakSentinelPassword) {
 		t.Errorf("credentials value leaked:\n%s\n%s", out, err)
+	}
+}
+
+func TestFailedInitScriptOutputMasksSecretEnvironment(t *testing.T) {
+	capture := newCaptureLogger()
+	previous := logger.Get()
+
+	logger.Set(capture)
+	t.Cleanup(func() { logger.Set(previous) })
+
+	script := filepath.Join(t.TempDir(), "init")
+
+	body := "#!/bin/sh\necho \"token=$VAULT_TOKEN secret=$BOSH_CLIENT_SECRET\"\nexit 1\n"
+
+	err := os.WriteFile(script, []byte(body), 0o700) //nolint:gosec // test script must be executable
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(context.Background(), script)
+	cmd.Env = []string{"VAULT_TOKEN=" + leakSentinelVault, "BOSH_CLIENT_SECRET=" + leakSentinelBoshSecret}
+
+	err = executeInitScript(cmd, script)
+	if err == nil {
+		t.Fatal("expected the init script to fail")
+	}
+
+	out := capture.output()
+	if !strings.Contains(out, "token=<redacted> secret=<redacted>") {
+		t.Errorf("expected the failure output with masked values, got:\n%s", out)
+	}
+
+	for _, secret := range []string{leakSentinelVault, leakSentinelBoshSecret} {
+		if strings.Contains(out, secret) {
+			t.Errorf("log output leaked %q:\n%s", secret, out)
+		}
 	}
 }

@@ -206,7 +206,7 @@ func executeInitScript(cmd *exec.Cmd, initScriptPath string) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		logger.Get().Named("manifest").Error("Init script failed: %s", err)
-		logger.Get().Named("manifest").Debug("Init script output:\n%s", string(out))
+		logger.Get().Named("manifest").Debug("Init script output:\n%s", redactEnvValues(string(out), cmd.Env, "VAULT_TOKEN", "BOSH_CLIENT_SECRET"))
 
 		return fmt.Errorf("init script execution failed: %w", err)
 	}
@@ -215,6 +215,24 @@ func executeInitScript(cmd *exec.Cmd, initScriptPath string) error {
 	logger.Get().Named("manifest").Debug("Init script `%s' produced %d bytes of output (not logged because it can echo credentials)", initScriptPath, len(out))
 
 	return nil
+}
+
+// redactEnvValues replaces every occurrence of the named environment
+// variables' values in text, so a failed init script's output can be logged
+// without echoing the broker's own credentials.
+func redactEnvValues(text string, env []string, names ...string) string {
+	for _, name := range names {
+		prefix := name + "="
+
+		for _, entry := range env {
+			value, found := strings.CutPrefix(entry, prefix)
+			if found && value != "" {
+				text = strings.ReplaceAll(text, value, "<redacted>")
+			}
+		}
+	}
+
+	return text
 }
 
 func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (string, error) {
