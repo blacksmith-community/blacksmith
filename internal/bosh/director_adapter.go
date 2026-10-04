@@ -267,6 +267,12 @@ func (d *DirectorAdapter) GetInfo() (*Info, error) {
 		features[feature] = enabled
 	}
 
+	var uaaURL string
+
+	if info.Auth.Type == AuthTypeUAA {
+		uaaURL, _ = info.Auth.Options["url"].(string)
+	}
+
 	d.log.Infof("Successfully retrieved director info: %s (%s)", info.Name, info.Version)
 
 	return &Info{
@@ -276,6 +282,7 @@ func (d *DirectorAdapter) GetInfo() (*Info, error) {
 		User:     info.User,
 		CPI:      info.CPI,
 		Features: features,
+		UAAURL:   uaaURL,
 	}, nil
 }
 

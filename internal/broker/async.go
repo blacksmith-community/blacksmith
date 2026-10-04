@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -20,12 +21,29 @@ const (
 	// Retry backoff multiplier.
 	retryBackoffMultiplier = 5 * time.Second
 
-	// Task monitoring polling interval.
-	taskPollInterval = 10 * time.Second
+	// Default polling interval for the background delete-task monitor.
+	defaultTaskPollInterval = 10 * time.Second
 
 	// Task monitoring timeout duration.
 	taskMonitorTimeout = 2 * time.Hour
 )
+
+// taskPollOverride, when positive, replaces defaultTaskPollInterval in
+// nanoseconds. It is atomic because monitors started earlier may read it
+// while a test changes it.
+//
+//nolint:gochecknoglobals // a test seam, set only through export_test.go
+var taskPollOverride atomic.Int64
+
+// taskPollInterval returns how often the background monitor polls a task.
+func taskPollInterval() time.Duration {
+	override := taskPollOverride.Load()
+	if override > 0 {
+		return time.Duration(override)
+	}
+
+	return defaultTaskPollInterval
+}
 
 // Static errors for err113 compliance.
 var (
@@ -374,6 +392,8 @@ func (d *deprovisioningPhase) checkDeploymentExists(ctx context.Context) (bool, 
 func (d *deprovisioningPhase) handleDeploymentNotFound(ctx context.Context) bool {
 	d.broker.trackProgress(ctx, d.instanceID, "deprovision", "Deployment not found, cleanup only", 0, nil, d.logger)
 
+	d.broker.cleanupDeploymentCredentials(ctx, d.instanceID, d.deploymentName, d.logger)
+
 	if !d.removeFromIndex(ctx, "Removing from service index") {
 		return false
 	}
@@ -406,6 +426,8 @@ func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) (*b
 // handleDeploymentCleanedDuringRetry handles case where deployment was cleaned up during retry.
 func (d *deprovisioningPhase) handleDeploymentCleanedDuringRetry(ctx context.Context) bool {
 	d.logger.Info("Deployment %s was cleaned up during retry attempts", d.deploymentName)
+
+	d.broker.cleanupDeploymentCredentials(ctx, d.instanceID, d.deploymentName, d.logger)
 
 	if !d.removeFromIndex(ctx, "Removing from service index after cleanup") {
 		return false
@@ -477,6 +499,8 @@ func (d *deprovisioningPhase) handleTaskSuccess(ctx context.Context) {
 
 	d.logger.Info("Deployment %s confirmed deleted, performing cleanup", d.deploymentName)
 
+	d.broker.cleanupDeploymentCredentials(ctx, d.instanceID, d.deploymentName, d.logger)
+
 	// Store deleted_at timestamp
 	d.storeDeletedTimestamp(ctx)
 
@@ -500,7 +524,7 @@ func (d *deprovisioningPhase) handleTaskSuccess(ctx context.Context) {
 func (d *deprovisioningPhase) monitorAndCleanupTask(ctx context.Context, task *bosh.Task) {
 	d.logger.Info("Monitoring BOSH task %d for completion", task.ID)
 
-	ticker := time.NewTicker(taskPollInterval)
+	ticker := time.NewTicker(taskPollInterval())
 	defer ticker.Stop()
 
 	timeout := time.After(taskMonitorTimeout)

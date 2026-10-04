@@ -16,6 +16,13 @@ import (
 	"github.com/hashicorp/vault/api"
 )
 
+// The broker must keep implementing the reconciler's CredHub cleanup hooks,
+// so a renamed method breaks the build instead of the wiring.
+var (
+	_ reconciler.DeploymentCredentialCleaner = (*broker.Broker)(nil)
+	_ reconciler.OrphanedCredentialSweeper   = (*broker.Broker)(nil)
+)
+
 // Static errors for err113 compliance.
 var (
 	ErrReconcilerNotInitialized = errors.New("reconciler not initialized")
@@ -343,7 +350,7 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 	wrappedLogger := &loggerWrapper{logger: r.logger}
 
 	// Create the reconciler manager with CF manager (as interface{})
-	r.manager = reconciler.NewReconcilerManager(
+	manager := reconciler.NewReconcilerManager(
 		r.config,
 		wrappedBroker,
 		wrappedVault,
@@ -351,6 +358,14 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 		wrappedLogger,
 		r.cfManager,
 	)
+
+	// The manager only sees brokerWrapper, so the broker's CredHub cleanup
+	// entry points are passed in explicitly rather than found by assertion.
+	if r.broker != nil {
+		manager.SetCredentialHooks(r.broker, r.broker)
+	}
+
+	r.manager = manager
 
 	// Start the reconciler
 	err := r.manager.Start(ctx)

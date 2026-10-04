@@ -1,10 +1,12 @@
 package config
 
 import (
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/utils"
@@ -35,6 +37,103 @@ type Config struct {
 	Env          string             `yaml:"env"`
 	Shareable    bool               `yaml:"shareable"`
 	Forges       ForgesConfig       `yaml:"forges"`
+	CredHub      CredHubConfig      `yaml:"credhub"`
+}
+
+// Sweep modes for the CredHub orphan sweep.
+const (
+	CredHubSweepOff    = "off"
+	CredHubSweepDryRun = "dry-run"
+	CredHubSweepDelete = "delete"
+)
+
+// CredHubConfig configures the director CredHub client Blacksmith uses to
+// delete a deprovisioned instance's BOSH-generated variables.
+type CredHubConfig struct {
+	URL          string               `yaml:"url"`
+	CACert       string               `yaml:"ca_cert"`
+	ClientID     string               `yaml:"client_id"`
+	ClientSecret string               `yaml:"client_secret"`
+	DirectorName string               `yaml:"director_name"`
+	UAAURL       string               `yaml:"uaa_url"`
+	Cleanup      CredHubCleanupConfig `yaml:"cleanup"`
+}
+
+// CredHubCleanupConfig switches the cleanup on and configures the sweep.
+type CredHubCleanupConfig struct {
+	Enabled              bool     `yaml:"enabled"`
+	Sweep                string   `yaml:"sweep"`
+	ProtectedDeployments []string `yaml:"protected_deployments"`
+}
+
+// SweepMode returns the configured sweep mode, treating an empty value as off.
+func (c CredHubCleanupConfig) SweepMode() string {
+	if c.Sweep == "" {
+		return CredHubSweepOff
+	}
+
+	return c.Sweep
+}
+
+// Validate returns every problem with an enabled CredHub cleanup block at
+// once. It returns nothing when cleanup is disabled. No problem ever carries
+// the client secret.
+func (c CredHubConfig) Validate() []string {
+	if !c.Cleanup.Enabled {
+		return nil
+	}
+
+	var problems []string
+
+	switch {
+	case c.URL == "":
+		problems = append(problems, "credhub.url is required")
+	case !isHTTPSURL(c.URL):
+		problems = append(problems, "credhub.url must be an https URL")
+	}
+
+	switch {
+	case c.CACert == "":
+		problems = append(problems, "credhub.ca_cert is required")
+	case !x509.NewCertPool().AppendCertsFromPEM([]byte(c.CACert)):
+		problems = append(problems, "credhub.ca_cert does not contain a PEM certificate")
+	}
+
+	if c.ClientID == "" {
+		problems = append(problems, "credhub.client_id is required")
+	}
+
+	if c.ClientSecret == "" {
+		problems = append(problems, "credhub.client_secret is required")
+	}
+
+	switch {
+	case c.DirectorName == "":
+		problems = append(problems, "credhub.director_name is required")
+	case strings.ContainsAny(c.DirectorName, "/*%"):
+		problems = append(problems, "credhub.director_name must not contain '/', '*', or '%'")
+	}
+
+	if c.UAAURL != "" && !isHTTPSURL(c.UAAURL) {
+		problems = append(problems, "credhub.uaa_url must be an https URL when it is set")
+	}
+
+	switch c.Cleanup.SweepMode() {
+	case CredHubSweepOff, CredHubSweepDryRun, CredHubSweepDelete:
+	default:
+		problems = append(problems, "credhub.cleanup.sweep must be off, dry-run, or delete")
+	}
+
+	return problems
+}
+
+func isHTTPSURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+
+	return parsed.Scheme == "https" && parsed.Host != ""
 }
 
 // ServicesConfig configures service-specific behavior.
@@ -272,8 +371,15 @@ func ReadConfig(path string) (Config, error) {
 	setVMMonitoringDefaults(&config)
 	setReconcilerDefaults(&config)
 	setSSHDefaults(&config)
+	setCredHubDefaults(&config)
 
 	return config, nil
+}
+
+// setCredHubDefaults fills the CredHub cleanup defaults. It never fails,
+// because an invalid cleanup block must not stop the broker from starting.
+func setCredHubDefaults(config *Config) {
+	config.CredHub.Cleanup.Sweep = config.CredHub.Cleanup.SweepMode()
 }
 
 // loadConfigFromFile reads YAML config file.

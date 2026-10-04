@@ -85,6 +85,11 @@ type ReconcilerManager struct {
 	// Metrics and monitoring
 	metrics     MetricsCollector
 	performance *PerformanceTracker
+
+	// CredHub cleanup hooks into the broker. A nil hook turns that path off.
+	credentialHooksMu sync.RWMutex
+	credentialCleaner DeploymentCredentialCleaner
+	credentialSweeper OrphanedCredentialSweeper
 }
 
 // WorkItem represents a unit of work.
@@ -205,6 +210,7 @@ func (r *ReconcilerManager) Start(ctx context.Context) error {
 	r.cancel = cancel
 
 	r.logStartupConfiguration()
+	r.logCredentialHooks()
 
 	err := r.validateComponents()
 	if err != nil {
@@ -491,6 +497,54 @@ func (r *ReconcilerManager) UpdateInterval(interval time.Duration) {
 // GetInterval returns the current reconciliation interval.
 func (r *ReconcilerManager) GetInterval() time.Duration {
 	return r.config.Interval
+}
+
+// SetCredentialHooks wires the broker's CredHub cleanup entry points into the
+// reconciler. Call it before Start. A nil hook turns that path off.
+func (r *ReconcilerManager) SetCredentialHooks(cleaner DeploymentCredentialCleaner, sweeper OrphanedCredentialSweeper) {
+	r.credentialHooksMu.Lock()
+	defer r.credentialHooksMu.Unlock()
+
+	r.credentialCleaner = cleaner
+	r.credentialSweeper = sweeper
+}
+
+// CredentialHooks returns the hooks SetCredentialHooks stored.
+func (r *ReconcilerManager) CredentialHooks() (DeploymentCredentialCleaner, OrphanedCredentialSweeper) {
+	r.credentialHooksMu.RLock()
+	defer r.credentialHooksMu.RUnlock()
+
+	return r.credentialCleaner, r.credentialSweeper
+}
+
+// logCredentialHooks logs whether each CredHub cleanup hook is wired and the
+// sweep mode, so a wiring that never reaches the broker shows in the log.
+func (r *ReconcilerManager) logCredentialHooks() {
+	cleaner, sweeper := r.CredentialHooks()
+
+	if cleaner == nil && sweeper == nil {
+		r.logger.Infof("CredHub cleanup hooks not wired: deployment cleanup off, orphan sweep off")
+
+		return
+	}
+
+	cleanup := "off"
+	if cleaner != nil {
+		cleanup = "on"
+	}
+
+	sweep := "not wired"
+
+	if sweeper != nil {
+		sweep = sweeper.CredentialSweepMode()
+		if sweep == CredentialSweepModeDisabled {
+			r.logger.Infof("CredHub cleanup hooks wired, but CredHub cleanup is disabled in the broker, so neither deployment cleanup nor the orphan sweep deletes anything")
+
+			return
+		}
+	}
+
+	r.logger.Infof("CredHub cleanup hooks wired: deployment cleanup %s, orphan sweep %s", cleanup, sweep)
 }
 
 func (r *ReconcilerManager) logStartupConfiguration() {
@@ -841,6 +895,8 @@ func (r *ReconcilerManager) executeReconciliationPhases(ctx context.Context, run
 
 	// Phase 6: Remove index entries whose deployment the director confirms gone
 	swept := r.sweepOrphanedIndexEntries(ctx, updatedInstances, deploymentNameSet)
+
+	r.sweepOrphanedCredentials(ctx, deploymentNameSet)
 
 	r.logger.Infof("Run #%d processed %d instances successfully (%d orphaned index entries removed)", runID, len(updatedInstances), swept)
 

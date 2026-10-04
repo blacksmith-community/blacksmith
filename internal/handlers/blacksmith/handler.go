@@ -412,6 +412,10 @@ func (h *Handler) GetConfig(responseWriter http.ResponseWriter, req *http.Reques
 
 	configData := utils.DeinterfaceMap(intermediate)
 
+	// The endpoint is readable by anyone holding the broker credentials, so no
+	// secret value may leave it.
+	redactConfigSecrets(configData)
+
 	response.HandleJSON(responseWriter, configData, nil)
 }
 

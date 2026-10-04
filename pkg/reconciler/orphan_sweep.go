@@ -34,8 +34,12 @@ const OrphanSweepMinimumAge = 2 * time.Hour
 // skips Vault.Clear so the credentials survive for auditing. Sweeping those
 // secrets here would delete data that a completed deprovision keeps.
 //
+// Once the index save succeeds, and only then, each removed entry that names
+// a deployment is handed to the broker's CredHub cleanup hook, which checks
+// for Cloud Foundry's deprovision request before it deletes anything.
+//
 // It returns the number of entries removed.
-func (r *ReconcilerManager) sweepOrphanedIndexEntries(_ context.Context, reconciled []InstanceData, deploymentNames map[string]bool) int {
+func (r *ReconcilerManager) sweepOrphanedIndexEntries(ctx context.Context, reconciled []InstanceData, deploymentNames map[string]bool) int {
 	if r.bosh == nil {
 		r.logger.Debugf("BOSH director not available, skipping orphan index sweep")
 
@@ -70,9 +74,17 @@ func (r *ReconcilerManager) sweepOrphanedIndexEntries(_ context.Context, reconci
 
 	removed := 0
 
+	var sweptDeployments []sweptDeployment
+
 	for instanceID, data := range idx {
 		if !r.shouldSweepIndexEntry(synchronizer, instanceID, data, reconciledIDs, deploymentNames) {
 			continue
+		}
+
+		// A tombstone that names no deployment has no CredHub path to clean.
+		dataMap, _ := data.(map[string]interface{})
+		if deploymentName := indexEntryDeploymentName(instanceID, dataMap); deploymentName != "" {
+			sweptDeployments = append(sweptDeployments, sweptDeployment{instanceID: instanceID, deploymentName: deploymentName})
 		}
 
 		delete(idx, instanceID)
@@ -93,7 +105,59 @@ func (r *ReconcilerManager) sweepOrphanedIndexEntries(_ context.Context, reconci
 
 	r.logger.Infof("Orphan cleanup: removed %d index entries whose deployments the director confirmed absent", removed)
 
+	r.cleanupSweptCredentials(ctx, sweptDeployments)
+
 	return removed
+}
+
+// sweptDeployment is an index entry the orphan sweep removed.
+type sweptDeployment struct {
+	instanceID     string
+	deploymentName string
+}
+
+// cleanupSweptCredentials hands each removed entry's deployment to the CredHub
+// cleanup hook. The hook returns at once, and a panic in it is logged and
+// contained, so it cannot hold up or end the run.
+func (r *ReconcilerManager) cleanupSweptCredentials(ctx context.Context, swept []sweptDeployment) {
+	cleaner, _ := r.CredentialHooks()
+	if cleaner == nil {
+		return
+	}
+
+	for _, entry := range swept {
+		r.callCredentialCleaner(ctx, cleaner, entry)
+	}
+}
+
+func (r *ReconcilerManager) callCredentialCleaner(ctx context.Context, cleaner DeploymentCredentialCleaner, entry sweptDeployment) {
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			r.logger.Errorf("CredHub cleanup hook for deployment %s (instance %s) panicked, and the reconciler run continues: %v", entry.deploymentName, entry.instanceID, recovered)
+		}
+	}()
+
+	cleaner.CleanupDeploymentCredentials(ctx, entry.instanceID, entry.deploymentName)
+}
+
+// sweepOrphanedCredentials hands this run's deployment scan to the broker's
+// orphan credential sweep, which returns at once and runs its pass in the
+// background. A panic in the hook is logged and the run goes on.
+func (r *ReconcilerManager) sweepOrphanedCredentials(ctx context.Context, liveDeployments map[string]bool) {
+	_, sweeper := r.CredentialHooks()
+	if sweeper == nil {
+		return
+	}
+
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			r.logger.Errorf("CredHub orphan sweep hook panicked, and the reconciler run continues: %v", recovered)
+		}
+	}()
+
+	sweeper.SweepOrphanedCredentials(ctx, liveDeployments)
 }
 
 // shouldSweepIndexEntry decides whether one index entry is a confirmed orphan.

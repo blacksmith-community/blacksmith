@@ -40,6 +40,30 @@ func SetValkeyACLRetry(retries int, baseWait time.Duration) func() {
 	}
 }
 
+// SetTaskPollInterval shortens or lengthens the background monitor's poll
+// interval for monitors started from now on, and returns a function that
+// restores the previous interval.
+func SetTaskPollInterval(d time.Duration) func() {
+	previous := taskPollOverride.Swap(int64(d))
+
+	return func() { taskPollOverride.Store(previous) }
+}
+
+// WaitForCredentialCleanups blocks until every CredHub cleanup goroutine the
+// broker started has returned.
+func (b *Broker) WaitForCredentialCleanups() {
+	b.credentialCleanups.Wait()
+}
+
+// SetCredentialSweepClock replaces the clock the orphan sweep's once-an-hour
+// rule reads.
+func (b *Broker) SetCredentialSweepClock(now func() time.Time) {
+	b.credentialSweep.mu.Lock()
+	defer b.credentialSweep.mu.Unlock()
+
+	b.credentialSweep.now = now
+}
+
 // ProvisionActive reports whether the provisionAsync goroutine for instanceID
 // is still running in this process.
 func (b *Broker) ProvisionActive(instanceID string) bool {

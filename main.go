@@ -25,6 +25,7 @@ import (
 	internalCF "blacksmith/internal/cf"
 	"blacksmith/internal/compression"
 	"blacksmith/internal/config"
+	"blacksmith/internal/credhub"
 	"blacksmith/internal/planstore"
 	"blacksmith/internal/recovery"
 	"blacksmith/internal/services/rabbitmq"
@@ -1136,7 +1137,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger) error {
 	config, vault, boshDirector, batchDirector := initializeCore(configPath, logger)
 
-	brokerInstance, err := setupBrokerAndUI(config, vault, boshDirector, logger)
+	brokerInstance, credhubClient, err := setupBrokerAndUI(config, vault, boshDirector, logger)
 	if err != nil {
 		return err
 	}
@@ -1176,6 +1177,8 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	serverWaitGroup := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
 
+	startCredHubProbe(ctx, config, brokerInstance, credhubClient, logger)
+
 	waitForShutdownSignal(sigChan, ctx, logger)
 
 	cancel()
@@ -1184,15 +1187,72 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	return nil
 }
 
-func setupBrokerAndUI(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) (*broker.Broker, error) {
+func setupBrokerAndUI(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) (*broker.Broker, *credhub.Client, error) {
 	shieldClient := initializeShieldClient(config, logger)
 
 	brokerInstance, err := initializeBroker(config, vault, boshDirector, shieldClient, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize broker: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize broker: %w", err)
 	}
 
-	return brokerInstance, nil
+	credhubClient := setupCredHubCleanup(config, brokerInstance, boshDirector, logger)
+
+	return brokerInstance, credhubClient, nil
+}
+
+// setupCredHubCleanup builds the CredHub cleaner when credhub.cleanup.enabled
+// is true and hands it to the broker. Every configuration problem is logged
+// in one line and leaves cleanup off, so a bad credhub block never stops the
+// broker from starting. It makes at most one /info call and no UAA or CredHub
+// call.
+func setupCredHubCleanup(config *config.Config, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) *credhub.Client {
+	if !config.CredHub.Cleanup.Enabled {
+		logger.Info("CredHub cleanup is disabled (credhub.cleanup.enabled is false), so deprovisioned instances keep their director CredHub variables")
+
+		return nil
+	}
+
+	// A nil *PooledDirector inside the interface would not compare equal to
+	// nil, so BuildCleaner gets a true nil when there is no director.
+	var director bosh.Director
+	if boshDirector != nil {
+		director = boshDirector
+	}
+
+	cleaner, client, problems := credhub.BuildCleaner(config.CredHub, config.BOSH.CACert, director, brokerInstance.CatalogPlanIDs, loggerPkg.Get().Named("credhub"))
+	if len(problems) > 0 {
+		logger.Error("CredHub cleanup is disabled because the credhub configuration has %d problem(s): %s. Deprovisioned instances keep their director CredHub variables until these are fixed and the broker restarts.",
+			len(problems), strings.Join(problems, "; "))
+
+		return nil
+	}
+
+	brokerInstance.CredentialCleaner = cleaner
+	brokerInstance.CredentialFinder = client
+
+	return client
+}
+
+// startCredHubProbe checks in the background that CredHub and its UAA accept
+// the cleanup client, then logs the orphan sweep mode. A failed probe leaves
+// cleanup on, because every cleanup tries again and logs its own failure.
+func startCredHubProbe(ctx context.Context, config *config.Config, brokerInstance *broker.Broker, client *credhub.Client, logger loggerPkg.Logger) {
+	if client == nil {
+		return
+	}
+
+	go func() {
+		defer func() {
+			recovered := recover()
+			if recovered != nil {
+				logger.Error("CredHub cleanup startup probe panicked, and the broker keeps running with cleanup enabled: %v", recovered)
+			}
+		}()
+
+		_ = credhub.Probe(ctx, client, config.CredHub.DirectorName, loggerPkg.Get().Named("credhub"))
+
+		logger.Info("CredHub orphan sweep mode is %s", brokerInstance.CredentialSweepMode())
+	}()
 }
 
 func setupReconciler(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, cfManager *internalCF.Manager, logger loggerPkg.Logger) *recovery.ReconcilerAdapter {

@@ -157,6 +157,21 @@ type Broker struct {
 	// delete that has not returned its task ID yet from one the broker lost
 	// when it restarted.
 	activeDeprovisions sync.Map
+
+	// CredentialCleaner deletes a confirmed-deleted deployment's variables
+	// from the director's CredHub. A nil value turns the feature off.
+	CredentialCleaner credentialCleaner
+
+	// CredentialFinder lists the director CredHub paths the orphan sweep
+	// examines. The sweep does nothing without it.
+	CredentialFinder credentialFinder
+
+	// credentialCleanups tracks the cleanup and sweep goroutines, so tests
+	// can wait for them.
+	credentialCleanups sync.WaitGroup
+
+	// credentialSweep keeps one sweep pass at a time and at most one an hour.
+	credentialSweep credentialSweepState
 }
 
 // IsBroker implements the interfaces.Broker interface.
@@ -2292,6 +2307,8 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 	}
 
 	logger.Info("Deployment %s confirmed deleted", deploymentName)
+
+	b.cleanupDeploymentCredentials(ctx, instanceID, deploymentName, logger)
 
 	// Store deleted_at timestamp
 	logger.Debug("Storing deleted_at timestamp")

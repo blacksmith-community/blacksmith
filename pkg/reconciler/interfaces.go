@@ -15,6 +15,28 @@ type Manager interface {
 	GetInterval() time.Duration
 }
 
+// CredentialSweepModeDisabled is what OrphanedCredentialSweeper.CredentialSweepMode
+// reports when the broker has no CredHub cleaner, so neither hook deletes
+// anything.
+const CredentialSweepModeDisabled = "disabled"
+
+// DeploymentCredentialCleaner deletes the director CredHub variables of a
+// deployment whose index entry the orphan sweep removed. Implementations must
+// return at once and do their work in the background, because the call sits
+// inside a reconciler run.
+type DeploymentCredentialCleaner interface {
+	CleanupDeploymentCredentials(ctx context.Context, instanceID, deploymentName string)
+}
+
+// OrphanedCredentialSweeper looks for director CredHub variables left behind
+// by deployments that no longer exist. SweepOrphanedCredentials must return
+// at once and run its pass in the background. CredentialSweepMode reports
+// off, dry-run, delete, or CredentialSweepModeDisabled.
+type OrphanedCredentialSweeper interface {
+	SweepOrphanedCredentials(ctx context.Context, liveDeployments map[string]bool)
+	CredentialSweepMode() string
+}
+
 // Scanner discovers deployments from BOSH.
 type Scanner interface {
 	ScanDeployments(ctx context.Context) ([]DeploymentInfo, error)

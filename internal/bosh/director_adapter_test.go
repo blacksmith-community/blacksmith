@@ -3,6 +3,9 @@ package bosh_test
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -492,4 +495,57 @@ func TestGetConfigsReturnsOnlyActive(t *testing.T) {
 	//
 	// Example: If there are 3 versions of "cloud:my-cloud" config,
 	// GetConfigs should only return the one marked as Current=true
+}
+
+// GetInfo carries the director's UAA URL when /info says the director uses
+// UAA, and leaves it empty for any other authentication type.
+func TestGetInfoReturnsUAAURL(t *testing.T) {
+	// Cannot use t.Parallel() with t.Setenv
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	tests := []struct {
+		name string
+		auth string
+		want string
+	}{
+		{name: "uaa", auth: `{"type":"uaa","options":{"url":"https://10.0.0.6:8443"}}`, want: "https://10.0.0.6:8443"},
+		{name: "basic", auth: `{"type":"basic","options":{}}`, want: ""},
+		{name: "uaa without url", auth: `{"type":"uaa","options":{}}`, want: ""},
+	}
+
+	for _, testCase := range tests { //nolint:paralleltest // Cannot use t.Parallel() when parent test uses t.Setenv
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != "/info" {
+					writer.WriteHeader(http.StatusNotFound)
+
+					return
+				}
+
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(`{"name":"lab-bosh","uuid":"u","version":"282.0.0","user":"admin","cpi":"pve","user_authentication":` + testCase.auth + `}`))
+			}))
+			defer server.Close()
+
+			caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+
+			director, err := NewDirectorAdapter(Config{Address: server.URL, Username: "admin", Password: "admin", CACert: string(caPEM)})
+			if err != nil {
+				t.Fatalf("failed to create director adapter: %v", err)
+			}
+
+			info, err := director.GetInfo()
+			if err != nil {
+				t.Fatalf("GetInfo: %v", err)
+			}
+
+			if info.Name != "lab-bosh" {
+				t.Errorf("Name = %q, want lab-bosh", info.Name)
+			}
+
+			if info.UAAURL != testCase.want {
+				t.Errorf("UAAURL = %q, want %q", info.UAAURL, testCase.want)
+			}
+		})
+	}
 }

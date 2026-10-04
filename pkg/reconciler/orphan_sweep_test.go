@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -372,5 +374,401 @@ func TestOrphanSweep_KeepsInstanceSecretsAfterRemovingTombstone(t *testing.T) {
 
 	if kept[credentialField] != "keep-me" {
 		t.Fatalf("expected the credentials to be unchanged, got %v", kept)
+	}
+}
+
+var errSweepSaveRefused = errors.New("vault refused the index write")
+
+const sweepModeDryRun = "dry-run"
+
+// credentialCall is one CleanupDeploymentCredentials call the reconciler made.
+type credentialCall struct {
+	instanceID     string
+	deploymentName string
+}
+
+// recordingCredentialHooks records the reconciler's calls into the broker's
+// CredHub cleanup entry points. It can be told to panic.
+type recordingCredentialHooks struct {
+	mu      sync.Mutex
+	cleans  []credentialCall
+	sweeps  []map[string]bool
+	mode    string
+	explode bool
+}
+
+func (h *recordingCredentialHooks) CleanupDeploymentCredentials(_ context.Context, instanceID, deploymentName string) {
+	h.mu.Lock()
+	h.cleans = append(h.cleans, credentialCall{instanceID: instanceID, deploymentName: deploymentName})
+	explode := h.explode
+	h.mu.Unlock()
+
+	if explode {
+		panic("credential cleaner exploded")
+	}
+}
+
+func (h *recordingCredentialHooks) SweepOrphanedCredentials(_ context.Context, live map[string]bool) {
+	h.mu.Lock()
+	h.sweeps = append(h.sweeps, live)
+	explode := h.explode
+	h.mu.Unlock()
+
+	if explode {
+		panic("credential sweeper exploded")
+	}
+}
+
+func (h *recordingCredentialHooks) CredentialSweepMode() string {
+	return h.mode
+}
+
+func (h *recordingCredentialHooks) Cleans() []credentialCall {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return append([]credentialCall(nil), h.cleans...)
+}
+
+func (h *recordingCredentialHooks) Sweeps() []map[string]bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return append([]map[string]bool(nil), h.sweeps...)
+}
+
+// sweepSaveFailingVault refuses the index write that drops the zombie entry,
+// which is the orphan sweep's save, and lets every other write through.
+type sweepSaveFailingVault struct {
+	*RealTestVault
+}
+
+func (v *sweepSaveFailingVault) Put(path string, secret map[string]interface{}) error {
+	if path == "db" {
+		if _, kept := secret[sweepZombieID]; !kept {
+			return errSweepSaveRefused
+		}
+	}
+
+	return v.RealTestVault.Put(path, secret)
+}
+
+// recordingReconcilerLogger keeps every line the manager logs.
+type recordingReconcilerLogger struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *recordingReconcilerLogger) Debugf(format string, args ...interface{}) {
+	l.recordf(format, args...)
+}
+func (l *recordingReconcilerLogger) Infof(format string, args ...interface{}) {
+	l.recordf(format, args...)
+}
+func (l *recordingReconcilerLogger) Warningf(format string, args ...interface{}) {
+	l.recordf(format, args...)
+}
+func (l *recordingReconcilerLogger) Errorf(format string, args ...interface{}) {
+	l.recordf(format, args...)
+}
+
+func (l *recordingReconcilerLogger) recordf(format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *recordingReconcilerLogger) output() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return strings.Join(l.lines, "\n")
+}
+
+// A removed entry triggers exactly one cleanup call, naming its instance and
+// deployment.
+func TestOrphanSweep_CallsCredentialCleanerForRemovedEntry(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	hooks := &recordingCredentialHooks{}
+	fixture.manager.SetCredentialHooks(hooks, nil)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected zombie entry %s to be removed", sweepZombieID)
+	}
+
+	want := []credentialCall{{instanceID: sweepZombieID, deploymentName: sweepZombieName}}
+	if got := hooks.Cleans(); len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("expected exactly %v, got %v", want, got)
+	}
+}
+
+// A removed tombstone that names no deployment triggers no cleanup call.
+func TestOrphanSweep_SkipsCredentialCleanerForNamelessTombstone(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.seedZombieEntry(t, tombstoneEntry(3*time.Hour, nil))
+
+	hooks := &recordingCredentialHooks{}
+	fixture.manager.SetCredentialHooks(hooks, nil)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected bare tombstone %s to be removed", sweepZombieID)
+	}
+
+	if got := hooks.Cleans(); len(got) != 0 {
+		t.Fatalf("expected no cleanup call for a tombstone without a deployment name, got %v", got)
+	}
+}
+
+// An entry the sweep keeps triggers no cleanup call.
+func TestOrphanSweep_SkipsCredentialCleanerForKeptEntry(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+		return &bosh.Task{ID: 233, State: "processing", Description: "delete deployment"}, nil
+	}
+
+	hooks := &recordingCredentialHooks{}
+	fixture.manager.SetCredentialHooks(hooks, nil)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if !fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected entry %s to be kept while a task runs", sweepZombieID)
+	}
+
+	if got := hooks.Cleans(); len(got) != 0 {
+		t.Fatalf("expected no cleanup call for a kept entry, got %v", got)
+	}
+}
+
+// When the index save fails, nothing was removed, so no cleanup call is made.
+func TestOrphanSweep_SkipsCredentialCleanerWhenIndexSaveFails(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	failing := &sweepSaveFailingVault{RealTestVault: fixture.vault}
+	synchronizer := NewIndexSynchronizer(failing, NewMockLogger())
+	fixture.manager.Synchronizer = synchronizer
+	fixture.synchronizer = synchronizer
+
+	hooks := &recordingCredentialHooks{}
+	fixture.manager.SetCredentialHooks(hooks, nil)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if !fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected entry %s to stay when the index save fails", sweepZombieID)
+	}
+
+	if got := hooks.Cleans(); len(got) != 0 {
+		t.Fatalf("expected no cleanup call when the index save fails, got %v", got)
+	}
+}
+
+// With no cleaner set, the sweep removes the entry exactly as before.
+func TestOrphanSweep_NilCredentialCleanerChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.manager.SetCredentialHooks(nil, nil)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected zombie entry %s to be removed", sweepZombieID)
+	}
+
+	if !fixture.indexHas(t, sweepSurvivorID) {
+		t.Fatalf("expected healthy entry %s to stay", sweepSurvivorID)
+	}
+}
+
+// A cleaner that panics cannot stop the run: the entry is removed and the run
+// finishes and records its result.
+func TestOrphanSweep_CredentialCleanerPanicDoesNotStopTheRun(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	logger := &recordingReconcilerLogger{}
+	hooks := &recordingCredentialHooks{explode: true}
+
+	manager := NewReconcilerManager(newTestManagerConfig(), nil, nil, fixture.director, logger, nil)
+	manager.Scanner = fixture.manager.Scanner
+	manager.Updater = fixture.manager.Updater
+	manager.Synchronizer = fixture.synchronizer
+	manager.SetCredentialHooks(hooks, nil)
+
+	manager.RunReconciliation(context.Background())
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected zombie entry %s to be removed", sweepZombieID)
+	}
+
+	if got := hooks.Cleans(); len(got) != 1 {
+		t.Fatalf("expected one cleanup call, got %v", got)
+	}
+
+	if !strings.Contains(logger.output(), "orphaned index entries removed") {
+		t.Fatalf("expected the run to finish after the cleaner panicked, log was:\n%s", logger.output())
+	}
+
+	if !strings.Contains(logger.output(), "CredHub cleanup hook for deployment "+sweepZombieName+" (instance "+sweepZombieID+") panicked") {
+		t.Fatalf("expected the panic to be logged with the deployment name, log was:\n%s", logger.output())
+	}
+}
+
+// After the index sweep, the run hands the orphan credential sweep the names
+// of the deployments the director listed this run.
+func TestOrphanSweep_CallsCredentialSweeperWithTheDeploymentScan(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	hooks := &recordingCredentialHooks{mode: sweepModeDryRun}
+	fixture.manager.SetCredentialHooks(hooks, hooks)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	sweeps := hooks.Sweeps()
+	if len(sweeps) != 1 {
+		t.Fatalf("expected one sweep call, got %d", len(sweeps))
+	}
+
+	if len(sweeps[0]) != 1 || !sweeps[0][sweepSurvivorName] {
+		t.Fatalf("expected the sweep to receive only %s as live, got %v", sweepSurvivorName, sweeps[0])
+	}
+}
+
+// A sweeper that panics cannot stop the run, which still finishes and logs
+// its result.
+func TestOrphanSweep_CredentialSweeperPanicDoesNotStopTheRun(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	logger := &recordingReconcilerLogger{}
+	sweeper := &recordingCredentialHooks{explode: true}
+
+	manager := NewReconcilerManager(newTestManagerConfig(), nil, nil, fixture.director, logger, nil)
+	manager.Scanner = fixture.manager.Scanner
+	manager.Updater = fixture.manager.Updater
+	manager.Synchronizer = fixture.synchronizer
+	manager.SetCredentialHooks(nil, sweeper)
+
+	manager.RunReconciliation(context.Background())
+
+	if got := sweeper.Sweeps(); len(got) != 1 {
+		t.Fatalf("expected one sweep call, got %d", len(got))
+	}
+
+	if !strings.Contains(logger.output(), "CredHub orphan sweep hook panicked, and the reconciler run continues") {
+		t.Fatalf("expected the panic to be logged, log was:\n%s", logger.output())
+	}
+
+	if !strings.Contains(logger.output(), "orphaned index entries removed") {
+		t.Fatalf("expected the run to finish after the sweeper panicked, log was:\n%s", logger.output())
+	}
+}
+
+// With no sweeper set, the run makes no sweep call and finishes as before.
+func TestOrphanSweep_NilCredentialSweeperChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	cleaner := &recordingCredentialHooks{}
+	fixture.manager.SetCredentialHooks(cleaner, nil)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if got := cleaner.Sweeps(); len(got) != 0 {
+		t.Fatalf("expected no sweep call without a sweeper, got %d", len(got))
+	}
+
+	if fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected zombie entry %s to be removed", sweepZombieID)
+	}
+}
+
+// CredentialHooks returns exactly what SetCredentialHooks stored.
+func TestCredentialHooks_ReturnsWhatWasSet(t *testing.T) {
+	t.Parallel()
+
+	manager := NewReconcilerManager(newTestManagerConfig(), nil, nil, nil, NewMockLogger(), nil)
+
+	cleaner, sweeper := manager.CredentialHooks()
+	if cleaner != nil || sweeper != nil {
+		t.Fatalf("expected no hooks on a new manager, got %v and %v", cleaner, sweeper)
+	}
+
+	hooks := &recordingCredentialHooks{mode: sweepModeDryRun}
+	manager.SetCredentialHooks(hooks, hooks)
+
+	cleaner, sweeper = manager.CredentialHooks()
+	if cleaner != hooks || sweeper != hooks {
+		t.Fatalf("expected both hooks to be the recorder, got %v and %v", cleaner, sweeper)
+	}
+}
+
+// Start logs whether each hook is wired and the sweep mode, so a dead wiring
+// is visible in the log.
+func TestCredentialHooks_StartLogsTheWiring(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		cleaner DeploymentCredentialCleaner
+		sweeper OrphanedCredentialSweeper
+		want    string
+	}{
+		{name: "nothing wired", want: "CredHub cleanup hooks not wired: deployment cleanup off, orphan sweep off"},
+		{
+			name:    "cleanup only",
+			cleaner: &recordingCredentialHooks{},
+			want:    "CredHub cleanup hooks wired: deployment cleanup on, orphan sweep not wired",
+		},
+		{
+			name:    "both, sweep in dry-run",
+			cleaner: &recordingCredentialHooks{mode: sweepModeDryRun},
+			sweeper: &recordingCredentialHooks{mode: sweepModeDryRun},
+			want:    "CredHub cleanup hooks wired: deployment cleanup on, orphan sweep dry-run",
+		},
+		{
+			name:    "both, cleanup disabled in the broker",
+			cleaner: &recordingCredentialHooks{mode: CredentialSweepModeDisabled},
+			sweeper: &recordingCredentialHooks{mode: CredentialSweepModeDisabled},
+			want:    "CredHub cleanup hooks wired, but CredHub cleanup is disabled in the broker",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			logger := &recordingReconcilerLogger{}
+			config := newTestManagerConfig()
+			config.Interval = time.Hour
+
+			manager := NewReconcilerManager(config, nil, nil, nil, logger, nil)
+			manager.SetCredentialHooks(testCase.cleaner, testCase.sweeper)
+
+			err := manager.Start(context.Background())
+			if err != nil {
+				t.Fatalf("start failed: %v", err)
+			}
+
+			t.Cleanup(func() { _ = manager.Stop() })
+
+			if !strings.Contains(logger.output(), testCase.want) {
+				t.Fatalf("expected %q in the startup log, got:\n%s", testCase.want, logger.output())
+			}
+		})
 	}
 }

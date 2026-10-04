@@ -93,6 +93,9 @@ type Info struct {
 	User     string          `json:"user"`
 	CPI      string          `json:"cpi"`
 	Features map[string]bool `json:"features"`
+	// UAAURL is the director's UAA URL from /info, empty unless the
+	// director authenticates through UAA.
+	UAAURL string `json:"uaa_url"`
 }
 
 // Deployment represents a BOSH deployment.
