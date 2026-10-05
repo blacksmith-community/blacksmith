@@ -108,9 +108,11 @@ func (b *Broker) CleanupDeploymentCredentials(ctx context.Context, instanceID, d
 // deprovision handler writes delete_requested_at. A vault error, a missing
 // record, or an unreadable time all count as no request, and the read gives up
 // after deprovisionProofTimeout. A request older than the metadata's
-// created_at belongs to an earlier instance that used the same GUID, so it is
-// refused too. Metadata with no created_at carries no later creation to
-// compare against, and the request stands.
+// created_at, which a completed provision writes, or older than its
+// provision_requested_at, which Provision writes before it deploys, belongs to
+// an earlier instance that used the same GUID, so it is refused too. A request
+// with the same time as either stands. Metadata with neither field carries no
+// later creation to compare against, and the request stands.
 //
 // The error wraps errNoDeprovisionRequest when nothing usable is on record,
 // and says why otherwise.

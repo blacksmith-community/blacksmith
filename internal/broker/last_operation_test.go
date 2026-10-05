@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -623,6 +627,71 @@ var _ = Describe("LastOperation", func() {
 			Expect(metadata).To(HaveKeyWithValue("delete_requested_at", "2026-10-01T11:00:00Z"))
 			Expect(metadata).To(HaveKeyWithValue("created_at", "2026-10-01T10:00:00Z"))
 			Expect(metadata).To(HaveKey("provision_requested_at"))
+		})
+
+		Context("when the vault cannot record the provision request", func() {
+			var (
+				failing     *httptest.Server
+				failMethod  string
+				brokerVault *internalVault.Vault
+			)
+
+			// metadataFault proxies to the real vault and fails one method on
+			// the instance's metadata path, as an unreachable or read-only
+			// vault would.
+			startFaultyVault := func(method string) {
+				target, err := url.Parse(suite.vault.Addr)
+				Expect(err).ToNot(HaveOccurred())
+
+				proxy := httputil.NewSingleHostReverseProxy(target)
+				failMethod = method
+
+				failing = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					if request.Method == failMethod && strings.HasSuffix(request.URL.Path, instanceID+"/metadata") {
+						http.Error(writer, `{"errors":["vault is unavailable"]}`, http.StatusServiceUnavailable)
+
+						return
+					}
+
+					proxy.ServeHTTP(writer, request)
+				}))
+
+				brokerVault = internalVault.New(failing.URL, suite.vault.RootToken, true)
+				brokerInstance.Vault = brokerVault
+			}
+
+			AfterEach(func() {
+				if failing != nil {
+					failing.Close()
+					failing = nil
+				}
+			})
+
+			for _, method := range []string{http.MethodGet, http.MethodPut} {
+				method := method
+
+				It("refuses the provision and deploys nothing when the "+method+" of the metadata fails", func() {
+					director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
+					director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
+					director.CreateDeploymentFn = func(string) (*bosh.Task, error) {
+						return &bosh.Task{ID: createTaskID, State: "done", Description: "create deployment"}, nil
+					}
+
+					startFaultyVault(method)
+
+					_, async, err := brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
+						ServiceID: serviceID, PlanID: planID, OrganizationGUID: "org-guid", SpaceGUID: "space-guid",
+					}, true)
+					Expect(err).To(HaveOccurred())
+					Expect(async).To(BeFalse())
+					Expect(err.Error()).To(ContainSubstring(instanceID + "/metadata"))
+					Expect(err.Error()).To(ContainSubstring("Likely causes"))
+
+					Consistently(func() bool { return brokerInstance.ProvisionActive(instanceID) }, 300*time.Millisecond).Should(BeFalse())
+					Expect(director.Calls("CreateDeployment")).To(BeEmpty())
+					Expect(director.Calls("GetInfo")).To(BeEmpty())
+				})
+			}
 		})
 
 		It("records the create task its create event names rather than the task the director adapter reports", func() {
