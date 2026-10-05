@@ -547,6 +547,58 @@ var _ = Describe("LastOperation", func() {
 			Expect(recordedTask()).To(Equal(createTaskID))
 		})
 
+		It("records provision_requested_at in the metadata before the deploy starts", func() {
+			var (
+				seenMu       sync.Mutex
+				seenMetadata map[string]interface{}
+			)
+
+			before := time.Now().Add(-time.Second)
+
+			provisionAndWait(func(string) (*bosh.Task, error) {
+				var metadata map[string]interface{}
+
+				_, err := vaultClient.Get(ctx, instanceID+"/metadata", &metadata)
+				Expect(err).ToNot(HaveOccurred())
+
+				seenMu.Lock()
+				seenMetadata = metadata
+				seenMu.Unlock()
+
+				return &bosh.Task{ID: createTaskID, State: "done", Description: "create deployment"}, nil
+			})
+
+			seenMu.Lock()
+			defer seenMu.Unlock()
+
+			raw, _ := seenMetadata["provision_requested_at"].(string)
+			Expect(raw).ToNot(BeEmpty(), "the deploy started before the provision request was recorded")
+
+			recorded, err := time.Parse(time.RFC3339, raw)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(recorded).To(BeTemporally(">=", before.Truncate(time.Second)))
+			Expect(recorded).To(BeTemporally("<=", time.Now().Add(time.Second)))
+		})
+
+		It("keeps the delete request and the earlier creation time in the metadata when the GUID is provisioned again", func() {
+			Expect(vaultClient.Put(ctx, instanceID+"/metadata", map[string]interface{}{
+				"created_at":          "2026-10-01T10:00:00Z",
+				"delete_requested_at": "2026-10-01T11:00:00Z",
+			})).To(Succeed())
+
+			provisionAndWait(func(string) (*bosh.Task, error) {
+				return &bosh.Task{ID: createTaskID, State: "done", Description: "create deployment"}, nil
+			})
+
+			var metadata map[string]interface{}
+
+			_, err := vaultClient.Get(ctx, instanceID+"/metadata", &metadata)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(metadata).To(HaveKeyWithValue("delete_requested_at", "2026-10-01T11:00:00Z"))
+			Expect(metadata).To(HaveKeyWithValue("created_at", "2026-10-01T10:00:00Z"))
+			Expect(metadata).To(HaveKey("provision_requested_at"))
+		})
+
 		It("records the create task its create event names rather than the task the director adapter reports", func() {
 			provisionAndWait(func(string) (*bosh.Task, error) {
 				// Someone ran `bosh ssh` while bosh-cli waited on the deploy,

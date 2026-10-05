@@ -362,6 +362,14 @@ func (b *Broker) Provision(
 		return osbapi.ProvisionResponse{}, false, err
 	}
 
+	// Record when this provision was requested before anything deploys, so a
+	// delete request left over from an earlier instance with the same GUID is
+	// never taken for this instance's.
+	err = b.storeProvisionRequestedTimestamp(ctx, instanceID, logger)
+	if err != nil {
+		return osbapi.ProvisionResponse{}, false, err
+	}
+
 	// Find and validate plan
 	plan, err := b.validatePlan(ctx, instanceID, details, logger)
 	if err != nil {
@@ -1055,6 +1063,40 @@ func deploymentNameForInstance(instanceID string, instance *vaultPkg.Instance) s
 	}
 
 	return instance.PlanID + "-" + instanceID
+}
+
+// storeProvisionRequestedTimestamp writes provision_requested_at into the
+// instance metadata and keeps every other field, including a delete_requested_at
+// from an earlier instance with the same GUID. The credential sweep compares
+// that delete request with this time. Provision fails when the metadata cannot
+// be written, because a deploy that goes ahead without the record leaves a stale
+// delete request looking current.
+func (b *Broker) storeProvisionRequestedTimestamp(ctx context.Context, instanceID string, logger logger.Logger) error {
+	logger.Debug("storing provision_requested_at timestamp in Vault")
+
+	var metadata map[string]interface{}
+
+	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
+	if err != nil {
+		logger.Error("failed to read %s/metadata before recording provision_requested_at: %s", instanceID, err)
+
+		return fmt.Errorf("could not read %s/metadata to record when the provision was requested, so the provision was refused. Likely causes are an unreachable or sealed Vault or a token Vault no longer accepts: %w", instanceID, err)
+	}
+
+	if !exists || metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+
+	metadata["provision_requested_at"] = time.Now().Format(time.RFC3339)
+
+	err = b.Vault.Put(ctx, instanceID+"/metadata", metadata)
+	if err != nil {
+		logger.Error("failed to store provision_requested_at in %s/metadata: %s", instanceID, err)
+
+		return fmt.Errorf("could not write provision_requested_at to %s/metadata, so the provision was refused. Likely causes are an unreachable or sealed Vault or a token without write access to the secret path: %w", instanceID, err)
+	}
+
+	return nil
 }
 
 func (b *Broker) storeDeleteRequestedTimestamp(ctx context.Context, instanceID string, logger logger.Logger) {

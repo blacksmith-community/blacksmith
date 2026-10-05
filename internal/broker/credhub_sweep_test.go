@@ -415,6 +415,56 @@ var _ = Describe("CredHub sweep", func() {
 		Expect(output).To(ContainSubstring("created_at"))
 	})
 
+	It("does not prove an orphan whose GUID was provisioned again after the delete request and has not completed yet", func() {
+		useMode(config.CredHubSweepDelete)
+
+		reprovisioned := newGUID()
+		Expect(vaultClient.Put(ctx, reprovisioned+"/metadata", map[string]interface{}{
+			"created_at":             time.Now().Add(-8 * time.Hour).Format(time.RFC3339),
+			"delete_requested_at":    time.Now().Add(-5 * time.Hour).Format(time.RFC3339),
+			"provision_requested_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+		})).To(Succeed())
+		fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(reprovisioned))+"valkey_password")
+
+		sweepAndWait()
+
+		Expect(fakeCredHub.Deleted()).To(BeEmpty())
+		Expect(capture.output()).To(ContainSubstring("provision_requested_at"))
+		Expect(capture.output()).To(ContainSubstring("predates"))
+	})
+
+	It("proves an orphan whose delete request follows its provision request and its creation", func() {
+		useMode(config.CredHubSweepDelete)
+
+		orderly := newGUID()
+		Expect(vaultClient.Put(ctx, orderly+"/metadata", map[string]interface{}{
+			"provision_requested_at": time.Now().Add(-8 * time.Hour).Format(time.RFC3339),
+			"created_at":             time.Now().Add(-7 * time.Hour).Format(time.RFC3339),
+			"delete_requested_at":    time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+		})).To(Succeed())
+		fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(orderly))+"valkey_password")
+
+		sweepAndWait()
+
+		Expect(fakeCredHub.Deleted()).To(Equal([]string{prefixFor(deploymentFor(orderly)) + "valkey_password"}))
+	})
+
+	It("does not prove an orphan whose provision_requested_at is not a time", func() {
+		useMode(config.CredHubSweepDelete)
+
+		garbled := newGUID()
+		Expect(vaultClient.Put(ctx, garbled+"/metadata", map[string]interface{}{
+			"delete_requested_at":    time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+			"provision_requested_at": "last-tuesday",
+		})).To(Succeed())
+		fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(garbled))+"valkey_password")
+
+		sweepAndWait()
+
+		Expect(fakeCredHub.Deleted()).To(BeEmpty())
+		Expect(capture.output()).To(ContainSubstring("last-tuesday"))
+	})
+
 	It("proves an orphan whose delete request has the same time as its creation", func() {
 		useMode(config.CredHubSweepDelete)
 

@@ -178,29 +178,38 @@ func (b *Broker) hasDeprovisionRequest(ctx context.Context, instanceID string) (
 	return requestedAt, b.checkRequestFollowsCreation(instanceID, got.metadata, raw, requestedAt)
 }
 
-// checkRequestFollowsCreation refuses a delete request that is older than the
-// creation time in the same metadata. A request with the same time as the
-// creation is accepted. The request is then a leftover of an earlier instance
-// with the same GUID.
+// requestFollowsFields are the metadata fields whose times a delete request
+// must not precede. created_at is written when a provision completes, and
+// provision_requested_at when one starts, so a GUID provisioned again is caught
+// while its deploy is still running.
+var requestFollowsFields = []string{"created_at", "provision_requested_at"}
+
+// checkRequestFollowsCreation refuses a delete request that is older than a
+// provision time in the same metadata. A request with the same time as one is
+// accepted. The request is then a leftover of an earlier instance with the same
+// GUID. A field that is absent is skipped, so adopted and legacy instances with
+// no record keep working.
 func (b *Broker) checkRequestFollowsCreation(instanceID string, metadata map[string]interface{}, rawRequest string, requestedAt time.Time) error {
-	created, present := metadata["created_at"]
-	if !present {
-		return nil
-	}
+	for _, field := range requestFollowsFields {
+		value, present := metadata[field]
+		if !present {
+			continue
+		}
 
-	rawCreated, isString := created.(string)
-	if !isString || rawCreated == "" {
-		return fmt.Errorf("%s/metadata records created_at as %v, which is not a time string, so the delete request cannot be shown to follow the instance's creation", instanceID, created)
-	}
+		raw, isString := value.(string)
+		if !isString || raw == "" {
+			return fmt.Errorf("%s/metadata records %s as %v, which is not a time string, so the delete request cannot be shown to follow the instance's creation", instanceID, field, value)
+		}
 
-	createdAt, err := time.Parse(time.RFC3339, rawCreated)
-	if err != nil {
-		return fmt.Errorf("%s/metadata records created_at as %q, which is not an RFC 3339 time (%w), so the delete request cannot be shown to follow the instance's creation", instanceID, rawCreated, err)
-	}
+		recorded, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return fmt.Errorf("%s/metadata records %s as %q, which is not an RFC 3339 time (%w), so the delete request cannot be shown to follow the instance's creation", instanceID, field, raw, err)
+		}
 
-	if requestedAt.Before(createdAt) {
-		return fmt.Errorf("the delete request at %s predates the instance's created_at of %s in %s/metadata, so it belongs to an earlier instance that used the same GUID",
-			rawRequest, rawCreated, instanceID)
+		if requestedAt.Before(recorded) {
+			return fmt.Errorf("the delete request at %s predates the instance's %s of %s in %s/metadata, so it belongs to an earlier instance that used the same GUID",
+				rawRequest, field, raw, instanceID)
+		}
 	}
 
 	return nil
