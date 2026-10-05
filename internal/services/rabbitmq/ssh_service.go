@@ -63,12 +63,14 @@ func NewRabbitMQSSHService(sshService ssh.SSHService, logger Logger) *SSHService
 
 // ExecuteCommand executes a RabbitMQ command on a service instance.
 func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd RabbitMQCommand) (*RabbitMQCommandResult, error) {
-	r.logger.Infof("Executing RabbitMQ command '%s' on %s/%s/%d", cmd.Name, deployment, instance, index)
+	label := commandLabel(cmd)
+
+	r.logger.Infof("Executing RabbitMQ command '%s' on %s/%s/%d", label, deployment, instance, index)
 
 	fullCommand := r.buildFullCommand(cmd)
 	sshReq := r.createSSHRequest(deployment, instance, index, fullCommand, cmd.Timeout)
 
-	r.logger.Debugf("SSH request for command %s on %s/%s/%d (command line of %d bytes not logged)", cmd.Name, deployment, instance, index, len(fullCommand))
+	r.logger.Debugf("SSH request for command %s on %s/%s/%d (command line of %d bytes not logged)", label, deployment, instance, index, len(fullCommand))
 
 	sshResp, err := r.sshService.ExecuteCommand(sshReq)
 	if err != nil {
@@ -79,7 +81,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 	r.enhanceResultOnFailure(result, sshResp)
 	r.parseOutputOnSuccess(result, cmd)
 
-	r.logger.Infof("RabbitMQ command '%s' completed: success=%t, exitCode=%d", cmd.Name, result.Success, result.ExitCode)
+	r.logger.Infof("RabbitMQ command '%s' completed: success=%t, exitCode=%d", label, result.Success, result.ExitCode)
 
 	return result, nil
 }
@@ -300,6 +302,20 @@ func (r *SSHService) parseOutputOnSuccess(result *RabbitMQCommandResult, cmd Rab
 			r.logger.Debugf("Failed to parse output for command %s: %v", cmd.Name, parseErr)
 		}
 	}
+}
+
+// commandLabel names a command for the log. A pre-built rabbitmq-plugins
+// command carries its arguments in Name, so its description stands in.
+func commandLabel(cmd RabbitMQCommand) string {
+	if strings.Contains(cmd.Name, "rabbitmq-plugins") || strings.Contains(cmd.Name, "/var/vcap/jobs/rabbitmq/env") {
+		if cmd.Description != "" {
+			return cmd.Description
+		}
+
+		return "rabbitmq-plugins command"
+	}
+
+	return cmd.Name
 }
 
 func (r *SSHService) buildFullCommand(cmd RabbitMQCommand) []string {

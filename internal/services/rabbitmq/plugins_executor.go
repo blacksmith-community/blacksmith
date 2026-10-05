@@ -60,7 +60,7 @@ func NewPluginsExecutorService(sshService *SSHService, metadataService *PluginsM
 
 // ExecuteCommand executes a rabbitmq-plugins command with streaming output.
 func (e *PluginsExecutorService) ExecuteCommand(ctx context.Context, execCtx PluginsExecutionContext, deployment, instance string, index int, category, command string, arguments []string) (*PluginsStreamingExecutionResult, error) {
-	e.logger.Infof("Executing rabbitmq-plugins command: %s.%s with args %v", category, command, arguments)
+	e.logger.Infof("Executing rabbitmq-plugins command: %s.%s with %d args", category, command, len(arguments))
 
 	// Validate command
 	cmd, err := e.metadataService.GetCommand(command)
@@ -105,7 +105,7 @@ func (e *PluginsExecutorService) ExecuteCommand(ctx context.Context, execCtx Plu
 
 // ExecuteCommandSync executes a rabbitmq-plugins command synchronously.
 func (e *PluginsExecutorService) ExecuteCommandSync(ctx context.Context, execCtx PluginsExecutionContext, deployment, instance string, index int, category, command string, arguments []string) (string, int, error) {
-	e.logger.Infof("Executing rabbitmq-plugins command synchronously: %s.%s with args %v", category, command, arguments)
+	e.logger.Infof("Executing rabbitmq-plugins command synchronously: %s.%s with %d args", category, command, len(arguments))
 
 	// Validate command
 	_, err := e.metadataService.GetCommand(command)
@@ -299,7 +299,7 @@ func (e *PluginsExecutorService) buildRabbitMQPluginsCommand(command string, arg
 	// Join and escape properly
 	fullCommand := fmt.Sprintf("%s && %s", envSource, strings.Join(cmdParts, " "))
 
-	e.logger.Debugf("Built rabbitmq-plugins command: %s", fullCommand)
+	e.logger.Debugf("Built rabbitmq-plugins command %s with %d args", command, len(arguments))
 
 	return fullCommand
 }

@@ -662,7 +662,7 @@ func (h *Handler) handlePluginsMessageType(ctx context.Context, conn *gorillaweb
 }, logger interfaces.Logger) error {
 	switch message.Type {
 	case commandTypeExecute:
-		logger.Info("Executing rabbitmq-plugins command: %s.%s with args %v", message.Category, message.Command, message.Arguments)
+		logger.Info("Executing rabbitmq-plugins command: %s.%s with %d args", message.Category, message.Command, len(message.Arguments))
 		h.handlePluginsStreamingExecution(ctx, conn, instanceID, deploymentName, instanceName, instanceIndex, message.Category, message.Command, message.Arguments, logger)
 
 		return nil

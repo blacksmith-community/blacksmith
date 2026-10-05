@@ -84,3 +84,59 @@ func TestRabbitMQCtlCommandBuilderNeverLogsArguments(t *testing.T) {
 		t.Errorf("unexpected log output:\n%s", capture.output())
 	}
 }
+
+const leakSentinelPluginArg = "sentinel-plugin-argument-do-not-log"
+
+func newPluginsExecutor(capture *captureLogger) *PluginsExecutorService {
+	return NewPluginsExecutorService(NewRabbitMQSSHService(fakeSSH{}, capture), NewPluginsMetadataService(capture), capture)
+}
+
+func TestRabbitMQPluginsExecutionNeverLogsArguments(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sync", func(t *testing.T) {
+		t.Parallel()
+
+		capture := &captureLogger{}
+
+		_, _, err := newPluginsExecutor(capture).ExecuteCommandSync(context.Background(), PluginsExecutionContext{InstanceID: "inst-1"},
+			"dep", "rabbitmq", 0, "plugin_management", "enable", []string{leakSentinelPluginArg})
+		if err != nil {
+			t.Fatalf("ExecuteCommandSync: %v", err)
+		}
+
+		assertLoggedWithoutArgument(t, capture, "enable")
+	})
+
+	t.Run("streaming", func(t *testing.T) {
+		t.Parallel()
+
+		capture := &captureLogger{}
+
+		result, err := newPluginsExecutor(capture).ExecuteCommand(context.Background(), PluginsExecutionContext{InstanceID: "inst-1"},
+			"dep", "rabbitmq", 0, "plugin_management", "enable", []string{leakSentinelPluginArg})
+		if err != nil {
+			t.Fatalf("ExecuteCommand: %v", err)
+		}
+
+		// The streamed output is for the caller and may carry the argument.
+		// Draining it lets the command finish and log its completion.
+		for range result.Output {
+		}
+
+		assertLoggedWithoutArgument(t, capture, "enable")
+	})
+}
+
+func assertLoggedWithoutArgument(t *testing.T, capture *captureLogger, command string) {
+	t.Helper()
+
+	out := capture.output()
+	if !strings.Contains(out, command) {
+		t.Errorf("expected the command name %q in the log, got:\n%s", command, out)
+	}
+
+	if strings.Contains(out, leakSentinelPluginArg) {
+		t.Errorf("log output leaked a plugin argument:\n%s", out)
+	}
+}
