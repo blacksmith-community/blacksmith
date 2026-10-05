@@ -181,12 +181,17 @@ var _ = Describe("Log leak prevention", func() {
 		})
 	}
 
-	It("masks key parameters by whole word or known suffix and leaves keyword visible", func() {
-		for _, masked := range []string{"api_key", "API_KEY", "apiKey", "apikey", "ssh-key", "key", "access_key", "private.key"} {
+	It("masks any name that ends in key or keys, ignoring trailing digits, and leaves other names visible", func() {
+		for _, masked := range []string{
+			"api_key", "API_KEY", "apiKey", "apikey", "ssh-key", "key", "access_key", "private.key",
+			"passkey", "authkey", "masterkey", "hmackey", "privkey", "pubkey", "keys", "ssh_keys", "key1", "api_key2",
+			// Names that merely end in key are masked too, an accepted over-match.
+			"monkey", "monkeys", "hockey", "turkey",
+		} {
 			Expect(broker.RedactedQuery(masked+"=v")).To(Equal(masked+"=<redacted>"), masked)
 		}
 
-		for _, visible := range []string{"keyword", "keywords", "monkeys", "keyboard", "hockey", "turkey"} {
+		for _, visible := range []string{"keyword", "keywords", "keyboard", "monkey_id"} {
 			Expect(broker.RedactedQuery(visible+"=v")).To(Equal(visible+"=v"), visible)
 		}
 

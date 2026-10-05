@@ -153,9 +153,10 @@ func redactedHeaders(h http.Header) http.Header {
 // redactedQuery returns rawQuery with the values of credential-bearing
 // parameters replaced, so debug logs show which parameters arrived without
 // their secrets. A parameter is credential-bearing when its name contains
-// password, secret, or token in any case, or when "key" is a whole word of
-// the name (api_key, apiKey, ssh-key) or the name ends in a known key name
-// such as apikey. A name like keyword stays visible.
+// password, secret, or token in any case, when "key" is a whole word of the
+// name (api_key, apiKey, ssh-key), or when the name ends in key or keys once
+// a trailing run of digits is dropped (passkey, ssh_keys, key1). A name like
+// keyword or monkey_id stays visible.
 func redactedQuery(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
@@ -198,6 +199,13 @@ func isCredentialParameter(name string) bool {
 		if strings.HasSuffix(lower, suffix) {
 			return true
 		}
+	}
+
+	// Any name that ends in key or keys, once a trailing run of digits is
+	// dropped, is masked: passkey, ssh_keys, and key1 all end that way.
+	trimmed := strings.TrimRight(lower, "0123456789")
+	if strings.HasSuffix(trimmed, "key") || strings.HasSuffix(trimmed, "keys") {
+		return true
 	}
 
 	return slices.Contains(nameWords(name), "key")
