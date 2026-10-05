@@ -140,6 +140,10 @@ type Broker struct {
 	Shield  shield.Client
 	Config  *config.Config
 
+	// ServiceContext ends when the broker shuts down. Detached work derives
+	// from it. When nil, that work runs under context.Background().
+	ServiceContext context.Context
+
 	// VM monitoring integration
 	vmMonitor interfaces.VMMonitor
 
@@ -158,6 +162,11 @@ type Broker struct {
 	// delete that has not returned its task ID yet from one the broker lost
 	// when it restarted.
 	activeDeprovisions sync.Map
+
+	// monitorExited, when set, is called with the instance ID each time a
+	// deprovision monitor goroutine returns. Production leaves it nil; tests
+	// use it to wait for the monitor to stop.
+	monitorExited func(instanceID string)
 
 	// CredentialCleaner deletes a confirmed-deleted deployment's variables
 	// from the director's CredHub. A nil value turns the feature off.
@@ -465,10 +474,16 @@ func (b *Broker) Deprovision(
 	b.activeDeprovisions.Store(instanceID, time.Now())
 
 	// Launch async deprovisioning in background
-	// Create a detached context that survives the HTTP request lifecycle
-	// This ensures deprovisioning can continue even if the request context is cancelled
-	asyncCtx := context.WithoutCancel(ctx)
-	go b.deprovisionAsync(asyncCtx, instanceID, instance)
+	// The deprovision outlives the HTTP request, so it runs under the service
+	// context with the monitor's bound. A shutdown ends it, and LastOperation
+	// settles what the director task left behind.
+	asyncCtx, cancelAsync := context.WithTimeout(b.serviceContext(), taskMonitorTimeout)
+
+	go func() {
+		defer cancelAsync()
+
+		b.deprovisionAsync(asyncCtx, instanceID, instance)
+	}()
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
 
@@ -1718,10 +1733,15 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 	b.activeProvisions.Store(instanceID, time.Now())
 
 	// Launch async provisioning in background
-	// Create a detached context that survives the HTTP request lifecycle
-	// This ensures provisioning can continue even if the request context is cancelled
-	asyncCtx := context.WithoutCancel(ctx)
-	go b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
+	// The provision outlives the HTTP request, so it runs under the service
+	// context with its own deadline instead of the request's.
+	asyncCtx, cancelAsync := context.WithTimeout(b.serviceContext(), provisionTimeout)
+
+	go func() {
+		defer cancelAsync()
+
+		b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
+	}()
 
 	return nil
 }
@@ -2247,7 +2267,10 @@ func (b *Broker) resolveDeploymentTask(ctx context.Context, deploymentName, acti
 
 // recordTask stores a BOSH task ID for the instance's current operation.
 func (b *Broker) recordTask(ctx context.Context, instanceID, operation, description string, taskID int, logger logger.Logger) {
-	err := b.Vault.TrackProgress(ctx, instanceID, operation, description, taskID, nil)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.TrackProgress(recordCtx, instanceID, operation, description, taskID, nil)
 	if err != nil {
 		logger.Error("failed to record task %d for instance %s: %s", taskID, instanceID, err)
 	}
@@ -2308,9 +2331,9 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 		// the cleanup runs in the background rather than holding up the poll.
 		b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
 
-		// The cleanup outlives this poll, so it keeps the poll's values but
-		// not its cancellation, the same way provisionAsync does.
-		go b.cleanupFailedDeployment(context.WithoutCancel(ctx), deploymentName, logger)
+		// The cleanup outlives this poll; it keeps the poll's values and sets
+		// its own deadline.
+		go b.cleanupFailedDeployment(ctx, deploymentName, logger)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
 
@@ -2345,7 +2368,13 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 	}
 }
 
+// cleanupFailedDeployment deletes a failed deployment on a best-effort basis.
+// It keeps the values of ctx but not its cancellation, and gives up after
+// failedDeploymentCleanupTimeout.
 func (b *Broker) cleanupFailedDeployment(ctx context.Context, deploymentName string, logger logger.Logger) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failedDeploymentCleanupTimeout)
+	defer cancel()
+
 	logger.Debug("checking if failed deployment exists and needs cleanup")
 
 	_, deploymentErr := b.BOSH.GetDeployment(ctx, deploymentName)

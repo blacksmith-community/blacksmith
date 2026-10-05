@@ -26,7 +26,36 @@ const (
 
 	// Task monitoring timeout duration.
 	taskMonitorTimeout = 2 * time.Hour
+
+	// provisionTimeout bounds the provision goroutine: the manifest work, the
+	// release uploads and the deploy itself while bosh-cli still runs it.
+	provisionTimeout = 60 * time.Minute
+
+	// failedDeploymentCleanupTimeout bounds the best-effort delete of a
+	// deployment whose create task failed.
+	failedDeploymentCleanupTimeout = 5 * time.Minute
+
+	// recordWriteTimeout bounds a failure or progress record written to the
+	// vault, so the write still happens after the context it follows ended.
+	recordWriteTimeout = 10 * time.Second
 )
+
+// serviceContext returns the context that ends when the broker shuts down. A
+// broker built without one, as many tests do, never sees a shutdown.
+func (b *Broker) serviceContext() context.Context {
+	if b.ServiceContext == nil {
+		return context.Background()
+	}
+
+	return b.ServiceContext
+}
+
+// recordContext returns a context for writing a record. It keeps the values
+// of ctx but not its cancellation or deadline, and bounds the write by
+// recordWriteTimeout.
+func recordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+}
 
 // taskPollOverride, when positive, replaces defaultTaskPollInterval in
 // nanoseconds. It is atomic because monitors started earlier may read it
@@ -54,7 +83,10 @@ var (
 
 // trackProgress is a helper to track progress with error logging.
 func (b *Broker) trackProgress(ctx context.Context, instanceID, operation, message string, _ int, params map[interface{}]interface{}, l logger.Logger) {
-	err := b.Vault.TrackProgress(ctx, instanceID, operation, message, 0, params)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.TrackProgress(recordCtx, instanceID, operation, message, 0, params)
 	if err != nil {
 		l.Error("failed to track progress (%s): %s", message, err)
 	}
@@ -62,10 +94,28 @@ func (b *Broker) trackProgress(ctx context.Context, instanceID, operation, messa
 
 // failWithTracking tracks a failure.
 func (b *Broker) failWithTracking(ctx context.Context, instanceID, operation, message string, params map[interface{}]interface{}, l logger.Logger) {
-	err := b.Vault.TrackProgress(ctx, instanceID, operation, message, -1, params)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.TrackProgress(recordCtx, instanceID, operation, message, -1, params)
 	if err != nil {
 		l.Error("failed to track progress (%s): %s", message, err)
 	}
+}
+
+// stoppedProvisionDescription describes a provision whose own context ended
+// before the failing step finished, so an operator reads the cause and not a
+// failure of the step. It returns "" while the context is still live.
+func (b *Broker) stoppedProvisionDescription(ctx context.Context, err error) string {
+	if ctx.Err() == nil {
+		return ""
+	}
+
+	if b.serviceContext().Err() != nil {
+		return fmt.Sprintf("Provision stopped by broker shutdown: %s", err)
+	}
+
+	return fmt.Sprintf("Provision stopped at its %s time limit: %s", provisionTimeout, err)
 }
 
 // provisioningPhase represents a phase in the provisioning process.
@@ -74,6 +124,17 @@ type provisioningPhase struct {
 	instanceID string
 	logger     logger.Logger
 	params     map[interface{}]interface{}
+}
+
+// failStep records the provision as failed at the step named by summary. When
+// the provision context has ended, the record says the broker stopped it.
+func (p *provisioningPhase) failStep(ctx context.Context, summary string, err error) {
+	description := p.broker.stoppedProvisionDescription(ctx, err)
+	if description == "" {
+		description = fmt.Sprintf("%s: %s", summary, err)
+	}
+
+	p.broker.failWithTracking(ctx, p.instanceID, "provision", description, p.params, p.logger)
 }
 
 // parseParameters extracts and parses parameters from the details.
@@ -110,7 +171,7 @@ func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services
 	info, err := p.broker.BOSH.GetInfo(ctx)
 	if err != nil {
 		p.logger.Error("Failed to get information about BOSH director: %s", err)
-		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Failed to connect to BOSH: %s", err), p.params, p.logger)
+		p.failStep(ctx, "Failed to connect to BOSH", err)
 
 		return nil, false
 	}
@@ -145,7 +206,7 @@ func (p *provisioningPhase) initializeService(ctx context.Context, plan services
 	err = manifest.InitManifest(ctx, plan, p.instanceID)
 	if err != nil {
 		p.logger.Error("Service deployment initialization script failed: %s", err)
-		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Service initialization failed: %s", err), p.params, p.logger)
+		p.failStep(ctx, "Service initialization failed", err)
 
 		return false
 	}
@@ -159,10 +220,14 @@ func (p *provisioningPhase) initializeService(ctx context.Context, plan services
 
 		initScriptContent, readErr := os.ReadFile(plan.InitScriptPath)
 		if readErr == nil {
-			err = p.broker.Vault.Put(ctx, p.instanceID+"/init", map[string]interface{}{
+			recordCtx, cancelRecord := recordContext(ctx)
+			err = p.broker.Vault.Put(recordCtx, p.instanceID+"/init", map[string]interface{}{
 				"script":      string(initScriptContent),
 				"executed_at": time.Now().Format(time.RFC3339),
 			})
+
+			cancelRecord()
+
 			if err != nil {
 				p.logger.Error("Failed to store init script in vault: %s", err)
 				// Continue anyway as this is non-fatal
@@ -199,10 +264,14 @@ func (p *provisioningPhase) generateAndStoreManifest(ctx context.Context, plan s
 
 	storeStartTime := time.Now()
 
-	err = p.broker.Vault.Put(ctx, p.instanceID+"/manifest", map[string]interface{}{
+	recordCtx, cancelRecord := recordContext(ctx)
+	err = p.broker.Vault.Put(recordCtx, p.instanceID+"/manifest", map[string]interface{}{
 		"manifest":  manifestStr,
 		"stored_at": time.Now().Format(time.RFC3339),
 	})
+
+	cancelRecord()
+
 	if err != nil {
 		p.logger.Error("FATAL: Failed to store manifest in Vault at %s/manifest: %s", p.instanceID, err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Failed to store manifest in Vault: %s", err), p.params, p.logger)
@@ -224,7 +293,7 @@ func (p *provisioningPhase) uploadReleases(ctx context.Context, manifestStr stri
 	err := manifest.UploadReleasesFromManifest(ctx, manifestStr, p.broker.BOSH, p.logger)
 	if err != nil {
 		p.logger.Error("failed to upload service deployment releases: %s", err)
-		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Release upload failed: %s", err), p.params, p.logger)
+		p.failStep(ctx, "Release upload failed", err)
 
 		return false
 	}
@@ -246,14 +315,23 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 		// bosh-cli reports a deploy task that failed as an error. When BOSH
 		// started the task, record it, so LastOperation answers from the
 		// task's own state and cleans up the failed deployment.
-		createTaskID := p.broker.resolveDeploymentTask(ctx, deploymentName, boshEventActionCreate, p.logger)
+		//
+		// The lookup runs under its own bound, because the provision context
+		// may be what ended the deploy. Reading the events on it would fail,
+		// and the instance would be recorded as failed without a task, which
+		// LastOperation cannot recover from.
+		lookupCtx, cancelLookup := recordContext(ctx)
+		createTaskID := p.broker.resolveDeploymentTask(lookupCtx, deploymentName, boshEventActionCreate, p.logger)
+
+		cancelLookup()
+
 		if createTaskID > 0 {
 			p.broker.recordTask(ctx, p.instanceID, operationTypeProvision, fmt.Sprintf("BOSH deployment task %d did not succeed: %s", createTaskID, err), createTaskID, p.logger)
 
 			return false
 		}
 
-		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Deployment creation failed: %s", err), p.params, p.logger)
+		p.failStep(ctx, "Deployment creation failed", err)
 
 		return false
 	}
@@ -287,7 +365,10 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 		description = "BOSH deployment returned; waiting for BOSH events to name the deploy task"
 	}
 
-	err = p.broker.Vault.TrackProgress(ctx, p.instanceID, "provision", description, actualTaskID, p.params)
+	recordCtx, cancelRecord := recordContext(ctx)
+	defer cancelRecord()
+
+	err = p.broker.Vault.TrackProgress(recordCtx, p.instanceID, "provision", description, actualTaskID, p.params)
 	if err != nil {
 		p.logger.Error("CRITICAL: failed to store service status in the vault: %s", err)
 	} else {
@@ -318,7 +399,17 @@ func (p *provisioningPhase) instanceStillIndexed(ctx context.Context) bool {
 // the same delete-with-retry and background monitoring as deprovisionAsync and
 // leaves the instance out of the index.
 func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
-	err := b.Vault.TrackProgress(ctx, instanceID, "deprovision", "Deleting deployment that finished after the instance was deprovisioned", 0, nil)
+	// The provision context may be nearly spent by now, so the teardown keeps
+	// its values and sets its own deadline. The delete waits on the director
+	// task, so it gets the same bound as a regular deprovision.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), taskMonitorTimeout)
+	defer cancel()
+
+	recordCtx, cancelRecord := recordContext(ctx)
+	err := b.Vault.TrackProgress(recordCtx, instanceID, "deprovision", "Deleting deployment that finished after the instance was deprovisioned", 0, nil)
+
+	cancelRecord()
+
 	if err != nil {
 		logger.Error("failed to track abandoned deployment cleanup: %s", err)
 	}
@@ -348,7 +439,7 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 
 	phase.trackDeletionProgress(ctx, deleteTask)
 
-	go phase.monitorAndCleanupTask(context.WithoutCancel(ctx), deleteTask)
+	go phase.monitorAndCleanupTask(b.serviceContext(), deleteTask)
 }
 
 // deprovisioningPhase represents a phase in the deprovisioning process.
@@ -374,6 +465,16 @@ func (d *deprovisioningPhase) checkDeploymentExists(ctx context.Context) (bool, 
 		// Existence is unknown. Treating this as "not found" would drop the
 		// index entry while the deployment keeps running on the director.
 		d.logger.Error("Failed to check whether deployment %s exists: %s", d.deploymentName, err)
+
+		// A deprovision that the broker's shutdown or its time bound ended has
+		// not failed. The director may be deleting the deployment already, and
+		// LastOperation settles the instance from what the director reports.
+		if ctx.Err() != nil {
+			d.logger.Warning("Deprovision of instance %s stopped before the deployment status was known (%s); LastOperation settles it", d.instanceID, ctx.Err())
+
+			return false, false
+		}
+
 		d.broker.failWithTracking(ctx, d.instanceID, "deprovision", fmt.Sprintf("Failed to check deployment status: %s", err), nil, d.logger)
 
 		return false, false
@@ -400,7 +501,10 @@ func (d *deprovisioningPhase) handleDeploymentNotFound(ctx context.Context) bool
 
 	d.broker.trackProgress(ctx, d.instanceID, "deprovision", "Deprovisioning completed (no deployment)", 0, nil, d.logger)
 
-	err := d.broker.Vault.Track(ctx, d.instanceID, "deprovision", 1, nil)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := d.broker.Vault.Track(recordCtx, d.instanceID, "deprovision", 1, nil)
 	if err != nil {
 		d.logger.Error("failed to track completion: %s", err)
 	}
@@ -414,8 +518,18 @@ func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) (*b
 
 	task, err := d.broker.retryDeleteDeployment(ctx, d.deploymentName, d.instanceID, defaultDeleteRetryAttempts)
 	if err != nil {
-		d.logger.Error("Failed to delete BOSH deployment %s after retries: %s", d.deploymentName, err)
-		d.broker.failWithTracking(ctx, d.instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed after retries: %s", err), nil, d.logger)
+		d.logger.Error("Failed to delete BOSH deployment %s: %s", d.deploymentName, err)
+
+		// The director's delete task keeps running when the broker stops, and
+		// LastOperation adopts it from the director's events. The retry loop
+		// has left a progress record, so no failure is recorded here.
+		if ctx.Err() != nil {
+			d.logger.Warning("Deprovision of instance %s stopped before the delete finished (%s); LastOperation settles it", d.instanceID, ctx.Err())
+
+			return nil, false
+		}
+
+		d.broker.failWithTracking(ctx, d.instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed: %s", err), nil, d.logger)
 
 		return nil, false
 	}
@@ -435,7 +549,10 @@ func (d *deprovisioningPhase) handleDeploymentCleanedDuringRetry(ctx context.Con
 
 	d.broker.trackProgress(ctx, d.instanceID, "deprovision", "Deprovisioning completed (cleanup during retry)", 0, nil, d.logger)
 
-	err := d.broker.Vault.Track(ctx, d.instanceID, "deprovision", 0, nil)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := d.broker.Vault.Track(recordCtx, d.instanceID, "deprovision", 0, nil)
 	if err != nil {
 		d.logger.Error("failed to track completion: %s", err)
 	}
@@ -447,7 +564,10 @@ func (d *deprovisioningPhase) handleDeploymentCleanedDuringRetry(ctx context.Con
 func (d *deprovisioningPhase) removeFromIndex(ctx context.Context, message string) bool {
 	d.broker.trackProgress(ctx, d.instanceID, "deprovision", message, 0, nil, d.logger)
 
-	err := d.broker.Vault.Index(ctx, d.instanceID, nil)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := d.broker.Vault.Index(recordCtx, d.instanceID, nil)
 	if err != nil {
 		d.logger.Error("failed to remove service from vault index: %s", err)
 
@@ -466,7 +586,11 @@ func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
 	// Get existing metadata
 	var metadata map[string]interface{}
 
-	exists, err := d.broker.Vault.Get(ctx, d.instanceID+"/metadata", &metadata)
+	getCtx, cancelGet := recordContext(ctx)
+	exists, err := d.broker.Vault.Get(getCtx, d.instanceID+"/metadata", &metadata)
+
+	cancelGet()
+
 	if err != nil || !exists {
 		metadata = make(map[string]interface{})
 	}
@@ -475,7 +599,10 @@ func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
 	metadata["deleted_at"] = deletedAt.Format(time.RFC3339)
 
 	// Store updated metadata
-	err = d.broker.Vault.Put(ctx, d.instanceID+"/metadata", metadata)
+	putCtx, cancelPut := recordContext(ctx)
+	defer cancelPut()
+
+	err = d.broker.Vault.Put(putCtx, d.instanceID+"/metadata", metadata)
 	if err != nil {
 		d.logger.Error("failed to store deleted_at timestamp: %s", err)
 	}
@@ -522,6 +649,8 @@ func (d *deprovisioningPhase) handleTaskSuccess(ctx context.Context) {
 //
 // This provides defense-in-depth alongside the LastOperation cleanup mechanism.
 func (d *deprovisioningPhase) monitorAndCleanupTask(ctx context.Context, task *bosh.Task) {
+	defer d.broker.noteMonitorExited(d.instanceID)
+
 	d.logger.Info("Monitoring BOSH task %d for completion", task.ID)
 
 	ticker := time.NewTicker(taskPollInterval())
@@ -571,6 +700,14 @@ func (d *deprovisioningPhase) monitorAndCleanupTask(ctx context.Context, task *b
 	}
 }
 
+// noteMonitorExited reports that a deprovision monitor goroutine has returned
+// to the monitorExited hook. It does nothing when no hook is set.
+func (b *Broker) noteMonitorExited(instanceID string) {
+	if b.monitorExited != nil {
+		b.monitorExited(instanceID)
+	}
+}
+
 // resolveDeleteTask names the delete task the broker started. bosh-cli returns
 // once the delete task has finished, and the adapter then reports the
 // deployment's newest task, which can be one someone or vm-monitor ran on the
@@ -592,7 +729,10 @@ func (d *deprovisioningPhase) resolveDeleteTask(ctx context.Context) *bosh.Task 
 func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *bosh.Task) {
 	d.logger.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
 
-	err := d.broker.Vault.TrackProgress(ctx, d.instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), task.ID, nil)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := d.broker.Vault.TrackProgress(recordCtx, d.instanceID, "deprovision", fmt.Sprintf("BOSH deletion in progress (task %d)", task.ID), task.ID, nil)
 	if err != nil {
 		d.logger.Error("failed to store deprovision status in the vault: %s", err)
 	}
@@ -612,7 +752,11 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 	params := make(map[interface{}]interface{})
 
 	// Track initial state
-	err := b.Vault.TrackProgress(ctx, instanceID, "provision", "Starting provisioning process", 0, params)
+	recordCtx, cancelRecord := recordContext(ctx)
+	err := b.Vault.TrackProgress(recordCtx, instanceID, "provision", "Starting provisioning process", 0, params)
+
+	cancelRecord()
+
 	if err != nil {
 		logger.Error("failed to initialize provision tracking: %s", err)
 
@@ -705,7 +849,11 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
 
 	// Track initial state
-	err := b.Vault.TrackProgress(ctx, instanceID, "deprovision", "Starting deprovisioning process", 0, nil)
+	recordCtx, cancelRecord := recordContext(ctx)
+	err := b.Vault.TrackProgress(recordCtx, instanceID, "deprovision", "Starting deprovisioning process", 0, nil)
+
+	cancelRecord()
+
 	if err != nil {
 		logger.Error("failed to initialize deprovision tracking: %s", err)
 
@@ -755,10 +903,10 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	phase.trackDeletionProgress(ctx, deleteTask)
 
 	// Launch background task monitor for cleanup
-	// Create a detached context that survives the HTTP request lifecycle
-	// This ensures cleanup happens even if the request context is cancelled
-	monitorCtx := context.WithoutCancel(ctx)
-	go phase.monitorAndCleanupTask(monitorCtx, deleteTask)
+	// The monitor outlives the request, so it runs under the service context,
+	// which a shutdown ends. LastOperation finishes a deprovision whose
+	// monitor is gone.
+	go phase.monitorAndCleanupTask(b.serviceContext(), deleteTask)
 
 	logger.Info("Launched background task monitor for instance %s (task %d)", instanceID, deleteTask.ID)
 }
@@ -798,7 +946,11 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName strin
 		// Track the retry attempt without a task, which keeps the operation in
 		// progress. Only the caller records the deprovision as failed, once
 		// every attempt is spent.
-		trackErr := b.Vault.TrackProgress(ctx, instanceID, "deprovision", fmt.Sprintf("Deletion retry %d/%d failed: %s", attempt, maxRetries, err), 0, nil)
+		recordCtx, cancelRecord := recordContext(ctx)
+		trackErr := b.Vault.TrackProgress(recordCtx, instanceID, "deprovision", fmt.Sprintf("Deletion retry %d/%d failed: %s", attempt, maxRetries, err), 0, nil)
+
+		cancelRecord()
+
 		if trackErr != nil {
 			logger.Error("failed to track retry attempt: %s", trackErr)
 		}
@@ -807,7 +959,15 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName strin
 		if attempt < maxRetries {
 			waitTime := time.Duration(attempt) * retryBackoffMultiplier
 			logger.Debug("Waiting %v before retry attempt %d", waitTime, attempt+1)
-			time.Sleep(waitTime)
+
+			timer := time.NewTimer(waitTime)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+
+				return nil, fmt.Errorf("stopped deleting deployment %s for instance %s after attempt %d of %d because the broker context ended (%w); check whether the broker is shutting down and whether the deployment still exists on the director", deploymentName, instanceID, attempt, maxRetries, ctx.Err())
+			}
 		}
 	}
 

@@ -1164,6 +1164,8 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	ctx, cancel, sigChan := setupSignalHandlingAndContext()
 	defer cancel()
 
+	brokerInstance.ServiceContext = ctx
+
 	cfManager := initializeCFManager(config, logger)
 	reconciler := setupReconciler(config, brokerInstance, vault, boshDirector, cfManager, logger)
 	vmMonitor := setupVMMonitor(vault, boshDirector, config, logger)

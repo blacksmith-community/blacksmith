@@ -49,6 +49,12 @@ func SetTaskPollInterval(d time.Duration) func() {
 	return func() { taskPollOverride.Store(previous) }
 }
 
+// SetMonitorExited sets the hook the broker calls, with the instance ID, each
+// time a deprovision monitor goroutine returns.
+func (b *Broker) SetMonitorExited(hook func(instanceID string)) {
+	b.monitorExited = hook
+}
+
 // WaitForCredentialCleanups blocks until every CredHub cleanup goroutine the
 // broker started has returned.
 func (b *Broker) WaitForCredentialCleanups() {
@@ -108,3 +114,21 @@ func (b *Broker) CompleteBind(ctx context.Context, instanceID, bindingID string,
 
 // RedactedQuery exposes the query string redaction used by the request logs.
 func RedactedQuery(rawQuery string) string { return redactedQuery(rawQuery) }
+
+// RetryDeleteDeployment exposes the deprovision delete retry loop.
+func (b *Broker) RetryDeleteDeployment(ctx context.Context, deploymentName, instanceID string, maxRetries int) error {
+	_, err := b.retryDeleteDeployment(ctx, deploymentName, instanceID, maxRetries)
+
+	return err
+}
+
+// CleanupFailedDeployment exposes the best-effort delete of a failed deployment.
+func (b *Broker) CleanupFailedDeployment(ctx context.Context, deploymentName string) {
+	b.cleanupFailedDeployment(ctx, deploymentName, logger.Get().Named("broker"))
+}
+
+// TearDownAbandonedDeployment exposes the delete of a deployment whose
+// instance was deprovisioned while the deploy was running.
+func (b *Broker) TearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string) {
+	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, logger.Get().Named("broker"))
+}
