@@ -275,13 +275,16 @@ func (s *TokenSource) noteCoveredFailure(err error) {
 	s.log.Debugf("the UAA token refresh failed again (%v), failure %d of this outage, so the cached token, which is valid for another %s, is still in use", err, s.outageFailures, remaining)
 }
 
-// countOutageFailure adds a failure that no cached token covered for to a
-// running outage. The caller sees that failure as an error and logs it. The
-// caller holds s.mu.
+// countOutageFailure counts a failure that no cached token covered for, which
+// the caller sees as an error and logs. It starts an outage when none is
+// running, so the refresh that works again is still reported. The caller holds
+// s.mu.
 func (s *TokenSource) countOutageFailure() {
-	if s.outageFailures > 0 {
-		s.outageFailures++
+	if s.outageFailures == 0 {
+		s.outageSince = s.now()
 	}
+
+	s.outageFailures++
 }
 
 // endOutage logs one notice when a refresh works after a run of failures, and

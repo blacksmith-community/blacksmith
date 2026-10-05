@@ -664,3 +664,89 @@ func TestTokenSourceWarnsOncePerOutageAndReportsRecovery(t *testing.T) {
 
 	assertNoMarkers(t, log.output())
 }
+
+// An outage that lasts past the cached token's expiry is still one outage.
+// The callers see errors once the token is gone, the source adds no further
+// warnings, and the refresh that works again reports every failed refresh.
+func TestTokenSourceOutageThatOutlivesTheCachedToken(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t, nil)
+	clock := newFakeClock()
+	source := newTestTokenSource(t, uaa, clock)
+	log := newCaptureLogger()
+	source.SetLogger(log)
+
+	_ = mustToken(t, source)
+
+	uaa.failing.Store(true)
+	clock.Advance(250 * time.Second)
+
+	_ = mustToken(t, source)
+
+	clock.Advance(5 * time.Second)
+
+	_ = mustToken(t, source)
+
+	// The cached token is now past its expiry.
+	clock.Advance(60 * time.Second)
+
+	for range 2 {
+		_, err := source.Token(context.Background())
+		if err == nil {
+			t.Fatal("expected an error once the cached token has expired and the refresh still fails")
+		}
+	}
+
+	if got := len(log.matching("WARN")); got != 1 {
+		t.Fatalf("expected one warning for the whole outage, got %d:\n%s", got, log.output())
+	}
+
+	uaa.failing.Store(false)
+
+	if got := mustToken(t, source); got == firstToken {
+		t.Fatalf("expected a fresh token once the UAA answers, got %q", got)
+	}
+
+	recovered := log.matching("INFO", "recovered")
+	if len(recovered) != 1 || !strings.Contains(recovered[0], "4 failed") {
+		t.Fatalf("expected one recovery notice counting the 4 failed refreshes, got:\n%s", log.output())
+	}
+
+	assertNoMarkers(t, log.output())
+}
+
+// An outage that begins after the cached token has gone never had a covered
+// failure to warn about, because every caller got the error. The refresh that
+// works again still says so once.
+func TestTokenSourceReportsRecoveryAfterAnOutageWithNoCachedToken(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t, nil)
+	uaa.failing.Store(true)
+
+	clock := newFakeClock()
+	source := newTestTokenSource(t, uaa, clock)
+	log := newCaptureLogger()
+	source.SetLogger(log)
+
+	for range 3 {
+		_, err := source.Token(context.Background())
+		if err == nil {
+			t.Fatal("expected an error while the UAA is down and nothing is cached")
+		}
+	}
+
+	if got := len(log.matching("WARN")); got != 0 {
+		t.Fatalf("expected no source warning when every caller gets the error, got:\n%s", log.output())
+	}
+
+	uaa.failing.Store(false)
+
+	_ = mustToken(t, source)
+
+	recovered := log.matching("INFO", "recovered")
+	if len(recovered) != 1 || !strings.Contains(recovered[0], "3 failed") {
+		t.Fatalf("expected one recovery notice counting the 3 failed refreshes, got:\n%s", log.output())
+	}
+}
