@@ -161,6 +161,59 @@ var _ = Describe("Log leak prevention", func() {
 		})
 	}
 
+	Describe("the originating-identity header", func() {
+		logRequestWith := func(name, value string) string {
+			api := broker.API{Logger: capture}
+			req := httptest.NewRequest(http.MethodGet, "/v2/catalog", nil)
+			req.Header[name] = []string{value}
+			req.Header.Set("X-Broker-API-Version", "2.17")
+
+			api.ServeHTTP(httptest.NewRecorder(), req)
+
+			return capture.output()
+		}
+
+		It("keeps the platform name and masks the identity payload", func() {
+			output := logRequestWith("X-Broker-API-Originating-Identity", "cloudfoundry "+leakSentinelAuth)
+
+			Expect(output).To(ContainSubstring("cloudfoundry <redacted>"))
+			Expect(output).NotTo(ContainSubstring(leakSentinelAuth))
+		})
+
+		It("masks the header however its name is cased", func() {
+			output := logRequestWith("x-broker-api-originating-identity", "kubernetes "+leakSentinelAuth)
+
+			Expect(output).To(ContainSubstring("kubernetes <redacted>"))
+			Expect(output).NotTo(ContainSubstring(leakSentinelAuth))
+		})
+
+		It("masks the whole value when it has no platform and payload split", func() {
+			output := logRequestWith("X-Broker-API-Originating-Identity", leakSentinelAuth)
+
+			Expect(output).To(ContainSubstring("<redacted>"))
+			Expect(output).NotTo(ContainSubstring(leakSentinelAuth))
+		})
+
+		It("masks the whole value when the leading word is not a platform name", func() {
+			output := logRequestWith("X-Broker-API-Originating-Identity", leakSentinelAuth+"=== "+leakSentinelAuth)
+
+			Expect(output).NotTo(ContainSubstring(leakSentinelAuth))
+		})
+
+		It("masks every value of a repeated header", func() {
+			api := broker.API{Logger: capture}
+			req := httptest.NewRequest(http.MethodGet, "/v2/catalog", nil)
+			req.Header.Add("X-Broker-API-Originating-Identity", "cloudfoundry "+leakSentinelAuth)
+			req.Header.Add("X-Broker-API-Originating-Identity", "kubernetes "+leakSentinelAuth)
+
+			api.ServeHTTP(httptest.NewRecorder(), req)
+
+			Expect(capture.output()).To(ContainSubstring("cloudfoundry <redacted>"))
+			Expect(capture.output()).To(ContainSubstring("kubernetes <redacted>"))
+			Expect(capture.output()).NotTo(ContainSubstring(leakSentinelAuth))
+		})
+	})
+
 	for _, path := range []string{"/b/rabbitmq/test", "/v2/catalog"} {
 		path := path
 

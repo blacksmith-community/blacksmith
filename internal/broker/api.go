@@ -142,12 +142,54 @@ func redactedHeaders(h http.Header) http.Header {
 		switch http.CanonicalHeaderKey(name) {
 		case "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "X-Vault-Token":
 			out[name] = []string{"<redacted>"}
+		case "X-Broker-Api-Originating-Identity":
+			masked := make([]string, len(values))
+			for i, value := range values {
+				masked[i] = redactedOriginatingIdentity(value)
+			}
+
+			out[name] = masked
 		default:
 			out[name] = values
 		}
 	}
 
 	return out
+}
+
+// redactedOriginatingIdentity masks the payload of an originating-identity
+// header value, which the OSB API writes as "<platform> <base64 JSON>" and
+// which names the acting user. The platform stays visible because it helps with
+// debugging. A value that does not split into a platform name and a payload is
+// masked whole, since there is no telling what it holds.
+func redactedOriginatingIdentity(value string) string {
+	platform, payload, found := strings.Cut(strings.TrimSpace(value), " ")
+	if !found || strings.TrimSpace(payload) == "" || !isPlatformName(platform) {
+		return "<redacted>"
+	}
+
+	return platform + " <redacted>"
+}
+
+// isPlatformName reports whether s looks like an OSB platform name, such as
+// cloudfoundry or kubernetes, and not a credential that lost its prefix.
+func isPlatformName(s string) bool {
+	const maxPlatformNameLength = 64
+
+	if s == "" || len(s) > maxPlatformNameLength {
+		return false
+	}
+
+	for _, r := range s {
+		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		isDigit := r >= '0' && r <= '9'
+
+		if !isLetter && !isDigit && r != '-' && r != '_' && r != '.' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // redactedQuery returns rawQuery with the values of credential-bearing
