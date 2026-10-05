@@ -75,6 +75,14 @@ func (c CredHubCleanupConfig) SweepMode() string {
 	return c.Sweep
 }
 
+// Configured reports whether any of the four connection properties (url,
+// ca_cert, client_secret, and director_name) is set. A block where none is set
+// has no CredHub connection at all, which is different from a connection that
+// is half filled in and needs the full problem list from Validate.
+func (c CredHubConfig) Configured() bool {
+	return c.URL != "" || c.CACert != "" || c.ClientSecret != "" || c.DirectorName != ""
+}
+
 // Validate returns every problem with an enabled CredHub cleanup block at
 // once. It returns nothing when cleanup is disabled. No problem ever carries
 // the client secret.

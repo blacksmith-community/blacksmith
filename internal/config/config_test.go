@@ -328,3 +328,42 @@ func TestCredHubConfigReadConfig(t *testing.T) {
 		}
 	})
 }
+
+// Configured reports whether any of the four connection properties is set, so
+// the broker can tell a block nobody filled in from one that is half done.
+func TestCredHubConfigConfigured(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*config.CredHubConfig)
+		want   bool
+	}{
+		{name: "empty block", mutate: func(*config.CredHubConfig) {}, want: false},
+		{name: "only the url", mutate: func(c *config.CredHubConfig) { c.URL = "https://10.0.0.6:8844" }, want: true},
+		{name: "only the ca_cert", mutate: func(c *config.CredHubConfig) { c.CACert = "pem" }, want: true},
+		{name: "only the client_secret", mutate: func(c *config.CredHubConfig) { c.ClientSecret = "secret" }, want: true},
+		{name: "only the director_name", mutate: func(c *config.CredHubConfig) { c.DirectorName = "bosh" }, want: true},
+		{name: "only the client_id", mutate: func(c *config.CredHubConfig) { c.ClientID = "blacksmith_credhub" }, want: false},
+		{name: "only the uaa_url", mutate: func(c *config.CredHubConfig) { c.UAAURL = "https://10.0.0.6:8443" }, want: false},
+		{name: "only cleanup enabled", mutate: func(c *config.CredHubConfig) { c.Cleanup.Enabled = true }, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var block config.CredHubConfig
+
+			tt.mutate(&block)
+
+			if got := block.Configured(); got != tt.want {
+				t.Errorf("Configured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	if !validCredHubConfig(t).Configured() {
+		t.Error("a fully set block must be configured")
+	}
+}
