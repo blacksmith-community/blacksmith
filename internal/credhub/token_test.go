@@ -583,3 +583,84 @@ func TestTokenSourceFetchPanicBecomesAnError(t *testing.T) {
 		t.Fatalf("expected the source to recover and fetch token-1, got %q", got)
 	}
 }
+
+// While the UAA stays down inside the margin, the first failed refresh warns
+// and the rest of that outage stays at debug, so an outage does not bury the
+// log in warnings. The refresh that works again says so once, and a later
+// outage warns afresh.
+func TestTokenSourceWarnsOncePerOutageAndReportsRecovery(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t, nil)
+	clock := newFakeClock()
+	source := newTestTokenSource(t, uaa, clock)
+	log := newCaptureLogger()
+	source.SetLogger(log)
+
+	_ = mustToken(t, source)
+
+	uaa.failing.Store(true)
+	clock.Advance(250 * time.Second)
+
+	for range 3 {
+		if got := mustToken(t, source); got != firstToken {
+			t.Fatalf("expected the still-valid cached token, got %q", got)
+		}
+
+		clock.Advance(5 * time.Second)
+	}
+
+	warnings := log.matching("WARN", "refresh failed")
+	if len(warnings) != 1 {
+		t.Fatalf("expected one warning for the whole outage, got %d:\n%s", len(warnings), log.output())
+	}
+
+	for _, want := range []string{"503", "reachable", "credentials"} {
+		if !strings.Contains(warnings[0], want) {
+			t.Errorf("expected the warning to mention %q, got %q", want, warnings[0])
+		}
+	}
+
+	if got := len(log.matching("DEBUG", "refresh failed")); got != 2 {
+		t.Fatalf("expected the two later failures at debug, got %d:\n%s", got, log.output())
+	}
+
+	if got := len(log.matching("INFO", "recovered")); got != 0 {
+		t.Fatalf("expected no recovery notice while the UAA is down, got:\n%s", log.output())
+	}
+
+	uaa.failing.Store(false)
+
+	if got := mustToken(t, source); got == firstToken {
+		t.Fatalf("expected a fresh token once the UAA answers, got %q", got)
+	}
+
+	recovered := log.matching("INFO", "recovered")
+	if len(recovered) != 1 {
+		t.Fatalf("expected one recovery notice, got %d:\n%s", len(recovered), log.output())
+	}
+
+	if !strings.Contains(recovered[0], "3 failed") {
+		t.Errorf("expected the notice to count the 3 failed refreshes, got %q", recovered[0])
+	}
+
+	// An ordinary refresh after recovery says nothing more.
+	clock.Advance(250 * time.Second)
+
+	_ = mustToken(t, source)
+
+	if got := len(log.matching("INFO", "recovered")); got != 1 {
+		t.Fatalf("expected no second recovery notice for an ordinary refresh, got:\n%s", log.output())
+	}
+
+	uaa.failing.Store(true)
+	clock.Advance(250 * time.Second)
+
+	_ = mustToken(t, source)
+
+	if got := len(log.matching("WARN", "refresh failed")); got != 2 {
+		t.Fatalf("expected a new outage to warn again, got %d warnings:\n%s", got, log.output())
+	}
+
+	assertNoMarkers(t, log.output())
+}

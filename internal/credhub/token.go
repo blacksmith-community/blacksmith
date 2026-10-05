@@ -82,6 +82,11 @@ type TokenSource struct {
 	token    string
 	expiry   time.Time
 	inflight *tokenFetch
+
+	// outage tracks a run of failed refreshes the cached token covered for,
+	// so the log gets one warning when it starts and one notice when it ends.
+	outageSince    time.Time
+	outageFailures int
 }
 
 // tokenFetch is one fetch that any number of callers wait on.
@@ -224,13 +229,13 @@ func (s *TokenSource) runFetch(callerCtx context.Context, fetch *tokenFetch) {
 	case err == nil:
 		s.token = token
 		s.expiry = issued.Add(time.Duration(expiresIn) * time.Second)
+		s.endOutage()
 	case s.token != "" && s.expiry.After(s.now()):
-		if s.log != nil {
-			s.log.Warnf("the UAA token refresh failed (%v), so the cached token, which is valid for another %s, is still in use. The next request tries the refresh again. Check that the UAA is reachable and that the client credentials are still accepted",
-				err, s.expiry.Sub(s.now()).Round(time.Second))
-		}
+		s.noteCoveredFailure(err)
 
 		token, err = s.token, nil
+	default:
+		s.countOutageFailure()
 	}
 
 	s.inflight = nil
@@ -239,6 +244,59 @@ func (s *TokenSource) runFetch(callerCtx context.Context, fetch *tokenFetch) {
 	s.mu.Unlock()
 
 	close(fetch.done)
+}
+
+// noteCoveredFailure logs a refresh failure the still-valid cached token
+// covered for. The first failure of an outage is a warning and the rest are
+// debug lines, so an outage does not fill the log with warnings. The caller
+// holds s.mu.
+func (s *TokenSource) noteCoveredFailure(err error) {
+	first := s.outageFailures == 0
+	if first {
+		s.outageSince = s.now()
+	}
+
+	s.outageFailures++
+
+	if s.log == nil {
+		return
+	}
+
+	remaining := s.expiry.Sub(s.now()).Round(time.Second)
+
+	if first {
+		s.log.Warnf("the UAA token refresh failed (%v), so the cached token, which is valid for another %s, is still in use. Every request tries the refresh again, and only the first failure of this outage is a warning. A notice follows when a refresh works again. "+
+			"Likely causes are a UAA that is down or not reachable from the broker, a CA certificate the UAA no longer matches, or client credentials the UAA now refuses",
+			err, remaining)
+
+		return
+	}
+
+	s.log.Debugf("the UAA token refresh failed again (%v), failure %d of this outage, so the cached token, which is valid for another %s, is still in use", err, s.outageFailures, remaining)
+}
+
+// countOutageFailure adds a failure that no cached token covered for to a
+// running outage. The caller sees that failure as an error and logs it. The
+// caller holds s.mu.
+func (s *TokenSource) countOutageFailure() {
+	if s.outageFailures > 0 {
+		s.outageFailures++
+	}
+}
+
+// endOutage logs one notice when a refresh works after a run of failures, and
+// clears the run. The caller holds s.mu.
+func (s *TokenSource) endOutage() {
+	if s.outageFailures == 0 {
+		return
+	}
+
+	if s.log != nil {
+		s.log.Infof("the UAA token refresh recovered, because a refresh succeeded after %d failed refreshes over %s", s.outageFailures, s.now().Sub(s.outageSince).Round(time.Second))
+	}
+
+	s.outageFailures = 0
+	s.outageSince = time.Time{}
 }
 
 // safeFetch runs fetch and turns a panic into an error, so a fault in the
