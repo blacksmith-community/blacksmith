@@ -1201,13 +1201,23 @@ func setupBrokerAndUI(config *config.Config, vault *internalVault.Vault, boshDir
 }
 
 // setupCredHubCleanup builds the CredHub cleaner when credhub.cleanup.enabled
-// is true and hands it to the broker. Every configuration problem is logged
-// in one line and leaves cleanup off, so a bad credhub block never stops the
-// broker from starting. It makes at most one /info call and no UAA or CredHub
+// is true and hands it to the broker. A block with no connection at all gets
+// one warning, and every problem in a partial block is logged in one line.
+// Either way cleanup stays off, so a bad credhub block never stops the broker
+// from starting. It makes at most one /info call and no UAA or CredHub
 // call.
 func setupCredHubCleanup(config *config.Config, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) *credhub.Client {
 	if !config.CredHub.Cleanup.Enabled {
 		logger.Info("CredHub cleanup is disabled (credhub.cleanup.enabled is false), so deprovisioned instances keep their director CredHub variables")
+
+		return nil
+	}
+
+	// Cleanup is on by default, so a broker nobody gave a CredHub connection
+	// lands here. That is not a configuration error to list, only a gap to
+	// name once.
+	if !config.CredHub.Configured() {
+		logger.Warn("CredHub cleanup is on by default, but this broker has no CredHub connection (credhub.url, credhub.ca_cert, credhub.client_secret, and credhub.director_name are all empty), so cleanup is off and deprovisioned instances keep their director CredHub variables. On a Genesis deployment, the BOSH kit's blacksmith-integration feature supplies the connection.")
 
 		return nil
 	}
