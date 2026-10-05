@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -1961,7 +1962,7 @@ func (d *DirectorAdapter) SSHCommand(ctx context.Context, deployment, instance s
 	defer cleanup()
 
 	// Create SSH client and execute command
-	client, err := d.createSSHClient(sshResult, privateKey)
+	client, err := d.createSSHClient(ctx, sshResult, privateKey)
 	if err != nil {
 		return "", err
 	}
@@ -2928,7 +2929,7 @@ func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, slu
 }
 
 // createSSHClient creates an SSH client using the SSH result.
-func (d *DirectorAdapter) createSSHClient(sshResult *boshdirector.SSHResult, privateKey string) (*ssh.Client, error) {
+func (d *DirectorAdapter) createSSHClient(ctx context.Context, sshResult *boshdirector.SSHResult, privateKey string) (sshClient, error) {
 	// Parse the private key
 	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
 	if err != nil {
@@ -2949,60 +2950,187 @@ func (d *DirectorAdapter) createSSHClient(sshResult *boshdirector.SSHResult, pri
 		Timeout:         httpClientTimeout,
 	}
 
+	targetAddr := sshAddress(host.Host)
+
 	if sshResult.GatewayHost != "" {
-		return d.createGatewaySSHClient(sshResult, config, signer)
+		gatewayConfig := &ssh.ClientConfig{
+			User: sshResult.GatewayUsername,
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeys(signer),
+			},
+			HostKeyCallback: d.createSecureHostKeyCallback(sshResult.GatewayHost),
+			Timeout:         httpClientTimeout,
+		}
+
+		return d.createGatewaySSHClient(ctx, sshAddress(sshResult.GatewayHost), targetAddr, gatewayConfig, config)
 	}
 
-	return d.createDirectSSHClient(host.Host, config)
+	return d.createDirectSSHClient(ctx, targetAddr, config)
 }
 
-// createGatewaySSHClient creates an SSH client through a gateway.
-func (d *DirectorAdapter) createGatewaySSHClient(sshResult *boshdirector.SSHResult, config *ssh.ClientConfig, signer ssh.Signer) (*ssh.Client, error) {
-	// Connect to gateway first
-	gatewayAddr := sshResult.GatewayHost + ":22"
-	gatewayConfig := &ssh.ClientConfig{
-		User: sshResult.GatewayUsername,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: d.createSecureHostKeyCallback(sshResult.GatewayHost),
-		Timeout:         httpClientTimeout,
+// sshAddress returns the SSH address of host, bracketing an IPv6 literal.
+func sshAddress(host string) string {
+	return net.JoinHostPort(host, "22")
+}
+
+// sshClient is the part of an SSH client that command execution and cleanup
+// need. A client reached through a gateway also owns the gateway connection.
+type sshClient interface {
+	NewSession() (*ssh.Session, error)
+	Close() error
+}
+
+// gatewayedClient is a target client that owns the gateway client its
+// connection is tunnelled through, so closing it closes both.
+type gatewayedClient struct {
+	*ssh.Client
+
+	gateway *ssh.Client
+}
+
+// Close closes the target client and the gateway client. It always closes
+// both and returns the first error.
+func (c *gatewayedClient) Close() error {
+	err := c.Client.Close()
+	if gatewayErr := c.gateway.Close(); err == nil {
+		err = gatewayErr
 	}
 
-	gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
+	return err
+}
+
+// closeOnceConn closes the connection underneath it at most once, however
+// many callers close it. The SSH library closes a connection when its
+// handshake fails, and the SSH client closes it again later, so every close
+// goes through here. The first closer gets the real result and later closers
+// get net.ErrClosed.
+type closeOnceConn struct {
+	net.Conn
+
+	once sync.Once
+	// closedByContext records that the context watcher made the real close.
+	closedByContext atomic.Bool
+}
+
+func (c *closeOnceConn) Close() error {
+	err := net.ErrClosed
+
+	c.once.Do(func() { err = c.Conn.Close() })
+
+	return err
+}
+
+// closeForContext is the context watcher's close. It marks the connection as
+// closed by the context only when it is the close that takes effect.
+func (c *closeOnceConn) closeForContext() {
+	c.once.Do(func() {
+		c.closedByContext.Store(true)
+
+		_ = c.Conn.Close()
+	})
+}
+
+// handshakeSSH runs the SSH handshake on conn, bounded by ctx. The
+// ClientConfig Timeout only bounds the TCP connect, so a server that accepts
+// and never speaks would otherwise block the handshake forever. The
+// handshake therefore runs under the context's deadline, or under the
+// config's Timeout when the context has none, and ends early when the
+// context is cancelled. conn is closed exactly once when the handshake
+// fails, and is left open for the returned client when it succeeds.
+func handshakeSSH(ctx context.Context, rawConn net.Conn, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	conn := &closeOnceConn{Conn: rawConn}
+
+	if deadline, ok := ctx.Deadline(); ok {
+		// Tunnelled channels do not support deadlines; the AfterFunc below
+		// still ends their handshake.
+		_ = conn.SetDeadline(deadline)
+	} else if config.Timeout > 0 {
+		_ = conn.SetDeadline(time.Now().Add(config.Timeout))
+	}
+
+	stop := context.AfterFunc(ctx, conn.closeForContext)
+
+	nconn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	stopped := stop()
+
+	if err != nil {
+		// The library closed the connection already; this keeps the
+		// guarantee independent of that.
+		_ = conn.Close()
+
+		// Report the context only when its watcher closed the connection
+		// under the handshake. Any other failure is the handshake's own.
+		if conn.closedByContext.Load() {
+			return nil, fmt.Errorf("SSH handshake with %s ended with its context: %w", addr, context.Cause(ctx))
+		}
+
+		return nil, err
+	}
+
+	if !stopped {
+		// The context ended after the handshake completed and its watcher
+		// is closing the connection, so the client would be dead.
+		_ = conn.Close()
+
+		return nil, fmt.Errorf("SSH handshake with %s ended with its context: %w", addr, context.Cause(ctx))
+	}
+
+	// The handshake deadline must not cut off the session that follows.
+	_ = conn.SetDeadline(time.Time{})
+
+	return ssh.NewClient(nconn, chans, reqs), nil
+}
+
+// createGatewaySSHClient creates an SSH client through a gateway. The
+// gateway client stays open until the returned client is closed.
+func (d *DirectorAdapter) createGatewaySSHClient(ctx context.Context, gatewayAddr, targetAddr string, gatewayConfig, config *ssh.ClientConfig) (sshClient, error) {
+	// Connect to gateway first
+	gatewayConn, err := (&net.Dialer{Timeout: gatewayConfig.Timeout}).DialContext(ctx, "tcp", gatewayAddr)
 	if err != nil {
 		d.log.Errorf("Failed to connect to gateway %s: %v", gatewayAddr, err)
 
 		return nil, fmt.Errorf("failed to connect to gateway: %w", err)
 	}
 
-	defer func() { _ = gatewayClient.Close() }()
+	gatewayClient, err := handshakeSSH(ctx, gatewayConn, gatewayAddr, gatewayConfig)
+	if err != nil {
+		d.log.Errorf("Failed to connect to gateway %s: %v", gatewayAddr, err)
+
+		return nil, fmt.Errorf("failed to connect to gateway: %w", err)
+	}
 
 	// Connect to target host through gateway
-	targetAddr := sshResult.Hosts[0].Host + ":22"
-
-	conn, err := gatewayClient.Dial("tcp", targetAddr)
+	conn, err := gatewayClient.DialContext(ctx, "tcp", targetAddr)
 	if err != nil {
+		_ = gatewayClient.Close()
+
 		d.log.Errorf("Failed to connect to target host %s through gateway: %v", targetAddr, err)
 
 		return nil, fmt.Errorf("failed to connect to target host through gateway: %w", err)
 	}
 
-	nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
+	targetClient, err := handshakeSSH(ctx, conn, targetAddr, config)
 	if err != nil {
+		_ = gatewayClient.Close()
+
 		d.log.Errorf("Failed to establish SSH connection to %s: %v", targetAddr, err)
 
 		return nil, fmt.Errorf("failed to establish SSH connection: %w", err)
 	}
 
-	return ssh.NewClient(nconn, chans, reqs), nil
+	return &gatewayedClient{Client: targetClient, gateway: gatewayClient}, nil
 }
 
 // createDirectSSHClient creates a direct SSH client connection.
-func (d *DirectorAdapter) createDirectSSHClient(host string, config *ssh.ClientConfig) (*ssh.Client, error) {
-	addr := host + ":22"
+func (d *DirectorAdapter) createDirectSSHClient(ctx context.Context, addr string, config *ssh.ClientConfig) (sshClient, error) {
+	conn, err := (&net.Dialer{Timeout: config.Timeout}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		d.log.Errorf("Failed to connect to %s: %v", addr, err)
 
-	client, err := ssh.Dial("tcp", addr, config)
+		return nil, fmt.Errorf("failed to connect to host: %w", err)
+	}
+
+	client, err := handshakeSSH(ctx, conn, addr, config)
 	if err != nil {
 		d.log.Errorf("Failed to connect to %s: %v", addr, err)
 
@@ -3013,7 +3141,7 @@ func (d *DirectorAdapter) createDirectSSHClient(host string, config *ssh.ClientC
 }
 
 // executeSSHCommand executes the command on the SSH client.
-func (d *DirectorAdapter) executeSSHCommand(client *ssh.Client, command string, args []string) (string, error) {
+func (d *DirectorAdapter) executeSSHCommand(client sshClient, command string, args []string) (string, error) {
 	// Create a session
 	session, err := client.NewSession()
 	if err != nil {
