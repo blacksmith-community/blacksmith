@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"unicode"
 
 	"blacksmith/pkg/logger"
 )
@@ -151,7 +153,9 @@ func redactedHeaders(h http.Header) http.Header {
 // redactedQuery returns rawQuery with the values of credential-bearing
 // parameters replaced, so debug logs show which parameters arrived without
 // their secrets. A parameter is credential-bearing when its name contains
-// password, secret, token, or key, in any case.
+// password, secret, or token in any case, or when "key" is a whole word of
+// the name (api_key, apiKey, ssh-key) or the name ends in a known key name
+// such as apikey. A name like keyword stays visible.
 func redactedQuery(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
@@ -170,15 +174,68 @@ func redactedQuery(rawQuery string) string {
 			decoded = name
 		}
 
-		lower := strings.ToLower(decoded)
-		for _, marker := range []string{"password", "secret", "token", "key"} {
-			if strings.Contains(lower, marker) {
-				pairs[i] = name + "=<redacted>"
-
-				break
-			}
+		if isCredentialParameter(decoded) {
+			pairs[i] = name + "=<redacted>"
 		}
 	}
 
 	return strings.Join(pairs, "&")
+}
+
+// keyNameSuffixes are names that end in a key without a word break.
+var keyNameSuffixes = []string{"apikey", "accesskey", "secretkey", "privatekey", "signingkey", "encryptionkey", "sshkey"}
+
+func isCredentialParameter(name string) bool {
+	lower := strings.ToLower(name)
+
+	for _, marker := range []string{"password", "secret", "token"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	for _, suffix := range keyNameSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+
+	return slices.Contains(nameWords(name), "key")
+}
+
+// nameWords splits a parameter name into lower-case words at every character
+// that is not a letter or digit and before each capital that follows a
+// lower-case letter, so api_key, api-key, and apiKey all give api and key.
+func nameWords(name string) []string {
+	var (
+		words   []string
+		current []rune
+		last    rune
+	)
+
+	flush := func() {
+		if len(current) > 0 {
+			words = append(words, strings.ToLower(string(current)))
+			current = nil
+		}
+	}
+
+	for _, char := range name {
+		switch {
+		case !unicode.IsLetter(char) && !unicode.IsDigit(char):
+			flush()
+		case unicode.IsUpper(char) && unicode.IsLower(last):
+			flush()
+
+			current = append(current, char)
+		default:
+			current = append(current, char)
+		}
+
+		last = char
+	}
+
+	flush()
+
+	return words
 }
