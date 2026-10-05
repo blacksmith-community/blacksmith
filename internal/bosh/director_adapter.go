@@ -117,8 +117,7 @@ func (da *DirectorAdapter) GetConfig(configType, configName string) (interface{}
 		return nil, fmt.Errorf("%w %s/%s: %w", ErrGetConfigFailed, configType, configName, err)
 	}
 
-	da.log.Debugf("Retrieved config %s/%s successfully", configType, configName)
-	da.log.Debugf("Config content:\n%s", config.Content)
+	da.log.Debugf("Retrieved config %s/%s successfully (size: %d bytes, content not logged)", configType, configName, len(config.Content))
 
 	// Parse the YAML content to return as a map
 	var configData map[string]interface{}
@@ -130,7 +129,7 @@ func (da *DirectorAdapter) GetConfig(configType, configName string) (interface{}
 		return nil, fmt.Errorf("%w: %w", ErrConfigYAMLParseFailed, err)
 	}
 
-	da.log.Debugf("Parsed config data: %+v", configData)
+	da.log.Debugf("Parsed config %s/%s into %d top-level keys", configType, configName, len(configData))
 
 	return configData, nil
 }
