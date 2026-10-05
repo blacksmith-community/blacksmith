@@ -10,9 +10,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
+
+	"blacksmith/pkg/logger"
 )
 
 const (
@@ -68,6 +71,8 @@ func (e *UAAError) Error() string {
 // concurrent use.
 type TokenSource struct {
 	tokenURL     string
+	resolveURL   func() (string, error)
+	log          logger.Logger
 	clientID     string
 	clientSecret string
 	httpClient   *http.Client
@@ -129,8 +134,39 @@ func NewTokenSource(uaaURL, clientID, clientSecret, caCert string, now func() ti
 	}, nil
 }
 
+// NewLazyTokenSource builds a token source whose UAA URL comes from resolve,
+// which runs on a fetch until it succeeds and is not called again afterwards.
+// It lets a source be built while the URL is still unknown, such as when the
+// director's /info was unreachable at boot, and recover on a later fetch.
+func NewLazyTokenSource(resolve func() (string, error), clientID, clientSecret, caCert string, now func() time.Time) (*TokenSource, error) {
+	if resolve == nil {
+		return nil, ErrInvalidUAAURL
+	}
+
+	source, err := NewTokenSource("https://unresolved.invalid", clientID, clientSecret, caCert, now)
+	if err != nil {
+		return nil, err
+	}
+
+	source.tokenURL = ""
+	source.resolveURL = resolve
+
+	return source, nil
+}
+
+// SetLogger sets where the source logs a refresh failure it papered over with
+// a still-valid cached token. Without one it logs nothing.
+func (s *TokenSource) SetLogger(log logger.Logger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.log = log
+}
+
 // Token returns a token with more than refreshMargin of validity left,
-// fetching one when the cache has none. Callers that arrive during a fetch
+// fetching one when the cache has none. When that fetch fails and the cached
+// token has not yet expired, the cached token is returned and the failure is
+// logged. Callers that arrive during a fetch
 // share it, and each returns early when its own context ends.
 func (s *TokenSource) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
@@ -180,13 +216,21 @@ func (s *TokenSource) runFetch(callerCtx context.Context, fetch *tokenFetch) {
 	defer cancel()
 
 	issued := s.now()
-	token, expiresIn, err := s.fetch(ctx)
+	token, expiresIn, err := s.safeFetch(ctx)
 
 	s.mu.Lock()
 
-	if err == nil {
+	switch {
+	case err == nil:
 		s.token = token
 		s.expiry = issued.Add(time.Duration(expiresIn) * time.Second)
+	case s.token != "" && s.expiry.After(s.now()):
+		if s.log != nil {
+			s.log.Warnf("the UAA token refresh failed (%v), so the cached token, which is valid for another %s, is still in use. The next request tries the refresh again. Check that the UAA is reachable and that the client credentials are still accepted",
+				err, s.expiry.Sub(s.now()).Round(time.Second))
+		}
+
+		token, err = s.token, nil
 	}
 
 	s.inflight = nil
@@ -197,7 +241,34 @@ func (s *TokenSource) runFetch(callerCtx context.Context, fetch *tokenFetch) {
 	close(fetch.done)
 }
 
+// safeFetch runs fetch and turns a panic into an error, so a fault in the
+// fetch fails its waiters instead of crashing the broker.
+func (s *TokenSource) safeFetch(ctx context.Context) (token string, expiresIn int64, err error) {
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			token, expiresIn = "", 0
+			err = fmt.Errorf("%w: the token fetch panicked: %s\n%s", ErrUAAUnreachable, s.scrub(fmt.Sprint(recovered)), debug.Stack())
+		}
+	}()
+
+	return s.fetch(ctx)
+}
+
 func (s *TokenSource) fetch(ctx context.Context) (string, int64, error) {
+	if s.tokenURL == "" {
+		resolved, err := s.resolveURL()
+		if err != nil {
+			return "", 0, fmt.Errorf("%w: finding the UAA URL: %w", ErrUAAUnreachable, err)
+		}
+
+		if !isHTTPSURL(resolved) {
+			return "", 0, fmt.Errorf("%w: %s", ErrInvalidUAAURL, redactURL(resolved))
+		}
+
+		s.tokenURL = strings.TrimRight(resolved, "/") + "/oauth/token"
+	}
+
 	form := url.Values{"grant_type": {"client_credentials"}}
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.tokenURL, strings.NewReader(form.Encode()))
@@ -296,6 +367,20 @@ func pinnedHTTPClient(caCert string) (*http.Client, error) {
 			return http.ErrUseLastResponse
 		},
 	}, nil
+}
+
+// redactURL returns raw without any userinfo, so a URL that carries a
+// password is safe to put in a log line or a problem string. A URL that does
+// not parse is replaced by a placeholder rather than echoed.
+func redactURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "[unparseable URL]"
+	}
+
+	parsed.User = nil
+
+	return parsed.String()
 }
 
 func isHTTPSURL(raw string) bool {

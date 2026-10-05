@@ -123,22 +123,96 @@ func TestBuildCleanerInvalidConfigListsEveryProblem(t *testing.T) {
 	}
 }
 
-func TestBuildCleanerInfoFailureWithoutUAAURL(t *testing.T) {
+// A director that is down at boot must not leave cleanup off until the broker
+// restarts. The cleaner is built, and its token source asks /info again.
+func TestBuildCleanerInfoFailureWithoutUAAURLRetriesLater(t *testing.T) {
 	t.Parallel()
 
-	director := newWireDirector(wireUAAURL)
+	uaa := newFakeUAA(t, nil)
+	fake := newFakeCredHub(t, func(int, *http.Request) (int, string) { return http.StatusOK, emptyFind })
+
+	cfg := validWireConfig(t)
+	cfg.URL = fake.server.URL
+	cfg.CACert = serverCA(fake.server)
+
+	director := newWireDirector(uaa.server.URL)
 	director.infoErr = errInfoDown
+	log := newCaptureLogger()
 
-	cleaner, client, problems := credhub.BuildCleaner(validWireConfig(t), unrelatedCA(t), director, wirePlans, newCaptureLogger())
-	assertNotBuilt(t, cleaner, client, problems)
-
-	if !strings.Contains(problems[0], "credhub.uaa_url is empty") || !strings.Contains(problems[0], errInfoDown.Error()) {
-		t.Fatalf("expected the problem to name the empty uaa_url and the /info error, got %q", problems[0])
+	cleaner, client, problems := credhub.BuildCleaner(cfg, serverCA(uaa.server), director, wirePlans, log)
+	if len(problems) != 0 || cleaner == nil || client == nil {
+		t.Fatalf("expected a cleaner and a client despite the /info failure, got problems %v", problems)
 	}
 
-	if director.infoCalls.Load() != 1 {
-		t.Fatalf("expected exactly one /info call, got %d", director.infoCalls.Load())
+	if len(log.matching("WARN", "/info failed", errInfoDown.Error(), "asks /info again")) != 1 {
+		t.Fatalf("expected one warning that names the /info failure, got:\n%s", log.output())
 	}
+
+	_, err := client.FindByPath(context.Background(), "/"+labDirector+"/x/")
+	if err == nil || !strings.Contains(err.Error(), errInfoDown.Error()) {
+		t.Fatalf("expected a find while /info is still down to fail with the /info error, got %v", err)
+	}
+
+	if uaa.requests.Load() != 0 || len(fake.requests()) != 0 {
+		t.Fatalf("expected no UAA or CredHub call before the UAA URL is known, got %d and %d", uaa.requests.Load(), len(fake.requests()))
+	}
+
+	director.infoErr = nil
+
+	_, err = client.FindByPath(context.Background(), "/"+labDirector+"/x/")
+	if err != nil {
+		t.Fatalf("expected the find to succeed once /info answers, got %v", err)
+	}
+
+	if uaa.requests.Load() != 1 || len(fake.requests()) != 1 {
+		t.Fatalf("expected one UAA and one CredHub request, got %d and %d", uaa.requests.Load(), len(fake.requests()))
+	}
+
+	calls := director.infoCalls.Load()
+
+	_, _ = client.FindByPath(context.Background(), "/"+labDirector+"/y/")
+
+	if director.infoCalls.Load() != calls {
+		t.Fatalf("expected /info not to be asked again once the UAA URL is known")
+	}
+}
+
+// A URL that carries a password must never reach a problem string.
+func TestBuildCleanerProblemsStripURLUserinfo(t *testing.T) {
+	t.Parallel()
+
+	const password = "hunter2-url-password"
+
+	t.Run("uaa url", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := validWireConfig(t)
+		cfg.UAAURL = "https://admin:" + password + "@10.0.0.6:8443"
+
+		cleaner, client, problems := credhub.BuildCleaner(cfg, unrelatedCA(t), newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
+		assertNotBuilt(t, cleaner, client, problems)
+
+		joined := strings.Join(problems, "\n")
+		if strings.Contains(joined, password) || !strings.Contains(joined, "https://10.0.0.6:8443") {
+			t.Fatalf("expected the UAA URL without its userinfo, got %q", joined)
+		}
+	})
+
+	t.Run("credhub url", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := validWireConfig(t)
+		cfg.URL = "https://admin:" + password + "@10.0.0.6:8844"
+		cfg.UAAURL = wireUAAURL
+
+		cleaner, client, problems := credhub.BuildCleaner(cfg, unrelatedCA(t), newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
+		assertNotBuilt(t, cleaner, client, problems)
+
+		joined := strings.Join(problems, "\n")
+		if strings.Contains(joined, password) || !strings.Contains(joined, "https://10.0.0.6:8844") {
+			t.Fatalf("expected the CredHub URL without its userinfo, got %q", joined)
+		}
+	})
 }
 
 func TestBuildCleanerInfoWithoutUAA(t *testing.T) {

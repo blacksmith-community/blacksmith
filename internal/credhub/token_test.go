@@ -34,6 +34,7 @@ type fakeUAA struct {
 	body      string
 	block     chan struct{}
 	arrived   chan struct{}
+	failing   atomic.Bool
 }
 
 func newFakeUAA(t *testing.T, configure func(*fakeUAA)) *fakeUAA {
@@ -99,6 +100,12 @@ func (u *fakeUAA) handle(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	writer.Header().Set("Content-Type", "application/json")
+
+	if u.failing.Load() {
+		writer.WriteHeader(http.StatusServiceUnavailable)
+
+		return
+	}
 
 	if u.status != http.StatusOK || u.body != "" {
 		writer.WriteHeader(u.status)
@@ -505,4 +512,74 @@ func runConcurrently(t *testing.T, callers int, call func() (string, error)) []s
 	}
 
 	return out
+}
+
+// A refresh that fails inside the margin must not take away a token that is
+// still valid, and the failure must reach the log.
+func TestTokenSourceServesValidCachedTokenWhenRefreshFails(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t, nil)
+	clock := newFakeClock()
+	source := newTestTokenSource(t, uaa, clock)
+	log := newCaptureLogger()
+	source.SetLogger(log)
+
+	_ = mustToken(t, source)
+
+	uaa.failing.Store(true)
+	clock.Advance(250 * time.Second)
+
+	if got := mustToken(t, source); got != firstToken {
+		t.Fatalf("expected the still-valid cached token, got %q", got)
+	}
+
+	if uaa.requests.Load() != 2 {
+		t.Fatalf("expected the refresh to be tried, got %d UAA requests", uaa.requests.Load())
+	}
+
+	if len(log.matching("WARN", "refresh failed", "503")) != 1 {
+		t.Fatalf("expected one warning naming the refresh failure, got:\n%s", log.output())
+	}
+
+	clock.Advance(60 * time.Second)
+
+	_, err := source.Token(context.Background())
+	if err == nil {
+		t.Fatal("expected an error once the cached token has expired and the refresh still fails")
+	}
+}
+
+// A panic inside the fetch fails the waiters with an error rather than
+// crashing the process, and the source works again afterwards.
+func TestTokenSourceFetchPanicBecomesAnError(t *testing.T) {
+	t.Parallel()
+
+	uaa := newFakeUAA(t, nil)
+
+	var calls atomic.Int64
+
+	resolve := func() (string, error) {
+		if calls.Add(1) == 1 {
+			panic("resolver exploded with " + secretMarker)
+		}
+
+		return uaa.server.URL, nil
+	}
+
+	source, err := credhub.NewLazyTokenSource(resolve, testClientID, secretMarker, serverCA(uaa.server), nil)
+	if err != nil {
+		t.Fatalf("NewLazyTokenSource: %v", err)
+	}
+
+	_, err = source.Token(context.Background())
+	if !errors.Is(err, credhub.ErrUAAUnreachable) || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("expected a panic error, got %v", err)
+	}
+
+	assertNoMarkers(t, err.Error())
+
+	if got := mustToken(t, source); got != firstToken {
+		t.Fatalf("expected the source to recover and fetch token-1, got %q", got)
+	}
 }

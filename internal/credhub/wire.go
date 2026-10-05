@@ -2,6 +2,8 @@ package credhub
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"blacksmith/internal/config"
@@ -22,7 +24,8 @@ const (
 // found. The UAA URL is credhub.uaa_url, or else the one the director reports
 // in /info, and the UAA is trusted through boshCACert. BuildCleaner makes at
 // most one /info call and never calls UAA or CredHub, so it cannot hold up
-// startup. plans is read on every cleanup run, so the catalog's plan IDs are
+// startup. When that /info call fails, the cleaner is still built and looks
+// the UAA URL up again when it first needs a token. plans is read on every cleanup run, so the catalog's plan IDs are
 // always current. No problem ever carries the client secret.
 func BuildCleaner(cfg config.CredHubConfig, boshCACert string, director directorProber, plans func() []string, log logger.Logger) (*Cleaner, *Client, []string) {
 	if !cfg.Cleanup.Enabled {
@@ -43,14 +46,9 @@ func BuildCleaner(cfg config.CredHubConfig, boshCACert string, director director
 		return nil, nil, problems
 	}
 
-	uaaURL, infoName, problem := findUAAURL(cfg, director)
+	tokens, infoName, problem := buildTokenSource(cfg, boshCACert, director, log)
 	if problem != "" {
 		return nil, nil, []string{problem}
-	}
-
-	tokens, err := NewTokenSource(uaaURL, cfg.ClientID, cfg.ClientSecret, boshCACert, nil)
-	if err != nil {
-		return nil, nil, []string{"the UAA token source for " + uaaURL + " could not be built (" + err.Error() + "). Check bosh.cacert, which is the trust anchor for the director's UAA"}
 	}
 
 	protected := ProtectedPrefixes(Policy{
@@ -61,7 +59,7 @@ func BuildCleaner(cfg config.CredHubConfig, boshCACert string, director director
 
 	client, err := NewClient(ClientConfig{URL: cfg.URL, CACert: cfg.CACert}, tokens, protected)
 	if err != nil {
-		return nil, nil, []string{"the CredHub client for " + cfg.URL + " could not be built (" + err.Error() + ")"}
+		return nil, nil, []string{"the CredHub client for " + redactURL(cfg.URL) + " could not be built (" + err.Error() + ")"}
 	}
 
 	policy := func() Policy {
@@ -75,24 +73,66 @@ func BuildCleaner(cfg config.CredHubConfig, boshCACert string, director director
 	return NewCleaner(client, director, policy, log), client, nil
 }
 
-// findUAAURL returns credhub.uaa_url when it is set and otherwise asks the
-// director's /info, returning the director's reported name as well. A
-// non-empty problem says why no URL was found.
-func findUAAURL(cfg config.CredHubConfig, director directorProber) (string, string, string) {
-	if cfg.UAAURL != "" {
-		return cfg.UAAURL, "", ""
+// buildTokenSource builds the UAA token source. With credhub.uaa_url set it
+// never calls /info. Otherwise it asks the director's /info once. When that
+// call fails, the source is built anyway and asks /info again on each fetch
+// until it answers, so a director that was briefly down at boot does not
+// leave cleanup off until the broker restarts. A /info that answers without a
+// UAA is a configuration problem and is returned as one. The returned name is
+// the director name /info reported, or empty when it was not read.
+func buildTokenSource(cfg config.CredHubConfig, boshCACert string, director directorProber, log logger.Logger) (*TokenSource, string, string) {
+	uaaURL := cfg.UAAURL
+	infoName := ""
+
+	var resolve func() (string, error)
+
+	if uaaURL == "" {
+		info, err := director.GetInfo()
+
+		switch {
+		case err != nil:
+			log.Warnf("credhub.uaa_url is empty and the director's /info failed (%v), so the UAA that issues CredHub tokens is not known yet. CredHub cleanup stays enabled and asks /info again on each run. Set credhub.uaa_url or check that the director is reachable", err)
+
+			resolve = func() (string, error) { return infoUAAURL(director) }
+		case info == nil || info.UAAURL == "":
+			return nil, "", "credhub.uaa_url is empty and the director's /info names no UAA, which happens when the director does not use UAA authentication. Set credhub.uaa_url to the UAA that CredHub trusts"
+		default:
+			uaaURL, infoName = info.UAAURL, info.Name
+		}
 	}
 
+	var (
+		tokens *TokenSource
+		err    error
+	)
+
+	if resolve != nil {
+		tokens, err = NewLazyTokenSource(resolve, cfg.ClientID, cfg.ClientSecret, boshCACert, nil)
+	} else {
+		tokens, err = NewTokenSource(uaaURL, cfg.ClientID, cfg.ClientSecret, boshCACert, nil)
+	}
+
+	if err != nil {
+		return nil, "", "the UAA token source for " + redactURL(uaaURL) + " could not be built (" + err.Error() + "). Check bosh.cacert, which is the trust anchor for the director's UAA"
+	}
+
+	tokens.SetLogger(log)
+
+	return tokens, infoName, ""
+}
+
+// infoUAAURL asks the director's /info for the UAA URL.
+func infoUAAURL(director directorProber) (string, error) {
 	info, err := director.GetInfo()
 	if err != nil {
-		return "", "", "credhub.uaa_url is empty and the director's /info failed (" + err.Error() + "), so the UAA that issues CredHub tokens is unknown. Set credhub.uaa_url or check that the director is reachable"
+		return "", fmt.Errorf("the director's /info failed: %w", err)
 	}
 
 	if info == nil || info.UAAURL == "" {
-		return "", "", "credhub.uaa_url is empty and the director's /info names no UAA, which happens when the director does not use UAA authentication. Set credhub.uaa_url to the UAA that CredHub trusts"
+		return "", errors.New("the director's /info names no UAA")
 	}
 
-	return info.UAAURL, info.Name, ""
+	return info.UAAURL, nil
 }
 
 // Probe lists /<director>/blacksmith-credhub-probe/, a path that never
