@@ -702,6 +702,20 @@ var _ = Describe("CredHub cleanup", func() {
 			Eventually(cleaner.Targets, 5*time.Second).Should(HaveLen(1))
 		})
 
+		It("counts a panic in the vault read as no deprovision request instead of crashing", func() {
+			cleaner := useCleaner(cleanerSucceeds)
+
+			// A nil vault makes the read panic.
+			brokerInstance.Vault = nil
+
+			brokerInstance.CleanupDeploymentCredentials(ctx, instanceID, deploymentName)
+			brokerInstance.WaitForCredentialCleanups()
+
+			Expect(cleaner.Targets()).To(BeEmpty())
+			Expect(capture.output()).To(ContainSubstring("panicked"))
+			Expect(capture.output()).To(ContainSubstring("was not deprovisioned through the broker"))
+		})
+
 		It("does nothing when no cleaner is configured", func() {
 			Expect(brokerInstance.CredentialCleaner).To(BeNil())
 

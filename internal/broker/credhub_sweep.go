@@ -47,6 +47,38 @@ type credentialSweepState struct {
 	mu        sync.Mutex
 	lastStart time.Time
 	now       func() time.Time
+	// passTimeout replaces credentialSweepPassTimeout when it is not zero.
+	passTimeout time.Duration
+	// unproven holds the deployments the last pass could not prove orphans,
+	// so the next pass looks at everything else first.
+	unproven map[string]bool
+}
+
+func (s *credentialSweepState) timeout() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.passTimeout > 0 {
+		return s.passTimeout
+	}
+
+	return credentialSweepPassTimeout
+}
+
+// previouslyUnproven reports whether the last pass left deployment alone as
+// not a proven orphan.
+func (s *credentialSweepState) previouslyUnproven(deployment string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.unproven[deployment]
+}
+
+func (s *credentialSweepState) rememberUnproven(deployments map[string]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.unproven = deployments
 }
 
 func (s *credentialSweepState) clock() time.Time {
@@ -182,7 +214,7 @@ func (b *Broker) SweepOrphanedCredentials(ctx context.Context, liveDeployments m
 			}
 		}()
 
-		passCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), credentialSweepPassTimeout)
+		passCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), b.credentialSweep.timeout())
 		defer cancel()
 
 		pass := &sweepPass{broker: b, mode: mode, live: live, cleaner: cleaner, finder: finder, log: log}
@@ -229,6 +261,7 @@ func (p *sweepPass) run(ctx context.Context) {
 	}
 
 	candidates := p.candidates(root, names)
+	unproven := make(map[string]bool)
 
 	for index, candidate := range candidates {
 		if ctx.Err() != nil || p.handled >= credentialSweepMaxCandidates {
@@ -237,11 +270,22 @@ func (p *sweepPass) run(ctx context.Context) {
 			break
 		}
 
+		requestedAt, reason := p.prove(ctx, candidate)
+
+		// A proof the pass deadline cut short says nothing about the
+		// candidate, so it waits for the next pass instead of counting as
+		// examined and unproven.
+		if reason != "" && ctx.Err() != nil {
+			p.deferred = len(candidates) - index
+
+			break
+		}
+
 		p.examined++
 
-		requestedAt, reason := p.prove(ctx, candidate)
 		if reason != "" {
 			p.unproven++
+			unproven[candidate.deployment] = true
 			p.log.Info("CredHub orphan sweep (%s) left %d credentials under %s alone, because deployment %s is not a proven orphan: %s. If Cloud Foundry no longer has instance %s, list them with `credhub find -p %s` and remove each one with `credhub delete -n <name>`.",
 				p.mode, len(candidate.names), candidate.prefix, candidate.deployment, reason, candidate.instanceID, candidate.prefix)
 
@@ -251,6 +295,8 @@ func (p *sweepPass) run(ctx context.Context) {
 		p.handled++
 		p.handle(ctx, candidate, requestedAt)
 	}
+
+	p.broker.credentialSweep.rememberUnproven(unproven)
 
 	p.log.Info("CredHub orphan sweep (%s) under %s examined %d candidate deployments: %d proven orphans handled, %d unproven, %d deferred to the next pass",
 		p.mode, root, p.examined, p.handled, p.unproven, p.deferred)
@@ -305,7 +351,7 @@ func (p *sweepPass) candidates(root string, names []string) []sweepCandidate {
 
 	sort.Strings(segments)
 
-	var candidates []sweepCandidate
+	var candidates, unprovenLast []sweepCandidate
 
 	for _, segment := range segments {
 		if p.live[segment] {
@@ -326,10 +372,21 @@ func (p *sweepPass) candidates(root string, names []string) []sweepCandidate {
 			continue
 		}
 
-		candidates = append(candidates, sweepCandidate{deployment: segment, instanceID: instanceID, prefix: prefix, names: grouped[segment]})
+		candidate := sweepCandidate{deployment: segment, instanceID: instanceID, prefix: prefix, names: grouped[segment]}
+
+		// Deployments the last pass could not prove go behind the rest, so
+		// a stubborn few cannot use up the pass before a proven orphan is
+		// reached. Each group stays in name order.
+		if p.broker.credentialSweep.previouslyUnproven(segment) {
+			unprovenLast = append(unprovenLast, candidate)
+
+			continue
+		}
+
+		candidates = append(candidates, candidate)
 	}
 
-	return candidates
+	return append(candidates, unprovenLast...)
 }
 
 // logShapeRefusal logs a path the guard will not treat as a Blacksmith

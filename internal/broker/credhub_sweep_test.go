@@ -401,6 +401,70 @@ var _ = Describe("CredHub sweep", func() {
 		Expect(capture.output()).To(ContainSubstring("15 deferred"))
 	})
 
+	It("counts a proof the pass deadline cut short as deferred, not as examined or unproven", func() {
+		useMode(config.CredHubSweepDelete)
+		useBlockingCleaner(cleanerSucceeds)
+
+		for range 3 {
+			provenOrphan()
+		}
+
+		brokerInstance.SetCredentialSweepPassTimeout(100 * time.Millisecond)
+
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			time.Sleep(300 * time.Millisecond)
+
+			return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+		}
+
+		sweepAndWait()
+
+		Expect(capture.output()).To(ContainSubstring("examined 0 candidate deployments: 0 proven orphans handled, 0 unproven, 3 deferred to the next pass"))
+	})
+
+	It("examines the deployments the last pass could not prove after the rest", func() {
+		useMode(config.CredHubSweepDelete)
+		useBlockingCleaner(cleanerSucceeds)
+
+		unprovenGUID, provenGUID := "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"
+		seededIDs = append(seededIDs, unprovenGUID, provenGUID)
+
+		requestDeprovision(provenGUID, 3*time.Hour)
+
+		for _, guid := range []string{unprovenGUID, provenGUID} {
+			fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(guid))+"valkey_password")
+		}
+
+		var (
+			orderMu sync.Mutex
+			order   []string
+		)
+
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			orderMu.Lock()
+			order = append(order, name)
+			orderMu.Unlock()
+
+			return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+		}
+
+		sweepAndWait()
+
+		orderMu.Lock()
+		Expect(order).To(Equal([]string{deploymentFor(unprovenGUID), deploymentFor(provenGUID)}))
+
+		order = nil
+		orderMu.Unlock()
+
+		clock.Advance(2 * time.Hour)
+		sweepAndWait()
+
+		orderMu.Lock()
+		defer orderMu.Unlock()
+
+		Expect(order).To(Equal([]string{deploymentFor(provenGUID), deploymentFor(unprovenGUID)}))
+	})
+
 	It("returns at once while the cleaner blocks, and a second call during the pass does not list CredHub", func() {
 		useMode(config.CredHubSweepDelete)
 		provenOrphan()

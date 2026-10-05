@@ -112,6 +112,13 @@ func (b *Broker) hasDeprovisionRequest(ctx context.Context, instanceID string) (
 	answers := make(chan answer, 1)
 
 	go func() {
+		defer func() {
+			recovered := recover()
+			if recovered != nil {
+				answers <- answer{err: fmt.Errorf("the vault read panicked: %v\n%s", recovered, debug.Stack())}
+			}
+		}()
+
 		var metadata map[string]interface{}
 
 		exists, err := b.Vault.Get(readCtx, instanceID+"/metadata", &metadata)

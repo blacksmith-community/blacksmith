@@ -64,6 +64,14 @@ func (b *Broker) SetCredentialSweepClock(now func() time.Time) {
 	b.credentialSweep.now = now
 }
 
+// SetCredentialSweepPassTimeout replaces the deadline of one sweep pass.
+func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
+	b.credentialSweep.mu.Lock()
+	defer b.credentialSweep.mu.Unlock()
+
+	b.credentialSweep.passTimeout = timeout
+}
+
 // ProvisionActive reports whether the provisionAsync goroutine for instanceID
 // is still running in this process.
 func (b *Broker) ProvisionActive(instanceID string) bool {
