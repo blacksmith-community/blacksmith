@@ -510,6 +510,116 @@ var _ = Describe("CredHub sweep", func() {
 		Expect(order).To(Equal([]string{deploymentFor(provenGUID), deploymentFor(unprovenGUID)}))
 	})
 
+	It("keeps the same examination order across passes when a pass never reaches the unproven deployments", func() {
+		useMode(config.CredHubSweepDelete)
+		useBlockingCleaner(cleanerSucceeds)
+
+		// Sorted by name, the unproven deployment comes before every proven one.
+		unprovenGUID := "00000000-0000-4000-8000-000000000000"
+		seededIDs = append(seededIDs, unprovenGUID)
+		fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(unprovenGUID))+"valkey_password")
+
+		for i := 1; i <= 11; i++ {
+			guid := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+			seededIDs = append(seededIDs, guid)
+			requestDeprovision(guid, 3*time.Hour)
+			fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(guid))+"valkey_password")
+		}
+
+		var (
+			orderMu sync.Mutex
+			order   []string
+		)
+
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			orderMu.Lock()
+			order = append(order, name)
+			orderMu.Unlock()
+
+			return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+		}
+
+		takeOrder := func() []string {
+			orderMu.Lock()
+			defer orderMu.Unlock()
+
+			taken := order
+			order = nil
+
+			return taken
+		}
+
+		sweepAndWait()
+
+		first := takeOrder()
+		Expect(first[0]).To(Equal(deploymentFor(unprovenGUID)))
+
+		clock.Advance(2 * time.Hour)
+		sweepAndWait()
+
+		second := takeOrder()
+
+		// The ten proven deployments use up the pass before the unproven one.
+		Expect(second).To(HaveLen(10))
+		Expect(second).NotTo(ContainElement(deploymentFor(unprovenGUID)))
+
+		clock.Advance(2 * time.Hour)
+		sweepAndWait()
+
+		Expect(takeOrder()).To(Equal(second))
+	})
+
+	It("forgets a deployment that was unproven once a pass proves it", func() {
+		useMode(config.CredHubSweepDelete)
+		useBlockingCleaner(cleanerSucceeds)
+
+		firstGUID, secondGUID := "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"
+		seededIDs = append(seededIDs, firstGUID, secondGUID)
+
+		requestDeprovision(secondGUID, 3*time.Hour)
+
+		for _, guid := range []string{firstGUID, secondGUID} {
+			fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(guid))+"valkey_password")
+		}
+
+		var (
+			orderMu sync.Mutex
+			order   []string
+		)
+
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			orderMu.Lock()
+			order = append(order, name)
+			orderMu.Unlock()
+
+			return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+		}
+
+		sweepAndWait()
+
+		// Cloud Foundry's request for the first deployment arrives, so it proves.
+		requestDeprovision(firstGUID, 3*time.Hour)
+
+		orderMu.Lock()
+		order = nil
+		orderMu.Unlock()
+
+		clock.Advance(2 * time.Hour)
+		sweepAndWait()
+
+		clock.Advance(2 * time.Hour)
+		orderMu.Lock()
+		order = nil
+		orderMu.Unlock()
+
+		sweepAndWait()
+
+		orderMu.Lock()
+		defer orderMu.Unlock()
+
+		Expect(order).To(Equal([]string{deploymentFor(firstGUID), deploymentFor(secondGUID)}))
+	})
+
 	It("returns at once while the cleaner blocks, and a second call during the pass does not list CredHub", func() {
 		useMode(config.CredHubSweepDelete)
 		provenOrphan()
