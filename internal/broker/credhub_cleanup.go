@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -13,6 +14,10 @@ import (
 // deprovisionProofTimeout bounds the vault read that looks for Cloud
 // Foundry's deprovision request, so a slow vault never holds a caller.
 const deprovisionProofTimeout = 10 * time.Second
+
+// errNoDeprovisionRequest means the instance's metadata holds no usable record
+// of Cloud Foundry's deprovision request.
+var errNoDeprovisionRequest = errors.New("no deprovision request is on record")
 
 // credentialCleaner deletes a gone deployment's variables from the director's
 // CredHub. *credhub.Cleaner implements it.
@@ -77,13 +82,19 @@ func (b *Broker) CleanupDeploymentCredentials(ctx context.Context, instanceID, d
 
 		detached := context.WithoutCancel(ctx)
 
-		_, requested := b.hasDeprovisionRequest(detached, instanceID)
-		if !requested {
+		_, err := b.hasDeprovisionRequest(detached, instanceID)
+		if err != nil {
 			prefix := b.credentialPrefix(deploymentName)
-			log.Warn("CredHub cleanup skipped for deployment %s (instance %s): the instance was not deprovisioned through the broker, because %s/metadata records no delete_requested_at. "+
-				"Its director CredHub variables under %s are left in place. Likely causes are a deployment deleted by hand or a broker that failed to record Cloud Foundry's request. "+
+
+			cause := err.Error()
+			if errors.Is(err, errNoDeprovisionRequest) {
+				cause = "the instance was not deprovisioned through the broker, because " + instanceID + "/metadata records no delete_requested_at"
+			}
+
+			log.Warn("CredHub cleanup skipped for deployment %s (instance %s): %s. "+
+				"Its director CredHub variables under %s are left in place. Likely causes are a deployment deleted by hand, a broker that failed to record Cloud Foundry's request, or a service instance GUID that was provisioned again after an earlier deprovision. "+
 				"If Cloud Foundry no longer has this service instance, list the variables with `credhub find -p %s` and remove each one with `credhub delete -n <name>`.",
-				deploymentName, instanceID, instanceID, prefix, prefix)
+				deploymentName, instanceID, cause, prefix, prefix)
 
 			return
 		}
@@ -92,12 +103,18 @@ func (b *Broker) CleanupDeploymentCredentials(ctx context.Context, instanceID, d
 	}()
 }
 
-// hasDeprovisionRequest reports whether <instanceID>/metadata records the
-// time Cloud Foundry asked the broker to deprovision the instance, and that
-// time. Only the OSB deprovision handler writes the field. A vault error, a
-// missing record, or an unreadable time all count as no request, and the read
-// gives up after deprovisionProofTimeout.
-func (b *Broker) hasDeprovisionRequest(ctx context.Context, instanceID string) (time.Time, bool) {
+// hasDeprovisionRequest returns the time Cloud Foundry asked the broker to
+// deprovision the instance, as <instanceID>/metadata records it. Only the OSB
+// deprovision handler writes delete_requested_at. A vault error, a missing
+// record, or an unreadable time all count as no request, and the read gives up
+// after deprovisionProofTimeout. A request older than the metadata's
+// created_at belongs to an earlier instance that used the same GUID, so it is
+// refused too. Metadata with no created_at carries no later creation to
+// compare against, and the request stands.
+//
+// The error wraps errNoDeprovisionRequest when nothing usable is on record,
+// and says why otherwise.
+func (b *Broker) hasDeprovisionRequest(ctx context.Context, instanceID string) (time.Time, error) {
 	log := logger.Get().Named("broker")
 
 	readCtx, cancel := context.WithTimeout(ctx, deprovisionProofTimeout)
@@ -133,32 +150,59 @@ func (b *Broker) hasDeprovisionRequest(ctx context.Context, instanceID string) (
 		log.Error("could not read %s/metadata to look for Cloud Foundry's deprovision request within %s, so the instance counts as not deprovisioned through the broker: %s",
 			instanceID, deprovisionProofTimeout, readCtx.Err())
 
-		return time.Time{}, false
+		return time.Time{}, errNoDeprovisionRequest
 	}
 
 	if got.err != nil {
 		log.Error("could not read %s/metadata to look for Cloud Foundry's deprovision request, so the instance counts as not deprovisioned through the broker: %s", instanceID, got.err)
 
-		return time.Time{}, false
+		return time.Time{}, errNoDeprovisionRequest
 	}
 
 	if !got.exists {
-		return time.Time{}, false
+		return time.Time{}, errNoDeprovisionRequest
 	}
 
 	raw, ok := got.metadata["delete_requested_at"].(string)
 	if !ok || raw == "" {
-		return time.Time{}, false
+		return time.Time{}, errNoDeprovisionRequest
 	}
 
 	requestedAt, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
 		log.Error("%s/metadata records delete_requested_at as %q, which is not an RFC 3339 time, so the instance counts as not deprovisioned through the broker", instanceID, raw)
 
-		return time.Time{}, false
+		return time.Time{}, errNoDeprovisionRequest
 	}
 
-	return requestedAt, true
+	return requestedAt, b.checkRequestFollowsCreation(instanceID, got.metadata, raw, requestedAt)
+}
+
+// checkRequestFollowsCreation refuses a delete request that is not newer than
+// the creation time in the same metadata. The request is then a leftover of an
+// earlier instance with the same GUID.
+func (b *Broker) checkRequestFollowsCreation(instanceID string, metadata map[string]interface{}, rawRequest string, requestedAt time.Time) error {
+	created, present := metadata["created_at"]
+	if !present {
+		return nil
+	}
+
+	rawCreated, isString := created.(string)
+	if !isString || rawCreated == "" {
+		return fmt.Errorf("%s/metadata records created_at as %v, which is not a time string, so the delete request cannot be shown to follow the instance's creation", instanceID, created)
+	}
+
+	createdAt, err := time.Parse(time.RFC3339, rawCreated)
+	if err != nil {
+		return fmt.Errorf("%s/metadata records created_at as %q, which is not an RFC 3339 time (%w), so the delete request cannot be shown to follow the instance's creation", instanceID, rawCreated, err)
+	}
+
+	if requestedAt.Before(createdAt) {
+		return fmt.Errorf("the delete request at %s predates the instance's created_at of %s in %s/metadata, so it belongs to an earlier instance that used the same GUID",
+			rawRequest, rawCreated, instanceID)
+	}
+
+	return nil
 }
 
 // credentialPrefix names the CredHub path a deployment's variables live under,

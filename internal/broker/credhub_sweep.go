@@ -424,9 +424,13 @@ func (p *sweepPass) prove(ctx context.Context, candidate sweepCandidate) (time.T
 		return time.Time{}, fmt.Sprintf("task %d (%s) is %s on it", task.ID, task.Description, task.State)
 	}
 
-	requestedAt, requested := p.broker.hasDeprovisionRequest(ctx, candidate.instanceID)
-	if !requested {
+	requestedAt, err := p.broker.hasDeprovisionRequest(ctx, candidate.instanceID)
+	if errors.Is(err, errNoDeprovisionRequest) {
 		return time.Time{}, "there is no deprovision request on record, because " + candidate.instanceID + "/metadata has no delete_requested_at"
+	}
+
+	if err != nil {
+		return time.Time{}, err.Error()
 	}
 
 	age := time.Since(requestedAt)

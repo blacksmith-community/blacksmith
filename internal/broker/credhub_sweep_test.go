@@ -386,6 +386,51 @@ var _ = Describe("CredHub sweep", func() {
 		Expect(output).To(ContainSubstring(deploymentFor(taskRunning) + " is not a proven orphan: task 42"))
 	})
 
+	It("does not prove an orphan whose delete request predates the instance's creation, as with a reused GUID", func() {
+		useMode(config.CredHubSweepDelete)
+
+		reused := newGUID()
+		Expect(vaultClient.Put(ctx, reused+"/metadata", map[string]interface{}{
+			"delete_requested_at": time.Now().Add(-5 * time.Hour).Format(time.RFC3339),
+			"created_at":          time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+		})).To(Succeed())
+
+		genuine := newGUID()
+		Expect(vaultClient.Put(ctx, genuine+"/metadata", map[string]interface{}{
+			"created_at":          time.Now().Add(-6 * time.Hour).Format(time.RFC3339),
+			"delete_requested_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+		})).To(Succeed())
+
+		for _, guid := range []string{reused, genuine} {
+			fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(guid))+"valkey_password")
+		}
+
+		sweepAndWait()
+
+		Expect(fakeCredHub.Deleted()).To(Equal([]string{prefixFor(deploymentFor(genuine)) + "valkey_password"}))
+
+		output := capture.output()
+		Expect(output).To(ContainSubstring(deploymentFor(reused) + " is not a proven orphan"))
+		Expect(output).To(ContainSubstring("predates"))
+		Expect(output).To(ContainSubstring("created_at"))
+	})
+
+	It("does not prove an orphan whose created_at is not a time", func() {
+		useMode(config.CredHubSweepDelete)
+
+		garbled := newGUID()
+		Expect(vaultClient.Put(ctx, garbled+"/metadata", map[string]interface{}{
+			"delete_requested_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+			"created_at":          "yesterday-ish",
+		})).To(Succeed())
+		fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(garbled))+"valkey_password")
+
+		sweepAndWait()
+
+		Expect(fakeCredHub.Deleted()).To(BeEmpty())
+		Expect(capture.output()).To(ContainSubstring("yesterday-ish"))
+	})
+
 	It("handles at most 10 proven candidates in one pass and defers the rest", func() {
 		useMode(config.CredHubSweepDelete)
 

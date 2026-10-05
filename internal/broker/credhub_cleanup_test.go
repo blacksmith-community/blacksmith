@@ -660,6 +660,21 @@ var _ = Describe("CredHub cleanup", func() {
 			Eventually(cleaner.Targets, 5*time.Second).Should(Equal([]credhub.Target{expectedTarget()}))
 		})
 
+		It("leaves the credentials alone when the delete request predates the instance's creation", func() {
+			cleaner := useCleaner(cleanerSucceeds)
+
+			Expect(vaultClient.Put(ctx, instanceID+"/metadata", map[string]interface{}{
+				"delete_requested_at": time.Now().Add(-5 * time.Hour).Format(time.RFC3339),
+				"created_at":          time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+			})).To(Succeed())
+
+			brokerInstance.CleanupDeploymentCredentials(ctx, instanceID, deploymentName)
+			brokerInstance.WaitForCredentialCleanups()
+
+			Expect(cleaner.Targets()).To(BeEmpty())
+			Expect(capture.output()).To(ContainSubstring("predates"))
+		})
+
 		It("leaves the credentials alone and says so when only the reconciler marked the instance deleted", func() {
 			cleaner := useCleaner(cleanerSucceeds)
 
