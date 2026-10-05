@@ -200,6 +200,23 @@ var _ = Describe("Log leak prevention", func() {
 			Expect(output).NotTo(ContainSubstring(leakSentinelAuth))
 		})
 
+		It("masks the whole value when the leading word is not a known platform, even if it looks like a name", func() {
+			// A key or token that happens to be one alphanumeric word would
+			// otherwise show up as the platform.
+			output := logRequestWith("X-Broker-API-Originating-Identity", "sentinelkey"+"0123456789 "+leakSentinelAuth)
+
+			Expect(output).To(ContainSubstring("<redacted>"))
+			Expect(output).NotTo(ContainSubstring("sentinelkey0123456789"))
+			Expect(output).NotTo(ContainSubstring(leakSentinelAuth))
+		})
+
+		It("matches the platform name without regard to case and shows it as the platform was sent", func() {
+			output := logRequestWith("X-Broker-API-Originating-Identity", "CloudFoundry "+leakSentinelAuth)
+
+			Expect(output).To(ContainSubstring("CloudFoundry <redacted>"))
+			Expect(output).NotTo(ContainSubstring(leakSentinelAuth))
+		})
+
 		It("masks every value of a repeated header", func() {
 			api := broker.API{Logger: capture}
 			req := httptest.NewRequest(http.MethodGet, "/v2/catalog", nil)
