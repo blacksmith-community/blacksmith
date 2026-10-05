@@ -477,6 +477,32 @@ var _ = Describe("LastOperation", func() {
 			Expect(indexEntryExists()).To(BeFalse())
 		})
 
+		It("refuses a provision of the same GUID with the concurrency error and changes nothing", func() {
+			deprovision()
+
+			Eventually(func() []string { return director.Calls("DeleteDeployment") }).Should(HaveLen(1))
+
+			var before map[string]interface{}
+
+			_, err := vaultClient.Get(ctx, instanceID+"/metadata", &before)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(before).To(HaveKey("delete_requested_at"))
+
+			_, _, err = brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
+				ServiceID: serviceID, PlanID: planID, OrganizationGUID: "org-guid", SpaceGUID: "space-guid",
+			}, true)
+			Expect(err).To(MatchError(osbapi.ErrConcurrencyError))
+
+			var after map[string]interface{}
+
+			_, err = vaultClient.Get(ctx, instanceID+"/metadata", &after)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(after).To(Equal(before), "a refused provision must not touch the metadata the running deprovision relies on")
+			Expect(after).ToNot(HaveKey("provision_requested_at"))
+			Expect(indexEntryExists()).To(BeTrue())
+			Expect(director.Calls("CreateDeployment")).To(BeEmpty())
+		})
+
 		It("accepts a repeated delete while its deprovision runs without starting a second one", func() {
 			operation := deprovision().Operation
 

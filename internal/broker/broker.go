@@ -356,6 +356,15 @@ func (b *Broker) Provision(
 		return osbapi.ProvisionResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
+	// Refuse before any write, because a provision that goes ahead would move
+	// provision_requested_at past the delete request of the deprovision still
+	// running, and that deprovision's credential cleanup would refuse to delete.
+	if b.provisionBlockedByDeprovision(instanceID) {
+		logger.Warning("Rejecting provision of instance %s: its deprovision is still in progress", instanceID)
+
+		return osbapi.ProvisionResponse{}, false, osbapi.ErrConcurrencyError
+	}
+
 	// Record the initial request
 	err := b.recordInitialRequest(ctx, instanceID, details, logger)
 	if err != nil {
@@ -2248,6 +2257,14 @@ func (b *Broker) provisionActive(instanceID string) bool {
 	_, running := b.activeProvisions.Load(instanceID)
 
 	return running
+}
+
+// provisionBlockedByDeprovision reports whether a deprovision of instanceID is
+// in flight, so Provision must refuse the GUID. It reads only the broker's own
+// record of running operations and never asks the director. Every condition
+// that must block provisioning belongs here.
+func (b *Broker) provisionBlockedByDeprovision(instanceID string) bool {
+	return b.deprovisionActive(instanceID)
 }
 
 func (b *Broker) deprovisionActive(instanceID string) bool {
