@@ -109,6 +109,16 @@ var _ = Describe("Log leak prevention", func() {
 		Expect(err.Error()).NotTo(ContainSubstring(leakSentinelPassword))
 	})
 
+	It("keeps the value fragment of a YAML type error out of the log and the error", func() {
+		err := broker.WriteYamlFile("inst-1", []byte("hunter2-not-a-mapping"))
+
+		Expect(err).To(HaveOccurred())
+		Expect(err).To(MatchError(broker.ErrUnmarshalYAMLData))
+		Expect(capture.output()).To(ContainSubstring("Failed to unmarshal"))
+		Expect(capture.output()).NotTo(ContainSubstring("hunter2"))
+		Expect(err.Error()).NotTo(ContainSubstring("hunter2"))
+	})
+
 	It("does not log the RabbitMQ password in the user creation payload", func() {
 		data, err := broker.PrepareUserCreationPayload(leakSentinelPassword, capture)
 
@@ -170,6 +180,18 @@ var _ = Describe("Log leak prevention", func() {
 			Expect(capture.output()).NotTo(ContainSubstring(leakSentinelPassword))
 		})
 	}
+
+	It("masks key parameters by whole word or known suffix and leaves keyword visible", func() {
+		for _, masked := range []string{"api_key", "API_KEY", "apiKey", "apikey", "ssh-key", "key", "access_key", "private.key"} {
+			Expect(broker.RedactedQuery(masked+"=v")).To(Equal(masked+"=<redacted>"), masked)
+		}
+
+		for _, visible := range []string{"keyword", "keywords", "monkeys", "keyboard", "hockey", "turkey"} {
+			Expect(broker.RedactedQuery(visible+"=v")).To(Equal(visible+"=v"), visible)
+		}
+
+		Expect(broker.RedactedQuery("keyword=a&api_key=b&q=c")).To(Equal("keyword=a&api_key=<redacted>&q=c"))
+	})
 
 	It("leaves query strings without credential names alone", func() {
 		Expect(broker.RedactedQuery("a=1&b=2")).To(Equal("a=1&b=2"))

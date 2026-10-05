@@ -74,6 +74,7 @@ var (
 	ErrPlanNotFound                          = errors.New("plan not found")
 	ErrNoForgeDirectoriesFoundViaScan        = errors.New("no forge directories found via auto-scan")
 	ErrNoServiceDirectoriesProvided          = errors.New("no service directories provided")
+	ErrUnmarshalYAMLData                     = errors.New("failed to unmarshal YAML data")
 	ErrFailedToTrackServiceRequestInVault    = errors.New("failed to track service request in Vault")
 	ErrFailedToUpdateServiceStatusInVault    = errors.New("failed to update service status in Vault")
 	ErrFailedToStoreServiceMetadata          = errors.New("failed to store service metadata")
@@ -224,6 +225,18 @@ func WriteDataFile(
 	return nil
 }
 
+// yamlErrorSummary describes a YAML decode error without the fragment of the
+// offending value that yaml.v2 puts in a type error, because that value can be
+// a credential.
+func yamlErrorSummary(err error) string {
+	var typeErr *yaml.TypeError
+	if errors.As(err, &typeErr) {
+		return fmt.Sprintf("%d value(s) in the YAML have a type the target does not accept", len(typeErr.Errors))
+	}
+
+	return err.Error()
+}
+
 func WriteYamlFile(
 	instanceID string,
 	data []byte,
@@ -235,10 +248,12 @@ func WriteYamlFile(
 
 	err := yaml.Unmarshal(data, &mergedMap)
 	if err != nil {
-		logger.Error("Failed to unmarshal data for YAML file: %s", err)
+		summary := yamlErrorSummary(err)
+
+		logger.Error("Failed to unmarshal data for YAML file: %s", summary)
 		logger.Debug("Unparseable YAML data for instance %s is %d bytes; its content is not logged because it can hold credentials", instanceID, len(data))
 
-		return fmt.Errorf("failed to unmarshal YAML data: %w", err)
+		return fmt.Errorf("%w: %s", ErrUnmarshalYAMLData, summary)
 	}
 
 	yamlBytes, err := yaml.Marshal(mergedMap)
