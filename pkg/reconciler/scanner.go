@@ -42,7 +42,7 @@ func NewBOSHScanner(director bosh.Director, logger Logger) *BoshScanner {
 func (s *BoshScanner) ScanDeployments(ctx context.Context) ([]DeploymentInfo, error) {
 	s.logger.Debugf("Scanning BOSH deployments")
 
-	deployments, err := s.director.GetDeployments()
+	deployments, err := s.director.GetDeployments(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployments: %w", err)
 	}
@@ -82,7 +82,7 @@ func (s *BoshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	s.logger.Debugf("Fetching details for deployment %s", name)
 
 	// Get basic deployment info
-	dep, err := s.director.GetDeployment(name)
+	dep, err := s.director.GetDeployment(ctx, name)
 	if err != nil {
 		// Check if it's a 404 error (deployment doesn't exist)
 		errStr := err.Error()
@@ -102,7 +102,7 @@ func (s *BoshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	}
 
 	// Get deployment timestamps
-	createdAt, updatedAt, latestTaskID := s.getDeploymentTimestampsWithFallback(name)
+	createdAt, updatedAt, latestTaskID := s.getDeploymentTimestampsWithFallback(ctx, name)
 
 	// Create deployment detail
 	detail := s.createDeploymentDetail(dep, createdAt, updatedAt)
@@ -111,7 +111,7 @@ func (s *BoshScanner) GetDeploymentDetails(ctx context.Context, name string) (*D
 	s.parseManifestData(detail, dep.Manifest)
 
 	// Get VM information
-	s.addVMInformation(detail, name)
+	s.addVMInformation(ctx, detail, name)
 
 	// Parse manifest properties
 	s.parseManifestProperties(detail)
@@ -213,8 +213,8 @@ func (s *BoshScanner) ParseManifestProperties(manifest string) (map[string]inter
 }
 
 // getDeploymentTimestampsWithFallback gets deployment timestamps with fallback to current time.
-func (s *BoshScanner) getDeploymentTimestampsWithFallback(name string) (time.Time, time.Time, string) {
-	createdAt, updatedAt, latestTaskID, err := s.getDeploymentTimestamps(name)
+func (s *BoshScanner) getDeploymentTimestampsWithFallback(ctx context.Context, name string) (time.Time, time.Time, string) {
+	createdAt, updatedAt, latestTaskID, err := s.getDeploymentTimestamps(ctx, name)
 	if err != nil {
 		s.logger.Errorf("Failed to get deployment timestamps for %s: %s", name, err)
 		// Fall back to current time if events are unavailable
@@ -399,8 +399,8 @@ func (s *BoshScanner) formatStemcellString(alias, operatingSystem, version strin
 }
 
 // addVMInformation adds VM information to the deployment detail.
-func (s *BoshScanner) addVMInformation(detail *DeploymentDetail, name string) {
-	vms, err := s.director.GetDeploymentVMs(name)
+func (s *BoshScanner) addVMInformation(ctx context.Context, detail *DeploymentDetail, name string) {
+	vms, err := s.director.GetDeploymentVMs(ctx, name)
 	if err != nil {
 		s.logger.Errorf("Failed to get VMs for %s: %s", name, err)
 
@@ -444,8 +444,8 @@ func (s *BoshScanner) storeLatestTaskID(detail *DeploymentDetail, latestTaskID s
 }
 
 // getDeploymentTimestamps extracts creation/update timestamps and latest task ID from deployment events.
-func (s *BoshScanner) getDeploymentTimestamps(deploymentName string) (time.Time, time.Time, string, error) {
-	events, err := s.director.GetEvents(deploymentName)
+func (s *BoshScanner) getDeploymentTimestamps(ctx context.Context, deploymentName string) (time.Time, time.Time, string, error) {
+	events, err := s.director.GetEvents(ctx, deploymentName)
 	if err != nil {
 		return time.Time{}, time.Time{}, "", fmt.Errorf("failed to get events for deployment %s: %w", deploymentName, err)
 	}

@@ -168,7 +168,7 @@ var _ = Describe("Binding Recovery", func() {
 		})
 
 		It("should successfully reconstruct binding credentials", func() {
-			err := updater.ReconstructBindingWithBroker(instanceID, bindingID, mockBroker)
+			err := updater.ReconstructBindingWithBroker(context.Background(), instanceID, bindingID, mockBroker)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify credentials were stored
@@ -180,7 +180,7 @@ var _ = Describe("Binding Recovery", func() {
 		})
 
 		It("should store reconstruction metadata", func() {
-			err := updater.ReconstructBindingWithBroker(instanceID, bindingID, mockBroker)
+			err := updater.ReconstructBindingWithBroker(context.Background(), instanceID, bindingID, mockBroker)
 			Expect(err).ToNot(HaveOccurred())
 
 			// Verify metadata was stored
@@ -197,7 +197,7 @@ var _ = Describe("Binding Recovery", func() {
 			})
 
 			It("should return an error", func() {
-				err := updater.ReconstructBindingWithBroker(instanceID, bindingID, mockBroker)
+				err := updater.ReconstructBindingWithBroker(context.Background(), instanceID, bindingID, mockBroker)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("broker reconstruction failed"))
 			})
@@ -224,7 +224,7 @@ var _ = Describe("Binding Recovery", func() {
 			})
 
 			It("should complete without errors", func() {
-				err := updater.RepairInstanceBindings(instanceID, mockBroker)
+				err := updater.RepairInstanceBindings(context.Background(), instanceID, mockBroker)
 				Expect(err).ToNot(HaveOccurred())
 			})
 		})
@@ -252,7 +252,7 @@ var _ = Describe("Binding Recovery", func() {
 			})
 
 			It("should repair all unhealthy bindings", func() {
-				err := updater.RepairInstanceBindings(instanceID, mockBroker)
+				err := updater.RepairInstanceBindings(context.Background(), instanceID, mockBroker)
 				Expect(err).ToNot(HaveOccurred())
 
 				// Verify credentials were stored
@@ -295,7 +295,7 @@ var _ = Describe("Binding Recovery", func() {
 			})
 
 			It("should return error but repair what it can", func() {
-				err := updater.RepairInstanceBindings(instanceID, mockBroker)
+				err := updater.RepairInstanceBindings(context.Background(), instanceID, mockBroker)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("failed to repair 1 of 2 bindings"))
 
@@ -426,7 +426,7 @@ func (mb *MockBroker) SetError(instanceID, bindingID string, err error) {
 	mb.errors[key] = err
 }
 
-func (mb *MockBroker) GetBindingCredentials(instanceID, bindingID string) (*BindingCredentials, error) {
+func (mb *MockBroker) GetBindingCredentials(_ context.Context, instanceID, bindingID string) (*BindingCredentials, error) {
 	key := instanceID + "/" + bindingID
 
 	if err, exists := mb.errors[key]; exists {

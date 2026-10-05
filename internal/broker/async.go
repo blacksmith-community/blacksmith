@@ -107,7 +107,7 @@ func (p *provisioningPhase) setupBOSHDefaults(ctx context.Context, plan services
 
 	boshStartTime := time.Now()
 
-	info, err := p.broker.BOSH.GetInfo()
+	info, err := p.broker.BOSH.GetInfo(ctx)
 	if err != nil {
 		p.logger.Error("Failed to get information about BOSH director: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Failed to connect to BOSH: %s", err), p.params, p.logger)
@@ -221,7 +221,7 @@ func (p *provisioningPhase) uploadReleases(ctx context.Context, manifestStr stri
 	p.logger.Debug("uploading releases (if necessary) to BOSH director")
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Uploading BOSH releases", 0, p.params, p.logger)
 
-	err := manifest.UploadReleasesFromManifest(manifestStr, p.broker.BOSH, p.logger)
+	err := manifest.UploadReleasesFromManifest(ctx, manifestStr, p.broker.BOSH, p.logger)
 	if err != nil {
 		p.logger.Error("failed to upload service deployment releases: %s", err)
 		p.broker.failWithTracking(ctx, p.instanceID, "provision", fmt.Sprintf("Release upload failed: %s", err), p.params, p.logger)
@@ -239,14 +239,14 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 
 	deploymentName := plan.ID + "-" + p.instanceID
 
-	task, err := p.broker.BOSH.CreateDeployment(manifestStr)
+	task, err := p.broker.BOSH.CreateDeployment(ctx, manifestStr)
 	if err != nil {
 		p.logger.Error("Failed to create service deployment: %s", err)
 
 		// bosh-cli reports a deploy task that failed as an error. When BOSH
 		// started the task, record it, so LastOperation answers from the
 		// task's own state and cleans up the failed deployment.
-		createTaskID := p.broker.resolveDeploymentTask(deploymentName, boshEventActionCreate, p.logger)
+		createTaskID := p.broker.resolveDeploymentTask(ctx, deploymentName, boshEventActionCreate, p.logger)
 		if createTaskID > 0 {
 			p.broker.recordTask(ctx, p.instanceID, operationTypeProvision, fmt.Sprintf("BOSH deployment task %d did not succeed: %s", createTaskID, err), createTaskID, p.logger)
 
@@ -274,7 +274,7 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	// someone ran on the deployment while bosh-cli waited on the deploy. The
 	// deployment-level create event names the deploy task itself. When no
 	// event names it yet, zero is recorded and LastOperation looks again.
-	actualTaskID := p.broker.resolveDeploymentTask(deploymentName, boshEventActionCreate, p.logger)
+	actualTaskID := p.broker.resolveDeploymentTask(ctx, deploymentName, boshEventActionCreate, p.logger)
 	if actualTaskID != task.ID {
 		p.logger.Info("Recording create deployment task %d from BOSH events for %s (the director adapter reported task %d)", actualTaskID, deploymentName, task.ID)
 	}
@@ -363,7 +363,7 @@ type deprovisioningPhase struct {
 func (d *deprovisioningPhase) checkDeploymentExists(ctx context.Context) (bool, bool) {
 	d.broker.trackProgress(ctx, d.instanceID, "deprovision", "Checking BOSH deployment status", 0, nil, d.logger)
 
-	deployment, err := d.broker.BOSH.GetDeployment(d.deploymentName)
+	deployment, err := d.broker.BOSH.GetDeployment(ctx, d.deploymentName)
 	if err != nil {
 		if errors.Is(err, bosh.ErrDeploymentNotFound) {
 			d.logger.Info("Deployment %s not found, marking as deleted", d.deploymentName)
@@ -484,7 +484,7 @@ func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
 // handleTaskSuccess performs cleanup after successful task completion.
 func (d *deprovisioningPhase) handleTaskSuccess(ctx context.Context) {
 	// Verify deployment is actually gone
-	_, deploymentErr := d.broker.BOSH.GetDeployment(d.deploymentName)
+	_, deploymentErr := d.broker.BOSH.GetDeployment(ctx, d.deploymentName)
 	if deploymentErr == nil {
 		d.logger.Error("Task succeeded but deployment %s still exists, not removing from index", d.deploymentName)
 
@@ -543,7 +543,7 @@ func (d *deprovisioningPhase) monitorAndCleanupTask(ctx context.Context, task *b
 
 		case <-ticker.C:
 			// Poll BOSH for task status
-			boshTask, err := d.broker.BOSH.GetTask(task.ID)
+			boshTask, err := d.broker.BOSH.GetTask(ctx, task.ID)
 			if err != nil {
 				d.logger.Error("Failed to get task %d status: %s", task.ID, err)
 
@@ -578,7 +578,7 @@ func (d *deprovisioningPhase) monitorAndCleanupTask(ctx context.Context, task *b
 // delete task itself. When no event names it, nil is returned after recording
 // that, and LastOperation looks again on the next poll.
 func (d *deprovisioningPhase) resolveDeleteTask(ctx context.Context) *bosh.Task {
-	taskID := d.broker.resolveDeploymentTask(d.deploymentName, boshEventActionDelete, d.logger)
+	taskID := d.broker.resolveDeploymentTask(ctx, d.deploymentName, boshEventActionDelete, d.logger)
 	if taskID == 0 {
 		d.broker.trackProgress(ctx, d.instanceID, "deprovision", "BOSH deletion returned; waiting for BOSH events to name the delete task", 0, nil, d.logger)
 
@@ -771,7 +771,7 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName strin
 		logger.Debug("Deletion attempt %d/%d for deployment %s", attempt, maxRetries, deploymentName)
 
 		// Check if deployment still exists
-		_, err := b.BOSH.GetDeployment(deploymentName)
+		_, err := b.BOSH.GetDeployment(ctx, deploymentName)
 		if err != nil {
 			if errors.Is(err, bosh.ErrDeploymentNotFound) {
 				// Deployment not found is success for deletion
@@ -786,7 +786,7 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName strin
 		}
 
 		// Attempt deletion
-		task, err := b.BOSH.DeleteDeployment(deploymentName)
+		task, err := b.BOSH.DeleteDeployment(ctx, deploymentName)
 		if err == nil {
 			logger.Info("Deletion task started on attempt %d for deployment %s (task %d)", attempt, deploymentName, task.ID)
 

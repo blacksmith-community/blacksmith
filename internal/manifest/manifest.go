@@ -289,18 +289,18 @@ func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (str
 	return manifestStr, nil
 }
 
-func UploadReleasesFromManifest(raw string, director bosh.Director, loggerInstance logger.Logger) error {
+func UploadReleasesFromManifest(ctx context.Context, raw string, director bosh.Director, loggerInstance logger.Logger) error {
 	manifest, err := parseManifestReleases(raw)
 	if err != nil {
 		return err
 	}
 
-	existingReleases, err := getExistingReleases(director, loggerInstance)
+	existingReleases, err := getExistingReleases(ctx, director, loggerInstance)
 	if err != nil {
 		return err
 	}
 
-	return uploadMissingReleases(manifest.Releases, existingReleases, director, loggerInstance)
+	return uploadMissingReleases(ctx, manifest.Releases, existingReleases, director, loggerInstance)
 }
 
 type manifestReleases struct {
@@ -323,10 +323,10 @@ func parseManifestReleases(raw string) (*manifestReleases, error) {
 	return &manifest, nil
 }
 
-func getExistingReleases(director bosh.Director, loggerInstance logger.Logger) (map[string]bool, error) {
+func getExistingReleases(ctx context.Context, director bosh.Director, loggerInstance logger.Logger) (map[string]bool, error) {
 	loggerInstance.Debug("enumerating uploaded BOSH releases")
 
-	boshReleases, err := director.GetReleases()
+	boshReleases, err := director.GetReleases(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get BOSH releases: %w", err)
 	}
@@ -361,7 +361,7 @@ func logExistingReleases(releases []string, loggerInstance logger.Logger) {
 	}
 }
 
-func uploadMissingReleases(releases []struct {
+func uploadMissingReleases(ctx context.Context, releases []struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
 	URL     string `yaml:"url"`
@@ -370,7 +370,7 @@ func uploadMissingReleases(releases []struct {
 	loggerInstance.Debug("determining which BOSH releases need uploaded")
 
 	for _, release := range releases {
-		err := processRelease(release, existingReleases, director, loggerInstance)
+		err := processRelease(ctx, release, existingReleases, director, loggerInstance)
 		if err != nil {
 			return err
 		}
@@ -379,7 +379,7 @@ func uploadMissingReleases(releases []struct {
 	return nil
 }
 
-func processRelease(release struct {
+func processRelease(ctx context.Context, release struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
 	URL     string `yaml:"url"`
@@ -397,7 +397,7 @@ func processRelease(release struct {
 	default:
 		loggerInstance.Debug("uploading BOSH release %s/%s from %s (sha1 %s)...", release.Name, release.Version, release.URL, release.SHA1)
 
-		_, err := director.UploadRelease(release.URL, release.SHA1)
+		_, err := director.UploadRelease(ctx, release.URL, release.SHA1)
 		if err != nil {
 			return fmt.Errorf("failed to upload BOSH release %s/%s: %w", release.Name, release.Version, err)
 		}
@@ -406,10 +406,10 @@ func processRelease(release struct {
 	return nil
 }
 
-func GetCreds(instanceID string, plan services.Plan, director bosh.Director, deploymentManifest string, loggerInstance logger.Logger) (interface{}, error) {
+func GetCreds(ctx context.Context, instanceID string, plan services.Plan, director bosh.Director, deploymentManifest string, loggerInstance logger.Logger) (interface{}, error) {
 	deployment := plan.ID + "-" + instanceID
 
-	vms, err := getDeploymentVMs(director, deployment, loggerInstance)
+	vms, err := getDeploymentVMs(ctx, director, deployment, loggerInstance)
 	if err != nil {
 		return nil, err
 	}
@@ -436,10 +436,10 @@ func GetCreds(instanceID string, plan services.Plan, director bosh.Director, dep
 	return extractCredentialsFromManifest(manifest, loggerInstance)
 }
 
-func getDeploymentVMs(director bosh.Director, deployment string, loggerInstance logger.Logger) ([]bosh.VM, error) {
+func getDeploymentVMs(ctx context.Context, director bosh.Director, deployment string, loggerInstance logger.Logger) ([]bosh.VM, error) {
 	loggerInstance.Debug("looking up BOSH VM information for %s", deployment)
 
-	vms, err := director.GetDeploymentVMs(deployment)
+	vms, err := director.GetDeploymentVMs(ctx, deployment)
 	if err != nil {
 		loggerInstance.Error("failed to retrieve BOSH VM information for %s: %s", deployment, err)
 

@@ -348,6 +348,8 @@ func extractResurrectionStateFromRule(ruleMap map[string]interface{}, deployment
 
 // GetVMs retrieves the VMs for the blacksmith deployment.
 func (h *Handler) GetVMs(responseWriter http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("blacksmith-vms")
 	logger.Debug("Fetching Blacksmith VMs")
 
@@ -357,14 +359,14 @@ func (h *Handler) GetVMs(responseWriter http.ResponseWriter, req *http.Request) 
 
 	deploymentName := h.getBlacksmithDeploymentName(logger)
 
-	vms, err := h.fetchDeploymentVMs(deploymentName, logger)
+	vms, err := h.fetchDeploymentVMs(ctx, deploymentName, logger)
 	if err != nil {
 		h.sendVMsErrorResponse(responseWriter, err)
 
 		return
 	}
 
-	h.applyResurrectionStatus(vms, deploymentName, logger)
+	h.applyResurrectionStatus(ctx, vms, deploymentName, logger)
 	response.HandleJSON(responseWriter, vms, nil)
 }
 
@@ -603,6 +605,8 @@ func (h *Handler) Cleanup(responseWriter http.ResponseWriter, req *http.Request)
 
 // GetEvents returns events for the blacksmith deployment.
 func (h *Handler) GetEvents(responseWriter http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("blacksmith-events")
 	logger.Debug("Fetching Blacksmith events")
 
@@ -630,7 +634,7 @@ func (h *Handler) GetEvents(responseWriter http.ResponseWriter, req *http.Reques
 
 	logger.Debug("Fetching events for deployment: %s", deploymentName)
 
-	events, err := h.director.GetEvents(deploymentName)
+	events, err := h.director.GetEvents(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to fetch events: %v", err)
 		eventsData := map[string]interface{}{
@@ -647,6 +651,8 @@ func (h *Handler) GetEvents(responseWriter http.ResponseWriter, req *http.Reques
 
 // GetManifest returns the manifest for the blacksmith deployment.
 func (h *Handler) GetManifest(responseWriter http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("blacksmith-manifest")
 	logger.Debug("Fetching Blacksmith manifest")
 
@@ -675,7 +681,7 @@ func (h *Handler) GetManifest(responseWriter http.ResponseWriter, req *http.Requ
 
 	logger.Debug("Fetching manifest for deployment: %s", deploymentName)
 
-	deployment, err := h.director.GetDeployment(deploymentName)
+	deployment, err := h.director.GetDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to fetch deployment: %v", err)
 		manifestData := map[string]interface{}{
@@ -737,6 +743,8 @@ func (h *Handler) ExecuteCommand(responseWriter http.ResponseWriter, req *http.R
 
 // ToggleResurrection toggles resurrection for a deployment (blacksmith or service instance).
 func (h *Handler) ToggleResurrection(responseWriter http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("resurrection-toggle")
 
 	instanceID, isValid := h.validateResurrectionPath(req, logger, responseWriter)
@@ -763,7 +771,7 @@ func (h *Handler) ToggleResurrection(responseWriter http.ResponseWriter, req *ht
 		return
 	}
 
-	if !h.enableResurrection(deploymentName, enabled, logger, responseWriter) {
+	if !h.enableResurrection(ctx, deploymentName, enabled, logger, responseWriter) {
 		return
 	}
 
@@ -772,6 +780,8 @@ func (h *Handler) ToggleResurrection(responseWriter http.ResponseWriter, req *ht
 
 // DeleteResurrectionConfig deletes resurrection config for a deployment.
 func (h *Handler) DeleteResurrectionConfig(responseWriter http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("resurrection-delete")
 
 	instanceID, isValid := h.validateResurrectionPath(req, logger, responseWriter)
@@ -793,7 +803,7 @@ func (h *Handler) DeleteResurrectionConfig(responseWriter http.ResponseWriter, r
 		return
 	}
 
-	if !h.deleteResurrectionConfig(deploymentName, logger, responseWriter) {
+	if !h.deleteResurrectionConfig(ctx, deploymentName, logger, responseWriter) {
 		return
 	}
 
@@ -829,8 +839,8 @@ func (h *Handler) getBlacksmithDeploymentName(logger interfaces.Logger) string {
 	return deploymentName
 }
 
-func (h *Handler) fetchDeploymentVMs(deploymentName string, logger interfaces.Logger) ([]bosh.VM, error) {
-	vms, err := h.director.GetDeploymentVMs(deploymentName)
+func (h *Handler) fetchDeploymentVMs(ctx context.Context, deploymentName string, logger interfaces.Logger) ([]bosh.VM, error) {
+	vms, err := h.director.GetDeploymentVMs(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to fetch VMs: %v", err)
 
@@ -848,13 +858,13 @@ func (h *Handler) sendVMsErrorResponse(responseWriter http.ResponseWriter, err e
 	response.HandleJSON(responseWriter, vmsData, nil)
 }
 
-func (h *Handler) applyResurrectionStatus(vms []bosh.VM, deploymentName string, logger interfaces.Logger) {
+func (h *Handler) applyResurrectionStatus(ctx context.Context, vms []bosh.VM, deploymentName string, logger interfaces.Logger) {
 	configName := "blacksmith." + deploymentName
 	logger.Debug("Checking for resurrection config: %s (deployment: %s)", configName, deploymentName)
 
 	resurrectionPaused := false
 
-	resurrectionConfig, err := h.director.GetConfig("resurrection", configName)
+	resurrectionConfig, err := h.director.GetConfig(ctx, "resurrection", configName)
 	if err != nil {
 		logger.Debug("Error getting resurrection config: %v", err)
 	}
@@ -1002,8 +1012,8 @@ func (h *Handler) getServiceDeploymentName(req *http.Request, instanceID string,
 	return deploymentName, true
 }
 
-func (h *Handler) enableResurrection(deploymentName string, enabled bool, logger interfaces.Logger, responseWriter http.ResponseWriter) bool {
-	err := h.director.EnableResurrection(deploymentName, enabled)
+func (h *Handler) enableResurrection(ctx context.Context, deploymentName string, enabled bool, logger interfaces.Logger, responseWriter http.ResponseWriter) bool {
+	err := h.director.EnableResurrection(ctx, deploymentName, enabled)
 	if err != nil {
 		logger.Error("Unable to toggle resurrection for deployment %s: %v", deploymentName, err)
 		responseWriter.WriteHeader(http.StatusInternalServerError)
@@ -1031,8 +1041,8 @@ func (h *Handler) sendResurrectionToggleResponse(responseWriter http.ResponseWri
 }
 
 // deleteResurrectionConfig deletes the resurrection config for a deployment.
-func (h *Handler) deleteResurrectionConfig(deploymentName string, logger interfaces.Logger, responseWriter http.ResponseWriter) bool {
-	err := h.director.DeleteResurrectionConfig(deploymentName)
+func (h *Handler) deleteResurrectionConfig(ctx context.Context, deploymentName string, logger interfaces.Logger, responseWriter http.ResponseWriter) bool {
+	err := h.director.DeleteResurrectionConfig(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Unable to delete resurrection config for deployment %s: %v", deploymentName, err)
 		responseWriter.WriteHeader(http.StatusInternalServerError)

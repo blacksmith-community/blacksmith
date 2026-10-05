@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -95,7 +96,7 @@ func TestSetupCredHubCleanupWarnsOnceWhenNoConnectionIsConfigured(t *testing.T) 
 	logger := newRecordingLogger()
 	brokerInstance := &broker.Broker{}
 
-	client := setupCredHubCleanup(enabledCleanupConfig(), brokerInstance, scriptedPool(t), logger)
+	client := setupCredHubCleanup(context.Background(), enabledCleanupConfig(), brokerInstance, scriptedPool(t), logger)
 
 	if client != nil {
 		t.Error("expected no CredHub client when no connection is configured")
@@ -142,7 +143,7 @@ func TestSetupCredHubCleanupKeepsProblemListForPartialConnection(t *testing.T) {
 	logger := newRecordingLogger()
 	brokerInstance := &broker.Broker{}
 
-	client := setupCredHubCleanup(cfg, brokerInstance, scriptedPool(t), logger)
+	client := setupCredHubCleanup(context.Background(), cfg, brokerInstance, scriptedPool(t), logger)
 
 	if client != nil || brokerInstance.CredentialCleaner != nil {
 		t.Error("expected cleanup to stay off for a partial connection")
@@ -178,7 +179,7 @@ func TestSetupCredHubCleanupDisabledStaysQuiet(t *testing.T) {
 	logger := newRecordingLogger()
 	brokerInstance := &broker.Broker{}
 
-	if client := setupCredHubCleanup(&config.Config{}, brokerInstance, scriptedPool(t), logger); client != nil {
+	if client := setupCredHubCleanup(context.Background(), &config.Config{}, brokerInstance, scriptedPool(t), logger); client != nil {
 		t.Error("expected no CredHub client when cleanup is disabled")
 	}
 

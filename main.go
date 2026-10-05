@@ -434,7 +434,7 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDi
 }
 
 // updateBOSHCloudConfig updates BOSH cloud config if provided.
-func updateBOSHCloudConfig(cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+func updateBOSHCloudConfig(ctx context.Context, cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
 	if cfg.BOSH.CloudConfig == "" {
 		return
 	}
@@ -448,7 +448,7 @@ func updateBOSHCloudConfig(cfg *config.Config, boshDirector bosh.Director, logge
 	logger.Info("updating cloud-cfg...")
 	logger.Debug("updating cloud-config with:\n%s", cfg.BOSH.CloudConfig)
 
-	err := boshDirector.UpdateCloudConfig(cfg.BOSH.CloudConfig)
+	err := boshDirector.UpdateCloudConfig(ctx, cfg.BOSH.CloudConfig)
 	if err != nil {
 		logger.Error("Failed to update CLOUD-CONFIG: %s", err)
 		logger.Error("Continuing without cloud config update - manual intervention may be required")
@@ -458,12 +458,12 @@ func updateBOSHCloudConfig(cfg *config.Config, boshDirector bosh.Director, logge
 }
 
 // uploadBOSHReleases uploads configured BOSH releases.
-func uploadBOSHReleases(cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+func uploadBOSHReleases(ctx context.Context, cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
 	if cfg.BOSH.Releases == nil {
 		return
 	}
 
-	releases, err := boshDirector.GetReleases()
+	releases, err := boshDirector.GetReleases(ctx)
 	if err != nil {
 		logger.Error("Failed to retrieve RELEASES list: %s", err)
 		logger.Error("Continuing without release uploads - manual intervention may be required")
@@ -490,7 +490,7 @@ func uploadBOSHReleases(cfg *config.Config, boshDirector bosh.Director, logger l
 
 		logger.Debug("uploading release %s/%s [sha1 %s] from %s", release.Name, release.Version, release.SHA1, release.URL)
 
-		task, err := boshDirector.UploadRelease(release.URL, release.SHA1)
+		task, err := boshDirector.UploadRelease(ctx, release.URL, release.SHA1)
 		if err != nil {
 			logger.Error("Failed to upload RELEASE (%s) sha1 [%s]: %s", release.URL, release.SHA1, err)
 			logger.Error("Continuing without this release - manual intervention may be required")
@@ -503,12 +503,12 @@ func uploadBOSHReleases(cfg *config.Config, boshDirector bosh.Director, logger l
 }
 
 // uploadBOSHStemcells uploads configured BOSH stemcells.
-func uploadBOSHStemcells(cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+func uploadBOSHStemcells(ctx context.Context, cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
 	if cfg.BOSH.Stemcells == nil {
 		return
 	}
 
-	stemcells, err := boshDirector.GetStemcells()
+	stemcells, err := boshDirector.GetStemcells(ctx)
 	if err != nil {
 		logger.Error("Failed to retrieve STEMCELLS list: %s", err)
 		logger.Error("Continuing without stemcell uploads - manual intervention may be required")
@@ -532,7 +532,7 @@ func uploadBOSHStemcells(cfg *config.Config, boshDirector bosh.Director, logger 
 
 		logger.Debug("uploading stemcell %s/%s [sha1 %s] from %s", stemcell.Name, stemcell.Version, stemcell.SHA1, stemcell.URL)
 
-		task, err := boshDirector.UploadStemcell(stemcell.URL, stemcell.SHA1)
+		task, err := boshDirector.UploadStemcell(ctx, stemcell.URL, stemcell.SHA1)
 		if err != nil {
 			logger.Error("Failed to upload STEMCELL (%s) sha1 [%s]: %s", stemcell.URL, stemcell.SHA1, err)
 			logger.Error("Continuing without this stemcell - manual intervention may be required")
@@ -995,30 +995,33 @@ func setupSignalHandlingAndContext() (context.Context, context.CancelFunc, chan 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// This is the service's root context. Every request handler, background
+	// loop, and director call after boot descends from it, and cancel ends it
+	// at shutdown.
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return ctx, cancel, sigChan
 }
 
-func initializeCore(configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector, *bosh.BatchDirector) {
+func initializeCore(ctx context.Context, configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector, *bosh.BatchDirector) {
 	config := initializeConfig(configPath, logger)
 	vault := initializeVault(config, logger)
 	boshDirector, batchDirector := initializeBOSH(config, logger)
-	setupBOSHResources(config, boshDirector, logger)
+	setupBOSHResources(ctx, config, boshDirector, logger)
 
 	return config, vault, boshDirector, batchDirector
 }
 
-func setupBOSHResources(config *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
+func setupBOSHResources(ctx context.Context, config *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
 	if boshDirector == nil {
 		logger.Warn("BOSH director is nil - skipping BOSH resource setup")
 
 		return
 	}
 
-	updateBOSHCloudConfig(config, boshDirector, logger)
-	uploadBOSHReleases(config, boshDirector, logger)
-	uploadBOSHStemcells(config, boshDirector, logger)
+	updateBOSHCloudConfig(ctx, config, boshDirector, logger)
+	uploadBOSHReleases(ctx, config, boshDirector, logger)
+	uploadBOSHStemcells(ctx, config, boshDirector, logger)
 }
 
 func getUIHandler(config *config.Config) http.Handler {
@@ -1135,12 +1138,26 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 
 // runService runs the main service logic.
 func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger) error {
-	config, vault, boshDirector, batchDirector := initializeCore(configPath, logger)
+	// bootCtx is a root context. Nothing above runService carries one, and
+	// the boot steps (the cloud config update, the release and stemcell
+	// uploads, and the CredHub /info call) run before the service's own
+	// context exists. It ends on SIGINT or SIGTERM, so a director that hangs
+	// during boot never keeps the broker from shutting down.
+	bootCtx, stopBoot := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopBoot()
 
-	brokerInstance, credhubClient, err := setupBrokerAndUI(config, vault, boshDirector, logger)
+	config, vault, boshDirector, batchDirector := initializeCore(bootCtx, configPath, logger)
+
+	brokerInstance, credhubClient, err := setupBrokerAndUI(bootCtx, config, vault, boshDirector, logger)
 	if err != nil {
 		return err
 	}
+
+	if bootCtx.Err() != nil {
+		return fmt.Errorf("blacksmith received a shutdown signal during startup and stopped before serving: %w", bootCtx.Err())
+	}
+
+	stopBoot()
 
 	logger.Info("blacksmith service broker v%s starting up...", buildInfo.Version)
 
@@ -1187,7 +1204,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	return nil
 }
 
-func setupBrokerAndUI(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) (*broker.Broker, *credhub.Client, error) {
+func setupBrokerAndUI(ctx context.Context, config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) (*broker.Broker, *credhub.Client, error) {
 	shieldClient := initializeShieldClient(config, logger)
 
 	brokerInstance, err := initializeBroker(config, vault, boshDirector, shieldClient, logger)
@@ -1195,7 +1212,7 @@ func setupBrokerAndUI(config *config.Config, vault *internalVault.Vault, boshDir
 		return nil, nil, fmt.Errorf("failed to initialize broker: %w", err)
 	}
 
-	credhubClient := setupCredHubCleanup(config, brokerInstance, boshDirector, logger)
+	credhubClient := setupCredHubCleanup(ctx, config, brokerInstance, boshDirector, logger)
 
 	return brokerInstance, credhubClient, nil
 }
@@ -1206,7 +1223,7 @@ func setupBrokerAndUI(config *config.Config, vault *internalVault.Vault, boshDir
 // Either way cleanup stays off, so a bad credhub block never stops the broker
 // from starting. It makes at most one /info call and no UAA or CredHub
 // call.
-func setupCredHubCleanup(config *config.Config, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) *credhub.Client {
+func setupCredHubCleanup(ctx context.Context, config *config.Config, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) *credhub.Client {
 	if !config.CredHub.Cleanup.Enabled {
 		logger.Info("CredHub cleanup is disabled (credhub.cleanup.enabled is false), so deprovisioned instances keep their director CredHub variables")
 
@@ -1229,7 +1246,7 @@ func setupCredHubCleanup(config *config.Config, brokerInstance *broker.Broker, b
 		director = boshDirector
 	}
 
-	cleaner, client, problems := credhub.BuildCleaner(config.CredHub, config.BOSH.CACert, director, brokerInstance.CatalogPlanIDs, loggerPkg.Get().Named("credhub"))
+	cleaner, client, problems := credhub.BuildCleaner(ctx, config.CredHub, config.BOSH.CACert, director, brokerInstance.CatalogPlanIDs, loggerPkg.Get().Named("credhub"))
 	if len(problems) > 0 {
 		logger.Error("CredHub cleanup is disabled because the credhub configuration has %d problem(s): %s. Deprovisioned instances keep their director CredHub variables until these are fixed and the broker restarts.",
 			len(problems), strings.Join(problems, "; "))

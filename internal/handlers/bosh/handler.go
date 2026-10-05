@@ -103,10 +103,12 @@ func (h *Handler) GetVMMonitorStatus(responseWriter http.ResponseWriter, req *ht
 
 // GetStemcells returns available stemcells from the BOSH director.
 func (h *Handler) GetStemcells(responseWriter http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("bosh-stemcells")
 	logger.Debug("BOSH stemcells request")
 
-	stemcells, err := h.director.GetStemcells()
+	stemcells, err := h.director.GetStemcells(ctx)
 	if err != nil {
 		logger.Error("Failed to get stemcells: %v", err)
 		response.HandleJSON(responseWriter, nil, err)

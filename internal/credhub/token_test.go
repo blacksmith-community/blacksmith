@@ -559,7 +559,7 @@ func TestTokenSourceFetchPanicBecomesAnError(t *testing.T) {
 
 	var calls atomic.Int64
 
-	resolve := func() (string, error) {
+	resolve := func(context.Context) (string, error) {
 		if calls.Add(1) == 1 {
 			panic("resolver exploded with " + secretMarker)
 		}

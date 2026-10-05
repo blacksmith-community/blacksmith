@@ -62,7 +62,7 @@ func TestGetConfigNeverLogsTheConfigBody(t *testing.T) {
 		t.Fatalf("failed to create director adapter: %v", err)
 	}
 
-	got, err := director.GetConfig("resurrection", "blacksmith")
+	got, err := director.GetConfig(t.Context(), "resurrection", "blacksmith")
 	if err != nil {
 		t.Fatalf("GetConfig: %v", err)
 	}

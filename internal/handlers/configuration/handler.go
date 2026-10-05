@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -158,6 +159,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 // GetConfigs returns all available configurations.
 func (h *Handler) GetConfigs(writer http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("configs-list")
 	logger.Debug("Fetching all configurations")
 
@@ -174,7 +177,7 @@ func (h *Handler) GetConfigs(writer http.ResponseWriter, req *http.Request) {
 
 	logger.Debugf("Fetching configs with limit=%d types=%v", limit, configTypes)
 
-	configs, err := h.director.GetConfigs(limit, configTypes)
+	configs, err := h.director.GetConfigs(ctx, limit, configTypes)
 	if err != nil {
 		logger.Errorf("Failed to fetch configs: %v", err)
 		response.HandleJSON(writer, nil, fmt.Errorf("failed to fetch configs: %w", err))
@@ -194,6 +197,8 @@ func (h *Handler) GetConfigs(writer http.ResponseWriter, req *http.Request) {
 
 // GetConfigDetails returns detailed information for a specific config ID.
 func (h *Handler) GetConfigDetails(writer http.ResponseWriter, req *http.Request, configID string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("config-details")
 	logger.Debugf("Fetching config details for ID: %s", configID)
 
@@ -204,7 +209,7 @@ func (h *Handler) GetConfigDetails(writer http.ResponseWriter, req *http.Request
 		return
 	}
 
-	config, err := h.director.GetConfigByID(configID)
+	config, err := h.director.GetConfigByID(ctx, configID)
 	if err != nil {
 		logger.Errorf("Failed to fetch config %s: %v", configID, err)
 
@@ -226,6 +231,8 @@ func (h *Handler) GetConfigDetails(writer http.ResponseWriter, req *http.Request
 
 // GetConfigVersions returns version history for a config.
 func (h *Handler) GetConfigVersions(writer http.ResponseWriter, req *http.Request, configType, configName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("config-versions")
 	logger.Debugf("Fetching config versions for type=%s name=%s", configType, configName)
 
@@ -241,7 +248,7 @@ func (h *Handler) GetConfigVersions(writer http.ResponseWriter, req *http.Reques
 
 	logger.Debugf("Fetching versions with limit=%d", limit)
 
-	configs, err := h.director.GetConfigVersions(configType, configName, limit)
+	configs, err := h.director.GetConfigVersions(ctx, configType, configName, limit)
 	if err != nil {
 		logger.Errorf("Failed to fetch config versions for %s/%s: %v", configType, configName, err)
 		response.HandleJSON(writer, nil, fmt.Errorf("failed to fetch config versions: %w", err))
@@ -263,6 +270,8 @@ func (h *Handler) GetConfigVersions(writer http.ResponseWriter, req *http.Reques
 
 // GetConfigDiff returns a diff between two config versions.
 func (h *Handler) GetConfigDiff(writer http.ResponseWriter, req *http.Request, configType, configName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("config-diff")
 	logger.Debugf("Computing config diff for type=%s name=%s", configType, configName)
 
@@ -278,13 +287,13 @@ func (h *Handler) GetConfigDiff(writer http.ResponseWriter, req *http.Request, c
 		return
 	}
 
-	diff, ok := h.computeDiff(writer, logger, configType, configName, fromID, toID)
+	diff, ok := h.computeDiff(ctx, writer, logger, configType, configName, fromID, toID)
 	if !ok {
 		return
 	}
 
 	payload := h.buildDiffPayload(configType, configName, fromID, toID, diff)
-	h.enrichDiffPayloadWithMetadata(payload, fromID, toID)
+	h.enrichDiffPayloadWithMetadata(ctx, payload, fromID, toID)
 
 	logger.Infof("Successfully computed config diff (has_changes=%v)", diff.HasChanges)
 	response.HandleJSON(writer, payload, nil)
@@ -447,8 +456,8 @@ func (h *Handler) parseDiffParameters(writer http.ResponseWriter, req *http.Requ
 	return fromID, toID, true
 }
 
-func (h *Handler) computeDiff(writer http.ResponseWriter, logger interfaces.Logger, configType, configName, fromID, toID string) (*bosh.ConfigDiff, bool) {
-	diff, err := h.director.ComputeConfigDiff(fromID, toID)
+func (h *Handler) computeDiff(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, configType, configName, fromID, toID string) (*bosh.ConfigDiff, bool) {
+	diff, err := h.director.ComputeConfigDiff(ctx, fromID, toID)
 	if err != nil {
 		logger.Errorf("Failed to compute config diff for %s/%s: %v", configType, configName, err)
 		response.HandleJSON(writer, nil, fmt.Errorf("failed to compute config diff: %w", err))
@@ -471,8 +480,8 @@ func (h *Handler) buildDiffPayload(configType, configName, fromID, toID string, 
 	}
 }
 
-func (h *Handler) enrichDiffPayloadWithMetadata(payload map[string]interface{}, fromID, toID string) {
-	fromConfig, err := h.director.GetConfigByID(fromID)
+func (h *Handler) enrichDiffPayloadWithMetadata(ctx context.Context, payload map[string]interface{}, fromID, toID string) {
+	fromConfig, err := h.director.GetConfigByID(ctx, fromID)
 	if err == nil && fromConfig != nil {
 		payload["from_metadata"] = map[string]interface{}{
 			"id":         fromConfig.ID,
@@ -481,7 +490,7 @@ func (h *Handler) enrichDiffPayloadWithMetadata(payload map[string]interface{}, 
 		}
 	}
 
-	toConfig, err := h.director.GetConfigByID(toID)
+	toConfig, err := h.director.GetConfigByID(ctx, toID)
 	if err == nil && toConfig != nil {
 		payload["to_metadata"] = map[string]interface{}{
 			"id":         toConfig.ID,

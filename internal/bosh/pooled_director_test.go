@@ -1,6 +1,7 @@
 package bosh_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,7 +24,7 @@ type MockDirector struct {
 	mu        sync.Mutex
 }
 
-func (m *MockDirector) GetInfo() (*bosh.Info, error) {
+func (m *MockDirector) GetInfo(_ context.Context) (*bosh.Info, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -37,7 +38,7 @@ func (m *MockDirector) GetInfo() (*bosh.Info, error) {
 	}, nil
 }
 
-func (m *MockDirector) GetDeployments() ([]bosh.Deployment, error) {
+func (m *MockDirector) GetDeployments(_ context.Context) ([]bosh.Deployment, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -49,7 +50,7 @@ func (m *MockDirector) GetDeployments() ([]bosh.Deployment, error) {
 	}, nil
 }
 
-func (m *MockDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error) {
+func (m *MockDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -59,7 +60,7 @@ func (m *MockDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error
 	return &bosh.DeploymentDetail{Name: name}, nil
 }
 
-func (m *MockDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
+func (m *MockDirector) CreateDeployment(_ context.Context, manifest string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -69,7 +70,7 @@ func (m *MockDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
 	return &bosh.Task{ID: 1}, nil
 }
 
-func (m *MockDirector) DeleteDeployment(name string) (*bosh.Task, error) {
+func (m *MockDirector) DeleteDeployment(_ context.Context, name string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -79,7 +80,7 @@ func (m *MockDirector) DeleteDeployment(name string) (*bosh.Task, error) {
 	return &bosh.Task{ID: 2}, nil
 }
 
-func (m *MockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
+func (m *MockDirector) GetDeploymentVMs(_ context.Context, deployment string) ([]bosh.VM, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -89,7 +90,7 @@ func (m *MockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
 	return []bosh.VM{}, nil
 }
 
-func (m *MockDirector) GetReleases() ([]bosh.Release, error) {
+func (m *MockDirector) GetReleases(_ context.Context) ([]bosh.Release, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -99,7 +100,7 @@ func (m *MockDirector) GetReleases() ([]bosh.Release, error) {
 	return []bosh.Release{}, nil
 }
 
-func (m *MockDirector) UploadRelease(url string, sha1 string) (*bosh.Task, error) {
+func (m *MockDirector) UploadRelease(_ context.Context, url string, sha1 string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -109,7 +110,7 @@ func (m *MockDirector) UploadRelease(url string, sha1 string) (*bosh.Task, error
 	return &bosh.Task{ID: 3}, nil
 }
 
-func (m *MockDirector) GetStemcells() ([]bosh.Stemcell, error) {
+func (m *MockDirector) GetStemcells(_ context.Context) ([]bosh.Stemcell, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -119,7 +120,7 @@ func (m *MockDirector) GetStemcells() ([]bosh.Stemcell, error) {
 	return []bosh.Stemcell{}, nil
 }
 
-func (m *MockDirector) UploadStemcell(url string, sha1 string) (*bosh.Task, error) {
+func (m *MockDirector) UploadStemcell(_ context.Context, url string, sha1 string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -129,7 +130,7 @@ func (m *MockDirector) UploadStemcell(url string, sha1 string) (*bosh.Task, erro
 	return &bosh.Task{ID: 4}, nil
 }
 
-func (m *MockDirector) GetTask(taskID int) (*bosh.Task, error) {
+func (m *MockDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -139,7 +140,7 @@ func (m *MockDirector) GetTask(taskID int) (*bosh.Task, error) {
 	return &bosh.Task{ID: taskID}, nil
 }
 
-func (m *MockDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
+func (m *MockDirector) GetTasks(_ context.Context, taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -149,7 +150,7 @@ func (m *MockDirector) GetTasks(taskType string, limit int, states []string, tea
 	return []bosh.Task{}, nil
 }
 
-func (m *MockDirector) GetAllTasks(limit int) ([]bosh.Task, error) {
+func (m *MockDirector) GetAllTasks(_ context.Context, limit int) ([]bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -159,7 +160,7 @@ func (m *MockDirector) GetAllTasks(limit int) ([]bosh.Task, error) {
 	return []bosh.Task{}, nil
 }
 
-func (m *MockDirector) CancelTask(taskID int) error {
+func (m *MockDirector) CancelTask(_ context.Context, taskID int) error {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -169,7 +170,7 @@ func (m *MockDirector) CancelTask(taskID int) error {
 	return nil
 }
 
-func (m *MockDirector) GetTaskOutput(id int, outputType string) (string, error) {
+func (m *MockDirector) GetTaskOutput(_ context.Context, id int, outputType string) (string, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -179,7 +180,7 @@ func (m *MockDirector) GetTaskOutput(id int, outputType string) (string, error) 
 	return "test output", nil
 }
 
-func (m *MockDirector) GetTaskEvents(id int) ([]bosh.TaskEvent, error) {
+func (m *MockDirector) GetTaskEvents(_ context.Context, id int) ([]bosh.TaskEvent, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -189,7 +190,7 @@ func (m *MockDirector) GetTaskEvents(id int) ([]bosh.TaskEvent, error) {
 	return []bosh.TaskEvent{}, nil
 }
 
-func (m *MockDirector) GetEvents(deployment string) ([]bosh.Event, error) {
+func (m *MockDirector) GetEvents(_ context.Context, deployment string) ([]bosh.Event, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -199,7 +200,7 @@ func (m *MockDirector) GetEvents(deployment string) ([]bosh.Event, error) {
 	return []bosh.Event{}, nil
 }
 
-func (m *MockDirector) UpdateCloudConfig(config string) error {
+func (m *MockDirector) UpdateCloudConfig(_ context.Context, config string) error {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -209,7 +210,7 @@ func (m *MockDirector) UpdateCloudConfig(config string) error {
 	return nil
 }
 
-func (m *MockDirector) GetCloudConfig() (string, error) {
+func (m *MockDirector) GetCloudConfig(_ context.Context) (string, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -219,7 +220,7 @@ func (m *MockDirector) GetCloudConfig() (string, error) {
 	return "test-cloud-config", nil
 }
 
-func (m *MockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
+func (m *MockDirector) GetConfigs(_ context.Context, limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -229,7 +230,7 @@ func (m *MockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshC
 	return []bosh.BoshConfig{}, nil
 }
 
-func (m *MockDirector) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
+func (m *MockDirector) GetConfigVersions(_ context.Context, configType, name string, limit int) ([]bosh.BoshConfig, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -239,7 +240,7 @@ func (m *MockDirector) GetConfigVersions(configType, name string, limit int) ([]
 	return []bosh.BoshConfig{}, nil
 }
 
-func (m *MockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+func (m *MockDirector) GetConfigByID(_ context.Context, configID string) (*bosh.BoshConfigDetail, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -249,7 +250,7 @@ func (m *MockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, e
 	return &bosh.BoshConfigDetail{}, nil
 }
 
-func (m *MockDirector) GetConfigContent(configID string) (string, error) {
+func (m *MockDirector) GetConfigContent(_ context.Context, configID string) (string, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -259,7 +260,7 @@ func (m *MockDirector) GetConfigContent(configID string) (string, error) {
 	return "test-config", nil
 }
 
-func (m *MockDirector) GetConfig(configType, configName string) (interface{}, error) {
+func (m *MockDirector) GetConfig(_ context.Context, configType, configName string) (interface{}, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -269,7 +270,7 @@ func (m *MockDirector) GetConfig(configType, configName string) (interface{}, er
 	return map[string]interface{}{}, nil
 }
 
-func (m *MockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
+func (m *MockDirector) ComputeConfigDiff(_ context.Context, fromID, toID string) (*bosh.ConfigDiff, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -279,7 +280,7 @@ func (m *MockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff,
 	return &bosh.ConfigDiff{}, nil
 }
 
-func (m *MockDirector) Cleanup(removeAll bool) (*bosh.Task, error) {
+func (m *MockDirector) Cleanup(_ context.Context, removeAll bool) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -289,7 +290,7 @@ func (m *MockDirector) Cleanup(removeAll bool) (*bosh.Task, error) {
 	return &bosh.Task{ID: 5}, nil
 }
 
-func (m *MockDirector) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
+func (m *MockDirector) FetchLogs(_ context.Context, deployment string, jobName string, jobIndex string) (string, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -299,7 +300,7 @@ func (m *MockDirector) FetchLogs(deployment string, jobName string, jobIndex str
 	return "/tmp/logs.tar.gz", nil
 }
 
-func (m *MockDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
+func (m *MockDirector) SSHCommand(_ context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -309,7 +310,7 @@ func (m *MockDirector) SSHCommand(deployment, instance string, index int, comman
 	return "command output", nil
 }
 
-func (m *MockDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+func (m *MockDirector) SSHSession(_ context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -319,7 +320,7 @@ func (m *MockDirector) SSHSession(deployment, instance string, index int, option
 	return nil, ErrMockError
 }
 
-func (m *MockDirector) EnableResurrection(deployment string, enabled bool) error {
+func (m *MockDirector) EnableResurrection(_ context.Context, deployment string, enabled bool) error {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -329,7 +330,7 @@ func (m *MockDirector) EnableResurrection(deployment string, enabled bool) error
 	return nil
 }
 
-func (m *MockDirector) DeleteResurrectionConfig(deploymentName string) error {
+func (m *MockDirector) DeleteResurrectionConfig(_ context.Context, deploymentName string) error {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -339,7 +340,7 @@ func (m *MockDirector) DeleteResurrectionConfig(deploymentName string) error {
 	return nil
 }
 
-func (m *MockDirector) RestartDeployment(name string, opts bosh.RestartOpts) (*bosh.Task, error) {
+func (m *MockDirector) RestartDeployment(_ context.Context, name string, opts bosh.RestartOpts) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -349,7 +350,7 @@ func (m *MockDirector) RestartDeployment(name string, opts bosh.RestartOpts) (*b
 	return &bosh.Task{ID: 1}, nil
 }
 
-func (m *MockDirector) StopDeployment(name string, opts bosh.StopOpts) (*bosh.Task, error) {
+func (m *MockDirector) StopDeployment(_ context.Context, name string, opts bosh.StopOpts) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -359,7 +360,7 @@ func (m *MockDirector) StopDeployment(name string, opts bosh.StopOpts) (*bosh.Ta
 	return &bosh.Task{ID: 1}, nil
 }
 
-func (m *MockDirector) StartDeployment(name string, opts bosh.StartOpts) (*bosh.Task, error) {
+func (m *MockDirector) StartDeployment(_ context.Context, name string, opts bosh.StartOpts) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -369,7 +370,7 @@ func (m *MockDirector) StartDeployment(name string, opts bosh.StartOpts) (*bosh.
 	return &bosh.Task{ID: 1}, nil
 }
 
-func (m *MockDirector) RecreateDeployment(name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
+func (m *MockDirector) RecreateDeployment(_ context.Context, name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -379,7 +380,7 @@ func (m *MockDirector) RecreateDeployment(name string, opts bosh.RecreateOpts) (
 	return &bosh.Task{ID: 1}, nil
 }
 
-func (m *MockDirector) ListErrands(deployment string) ([]bosh.Errand, error) {
+func (m *MockDirector) ListErrands(_ context.Context, deployment string) ([]bosh.Errand, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -389,7 +390,7 @@ func (m *MockDirector) ListErrands(deployment string) ([]bosh.Errand, error) {
 	return []bosh.Errand{}, nil
 }
 
-func (m *MockDirector) RunErrand(deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
+func (m *MockDirector) RunErrand(_ context.Context, deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -399,7 +400,7 @@ func (m *MockDirector) RunErrand(deployment, errand string, opts bosh.ErrandOpts
 	return &bosh.ErrandResult{}, nil
 }
 
-func (m *MockDirector) GetInstances(deployment string) ([]bosh.Instance, error) {
+func (m *MockDirector) GetInstances(_ context.Context, deployment string) ([]bosh.Instance, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -409,7 +410,7 @@ func (m *MockDirector) GetInstances(deployment string) ([]bosh.Instance, error) 
 	return []bosh.Instance{}, nil
 }
 
-func (m *MockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
+func (m *MockDirector) UpdateDeployment(_ context.Context, name, manifest string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -419,7 +420,7 @@ func (m *MockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, erro
 	return &bosh.Task{ID: 1}, nil
 }
 
-func (m *MockDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+func (m *MockDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
@@ -473,7 +474,7 @@ func TestPooledDirector_ConcurrentRequests(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 
-			_, err := pooled.CreateDeployment("test-manifest")
+			_, err := pooled.CreateDeployment(t.Context(), "test-manifest")
 			results <- err
 		}()
 	}
@@ -520,14 +521,14 @@ func TestPooledDirector_Timeout(t *testing.T) {
 	// Fill the pool with a long-running request
 	// Note: Only write operations use pooling, so we use CreateDeployment
 	go func() {
-		_, _ = pooled.CreateDeployment("test-manifest")
+		_, _ = pooled.CreateDeployment(t.Context(), "test-manifest")
 	}()
 
 	time.Sleep(100 * time.Millisecond) // Let first request start
 
 	// This should timeout
 	// Use DeleteDeployment which uses pooling (read operations don't use pooling)
-	_, err := pooled.DeleteDeployment("test-deployment")
+	_, err := pooled.DeleteDeployment(t.Context(), "test-deployment")
 	if err == nil {
 		t.Error("Expected timeout error, got nil")
 	}
@@ -564,7 +565,7 @@ func TestPooledDirector_QueuedRequests(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 
-			_, _ = pooled.CreateDeployment("test-manifest")
+			_, _ = pooled.CreateDeployment(t.Context(), "test-manifest")
 		}()
 	}
 
@@ -662,7 +663,7 @@ func launchConcurrentRequests(pooled bosh.Director) (chan bool, chan bool) {
 			started <- true
 
 			// Use CreateDeployment which still uses pooling (read operations don't use pooling)
-			_, _ = pooled.CreateDeployment("test-manifest")
+			_, _ = pooled.CreateDeployment(context.Background(), "test-manifest")
 
 			done <- true
 		}()
@@ -729,7 +730,7 @@ func getDeploymentTests(pooled *bosh.PooledDirector) []struct {
 		fn   func() error
 	}{
 		{"GetInfo", func() error {
-			_, err := pooled.GetInfo()
+			_, err := pooled.GetInfo(context.Background())
 			if err != nil {
 				return fmt.Errorf("GetInfo failed: %w", err)
 			}
@@ -737,7 +738,7 @@ func getDeploymentTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetDeployments", func() error {
-			_, err := pooled.GetDeployments()
+			_, err := pooled.GetDeployments(context.Background())
 			if err != nil {
 				return fmt.Errorf("GetDeployments failed: %w", err)
 			}
@@ -745,7 +746,7 @@ func getDeploymentTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetDeployment", func() error {
-			_, err := pooled.GetDeployment("test")
+			_, err := pooled.GetDeployment(context.Background(), "test")
 			if err != nil {
 				return fmt.Errorf("GetDeployment failed: %w", err)
 			}
@@ -753,7 +754,7 @@ func getDeploymentTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"CreateDeployment", func() error {
-			_, err := pooled.CreateDeployment("manifest")
+			_, err := pooled.CreateDeployment(context.Background(), "manifest")
 			if err != nil {
 				return fmt.Errorf("CreateDeployment failed: %w", err)
 			}
@@ -761,7 +762,7 @@ func getDeploymentTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"DeleteDeployment", func() error {
-			_, err := pooled.DeleteDeployment("test")
+			_, err := pooled.DeleteDeployment(context.Background(), "test")
 			if err != nil {
 				return fmt.Errorf("DeleteDeployment failed: %w", err)
 			}
@@ -769,7 +770,7 @@ func getDeploymentTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetDeploymentVMs", func() error {
-			_, err := pooled.GetDeploymentVMs("test")
+			_, err := pooled.GetDeploymentVMs(context.Background(), "test")
 			if err != nil {
 				return fmt.Errorf("GetDeploymentVMs failed: %w", err)
 			}
@@ -789,7 +790,7 @@ func getReleaseAndStemcellTests(pooled *bosh.PooledDirector) []struct {
 		fn   func() error
 	}{
 		{"GetReleases", func() error {
-			_, err := pooled.GetReleases()
+			_, err := pooled.GetReleases(context.Background())
 			if err != nil {
 				return fmt.Errorf("GetReleases failed: %w", err)
 			}
@@ -797,7 +798,7 @@ func getReleaseAndStemcellTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"UploadRelease", func() error {
-			_, err := pooled.UploadRelease("url", "sha1")
+			_, err := pooled.UploadRelease(context.Background(), "url", "sha1")
 			if err != nil {
 				return fmt.Errorf("UploadRelease failed: %w", err)
 			}
@@ -805,7 +806,7 @@ func getReleaseAndStemcellTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetStemcells", func() error {
-			_, err := pooled.GetStemcells()
+			_, err := pooled.GetStemcells(context.Background())
 			if err != nil {
 				return fmt.Errorf("GetStemcells failed: %w", err)
 			}
@@ -813,7 +814,7 @@ func getReleaseAndStemcellTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"UploadStemcell", func() error {
-			_, err := pooled.UploadStemcell("url", "sha1")
+			_, err := pooled.UploadStemcell(context.Background(), "url", "sha1")
 			if err != nil {
 				return fmt.Errorf("UploadStemcell failed: %w", err)
 			}
@@ -833,7 +834,7 @@ func getTaskTests(pooled *bosh.PooledDirector) []struct {
 		fn   func() error
 	}{
 		{"GetTask", func() error {
-			_, err := pooled.GetTask(1)
+			_, err := pooled.GetTask(context.Background(), 1)
 			if err != nil {
 				return fmt.Errorf("GetTask failed: %w", err)
 			}
@@ -841,7 +842,7 @@ func getTaskTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetAllTasks", func() error {
-			_, err := pooled.GetAllTasks(10)
+			_, err := pooled.GetAllTasks(context.Background(), 10)
 			if err != nil {
 				return fmt.Errorf("GetAllTasks failed: %w", err)
 			}
@@ -849,10 +850,10 @@ func getTaskTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"CancelTask", func() error {
-			return pooled.CancelTask(1)
+			return pooled.CancelTask(context.Background(), 1)
 		}},
 		{"GetTaskOutput", func() error {
-			_, err := pooled.GetTaskOutput(1, "result")
+			_, err := pooled.GetTaskOutput(context.Background(), 1, "result")
 			if err != nil {
 				return fmt.Errorf("GetTaskOutput failed: %w", err)
 			}
@@ -860,7 +861,7 @@ func getTaskTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetTaskEvents", func() error {
-			_, err := pooled.GetTaskEvents(1)
+			_, err := pooled.GetTaskEvents(context.Background(), 1)
 			if err != nil {
 				return fmt.Errorf("GetTaskEvents failed: %w", err)
 			}
@@ -880,7 +881,7 @@ func getEventTests(pooled *bosh.PooledDirector) []struct {
 		fn   func() error
 	}{
 		{"GetEvents", func() error {
-			_, err := pooled.GetEvents("test")
+			_, err := pooled.GetEvents(context.Background(), "test")
 			if err != nil {
 				return fmt.Errorf("GetEvents failed: %w", err)
 			}
@@ -900,10 +901,10 @@ func getConfigTests(pooled *bosh.PooledDirector) []struct {
 		fn   func() error
 	}{
 		{"UpdateCloudConfig", func() error {
-			return pooled.UpdateCloudConfig("config")
+			return pooled.UpdateCloudConfig(context.Background(), "config")
 		}},
 		{"GetCloudConfig", func() error {
-			_, err := pooled.GetCloudConfig()
+			_, err := pooled.GetCloudConfig(context.Background())
 			if err != nil {
 				return fmt.Errorf("GetCloudConfig failed: %w", err)
 			}
@@ -911,7 +912,7 @@ func getConfigTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetConfigs", func() error {
-			_, err := pooled.GetConfigs(10, []string{"cloud"})
+			_, err := pooled.GetConfigs(context.Background(), 10, []string{"cloud"})
 			if err != nil {
 				return fmt.Errorf("GetConfigs failed: %w", err)
 			}
@@ -919,7 +920,7 @@ func getConfigTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetConfigVersions", func() error {
-			_, err := pooled.GetConfigVersions("cloud", "default", 10)
+			_, err := pooled.GetConfigVersions(context.Background(), "cloud", "default", 10)
 			if err != nil {
 				return fmt.Errorf("GetConfigVersions failed: %w", err)
 			}
@@ -927,7 +928,7 @@ func getConfigTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetConfigByID", func() error {
-			_, err := pooled.GetConfigByID("123")
+			_, err := pooled.GetConfigByID(context.Background(), "123")
 			if err != nil {
 				return fmt.Errorf("GetConfigByID failed: %w", err)
 			}
@@ -935,7 +936,7 @@ func getConfigTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetConfigContent", func() error {
-			_, err := pooled.GetConfigContent("123")
+			_, err := pooled.GetConfigContent(context.Background(), "123")
 			if err != nil {
 				return fmt.Errorf("GetConfigContent failed: %w", err)
 			}
@@ -943,7 +944,7 @@ func getConfigTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"GetConfig", func() error {
-			_, err := pooled.GetConfig("cloud", "default")
+			_, err := pooled.GetConfig(context.Background(), "cloud", "default")
 			if err != nil {
 				return fmt.Errorf("GetConfig failed: %w", err)
 			}
@@ -963,7 +964,7 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 		fn   func() error
 	}{
 		{"Cleanup", func() error {
-			_, err := pooled.Cleanup(false)
+			_, err := pooled.Cleanup(context.Background(), false)
 			if err != nil {
 				return fmt.Errorf("Cleanup failed: %w", err)
 			}
@@ -971,7 +972,7 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"FetchLogs", func() error {
-			_, err := pooled.FetchLogs("test", "job", "0")
+			_, err := pooled.FetchLogs(context.Background(), "test", "job", "0")
 			if err != nil {
 				return fmt.Errorf("FetchLogs failed: %w", err)
 			}
@@ -979,7 +980,7 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"SSHCommand", func() error {
-			_, err := pooled.SSHCommand("test", "instance", 0, "ls", []string{}, nil)
+			_, err := pooled.SSHCommand(context.Background(), "test", "instance", 0, "ls", []string{}, nil)
 			if err != nil {
 				return fmt.Errorf("SSHCommand failed: %w", err)
 			}
@@ -987,7 +988,7 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"SSHSession", func() error {
-			_, err := pooled.SSHSession("test", "instance", 0, nil)
+			_, err := pooled.SSHSession(context.Background(), "test", "instance", 0, nil)
 			if !errors.Is(err, ErrMockError) {
 				return fmt.Errorf("expected ErrMockError, got %w", err)
 			}
@@ -995,10 +996,10 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"EnableResurrection", func() error {
-			return pooled.EnableResurrection("test", true)
+			return pooled.EnableResurrection(context.Background(), "test", true)
 		}},
 		{"DeleteResurrectionConfig", func() error {
-			return pooled.DeleteResurrectionConfig("test")
+			return pooled.DeleteResurrectionConfig(context.Background(), "test")
 		}},
 	}
 }
@@ -1069,35 +1070,35 @@ func TestPooledDirector_AllMethods(t *testing.T) {
 func executeStressTestOperation(pooled *bosh.PooledDirector, requestID int) error {
 	switch requestID % 5 {
 	case 0:
-		_, err := pooled.CreateDeployment("test-manifest")
+		_, err := pooled.CreateDeployment(context.Background(), "test-manifest")
 		if err != nil {
 			return fmt.Errorf("failed to create deployment: %w", err)
 		}
 
 		return nil
 	case 1:
-		_, err := pooled.DeleteDeployment("test-deployment")
+		_, err := pooled.DeleteDeployment(context.Background(), "test-deployment")
 		if err != nil {
 			return fmt.Errorf("failed to delete deployment: %w", err)
 		}
 
 		return nil
 	case 2:
-		_, err := pooled.UpdateDeployment("test-deployment", "test-manifest")
+		_, err := pooled.UpdateDeployment(context.Background(), "test-deployment", "test-manifest")
 		if err != nil {
 			return fmt.Errorf("failed to update deployment: %w", err)
 		}
 
 		return nil
 	case 3:
-		_, err := pooled.UploadRelease("http://example.com/release.tgz", "sha1")
+		_, err := pooled.UploadRelease(context.Background(), "http://example.com/release.tgz", "sha1")
 		if err != nil {
 			return fmt.Errorf("failed to upload release: %w", err)
 		}
 
 		return nil
 	case 4:
-		_, err := pooled.UploadStemcell("http://example.com/stemcell.tgz", "sha1")
+		_, err := pooled.UploadStemcell(context.Background(), "http://example.com/stemcell.tgz", "sha1")
 		if err != nil {
 			return fmt.Errorf("failed to upload stemcell: %w", err)
 		}
@@ -1196,7 +1197,7 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 	// First request fills the pool
 	// Use CreateDeployment which still uses pooling (read operations don't use pooling)
 	go func() {
-		_, _ = pooled.CreateDeployment("test-manifest")
+		_, _ = pooled.CreateDeployment(t.Context(), "test-manifest")
 	}()
 
 	// Give first request time to acquire the slot
@@ -1204,7 +1205,7 @@ func TestPooledDirector_TimeoutBehavior(t *testing.T) {
 
 	// Second request should timeout
 	start := time.Now()
-	_, err := pooled.DeleteDeployment("test-deployment")
+	_, err := pooled.DeleteDeployment(t.Context(), "test-deployment")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -1248,7 +1249,7 @@ func TestPooledDirector_GracefulShutdown(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 
-			_, _ = pooled.CreateDeployment("test-manifest")
+			_, _ = pooled.CreateDeployment(t.Context(), "test-manifest")
 		}()
 	}
 
@@ -1290,7 +1291,7 @@ func TestPooledDirector_ErrorPropagation(t *testing.T) {
 
 	// Test that errors are properly propagated
 	// Use CreateDeployment which still uses pooling (read operations don't use pooling)
-	_, err := pooled.CreateDeployment("test-manifest")
+	_, err := pooled.CreateDeployment(t.Context(), "test-manifest")
 	if err == nil {
 		t.Error("Expected error to be propagated, got nil")
 	}
@@ -1300,7 +1301,7 @@ func TestPooledDirector_ErrorPropagation(t *testing.T) {
 	}
 
 	// Verify the pool still works after an error
-	_, err2 := pooled.DeleteDeployment("test-deployment")
+	_, err2 := pooled.DeleteDeployment(t.Context(), "test-deployment")
 	if err2 == nil {
 		t.Error("Expected second error to be propagated, got nil")
 	}
@@ -1323,25 +1324,25 @@ type MockErrorDirector struct {
 	errorMessage string
 }
 
-func (m *MockErrorDirector) GetInfo() (*bosh.Info, error) {
+func (m *MockErrorDirector) GetInfo(_ context.Context) (*bosh.Info, error) {
 	m.incrementCallCount()
 
 	return nil, fmt.Errorf("%w: %s", ErrMockError, m.errorMessage)
 }
 
-func (m *MockErrorDirector) GetDeployments() ([]bosh.Deployment, error) {
+func (m *MockErrorDirector) GetDeployments(_ context.Context) ([]bosh.Deployment, error) {
 	m.incrementCallCount()
 
 	return nil, fmt.Errorf("%w: %s", ErrMockError, m.errorMessage)
 }
 
-func (m *MockErrorDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
+func (m *MockErrorDirector) CreateDeployment(_ context.Context, manifest string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	return nil, fmt.Errorf("%w: %s", ErrMockError, m.errorMessage)
 }
 
-func (m *MockErrorDirector) DeleteDeployment(name string) (*bosh.Task, error) {
+func (m *MockErrorDirector) DeleteDeployment(_ context.Context, name string) (*bosh.Task, error) {
 	m.incrementCallCount()
 
 	return nil, fmt.Errorf("%w: %s", ErrMockError, m.errorMessage)

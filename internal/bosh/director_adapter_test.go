@@ -534,7 +534,7 @@ func TestGetInfoReturnsUAAURL(t *testing.T) {
 				t.Fatalf("failed to create director adapter: %v", err)
 			}
 
-			info, err := director.GetInfo()
+			info, err := director.GetInfo(t.Context())
 			if err != nil {
 				t.Fatalf("GetInfo: %v", err)
 			}

@@ -71,7 +71,7 @@ func (e *UAAError) Error() string {
 // concurrent use.
 type TokenSource struct {
 	tokenURL     string
-	resolveURL   func() (string, error)
+	resolveURL   func(ctx context.Context) (string, error)
 	log          logger.Logger
 	clientID     string
 	clientSecret string
@@ -143,7 +143,7 @@ func NewTokenSource(uaaURL, clientID, clientSecret, caCert string, now func() ti
 // which runs on a fetch until it succeeds and is not called again afterwards.
 // It lets a source be built while the URL is still unknown, such as when the
 // director's /info was unreachable at boot, and recover on a later fetch.
-func NewLazyTokenSource(resolve func() (string, error), clientID, clientSecret, caCert string, now func() time.Time) (*TokenSource, error) {
+func NewLazyTokenSource(resolve func(ctx context.Context) (string, error), clientID, clientSecret, caCert string, now func() time.Time) (*TokenSource, error) {
 	if resolve == nil {
 		return nil, ErrInvalidUAAURL
 	}
@@ -318,7 +318,7 @@ func (s *TokenSource) safeFetch(ctx context.Context) (token string, expiresIn in
 
 func (s *TokenSource) fetch(ctx context.Context) (string, int64, error) {
 	if s.tokenURL == "" {
-		resolved, err := s.resolveURL()
+		resolved, err := s.resolveURL(ctx)
 		if err != nil {
 			return "", 0, fmt.Errorf("%w: finding the UAA URL: %w", ErrUAAUnreachable, err)
 		}

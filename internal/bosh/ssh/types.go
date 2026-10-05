@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"context"
 	"io"
 	"time"
 )
@@ -8,10 +9,10 @@ import (
 // SSHService defines the interface for BOSH SSH operations.
 type SSHService interface {
 	// Execute a one-off command on a BOSH VM
-	ExecuteCommand(request *SSHRequest) (*SSHResponse, error)
+	ExecuteCommand(ctx context.Context, request *SSHRequest) (*SSHResponse, error)
 
 	// Create an interactive SSH session for streaming
-	CreateSession(request *SSHRequest) (SSHSession, error)
+	CreateSession(ctx context.Context, request *SSHRequest) (SSHSession, error)
 
 	// Close the SSH service and cleanup resources
 	Close() error
@@ -20,13 +21,13 @@ type SSHService interface {
 // SSHExecutor handles command execution on BOSH VMs.
 type SSHExecutor interface {
 	// Execute a command with timeout
-	Execute(request *SSHRequest) (*SSHResponse, error)
+	Execute(ctx context.Context, request *SSHRequest) (*SSHResponse, error)
 
 	// Execute a command with custom timeout
-	ExecuteWithTimeout(request *SSHRequest, timeout time.Duration) (*SSHResponse, error)
+	ExecuteWithTimeout(ctx context.Context, request *SSHRequest, timeout time.Duration) (*SSHResponse, error)
 
 	// Execute a command with streaming output
-	ExecuteWithStream(request *SSHRequest, output io.Writer) (*SSHResponse, error)
+	ExecuteWithStream(ctx context.Context, request *SSHRequest, output io.Writer) (*SSHResponse, error)
 }
 
 // SSHSession represents an interactive SSH session.

@@ -471,7 +471,7 @@ func (h *SSHHandler) startSSHSession(ctx context.Context, session *SSHStreamSess
 	h.logger.Debugf("SSH request: %+v", sshReq)
 
 	// Create SSH session
-	sshSession, err := h.sshService.CreateSession(sshReq)
+	sshSession, err := h.sshService.CreateSession(ctx, sshReq)
 	if err != nil {
 		return fmt.Errorf("failed to create SSH session: %w", err)
 	}

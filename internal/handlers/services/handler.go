@@ -166,6 +166,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 // ExecuteSSHCommand executes an SSH command on a service instance.
 func (h *Handler) ExecuteSSHCommand(writer http.ResponseWriter, req *http.Request, instanceID string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("ssh-execute")
 	logger.Debug("Executing SSH command on instance: %s", instanceID)
 
@@ -189,16 +191,18 @@ func (h *Handler) ExecuteSSHCommand(writer http.ResponseWriter, req *http.Reques
 	logger.Info("Executing command '%s' on %s/%s/%d", sshReq.Command, sshReq.Deployment, sshReq.Instance, sshReq.Index)
 
 	if execReq.Async {
-		h.handleAsyncSSH(writer, logger, sshReq, instanceID, &execReq)
+		h.handleAsyncSSH(ctx, writer, logger, sshReq, instanceID, &execReq)
 
 		return
 	}
 
-	h.handleSyncSSH(writer, logger, sshReq, instanceID, &execReq)
+	h.handleSyncSSH(ctx, writer, logger, sshReq, instanceID, &execReq)
 }
 
 // GetTrustedCertificates fetches trusted certificate files from the service instance VM via SSH.
 func (h *Handler) GetTrustedCertificates(writer http.ResponseWriter, req *http.Request, instanceID string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("certificates-trusted-get")
 	logger.Debug("Getting trusted certificates for instance: %s", instanceID)
 
@@ -214,7 +218,7 @@ func (h *Handler) GetTrustedCertificates(writer http.ResponseWriter, req *http.R
 		return
 	}
 
-	sshResp, err := h.executeCertificateListCommand(logger, deploymentInfo, instanceID)
+	sshResp, err := h.executeCertificateListCommand(ctx, logger, deploymentInfo, instanceID)
 	if err != nil {
 		h.writeCertificateErrorResponse(writer, err)
 
@@ -227,6 +231,8 @@ func (h *Handler) GetTrustedCertificates(writer http.ResponseWriter, req *http.R
 
 // GetTrustedCertificateFile fetches a specific certificate file from the service instance VM via SSH.
 func (h *Handler) GetTrustedCertificateFile(writer http.ResponseWriter, req *http.Request, instanceID string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("certificates-trusted-file")
 	logger.Debug("Fetching certificate file for instance: %s", instanceID)
 
@@ -247,7 +253,7 @@ func (h *Handler) GetTrustedCertificateFile(writer http.ResponseWriter, req *htt
 		return
 	}
 
-	certPEM, err := h.fetchCertificateFileContent(writer, logger, deploymentInfo, instanceID, fileRequest.FilePath)
+	certPEM, err := h.fetchCertificateFileContent(ctx, writer, logger, deploymentInfo, instanceID, fileRequest.FilePath)
 	if err != nil {
 		return
 	}
@@ -335,6 +341,8 @@ func (h *Handler) RemoveTrustedCertificate(writer http.ResponseWriter, req *http
 
 // ExecuteRabbitMQSSHCommand executes RabbitMQ-specific SSH commands.
 func (h *Handler) ExecuteRabbitMQSSHCommand(writer http.ResponseWriter, req *http.Request, instanceID string, command string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("rabbitmq-ssh")
 	logger.Debug("Executing RabbitMQ SSH command '%s' on instance: %s", command, instanceID)
 
@@ -353,7 +361,7 @@ func (h *Handler) ExecuteRabbitMQSSHCommand(writer http.ResponseWriter, req *htt
 		return
 	}
 
-	result, err := h.executeRabbitMQCommand(writer, command, bodyBytes, deploymentName, instanceName, 0)
+	result, err := h.executeRabbitMQCommand(ctx, writer, command, bodyBytes, deploymentName, instanceName, 0)
 	if err != nil {
 		logger.Error("RabbitMQ SSH command '%s' failed for %s: %v", command, instanceID, err)
 		response.WriteError(writer, http.StatusInternalServerError, err.Error())
@@ -444,6 +452,8 @@ func extractResurrectionStateFromRuleWithDebug(ruleMap map[string]interface{}, d
 
 // GetInstanceVMs returns VMs for a service instance.
 func (h *Handler) GetInstanceVMs(writer http.ResponseWriter, req *http.Request, instanceID string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("instance-vms")
 	logger.Debug("Getting VMs for instance: %s", instanceID)
 
@@ -462,12 +472,12 @@ func (h *Handler) GetInstanceVMs(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
-	vms, err := h.fetchDeploymentVMs(writer, logger, deploymentName)
+	vms, err := h.fetchDeploymentVMs(ctx, writer, logger, deploymentName)
 	if err != nil {
 		return
 	}
 
-	h.applyResurrectionConfig(logger, deploymentName, vms)
+	h.applyResurrectionConfig(ctx, logger, deploymentName, vms)
 	h.cacheVMData(req.Context(), logger, instanceID, deploymentName, vms)
 
 	response.HandleJSON(writer, vms, nil)
@@ -549,7 +559,7 @@ func (h *Handler) GetInstanceLogs(writer http.ResponseWriter, req *http.Request,
 		return
 	}
 
-	allLogs := h.fetchLogsForInstanceGroups(logger, deploymentName, instanceGroups)
+	allLogs := h.fetchLogsForInstanceGroups(ctx, logger, deploymentName, instanceGroups)
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
@@ -607,7 +617,7 @@ func (h *Handler) GetInstanceEvents(writer http.ResponseWriter, req *http.Reques
 	deploymentName := inst.DeploymentName
 	logger.Debug("Getting events for deployment: %s", deploymentName)
 
-	events, err := h.director.GetEvents(deploymentName)
+	events, err := h.director.GetEvents(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to fetch events: %v", err)
 		response.HandleJSON(writer, map[string]interface{}{
@@ -664,7 +674,7 @@ func (h *Handler) GetInstanceManifest(writer http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	deployment, err := h.fetchDeploymentManifest(writer, logger, deploymentName)
+	deployment, err := h.fetchDeploymentManifest(ctx, writer, logger, deploymentName)
 	if err != nil {
 		return
 	}
@@ -764,7 +774,7 @@ func (h *Handler) GetInstanceDetails(writer http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	deployment, err := h.fetchDeploymentForDetails(writer, logger, deploymentName, instanceID)
+	deployment, err := h.fetchDeploymentForDetails(ctx, writer, logger, deploymentName, instanceID)
 	if err != nil {
 		return
 	}
@@ -837,7 +847,7 @@ func (h *Handler) GetInstanceTaskLog(writer http.ResponseWriter, req *http.Reque
 	deploymentName := deploymentInfo.Deployment
 	logger.Debug("Resolved deployment name %s for task log", deploymentName)
 
-	events, err := h.director.GetEvents(deploymentName)
+	events, err := h.director.GetEvents(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Unable to get events for deployment %s: %v", deploymentName, err)
 		response.HandleJSON(writer, []bosh.TaskEvent{}, nil)
@@ -855,7 +865,7 @@ func (h *Handler) GetInstanceTaskLog(writer http.ResponseWriter, req *http.Reque
 
 	logger.Debug("Fetching task output for task %d", taskID)
 
-	taskOutput := fetchTaskOutput(logger, h.director, taskID)
+	taskOutput := fetchTaskOutput(ctx, logger, h.director, taskID)
 	if strings.TrimSpace(taskOutput) == "" {
 		logger.Debug("Task output empty for task %d", taskID)
 		response.HandleJSON(writer, []bosh.TaskEvent{}, nil)
@@ -893,7 +903,7 @@ func (h *Handler) parseCertificateFileRequest(writer http.ResponseWriter, req *h
 	return struct{ FilePath string }{FilePath: fileRequest.FilePath}, nil
 }
 
-func (h *Handler) fetchCertificateFileContent(writer http.ResponseWriter, logger interfaces.Logger, deploymentInfo *deploymentInfo, instanceID, filePath string) (string, error) {
+func (h *Handler) fetchCertificateFileContent(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentInfo *deploymentInfo, instanceID, filePath string) (string, error) {
 	sshReq := &boshssh.SSHRequest{
 		Deployment: deploymentInfo.Deployment,
 		Instance:   deploymentInfo.InstanceGroup,
@@ -909,7 +919,7 @@ func (h *Handler) fetchCertificateFileContent(writer http.ResponseWriter, logger
 
 	logger.Debug("Reading certificate file via SSH: %s on %s/%s/%d", filePath, sshReq.Deployment, sshReq.Instance, sshReq.Index)
 
-	sshResp, err := h.ssh.ExecuteCommand(sshReq)
+	sshResp, err := h.ssh.ExecuteCommand(ctx, sshReq)
 	if err != nil {
 		logger.Error("SSH certificate file read failed for %s: %v", instanceID, err)
 		response.WriteError(writer, http.StatusInternalServerError, fmt.Sprintf("failed to read certificate file: %v", err))
@@ -1260,10 +1270,10 @@ func (h *Handler) resolveRabbitMQDeployment(writer http.ResponseWriter, req *htt
 	return deploymentInfo.Deployment, deploymentInfo.InstanceGroup, nil
 }
 
-func (h *Handler) executeRabbitMQCommand(writer http.ResponseWriter, command string, bodyBytes []byte, deploymentName, instanceName string, instanceIndex int) (*rabbitmqssh.RabbitMQCommandResult, error) {
+func (h *Handler) executeRabbitMQCommand(ctx context.Context, writer http.ResponseWriter, command string, bodyBytes []byte, deploymentName, instanceName string, instanceIndex int) (*rabbitmqssh.RabbitMQCommandResult, error) {
 	baseCmd := h.extractBaseCommand(command)
 
-	return h.dispatchRabbitMQCommand(writer, baseCmd, bodyBytes, deploymentName, instanceName, instanceIndex)
+	return h.dispatchRabbitMQCommand(ctx, writer, baseCmd, bodyBytes, deploymentName, instanceName, instanceIndex)
 }
 
 func (h *Handler) extractBaseCommand(command string) string {
@@ -1274,36 +1284,36 @@ func (h *Handler) extractBaseCommand(command string) string {
 	return command
 }
 
-func (h *Handler) dispatchRabbitMQCommand(writer http.ResponseWriter, baseCmd string, bodyBytes []byte, deploymentName, instanceName string, instanceIndex int) (*rabbitmqssh.RabbitMQCommandResult, error) {
+func (h *Handler) dispatchRabbitMQCommand(ctx context.Context, writer http.ResponseWriter, baseCmd string, bodyBytes []byte, deploymentName, instanceName string, instanceIndex int) (*rabbitmqssh.RabbitMQCommandResult, error) {
 	commandExecutors := map[string]func() (*rabbitmqssh.RabbitMQCommandResult, error){
 		"list_queues": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.ListQueues(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.ListQueues(ctx, deploymentName, instanceName, instanceIndex)
 		},
 		"list_connections": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.ListConnections(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.ListConnections(ctx, deploymentName, instanceName, instanceIndex)
 		},
 		"list_channels": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.ListChannels(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.ListChannels(ctx, deploymentName, instanceName, instanceIndex)
 		},
 		"list_users": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.ListUsers(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.ListUsers(ctx, deploymentName, instanceName, instanceIndex)
 		},
 		"cluster_status": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.ClusterStatus(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.ClusterStatus(ctx, deploymentName, instanceName, instanceIndex)
 		},
 		"node_health": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.NodeHealth(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.NodeHealth(ctx, deploymentName, instanceName, instanceIndex)
 		},
 		"status": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.Status(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.Status(ctx, deploymentName, instanceName, instanceIndex)
 		},
 		"environment": func() (*rabbitmqssh.RabbitMQCommandResult, error) {
-			return h.rabbitmqSSH.Environment(deploymentName, instanceName, instanceIndex)
+			return h.rabbitmqSSH.Environment(ctx, deploymentName, instanceName, instanceIndex)
 		},
 	}
 
 	if baseCmd == "custom" {
-		return h.executeCustomRabbitMQCommand(writer, bodyBytes, deploymentName, instanceName, instanceIndex)
+		return h.executeCustomRabbitMQCommand(ctx, writer, bodyBytes, deploymentName, instanceName, instanceIndex)
 	}
 
 	executor, exists := commandExecutors[baseCmd]
@@ -1321,7 +1331,7 @@ func (h *Handler) dispatchRabbitMQCommand(writer http.ResponseWriter, baseCmd st
 	return result, nil
 }
 
-func (h *Handler) executeCustomRabbitMQCommand(writer http.ResponseWriter, bodyBytes []byte, deploymentName, instanceName string, instanceIndex int) (*rabbitmqssh.RabbitMQCommandResult, error) {
+func (h *Handler) executeCustomRabbitMQCommand(ctx context.Context, writer http.ResponseWriter, bodyBytes []byte, deploymentName, instanceName string, instanceIndex int) (*rabbitmqssh.RabbitMQCommandResult, error) {
 	var customReq struct {
 		Command string   `json:"command"`
 		Args    []string `json:"args"`
@@ -1354,7 +1364,7 @@ func (h *Handler) executeCustomRabbitMQCommand(writer http.ResponseWriter, bodyB
 		Timeout:     customReq.Timeout,
 	}
 
-	result, err := h.rabbitmqSSH.ExecuteCommand(deploymentName, instanceName, instanceIndex, cmd)
+	result, err := h.rabbitmqSSH.ExecuteCommand(ctx, deploymentName, instanceName, instanceIndex, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute custom RabbitMQ command: %w", err)
 	}
@@ -1385,8 +1395,8 @@ func (h *Handler) getDeploymentNameFromVault(writer http.ResponseWriter, ctx con
 	return inst.DeploymentName, nil
 }
 
-func (h *Handler) fetchDeploymentVMs(writer http.ResponseWriter, logger interfaces.Logger, deploymentName string) ([]bosh.VM, error) {
-	vms, err := h.director.GetDeploymentVMs(deploymentName)
+func (h *Handler) fetchDeploymentVMs(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName string) ([]bosh.VM, error) {
+	vms, err := h.director.GetDeploymentVMs(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to fetch VMs: %v", err)
 		response.HandleJSON(writer, map[string]interface{}{
@@ -1400,13 +1410,13 @@ func (h *Handler) fetchDeploymentVMs(writer http.ResponseWriter, logger interfac
 	return vms, nil
 }
 
-func (h *Handler) applyResurrectionConfig(logger interfaces.Logger, deploymentName string, vms []bosh.VM) {
+func (h *Handler) applyResurrectionConfig(ctx context.Context, logger interfaces.Logger, deploymentName string, vms []bosh.VM) {
 	configName := "blacksmith." + deploymentName
 	logger.Debug("Checking for resurrection config: %s (deployment: %s)", configName, deploymentName)
 
 	resurrectionPaused := false
 
-	resurrectionConfig, err := h.director.GetConfig("resurrection", configName)
+	resurrectionConfig, err := h.director.GetConfig(ctx, "resurrection", configName)
 	if err != nil {
 		logger.Debug("Error getting resurrection config: %v", err)
 	}
@@ -1509,7 +1519,7 @@ func (h *Handler) getInstanceGroupsFromManifest(writer http.ResponseWriter, ctx 
 	return instanceGroups, nil
 }
 
-func (h *Handler) fetchLogsForInstanceGroups(logger interfaces.Logger, deploymentName string, instanceGroups []interface{}) map[string]interface{} {
+func (h *Handler) fetchLogsForInstanceGroups(ctx context.Context, logger interfaces.Logger, deploymentName string, instanceGroups []interface{}) map[string]interface{} {
 	allLogs := make(map[string]interface{})
 
 	logger.Debug("Found %d instance groups in manifest", len(instanceGroups))
@@ -1534,7 +1544,7 @@ func (h *Handler) fetchLogsForInstanceGroups(logger interfaces.Logger, deploymen
 		instances := h.getInstanceCount(group)
 		logger.Debug("Job %s has %d instances", jobName, instances)
 
-		h.fetchLogsForJob(logger, allLogs, deploymentName, jobName, instances)
+		h.fetchLogsForJob(ctx, logger, allLogs, deploymentName, jobName, instances)
 	}
 
 	return allLogs
@@ -1553,14 +1563,14 @@ func (h *Handler) getInstanceCount(group map[string]interface{}) int {
 	return instances
 }
 
-func (h *Handler) fetchLogsForJob(logger interfaces.Logger, allLogs map[string]interface{}, deploymentName, jobName string, instances int) {
+func (h *Handler) fetchLogsForJob(ctx context.Context, logger interfaces.Logger, allLogs map[string]interface{}, deploymentName, jobName string, instances int) {
 	for i := range instances {
 		jobIndex := strconv.Itoa(i)
 		logKey := fmt.Sprintf("%s/%s", jobName, jobIndex)
 
 		logger.Debug("Fetching logs for job %s/%s", jobName, jobIndex)
 
-		logs, err := h.director.FetchLogs(deploymentName, jobName, jobIndex)
+		logs, err := h.director.FetchLogs(ctx, deploymentName, jobName, jobIndex)
 		if err != nil {
 			logger.Error("Failed to fetch logs for %s/%s: %v", jobName, jobIndex, err)
 			allLogs[logKey] = map[string]interface{}{
@@ -1596,8 +1606,8 @@ func (h *Handler) getDeploymentNameForManifest(writer http.ResponseWriter, ctx c
 	return inst.DeploymentName, nil
 }
 
-func (h *Handler) fetchDeploymentManifest(writer http.ResponseWriter, logger interfaces.Logger, deploymentName string) (*bosh.DeploymentDetail, error) {
-	deployment, err := h.director.GetDeployment(deploymentName)
+func (h *Handler) fetchDeploymentManifest(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName string) (*bosh.DeploymentDetail, error) {
+	deployment, err := h.director.GetDeployment(ctx, deploymentName)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "doesn't exist") {
 			logger.Info("Deployment %s doesn't exist (404), returning success for deleted deployment", deploymentName)
@@ -1683,8 +1693,8 @@ func (h *Handler) getInstanceDataForDetails(writer http.ResponseWriter, ctx cont
 	return inst, inst.DeploymentName, nil
 }
 
-func (h *Handler) fetchDeploymentForDetails(writer http.ResponseWriter, logger interfaces.Logger, deploymentName, instanceID string) (*bosh.DeploymentDetail, error) {
-	deployment, err := h.director.GetDeployment(deploymentName)
+func (h *Handler) fetchDeploymentForDetails(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName, instanceID string) (*bosh.DeploymentDetail, error) {
+	deployment, err := h.director.GetDeployment(ctx, deploymentName)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "doesn't exist") {
 			logger.Info("Deployment %s doesn't exist (404), returning success for deleted instance", deploymentName)
@@ -1899,8 +1909,8 @@ func (h *Handler) buildSSHRequest(deploymentInfo *deploymentInfo, execReq *SSHEx
 	return sshReq
 }
 
-func (h *Handler) handleAsyncSSH(writer http.ResponseWriter, logger interfaces.Logger, sshReq *boshssh.SSHRequest, instanceID string, execReq *SSHExecuteRequest) {
-	h.executeSSHAsync(logger, sshReq, instanceID)
+func (h *Handler) handleAsyncSSH(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, sshReq *boshssh.SSHRequest, instanceID string, execReq *SSHExecuteRequest) {
+	h.executeSSHAsync(ctx, logger, sshReq, instanceID)
 
 	result := map[string]interface{}{
 		"instance_id": instanceID,
@@ -1914,8 +1924,8 @@ func (h *Handler) handleAsyncSSH(writer http.ResponseWriter, logger interfaces.L
 	response.HandleJSON(writer, result, nil)
 }
 
-func (h *Handler) handleSyncSSH(writer http.ResponseWriter, logger interfaces.Logger, sshReq *boshssh.SSHRequest, instanceID string, execReq *SSHExecuteRequest) {
-	sshResp, err := h.ssh.ExecuteCommand(sshReq)
+func (h *Handler) handleSyncSSH(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, sshReq *boshssh.SSHRequest, instanceID string, execReq *SSHExecuteRequest) {
+	sshResp, err := h.ssh.ExecuteCommand(ctx, sshReq)
 	if err != nil {
 		logger.Error("SSH command execution failed for %s: %v", instanceID, err)
 		response.WriteError(writer, http.StatusInternalServerError, err.Error())
@@ -1952,7 +1962,7 @@ func (h *Handler) buildSSHResponse(instanceID string, execReq *SSHExecuteRequest
 	return result
 }
 
-func (h *Handler) executeCertificateListCommand(logger interfaces.Logger, deploymentInfo *deploymentInfo, instanceID string) (*boshssh.SSHResponse, error) {
+func (h *Handler) executeCertificateListCommand(ctx context.Context, logger interfaces.Logger, deploymentInfo *deploymentInfo, instanceID string) (*boshssh.SSHResponse, error) {
 	sshReq := &boshssh.SSHRequest{
 		Deployment: deploymentInfo.Deployment,
 		Instance:   deploymentInfo.InstanceGroup,
@@ -1968,7 +1978,7 @@ func (h *Handler) executeCertificateListCommand(logger interfaces.Logger, deploy
 
 	logger.Debug("Listing certificates via SSH command on %s/%s/%d", sshReq.Deployment, sshReq.Instance, sshReq.Index)
 
-	sshResp, err := h.ssh.ExecuteCommand(sshReq)
+	sshResp, err := h.ssh.ExecuteCommand(ctx, sshReq)
 	if err != nil {
 		logger.Error("SSH certificate listing failed for %s: %v", instanceID, err)
 
@@ -2040,7 +2050,7 @@ type deploymentInfo struct {
 	PlanID        string
 }
 
-func (h *Handler) executeSSHAsync(logger interfaces.Logger, request *boshssh.SSHRequest, instanceID string) {
+func (h *Handler) executeSSHAsync(ctx context.Context, logger interfaces.Logger, request *boshssh.SSHRequest, instanceID string) {
 	if h.ssh == nil {
 		logger.Warnf("SSH service not configured for async execution on instance %s", instanceID)
 
@@ -2052,8 +2062,12 @@ func (h *Handler) executeSSHAsync(logger interfaces.Logger, request *boshssh.SSH
 		asyncReq.Args = append([]string(nil), request.Args...)
 	}
 
+	// The command outlives the request that started it, so it keeps the
+	// request's values but not its cancellation.
+	asyncCtx := context.WithoutCancel(ctx)
+
 	go func(req *boshssh.SSHRequest) {
-		_, sshErr := h.ssh.ExecuteCommand(req)
+		_, sshErr := h.ssh.ExecuteCommand(asyncCtx, req)
 		if sshErr != nil {
 			logger.Warnf("Async SSH command failed for instance %s: %v", instanceID, sshErr)
 
@@ -2605,8 +2619,8 @@ func latestDeploymentTaskID(events []bosh.Event) int {
 	return taskID
 }
 
-func fetchTaskOutput(logger interfaces.Logger, director interfaces.Director, taskID int) string {
-	eventOutput, err := director.GetTaskOutput(taskID, "event")
+func fetchTaskOutput(ctx context.Context, logger interfaces.Logger, director interfaces.Director, taskID int) string {
+	eventOutput, err := director.GetTaskOutput(ctx, taskID, "event")
 	if err != nil {
 		logger.Debug("Unable to get event output for task %d: %v", taskID, err)
 	}
@@ -2615,7 +2629,7 @@ func fetchTaskOutput(logger interfaces.Logger, director interfaces.Director, tas
 		return eventOutput
 	}
 
-	resultOutput, err := director.GetTaskOutput(taskID, "result")
+	resultOutput, err := director.GetTaskOutput(ctx, taskID, "result")
 	if err != nil {
 		logger.Error("Unable to get result output for task %d: %v", taskID, err)
 

@@ -110,11 +110,13 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 // GetDeployment returns details about a specific deployment.
 func (h *Handler) GetDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-get")
 	logger.Debug("Getting deployment: %s", deploymentName)
 
 	// Get basic deployment info from the deployments list
-	deployments, err := h.director.GetDeployments()
+	deployments, err := h.director.GetDeployments(ctx)
 	if err != nil {
 		logger.Error("Failed to get deployments list: %v", err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -155,10 +157,12 @@ func (h *Handler) GetDeployment(writer http.ResponseWriter, req *http.Request, d
 
 // DeleteDeployment deletes a deployment.
 func (h *Handler) DeleteDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-delete")
 	logger.Info("Deleting deployment: %s", deploymentName)
 
-	task, err := h.director.DeleteDeployment(deploymentName)
+	task, err := h.director.DeleteDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to delete deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -179,22 +183,28 @@ func (h *Handler) DeleteDeployment(writer http.ResponseWriter, req *http.Request
 
 // GetManifest returns the manifest for a deployment.
 func (h *Handler) GetManifest(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-manifest")
 	logger.Debug("Getting manifest for deployment: %s", deploymentName)
 
-	response.HandleJSON(writer, h.buildManifestPayload(deploymentName), nil)
+	response.HandleJSON(writer, h.buildManifestPayload(ctx, deploymentName), nil)
 }
 
 // GetManifestDetails returns a structured manifest payload suitable for UI consumption.
 func (h *Handler) GetManifestDetails(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-manifest-details")
 	logger.Debug("Getting manifest details for deployment: %s", deploymentName)
 
-	response.HandleJSON(writer, h.buildManifestPayload(deploymentName), nil)
+	response.HandleJSON(writer, h.buildManifestPayload(ctx, deploymentName), nil)
 }
 
 // UpdateManifest updates the manifest for a deployment.
 func (h *Handler) UpdateManifest(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-manifest-update")
 	logger.Info("Updating manifest for deployment: %s", deploymentName)
 
@@ -217,7 +227,7 @@ func (h *Handler) UpdateManifest(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
-	task, err := h.director.UpdateDeployment(deploymentName, string(manifestBytes))
+	task, err := h.director.UpdateDeployment(ctx, deploymentName, string(manifestBytes))
 	if err != nil {
 		logger.Error("Failed to update deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -247,10 +257,12 @@ func (h *Handler) UpdateManifest(writer http.ResponseWriter, req *http.Request, 
 
 // GetVMs returns the VMs for a deployment.
 func (h *Handler) GetVMs(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-vms")
 	logger.Debug("Getting VMs for deployment: %s", deploymentName)
 
-	vms, err := h.director.GetDeploymentVMs(deploymentName)
+	vms, err := h.director.GetDeploymentVMs(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to get VMs for deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -264,7 +276,7 @@ func (h *Handler) GetVMs(writer http.ResponseWriter, req *http.Request, deployme
 
 	resurrectionPaused := false
 
-	resurrectionConfig, err := h.director.GetConfig("resurrection", configName)
+	resurrectionConfig, err := h.director.GetConfig(ctx, "resurrection", configName)
 	if err != nil {
 		logger.Debug("Error getting resurrection config: %v", err)
 	}
@@ -288,10 +300,12 @@ func (h *Handler) GetVMs(writer http.ResponseWriter, req *http.Request, deployme
 
 // GetEvents returns events for the specified deployment.
 func (h *Handler) GetEvents(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-events")
 	logger.Debug("Getting events for deployment: %s", deploymentName)
 
-	events, err := h.director.GetEvents(deploymentName)
+	events, err := h.director.GetEvents(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to get events for deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -305,10 +319,12 @@ func (h *Handler) GetEvents(writer http.ResponseWriter, req *http.Request, deplo
 
 // GetInstances returns the instances for a deployment.
 func (h *Handler) GetInstances(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-instances")
 	logger.Debug("Getting instances for deployment: %s", deploymentName)
 
-	instances, err := h.director.GetInstances(deploymentName)
+	instances, err := h.director.GetInstances(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to get instances for deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -337,10 +353,12 @@ func (h *Handler) GetInstances(writer http.ResponseWriter, req *http.Request, de
 
 // ListErrands lists available errands for a deployment.
 func (h *Handler) ListErrands(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-errands-list")
 	logger.Debug("Listing errands for deployment: %s", deploymentName)
 
-	errands, err := h.director.ListErrands(deploymentName)
+	errands, err := h.director.ListErrands(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to list errands for deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -363,12 +381,14 @@ func (h *Handler) ListErrands(writer http.ResponseWriter, req *http.Request, dep
 
 // RunErrand runs a specific errand.
 func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deploymentName string, errandName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-errand-run")
 	logger.Info("Running errand %s for deployment: %s", errandName, deploymentName)
 
 	opts := parseErrandOpts(req)
 
-	result, err := h.director.RunErrand(deploymentName, errandName, opts)
+	result, err := h.director.RunErrand(ctx, deploymentName, errandName, opts)
 	if err != nil {
 		logger.Error("Failed to run errand %s for deployment %s: %v", errandName, deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -390,12 +410,14 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 
 // RecreateDeployment recreates all VMs in a deployment.
 func (h *Handler) RecreateDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-recreate")
 	logger.Info("Recreating deployment: %s", deploymentName)
 
 	opts := parseRecreateOpts(req)
 
-	task, err := h.director.RecreateDeployment(deploymentName, opts)
+	task, err := h.director.RecreateDeployment(ctx, deploymentName, opts)
 	if err != nil {
 		logger.Error("Failed to recreate deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -416,12 +438,14 @@ func (h *Handler) RecreateDeployment(writer http.ResponseWriter, req *http.Reque
 
 // RestartDeployment restarts all VMs in a deployment.
 func (h *Handler) RestartDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-restart")
 	logger.Info("Restarting deployment: %s", deploymentName)
 
 	opts := parseRestartOpts(req)
 
-	task, err := h.director.RestartDeployment(deploymentName, opts)
+	task, err := h.director.RestartDeployment(ctx, deploymentName, opts)
 	if err != nil {
 		logger.Error("Failed to restart deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -442,12 +466,14 @@ func (h *Handler) RestartDeployment(writer http.ResponseWriter, req *http.Reques
 
 // StopDeployment stops all VMs in a deployment.
 func (h *Handler) StopDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-stop")
 	logger.Info("Stopping deployment: %s", deploymentName)
 
 	opts := parseStopOpts(req)
 
-	task, err := h.director.StopDeployment(deploymentName, opts)
+	task, err := h.director.StopDeployment(ctx, deploymentName, opts)
 	if err != nil {
 		logger.Error("Failed to stop deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -468,12 +494,14 @@ func (h *Handler) StopDeployment(writer http.ResponseWriter, req *http.Request, 
 
 // StartDeployment starts all VMs in a deployment.
 func (h *Handler) StartDeployment(writer http.ResponseWriter, req *http.Request, deploymentName string) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("deployment-start")
 	logger.Info("Starting deployment: %s", deploymentName)
 
 	opts := parseStartOpts(req)
 
-	task, err := h.director.StartDeployment(deploymentName, opts)
+	task, err := h.director.StartDeployment(ctx, deploymentName, opts)
 	if err != nil {
 		logger.Error("Failed to start deployment %s: %v", deploymentName, err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -492,10 +520,10 @@ func (h *Handler) StartDeployment(writer http.ResponseWriter, req *http.Request,
 	response.HandleJSON(writer, result, nil)
 }
 
-func (h *Handler) buildManifestPayload(deploymentName string) map[string]interface{} {
+func (h *Handler) buildManifestPayload(ctx context.Context, deploymentName string) map[string]interface{} {
 	// Try to fetch the actual manifest from BOSH director
 	if h.director != nil {
-		deployment, err := h.director.GetDeployment(deploymentName)
+		deployment, err := h.director.GetDeployment(ctx, deploymentName)
 		if err == nil && deployment.Manifest != "" {
 			// Parse the YAML manifest into a structured format
 			var parsed map[string]interface{}

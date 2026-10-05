@@ -152,7 +152,7 @@ func newFakeDirector() *fakeDirector {
 	return &fakeDirector{MockBOSHDirector: testutil.NewMockBOSHDirector()}
 }
 
-func (f *fakeDirector) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
+func (f *fakeDirector) UpdateDeployment(_ context.Context, name, manifest string) (*bosh.Task, error) {
 	f.updateDeploymentCalled = true
 	f.updateDeploymentManifest = manifest
 
@@ -167,7 +167,7 @@ func (f *fakeDirector) UpdateDeployment(name, manifest string) (*bosh.Task, erro
 	return &bosh.Task{ID: 1, State: "done"}, nil
 }
 
-func (f *fakeDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+func (f *fakeDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, nil
 }
 

@@ -346,7 +346,7 @@ func (b *Broker) handleValkeyUnbind(ctx context.Context, instanceID, bindingID s
 		return err
 	}
 
-	credMap, err := b.getValkeyCredentials(ctx, instanceID, &plan, logger)
+	credMap, err := b.getValkeyCredentials(ctx, ctx, instanceID, &plan, logger)
 	if err != nil {
 		return err
 	}
@@ -372,12 +372,12 @@ func (b *Broker) handleValkeyUnbind(ctx context.Context, instanceID, bindingID s
 }
 
 // getValkeyCredentials retrieves the raw credential map for a Valkey instance.
-func (b *Broker) getValkeyCredentials(_ context.Context, instanceID string, plan *services.Plan, logger logger.Logger) (map[string]interface{}, error) {
+func (b *Broker) getValkeyCredentials(ctx context.Context, _ context.Context, instanceID string, plan *services.Plan, logger logger.Logger) (map[string]interface{}, error) {
 	logger.Debug("Retrieving admin credentials for Valkey instance")
 
 	deploymentManifest := b.getDeploymentManifestFromVault(instanceID, logger)
 
-	creds, err := manifest.GetCreds(instanceID, *plan, b.BOSH, deploymentManifest, logger)
+	creds, err := manifest.GetCreds(ctx, instanceID, *plan, b.BOSH, deploymentManifest, logger)
 	if err != nil {
 		logger.Error("Failed to retrieve credentials: %s", err)
 		return nil, fmt.Errorf("failed to get Valkey credentials: %w", err)

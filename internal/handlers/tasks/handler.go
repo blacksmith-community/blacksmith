@@ -101,6 +101,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 // ListTasks returns a list of all BOSH tasks.
 func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("task-list")
 	logger.Debug("Listing BOSH tasks")
 
@@ -141,7 +143,7 @@ func (h *Handler) ListTasks(writer http.ResponseWriter, req *http.Request) {
 
 	logger.Debug("Fetching tasks from director", "type", taskType, "limit", limit, "states", states, "team", team)
 
-	directorTasks, err := h.director.GetTasks(taskType, limit, states, team)
+	directorTasks, err := h.director.GetTasks(ctx, taskType, limit, states, team)
 	if err != nil {
 		logger.Error("Failed to fetch tasks from director: %v", err)
 
@@ -275,10 +277,12 @@ func buildTaskEvent(boshEvent boshEventData) bosh.TaskEvent {
 
 // GetTaskDetails returns details for a specific task.
 func (h *Handler) GetTaskDetails(writer http.ResponseWriter, req *http.Request, taskID int) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("task-details")
 	logger.Debug("Getting details for task %d", taskID)
 
-	directorTask, err := h.director.GetTask(taskID)
+	directorTask, err := h.director.GetTask(ctx, taskID)
 	if err != nil {
 		logger.Error("Failed to fetch task %d: %v", taskID, err)
 		response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("task %d not found", taskID))
@@ -286,7 +290,7 @@ func (h *Handler) GetTaskDetails(writer http.ResponseWriter, req *http.Request, 
 		return
 	}
 
-	events, err := h.director.GetTaskEvents(taskID)
+	events, err := h.director.GetTaskEvents(ctx, taskID)
 	if err != nil {
 		logger.Debug("Unable to fetch events for task %d: %v", taskID, err)
 
@@ -306,6 +310,8 @@ func (h *Handler) GetTaskDetails(writer http.ResponseWriter, req *http.Request, 
 
 // GetTaskOutput returns the output/logs for a specific task.
 func (h *Handler) GetTaskOutput(writer http.ResponseWriter, req *http.Request, taskID int) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("task-output")
 	logger.Debug("Getting output for task %d", taskID)
 
@@ -316,7 +322,7 @@ func (h *Handler) GetTaskOutput(writer http.ResponseWriter, req *http.Request, t
 
 	logger.Debug("Fetching task output", "task_id", taskID, "type", outputType)
 
-	output, err := h.director.GetTaskOutput(taskID, outputType)
+	output, err := h.director.GetTaskOutput(ctx, taskID, outputType)
 	if err != nil {
 		logger.Error("Failed to fetch task output for %d (type=%s): %v", taskID, outputType, err)
 		response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("task %d output not found", taskID))
@@ -340,6 +346,8 @@ func (h *Handler) GetTaskOutput(writer http.ResponseWriter, req *http.Request, t
 
 // CancelTask cancels a running task.
 func (h *Handler) CancelTask(writer http.ResponseWriter, req *http.Request, taskID int) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("task-cancel")
 
 	// Parse optional request body
@@ -355,7 +363,7 @@ func (h *Handler) CancelTask(writer http.ResponseWriter, req *http.Request, task
 
 	logger.Info("Cancelling task %d (force: %v)", taskID, cancelRequest.Force)
 
-	err = h.director.CancelTask(taskID)
+	err = h.director.CancelTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, bosh.ErrTaskCannotBeCancelled) {
 			logger.Warn("Task %d cannot be cancelled: %v", taskID, err)

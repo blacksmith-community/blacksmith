@@ -69,8 +69,8 @@ type ServiceImpl struct {
 
 // DirectorInterface defines the methods we need from the BOSH director.
 type DirectorInterface interface {
-	SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
-	SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
+	SSHCommand(ctx context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
+	SSHSession(ctx context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
 }
 
 // Config holds configuration for the SSH service.
@@ -134,7 +134,7 @@ func createSSHResponse(success bool, exitCode int, duration time.Duration, outpu
 }
 
 // ExecuteCommand executes a one-off command on a BOSH VM.
-func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) {
+func (s *ServiceImpl) ExecuteCommand(ctx context.Context, request *SSHRequest) (*SSHResponse, error) {
 	s.logger.Infof("Executing SSH command on %s/%s/%d", request.Deployment, request.Instance, request.Index)
 	s.logger.Debugf("Command: %s %v", request.Command, request.Args)
 
@@ -148,6 +148,7 @@ func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) 
 	options := s.prepareSSHCommandOptions(request)
 
 	output, err := s.director.SSHCommand(
+		ctx,
 		request.Deployment,
 		request.Instance,
 		request.Index,
@@ -172,7 +173,7 @@ func (s *ServiceImpl) ExecuteCommand(request *SSHRequest) (*SSHResponse, error) 
 // CreateSession creates an interactive SSH session for streaming
 //
 //nolint:ireturn // Interface return is intentional - part of SSHService interface contract
-func (s *ServiceImpl) CreateSession(request *SSHRequest) (SSHSession, error) {
+func (s *ServiceImpl) CreateSession(ctx context.Context, request *SSHRequest) (SSHSession, error) {
 	s.logger.Infof("Creating SSH session for %s/%s/%d", request.Deployment, request.Instance, request.Index)
 
 	err := s.validateRequest(request)
@@ -187,7 +188,7 @@ func (s *ServiceImpl) CreateSession(request *SSHRequest) (SSHSession, error) {
 
 	options := s.prepareSSHSessionOptions(request)
 
-	sessionInfo, err := s.director.SSHSession(request.Deployment, request.Instance, request.Index, options)
+	sessionInfo, err := s.director.SSHSession(ctx, request.Deployment, request.Instance, request.Index, options)
 	if err != nil {
 		s.logger.Errorf("Failed to create SSH session: %v", err)
 

@@ -41,48 +41,28 @@ func NewSSHExecutor(sshService SSHService, config Config, logger Logger) *Execut
 }
 
 // Execute executes a command with the default timeout.
-func (e *ExecutorImpl) Execute(request *SSHRequest) (*SSHResponse, error) {
-	return e.ExecuteWithTimeout(request, e.config.Timeout)
+func (e *ExecutorImpl) Execute(ctx context.Context, request *SSHRequest) (*SSHResponse, error) {
+	return e.ExecuteWithTimeout(ctx, request, e.config.Timeout)
 }
 
-// ExecuteWithTimeout executes a command with a custom timeout.
-func (e *ExecutorImpl) ExecuteWithTimeout(request *SSHRequest, timeout time.Duration) (*SSHResponse, error) {
+// ExecuteWithTimeout executes a command, giving up when timeout passes or ctx
+// ends. The command runs under that deadline, so it stops with it rather than
+// running on in the background.
+func (e *ExecutorImpl) ExecuteWithTimeout(ctx context.Context, request *SSHRequest, timeout time.Duration) (*SSHResponse, error) {
 	e.logger.Infof("Executing SSH command with timeout %v", timeout)
 
-	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Create a channel to receive the result
-	resultChan := make(chan *SSHResponse, 1)
-	errorChan := make(chan error, 1)
-
-	// Execute the command in a goroutine
-	go func() {
-		result, err := e.sshService.ExecuteCommand(request)
-		if err != nil {
-			errorChan <- err
-
-			return
-		}
-
-		resultChan <- result
-	}()
-
-	// Wait for either completion or timeout
-	select {
-	case result := <-resultChan:
+	result, err := e.sshService.ExecuteCommand(ctx, request)
+	if err == nil {
 		e.logger.Infof("SSH command completed successfully")
 
 		return result, nil
+	}
 
-	case err := <-errorChan:
-		e.logger.Errorf("SSH command failed: %v", err)
-
-		return nil, err
-
-	case <-ctx.Done():
-		e.logger.Errorf("SSH command timed out after %v", timeout)
+	if ctx.Err() != nil {
+		e.logger.Errorf("SSH command timed out after %v: %v", timeout, ctx.Err())
 
 		return &SSHResponse{
 			Success:   false,
@@ -95,20 +75,24 @@ func (e *ExecutorImpl) ExecuteWithTimeout(request *SSHRequest, timeout time.Dura
 			RequestID: "",
 		}, NewSSHError(SSHErrorCodeTimeout, "Command execution timed out", ctx.Err())
 	}
+
+	e.logger.Errorf("SSH command failed: %v", err)
+
+	return nil, err
 }
 
 // ExecuteWithStream executes a command with streaming output.
-func (e *ExecutorImpl) ExecuteWithStream(request *SSHRequest, output io.Writer) (*SSHResponse, error) {
+func (e *ExecutorImpl) ExecuteWithStream(ctx context.Context, request *SSHRequest, output io.Writer) (*SSHResponse, error) {
 	e.logger.Infof("Executing SSH command with streaming output")
 
 	timeout := e.resolveTimeout(request)
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	startTime := time.Now()
 
-	session, err := e.setupSession(request)
+	session, err := e.setupSession(ctx, request)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +119,8 @@ func (e *ExecutorImpl) resolveTimeout(request *SSHRequest) time.Duration {
 	return e.config.Timeout
 }
 
-func (e *ExecutorImpl) setupSession(request *SSHRequest) (SSHSession, error) {
-	session, err := e.sshService.CreateSession(request)
+func (e *ExecutorImpl) setupSession(ctx context.Context, request *SSHRequest) (SSHSession, error) {
+	session, err := e.sshService.CreateSession(ctx, request)
 	if err != nil {
 		e.logger.Errorf("Failed to create SSH session: %v", err)
 
@@ -374,28 +358,29 @@ func NewExecutorWithRetry(executor SSHExecutor, maxRetries int, retryDelay time.
 }
 
 // Execute executes a command with retry logic.
-func (e *ExecutorWithRetry) Execute(request *SSHRequest) (*SSHResponse, error) {
-	return e.executeWithRetry(func() (*SSHResponse, error) {
-		return e.executor.Execute(request)
+func (e *ExecutorWithRetry) Execute(ctx context.Context, request *SSHRequest) (*SSHResponse, error) {
+	return e.executeWithRetry(ctx, func() (*SSHResponse, error) {
+		return e.executor.Execute(ctx, request)
 	})
 }
 
 // ExecuteWithTimeout executes a command with timeout and retry logic.
-func (e *ExecutorWithRetry) ExecuteWithTimeout(request *SSHRequest, timeout time.Duration) (*SSHResponse, error) {
-	return e.executeWithRetry(func() (*SSHResponse, error) {
-		return e.executor.ExecuteWithTimeout(request, timeout)
+func (e *ExecutorWithRetry) ExecuteWithTimeout(ctx context.Context, request *SSHRequest, timeout time.Duration) (*SSHResponse, error) {
+	return e.executeWithRetry(ctx, func() (*SSHResponse, error) {
+		return e.executor.ExecuteWithTimeout(ctx, request, timeout)
 	})
 }
 
 // ExecuteWithStream executes a command with streaming and retry logic.
-func (e *ExecutorWithRetry) ExecuteWithStream(request *SSHRequest, output io.Writer) (*SSHResponse, error) {
-	return e.executeWithRetry(func() (*SSHResponse, error) {
-		return e.executor.ExecuteWithStream(request, output)
+func (e *ExecutorWithRetry) ExecuteWithStream(ctx context.Context, request *SSHRequest, output io.Writer) (*SSHResponse, error) {
+	return e.executeWithRetry(ctx, func() (*SSHResponse, error) {
+		return e.executor.ExecuteWithStream(ctx, request, output)
 	})
 }
 
-// executeWithRetry executes a function with retry logic.
-func (e *ExecutorWithRetry) executeWithRetry(retryFunc func() (*SSHResponse, error)) (*SSHResponse, error) {
+// executeWithRetry executes a function with retry logic. It stops waiting
+// between attempts as soon as ctx ends.
+func (e *ExecutorWithRetry) executeWithRetry(ctx context.Context, retryFunc func() (*SSHResponse, error)) (*SSHResponse, error) {
 	var lastErr error
 
 	var lastResponse *SSHResponse
@@ -403,7 +388,17 @@ func (e *ExecutorWithRetry) executeWithRetry(retryFunc func() (*SSHResponse, err
 	for attempt := 0; attempt <= e.maxRetries; attempt++ {
 		if attempt > 0 {
 			e.logger.Infof("Retrying SSH command execution, attempt %d/%d", attempt, e.maxRetries)
-			time.Sleep(e.retryDelay)
+
+			timer := time.NewTimer(e.retryDelay)
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				e.logger.Errorf("SSH command retries stopped after %d attempts because %v: %v", attempt, ctx.Err(), lastErr)
+
+				return lastResponse, fmt.Errorf("%w (stopped retrying: %w)", lastErr, ctx.Err())
+			case <-timer.C:
+			}
 		}
 
 		response, err := retryFunc()
@@ -473,7 +468,7 @@ type BatchResult struct {
 }
 
 // ExecuteBatch executes multiple SSH commands concurrently.
-func (b *BatchExecutor) ExecuteBatch(requests []BatchRequest) []BatchResult {
+func (b *BatchExecutor) ExecuteBatch(ctx context.Context, requests []BatchRequest) []BatchResult {
 	b.logger.Infof("Executing batch of %d SSH commands with %d workers", len(requests), b.maxWorkers)
 
 	// Create channels for work distribution
@@ -482,7 +477,7 @@ func (b *BatchExecutor) ExecuteBatch(requests []BatchRequest) []BatchResult {
 
 	// Start workers
 	for range b.maxWorkers {
-		go b.worker(workChan, resultChan)
+		go b.worker(ctx, workChan, resultChan)
 	}
 
 	// Send work to workers
@@ -506,11 +501,11 @@ func (b *BatchExecutor) ExecuteBatch(requests []BatchRequest) []BatchResult {
 }
 
 // worker processes SSH requests from the work channel.
-func (b *BatchExecutor) worker(workChan <-chan BatchRequest, resultChan chan<- BatchResult) {
+func (b *BatchExecutor) worker(ctx context.Context, workChan <-chan BatchRequest, resultChan chan<- BatchResult) {
 	for req := range workChan {
 		b.logger.Debugf("Worker processing request: %s", req.ID)
 
-		response, err := b.executor.Execute(req.Request)
+		response, err := b.executor.Execute(ctx, req.Request)
 
 		resultChan <- BatchResult{
 			ID:       req.ID,

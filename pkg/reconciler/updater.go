@@ -395,14 +395,14 @@ func (u *VaultUpdater) GetBindingStatus(instanceID, bindingID string) (string, e
 }
 
 // ReconstructBindingWithBroker uses the broker to reconstruct binding credentials.
-func (u *VaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error {
+func (u *VaultUpdater) ReconstructBindingWithBroker(ctx context.Context, instanceID, bindingID string, broker BrokerInterface) error {
 	u.logger.Infof("Reconstructing binding %s for instance %s using broker", bindingID, instanceID)
 
 	if broker == nil {
 		return ErrBrokerNotAvailableForReconstruction
 	}
 
-	bindingCreds, err := u.getCredentialsFromBroker(broker, instanceID, bindingID)
+	bindingCreds, err := u.getCredentialsFromBroker(ctx, broker, instanceID, bindingID)
 	if err != nil {
 		return err
 	}
@@ -425,7 +425,7 @@ func (u *VaultUpdater) ReconstructBindingWithBroker(instanceID, bindingID string
 }
 
 // RepairInstanceBindings repairs all unhealthy bindings for an instance using the broker.
-func (u *VaultUpdater) RepairInstanceBindings(instanceID string, broker BrokerInterface) error {
+func (u *VaultUpdater) RepairInstanceBindings(ctx context.Context, instanceID string, broker BrokerInterface) error {
 	u.logger.Infof("Starting binding repair for instance %s", instanceID)
 
 	// Get the current binding health status
@@ -449,7 +449,7 @@ func (u *VaultUpdater) RepairInstanceBindings(instanceID string, broker BrokerIn
 	for _, bindingID := range unhealthyBindingIDs {
 		u.logger.Infof("Attempting to repair binding %s", bindingID)
 
-		err := u.ReconstructBindingWithBroker(instanceID, bindingID, broker)
+		err := u.ReconstructBindingWithBroker(ctx, instanceID, bindingID, broker)
 		if err != nil {
 			u.logger.Errorf("Failed to repair binding %s: %s", bindingID, err)
 			repairErrors = append(repairErrors, fmt.Sprintf("binding %s: %s", bindingID, err))
@@ -707,7 +707,7 @@ func (u *VaultUpdater) DecompressAndDecode(encodedData string) (map[string]inter
 // UpdateInstance updates an instance in vault.
 // handleBindingRepair handles binding repair if needed.
 func (u *VaultUpdater) handleBindingRepair(ctx context.Context, instance *InstanceData, broker BrokerInterface) {
-	repairErr := u.RepairInstanceBindings(instance.ID, broker)
+	repairErr := u.RepairInstanceBindings(ctx, instance.ID, broker)
 	if repairErr != nil {
 		u.logger.Errorf("Binding repair failed for instance %s: %s", instance.ID, repairErr)
 		u.updateRepairFailureMetadata(ctx, instance, repairErr)
@@ -1380,8 +1380,8 @@ func (u *VaultUpdater) deleteFromVault(path string) {
 }
 
 // getCredentialsFromBroker retrieves binding credentials from the broker.
-func (u *VaultUpdater) getCredentialsFromBroker(broker BrokerInterface, instanceID, bindingID string) (*BindingCredentials, error) {
-	bindingCreds, err := broker.GetBindingCredentials(instanceID, bindingID)
+func (u *VaultUpdater) getCredentialsFromBroker(ctx context.Context, broker BrokerInterface, instanceID, bindingID string) (*BindingCredentials, error) {
+	bindingCreds, err := broker.GetBindingCredentials(ctx, instanceID, bindingID)
 	if err != nil {
 		u.logger.Errorf("Broker failed to reconstruct credentials for binding %s: %s", bindingID, err)
 

@@ -18,6 +18,10 @@ const (
 	upgradeSettingsVaultPath = "upgrade-settings"
 )
 
+// cancelTaskTimeout bounds the director calls that find and cancel a running
+// upgrade task, so a hung director cannot hold up a cancel or a Stop.
+const cancelTaskTimeout = 30 * time.Second
+
 // Error variables for err113 compliance.
 var (
 	ErrTaskNotFound    = errors.New("upgrade task not found")
@@ -39,6 +43,10 @@ type Manager struct {
 	taskQueue chan *UpgradeTask
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
+
+	// ctx bounds every director call an upgrade makes, and Stop cancels it.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// Cancellation tracking - maps taskID to cancel channel
 	taskCancelCh   map[string]chan struct{}
@@ -67,6 +75,11 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		taskCancelCh: make(map[string]chan struct{}),
 	}
 
+	// The manager's context is a root. The manager lives as long as the
+	// broker, NewManager receives no context, and Stop is what ends it, so
+	// every director call an upgrade makes descends from this context.
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+
 	// Load persisted settings from vault
 	ctx := context.Background()
 	if err := m.loadSettings(ctx); err != nil {
@@ -92,6 +105,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 // Stop stops the manager and waits for pending operations to complete.
 func (m *Manager) Stop() {
 	close(m.stopCh)
+	m.cancel()
 	m.wg.Wait()
 }
 
@@ -369,7 +383,7 @@ func (m *Manager) processTask(task *UpgradeTask) {
 			continue
 		}
 
-		m.upgradeInstance(task, instance, cancelCh)
+		m.upgradeInstance(m.ctx, task, instance, cancelCh)
 	}
 
 	// Update task status (only if not already cancelled)
@@ -401,8 +415,10 @@ func (m *Manager) processTask(task *UpgradeTask) {
 // 1. Goroutine 1: Runs UpdateDeployment (blocking until BOSH task completes)
 // 2. Goroutine 2: Polls to find and store the BOSH task ID for UI display
 // Main thread waits for completion or task-level cancel signal.
-func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) {
-	ctx := context.Background()
+func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) {
+	// Progress is saved even after Stop ends ctx, so the stored task shows
+	// how far the upgrade got.
+	persistCtx := context.WithoutCancel(ctx)
 	m.logger.Info("Upgrading instance %s (deployment: %s)", instance.InstanceID, instance.DeploymentName)
 
 	now := time.Now()
@@ -413,7 +429,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 	m.mu.Unlock()
 
 	// Persist running state immediately so the UI shows the instance as running
-	m.persistTask(ctx, task) //nolint:errcheck
+	m.persistTask(persistCtx, task) //nolint:errcheck
 
 	// Validate deployment name
 	if instance.DeploymentName == "" {
@@ -423,13 +439,13 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Instance %s has no deployment name", instance.InstanceID)
-		m.persistTask(ctx, task) //nolint:errcheck
+		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
 	// Get current deployment manifest
 	m.logger.Debug("Getting deployment %s for instance %s", instance.DeploymentName, instance.InstanceID)
-	deployment, err := m.director.GetDeployment(instance.DeploymentName)
+	deployment, err := m.director.GetDeployment(ctx, instance.DeploymentName)
 	if err != nil {
 		m.mu.Lock()
 		instance.Status = InstanceStatusFailed
@@ -437,7 +453,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Failed to get deployment %s: %v", instance.DeploymentName, err)
-		m.persistTask(ctx, task) //nolint:errcheck
+		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
@@ -448,7 +464,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Deployment %s returned nil without error", instance.DeploymentName)
-		m.persistTask(ctx, task) //nolint:errcheck
+		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
@@ -467,7 +483,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		task.FailedCount++
 		m.mu.Unlock()
 		m.logger.Error("Failed to merge stemcell overlay for %s: %v", instance.DeploymentName, err)
-		m.persistTask(ctx, task) //nolint:errcheck
+		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
@@ -485,7 +501,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 	// Goroutine 1: Run UpdateDeployment (blocking)
 	m.logger.Debug("Starting deployment update goroutine for %s", instance.DeploymentName)
 	go func() {
-		_, err := m.director.UpdateDeployment(instance.DeploymentName, newManifest)
+		_, err := m.director.UpdateDeployment(ctx, instance.DeploymentName, newManifest)
 		updateDoneCh <- err
 	}()
 
@@ -508,7 +524,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 				}
 
 				// Find running task for this deployment
-				runningTask, err := m.director.FindRunningTaskForDeployment(instance.DeploymentName)
+				runningTask, err := m.director.FindRunningTaskForDeployment(ctx, instance.DeploymentName)
 				if err != nil {
 					m.logger.Debug("Error finding running task for %s: %v", instance.DeploymentName, err)
 					continue
@@ -519,7 +535,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 					instance.BOSHTaskID = runningTask.ID
 					m.mu.Unlock()
 					m.logger.Info("Found BOSH task %d for deployment %s", runningTask.ID, instance.DeploymentName)
-					m.persistTask(ctx, task) //nolint:errcheck
+					m.persistTask(persistCtx, task) //nolint:errcheck
 					return
 				}
 			}
@@ -536,13 +552,13 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 	case <-cancelCh:
 		// Task-level cancel
 		m.logger.Info("Task-level cancel for instance %s", instance.InstanceID)
-		m.cancelRunningTaskForDeployment(instance.DeploymentName)
+		m.cancelRunningTaskForDeployment(ctx, instance.DeploymentName)
 		updateErr = <-updateDoneCh
 
 	case <-m.stopCh:
 		// Manager stopped
 		m.logger.Info("Manager stopped while upgrading instance %s", instance.InstanceID)
-		m.cancelRunningTaskForDeployment(instance.DeploymentName)
+		m.cancelRunningTaskForDeployment(ctx, instance.DeploymentName)
 		updateErr = <-updateDoneCh
 	}
 
@@ -557,7 +573,7 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 		task.FailedCount++
 		m.logger.Error("Update failed for %s: %v", instance.DeploymentName, updateErr)
 		m.mu.Unlock()
-		m.persistTask(ctx, task) //nolint:errcheck
+		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
@@ -571,12 +587,18 @@ func (m *Manager) upgradeInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 	m.mu.Unlock()
 
 	// Persist progress
-	m.persistTask(ctx, task) //nolint:errcheck
+	m.persistTask(persistCtx, task) //nolint:errcheck
 }
 
-// cancelRunningTaskForDeployment finds and cancels any running BOSH task for the deployment.
-func (m *Manager) cancelRunningTaskForDeployment(deploymentName string) {
-	runningTask, err := m.director.FindRunningTaskForDeployment(deploymentName)
+// cancelRunningTaskForDeployment finds and cancels any running BOSH task for
+// the deployment. It runs when the upgrade is being cancelled or the manager
+// is stopping, which may already have ended ctx, so it keeps ctx's values but
+// gets its own deadline.
+func (m *Manager) cancelRunningTaskForDeployment(ctx context.Context, deploymentName string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTaskTimeout)
+	defer cancel()
+
+	runningTask, err := m.director.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		m.logger.Error("Failed to find running task for %s: %v", deploymentName, err)
 		return
@@ -584,7 +606,7 @@ func (m *Manager) cancelRunningTaskForDeployment(deploymentName string) {
 
 	if runningTask != nil {
 		m.logger.Info("Cancelling BOSH task %d for deployment %s", runningTask.ID, deploymentName)
-		if err := m.director.CancelTask(runningTask.ID); err != nil {
+		if err := m.director.CancelTask(ctx, runningTask.ID); err != nil {
 			m.logger.Error("Failed to cancel BOSH task %d: %v", runningTask.ID, err)
 		}
 	} else {
@@ -706,7 +728,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 		instance := &task.Instances[i]
 		if instance.Status == InstanceStatusRunning && instance.BOSHTaskID > 0 {
 			m.logger.Info("Cancelling BOSH task %d for instance %s", instance.BOSHTaskID, instance.InstanceID)
-			if err := m.director.CancelTask(instance.BOSHTaskID); err != nil {
+			if err := m.director.CancelTask(ctx, instance.BOSHTaskID); err != nil {
 				m.logger.Error("Failed to cancel BOSH task %d: %v", instance.BOSHTaskID, err)
 			}
 			instance.Status = InstanceStatusCancelled

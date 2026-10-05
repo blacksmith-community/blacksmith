@@ -37,9 +37,9 @@ type finderDeleter interface {
 
 // directorProber is the part of bosh.Director the cleaner uses.
 type directorProber interface {
-	GetInfo() (*bosh.Info, error)
-	GetDeployment(name string) (*bosh.DeploymentDetail, error)
-	FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error)
+	GetInfo(ctx context.Context) (*bosh.Info, error)
+	GetDeployment(ctx context.Context, name string) (*bosh.DeploymentDetail, error)
+	FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*bosh.Task, error)
 }
 
 // Failure records one name, or the deployment prefix when listing failed,
@@ -78,7 +78,9 @@ type Cleaner struct {
 	policy   func() Policy
 	log      logger.Logger
 	backoff  []time.Duration
-	inFlight sync.Map
+	// runTimeout bounds one run. It is RunTimeout outside tests.
+	runTimeout time.Duration
+	inFlight   sync.Map
 }
 
 // NewCleaner builds a cleaner. policy is called on every run so the catalog's
@@ -86,11 +88,12 @@ type Cleaner struct {
 // a fresh /info on every run and ignores any value policy returns there.
 func NewCleaner(client finderDeleter, director directorProber, policy func() Policy, log logger.Logger) *Cleaner {
 	return &Cleaner{
-		client:   client,
-		director: director,
-		policy:   policy,
-		log:      log,
-		backoff:  []time.Duration{1 * time.Second, 3 * time.Second},
+		client:     client,
+		director:   director,
+		policy:     policy,
+		log:        log,
+		backoff:    []time.Duration{1 * time.Second, 3 * time.Second},
+		runTimeout: RunTimeout,
 	}
 }
 
@@ -110,7 +113,7 @@ func (c *Cleaner) CleanupDeployment(ctx context.Context, target Target) Result {
 	}
 	defer c.inFlight.Delete(target.DeploymentName)
 
-	ctx, cancel := context.WithTimeout(ctx, RunTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.runTimeout)
 	defer cancel()
 
 	policy := c.policy()
@@ -119,7 +122,7 @@ func (c *Cleaner) CleanupDeployment(ctx context.Context, target Target) Result {
 		return result
 	}
 
-	prefix, confirmed := c.confirmDirector(target, policy, &result)
+	prefix, confirmed := c.confirmDirector(ctx, target, policy, &result)
 	if !confirmed {
 		return result
 	}
@@ -165,21 +168,26 @@ func (c *Cleaner) proveAbsent(ctx context.Context, target Target, result *Result
 		return false
 	}
 
-	reason := ""
+	var (
+		reason string
+		cause  error
+	)
 
-	_, err := c.director.GetDeployment(target.DeploymentName)
+	_, err := c.director.GetDeployment(ctx, target.DeploymentName)
 
 	switch {
 	case err == nil:
 		reason = "the director still has deployment " + target.DeploymentName
 	case !errors.Is(err, bosh.ErrDeploymentNotFound):
-		reason = fmt.Sprintf("the director could not confirm deployment %s is gone: %v", target.DeploymentName, err)
+		reason = "the director could not confirm deployment " + target.DeploymentName + " is gone"
+		cause = err
 	default:
-		task, taskErr := c.director.FindRunningTaskForDeployment(target.DeploymentName)
+		task, taskErr := c.director.FindRunningTaskForDeployment(ctx, target.DeploymentName)
 
 		switch {
 		case taskErr != nil:
-			reason = fmt.Sprintf("the director could not list the tasks of deployment %s: %v", target.DeploymentName, taskErr)
+			reason = "the director could not list the tasks of deployment " + target.DeploymentName
+			cause = taskErr
 		case task != nil:
 			reason = fmt.Sprintf("task %d (%s) is running on deployment %s", task.ID, task.State, target.DeploymentName)
 		}
@@ -189,7 +197,13 @@ func (c *Cleaner) proveAbsent(ctx context.Context, target Target, result *Result
 		return true
 	}
 
-	result.Refused = fmt.Errorf("%w: %s", ErrDeploymentNotProvenGone, reason)
+	if cause != nil {
+		result.Refused = fmt.Errorf("%w: %s: %w", ErrDeploymentNotProvenGone, reason, cause)
+		reason = fmt.Sprintf("%s: %v", reason, cause)
+	} else {
+		result.Refused = fmt.Errorf("%w: %s", ErrDeploymentNotProvenGone, reason)
+	}
+
 	c.log.Warnf("CredHub cleanup left the credentials of deployment %s (instance %s) in place and deleted nothing because %s, and the deprovision itself succeeded. To investigate, check the director's view of the deployment and its tasks.",
 		target.DeploymentName, target.InstanceID, reason)
 
@@ -198,8 +212,8 @@ func (c *Cleaner) proveAbsent(ctx context.Context, target Target, result *Result
 
 // confirmDirector reads the director's name from a fresh /info and builds the
 // prefix only when it equals the configured name.
-func (c *Cleaner) confirmDirector(target Target, policy Policy, result *Result) (string, bool) {
-	info, err := c.director.GetInfo()
+func (c *Cleaner) confirmDirector(ctx context.Context, target Target, policy Policy, result *Result) (string, bool) {
+	info, err := c.director.GetInfo(ctx)
 	if err != nil {
 		c.refuse(target, policy, fmt.Errorf("%w: reading the director's /info failed: %w", ErrDirectorNameMismatch, err), result)
 

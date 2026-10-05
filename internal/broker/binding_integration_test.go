@@ -101,8 +101,8 @@ func (b *BrokerTestAdapter) GetServices() []reconciler.Service {
 }
 
 // GetBindingCredentials implements reconciler.BrokerInterface without context.
-func (b *BrokerTestAdapter) GetBindingCredentials(instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
-	creds, err := b.Broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
+func (b *BrokerTestAdapter) GetBindingCredentials(ctx context.Context, instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
+	creds, err := b.Broker.GetBindingCredentials(ctx, instanceID, bindingID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
 	}

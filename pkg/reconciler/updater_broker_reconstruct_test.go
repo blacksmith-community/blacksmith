@@ -1,6 +1,7 @@
 package reconciler_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ type reconMockBroker struct {
 }
 
 func (m *reconMockBroker) GetServices() []Service { return nil }
-func (m *reconMockBroker) GetBindingCredentials(instanceID, bindingID string) (*BindingCredentials, error) {
+func (m *reconMockBroker) GetBindingCredentials(_ context.Context, instanceID, bindingID string) (*BindingCredentials, error) {
 	return m.creds, nil
 }
 
@@ -35,7 +36,7 @@ func TestReconstructBindingWithBroker_StoresCredentialsAndMetadata(t *testing.T)
 
 	mb := createMockBroker()
 
-	err := updater.ReconstructBindingWithBroker(instanceID, bindingID, mb)
+	err := updater.ReconstructBindingWithBroker(t.Context(), instanceID, bindingID, mb)
 	if err != nil {
 		t.Fatalf("ReconstructBindingWithBroker error: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestReconstructBindingWithBroker_BrokerError(t *testing.T) {
 
 	// Override method via embedding not available; simulate by calling with nil creds and expecting error
 	// The updater checks for nil and returns error without writing
-	err := updater.ReconstructBindingWithBroker(instanceID, bindingID, bad)
+	err := updater.ReconstructBindingWithBroker(t.Context(), instanceID, bindingID, bad)
 	if err == nil {
 		t.Fatalf("expected error from ReconstructBindingWithBroker when broker returns nil creds")
 	}

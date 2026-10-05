@@ -95,7 +95,7 @@ func newFakeDirector() *fakeDirector {
 	return &fakeDirector{infoName: labDirector, deploymentErr: bosh.ErrDeploymentNotFound}
 }
 
-func (d *fakeDirector) GetInfo() (*bosh.Info, error) {
+func (d *fakeDirector) GetInfo(_ context.Context) (*bosh.Info, error) {
 	d.record("info")
 
 	if d.infoErr != nil {
@@ -105,7 +105,7 @@ func (d *fakeDirector) GetInfo() (*bosh.Info, error) {
 	return &bosh.Info{Name: d.infoName}, nil
 }
 
-func (d *fakeDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error) {
+func (d *fakeDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
 	d.record("deployment " + name)
 
 	if d.entered != nil {
@@ -123,7 +123,7 @@ func (d *fakeDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error
 	return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
 }
 
-func (d *fakeDirector) FindRunningTaskForDeployment(name string) (*bosh.Task, error) {
+func (d *fakeDirector) FindRunningTaskForDeployment(_ context.Context, name string) (*bosh.Task, error) {
 	d.record("tasks " + name)
 
 	return d.runningTask, d.taskErr
@@ -679,5 +679,101 @@ func TestExplainFailureCoversEveryRow(t *testing.T) {
 				t.Errorf("check %q does not contain %q", check, testCase.check)
 			}
 		})
+	}
+}
+
+// hungDirector hangs its first GetDeployment the way a hung BOSH director
+// does, and answers every other call through fakeDirector.
+type hungDirector struct {
+	*fakeDirector
+
+	once    sync.Once
+	entered chan struct{}
+	exited  chan struct{}
+	release chan struct{}
+}
+
+func newHungDirector() *hungDirector {
+	return &hungDirector{
+		fakeDirector: newFakeDirector(),
+		entered:      make(chan struct{}),
+		exited:       make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+}
+
+func (d *hungDirector) GetDeployment(ctx context.Context, name string) (*bosh.DeploymentDetail, error) {
+	first := false
+	d.once.Do(func() { first = true })
+
+	if !first {
+		return d.fakeDirector.GetDeployment(ctx, name)
+	}
+
+	defer close(d.exited)
+
+	close(d.entered)
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-d.release:
+		return nil, errDirectorDown
+	}
+}
+
+// A hung director call must end with the run's context, so the in-flight key
+// is released at the run timeout and no director goroutine outlives the run.
+func TestCleanerReleasesTheDeploymentWhenTheDirectorHangs(t *testing.T) {
+	t.Parallel()
+
+	world := newCleanerWorld(t)
+	director := newHungDirector()
+	t.Cleanup(func() { close(director.release) })
+
+	cleaner := credhub.NewCleaner(world.client, director, func() credhub.Policy {
+		policy := labPolicy()
+		policy.InfoDirectorName = ""
+
+		return policy
+	}, world.log)
+	credhub.SetCleanerBackoff(cleaner, time.Millisecond, time.Millisecond)
+	credhub.SetCleanerRunTimeout(cleaner, 50*time.Millisecond)
+
+	results := make(chan credhub.Result, 1)
+
+	go func() { results <- cleaner.CleanupDeployment(context.Background(), labTarget()) }()
+
+	<-director.entered
+
+	var first credhub.Result
+
+	select {
+	case first = <-results:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run still holds the deployment 5s after its 50ms run timeout, because the hung director call ignores the run's context")
+	}
+
+	select {
+	case <-director.exited:
+	default:
+		t.Fatal("the run returned while its director call was still running, so that goroutine leaked")
+	}
+
+	if !errors.Is(first.Refused, credhub.ErrDeploymentNotProvenGone) {
+		t.Fatalf("expected the timed-out run to refuse for lack of proof, got %+v", first)
+	}
+
+	if !errors.Is(first.Refused, context.DeadlineExceeded) {
+		t.Fatalf("expected the refusal to carry the run's deadline, got %v", first.Refused)
+	}
+
+	if _, deletes := world.client.calls(); len(deletes) != 0 {
+		t.Fatalf("expected no delete after a timed-out proof, got %q", deletes)
+	}
+
+	second := cleaner.CleanupDeployment(context.Background(), labTarget())
+	if second.Duplicate {
+		t.Fatal("the deployment is still marked in flight after the timed-out run returned")
 	}
 }

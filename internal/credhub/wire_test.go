@@ -35,10 +35,10 @@ func newWireDirector(uaaURL string) *wireDirector {
 	return &wireDirector{fakeDirector: newFakeDirector(), uaaURL: uaaURL}
 }
 
-func (d *wireDirector) GetInfo() (*bosh.Info, error) {
+func (d *wireDirector) GetInfo(ctx context.Context) (*bosh.Info, error) {
 	d.infoCalls.Add(1)
 
-	info, err := d.fakeDirector.GetInfo()
+	info, err := d.fakeDirector.GetInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func TestBuildCleanerDisabledConfig(t *testing.T) {
 	cfg.Cleanup.Enabled = false
 	director := newWireDirector(wireUAAURL)
 
-	cleaner, client, problems := credhub.BuildCleaner(cfg, unrelatedCA(t), director, wirePlans, newCaptureLogger())
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), cfg, unrelatedCA(t), director, wirePlans, newCaptureLogger())
 	assertNotBuilt(t, cleaner, client, problems)
 
 	if director.infoCalls.Load() != 0 {
@@ -108,7 +108,7 @@ func TestBuildCleanerInvalidConfigListsEveryProblem(t *testing.T) {
 	cfg.DirectorName = "lab/*"
 	director := newWireDirector(wireUAAURL)
 
-	cleaner, client, problems := credhub.BuildCleaner(cfg, unrelatedCA(t), director, wirePlans, newCaptureLogger())
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), cfg, unrelatedCA(t), director, wirePlans, newCaptureLogger())
 	assertNotBuilt(t, cleaner, client, problems)
 
 	joined := strings.Join(problems, "\n")
@@ -139,7 +139,7 @@ func TestBuildCleanerInfoFailureWithoutUAAURLRetriesLater(t *testing.T) {
 	director.infoErr = errInfoDown
 	log := newCaptureLogger()
 
-	cleaner, client, problems := credhub.BuildCleaner(cfg, serverCA(uaa.server), director, wirePlans, log)
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), cfg, serverCA(uaa.server), director, wirePlans, log)
 	if len(problems) != 0 || cleaner == nil || client == nil {
 		t.Fatalf("expected a cleaner and a client despite the /info failure, got problems %v", problems)
 	}
@@ -189,7 +189,7 @@ func TestBuildCleanerProblemsStripURLUserinfo(t *testing.T) {
 		cfg := validWireConfig(t)
 		cfg.UAAURL = "https://admin:" + password + "@10.0.0.6:8443"
 
-		cleaner, client, problems := credhub.BuildCleaner(cfg, unrelatedCA(t), newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
+		cleaner, client, problems := credhub.BuildCleaner(context.Background(), cfg, unrelatedCA(t), newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
 		assertNotBuilt(t, cleaner, client, problems)
 
 		joined := strings.Join(problems, "\n")
@@ -205,7 +205,7 @@ func TestBuildCleanerProblemsStripURLUserinfo(t *testing.T) {
 		cfg.URL = "https://admin:" + password + "@10.0.0.6:8844"
 		cfg.UAAURL = wireUAAURL
 
-		cleaner, client, problems := credhub.BuildCleaner(cfg, unrelatedCA(t), newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
+		cleaner, client, problems := credhub.BuildCleaner(context.Background(), cfg, unrelatedCA(t), newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
 		assertNotBuilt(t, cleaner, client, problems)
 
 		joined := strings.Join(problems, "\n")
@@ -220,7 +220,7 @@ func TestBuildCleanerInfoWithoutUAA(t *testing.T) {
 
 	director := newWireDirector("")
 
-	cleaner, client, problems := credhub.BuildCleaner(validWireConfig(t), unrelatedCA(t), director, wirePlans, newCaptureLogger())
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), validWireConfig(t), unrelatedCA(t), director, wirePlans, newCaptureLogger())
 	assertNotBuilt(t, cleaner, client, problems)
 
 	if !strings.Contains(problems[0], "names no UAA") {
@@ -236,7 +236,7 @@ func TestBuildCleanerExplicitUAAURLSkipsInfo(t *testing.T) {
 	director := newWireDirector("")
 	director.infoErr = errInfoDown
 
-	cleaner, client, problems := credhub.BuildCleaner(cfg, unrelatedCA(t), director, wirePlans, newCaptureLogger())
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), cfg, unrelatedCA(t), director, wirePlans, newCaptureLogger())
 	if len(problems) != 0 || cleaner == nil || client == nil {
 		t.Fatalf("expected a cleaner and a client, got problems %v", problems)
 	}
@@ -249,7 +249,7 @@ func TestBuildCleanerExplicitUAAURLSkipsInfo(t *testing.T) {
 func TestBuildCleanerMissingBOSHCACert(t *testing.T) {
 	t.Parallel()
 
-	cleaner, client, problems := credhub.BuildCleaner(validWireConfig(t), "", newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), validWireConfig(t), "", newWireDirector(wireUAAURL), wirePlans, newCaptureLogger())
 	assertNotBuilt(t, cleaner, client, problems)
 
 	if !strings.Contains(problems[0], "bosh.cacert") {
@@ -260,7 +260,7 @@ func TestBuildCleanerMissingBOSHCACert(t *testing.T) {
 func TestBuildCleanerNoDirectorOrCatalog(t *testing.T) {
 	t.Parallel()
 
-	cleaner, client, problems := credhub.BuildCleaner(validWireConfig(t), unrelatedCA(t), nil, nil, newCaptureLogger())
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), validWireConfig(t), unrelatedCA(t), nil, nil, newCaptureLogger())
 	assertNotBuilt(t, cleaner, client, problems)
 
 	if len(problems) != 2 {
@@ -282,7 +282,7 @@ func TestBuildCleanerValidConfig(t *testing.T) {
 	cfg.CACert = serverCA(fake.server)
 	director := newWireDirector(uaa.server.URL)
 
-	cleaner, client, problems := credhub.BuildCleaner(cfg, serverCA(uaa.server), director, wirePlans, newCaptureLogger())
+	cleaner, client, problems := credhub.BuildCleaner(context.Background(), cfg, serverCA(uaa.server), director, wirePlans, newCaptureLogger())
 	if len(problems) != 0 || cleaner == nil || client == nil {
 		t.Fatalf("expected a cleaner and a client, got problems %v", problems)
 	}
@@ -323,7 +323,7 @@ func TestProbeSucceeds(t *testing.T) {
 
 	log := newCaptureLogger()
 
-	_, client, problems := credhub.BuildCleaner(cfg, serverCA(uaa.server), newWireDirector(""), wirePlans, log)
+	_, client, problems := credhub.BuildCleaner(context.Background(), cfg, serverCA(uaa.server), newWireDirector(""), wirePlans, log)
 	if len(problems) != 0 {
 		t.Fatalf("unexpected problems %v", problems)
 	}
@@ -360,7 +360,7 @@ func TestProbeReturnsAtItsDeadlineWhenUAAHangs(t *testing.T) {
 
 	log := newCaptureLogger()
 
-	_, client, problems := credhub.BuildCleaner(cfg, serverCA(uaa.server), newWireDirector(""), wirePlans, log)
+	_, client, problems := credhub.BuildCleaner(context.Background(), cfg, serverCA(uaa.server), newWireDirector(""), wirePlans, log)
 	if len(problems) != 0 {
 		t.Fatalf("unexpected problems %v", problems)
 	}

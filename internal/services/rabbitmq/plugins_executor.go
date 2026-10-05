@@ -131,7 +131,7 @@ func (e *PluginsExecutorService) ExecuteCommandSync(ctx context.Context, execCtx
 	}
 
 	// Execute command
-	sshResult, err := e.sshService.ExecuteCommand(deployment, instance, index, rabbitCmd)
+	sshResult, err := e.sshService.ExecuteCommand(ctx, deployment, instance, index, rabbitCmd)
 	if err != nil {
 		e.logger.Errorf("Failed to execute rabbitmq-plugins command: %v", err)
 
@@ -451,7 +451,7 @@ func (e *PluginsExecutorService) executeCommandAsync(ctx context.Context, _ Plug
 	}
 
 	// Execute the command
-	sshResult, err := e.sshService.ExecuteCommand(deployment, instance, index, rabbitCmd)
+	sshResult, err := e.sshService.ExecuteCommand(ctx, deployment, instance, index, rabbitCmd)
 
 	// Process and send the output
 	processedOutput := e.processCommandOutput(result.Command, sshResult.Output)

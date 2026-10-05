@@ -106,6 +106,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 // handleBlacksmithSSH handles WebSocket SSH for blacksmith deployment.
 func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+
 	logger := h.logger.Named("blacksmith-websocket-ssh")
 	logger.Debug("WebSocket SSH connection request for blacksmith deployment")
 
@@ -126,7 +128,7 @@ func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	deploymentName, instanceName, err := h.resolveBlacksmithDeployment(logger)
+	deploymentName, instanceName, err := h.resolveBlacksmithDeployment(ctx, logger)
 	if err != nil {
 		logger.Error("Failed to resolve blacksmith deployment info: %v", err)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -164,7 +166,7 @@ func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Requ
 	}
 }
 
-func (h *Handler) resolveBlacksmithDeployment(logger interfaces.Logger) (string, string, error) {
+func (h *Handler) resolveBlacksmithDeployment(ctx context.Context, logger interfaces.Logger) (string, string, error) {
 	deploymentName := h.readDeploymentNameFromInstanceFile(logger)
 	if deploymentName == "" {
 		env := strings.TrimSpace(h.config.GetEnvironment())
@@ -183,7 +185,7 @@ func (h *Handler) resolveBlacksmithDeployment(logger interfaces.Logger) (string,
 		return deploymentName, deploymentNameBlacksmith, errBOSHDirectorNotConfigured
 	}
 
-	deployment, err := h.director.GetDeployment(deploymentName)
+	deployment, err := h.director.GetDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("Failed to fetch deployment manifest for %s: %v", deploymentName, err)
 

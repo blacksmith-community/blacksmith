@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"sync"
 
 	"blacksmith/internal/bosh"
@@ -49,113 +50,113 @@ func (s *ScriptedBOSHDirector) Calls(method string) []string {
 }
 
 // GetInfo runs GetInfoFn when set.
-func (s *ScriptedBOSHDirector) GetInfo() (*bosh.Info, error) {
+func (s *ScriptedBOSHDirector) GetInfo(ctx context.Context) (*bosh.Info, error) {
 	s.record("GetInfo", "")
 
 	if s.GetInfoFn != nil {
 		return s.GetInfoFn()
 	}
 
-	return s.IntegrationMockBOSH.GetInfo()
+	return s.IntegrationMockBOSH.GetInfo(ctx)
 }
 
 // GetDeployment runs GetDeploymentFn when set.
-func (s *ScriptedBOSHDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error) {
+func (s *ScriptedBOSHDirector) GetDeployment(ctx context.Context, name string) (*bosh.DeploymentDetail, error) {
 	s.record("GetDeployment", name)
 
 	if s.GetDeploymentFn != nil {
 		return s.GetDeploymentFn(name)
 	}
 
-	return s.IntegrationMockBOSH.GetDeployment(name)
+	return s.IntegrationMockBOSH.GetDeployment(ctx, name)
 }
 
 // GetDeployments runs GetDeploymentsFn when set.
-func (s *ScriptedBOSHDirector) GetDeployments() ([]bosh.Deployment, error) {
+func (s *ScriptedBOSHDirector) GetDeployments(ctx context.Context) ([]bosh.Deployment, error) {
 	s.record("GetDeployments", "")
 
 	if s.GetDeploymentsFn != nil {
 		return s.GetDeploymentsFn()
 	}
 
-	return s.IntegrationMockBOSH.GetDeployments()
+	return s.IntegrationMockBOSH.GetDeployments(ctx)
 }
 
 // GetDeploymentVMs runs GetDeploymentVMsFn when set.
-func (s *ScriptedBOSHDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
+func (s *ScriptedBOSHDirector) GetDeploymentVMs(ctx context.Context, deployment string) ([]bosh.VM, error) {
 	s.record("GetDeploymentVMs", deployment)
 
 	if s.GetDeploymentVMsFn != nil {
 		return s.GetDeploymentVMsFn(deployment)
 	}
 
-	return s.IntegrationMockBOSH.GetDeploymentVMs(deployment)
+	return s.IntegrationMockBOSH.GetDeploymentVMs(ctx, deployment)
 }
 
 // CreateDeployment runs CreateDeploymentFn when set.
-func (s *ScriptedBOSHDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
+func (s *ScriptedBOSHDirector) CreateDeployment(ctx context.Context, manifest string) (*bosh.Task, error) {
 	s.record("CreateDeployment", bosh.ExtractDeploymentName(manifest))
 
 	if s.CreateDeploymentFn != nil {
 		return s.CreateDeploymentFn(manifest)
 	}
 
-	return s.IntegrationMockBOSH.CreateDeployment(manifest)
+	return s.IntegrationMockBOSH.CreateDeployment(ctx, manifest)
 }
 
 // DeleteDeployment runs DeleteDeploymentFn when set.
-func (s *ScriptedBOSHDirector) DeleteDeployment(name string) (*bosh.Task, error) {
+func (s *ScriptedBOSHDirector) DeleteDeployment(ctx context.Context, name string) (*bosh.Task, error) {
 	s.record("DeleteDeployment", name)
 
 	if s.DeleteDeploymentFn != nil {
 		return s.DeleteDeploymentFn(name)
 	}
 
-	return s.IntegrationMockBOSH.DeleteDeployment(name)
+	return s.IntegrationMockBOSH.DeleteDeployment(ctx, name)
 }
 
 // GetTask runs GetTaskFn when set.
-func (s *ScriptedBOSHDirector) GetTask(taskID int) (*bosh.Task, error) {
+func (s *ScriptedBOSHDirector) GetTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	s.record("GetTask", "")
 
 	if s.GetTaskFn != nil {
 		return s.GetTaskFn(taskID)
 	}
 
-	return s.IntegrationMockBOSH.GetTask(taskID)
+	return s.IntegrationMockBOSH.GetTask(ctx, taskID)
 }
 
 // GetEvents runs GetEventsFn when set.
-func (s *ScriptedBOSHDirector) GetEvents(deployment string) ([]bosh.Event, error) {
+func (s *ScriptedBOSHDirector) GetEvents(ctx context.Context, deployment string) ([]bosh.Event, error) {
 	s.record("GetEvents", deployment)
 
 	if s.GetEventsFn != nil {
 		return s.GetEventsFn(deployment)
 	}
 
-	return s.IntegrationMockBOSH.GetEvents(deployment)
+	return s.IntegrationMockBOSH.GetEvents(ctx, deployment)
 }
 
 // GetReleases runs GetReleasesFn when set.
-func (s *ScriptedBOSHDirector) GetReleases() ([]bosh.Release, error) {
+func (s *ScriptedBOSHDirector) GetReleases(ctx context.Context) ([]bosh.Release, error) {
 	s.record("GetReleases", "")
 
 	if s.GetReleasesFn != nil {
 		return s.GetReleasesFn()
 	}
 
-	return s.IntegrationMockBOSH.GetReleases()
+	return s.IntegrationMockBOSH.GetReleases(ctx)
 }
 
 // FindRunningTaskForDeployment runs FindRunningTaskForDeploymentFn when set.
-func (s *ScriptedBOSHDirector) FindRunningTaskForDeployment(deployment string) (*bosh.Task, error) {
+func (s *ScriptedBOSHDirector) FindRunningTaskForDeployment(ctx context.Context, deployment string) (*bosh.Task, error) {
 	s.record("FindRunningTaskForDeployment", deployment)
 
 	if s.FindRunningTaskForDeploymentFn != nil {
 		return s.FindRunningTaskForDeploymentFn(deployment)
 	}
 
-	return s.IntegrationMockBOSH.FindRunningTaskForDeployment(deployment)
+	return s.IntegrationMockBOSH.FindRunningTaskForDeployment(ctx, deployment)
 }
 
 func (s *ScriptedBOSHDirector) record(method, arg string) {

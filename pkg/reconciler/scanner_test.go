@@ -29,11 +29,11 @@ type mockDirector struct {
 	vmErr       error
 }
 
-func (d *mockDirector) GetInfo() (*bosh.Info, error) {
+func (d *mockDirector) GetInfo(_ context.Context) (*bosh.Info, error) {
 	return &bosh.Info{Name: "test-director", UUID: "test-uuid"}, nil
 }
 
-func (d *mockDirector) GetDeployments() ([]bosh.Deployment, error) {
+func (d *mockDirector) GetDeployments(_ context.Context) ([]bosh.Deployment, error) {
 	if d.getErr != nil {
 		return nil, d.getErr
 	}
@@ -41,7 +41,7 @@ func (d *mockDirector) GetDeployments() ([]bosh.Deployment, error) {
 	return d.deployments, nil
 }
 
-func (d *mockDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error) {
+func (d *mockDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
 	if d.detailErr != nil {
 		return nil, d.detailErr
 	}
@@ -53,7 +53,7 @@ func (d *mockDirector) GetDeployment(name string) (*bosh.DeploymentDetail, error
 	return nil, fmt.Errorf("%w: %s", errDeploymentNotFound, name)
 }
 
-func (d *mockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
+func (d *mockDirector) GetDeploymentVMs(_ context.Context, deployment string) ([]bosh.VM, error) {
 	if d.vmErr != nil {
 		return nil, d.vmErr
 	}
@@ -65,147 +65,147 @@ func (d *mockDirector) GetDeploymentVMs(deployment string) ([]bosh.VM, error) {
 	return []bosh.VM{}, nil
 }
 
-func (d *mockDirector) GetConfig(configType, configName string) (interface{}, error) {
+func (d *mockDirector) GetConfig(_ context.Context, configType, configName string) (interface{}, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) CreateDeployment(manifest string) (*bosh.Task, error) {
+func (d *mockDirector) CreateDeployment(_ context.Context, manifest string) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) DeleteDeployment(name string) (*bosh.Task, error) {
+func (d *mockDirector) DeleteDeployment(_ context.Context, name string) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetReleases() ([]bosh.Release, error) {
+func (d *mockDirector) GetReleases(_ context.Context) ([]bosh.Release, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) UploadRelease(url, sha1 string) (*bosh.Task, error) {
+func (d *mockDirector) UploadRelease(_ context.Context, url, sha1 string) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetStemcells() ([]bosh.Stemcell, error) {
+func (d *mockDirector) GetStemcells(_ context.Context) ([]bosh.Stemcell, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) UploadStemcell(url, sha1 string) (*bosh.Task, error) {
+func (d *mockDirector) UploadStemcell(_ context.Context, url, sha1 string) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetTask(id int) (*bosh.Task, error) {
+func (d *mockDirector) GetTask(_ context.Context, id int) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetTaskOutput(id int, outputType string) (string, error) {
+func (d *mockDirector) GetTaskOutput(_ context.Context, id int, outputType string) (string, error) {
 	return "", ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetTaskEvents(id int) ([]bosh.TaskEvent, error) {
+func (d *mockDirector) GetTaskEvents(_ context.Context, id int) ([]bosh.TaskEvent, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetEvents(deployment string) ([]bosh.Event, error) {
+func (d *mockDirector) GetEvents(_ context.Context, deployment string) ([]bosh.Event, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
+func (d *mockDirector) FetchLogs(_ context.Context, deployment string, jobName string, jobIndex string) (string, error) {
 	return "", ErrScannerNotImplemented
 }
 
-func (d *mockDirector) UpdateCloudConfig(config string) error {
+func (d *mockDirector) UpdateCloudConfig(_ context.Context, config string) error {
 	return ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetCloudConfig() (string, error) {
+func (d *mockDirector) GetCloudConfig(_ context.Context) (string, error) {
 	return "", ErrScannerNotImplemented
 }
 
-func (d *mockDirector) Cleanup(removeAll bool) (*bosh.Task, error) {
+func (d *mockDirector) Cleanup(_ context.Context, removeAll bool) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
+func (d *mockDirector) SSHCommand(_ context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
 	return "", ErrScannerNotImplemented
 }
 
-func (d *mockDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+func (d *mockDirector) SSHSession(_ context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
 	return nil, ErrScannerNotImplemented
 }
-func (d *mockDirector) EnableResurrection(deployment string, enabled bool) error {
+func (d *mockDirector) EnableResurrection(_ context.Context, deployment string, enabled bool) error {
 	return ErrScannerNotImplemented
 }
 
-func (d *mockDirector) DeleteResurrectionConfig(deployment string) error {
+func (d *mockDirector) DeleteResurrectionConfig(_ context.Context, deployment string) error {
 	return ErrScannerNotImplemented
 }
 
 // New task methods added for Tasks feature.
-func (d *mockDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
+func (d *mockDirector) GetTasks(_ context.Context, taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetAllTasks(limit int) ([]bosh.Task, error) {
+func (d *mockDirector) GetAllTasks(_ context.Context, limit int) ([]bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) CancelTask(taskID int) error {
+func (d *mockDirector) CancelTask(_ context.Context, taskID int) error {
 	return ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetConfigs(limit int, configTypes []string) ([]bosh.BoshConfig, error) {
+func (d *mockDirector) GetConfigs(_ context.Context, limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetConfigVersions(configType, name string, limit int) ([]bosh.BoshConfig, error) {
+func (d *mockDirector) GetConfigVersions(_ context.Context, configType, name string, limit int) ([]bosh.BoshConfig, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetConfigByID(configID string) (*bosh.BoshConfigDetail, error) {
+func (d *mockDirector) GetConfigByID(_ context.Context, configID string) (*bosh.BoshConfigDetail, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetConfigContent(configID string) (string, error) {
+func (d *mockDirector) GetConfigContent(_ context.Context, configID string) (string, error) {
 	return "", nil
 }
 
-func (d *mockDirector) ComputeConfigDiff(fromID, toID string) (*bosh.ConfigDiff, error) {
+func (d *mockDirector) ComputeConfigDiff(_ context.Context, fromID, toID string) (*bosh.ConfigDiff, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) RestartDeployment(name string, opts bosh.RestartOpts) (*bosh.Task, error) {
+func (d *mockDirector) RestartDeployment(_ context.Context, name string, opts bosh.RestartOpts) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) StopDeployment(name string, opts bosh.StopOpts) (*bosh.Task, error) {
+func (d *mockDirector) StopDeployment(_ context.Context, name string, opts bosh.StopOpts) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) StartDeployment(name string, opts bosh.StartOpts) (*bosh.Task, error) {
+func (d *mockDirector) StartDeployment(_ context.Context, name string, opts bosh.StartOpts) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) RecreateDeployment(name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
+func (d *mockDirector) RecreateDeployment(_ context.Context, name string, opts bosh.RecreateOpts) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) ListErrands(deployment string) ([]bosh.Errand, error) {
+func (d *mockDirector) ListErrands(_ context.Context, deployment string) ([]bosh.Errand, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) RunErrand(deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
+func (d *mockDirector) RunErrand(_ context.Context, deployment, errand string, opts bosh.ErrandOpts) (*bosh.ErrandResult, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) GetInstances(deployment string) ([]bosh.Instance, error) {
+func (d *mockDirector) GetInstances(_ context.Context, deployment string) ([]bosh.Instance, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) UpdateDeployment(name, manifest string) (*bosh.Task, error) {
+func (d *mockDirector) UpdateDeployment(_ context.Context, name, manifest string) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+func (d *mockDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, nil
 }
 

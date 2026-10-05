@@ -66,8 +66,8 @@ type Updater interface {
 	UpdateInstance(ctx context.Context, instance InstanceData) (*InstanceData, error)
 	UpdateBatch(ctx context.Context, instances []InstanceData) ([]InstanceData, error)
 	CheckBindingHealth(instanceID string) ([]BindingInfo, []string, error)
-	ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error
-	RepairInstanceBindings(instanceID string, broker BrokerInterface) error
+	ReconstructBindingWithBroker(ctx context.Context, instanceID, bindingID string, broker BrokerInterface) error
+	RepairInstanceBindings(ctx context.Context, instanceID string, broker BrokerInterface) error
 	UpdateInstanceWithBindingRepair(ctx context.Context, instance InstanceData, broker BrokerInterface) (*InstanceData, error)
 }
 
@@ -100,7 +100,7 @@ type MetricsCollector interface {
 type BrokerInterface interface {
 	GetServices() []Service
 	// Provide reconstructed binding credentials using the broker's logic
-	GetBindingCredentials(instanceID, bindingID string) (*BindingCredentials, error)
+	GetBindingCredentials(ctx context.Context, instanceID, bindingID string) (*BindingCredentials, error)
 }
 
 // CFManagerInterface is defined in credential_vcap_recovery.go

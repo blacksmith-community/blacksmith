@@ -13,6 +13,10 @@ import (
 const (
 	// ProbeTimeout bounds the startup probe.
 	ProbeTimeout = 30 * time.Second
+	// BootInfoTimeout bounds the one /info call BuildCleaner makes, so a hung
+	// director cannot hold up startup. A cleaner whose boot /info timed out
+	// asks /info again when it first needs a token.
+	BootInfoTimeout = 30 * time.Second
 	// probeDeployment names a deployment path that never exists, so the probe
 	// lists nothing and touches nothing.
 	probeDeployment = "blacksmith-credhub-probe"
@@ -27,7 +31,7 @@ const (
 // startup. When that /info call fails, the cleaner is still built and looks
 // the UAA URL up again when it first needs a token. plans is read on every cleanup run, so the catalog's plan IDs are
 // always current. No problem ever carries the client secret.
-func BuildCleaner(cfg config.CredHubConfig, boshCACert string, director directorProber, plans func() []string, log logger.Logger) (*Cleaner, *Client, []string) {
+func BuildCleaner(ctx context.Context, cfg config.CredHubConfig, boshCACert string, director directorProber, plans func() []string, log logger.Logger) (*Cleaner, *Client, []string) {
 	if !cfg.Cleanup.Enabled {
 		return nil, nil, []string{"credhub.cleanup.enabled is false, so there is no cleaner to build"}
 	}
@@ -46,7 +50,7 @@ func BuildCleaner(cfg config.CredHubConfig, boshCACert string, director director
 		return nil, nil, problems
 	}
 
-	tokens, infoName, problem := buildTokenSource(cfg, boshCACert, director, log)
+	tokens, infoName, problem := buildTokenSource(ctx, cfg, boshCACert, director, log)
 	if problem != "" {
 		return nil, nil, []string{problem}
 	}
@@ -80,20 +84,23 @@ func BuildCleaner(cfg config.CredHubConfig, boshCACert string, director director
 // leave cleanup off until the broker restarts. A /info that answers without a
 // UAA is a configuration problem and is returned as one. The returned name is
 // the director name /info reported, or empty when it was not read.
-func buildTokenSource(cfg config.CredHubConfig, boshCACert string, director directorProber, log logger.Logger) (*TokenSource, string, string) {
+func buildTokenSource(ctx context.Context, cfg config.CredHubConfig, boshCACert string, director directorProber, log logger.Logger) (*TokenSource, string, string) {
 	uaaURL := cfg.UAAURL
 	infoName := ""
 
-	var resolve func() (string, error)
+	var resolve func(ctx context.Context) (string, error)
 
 	if uaaURL == "" {
-		info, err := director.GetInfo()
+		infoCtx, cancel := context.WithTimeout(ctx, BootInfoTimeout)
+		info, err := director.GetInfo(infoCtx)
+
+		cancel()
 
 		switch {
 		case err != nil:
 			log.Warnf("credhub.uaa_url is empty and the director's /info failed (%v), so the UAA that issues CredHub tokens is not known yet. CredHub cleanup stays enabled and asks /info again on each run. Set credhub.uaa_url or check that the director is reachable", err)
 
-			resolve = func() (string, error) { return infoUAAURL(director) }
+			resolve = func(ctx context.Context) (string, error) { return infoUAAURL(ctx, director) }
 		case info == nil || info.UAAURL == "":
 			return nil, "", "credhub.uaa_url is empty and the director's /info names no UAA, which happens when the director does not use UAA authentication. Set credhub.uaa_url to the UAA that CredHub trusts"
 		default:
@@ -122,8 +129,8 @@ func buildTokenSource(cfg config.CredHubConfig, boshCACert string, director dire
 }
 
 // infoUAAURL asks the director's /info for the UAA URL.
-func infoUAAURL(director directorProber) (string, error) {
-	info, err := director.GetInfo()
+func infoUAAURL(ctx context.Context, director directorProber) (string, error) {
+	info, err := director.GetInfo(ctx)
 	if err != nil {
 		return "", fmt.Errorf("the director's /info failed: %w", err)
 	}

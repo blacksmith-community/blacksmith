@@ -373,7 +373,9 @@ func (r *ReconcilerManager) ForceReconcile() error {
 		return ErrReconciliationInProgress
 	}
 
-	// Start reconciliation in background with background context
+	// This run is a root. It outlives the request that asked for it, the
+	// manager keeps no context of its own, and RunReconciliation bounds every
+	// director call it makes with Timeouts.ReconciliationRun.
 	go r.RunReconciliation(context.Background())
 
 	return nil

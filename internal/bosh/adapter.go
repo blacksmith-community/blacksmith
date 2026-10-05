@@ -1,6 +1,7 @@
 package bosh
 
 import (
+	"context"
 	"io"
 	"time"
 )
@@ -9,77 +10,77 @@ import (
 // This provides a clean abstraction over the BOSH CLI director client.
 type Director interface {
 	// Director operations
-	GetInfo() (*Info, error)
+	GetInfo(ctx context.Context) (*Info, error)
 
 	// Deployment operations
-	GetDeployments() ([]Deployment, error)
-	GetDeployment(name string) (*DeploymentDetail, error)
-	CreateDeployment(manifest string) (*Task, error)
-	DeleteDeployment(name string) (*Task, error)
-	GetDeploymentVMs(deployment string) ([]VM, error)
+	GetDeployments(ctx context.Context) ([]Deployment, error)
+	GetDeployment(ctx context.Context, name string) (*DeploymentDetail, error)
+	CreateDeployment(ctx context.Context, manifest string) (*Task, error)
+	DeleteDeployment(ctx context.Context, name string) (*Task, error)
+	GetDeploymentVMs(ctx context.Context, deployment string) ([]VM, error)
 
 	// Release operations
-	GetReleases() ([]Release, error)
-	UploadRelease(url, sha1 string) (*Task, error)
+	GetReleases(ctx context.Context) ([]Release, error)
+	UploadRelease(ctx context.Context, url, sha1 string) (*Task, error)
 
 	// Stemcell operations
-	GetStemcells() ([]Stemcell, error)
-	UploadStemcell(url, sha1 string) (*Task, error)
+	GetStemcells(ctx context.Context) ([]Stemcell, error)
+	UploadStemcell(ctx context.Context, url, sha1 string) (*Task, error)
 
 	// Task operations
-	GetTask(id int) (*Task, error)
-	GetTasks(taskType string, limit int, states []string, team string) ([]Task, error)
-	GetAllTasks(limit int) ([]Task, error)
-	CancelTask(taskID int) error
-	GetTaskOutput(id int, outputType string) (string, error)
-	GetTaskEvents(id int) ([]TaskEvent, error)
+	GetTask(ctx context.Context, id int) (*Task, error)
+	GetTasks(ctx context.Context, taskType string, limit int, states []string, team string) ([]Task, error)
+	GetAllTasks(ctx context.Context, limit int) ([]Task, error)
+	CancelTask(ctx context.Context, taskID int) error
+	GetTaskOutput(ctx context.Context, id int, outputType string) (string, error)
+	GetTaskEvents(ctx context.Context, id int) ([]TaskEvent, error)
 
 	// Event operations
-	GetEvents(deployment string) ([]Event, error)
+	GetEvents(ctx context.Context, deployment string) ([]Event, error)
 
 	// Log operations
-	FetchLogs(deployment string, jobName string, jobIndex string) (string, error)
+	FetchLogs(ctx context.Context, deployment string, jobName string, jobIndex string) (string, error)
 
 	// Config operations
-	UpdateCloudConfig(config string) error
-	GetCloudConfig() (string, error)
-	GetConfig(configType, configName string) (interface{}, error)
-	GetConfigs(limit int, configTypes []string) ([]BoshConfig, error)
-	GetConfigVersions(configType, name string, limit int) ([]BoshConfig, error)
-	GetConfigByID(configID string) (*BoshConfigDetail, error)
-	GetConfigContent(configID string) (string, error)
-	ComputeConfigDiff(fromID, toID string) (*ConfigDiff, error)
+	UpdateCloudConfig(ctx context.Context, config string) error
+	GetCloudConfig(ctx context.Context) (string, error)
+	GetConfig(ctx context.Context, configType, configName string) (interface{}, error)
+	GetConfigs(ctx context.Context, limit int, configTypes []string) ([]BoshConfig, error)
+	GetConfigVersions(ctx context.Context, configType, name string, limit int) ([]BoshConfig, error)
+	GetConfigByID(ctx context.Context, configID string) (*BoshConfigDetail, error)
+	GetConfigContent(ctx context.Context, configID string) (string, error)
+	ComputeConfigDiff(ctx context.Context, fromID, toID string) (*ConfigDiff, error)
 
 	// Cleanup operations
-	Cleanup(removeAll bool) (*Task, error)
+	Cleanup(ctx context.Context, removeAll bool) (*Task, error)
 
 	// SSH operations
-	SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
-	SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
+	SSHCommand(ctx context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error)
+	SSHSession(ctx context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error)
 
 	// Resurrection operations
-	EnableResurrection(deployment string, enabled bool) error
-	DeleteResurrectionConfig(deployment string) error
+	EnableResurrection(ctx context.Context, deployment string, enabled bool) error
+	DeleteResurrectionConfig(ctx context.Context, deployment string) error
 
 	// Deployment control operations
-	RestartDeployment(name string, opts RestartOpts) (*Task, error)
-	StopDeployment(name string, opts StopOpts) (*Task, error)
-	StartDeployment(name string, opts StartOpts) (*Task, error)
-	RecreateDeployment(name string, opts RecreateOpts) (*Task, error)
+	RestartDeployment(ctx context.Context, name string, opts RestartOpts) (*Task, error)
+	StopDeployment(ctx context.Context, name string, opts StopOpts) (*Task, error)
+	StartDeployment(ctx context.Context, name string, opts StartOpts) (*Task, error)
+	RecreateDeployment(ctx context.Context, name string, opts RecreateOpts) (*Task, error)
 
 	// Errand operations
-	ListErrands(deployment string) ([]Errand, error)
-	RunErrand(deployment, errand string, opts ErrandOpts) (*ErrandResult, error)
+	ListErrands(ctx context.Context, deployment string) ([]Errand, error)
+	RunErrand(ctx context.Context, deployment, errand string, opts ErrandOpts) (*ErrandResult, error)
 
 	// Instance operations
-	GetInstances(deployment string) ([]Instance, error)
+	GetInstances(ctx context.Context, deployment string) ([]Instance, error)
 
 	// Deployment update
-	UpdateDeployment(name, manifest string) (*Task, error)
+	UpdateDeployment(ctx context.Context, name, manifest string) (*Task, error)
 
 	// FindRunningTaskForDeployment finds a currently running task for the given deployment.
 	// Returns nil if no running task is found.
-	FindRunningTaskForDeployment(deploymentName string) (*Task, error)
+	FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*Task, error)
 
 	// Pool statistics (for PooledDirector)
 	GetPoolStats() (*PoolStats, error)

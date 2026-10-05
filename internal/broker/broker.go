@@ -508,7 +508,7 @@ func (b *Broker) OnProvisionCompleted(
 	}
 
 	// Get deployment VMs
-	vms, err := b.getDeploymentVMs(deployment, logger)
+	vms, err := b.getDeploymentVMs(ctx, deployment, logger)
 	if err != nil {
 		return err
 	}
@@ -607,7 +607,7 @@ func (b *Broker) Bind(
 	}
 
 	// Get credentials
-	creds, err := b.getInstanceCredentials(instanceID, plan, logger)
+	creds, err := b.getInstanceCredentials(ctx, instanceID, plan, logger)
 	if err != nil {
 		return binding, false, err
 	}
@@ -756,7 +756,7 @@ func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingI
 		return nil, err
 	}
 
-	creds, err := b.getBaseCredentials(instanceID, plan, logger)
+	creds, err := b.getBaseCredentials(ctx, instanceID, plan, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -798,7 +798,7 @@ func (b *Broker) ServiceWithNoDeploymentCheck(ctx context.Context) (
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting check for orphaned service instances with no backing BOSH deployment")
 
-	deploymentNames, err := b.getDeploymentNamesFromBOSH(logger)
+	deploymentNames, err := b.getDeploymentNamesFromBOSH(ctx, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -1047,7 +1047,7 @@ func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID str
 
 	deploymentName := deploymentNameForInstance(instanceID, instance)
 
-	task, err := b.BOSH.FindRunningTaskForDeployment(deploymentName)
+	task, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("could not determine whether deployment %s has a running BOSH task: %s", deploymentName, err)
 
@@ -1202,12 +1202,12 @@ func (b *Broker) getDeploymentManifestFromVault(instanceID string, logger logger
 	return manifestYAML
 }
 
-func (b *Broker) getBaseCredentials(instanceID string, plan services.Plan, logger logger.Logger) (interface{}, error) {
+func (b *Broker) getBaseCredentials(ctx context.Context, instanceID string, plan services.Plan, logger logger.Logger) (interface{}, error) {
 	logger.Debug("Retrieving base credentials using GetCreds")
 
 	deploymentManifest := b.getDeploymentManifestFromVault(instanceID, logger)
 
-	creds, err := manifest.GetCreds(instanceID, plan, b.BOSH, deploymentManifest, logger)
+	creds, err := manifest.GetCreds(ctx, instanceID, plan, b.BOSH, deploymentManifest, logger)
 	if err != nil {
 		logger.Error("Failed to retrieve base credentials: %s", err)
 
@@ -1274,10 +1274,10 @@ func (b *Broker) processDynamicCredentials(ctx context.Context, instanceID strin
 	return nil
 }
 
-func (b *Broker) getDeploymentNamesFromBOSH(logger logger.Logger) (map[string]bool, error) {
+func (b *Broker) getDeploymentNamesFromBOSH(ctx context.Context, logger logger.Logger) (map[string]bool, error) {
 	logger.Debug("Fetching all current deployments from BOSH director")
 
-	deployments, err := b.BOSH.GetDeployments()
+	deployments, err := b.BOSH.GetDeployments(ctx)
 	if err != nil {
 		logger.Error("Failed to get deployments from BOSH director: %s", err)
 
@@ -1858,10 +1858,10 @@ func (b *Broker) parseProvisionDetails(ctx context.Context, detailsMetadata map[
 	return details, nil
 }
 
-func (b *Broker) getDeploymentVMs(deployment string, logger logger.Logger) ([]bosh.VM, error) {
+func (b *Broker) getDeploymentVMs(ctx context.Context, deployment string, logger logger.Logger) ([]bosh.VM, error) {
 	logger.Debug("fetching deployment VMs metadata")
 
-	vms, err := b.BOSH.GetDeploymentVMs(deployment)
+	vms, err := b.BOSH.GetDeploymentVMs(ctx, deployment)
 	if err != nil {
 		logger.Error("failed to fetch VMs metadata for deployment '%s': %s", deployment, err)
 
@@ -1893,7 +1893,7 @@ func (b *Broker) processCredentials(ctx context.Context, instanceID string, deta
 
 	deploymentManifest := b.getDeploymentManifestFromVault(instanceID, logger)
 
-	creds, err := manifest.GetCreds(instanceID, plan, b.BOSH, deploymentManifest, logger)
+	creds, err := manifest.GetCreds(ctx, instanceID, plan, b.BOSH, deploymentManifest, logger)
 	if err != nil {
 		return fmt.Errorf("failed to get credentials: %w", err)
 	}
@@ -1946,7 +1946,7 @@ func (b *Broker) retryCredentialStorage(ctx context.Context, instanceID string, 
 
 	deploymentManifest := b.getDeploymentManifestFromVault(instanceID, logger)
 
-	creds2, err := manifest.GetCreds(instanceID, *plan, b.BOSH, deploymentManifest, logger)
+	creds2, err := manifest.GetCreds(ctx, instanceID, *plan, b.BOSH, deploymentManifest, logger)
 	if err != nil {
 		return fmt.Errorf("failed to verify credential storage and unable to re-fetch: %w", err)
 	}
@@ -2100,7 +2100,7 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 // deployment-level "create" event, so that event names the task the broker
 // started. Once found, the task is recorded so later polls use it directly.
 func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	taskID, err := b.findDeploymentEventTask(deploymentName, boshEventActionCreate, logger)
+	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionCreate, logger)
 	if err != nil {
 		return osbapi.LastOperationResponse{}, err
 	}
@@ -2112,7 +2112,7 @@ func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentNam
 		return b.handleProvisionTask(ctx, instanceID, deploymentName, taskID, logger)
 	}
 
-	return b.interruptedOperationStatus(instanceID, deploymentName, "Provisioning was interrupted before the deployment was handed to BOSH", logger)
+	return b.interruptedOperationStatus(ctx, instanceID, deploymentName, "Provisioning was interrupted before the deployment was handed to BOSH", logger)
 }
 
 // deprovisionStatus answers a deprovision poll from the deprovision the broker
@@ -2145,7 +2145,7 @@ func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentNa
 // "delete" event, so that event names the task the broker started. Without
 // one, a deployment the director no longer has needs nothing more deleted.
 func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	taskID, err := b.findDeploymentEventTask(deploymentName, boshEventActionDelete, logger)
+	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionDelete, logger)
 	if err != nil {
 		return osbapi.LastOperationResponse{}, err
 	}
@@ -2157,7 +2157,7 @@ func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentN
 		return b.handleDeprovisionTask(ctx, instanceID, deploymentName, taskID, logger)
 	}
 
-	_, err = b.BOSH.GetDeployment(deploymentName)
+	_, err = b.BOSH.GetDeployment(ctx, deploymentName)
 	if errors.Is(err, bosh.ErrDeploymentNotFound) {
 		logger.Info("Deployment %s is gone and no delete task was recorded for instance %s", deploymentName, instanceID)
 
@@ -2170,15 +2170,15 @@ func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentN
 		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to check whether deployment %s exists: %w", deploymentName, err)
 	}
 
-	return b.interruptedOperationStatus(instanceID, deploymentName, "Deprovisioning was interrupted before the deployment delete started; the deployment still exists, so the delete can be retried", logger)
+	return b.interruptedOperationStatus(ctx, instanceID, deploymentName, "Deprovisioning was interrupted before the deployment delete started; the deployment still exists, so the delete can be retried", logger)
 }
 
 // interruptedOperationStatus answers for an operation that no goroutine in
 // this process is running and that left no BOSH task behind. A task still
 // running on the deployment may yet be the one the broker started, so that
 // keeps the answer in progress; otherwise nothing will finish the operation.
-func (b *Broker) interruptedOperationStatus(instanceID, deploymentName, description string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	running, err := b.BOSH.FindRunningTaskForDeployment(deploymentName)
+func (b *Broker) interruptedOperationStatus(ctx context.Context, instanceID, deploymentName, description string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	running, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("could not determine whether deployment %s has a running BOSH task: %s", deploymentName, err)
 
@@ -2200,8 +2200,8 @@ func (b *Broker) interruptedOperationStatus(instanceID, deploymentName, descript
 // deployment-level event with the given action for, or zero when there is
 // none. Unlike the newest task overall, this cannot be a task someone ran by
 // hand on the deployment, such as ssh, restart, recreate, or cck.
-func (b *Broker) findDeploymentEventTask(deploymentName, action string, logger logger.Logger) (int, error) {
-	events, err := b.BOSH.GetEvents(deploymentName)
+func (b *Broker) findDeploymentEventTask(ctx context.Context, deploymentName, action string, logger logger.Logger) (int, error) {
+	events, err := b.BOSH.GetEvents(ctx, deploymentName)
 	if err != nil {
 		logger.Error("failed to get events for deployment %s: %s", deploymentName, err)
 
@@ -2230,8 +2230,8 @@ func (b *Broker) findDeploymentEventTask(deploymentName, action string, logger l
 
 // resolveDeploymentTask returns the task named by the deployment-level event
 // with the given action, or zero when the events cannot be read or name none.
-func (b *Broker) resolveDeploymentTask(deploymentName, action string, logger logger.Logger) int {
-	taskID, err := b.findDeploymentEventTask(deploymentName, action, logger)
+func (b *Broker) resolveDeploymentTask(ctx context.Context, deploymentName, action string, logger logger.Logger) int {
+	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, action, logger)
 	if err != nil {
 		logger.Info("Could not look up the %s deployment task of %s, LastOperation will look again: %s", action, deploymentName, err)
 
@@ -2281,7 +2281,7 @@ func isFailedTaskState(state string) bool {
 func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Debug("retrieving task %d from BOSH director", taskID)
 
-	task, err := b.BOSH.GetTask(taskID)
+	task, err := b.BOSH.GetTask(ctx, taskID)
 	if err != nil {
 		logger.Error("failed to retrieve task %d from BOSH director: %s", taskID, err)
 
@@ -2308,7 +2308,9 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 		// the cleanup runs in the background rather than holding up the poll.
 		b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
 
-		go b.cleanupFailedDeployment(deploymentName, logger)
+		// The cleanup outlives this poll, so it keeps the poll's values but
+		// not its cancellation, the same way provisionAsync does.
+		go b.cleanupFailedDeployment(context.WithoutCancel(ctx), deploymentName, logger)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
 
@@ -2322,7 +2324,7 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Debug("retrieving task %d from BOSH director", taskID)
 
-	task, err := b.BOSH.GetTask(taskID)
+	task, err := b.BOSH.GetTask(ctx, taskID)
 	if err != nil {
 		logger.Error("failed to retrieve task %d from BOSH director: %s", taskID, err)
 
@@ -2335,7 +2337,7 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 	case isFailedTaskState(task.State):
 		logger.Error("deprovision operation failed: BOSH task %d is %s", taskID, task.State)
 
-		return b.handleFailedDeprovision(deploymentName, logger)
+		return b.handleFailedDeprovision(ctx, deploymentName, logger)
 	default:
 		logger.Debug("deprovision operation is still in progress")
 
@@ -2343,14 +2345,14 @@ func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deployme
 	}
 }
 
-func (b *Broker) cleanupFailedDeployment(deploymentName string, logger logger.Logger) {
+func (b *Broker) cleanupFailedDeployment(ctx context.Context, deploymentName string, logger logger.Logger) {
 	logger.Debug("checking if failed deployment exists and needs cleanup")
 
-	_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
+	_, deploymentErr := b.BOSH.GetDeployment(ctx, deploymentName)
 	if deploymentErr == nil {
 		logger.Info("Failed deployment %s still exists, attempting cleanup", deploymentName)
 		// Attempt to delete the failed deployment (best effort)
-		cleanupTask, cleanupErr := b.BOSH.DeleteDeployment(deploymentName)
+		cleanupTask, cleanupErr := b.BOSH.DeleteDeployment(ctx, deploymentName)
 		if cleanupErr != nil {
 			logger.Error("Failed to initiate cleanup of failed deployment %s: %s", deploymentName, cleanupErr)
 		} else {
@@ -2364,7 +2366,7 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 
 	logger.Debug("Verifying deployment is actually deleted")
 
-	_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
+	_, deploymentErr := b.BOSH.GetDeployment(ctx, deploymentName)
 	if deploymentErr == nil {
 		logger.Error("Deprovision task succeeded but deployment %s still exists", deploymentName)
 
@@ -2405,13 +2407,13 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 	return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
 }
 
-func (b *Broker) handleFailedDeprovision(deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+func (b *Broker) handleFailedDeprovision(ctx context.Context, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Error("deprovision operation failed!")
 
 	// Check if deployment still exists after failed deletion
 	description := "The BOSH delete task failed"
 
-	_, deploymentErr := b.BOSH.GetDeployment(deploymentName)
+	_, deploymentErr := b.BOSH.GetDeployment(ctx, deploymentName)
 	if deploymentErr == nil {
 		logger.Error("Deployment %s still exists after failed deletion task", deploymentName)
 
@@ -2465,13 +2467,13 @@ func (b *Broker) findPlanForBinding(details osbapi.BindRequest, logger logger.Lo
 	return &plan, nil
 }
 
-func (b *Broker) getInstanceCredentials(instanceID string, plan *services.Plan, logger logger.Logger) (interface{}, error) {
+func (b *Broker) getInstanceCredentials(ctx context.Context, instanceID string, plan *services.Plan, logger logger.Logger) (interface{}, error) {
 	logger.Info("Retrieving credentials for instance %s", instanceID)
 	logger.Debug("Calling GetCreds for plan %s", plan.Name)
 
 	deploymentManifest := b.getDeploymentManifestFromVault(instanceID, logger)
 
-	creds, err := manifest.GetCreds(instanceID, *plan, b.BOSH, deploymentManifest, logger)
+	creds, err := manifest.GetCreds(ctx, instanceID, *plan, b.BOSH, deploymentManifest, logger)
 	if err != nil {
 		logger.Error("Failed to retrieve credentials: %s", err)
 
@@ -2644,7 +2646,7 @@ func (b *Broker) handleRabbitMQUnbind(ctx context.Context, instanceID, bindingID
 		return err
 	}
 
-	creds, err := b.getRabbitMQCredentials(ctx, instanceID, &plan, logger)
+	creds, err := b.getRabbitMQCredentials(ctx, ctx, instanceID, &plan, logger)
 	if err != nil {
 		return err
 	}
@@ -2652,12 +2654,12 @@ func (b *Broker) handleRabbitMQUnbind(ctx context.Context, instanceID, bindingID
 	return b.deleteRabbitMQUser(ctx, bindingID, creds, logger)
 }
 
-func (b *Broker) getRabbitMQCredentials(_ context.Context, instanceID string, plan *services.Plan, logger logger.Logger) (map[string]interface{}, error) {
+func (b *Broker) getRabbitMQCredentials(ctx context.Context, _ context.Context, instanceID string, plan *services.Plan, logger logger.Logger) (map[string]interface{}, error) {
 	logger.Debug("Retrieving admin credentials for RabbitMQ instance")
 
 	deploymentManifest := b.getDeploymentManifestFromVault(instanceID, logger)
 
-	creds, err := manifest.GetCreds(instanceID, *plan, b.BOSH, deploymentManifest, logger)
+	creds, err := manifest.GetCreds(ctx, instanceID, *plan, b.BOSH, deploymentManifest, logger)
 	if err != nil {
 		logger.Error("Failed to retrieve credentials: %s", err)
 

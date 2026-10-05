@@ -48,7 +48,7 @@ func TestGetDeploymentDistinguishesEmptyManifestFromMissing(t *testing.T) {
 		t.Fatalf("failed to create director adapter: %v", err)
 	}
 
-	inFlight, err := director.GetDeployment("in-flight")
+	inFlight, err := director.GetDeployment(t.Context(), "in-flight")
 	if err != nil {
 		t.Fatalf("expected an in-flight deployment with no manifest to exist, got error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestGetDeploymentDistinguishesEmptyManifestFromMissing(t *testing.T) {
 		t.Fatalf("unexpected in-flight deployment detail: %+v", inFlight)
 	}
 
-	finished, err := director.GetDeployment("finished")
+	finished, err := director.GetDeployment(t.Context(), "finished")
 	if err != nil {
 		t.Fatalf("expected a finished deployment to be returned, got error: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestGetDeploymentDistinguishesEmptyManifestFromMissing(t *testing.T) {
 		t.Fatalf("unexpected manifest for finished deployment: %q", finished.Manifest)
 	}
 
-	_, err = director.GetDeployment("missing")
+	_, err = director.GetDeployment(t.Context(), "missing")
 	if !errors.Is(err, bosh.ErrDeploymentNotFound) {
 		t.Fatalf("expected ErrDeploymentNotFound for a 404, got: %v", err)
 	}

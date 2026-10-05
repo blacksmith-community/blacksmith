@@ -18,6 +18,12 @@ func SetCleanerBackoff(cleaner *Cleaner, delays ...time.Duration) {
 	cleaner.backoff = delays
 }
 
+// SetCleanerRunTimeout replaces RunTimeout for one cleaner, so a test of the
+// run deadline does not wait two minutes.
+func SetCleanerRunTimeout(cleaner *Cleaner, timeout time.Duration) {
+	cleaner.runTimeout = timeout
+}
+
 // ProbeWithin runs the startup probe under timeout instead of ProbeTimeout,
 // so a test of the deadline does not wait thirty seconds.
 func ProbeWithin(ctx context.Context, client *Client, directorName string, log logger.Logger, timeout time.Duration) error {

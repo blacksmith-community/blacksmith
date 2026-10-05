@@ -38,12 +38,14 @@ func (c *captureLogger) output() string {
 
 type fakeSSH struct{}
 
-func (fakeSSH) ExecuteCommand(*ssh.SSHRequest) (*ssh.SSHResponse, error) {
+func (fakeSSH) ExecuteCommand(context.Context, *ssh.SSHRequest) (*ssh.SSHResponse, error) {
 	return &ssh.SSHResponse{Success: true}, nil
 }
 
-func (fakeSSH) CreateSession(*ssh.SSHRequest) (ssh.SSHSession, error) { return nil, nil } //nolint:nilnil // unused by these tests
-func (fakeSSH) Close() error                                          { return nil }
+func (fakeSSH) CreateSession(context.Context, *ssh.SSHRequest) (ssh.SSHSession, error) {
+	return nil, nil
+}                            //nolint:nilnil // unused by these tests
+func (fakeSSH) Close() error { return nil }
 
 func TestRabbitMQCtlExecutionNeverLogsArguments(t *testing.T) {
 	t.Parallel()

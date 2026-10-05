@@ -1,6 +1,7 @@
 package tasks_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -55,7 +56,7 @@ func newFakeDirector() *fakeDirector {
 	}
 }
 
-func (f *fakeDirector) GetTasks(taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
+func (f *fakeDirector) GetTasks(_ context.Context, taskType string, limit int, states []string, team string) ([]bosh.Task, error) {
 	if f.getTasksErr != nil {
 		return nil, f.getTasksErr
 	}
@@ -66,7 +67,7 @@ func (f *fakeDirector) GetTasks(taskType string, limit int, states []string, tea
 	return result, nil
 }
 
-func (f *fakeDirector) GetTask(taskID int) (*bosh.Task, error) {
+func (f *fakeDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
 	if err, ok := f.taskDetailErr[taskID]; ok {
 		return nil, err
 	}
@@ -81,7 +82,7 @@ func (f *fakeDirector) GetTask(taskID int) (*bosh.Task, error) {
 	return &taskCopy, nil
 }
 
-func (f *fakeDirector) GetTaskEvents(taskID int) ([]bosh.TaskEvent, error) {
+func (f *fakeDirector) GetTaskEvents(_ context.Context, taskID int) ([]bosh.TaskEvent, error) {
 	if err, ok := f.taskEventsErr[taskID]; ok {
 		return nil, err
 	}
@@ -97,7 +98,7 @@ func (f *fakeDirector) GetTaskEvents(taskID int) ([]bosh.TaskEvent, error) {
 	return result, nil
 }
 
-func (f *fakeDirector) GetTaskOutput(taskID int, outputType string) (string, error) {
+func (f *fakeDirector) GetTaskOutput(_ context.Context, taskID int, outputType string) (string, error) {
 	key := outputKey{id: taskID, typ: outputType}
 
 	if err, ok := f.taskOutputErr[key]; ok {
@@ -111,7 +112,7 @@ func (f *fakeDirector) GetTaskOutput(taskID int, outputType string) (string, err
 	return "", errFakeNotFound
 }
 
-func (f *fakeDirector) CancelTask(taskID int) error {
+func (f *fakeDirector) CancelTask(_ context.Context, taskID int) error {
 	if err, ok := f.cancelTaskErr[taskID]; ok {
 		return err
 	}
@@ -121,7 +122,7 @@ func (f *fakeDirector) CancelTask(taskID int) error {
 	return nil
 }
 
-func (f *fakeDirector) FindRunningTaskForDeployment(deploymentName string) (*bosh.Task, error) {
+func (f *fakeDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, nil
 }
 

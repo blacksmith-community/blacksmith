@@ -247,7 +247,7 @@ func (p *sweepPass) run(ctx context.Context) {
 	cfg := p.broker.Config.CredHub
 	root := "/" + cfg.DirectorName + "/"
 
-	infoName, err := p.confirmDirector(cfg.DirectorName)
+	infoName, err := p.confirmDirector(ctx, cfg.DirectorName)
 	if err != nil {
 		p.log.Error("CredHub orphan sweep (%s) listed nothing under %s, because it could not confirm the director: %s. Likely causes are a director that is unreachable or a credhub.director_name that does not match the director's /info name.",
 			p.mode, root, err)
@@ -329,8 +329,8 @@ func (p *sweepPass) run(ctx context.Context) {
 
 // confirmDirector checks that /info names the configured director and
 // returns that name.
-func (p *sweepPass) confirmDirector(configured string) (string, error) {
-	info, err := p.broker.BOSH.GetInfo()
+func (p *sweepPass) confirmDirector(ctx context.Context, configured string) (string, error) {
+	info, err := p.broker.BOSH.GetInfo(ctx)
 	if err != nil {
 		return "", fmt.Errorf("director /info failed: %w", err)
 	}
@@ -432,7 +432,7 @@ func (p *sweepPass) logShapeRefusal(root, segment string, count int, err error) 
 // prove applies sweep proof rules 3 and 4. It returns the time Cloud Foundry
 // requested the deprovision, or the reason the candidate is not proven.
 func (p *sweepPass) prove(ctx context.Context, candidate sweepCandidate) (time.Time, string) {
-	_, err := p.broker.BOSH.GetDeployment(candidate.deployment)
+	_, err := p.broker.BOSH.GetDeployment(ctx, candidate.deployment)
 	if err == nil {
 		return time.Time{}, "the director still has the deployment"
 	}
@@ -441,7 +441,7 @@ func (p *sweepPass) prove(ctx context.Context, candidate sweepCandidate) (time.T
 		return time.Time{}, fmt.Sprintf("the director could not confirm the deployment is gone (%s)", err)
 	}
 
-	task, err := p.broker.BOSH.FindRunningTaskForDeployment(candidate.deployment)
+	task, err := p.broker.BOSH.FindRunningTaskForDeployment(ctx, candidate.deployment)
 	if err != nil {
 		return time.Time{}, fmt.Sprintf("the director could not say whether a task is running on it (%s)", err)
 	}

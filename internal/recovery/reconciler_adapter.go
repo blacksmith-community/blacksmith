@@ -550,12 +550,12 @@ func (b *brokerWrapper) GetServices() []reconciler.Service {
 }
 
 // GetBindingCredentials reconstructs binding credentials via the real broker and maps them.
-func (b *brokerWrapper) GetBindingCredentials(instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
+func (b *brokerWrapper) GetBindingCredentials(ctx context.Context, instanceID, bindingID string) (*reconciler.BindingCredentials, error) {
 	if b.broker == nil {
 		return nil, ErrBrokerNotInitialized
 	}
 
-	bindingCredentials, err := b.broker.GetBindingCredentials(context.Background(), instanceID, bindingID)
+	bindingCredentials, err := b.broker.GetBindingCredentials(ctx, instanceID, bindingID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get binding credentials: %w", err)
 	}

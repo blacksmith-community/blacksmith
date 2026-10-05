@@ -1,6 +1,7 @@
 package rabbitmq
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -62,7 +63,7 @@ func NewRabbitMQSSHService(sshService ssh.SSHService, logger Logger) *SSHService
 }
 
 // ExecuteCommand executes a RabbitMQ command on a service instance.
-func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd RabbitMQCommand) (*RabbitMQCommandResult, error) {
+func (r *SSHService) ExecuteCommand(ctx context.Context, deployment, instance string, index int, cmd RabbitMQCommand) (*RabbitMQCommandResult, error) {
 	label := commandLabel(cmd)
 
 	r.logger.Infof("Executing RabbitMQ command '%s' on %s/%s/%d", label, deployment, instance, index)
@@ -72,7 +73,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 
 	r.logger.Debugf("SSH request for command %s on %s/%s/%d (command line of %d bytes not logged)", label, deployment, instance, index, len(fullCommand))
 
-	sshResp, err := r.sshService.ExecuteCommand(sshReq)
+	sshResp, err := r.sshService.ExecuteCommand(ctx, sshReq)
 	if err != nil {
 		return r.handleSSHError(cmd.Name, err)
 	}
@@ -89,7 +90,7 @@ func (r *SSHService) ExecuteCommand(deployment, instance string, index int, cmd 
 // Common RabbitMQ commands
 
 // ListQueues lists all queues.
-func (r *SSHService) ListQueues(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) ListQueues(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_queues",
 		Args:        []string{"name", "messages", "consumers", "state"},
@@ -97,11 +98,11 @@ func (r *SSHService) ListQueues(deployment, instance string, index int) (*Rabbit
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // ListConnections lists all connections.
-func (r *SSHService) ListConnections(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) ListConnections(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_connections",
 		Args:        []string{"name", "state", "user", "protocol"},
@@ -109,11 +110,11 @@ func (r *SSHService) ListConnections(deployment, instance string, index int) (*R
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // ListChannels lists all channels.
-func (r *SSHService) ListChannels(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) ListChannels(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_channels",
 		Args:        []string{"name", "connection", "user", "consumer_count"},
@@ -121,11 +122,11 @@ func (r *SSHService) ListChannels(deployment, instance string, index int) (*Rabb
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // ListUsers lists all users.
-func (r *SSHService) ListUsers(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) ListUsers(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "list_users",
 		Args:        []string{},
@@ -133,11 +134,11 @@ func (r *SSHService) ListUsers(deployment, instance string, index int) (*RabbitM
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // ClusterStatus gets cluster status.
-func (r *SSHService) ClusterStatus(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) ClusterStatus(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "cluster_status",
 		Args:        []string{},
@@ -145,11 +146,11 @@ func (r *SSHService) ClusterStatus(deployment, instance string, index int) (*Rab
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // NodeHealth checks node health.
-func (r *SSHService) NodeHealth(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) NodeHealth(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "node_health_check",
 		Args:        []string{},
@@ -157,11 +158,11 @@ func (r *SSHService) NodeHealth(deployment, instance string, index int) (*Rabbit
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // Status gets overall status.
-func (r *SSHService) Status(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) Status(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "status",
 		Args:        []string{},
@@ -169,11 +170,11 @@ func (r *SSHService) Status(deployment, instance string, index int) (*RabbitMQCo
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // Environment gets environment information.
-func (r *SSHService) Environment(deployment, instance string, index int) (*RabbitMQCommandResult, error) {
+func (r *SSHService) Environment(ctx context.Context, deployment, instance string, index int) (*RabbitMQCommandResult, error) {
 	cmd := RabbitMQCommand{
 		Name:        "environment",
 		Args:        []string{},
@@ -181,7 +182,7 @@ func (r *SSHService) Environment(deployment, instance string, index int) (*Rabbi
 		Timeout:     DefaultSSHTimeout,
 	}
 
-	return r.ExecuteCommand(deployment, instance, index, cmd)
+	return r.ExecuteCommand(ctx, deployment, instance, index, cmd)
 }
 
 // IsRabbitMQSSHService implements the interfaces.RabbitMQSSHService interface.

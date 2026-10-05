@@ -77,7 +77,7 @@ func (r *ReconcilerManager) sweepOrphanedIndexEntries(ctx context.Context, recon
 	var sweptDeployments []sweptDeployment
 
 	for instanceID, data := range idx {
-		if !r.shouldSweepIndexEntry(synchronizer, instanceID, data, reconciledIDs, deploymentNames) {
+		if !r.shouldSweepIndexEntry(ctx, synchronizer, instanceID, data, reconciledIDs, deploymentNames) {
 			continue
 		}
 
@@ -166,7 +166,7 @@ func (r *ReconcilerManager) sweepOrphanedCredentials(ctx context.Context, liveDe
 // already answered 404 for the deployment. When it still names a deployment
 // the director is asked again; when it carries no deployment name at all there
 // is nothing left to confirm and its age alone decides.
-func (r *ReconcilerManager) shouldSweepIndexEntry(synchronizer *IndexSynchronizer, instanceID string, data interface{}, reconciledIDs, deploymentNames map[string]bool) bool {
+func (r *ReconcilerManager) shouldSweepIndexEntry(ctx context.Context, synchronizer *IndexSynchronizer, instanceID string, data interface{}, reconciledIDs, deploymentNames map[string]bool) bool {
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
 		return false
@@ -206,7 +206,7 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(synchronizer *IndexSynchronize
 		return false
 	}
 
-	_, err := r.bosh.GetDeployment(deploymentName)
+	_, err := r.bosh.GetDeployment(ctx, deploymentName)
 	if err == nil {
 		r.logger.Debugf("Orphan sweep: keeping %s, deployment %s exists on the director", instanceID, deploymentName)
 
@@ -219,7 +219,7 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(synchronizer *IndexSynchronize
 		return false
 	}
 
-	task, err := r.bosh.FindRunningTaskForDeployment(deploymentName)
+	task, err := r.bosh.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		r.logger.Debugf("Orphan sweep: keeping %s, could not check for a running task on %s: %v", instanceID, deploymentName, err)
 

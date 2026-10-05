@@ -77,11 +77,11 @@ func (u *rmMockUpdater) CheckBindingHealth(instanceID string) ([]BindingInfo, []
 	return nil, nil, nil
 }
 
-func (u *rmMockUpdater) ReconstructBindingWithBroker(instanceID, bindingID string, broker BrokerInterface) error {
+func (u *rmMockUpdater) ReconstructBindingWithBroker(_ context.Context, instanceID, bindingID string, broker BrokerInterface) error {
 	return nil
 }
 
-func (u *rmMockUpdater) RepairInstanceBindings(instanceID string, broker BrokerInterface) error {
+func (u *rmMockUpdater) RepairInstanceBindings(_ context.Context, instanceID string, broker BrokerInterface) error {
 	return nil
 }
 

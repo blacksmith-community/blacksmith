@@ -576,7 +576,7 @@ func (cr *CredentialRecovery) checkRegenerationPossible(ctx context.Context, ins
 	// Check if deployment still exists
 	deploymentName := instance.PlanID + "-" + instanceID
 
-	_, err = cr.broker.BOSH.GetDeployment(deploymentName)
+	_, err = cr.broker.BOSH.GetDeployment(ctx, deploymentName)
 	if err != nil {
 		cr.logger.Error("Deployment %s does not exist in BOSH", deploymentName)
 

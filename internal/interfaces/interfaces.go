@@ -85,15 +85,15 @@ type SSHService interface {
 // RabbitMQSSHService interface for RabbitMQ SSH operations across all internal packages.
 type RabbitMQSSHService interface {
 	IsRabbitMQSSHService() bool
-	ListQueues(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	ListConnections(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	ListChannels(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	ListUsers(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	ClusterStatus(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	NodeHealth(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	Status(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	Environment(deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
-	ExecuteCommand(deployment, instance string, index int, cmd rabbitmqssh.RabbitMQCommand) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ListQueues(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ListConnections(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ListChannels(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ListUsers(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ClusterStatus(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	NodeHealth(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	Status(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	Environment(ctx context.Context, deployment, instance string, index int) (*rabbitmqssh.RabbitMQCommandResult, error)
+	ExecuteCommand(ctx context.Context, deployment, instance string, index int, cmd rabbitmqssh.RabbitMQCommand) (*rabbitmqssh.RabbitMQCommandResult, error)
 }
 
 // RabbitMQMetadataService interface for RabbitMQ metadata operations across all internal packages.

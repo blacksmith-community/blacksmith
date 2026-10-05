@@ -119,7 +119,7 @@ func (e *ExecutorService) ExecuteCommandSync(ctx context.Context, execCtx Execut
 
 	// Execute command
 	startTime := time.Now()
-	result, err := e.sshService.ExecuteCommand(deployment, instance, index, *cmd)
+	result, err := e.sshService.ExecuteCommand(ctx, deployment, instance, index, *cmd)
 
 	// Build execution record based on result
 	if err != nil {
@@ -326,7 +326,7 @@ func (e *ExecutorService) executeAsync(ctx context.Context, result *StreamingExe
 	}
 
 	// Execute command
-	sshResult, err := e.sshService.ExecuteCommand(deployment, instance, index, rabbitCmd)
+	sshResult, err := e.sshService.ExecuteCommand(ctx, deployment, instance, index, rabbitCmd)
 	if err != nil {
 		e.handleAsyncError(result, err)
 

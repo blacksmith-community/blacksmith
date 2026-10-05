@@ -6,43 +6,30 @@ import (
 	"fmt"
 )
 
-// Constants for pooled director operations.
-const (
-	// Upload operations require more time.
-	uploadTimeoutMultiplier = 3
-
-	// Timeout multiplier for long-running operations.
-	longRunningTimeoutMultiplier = 2
-)
-
 // Static error variables to satisfy err113.
 var (
 	ErrUnexpectedResultType = errors.New("unexpected result type")
 )
 
 // GetInfo implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetInfo() (*Info, error) {
-	return p.director.GetInfo()
+func (p *PooledDirector) GetInfo(ctx context.Context) (*Info, error) {
+	return p.director.GetInfo(ctx)
 }
 
 // GetDeployments implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetDeployments() ([]Deployment, error) {
-	return p.director.GetDeployments()
+func (p *PooledDirector) GetDeployments(ctx context.Context) ([]Deployment, error) {
+	return p.director.GetDeployments(ctx)
 }
 
 // GetDeployment implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetDeployment(name string) (*DeploymentDetail, error) {
-	return p.director.GetDeployment(name)
+func (p *PooledDirector) GetDeployment(ctx context.Context, name string) (*DeploymentDetail, error) {
+	return p.director.GetDeployment(ctx, name)
 }
 
 // CreateDeployment implements Director interface with pooling.
-func (p *PooledDirector) CreateDeployment(manifest string) (*Task, error) {
-	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) CreateDeployment(ctx context.Context, manifest string) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.CreateDeployment(manifest)
+		return p.director.CreateDeployment(ctx, manifest)
 	})
 	if err != nil {
 		return nil, err
@@ -57,13 +44,9 @@ func (p *PooledDirector) CreateDeployment(manifest string) (*Task, error) {
 }
 
 // DeleteDeployment implements Director interface with pooling.
-func (p *PooledDirector) DeleteDeployment(name string) (*Task, error) {
-	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) DeleteDeployment(ctx context.Context, name string) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.DeleteDeployment(name)
+		return p.director.DeleteDeployment(ctx, name)
 	})
 	if err != nil {
 		return nil, err
@@ -78,23 +61,19 @@ func (p *PooledDirector) DeleteDeployment(name string) (*Task, error) {
 }
 
 // GetDeploymentVMs implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetDeploymentVMs(deployment string) ([]VM, error) {
-	return p.director.GetDeploymentVMs(deployment)
+func (p *PooledDirector) GetDeploymentVMs(ctx context.Context, deployment string) ([]VM, error) {
+	return p.director.GetDeploymentVMs(ctx, deployment)
 }
 
 // GetReleases implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetReleases() ([]Release, error) {
-	return p.director.GetReleases()
+func (p *PooledDirector) GetReleases(ctx context.Context) ([]Release, error) {
+	return p.director.GetReleases(ctx)
 }
 
 // UploadRelease implements Director interface with pooling.
-func (p *PooledDirector) UploadRelease(url string, sha1 string) (*Task, error) {
-	// Use longer timeout for upload operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*uploadTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) UploadRelease(ctx context.Context, url string, sha1 string) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.UploadRelease(url, sha1)
+		return p.director.UploadRelease(ctx, url, sha1)
 	})
 	if err != nil {
 		return nil, err
@@ -109,18 +88,14 @@ func (p *PooledDirector) UploadRelease(url string, sha1 string) (*Task, error) {
 }
 
 // GetStemcells implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetStemcells() ([]Stemcell, error) {
-	return p.director.GetStemcells()
+func (p *PooledDirector) GetStemcells(ctx context.Context) ([]Stemcell, error) {
+	return p.director.GetStemcells(ctx)
 }
 
 // UploadStemcell implements Director interface with pooling.
-func (p *PooledDirector) UploadStemcell(url string, sha1 string) (*Task, error) {
-	// Use longer timeout for upload operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*uploadTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) UploadStemcell(ctx context.Context, url string, sha1 string) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.UploadStemcell(url, sha1)
+		return p.director.UploadStemcell(ctx, url, sha1)
 	})
 	if err != nil {
 		return nil, err
@@ -135,92 +110,86 @@ func (p *PooledDirector) UploadStemcell(url string, sha1 string) (*Task, error) 
 }
 
 // GetTask implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetTask(id int) (*Task, error) {
-	return p.director.GetTask(id)
+func (p *PooledDirector) GetTask(ctx context.Context, id int) (*Task, error) {
+	return p.director.GetTask(ctx, id)
 }
 
 // GetTasks implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetTasks(taskType string, limit int, states []string, team string) ([]Task, error) {
-	return p.director.GetTasks(taskType, limit, states, team)
+func (p *PooledDirector) GetTasks(ctx context.Context, taskType string, limit int, states []string, team string) ([]Task, error) {
+	return p.director.GetTasks(ctx, taskType, limit, states, team)
 }
 
 // GetAllTasks implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetAllTasks(limit int) ([]Task, error) {
-	return p.director.GetAllTasks(limit)
+func (p *PooledDirector) GetAllTasks(ctx context.Context, limit int) ([]Task, error) {
+	return p.director.GetAllTasks(ctx, limit)
 }
 
 // CancelTask implements Director interface - no pooling (doesn't create a task).
-func (p *PooledDirector) CancelTask(taskID int) error {
-	return p.director.CancelTask(taskID)
+func (p *PooledDirector) CancelTask(ctx context.Context, taskID int) error {
+	return p.director.CancelTask(ctx, taskID)
 }
 
 // GetTaskOutput implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetTaskOutput(id int, outputType string) (string, error) {
-	return p.director.GetTaskOutput(id, outputType)
+func (p *PooledDirector) GetTaskOutput(ctx context.Context, id int, outputType string) (string, error) {
+	return p.director.GetTaskOutput(ctx, id, outputType)
 }
 
 // GetTaskEvents implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetTaskEvents(id int) ([]TaskEvent, error) {
-	return p.director.GetTaskEvents(id)
+func (p *PooledDirector) GetTaskEvents(ctx context.Context, id int) ([]TaskEvent, error) {
+	return p.director.GetTaskEvents(ctx, id)
 }
 
 // GetEvents implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetEvents(deployment string) ([]Event, error) {
-	return p.director.GetEvents(deployment)
+func (p *PooledDirector) GetEvents(ctx context.Context, deployment string) ([]Event, error) {
+	return p.director.GetEvents(ctx, deployment)
 }
 
 // UpdateCloudConfig implements Director interface with pooling.
-func (p *PooledDirector) UpdateCloudConfig(config string) error {
-	// Use longer timeout for config update operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) UpdateCloudConfig(ctx context.Context, config string) error {
 	return p.withConnection(ctx, func() error {
-		return p.director.UpdateCloudConfig(config)
+		return p.director.UpdateCloudConfig(ctx, config)
 	})
 }
 
 // GetCloudConfig implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetCloudConfig() (string, error) {
-	return p.director.GetCloudConfig()
+func (p *PooledDirector) GetCloudConfig(ctx context.Context) (string, error) {
+	return p.director.GetCloudConfig(ctx)
 }
 
 // GetConfigs implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetConfigs(limit int, configTypes []string) ([]BoshConfig, error) {
-	return p.director.GetConfigs(limit, configTypes)
+func (p *PooledDirector) GetConfigs(ctx context.Context, limit int, configTypes []string) ([]BoshConfig, error) {
+	return p.director.GetConfigs(ctx, limit, configTypes)
 }
 
 // GetConfigVersions implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetConfigVersions(configType, name string, limit int) ([]BoshConfig, error) {
-	return p.director.GetConfigVersions(configType, name, limit)
+func (p *PooledDirector) GetConfigVersions(ctx context.Context, configType, name string, limit int) ([]BoshConfig, error) {
+	return p.director.GetConfigVersions(ctx, configType, name, limit)
 }
 
 // GetConfigByID implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetConfigByID(configID string) (*BoshConfigDetail, error) {
-	return p.director.GetConfigByID(configID)
+func (p *PooledDirector) GetConfigByID(ctx context.Context, configID string) (*BoshConfigDetail, error) {
+	return p.director.GetConfigByID(ctx, configID)
 }
 
 // GetConfigContent implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetConfigContent(configID string) (string, error) {
-	return p.director.GetConfigContent(configID)
+func (p *PooledDirector) GetConfigContent(ctx context.Context, configID string) (string, error) {
+	return p.director.GetConfigContent(ctx, configID)
 }
 
 // GetConfig implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetConfig(configType, configName string) (interface{}, error) {
-	return p.director.GetConfig(configType, configName)
+func (p *PooledDirector) GetConfig(ctx context.Context, configType, configName string) (interface{}, error) {
+	return p.director.GetConfig(ctx, configType, configName)
 }
 
 // ComputeConfigDiff implements Director interface - no pooling for read operations.
-func (p *PooledDirector) ComputeConfigDiff(fromID, toID string) (*ConfigDiff, error) {
-	return p.director.ComputeConfigDiff(fromID, toID)
+func (p *PooledDirector) ComputeConfigDiff(ctx context.Context, fromID, toID string) (*ConfigDiff, error) {
+	return p.director.ComputeConfigDiff(ctx, fromID, toID)
 }
 
 // Cleanup implements Director interface with pooling.
-func (p *PooledDirector) Cleanup(removeAll bool) (*Task, error) {
-	ctx := context.Background()
-
+func (p *PooledDirector) Cleanup(ctx context.Context, removeAll bool) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.Cleanup(removeAll)
+		return p.director.Cleanup(ctx, removeAll)
 	})
 	if err != nil {
 		return nil, err
@@ -235,38 +204,34 @@ func (p *PooledDirector) Cleanup(removeAll bool) (*Task, error) {
 }
 
 // FetchLogs implements Director interface - no pooling for read operations.
-func (p *PooledDirector) FetchLogs(deployment string, jobName string, jobIndex string) (string, error) {
-	return p.director.FetchLogs(deployment, jobName, jobIndex)
+func (p *PooledDirector) FetchLogs(ctx context.Context, deployment string, jobName string, jobIndex string) (string, error) {
+	return p.director.FetchLogs(ctx, deployment, jobName, jobIndex)
 }
 
 // SSHCommand implements Director interface - no pooling for read operations.
-func (p *PooledDirector) SSHCommand(deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
-	return p.director.SSHCommand(deployment, instance, index, command, args, options)
+func (p *PooledDirector) SSHCommand(ctx context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
+	return p.director.SSHCommand(ctx, deployment, instance, index, command, args, options)
 }
 
 // SSHSession implements Director interface - no pooling for read operations.
-func (p *PooledDirector) SSHSession(deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
-	return p.director.SSHSession(deployment, instance, index, options)
+func (p *PooledDirector) SSHSession(ctx context.Context, deployment, instance string, index int, options map[string]interface{}) (interface{}, error) {
+	return p.director.SSHSession(ctx, deployment, instance, index, options)
 }
 
 // EnableResurrection implements Director interface - no pooling (doesn't create a task).
-func (p *PooledDirector) EnableResurrection(deployment string, enabled bool) error {
-	return p.director.EnableResurrection(deployment, enabled)
+func (p *PooledDirector) EnableResurrection(ctx context.Context, deployment string, enabled bool) error {
+	return p.director.EnableResurrection(ctx, deployment, enabled)
 }
 
 // DeleteResurrectionConfig implements Director interface - no pooling (doesn't create a task).
-func (p *PooledDirector) DeleteResurrectionConfig(deploymentName string) error {
-	return p.director.DeleteResurrectionConfig(deploymentName)
+func (p *PooledDirector) DeleteResurrectionConfig(ctx context.Context, deploymentName string) error {
+	return p.director.DeleteResurrectionConfig(ctx, deploymentName)
 }
 
 // RestartDeployment implements Director interface with pooling.
-func (p *PooledDirector) RestartDeployment(name string, opts RestartOpts) (*Task, error) {
-	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) RestartDeployment(ctx context.Context, name string, opts RestartOpts) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.RestartDeployment(name, opts)
+		return p.director.RestartDeployment(ctx, name, opts)
 	})
 	if err != nil {
 		return nil, err
@@ -281,13 +246,9 @@ func (p *PooledDirector) RestartDeployment(name string, opts RestartOpts) (*Task
 }
 
 // StopDeployment implements Director interface with pooling.
-func (p *PooledDirector) StopDeployment(name string, opts StopOpts) (*Task, error) {
-	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) StopDeployment(ctx context.Context, name string, opts StopOpts) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.StopDeployment(name, opts)
+		return p.director.StopDeployment(ctx, name, opts)
 	})
 	if err != nil {
 		return nil, err
@@ -302,13 +263,9 @@ func (p *PooledDirector) StopDeployment(name string, opts StopOpts) (*Task, erro
 }
 
 // StartDeployment implements Director interface with pooling.
-func (p *PooledDirector) StartDeployment(name string, opts StartOpts) (*Task, error) {
-	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) StartDeployment(ctx context.Context, name string, opts StartOpts) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.StartDeployment(name, opts)
+		return p.director.StartDeployment(ctx, name, opts)
 	})
 	if err != nil {
 		return nil, err
@@ -323,13 +280,9 @@ func (p *PooledDirector) StartDeployment(name string, opts StartOpts) (*Task, er
 }
 
 // RecreateDeployment implements Director interface with pooling.
-func (p *PooledDirector) RecreateDeployment(name string, opts RecreateOpts) (*Task, error) {
-	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*uploadTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) RecreateDeployment(ctx context.Context, name string, opts RecreateOpts) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.RecreateDeployment(name, opts)
+		return p.director.RecreateDeployment(ctx, name, opts)
 	})
 	if err != nil {
 		return nil, err
@@ -344,18 +297,14 @@ func (p *PooledDirector) RecreateDeployment(name string, opts RecreateOpts) (*Ta
 }
 
 // ListErrands implements Director interface - no pooling for read operations.
-func (p *PooledDirector) ListErrands(deployment string) ([]Errand, error) {
-	return p.director.ListErrands(deployment)
+func (p *PooledDirector) ListErrands(ctx context.Context, deployment string) ([]Errand, error) {
+	return p.director.ListErrands(ctx, deployment)
 }
 
 // RunErrand implements Director interface with pooling.
-func (p *PooledDirector) RunErrand(deployment, errand string, opts ErrandOpts) (*ErrandResult, error) {
-	// Use longer timeout for errand operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*uploadTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) RunErrand(ctx context.Context, deployment, errand string, opts ErrandOpts) (*ErrandResult, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.RunErrand(deployment, errand, opts)
+		return p.director.RunErrand(ctx, deployment, errand, opts)
 	})
 	if err != nil {
 		return nil, err
@@ -370,18 +319,14 @@ func (p *PooledDirector) RunErrand(deployment, errand string, opts ErrandOpts) (
 }
 
 // GetInstances implements Director interface - no pooling for read operations.
-func (p *PooledDirector) GetInstances(deployment string) ([]Instance, error) {
-	return p.director.GetInstances(deployment)
+func (p *PooledDirector) GetInstances(ctx context.Context, deployment string) ([]Instance, error) {
+	return p.director.GetInstances(ctx, deployment)
 }
 
 // UpdateDeployment implements Director interface with pooling.
-func (p *PooledDirector) UpdateDeployment(name, manifest string) (*Task, error) {
-	// Use longer timeout for deployment operations
-	ctx, cancel := context.WithTimeout(context.Background(), p.timeout*longRunningTimeoutMultiplier)
-	defer cancel()
-
+func (p *PooledDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*Task, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
-		return p.director.UpdateDeployment(name, manifest)
+		return p.director.UpdateDeployment(ctx, name, manifest)
 	})
 	if err != nil {
 		return nil, err
@@ -396,6 +341,6 @@ func (p *PooledDirector) UpdateDeployment(name, manifest string) (*Task, error) 
 }
 
 // FindRunningTaskForDeployment implements Director interface - no pooling for read operations.
-func (p *PooledDirector) FindRunningTaskForDeployment(deploymentName string) (*Task, error) {
-	return p.director.FindRunningTaskForDeployment(deploymentName)
+func (p *PooledDirector) FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*Task, error) {
+	return p.director.FindRunningTaskForDeployment(ctx, deploymentName)
 }
