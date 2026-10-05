@@ -453,6 +453,32 @@ func TestCleanerDeleteFailureDoesNotStopTheRest(t *testing.T) {
 	}
 }
 
+// A protected-name refusal must explain itself and never invite a manual
+// delete of a credential that is protected on purpose.
+func TestCleanerProtectedNameRefusalSuggestsNoManualDelete(t *testing.T) {
+	t.Parallel()
+
+	world := newCleanerWorld(t)
+	name := labPrefix + "valkey_standalone_crt"
+	world.client.listed = []string{name}
+	world.client.deleteErr[name] = []error{fmt.Errorf("%w: %q is under %q", credhub.ErrProtectedName, name, labPrefix)}
+
+	result := world.cleaner.CleanupDeployment(context.Background(), labTarget())
+
+	if len(result.Failed) != 1 || result.Failed[0].Name != name {
+		t.Fatalf("expected the refused name to be recorded as failed, got %+v", result)
+	}
+
+	lines := world.log.matching(name, "refused the name", "protected prefix", "must stay where it is", "the deprovision itself succeeded")
+	if len(lines) != 1 {
+		t.Fatalf("expected one line that says what was refused and why, got:\n%s", world.log.output())
+	}
+
+	if strings.Contains(world.log.output(), "credhub delete") {
+		t.Fatalf("expected no manual delete hint, got:\n%s", world.log.output())
+	}
+}
+
 func TestCleanerDoesNotRetryARefreshed401(t *testing.T) {
 	t.Parallel()
 

@@ -266,6 +266,14 @@ func (c *Cleaner) deleteOne(ctx context.Context, target Target, name string, res
 	default:
 		result.Failed = append(result.Failed, Failure{Name: name, Op: opDelete, Err: err})
 		causes, check := explainFailure(opDelete, err)
+
+		if errors.Is(err, ErrProtectedName) || errors.Is(err, ErrEmptyName) {
+			c.log.Errorf("CredHub cleanup did not delete %s for deployment %s (instance %s), because the CredHub client refused the name and the deprovision itself succeeded. The error was %v. The likely cause is that %s. To investigate, check %s. This credential must stay where it is, so look at why the cleaner chose this name rather than deleting it.",
+				name, target.DeploymentName, target.InstanceID, err, causes, check)
+
+			return
+		}
+
 		c.log.Errorf("CredHub cleanup could not delete %s for deployment %s (instance %s), and the deprovision itself succeeded. The error was %v. The likely cause is that %s. To investigate, check %s. To remove it by hand, run credhub delete -n %s",
 			name, target.DeploymentName, target.InstanceID, err, causes, check, name)
 	}
