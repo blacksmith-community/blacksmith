@@ -14,6 +14,7 @@ import (
 // Static errors for err113 compliance.
 var (
 	ErrRabbitMQExecutorServiceNotAvailable = errors.New("RabbitMQ executor service not available")
+	ErrRabbitMQPluginsExecutorNotAvailable = errors.New("RabbitMQ plugins executor service not available")
 )
 
 // handleStreamingExecution handles the execution of a rabbitmqctl command with streaming output.
@@ -74,7 +75,7 @@ func (h *Handler) validatePluginsExecutorService(conn *gorillawebsocket.Conn) er
 			return fmt.Errorf("failed to send WebSocket error response: %w", err)
 		}
 
-		return nil
+		return ErrRabbitMQPluginsExecutorNotAvailable
 	}
 
 	return nil

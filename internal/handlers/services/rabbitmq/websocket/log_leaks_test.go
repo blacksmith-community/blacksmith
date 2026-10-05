@@ -123,3 +123,49 @@ func TestPluginsExecuteMessageNeverLogsArguments(t *testing.T) {
 		t.Errorf("log output leaked a plugin argument:\n%s", out)
 	}
 }
+
+// With no plugins executor configured, the handler reports the error to the
+// client and stops. It must not go on to call the nil executor.
+func TestPluginsStreamingExecutionStopsWithoutAnExecutor(t *testing.T) {
+	t.Parallel()
+
+	capture := &captureLogger{NoOpLogger: &logger.NoOpLogger{}}
+	handler := NewHandler(Dependencies{Logger: capture})
+	upgrader := gorillawebsocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	done := make(chan interface{}, 1)
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		conn, err := upgrader.Upgrade(writer, request, nil)
+		if err != nil {
+			done <- err
+
+			return
+		}
+
+		defer func() { _ = conn.Close() }()
+
+		defer func() { done <- recover() }()
+
+		handler.handlePluginsStreamingExecution(context.Background(), conn, "inst-1", "dep", "rabbitmq", 0, "plugin_management", "list", nil, capture)
+	}))
+	defer server.Close()
+
+	client, _, err := gorillawebsocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	defer func() { _ = client.Close() }()
+
+	var reply map[string]interface{}
+
+	err = client.ReadJSON(&reply)
+	if err != nil || reply["type"] != "error" {
+		t.Fatalf("expected one error reply, got %v and %v", reply, err)
+	}
+
+	recovered := <-done
+	if recovered != nil {
+		t.Fatalf("the handler went on to use the missing executor and panicked: %v", recovered)
+	}
+}
