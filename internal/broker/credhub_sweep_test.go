@@ -415,6 +415,22 @@ var _ = Describe("CredHub sweep", func() {
 		Expect(output).To(ContainSubstring("created_at"))
 	})
 
+	It("proves an orphan whose delete request has the same time as its creation", func() {
+		useMode(config.CredHubSweepDelete)
+
+		sameSecond := newGUID()
+		stamp := time.Now().Add(-3 * time.Hour).Format(time.RFC3339)
+		Expect(vaultClient.Put(ctx, sameSecond+"/metadata", map[string]interface{}{
+			"created_at":          stamp,
+			"delete_requested_at": stamp,
+		})).To(Succeed())
+		fakeCredHub.names = append(fakeCredHub.names, prefixFor(deploymentFor(sameSecond))+"valkey_password")
+
+		sweepAndWait()
+
+		Expect(fakeCredHub.Deleted()).To(Equal([]string{prefixFor(deploymentFor(sameSecond)) + "valkey_password"}))
+	})
+
 	It("does not prove an orphan whose created_at is not a time", func() {
 		useMode(config.CredHubSweepDelete)
 

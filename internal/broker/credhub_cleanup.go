@@ -178,9 +178,10 @@ func (b *Broker) hasDeprovisionRequest(ctx context.Context, instanceID string) (
 	return requestedAt, b.checkRequestFollowsCreation(instanceID, got.metadata, raw, requestedAt)
 }
 
-// checkRequestFollowsCreation refuses a delete request that is not newer than
-// the creation time in the same metadata. The request is then a leftover of an
-// earlier instance with the same GUID.
+// checkRequestFollowsCreation refuses a delete request that is older than the
+// creation time in the same metadata. A request with the same time as the
+// creation is accepted. The request is then a leftover of an earlier instance
+// with the same GUID.
 func (b *Broker) checkRequestFollowsCreation(instanceID string, metadata map[string]interface{}, rawRequest string, requestedAt time.Time) error {
 	created, present := metadata["created_at"]
 	if !present {
