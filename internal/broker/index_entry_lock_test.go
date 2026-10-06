@@ -188,10 +188,14 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 		return entry
 	}
 
-	expectMarked := func(entry map[string]interface{}) {
+	expectMark := func(entry map[string]interface{}) {
 		Expect(entry).To(HaveKey("deleted_at"), "the deleted mark was lost")
 		Expect(entry).To(HaveKeyWithValue("deleted_by", "vm-monitor"))
 		Expect(entry).To(HaveKey("deletion_reason"))
+	}
+
+	expectMarked := func(entry map[string]interface{}) {
+		expectMark(entry)
 		Expect(entry).To(HaveKeyWithValue("deployment_name", planID+"-"+instanceID))
 	}
 
@@ -218,13 +222,17 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 	})
 
 	It("keeps the mark when the deployment name is recorded at the same time", func() {
+		renamed := planID + "-renamed-" + instanceID
+
 		entry := overlapWithMark(func() error {
-			b.StoreDeploymentNameInIndex(ctx, instanceID, planID+"-"+instanceID)
+			b.StoreDeploymentNameInIndex(ctx, instanceID, renamed)
 
 			return nil
 		})
 
-		expectMarked(entry)
+		expectMark(entry)
+		Expect(entry).To(HaveKeyWithValue("deployment_name", renamed), "the new deployment name did not land")
+		Expect(entry).To(HaveKeyWithValue("service_id", serviceID))
 	})
 
 	It("keeps the mark when the first provision record is written at the same time", func() {
