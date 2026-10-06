@@ -82,8 +82,11 @@ var ErrNilIndexChange = errors.New("index change is nil")
 // UpdateIndex runs change on the entries of the "db" index and saves the index
 // when change reports that it changed something. It takes the same lock as
 // every other index change made through this Vault, from the read to the
-// save, so a caller outside this package, such as the reconciler, cannot lose
-// a change made by the broker at the same moment, or have its own lost.
+// save, so no broker change lands between the read and the save of a caller
+// outside this package, such as the reconciler, and neither side's save is
+// built on a stale read. The lock does not stop change from overwriting what
+// it reads, so a change that puts a whole entry in place of the stored one
+// still drops the fields the broker stored there.
 //
 // change may run more than once, each time on a fresh read, when Vault is
 // found sealed and auto-unsealed. It must keep no state between runs, and it

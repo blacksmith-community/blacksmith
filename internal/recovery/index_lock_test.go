@@ -114,3 +114,79 @@ func TestReconcilerAndBrokerIndexWritesBothSurvive(t *testing.T) {
 		t.Fatalf("%d of %d index writes were lost: %v", len(lost), 2*writers+len(instances), lost)
 	}
 }
+
+// Phase 4 checks for a deleted mark without the lock, then spends a while on
+// credentials and bindings before it writes the instance's index entry. The
+// vm-monitor can mark the instance deleted in that window, so the write must
+// keep the mark, and the broker's deprovision request, that it finds there.
+func TestReconcilerInstanceWriteKeepsTheDeletedMark(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start vault: %v", err)
+	}
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	wrapped := &vaultWrapper{vault: vaultClient}
+	log := &loggerWrapper{logger: logger.Get().Named("index-mark-test")}
+	updater := reconciler.NewVaultUpdater(wrapped, log, reconciler.BackupConfig{})
+
+	const instanceID = "marked-0"
+
+	err = vaultClient.Index(ctx, instanceID, map[string]interface{}{
+		"service_id":      "valkey",
+		"plan_id":         "standalone",
+		"deployment_name": "standalone-" + instanceID,
+	})
+	if err != nil {
+		t.Fatalf("failed to seed the entry: %v", err)
+	}
+
+	err = vaultClient.UpdateIndexEntry(ctx, instanceID, map[string]interface{}{
+		"deprovision_requested_at": "2026-10-06T12:00:00Z",
+		"status":                   "deprovision_requested",
+	})
+	if err != nil {
+		t.Fatalf("failed to record the deprovision request: %v", err)
+	}
+
+	err = vaultClient.MarkInstanceDeleted(ctx, instanceID)
+	if err != nil {
+		t.Fatalf("failed to mark the instance deleted: %v", err)
+	}
+
+	_, err = updater.UpdateInstance(ctx, reconciler.InstanceData{
+		ID: instanceID, ServiceID: "valkey", PlanID: "standalone",
+		Deployment: reconciler.DeploymentDetail{DeploymentInfo: reconciler.DeploymentInfo{Name: "standalone-" + instanceID}},
+	})
+	if err != nil {
+		t.Fatalf("the reconciler's update failed: %v", err)
+	}
+
+	idx, err := vaultClient.GetIndex(ctx, "db")
+	if err != nil {
+		t.Fatalf("failed to read the index: %v", err)
+	}
+
+	entry, ok := idx.Data[instanceID].(map[string]interface{})
+	if !ok {
+		t.Fatalf("the entry for %s is gone", instanceID)
+	}
+
+	if entry["reconciled"] != true {
+		t.Errorf("the reconciler's own fields did not land: reconciled = %v", entry["reconciled"])
+	}
+
+	if entry["status"] != "deleted" {
+		t.Errorf("the deleted mark was lost: status = %v", entry["status"])
+	}
+
+	for _, field := range []string{"deleted_at", "deleted_by", "deletion_reason", "deprovision_requested_at"} {
+		if _, has := entry[field]; !has {
+			t.Errorf("the reconciler's write dropped %s", field)
+		}
+	}
+}

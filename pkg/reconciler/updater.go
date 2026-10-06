@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -598,9 +599,17 @@ func (u *VaultUpdater) UpdateIndex(instanceID string, data map[string]interface{
 		return ErrVaultNotExpectedType
 	}
 
-	// The change runs under the vault's index lock, so it cannot drop or be
-	// dropped by a broker index write made at the same time. A failed read
-	// of the index fails the update instead of saving over it.
+	// The change runs under the vault's index lock, so no other index write
+	// through the same vault lands between its read and its save. A failed
+	// read of the index fails the update instead of saving over it.
+	//
+	// data is laid over the entry as it stands under the lock rather than
+	// put in its place. It is built from the root secret and BOSH, and it
+	// holds none of the fields that only the index has, such as the
+	// broker's status and request times or the vm-monitor's deleted mark.
+	// The caller checks for that mark without the lock, so it can appear
+	// before this write, and replacing the entry would wipe it. A field
+	// that data also holds takes the value in data, as it always has.
 	err := vault.UpdateIndex(context.Background(), func(indexData map[string]interface{}) (bool, error) {
 		if data == nil {
 			_, exists := indexData[instanceID]
@@ -609,7 +618,13 @@ func (u *VaultUpdater) UpdateIndex(instanceID string, data map[string]interface{
 			return exists, nil
 		}
 
-		indexData[instanceID] = data
+		current, _ := indexData[instanceID].(map[string]interface{})
+
+		entry := make(map[string]interface{}, len(current)+len(data))
+		maps.Copy(entry, current)
+		maps.Copy(entry, data)
+
+		indexData[instanceID] = entry
 
 		return true, nil
 	})
