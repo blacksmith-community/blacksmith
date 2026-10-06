@@ -16,6 +16,7 @@ import (
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/testutil"
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -201,5 +202,46 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 
 		expectMarked(entry)
 		Expect(entry).To(HaveKey("created_at"))
+	})
+
+	provisionRequest := func() osbapi.ProvisionRequest {
+		return osbapi.ProvisionRequest{ServiceID: serviceID, PlanID: planID}
+	}
+
+	It("keeps the mark when a deprovision request is recorded at the same time", func() {
+		entry := overlapWithMark(func() error {
+			return b.RecordDeprovisionRequest(ctx, instanceID, osbapi.DeprovisionRequest{ServiceID: serviceID, PlanID: planID})
+		})
+
+		expectMarked(entry)
+		Expect(entry).To(HaveKey("deprovision_requested_at"))
+	})
+
+	It("keeps the mark when the deployment name is recorded at the same time", func() {
+		entry := overlapWithMark(func() error {
+			b.StoreDeploymentNameInIndex(ctx, instanceID, planID+"-"+instanceID)
+
+			return nil
+		})
+
+		expectMarked(entry)
+	})
+
+	It("keeps the mark when the first provision record is written at the same time", func() {
+		entry := overlapWithMark(func() error {
+			return b.RecordInitialRequest(ctx, instanceID, provisionRequest())
+		})
+
+		expectMarked(entry)
+		Expect(entry).To(HaveKey("requested_at"))
+	})
+
+	It("keeps the mark when a provision status is written at the same time", func() {
+		entry := overlapWithMark(func() error {
+			return b.UpdateInstanceStatus(ctx, instanceID, provisionRequest(), &services.Plan{ID: planID}, "provisioning")
+		})
+
+		expectMarked(entry)
+		Expect(entry).To(HaveKey("requested_at"))
 	})
 })

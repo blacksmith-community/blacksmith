@@ -1176,12 +1176,7 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil)
-	if err != nil {
-		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
-	}
-
-	err = b.Vault.Index(recordCtx, instanceID, entry)
+	err := b.mergeIndexEntry(recordCtx, instanceID, baseData, nil)
 	if err != nil {
 		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
 	}
@@ -1189,30 +1184,51 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	return nil
 }
 
-func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, contextData map[string]any) (map[string]interface{}, error) {
-	existing, err := b.getExistingIndexEntry(ctx, instanceID)
-	if err != nil {
-		return nil, err
-	}
+// mergeIndexEntry sets the fields of base, then the non-empty fields taken
+// from contextData, on the instance's entry in the 'db' index, keeping every
+// other field the entry holds. An instance that is not in the index gets a new
+// entry. The read of the entry and the write of the index happen under one
+// hold of the index lock, so a change another writer makes to the entry in
+// between, such as the vm-monitor's deleted mark, is kept. An index that
+// cannot be read is an error and is not written, because merging into an
+// empty entry would erase the fields the stored entry holds. The error is
+// logged by the caller, which knows the step it stops.
+func (b *Broker) mergeIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, contextData map[string]any) error {
+	fields := make(map[string]interface{}, len(base))
 
 	for key, value := range base {
-		existing[key] = value
+		fields[key] = value
 	}
 
 	for key, value := range b.extractContextFields(contextData) {
 		if value != "" {
-			existing[key] = value
+			fields[key] = value
 		}
 	}
 
-	return existing, nil
+	err := b.Vault.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
+		entry := copyIndexEntry(entries[instanceID])
+
+		for key, value := range fields {
+			entry[key] = value
+		}
+
+		entries[instanceID] = entry
+
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update the index entry for %s: %w", instanceID, err)
+	}
+
+	return nil
 }
 
 // getExistingIndexEntry returns a copy of the instance's entry in the 'db'
-// index. An instance that is not in the index has an empty entry. An index
-// that cannot be read is an error, because merging new fields into an empty
-// entry and writing it would erase the fields the stored entry holds. The
-// error is logged by the caller, which knows the step it stops.
+// index, for a caller that only reads it. An instance that is not in the index
+// has an empty entry. An index that cannot be read is an error, which the
+// caller logs. A caller that changes the entry uses mergeIndexEntry instead,
+// so its read and its write happen under one hold of the index lock.
 func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string) (map[string]interface{}, error) {
 	entry := make(map[string]interface{})
 
@@ -1225,6 +1241,15 @@ func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string) (
 	if err != nil {
 		return entry, nil //nolint:nilerr // not being in the index is the normal first write
 	}
+
+	return copyIndexEntry(raw), nil
+}
+
+// copyIndexEntry returns a copy of an index entry as a map, whatever form it
+// was stored in. A missing entry, or one in a form that holds no fields,
+// copies as an empty map.
+func copyIndexEntry(raw interface{}) map[string]interface{} {
+	entry := make(map[string]interface{})
 
 	switch typed := raw.(type) {
 	case map[string]interface{}:
@@ -1256,7 +1281,7 @@ func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string) (
 		}
 	}
 
-	return entry, nil
+	return entry
 }
 
 func (b *Broker) extractContextFields(contextData map[string]any) map[string]string {
@@ -1712,21 +1737,11 @@ func (b *Broker) storeDeploymentNameInIndex(ctx context.Context, instanceID, dep
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil)
+	err := b.mergeIndexEntry(recordCtx, instanceID, baseData, nil)
 	if err != nil {
-		// Non-fatal, as a failed write is. The entry already in the index must
-		// not be replaced by one built without it.
+		// Non-fatal: LastOperation falls back to deriving the name from the
+		// plan ID. A failed read leaves the entry in the index unchanged.
 		logger.Error("failed to record deployment name in vault index, leaving the entry unchanged: %s", err)
-
-		return
-	}
-
-	entry["deployment_name"] = deploymentName
-
-	err = b.Vault.Index(recordCtx, instanceID, entry)
-	if err != nil {
-		logger.Error("failed to record deployment name in vault index: %s", err)
-		// Non-fatal: LastOperation falls back to deriving the name from the plan ID.
 	}
 }
 
@@ -1757,14 +1772,7 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context)
-	if err != nil {
-		logger.Error("failed to record service request in vault: %s", err)
-
-		return ErrFailedToTrackServiceRequestInVault
-	}
-
-	err = b.Vault.Index(recordCtx, instanceID, entry)
+	err := b.mergeIndexEntry(recordCtx, instanceID, baseData, details.Context)
 	if err != nil {
 		logger.Error("failed to record service request in vault: %s", err)
 
@@ -1840,14 +1848,7 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context)
-	if err != nil {
-		logger.Error("failed to update service status in vault index: %s", err)
-
-		return ErrFailedToUpdateServiceStatusInVault
-	}
-
-	err = b.Vault.Index(recordCtx, instanceID, entry)
+	err := b.mergeIndexEntry(recordCtx, instanceID, baseData, details.Context)
 	if err != nil {
 		logger.Error("failed to update service status in vault index: %s", err)
 
