@@ -3203,20 +3203,13 @@ func (b *Broker) deleteRabbitMQUser(ctx context.Context, bindingID string, credM
 		baseDelay  = 1 * time.Second
 	)
 
+	// DeletetUserRabbitMQ already takes a 404 answer for a user that is
+	// gone and returns nil, so every error here is a failed delete, even
+	// one whose text happens to contain "404".
 	err = common.WithRetry(ctx, func() error {
 		return DeletetUserRabbitMQ(ctx, bindingID, adminUsername, adminPassword, apiUrl, b.Config, credMap)
 	}, maxRetries, baseDelay)
 	if err != nil {
-		// A 404 answer means the user is already gone, which is the end
-		// state the delete wants. The status code decides, because another
-		// failure can carry "404" in its text without being that answer.
-		var statusErr *httpStatusError
-		if errors.As(err, &statusErr) && statusErr.StatusCode() == http.StatusNotFound {
-			logger.Info("User %s doesn't exist, considering as successful deletion", bindingID)
-
-			return nil
-		}
-
 		logger.Error("Failed to delete RabbitMQ user after retries", "bindingID", bindingID, "error", err)
 
 		return fmt.Errorf("failed to delete RabbitMQ user: %w", err)
