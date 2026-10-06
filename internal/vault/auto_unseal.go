@@ -25,74 +25,117 @@ var (
 	ErrUnsealPanicked  = errors.New("auto-unseal panicked")
 )
 
-// withAutoUnseal wraps an operation with automatic unsealing on vault sealed errors.
+// withAutoUnseal runs operation once and, when it fails because Vault is
+// sealed or unreachable, tries an auto-unseal and runs it once more. The retry
+// happens only when the error says Vault is sealed or the unseal unsealed it.
+// Any other error is returned as it is after the one attempt, because a write
+// whose answer was lost may already have landed, and a retry of the broker's
+// own against a Vault that nothing changed would repeat it. This rule covers
+// only the broker's attempts. The Vault API client underneath still retries a
+// request on its own after a 5xx answer or a dropped connection, as its
+// MaxRetries setting allows.
 func (vault *Vault) withAutoUnseal(ctx context.Context, operation func() error) error {
 	err := operation()
-	if err != nil {
-		if !vault.isSealedOrUnavailable(err) {
-			return err
-		}
-		// A caller whose context has ended gets the original error. An
-		// unseal and a retry under a dead context could only fail again.
-		if ctx.Err() != nil {
-			return err
-		}
-		// Try to auto-unseal, then retry once
-		if !vault.autoUnsealEnabled {
-			return err
-		}
-
-		var uerr error
-		if vault.autoUnsealHook != nil {
-			uerr = vault.autoUnsealHook(ctx)
-		} else {
-			uerr = vault.AutoUnsealIfSealed(ctx)
-		}
-
-		if uerr != nil {
-			return err // preserve original error; auto-unseal failed
-		}
-		// retry once
-		return operation()
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	if !vault.isSealedOrUnavailable(err) {
+		return err
+	}
+	// A caller whose context has ended gets the original error. An unseal
+	// and a retry under a dead context could only fail again.
+	if ctx.Err() != nil {
+		return err
+	}
+
+	if !vault.autoUnsealEnabled {
+		return err
+	}
+
+	unsealed, uerr := vault.unsealBeforeRetry(ctx)
+	if uerr != nil {
+		return err // preserve the original error; the auto-unseal failed
+	}
+
+	if !unsealed && !isSealedError(err) {
+		return err
+	}
+
+	return operation()
+}
+
+// unsealBeforeRetry runs the auto-unseal, or the test hook in its place, and
+// reports whether it unsealed Vault. A hook that succeeds counts as an unseal.
+func (vault *Vault) unsealBeforeRetry(ctx context.Context) (bool, error) {
+	if vault.autoUnsealHook != nil {
+		err := vault.autoUnsealHook(ctx)
+
+		return err == nil, err
+	}
+
+	return vault.autoUnseal(ctx)
+}
+
+// isSealedError reports whether err says Vault is sealed, as against an error
+// that only looks like an outage, such as a refused or reset connection.
+func isSealedError(err error) bool {
+	if errors.Is(err, vaultPkg.ErrIsSealed) {
+		return true
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "sealed")
 }
 
 // AutoUnsealIfSealed attempts to automatically unseal vault if it's sealed.
 func (vault *Vault) AutoUnsealIfSealed(ctx context.Context) error {
+	_, err := vault.autoUnseal(ctx)
+
+	return err
+}
+
+// autoUnseal unseals Vault if it is sealed, and reports whether an unseal ran
+// to success, whether this caller started it or waited on one in flight. A
+// Vault that is not sealed, or a cooldown that holds the unseal off, is not an
+// error and not an unseal.
+func (vault *Vault) autoUnseal(ctx context.Context) (bool, error) {
 	logger := logger.Get().Named("vault auto-unseal")
 
 	err := vault.ensureClient()
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	health, err := vault.checkVaultHealth(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if !health.Sealed {
-		return nil
+		return false, nil
 	}
 
 	err = vault.validateAutoUnsealConfig(logger)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	call, leader := vault.joinOrStartUnseal()
 	if call == nil {
 		// The cooldown since the last attempt has not passed.
-		return nil
+		return false, nil
 	}
 
 	if leader {
 		vault.runUnsealDetached(ctx, call, logger)
 	}
 
-	return awaitUnseal(ctx, call)
+	err = awaitUnseal(ctx, call)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // unsealCall is one auto-unseal in flight. Every caller that finds Vault

@@ -212,11 +212,11 @@ func (vault *Vault) Put(ctx context.Context, path string, data interface{}) erro
 		return fmt.Errorf("failed to convert data: %w", err)
 	}
 
-	err = vault.client.PutSecret(ctx, path, dataMap)
+	err = vault.withAutoUnseal(ctx, func() error {
+		return vault.client.PutSecret(ctx, path, dataMap)
+	})
 	if err != nil {
-		return vault.withAutoUnseal(ctx, func() error {
-			return vault.client.PutSecret(ctx, path, dataMap)
-		})
+		return err
 	}
 
 	logger.Debug("secret stored at %s", path)
@@ -286,11 +286,11 @@ func (vault *Vault) Delete(ctx context.Context, path string) error {
 		return err
 	}
 
-	err = vault.client.DeleteSecret(ctx, path)
+	err = vault.withAutoUnseal(ctx, func() error {
+		return vault.client.DeleteSecret(ctx, path)
+	})
 	if err != nil {
-		return vault.withAutoUnseal(ctx, func() error {
-			return vault.client.DeleteSecret(ctx, path)
-		})
+		return err
 	}
 
 	logger.Debug("secret deleted at %s", path)
