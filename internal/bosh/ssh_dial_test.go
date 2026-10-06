@@ -27,6 +27,12 @@ type testSSHServer struct {
 	listener net.Listener
 	wg       sync.WaitGroup
 
+	// forwarding counts the gateway forwarders still running, and
+	// forwarderExitDelay, in nanoseconds, slows each forwarder's exit so a
+	// test can tell whether Close waits for it.
+	forwarding         atomic.Int32
+	forwarderExitDelay atomic.Int64
+
 	mu    sync.Mutex
 	conns []net.Conn
 }
@@ -241,9 +247,12 @@ func gatewayHandler(config *ssh.ServerConfig, hold bool) func(*testSSHServer, ne
 
 			// Tracked so that closing the server waits for the forwarder.
 			s.wg.Add(1)
+			s.forwarding.Add(1)
 
 			go func() {
 				defer s.wg.Done()
+				defer s.forwarding.Add(-1)
+				defer func() { time.Sleep(time.Duration(s.forwarderExitDelay.Load())) }()
 				defer channel.Close()
 				defer target.Close()
 
@@ -726,5 +735,52 @@ func TestSSHSessionOutlivesTheHandshakeTimeout(t *testing.T) {
 
 	if got != output {
 		t.Fatalf("command output = %q, want %q", got, output)
+	}
+}
+
+// TestGatewayCloseWaitsForItsForwarders checks that closing a gateway server
+// returns only after every forwarder it started has finished, so a test that
+// closes its servers leaves no goroutine behind to touch a closed target. Each
+// forwarder's exit is slowed, so a Close that did not wait for it would return
+// while it still runs.
+func TestGatewayCloseWaitsForItsForwarders(t *testing.T) {
+	t.Parallel()
+
+	const (
+		rounds    = 3
+		exitDelay = 100 * time.Millisecond
+	)
+
+	for round := range rounds {
+		target := startTestSSHServer(t, silentHandler)
+		gateway := startTestSSHServer(t, gatewayHandler(testHostConfig(t), false))
+		gateway.forwarderExitDelay.Store(int64(exitDelay))
+
+		client := dialTestClient(t, gateway)
+
+		tunnel, err := client.Dial("tcp", target.Addr())
+		if err != nil {
+			t.Fatalf("round %d: open a tunnel through the gateway: %v", round, err)
+		}
+
+		deadline := time.Now().Add(5 * time.Second)
+		for gateway.forwarding.Load() != 1 {
+			if time.Now().After(deadline) {
+				t.Fatalf("round %d: the gateway did not start a forwarder", round)
+			}
+
+			time.Sleep(time.Millisecond)
+		}
+
+		gateway.Close()
+
+		if running := gateway.forwarding.Load(); running != 0 {
+			t.Fatalf("round %d: Close returned with %d forwarder(s) still running", round, running)
+		}
+
+		_ = tunnel.Close()
+		_ = client.Close()
+
+		target.Close()
 	}
 }
