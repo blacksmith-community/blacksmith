@@ -80,8 +80,8 @@ func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
 	b.credentialSweep.passTimeout = timeout
 }
 
-// ProvisionActive reports whether the provisionAsync goroutine for instanceID
-// is still running in this process.
+// ProvisionActive reports whether a provision of instanceID is in flight in
+// this process, from its accept chain until its goroutine returns.
 func (b *Broker) ProvisionActive(instanceID string) bool {
 	_, running := b.activeProvisions.Load(instanceID)
 

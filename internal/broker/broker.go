@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -151,10 +153,13 @@ type Broker struct {
 	instanceMu    sync.RWMutex           // Protects InstanceLocks map
 	InstanceLocks map[string]*sync.Mutex // Per-instance mutexes (exported for initialization)
 
-	// activeProvisions records instance IDs whose provisionAsync goroutine is
-	// still running in this process, keyed by instance ID. Deprovision consults
-	// it so a delete that arrives while the create is still being handed to BOSH
-	// is rejected instead of racing the deploy.
+	// activeProvisions records the instance IDs whose provision is in flight in
+	// this process, from the moment Provision claims the ID until the
+	// provisionAsync goroutine returns, keyed by instance ID with an
+	// *inflightProvision value. Provision claims an ID with LoadOrStore, so a
+	// repeated request cannot start a second accept chain or goroutine.
+	// Deprovision consults it so a delete that arrives while the create is
+	// still being handed to BOSH is rejected instead of racing the deploy.
 	activeProvisions sync.Map
 
 	// activeDeprovisions records instance IDs whose deprovisionAsync goroutine
@@ -182,6 +187,18 @@ type Broker struct {
 
 	// credentialSweep keeps one sweep pass at a time and at most one an hour.
 	credentialSweep credentialSweepState
+}
+
+// inflightProvision is the request whose provision holds an instance ID in
+// activeProvisions. A later request for the same ID is compared with it.
+type inflightProvision struct {
+	request osbapi.ProvisionRequest
+	claimed time.Time
+
+	// launched is set just before the provisionAsync goroutine starts. Until
+	// then the accept chain may still fail, so the first request's answer is
+	// not known and a repeat cannot be told the provision was accepted.
+	launched atomic.Bool
 }
 
 // IsBroker implements the interfaces.Broker interface.
@@ -374,6 +391,26 @@ func (b *Broker) Provision(
 		return osbapi.ProvisionResponse{}, false, osbapi.ErrConcurrencyError
 	}
 
+	// Claim the instance ID before any write. A platform that retries while
+	// the first request is still being accepted, or while its goroutine still
+	// runs, must not start a second deploy of the same deployment.
+	claim := &inflightProvision{request: copyProvisionRequest(details), claimed: time.Now()}
+
+	held, inFlight := b.activeProvisions.LoadOrStore(instanceID, claim)
+	if inFlight {
+		return b.answerProvisionInFlight(instanceID, details, held, logger)
+	}
+
+	// Until the goroutine takes the claim over, Provision owns it and gives
+	// it up on every way out, a panic included.
+	handedOff := false
+
+	defer func() {
+		if !handedOff {
+			b.activeProvisions.Delete(instanceID)
+		}
+	}()
+
 	// Record the initial request
 	err := b.recordInitialRequest(ctx, instanceID, details, logger)
 	if err != nil {
@@ -401,7 +438,7 @@ func (b *Broker) Provision(
 	}
 
 	// Launch async provisioning
-	err = b.launchAsyncProvisioning(ctx, instanceID, details, plan, logger)
+	handedOff, err = b.launchAsyncProvisioning(ctx, instanceID, details, plan, claim, logger)
 	if err != nil {
 		return osbapi.ProvisionResponse{}, false, err
 	}
@@ -867,6 +904,119 @@ func (b *Broker) GetInstanceLock(instanceID string) *sync.Mutex {
 	return mutexForInstance
 }
 
+// answerProvisionInFlight answers a provision request for an instance whose
+// provision is already in flight in this process. A request whose attributes
+// differ from the one in progress gets 409 Conflict. An identical request gets
+// 202 Accepted with the first answer's operation once the provisionAsync
+// goroutine has started, because the first request was then accepted. While
+// the first request is still in its accept chain, its answer is not known yet,
+// so an identical request gets 422 ConcurrencyError and the platform retries.
+func (b *Broker) answerProvisionInFlight(instanceID string, details osbapi.ProvisionRequest, held any, logger logger.Logger) (osbapi.ProvisionResponse, bool, error) {
+	inflight, ok := held.(*inflightProvision)
+	if !ok {
+		logger.Error("Rejecting provision of instance %s: its in-flight record has unexpected type %T", instanceID, held)
+
+		return osbapi.ProvisionResponse{}, false, osbapi.ErrConcurrencyError
+	}
+
+	if !provisionRequestsMatch(inflight.request, details) {
+		logger.Warning("Rejecting provision of instance %s: a provision with different attributes has been in progress since %s", instanceID, inflight.claimed.Format(time.RFC3339))
+
+		return osbapi.ProvisionResponse{}, false, fmt.Errorf("%w: instance %s is being provisioned with different attributes", osbapi.ErrInstanceAlreadyExists, instanceID)
+	}
+
+	if !inflight.launched.Load() {
+		logger.Warning("Rejecting provision of instance %s: an identical provision has been in its accept chain since %s and its outcome is not known yet", instanceID, inflight.claimed.Format(time.RFC3339))
+
+		return osbapi.ProvisionResponse{}, false, fmt.Errorf("%w: the provision of instance %s is still being accepted", osbapi.ErrConcurrencyError, instanceID)
+	}
+
+	logger.Info("Provision of instance %s is already in progress since %s; accepting the repeated request without starting another", instanceID, inflight.claimed.Format(time.RFC3339))
+
+	return osbapi.ProvisionResponse{Operation: operationTypeProvision}, true, nil
+}
+
+// provisionRequestsMatch reports whether two provision requests carry the same
+// attributes. A nil Context or Parameters map equals an empty one, because the
+// Open Service Broker API treats an omitted object and an empty one alike.
+func provisionRequestsMatch(first, second osbapi.ProvisionRequest) bool {
+	return reflect.DeepEqual(normalizedProvisionRequest(first), normalizedProvisionRequest(second))
+}
+
+// normalizedProvisionRequest returns request with a nil Context or Parameters
+// map replaced by an empty one.
+func normalizedProvisionRequest(request osbapi.ProvisionRequest) osbapi.ProvisionRequest {
+	if request.Context == nil {
+		request.Context = map[string]any{}
+	}
+
+	if request.Parameters == nil {
+		request.Parameters = map[string]any{}
+	}
+
+	return request
+}
+
+// copyProvisionRequest returns a copy of request that shares no map, slice, or
+// pointer with it, so the copy is unaffected by later changes to the original.
+func copyProvisionRequest(request osbapi.ProvisionRequest) osbapi.ProvisionRequest {
+	request.Context = copyJSONMap(request.Context)
+	request.Parameters = copyJSONMap(request.Parameters)
+
+	if request.MaintenanceInfo != nil {
+		info := *request.MaintenanceInfo
+		request.MaintenanceInfo = &info
+	}
+
+	return request
+}
+
+// copyJSONMap returns a deep copy of a map decoded from JSON, or nil for a nil
+// map.
+func copyJSONMap(original map[string]any) map[string]any {
+	if original == nil {
+		return nil
+	}
+
+	copied := make(map[string]any, len(original))
+	for key, value := range original {
+		copied[key] = copyJSONValue(value)
+	}
+
+	return copied
+}
+
+// copyJSONValue returns a deep copy of a value decoded from JSON. Objects and
+// arrays are copied element by element. Every other value a JSON decoder
+// produces is a string, number, boolean, or nil, which is copied by value. A
+// map[interface{}]interface{} from a YAML decoder is copied as well.
+func copyJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return copyJSONMap(typed)
+	case map[interface{}]interface{}:
+		copied := make(map[interface{}]interface{}, len(typed))
+		for key, element := range typed {
+			copied[key] = copyJSONValue(element)
+		}
+
+		return copied
+	case []any:
+		if typed == nil {
+			return typed
+		}
+
+		copied := make([]any, len(typed))
+		for index, element := range typed {
+			copied[index] = copyJSONValue(element)
+		}
+
+		return copied
+	default:
+		return value
+	}
+}
+
 func (b *Broker) determineServiceDirs(dir []string, logger logger.Logger) ([]string, error) {
 	switch {
 	case len(dir) == 0 && b.Config.Forges.AutoScan:
@@ -1070,8 +1220,9 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 }
 
 // rejectIfOperationInProgress returns the OSB concurrency error when the
-// instance still has an operation running: either its provisionAsync goroutine
-// has not finished in this process, or BOSH still reports a queued or running
+// instance still has an operation running: either its provision is still being
+// accepted or its provisionAsync goroutine has not finished in this process,
+// or BOSH still reports a queued or running
 // task for the deployment. Accepting a deprovision in that window would tear
 // down the vault index while the create deployment task keeps running, which
 // leaves an orphaned deployment behind.
@@ -1799,7 +1950,11 @@ func (b *Broker) storePlanReferences(ctx context.Context, instanceID string, pla
 	}
 }
 
-func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, logger logger.Logger) error {
+// launchAsyncProvisioning records the accepted provision and starts the
+// provisionAsync goroutine, which takes over the instance's claim in
+// activeProvisions and gives it up when it returns. It marks the claim as
+// launched just before the goroutine starts, and reports whether it started.
+func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, claim *inflightProvision, logger logger.Logger) (bool, error) {
 	// Update status to show provisioning is starting
 	err := b.updateInstanceStatus(ctx, instanceID, details, plan, "provisioning_started", logger)
 	if err != nil {
@@ -1813,7 +1968,7 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 		"plan_id":           details.PlanID,
 		"organization_guid": details.OrganizationGUID,
 		"space_guid":        details.SpaceGUID,
-		"parameters":        details.Parameters,
+		"parameters":        copyJSONMap(details.Parameters),
 	}
 
 	// Record the provision as the instance's current operation before
@@ -1826,26 +1981,29 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 	if err != nil {
 		logger.Error("failed to record the accepted provision in vault: %s", err)
 
-		return fmt.Errorf("failed to record the provision of instance %s: %w", instanceID, err)
+		return false, fmt.Errorf("failed to record the provision of instance %s: %w", instanceID, err)
 	}
-
-	// Mark the provision as in flight before the goroutine starts so a
-	// deprovision that arrives immediately after the 202 is already rejected.
-	// provisionAsync clears the mark when it returns.
-	b.activeProvisions.Store(instanceID, time.Now())
 
 	// Launch async provisioning in background
 	// The provision outlives the HTTP request, so it runs under the service
 	// context with its own deadline instead of the request's.
 	asyncCtx, cancelAsync := context.WithTimeout(b.serviceContext(), provisionTimeout)
 
+	// Nothing after this point can fail the request, so an identical repeat
+	// may now be answered as accepted.
+	claim.launched.Store(true)
+
 	go func() {
+		// The claim Provision took stays in place while the goroutine runs,
+		// so a deprovision or a repeated provision is answered from it. It
+		// is given up on every return, a panic included.
+		defer b.activeProvisions.Delete(instanceID)
 		defer cancelAsync()
 
 		b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
 	}()
 
-	return nil
+	return true, nil
 }
 
 func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string, logger logger.Logger) error {

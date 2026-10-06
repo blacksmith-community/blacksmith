@@ -775,8 +775,6 @@ func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *b
 
 // provisionAsync handles the actual provisioning work in a background goroutine.
 func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details interface{}, plan services.Plan) {
-	defer b.activeProvisions.Delete(instanceID)
-
 	startTime := time.Now()
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async provisioning for instance %s (plan: %s)", instanceID, plan.ID)
