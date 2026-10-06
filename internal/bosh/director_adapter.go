@@ -243,44 +243,6 @@ type Logger interface {
 	Errorf(format string, args ...interface{})
 }
 
-// BufferedTaskReporter implements TaskReporter to capture task output.
-type BufferedTaskReporter struct {
-	mu       sync.Mutex
-	output   bytes.Buffer
-	started  bool
-	finished bool
-	state    string
-}
-
-func (r *BufferedTaskReporter) TaskStarted(id int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.started = true
-}
-
-func (r *BufferedTaskReporter) TaskFinished(id int, state string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.finished = true
-	r.state = state
-}
-
-func (r *BufferedTaskReporter) TaskOutputChunk(id int, chunk []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.output.Write(chunk)
-}
-
-func (r *BufferedTaskReporter) GetOutput() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	return r.output.String()
-}
-
 // noOpLogger is a no-op implementation of Logger interface.
 type noOpLogger struct{}
 
@@ -704,73 +666,198 @@ func (d *DirectorAdapter) UploadStemcell(ctx context.Context, url, sha1 string) 
 	return nil, ErrNoTaskFoundStemcellUpload
 }
 
+// runningTaskStates is the director's state filter for tasks that have not
+// finished.
+const runningTaskStates = "processing,cancelling,queued"
+
+// Task states the director reports.
+const (
+	taskStateQueued     = "queued"
+	taskStateProcessing = "processing"
+	taskStateCancelling = "cancelling"
+	taskStateDone       = "done"
+	taskStateError      = "error"
+	taskStateCancelled  = "cancelled"
+	taskStateTimeout    = "timeout"
+)
+
+// isTerminalTaskState reports whether a task in state has finished.
+func isTerminalTaskState(state string) bool {
+	switch state {
+	case taskStateDone, taskStateError, taskStateCancelled, taskStateTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// isRunningTaskState reports whether a task in state has not finished.
+func isRunningTaskState(state string) bool {
+	switch state {
+	case taskStateQueued, taskStateProcessing, taskStateCancelling:
+		return true
+	default:
+		return false
+	}
+}
+
+// convertAPITask converts a task as the director reports it. The director's
+// timestamp is the time of the task's last update, which for a finished task
+// is when it ended.
+func convertAPITask(task boshapi.Task) Task {
+	converted := Task{
+		ID:          task.ID,
+		State:       task.State,
+		Description: task.Description,
+		Result:      task.Result,
+		User:        task.User,
+		Deployment:  task.DeploymentName,
+		ContextID:   task.ContextID,
+	}
+
+	if task.StartedAt != nil {
+		converted.StartedAt = time.Unix(*task.StartedAt, 0)
+	}
+
+	if task.Timestamp != nil {
+		converted.Timestamp = *task.Timestamp
+
+		if isTerminalTaskState(task.State) {
+			ended := time.Unix(*task.Timestamp, 0)
+			converted.EndedAt = &ended
+		}
+	}
+
+	return converted
+}
+
+// convertAPITasks converts tasks in the order the director listed them.
+func convertAPITasks(tasks []boshapi.Task) []Task {
+	converted := make([]Task, len(tasks))
+	for index, task := range tasks {
+		converted[index] = convertAPITask(task)
+	}
+
+	return converted
+}
+
 // GetTask retrieves a task by ID.
 func (d *DirectorAdapter) GetTask(ctx context.Context, taskID int) (_ *Task, err error) {
 	defer d.explainContext(ctx, "GetTask", &err)
 
-	director := d.bind(ctx)
+	d.log.Debugf("Calling GET /tasks/%d", taskID)
 
-	d.log.Infof("Getting task: %d", taskID)
-	d.log.Debugf("Finding task %d", taskID)
-
-	task, err := director.FindTask(taskID)
+	task, err := d.api.Tasks().Get(ctx, taskID)
 	if err != nil {
 		d.log.Errorf("Failed to get task %d: %v", taskID, err)
 
-		return nil, fmt.Errorf("failed to get task %d: %w", taskID, err)
+		return nil, d.requestFailure(fmt.Sprintf("get BOSH task %d", taskID), err)
 	}
 
-	convertedTask := convertDirectorTask(task)
-	d.log.Infof("Successfully retrieved task %d (state: %s)", taskID, convertedTask.State)
+	if task == nil {
+		d.log.Errorf("The director answered GET /tasks/%d with no data", taskID)
 
-	return convertedTask, nil
+		return nil, d.requestFailure(fmt.Sprintf("get BOSH task %d", taskID), ErrEmptyDirectorAnswer)
+	}
+
+	converted := convertAPITask(*task)
+	d.log.Debugf("Task %d is %s", taskID, converted.State)
+
+	return &converted, nil
 }
 
-// GetTasks retrieves multiple tasks based on filter criteria.
+// GetTasks lists tasks in one of Blacksmith's modes: "recent" asks for twice
+// the limit, so the filters below still have enough tasks to fill the page,
+// "current" asks for every task that has not finished, and "all" merges the
+// two. Any other mode reads as "recent". The director has no task type
+// filter, and the state and team filters run here.
 func (d *DirectorAdapter) GetTasks(ctx context.Context, taskType string, limit int, states []string, team string) (_ []Task, err error) {
 	defer d.explainContext(ctx, "GetTasks", &err)
 
-	d.log.Infof("Getting tasks (type: %s, limit: %d, states: %v, team: %s)", taskType, limit, states, team)
+	d.log.Debugf("Getting tasks (type: %s, limit: %d, states: %v, team: %s)", taskType, limit, states, team)
 
-	// Convert limit to sensible defaults
 	if limit <= 0 || limit > 200 {
-		limit = 50 // Default limit
+		limit = 50
 	}
 
-	// Get tasks based on type
-	tasks, err := d.fetchTasksByType(d.bind(ctx), taskType, limit)
+	var tasks []Task
+
+	switch taskType {
+	case "current":
+		tasks, err = d.listTasks(ctx, "list running tasks", &boshapi.TaskListOptions{State: runningTaskStates, Verbose: 1})
+	case "all":
+		tasks, err = d.listAllTasks(ctx, limit)
+	default:
+		if taskType != "recent" {
+			d.log.Debugf("Unknown task type %s, listing recent tasks", taskType)
+		}
+
+		tasks, err = d.listTasks(ctx, "list recent tasks", &boshapi.TaskListOptions{Limit: limit * taskFetchMultiplier, Verbose: 1})
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	// Apply filters
 	tasks = d.filterTasksByStates(tasks, states)
 	tasks = d.filterTasksByTeam(tasks, team)
 
-	// Limit results
 	if len(tasks) > limit {
 		tasks = tasks[:limit]
 	}
 
-	// Convert director tasks to our Task type
-	result := make([]Task, len(tasks))
-	for i, task := range tasks {
-		result[i] = *convertDirectorTask(task)
-	}
+	d.log.Debugf("Retrieved %d tasks (type: %s)", len(tasks), taskType)
 
-	d.log.Infof("Successfully retrieved %d tasks (type: %s)", len(result), taskType)
-
-	return result, nil
+	return tasks, nil
 }
 
-// GetAllTasks retrieves all available tasks up to the specified limit.
+// GetAllTasks lists the running tasks and the recent ones, merged.
 func (d *DirectorAdapter) GetAllTasks(ctx context.Context, limit int) (_ []Task, err error) {
 	defer d.explainContext(ctx, "GetAllTasks", &err)
 
-	d.log.Infof("Getting all tasks (limit: %d)", limit)
-
-	// Use GetTasks with "all" type for consistency
 	return d.GetTasks(ctx, "all", limit, nil, "")
+}
+
+// listTasks lists tasks with opts. what names the list in an error.
+func (d *DirectorAdapter) listTasks(ctx context.Context, what string, opts *boshapi.TaskListOptions) ([]Task, error) {
+	tasks, err := d.api.Tasks().List(ctx, opts)
+	if err != nil {
+		d.log.Errorf("Failed to %s: %v", what, err)
+
+		return nil, d.requestFailure(what, err)
+	}
+
+	return convertAPITasks(tasks), nil
+}
+
+// listAllTasks merges the running tasks with the recent ones, each task
+// once, newest first.
+func (d *DirectorAdapter) listAllTasks(ctx context.Context, limit int) ([]Task, error) {
+	running, err := d.listTasks(ctx, "list running tasks", &boshapi.TaskListOptions{State: runningTaskStates, Verbose: 1})
+	if err != nil {
+		return nil, err
+	}
+
+	recent, err := d.listTasks(ctx, "list recent tasks", &boshapi.TaskListOptions{Limit: limit * taskFetchMultiplier, Verbose: 1})
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[int]bool, len(running)+len(recent))
+	merged := make([]Task, 0, len(running)+len(recent))
+
+	for _, task := range append(running, recent...) {
+		if seen[task.ID] {
+			continue
+		}
+
+		seen[task.ID] = true
+		merged = append(merged, task)
+	}
+
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].ID > merged[j].ID })
+
+	return merged, nil
 }
 
 // CancelTask cancels a running task.
@@ -813,91 +900,55 @@ func (d *DirectorAdapter) CancelTask(ctx context.Context, taskID int) (err error
 	return nil
 }
 
-// GetTaskOutput retrieves task output.
+// taskOutputType maps Blacksmith's output types onto the director's. The
+// "task" view is the event log, which is what an operator reads to follow a
+// task, and debug is the default.
+func taskOutputType(outputType string) string {
+	switch outputType {
+	case "task", "event":
+		return "event"
+	case "result", "cpi":
+		return outputType
+	default:
+		return "debug"
+	}
+}
+
+// GetTaskOutput retrieves a task's output of the given type.
 func (d *DirectorAdapter) GetTaskOutput(ctx context.Context, taskID int, outputType string) (_ string, err error) {
 	defer d.explainContext(ctx, "GetTaskOutput", &err)
 
-	director := d.bind(ctx)
+	directorType := taskOutputType(outputType)
 
-	d.log.Infof("Getting task output for task %d (type: %s)", taskID, outputType)
-	d.log.Debugf("Finding task %d for output retrieval", taskID)
+	d.log.Debugf("Calling GET /tasks/%d/output?type=%s", taskID, directorType)
 
-	task, err := director.FindTask(taskID)
+	output, err := d.api.Tasks().GetOutput(ctx, taskID, &boshapi.TaskOutputOptions{Type: directorType})
 	if err != nil {
-		d.log.Errorf("Failed to get task %d: %v", taskID, err)
+		d.log.Errorf("Failed to get the %s output of task %d: %v", directorType, taskID, err)
 
-		return "", fmt.Errorf("failed to get task %d: %w", taskID, err)
+		return "", d.requestFailure(fmt.Sprintf("get the %s output of BOSH task %d", directorType, taskID), err)
 	}
 
-	// Create a buffered reporter to capture output
-	reporter := &BufferedTaskReporter{}
-
-	// Get task output based on type
-	switch outputType {
-	case "task":
-		// For  task output, use event output which matches 'bosh task <id>' output
-		err = task.EventOutput(reporter)
-	case "debug":
-		// For debug output, use DebugOutput method
-		err = task.DebugOutput(reporter)
-	case "event":
-		// For event output, use EventOutput method
-		err = task.EventOutput(reporter)
-	case "result":
-		// For result output, use ResultOutput method
-		err = task.ResultOutput(reporter)
-	case "cpi":
-		// For CPI output, use CPIOutput method
-		err = task.CPIOutput(reporter)
-	default:
-		// Default to debug output
-		err = task.DebugOutput(reporter)
-	}
-
-	if err != nil {
-		d.log.Errorf("Failed to get task output for task %d: %v", taskID, err)
-
-		return "", fmt.Errorf("failed to get task output for task %d: %w", taskID, err)
-	}
-
-	output := reporter.GetOutput()
-	d.log.Infof("Successfully retrieved task output for task %d (size: %d bytes)", taskID, len(output))
-	d.log.Debugf("Task output type %s retrieved successfully", outputType)
+	d.log.Debugf("Retrieved the %s output of task %d (size: %d bytes)", directorType, taskID, len(output))
 
 	return output, nil
 }
 
-// GetTaskEvents retrieves task events.
+// GetTaskEvents retrieves a task's events from its event output.
 func (d *DirectorAdapter) GetTaskEvents(ctx context.Context, taskID int) (_ []TaskEvent, err error) {
 	defer d.explainContext(ctx, "GetTaskEvents", &err)
 
-	director := d.bind(ctx)
+	d.log.Debugf("Calling GET /tasks/%d/output?type=event", taskID)
 
-	d.log.Infof("Getting task events for task %d", taskID)
-	d.log.Debugf("Finding task %d for event retrieval", taskID)
-
-	task, err := director.FindTask(taskID)
+	output, err := d.api.Tasks().GetOutput(ctx, taskID, &boshapi.TaskOutputOptions{Type: "event"})
 	if err != nil {
-		d.log.Errorf("Failed to get task %d: %v", taskID, err)
+		d.log.Errorf("Failed to get the events of task %d: %v", taskID, err)
 
-		return nil, fmt.Errorf("failed to get task %d: %w", taskID, err)
+		return nil, d.requestFailure(fmt.Sprintf("get the events of BOSH task %d", taskID), err)
 	}
 
-	// Get event output which should be JSON lines
-	reporter := &BufferedTaskReporter{}
-
-	err = task.EventOutput(reporter)
-	if err != nil {
-		d.log.Errorf("Failed to get task events for task %d: %v", taskID, err)
-
-		return nil, fmt.Errorf("failed to get task events for task %d: %w", taskID, err)
-	}
-
-	// Parse the output as JSON lines for events
-	output := reporter.GetOutput()
 	events := d.parseTaskEvents(output)
-
-	d.log.Infof("Successfully retrieved %d events for task %d", len(events), taskID)
+	d.log.Debugf("Retrieved %d events for task %d", len(events), taskID)
 
 	return events, nil
 }
@@ -2475,38 +2526,31 @@ func (d *DirectorAdapter) GetPoolStats() (*PoolStats, error) {
 	}, nil
 }
 
-// FindRunningTaskForDeployment finds a currently running task for the given deployment.
-// It queries recent tasks and returns the first one that is queued, processing, or cancelling.
-// Returns nil if no running task is found.
+// FindRunningTaskForDeployment returns the newest task on the deployment that
+// has not finished, or nil when there is none. The director filters by
+// deployment and state itself.
 func (d *DirectorAdapter) FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (_ *Task, err error) {
 	defer d.explainContext(ctx, "FindRunningTaskForDeployment", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Debugf("Finding running task for deployment: %s", deploymentName)
 
-	tasks, err := director.RecentTasks(30, boshdirector.TasksFilter{
-		Deployment: deploymentName,
-	})
+	tasks, err := d.listTasks(ctx, "list the running tasks of deployment "+deploymentName,
+		&boshapi.TaskListOptions{Deployment: deploymentName, State: runningTaskStates, Verbose: 1})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get recent tasks: %w", err)
+		return nil, err
 	}
 
-	for _, t := range tasks {
-		state := t.State()
-		if state == "queued" || state == "processing" || state == "cancelling" {
-			d.log.Debugf("Found running task %d for deployment %s (state: %s)", t.ID(), deploymentName, state)
-			return &Task{
-				ID:          t.ID(),
-				State:       state,
-				Description: t.Description(),
-				Deployment:  deploymentName,
-			}, nil
+	for _, task := range tasks {
+		if isRunningTaskState(task.State) {
+			d.log.Debugf("Found running task %d for deployment %s (state: %s)", task.ID, deploymentName, task.State)
+
+			return &task, nil
 		}
 	}
 
 	d.log.Debugf("No running task found for deployment %s", deploymentName)
-	return nil, nil
+
+	return nil, nil //nolint:nilnil // no running task is an answer, not an error
 }
 
 func (d *DirectorAdapter) updateExistingDeployment(director boshdirector.Director, dep boshdirector.Deployment, deploymentName, manifest string) (*Task, error) {
@@ -3167,86 +3211,8 @@ func (d *DirectorAdapter) buildFullCommand(command string, args []string) string
 	return fullCommand
 }
 
-// fetchTasksByType retrieves tasks based on the specified type.
-func (d *DirectorAdapter) fetchTasksByType(director boshdirector.Director, taskType string, limit int) ([]boshdirector.Task, error) {
-	d.log.Debugf("Building task filter for type: %s", taskType)
-
-	filter := boshdirector.TasksFilter{}
-
-	switch taskType {
-	case "recent":
-		d.log.Debugf("Getting recent tasks with limit %d", limit)
-
-		tasks, err := director.RecentTasks(limit*taskFetchMultiplier, filter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get recent tasks: %w", err)
-		}
-
-		return tasks, nil
-	case "current":
-		d.log.Debugf("Getting current tasks")
-
-		tasks, err := director.CurrentTasks(filter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get current tasks: %w", err)
-		}
-
-		return tasks, nil
-	case "all":
-		return d.fetchAllTasks(director, limit, filter)
-	default:
-		d.log.Debugf("Unknown task type %s, defaulting to recent", taskType)
-
-		tasks, err := director.RecentTasks(limit*taskFetchMultiplier, filter)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get recent tasks (default): %w", err)
-		}
-
-		return tasks, nil
-	}
-}
-
-// fetchAllTasks retrieves both current and recent tasks, merging them.
-func (d *DirectorAdapter) fetchAllTasks(director boshdirector.Director, limit int, filter boshdirector.TasksFilter) ([]boshdirector.Task, error) {
-	d.log.Debugf("Getting all tasks with limit %d", limit)
-
-	currentTasks, err := director.CurrentTasks(filter)
-	if err != nil {
-		d.log.Errorf("Failed to get current tasks: %v", err)
-
-		return nil, fmt.Errorf("failed to get current tasks: %w", err)
-	}
-
-	recentTasks, err := director.RecentTasks(limit*taskFetchMultiplier, filter)
-	if err != nil {
-		d.log.Errorf("Failed to get recent tasks: %v", err)
-
-		return nil, fmt.Errorf("failed to get recent tasks: %w", err)
-	}
-
-	// Merge tasks, avoiding duplicates by ID
-	taskMap := make(map[int]boshdirector.Task)
-	for _, task := range currentTasks {
-		taskMap[task.ID()] = task
-	}
-
-	for _, task := range recentTasks {
-		if _, exists := taskMap[task.ID()]; !exists {
-			taskMap[task.ID()] = task
-		}
-	}
-
-	// Convert map back to slice
-	tasks := make([]boshdirector.Task, 0, len(taskMap))
-	for _, task := range taskMap {
-		tasks = append(tasks, task)
-	}
-
-	return tasks, nil
-}
-
 // filterTasksByStates filters tasks by the specified states.
-func (d *DirectorAdapter) filterTasksByStates(tasks []boshdirector.Task, states []string) []boshdirector.Task {
+func (d *DirectorAdapter) filterTasksByStates(tasks []Task, states []string) []Task {
 	if len(states) == 0 {
 		return tasks
 	}
@@ -3256,10 +3222,10 @@ func (d *DirectorAdapter) filterTasksByStates(tasks []boshdirector.Task, states 
 		stateMap[state] = true
 	}
 
-	var filteredTasks []boshdirector.Task
+	var filteredTasks []Task
 
 	for _, task := range tasks {
-		if stateMap[task.State()] {
+		if stateMap[task.State] {
 			filteredTasks = append(filteredTasks, task)
 		}
 	}
@@ -3270,14 +3236,14 @@ func (d *DirectorAdapter) filterTasksByStates(tasks []boshdirector.Task, states 
 }
 
 // filterTasksByTeam filters tasks by the specified team.
-func (d *DirectorAdapter) filterTasksByTeam(tasks []boshdirector.Task, team string) []boshdirector.Task {
+func (d *DirectorAdapter) filterTasksByTeam(tasks []Task, team string) []Task {
 	if team == "" {
 		return tasks
 	}
 
 	d.log.Debugf("Starting team filtering with %d tasks for team '%s'", len(tasks), team)
 
-	var teamFilteredTasks []boshdirector.Task
+	var teamFilteredTasks []Task
 
 	for _, task := range tasks {
 		if d.shouldIncludeTaskForTeam(task, team) {
@@ -3292,9 +3258,9 @@ func (d *DirectorAdapter) filterTasksByTeam(tasks []boshdirector.Task, team stri
 }
 
 // shouldIncludeTaskForTeam determines if a task should be included for the specified team.
-func (d *DirectorAdapter) shouldIncludeTaskForTeam(task boshdirector.Task, team string) bool {
-	deploymentName := task.DeploymentName()
-	d.log.Debugf("Task %d: deployment='%s', description='%s'", task.ID(), deploymentName, task.Description())
+func (d *DirectorAdapter) shouldIncludeTaskForTeam(task Task, team string) bool {
+	deploymentName := task.Deployment
+	d.log.Debugf("Task %d: deployment='%s', description='%s'", task.ID, deploymentName, task.Description)
 
 	var includeTask bool
 
@@ -3303,17 +3269,17 @@ func (d *DirectorAdapter) shouldIncludeTaskForTeam(task boshdirector.Task, team 
 		// For blacksmith, show all BOSH director tasks
 		includeTask = true
 
-		d.log.Debugf("Task %d: included for blacksmith (show all)", task.ID())
+		d.log.Debugf("Task %d: included for blacksmith (show all)", task.ID)
 	case "service-instances":
-		includeTask = d.isServiceInstanceTask(deploymentName, task.ID())
+		includeTask = d.isServiceInstanceTask(deploymentName, task.ID)
 	default:
-		includeTask = d.isSpecificTeamTask(deploymentName, team, task.ID())
+		includeTask = d.isSpecificTeamTask(deploymentName, team, task.ID)
 	}
 
 	if includeTask {
-		d.log.Debugf("Task %d: INCLUDED for team '%s'", task.ID(), team)
+		d.log.Debugf("Task %d: INCLUDED for team '%s'", task.ID, team)
 	} else {
-		d.log.Debugf("Task %d: EXCLUDED for team '%s'", task.ID(), team)
+		d.log.Debugf("Task %d: EXCLUDED for team '%s'", task.ID, team)
 	}
 
 	return includeTask

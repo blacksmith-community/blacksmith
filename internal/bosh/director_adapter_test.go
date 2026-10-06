@@ -1,7 +1,6 @@
 package bosh_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"encoding/pem"
 	"net/http"
@@ -13,34 +12,6 @@ import (
 	. "blacksmith/internal/bosh"
 	"blacksmith/pkg/logger"
 )
-
-// TestBufferedTaskReporter tests the BufferedTaskReporter implementation.
-func TestBufferedTaskReporter(t *testing.T) {
-	t.Parallel()
-
-	reporter := &BufferedTaskReporter{}
-
-	// Test TaskStarted
-	reporter.TaskStarted(42)
-
-	// Test TaskOutputChunk
-	chunk1 := []byte("First chunk\n")
-	chunk2 := []byte("Second chunk\n")
-
-	reporter.TaskOutputChunk(42, chunk1)
-	reporter.TaskOutputChunk(42, chunk2)
-
-	// Test GetOutput
-	output := reporter.GetOutput()
-
-	expected := "First chunk\nSecond chunk\n"
-	if output != expected {
-		t.Errorf("GetOutput() = %q, want %q", output, expected)
-	}
-
-	// Test TaskFinished
-	reporter.TaskFinished(42, "done")
-}
 
 // TestTaskEventParsing tests parsing of task events from JSON output.
 func TestTaskEventParsing(t *testing.T) {
@@ -225,44 +196,6 @@ releases: []`,
 	}
 }
 
-// TestBufferedTaskReporter_Concurrent tests concurrent access to BufferedTaskReporter.
-func TestBufferedTaskReporter_Concurrent(t *testing.T) {
-	t.Parallel()
-
-	reporter := &BufferedTaskReporter{}
-
-	// Start multiple goroutines writing chunks
-	done := make(chan bool)
-
-	for index := range 10 {
-		go func(id int) {
-			chunk := []byte(string(rune('A' + id)))
-			reporter.TaskOutputChunk(1, chunk)
-
-			done <- true
-		}(index)
-	}
-
-	// Wait for all goroutines
-	for range 10 {
-		<-done
-	}
-
-	// Check that all chunks are present
-	output := reporter.GetOutput()
-	if len(output) != 10 {
-		t.Errorf("Expected output length 10, got %d", len(output))
-	}
-
-	// Check that all characters are present (order doesn't matter due to concurrency)
-	for i := range 10 {
-		char := string(rune('A' + i))
-		if !strings.Contains(output, char) {
-			t.Errorf("Output missing character %s", char)
-		}
-	}
-}
-
 // TestBuildFactoryConfig tests the factory config building.
 func TestBuildFactoryConfig(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
@@ -412,18 +345,6 @@ func TestConvertDirectorTask(t *testing.T) {
 
 	if task.EndedAt == nil {
 		t.Errorf("Task.EndedAt should not be nil for completed task")
-	}
-}
-
-// Benchmark tests.
-func BenchmarkBufferedTaskReporter(b *testing.B) {
-	reporter := &BufferedTaskReporter{}
-	chunk := bytes.Repeat([]byte("x"), 1024) // 1KB chunk
-
-	b.ResetTimer()
-
-	for range b.N {
-		reporter.TaskOutputChunk(1, chunk)
 	}
 }
 

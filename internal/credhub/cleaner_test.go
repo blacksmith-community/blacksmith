@@ -8,10 +8,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/boshtest"
 	"blacksmith/internal/credhub"
 	"blacksmith/pkg/logger"
 )
@@ -775,5 +777,133 @@ func TestCleanerReleasesTheDeploymentWhenTheDirectorHangs(t *testing.T) {
 	second := cleaner.CleanupDeployment(context.Background(), labTarget())
 	if second.Duplicate {
 		t.Fatal("the deployment is still marked in flight after the timed-out run returned")
+	}
+}
+
+// A real director adapter against a director that stops answering must end
+// each of the cleaner's three director calls with the run's context, so the
+// in-flight key is released at the run timeout and the next run for the
+// deployment proceeds.
+func TestCleanerReleasesTheInFlightKeyWhenTheDirectorHangs(t *testing.T) {
+	tests := []struct {
+		name string
+		// hangs reports whether the director leaves a request unanswered.
+		// infoCount counts GET /info requests, the first of which is auth
+		// discovery.
+		hangs func(request *http.Request, infoCount int32) bool
+	}{
+		{
+			name: "on the deployment lookup",
+			hangs: func(request *http.Request, _ int32) bool {
+				return request.URL.Path == "/deployments/"+labDeployment
+			},
+		},
+		{
+			name: "on the running task lookup",
+			hangs: func(request *http.Request, _ int32) bool {
+				return request.URL.Path == "/tasks"
+			},
+		},
+		{
+			name: "on the director's /info",
+			hangs: func(request *http.Request, infoCount int32) bool {
+				return request.URL.Path == "/info" && infoCount > 1
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			release := make(chan struct{})
+
+			var infoCount atomic.Int32
+
+			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				count := int32(0)
+				if request.URL.Path == "/info" {
+					count = infoCount.Add(1)
+				}
+
+				if testCase.hangs(request, count) {
+					select {
+					case <-request.Context().Done():
+					case <-release:
+					}
+
+					return true
+				}
+
+				switch request.URL.Path {
+				case "/deployments/" + labDeployment:
+					boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment '"+labDeployment+"' doesn't exist")
+				case "/tasks":
+					boshtest.WriteJSON(writer, http.StatusOK, []interface{}{})
+				default:
+					return false
+				}
+
+				return true
+			})
+			t.Cleanup(func() { close(release) })
+
+			director, err := bosh.NewDirectorAdapter(bosh.Config{
+				Address:  server.URL,
+				Username: "admin",
+				Password: "admin",
+				CACert:   server.CACert,
+			})
+			if err != nil {
+				t.Fatalf("failed to create director adapter: %v", err)
+			}
+
+			world := newCleanerWorld(t)
+			cleaner := credhub.NewCleaner(world.client, director, func() credhub.Policy {
+				policy := labPolicy()
+				policy.InfoDirectorName = ""
+
+				return policy
+			}, world.log)
+			credhub.SetCleanerBackoff(cleaner, time.Millisecond, time.Millisecond)
+			credhub.SetCleanerRunTimeout(cleaner, 300*time.Millisecond)
+
+			results := make(chan credhub.Result, 1)
+
+			go func() { results <- cleaner.CleanupDeployment(context.Background(), labTarget()) }()
+
+			var first credhub.Result
+
+			select {
+			case first = <-results:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the run still holds the deployment 2s after its 300ms run timeout, because a director call ignores the run's context")
+			}
+
+			if first.Duplicate {
+				t.Fatalf("the first run was refused as a duplicate: %+v", first)
+			}
+
+			if first.Refused == nil && len(first.Failed) == 0 {
+				t.Fatalf("expected the timed-out run to refuse or fail, got %+v", first)
+			}
+
+			if _, deletes := world.client.calls(); len(deletes) != 0 {
+				t.Fatalf("expected no delete after a timed-out run, got %q", deletes)
+			}
+
+			secondDone := make(chan credhub.Result, 1)
+
+			go func() { secondDone <- cleaner.CleanupDeployment(context.Background(), labTarget()) }()
+
+			select {
+			case second := <-secondDone:
+				if second.Duplicate {
+					t.Fatal("the deployment is still marked in flight after the timed-out run returned")
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("the second run did not end within 2s of its 300ms run timeout")
+			}
+		})
 	}
 }

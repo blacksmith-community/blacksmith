@@ -316,13 +316,6 @@ type TaskEventError struct {
 	Message string `json:"message"`
 }
 
-// TaskReporter provides task progress reporting.
-type TaskReporter interface {
-	TaskStarted(taskID int)
-	TaskFinished(taskID int, state string)
-	TaskOutputChunk(taskID int, chunk []byte)
-}
-
 // EventLogger provides event logging capabilities.
 type EventLogger interface {
 	io.Writer

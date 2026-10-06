@@ -140,6 +140,15 @@ func WriteError(writer http.ResponseWriter, status, code int, description string
 	WriteJSON(writer, status, map[string]interface{}{"code": code, "description": description})
 }
 
+// WriteText answers with a plain text body, the way the director answers some
+// failures, such as a cancel of a task that is no longer running.
+func WriteText(writer http.ResponseWriter, status int, body string) {
+	writer.Header().Set("Content-Type", "text/plain")
+	writer.WriteHeader(status)
+
+	_, _ = writer.Write([]byte(body))
+}
+
 // WriteRouteNotFound answers the way the director answers a route it does not
 // serve, with a 404 and a plain text body that holds no error code.
 func WriteRouteNotFound(writer http.ResponseWriter, request *http.Request) {
