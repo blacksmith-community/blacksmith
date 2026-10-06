@@ -182,6 +182,12 @@ func (b *Broker) StoreBindingCredentials(ctx context.Context, instanceID, bindin
 	return b.storeBindingCredentials(ctx, instanceID, bindingID, credentials, logger.Get().Named("broker"))
 }
 
+// DeleteRabbitMQUser exposes the unbind step that deletes a binding's
+// RabbitMQ user, retries included.
+func (b *Broker) DeleteRabbitMQUser(ctx context.Context, bindingID string, creds map[string]interface{}) error {
+	return b.deleteRabbitMQUser(ctx, bindingID, creds, logger.Get().Named("broker"))
+}
+
 // RecordDeprovisionRequest exposes the index write that Deprovision makes
 // before it answers.
 func (b *Broker) RecordDeprovisionRequest(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest) error {

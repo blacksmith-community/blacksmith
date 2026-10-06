@@ -1609,7 +1609,10 @@ func (h *Handler) getDeploymentNameForManifest(writer http.ResponseWriter, ctx c
 func (h *Handler) fetchDeploymentManifest(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName string) (*bosh.DeploymentDetail, error) {
 	deployment, err := h.director.GetDeployment(ctx, deploymentName)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "doesn't exist") {
+		// The director adapter wraps ErrDeploymentNotFound when the
+		// director's answer says the deployment does not exist. Other errors
+		// can carry "404" in their text without being that answer.
+		if errors.Is(err, bosh.ErrDeploymentNotFound) {
 			logger.Info("Deployment %s doesn't exist (404), returning success for deleted deployment", deploymentName)
 			response.HandleJSON(writer, map[string]interface{}{
 				"text": "",
@@ -1696,7 +1699,8 @@ func (h *Handler) getInstanceDataForDetails(writer http.ResponseWriter, ctx cont
 func (h *Handler) fetchDeploymentForDetails(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName, instanceID string) (*bosh.DeploymentDetail, error) {
 	deployment, err := h.director.GetDeployment(ctx, deploymentName)
 	if err != nil {
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "doesn't exist") {
+		// Only the director's not-found answer means the instance is gone.
+		if errors.Is(err, bosh.ErrDeploymentNotFound) {
 			logger.Info("Deployment %s doesn't exist (404), returning success for deleted instance", deploymentName)
 			response.HandleJSON(writer, map[string]interface{}{
 				"instance_id": instanceID,
