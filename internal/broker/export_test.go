@@ -2,6 +2,9 @@ package broker
 
 import (
 	"context"
+	"reflect"
+	"runtime"
+	"strings"
 	"time"
 
 	"blacksmith/internal/services"
@@ -215,4 +218,43 @@ func SetRecordWriteTimeout(d time.Duration) func() {
 // cleanup that follows when it fails.
 func (b *Broker) StoreDeploymentDetails(ctx context.Context, instanceID, deploymentName string, details osbapi.ProvisionRequest) error {
 	return b.storeDeploymentDetails(ctx, instanceID, deploymentName, details, logger.Get().Named("broker"))
+}
+
+// BackgroundGoroutines returns the stack of every goroutine, other than the
+// caller's, that is running code of package broker. Between specs it should
+// be empty: a provision, deprovision, monitor, or cleanup goroutine still
+// running there can write the shared index during the next spec.
+func BackgroundGoroutines() []string {
+	// Function names carry the package path, for example
+	// "blacksmith/internal/broker.recordContext". The test package's own
+	// functions are named "blacksmith/internal/broker_test....", so the
+	// prefix with its trailing dot does not match them.
+	name := runtime.FuncForPC(reflect.ValueOf(recordContext).Pointer()).Name()
+	prefix := name[:strings.LastIndex(name, ".")+1]
+
+	buf := make([]byte, 1<<20)
+
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+
+			break
+		}
+
+		buf = make([]byte, 2*len(buf))
+	}
+
+	stacks := strings.Split(string(buf), "\n\n")
+
+	var running []string
+
+	// The first stack is the caller's own goroutine.
+	for _, stack := range stacks[1:] {
+		if strings.Contains(stack, "\n"+prefix) {
+			running = append(running, stack)
+		}
+	}
+
+	return running
 }

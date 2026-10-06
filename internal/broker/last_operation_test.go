@@ -201,6 +201,7 @@ var _ = Describe("LastOperation", func() {
 		deploymentName string
 		world          *scriptedTasks
 		scriptDir      string
+		stopService    context.CancelFunc
 	)
 
 	indexEntryExists := func() bool {
@@ -274,6 +275,10 @@ var _ = Describe("LastOperation", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
+
+		var serviceCtx context.Context
+
+		serviceCtx, stopService = context.WithCancel(ctx)
 		instanceID = fmt.Sprintf("lastop-%d", time.Now().UnixNano())
 		deploymentName = planID + "-" + instanceID
 
@@ -338,11 +343,16 @@ var _ = Describe("LastOperation", func() {
 			Shield:        backups,
 			Config:        &config.Config{},
 			InstanceLocks: make(map[string]*sync.Mutex),
+			// The provision, deprovision, and monitor goroutines run under
+			// it, and AfterEach ends it.
+			ServiceContext: serviceCtx,
 		}
 		brokerInstance.SetVMMonitor(monitor)
 	})
 
 	AfterEach(func() {
+		stopBrokerGoroutines(stopService)
+
 		_ = vaultClient.Index(ctx, instanceID, nil)
 		_ = os.RemoveAll(scriptDir)
 	})

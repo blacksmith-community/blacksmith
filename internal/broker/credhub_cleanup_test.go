@@ -197,6 +197,7 @@ var _ = Describe("CredHub cleanup", func() {
 		capture          *captureLogger
 		previousLogger   logger.Logger
 		cleanersToFinish []*recordingCleaner
+		stopService      context.CancelFunc
 	)
 
 	indexEntryExists := func() bool {
@@ -242,6 +243,10 @@ var _ = Describe("CredHub cleanup", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
+
+		var serviceCtx context.Context
+
+		serviceCtx, stopService = context.WithCancel(ctx)
 		instanceID = cleanupGUID()
 		deploymentName = planID + "-" + instanceID
 		cleanersToFinish = nil
@@ -324,6 +329,8 @@ var _ = Describe("CredHub cleanup", func() {
 			Shield:        &recordingShield{},
 			Config:        &config.Config{CredHub: config.CredHubConfig{DirectorName: directorName}},
 			InstanceLocks: make(map[string]*sync.Mutex),
+			// The background monitor runs under it, and AfterEach ends it.
+			ServiceContext: serviceCtx,
 		}
 
 		Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
@@ -348,6 +355,7 @@ var _ = Describe("CredHub cleanup", func() {
 		}
 
 		Eventually(func() bool { return brokerInstance.DeprovisionActive(instanceID) }, 20*time.Second).Should(BeFalse())
+		stopBrokerGoroutines(stopService)
 		brokerInstance.WaitForCredentialCleanups()
 
 		restorePoll()
