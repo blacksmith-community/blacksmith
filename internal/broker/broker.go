@@ -153,20 +153,15 @@ type Broker struct {
 	instanceMu    sync.RWMutex           // Protects InstanceLocks map
 	InstanceLocks map[string]*sync.Mutex // Per-instance mutexes (exported for initialization)
 
-	// activeProvisions records the instance IDs whose provision is in flight in
-	// this process, from the moment Provision claims the ID until the
-	// provisionAsync goroutine returns, keyed by instance ID with an
-	// *inflightProvision value. Provision claims an ID with LoadOrStore, so a
-	// repeated request cannot start a second accept chain or goroutine.
-	// Deprovision consults it so a delete that arrives while the create is
-	// still being handed to BOSH is rejected instead of racing the deploy.
-	activeProvisions sync.Map
-
-	// activeDeprovisions records instance IDs whose deprovisionAsync goroutine
-	// is still running in this process. LastOperation consults it to tell a
-	// delete that has not returned its task ID yet from one the broker lost
-	// when it restarted.
-	activeDeprovisions sync.Map
+	// activeOperations holds the claim of the one provision or deprovision in
+	// flight for an instance ID in this process, keyed by instance ID with an
+	// *operationClaim value. Provision and Deprovision both claim an ID with
+	// LoadOrStore before any write, so one atomic step decides which operation
+	// owns it, and the other request is answered from the claim. The claim
+	// lasts until the operation's goroutine returns, or until its accept chain
+	// fails or panics. LastOperation consults it to tell an operation that has
+	// not recorded its task yet from one the broker lost when it restarted.
+	activeOperations sync.Map
 
 	// monitorExited, when set, is called with the instance ID each time a
 	// deprovision monitor goroutine returns. Production leaves it nil; tests
@@ -189,15 +184,20 @@ type Broker struct {
 	credentialSweep credentialSweepState
 }
 
-// inflightProvision is the request whose provision holds an instance ID in
-// activeProvisions. A later request for the same ID is compared with it.
-type inflightProvision struct {
-	request osbapi.ProvisionRequest
-	claimed time.Time
+// operationClaim is the claim an operation holds on an instance ID in
+// activeOperations. A later request for the same ID is answered from it.
+type operationClaim struct {
+	// operation is operationTypeProvision or operationTypeDeprovision.
+	operation string
+	claimed   time.Time
 
-	// launched is set just before the provisionAsync goroutine starts. Until
+	// request is a provision's request, kept as a copy so a repeat can be
+	// compared with it. A deprovision claim leaves it empty.
+	request osbapi.ProvisionRequest
+
+	// launched is set just before the operation's goroutine starts. Until
 	// then the accept chain may still fail, so the first request's answer is
-	// not known and a repeat cannot be told the provision was accepted.
+	// not known and a repeat cannot be told the operation was accepted.
 	launched atomic.Bool
 }
 
@@ -382,23 +382,15 @@ func (b *Broker) Provision(
 		return osbapi.ProvisionResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
-	// Refuse before any write, because a provision that goes ahead would move
-	// provision_requested_at past the delete request of the deprovision still
-	// running, and that deprovision's credential cleanup would refuse to delete.
-	if b.provisionBlockedByDeprovision(instanceID) {
-		logger.Warning("Rejecting provision of instance %s: its deprovision is still in progress", instanceID)
-
-		return osbapi.ProvisionResponse{}, false, osbapi.ErrConcurrencyError
-	}
-
 	// Claim the instance ID before any write. A platform that retries while
 	// the first request is still being accepted, or while its goroutine still
-	// runs, must not start a second deploy of the same deployment.
-	claim := &inflightProvision{request: copyProvisionRequest(details), claimed: time.Now()}
+	// runs, must not start a second deploy of the same deployment, and a
+	// provision must not run alongside a deprovision of the same ID.
+	claim := &operationClaim{operation: operationTypeProvision, request: copyProvisionRequest(details), claimed: time.Now()}
 
-	held, inFlight := b.activeProvisions.LoadOrStore(instanceID, claim)
-	if inFlight {
-		return b.answerProvisionInFlight(instanceID, details, held, logger)
+	held, claimed := b.claimOperation(instanceID, claim)
+	if !claimed {
+		return b.answerProvisionWhileClaimed(instanceID, details, held, logger)
 	}
 
 	// Until the goroutine takes the claim over, Provision owns it and gives
@@ -407,7 +399,7 @@ func (b *Broker) Provision(
 
 	defer func() {
 		if !handedOff {
-			b.activeProvisions.Delete(instanceID)
+			b.releaseOperation(instanceID, claim)
 		}
 	}()
 
@@ -467,16 +459,27 @@ func (b *Broker) Deprovision(
 		return osbapi.DeprovisionResponse{}, false, osbapi.ErrAsyncRequired
 	}
 
-	// A repeated request for a deprovision this process is still running is
-	// accepted again rather than starting a second delete.
-	if b.deprovisionActive(instanceID) {
-		logger.Info("Deprovision of instance %s is already in progress", instanceID)
+	// Claim the instance ID before anything is written to the vault, so a
+	// refused request leaves no deprovision trace on the index entry, and a
+	// provision or a second deprovision cannot start while this one is being
+	// accepted.
+	claim := &operationClaim{operation: operationTypeDeprovision, claimed: time.Now()}
 
-		return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
+	held, claimed := b.claimOperation(instanceID, claim)
+	if !claimed {
+		return b.answerDeprovisionWhileClaimed(instanceID, held, logger)
 	}
 
-	// Reject before anything is written to the vault so a refused request
-	// leaves no deprovision trace on the index entry.
+	// Until the goroutine takes the claim over, Deprovision owns it and gives
+	// it up on every way out, a panic included.
+	handedOff := false
+
+	defer func() {
+		if !handedOff {
+			b.releaseOperation(instanceID, claim)
+		}
+	}()
+
 	err := b.rejectIfOperationInProgress(ctx, instanceID, logger)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, err
@@ -512,17 +515,21 @@ func (b *Broker) Deprovision(
 	b.storeDeleteRequestedTimestamp(ctx, instanceID, logger)
 	b.descheduleShieldBackup(instanceID, details.ServiceID, details.PlanID, logger)
 
-	// Mark the deprovision as in flight before the goroutine starts;
-	// deprovisionAsync clears the mark when it returns.
-	b.activeDeprovisions.Store(instanceID, time.Now())
-
 	// Launch async deprovisioning in background
 	// The deprovision outlives the HTTP request, so it runs under the service
 	// context with the monitor's bound. A shutdown ends it, and LastOperation
 	// settles what the director task left behind.
 	asyncCtx, cancelAsync := context.WithTimeout(b.serviceContext(), taskMonitorTimeout)
 
+	// Nothing after this point can fail the request, so a repeated delete may
+	// now be answered as accepted, and the goroutine takes the claim over.
+	claim.launched.Store(true)
+
+	handedOff = true
+
 	go func() {
+		// The goroutine gives the claim up on every return, a panic included.
+		defer b.releaseOperation(instanceID, claim)
 		defer cancelAsync()
 
 		b.deprovisionAsync(asyncCtx, instanceID, instance)
@@ -904,36 +911,110 @@ func (b *Broker) GetInstanceLock(instanceID string) *sync.Mutex {
 	return mutexForInstance
 }
 
-// answerProvisionInFlight answers a provision request for an instance whose
-// provision is already in flight in this process. A request whose attributes
-// differ from the one in progress gets 409 Conflict. An identical request gets
-// 202 Accepted with the first answer's operation once the provisionAsync
-// goroutine has started, because the first request was then accepted. While
-// the first request is still in its accept chain, its answer is not known yet,
-// so an identical request gets 422 ConcurrencyError and the platform retries.
-func (b *Broker) answerProvisionInFlight(instanceID string, details osbapi.ProvisionRequest, held any, logger logger.Logger) (osbapi.ProvisionResponse, bool, error) {
-	inflight, ok := held.(*inflightProvision)
+// claimOperation claims instanceID for claim's operation in one atomic step.
+// It reports whether the claim was taken. When it was not, it returns the
+// claim another operation holds, or nil when the stored value is not a claim.
+func (b *Broker) claimOperation(instanceID string, claim *operationClaim) (*operationClaim, bool) {
+	stored, loaded := b.activeOperations.LoadOrStore(instanceID, claim)
+	if !loaded {
+		return nil, true
+	}
+
+	held, ok := stored.(*operationClaim)
 	if !ok {
-		logger.Error("Rejecting provision of instance %s: its in-flight record has unexpected type %T", instanceID, held)
+		return nil, false
+	}
+
+	return held, false
+}
+
+// releaseOperation gives up claim on instanceID. It removes the stored claim
+// only when it is this one, so it can never remove a claim another operation
+// took after this one.
+func (b *Broker) releaseOperation(instanceID string, claim *operationClaim) {
+	b.activeOperations.CompareAndDelete(instanceID, claim)
+}
+
+// operationActive reports whether an operation of the given type holds the
+// claim on instanceID, from the start of its accept chain until its goroutine
+// returns.
+func (b *Broker) operationActive(instanceID, operation string) bool {
+	stored, found := b.activeOperations.Load(instanceID)
+	if !found {
+		return false
+	}
+
+	held, isClaim := stored.(*operationClaim)
+
+	return isClaim && held.operation == operation
+}
+
+// answerProvisionWhileClaimed answers a provision request for an instance that
+// another operation has claimed in this process. While a deprovision holds the
+// claim, the request gets 422 ConcurrencyError before any write, because a
+// provision that went ahead would move provision_requested_at past the delete
+// request of the running deprovision, and that deprovision's credential
+// cleanup would refuse to delete. While a provision holds it, a request whose
+// attributes differ gets 409 Conflict. An identical request gets 202 Accepted
+// with the first answer's operation once the provisionAsync goroutine has
+// started, because the first request was then accepted. While the first
+// request is still in its accept chain, its answer is not known yet, so an
+// identical request gets 422 ConcurrencyError and the platform retries.
+func (b *Broker) answerProvisionWhileClaimed(instanceID string, details osbapi.ProvisionRequest, held *operationClaim, logger logger.Logger) (osbapi.ProvisionResponse, bool, error) {
+	switch {
+	case held == nil:
+		logger.Error("Rejecting provision of instance %s: its operation claim holds a value of an unexpected type", instanceID)
 
 		return osbapi.ProvisionResponse{}, false, osbapi.ErrConcurrencyError
-	}
+	case held.operation != operationTypeProvision:
+		logger.Warning("Rejecting provision of instance %s: its %s has been in progress since %s", instanceID, held.operation, held.claimed.Format(time.RFC3339))
 
-	if !provisionRequestsMatch(inflight.request, details) {
-		logger.Warning("Rejecting provision of instance %s: a provision with different attributes has been in progress since %s", instanceID, inflight.claimed.Format(time.RFC3339))
+		return osbapi.ProvisionResponse{}, false, fmt.Errorf("%w: instance %s has a %s in progress", osbapi.ErrConcurrencyError, instanceID, held.operation)
+	case !provisionRequestsMatch(held.request, details):
+		logger.Warning("Rejecting provision of instance %s: a provision with different attributes has been in progress since %s", instanceID, held.claimed.Format(time.RFC3339))
 
 		return osbapi.ProvisionResponse{}, false, fmt.Errorf("%w: instance %s is being provisioned with different attributes", osbapi.ErrInstanceAlreadyExists, instanceID)
-	}
-
-	if !inflight.launched.Load() {
-		logger.Warning("Rejecting provision of instance %s: an identical provision has been in its accept chain since %s and its outcome is not known yet", instanceID, inflight.claimed.Format(time.RFC3339))
+	case !held.launched.Load():
+		logger.Warning("Rejecting provision of instance %s: an identical provision has been in its accept chain since %s and its outcome is not known yet", instanceID, held.claimed.Format(time.RFC3339))
 
 		return osbapi.ProvisionResponse{}, false, fmt.Errorf("%w: the provision of instance %s is still being accepted", osbapi.ErrConcurrencyError, instanceID)
 	}
 
-	logger.Info("Provision of instance %s is already in progress since %s; accepting the repeated request without starting another", instanceID, inflight.claimed.Format(time.RFC3339))
+	logger.Info("Provision of instance %s is already in progress since %s; accepting the repeated request without starting another", instanceID, held.claimed.Format(time.RFC3339))
 
 	return osbapi.ProvisionResponse{Operation: operationTypeProvision}, true, nil
+}
+
+// answerDeprovisionWhileClaimed answers a deprovision request for an instance
+// that another operation has claimed in this process. While a provision holds
+// the claim, the request gets 422 ConcurrencyError before any write, because a
+// delete accepted then would tear down the vault index while the create
+// deployment task keeps running. While a deprovision holds it, the request is
+// answered 202 Accepted with the deprovision operation once the
+// deprovisionAsync goroutine has started. While the first deprovision is still
+// in its accept chain, its answer is not known yet, so the request gets 422
+// ConcurrencyError and the platform retries.
+func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operationClaim, logger logger.Logger) (osbapi.DeprovisionResponse, bool, error) {
+	switch {
+	case held == nil:
+		logger.Error("Rejecting deprovision of instance %s: its operation claim holds a value of an unexpected type", instanceID)
+
+		return osbapi.DeprovisionResponse{}, false, osbapi.ErrConcurrencyError
+	case held.operation != operationTypeDeprovision:
+		logger.Warning("Rejecting deprovision of instance %s: its %s has been in progress since %s", instanceID, held.operation, held.claimed.Format(time.RFC3339))
+
+		return osbapi.DeprovisionResponse{}, false, fmt.Errorf("%w: instance %s has a %s in progress", osbapi.ErrConcurrencyError, instanceID, held.operation)
+	case !held.launched.Load():
+		logger.Warning("Rejecting deprovision of instance %s: an earlier deprovision has been in its accept chain since %s and its outcome is not known yet", instanceID, held.claimed.Format(time.RFC3339))
+
+		return osbapi.DeprovisionResponse{}, false, fmt.Errorf("%w: the deprovision of instance %s is still being accepted", osbapi.ErrConcurrencyError, instanceID)
+	}
+
+	// A repeated request for a deprovision this process is still running is
+	// accepted again rather than starting a second delete.
+	logger.Info("Deprovision of instance %s is already in progress", instanceID)
+
+	return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
 }
 
 // provisionRequestsMatch reports whether two provision requests carry the same
@@ -1219,23 +1300,16 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 	return instance, nil
 }
 
-// rejectIfOperationInProgress returns the OSB concurrency error when the
-// instance still has an operation running: either its provision is still being
-// accepted or its provisionAsync goroutine has not finished in this process,
-// or BOSH still reports a queued or running
-// task for the deployment. Accepting a deprovision in that window would tear
-// down the vault index while the create deployment task keeps running, which
-// leaves an orphaned deployment behind.
+// rejectIfOperationInProgress returns the OSB concurrency error when BOSH
+// still reports a queued or running task for the instance's deployment.
+// Accepting a deprovision in that window would tear down the vault index while
+// the create deployment task keeps running, which leaves an orphaned
+// deployment behind. A provision still in flight in this process holds the
+// instance's operation claim, so Deprovision has refused it already.
 //
 // Instances that are not in the index are left to the regular flow, which
 // still records the request and answers with the OSB "does not exist" error.
 func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID string, logger logger.Logger) error {
-	if _, running := b.activeProvisions.Load(instanceID); running {
-		logger.Warning("Rejecting deprovision of instance %s: provisioning is still in progress", instanceID)
-
-		return osbapi.ErrConcurrencyError
-	}
-
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
 	if err != nil || !exists {
 		// validateInstanceExists reports lookup failures and missing instances.
@@ -1952,9 +2026,9 @@ func (b *Broker) storePlanReferences(ctx context.Context, instanceID string, pla
 
 // launchAsyncProvisioning records the accepted provision and starts the
 // provisionAsync goroutine, which takes over the instance's claim in
-// activeProvisions and gives it up when it returns. It marks the claim as
+// activeOperations and gives it up when it returns. It marks the claim as
 // launched just before the goroutine starts, and reports whether it started.
-func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, claim *inflightProvision, logger logger.Logger) (bool, error) {
+func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, claim *operationClaim, logger logger.Logger) (bool, error) {
 	// Update status to show provisioning is starting
 	err := b.updateInstanceStatus(ctx, instanceID, details, plan, "provisioning_started", logger)
 	if err != nil {
@@ -1997,7 +2071,7 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 		// The claim Provision took stays in place while the goroutine runs,
 		// so a deprovision or a repeated provision is answered from it. It
 		// is given up on every return, a panic included.
-		defer b.activeProvisions.Delete(instanceID)
+		defer b.releaseOperation(instanceID, claim)
 		defer cancelAsync()
 
 		b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
@@ -2563,23 +2637,11 @@ func (b *Broker) recordTask(ctx context.Context, instanceID, operation, descript
 }
 
 func (b *Broker) provisionActive(instanceID string) bool {
-	_, running := b.activeProvisions.Load(instanceID)
-
-	return running
-}
-
-// provisionBlockedByDeprovision reports whether a deprovision of instanceID is
-// in flight, so Provision must refuse the GUID. It reads only the broker's own
-// record of running operations and never asks the director. Every condition
-// that must block provisioning belongs here.
-func (b *Broker) provisionBlockedByDeprovision(instanceID string) bool {
-	return b.deprovisionActive(instanceID)
+	return b.operationActive(instanceID, operationTypeProvision)
 }
 
 func (b *Broker) deprovisionActive(instanceID string) bool {
-	_, running := b.activeDeprovisions.Load(instanceID)
-
-	return running
+	return b.operationActive(instanceID, operationTypeDeprovision)
 }
 
 // isFailedTaskState reports whether a BOSH task ended without succeeding.

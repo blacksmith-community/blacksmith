@@ -874,8 +874,6 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 // Both cleanup paths are idempotent (Index removal and timestamp storage can be
 // repeated safely), so there's no harm if both execute.
 func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instance *vaultPkg.Instance) {
-	defer b.activeDeprovisions.Delete(instanceID)
-
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
 

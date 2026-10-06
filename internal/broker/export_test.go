@@ -83,17 +83,13 @@ func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
 // ProvisionActive reports whether a provision of instanceID is in flight in
 // this process, from its accept chain until its goroutine returns.
 func (b *Broker) ProvisionActive(instanceID string) bool {
-	_, running := b.activeProvisions.Load(instanceID)
-
-	return running
+	return b.provisionActive(instanceID)
 }
 
-// DeprovisionActive reports whether the deprovisionAsync goroutine for
-// instanceID is still running in this process.
+// DeprovisionActive reports whether a deprovision of instanceID is in flight
+// in this process, from its accept chain until its goroutine returns.
 func (b *Broker) DeprovisionActive(instanceID string) bool {
-	_, running := b.activeDeprovisions.Load(instanceID)
-
-	return running
+	return b.deprovisionActive(instanceID)
 }
 
 // LogBindingCredentialKeys exposes the bind path's credential logging.
