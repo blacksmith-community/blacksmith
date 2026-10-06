@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"blacksmith/internal/bosh"
 )
@@ -16,6 +17,7 @@ var (
 
 // IntegrationMockBOSH provides a mock implementation of the BOSH Director interface for integration testing.
 type IntegrationMockBOSH struct {
+	mu     sync.RWMutex
 	vms    map[string][]bosh.VM
 	errors map[string]string
 }
@@ -30,16 +32,25 @@ func NewIntegrationMockBOSH() *IntegrationMockBOSH {
 
 // SetVMs sets mock VMs for a given deployment.
 func (imb *IntegrationMockBOSH) SetVMs(deployment string, vms []bosh.VM) {
+	imb.mu.Lock()
+	defer imb.mu.Unlock()
+
 	imb.vms[deployment] = vms
 }
 
 // SetError sets a mock error for a given operation.
 func (imb *IntegrationMockBOSH) SetError(operation, errorMsg string) {
+	imb.mu.Lock()
+	defer imb.mu.Unlock()
+
 	imb.errors[operation] = errorMsg
 }
 
 // GetDeploymentVMs returns VMs for a deployment.
 func (imb *IntegrationMockBOSH) GetDeploymentVMs(_ context.Context, deployment string) ([]bosh.VM, error) {
+	imb.mu.RLock()
+	defer imb.mu.RUnlock()
+
 	if errorMsg, exists := imb.errors["GetDeploymentVMs"]; exists {
 		return nil, fmt.Errorf("%w: %s", ErrIntegrationTestError, errorMsg)
 	}
