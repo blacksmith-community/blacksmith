@@ -315,8 +315,8 @@ func (vc *Client) DeleteSecret(ctx context.Context, path string) error {
 
 	_, err := vc.Logical().DeleteWithContext(ctx, fullPath)
 	if err != nil {
-		// Don't error on 404s
-		if !strings.Contains(err.Error(), "404") {
+		// A secret that is already gone is not an error.
+		if !isNotFound(err) {
 			loggerInstance.Error("failed to delete secret at %s: %s", fullPath, err)
 
 			return fmt.Errorf("failed to delete vault secret: %w", err)
@@ -346,8 +346,9 @@ func (vc *Client) ListSecrets(ctx context.Context, path string) ([]string, error
 
 	secret, err := vc.Logical().ListWithContext(ctx, fullPath)
 	if err != nil {
-		// Don't error on 404s - just return empty list
-		if strings.Contains(err.Error(), "404") {
+		// A path with nothing under it lists as empty. The Vault API client
+		// already answers most 404s on a list with no secret and no error.
+		if isNotFound(err) {
 			loggerInstance.Debug("no secrets found at %s", path)
 
 			return []string{}, nil
@@ -381,6 +382,15 @@ func (vc *Client) ListSecrets(ctx context.Context, path string) ([]string, error
 	loggerInstance.Debug("found %d secrets at %s", len(result), path)
 
 	return result, nil
+}
+
+// isNotFound reports whether err is Vault answering 404. It reads the status
+// code and never the error text, because the text carries the request URL,
+// and an address, a port, or an instance GUID can contain "404".
+func isNotFound(err error) bool {
+	var respErr *api.ResponseError
+
+	return errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound
 }
 
 // handleExistingMount processes an existing mount, checking type and upgrading if needed.
