@@ -3,6 +3,7 @@ package vault
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"blacksmith/pkg/logger"
@@ -46,22 +47,33 @@ func (vault *Vault) ListCFRegistrations(ctx context.Context) ([]map[string]inter
 	// List all registration keys
 	keys, err := vault.client.ListSecrets("secret/blacksmith/registrations/")
 	if err != nil {
-		logger.Debug("failed to list CF registrations (may not exist yet): %s", err)
+		logger.Error("failed to list CF registrations: %s", err)
 
-		return []map[string]interface{}{}, nil
+		return nil, fmt.Errorf("failed to list CF registrations: %w", err)
 	}
 
 	var registrations []map[string]interface{}
 	for _, key := range keys {
+		// A key that ends in "/" is a folder, such as the one that holds a
+		// registration's progress record. Reading it would read the
+		// registration a second time, or fail the whole listing.
+		if strings.HasSuffix(key, "/") {
+			continue
+		}
+
 		var registration map[string]interface{}
 
 		path := "secret/blacksmith/registrations/" + key
 
 		exists, err := vault.Get(ctx, path, &registration)
 		if err != nil {
+			// A listing that leaves out a registration it could not read looks
+			// complete to the caller. A registration that is not found is not
+			// an error, because Get reports it as (false, nil) and it is
+			// skipped below.
 			logger.Error("failed to get registration %s: %s", key, err)
 
-			continue
+			return nil, fmt.Errorf("failed to get registration %s: %w", key, err)
 		}
 
 		if exists {

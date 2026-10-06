@@ -329,7 +329,7 @@ var _ = Describe("GetBindingCredentials", func() {
 				credentials, err := brokerInstance.GetBindingCredentials(context.Background(), instanceID, bindingID)
 				Expect(err).To(HaveOccurred())
 				Expect(credentials).To(BeNil())
-				Expect(err.Error()).To(ContainSubstring("failed to get service/plan info"))
+				Expect(err.Error()).To(ContainSubstring("failed to read the credentials stored for binding"))
 			})
 		})
 	})

@@ -103,8 +103,10 @@ func (vault *Vault) AppendHistory(ctx context.Context, instanceID, action, descr
 	exists, err := vault.Get(ctx, metadataPath, &metadata)
 	if err != nil {
 		logger.Error("failed to get metadata: %s", err)
-		// Start fresh if there's an error
-		metadata = map[string]interface{}{}
+
+		// Writing a fresh map over metadata that could not be read would
+		// erase the existing history.
+		return fmt.Errorf("failed to read %s before appending history: %w", metadataPath, err)
 	}
 
 	if !exists {

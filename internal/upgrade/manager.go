@@ -842,11 +842,15 @@ func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
 
 	exists, err := m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
 	if err != nil {
+		// A fresh map written over an index that could not be read would
+		// drop every other task from it, and loadPersistedTasks would forget
+		// them at the next restart. The task's own record is already saved.
 		m.logger.Error("Failed to get tasks index: %v", err)
-		tasksIndex = make(map[string]interface{})
+
+		return fmt.Errorf("failed to read the tasks index before adding task %s: %w", task.ID, err)
 	}
 
-	if !exists {
+	if !exists || tasksIndex == nil {
 		tasksIndex = make(map[string]interface{})
 	}
 

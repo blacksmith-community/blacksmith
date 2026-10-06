@@ -591,7 +591,15 @@ func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
 
 	cancelGet()
 
-	if err != nil || !exists {
+	if err != nil {
+		// A fresh map written over metadata that could not be read would
+		// erase the history and every timestamp already recorded.
+		d.logger.Error("failed to read %s/metadata before recording deleted_at, leaving it unchanged: %s", d.instanceID, err)
+
+		return
+	}
+
+	if !exists || metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 

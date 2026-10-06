@@ -159,16 +159,23 @@ func (vault *Vault) Get(ctx context.Context, path string, out interface{}) (bool
 		return false, err
 	}
 
-	data, exists, err := vault.client.GetSecret(path)
-	if err != nil {
-		return false, vault.withAutoUnseal(ctx, func() error {
-			data, exists, err = vault.client.GetSecret(path)
-			if err != nil {
-				return fmt.Errorf("failed to get secret: %w", err)
-			}
+	var (
+		data   map[string]interface{}
+		exists bool
+	)
 
-			return nil
-		})
+	err = vault.withAutoUnseal(ctx, func() error {
+		var getErr error
+
+		data, exists, getErr = vault.client.GetSecret(path)
+		if getErr != nil {
+			return fmt.Errorf("failed to get secret: %w", getErr)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return false, err
 	}
 
 	if !exists {

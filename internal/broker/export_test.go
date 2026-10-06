@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
+	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
+	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
 // CreateValkeyACLUser exposes the bind path's ACL user creation to package
@@ -131,4 +133,52 @@ func (b *Broker) CleanupFailedDeployment(ctx context.Context, deploymentName str
 // instance was deprovisioned while the deploy was running.
 func (b *Broker) TearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string) {
 	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, logger.Get().Named("broker"))
+}
+
+// StoreDeleteRequestedTimestamp exposes the write of delete_requested_at that
+// Deprovision makes before it answers.
+func (b *Broker) StoreDeleteRequestedTimestamp(ctx context.Context, instanceID string) {
+	b.storeDeleteRequestedTimestamp(ctx, instanceID, logger.Get().Named("broker"))
+}
+
+// StoreDeletedTimestamp exposes the write of deleted_at that LastOperation
+// makes once a deprovision has finished.
+func (b *Broker) StoreDeletedTimestamp(ctx context.Context, instanceID string) {
+	b.storeDeletedTimestamp(ctx, instanceID, logger.Get().Named("broker"))
+}
+
+// StoreDeletedTimestampFromMonitor exposes the write of deleted_at that the
+// background deprovision makes once the deployment is gone.
+func (b *Broker) StoreDeletedTimestampFromMonitor(ctx context.Context, instanceID string) {
+	phase := &deprovisioningPhase{broker: b, instanceID: instanceID, logger: logger.Get().Named("broker")}
+	phase.storeDeletedTimestamp(ctx)
+}
+
+// UpdateInstanceTimestamp exposes the write of created_at that
+// OnProvisionCompleted makes to the instance metadata.
+func (b *Broker) UpdateInstanceTimestamp(ctx context.Context, instanceID string) error {
+	return b.updateInstanceTimestamp(ctx, instanceID, logger.Get().Named("broker"))
+}
+
+// RecordDeprovisionRequest exposes the index write that Deprovision makes
+// before it answers.
+func (b *Broker) RecordDeprovisionRequest(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest) error {
+	return b.recordDeprovisionRequest(ctx, instanceID, details, logger.Get().Named("broker"))
+}
+
+// StoreDeploymentNameInIndex exposes the write of the deployment name into the
+// index.
+func (b *Broker) StoreDeploymentNameInIndex(ctx context.Context, instanceID, deploymentName string) {
+	b.storeDeploymentNameInIndex(ctx, instanceID, deploymentName, logger.Get().Named("broker"))
+}
+
+// RecordInitialRequest exposes the index write that Provision makes first.
+func (b *Broker) RecordInitialRequest(ctx context.Context, instanceID string, details osbapi.ProvisionRequest) error {
+	return b.recordInitialRequest(ctx, instanceID, details, logger.Get().Named("broker"))
+}
+
+// UpdateInstanceStatus exposes the index write that records a provision's
+// status.
+func (b *Broker) UpdateInstanceStatus(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, status string) error {
+	return b.updateInstanceStatus(ctx, instanceID, details, plan, status, logger.Get().Named("broker"))
 }

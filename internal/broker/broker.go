@@ -754,8 +754,14 @@ func (b *Broker) GetBindingCredentials(ctx context.Context, instanceID, bindingI
 
 	exists, err := b.Vault.Get(ctx, credPath, &existingCreds)
 	if err != nil {
-		logger.Debug("Error checking for existing credentials: %s", err)
-	} else if exists {
+		// Rebuilding would create a second dynamic user and overwrite the
+		// credentials already stored for this binding.
+		logger.Error("Error checking for existing credentials: %s", err)
+
+		return nil, fmt.Errorf("failed to read the credentials stored for binding %s: %w", bindingID, err)
+	}
+
+	if exists {
 		logger.Info("Found existing credentials for binding %s, returning from vault", bindingID)
 
 		binding := &BindingCredentials{Raw: existingCreds}
@@ -930,9 +936,12 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 		"status":                   "deprovision_requested",
 	}
 
-	entry := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+	if err != nil {
+		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
+	}
 
-	err := b.Vault.Index(ctx, instanceID, entry)
+	err = b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
 		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
 	}
@@ -940,8 +949,11 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	return nil
 }
 
-func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, contextData map[string]any, logger logger.Logger) map[string]interface{} {
-	existing := b.getExistingIndexEntry(ctx, instanceID, logger)
+func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, contextData map[string]any, logger logger.Logger) (map[string]interface{}, error) {
+	existing, err := b.getExistingIndexEntry(ctx, instanceID, logger)
+	if err != nil {
+		return nil, err
+	}
 
 	for key, value := range base {
 		existing[key] = value
@@ -953,22 +965,26 @@ func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base ma
 		}
 	}
 
-	return existing
+	return existing, nil
 }
 
-func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) map[string]interface{} {
+// getExistingIndexEntry returns a copy of the instance's entry in the 'db'
+// index. An instance that is not in the index has an empty entry. An index
+// that cannot be read is an error, because merging new fields into an empty
+// entry and writing it would erase the fields the stored entry holds.
+func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) (map[string]interface{}, error) {
 	entry := make(map[string]interface{})
 
 	idx, err := b.Vault.GetIndex(ctx, "db")
 	if err != nil {
-		logger.Debug("unable to load existing index entry for %s: %v", instanceID, err)
+		logger.Error("unable to load the existing index entry for %s: %v", instanceID, err)
 
-		return entry
+		return nil, fmt.Errorf("failed to read the index entry for %s: %w", instanceID, err)
 	}
 
 	raw, err := idx.Lookup(instanceID)
 	if err != nil {
-		return entry
+		return entry, nil //nolint:nilerr // not being in the index is the normal first write
 	}
 
 	switch typed := raw.(type) {
@@ -1001,7 +1017,7 @@ func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string, l
 		}
 	}
 
-	return entry
+	return entry, nil
 }
 
 func (b *Broker) extractContextFields(contextData map[string]any) map[string]string {
@@ -1132,7 +1148,15 @@ func (b *Broker) storeDeleteRequestedTimestamp(ctx context.Context, instanceID s
 	var metadata map[string]interface{}
 
 	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
-	if err != nil || !exists {
+	if err != nil {
+		// A fresh map written over metadata that could not be read would
+		// erase the history and every timestamp already recorded.
+		logger.Error("failed to read %s/metadata before recording delete_requested_at, leaving it unchanged: %s", instanceID, err)
+
+		return
+	}
+
+	if !exists || metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 
@@ -1433,10 +1457,18 @@ func (b *Broker) storeDeploymentNameInIndex(ctx context.Context, instanceID, dep
 		"deployment_name": deploymentName,
 	}
 
-	entry := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+	if err != nil {
+		// Non-fatal, as a failed write is. The entry already in the index must
+		// not be replaced by one built without it.
+		logger.Error("failed to record deployment name in vault index, leaving the entry unchanged: %s", err)
+
+		return
+	}
+
 	entry["deployment_name"] = deploymentName
 
-	err := b.Vault.Index(ctx, instanceID, entry)
+	err = b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to record deployment name in vault index: %s", err)
 		// Non-fatal: LastOperation falls back to deriving the name from the plan ID.
@@ -1464,9 +1496,14 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 		baseData["space_guid"] = details.SpaceGUID
 	}
 
-	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
+	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
+	if err != nil {
+		logger.Error("failed to record service request in vault: %s", err)
 
-	err := b.Vault.Index(ctx, instanceID, entry)
+		return ErrFailedToTrackServiceRequestInVault
+	}
+
+	err = b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to record service request in vault: %s", err)
 
@@ -1535,9 +1572,14 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 		baseData["space_guid"] = details.SpaceGUID
 	}
 
-	entry := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
+	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
+	if err != nil {
+		logger.Error("failed to update service status in vault index: %s", err)
 
-	err := b.Vault.Index(ctx, instanceID, entry)
+		return ErrFailedToUpdateServiceStatusInVault
+	}
+
+	err = b.Vault.Index(ctx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to update service status in vault index: %s", err)
 
@@ -1755,7 +1797,22 @@ func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string,
 	var metadata map[string]interface{}
 
 	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
-	if err != nil || !exists {
+	if err != nil {
+		// Writing a fresh map would erase the history and timestamps the
+		// metadata already holds, so the metadata is left alone. The index
+		// does not depend on it, and CF stops polling once the provision
+		// reports success, so created_at still goes into the index.
+		readErr := fmt.Errorf("failed to read %s/metadata before recording created_at: %w", instanceID, err)
+
+		indexErr := b.updateIndexTimestamp(ctx, instanceID, createdAt, logger)
+		if indexErr != nil {
+			logger.Error("failed to record created_at in the index after the metadata read failed: %s", indexErr)
+		}
+
+		return readErr
+	}
+
+	if !exists || metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 
@@ -2465,7 +2522,15 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 	var metadata map[string]interface{}
 
 	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
-	if err != nil || !exists {
+	if err != nil {
+		// A fresh map written over metadata that could not be read would
+		// erase the history and every timestamp already recorded.
+		logger.Error("failed to read %s/metadata before recording deleted_at, leaving it unchanged: %s", instanceID, err)
+
+		return
+	}
+
+	if !exists || metadata == nil {
 		metadata = make(map[string]interface{})
 	}
 
