@@ -177,6 +177,23 @@ var _ = Describe("Vault writes that outlive their context", func() {
 			Expect(readSecret(instanceID + "/metadata")).To(HaveKeyWithValue("deleted_at", "2026-01-01T00:05:00Z"))
 		})
 
+		It("records a fresh deleted_at from the background deprovision when the GUID was provisioned again", func() {
+			mergeMetadata(map[string]interface{}{
+				"delete_requested_at":    "2026-01-01T00:00:00Z",
+				"deleted_at":             "2026-01-01T00:05:00Z",
+				"provision_requested_at": "2026-02-01T00:00:00Z",
+			})
+
+			brokerInstance.StoreDeletedTimestampFromMonitor(ctx, instanceID)
+
+			raw, ok := readSecret(instanceID + "/metadata")["deleted_at"].(string)
+			Expect(ok).To(BeTrue())
+
+			recorded, err := time.Parse(time.RFC3339, raw)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(recorded).To(BeTemporally(">", time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)), "the deletion of the earlier use of this GUID was kept as this one's")
+		})
+
 		It("lands the record of an abandoned deployment's teardown after its parent context has ended", func() {
 			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
 				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deploymentName)
@@ -299,6 +316,32 @@ var _ = Describe("Vault writes that outlive their context", func() {
 			raw, err := vaultClient.GetIndex(ctx, "db")
 			Expect(err).ToNot(HaveOccurred())
 			Expect(raw.Data[instanceID]).To(HaveKey("created_at"), "created_at was lost from the index")
+		})
+	})
+
+	Describe("the deleted_at record when the index read is slow", func() {
+		It("still records deleted_at when the index read used up its deadline", func() {
+			proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+			Expect(err).ToNot(HaveOccurred())
+
+			defer proxy.Close()
+
+			brokerInstance.Vault = internalVault.New(proxy.Addr, suite.vault.RootToken, true)
+
+			mergeMetadata(map[string]interface{}{
+				"provision_requested_at": time.Now().Add(-time.Hour).Format(time.RFC3339),
+			})
+
+			// The index read that dates the lifecycle hangs until its bound
+			// runs out. The metadata write that follows cannot share that
+			// bound, or it would fail at once and deleted_at would be lost.
+			proxy.HoldReads("secret/data/db", 1)
+
+			defer broker.SetRecordWriteTimeout(800 * time.Millisecond)()
+
+			brokerInstance.StoreDeletedTimestamp(ctx, instanceID)
+
+			Expect(readSecret(instanceID+"/metadata")).To(HaveKey("deleted_at"), "the stalled index read dropped deleted_at")
 		})
 	})
 
@@ -440,6 +483,93 @@ var _ = Describe("Vault writes that outlive their context", func() {
 			recorded, parseErr := time.Parse(time.RFC3339, deletedAt)
 			Expect(parseErr).ToNot(HaveOccurred())
 			Expect(recorded).To(BeTemporally(">", time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)), "the deletion of the earlier use of this GUID was kept as this deprovision's")
+		})
+
+		// indexWithDeprovisionRequest rewrites the instance's index entry with
+		// the time Deprovision recorded the request there.
+		indexWithDeprovisionRequest := func(requestedAt string) {
+			ExpectWithOffset(1, vaultClient.Index(ctx, instanceID, map[string]interface{}{
+				"instance_id": instanceID, "service_id": serviceID, "plan_id": planID,
+				"deployment_name": deploymentName, "deprovision_requested_at": requestedAt,
+			})).To(Succeed())
+		}
+
+		// recordedDeletedAt reads deleted_at from the instance's metadata.
+		recordedDeletedAt := func() time.Time {
+			raw, ok := readSecret(instanceID + "/metadata")["deleted_at"].(string)
+			ExpectWithOffset(1, ok).To(BeTrue(), "no deleted_at is recorded")
+
+			recorded, err := time.Parse(time.RFC3339, raw)
+			ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+			return recorded
+		}
+
+		It("keeps the first deleted_at when delete_requested_at was never written and a poll retries", func() {
+			// The delete_requested_at write failed when the deprovision was
+			// accepted, so only the provision times and the index's request
+			// time date this lifecycle.
+			indexWithDeprovisionRequest("2026-01-01T00:04:00Z")
+			mergeMetadata(map[string]interface{}{
+				"provision_requested_at": "2026-01-01T00:00:00Z",
+				"created_at":             "2026-01-01T00:01:00Z",
+				"deleted_at":             "2026-01-01T00:05:00Z",
+			})
+
+			brokerInstance.Vault = internalVault.New(proxy.Addr, suite.vault.RootToken, true)
+			proxy.FailWrites("secret/data/db", http.StatusForbidden, "permission denied", -1)
+
+			response, err := poll(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateInProgress))
+			Expect(readSecret(instanceID+"/metadata")).To(HaveKeyWithValue("deleted_at", "2026-01-01T00:05:00Z"), "the retried poll moved deleted_at")
+
+			proxy.ClearFaults()
+
+			response, err = poll(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateSucceeded))
+			Expect(readSecret(instanceID+"/metadata")).To(HaveKeyWithValue("deleted_at", "2026-01-01T00:05:00Z"), "the retried poll moved deleted_at")
+		})
+
+		It("records a fresh deleted_at when the GUID was provisioned again after the deletion on record", func() {
+			// The first life of this GUID was requested deleted and deleted.
+			// The second life was provisioned later, and the delete_requested_at
+			// write of its own deprovision failed.
+			mergeMetadata(map[string]interface{}{
+				"delete_requested_at":    "2026-01-01T00:00:00Z",
+				"deleted_at":             "2026-01-01T00:05:00Z",
+				"provision_requested_at": "2026-02-01T00:00:00Z",
+			})
+
+			response, err := poll(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateSucceeded))
+			Expect(recordedDeletedAt()).To(BeTemporally(">", time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)), "the deletion of the earlier use of this GUID was kept as this one's")
+		})
+
+		It("records a fresh deleted_at when only the index dates the deprovision after the deletion on record", func() {
+			indexWithDeprovisionRequest("2026-02-01T00:00:00Z")
+			mergeMetadata(map[string]interface{}{
+				"delete_requested_at": "2026-01-01T00:00:00Z",
+				"deleted_at":          "2026-01-01T00:05:00Z",
+			})
+
+			response, err := poll(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateSucceeded))
+			Expect(recordedDeletedAt()).To(BeTemporally(">", time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)), "the index's deprovision request was not taken into account")
+		})
+
+		It("keeps a deleted_at when no lifecycle start is on record", func() {
+			mergeMetadata(map[string]interface{}{
+				"deleted_at": "2026-01-01T00:05:00Z",
+			})
+
+			response, err := poll(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateSucceeded))
+			Expect(readSecret(instanceID + "/metadata")).To(HaveKeyWithValue("deleted_at", "2026-01-01T00:05:00Z"))
 		})
 
 		It("answers succeeded once the removal lands, although the poll's context ends after the director confirms the deletion", func() {

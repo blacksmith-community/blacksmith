@@ -2818,13 +2818,18 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 
 	deletedAt := time.Now()
 
-	recordCtx, cancel := recordContext(ctx)
-	defer cancel()
+	// The metadata read, the index read, and the metadata write each run
+	// under a bound of their own, so a stalled read cannot use up the time
+	// the deleted_at write needs.
+	readCtx, cancelRead := recordContext(ctx)
 
 	// Get existing metadata
 	var metadata map[string]interface{}
 
-	exists, err := b.Vault.Get(recordCtx, instanceID+"/metadata", &metadata)
+	exists, err := b.Vault.Get(readCtx, instanceID+"/metadata", &metadata)
+
+	cancelRead()
+
 	if err != nil {
 		// A fresh map written over metadata that could not be read would
 		// erase the history and every timestamp already recorded.
@@ -2840,7 +2845,12 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 	// A poll that comes back after a failed index removal reaches this point
 	// again. The first deleted_at is the time the deployment was confirmed
 	// gone, and a later one would only move it.
-	if deletionAlreadyRecorded(metadata) {
+	indexCtx, cancelIndex := recordContext(ctx)
+	indexEntry := b.lifecycleIndexEntry(indexCtx, instanceID, logger)
+
+	cancelIndex()
+
+	if deletionAlreadyRecorded(metadata, indexEntry) {
 		logger.Debug("deleted_at is already recorded for %s, keeping it", instanceID)
 
 		return
@@ -2850,7 +2860,10 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 	metadata["deleted_at"] = deletedAt.Format(time.RFC3339)
 
 	// Store updated metadata
-	err = b.Vault.Put(recordCtx, instanceID+"/metadata", metadata)
+	writeCtx, cancelWrite := recordContext(ctx)
+	defer cancelWrite()
+
+	err = b.Vault.Put(writeCtx, instanceID+"/metadata", metadata)
 	if err != nil {
 		logger.Error("failed to store deleted_at timestamp: %s", err)
 		// Continue anyway, this is non-fatal
@@ -2858,33 +2871,83 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 }
 
 // deletionAlreadyRecorded reports whether metadata holds the deleted_at of the
-// deprovision that is being finished. A deleted_at from before the latest
-// delete_requested_at belongs to an earlier use of the same instance GUID, and
-// the new deprovision still has to record its own. Metadata with no readable
-// delete_requested_at has no deprovision to tie a deleted_at to, so nothing
-// counts as recorded.
-func deletionAlreadyRecorded(metadata map[string]interface{}) bool {
-	deletedRaw, ok := metadata["deleted_at"].(string)
+// instance's current lifecycle, so a retried write must keep it. The current
+// lifecycle starts at the latest time found among delete_requested_at,
+// provision_requested_at, and created_at in metadata and
+// deprovision_requested_at in indexEntry. A deleted_at before that start
+// belongs to an earlier use of the same instance GUID, or to a delete whose
+// request time was never written, and a new one is recorded. A deleted_at at
+// or after it is kept. Times have one second resolution, so a deletion
+// confirmed in the second its request was made is kept too. When none of the
+// start times is on record there is nothing to date the deleted_at against,
+// and it is kept. indexEntry may be nil when the index could not be read.
+func deletionAlreadyRecorded(metadata, indexEntry map[string]interface{}) bool {
+	deletedAt, ok := recordedTime(metadata, "deleted_at")
 	if !ok {
 		return false
 	}
 
-	requestedRaw, ok := metadata["delete_requested_at"].(string)
-	if !ok {
-		return false
+	start, found := latestLifecycleStart(metadata, indexEntry)
+	if !found {
+		return true
 	}
 
-	deletedAt, err := time.Parse(time.RFC3339, deletedRaw)
+	return !deletedAt.Before(start)
+}
+
+// latestLifecycleStart returns the latest lifecycle start time on record in
+// metadata and indexEntry, and whether any was found. A field that is absent
+// or does not hold an RFC 3339 time is skipped.
+func latestLifecycleStart(metadata, indexEntry map[string]interface{}) (time.Time, bool) {
+	var (
+		latest time.Time
+		found  bool
+	)
+
+	consider := func(record map[string]interface{}, fields []string) {
+		for _, field := range fields {
+			recorded, ok := recordedTime(record, field)
+			if ok && (!found || recorded.After(latest)) {
+				latest, found = recorded, true
+			}
+		}
+	}
+
+	consider(metadata, metadataLifecycleFields)
+	consider(indexEntry, indexLifecycleFields)
+
+	return latest, found
+}
+
+// recordedTime returns the RFC 3339 time stored under field in record, and
+// whether there is one. A nil record has none.
+func recordedTime(record map[string]interface{}, field string) (time.Time, bool) {
+	raw, ok := record[field].(string)
+	if !ok || raw == "" {
+		return time.Time{}, false
+	}
+
+	recorded, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 
-	requestedAt, err := time.Parse(time.RFC3339, requestedRaw)
+	return recorded, true
+}
+
+// lifecycleIndexEntry returns the instance's index entry for dating its
+// current lifecycle. An index that cannot be read leaves the entry out, and
+// the lifecycle is dated from the metadata alone, because a failed read must
+// not stop the deleted_at write.
+func (b *Broker) lifecycleIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) map[string]interface{} {
+	entry, err := b.getExistingIndexEntry(ctx, instanceID, logger)
 	if err != nil {
-		return false
+		logger.Warning("could not read the index entry of %s, so deleted_at is dated from its metadata alone: %s", instanceID, err)
+
+		return nil
 	}
 
-	return !deletedAt.Before(requestedAt)
+	return entry
 }
 
 func (b *Broker) findPlanForBinding(details osbapi.BindRequest, logger logger.Logger) (*services.Plan, error) {

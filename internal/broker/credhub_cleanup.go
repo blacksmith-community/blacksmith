@@ -186,6 +186,17 @@ func (b *Broker) hasDeprovisionRequest(ctx context.Context, instanceID string) (
 // while its deploy is still running.
 var requestFollowsFields = []string{"created_at", "provision_requested_at"}
 
+// metadataLifecycleFields are the metadata fields whose times mark a start in
+// an instance's lifecycle when deleted_at is dated. A provision or deprovision
+// request starts one, and so does the completion of a provision. They are read
+// from <instanceID>/metadata.
+var metadataLifecycleFields = []string{"delete_requested_at", "provision_requested_at", "created_at"}
+
+// indexLifecycleFields are the index entry fields whose times mark a start in
+// an instance's lifecycle when deleted_at is dated. They are read from the
+// instance's entry in the 'db' index.
+var indexLifecycleFields = []string{"deprovision_requested_at"}
+
 // checkRequestFollowsCreation refuses a delete request that is older than a
 // provision time in the same metadata. A request with the same time as one is
 // accepted. The request is then a leftover of an earlier instance with the same

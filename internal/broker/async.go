@@ -622,7 +622,12 @@ func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
 	// The first deleted_at is the time the deployment was confirmed gone. A
 	// poll that finds the entry still indexed reaches the broker's own write,
 	// and neither may move it.
-	if deletionAlreadyRecorded(metadata) {
+	indexCtx, cancelIndex := recordContext(ctx)
+	indexEntry := d.broker.lifecycleIndexEntry(indexCtx, d.instanceID, d.logger)
+
+	cancelIndex()
+
+	if deletionAlreadyRecorded(metadata, indexEntry) {
 		d.logger.Debug("deleted_at is already recorded for %s, keeping it", d.instanceID)
 
 		return
