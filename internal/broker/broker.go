@@ -2132,29 +2132,32 @@ func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string,
 	return b.updateIndexTimestamp(recordCtx, instanceID, createdAt, logger)
 }
 
+// updateIndexTimestamp sets created_at on the instance's index entry. The
+// lookup and the write happen under one hold of the index lock, so a change
+// made to the entry meanwhile, such as the vm-monitor's deleted mark, is not
+// saved over. An instance missing from the index is an error, and an entry
+// that is not a map is left alone. A failed read or save of the index is
+// returned for the caller to log.
 func (b *Broker) updateIndexTimestamp(ctx context.Context, instanceID string, createdAt time.Time, logger logger.Logger) error {
 	logger.Debug("updating index with created_at timestamp")
 
-	idx, err := b.Vault.GetIndex(ctx, "db")
+	err := b.Vault.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
+		raw, exists := entries[instanceID]
+		if !exists {
+			return false, fmt.Errorf("failed to lookup instance in index: %w: '%s'", vaultPkg.ErrKeyNotFoundInIndex, instanceID)
+		}
+
+		data, ok := raw.(map[string]interface{})
+		if !ok {
+			return false, nil
+		}
+
+		data["created_at"] = createdAt.Format(time.RFC3339)
+
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to get vault index: %w", err)
-	}
-
-	raw, err := idx.Lookup(instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to lookup instance in index: %w", err)
-	}
-
-	data, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil
-	}
-
-	data["created_at"] = createdAt.Format(time.RFC3339)
-
-	err = b.Vault.Index(ctx, instanceID, data)
-	if err != nil {
-		logger.Error("failed to index service instance: %s", err)
+		return fmt.Errorf("failed to record created_at in the index entry for %s: %w", instanceID, err)
 	}
 
 	return nil
