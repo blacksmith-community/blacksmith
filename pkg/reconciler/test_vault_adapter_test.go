@@ -28,6 +28,9 @@ type RealTestVault struct {
 	getCalls []string
 	putCalls []string
 	errors   map[string]error
+
+	// indexMu serializes UpdateIndex calls, as the broker's vault does.
+	indexMu sync.Mutex
 }
 
 // NewTestVault creates a new adapter backed by the shared suite Vault.
@@ -117,6 +120,35 @@ func (v *RealTestVault) Put(path string, secret map[string]interface{}) error {
 	}
 
 	return nil
+}
+
+// UpdateIndex runs change on the "db" index under indexMu and saves it when
+// change reports a change. A missing index reads as an empty one.
+func (v *RealTestVault) UpdateIndex(_ context.Context, change func(index map[string]interface{}) (bool, error)) error {
+	return v.updateIndexWith(change, v.Put)
+}
+
+// updateIndexWith is UpdateIndex with the save made through put, so a double
+// that embeds RealTestVault can fail the save with its own Put.
+func (v *RealTestVault) updateIndexWith(change func(index map[string]interface{}) (bool, error), put func(path string, secret map[string]interface{}) error) error {
+	v.indexMu.Lock()
+	defer v.indexMu.Unlock()
+
+	index, err := v.Get("db")
+	if err != nil && !errors.Is(err, ErrSecretNotFound) {
+		return err
+	}
+
+	if index == nil {
+		index = map[string]interface{}{}
+	}
+
+	changed, err := change(index)
+	if err != nil || !changed {
+		return err
+	}
+
+	return put("db", index)
 }
 
 func (v *RealTestVault) GetSecret(path string) (map[string]interface{}, error) {

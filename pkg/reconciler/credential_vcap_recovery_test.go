@@ -94,6 +94,20 @@ func (v *vcapTestVault) DeleteSecret(path string) error {
 }
 func (v *vcapTestVault) ListSecrets(path string) ([]string, error) { return []string{}, nil }
 
+func (v *vcapTestVault) UpdateIndex(_ context.Context, change func(index map[string]interface{}) (bool, error)) error {
+	index, ok := v.data["db"]
+	if !ok {
+		index = map[string]interface{}{}
+	}
+
+	changed, err := change(index)
+	if err != nil || !changed {
+		return err
+	}
+
+	return v.Put("db", index)
+}
+
 //nolint:funlen // This test function is intentionally long for comprehensive testing
 func TestVCAPRecovery_RabbitMQ_Success(t *testing.T) {
 	t.Parallel()

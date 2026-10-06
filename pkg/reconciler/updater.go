@@ -598,26 +598,21 @@ func (u *VaultUpdater) UpdateIndex(instanceID string, data map[string]interface{
 		return ErrVaultNotExpectedType
 	}
 
-	// Get the index from vault at the canonical path
-	indexPath := "db"
+	// The change runs under the vault's index lock, so it cannot drop or be
+	// dropped by a broker index write made at the same time. A failed read
+	// of the index fails the update instead of saving over it.
+	err := vault.UpdateIndex(context.Background(), func(indexData map[string]interface{}) (bool, error) {
+		if data == nil {
+			_, exists := indexData[instanceID]
+			delete(indexData, instanceID)
 
-	indexData, err := vault.Get(indexPath)
-	if err != nil || indexData == nil {
-		// If index doesn't exist, create it
-		indexData = make(map[string]interface{})
-	}
+			return exists, nil
+		}
 
-	// Update the index
-	if data == nil {
-		// Delete the entry
-		delete(indexData, instanceID)
-	} else {
-		// Add/update the entry
 		indexData[instanceID] = data
-	}
 
-	// Save the index back to vault
-	err = vault.Put(indexPath, indexData)
+		return true, nil
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update vault index: %w", err)
 	}

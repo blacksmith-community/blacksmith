@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -45,33 +46,15 @@ func NewIndexSynchronizer(vault interface{}, logger Logger) *IndexSynchronizer {
 func (s *IndexSynchronizer) CleanupDeletedInstances(ctx context.Context, dryRun bool) (int, error) {
 	s.logger.Infof("Starting cleanup of deleted instances (dryRun=%v)", dryRun)
 
-	idx, err := s.GetVaultIndex()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get index for cleanup: %w", err)
-	}
-
-	var toDelete []string
-	for instanceID, data := range idx {
-		dataMap, validMap := data.(map[string]interface{})
-		if !validMap {
-			continue
-		}
-
-		// Only cleanup instances that are explicitly marked as cleanup_eligible
-		if eligible, ok := dataMap["cleanup_eligible"].(bool); ok && eligible {
-			toDelete = append(toDelete, instanceID)
-		}
-	}
-
-	if len(toDelete) == 0 {
-		s.logger.Infof("No instances eligible for cleanup")
-
-		return 0, nil
-	}
-
-	s.logger.Infof("Found %d instances eligible for cleanup", len(toDelete))
-
 	if dryRun {
+		idx, err := s.GetVaultIndex()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get index for cleanup: %w", err)
+		}
+
+		toDelete := cleanupEligibleIDs(idx)
+		s.logger.Infof("Found %d instances eligible for cleanup", len(toDelete))
+
 		for _, id := range toDelete {
 			if data, ok := idx[id].(map[string]interface{}); ok {
 				s.logger.Infof("Would delete: %s (deleted_at: %v, days_deleted: %v)",
@@ -82,56 +65,81 @@ func (s *IndexSynchronizer) CleanupDeletedInstances(ctx context.Context, dryRun 
 		return len(toDelete), nil
 	}
 
-	// Actually delete the instances
-	deletedCount := 0
+	var removed []string
 
-	for _, id := range toDelete {
-		delete(idx, id)
+	err := s.updateVaultIndex(ctx, func(idx map[string]interface{}) (bool, error) {
+		removed = cleanupEligibleIDs(idx)
+		for _, id := range removed {
+			delete(idx, id)
+		}
 
-		deletedCount++
+		return len(removed) > 0, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to clean up deleted instances: %w", err)
+	}
 
+	if len(removed) == 0 {
+		s.logger.Infof("No instances eligible for cleanup")
+
+		return 0, nil
+	}
+
+	for _, id := range removed {
 		s.logger.Infof("Removed instance %s from index", id)
 	}
 
-	// Save the updated index
-	if deletedCount > 0 {
-		err = s.SaveVaultIndex(idx)
-		if err != nil {
-			return 0, fmt.Errorf("failed to save index after cleanup: %w", err)
+	s.logger.Infof("Successfully cleaned up %d deleted instances", len(removed))
+
+	return len(removed), nil
+}
+
+// cleanupEligibleIDs lists the index entries explicitly marked
+// cleanup_eligible.
+func cleanupEligibleIDs(idx map[string]interface{}) []string {
+	var eligibleIDs []string
+
+	for instanceID, data := range idx {
+		dataMap, validMap := data.(map[string]interface{})
+		if !validMap {
+			continue
+		}
+
+		if eligible, ok := dataMap["cleanup_eligible"].(bool); ok && eligible {
+			eligibleIDs = append(eligibleIDs, instanceID)
 		}
 	}
 
-	s.logger.Infof("Successfully cleaned up %d deleted instances", deletedCount)
-
-	return deletedCount, nil
+	return eligibleIDs
 }
 
 // SyncIndex synchronizes the vault index with reconciled instances.
 func (s *IndexSynchronizer) SyncIndex(ctx context.Context, instances []InstanceData) error {
 	s.logger.Debugf("Synchronizing index with %d instances", len(instances))
 
-	idx, err := s.GetVaultIndex()
+	var (
+		idx           map[string]interface{}
+		startCount    int
+		nilCount      int
+		stats         syncStats
+		reconciledMap = s.buildReconciledMap(instances)
+	)
+
+	err := s.updateVaultIndex(ctx, func(current map[string]interface{}) (bool, error) {
+		idx, startCount = current, len(current)
+		nilCount = s.cleanupNilEntries(current)
+		stats = s.updateIndexWithInstances(current, instances)
+		stats.orphanCount = s.markOrphanedInstances(current, reconciledMap)
+		stats.cleanupCount = s.markStaleOrphans(current)
+
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to get index: %w", err)
+		return fmt.Errorf("failed to sync index: %w", err)
 	}
 
-	startCount := len(idx)
-	s.logger.Debugf("Current index has %d entries", startCount)
-
-	// Clean up any nil entries first
-	nilCount := s.cleanupNilEntries(idx)
 	if nilCount > 0 {
 		s.logger.Warningf("Cleaned up %d nil entries from index", nilCount)
-	}
-
-	reconciledMap := s.buildReconciledMap(instances)
-	stats := s.updateIndexWithInstances(idx, instances)
-	stats.orphanCount = s.markOrphanedInstances(idx, reconciledMap)
-	stats.cleanupCount = s.markStaleOrphans(idx)
-
-	err = s.SaveVaultIndex(idx)
-	if err != nil {
-		return fmt.Errorf("failed to save index: %w", err)
 	}
 
 	s.logger.Infof("Index synchronized successfully: initial=%d, nil-cleaned=%d, updated=%d, added=%d, unclaimed=%d, orphaned=%d, stale=%d, final=%d",
@@ -247,35 +255,22 @@ func (s *IndexSynchronizer) GetVaultIndex() (map[string]interface{}, error) {
 		return nil, ErrVaultInterfaceNotAvailable
 	}
 
+	// A missing index is an empty one, as it is to the broker, which deletes
+	// the key when it removes the last entry. Nothing is written here: an
+	// empty index saved from a read could replace entries written meanwhile.
 	data, err := v.Get("db")
 	if err != nil {
 		if err.Error() == "vault key not found" {
-			s.logger.Infof("Vault index key 'db' does not exist, initializing empty index")
+			s.logger.Debugf("Vault index key 'db' does not exist, reading it as empty")
 
-			emptyIndex := make(map[string]interface{})
-
-			err := s.SaveVaultIndex(emptyIndex)
-			if err != nil {
-				return nil, fmt.Errorf("failed to initialize vault index: %w", err)
-			}
-
-			return emptyIndex, nil
+			return make(map[string]interface{}), nil
 		}
 
 		return nil, fmt.Errorf("failed to get index from vault: %w", err)
 	}
 
 	if data == nil {
-		s.logger.Infof("Vault returned nil data for 'db' key, initializing empty index")
-
-		emptyIndex := make(map[string]interface{})
-
-		err := s.SaveVaultIndex(emptyIndex)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize vault index: %w", err)
-		}
-
-		return emptyIndex, nil
+		return make(map[string]interface{}), nil
 	}
 
 	return data, nil
@@ -284,14 +279,33 @@ func (s *IndexSynchronizer) GetVaultIndex() (map[string]interface{}, error) {
 func (s *IndexSynchronizer) SaveVaultIndex(idx map[string]interface{}) error {
 	s.logger.Debugf("Saving vault index with %d entries", len(idx))
 
+	err := s.updateVaultIndex(context.Background(), func(current map[string]interface{}) (bool, error) {
+		clear(current)
+		maps.Copy(current, idx)
+
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save index to vault: %w", err)
+	}
+
+	return nil
+}
+
+// updateVaultIndex runs change on the index as one read-modify-write under
+// the vault's index lock, the one the broker's own index writes take, so
+// neither side can save over a change the other made in between. change
+// may run more than once, each time on a fresh read, and must not keep
+// state from an earlier call.
+func (s *IndexSynchronizer) updateVaultIndex(ctx context.Context, change func(idx map[string]interface{}) (bool, error)) error {
 	v, ok := s.vault.(VaultInterface)
 	if !ok || v == nil {
 		return ErrVaultInterfaceNotAvailable
 	}
 
-	err := v.Put("db", idx)
+	err := v.UpdateIndex(ctx, change)
 	if err != nil {
-		return fmt.Errorf("failed to save index to vault: %w", err)
+		return fmt.Errorf("failed to update index in vault: %w", err)
 	}
 
 	return nil
@@ -726,32 +740,35 @@ func (s *IndexSynchronizer) validateDeploymentName(instanceID string, dataMap ma
 func (s *IndexSynchronizer) SyncIndexWithValidation(ctx context.Context, instances []InstanceData, deploymentNames map[string]bool) error {
 	s.logger.Debugf("Synchronizing index with %d instances and %d known deployments", len(instances), len(deploymentNames))
 
-	idx, err := s.GetVaultIndex()
+	var (
+		idx           map[string]interface{}
+		startCount    int
+		nilCount      int
+		cleanupCount  int
+		stats         syncStats
+		orphanStats   orphanProcessingStats
+		reconciledMap = s.buildReconciledMap(instances)
+	)
+
+	err := s.updateVaultIndex(ctx, func(current map[string]interface{}) (bool, error) {
+		idx, startCount = current, len(current)
+		nilCount = s.cleanupNilEntries(current)
+		stats = s.updateIndexWithInstances(current, instances)
+
+		// Process orphan logic with deployment validation
+		orphanStats = s.processOrphansWithValidation(current, reconciledMap, deploymentNames)
+
+		// Cleanup old orphans (24+ hours or 24+ checks)
+		cleanupCount = s.cleanupStaleOrphans(current)
+
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to get index: %w", err)
+		return fmt.Errorf("failed to sync index: %w", err)
 	}
 
-	startCount := len(idx)
-	s.logger.Debugf("Current index has %d entries", startCount)
-
-	// Clean up any nil entries first
-	nilCount := s.cleanupNilEntries(idx)
 	if nilCount > 0 {
 		s.logger.Warningf("Cleaned up %d nil entries from index", nilCount)
-	}
-
-	reconciledMap := s.buildReconciledMap(instances)
-	stats := s.updateIndexWithInstances(idx, instances)
-
-	// Process orphan logic with deployment validation
-	orphanStats := s.processOrphansWithValidation(idx, reconciledMap, deploymentNames)
-
-	// Cleanup old orphans (24+ hours or 24+ checks)
-	cleanupCount := s.cleanupStaleOrphans(idx)
-
-	err = s.SaveVaultIndex(idx)
-	if err != nil {
-		return fmt.Errorf("failed to save index: %w", err)
 	}
 
 	s.logger.Infof("Index synchronized: initial=%d, nil-cleaned=%d, updated=%d, added=%d, unclaimed=%d, orphaned=%d, un-orphaned=%d, cleaned=%d, final=%d",
@@ -925,11 +942,23 @@ func (s *IndexSynchronizer) cleanupStaleOrphans(idx map[string]interface{}) int 
 func (s *IndexSynchronizer) ResetOrphanTimers() (int, error) {
 	s.logger.Infof("Resetting orphan timers on startup")
 
-	idx, err := s.GetVaultIndex()
+	count := 0
+
+	err := s.updateVaultIndex(context.Background(), func(idx map[string]interface{}) (bool, error) {
+		count = resetOrphanTimers(idx, s.logger)
+
+		return count > 0, nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to get index: %w", err)
+		return 0, fmt.Errorf("failed to reset orphan timers: %w", err)
 	}
 
+	return count, nil
+}
+
+// resetOrphanTimers restarts the orphan clock of every orphaned entry in idx
+// and returns how many it reset.
+func resetOrphanTimers(idx map[string]interface{}, logger Logger) int {
 	count := 0
 	now := time.Now().Format(time.RFC3339)
 
@@ -953,16 +982,9 @@ func (s *IndexSynchronizer) ResetOrphanTimers() (int, error) {
 		delete(dataMap, "stale_since")
 		delete(dataMap, "days_orphaned")
 
-		s.logger.Debugf("Reset orphan timer for instance %s", instanceID)
+		logger.Debugf("Reset orphan timer for instance %s", instanceID)
 		count++
 	}
 
-	if count > 0 {
-		err = s.SaveVaultIndex(idx)
-		if err != nil {
-			return 0, fmt.Errorf("failed to save index after resetting orphan timers: %w", err)
-		}
-	}
-
-	return count, nil
+	return count
 }

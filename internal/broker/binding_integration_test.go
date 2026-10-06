@@ -89,6 +89,15 @@ func (v *vaultInterfaceAdapter) DeleteSecret(path string) error {
 	return nil
 }
 
+func (v *vaultInterfaceAdapter) UpdateIndex(ctx context.Context, change func(index map[string]interface{}) (bool, error)) error {
+	err := v.client.UpdateIndex(ctx, change)
+	if err != nil {
+		return fmt.Errorf("failed to update the vault index: %w", err)
+	}
+
+	return nil
+}
+
 func (v *vaultInterfaceAdapter) ListSecrets(path string) ([]string, error) {
 	// ListSecrets is not exercised in these integration tests; return empty slice for compatibility.
 	return []string{}, nil

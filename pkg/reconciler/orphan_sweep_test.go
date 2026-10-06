@@ -453,6 +453,12 @@ func (v *sweepSaveFailingVault) Put(path string, secret map[string]interface{}) 
 	return v.RealTestVault.Put(path, secret)
 }
 
+// UpdateIndex saves through this double's Put, so the sweep's locked save is
+// refused too.
+func (v *sweepSaveFailingVault) UpdateIndex(_ context.Context, change func(index map[string]interface{}) (bool, error)) error {
+	return v.updateIndexWith(change, v.Put)
+}
+
 // recordingReconcilerLogger keeps every line the manager logs.
 type recordingReconcilerLogger struct {
 	mu    sync.Mutex
@@ -770,5 +776,44 @@ func TestCredentialHooks_StartLogsTheWiring(t *testing.T) {
 				t.Fatalf("expected %q in the startup log, got:\n%s", testCase.want, logger.output())
 			}
 		})
+	}
+}
+
+// The sweep asks the director before it takes the index lock. An entry that
+// changes while it asks is kept, and an entry added meanwhile survives the
+// save.
+func TestOrphanSweep_KeepsChangesMadeWhileItAsksTheDirector(t *testing.T) {
+	t.Parallel()
+
+	const addedID = "00000000-0000-4000-8000-00000000beef"
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+		err := fixture.vault.UpdateIndex(context.Background(), func(index map[string]interface{}) (bool, error) {
+			zombie, ok := index[sweepZombieID].(map[string]interface{})
+			if !ok {
+				return false, nil
+			}
+
+			zombie["delete_requested_at"] = time.Now().Format(time.RFC3339)
+			index[addedID] = map[string]interface{}{"service_id": "valkey", "plan_id": "standalone"}
+
+			return true, nil
+		})
+		if err != nil {
+			t.Errorf("failed to change the index during the sweep: %v", err)
+		}
+
+		return nil, nil //nolint:nilnil // no running task is a nil task without an error
+	}
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if !fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected entry %s, changed during the sweep, to be kept", sweepZombieID)
+	}
+
+	if !fixture.indexHas(t, addedID) {
+		t.Fatalf("expected entry %s, added during the sweep, to survive the sweep's save", addedID)
 	}
 }

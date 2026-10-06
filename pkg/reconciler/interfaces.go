@@ -227,6 +227,12 @@ type VaultInterface interface {
 	SetSecret(path string, secret map[string]interface{}) error
 	DeleteSecret(path string) error
 	ListSecrets(path string) ([]string, error)
+	// UpdateIndex runs change on the entries of the "db" index as one
+	// read-modify-write that no other index change through the same vault
+	// can interleave with, and saves the index when change reports that it
+	// changed something. change may run more than once, each time on a fresh
+	// read, and an error from it is returned with nothing saved.
+	UpdateIndex(ctx context.Context, change func(index map[string]interface{}) (bool, error)) error
 }
 
 // BindingCredentials represents credentials for a service binding.

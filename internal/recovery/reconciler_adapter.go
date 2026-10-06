@@ -688,6 +688,17 @@ func (v *vaultWrapper) Put(path string, secret map[string]interface{}) error {
 	return nil
 }
 
+// UpdateIndex changes the index under the lock the broker's own index writes
+// take, since the broker and the reconciler share one Vault value.
+func (v *vaultWrapper) UpdateIndex(ctx context.Context, change func(index map[string]interface{}) (bool, error)) error {
+	err := v.vault.UpdateIndex(ctx, change)
+	if err != nil {
+		return fmt.Errorf("vault index update failed: %w", err)
+	}
+
+	return nil
+}
+
 func (v *vaultWrapper) Get(path string) (map[string]interface{}, error) {
 	var data map[string]interface{}
 

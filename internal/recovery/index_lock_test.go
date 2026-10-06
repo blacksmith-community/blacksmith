@@ -1,0 +1,116 @@
+package recovery
+
+import (
+	"fmt"
+	"sync"
+	"testing"
+
+	internalVault "blacksmith/internal/vault"
+	"blacksmith/pkg/logger"
+	"blacksmith/pkg/reconciler"
+	"blacksmith/pkg/testutil"
+)
+
+// The reconciler gets the broker's own Vault value through vaultWrapper, so
+// its index writes and the broker's must serialize on one lock. Each writer
+// adds a different key at the same moment, and every key must survive.
+func TestReconcilerAndBrokerIndexWritesBothSurvive(t *testing.T) {
+	ctx := t.Context()
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start vault: %v", err)
+	}
+
+	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
+	wrapped := &vaultWrapper{vault: vaultClient}
+	log := &loggerWrapper{logger: logger.Get().Named("index-lock-test")}
+	updater := reconciler.NewVaultUpdater(wrapped, log, reconciler.BackupConfig{})
+	synchronizer := reconciler.NewIndexSynchronizer(wrapped, log)
+
+	const writers = 12
+
+	entry := func(id string) map[string]interface{} {
+		return map[string]interface{}{"service_id": "valkey", "plan_id": "standalone", "deployment_name": "standalone-" + id}
+	}
+
+	// The sync rewrites the entries of the instances it reconciled, so it
+	// gets entries of its own to update.
+	instances := make([]reconciler.InstanceData, 0, 4)
+
+	for i := range 4 {
+		id := fmt.Sprintf("synced-%d", i)
+
+		err = vaultClient.Index(ctx, id, entry(id))
+		if err != nil {
+			t.Fatalf("failed to seed %s: %v", id, err)
+		}
+
+		instances = append(instances, reconciler.InstanceData{
+			ID: id, ServiceID: "valkey", PlanID: "standalone",
+			Deployment: reconciler.DeploymentDetail{DeploymentInfo: reconciler.DeploymentInfo{Name: "standalone-" + id}},
+		})
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 3*writers)
+
+	var group sync.WaitGroup
+
+	for i := range writers {
+		brokerID := fmt.Sprintf("broker-%d", i)
+		reconcilerID := fmt.Sprintf("reconciler-%d", i)
+
+		group.Go(func() {
+			<-start
+
+			errs <- vaultClient.Index(ctx, brokerID, entry(brokerID))
+		})
+		group.Go(func() {
+			<-start
+
+			errs <- updater.UpdateIndex(reconcilerID, entry(reconcilerID))
+		})
+		group.Go(func() {
+			<-start
+
+			errs <- synchronizer.SyncIndex(ctx, instances)
+		})
+	}
+
+	close(start)
+	group.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("an index write failed: %v", err)
+		}
+	}
+
+	idx, err := vaultClient.GetIndex(ctx, "db")
+	if err != nil {
+		t.Fatalf("failed to read the index: %v", err)
+	}
+
+	var lost []string
+
+	for i := range writers {
+		for _, id := range []string{fmt.Sprintf("broker-%d", i), fmt.Sprintf("reconciler-%d", i)} {
+			if _, ok := idx.Data[id]; !ok {
+				lost = append(lost, id)
+			}
+		}
+	}
+
+	for _, instance := range instances {
+		data, ok := idx.Data[instance.ID].(map[string]interface{})
+		if !ok || data["reconciled"] != true {
+			lost = append(lost, instance.ID+" (reconciled)")
+		}
+	}
+
+	if len(lost) > 0 {
+		t.Fatalf("%d of %d index writes were lost: %v", len(lost), 2*writers+len(instances), lost)
+	}
+}

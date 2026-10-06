@@ -3,7 +3,6 @@ package reconciler_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -168,7 +167,7 @@ func TestIndexSynchronizer_SyncIndex_GetError(t *testing.T) {
 	vault.SetError("db", errBoomGet)
 
 	err := synchronizer.SyncIndex(context.TODO(), []InstanceData{})
-	if err == nil || !strings.Contains(err.Error(), "failed to get index") {
+	if !errors.Is(err, errBoomGet) {
 		t.Fatalf("expected get error propagated, got: %v", err)
 	}
 }

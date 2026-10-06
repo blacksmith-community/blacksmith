@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"time"
 
@@ -72,34 +73,57 @@ func (r *ReconcilerManager) sweepOrphanedIndexEntries(ctx context.Context, recon
 		reconciledIDs[inst.ID] = true
 	}
 
-	removed := 0
-
-	var sweptDeployments []sweptDeployment
+	// The checks ask the director, so they run before the index lock is
+	// taken, against this read of the index.
+	candidates := make(map[string]interface{})
 
 	for instanceID, data := range idx {
-		if !r.shouldSweepIndexEntry(ctx, synchronizer, instanceID, data, reconciledIDs, deploymentNames) {
-			continue
+		if r.shouldSweepIndexEntry(ctx, synchronizer, instanceID, data, reconciledIDs, deploymentNames) {
+			candidates[instanceID] = data
 		}
-
-		// A tombstone that names no deployment has no CredHub path to clean.
-		dataMap, _ := data.(map[string]interface{})
-		if deploymentName := indexEntryDeploymentName(instanceID, dataMap); deploymentName != "" {
-			sweptDeployments = append(sweptDeployments, sweptDeployment{instanceID: instanceID, deploymentName: deploymentName})
-		}
-
-		delete(idx, instanceID)
-
-		removed++
 	}
 
-	if removed == 0 {
+	if len(candidates) == 0 {
 		return 0
 	}
 
-	err = synchronizer.SaveVaultIndex(idx)
+	var (
+		removed          int
+		sweptDeployments []sweptDeployment
+	)
+
+	err = synchronizer.updateVaultIndex(ctx, func(current map[string]interface{}) (bool, error) {
+		removed, sweptDeployments = 0, nil
+
+		for instanceID, data := range candidates {
+			// An entry that changed after the checks, or is gone, is left
+			// for the next run to judge again.
+			if !reflect.DeepEqual(current[instanceID], data) {
+				r.logger.Infof("Orphan sweep: keeping %s, its index entry changed during the sweep", instanceID)
+
+				continue
+			}
+
+			// A tombstone that names no deployment has no CredHub path to clean.
+			dataMap, _ := data.(map[string]interface{})
+			if deploymentName := indexEntryDeploymentName(instanceID, dataMap); deploymentName != "" {
+				sweptDeployments = append(sweptDeployments, sweptDeployment{instanceID: instanceID, deploymentName: deploymentName})
+			}
+
+			delete(current, instanceID)
+
+			removed++
+		}
+
+		return removed > 0, nil
+	})
 	if err != nil {
 		r.logger.Errorf("Failed to save vault index after orphan sweep: %v", err)
 
+		return 0
+	}
+
+	if removed == 0 {
 		return 0
 	}
 
