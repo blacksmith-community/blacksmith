@@ -1,13 +1,12 @@
 package bosh_test
 
 import (
-	"encoding/pem"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/boshtest"
 )
 
 const basicAuthCredential = "admin"
@@ -19,30 +18,26 @@ func TestGetDeploymentDistinguishesEmptyManifestFromMissing(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
-	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		switch request.URL.Path {
 		case "/deployments/in-flight":
-			_, _ = writer.Write([]byte(`{"name":"in-flight","manifest":null,"releases":[],"stemcells":[],"teams":[]}`))
+			boshtest.WriteJSON(writer, http.StatusOK, map[string]interface{}{"name": "in-flight", "manifest": nil, "releases": []string{}, "stemcells": []string{}, "teams": []string{}})
 		case "/deployments/finished":
-			_, _ = writer.Write([]byte(`{"name":"finished","manifest":"name: finished\n","releases":[],"stemcells":[],"teams":[]}`))
+			boshtest.WriteJSON(writer, http.StatusOK, map[string]interface{}{"name": "finished", "manifest": "name: finished\n", "releases": []string{}, "stemcells": []string{}, "teams": []string{}})
 		case "/deployments/missing":
-			writer.WriteHeader(http.StatusNotFound)
-			_, _ = writer.Write([]byte(`{"code":70000,"description":"Deployment 'missing' doesn't exist"}`))
+			boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment 'missing' doesn't exist")
 		default:
-			writer.WriteHeader(http.StatusNotFound)
+			return false
 		}
-	}))
-	defer server.Close()
 
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+		return true
+	})
 
 	director, err := bosh.NewDirectorAdapter(bosh.Config{
 		Address:  server.URL,
 		Username: basicAuthCredential,
 		Password: basicAuthCredential,
-		CACert:   string(caPEM),
+		CACert:   server.CACert,
 	})
 	if err != nil {
 		t.Fatalf("failed to create director adapter: %v", err)

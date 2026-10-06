@@ -12,6 +12,9 @@ const (
 	defaultConnectTimeout = 30 * time.Second
 	defaultMaxRetries     = 3
 	defaultRetryInterval  = 5 * time.Second
+	// defaultRequestTimeout bounds one request to the director when
+	// bosh.request_timeout is not set.
+	defaultRequestTimeout = 60 * time.Second
 )
 
 // Static error variables to satisfy err113.
@@ -54,6 +57,10 @@ func (f *Factory) New(config Config) (*DirectorAdapter, error) {
 		config.RetryInterval = defaultRetryInterval
 	}
 
+	if config.RequestTimeout == 0 {
+		config.RequestTimeout = defaultRequestTimeout
+	}
+
 	// Always use the BOSH CLI director implementation
 	director, err := NewDirectorAdapter(config)
 	if err != nil {
@@ -86,6 +93,7 @@ func CreateDirectorFromLegacyConfig(address, username, password string, skipSSL 
 		ConnectTimeout:    0,
 		MaxRetries:        0,
 		RetryInterval:     0,
+		RequestTimeout:    0,
 		EventLogger:       nil,
 		Logger:            nil,
 	}
@@ -93,8 +101,9 @@ func CreateDirectorFromLegacyConfig(address, username, password string, skipSSL 
 	return factory.New(config)
 }
 
-// CreateDirectorWithLogger creates a Director with a logger for  logging.
-func CreateDirectorWithLogger(address, username, password, caCert string, skipSSL bool, logger Logger) (*DirectorAdapter, error) {
+// CreateDirectorWithLogger creates a Director with a logger for  logging. A
+// zero requestTimeout means the default of 60 seconds.
+func CreateDirectorWithLogger(address, username, password, caCert string, skipSSL bool, requestTimeout time.Duration, logger Logger) (*DirectorAdapter, error) {
 	factory := NewDefaultFactory()
 
 	config := Config{
@@ -110,6 +119,7 @@ func CreateDirectorWithLogger(address, username, password, caCert string, skipSS
 		ConnectTimeout:    0,
 		MaxRetries:        0,
 		RetryInterval:     0,
+		RequestTimeout:    requestTimeout,
 		EventLogger:       nil,
 		Logger:            logger,
 	}
@@ -135,6 +145,7 @@ func CreateDirectorWithUAA(address string, uaaConfig *UAAConfig, skipSSL bool) (
 		ConnectTimeout:    0,
 		MaxRetries:        0,
 		RetryInterval:     0,
+		RequestTimeout:    0,
 		EventLogger:       nil,
 		Logger:            nil,
 	}
@@ -149,9 +160,9 @@ func CreateDirectorWithCertificate(address, caCert, clientCert, clientKey string
 }
 
 // CreatePooledDirector creates a Director with connection pooling.
-func CreatePooledDirector(address, username, password, caCert string, skipSSL bool, maxConnections int, timeout time.Duration, logger Logger) (*PooledDirector, error) {
+func CreatePooledDirector(address, username, password, caCert string, skipSSL bool, requestTimeout time.Duration, maxConnections int, timeout time.Duration, logger Logger) (*PooledDirector, error) {
 	// Create base director
-	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, logger)
+	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, requestTimeout, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -163,9 +174,9 @@ func CreatePooledDirector(address, username, password, caCert string, skipSSL bo
 // CreatePooledAndBatchDirectors creates both a PooledDirector for general use
 // and a BatchDirector for batch upgrade operations. They share the same base
 // director but have separate connection pools.
-func CreatePooledAndBatchDirectors(address, username, password, caCert string, skipSSL bool, maxConnections, maxBatchJobs int, timeout time.Duration, logger Logger) (*PooledDirector, *BatchDirector, error) {
+func CreatePooledAndBatchDirectors(address, username, password, caCert string, skipSSL bool, requestTimeout time.Duration, maxConnections, maxBatchJobs int, timeout time.Duration, logger Logger) (*PooledDirector, *BatchDirector, error) {
 	// Create base director (shared between both)
-	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, logger)
+	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, requestTimeout, logger)
 	if err != nil {
 		return nil, nil, err
 	}

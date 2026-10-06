@@ -24,6 +24,7 @@ import (
 	boshuaa "github.com/cloudfoundry/bosh-cli/v7/uaa"
 	boshlog "github.com/cloudfoundry/bosh-utils/logger"
 	boshuuid "github.com/cloudfoundry/bosh-utils/uuid"
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/geofffranks/spruce"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
@@ -145,9 +146,13 @@ func (da *DirectorAdapter) GetConfig(ctx context.Context, configType, configName
 
 type DirectorAdapter struct {
 	director boshdirector.Director
-	address  string // director address, for errors
-	logger   boshlog.Logger
-	log      Logger // Application logger for Info/Debug logging
+	// api is the boshapi client the methods that have moved off bosh-cli
+	// call.
+	api            boshapi.Client
+	address        string        // director address, for errors
+	requestTimeout time.Duration // the bosh.request_timeout in force, for errors
+	logger         boshlog.Logger
+	log            Logger // Application logger for Info/Debug logging
 }
 
 // bind returns the bosh-cli director for one call.
@@ -168,6 +173,15 @@ func NewDirectorAdapter(config Config) (Director, error) {
 
 	appLogger.Infof("Creating new BOSH director adapter")
 	appLogger.Debugf("Director address: %s", config.Address)
+
+	// Refuse a configuration with no credentials before anything dials the
+	// director.
+	auth, err := resolveDirectorAuth(config)
+	if err != nil {
+		appLogger.Errorf("Failed to resolve director credentials: %v", err)
+
+		return nil, err
+	}
 
 	logger := boshlog.NewLogger(boshlog.LevelError)
 
@@ -201,13 +215,24 @@ func NewDirectorAdapter(config Config) (Director, error) {
 		return nil, fmt.Errorf("failed to create director: %w", err)
 	}
 
+	appLogger.Debugf("Creating boshapi client")
+
+	api, err := newAPIClient(config, auth, appLogger)
+	if err != nil {
+		appLogger.Errorf("Failed to create boshapi client: %v", err)
+
+		return nil, err
+	}
+
 	appLogger.Infof("Successfully created BOSH director adapter")
 
 	return &DirectorAdapter{
-		director: director,
-		address:  config.Address,
-		logger:   logger,
-		log:      appLogger,
+		director:       director,
+		api:            api,
+		address:        config.Address,
+		requestTimeout: config.RequestTimeout,
+		logger:         logger,
+		log:            appLogger,
 	}, nil
 }
 
@@ -267,29 +292,35 @@ func (n *noOpLogger) Errorf(format string, args ...interface{}) {}
 func (d *DirectorAdapter) GetInfo(ctx context.Context) (_ *Info, err error) {
 	defer d.explainContext(ctx, "GetInfo", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting BOSH director information")
-	d.log.Debugf("Calling director.Infof()")
+	d.log.Debugf("Calling GET /info")
 
-	info, err := director.Info()
+	info, err := d.api.GetInfo(ctx)
 	if err != nil {
 		d.log.Errorf("Failed to get director info: %v", err)
 
-		return nil, fmt.Errorf("failed to get info: %w", err)
+		return nil, d.requestFailure("get info", err)
+	}
+
+	if info == nil {
+		d.log.Errorf("The director answered GET /info with no data")
+
+		return nil, d.requestFailure("get info", ErrEmptyDirectorAnswer)
 	}
 
 	d.log.Debugf("Director info retrieved - Name: %s, UUID: %s, Version: %s", info.Name, info.UUID, info.Version)
 
-	features := make(map[string]bool)
-	for feature, enabled := range info.Features {
-		features[feature] = enabled
+	// The director reports each feature as {"status": bool, "extras": {...}}.
+	// Features maps each feature name to its status, as bosh-cli does.
+	features := make(map[string]bool, len(info.Features))
+	for name, feature := range info.Features {
+		features[name] = feature.Status
 	}
 
 	var uaaURL string
 
-	if info.Auth.Type == AuthTypeUAA {
-		uaaURL, _ = info.Auth.Options["url"].(string)
+	if info.UserAuthentication.Type == AuthTypeUAA {
+		uaaURL = info.UserAuthentication.Options.URL
 	}
 
 	d.log.Infof("Successfully retrieved director info: %s (%s)", info.Name, info.Version)
@@ -305,49 +336,42 @@ func (d *DirectorAdapter) GetInfo(ctx context.Context) (_ *Info, err error) {
 	}, nil
 }
 
-// GetDeployments lists all deployments.
+// GetDeployments lists all deployments. The director's list answer carries
+// each deployment's releases, stemcells, teams, and cloud config state, so
+// one request is all it takes.
 func (d *DirectorAdapter) GetDeployments(ctx context.Context) (_ []Deployment, err error) {
 	defer d.explainContext(ctx, "GetDeployments", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Listing all deployments")
-	d.log.Debugf("Calling director.Deployments()")
+	d.log.Debugf("Calling GET /deployments")
 
-	deps, err := director.Deployments()
+	deps, err := d.api.Deployments().List(ctx, nil)
 	if err != nil {
 		d.log.Errorf("Failed to get deployments: %v", err)
 
-		return nil, fmt.Errorf("failed to get deployments: %w", err)
+		return nil, d.requestFailure("list deployments", err)
 	}
 
 	d.log.Debugf("Found %d deployments", len(deps))
 
 	deployments := make([]Deployment, len(deps))
 	for index, dep := range deps {
-		depReleases, _ := dep.Releases()
-
-		releases := make([]string, len(depReleases))
-		for j, rel := range depReleases {
-			releases[j] = fmt.Sprintf("%s/%s", rel.Name(), rel.Version())
+		releases := make([]string, len(dep.Releases))
+		for j, rel := range dep.Releases {
+			releases[j] = fmt.Sprintf("%s/%s", rel.Name, rel.Version)
 		}
 
-		depStemcells, _ := dep.Stemcells()
-
-		stemcells := make([]string, len(depStemcells))
-		for j, sc := range depStemcells {
-			stemcells[j] = fmt.Sprintf("%s/%s", sc.Name(), sc.Version())
+		stemcells := make([]string, len(dep.Stemcells))
+		for j, sc := range dep.Stemcells {
+			stemcells[j] = fmt.Sprintf("%s/%s", sc.Name, sc.Version)
 		}
-
-		cloudConfig, _ := dep.CloudConfig()
-		teams, _ := dep.Teams()
 
 		deployments[index] = Deployment{
-			Name:        dep.Name(),
-			CloudConfig: cloudConfig,
+			Name:        dep.Name,
+			CloudConfig: dep.CloudConfig,
 			Releases:    releases,
 			Stemcells:   stemcells,
-			Teams:       teams,
+			Teams:       dep.Teams,
 		}
 	}
 
@@ -356,66 +380,53 @@ func (d *DirectorAdapter) GetDeployments(ctx context.Context) (_ []Deployment, e
 	return deployments, nil
 }
 
-// GetDeployment retrieves a specific deployment.
+// GetDeployment retrieves a specific deployment. Only the director's own
+// "deployment not found" answer, its JSON error with code 70000, reports the
+// deployment as missing. A plain 404 is a routing problem, and it stays an
+// error that says so, so callers that act on a missing deployment never act
+// on one.
 func (d *DirectorAdapter) GetDeployment(ctx context.Context, name string) (_ *DeploymentDetail, err error) {
 	defer d.explainContext(ctx, "GetDeployment", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting deployment: %s", name)
-	d.log.Debugf("Finding deployment %s", name)
+	d.log.Debugf("Calling GET /deployments/%s", name)
 
-	dep, err := director.FindDeployment(name)
+	// A deployment whose first deploy is still running answers 200 with an
+	// empty manifest, which is an existing deployment, not a missing one.
+	deployment, err := d.api.Deployments().Get(ctx, name)
 	if err != nil {
-		if isDirectorNotFoundError(err) {
+		// Only the director's deployment-not-found code means the deployment
+		// does not exist. boshapi.IsNotFound also accepts the director's codes
+		// for a missing resource and a missing task, which say nothing about
+		// this deployment.
+		var apiErr *boshapi.APIError
+		if errors.As(err, &apiErr) && apiErr.Code == boshapi.ErrorCodeDeploymentNotFound {
 			d.log.Debugf("Deployment %s not found (expected during early provisioning stages)", name)
 
 			return nil, fmt.Errorf("%w: %s: %w", ErrDeploymentNotFound, name, err)
 		}
 
-		d.log.Errorf("Failed to find deployment %s: %v", name, err)
+		d.log.Errorf("Failed to get deployment %s: %v", name, err)
 
-		return nil, fmt.Errorf("failed to get deployment %s: %w", name, err)
+		return nil, d.requestFailure("get deployment "+name, err)
 	}
 
-	d.log.Debugf("Retrieving manifest for deployment %s", name)
+	if deployment == nil {
+		d.log.Errorf("The director answered GET /deployments/%s with no data", name)
 
-	// FindDeployment does not talk to the director; the GET /deployments/:name
-	// request happens here, so a 404 for a missing deployment surfaces from
-	// Manifest(). A deployment whose first deploy is still running answers 200
-	// with an empty manifest, which is an existing deployment, not a missing one.
-	manifest, err := dep.Manifest()
-	if err != nil {
-		if isDirectorNotFoundError(err) {
-			d.log.Debugf("Deployment %s not found (expected during early provisioning stages)", name)
-
-			return nil, fmt.Errorf("%w: %s: %w", ErrDeploymentNotFound, name, err)
-		}
-
-		d.log.Errorf("Failed to get manifest for deployment %s: %v", name, err)
-
-		return nil, fmt.Errorf("failed to get manifest for deployment %s: %w", name, err)
+		return nil, d.requestFailure("get deployment "+name, ErrEmptyDirectorAnswer)
 	}
 
-	if manifest == "" {
+	if deployment.Manifest == "" {
 		d.log.Infof("Successfully retrieved deployment %s (no manifest yet; a deploy is still in flight)", name)
 	} else {
-		d.log.Infof("Successfully retrieved deployment %s (manifest size: %d bytes)", name, len(manifest))
+		d.log.Infof("Successfully retrieved deployment %s (manifest size: %d bytes)", name, len(deployment.Manifest))
 	}
 
 	return &DeploymentDetail{
 		Name:     name,
-		Manifest: manifest,
+		Manifest: deployment.Manifest,
 	}, nil
-}
-
-// isDirectorNotFoundError reports whether a bosh-cli error is the director's
-// 404 for a missing deployment. bosh-cli does not export typed errors, so the
-// status code and the director's "doesn't exist" description are the only signals.
-func isDirectorNotFoundError(err error) bool {
-	errStr := err.Error()
-
-	return strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'")
 }
 
 // CreateDeployment creates a new deployment.
@@ -549,59 +560,37 @@ func (d *DirectorAdapter) GetDeploymentVMs(ctx context.Context, deployment strin
 	return vms, nil
 }
 
-// GetReleases retrieves all releases.
+// GetReleases retrieves all releases, each with every version the director
+// holds.
 func (d *DirectorAdapter) GetReleases(ctx context.Context) (_ []Release, err error) {
 	defer d.explainContext(ctx, "GetReleases", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting all releases")
-	d.log.Debugf("Calling director.Releases()")
+	d.log.Debugf("Calling GET /releases")
 
-	// Test basic connectivity first
-	info, err := director.Info()
-	if err != nil {
-		d.log.Errorf("Failed to get director info (auth test): %v", err)
-		d.log.Errorf("This might indicate an authentication issue")
-	} else {
-		d.log.Debugf("Director info test successful - User: %s, Name: %s", info.User, info.Name)
-		d.log.Debugf("Director authentication type: %s", info.Auth.Type)
-
-		switch info.Auth.Type {
-		case authTypeUAA:
-			if uaaURL, ok := info.Auth.Options["url"].(string); ok {
-				d.log.Debugf("Director is configured for UAA authentication at: %s", uaaURL)
-				d.log.Debugf("Using UAA client credentials for authentication")
-			}
-		case "basic":
-			d.log.Debugf("Director is configured for basic authentication")
-		}
-
-		if info.User == "" {
-			d.log.Debugf("Note: User field is empty in /info response - this is expected as /info doesn't require authentication")
-		}
-	}
-
-	releases, err := director.Releases()
+	releases, err := d.api.Releases().List(ctx)
 	if err != nil {
 		d.log.Errorf("Failed to get releases: %v", err)
 
-		return nil, fmt.Errorf("failed to get releases: %w", err)
+		return nil, d.requestFailure("list releases", err)
 	}
 
 	d.log.Debugf("Found %d releases", len(releases))
 
 	result := make([]Release, 0, len(releases))
 	for _, rel := range releases {
-		// Get the actual version string without the asterisk
-		result = append(result, Release{
-			Name: rel.Name(),
-			ReleaseVersions: []ReleaseVersion{
-				{
-					Version: rel.Version().String(),
-				},
-			},
-		})
+		versions := make([]ReleaseVersion, len(rel.ReleaseVersions))
+		for index, version := range rel.ReleaseVersions {
+			versions[index] = ReleaseVersion{
+				Version:            version.Version,
+				CommitHash:         version.CommitHash,
+				UncommittedChanges: version.UncommittedChanges,
+				CurrentlyDeployed:  version.CurrentlyDeployed,
+				JobNames:           version.JobNames,
+			}
+		}
+
+		result = append(result, Release{Name: rel.Name, ReleaseVersions: versions})
 	}
 
 	return result, nil
@@ -646,29 +635,32 @@ func (d *DirectorAdapter) UploadRelease(ctx context.Context, url, sha1 string) (
 func (d *DirectorAdapter) GetStemcells(ctx context.Context) (_ []Stemcell, err error) {
 	defer d.explainContext(ctx, "GetStemcells", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting all stemcells")
-	d.log.Debugf("Calling director.Stemcells()")
+	d.log.Debugf("Calling GET /stemcells")
 
-	stemcells, err := director.Stemcells()
+	stemcells, err := d.api.Stemcells().List(ctx)
 	if err != nil {
 		d.log.Errorf("Failed to get stemcells: %v", err)
 
-		return nil, fmt.Errorf("failed to get stemcells: %w", err)
+		return nil, d.requestFailure("list stemcells", err)
 	}
 
 	d.log.Debugf("Found %d stemcells", len(stemcells))
 
 	result := make([]Stemcell, len(stemcells))
 	for index, stemcell := range stemcells {
+		deployments := make([]string, len(stemcell.Deployments))
+		for j, deployment := range stemcell.Deployments {
+			deployments[j] = deployment.Name
+		}
+
 		result[index] = Stemcell{
-			Name:        stemcell.Name(),
-			Version:     stemcell.Version().String(),
-			OS:          stemcell.OSName(),
-			CID:         stemcell.CID(),
-			CPI:         stemcell.CPI(),
-			Deployments: []string{}, // Deployments not directly available
+			Name:        stemcell.Name,
+			Version:     stemcell.Version,
+			OS:          stemcell.OperatingSystem,
+			CID:         stemcell.CID,
+			CPI:         stemcell.CPI,
+			Deployments: deployments,
 		}
 	}
 
@@ -914,40 +906,32 @@ func (d *DirectorAdapter) GetTaskEvents(ctx context.Context, taskID int) (_ []Ta
 func (d *DirectorAdapter) GetEvents(ctx context.Context, deployment string) (_ []Event, err error) {
 	defer d.explainContext(ctx, "GetEvents", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting events for deployment: %s", deployment)
 	d.log.Debugf("Fetching events from BOSH director")
 
-	// Use the BOSH director's Events method to get deployment events
-	filter := boshdirector.EventsFilter{
-		Deployment: deployment,
-	}
-
-	directorEvents, err := director.Events(filter)
+	directorEvents, err := d.api.Events().List(ctx, &boshapi.EventListOptions{Deployment: deployment})
 	if err != nil {
 		d.log.Errorf("Failed to get events for deployment %s: %v", deployment, err)
 
-		return nil, fmt.Errorf("failed to get events for deployment %s: %w", deployment, err)
+		return nil, d.requestFailure("list events for deployment "+deployment, err)
 	}
 
 	// Convert director events to our Event type
 	events := make([]Event, 0, len(directorEvents))
 	for _, dirEvent := range directorEvents {
-		event := Event{
-			ID:         dirEvent.ID(),
-			Time:       dirEvent.Timestamp(),
-			User:       dirEvent.User(),
-			Action:     dirEvent.Action(),
-			ObjectType: dirEvent.ObjectType(),
-			ObjectName: dirEvent.ObjectName(),
-			TaskID:     dirEvent.TaskID(),
-			Deployment: dirEvent.DeploymentName(),
-			Instance:   dirEvent.Instance(),
-			Context:    fmt.Sprintf("%v", dirEvent.Context()),
-			Error:      dirEvent.Error(),
-		}
-		events = append(events, event)
+		events = append(events, Event{
+			ID:         dirEvent.ID,
+			Time:       time.Unix(dirEvent.Timestamp, 0).UTC(),
+			User:       dirEvent.User,
+			Action:     dirEvent.Action,
+			ObjectType: dirEvent.ObjectType,
+			ObjectName: dirEvent.ObjectName,
+			TaskID:     dirEvent.TaskID,
+			Deployment: dirEvent.DeploymentName,
+			Instance:   dirEvent.Instance,
+			Context:    fmt.Sprintf("%v", dirEvent.Context),
+			Error:      dirEvent.Error,
+		})
 	}
 
 	d.log.Infof("Successfully retrieved %d events for deployment %s", len(events), deployment)
@@ -2311,22 +2295,13 @@ func (d *DirectorAdapter) RecreateDeployment(ctx context.Context, name string, o
 func (d *DirectorAdapter) ListErrands(ctx context.Context, deployment string) (_ []Errand, err error) {
 	defer d.explainContext(ctx, "ListErrands", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Listing errands for deployment: %s", deployment)
 
-	dep, err := director.FindDeployment(deployment)
-	if err != nil {
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
-
-		return nil, fmt.Errorf("failed to find deployment: %w", err)
-	}
-
-	boshErrands, err := dep.Errands()
+	boshErrands, err := d.api.Errands().List(ctx, deployment)
 	if err != nil {
 		d.log.Errorf("Failed to list errands for deployment %s: %v", deployment, err)
 
-		return nil, fmt.Errorf("failed to list errands: %w", err)
+		return nil, d.requestFailure("list errands for deployment "+deployment, err)
 	}
 
 	// Convert BOSH errands to our format

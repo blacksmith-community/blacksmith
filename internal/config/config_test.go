@@ -367,3 +367,56 @@ func TestCredHubConfigConfigured(t *testing.T) {
 		t.Error("a fully set block must be configured")
 	}
 }
+
+// bosh.request_timeout is a number of seconds. It loads as written, stays 0
+// when it is absent so the BOSH factory applies its own default, and a
+// negative value is refused with a message that names the setting.
+func TestReadConfigReadsBOSHRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		setting string
+		want    int
+		wantErr error
+	}{
+		{name: "absent", setting: "", want: 0},
+		{name: "set", setting: "  request_timeout: 90\n", want: 90},
+		{name: "negative", setting: "  request_timeout: -5\n", wantErr: config.ErrBOSHRequestTimeoutNegative},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			raw := "vault:\n  address: https://vault.example.com:8200\nbosh:\n  address: https://10.0.0.6:25555\n  username: admin\n  password: bosh-secret\n" + testCase.setting
+			path := filepath.Join(t.TempDir(), "blacksmith.yml")
+
+			err := os.WriteFile(path, []byte(raw), 0o600)
+			if err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			cfg, err := config.ReadConfig(path)
+			if testCase.wantErr != nil {
+				if !errors.Is(err, testCase.wantErr) {
+					t.Fatalf("expected %v, got %v", testCase.wantErr, err)
+				}
+
+				if !strings.Contains(err.Error(), "-5") {
+					t.Errorf("expected the error to name the value -5, got %q", err.Error())
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("ReadConfig: %v", err)
+			}
+
+			if cfg.BOSH.RequestTimeout != testCase.want {
+				t.Errorf("RequestTimeout = %d, want %d", cfg.BOSH.RequestTimeout, testCase.want)
+			}
+		})
+	}
+}

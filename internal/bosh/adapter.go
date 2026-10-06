@@ -359,6 +359,11 @@ type Config struct {
 	MaxRetries     int
 	RetryInterval  time.Duration
 
+	// RequestTimeout bounds one HTTP request to the director, and the wait
+	// for the director to start answering it. Zero means 60 seconds. It is
+	// the bosh.request_timeout setting.
+	RequestTimeout time.Duration
+
 	// Logging
 	EventLogger EventLogger // For event logging (legacy)
 	Logger      Logger      // For Info/Debug/Error logging

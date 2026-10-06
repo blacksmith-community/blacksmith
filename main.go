@@ -415,6 +415,7 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDi
 		cfg.BOSH.Password,
 		cfg.BOSH.CACert,
 		cfg.BOSH.SkipSslValidation,
+		time.Duration(cfg.BOSH.RequestTimeout)*time.Second,
 		cfg.BOSH.MaxConnections,
 		cfg.BOSH.MaxBatchConnections,
 		time.Duration(cfg.BOSH.ConnectionTimeout)*time.Second,

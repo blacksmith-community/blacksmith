@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
 // DirectorCallError is the error a director call returns when its context
@@ -29,7 +31,11 @@ type DirectorCallError struct {
 func (e *DirectorCallError) Error() string {
 	var why string
 
+	var timeout *requestTimeoutError
+
 	switch {
+	case errors.As(e.Cause, &timeout):
+		why = e.Cause.Error()
 	case errors.Is(e.Cause, context.DeadlineExceeded) && !e.Deadline.IsZero():
 		why = "its deadline of " + e.Deadline.UTC().Format(time.RFC3339) + " passed before the director answered"
 	case errors.Is(e.Cause, context.DeadlineExceeded):
@@ -52,9 +58,11 @@ func (e *DirectorCallError) Unwrap() []error {
 // explainContext replaces a failed call's error with a DirectorCallError
 // when the call's context has ended, so the caller learns that the deadline
 // or a cancellation stopped the call rather than reading whatever the HTTP
-// layer said when its request was torn down.
+// layer said when its request was torn down. It does the same when the
+// caller's context is still live but the director gave no answer within the
+// bosh.request_timeout, so that the error names the setting that bounded it.
 func (d *DirectorAdapter) explainContext(ctx context.Context, operation string, err *error) {
-	if *err == nil || ctx.Err() == nil {
+	if *err == nil {
 		return
 	}
 
@@ -63,13 +71,27 @@ func (d *DirectorAdapter) explainContext(ctx context.Context, operation string, 
 		return
 	}
 
-	deadline, _ := ctx.Deadline()
+	if ctx.Err() != nil {
+		deadline, _ := ctx.Deadline()
 
-	*err = &DirectorCallError{
-		Operation: operation,
-		Director:  d.address,
-		Deadline:  deadline,
-		Cause:     ctx.Err(),
-		Err:       *err,
+		*err = &DirectorCallError{
+			Operation: operation,
+			Director:  d.address,
+			Deadline:  deadline,
+			Cause:     ctx.Err(),
+			Err:       *err,
+		}
+
+		return
+	}
+
+	var transport *boshapi.TransportError
+	if errors.As(*err, &transport) && transport.Timeout {
+		*err = &DirectorCallError{
+			Operation: operation,
+			Director:  d.address,
+			Cause:     &requestTimeoutError{timeout: d.requestTimeout, attempts: transport.Attempts},
+			Err:       *err,
+		}
 	}
 }

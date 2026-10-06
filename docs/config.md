@@ -385,6 +385,7 @@ bosh:
   network: "blacksmith"                                 # Optional
   max_connections: 4                                    # Optional (connection pool size)
   connection_timeout: 300                               # Optional (timeout in seconds)
+  request_timeout: 60                                   # Optional (timeout in seconds)
   stemcells:                                            # Optional
     - name: "bosh-warden-boshlite-ubuntu-noble-go_agent"
       version: "1.25"
@@ -463,6 +464,11 @@ Connection pooling helps improve stability and performance when Blacksmith needs
 Timeout in seconds for acquiring a connection slot from the pool. When all connections are in use, new requests will wait up to this duration for a connection to become available. If the timeout is exceeded, the operation will fail with a timeout error.
 
 This setting helps prevent operations from waiting indefinitely when the BOSH director is under heavy load or experiencing issues.
+
+#### `request_timeout` (integer)
+**Default:** `60` (1 minute)
+
+Timeout in seconds for one HTTP request to the BOSH director, which also bounds how long the director may take to start answering it. A request that gets no answer in that time is an attempt that failed. Blacksmith retries a read up to 3 times, each attempt with its own timeout, so a director that never answers can hold a read for four times this value, plus the wait between attempts. The retry count is fixed and has no setting in the `bosh` section. When the attempts are exhausted, the error names this setting, how many attempts timed out, and the director's address. A negative value is rejected when the configuration is read.
 
 ### Connection Pool Monitoring
 

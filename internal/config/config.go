@@ -21,6 +21,7 @@ var (
 	ErrBOSHAddressNotSet          = errors.New("BOSH address is not set")
 	ErrBOSHUsernameNotSet         = errors.New("BOSH username is not set")
 	ErrBOSHPasswordNotSet         = errors.New("BOSH password is not set")
+	ErrBOSHRequestTimeoutNegative = errors.New("bosh.request_timeout must not be negative")
 )
 
 type Config struct {
@@ -314,6 +315,7 @@ type BOSHConfig struct {
 	MaxConnections      int       `yaml:"max_connections"`       // Max concurrent BOSH API connections
 	MaxBatchConnections int       `yaml:"max_batch_connections"` // Max concurrent batch upgrade connections (separate pool)
 	ConnectionTimeout   int       `yaml:"connection_timeout"`    // Timeout waiting for connection slot (seconds)
+	RequestTimeout      int       `yaml:"request_timeout"`       // Timeout for one director HTTP request (seconds); 0 means 60
 	SSH                 SSHConfig `yaml:"ssh,omitempty"`         // Deprecated: Use top-level SSH config instead
 }
 
@@ -538,6 +540,12 @@ func setBOSHDefaults(config *Config) error {
 
 	if config.BOSH.ConnectionTimeout == 0 {
 		config.BOSH.ConnectionTimeout = 300 // Default 5 minutes timeout
+	}
+
+	// A request timeout of 0 stays 0, and the BOSH factory then applies its
+	// own default of 60 seconds.
+	if config.BOSH.RequestTimeout < 0 {
+		return fmt.Errorf("%w: it is %d, and it must be a number of seconds, or 0 for the default of 60", ErrBOSHRequestTimeoutNegative, config.BOSH.RequestTimeout)
 	}
 
 	return nil
