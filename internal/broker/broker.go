@@ -459,7 +459,13 @@ func (b *Broker) Deprovision(
 	// Record the deprovision as the instance's current operation before
 	// answering, so a poll that arrives right after the 202 is answered for
 	// this deprovision and not from the provision recorded before it.
-	err = b.Vault.TrackProgress(ctx, instanceID, operationTypeDeprovision, "Deprovision request accepted", 0, nil)
+	// The write runs detached from the request, because a request that ends
+	// here would otherwise leave the deprovision running with no record of it.
+	trackCtx, cancelTrack := recordContext(ctx)
+	err = b.Vault.TrackProgress(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted", 0, nil)
+
+	cancelTrack()
+
 	if err != nil {
 		logger.Error("failed to record the accepted deprovision in vault: %s", err)
 
@@ -936,12 +942,15 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 		"status":                   "deprovision_requested",
 	}
 
-	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil, logger)
 	if err != nil {
 		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
 	}
 
-	err = b.Vault.Index(ctx, instanceID, entry)
+	err = b.Vault.Index(recordCtx, instanceID, entry)
 	if err != nil {
 		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
 	}
@@ -1038,7 +1047,13 @@ func (b *Broker) extractContextFields(contextData map[string]any) map[string]str
 }
 
 func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, logger logger.Logger) (*vaultPkg.Instance, error) {
-	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
+	// Deprovision looks the instance up after it has recorded the request, so
+	// the lookup is detached as well, and a request that ends in between
+	// does not leave a recorded request behind with no answer.
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	instance, exists, err := b.Vault.FindInstance(recordCtx, instanceID)
 	if err != nil {
 		logger.Error("unable to retrieve instance details from vault index: %s", err)
 
@@ -1114,9 +1129,12 @@ func deploymentNameForInstance(instanceID string, instance *vaultPkg.Instance) s
 func (b *Broker) storeProvisionRequestedTimestamp(ctx context.Context, instanceID string, logger logger.Logger) error {
 	logger.Debug("storing provision_requested_at timestamp in Vault")
 
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
 	var metadata map[string]interface{}
 
-	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
+	exists, err := b.Vault.Get(recordCtx, instanceID+"/metadata", &metadata)
 	if err != nil {
 		logger.Error("failed to read %s/metadata before recording provision_requested_at: %s", instanceID, err)
 
@@ -1129,7 +1147,7 @@ func (b *Broker) storeProvisionRequestedTimestamp(ctx context.Context, instanceI
 
 	metadata["provision_requested_at"] = time.Now().Format(time.RFC3339)
 
-	err = b.Vault.Put(ctx, instanceID+"/metadata", metadata)
+	err = b.Vault.Put(recordCtx, instanceID+"/metadata", metadata)
 	if err != nil {
 		logger.Error("failed to store provision_requested_at in %s/metadata: %s", instanceID, err)
 
@@ -1144,10 +1162,15 @@ func (b *Broker) storeDeleteRequestedTimestamp(ctx context.Context, instanceID s
 
 	deleteRequestedAt := time.Now()
 
+	// The write must land even when the request has ended, because the
+	// CredHub cleanup refuses to run for an instance with no delete request.
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
 	// Get existing metadata
 	var metadata map[string]interface{}
 
-	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
+	exists, err := b.Vault.Get(recordCtx, instanceID+"/metadata", &metadata)
 	if err != nil {
 		// A fresh map written over metadata that could not be read would
 		// erase the history and every timestamp already recorded.
@@ -1164,7 +1187,7 @@ func (b *Broker) storeDeleteRequestedTimestamp(ctx context.Context, instanceID s
 	metadata["delete_requested_at"] = deleteRequestedAt.Format(time.RFC3339)
 
 	// Store updated metadata
-	err = b.Vault.Put(ctx, instanceID+"/metadata", metadata)
+	err = b.Vault.Put(recordCtx, instanceID+"/metadata", metadata)
 	if err != nil {
 		logger.Error("failed to store delete_requested_at timestamp: %s", err)
 		// Continue anyway, this is non-fatal
@@ -1209,7 +1232,12 @@ func (b *Broker) storeBindingCredentials(ctx context.Context, instanceID, bindin
 	path := fmt.Sprintf("%s/bindings/%s/credentials", instanceID, bindingID)
 	logger.Debug("Storing binding credentials in Vault", "path", path)
 
-	err := b.Vault.Put(ctx, path, credentials)
+	// The dynamic user these credentials name already exists by now, so the
+	// write runs detached from the request that asked for the binding.
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.Put(recordCtx, path, credentials)
 	if err != nil {
 		logger.Error("Failed to store binding credentials for %s/%s: %s", instanceID, bindingID, err)
 
@@ -1457,7 +1485,10 @@ func (b *Broker) storeDeploymentNameInIndex(ctx context.Context, instanceID, dep
 		"deployment_name": deploymentName,
 	}
 
-	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, nil, logger)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil, logger)
 	if err != nil {
 		// Non-fatal, as a failed write is. The entry already in the index must
 		// not be replaced by one built without it.
@@ -1468,7 +1499,7 @@ func (b *Broker) storeDeploymentNameInIndex(ctx context.Context, instanceID, dep
 
 	entry["deployment_name"] = deploymentName
 
-	err = b.Vault.Index(ctx, instanceID, entry)
+	err = b.Vault.Index(recordCtx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to record deployment name in vault index: %s", err)
 		// Non-fatal: LastOperation falls back to deriving the name from the plan ID.
@@ -1496,14 +1527,20 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 		baseData["space_guid"] = details.SpaceGUID
 	}
 
-	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
+	// The accept path writes its records detached from the request, so a
+	// request that ends part way leaves complete records and not a stale
+	// "request_received" entry that counts against the plan limit.
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context, logger)
 	if err != nil {
 		logger.Error("failed to record service request in vault: %s", err)
 
 		return ErrFailedToTrackServiceRequestInVault
 	}
 
-	err = b.Vault.Index(ctx, instanceID, entry)
+	err = b.Vault.Index(recordCtx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to record service request in vault: %s", err)
 
@@ -1530,7 +1567,11 @@ func (b *Broker) validatePlan(ctx context.Context, instanceID string, details os
 	// Check service limits
 	logger.Debug("retrieving vault 'db' index (for tracking service usage)")
 
-	database, err := b.Vault.GetIndex(ctx, "db")
+	indexCtx, cancelIndex := recordContext(ctx)
+	database, err := b.Vault.GetIndex(indexCtx, "db")
+
+	cancelIndex()
+
 	if err != nil {
 		logger.Error("failed to get 'db' index out of the vault: %s", err)
 
@@ -1572,14 +1613,17 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 		baseData["space_guid"] = details.SpaceGUID
 	}
 
-	entry, err := b.buildIndexEntry(ctx, instanceID, baseData, details.Context, logger)
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context, logger)
 	if err != nil {
 		logger.Error("failed to update service status in vault index: %s", err)
 
 		return ErrFailedToUpdateServiceStatusInVault
 	}
 
-	err = b.Vault.Index(ctx, instanceID, entry)
+	err = b.Vault.Index(recordCtx, instanceID, entry)
 	if err != nil {
 		logger.Error("failed to update service status in vault index: %s", err)
 
@@ -1619,13 +1663,22 @@ func (b *Broker) storeDeploymentDetails(ctx context.Context, instanceID, deploym
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
 	logger.Debug("storing details at Vault path: %s", vaultPath)
 
-	err := b.Vault.Put(ctx, vaultPath, map[string]interface{}{
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.Put(recordCtx, vaultPath, map[string]interface{}{
 		"details": details,
 	})
 	if err != nil {
 		logger.Error("failed to store details in the vault at path %s: %s", vaultPath, err)
-		// Remove from index since we're failing
-		indexErr := b.Vault.Index(ctx, instanceID, nil)
+
+		// Remove from index since we're failing. The write may have failed
+		// because recordCtx's deadline ran out, and the cleanup would fail
+		// the same way on it, so it gets a bound of its own.
+		cleanupCtx, cleanupCancel := recordContext(ctx)
+		defer cleanupCancel()
+
+		indexErr := b.Vault.Index(cleanupCtx, instanceID, nil)
 		if indexErr != nil {
 			logger.Error("failed to remove instance from index: %s", indexErr)
 		}
@@ -1639,10 +1692,13 @@ func (b *Broker) storeDeploymentDetails(ctx context.Context, instanceID, deploym
 func (b *Broker) storeDeploymentInfo(ctx context.Context, instanceID, deploymentName string, details osbapi.ProvisionRequest, logger logger.Logger) {
 	deploymentInfo := b.buildDeploymentInfo(instanceID, deploymentName, details)
 
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
 	// Store deployment info at instance level
 	logger.Debug("storing deployment info at instance level: %s/deployment", instanceID)
 
-	err := b.Vault.Put(ctx, instanceID+"/deployment", deploymentInfo)
+	err := b.Vault.Put(recordCtx, instanceID+"/deployment", deploymentInfo)
 	if err != nil {
 		logger.Error("failed to store deployment info at instance level: %s", err)
 		// Continue anyway, this is not fatal
@@ -1653,7 +1709,7 @@ func (b *Broker) storeDeploymentInfo(ctx context.Context, instanceID, deployment
 
 	rootData := b.buildRootData(deploymentInfo, details)
 
-	err = b.Vault.Put(ctx, instanceID, rootData)
+	err = b.Vault.Put(recordCtx, instanceID, rootData)
 	if err != nil {
 		logger.Error("failed to store data at root instance path: %s", err)
 		// Continue anyway, this is not fatal
@@ -1762,7 +1818,11 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 
 	// Record the provision as the instance's current operation before
 	// answering, so every poll finds the operation the broker accepted.
-	err = b.Vault.TrackProgress(ctx, instanceID, operationTypeProvision, "Provision request accepted", 0, nil)
+	trackCtx, cancelTrack := recordContext(ctx)
+	err = b.Vault.TrackProgress(trackCtx, instanceID, operationTypeProvision, "Provision request accepted", 0, nil)
+
+	cancelTrack()
+
 	if err != nil {
 		logger.Error("failed to record the accepted provision in vault: %s", err)
 
@@ -1793,10 +1853,15 @@ func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string,
 
 	createdAt := time.Now()
 
+	// OnProvisionCompleted runs under the poll's request context, and these
+	// writes must land even when that request ends.
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
 	// Get existing metadata to preserve history and other fields
 	var metadata map[string]interface{}
 
-	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
+	exists, err := b.Vault.Get(recordCtx, instanceID+"/metadata", &metadata)
 	if err != nil {
 		// Writing a fresh map would erase the history and timestamps the
 		// metadata already holds, so the metadata is left alone. The index
@@ -1804,7 +1869,13 @@ func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string,
 		// reports success, so created_at still goes into the index.
 		readErr := fmt.Errorf("failed to read %s/metadata before recording created_at: %w", instanceID, err)
 
-		indexErr := b.updateIndexTimestamp(ctx, instanceID, createdAt, logger)
+		// The read may have failed because it used up the bound of recordCtx,
+		// so the index write takes a bound of its own.
+		indexCtx, cancelIndex := recordContext(ctx)
+		indexErr := b.updateIndexTimestamp(indexCtx, instanceID, createdAt, logger)
+
+		cancelIndex()
+
 		if indexErr != nil {
 			logger.Error("failed to record created_at in the index after the metadata read failed: %s", indexErr)
 		}
@@ -1820,14 +1891,14 @@ func (b *Broker) updateInstanceTimestamp(ctx context.Context, instanceID string,
 	metadata["created_at"] = createdAt.Format(time.RFC3339)
 
 	// Store updated metadata
-	err = b.Vault.Put(ctx, instanceID+"/metadata", metadata)
+	err = b.Vault.Put(recordCtx, instanceID+"/metadata", metadata)
 	if err != nil {
 		logger.Error("failed to store created_at timestamp: %s", err)
 		// Continue anyway, this is non-fatal
 	}
 
 	// Update the index with created_at
-	return b.updateIndexTimestamp(ctx, instanceID, createdAt, logger)
+	return b.updateIndexTimestamp(recordCtx, instanceID, createdAt, logger)
 }
 
 func (b *Broker) updateIndexTimestamp(ctx context.Context, instanceID string, createdAt time.Time, logger logger.Logger) error {
@@ -2476,16 +2547,25 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 	logger.Debug("Storing deleted_at timestamp")
 	b.storeDeletedTimestamp(ctx, instanceID, logger)
 
-	// Remove from index after confirmed deletion
+	// Remove from index after confirmed deletion. The write runs detached
+	// from the poll, so a poll that ends here does not leave the entry behind.
 	logger.Info("Removing instance %s from service index after confirmed deletion", instanceID)
 
-	err := b.Vault.Index(ctx, instanceID, nil)
+	removeCtx, cancelRemove := recordContext(ctx)
+	err := b.Vault.Index(removeCtx, instanceID, nil)
+
+	cancelRemove()
+
 	if err != nil {
+		// Answering succeeded now would tell the platform the instance is gone
+		// while it is still indexed. In progress makes the next poll confirm
+		// the deployment again and retry the removal.
 		logger.Error("Failed to remove service from vault index: %s", err)
-		// Continue anyway, the deployment is gone
-	} else {
-		logger.Info("Successfully removed instance %s from index", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: "Deleting the instance's record"}, nil
 	}
+
+	logger.Info("Successfully removed instance %s from index", instanceID)
 
 	logger.Debug("keeping secrets in vault for audit purposes")
 	// Note: We intentionally do NOT call b.Vault.Clear(instanceID) here
@@ -2518,10 +2598,13 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 
 	deletedAt := time.Now()
 
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
 	// Get existing metadata
 	var metadata map[string]interface{}
 
-	exists, err := b.Vault.Get(ctx, instanceID+"/metadata", &metadata)
+	exists, err := b.Vault.Get(recordCtx, instanceID+"/metadata", &metadata)
 	if err != nil {
 		// A fresh map written over metadata that could not be read would
 		// erase the history and every timestamp already recorded.
@@ -2534,15 +2617,54 @@ func (b *Broker) storeDeletedTimestamp(ctx context.Context, instanceID string, l
 		metadata = make(map[string]interface{})
 	}
 
+	// A poll that comes back after a failed index removal reaches this point
+	// again. The first deleted_at is the time the deployment was confirmed
+	// gone, and a later one would only move it.
+	if deletionAlreadyRecorded(metadata) {
+		logger.Debug("deleted_at is already recorded for %s, keeping it", instanceID)
+
+		return
+	}
+
 	// Add deleted_at
 	metadata["deleted_at"] = deletedAt.Format(time.RFC3339)
 
 	// Store updated metadata
-	err = b.Vault.Put(ctx, instanceID+"/metadata", metadata)
+	err = b.Vault.Put(recordCtx, instanceID+"/metadata", metadata)
 	if err != nil {
 		logger.Error("failed to store deleted_at timestamp: %s", err)
 		// Continue anyway, this is non-fatal
 	}
+}
+
+// deletionAlreadyRecorded reports whether metadata holds the deleted_at of the
+// deprovision that is being finished. A deleted_at from before the latest
+// delete_requested_at belongs to an earlier use of the same instance GUID, and
+// the new deprovision still has to record its own. Metadata with no readable
+// delete_requested_at has no deprovision to tie a deleted_at to, so nothing
+// counts as recorded.
+func deletionAlreadyRecorded(metadata map[string]interface{}) bool {
+	deletedRaw, ok := metadata["deleted_at"].(string)
+	if !ok {
+		return false
+	}
+
+	requestedRaw, ok := metadata["delete_requested_at"].(string)
+	if !ok {
+		return false
+	}
+
+	deletedAt, err := time.Parse(time.RFC3339, deletedRaw)
+	if err != nil {
+		return false
+	}
+
+	requestedAt, err := time.Parse(time.RFC3339, requestedRaw)
+	if err != nil {
+		return false
+	}
+
+	return !deletedAt.Before(requestedAt)
 }
 
 func (b *Broker) findPlanForBinding(details osbapi.BindRequest, logger logger.Logger) (*services.Plan, error) {

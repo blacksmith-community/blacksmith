@@ -54,7 +54,23 @@ func (b *Broker) serviceContext() context.Context {
 // of ctx but not its cancellation or deadline, and bounds the write by
 // recordWriteTimeout.
 func recordContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+	return context.WithTimeout(context.WithoutCancel(ctx), recordTimeout())
+}
+
+// recordTimeoutOverride, when positive, replaces recordWriteTimeout in
+// nanoseconds.
+//
+//nolint:gochecknoglobals // a test seam, set only through export_test.go
+var recordTimeoutOverride atomic.Int64
+
+// recordTimeout returns how long a record write may take.
+func recordTimeout() time.Duration {
+	override := recordTimeoutOverride.Load()
+	if override > 0 {
+		return time.Duration(override)
+	}
+
+	return recordWriteTimeout
 }
 
 // taskPollOverride, when positive, replaces defaultTaskPollInterval in
@@ -601,6 +617,15 @@ func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
 
 	if !exists || metadata == nil {
 		metadata = make(map[string]interface{})
+	}
+
+	// The first deleted_at is the time the deployment was confirmed gone. A
+	// poll that finds the entry still indexed reaches the broker's own write,
+	// and neither may move it.
+	if deletionAlreadyRecorded(metadata) {
+		d.logger.Debug("deleted_at is already recorded for %s, keeping it", d.instanceID)
+
+		return
 	}
 
 	// Add deleted_at

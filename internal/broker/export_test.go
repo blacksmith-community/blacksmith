@@ -160,6 +160,29 @@ func (b *Broker) UpdateInstanceTimestamp(ctx context.Context, instanceID string)
 	return b.updateInstanceTimestamp(ctx, instanceID, logger.Get().Named("broker"))
 }
 
+// RecordProgress exposes the progress record the provision and deprovision
+// goroutines write.
+func (b *Broker) RecordProgress(ctx context.Context, instanceID, operation, message string) {
+	b.trackProgress(ctx, instanceID, operation, message, 0, nil, logger.Get().Named("broker"))
+}
+
+// RecordFailure exposes the failure record the provision and deprovision
+// goroutines write.
+func (b *Broker) RecordFailure(ctx context.Context, instanceID, operation, message string) {
+	b.failWithTracking(ctx, instanceID, operation, message, nil, logger.Get().Named("broker"))
+}
+
+// RecordTask exposes the write that stores a BOSH task ID for an instance's
+// current operation.
+func (b *Broker) RecordTask(ctx context.Context, instanceID, operation, description string, taskID int) {
+	b.recordTask(ctx, instanceID, operation, description, taskID, logger.Get().Named("broker"))
+}
+
+// StoreBindingCredentials exposes the write of a binding's credentials.
+func (b *Broker) StoreBindingCredentials(ctx context.Context, instanceID, bindingID string, credentials map[string]interface{}) error {
+	return b.storeBindingCredentials(ctx, instanceID, bindingID, credentials, logger.Get().Named("broker"))
+}
+
 // RecordDeprovisionRequest exposes the index write that Deprovision makes
 // before it answers.
 func (b *Broker) RecordDeprovisionRequest(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest) error {
@@ -181,4 +204,19 @@ func (b *Broker) RecordInitialRequest(ctx context.Context, instanceID string, de
 // status.
 func (b *Broker) UpdateInstanceStatus(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, plan *services.Plan, status string) error {
 	return b.updateInstanceStatus(ctx, instanceID, details, plan, status, logger.Get().Named("broker"))
+}
+
+// SetRecordWriteTimeout shortens or lengthens the bound on a record write for
+// writes made from now on, and returns a function that restores the previous
+// bound.
+func SetRecordWriteTimeout(d time.Duration) func() {
+	previous := recordTimeoutOverride.Swap(int64(d))
+
+	return func() { recordTimeoutOverride.Store(previous) }
+}
+
+// StoreDeploymentDetails exposes the write of a provision's details, and the
+// cleanup that follows when it fails.
+func (b *Broker) StoreDeploymentDetails(ctx context.Context, instanceID, deploymentName string, details osbapi.ProvisionRequest) error {
+	return b.storeDeploymentDetails(ctx, instanceID, deploymentName, details, logger.Get().Named("broker"))
 }

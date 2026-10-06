@@ -45,7 +45,7 @@ func (vault *Vault) ListCFRegistrations(ctx context.Context) ([]map[string]inter
 	}
 
 	// List all registration keys
-	keys, err := vault.client.ListSecrets("secret/blacksmith/registrations/")
+	keys, err := vault.client.ListSecrets(ctx, "secret/blacksmith/registrations/")
 	if err != nil {
 		logger.Error("failed to list CF registrations: %s", err)
 

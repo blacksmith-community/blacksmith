@@ -1,6 +1,7 @@
 package reconciler_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -86,7 +87,7 @@ func (v *RealTestVault) Get(path string) (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	data, exists, err := v.wrapper.GetSecret(prefixedPath)
+	data, exists, err := v.wrapper.GetSecret(context.Background(), prefixedPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret at %s: %w", prefixedPath, err)
 	}
@@ -110,7 +111,7 @@ func (v *RealTestVault) Put(path string, secret map[string]interface{}) error {
 		return err
 	}
 
-	err = v.wrapper.PutSecret(prefixedPath, secret)
+	err = v.wrapper.PutSecret(context.Background(), prefixedPath, secret)
 	if err != nil {
 		return fmt.Errorf("failed to put secret at %s: %w", prefixedPath, err)
 	}
@@ -137,7 +138,7 @@ func (v *RealTestVault) DeleteSecret(path string) error {
 		return err
 	}
 
-	err = v.wrapper.DeleteSecret(prefixedPath)
+	err = v.wrapper.DeleteSecret(context.Background(), prefixedPath)
 	if err != nil {
 		return fmt.Errorf("failed to delete secret at %s: %w", prefixedPath, err)
 	}
@@ -156,7 +157,7 @@ func (v *RealTestVault) ListSecrets(path string) ([]string, error) {
 		return nil, err
 	}
 
-	secrets, err := v.wrapper.ListSecrets(prefixedPath)
+	secrets, err := v.wrapper.ListSecrets(context.Background(), prefixedPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list secrets at %s: %w", prefixedPath, err)
 	}
@@ -177,7 +178,7 @@ func (v *RealTestVault) SetError(path string, err error) {
 }
 
 func (v *RealTestVault) SetData(path string, data map[string]interface{}) {
-	_ = v.wrapper.PutSecret(v.pref(path), data)
+	_ = v.wrapper.PutSecret(context.Background(), v.pref(path), data)
 }
 
 func (v *RealTestVault) pref(path string) string {

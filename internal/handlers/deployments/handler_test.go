@@ -29,7 +29,7 @@ type testVaultAdapter struct {
 }
 
 func (v *testVaultAdapter) Get(ctx context.Context, path string, result interface{}) (bool, error) {
-	data, exists, err := v.client.GetSecret(path)
+	data, exists, err := v.client.GetSecret(ctx, path)
 	if err != nil {
 		return false, fmt.Errorf("failed to get secret from vault path %q: %w", path, err)
 	}
@@ -57,7 +57,7 @@ func (v *testVaultAdapter) Put(ctx context.Context, path string, data interface{
 		return errTestDataMustBeMapStringInterface
 	}
 
-	err := v.client.PutSecret(path, dataMap)
+	err := v.client.PutSecret(ctx, path, dataMap)
 	if err != nil {
 		return fmt.Errorf("failed to put secret to vault path %q: %w", path, err)
 	}
@@ -66,7 +66,7 @@ func (v *testVaultAdapter) Put(ctx context.Context, path string, data interface{
 }
 
 func (v *testVaultAdapter) Delete(ctx context.Context, path string) error {
-	err := v.client.DeleteSecret(path)
+	err := v.client.DeleteSecret(ctx, path)
 	if err != nil {
 		return fmt.Errorf("failed to delete secret from vault path %q: %w", path, err)
 	}
@@ -75,7 +75,7 @@ func (v *testVaultAdapter) Delete(ctx context.Context, path string) error {
 }
 
 func (v *testVaultAdapter) FindInstance(ctx context.Context, instanceID string) (*vault.Instance, bool, error) {
-	indexData, exists, err := v.client.GetSecret("db")
+	indexData, exists, err := v.client.GetSecret(ctx, "db")
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to find instance: %w", err)
 	}

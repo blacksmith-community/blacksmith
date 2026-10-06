@@ -15,6 +15,10 @@ import (
 	"github.com/hashicorp/vault/api"
 )
 
+// unsealTimeout bounds one auto-unseal. The unseal runs apart from the request
+// that triggered it, so the request's deadline cannot bound it.
+const unsealTimeout = 60 * time.Second
+
 // Static errors for err113 compliance.
 var (
 	ErrInvalidFilePath = errors.New("invalid file path")
@@ -25,6 +29,11 @@ func (vault *Vault) withAutoUnseal(ctx context.Context, operation func() error) 
 	err := operation()
 	if err != nil {
 		if !vault.isSealedOrUnavailable(err) {
+			return err
+		}
+		// A caller whose context has ended gets the original error. An
+		// unseal and a retry under a dead context could only fail again.
+		if ctx.Err() != nil {
 			return err
 		}
 		// Try to auto-unseal, then retry once
@@ -50,7 +59,7 @@ func (vault *Vault) withAutoUnseal(ctx context.Context, operation func() error) 
 }
 
 // AutoUnsealIfSealed attempts to automatically unseal vault if it's sealed.
-func (vault *Vault) AutoUnsealIfSealed(_ context.Context) error {
+func (vault *Vault) AutoUnsealIfSealed(ctx context.Context) error {
 	logger := logger.Get().Named("vault auto-unseal")
 
 	err := vault.ensureClient()
@@ -58,7 +67,7 @@ func (vault *Vault) AutoUnsealIfSealed(_ context.Context) error {
 		return err
 	}
 
-	health, err := vault.checkVaultHealth()
+	health, err := vault.checkVaultHealth(ctx)
 	if err != nil {
 		return err
 	}
@@ -75,17 +84,44 @@ func (vault *Vault) AutoUnsealIfSealed(_ context.Context) error {
 	if !vault.acquireUnsealLock() {
 		return nil
 	}
-	defer vault.releaseUnsealLock()
 
 	if vault.shouldSkipDueToCooldown() {
+		vault.releaseUnsealLock()
+
 		return nil
 	}
 
-	return vault.performUnseal(logger)
+	return vault.unsealDetached(ctx, logger)
 }
 
-func (vault *Vault) checkVaultHealth() (*api.HealthResponse, error) {
-	health, err := vault.client.Sys().Health()
+// unsealDetached runs the unseal on a context that keeps ctx's values but not
+// its cancellation, under its own bound, and releases the unseal lock when the
+// unseal ends. The unseal is a recovery action for every caller, and the
+// cooldown has already been spent on it, so one caller giving up must not cut
+// it off and leave Vault sealed for the cooldown's length. The caller stops
+// waiting when its context ends, and the unseal carries on without it.
+func (vault *Vault) unsealDetached(ctx context.Context, logger logger.Logger) error {
+	unsealCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unsealTimeout)
+
+	result := make(chan error, 1)
+
+	go func() {
+		defer vault.releaseUnsealLock()
+		defer cancel()
+
+		result <- vault.performUnseal(unsealCtx, logger)
+	}()
+
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("stopped waiting for the vault unseal: %w", ctx.Err())
+	}
+}
+
+func (vault *Vault) checkVaultHealth(ctx context.Context) (*api.HealthResponse, error) {
+	health, err := vault.client.Sys().HealthWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check vault health during auto-unseal: %w", err)
 	}
@@ -131,7 +167,7 @@ func (vault *Vault) shouldSkipDueToCooldown() bool {
 	return false
 }
 
-func (vault *Vault) performUnseal(logger logger.Logger) error {
+func (vault *Vault) performUnseal(ctx context.Context, logger logger.Logger) error {
 	key, err := vault.loadSealKey()
 	if err != nil {
 		logger.Error("failed to load seal key for auto-unseal: %s", err)
@@ -141,7 +177,7 @@ func (vault *Vault) performUnseal(logger logger.Logger) error {
 
 	logger.Info("vault is sealed; attempting auto-unseal")
 
-	err = vault.client.UnsealVault(key)
+	err = vault.client.UnsealVault(ctx, key)
 	if err != nil {
 		logger.Error("auto-unseal failed: %s", err)
 

@@ -22,6 +22,9 @@ const (
 // upgrade task, so a hung director cannot hold up a cancel or a Stop.
 const cancelTaskTimeout = 30 * time.Second
 
+// persistTaskTimeout bounds the Vault writes that save an upgrade task.
+const persistTaskTimeout = 10 * time.Second
+
 // Error variables for err113 compliance.
 var (
 	ErrTaskNotFound    = errors.New("upgrade task not found")
@@ -828,6 +831,13 @@ func (m *Manager) loadPersistedTasks(ctx context.Context) error {
 // persistTask saves an upgrade task to vault.
 func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
 	m.logger.Debug("Persisting task %s to vault", task.ID)
+
+	// The task's in-memory state and the director's task have already
+	// changed by the time this runs, so the save must land even when the
+	// request or manager context has ended. It keeps ctx's values and
+	// ignores its cancellation, under its own deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTaskTimeout)
+	defer cancel()
 
 	// Save the full task data
 	taskPath := upgradeTasksVaultPath + "/" + task.ID

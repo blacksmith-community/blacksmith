@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -132,13 +133,13 @@ func (vc *Client) InitVault(shares, threshold int) (*api.InitResponse, error) {
 }
 
 // UnsealVault unseals the vault with the provided key.
-func (vc *Client) UnsealVault(key string) error {
+func (vc *Client) UnsealVault(ctx context.Context, key string) error {
 	loggerInstance := logger.Get().Named("vault unseal")
 
 	// Check current seal status
 	loggerInstance.Debug("checking current seal status of the vault")
 
-	sealStatus, err := vc.Sys().SealStatus()
+	sealStatus, err := vc.Sys().SealStatusWithContext(ctx)
 	if err != nil {
 		loggerInstance.Error("failed to check current seal status of the vault: %s", err)
 
@@ -154,7 +155,7 @@ func (vc *Client) UnsealVault(key string) error {
 	// Unseal the vault
 	loggerInstance.Info("vault is sealed; unsealing it")
 
-	unsealResp, err := vc.Sys().Unseal(key)
+	unsealResp, err := vc.Sys().UnsealWithContext(ctx, key)
 	if err != nil {
 		loggerInstance.Error("failed to unseal vault: %s", err)
 
@@ -204,7 +205,7 @@ func (vc *Client) VerifyMount(mount string, createIfMissing bool) error {
 }
 
 // GetSecret reads a secret from vault.
-func (vc *Client) GetSecret(path string) (map[string]interface{}, bool, error) {
+func (vc *Client) GetSecret(ctx context.Context, path string) (map[string]interface{}, bool, error) {
 	loggerInstance := logger.Get().Named("vault get")
 
 	var fullPath string
@@ -216,7 +217,7 @@ func (vc *Client) GetSecret(path string) (map[string]interface{}, bool, error) {
 		loggerInstance.Debug("reading secret at %s (KV v1)", fullPath)
 	}
 
-	secret, err := vc.Logical().Read(fullPath)
+	secret, err := vc.Logical().ReadWithContext(ctx, fullPath)
 	if err != nil {
 		loggerInstance.Error("failed to read secret at %s: %s", fullPath, err)
 
@@ -258,7 +259,7 @@ func (vc *Client) GetSecret(path string) (map[string]interface{}, bool, error) {
 }
 
 // PutSecret writes a secret to vault.
-func (vc *Client) PutSecret(path string, data map[string]interface{}) error {
+func (vc *Client) PutSecret(ctx context.Context, path string, data map[string]interface{}) error {
 	loggerInstance := logger.Get().Named("vault put")
 
 	keys := make([]string, 0, len(data))
@@ -286,7 +287,7 @@ func (vc *Client) PutSecret(path string, data map[string]interface{}) error {
 		loggerInstance.Debug("writing secret to %s (KV v1) with keys: %v", fullPath, keys)
 	}
 
-	_, err := vc.Logical().Write(fullPath, writeData)
+	_, err := vc.Logical().WriteWithContext(ctx, fullPath, writeData)
 	if err != nil {
 		loggerInstance.Error("failed to write secret to %s: %s", fullPath, err)
 
@@ -299,7 +300,7 @@ func (vc *Client) PutSecret(path string, data map[string]interface{}) error {
 }
 
 // DeleteSecret deletes a secret from vault.
-func (vc *Client) DeleteSecret(path string) error {
+func (vc *Client) DeleteSecret(ctx context.Context, path string) error {
 	loggerInstance := logger.Get().Named("vault delete")
 
 	var fullPath string
@@ -312,7 +313,7 @@ func (vc *Client) DeleteSecret(path string) error {
 		loggerInstance.Debug("deleting secret at %s (KV v1)", fullPath)
 	}
 
-	_, err := vc.Logical().Delete(fullPath)
+	_, err := vc.Logical().DeleteWithContext(ctx, fullPath)
 	if err != nil {
 		// Don't error on 404s
 		if !strings.Contains(err.Error(), "404") {
@@ -330,7 +331,7 @@ func (vc *Client) DeleteSecret(path string) error {
 }
 
 // ListSecrets lists secrets at a given path.
-func (vc *Client) ListSecrets(path string) ([]string, error) {
+func (vc *Client) ListSecrets(ctx context.Context, path string) ([]string, error) {
 	loggerInstance := logger.Get().Named("vault list")
 
 	var fullPath string
@@ -343,7 +344,7 @@ func (vc *Client) ListSecrets(path string) ([]string, error) {
 		loggerInstance.Debug("listing secrets at %s (KV v1)", fullPath)
 	}
 
-	secret, err := vc.Logical().List(fullPath)
+	secret, err := vc.Logical().ListWithContext(ctx, fullPath)
 	if err != nil {
 		// Don't error on 404s - just return empty list
 		if strings.Contains(err.Error(), "404") {

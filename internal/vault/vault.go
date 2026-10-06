@@ -167,7 +167,7 @@ func (vault *Vault) Get(ctx context.Context, path string, out interface{}) (bool
 	err = vault.withAutoUnseal(ctx, func() error {
 		var getErr error
 
-		data, exists, getErr = vault.client.GetSecret(path)
+		data, exists, getErr = vault.client.GetSecret(ctx, path)
 		if getErr != nil {
 			return fmt.Errorf("failed to get secret: %w", getErr)
 		}
@@ -212,10 +212,10 @@ func (vault *Vault) Put(ctx context.Context, path string, data interface{}) erro
 		return fmt.Errorf("failed to convert data: %w", err)
 	}
 
-	err = vault.client.PutSecret(path, dataMap)
+	err = vault.client.PutSecret(ctx, path, dataMap)
 	if err != nil {
 		return vault.withAutoUnseal(ctx, func() error {
-			return vault.client.PutSecret(path, dataMap)
+			return vault.client.PutSecret(ctx, path, dataMap)
 		})
 	}
 
@@ -233,7 +233,7 @@ func (vault *Vault) SetKVMaxVersions(ctx context.Context, maxVersions int) error
 		return fmt.Errorf("failed to get vault API client: %w", err)
 	}
 
-	_, err = apiClient.Logical().Write("secret/config", map[string]interface{}{
+	_, err = apiClient.Logical().WriteWithContext(ctx, "secret/config", map[string]interface{}{
 		"max_versions": maxVersions,
 	})
 	if err != nil {
@@ -252,7 +252,7 @@ func (vault *Vault) GetKVMaxVersions(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("failed to get vault API client: %w", err)
 	}
 
-	secret, err := apiClient.Logical().Read("secret/config")
+	secret, err := apiClient.Logical().ReadWithContext(ctx, "secret/config")
 	if err != nil {
 		return 0, fmt.Errorf("failed to read KV config: %w", err)
 	}
@@ -286,10 +286,10 @@ func (vault *Vault) Delete(ctx context.Context, path string) error {
 		return err
 	}
 
-	err = vault.client.DeleteSecret(path)
+	err = vault.client.DeleteSecret(ctx, path)
 	if err != nil {
 		return vault.withAutoUnseal(ctx, func() error {
-			return vault.client.DeleteSecret(path)
+			return vault.client.DeleteSecret(ctx, path)
 		})
 	}
 
@@ -370,7 +370,7 @@ func (vault *Vault) Unseal(key string) error {
 		return err
 	}
 
-	err = vault.client.UnsealVault(key)
+	err = vault.client.UnsealVault(context.Background(), key)
 	if err != nil {
 		logger.Error("failed to unseal vault: %s", err)
 

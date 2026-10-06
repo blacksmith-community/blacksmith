@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
@@ -24,6 +25,10 @@ var (
 	ErrInvalidDataFormatForPlan    = errors.New("invalid data format for plan file")
 	ErrNoPlanFilesCouldBeRetrieved = errors.New("no plan files could be retrieved for instance")
 )
+
+// planReferencesTimeout bounds the Vault write of an instance's plan
+// references.
+const planReferencesTimeout = 10 * time.Second
 
 // Store handles storage of blacksmith plan files to Vault.
 type Store struct {
@@ -95,7 +100,13 @@ func (ps *Store) StorePlanReferences(ctx context.Context, instanceID string, pla
 		return nil
 	}
 
-	return ps.storeSHAReferences(ctx, instanceID, shaRefs, loggerInstance)
+	// Upgrades read these references later, and the caller is a provision
+	// request that may end before the write does. The write keeps ctx's
+	// values, ignores its cancellation, and runs under its own deadline.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), planReferencesTimeout)
+	defer cancel()
+
+	return ps.storeSHAReferences(writeCtx, instanceID, shaRefs, loggerInstance)
 }
 
 type planRef struct {

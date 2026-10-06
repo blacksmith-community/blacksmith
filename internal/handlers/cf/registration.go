@@ -18,6 +18,9 @@ import (
 const (
 	// Buffer size for progress tracking channel.
 	progressChannelBuffer = 100
+
+	// Longest a single registration status or progress write may take.
+	registrationWriteTimeout = 10 * time.Second
 )
 
 // Static errors for err113 linter compliance.
@@ -435,12 +438,23 @@ func (h *Handler) buildRegistrationRequest(writer http.ResponseWriter, req *http
 }
 
 func (h *Handler) startAsyncRegistration(writer http.ResponseWriter, ctx context.Context, logger interfaces.Logger, registrationID string, regReq *cfservices.RegistrationRequest, operations cfOperations) {
-	go h.performAsyncRegistration(ctx, registrationID, regReq, operations)
+	// The registration outlives the request, which ends when the response is
+	// written. The goroutine takes a context that keeps the request's values
+	// but not its cancellation, so its status and progress writes still land.
+	// This is taken before the go statement, so the goroutine never sees the
+	// request context at all.
+	registrationCtx := context.WithoutCancel(ctx)
 
-	err := h.vault.UpdateCFRegistrationStatus(ctx, registrationID, "registering", "")
+	// The "registering" status is written before the goroutine starts. The
+	// status update replaces the whole registration record, so a write that
+	// came after the goroutine's "active" or "failed" would put the
+	// registration back to "registering" for good.
+	err := h.updateRegistrationStatus(registrationCtx, registrationID, "registering", "")
 	if err != nil {
 		logger.Error("failed to update registration status for %s: %v", registrationID, err)
 	}
+
+	go h.performAsyncRegistration(registrationCtx, registrationID, regReq, operations)
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"message": "registration process started",
@@ -460,7 +474,7 @@ func (h *Handler) performAsyncRegistration(ctx context.Context, registrationID s
 	if err != nil {
 		logger.Error("CF registration failed", "id", registrationID, "error", err)
 
-		statusErr := h.vault.UpdateCFRegistrationStatus(ctx, registrationID, "failed", err.Error())
+		statusErr := h.updateRegistrationStatus(ctx, registrationID, "failed", err.Error())
 		if statusErr != nil {
 			logger.Error("failed to update registration status to failed", "id", registrationID, "error", statusErr)
 		}
@@ -468,7 +482,7 @@ func (h *Handler) performAsyncRegistration(ctx context.Context, registrationID s
 		return
 	}
 
-	statusErr := h.vault.UpdateCFRegistrationStatus(ctx, registrationID, "active", "")
+	statusErr := h.updateRegistrationStatus(ctx, registrationID, "active", "")
 	if statusErr != nil {
 		logger.Error("failed to update registration status to active", "id", registrationID, "error", statusErr)
 	}
@@ -476,12 +490,26 @@ func (h *Handler) performAsyncRegistration(ctx context.Context, registrationID s
 	logger.Info("CF registration completed", "id", registrationID)
 }
 
+// updateRegistrationStatus writes a registration's status under its own
+// deadline, so a Vault that stops answering cannot hold the registration
+// goroutine.
+func (h *Handler) updateRegistrationStatus(ctx context.Context, registrationID, status, message string) error {
+	writeCtx, cancel := context.WithTimeout(ctx, registrationWriteTimeout)
+	defer cancel()
+
+	return h.vault.UpdateCFRegistrationStatus(writeCtx, registrationID, status, message)
+}
+
 func (h *Handler) trackRegistrationProgress(ctx context.Context, registrationID string, progressChan <-chan cfservices.RegistrationProgress) {
 	logger := h.logger.Named("cf-progress-tracker")
 
 	for progress := range progressChan {
 		if h.persistProgress != nil {
-			err := h.persistProgress(ctx, registrationID, progress)
+			writeCtx, cancel := context.WithTimeout(ctx, registrationWriteTimeout)
+			err := h.persistProgress(writeCtx, registrationID, progress)
+
+			cancel()
+
 			if err != nil {
 				logger.Error("failed to persist progress", "id", registrationID, "error", err)
 			}
