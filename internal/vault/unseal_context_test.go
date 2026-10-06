@@ -3,16 +3,19 @@ package vault_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/vault"
+	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -342,6 +345,119 @@ var _ = Describe("Auto-unseal shared by concurrent callers", func() {
 		Eventually(first, 5*time.Second).Should(Receive(BeNil()), "the unseal did not finish for the caller that started it")
 		Expect(stub.sealed.Load()).To(BeFalse())
 		Expect(stub.unsealRequests.Load()).To(Equal(int32(1)), "the unseal ran more than once")
+	})
+})
+
+// unsealStartPanics is a logger whose first "attempting auto-unseal" message,
+// which the unseal logs before it sends the key, waits for release and then
+// panics. Every Error message is recorded.
+type unsealStartPanics struct {
+	*logger.NoOpLogger
+
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+
+	mu     sync.Mutex
+	errors []string
+}
+
+const unsealStartMessage = "vault is sealed; attempting auto-unseal"
+
+func (l *unsealStartPanics) Info(msg string, _ ...interface{}) {
+	if msg == unsealStartMessage && l.armed.CompareAndSwap(true, false) {
+		l.entered <- struct{}{}
+
+		<-l.release
+
+		panic("injected unseal panic")
+	}
+}
+
+func (l *unsealStartPanics) Error(msg string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.errors = append(l.errors, fmt.Sprintf(msg, args...))
+}
+
+func (l *unsealStartPanics) Named(string) logger.Logger { return l }
+
+func (l *unsealStartPanics) loggedErrors() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return strings.Join(l.errors, "\n")
+}
+
+// A panic in the unseal must not take the process down, and must not leave the
+// callers waiting on that unseal hung.
+var _ = Describe("Auto-unseal that panics", func() {
+	var (
+		stub     *sealedVaultStub
+		client   *vault.Vault
+		panicky  *unsealStartPanics
+		previous logger.Logger
+	)
+
+	BeforeEach(func() {
+		stub = newSealedVaultStub()
+		client = stub.client()
+
+		panicky = &unsealStartPanics{
+			NoOpLogger: &logger.NoOpLogger{},
+			entered:    make(chan struct{}, 1),
+			release:    make(chan struct{}),
+		}
+		panicky.armed.Store(true)
+
+		previous = logger.Get()
+
+		logger.Set(panicky)
+	})
+
+	AfterEach(func() {
+		logger.Set(previous)
+		stub.close()
+	})
+
+	It("returns the panic as an error to every waiting caller, logs its stack, and clears the unseal in flight", func() {
+		first := make(chan error, 1)
+		second := make(chan error, 1)
+
+		go func() {
+			defer GinkgoRecover()
+
+			first <- client.AutoUnsealIfSealed(context.Background())
+		}()
+
+		Eventually(panicky.entered, 5*time.Second).Should(Receive())
+
+		go func() {
+			defer GinkgoRecover()
+
+			second <- client.AutoUnsealIfSealed(context.Background())
+		}()
+
+		Consistently(second, 300*time.Millisecond).ShouldNot(Receive(), "the second caller did not wait for the unseal in flight")
+
+		close(panicky.release)
+
+		for _, results := range []chan error{first, second} {
+			var err error
+
+			Eventually(results, 5*time.Second).Should(Receive(&err), "a caller is still waiting on the unseal that panicked")
+			Expect(errors.Is(err, vault.ErrUnsealPanicked)).To(BeTrue(), "the error does not report the panic: %v", err)
+			Expect(err.Error()).To(ContainSubstring("injected unseal panic"))
+		}
+
+		Expect(panicky.loggedErrors()).To(ContainSubstring("auto-unseal panicked: injected unseal panic"))
+		Expect(panicky.loggedErrors()).To(ContainSubstring("performUnseal"), "the log does not carry the panic's stack")
+
+		// A later caller is held off by the cooldown and does not join the
+		// finished call, so the record of the unseal in flight was cleared.
+		Expect(client.AutoUnsealIfSealed(context.Background())).To(Succeed())
+		Expect(stub.unsealRequests.Load()).To(BeZero())
 	})
 })
 

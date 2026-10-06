@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ const unsealTimeout = 60 * time.Second
 // Static errors for err113 compliance.
 var (
 	ErrInvalidFilePath = errors.New("invalid file path")
+	ErrUnsealPanicked  = errors.New("auto-unseal panicked")
 )
 
 // withAutoUnseal wraps an operation with automatic unsealing on vault sealed errors.
@@ -143,13 +145,32 @@ func (vault *Vault) finishUnseal(call *unsealCall, err error) {
 // for every caller, and the cooldown has already been spent on it, so the
 // caller that started it giving up must not cut it off and leave Vault sealed
 // for the cooldown's length.
+//
+// A panic in the unseal becomes the call's error. The call is finished before
+// the panic is logged, so the callers waiting on it are released and the next
+// sealed Vault can start a new unseal, whatever the logging does.
 func (vault *Vault) runUnsealDetached(ctx context.Context, call *unsealCall, logger logger.Logger) {
 	unsealCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unsealTimeout)
 
 	go func() {
 		defer cancel()
 
-		vault.finishUnseal(call, vault.performUnseal(unsealCtx, logger))
+		var err error
+
+		defer func() {
+			recovered := recover()
+			if recovered != nil {
+				err = fmt.Errorf("%w: %v", ErrUnsealPanicked, recovered)
+			}
+
+			vault.finishUnseal(call, err)
+
+			if recovered != nil {
+				logger.Error("auto-unseal panicked: %v\n%s", recovered, debug.Stack())
+			}
+		}()
+
+		err = vault.performUnseal(unsealCtx, logger)
 	}()
 }
 
