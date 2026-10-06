@@ -860,44 +860,91 @@ func (d *DirectorAdapter) listAllTasks(ctx context.Context, limit int) ([]Task, 
 	return merged, nil
 }
 
-// CancelTask cancels a running task.
+// CancelTask asks the director to cancel a queued or processing task, on
+// DELETE /task/N. A task the director will not cancel, because it has
+// finished or a cancel already landed, returns ErrTaskCannotBeCancelled.
+//
+// When the cancel's answer is lost, the director may have taken it, so the
+// task is read: a task that is cancelling or cancelled needs nothing more, a
+// finished one returns ErrTaskCannotBeCancelled, and one that still runs gets
+// the cancel once more. A second cancel is safe, because a cancel starts no
+// task and can only cancel the same one.
 func (d *DirectorAdapter) CancelTask(ctx context.Context, taskID int) (err error) {
 	defer d.explainContext(ctx, "CancelTask", &err)
 
-	director := d.bind(ctx)
+	d.log.Infof("Cancelling BOSH task %d", taskID)
 
-	d.log.Infof("Cancelling task: %d", taskID)
-	d.log.Debugf("Finding task %d for cancellation", taskID)
+	err = d.api.Tasks().Cancel(ctx, taskID)
+	if err == nil {
+		d.log.Infof("The director accepted the cancel of BOSH task %d", taskID)
 
-	// Find the task first
-	task, err := director.FindTask(taskID)
-	if err != nil {
-		d.log.Errorf("Failed to find task %d: %v", taskID, err)
-
-		return fmt.Errorf("failed to find task %d: %w", taskID, err)
+		return nil
 	}
 
-	// Check if task can be cancelled (must be in processing or queued state)
-	state := task.State()
-	if state != "processing" && state != "queued" {
-		d.log.Errorf("Task %d is in state '%s' and cannot be cancelled", taskID, state)
-
-		return fmt.Errorf("%w: task %d is in state '%s'", ErrTaskCannotBeCancelled, taskID, state)
+	if !boshapi.IsOutcomeUnknown(err) || ctx.Err() != nil {
+		return d.cancelFailure(taskID, err)
 	}
 
-	// Cancel the task
-	d.log.Debugf("Cancelling task %d (current state: %s)", taskID, state)
+	d.log.Infof("The director's answer to the cancel of BOSH task %d was lost, so Blacksmith reads the task to see whether the cancel landed: %v", taskID, err)
 
-	err = task.Cancel()
-	if err != nil {
-		d.log.Errorf("Failed to cancel task %d: %v", taskID, err)
-
-		return fmt.Errorf("failed to cancel task %d: %w", taskID, err)
+	task, readErr := d.api.Tasks().Get(ctx, taskID)
+	if readErr == nil && task == nil {
+		readErr = ErrEmptyDirectorAnswer
 	}
 
-	d.log.Infof("Successfully cancelled task %d", taskID)
+	if readErr != nil {
+		d.log.Errorf("Failed to read BOSH task %d after its cancel's answer was lost: %v", taskID, readErr)
 
-	return nil
+		return fmt.Errorf("failed to cancel BOSH task %d on BOSH director %s: the director's answer to the cancel was lost (%w), "+
+			"and reading the task afterwards to see whether the cancel landed failed too (%w). "+
+			"Check the task at /b/tasks/%d, and cancel it again if it is still queued or processing",
+			taskID, d.address, err, readErr, taskID)
+	}
+
+	switch {
+	case task.State == taskStateCancelling || task.State == taskStateCancelled:
+		d.log.Infof("BOSH task %d is %s, so the cancel whose answer was lost landed", taskID, task.State)
+
+		return nil
+	case isTerminalTaskState(task.State):
+		d.log.Infof("BOSH task %d ended in state %s before the cancel took effect", taskID, task.State)
+
+		return fmt.Errorf("%w: BOSH task %d on BOSH director %s ended in state %q before the cancel took effect, "+
+			"so there is nothing left to cancel. Check its result at /b/tasks/%d",
+			ErrTaskCannotBeCancelled, taskID, d.address, task.State, taskID)
+	}
+
+	d.log.Infof("BOSH task %d is still %s, so the cancel whose answer was lost never landed, and Blacksmith sends it once more", taskID, task.State)
+
+	err = d.api.Tasks().Cancel(ctx, taskID)
+	if err == nil {
+		d.log.Infof("The director accepted the second cancel of BOSH task %d", taskID)
+
+		return nil
+	}
+
+	var stateErr *boshapi.TaskStateError
+	if errors.As(err, &stateErr) && stateErr.State == taskStateCancelling {
+		d.log.Infof("BOSH task %d is cancelling, so the first cancel landed after all", taskID)
+
+		return nil
+	}
+
+	return d.cancelFailure(taskID, err)
+}
+
+// cancelFailure explains a cancel the director did not accept.
+func (d *DirectorAdapter) cancelFailure(taskID int, err error) error {
+	var stateErr *boshapi.TaskStateError
+	if errors.As(err, &stateErr) {
+		d.log.Infof("BOSH task %d is %s and cannot be cancelled", taskID, stateErr.State)
+
+		return fmt.Errorf("%w: %w", ErrTaskCannotBeCancelled, stateErr)
+	}
+
+	d.log.Errorf("Failed to cancel BOSH task %d: %v", taskID, err)
+
+	return d.requestFailure(fmt.Sprintf("cancel BOSH task %d", taskID), err)
 }
 
 // taskOutputType maps Blacksmith's output types onto the director's. The

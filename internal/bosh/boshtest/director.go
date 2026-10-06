@@ -149,6 +149,23 @@ func WriteText(writer http.ResponseWriter, status int, body string) {
 	_, _ = writer.Write([]byte(body))
 }
 
+// DropAnswer closes the connection without writing an answer, the way a
+// connection that breaks after the request reached the director does. The
+// client sees its request sent and no answer come back.
+func DropAnswer(writer http.ResponseWriter) {
+	hijacker, ok := writer.(http.Hijacker)
+	if !ok {
+		panic("boshtest: the response writer cannot drop the connection")
+	}
+
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		panic("boshtest: dropping the connection failed: " + err.Error())
+	}
+
+	_ = conn.Close()
+}
+
 // WriteRouteNotFound answers the way the director answers a route it does not
 // serve, with a 404 and a plain text body that holds no error code.
 func WriteRouteNotFound(writer http.ResponseWriter, request *http.Request) {

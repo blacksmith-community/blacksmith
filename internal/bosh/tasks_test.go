@@ -1,9 +1,11 @@
 package bosh_test
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,6 +108,140 @@ func TestFindRunningTaskForDeploymentReturnsNilWhenNoneRuns(t *testing.T) {
 	task, err := director.FindRunningTaskForDeployment(t.Context(), "valkey-1")
 	if err != nil || task != nil {
 		t.Fatalf("expected no task and no error, got %+v and %v", task, err)
+	}
+}
+
+// The director cancels a task on DELETE /task/N, its TaskController's
+// singular route. It has no DELETE /tasks/N, and a cancel needs no read of
+// the task first.
+func TestCancelTaskUsesTheDirectorsRoute(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodDelete || request.URL.Path != "/task/42" {
+			return false
+		}
+
+		writer.WriteHeader(http.StatusNoContent)
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	err := director.CancelTask(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("CancelTask failed: %v", err)
+	}
+
+	requests := server.APIRequests()
+	if len(requests) != 1 || requests[0].Method != http.MethodDelete || requests[0].Path != "/task/42" {
+		t.Fatalf("expected exactly one DELETE /task/42, got %+v", requests)
+	}
+}
+
+// The director refuses to cancel a task that is no longer running, with a
+// 400. The tasks handler answers 409 for it, so the error must match
+// ErrTaskCannotBeCancelled.
+func TestCancelOfAFinishedTaskMapsToCannotBeCancelled(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodDelete || request.URL.Path != "/task/42" {
+			return false
+		}
+
+		boshtest.WriteText(writer, http.StatusBadRequest, "Cannot cancel task 42: invalid state (done)")
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	err := director.CancelTask(t.Context(), 42)
+	if !errors.Is(err, bosh.ErrTaskCannotBeCancelled) {
+		t.Fatalf("expected ErrTaskCannotBeCancelled, got: %v", err)
+	}
+
+	message := err.Error()
+	for _, want := range []string{"42", `"done"`} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the error to mention %q, got: %s", want, message)
+		}
+	}
+
+	if deletes := requestsTo(server, http.MethodDelete, "/task/42"); len(deletes) != 1 {
+		t.Errorf("expected one cancel, got %d", len(deletes))
+	}
+}
+
+// When a cancel's answer is lost, the director may have taken it. Blacksmith
+// reads the task, and a task already cancelling needs no second cancel.
+func TestLostCancelAnswerIsCheckedByReadingTheTask(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		switch {
+		case request.Method == http.MethodDelete && request.URL.Path == "/task/42":
+			boshtest.DropAnswer(writer)
+		case request.Method == http.MethodGet && request.URL.Path == "/tasks/42":
+			boshtest.WriteJSON(writer, http.StatusOK, directorTask(42, "cancelling"))
+		default:
+			return false
+		}
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	err := director.CancelTask(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("expected a cancel that landed to succeed, got: %v", err)
+	}
+
+	if deletes := requestsTo(server, http.MethodDelete, "/task/42"); len(deletes) != 1 {
+		t.Errorf("expected exactly one cancel, got %d", len(deletes))
+	}
+
+	if reads := requestsTo(server, http.MethodGet, "/tasks/42"); len(reads) != 1 {
+		t.Errorf("expected one read of the task after the lost answer, got %d", len(reads))
+	}
+}
+
+// When a cancel's answer is lost and the task still runs, the cancel never
+// landed, so Blacksmith sends it once more.
+func TestLostCancelAnswerIsResentWhileTheTaskRuns(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	var cancels atomic.Int32
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		switch {
+		case request.Method == http.MethodDelete && request.URL.Path == "/task/42":
+			if cancels.Add(1) == 1 {
+				boshtest.DropAnswer(writer)
+			} else {
+				writer.WriteHeader(http.StatusNoContent)
+			}
+		case request.Method == http.MethodGet && request.URL.Path == "/tasks/42":
+			boshtest.WriteJSON(writer, http.StatusOK, directorTask(42, "processing"))
+		default:
+			return false
+		}
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	err := director.CancelTask(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("expected the second cancel to succeed, got: %v", err)
+	}
+
+	if got := cancels.Load(); got != 2 {
+		t.Errorf("expected two cancels, got %d", got)
 	}
 }
 
