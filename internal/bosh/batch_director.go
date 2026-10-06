@@ -178,6 +178,11 @@ func (b *BatchDirector) GetAllTasks(ctx context.Context, limit int) ([]Task, err
 	return b.director.GetAllTasks(ctx, limit)
 }
 
+// WaitForTask passes through (a series of task reads, holding no slot).
+func (b *BatchDirector) WaitForTask(ctx context.Context, id int) (*Task, error) {
+	return b.director.WaitForTask(ctx, id)
+}
+
 func (b *BatchDirector) GetTaskOutput(ctx context.Context, id int, outputType string) (string, error) {
 	return b.director.GetTaskOutput(ctx, id, outputType)
 }

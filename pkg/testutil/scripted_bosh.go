@@ -22,6 +22,7 @@ type ScriptedBOSHDirector struct {
 	CreateDeploymentFn             func(manifest string) (*bosh.Task, error)
 	DeleteDeploymentFn             func(name string) (*bosh.Task, error)
 	GetTaskFn                      func(taskID int) (*bosh.Task, error)
+	WaitForTaskFn                  func(taskID int) (*bosh.Task, error)
 	GetEventsFn                    func(deployment string) ([]bosh.Event, error)
 	GetReleasesFn                  func() ([]bosh.Release, error)
 	FindRunningTaskForDeploymentFn func(deployment string) (*bosh.Task, error)
@@ -124,6 +125,17 @@ func (s *ScriptedBOSHDirector) GetTask(ctx context.Context, taskID int) (*bosh.T
 	}
 
 	return s.IntegrationMockBOSH.GetTask(ctx, taskID)
+}
+
+// WaitForTask runs WaitForTaskFn when set.
+func (s *ScriptedBOSHDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
+	s.record("WaitForTask", "")
+
+	if s.WaitForTaskFn != nil {
+		return s.WaitForTaskFn(taskID)
+	}
+
+	return s.IntegrationMockBOSH.WaitForTask(ctx, taskID)
 }
 
 // GetEvents runs GetEventsFn when set.

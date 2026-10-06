@@ -153,6 +153,10 @@ func (d *mockDirector) CancelTask(_ context.Context, taskID int) error {
 	return ErrScannerNotImplemented
 }
 
+func (d *mockDirector) WaitForTask(_ context.Context, taskID int) (*bosh.Task, error) {
+	return nil, ErrScannerNotImplemented
+}
+
 func (d *mockDirector) GetConfigs(_ context.Context, limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	return nil, ErrScannerNotImplemented
 }

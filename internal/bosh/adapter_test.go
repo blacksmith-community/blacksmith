@@ -129,6 +129,10 @@ func (m *mockDirector) GetAllTasks(_ context.Context, limit int) ([]bosh.Task, e
 	return nil, ErrMockNotImplemented
 }
 func (m *mockDirector) CancelTask(_ context.Context, taskID int) error { return ErrMockNotImplemented }
+
+func (m *mockDirector) WaitForTask(_ context.Context, taskID int) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 func (m *mockDirector) GetTaskOutput(_ context.Context, id int, outputType string) (string, error) {
 	return "", ErrMockNotImplemented
 }

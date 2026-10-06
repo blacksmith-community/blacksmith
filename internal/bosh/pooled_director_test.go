@@ -170,6 +170,16 @@ func (m *MockDirector) CancelTask(_ context.Context, taskID int) error {
 	return nil
 }
 
+func (m *MockDirector) WaitForTask(_ context.Context, taskID int) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return &bosh.Task{ID: taskID, State: "done"}, nil
+}
+
 func (m *MockDirector) GetTaskOutput(_ context.Context, id int, outputType string) (string, error) {
 	m.incrementCallCount()
 

@@ -129,6 +129,13 @@ func (p *PooledDirector) CancelTask(ctx context.Context, taskID int) error {
 	return p.director.CancelTask(ctx, taskID)
 }
 
+// WaitForTask implements Director interface - no pooling. A wait is a series
+// of task reads, and the pool holds no slot for a read, so a wait holds none
+// however long the task runs.
+func (p *PooledDirector) WaitForTask(ctx context.Context, id int) (*Task, error) {
+	return p.director.WaitForTask(ctx, id)
+}
+
 // GetTaskOutput implements Director interface - no pooling for read operations.
 func (p *PooledDirector) GetTaskOutput(ctx context.Context, id int, outputType string) (string, error) {
 	return p.director.GetTaskOutput(ctx, id, outputType)

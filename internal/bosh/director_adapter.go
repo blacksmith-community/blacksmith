@@ -151,8 +151,11 @@ type DirectorAdapter struct {
 	api            boshapi.Client
 	address        string        // director address, for errors
 	requestTimeout time.Duration // the bosh.request_timeout in force, for errors
-	logger         boshlog.Logger
-	log            Logger // Application logger for Info/Debug logging
+	// taskPollInterval is how often WaitForTask reads a task. Zero means
+	// boshapi's default of 2 seconds.
+	taskPollInterval time.Duration
+	logger           boshlog.Logger
+	log              Logger // Application logger for Info/Debug logging
 }
 
 // bind returns the bosh-cli director for one call.
@@ -764,6 +767,57 @@ func (d *DirectorAdapter) GetTask(ctx context.Context, taskID int) (_ *Task, err
 	d.log.Debugf("Task %d is %s", taskID, converted.State)
 
 	return &converted, nil
+}
+
+// WaitForTask waits until the task reaches a terminal state, reading it every
+// few seconds, and returns the final task with a nil error whatever that state
+// is, because callers judge the state themselves. When the context ends, or a
+// read of the task fails, it stops waiting and leaves the task running: the
+// error is a *DirectorCallError with TaskLeftRunning when the context ended or
+// a read got no answer within the request timeout, and the failed read's
+// error otherwise.
+func (d *DirectorAdapter) WaitForTask(ctx context.Context, taskID int) (_ *Task, err error) {
+	defer d.explainTaskWait(ctx, taskID, &err)
+
+	d.log.Debugf("Waiting for BOSH task %d", taskID)
+
+	task, err := d.api.Tasks().PollUntilComplete(ctx, taskID, &boshapi.PollOptions{Interval: d.taskPollInterval})
+
+	// boshapi reports a task that ended in error, cancelled, or timeout as a
+	// TaskError that holds the task. Here every terminal state is an answer.
+	var taskErr *boshapi.TaskError
+	if errors.As(err, &taskErr) && taskErr.Task != nil {
+		task, err = taskErr.Task, nil
+	}
+
+	if err != nil {
+		d.log.Errorf("Stopped waiting for BOSH task %d: %v", taskID, err)
+
+		return nil, d.requestFailure(fmt.Sprintf("wait for BOSH task %d", taskID), err)
+	}
+
+	if task == nil {
+		d.log.Errorf("The director answered GET /tasks/%d with no data", taskID)
+
+		return nil, d.requestFailure(fmt.Sprintf("wait for BOSH task %d", taskID), ErrEmptyDirectorAnswer)
+	}
+
+	converted := convertAPITask(*task)
+	d.log.Infof("BOSH task %d ended in state %s", taskID, converted.State)
+
+	return &converted, nil
+}
+
+// explainTaskWait explains a wait that stopped, as explainContext does, and
+// records that the task was left running.
+func (d *DirectorAdapter) explainTaskWait(ctx context.Context, taskID int, err *error) {
+	d.explainContext(ctx, "WaitForTask", err)
+
+	var callErr *DirectorCallError
+	if errors.As(*err, &callErr) {
+		callErr.TaskID = taskID
+		callErr.Task = TaskLeftRunning
+	}
 }
 
 // GetTasks lists tasks in one of Blacksmith's modes: "recent" asks for twice

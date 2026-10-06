@@ -1,10 +1,12 @@
 package bosh_test
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +14,9 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
 )
+
+// testPollInterval keeps task waits in these tests short.
+const testPollInterval = 10 * time.Millisecond
 
 // directorTask is a task in the director's JSON shape.
 func directorTask(id int, state string) map[string]interface{} {
@@ -28,6 +33,17 @@ func directorTask(id int, state string) map[string]interface{} {
 	}
 }
 
+// newTaskAdapter builds an adapter against a test director that polls tasks
+// every testPollInterval.
+func newTaskAdapter(t *testing.T, server *boshtest.Director) bosh.Director {
+	t.Helper()
+
+	director := newReadAdapter(t, server, nil)
+	bosh.SetTaskPollInterval(director, testPollInterval)
+
+	return director
+}
+
 // requestsTo returns the requests with the given method and path.
 func requestsTo(server *boshtest.Director, method, path string) []boshtest.Request {
 	var found []boshtest.Request
@@ -39,6 +55,188 @@ func requestsTo(server *boshtest.Director, method, path string) []boshtest.Reque
 	}
 
 	return found
+}
+
+// When the caller stops waiting, the director task keeps running. Blacksmith
+// never cancels a task just because it stopped waiting for it, and the error
+// says so and names the task.
+func TestWaitForTaskLeavesTheTaskRunningWhenTheContextEnds(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks/42" {
+			return false
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, directorTask(42, "processing"))
+
+		return true
+	})
+
+	director := newTaskAdapter(t, server)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+
+	task, err := director.WaitForTask(ctx, 42)
+	if task != nil {
+		t.Fatalf("expected no task when the wait ends first, got %+v", task)
+	}
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected an error that wraps context.DeadlineExceeded, got: %v", err)
+	}
+
+	var callErr *bosh.DirectorCallError
+	if !errors.As(err, &callErr) {
+		t.Fatalf("expected a *bosh.DirectorCallError, got %T: %v", err, err)
+	}
+
+	if callErr.Operation != "WaitForTask" || callErr.Director != server.URL || callErr.TaskID != 42 || callErr.Task != bosh.TaskLeftRunning {
+		t.Fatalf("DirectorCallError names operation %q, director %q, task %d, and outcome %v, want WaitForTask, %s, 42, and TaskLeftRunning",
+			callErr.Operation, callErr.Director, callErr.TaskID, callErr.Task, server.URL)
+	}
+
+	message := err.Error()
+	for _, want := range []string{
+		"WaitForTask", server.URL, "before BOSH task 42 finished",
+		"BOSH task 42 is still running; Blacksmith stopped waiting and did not cancel it", "/b/tasks/42",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the error to mention %q, got: %s", want, message)
+		}
+	}
+
+	if polls := requestsTo(server, http.MethodGet, "/tasks/42"); len(polls) < 2 {
+		t.Errorf("expected the wait to poll the task more than once, got %d polls", len(polls))
+	}
+
+	for _, request := range server.APIRequests() {
+		if request.Method == http.MethodDelete {
+			t.Errorf("the wait sent %s %s, but it must never cancel the task", request.Method, request.Path)
+		}
+	}
+}
+
+// Every terminal state ends the wait with the final task and no error,
+// because callers judge the state themselves.
+func TestWaitForTaskReturnsFailedTasksWithoutError(t *testing.T) {
+	for _, state := range []string{"done", "error", "cancelled", "timeout"} {
+		t.Run(state, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			var polls atomic.Int32
+
+			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				if request.Method != http.MethodGet || request.URL.Path != "/tasks/7" {
+					return false
+				}
+
+				task := directorTask(7, "processing")
+				if polls.Add(1) > 1 {
+					task["state"] = state
+					task["result"] = "the task ended " + state
+				}
+
+				boshtest.WriteJSON(writer, http.StatusOK, task)
+
+				return true
+			})
+
+			director := newTaskAdapter(t, server)
+
+			task, err := director.WaitForTask(t.Context(), 7)
+			if err != nil {
+				t.Fatalf("expected no error for a task that ended %s, got: %v", state, err)
+			}
+
+			if task == nil || task.ID != 7 || task.State != state || task.Result != "the task ended "+state {
+				t.Fatalf("expected task 7 in state %s with its result, got %+v", state, task)
+			}
+
+			if task.EndedAt == nil || !task.EndedAt.Equal(time.Unix(1759766400, 0)) {
+				t.Errorf("expected the finished task to end at the director's timestamp, got %v", task.EndedAt)
+			}
+
+			if polls.Load() < 2 {
+				t.Errorf("expected the wait to poll until the task ended, got %d polls", polls.Load())
+			}
+		})
+	}
+}
+
+// slowWaitDirector is a base director whose WaitForTask lasts until its
+// context ends, and whose CreateDeployment answers at once.
+type slowWaitDirector struct {
+	bosh.Director
+
+	entered     chan struct{}
+	enteredOnce sync.Once
+}
+
+func (d *slowWaitDirector) WaitForTask(ctx context.Context, id int) (*bosh.Task, error) {
+	d.enteredOnce.Do(func() { close(d.entered) })
+
+	<-ctx.Done()
+
+	return nil, ctx.Err()
+}
+
+func (d *slowWaitDirector) CreateDeployment(_ context.Context, _ string) (*bosh.Task, error) {
+	return &bosh.Task{ID: 2, State: "queued"}, nil
+}
+
+// A wait can last as long as a deploy does, so the pooled director must not
+// hold a slot for it, or a few long waits would stop every mutation.
+func TestPooledWaitDoesNotHoldASlot(t *testing.T) {
+	t.Parallel()
+
+	base := &slowWaitDirector{entered: make(chan struct{})}
+	pool := bosh.NewPooledDirector(base, 1, 200*time.Millisecond, nil)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	waited := make(chan error, 1)
+
+	go func() {
+		_, err := pool.WaitForTask(ctx, 1)
+		waited <- err
+	}()
+
+	select {
+	case <-base.entered:
+	case err := <-waited:
+		t.Fatalf("the pooled director never reached the base director's WaitForTask, and returned: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pooled director never reached the base director's WaitForTask")
+	}
+
+	stats, err := pool.GetPoolStats()
+	if err != nil {
+		t.Fatalf("GetPoolStats failed: %v", err)
+	}
+
+	if stats.ActiveConnections != 0 {
+		t.Errorf("a wait in progress holds %d pool slots, want 0", stats.ActiveConnections)
+	}
+
+	task, err := pool.CreateDeployment(t.Context(), "name: valkey-2")
+	if err != nil {
+		t.Fatalf("a deploy could not get the only pool slot while a wait was in progress: %v", err)
+	}
+
+	if task == nil || task.ID != 2 {
+		t.Fatalf("expected the deploy's task 2, got %+v", task)
+	}
+
+	cancel()
+
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pooled wait did not end with its context")
+	}
 }
 
 // The director filters a deployment's tasks by state itself, so Blacksmith
@@ -521,5 +719,43 @@ func TestGetTaskEventsParsesTheEventOutput(t *testing.T) {
 	if len(events) != 2 || events[0].Stage != "Preparing deployment" || events[1].State != "failed" ||
 		events[1].Error == nil || events[1].Error.Code != 450001 {
 		t.Fatalf("expected two parsed events with the failure's error, got %+v", events)
+	}
+}
+
+// Each outcome for a director task adds its own sentence to the error, so an
+// operator knows whether the task still runs.
+func TestDirectorCallErrorNamesTheTaskOutcome(t *testing.T) {
+	tests := []struct {
+		outcome bosh.TaskOutcome
+		want    string
+	}{
+		{outcome: bosh.TaskLeftRunning, want: "BOSH task 42 is still running; Blacksmith stopped waiting and did not cancel it"},
+		{outcome: bosh.TaskCancelRequested, want: "Blacksmith asked the director to cancel BOSH task 42"},
+		{outcome: bosh.TaskCancelFailed, want: "Blacksmith tried to cancel BOSH task 42, and the cancel failed"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.outcome.String(), func(t *testing.T) {
+			err := &bosh.DirectorCallError{
+				Operation: "WaitForTask",
+				Director:  "https://127.0.0.1:25555",
+				Cause:     context.Canceled,
+				Err:       context.Canceled,
+				TaskID:    42,
+				Task:      testCase.outcome,
+			}
+
+			message := err.Error()
+			for _, want := range []string{testCase.want, "/b/tasks/42"} {
+				if !strings.Contains(message, want) {
+					t.Errorf("expected the error to mention %q, got: %s", want, message)
+				}
+			}
+		})
+	}
+
+	plain := (&bosh.DirectorCallError{Operation: "GetInfo", Director: "https://127.0.0.1:25555", Cause: context.Canceled, Err: context.Canceled}).Error()
+	if strings.Contains(plain, "/b/tasks/") {
+		t.Errorf("a call with no task names no task path: %s", plain)
 	}
 }

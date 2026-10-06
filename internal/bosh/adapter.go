@@ -34,6 +34,11 @@ type Director interface {
 	CancelTask(ctx context.Context, taskID int) error
 	GetTaskOutput(ctx context.Context, id int, outputType string) (string, error)
 	GetTaskEvents(ctx context.Context, id int) ([]TaskEvent, error)
+	// WaitForTask waits until the task reaches a terminal state and returns
+	// it with a nil error for every terminal state, so callers judge the
+	// state themselves. When the context ends first, the task is left
+	// running and the error is a *DirectorCallError with TaskLeftRunning.
+	WaitForTask(ctx context.Context, id int) (*Task, error)
 
 	// Event operations
 	GetEvents(ctx context.Context, deployment string) ([]Event, error)
