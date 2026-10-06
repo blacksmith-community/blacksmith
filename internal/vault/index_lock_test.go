@@ -158,7 +158,12 @@ var _ = Describe("Vault index read-modify-writes", func() {
 		}
 	})
 
-	It("releases the index lock while it waits on an auto-unseal", func() {
+	// expectLockReleasedAcrossUnseal has the first caller's index change find
+	// Vault sealed, through the fault that seal injects, and holds the
+	// auto-unseal that answer starts. A second caller then changes the index
+	// while the first one waits, and both changes must survive the first
+	// caller's retry.
+	expectLockReleasedAcrossUnseal := func(seal func(proxy *testutil.VaultFaultProxy)) {
 		proxy, err := testutil.NewVaultFaultProxy(server.Addr)
 		Expect(err).ToNot(HaveOccurred())
 
@@ -185,9 +190,7 @@ var _ = Describe("Vault index read-modify-writes", func() {
 			return nil
 		})
 
-		// The first caller's index read finds Vault sealed, so it waits on
-		// the auto-unseal, which this spec holds.
-		proxy.FailReads("secret/data/db", http.StatusServiceUnavailable, "Vault is sealed", 1)
+		seal(proxy)
 
 		var firstErr error
 
@@ -225,6 +228,22 @@ var _ = Describe("Vault index read-modify-writes", func() {
 		idx, err := client.GetIndex(ctx, "db")
 		Expect(err).ToNot(HaveOccurred())
 		Expect(idx.Data).To(HaveKey(key(0)))
-		Expect(idx.Data).To(HaveKey(key(1)))
+		Expect(idx.Data).To(HaveKey(key(1)), "the retry saved an index read before the unseal")
+	}
+
+	It("releases the index lock while it waits on an auto-unseal", func() {
+		// The first caller's index read finds Vault sealed.
+		expectLockReleasedAcrossUnseal(func(proxy *testutil.VaultFaultProxy) {
+			proxy.FailReads("secret/data/db", http.StatusServiceUnavailable, "Vault is sealed", 1)
+		})
+	})
+
+	It("reads the index again when its save finds Vault sealed", func() {
+		// The first caller has read the index without the second caller's
+		// entry, and its save finds Vault sealed. A retry that saved the
+		// index it read before the unseal would drop that entry.
+		expectLockReleasedAcrossUnseal(func(proxy *testutil.VaultFaultProxy) {
+			proxy.FailWrites("secret/data/db", http.StatusServiceUnavailable, "Vault is sealed", 1)
+		})
 	})
 })
