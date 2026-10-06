@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/vault"
+	vaultPkg "blacksmith/pkg/vault"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -110,83 +112,106 @@ var _ = Describe("Auto-unseal and the caller's context", func() {
 	})
 })
 
+// sealedVaultStub answers the health and seal-status checks from a sealed
+// flag and holds every unseal request until release is closed, after which it
+// unseals. It records each unseal request, and each one its client cut off.
+type sealedVaultStub struct {
+	server         *httptest.Server
+	sealed         atomic.Bool
+	unsealRequests atomic.Int32
+	arrived        chan struct{}
+	sawCancel      chan struct{}
+	release        chan struct{}
+	releaseOnce    sync.Once
+	credentialsDir string
+}
+
+func newSealedVaultStub() *sealedVaultStub {
+	stub := &sealedVaultStub{
+		arrived:   make(chan struct{}, 4),
+		sawCancel: make(chan struct{}, 4),
+		release:   make(chan struct{}),
+	}
+	stub.sealed.Store(true)
+
+	stub.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+
+		switch req.URL.Path {
+		case "/v1/sys/health", "/v1/sys/seal-status":
+			_, _ = writer.Write([]byte(`{"sealed":` + boolJSON(stub.sealed.Load()) + `,"initialized":true,"t":1,"n":1}`))
+		case "/v1/sys/unseal":
+			// The server only notices a closed connection once the handler
+			// has read the request body to its end.
+			_, _ = io.Copy(io.Discard, req.Body)
+
+			stub.unsealRequests.Add(1)
+			stub.arrived <- struct{}{}
+
+			select {
+			case <-req.Context().Done():
+				stub.sawCancel <- struct{}{}
+
+				return
+			case <-stub.release:
+			}
+
+			stub.sealed.Store(false)
+
+			_, _ = writer.Write([]byte(`{"sealed":false,"initialized":true,"t":1,"n":1,"progress":0}`))
+		default:
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	var err error
+
+	stub.credentialsDir, err = os.MkdirTemp("", "unseal-stub-")
+	Expect(err).ToNot(HaveOccurred())
+
+	return stub
+}
+
+// client returns a Vault client for the stub with auto-unseal on and a seal
+// key on file.
+func (stub *sealedVaultStub) client() *vault.Vault {
+	credentials := filepath.Join(stub.credentialsDir, "creds.json")
+	ExpectWithOffset(1, os.WriteFile(credentials, []byte(`{"seal_key":"unseal-key","root_token":"root"}`), 0o600)).To(Succeed())
+
+	client := vault.New(stub.server.URL, "root", true)
+	client.SetCredentialsPath(credentials)
+	client.SetAutoUnsealEnabled(true)
+
+	return client
+}
+
+func (stub *sealedVaultStub) releaseUnseal() {
+	stub.releaseOnce.Do(func() { close(stub.release) })
+}
+
+func (stub *sealedVaultStub) close() {
+	stub.releaseUnseal()
+	stub.server.Close()
+
+	Expect(os.RemoveAll(stub.credentialsDir)).To(Succeed())
+}
+
 // The unseal is a recovery action for every caller, and the cooldown is spent
 // when it starts. A caller that gives up part way must not cut it off, or
 // Vault stays sealed for the whole cooldown.
 var _ = Describe("Auto-unseal that its caller abandons", func() {
 	var (
-		sealed         atomic.Bool
-		unsealRequests atomic.Int32
-		arrived        chan struct{}
-		sawCancel      chan struct{}
-		release        chan struct{}
-		stub           *httptest.Server
-		client         *vault.Vault
-
-		credentialsDir string
+		stub   *sealedVaultStub
+		client *vault.Vault
 	)
 
 	BeforeEach(func() {
-		sealed.Store(true)
-		unsealRequests.Store(0)
-
-		arrived = make(chan struct{}, 4)
-		sawCancel = make(chan struct{}, 4)
-		release = make(chan struct{})
-
-		stub = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
-			writer.Header().Set("Content-Type", "application/json")
-
-			switch req.URL.Path {
-			case "/v1/sys/health", "/v1/sys/seal-status":
-				_, _ = writer.Write([]byte(`{"sealed":` + boolJSON(sealed.Load()) + `,"initialized":true,"t":1,"n":1}`))
-			case "/v1/sys/unseal":
-				// The server only notices a closed connection once the handler
-				// has read the request body to its end.
-				_, _ = io.Copy(io.Discard, req.Body)
-
-				unsealRequests.Add(1)
-				arrived <- struct{}{}
-
-				select {
-				case <-req.Context().Done():
-					sawCancel <- struct{}{}
-
-					return
-				case <-release:
-				}
-
-				sealed.Store(false)
-
-				_, _ = writer.Write([]byte(`{"sealed":false,"initialized":true,"t":1,"n":1,"progress":0}`))
-			default:
-				writer.WriteHeader(http.StatusNotFound)
-			}
-		}))
-
-		var err error
-
-		credentialsDir, err = os.MkdirTemp("", "unseal-abandoned-")
-		Expect(err).ToNot(HaveOccurred())
-
-		credentials := filepath.Join(credentialsDir, "creds.json")
-		Expect(os.WriteFile(credentials, []byte(`{"seal_key":"unseal-key","root_token":"root"}`), 0o600)).To(Succeed())
-
-		client = vault.New(stub.URL, "root", true)
-		client.SetCredentialsPath(credentials)
-		client.SetAutoUnsealEnabled(true)
+		stub = newSealedVaultStub()
+		client = stub.client()
 	})
 
 	AfterEach(func() {
-		select {
-		case <-release:
-		default:
-			close(release)
-		}
-
-		stub.Close()
-
-		Expect(os.RemoveAll(credentialsDir)).To(Succeed())
+		stub.close()
 	})
 
 	It("still finishes the unseal when the caller's context ends during it", func() {
@@ -201,7 +226,7 @@ var _ = Describe("Auto-unseal that its caller abandons", func() {
 			done <- client.AutoUnsealIfSealed(callerCtx)
 		}()
 
-		Eventually(arrived, 5*time.Second).Should(Receive())
+		Eventually(stub.arrived, 5*time.Second).Should(Receive())
 		endCaller()
 
 		var err error
@@ -211,17 +236,112 @@ var _ = Describe("Auto-unseal that its caller abandons", func() {
 
 		// A cut-off request shows up at the stub as a cancelled request
 		// context, a moment after the caller's context ends.
-		Consistently(sawCancel, 500*time.Millisecond).ShouldNot(Receive(), "the unseal request was cancelled with its caller")
-		Expect(sealed.Load()).To(BeTrue(), "the stub unsealed before it was released")
+		Consistently(stub.sawCancel, 500*time.Millisecond).ShouldNot(Receive(), "the unseal request was cancelled with its caller")
+		Expect(stub.sealed.Load()).To(BeTrue(), "the stub unsealed before it was released")
 
-		close(release)
+		stub.releaseUnseal()
 
-		Eventually(sealed.Load, 5*time.Second).Should(BeFalse(), "the unseal did not finish after its caller gave up")
+		Eventually(stub.sealed.Load, 5*time.Second).Should(BeFalse(), "the unseal did not finish after its caller gave up")
 
 		// The next caller finds Vault unsealed, and the cooldown that the
 		// first attempt spent has not cost anyone an unseal.
 		Expect(client.AutoUnsealIfSealed(context.Background())).To(Succeed())
-		Expect(unsealRequests.Load()).To(Equal(int32(1)))
+		Expect(stub.unsealRequests.Load()).To(Equal(int32(1)))
+	})
+})
+
+// Callers that find Vault sealed while an unseal is already running share that
+// unseal. They wait for its result, and none of them starts a second one.
+var _ = Describe("Auto-unseal shared by concurrent callers", func() {
+	var (
+		stub   *sealedVaultStub
+		client *vault.Vault
+	)
+
+	BeforeEach(func() {
+		stub = newSealedVaultStub()
+		client = stub.client()
+	})
+
+	AfterEach(func() {
+		stub.close()
+	})
+
+	// sealedUntilUnsealed is an operation that fails as a sealed Vault does
+	// until the stub has been unsealed.
+	sealedUntilUnsealed := func() error {
+		if stub.sealed.Load() {
+			return vaultPkg.ErrIsSealed
+		}
+
+		return nil
+	}
+
+	It("lets a caller that arrives during the unseal wait for it and succeed", func() {
+		first := make(chan error, 1)
+		second := make(chan error, 1)
+
+		go func() {
+			defer GinkgoRecover()
+
+			first <- client.WithAutoUnseal(context.Background(), sealedUntilUnsealed)
+		}()
+
+		Eventually(stub.arrived, 5*time.Second).Should(Receive())
+
+		go func() {
+			defer GinkgoRecover()
+
+			second <- client.WithAutoUnseal(context.Background(), sealedUntilUnsealed)
+		}()
+
+		// The second caller waits for the unseal in flight instead of
+		// retrying into the sealed Vault.
+		Consistently(second, 500*time.Millisecond).ShouldNot(Receive(), "the second caller did not wait for the unseal in flight")
+
+		stub.releaseUnseal()
+
+		Eventually(first, 5*time.Second).Should(Receive(BeNil()))
+		Eventually(second, 5*time.Second).Should(Receive(BeNil()), "the second caller did not share the unseal's success")
+		Expect(stub.unsealRequests.Load()).To(Equal(int32(1)), "the unseal ran more than once")
+	})
+
+	It("returns the context error to a waiting caller whose context ends first, and still finishes the unseal", func() {
+		first := make(chan error, 1)
+		second := make(chan error, 1)
+
+		go func() {
+			defer GinkgoRecover()
+
+			first <- client.AutoUnsealIfSealed(context.Background())
+		}()
+
+		Eventually(stub.arrived, 5*time.Second).Should(Receive())
+
+		waiterCtx, endWaiter := context.WithCancel(context.Background())
+		defer endWaiter()
+
+		go func() {
+			defer GinkgoRecover()
+
+			second <- client.AutoUnsealIfSealed(waiterCtx)
+		}()
+
+		Consistently(second, 500*time.Millisecond).ShouldNot(Receive(), "the waiting caller returned before the unseal finished")
+
+		endWaiter()
+
+		var err error
+
+		Eventually(second, 5*time.Second).Should(Receive(&err), "the waiting caller did not stop when its context ended")
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue(), "the error does not carry the context's: %v", err)
+		Expect(stub.sealed.Load()).To(BeTrue(), "the stub unsealed before it was released")
+
+		stub.releaseUnseal()
+
+		Eventually(first, 5*time.Second).Should(Receive(BeNil()), "the unseal did not finish for the caller that started it")
+		Expect(stub.sealed.Load()).To(BeFalse())
+		Expect(stub.unsealRequests.Load()).To(Equal(int32(1)), "the unseal ran more than once")
 	})
 })
 

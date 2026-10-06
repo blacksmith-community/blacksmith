@@ -25,9 +25,9 @@ type Vault struct {
 	client   *vaultPkg.Client // HashiCorp API client wrapper
 	// auto-unseal management
 	credentialsPath   string
-	mu                sync.Mutex
+	mu                sync.Mutex   // protects unsealing and lastUnsealAttempt
 	clientMu          sync.RWMutex // protects client field for thread-safe access
-	unsealInProgress  int32
+	unsealing         *unsealCall  // the auto-unseal in flight, or nil
 	lastUnsealAttempt time.Time
 	unsealCooldown    time.Duration
 	autoUnsealEnabled bool

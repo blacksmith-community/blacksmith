@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"blacksmith/pkg/logger"
@@ -81,40 +80,85 @@ func (vault *Vault) AutoUnsealIfSealed(ctx context.Context) error {
 		return err
 	}
 
-	if !vault.acquireUnsealLock() {
+	call, leader := vault.joinOrStartUnseal()
+	if call == nil {
+		// The cooldown since the last attempt has not passed.
 		return nil
 	}
 
-	if vault.shouldSkipDueToCooldown() {
-		vault.releaseUnsealLock()
-
-		return nil
+	if leader {
+		vault.runUnsealDetached(ctx, call, logger)
 	}
 
-	return vault.unsealDetached(ctx, logger)
+	return awaitUnseal(ctx, call)
 }
 
-// unsealDetached runs the unseal on a context that keeps ctx's values but not
-// its cancellation, under its own bound, and releases the unseal lock when the
-// unseal ends. The unseal is a recovery action for every caller, and the
-// cooldown has already been spent on it, so one caller giving up must not cut
-// it off and leave Vault sealed for the cooldown's length. The caller stops
-// waiting when its context ends, and the unseal carries on without it.
-func (vault *Vault) unsealDetached(ctx context.Context, logger logger.Logger) error {
+// unsealCall is one auto-unseal in flight. Every caller that finds Vault
+// sealed while it runs waits for its result instead of starting another. err
+// is written once, before done is closed, and read only after done is closed.
+type unsealCall struct {
+	done chan struct{}
+	err  error
+}
+
+// joinOrStartUnseal returns the unseal in flight, or starts the record of a
+// new one when the cooldown allows it. leader is true for the caller that must
+// run the new unseal. A nil call means the cooldown since the last attempt has
+// not passed and no unseal is in flight.
+func (vault *Vault) joinOrStartUnseal() (*unsealCall, bool) {
+	vault.mu.Lock()
+	defer vault.mu.Unlock()
+
+	if vault.unsealing != nil {
+		return vault.unsealing, false
+	}
+
+	if vault.inUnsealCooldown() {
+		return nil, false
+	}
+
+	vault.lastUnsealAttempt = time.Now()
+	vault.unsealing = &unsealCall{done: make(chan struct{})}
+
+	return vault.unsealing, true
+}
+
+// finishUnseal records the result of call, wakes every caller waiting on it,
+// and clears it, so the next sealed Vault starts a new unseal once the
+// cooldown has passed.
+func (vault *Vault) finishUnseal(call *unsealCall, err error) {
+	vault.mu.Lock()
+	defer vault.mu.Unlock()
+
+	call.err = err
+	close(call.done)
+
+	if vault.unsealing == call {
+		vault.unsealing = nil
+	}
+}
+
+// runUnsealDetached runs the unseal on a context that keeps ctx's values but
+// not its cancellation, under its own bound. The unseal is a recovery action
+// for every caller, and the cooldown has already been spent on it, so the
+// caller that started it giving up must not cut it off and leave Vault sealed
+// for the cooldown's length.
+func (vault *Vault) runUnsealDetached(ctx context.Context, call *unsealCall, logger logger.Logger) {
 	unsealCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unsealTimeout)
 
-	result := make(chan error, 1)
-
 	go func() {
-		defer vault.releaseUnsealLock()
 		defer cancel()
 
-		result <- vault.performUnseal(unsealCtx, logger)
+		vault.finishUnseal(call, vault.performUnseal(unsealCtx, logger))
 	}()
+}
 
+// awaitUnseal waits for call's result or for ctx to end, whichever comes
+// first. A caller that stops waiting leaves the unseal running for the others.
+func awaitUnseal(ctx context.Context, call *unsealCall) error {
 	select {
-	case err := <-result:
-		return err
+	case <-call.done:
+		return call.err
 	case <-ctx.Done():
 		return fmt.Errorf("stopped waiting for the vault unseal: %w", ctx.Err())
 	}
@@ -139,18 +183,9 @@ func (vault *Vault) validateAutoUnsealConfig(logger logger.Logger) error {
 	return nil
 }
 
-func (vault *Vault) acquireUnsealLock() bool {
-	return atomic.CompareAndSwapInt32(&vault.unsealInProgress, 0, 1)
-}
-
-func (vault *Vault) releaseUnsealLock() {
-	atomic.StoreInt32(&vault.unsealInProgress, 0)
-}
-
-func (vault *Vault) shouldSkipDueToCooldown() bool {
-	vault.mu.Lock()
-	defer vault.mu.Unlock()
-
+// inUnsealCooldown reports whether the last unseal attempt is more recent than
+// the cooldown. The caller holds vault.mu.
+func (vault *Vault) inUnsealCooldown() bool {
 	cooldown := vault.unsealCooldown
 	if cooldown <= 0 {
 		const defaultUnsealCooldownSeconds = 30
@@ -158,13 +193,7 @@ func (vault *Vault) shouldSkipDueToCooldown() bool {
 		cooldown = defaultUnsealCooldownSeconds * time.Second
 	}
 
-	if time.Since(vault.lastUnsealAttempt) < cooldown {
-		return true
-	}
-
-	vault.lastUnsealAttempt = time.Now()
-
-	return false
+	return time.Since(vault.lastUnsealAttempt) < cooldown
 }
 
 func (vault *Vault) performUnseal(ctx context.Context, logger logger.Logger) error {
