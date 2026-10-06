@@ -1176,7 +1176,7 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil, logger)
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil)
 	if err != nil {
 		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
 	}
@@ -1189,8 +1189,8 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	return nil
 }
 
-func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, contextData map[string]any, logger logger.Logger) (map[string]interface{}, error) {
-	existing, err := b.getExistingIndexEntry(ctx, instanceID, logger)
+func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base map[string]interface{}, contextData map[string]any) (map[string]interface{}, error) {
+	existing, err := b.getExistingIndexEntry(ctx, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -1211,14 +1211,13 @@ func (b *Broker) buildIndexEntry(ctx context.Context, instanceID string, base ma
 // getExistingIndexEntry returns a copy of the instance's entry in the 'db'
 // index. An instance that is not in the index has an empty entry. An index
 // that cannot be read is an error, because merging new fields into an empty
-// entry and writing it would erase the fields the stored entry holds.
-func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) (map[string]interface{}, error) {
+// entry and writing it would erase the fields the stored entry holds. The
+// error is logged by the caller, which knows the step it stops.
+func (b *Broker) getExistingIndexEntry(ctx context.Context, instanceID string) (map[string]interface{}, error) {
 	entry := make(map[string]interface{})
 
 	idx, err := b.Vault.GetIndex(ctx, "db")
 	if err != nil {
-		logger.Error("unable to load the existing index entry for %s: %v", instanceID, err)
-
 		return nil, fmt.Errorf("failed to read the index entry for %s: %w", instanceID, err)
 	}
 
@@ -1713,7 +1712,7 @@ func (b *Broker) storeDeploymentNameInIndex(ctx context.Context, instanceID, dep
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil, logger)
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, nil)
 	if err != nil {
 		// Non-fatal, as a failed write is. The entry already in the index must
 		// not be replaced by one built without it.
@@ -1758,7 +1757,7 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context, logger)
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context)
 	if err != nil {
 		logger.Error("failed to record service request in vault: %s", err)
 
@@ -1841,7 +1840,7 @@ func (b *Broker) updateInstanceStatus(ctx context.Context, instanceID string, de
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context, logger)
+	entry, err := b.buildIndexEntry(recordCtx, instanceID, baseData, details.Context)
 	if err != nil {
 		logger.Error("failed to update service status in vault index: %s", err)
 
@@ -2940,7 +2939,7 @@ func recordedTime(record map[string]interface{}, field string) (time.Time, bool)
 // the lifecycle is dated from the metadata alone, because a failed read must
 // not stop the deleted_at write.
 func (b *Broker) lifecycleIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) map[string]interface{} {
-	entry, err := b.getExistingIndexEntry(ctx, instanceID, logger)
+	entry, err := b.getExistingIndexEntry(ctx, instanceID)
 	if err != nil {
 		logger.Warning("could not read the index entry of %s, so deleted_at is dated from its metadata alone: %s", instanceID, err)
 

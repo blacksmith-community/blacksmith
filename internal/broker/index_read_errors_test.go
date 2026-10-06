@@ -4,17 +4,56 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"blacksmith/internal/broker"
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
+	"blacksmith/pkg/logger"
 	"blacksmith/pkg/testutil"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
+
+// errorLines records the messages logged at Error, the level a failed index
+// read is reported at.
+type errorLines struct {
+	*logger.NoOpLogger
+
+	mu    sync.Mutex
+	lines []string
+}
+
+func (e *errorLines) Error(msg string, args ...interface{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.lines = append(e.lines, fmt.Sprintf(msg, args...))
+}
+
+func (e *errorLines) Errorf(msg string, args ...interface{}) { e.Error(msg, args...) }
+
+func (e *errorLines) Named(string) logger.Logger { return e }
+
+// mentioning returns the logged lines that contain text.
+func (e *errorLines) mentioning(text string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	var matched []string
+
+	for _, line := range e.lines {
+		if strings.Contains(line, text) {
+			matched = append(matched, line)
+		}
+	}
+
+	return matched
+}
 
 // The accept path builds an instance's index entry from the entry already
 // stored, then writes it. When that first read fails, the broker must not write
@@ -121,6 +160,60 @@ var _ = Describe("Index read errors in the broker", func() {
 	It("skips the deployment name write without failing the provision", func() {
 		b.StoreDeploymentNameInIndex(ctx, instanceID, "a-different-name")
 		expectEntryUntouched()
+	})
+
+	// The step that stops is the one that reports it, so a failed read
+	// shows up once in the log, with that step named.
+	Context("the log of a failed read", func() {
+		var (
+			logged   *errorLines
+			previous logger.Logger
+		)
+
+		BeforeEach(func() {
+			logged = &errorLines{NoOpLogger: &logger.NoOpLogger{}}
+			previous = logger.Get()
+
+			logger.Set(logged)
+		})
+
+		AfterEach(func() {
+			logger.Set(previous)
+		})
+
+		readFailure := func() string { return "index entry for " + instanceID }
+
+		It("reports a failed first provision record once", func() {
+			Expect(b.RecordInitialRequest(ctx, instanceID, provisionRequest())).ToNot(Succeed())
+
+			Expect(logged.mentioning(readFailure())).To(HaveLen(1))
+			Expect(logged.mentioning(readFailure())[0]).To(ContainSubstring("failed to record service request in vault"))
+		})
+
+		It("reports a failed status update once", func() {
+			plan := &services.Plan{ID: planID}
+
+			Expect(b.UpdateInstanceStatus(ctx, instanceID, provisionRequest(), plan, "provisioning")).ToNot(Succeed())
+
+			Expect(logged.mentioning(readFailure())).To(HaveLen(1))
+			Expect(logged.mentioning(readFailure())[0]).To(ContainSubstring("failed to update service status in vault index"))
+		})
+
+		It("reports a skipped deployment name write once", func() {
+			b.StoreDeploymentNameInIndex(ctx, instanceID, "a-different-name")
+
+			Expect(logged.mentioning(readFailure())).To(HaveLen(1))
+			Expect(logged.mentioning(readFailure())[0]).To(ContainSubstring("failed to record deployment name in vault index"))
+		})
+
+		// Deprovision logs the error this returns, so the record itself
+		// logs nothing.
+		It("leaves the report of a failed deprovision record to Deprovision", func() {
+			err := b.RecordDeprovisionRequest(ctx, instanceID, osbapi.DeprovisionRequest{ServiceID: serviceID, PlanID: planID})
+			Expect(err).To(MatchError(ContainSubstring(readFailure())))
+
+			Expect(logged.mentioning(readFailure())).To(BeEmpty())
+		})
 	})
 
 	It("writes the merged entry when the index reads", func() {
