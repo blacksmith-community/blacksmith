@@ -146,38 +146,36 @@ func (vault *Vault) AppendHistory(ctx context.Context, instanceID, action, descr
 	return vault.Put(ctx, metadataPath, metadata)
 }
 
-// Index manages vault index data.
+// Index sets the index entry for instanceID to data, or removes the entry
+// when data is nil.
 func (vault *Vault) Index(ctx context.Context, instanceID string, data interface{}) error {
-	idx, err := vault.GetIndex(ctx, "db")
-	if err != nil {
-		return err
-	}
+	var entry interface{}
 
-	// If data is nil, remove the instance from the index
-	if data == nil {
-		delete(idx.Data, instanceID)
-	} else {
-		switch typedData := data.(type) {
-		case vaultPkg.Instance:
-			idx.Data[instanceID] = typedData
-		case map[string]interface{}:
-			idx.Data[instanceID] = typedData
-		default:
-			dataMap, err := convertToMap(data)
-			if err != nil {
-				return fmt.Errorf("%w: %w", vaultPkg.ErrIndexedValueMalformed, err)
-			}
-
-			idx.Data[instanceID] = dataMap
+	switch typedData := data.(type) {
+	case nil:
+	case vaultPkg.Instance:
+		entry = typedData
+	case map[string]interface{}:
+		entry = typedData
+	default:
+		dataMap, err := convertToMap(data)
+		if err != nil {
+			return fmt.Errorf("%w: %w", vaultPkg.ErrIndexedValueMalformed, err)
 		}
+
+		entry = dataMap
 	}
 
-	err = idx.Save(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to save index: %w", err)
-	}
+	return vault.updateIndex(ctx, func(idx *vaultPkg.Index) (bool, error) {
+		// If data is nil, remove the instance from the index
+		if entry == nil {
+			delete(idx.Data, instanceID)
+		} else {
+			idx.Data[instanceID] = entry
+		}
 
-	return nil
+		return true, nil
+	})
 }
 
 // GetIndex retrieves a vault index.
@@ -197,6 +195,12 @@ func (vault *Vault) FindInstance(ctx context.Context, instanceID string) (*vault
 		return nil, false, fmt.Errorf("failed to get vault index: %w", err)
 	}
 
+	return instanceFromIndex(idx, instanceID)
+}
+
+// instanceFromIndex decodes the entry for instanceID in idx. A missing entry,
+// or one whose data is nil, reports false.
+func instanceFromIndex(idx *vaultPkg.Index, instanceID string) (*vaultPkg.Instance, bool, error) {
 	data, err := idx.Lookup(instanceID)
 	if err != nil {
 		if err.Error() == fmt.Sprintf("%s: '%s'", vaultPkg.ErrKeyNotFoundInIndex, instanceID) {
@@ -226,7 +230,7 @@ func (vault *Vault) FindInstance(ctx context.Context, instanceID string) (*vault
 		}
 	case map[string]interface{}:
 		// Data is a map that needs to be converted
-		err = convertToStruct(typedData, &instance)
+		err := convertToStruct(typedData, &instance)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to convert instance data: %w", err)
 		}
@@ -290,18 +294,15 @@ func (vault *Vault) Clear(instanceID string) {
 	}
 
 	// Remove from index
-	idx, err := vault.GetIndex(ctx, "db")
+	err := vault.updateIndex(ctx, func(idx *vaultPkg.Index) (bool, error) {
+		delete(idx.Data, instanceID)
+
+		return true, nil
+	})
 	if err != nil {
-		logger.Debug("failed to get index for cleanup: %s", err)
+		logger.Debug("failed to remove instance from index during cleanup: %s", err)
 
 		return
-	}
-
-	delete(idx.Data, instanceID)
-
-	err = idx.Save(ctx)
-	if err != nil {
-		logger.Debug("failed to save index after cleanup: %s", err)
 	}
 
 	logger.Info("cleared all data for instance %s", instanceID)
@@ -329,11 +330,23 @@ func (vault *Vault) UpdateIndexEntry(ctx context.Context, instanceID string, upd
 	logger := logger.Get().Named("vault")
 	logger.Debug("updating index entry for instance %s", instanceID)
 
-	idx, err := vault.GetIndex(ctx, "db")
+	err := vault.updateIndex(ctx, func(idx *vaultPkg.Index) (bool, error) {
+		applyIndexUpdates(logger, idx, instanceID, updates)
+
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to get vault index: %w", err)
+		return fmt.Errorf("failed to update index entry for instance %s: %w", instanceID, err)
 	}
 
+	logger.Debug("updated index entry for instance %s with %d fields", instanceID, len(updates))
+
+	return nil
+}
+
+// applyIndexUpdates sets the fields in updates on the entry for instanceID in
+// idx, creating the entry when it is missing or is not a map.
+func applyIndexUpdates(logger logger.Logger, idx *vaultPkg.Index, instanceID string, updates map[string]interface{}) {
 	// Get existing entry or create new one
 	var entry map[string]interface{}
 	if existing, exists := idx.Data[instanceID]; exists {
@@ -356,49 +369,48 @@ func (vault *Vault) UpdateIndexEntry(ctx context.Context, instanceID string, upd
 		entry[key] = value
 	}
 
-	// Save back to index
 	idx.Data[instanceID] = entry
-
-	err = idx.Save(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to save index after updating instance %s: %w", instanceID, err)
-	}
-
-	logger.Debug("updated index entry for instance %s with %d fields", instanceID, len(updates))
-
-	return nil
 }
 
 // MarkInstanceDeleted marks an instance as deleted in the vault index.
 func (vault *Vault) MarkInstanceDeleted(ctx context.Context, instanceID string) error {
 	logger := logger.Get().Named("vault")
 
+	var marked bool
+
 	// Only an instance that is still indexed can be marked. Creating a bare
 	// tombstone for one that a deprovision or the reconciler already removed
-	// leaves an entry with no service, plan, or deployment fields behind.
-	_, exists, err := vault.FindInstance(ctx, instanceID)
+	// leaves an entry with no service, plan, or deployment fields behind. The
+	// check and the mark happen under one hold of the index lock, so a
+	// removal in this process cannot land between them.
+	err := vault.updateIndex(ctx, func(idx *vaultPkg.Index) (bool, error) {
+		_, exists, err := instanceFromIndex(idx, instanceID)
+		if err != nil {
+			return false, fmt.Errorf("failed to check whether instance %s is indexed: %w", instanceID, err)
+		}
+
+		marked = exists
+		if !exists {
+			return false, nil
+		}
+
+		applyIndexUpdates(logger, idx, instanceID, map[string]interface{}{
+			"status":          "deleted",
+			"deleted_at":      time.Now().Format(time.RFC3339),
+			"deleted_by":      "vm-monitor",
+			"deletion_reason": "deployment not found in BOSH director",
+		})
+
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to check whether instance %s is indexed: %w", instanceID, err)
+		return fmt.Errorf("failed to mark instance %s as deleted: %w", instanceID, err)
 	}
 
-	if !exists {
+	if !marked {
 		logger.Info("instance %s is not in the vault index, nothing to mark as deleted", instanceID)
 
 		return nil
-	}
-
-	logger.Info("marking instance %s as deleted in vault index", instanceID)
-
-	updates := map[string]interface{}{
-		"status":          "deleted",
-		"deleted_at":      time.Now().Format(time.RFC3339),
-		"deleted_by":      "vm-monitor",
-		"deletion_reason": "deployment not found in BOSH director",
-	}
-
-	err = vault.UpdateIndexEntry(ctx, instanceID, updates)
-	if err != nil {
-		return fmt.Errorf("failed to mark instance %s as deleted: %w", instanceID, err)
 	}
 
 	logger.Info("successfully marked instance %s as deleted", instanceID)

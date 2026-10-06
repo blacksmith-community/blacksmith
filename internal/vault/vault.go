@@ -37,6 +37,13 @@ type Vault struct {
 	verifyMountFn func(store string, createIfMissing bool) error
 	// HTTP timeout for vault client (0 uses default)
 	httpTimeout time.Duration
+
+	// indexMu is held by every read-modify-write of the "db" index from its
+	// read to its write, so that callers sharing this Vault do not overwrite
+	// each other's changes. It is never held while waiting on an auto-unseal
+	// and is separate from mu. Another Vault value, even in this process,
+	// and other processes writing the index are not covered.
+	indexMu sync.Mutex
 }
 
 // New creates a new Vault instance.
@@ -167,34 +174,15 @@ func (vault *Vault) Get(ctx context.Context, path string, out interface{}) (bool
 	err = vault.withAutoUnseal(ctx, func() error {
 		var getErr error
 
-		data, exists, getErr = vault.client.GetSecret(ctx, path)
-		if getErr != nil {
-			return fmt.Errorf("failed to get secret: %w", getErr)
-		}
+		data, exists, getErr = vault.readSecret(ctx, path)
 
-		return nil
+		return getErr
 	})
 	if err != nil {
 		return false, err
 	}
 
-	if !exists {
-		logger.Debug("secret not found at %s", path)
-
-		return false, nil
-	}
-
-	// Convert the data to the expected output format
-	err = convertToStruct(data, out)
-	if err != nil {
-		logger.Error("failed to convert data at %s: %s", path, err)
-
-		return false, fmt.Errorf("%w: failed to convert data", vaultPkg.ErrCouldNotRemarshalData)
-	}
-
-	logger.Debug("secret retrieved from %s", path)
-
-	return true, nil
+	return decodeSecret(logger, path, data, exists, out)
 }
 
 // Put stores data in vault at the specified path.
@@ -429,6 +417,17 @@ func (vault *Vault) LoadTokenFromCredentials() (string, error) {
 	return creds.RootToken, nil
 }
 
+// readSecret reads the secret at path once, with no auto-unseal. The caller
+// has called ensureClient.
+func (vault *Vault) readSecret(ctx context.Context, path string) (map[string]interface{}, bool, error) {
+	data, exists, err := vault.client.GetSecret(ctx, path)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get secret: %w", err)
+	}
+
+	return data, exists, nil
+}
+
 // ensureClient ensures the vault client is initialized.
 // This method is thread-safe using RWMutex for proper synchronization.
 func (vault *Vault) ensureClient() error {
@@ -545,6 +544,28 @@ func (vault *Vault) updateHomeDirs() {
 }
 
 // Helper functions
+
+// decodeSecret decodes the secret read from path into out and reports whether
+// it existed.
+func decodeSecret(logger logger.Logger, path string, data map[string]interface{}, exists bool, out interface{}) (bool, error) {
+	if !exists {
+		logger.Debug("secret not found at %s", path)
+
+		return false, nil
+	}
+
+	// Convert the data to the expected output format
+	err := convertToStruct(data, out)
+	if err != nil {
+		logger.Error("failed to convert data at %s: %s", path, err)
+
+		return false, fmt.Errorf("%w: failed to convert data", vaultPkg.ErrCouldNotRemarshalData)
+	}
+
+	logger.Debug("secret retrieved from %s", path)
+
+	return true, nil
+}
 
 // convertToStruct converts a map to a struct using JSON marshaling/unmarshaling.
 func convertToStruct(data map[string]interface{}, out interface{}) error {
