@@ -73,20 +73,6 @@ func newIndexReadGate(target string) *indexReadGate {
 	return gate
 }
 
-// stops reports whether request is the first index read since Arm.
-func (g *indexReadGate) stops(request *http.Request) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if !g.armed || request.Method != http.MethodGet || !strings.HasSuffix(request.URL.Path, "/secret/data/db") {
-		return false
-	}
-
-	g.armed = false
-
-	return true
-}
-
 // Arm makes the next index read wait for Release.
 func (g *indexReadGate) Arm() {
 	g.mu.Lock()
@@ -103,6 +89,20 @@ func (g *indexReadGate) Release() {
 func (g *indexReadGate) Close() {
 	g.Release()
 	g.server.Close()
+}
+
+// stops reports whether request is the first index read since Arm.
+func (g *indexReadGate) stops(request *http.Request) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if !g.armed || request.Method != http.MethodGet || !strings.HasSuffix(request.URL.Path, "/secret/data/db") {
+		return false
+	}
+
+	g.armed = false
+
+	return true
 }
 
 // The vm-monitor marks an instance deleted through the broker's Vault while

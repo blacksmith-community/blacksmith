@@ -292,25 +292,6 @@ func (s *IndexSynchronizer) SaveVaultIndex(idx map[string]interface{}) error {
 	return nil
 }
 
-// updateVaultIndex runs change on the index as one read-modify-write under
-// the vault's index lock, the one the broker's own index writes take, so
-// neither side can save over a change the other made in between. change
-// may run more than once, each time on a fresh read, and must not keep
-// state from an earlier call.
-func (s *IndexSynchronizer) updateVaultIndex(ctx context.Context, change func(idx map[string]interface{}) (bool, error)) error {
-	v, ok := s.vault.(VaultInterface)
-	if !ok || v == nil {
-		return ErrVaultInterfaceNotAvailable
-	}
-
-	err := v.UpdateIndex(ctx, change)
-	if err != nil {
-		return fmt.Errorf("failed to update index in vault: %w", err)
-	}
-
-	return nil
-}
-
 // cleanupNilEntries removes nil entries from the index.
 func (s *IndexSynchronizer) cleanupNilEntries(idx map[string]interface{}) int {
 	count := 0
@@ -987,4 +968,23 @@ func resetOrphanTimers(idx map[string]interface{}, logger Logger) int {
 	}
 
 	return count
+}
+
+// updateVaultIndex runs change on the index as one read-modify-write under
+// the vault's index lock, the one the broker's own index writes take, so
+// neither side can save over a change the other made in between. change
+// may run more than once, each time on a fresh read, and must not keep
+// state from an earlier call.
+func (s *IndexSynchronizer) updateVaultIndex(ctx context.Context, change func(idx map[string]interface{}) (bool, error)) error {
+	v, ok := s.vault.(VaultInterface)
+	if !ok || v == nil {
+		return ErrVaultInterfaceNotAvailable
+	}
+
+	err := v.UpdateIndex(ctx, change)
+	if err != nil {
+		return fmt.Errorf("failed to update index in vault: %w", err)
+	}
+
+	return nil
 }
