@@ -198,7 +198,7 @@ func TestPlanCloudConfigWriteDecidesByMeaning(t *testing.T) {
 func TestIsEmptyCloudConfig(t *testing.T) {
 	t.Parallel()
 
-	for _, content := range []string{"", "---", "{}", "--- {}", "[]", "--- []", "~", "  \n"} {
+	for _, content := range []string{"", "---", "{}", "--- {}", "[]", "--- []", "~", "  \n", "\t", " \t\n\t ", "# only a comment\n"} {
 		empty, err := bosh.IsEmptyCloudConfig(content)
 		if err != nil || !empty {
 			t.Errorf("expected %q to be empty, got %v, %v", content, empty, err)

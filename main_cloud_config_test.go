@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -154,8 +155,8 @@ func TestBootCloudConfigWritesWhenNothingOverlaps(t *testing.T) {
 func TestBootCloudConfigSkipsEmptyContent(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
-	for _, content := range []string{"", "---", "{}", "--- {}", "[]", "--- []", "~"} {
-		t.Run("content "+content, func(t *testing.T) {
+	for _, content := range []string{"", "---", "{}", "--- {}", "[]", "--- []", "~", "\t", " \n\t\n", "# only a comment\n"} {
+		t.Run(fmt.Sprintf("content %q", content), func(t *testing.T) {
 			t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 			boot, director, cfg := newBootDirector(t, false)

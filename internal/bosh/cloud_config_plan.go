@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -79,6 +80,12 @@ type CloudConfigPlan struct {
 // nothing, meaning it is blank, null, an empty map, or an empty list. It
 // returns the YAML error when the content does not parse.
 func IsEmptyCloudConfig(content string) (bool, error) {
+	// YAML rejects a tab where it expects indentation, so content that is
+	// only whitespace is empty before the parser sees it.
+	if strings.TrimSpace(content) == "" {
+		return true, nil
+	}
+
 	var value interface{}
 
 	err := yaml.Unmarshal([]byte(content), &value)
@@ -157,6 +164,10 @@ type parsedCloudConfig struct {
 // parseCloudConfigMap parses content as a YAML map. Blank content is an empty
 // map, and any other shape is an error, because a cloud config is a map.
 func parseCloudConfigMap(content string) (map[string]interface{}, error) {
+	if strings.TrimSpace(content) == "" {
+		return map[string]interface{}{}, nil
+	}
+
 	var value interface{}
 
 	err := yaml.Unmarshal([]byte(content), &value)
