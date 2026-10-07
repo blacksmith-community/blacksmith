@@ -1141,24 +1141,38 @@ func (d *DirectorAdapter) GetEvents(ctx context.Context, deployment string) (_ [
 	return events, nil
 }
 
-// UpdateCloudConfig updates the cloud config.
+// UpdateCloudConfig writes the content as the cloud config named blacksmith.
+// The director merges named cloud configs alongside its default one, so the
+// write adds to the director's cloud config and never replaces it. A config
+// write creates no director task, so a write whose answer was lost has
+// nothing to look up, and it is not sent again.
 func (d *DirectorAdapter) UpdateCloudConfig(ctx context.Context, config string) (err error) {
 	defer d.explainContext(ctx, "UpdateCloudConfig", &err)
 
-	director := d.bind(ctx)
-
-	d.log.Infof("Updating cloud config")
+	d.log.Infof("Writing cloud config %s", BoshCloudConfigName)
 	d.log.Debugf("Cloud config size: %d bytes", len(config))
 
-	// UpdateConfig has different signature in bosh-cli
-	_, err = director.UpdateConfig("cloud", "", config, []byte(config))
+	_, err = d.api.Configs().Create(ctx, &boshapi.CreateConfigRequest{
+		Type:    cloudConfigType,
+		Name:    BoshCloudConfigName,
+		Content: config,
+	})
 	if err != nil {
-		d.log.Errorf("Failed to update cloud config: %v", err)
+		d.log.Errorf("Failed to write cloud config: %v", err)
 
-		return fmt.Errorf("failed to update cloud config: %w", err)
+		if boshapi.IsOutcomeUnknown(err) && ctx.Err() == nil {
+			return &OutcomeUnknownError{
+				Operation: "UpdateCloudConfig",
+				Director:  d.address,
+				Config:    cloudConfigType + "/" + BoshCloudConfigName,
+				Err:       err,
+			}
+		}
+
+		return d.requestFailure("update cloud config", err)
 	}
 
-	d.log.Infof("Successfully updated cloud config")
+	d.log.Infof("Successfully wrote cloud config %s", BoshCloudConfigName)
 
 	return nil
 }
@@ -1194,13 +1208,15 @@ func (d *DirectorAdapter) GetCloudConfig(ctx context.Context) (_ string, err err
 
 // ListCloudConfigs returns the latest version of every cloud config on the
 // director, the default one included.
+//
+//nolint:nonamedreturns // explainContext reads the named error, as in every other adapter method.
 func (d *DirectorAdapter) ListCloudConfigs(ctx context.Context) (_ []CloudConfigEntry, err error) {
 	defer d.explainContext(ctx, "ListCloudConfigs", &err)
 
 	d.log.Infof("Listing cloud configs")
 
 	entries, err := d.api.Configs().List(ctx, &boshapi.ConfigListOptions{
-		Type:   "cloud",
+		Type:   cloudConfigType,
 		Latest: true,
 	})
 	if err != nil {

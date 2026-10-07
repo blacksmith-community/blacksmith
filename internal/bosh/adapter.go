@@ -48,6 +48,10 @@ type Director interface {
 	FetchLogs(ctx context.Context, deployment string, jobName string, jobIndex string) (string, error)
 
 	// Config operations
+	// UpdateCloudConfig writes the content as the cloud config named
+	// blacksmith. The director merges named cloud configs alongside its
+	// default one, so the write adds to the director's cloud config and
+	// never replaces it.
 	UpdateCloudConfig(ctx context.Context, config string) error
 	GetCloudConfig(ctx context.Context) (string, error)
 	// ListCloudConfigs returns the latest version of every cloud config on

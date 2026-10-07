@@ -434,28 +434,100 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDi
 	return boshDirector, batchDirector
 }
 
-// updateBOSHCloudConfig updates BOSH cloud config if provided.
+// updateBOSHCloudConfig writes the broker's cloud config to the director as
+// the named config blacksmith, when it is safe to. A wrong write can break
+// every deploy on the director, because the director refuses to merge two
+// compilation blocks and sees shared names twice, so any doubt means nothing
+// is written, the reason is logged, and the broker boots on.
 func updateBOSHCloudConfig(ctx context.Context, cfg *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
-	if cfg.BOSH.CloudConfig == "" {
-		return
-	}
+	content := cfg.BOSH.CloudConfig
+	address := cfg.BOSH.Address
 
-	// Check if cloud config is effectively empty (just {} or whitespace)
-	trimmed := strings.TrimSpace(cfg.BOSH.CloudConfig)
-	if trimmed == "{}" || trimmed == "---" || trimmed == "--- {}" || trimmed == "" {
-		return
-	}
-
-	logger.Info("updating cloud-cfg...")
-	logger.Debug("updating cloud-config with:\n%s", cfg.BOSH.CloudConfig)
-
-	err := boshDirector.UpdateCloudConfig(ctx, cfg.BOSH.CloudConfig)
+	empty, err := bosh.IsEmptyCloudConfig(content)
 	if err != nil {
-		logger.Error("Failed to update CLOUD-CONFIG: %s", err)
+		logger.Error("Configuration error in the BOSH cloud config %q (bosh.cloud-config): %s. "+
+			"Nothing was sent to the BOSH director %s, and the broker continues without a cloud config update",
+			cfg.BOSH.CCPath, err, address)
+
+		return
+	}
+
+	if empty {
+		return
+	}
+
+	existing, err := boshDirector.ListCloudConfigs(ctx)
+	if err != nil {
+		logger.Error("Skipped the cloud config write to BOSH director %s because the director's cloud configs "+
+			"could not be read (%s). A blind write could break the director's deploys, so the broker continues "+
+			"without a cloud config update", address, err)
+
+		return
+	}
+
+	plan := bosh.PlanCloudConfigWrite(existing, content)
+
+	switch plan.Action {
+	case bosh.CloudConfigSkipIdentical:
+		logger.Info("The broker's cloud config already lives in the %s on BOSH director %s, so no write is needed",
+			describeCloudConfig(plan.Holder), address)
+	case bosh.CloudConfigSkipUnreadable:
+		logger.Error("Skipped the cloud config write to BOSH director %s because %s, so the broker cannot show "+
+			"that a write is safe. The broker continues without a cloud config update", address, plan.Reason)
+	case bosh.CloudConfigRefuse:
+		logCloudConfigRefusal(logger, address, plan.Overlaps)
+	case bosh.CloudConfigWrite:
+		writeBOSHCloudConfig(ctx, boshDirector, address, content, logger)
+	}
+}
+
+// describeCloudConfig names a cloud config for a log line. The director's
+// default cloud config has no name.
+func describeCloudConfig(name string) string {
+	if name == "" {
+		return "default cloud config"
+	}
+
+	return fmt.Sprintf("cloud config %q", name)
+}
+
+// logCloudConfigRefusal tells the operator which names the broker's cloud
+// config shares with another cloud config.
+func logCloudConfigRefusal(logger loggerPkg.Logger, address string, overlaps []bosh.CloudConfigOverlap) {
+	details := make([]string, 0, len(overlaps))
+
+	for _, overlap := range overlaps {
+		if overlap.Name == "" {
+			details = append(details, fmt.Sprintf("the %s block in the %s", overlap.Key, describeCloudConfig(overlap.Config)))
+
+			continue
+		}
+
+		details = append(details, fmt.Sprintf("%s %q in the %s", overlap.Key, overlap.Name, describeCloudConfig(overlap.Config)))
+	}
+
+	logger.Error("Refused to write the cloud config %q to BOSH director %s, and wrote nothing, because it overlaps "+
+		"with another cloud config on the director: %s. The director refuses to merge two compilation blocks and "+
+		"would see the shared names twice, which would break its deploys. Remove those entries from one of the two "+
+		"configs, and the broker will write its cloud config at its next boot. The broker continues without a "+
+		"cloud config update", bosh.BoshCloudConfigName, address, strings.Join(details, "; "))
+}
+
+// writeBOSHCloudConfig sends the cloud config and logs the director's answer.
+// A failed write is not fatal at boot.
+func writeBOSHCloudConfig(ctx context.Context, boshDirector bosh.Director, address, content string, logger loggerPkg.Logger) {
+	logger.Info("Writing cloud config %q of type cloud to BOSH director %s", bosh.BoshCloudConfigName, address)
+	logger.Debug("updating cloud-config with:\n%s", content)
+
+	err := boshDirector.UpdateCloudConfig(ctx, content)
+	if err != nil {
+		logger.Error("Failed to write the cloud config %q to BOSH director %s: %s", bosh.BoshCloudConfigName, address, err)
 		logger.Error("Continuing without cloud config update - manual intervention may be required")
 
 		return
 	}
+
+	logger.Info("BOSH director %s accepted the cloud config %q of type cloud", address, bosh.BoshCloudConfigName)
 }
 
 // uploadBOSHReleases uploads configured BOSH releases.

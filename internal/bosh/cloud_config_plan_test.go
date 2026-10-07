@@ -8,6 +8,11 @@ import (
 	"blacksmith/internal/bosh"
 )
 
+const (
+	planOneAz      = "azs:\n- name: z1\n"
+	planBrokerName = "blacksmith"
+)
+
 const planBrokerContent = `
 azs:
 - name: z1
@@ -18,17 +23,17 @@ compilation:
   workers: 2
 `
 
-func TestPlanCloudConfigWriteDecidesByMeaning(t *testing.T) {
-	t.Parallel()
+type planCase struct {
+	name     string
+	existing []bosh.CloudConfigEntry
+	content  string
+	action   bosh.CloudConfigAction
+	holder   string
+	overlaps []bosh.CloudConfigOverlap
+}
 
-	tests := []struct {
-		name     string
-		existing []bosh.CloudConfigEntry
-		content  string
-		action   bosh.CloudConfigAction
-		holder   string
-		overlaps []bosh.CloudConfigOverlap
-	}{
+func planWriteAndSkipCases() []planCase {
+	return []planCase{
 		{name: "no other configs", content: planBrokerContent, action: bosh.CloudConfigWrite},
 		{
 			name:     "other config with different names and no compilation",
@@ -52,17 +57,22 @@ func TestPlanCloudConfigWriteDecidesByMeaning(t *testing.T) {
 		},
 		{
 			name:     "the broker's own config is not another config",
-			existing: []bosh.CloudConfigEntry{{Name: "blacksmith", Content: planBrokerContent}},
+			existing: []bosh.CloudConfigEntry{{Name: planBrokerName, Content: planBrokerContent}},
 			content:  planBrokerContent,
 			action:   bosh.CloudConfigWrite,
 		},
 		{
-			name:     "shared az",
-			existing: []bosh.CloudConfigEntry{{Name: "", Content: "azs:\n- name: z1\n"}},
-			content:  "azs:\n- name: z1\n",
+			name:     "the default holds a one-az config exactly",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: planOneAz}},
+			content:  planOneAz,
 			action:   bosh.CloudConfigSkipIdentical,
 			holder:   "",
 		},
+	}
+}
+
+func planRefuseCases() []planCase {
+	return []planCase{
 		{
 			name:     "shared az in a larger config",
 			existing: []bosh.CloudConfigEntry{{Name: "", Content: "azs:\n- name: z1\n- name: z2\n"}},
@@ -119,6 +129,11 @@ func TestPlanCloudConfigWriteDecidesByMeaning(t *testing.T) {
 				{Config: "b", Key: "compilation"},
 			},
 		},
+	}
+}
+
+func planBlankAndUnreadableCases() []planCase {
+	return []planCase{
 		{
 			name:     "blank other config overlaps nothing",
 			existing: []bosh.CloudConfigEntry{{Name: "", Content: "---\n"}},
@@ -140,6 +155,13 @@ func TestPlanCloudConfigWriteDecidesByMeaning(t *testing.T) {
 		{name: "unparseable broker content writes nothing", content: "azs: [unclosed", action: bosh.CloudConfigSkipUnreadable},
 		{name: "broker content that is a list writes nothing", content: "- a\n", action: bosh.CloudConfigSkipUnreadable},
 	}
+}
+
+func TestPlanCloudConfigWriteDecidesByMeaning(t *testing.T) {
+	t.Parallel()
+
+	tests := append(planWriteAndSkipCases(), planRefuseCases()...)
+	tests = append(tests, planBlankAndUnreadableCases()...)
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {

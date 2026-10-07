@@ -37,6 +37,7 @@ const (
 	opGetConfigByID       = "GetConfigByID"
 	opGetConfigContent    = "GetConfigContent"
 	opCleanUp             = "CleanUp"
+	cloudContentSample    = "azs:\n- name: z1\n"
 )
 
 var errConnectionReset = errors.New("connection reset")
@@ -247,6 +248,77 @@ func TestEnableResurrectionCreatesAResurrectionConfig(t *testing.T) {
 
 	if posts := requestsTo(server, http.MethodPost, configsPath); len(posts) != 1 {
 		t.Errorf("expected one POST /configs, got %d", len(posts))
+	}
+}
+
+// The boot cloud config is a named config, so the director merges it with its
+// default cloud config instead of having it replaced. Nothing goes to the
+// default cloud config route.
+func TestUpdateCloudConfigCreatesTheNamedConfig(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	var body map[string]string
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodPost || request.URL.Path != configsPath {
+			return false
+		}
+
+		raw, _ := io.ReadAll(request.Body)
+		_ = json.Unmarshal(raw, &body)
+
+		boshtest.WriteJSON(writer, http.StatusCreated, configEntry("31", typeCloud, teamBlacksmith))
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	err := director.UpdateCloudConfig(t.Context(), cloudContentSample)
+	if err != nil {
+		t.Fatalf("UpdateCloudConfig failed: %v", err)
+	}
+
+	if body[queryType] != typeCloud || body[queryName] != teamBlacksmith || body["content"] != cloudContentSample {
+		t.Errorf("expected type cloud, name blacksmith, and the content, got %v", body)
+	}
+
+	if posts := requestsTo(server, http.MethodPost, configsPath); len(posts) != 1 {
+		t.Errorf("expected one POST /configs, got %d", len(posts))
+	}
+
+	for _, request := range server.Requests() {
+		if strings.HasPrefix(request.Path, "/cloud_configs") {
+			t.Errorf("expected nothing sent to /cloud_configs, got %s %s", request.Method, request.Path)
+		}
+	}
+}
+
+// A failed write names the director and keeps the director's description.
+func TestUpdateCloudConfigKeepsTheDirectorFailure(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != configsPath {
+			return false
+		}
+
+		boshtest.WriteError(writer, http.StatusBadRequest, 440001, "bad cloud config")
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	err := director.UpdateCloudConfig(t.Context(), "azs: []\n")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	for _, want := range []string{server.URL, "400", "bad cloud config"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected the error to hold %q, got: %v", want, err)
+		}
 	}
 }
 

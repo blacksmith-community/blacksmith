@@ -33,6 +33,9 @@ const (
 	CloudConfigSkipUnreadable
 )
 
+// cloudConfigType is the director config type of a cloud config.
+const cloudConfigType = "cloud"
+
 // cloudConfigNamedKeys are the cloud config sections whose entries the
 // director identifies by name, and so sees twice when two configs define the
 // same name.
