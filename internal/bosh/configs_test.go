@@ -15,6 +15,10 @@ import (
 
 var errConnectionReset = errors.New("connection reset")
 
+// errTransportAdvice has the words boshapi's transport error ends with, which
+// send an operator to a director task a config write never creates.
+var errTransportAdvice = errors.New("no answer came back. Look for a recent director task for the same deployment before you send it again.")
+
 // configEntry is one entry of the director's GET /configs answer.
 func configEntry(id, configType, name string) map[string]interface{} {
 	return map[string]interface{}{
@@ -313,6 +317,10 @@ func TestLostConfigWriteAnswerIsOutcomeUnknown(t *testing.T) {
 			if reads := requestsTo(server, http.MethodGet, "/configs"); len(reads) != 0 {
 				t.Errorf("expected no lookup after the lost answer, got %d reads", len(reads))
 			}
+
+			if strings.Contains(err.Error(), "Look for a recent director task") {
+				t.Errorf("a config write has no task, so the message must not send the operator to one: %v", err)
+			}
 		})
 	}
 }
@@ -352,6 +360,52 @@ func TestOutcomeUnknownErrorNamesTheConfig(t *testing.T) {
 
 		if !errors.Is(err, bosh.ErrOutcomeUnknown) || !errors.Is(err, base) || !errors.As(err, &unknown) {
 			t.Errorf("expected errors.Is for the sentinel and the cause, and errors.As for the type, got: %v", err)
+		}
+	})
+
+	t.Run("a config write leaves out the text of its cause", func(t *testing.T) {
+		t.Parallel()
+
+		err := error(&bosh.OutcomeUnknownError{
+			Operation: "EnableResurrection",
+			Director:  "https://10.0.0.4:25555",
+			Config:    "resurrection/blacksmith.dep-1",
+			Err:       errTransportAdvice,
+		})
+
+		message := err.Error()
+		for _, unwanted := range []string{"Look for a recent director task", "no answer came back", "task for the same deployment"} {
+			if strings.Contains(message, unwanted) {
+				t.Errorf("expected no %q in a config message, got: %s", unwanted, message)
+			}
+		}
+
+		if !errors.Is(err, errTransportAdvice) || !errors.Is(err, bosh.ErrOutcomeUnknown) {
+			t.Errorf("expected the cause and the sentinel to stay reachable through Unwrap, got: %v", err)
+		}
+	})
+
+	t.Run("a config write says what each result means", func(t *testing.T) {
+		t.Parallel()
+
+		message := (&bosh.OutcomeUnknownError{
+			Operation: "DeleteResurrectionConfig",
+			Director:  "https://10.0.0.4:25555",
+			Config:    "resurrection/blacksmith.dep-1",
+			Err:       errConnectionReset,
+		}).Error()
+
+		for _, want := range []string{
+			"For a create, the config is present with the new content",
+			"For a delete, the latest list for that type and name is empty",
+		} {
+			if !strings.Contains(message, want) {
+				t.Errorf("expected the message to contain %q, got: %s", want, message)
+			}
+		}
+
+		if strings.Contains(strings.ToLower(message), "bosh cli") || strings.Contains(message, "bosh configs") {
+			t.Errorf("the message must not send the operator to the bosh CLI: %s", message)
 		}
 	})
 
@@ -543,6 +597,38 @@ func TestOutcomeUnknownErrorLeavesOutWhatIsEmpty(t *testing.T) {
 
 		if !strings.Contains(message, "Check /b/tasks for the task with context ID ctx-123") {
 			t.Errorf("expected the message to send the operator to /b/tasks for that context ID, got: %s", message)
+		}
+	})
+	t.Run("a request with a context ID names it once", func(t *testing.T) {
+		t.Parallel()
+
+		message := (&bosh.OutcomeUnknownError{
+			Operation: "CleanUp",
+			Director:  "https://10.0.0.4:25555",
+			ContextID: "ctx-123",
+			Err:       errConnectionReset,
+		}).Error()
+
+		if !strings.Contains(message, "with that context ID and found none yet") {
+			t.Errorf("expected the message to say a task with that context ID was sought, got: %s", message)
+		}
+	})
+
+	t.Run("neither a config, a deployment, nor a context ID", func(t *testing.T) {
+		t.Parallel()
+
+		message := (&bosh.OutcomeUnknownError{
+			Operation: "CleanUp",
+			Director:  "https://10.0.0.4:25555",
+			Err:       errConnectionReset,
+		}).Error()
+
+		if strings.Contains(message, "context ID") {
+			t.Errorf("a request with no context ID must not mention one, got: %s", message)
+		}
+
+		if !strings.HasSuffix(message, "did not resend it. Check /b/tasks for a recent task") {
+			t.Errorf("expected the message to end by sending the operator to /b/tasks for a recent task, got: %s", message)
 		}
 	})
 }

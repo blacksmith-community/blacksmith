@@ -45,7 +45,10 @@ func (e *OutcomeUnknownError) Error() string {
 		fmt.Fprintf(&msg, " (context ID %s)", e.ContextID)
 	}
 
-	if e.Err != nil {
+	// A config write creates no director task, and the transport text
+	// tells the operator to look for one, so it stays out of that message.
+	// It is still reachable through Unwrap.
+	if e.Err != nil && e.Config == "" {
 		fmt.Fprintf(&msg, " (%v)", e.Err)
 	}
 
@@ -55,13 +58,17 @@ func (e *OutcomeUnknownError) Error() string {
 		configType, configName, _ := strings.Cut(e.Config, "/")
 
 		fmt.Fprintf(&msg, "A config write creates no director task, so there is no task to look for. "+
-			"Check whether the write landed with GET %s/configs?type=%s&name=%s&latest=true",
+			"Check whether the write landed by reading GET %s/configs?type=%s&name=%s&latest=true. "+
+			"For a create, the config is present with the new content. "+
+			"For a delete, the latest list for that type and name is empty",
 			e.Director, configType, configName)
 
 		return msg.String()
 	}
 
-	msg.WriteString("Blacksmith looked for a task with that context ID and found none yet. ")
+	if e.ContextID != "" {
+		msg.WriteString("Blacksmith looked for a task with that context ID and found none yet. ")
+	}
 
 	switch {
 	case e.Deployment != "":
