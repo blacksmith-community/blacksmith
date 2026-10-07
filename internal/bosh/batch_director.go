@@ -120,6 +120,16 @@ func (b *BatchDirector) FindRunningTaskForDeployment(ctx context.Context, deploy
 	return b.director.FindRunningTaskForDeployment(ctx, deploymentName)
 }
 
+// FindTaskByContextID passes through (read operation).
+func (b *BatchDirector) FindTaskByContextID(ctx context.Context, contextID string) (*Task, error) {
+	task, err := b.director.FindTaskByContextID(ctx, contextID)
+	if err != nil {
+		return nil, fmt.Errorf("find the task with context ID %s: %w", contextID, err)
+	}
+
+	return task, nil
+}
+
 // CancelTask passes through (quick write operation, uses general pool).
 func (b *BatchDirector) CancelTask(ctx context.Context, taskID int) error {
 	return b.director.CancelTask(ctx, taskID)

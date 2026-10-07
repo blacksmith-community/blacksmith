@@ -96,6 +96,15 @@ type Director interface {
 	// Returns nil if no running task is found.
 	FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*Task, error)
 
+	// FindTaskByContextID returns the newest task the director recorded
+	// with the context ID, or nil when it has none. It looks across every
+	// deployment, because an upload carries no deployment name, and asks at
+	// verbose level 2, because the director hides orphan cleanup tasks at
+	// the default level. Each context ID goes on one request, so more than
+	// one match is logged. An empty context ID is refused, because the
+	// director would answer it with every task.
+	FindTaskByContextID(ctx context.Context, contextID string) (*Task, error)
+
 	// Pool statistics (for PooledDirector)
 	GetPoolStats() (*PoolStats, error)
 }

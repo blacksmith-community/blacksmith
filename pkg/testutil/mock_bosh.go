@@ -254,6 +254,11 @@ func (mb *MockBOSHDirector) FindRunningTaskForDeployment(_ context.Context, depl
 	return nil, ErrMockNotImplemented
 }
 
+// FindTaskByContextID implements the BOSH Director interface.
+func (mb *MockBOSHDirector) FindTaskByContextID(_ context.Context, _ string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
+
 // GetPoolStats implements the BOSH Director interface.
 func (mb *MockBOSHDirector) GetPoolStats() (*bosh.PoolStats, error) {
 	return nil, ErrMockNotImplemented

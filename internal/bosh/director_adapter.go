@@ -82,8 +82,11 @@ var (
 	// sentinel to decide that a deployment does not exist; any other error means
 	// existence is unknown, and a successful response with an empty manifest
 	// means the deployment exists but its first deploy has not finished yet.
-	ErrDeploymentNotFound             = errors.New("deployment not found")
-	ErrNoTaskFoundDeploymentDeletion  = errors.New("no task found for deployment deletion")
+	ErrDeploymentNotFound            = errors.New("deployment not found")
+	ErrNoTaskFoundDeploymentDeletion = errors.New("no task found for deployment deletion")
+	// ErrEmptyContextID is returned by FindTaskByContextID for an empty
+	// context ID, which the director would take as no filter at all.
+	ErrEmptyContextID                 = errors.New("the context ID to look tasks up by is empty")
 	ErrNoTaskFoundReleaseUpload       = errors.New("no task found for release upload")
 	ErrNoTaskFoundStemcellUpload      = errors.New("no task found for stemcell upload")
 	ErrTaskCannotBeCancelled          = errors.New("task is in invalid state and cannot be cancelled")
@@ -677,6 +680,10 @@ func (d *DirectorAdapter) UploadStemcell(ctx context.Context, url, sha1 string) 
 // runningTaskStates is the director's state filter for tasks that have not
 // finished.
 const runningTaskStates = "processing,cancelling,queued"
+
+// taskVerboseAll is the task list verbosity at which the director lists
+// every task, orphan cleanup tasks included.
+const taskVerboseAll = 2
 
 // Task states the director reports.
 const (
@@ -2761,6 +2768,67 @@ func (d *DirectorAdapter) FindRunningTaskForDeployment(ctx context.Context, depl
 	d.log.Debugf("No running task found for deployment %s", deploymentName)
 
 	return nil, nil //nolint:nilnil // no running task is an answer, not an error
+}
+
+// FindTaskByContextID returns the newest task the director recorded with the
+// context ID, or nil when it has none. The director filters by the ID
+// itself, and a task that carries another ID, from a director or proxy that
+// ignored the filter, is never taken for a match.
+func (d *DirectorAdapter) FindTaskByContextID(ctx context.Context, contextID string) (*Task, error) {
+	task, err := d.findTaskByContextID(ctx, contextID)
+	d.explainContext(ctx, "FindTaskByContextID", &err)
+
+	return task, err
+}
+
+func (d *DirectorAdapter) findTaskByContextID(ctx context.Context, contextID string) (*Task, error) {
+	if contextID == "" {
+		return nil, ErrEmptyContextID
+	}
+
+	d.log.Debugf("Finding the task with context ID %s", contextID)
+
+	tasks, err := d.listTasks(ctx, "list the tasks with context ID "+contextID,
+		&boshapi.TaskListOptions{ContextID: contextID, Verbose: taskVerboseAll})
+	if err != nil {
+		return nil, err
+	}
+
+	var matches []Task
+
+	for _, task := range tasks {
+		if task.ContextID != contextID {
+			d.log.Errorf("The director listed task %d with context ID %q when asked for context ID %s; ignoring it", task.ID, task.ContextID, contextID)
+
+			continue
+		}
+
+		matches = append(matches, task)
+	}
+
+	if len(matches) == 0 {
+		d.log.Debugf("No task has context ID %s", contextID)
+
+		return nil, nil //nolint:nilnil // no task with the ID is an answer, not an error
+	}
+
+	newest := matches[0]
+	for _, task := range matches[1:] {
+		if task.ID > newest.ID {
+			newest = task
+		}
+	}
+
+	if len(matches) > 1 {
+		for _, task := range matches {
+			d.log.Errorf("Context ID %s matches task %d (%s, %s, deployment %q), though each context ID goes on one request; using task %d, the newest",
+				contextID, task.ID, task.State, task.Description, task.Deployment, newest.ID)
+		}
+	}
+
+	d.log.Debugf("Found task %d (state: %s) with context ID %s", newest.ID, newest.State, contextID)
+
+	return &newest, nil
 }
 
 func (d *DirectorAdapter) updateExistingDeployment(director boshdirector.Director, dep boshdirector.Deployment, deploymentName, manifest string) (*Task, error) {

@@ -361,3 +361,13 @@ func (p *PooledDirector) UpdateDeployment(ctx context.Context, name, manifest st
 func (p *PooledDirector) FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*Task, error) {
 	return p.director.FindRunningTaskForDeployment(ctx, deploymentName)
 }
+
+// FindTaskByContextID implements Director interface - no pooling for read operations.
+func (p *PooledDirector) FindTaskByContextID(ctx context.Context, contextID string) (*Task, error) {
+	task, err := p.director.FindTaskByContextID(ctx, contextID)
+	if err != nil {
+		return nil, fmt.Errorf("find the task with context ID %s: %w", contextID, err)
+	}
+
+	return task, nil
+}

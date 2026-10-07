@@ -429,6 +429,146 @@ func TestFindRunningTaskForDeploymentReturnsNilWhenNoneRuns(t *testing.T) {
 	}
 }
 
+// contextTask is a task in the director's JSON shape that carries the
+// context ID.
+func contextTask(id int, state, contextID string) map[string]interface{} {
+	task := directorTask(id, state)
+	task["context_id"] = contextID
+
+	return task
+}
+
+// A lookup by context ID asks the director for every task that carries the
+// ID, at verbose level 2 so orphan cleanup tasks show, and with no
+// deployment filter so uploads, which carry no deployment name, show too.
+// The newest match wins.
+func TestFindTaskByContextIDSendsVerbose2WithoutADeployment(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	const contextID = "5f0c8a52-3c1e-4f43-9a8e-2f4b1d6c7e90"
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
+			return false
+		}
+
+		newest := contextTask(44, "processing", contextID)
+		newest["deployment"] = ""
+		newest["description"] = "upload release"
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{
+			contextTask(41, "error", contextID),
+			newest,
+			contextTask(43, "done", "another-context-id"),
+		})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	task, err := director.FindTaskByContextID(t.Context(), contextID)
+	if err != nil {
+		t.Fatalf("FindTaskByContextID failed: %v", err)
+	}
+
+	if task == nil || task.ID != 44 || task.State != "processing" || task.ContextID != contextID || task.Description != "upload release" {
+		t.Fatalf("expected the newest matching task, 44, with its fields, got %+v", task)
+	}
+
+	lists := requestsTo(server, http.MethodGet, "/tasks")
+	if len(lists) != 1 {
+		t.Fatalf("expected one task list request, got %d: %+v", len(lists), server.APIRequests())
+	}
+
+	query, err := url.ParseQuery(lists[0].RawQuery)
+	if err != nil {
+		t.Fatalf("parse query %q: %v", lists[0].RawQuery, err)
+	}
+
+	want := url.Values{
+		"context_id": {contextID},
+		"verbose":    {"2"},
+	}
+	if query.Encode() != want.Encode() {
+		t.Errorf("task list query = %q, want %q", query.Encode(), want.Encode())
+	}
+}
+
+// When no task carries the ID, the answer is nil with no error. A task that
+// carries another ID, from a director or proxy that ignored the filter, is
+// not a match.
+func TestFindTaskByContextIDReturnsNilWhenNoneMatches(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
+			return false
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{contextTask(43, "done", "another-context-id"), directorTask(42, "done")})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	task, err := director.FindTaskByContextID(t.Context(), "wanted-context-id")
+	if err != nil || task != nil {
+		t.Fatalf("expected no task and no error, got %+v and %v", task, err)
+	}
+}
+
+// An empty context ID would ask the director for every task, and the newest
+// task on the director would be taken for the one the broker sent, so it is
+// refused before anything is sent.
+func TestFindTaskByContextIDRefusesAnEmptyID(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
+			return false
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{directorTask(42, "processing")})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	task, err := director.FindTaskByContextID(t.Context(), "")
+	if !errors.Is(err, bosh.ErrEmptyContextID) || task != nil {
+		t.Fatalf("expected ErrEmptyContextID and no task, got %+v and %v", task, err)
+	}
+
+	if lists := requestsTo(server, http.MethodGet, "/tasks"); len(lists) != 0 {
+		t.Errorf("expected no task list request, got %+v", lists)
+	}
+}
+
+// A failed lookup is an error, never an answer that no task has the ID.
+func TestFindTaskByContextIDReturnsTheDirectorsError(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
+			return false
+		}
+
+		boshtest.WriteError(writer, http.StatusInternalServerError, 100, "the director is unwell")
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	task, err := director.FindTaskByContextID(t.Context(), "wanted-context-id")
+	if err == nil || task != nil {
+		t.Fatalf("expected an error and no task, got %+v and %v", task, err)
+	}
+}
+
 // The director cancels a task on DELETE /task/N, its TaskController's
 // singular route. It has no DELETE /tasks/N, and a cancel needs no read of
 // the task first.
@@ -1026,5 +1166,59 @@ func TestDirectorCallErrorNamesTheTaskOutcome(t *testing.T) {
 	plain := (&bosh.DirectorCallError{Operation: "GetInfo", Director: "https://127.0.0.1:25555", Cause: context.Canceled, Err: context.Canceled}).Error()
 	if strings.Contains(plain, "/b/tasks/") {
 		t.Errorf("a call with no task names no task path: %s", plain)
+	}
+}
+
+var errContextLookup = errors.New("the lookup failed")
+
+// contextLookupDirector answers FindTaskByContextID and nothing else.
+type contextLookupDirector struct {
+	bosh.Director
+
+	task *bosh.Task
+	err  error
+	asks []string
+}
+
+func (d *contextLookupDirector) FindTaskByContextID(_ context.Context, contextID string) (*bosh.Task, error) {
+	d.asks = append(d.asks, contextID)
+
+	return d.task, d.err
+}
+
+// The pooled and batch directors forward a lookup by context ID unchanged,
+// and forward a failure too.
+func TestFindTaskByContextIDForwardsThroughThePooledAndBatchDirectors(t *testing.T) {
+	t.Parallel()
+
+	wrap := map[string]func(bosh.Director) bosh.Director{
+		"pooled": func(inner bosh.Director) bosh.Director {
+			return bosh.NewPooledDirector(inner, 1, time.Second, nil)
+		},
+		"batch": func(inner bosh.Director) bosh.Director {
+			return bosh.NewBatchDirector(inner, 1, time.Second, nil)
+		},
+	}
+
+	for name, build := range wrap {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			inner := &contextLookupDirector{task: &bosh.Task{ID: 44, ContextID: "ctx-44"}}
+
+			task, err := build(inner).FindTaskByContextID(t.Context(), "ctx-44")
+			if err != nil || task == nil || task.ID != 44 {
+				t.Fatalf("expected task 44, got %+v and %v", task, err)
+			}
+
+			if len(inner.asks) != 1 || inner.asks[0] != "ctx-44" {
+				t.Errorf("expected one lookup of ctx-44, got %v", inner.asks)
+			}
+
+			_, err = build(&contextLookupDirector{err: errContextLookup}).FindTaskByContextID(t.Context(), "ctx-44")
+			if !errors.Is(err, errContextLookup) {
+				t.Errorf("expected the failure to pass through, got %v", err)
+			}
+		})
 	}
 }

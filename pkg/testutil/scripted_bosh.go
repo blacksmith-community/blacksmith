@@ -26,6 +26,7 @@ type ScriptedBOSHDirector struct {
 	GetEventsFn                    func(deployment string) ([]bosh.Event, error)
 	GetReleasesFn                  func() ([]bosh.Release, error)
 	FindRunningTaskForDeploymentFn func(deployment string) (*bosh.Task, error)
+	FindTaskByContextIDFn          func(contextID string) (*bosh.Task, error)
 
 	mu    sync.Mutex
 	calls map[string][]string
@@ -169,6 +170,17 @@ func (s *ScriptedBOSHDirector) FindRunningTaskForDeployment(ctx context.Context,
 	}
 
 	return s.IntegrationMockBOSH.FindRunningTaskForDeployment(ctx, deployment)
+}
+
+// FindTaskByContextID runs FindTaskByContextIDFn when set.
+func (s *ScriptedBOSHDirector) FindTaskByContextID(ctx context.Context, contextID string) (*bosh.Task, error) {
+	s.record("FindTaskByContextID", contextID)
+
+	if s.FindTaskByContextIDFn != nil {
+		return s.FindTaskByContextIDFn(contextID)
+	}
+
+	return s.IntegrationMockBOSH.FindTaskByContextID(ctx, contextID)
 }
 
 func (s *ScriptedBOSHDirector) record(method, arg string) {

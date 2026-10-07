@@ -214,6 +214,9 @@ func (m *mockDirector) UpdateDeployment(_ context.Context, name, manifest string
 func (m *mockDirector) FindRunningTaskForDeployment(_ context.Context, deploymentName string) (*bosh.Task, error) {
 	return nil, ErrMockNotImplemented
 }
+func (m *mockDirector) FindTaskByContextID(_ context.Context, _ string) (*bosh.Task, error) {
+	return nil, ErrMockNotImplemented
+}
 func (m *mockDirector) GetPoolStats() (*bosh.PoolStats, error) {
 	return nil, ErrMockNotImplemented
 }

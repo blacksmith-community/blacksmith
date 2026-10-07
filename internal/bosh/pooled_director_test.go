@@ -450,6 +450,16 @@ func (m *MockDirector) FindRunningTaskForDeployment(_ context.Context, deploymen
 	return nil, nil
 }
 
+func (m *MockDirector) FindTaskByContextID(_ context.Context, _ string) (*bosh.Task, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return nil, nil //nolint:nilnil // no task with the ID is an answer, not an error
+}
+
 func (m *MockDirector) GetPoolStats() (*bosh.PoolStats, error) {
 	m.incrementCallCount()
 
