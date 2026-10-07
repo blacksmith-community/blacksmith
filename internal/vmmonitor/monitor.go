@@ -641,15 +641,21 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 	m.mu.Unlock()
 }
 
-// handleCheckError handles errors that occur during service checks.
+// handleCheckError handles a failed VM listing for a service. The listing's
+// error never proves the deployment gone. A 404 can come from a proxy in
+// front of the director, and the director adapter wraps any 404 from the
+// listing in bosh.ErrDeploymentNotFound. So the instance is marked deleted
+// only when deploymentConfirmedGone says the director itself answered with
+// its deployment-not-found code. Any other answer records a failed check
+// and keeps monitoring the instance.
 func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err error) {
 	logger := logger.Get().Named("vm-monitor")
 
-	// Detect BOSH 404 "doesn't exist" and mark as deleted immediately
-	errStr := err.Error()
-	if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") ||
-		strings.Contains(errStr, "deployment not found") || errors.Is(err, bosh.ErrDeploymentNotFound) {
-		logger.Info("Deployment %s not found (404). Marking instance %s as deleted and stopping monitoring.", svc.DeploymentName, svc.ServiceID)
+	gone, confirmErr := m.deploymentConfirmedGone(ctx, svc.DeploymentName)
+
+	switch {
+	case gone:
+		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist. Marking instance %s as deleted and stopping monitoring.", svc.DeploymentName, err, svc.ServiceID)
 
 		// Mark deleted in index and store VM status as deleted
 		m.markInstanceDeleted(ctx, svc)
@@ -679,10 +685,11 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 		m.mu.Unlock()
 
 		return
+	case confirmErr != nil:
+		logger.Error("Failed to check VMs for service %s: %s; the instance is kept, because the director %s", svc.ServiceID, err, confirmErr)
+	default:
+		logger.Error("Failed to check VMs for service %s: %s; the director still has deployment %s, so the instance is kept", svc.ServiceID, err, svc.DeploymentName)
 	}
-
-	// For non-404 errors, log as error and handle with retry
-	logger.Error("Failed to check VMs for service %s: %s", svc.ServiceID, err)
 
 	// Default error handling with retry
 	svc.FailureCount++
@@ -896,5 +903,24 @@ func (m *Monitor) GetStatus() MonitorStatus {
 			"healthy":       healthyCount,
 			"failing":       failingCount,
 		},
+	}
+}
+
+// deploymentConfirmedGone asks the director for a deployment, and reports
+// true only when the director answers with its deployment-not-found code.
+// The director adapter's GetDeployment maps only that code, 70000, to
+// bosh.ErrDeploymentNotFound. A deployment the director still has reports
+// false with no error, and any other answer reports false with that answer,
+// because it leaves the deployment's state unknown.
+func (m *Monitor) deploymentConfirmedGone(ctx context.Context, deploymentName string) (bool, error) {
+	_, err := m.boshDirector.GetDeployment(ctx, deploymentName)
+
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, bosh.ErrDeploymentNotFound):
+		return true, nil
+	default:
+		return false, fmt.Errorf("could not confirm whether deployment %s exists: %w", deploymentName, err)
 	}
 }

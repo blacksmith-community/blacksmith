@@ -12,13 +12,14 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 )
 
-// indexVault serves a fixed index to the monitor and records the instances
-// the monitor marks deleted.
+// indexVault serves a fixed index to the monitor, and records the instances
+// the monitor marks deleted and the last VM status it stores for each.
 type indexVault struct {
 	entries map[string]interface{}
 
-	mu     sync.Mutex
-	marked []string
+	mu       sync.Mutex
+	marked   []string
+	statuses map[string]interface{}
 }
 
 func (v *indexVault) GetIndex(context.Context, string) (*vaultPkg.Index, error) {
@@ -34,7 +35,16 @@ func (v *indexVault) Get(context.Context, string, interface{}) (bool, error) {
 	return false, nil
 }
 
-func (v *indexVault) Put(context.Context, string, interface{}) error {
+func (v *indexVault) Put(_ context.Context, path string, data interface{}) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if v.statuses == nil {
+		v.statuses = map[string]interface{}{}
+	}
+
+	v.statuses[path] = data
+
 	return nil
 }
 
@@ -64,6 +74,18 @@ func (v *indexVault) markedDeleted() []string {
 	defer v.mu.Unlock()
 
 	return append([]string(nil), v.marked...)
+}
+
+// storedStatus returns the status of the last VM status the monitor stored
+// for an instance, or "" when it stored none.
+func (v *indexVault) storedStatus(instanceID string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	stored, _ := v.statuses[instanceID+"/vm_status"].(map[string]interface{})
+	status, _ := stored["status"].(string)
+
+	return status
 }
 
 // The monitor marks an instance deleted when the director has no deployment
@@ -109,6 +131,13 @@ func TestMonitorChecksTheDeploymentAnIndexEntryRecords(t *testing.T) {
 				}
 
 				return nil, fmt.Errorf("deployment %s: %w", name, bosh.ErrDeploymentNotFound)
+			}
+			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+				if name == adoptedRun || name == legacyRun {
+					return &bosh.DeploymentDetail{Name: name}, nil
+				}
+
+				return deploymentNotFound(name)
 			}
 
 			monitor := vmmonitor.NewWithVault(vault, director)
