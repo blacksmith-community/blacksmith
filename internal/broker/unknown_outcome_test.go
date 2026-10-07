@@ -1120,6 +1120,108 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		})
 	})
 
+	Describe("a poll with no index entry over a deprovision record", func() {
+		const deletedDuringProvision = "was deleted while it was being provisioned"
+
+		// recordFinishedDeprovision writes the record a deprovision leaves
+		// when the deployment was gone before its delete, which names no
+		// context ID.
+		recordFinishedDeprovision := func() {
+			ExpectWithOffset(1, vaultClient.Track(ctx, instanceID, outcomeDeprovision, 1, nil)).To(Succeed())
+		}
+
+		// recordDelete writes the record of a delete with a context ID.
+		recordDelete := func() {
+			ExpectWithOffset(1, vaultClient.TrackProgressWithDeployment(ctx, instanceID, outcomeDeprovision,
+				"Initiating BOSH deployment deletion with retry", uuid.NewString(), deploymentName, 0, nil)).To(Succeed())
+		}
+
+		// deploymentGone makes the director say the deployment is gone, and
+		// returns how often the broker asked.
+		deploymentGone := func() *atomic.Int32 {
+			var asked atomic.Int32
+
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				asked.Add(1)
+
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+			}
+
+			return &asked
+		}
+
+		deploymentStays := func() {
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+		}
+
+		Context("when the poll asks about a provision", func() {
+			It("answers failed for a finished deprovision", func() {
+				recordFinishedDeprovision()
+
+				response := pollUnindexed(outcomeProvision)
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a provision poll over a deprovision answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(deletedDuringProvision))
+			})
+
+			It("answers failed even when the director says the deployment is gone", func() {
+				recordDelete()
+				deploymentGone()
+
+				response := pollUnindexed(outcomeProvision)
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a provision poll over a deprovision answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(deletedDuringProvision))
+			})
+		})
+
+		Context("when the poll names no operation", func() {
+			It("follows a finished deprovision to succeeded", func() {
+				recordFinishedDeprovision()
+
+				response := pollUnindexed("")
+				Expect(response.State).To(Equal(osbapi.StateSucceeded), "a finished deprovision answered %+v", response)
+				Expect(response.Description).To(Equal("Instance has been deleted"))
+			})
+
+			It("answers succeeded for a delete only once the director says the deployment is gone", func() {
+				recordDelete()
+
+				asked := deploymentGone()
+
+				response := pollUnindexed("")
+				Expect(response.State).To(Equal(osbapi.StateSucceeded), "a confirmed delete answered %+v", response)
+				Expect(asked.Load()).To(BeNumerically(">", 0), "the broker answered succeeded without asking the director")
+			})
+
+			It("answers in progress for a delete whose deployment is still there", func() {
+				recordDelete()
+				deploymentStays()
+
+				response := pollUnindexed("")
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unconfirmed delete answered %+v", response)
+			})
+		})
+
+		Context("when the poll asks about a deprovision", func() {
+			It("answers succeeded once the director says the deployment is gone", func() {
+				recordDelete()
+				deploymentGone()
+
+				response := pollUnindexed(outcomeDeprovision)
+				Expect(response.State).To(Equal(osbapi.StateSucceeded), "a confirmed delete answered %+v", response)
+			})
+
+			It("answers in progress while the deployment is still there", func() {
+				recordDelete()
+				deploymentStays()
+
+				response := pollUnindexed(outcomeDeprovision)
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unconfirmed delete answered %+v", response)
+			})
+		})
+	})
+
 	Describe("a context ID that cannot be recorded stops the request before it is sent", func() {
 		const refusal = "permission denied"
 

@@ -634,7 +634,7 @@ func (b *Broker) LastOperation(
 	}
 
 	if instance == nil {
-		return b.pollWithoutIndexEntry(ctx, instanceID, details.PlanID, logger)
+		return b.pollWithoutIndexEntry(ctx, instanceID, details, logger)
 	}
 
 	logger.Debug("Instance %s found, deployment: %s", instanceID, deploymentName)
@@ -2131,9 +2131,12 @@ func (b *Broker) OperationClaimed(instanceID string) bool {
 // by deprovisionWithoutIndexEntry, or a delete request in <instance>/metadata
 // that follows the instance's creation. Every other poll answers failed, so
 // the platform does not take a lost provision for a finished one. A read
-// error returns an error, and the platform polls again. planID is the plan
-// the poll names, and it names the deployment when the record names none.
-func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID, planID string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// error returns an error, and the platform polls again. A provision poll
+// that finds a deprovision record answers failed, because the instance was
+// deleted while it was being provisioned. A poll that names no operation
+// follows the record's action. When the record names no deployment, the
+// deployment is named from the plan the poll names.
+func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, details osbapi.LastOperationRequest, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if b.provisionActive(instanceID) {
 		logger.Debug("instance %s has no index entry yet, and its provision is still being accepted", instanceID)
 
@@ -2151,7 +2154,16 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID, planID s
 	}
 
 	if recorded.Action == operationTypeDeprovision {
-		return b.deprovisionWithoutIndexEntry(ctx, instanceID, planID, recorded, logger)
+		if details.Operation == operationTypeProvision {
+			logger.Error("instance %s has no index entry, and a deprovision is recorded over the provision being polled, so the provision is reported as failed", instanceID)
+
+			return osbapi.LastOperationResponse{
+				State:       osbapi.StateFailed,
+				Description: fmt.Sprintf("Service instance %s was deleted while it was being provisioned", instanceID),
+			}, nil
+		}
+
+		return b.deprovisionWithoutIndexEntry(ctx, instanceID, details.PlanID, recorded, logger)
 	}
 
 	var metadata map[string]interface{}
