@@ -914,7 +914,12 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 	// the grace period found nothing, and while lookups fail it stays in
 	// progress.
 	Describe("an unknown outcome is settled from what the director says", func() {
-		const refusal = "permission denied"
+		const (
+			refusal = "permission denied"
+			// taskListPath is the director route a lookup by context ID
+			// reads.
+			taskListPath = "/tasks"
+		)
 
 		var clockOffset atomic.Int64
 
@@ -1111,7 +1116,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			contextID := loseDelete()
 
 			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) {
-				return nil, &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: "/tasks"}
+				return nil, &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: taskListPath}
 			}
 
 			passGrace()
@@ -1121,7 +1126,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown delete whose lookup failed answered %+v", response)
 				Expect(response.Description).To(ContainSubstring(contextID))
-				Expect(response.Description).To(ContainSubstring("/tasks"), "the answer does not carry the failed lookup")
+				Expect(response.Description).To(ContainSubstring(taskListPath), "the answer does not carry the failed lookup")
 			}
 
 			Expect(stillIndexed()).To(BeTrue())
@@ -1173,13 +1178,13 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			passGrace()
 
 			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) {
-				return nil, &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: "/tasks"}
+				return nil, &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: taskListPath}
 			}
 
 			response := poll(outcomeProvision)
 			Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown deploy whose lookup failed answered %+v", response)
 			Expect(response.Description).To(ContainSubstring(contextID))
-			Expect(response.Description).To(ContainSubstring("/tasks"), "the answer does not carry the failed lookup")
+			Expect(response.Description).To(ContainSubstring(taskListPath), "the answer does not carry the failed lookup")
 
 			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no task is a nil task without an error
 			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
@@ -1190,6 +1195,88 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown deploy whose deployment check failed answered %+v", response)
 			Expect(response.Description).To(ContainSubstring("/deployments/"+deploymentName), "the answer does not carry the failed check")
 
+			Expect(recorded().State).To(Equal(outcomeStateUnknown))
+		})
+
+		It("a LastOperation poll answers within 10 seconds while the context-ID lookup hangs", func() {
+			contextID := loseDelete()
+
+			lookupFailure := &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: taskListPath}
+
+			type lookupSeen struct {
+				deadline        time.Time
+				hasDeadline     bool
+				retriesDisabled bool
+			}
+
+			var (
+				lookups  atomic.Int32
+				seen     = make(chan lookupSeen, 1)
+				released = make(chan struct{})
+			)
+
+			cleanups = append(cleanups, func() { close(released) })
+
+			// The first lookup fails at once. The second hangs until its
+			// context ends, or until the spec ends.
+			director.onFindTaskByContextID = func(callCtx context.Context, _ string) (*bosh.Task, error) {
+				if lookups.Add(1) == 1 {
+					return nil, lookupFailure
+				}
+
+				deadline, hasDeadline := callCtx.Deadline()
+				seen <- lookupSeen{deadline: deadline, hasDeadline: hasDeadline, retriesDisabled: boshapi.RetriesDisabled(callCtx)}
+
+				select {
+				case <-callCtx.Done():
+					return nil, fmt.Errorf("get /tasks: %w", callCtx.Err())
+				case <-released:
+					return nil, errAnswerLost
+				}
+			}
+
+			response := poll(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress))
+			Expect(response.Description).To(ContainSubstring(taskListPath))
+
+			started := time.Now()
+			answered := make(chan osbapi.LastOperationResponse, 1)
+
+			go func() {
+				defer GinkgoRecover()
+
+				answered <- poll(outcomeDeprovision)
+			}()
+
+			var lookup lookupSeen
+
+			Eventually(seen, 5*time.Second).Should(Receive(&lookup), "the second poll never looked the task up")
+			Expect(lookup.retriesDisabled).To(BeTrue(), "the lookup ran with the director client's retries on")
+			Expect(lookup.hasDeadline).To(BeTrue(), "the lookup ran without a deadline")
+			// The pass's deadline starts once it holds the instance's lock,
+			// a record read or two after the poll began.
+			Expect(lookup.deadline.Sub(started)).To(BeNumerically("<=", 10*time.Second+500*time.Millisecond), "the lookup's deadline is more than 10 seconds away")
+
+			// A poll while the pass runs answers at once, with the error
+			// the last pass ended with.
+			concurrentStart := time.Now()
+			concurrent := poll(outcomeDeprovision)
+
+			Expect(time.Since(concurrentStart)).To(BeNumerically("<", 2*time.Second), "a poll waited for the running pass")
+			Expect(concurrent.State).To(Equal(osbapi.StateInProgress))
+			Expect(concurrent.Description).To(ContainSubstring(contextID))
+			Expect(concurrent.Description).To(ContainSubstring("already running"))
+			Expect(concurrent.Description).To(ContainSubstring(taskListPath), "the poll does not carry the last pass's error")
+
+			var hung osbapi.LastOperationResponse
+
+			Eventually(answered, 11*time.Second).Should(Receive(&hung), "the poll whose lookup hangs did not answer")
+			Expect(time.Since(started)).To(BeNumerically("<=", 10*time.Second+500*time.Millisecond))
+			Expect(hung.State).To(Equal(osbapi.StateInProgress), "the poll whose lookup hung answered %+v", hung)
+			Expect(hung.Description).To(ContainSubstring(contextID))
+			Expect(hung.Description).To(ContainSubstring(context.DeadlineExceeded.Error()))
+
+			Expect(stillIndexed()).To(BeTrue())
 			Expect(recorded().State).To(Equal(outcomeStateUnknown))
 		})
 

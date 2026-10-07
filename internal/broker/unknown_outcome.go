@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"blacksmith/internal/bosh"
+	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 )
 
@@ -64,20 +67,112 @@ func requestNoun(action string) string {
 	return "deploy"
 }
 
+// unknownOutcomePassTimeout bounds the director lookups of one resolver
+// pass, so a poll answers in about that long however slow the director
+// is.
+const unknownOutcomePassTimeout = 10 * time.Second
+
+// unknownOutcomePass keeps the resolver passes over one instance's unknown
+// outcome to one at a time, and holds the error the last pass ended with.
+type unknownOutcomePass struct {
+	// running is held by the pass that runs.
+	running sync.Mutex
+
+	lastErrMu sync.Mutex
+	lastErr   string
+}
+
+func (pass *unknownOutcomePass) setLastErr(err error) {
+	pass.lastErrMu.Lock()
+	defer pass.lastErrMu.Unlock()
+
+	pass.lastErr = ""
+	if err != nil {
+		pass.lastErr = err.Error()
+	}
+}
+
+func (pass *unknownOutcomePass) lastError() string {
+	pass.lastErrMu.Lock()
+	defer pass.lastErrMu.Unlock()
+
+	return pass.lastErr
+}
+
+// unknownOutcomePassFor returns the pass state of an instance.
+func (b *Broker) unknownOutcomePassFor(instanceID string) *unknownOutcomePass {
+	value, _ := b.unknownOutcomePasses.LoadOrStore(instanceID, &unknownOutcomePass{})
+	pass, _ := value.(*unknownOutcomePass)
+
+	return pass
+}
+
 // resolveUnknownOutcome settles an operation whose director request lost
 // its answer, from what the director says now. deploymentName is the
 // deployment the instance's index entry or the poll names, and the
 // deployment the record names wins over it. It answers in progress until
 // the director shows what happened, and it changes nothing while any
 // director call fails.
+//
+// One pass runs per instance at a time, and a poll that finds one running
+// answers in progress with the error the last pass ended with. The
+// record's second read and the director lookups of a pass run under
+// unknownOutcomePassTimeout with the director client's retries turned
+// off. Once a lookup has settled the
+// outcome, the pass follows it with the poll's own context, as any other
+// poll would.
 func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
-	if operation.DeploymentName != "" {
-		deploymentName = operation.DeploymentName
+	noun := requestNoun(operation.Action)
+	pass := b.unknownOutcomePassFor(instanceID)
+
+	if !pass.running.TryLock() {
+		logger.Info("A check of the %s of instance %s with context ID %s is already running, so this poll answers in progress", noun, instanceID, operation.ContextID)
+
+		description := fmt.Sprintf("A check of whether the director started the %s with context ID %s is already running", noun, operation.ContextID)
+		if lastErr := pass.lastError(); lastErr != "" {
+			description += "; the last check ended with " + lastErr
+		}
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: description}, nil
 	}
 
-	finding := b.findUnknownOutcome(ctx, deploymentName, operation, logger)
+	defer pass.running.Unlock()
 
-	return b.settleUnknownOutcome(ctx, instanceID, deploymentName, operation, finding, logger)
+	passCtx, cancel := context.WithTimeout(boshapi.WithoutRetries(ctx), unknownOutcomePassTimeout)
+	defer cancel()
+
+	// A pass that ran while this poll read the record may have settled
+	// it, so the record is read again under the pass's lock.
+	current, err := b.readRecordedOperation(passCtx, instanceID)
+	if err != nil {
+		pass.setLastErr(err)
+		logger.Error("Instance %s: the record of the %s with context ID %s could not be read again: %s", instanceID, noun, operation.ContextID, err)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("Waiting for the director to show whether it started the %s with context ID %s; %s", noun, operation.ContextID, err),
+		}, nil
+	}
+
+	if current.State != internalVault.TaskStateOutcomeUnknown || current.Action != operation.Action || current.ContextID != operation.ContextID {
+		logger.Info("Instance %s: the unknown outcome of the %s with context ID %s was settled while this poll waited", instanceID, noun, operation.ContextID)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("The outcome of the %s with context ID %s was just settled", noun, operation.ContextID),
+		}, nil
+	}
+
+	if current.DeploymentName != "" {
+		deploymentName = current.DeploymentName
+	}
+
+	finding := b.findUnknownOutcome(passCtx, deploymentName, current, logger)
+
+	cancel()
+	pass.setLastErr(finding.err)
+
+	return b.settleUnknownOutcome(ctx, instanceID, deploymentName, current, finding, logger)
 }
 
 // findUnknownOutcome asks the director what became of the request that

@@ -191,6 +191,10 @@ type Broker struct {
 	// unknown outcome is recorded and judged by, so tests can let the
 	// grace period pass without waiting for it.
 	unknownOutcomeClock func() time.Time
+
+	// unknownOutcomePasses holds an *unknownOutcomePass for each instance
+	// whose unknown outcome a poll has tried to settle.
+	unknownOutcomePasses sync.Map
 }
 
 // operationClaim is the claim an operation holds on an instance ID in
