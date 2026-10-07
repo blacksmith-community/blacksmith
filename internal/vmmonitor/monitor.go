@@ -1059,6 +1059,10 @@ func (m *Monitor) writeTombstone(ctx context.Context, svc *ServiceMonitor, judge
 			return false, nil
 		}
 
+		// This guard is defensive. inFlightReason already keeps an instance
+		// when the monitor has no claims to ask, so the write is never
+		// reached without them, and the guard only keeps a later change from
+		// dereferencing nil here.
 		if m.claims == nil {
 			kept = keepReason{reason: "the monitor has no way to ask for the operation claims of this process"}
 
