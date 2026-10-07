@@ -3521,6 +3521,16 @@ th[style*="cursor: pointer"]:hover {
   background-color: #6c757d;
 }
 
+.vm-status-deleted {
+  background-color: #f8f9fa;
+  color: #6c757d;
+  border: 1px dashed #ced4da;
+}
+
+.vm-status-deleted .vm-status-icon::before {
+  background-color: #adb5bd;
+}
+
 .vm-count {
   font-size: 11px;
   opacity: 0.8;
@@ -3555,6 +3565,16 @@ th[style*="cursor: pointer"]:hover {
   background-color: #383d41;
   color: #e2e3e5;
   border-color: #6c757d;
+}
+
+[data-theme="dark"] .vm-status-deleted {
+  background-color: #2b2f33;
+  color: #adb5bd;
+  border-color: #495057;
+}
+
+[data-theme="dark"] .vm-status-deleted .vm-status-icon::before {
+  background-color: #6c757d;
 }
 
 /* Deletion status badge styles */
