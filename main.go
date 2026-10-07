@@ -1169,7 +1169,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	cfManager := initializeCFManager(config, logger)
 	reconciler := setupReconciler(config, brokerInstance, vault, boshDirector, cfManager, logger)
-	vmMonitor := setupVMMonitor(vault, boshDirector, config, logger)
+	vmMonitor := setupVMMonitor(vault, boshDirector, brokerInstance, config, logger)
 
 	// Connect vm-monitor to broker so broker can notify on provision completion
 	if vmMonitor != nil {
@@ -1295,9 +1295,9 @@ func setupReconciler(config *config.Config, brokerInstance *broker.Broker, vault
 	return &recovery.ReconcilerAdapter{}
 }
 
-func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirector, config *config.Config, logger loggerPkg.Logger) *vmmonitor.Monitor {
+func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirector, brokerInstance *broker.Broker, config *config.Config, logger loggerPkg.Logger) *vmmonitor.Monitor {
 	if boshDirector != nil {
-		return vmmonitor.New(vault, boshDirector, config)
+		return vmmonitor.New(vault, boshDirector, brokerInstance, config)
 	}
 
 	logger.Warn("BOSH director unavailable - VM monitor will be disabled")

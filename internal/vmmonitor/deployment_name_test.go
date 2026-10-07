@@ -2,6 +2,7 @@ package vmmonitor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -12,17 +13,31 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 )
 
-// indexVault serves a fixed index to the monitor, and records the instances
-// the monitor marks deleted and the last VM status it stores for each.
+// indexVault serves a fixed index and fixed records to the monitor, and
+// records the instances the monitor marks deleted and the last VM status it
+// stores for each. A test can make later reads of the index or of a record
+// fail.
 type indexVault struct {
 	entries map[string]interface{}
+
+	// records holds the secrets Get serves, by path.
+	records map[string]map[string]interface{}
 
 	mu       sync.Mutex
 	marked   []string
 	statuses map[string]interface{}
+	indexErr error
+	getErr   error
 }
 
 func (v *indexVault) GetIndex(context.Context, string) (*vaultPkg.Index, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if v.indexErr != nil {
+		return nil, v.indexErr
+	}
+
 	data := make(map[string]interface{}, len(v.entries))
 	for id, entry := range v.entries {
 		data[id] = entry
@@ -31,8 +46,32 @@ func (v *indexVault) GetIndex(context.Context, string) (*vaultPkg.Index, error) 
 	return &vaultPkg.Index{Data: data}, nil
 }
 
-func (v *indexVault) Get(context.Context, string, interface{}) (bool, error) {
-	return false, nil
+// Get decodes the record at path into out the way the vault client does,
+// through JSON, so numbers arrive as float64.
+func (v *indexVault) Get(_ context.Context, path string, out interface{}) (bool, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if v.getErr != nil {
+		return false, v.getErr
+	}
+
+	record, exists := v.records[path]
+	if !exists {
+		return false, nil
+	}
+
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return false, fmt.Errorf("encode %s: %w", path, err)
+	}
+
+	err = json.Unmarshal(encoded, out)
+	if err != nil {
+		return false, fmt.Errorf("decode %s: %w", path, err)
+	}
+
+	return true, nil
 }
 
 func (v *indexVault) Put(_ context.Context, path string, data interface{}) error {
@@ -60,6 +99,22 @@ func (v *indexVault) MarkInstanceDeleted(_ context.Context, instanceID string) e
 	v.record(instanceID)
 
 	return nil
+}
+
+// failIndexReads makes every later read of the index fail with err.
+func (v *indexVault) failIndexReads(err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	v.indexErr = err
+}
+
+// failRecordReads makes every later read of a record fail with err.
+func (v *indexVault) failRecordReads(err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	v.getErr = err
 }
 
 func (v *indexVault) record(instanceID string) {
@@ -139,8 +194,9 @@ func TestMonitorChecksTheDeploymentAnIndexEntryRecords(t *testing.T) {
 
 				return deploymentNotFound(name)
 			}
+			director.FindRunningTaskForDeploymentFn = noRunningTask
 
-			monitor := vmmonitor.NewWithVault(vault, director)
+			monitor := vmmonitor.NewWithVault(vault, director, noClaims{})
 
 			err := discovery.discover(t.Context(), monitor)
 			if err != nil {
@@ -162,4 +218,21 @@ func TestMonitorChecksTheDeploymentAnIndexEntryRecords(t *testing.T) {
 			}
 		})
 	}
+}
+
+// setEntryTime sets one time on an instance's index entry, as a later write
+// to the index would.
+func (v *indexVault) setEntryTime(instanceID, field, value string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	entry, _ := v.entries[instanceID].(map[string]interface{})
+
+	updated := make(map[string]interface{}, len(entry)+1)
+	for key, existing := range entry {
+		updated[key] = existing
+	}
+
+	updated[field] = value
+	v.entries[instanceID] = updated
 }

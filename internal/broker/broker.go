@@ -2159,9 +2159,10 @@ func (b *Broker) orphanDeploymentUnconfirmed(ctx context.Context, deploymentName
 	return ""
 }
 
-// operationClaimed reports whether an operation of any type holds the claim
-// on instanceID in this process.
-func (b *Broker) operationClaimed(instanceID string) bool {
+// OperationClaimed reports whether an operation of any type holds the claim
+// on instanceID in this process. The vm-monitor asks it before it marks an
+// instance deleted.
+func (b *Broker) OperationClaimed(instanceID string) bool {
 	_, held := b.activeOperations.Load(instanceID)
 
 	return held
@@ -2267,7 +2268,7 @@ func (b *Broker) removeOrphanedInstances(ctx context.Context, candidates []orpha
 				continue
 			}
 
-			if b.operationClaimed(candidate.instanceID) {
+			if b.OperationClaimed(candidate.instanceID) {
 				logger.Info("Keeping instance %s, because an operation claimed it during the orphan check", candidate.instanceID)
 
 				continue

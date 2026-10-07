@@ -23,6 +23,17 @@ var (
 	errDirectorFailed = errors.New("director responded with non-successful status code '500'")
 )
 
+// The service and the index entry fields the specs set, and the VM statuses
+// they expect.
+const (
+	serviceID     = "valkey"
+	serviceKey    = "service_id"
+	planKey       = "plan_id"
+	nameKey       = "deployment_name"
+	statusDeleted = "deleted"
+	statusError   = "error"
+)
+
 // checkErrorCase is a failed VM listing, the director's answer when the
 // monitor asks for the deployment itself, and whether the instance should
 // then be marked deleted.
@@ -95,12 +106,8 @@ func checkAfterError(t *testing.T, checkError checkErrorCase) {
 
 	const (
 		instanceID = "adopted"
-		serviceID  = "valkey"
 		planID     = "standalone"
 		monitored  = planID + "-classic-" + instanceID
-		serviceKey = "service_id"
-		planKey    = "plan_id"
-		nameKey    = "deployment_name"
 	)
 
 	vault := &indexVault{entries: map[string]interface{}{
@@ -121,8 +128,9 @@ func checkAfterError(t *testing.T, checkError checkErrorCase) {
 
 		return deploymentNotFound(deployment)
 	}
+	director.FindRunningTaskForDeploymentFn = noRunningTask
 
-	monitor := vmmonitor.NewWithVault(vault, director)
+	monitor := vmmonitor.NewWithVault(vault, director, noClaims{})
 
 	err := monitor.ScanAllServices(t.Context())
 	if err != nil {
@@ -141,7 +149,7 @@ func checkAfterError(t *testing.T, checkError checkErrorCase) {
 	status := vault.storedStatus(instanceID)
 
 	if checkError.deleted {
-		if len(marked) != 1 || marked[0] != instanceID || stillMonitored || status != "deleted" {
+		if len(marked) != 1 || marked[0] != instanceID || stillMonitored || status != statusDeleted {
 			t.Errorf("a deployment the director confirmed gone: marked %v, still monitored %t, status %q; want %s marked, unmonitored, and deleted",
 				marked, stillMonitored, status, instanceID)
 		}
@@ -149,7 +157,7 @@ func checkAfterError(t *testing.T, checkError checkErrorCase) {
 		return
 	}
 
-	if len(marked) != 0 || !stillMonitored || status != "error" {
+	if len(marked) != 0 || !stillMonitored || status != statusError {
 		t.Errorf("a deployment the director did not confirm gone: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and error",
 			marked, stillMonitored, status)
 	}

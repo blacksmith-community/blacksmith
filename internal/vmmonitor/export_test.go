@@ -8,11 +8,13 @@ import (
 )
 
 // NewWithVault builds a Monitor over any vault that offers the calls the
-// monitor makes, so a test can script the index it reads.
-func NewWithVault(vault vmVault, director bosh.Director) *Monitor {
+// monitor makes, so a test can script the index it reads, and over the
+// operation claims a test scripts.
+func NewWithVault(vault vmVault, director bosh.Director, claims OperationClaims) *Monitor {
 	return &Monitor{
 		vault:          vault,
 		boshDirector:   director,
+		claims:         claims,
 		normalInterval: time.Hour,
 		failedInterval: 5 * time.Minute,
 		services:       make(map[string]*ServiceMonitor),

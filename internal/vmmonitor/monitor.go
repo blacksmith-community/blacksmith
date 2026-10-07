@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/inflight"
 	internalVault "blacksmith/internal/vault"
 	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
@@ -28,6 +29,7 @@ const (
 type Monitor struct {
 	vault        vmVault
 	boshDirector bosh.Director
+	claims       OperationClaims
 	config       interface{}
 
 	normalInterval time.Duration
@@ -47,6 +49,13 @@ type vmVault interface {
 	Put(ctx context.Context, path string, data interface{}) error
 	UpdateIndexEntry(ctx context.Context, instanceID string, updates map[string]interface{}) error
 	MarkInstanceDeleted(ctx context.Context, instanceID string) error
+}
+
+// OperationClaims reports whether a provision or a deprovision running in
+// this process holds the claim on an instance. The broker holds those claims
+// in memory, so only a claim this process holds is seen.
+type OperationClaims interface {
+	OperationClaimed(instanceID string) bool
 }
 
 // ServiceMonitor tracks the monitoring state of a service instance.
@@ -80,8 +89,9 @@ type VMStatus struct {
 	Details     map[string]interface{} `json:"details,omitempty"`
 }
 
-// New creates a new VM monitor service.
-func New(vault *internalVault.Vault, boshDirector bosh.Director, cfg interface{}) *Monitor {
+// New creates a new VM monitor service. claims is the broker of this process,
+// which the monitor asks before it marks an instance deleted.
+func New(vault *internalVault.Vault, boshDirector bosh.Director, claims OperationClaims, cfg interface{}) *Monitor {
 	// Default intervals if not configured
 	normalInterval := 1 * time.Hour
 
@@ -108,6 +118,7 @@ func New(vault *internalVault.Vault, boshDirector bosh.Director, cfg interface{}
 	return &Monitor{
 		vault:          vault,
 		boshDirector:   boshDirector,
+		claims:         claims,
 		config:         cfg,
 		normalInterval: normalInterval,
 		failedInterval: failedInterval,
@@ -646,14 +657,22 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 // front of the director, and the director adapter wraps any 404 from the
 // listing in bosh.ErrDeploymentNotFound. So the instance is marked deleted
 // only when deploymentConfirmedGone says the director itself answered with
-// its deployment-not-found code. Any other answer records a failed check
-// and keeps monitoring the instance.
+// its deployment-not-found code, and inFlightReason finds nothing to show
+// that the instance belongs to work in flight. Any other answer records a
+// failed check and keeps monitoring the instance.
 func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err error) {
 	logger := logger.Get().Named("vm-monitor")
 
 	gone, confirmErr := m.deploymentConfirmedGone(ctx, svc.DeploymentName)
 
+	inFlight := ""
+	if gone {
+		inFlight = m.inFlightReason(ctx, svc)
+	}
+
 	switch {
+	case gone && inFlight != "":
+		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist, but instance %s is kept, because %s", svc.DeploymentName, err, svc.ServiceID, inFlight)
 	case gone:
 		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist. Marking instance %s as deleted and stopping monitoring.", svc.DeploymentName, err, svc.ServiceID)
 
@@ -904,6 +923,57 @@ func (m *Monitor) GetStatus() MonitorStatus {
 			"failing":       failingCount,
 		},
 	}
+}
+
+// inFlightReason returns why an instance whose deployment the director says
+// is gone may belong to work in flight, or "" when nothing shows that it
+// does. It applies the broker orphan check's rules. It reads the instance's
+// index entry afresh and judges it, and its task record, by inflight.Reason.
+// Then it asks the director whether a task is running on the deployment the
+// monitor watches, because a deploy may be creating it. Last, it asks
+// whether an operation in this process holds the claim on the instance, as
+// close to the tombstone as it can. A read or a check that fails counts as
+// in flight, and so does a monitor built without the claims to ask.
+func (m *Monitor) inFlightReason(ctx context.Context, svc *ServiceMonitor) string {
+	idx, err := m.vault.GetIndex(ctx, "db")
+	if err != nil {
+		return fmt.Sprintf("its index entry could not be read (%s)", err)
+	}
+
+	entry, _ := idx.Data[svc.ServiceID].(map[string]interface{})
+
+	reason := inflight.Reason(entry, func() (map[string]interface{}, bool, error) {
+		var task map[string]interface{}
+
+		exists, err := m.vault.Get(ctx, svc.ServiceID+"/task", &task)
+		if err != nil {
+			return nil, false, fmt.Errorf("read %s/task: %w", svc.ServiceID, err)
+		}
+
+		return task, exists, nil
+	})
+	if reason != "" {
+		return reason
+	}
+
+	task, err := m.boshDirector.FindRunningTaskForDeployment(ctx, svc.DeploymentName)
+	if err != nil {
+		return fmt.Sprintf("the director could not say whether a task is running on deployment %s (%s)", svc.DeploymentName, err)
+	}
+
+	if task != nil {
+		return fmt.Sprintf("BOSH task %d (%s) is %s on deployment %s", task.ID, task.Description, task.State, svc.DeploymentName)
+	}
+
+	if m.claims == nil {
+		return "the monitor has no way to ask for the operation claims of this process"
+	}
+
+	if m.claims.OperationClaimed(svc.ServiceID) {
+		return "an operation in this process holds its claim"
+	}
+
+	return ""
 }
 
 // deploymentConfirmedGone asks the director for a deployment, and reports
