@@ -947,6 +947,15 @@ func (b *Broker) ServiceWithNoDeploymentCheck(ctx context.Context) (
 		return nil, err
 	}
 
+	// An empty list is more likely a failed scan than an empty director, and
+	// against it every entry would look orphaned, so nothing is removed. The
+	// reconciler's orphan sweep skips an empty scan the same way.
+	if len(deploymentNames) == 0 {
+		logger.Warning("Orphan check skipped: the BOSH director listed no deployments, so no index entry is removed")
+
+		return nil, nil
+	}
+
 	vaultDB, err := b.getVaultDBIndex(ctx, logger)
 	if err != nil {
 		return nil, err

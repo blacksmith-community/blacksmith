@@ -1198,9 +1198,11 @@ var _ = Describe("The broker's orphan check", func() {
 		ctx = context.Background()
 		suffix = strconv.FormatInt(time.Now().UnixNano(), 10)
 		seeded = nil
-		live = map[string]bool{}
 
-		// The director lists the deployments a spec puts in live.
+		// The director lists the deployments a spec puts in live. An empty
+		// list stops the check, so one unrelated deployment is always there.
+		live = map[string]bool{"unrelated-" + suffix: true}
+
 		director = testutil.NewScriptedBOSHDirector()
 		director.GetDeploymentsFn = func() ([]bosh.Deployment, error) {
 			deployments := []bosh.Deployment{}
@@ -1318,6 +1320,22 @@ var _ = Describe("The broker's orphan check", func() {
 		Expect(removed).ToNot(ContainElement(storedName))
 		Expect(removed).ToNot(ContainElement(builtName))
 		Expect(indexed(adoptedID)).To(BeTrue(), "the entry of a live deployment was removed")
+	})
+
+	// An empty list is more likely a failed scan than an empty director, so
+	// the check removes nothing, even an entry whose deployment is gone.
+	It("the orphan check removes nothing when the deployment list is empty", func() {
+		goneID, goneName := seedEntry("empty-list", old, map[string]interface{}{"created": old.Unix()})
+
+		live = map[string]bool{}
+		director.GetDeploymentFn = deploymentNotFound
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil }
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).To(BeEmpty())
+		Expect(removed).ToNot(ContainElement(goneName))
+		Expect(indexed(goneID)).To(BeTrue(), "an entry was removed on an empty deployment list")
 	})
 
 	// An entry indexed before deployment_name existed is named from its plan
