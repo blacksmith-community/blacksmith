@@ -1120,7 +1120,7 @@ func (m *Monitor) writeTombstone(ctx context.Context, svc *ServiceMonitor, judge
 			return false, nil
 		}
 
-		entries[svc.ServiceID] = deletedEntry(current)
+		entries[svc.ServiceID] = DeletedEntry(current)
 
 		return true, nil
 	})
@@ -1140,11 +1140,13 @@ func entryMarkedDeleted(entry interface{}) bool {
 	return status == statusDeleted
 }
 
-// deletedEntry returns a copy of an index entry marked deleted by the
-// vm-monitor. The mark sets status, deleted_at, deleted_by, and
-// deletion_reason, and the copy keeps every other field of the entry. An
-// entry that is not a map is replaced by one that holds only the mark.
-func deletedEntry(entry interface{}) map[string]interface{} {
+// DeletedEntry returns a copy of an index entry marked deleted by the
+// vm-monitor, which is the entry its tombstone writes. The mark sets status,
+// deleted_at, deleted_by, and deletion_reason, and the copy keeps every
+// other field of the entry. An entry that is not a map is replaced by one
+// that holds only the mark. Tests that race other index writers against the
+// tombstone write it through vmmonitortest.MarkDeleted.
+func DeletedEntry(entry interface{}) map[string]interface{} {
 	fields, _ := entry.(map[string]interface{})
 
 	marked := make(map[string]interface{}, len(fields))

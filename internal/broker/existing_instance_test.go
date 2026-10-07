@@ -26,6 +26,7 @@ import (
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
+	"blacksmith/internal/vmmonitor/vmmonitortest"
 	"blacksmith/pkg/testutil"
 	"blacksmith/shield"
 
@@ -297,7 +298,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 			brokerInstance.RecordTask(ctx, instanceID, "provision", "BOSH deployment task 77 is error", -1)
 		}},
 		{"a repeat for an instance the vm-monitor marked deleted answers 409", true, func() {
-			Expect(markDeletedAsTheMonitorDoes(ctx, vaultClient, instanceID)).To(Succeed())
+			Expect(vmmonitortest.MarkDeleted(ctx, vaultClient, instanceID)).To(Succeed())
 		}},
 		{"a repeat for an instance with the older deleted flag answers 409", true, func() {
 			Expect(vaultClient.UpdateIndexEntry(ctx, instanceID, map[string]interface{}{"deleted": true})).To(Succeed())

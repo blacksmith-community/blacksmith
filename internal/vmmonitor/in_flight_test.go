@@ -230,26 +230,20 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 			want:     unindexed,
 		},
 		{
-			name: "the monitor stops watching an instance whose entry was just marked deleted",
-			entry: map[string]interface{}{
-				"status": statusDeleted, "deleted_at": young.Format(time.RFC3339), "deleted_by": deletedByMonitor,
-			},
+			name:  "the monitor stops watching an instance whose entry was just marked deleted",
+			entry: markedAt(nil, young),
 			added: true,
 			want:  alreadyMarked,
 		},
 		{
-			name: "the monitor stops watching an instance whose entry was marked deleted long ago",
-			entry: map[string]interface{}{
-				"status": statusDeleted, "deleted_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339), "deleted_by": deletedByMonitor,
-			},
+			name:  "the monitor stops watching an instance whose entry was marked deleted long ago",
+			entry: markedAt(nil, time.Now().Add(-3*time.Hour)),
 			added: true,
 			want:  alreadyMarked,
 		},
 		{
-			name: "the monitor stops watching an instance already marked deleted while index writes fail",
-			entry: map[string]interface{}{
-				"status": statusDeleted, "deleted_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339), "deleted_by": deletedByMonitor,
-			},
+			name:      "the monitor stops watching an instance already marked deleted while index writes fail",
+			entry:     markedAt(nil, time.Now().Add(-3*time.Hour)),
 			added:     true,
 			afterScan: func(vault *indexVault) { vault.failIndexWrites(errVaultSealed) },
 			want:      alreadyMarked,

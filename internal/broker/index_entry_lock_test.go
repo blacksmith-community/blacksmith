@@ -15,6 +15,7 @@ import (
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
+	"blacksmith/internal/vmmonitor/vmmonitortest"
 	"blacksmith/pkg/testutil"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
@@ -166,7 +167,7 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 
 		markErr := make(chan error, 1)
 
-		go func() { markErr <- markDeletedAsTheMonitorDoes(ctx, b.Vault, instanceID) }()
+		go func() { markErr <- vmmonitortest.MarkDeleted(ctx, b.Vault, instanceID) }()
 
 		select {
 		case err := <-markErr:
@@ -249,7 +250,7 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 	// then lands after the mark and sets the status back to request_received.
 	// The entry is live again, so it must keep no part of the mark.
 	It("clears the mark's fields when the first provision record lands after it", func() {
-		Expect(markDeletedAsTheMonitorDoes(ctx, b.Vault, instanceID)).To(Succeed())
+		Expect(vmmonitortest.MarkDeleted(ctx, b.Vault, instanceID)).To(Succeed())
 
 		Expect(b.RecordInitialRequest(ctx, instanceID, provisionRequest())).To(Succeed())
 
@@ -266,7 +267,7 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 	})
 
 	It("keeps the whole mark when the deployment name is recorded after it", func() {
-		Expect(markDeletedAsTheMonitorDoes(ctx, b.Vault, instanceID)).To(Succeed())
+		Expect(vmmonitortest.MarkDeleted(ctx, b.Vault, instanceID)).To(Succeed())
 
 		b.StoreDeploymentNameInIndex(ctx, instanceID, planID+"-"+instanceID)
 
@@ -291,27 +292,3 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 
 // indexStatusDeleted is the status of an index entry marked deleted.
 const indexStatusDeleted = "deleted"
-
-// markDeletedAsTheMonitorDoes marks an indexed instance deleted the way the vm-monitor does,
-// in one index update that keeps every field of the entry. It marks nothing
-// when the instance is not indexed.
-func markDeletedAsTheMonitorDoes(ctx context.Context, client *internalVault.Vault, instanceID string) error {
-	err := client.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
-		entry, indexed := entries[instanceID].(map[string]interface{})
-		if !indexed {
-			return false, nil
-		}
-
-		entry["status"] = indexStatusDeleted
-		entry["deleted_at"] = time.Now().Format(time.RFC3339)
-		entry["deleted_by"] = "vm-monitor"
-		entry["deletion_reason"] = "deployment not found in BOSH director"
-
-		return true, nil
-	})
-	if err != nil {
-		return fmt.Errorf("mark %s deleted: %w", instanceID, err)
-	}
-
-	return nil
-}

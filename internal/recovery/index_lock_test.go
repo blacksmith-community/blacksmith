@@ -1,13 +1,12 @@
 package recovery
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	internalVault "blacksmith/internal/vault"
+	"blacksmith/internal/vmmonitor/vmmonitortest"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/reconciler"
 	"blacksmith/pkg/testutil"
@@ -155,7 +154,7 @@ func TestReconcilerInstanceWriteKeepsTheDeletedMark(t *testing.T) {
 		t.Fatalf("failed to record the deprovision request: %v", err)
 	}
 
-	err = markDeletedAsTheMonitorDoes(ctx, vaultClient, instanceID)
+	err = vmmonitortest.MarkDeleted(ctx, vaultClient, instanceID)
 	if err != nil {
 		t.Fatalf("failed to mark the instance deleted: %v", err)
 	}
@@ -191,28 +190,4 @@ func TestReconcilerInstanceWriteKeepsTheDeletedMark(t *testing.T) {
 			t.Errorf("the reconciler's write dropped %s", field)
 		}
 	}
-}
-
-// markDeletedAsTheMonitorDoes marks an indexed instance deleted the way the vm-monitor does,
-// in one index update that keeps every field of the entry. It marks nothing
-// when the instance is not indexed.
-func markDeletedAsTheMonitorDoes(ctx context.Context, client *internalVault.Vault, instanceID string) error {
-	err := client.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
-		entry, indexed := entries[instanceID].(map[string]interface{})
-		if !indexed {
-			return false, nil
-		}
-
-		entry["status"] = "deleted"
-		entry["deleted_at"] = time.Now().Format(time.RFC3339)
-		entry["deleted_by"] = "vm-monitor"
-		entry["deletion_reason"] = "deployment not found in BOSH director"
-
-		return true, nil
-	})
-	if err != nil {
-		return fmt.Errorf("mark %s deleted: %w", instanceID, err)
-	}
-
-	return nil
 }

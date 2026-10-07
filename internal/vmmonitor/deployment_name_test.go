@@ -228,18 +228,16 @@ func (v *indexVault) markEntryDeleted(instanceID string, deletedAt time.Time) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	entry, _ := v.entries[instanceID].(map[string]interface{})
+	v.entries[instanceID] = markedAt(v.entries[instanceID], deletedAt)
+}
 
-	marked := make(map[string]interface{}, len(entry)+4)
-	for key, existing := range entry {
-		marked[key] = existing
-	}
-
-	marked["status"] = statusDeleted
+// markedAt returns an index entry as the monitor's tombstone marks it,
+// through vmmonitor.DeletedEntry, with its deleted_at set to deletedAt.
+func markedAt(entry interface{}, deletedAt time.Time) map[string]interface{} {
+	marked := vmmonitor.DeletedEntry(entry)
 	marked["deleted_at"] = deletedAt.Format(time.RFC3339)
-	marked["deleted_by"] = deletedByMonitor
-	marked["deletion_reason"] = "deployment not found in BOSH director"
-	v.entries[instanceID] = marked
+
+	return marked
 }
 
 func (v *indexVault) markedDeleted() []string {
