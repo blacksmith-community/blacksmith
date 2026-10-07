@@ -493,13 +493,20 @@ func (b *Broker) Deprovision(
 		return osbapi.DeprovisionResponse{}, false, err
 	}
 
+	// An instance the index does not have is gone only when the director
+	// confirms its deployment is, and then nothing is recorded for it.
+	err = b.refuseDeleteOfGoneInstance(ctx, instanceID, details, logger)
+	if err != nil {
+		return osbapi.DeprovisionResponse{}, false, err
+	}
+
 	err = b.recordDeprovisionRequest(ctx, instanceID, details, logger)
 	if err != nil {
 		logger.Error("failed to record deprovision request in vault: %s", err)
 		// Continue anyway, this is non-fatal for existing instances
 	}
 
-	instance, err := b.validateInstanceExists(ctx, instanceID, logger)
+	instance, err := b.validateInstanceExists(ctx, instanceID, details, logger)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, err
 	}
@@ -1564,7 +1571,13 @@ func (b *Broker) extractContextFields(contextData map[string]any) map[string]str
 	return fields
 }
 
-func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, logger logger.Logger) (*vaultPkg.Instance, error) {
+// validateInstanceExists returns the index entry of the instance a
+// deprovision deletes. An instance with no entry, which is left when the
+// deprovision request could not be recorded, answers 410 Gone only when the
+// director confirms its deployment is gone. A deployment that still exists,
+// or one whose existence is unknown, fails the request, so the platform
+// retries the delete instead of taking the instance for gone.
+func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, logger logger.Logger) (*vaultPkg.Instance, error) {
 	// Deprovision looks the instance up after it has recorded the request, so
 	// the lookup is detached as well, and a request that ends in between
 	// does not leave a recorded request behind with no answer.
@@ -1578,13 +1591,80 @@ func (b *Broker) validateInstanceExists(ctx context.Context, instanceID string, 
 		return nil, fmt.Errorf("failed to find instance in vault: %w", err)
 	}
 
-	if !exists {
-		logger.Debug("Instance not found in vault index")
-
-		return nil, osbapi.ErrInstanceNotFound
+	if exists {
+		return instance, nil
 	}
 
-	return instance, nil
+	deploymentName := details.PlanID + "-" + instanceID
+
+	err = b.deploymentGone(recordCtx, instanceID, deploymentName, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Error("instance %s has no index entry, but the director still has deployment %s, so the delete was refused", instanceID, deploymentName)
+
+	return nil, fmt.Errorf("%w: instance %s has no index entry, but deployment %s still exists, so the delete must be retried",
+		errInstanceUnindexed, instanceID, deploymentName)
+}
+
+// errInstanceUnindexed marks a delete that found the instance's deployment
+// but no index entry to delete it through.
+var errInstanceUnindexed = errors.New("instance has no index entry")
+
+// refuseDeleteOfGoneInstance answers a deprovision of an instance the index
+// does not have. The instance is gone when the director confirms that the
+// deployment named from the request's plan and the instance ID is gone, and
+// the request then answers 410 Gone with nothing recorded. A deployment that
+// still exists is left to the deprovision, which records the request and
+// deletes it. An indexed instance is left to the deprovision as well.
+func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, logger logger.Logger) error {
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	_, exists, err := b.Vault.FindInstance(readCtx, instanceID)
+	if err != nil {
+		logger.Error("unable to look instance %s up in the vault index: %s", instanceID, err)
+
+		return fmt.Errorf("failed to find instance in vault: %w", err)
+	}
+
+	if exists {
+		return nil
+	}
+
+	deploymentName := details.PlanID + "-" + instanceID
+
+	err = b.deploymentGone(readCtx, instanceID, deploymentName, logger)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("instance %s has no index entry, but the director still has deployment %s, so the delete goes ahead", instanceID, deploymentName)
+
+	return nil
+}
+
+// deploymentGone asks the director for the deployment of an instance the
+// index does not have. It returns an error wrapping osbapi.ErrGoneError when
+// the director answers with its own deployment-not-found code, and nil when
+// the deployment exists. Any other answer leaves existence unknown, and the
+// error it returns never wraps osbapi.ErrGoneError.
+func (b *Broker) deploymentGone(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) error {
+	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, bosh.ErrDeploymentNotFound) {
+		logger.Info("instance %s has no index entry, and the director has no deployment %s, so the instance is gone", instanceID, deploymentName)
+
+		return fmt.Errorf("%w: instance %s has no index entry, and deployment %s does not exist", osbapi.ErrGoneError, instanceID, deploymentName)
+	}
+
+	logger.Error("instance %s has no index entry, and the director could not confirm whether deployment %s exists: %s", instanceID, deploymentName, err)
+
+	return fmt.Errorf("instance %s has no index entry, and whether deployment %s exists is unknown: %w", instanceID, deploymentName, err)
 }
 
 // rejectIfOperationInProgress returns the OSB concurrency error when BOSH

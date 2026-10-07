@@ -13,9 +13,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/boshtest"
 	"blacksmith/internal/broker"
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
@@ -544,5 +546,270 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 
 		_, err = brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: "provision"})
 		Expect(err).To(HaveOccurred())
+	})
+})
+
+// A delete of an instance the index does not have answers 410 Gone when the
+// director confirms, with its own deployment-not-found code, that the
+// deployment named from the request's plan and the instance ID is gone. Any
+// other director answer leaves the instance's existence unknown, so the
+// delete fails and the platform retries it. A plain test, because the
+// director is a TLS test server driven through the real director adapter.
+//
+//nolint:paralleltest // t.Setenv cannot be used with t.Parallel
+func TestDeleteOfUnknownInstance(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	vault, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("failed to start Vault: %v", err)
+	}
+
+	defer vault.Close()
+
+	cases := []struct {
+		name       string
+		answer     func(http.ResponseWriter, *http.Request)
+		wantStatus int
+	}{
+		{"deleting an unknown instance answers 410", func(writer http.ResponseWriter, _ *http.Request) {
+			boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment doesn't exist")
+		}, http.StatusGone},
+		{"a 404 without the director's code is not taken for a missing deployment", boshtest.WriteRouteNotFound, http.StatusInternalServerError},
+		{"a director error is not taken for a missing deployment", func(writer http.ResponseWriter, _ *http.Request) {
+			boshtest.WriteText(writer, http.StatusInternalServerError, "director failure")
+		}, http.StatusInternalServerError},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			instanceID := fmt.Sprintf("unknown-%d", time.Now().UnixNano())
+			deploymentPath := "/deployments/standalone-" + instanceID
+
+			director := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				if request.URL.Path != deploymentPath {
+					return false
+				}
+
+				if request.Method == http.MethodGet {
+					testCase.answer(writer, request)
+				} else {
+					boshtest.WriteText(writer, http.StatusInternalServerError, "the broker must not delete the deployment")
+				}
+
+				return true
+			})
+
+			adapter, err := bosh.NewDirectorAdapter(bosh.Config{
+				Address:  director.URL,
+				Username: "admin",
+				Password: "admin",
+				CACert:   director.CACert,
+			})
+			if err != nil {
+				t.Fatalf("failed to create the director adapter: %v", err)
+			}
+
+			serviceCtx, stopService := context.WithCancel(context.Background())
+			defer waitForBrokerGoroutines(t, stopService)
+
+			vaultClient := internalVault.New(vault.Addr, vault.RootToken, true)
+			brokerInstance := &broker.Broker{
+				Plans:          map[string]services.Plan{},
+				BOSH:           adapter,
+				Vault:          vaultClient,
+				Shield:         &shield.NoopClient{},
+				Config:         &config.Config{},
+				InstanceLocks:  make(map[string]*sync.Mutex),
+				ServiceContext: serviceCtx,
+			}
+
+			server := httptest.NewServer(osbapibroker.NewHandler(brokerInstance))
+			defer server.Close()
+
+			status, body := deleteThroughOSB(t, server.URL, instanceID)
+			if status != testCase.wantStatus {
+				t.Fatalf("the delete answered %d, want %d: %s", status, testCase.wantStatus, body)
+			}
+
+			var deletes []string
+
+			for _, request := range director.Requests() {
+				if request.Path == deploymentPath && request.Method != http.MethodGet {
+					deletes = append(deletes, request.Method)
+				}
+			}
+
+			if len(deletes) != 0 {
+				t.Fatalf("the broker sent %v for the deployment", deletes)
+			}
+
+			_, indexed, err := vaultClient.FindInstance(context.Background(), instanceID)
+			if err != nil || indexed {
+				t.Fatalf("the delete left an index entry (indexed %t, err %v)", indexed, err)
+			}
+
+			for _, path := range []string{"/metadata", "/task"} {
+				var record map[string]interface{}
+
+				exists, err := vaultClient.Get(context.Background(), instanceID+path, &record)
+				if err != nil || exists {
+					t.Fatalf("the delete wrote %s%s (exists %t, err %v)", instanceID, path, exists, err)
+				}
+			}
+		})
+	}
+}
+
+// deleteThroughOSB sends a deprovision for instanceID on the standalone plan
+// through the OSB handler at baseURL and returns the answer's status and body.
+func deleteThroughOSB(t *testing.T, baseURL, instanceID string) (int, string) {
+	t.Helper()
+
+	path := "/v2/service_instances/" + instanceID + "?service_id=valkey&plan_id=standalone&accepts_incomplete=true"
+
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodDelete, baseURL+path, nil)
+	if err != nil {
+		t.Fatalf("failed to build the delete: %v", err)
+	}
+
+	request.Header.Set(osbapi.HeaderAPIVersion, "2.17")
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("failed to send the delete: %v", err)
+	}
+
+	defer func() { _ = response.Body.Close() }()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("failed to read the answer: %v", err)
+	}
+
+	return response.StatusCode, string(body)
+}
+
+// waitForBrokerGoroutines stops the broker's service context and waits for
+// every goroutine of package broker to return, so none outlives the test.
+func waitForBrokerGoroutines(t *testing.T, stopService context.CancelFunc) {
+	t.Helper()
+
+	stopService()
+
+	deadline := time.Now().Add(backgroundStopTimeout)
+
+	for len(broker.BackgroundGoroutines()) > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines of package broker outlived the test: %v", broker.BackgroundGoroutines())
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A delete of an instance the index does not have goes ahead when the
+// director still has the deployment named from the request's plan and the
+// instance ID, because only the delete can remove it.
+var _ = Describe("A delete of an instance the index does not have", func() {
+	var (
+		ctx            context.Context
+		stopService    context.CancelFunc
+		director       *testutil.ScriptedBOSHDirector
+		brokerInstance *broker.Broker
+		instanceID     string
+		deploymentName string
+		request        osbapi.DeprovisionRequest
+	)
+
+	newBroker := func(vault *internalVault.Vault) *broker.Broker {
+		var serviceCtx context.Context
+
+		serviceCtx, stopService = context.WithCancel(context.Background())
+
+		return &broker.Broker{
+			Plans:          map[string]services.Plan{},
+			BOSH:           director,
+			Vault:          vault,
+			Shield:         &shield.NoopClient{},
+			Config:         &config.Config{},
+			InstanceLocks:  make(map[string]*sync.Mutex),
+			ServiceContext: serviceCtx,
+		}
+	}
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		instanceID = fmt.Sprintf("unindexed-delete-%d", time.Now().UnixNano())
+		deploymentName = "standalone-" + instanceID
+		request = osbapi.DeprovisionRequest{ServiceID: "valkey", PlanID: "standalone"}
+
+		director = testutil.NewScriptedBOSHDirector()
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no running task is a nil task without an error
+		director.DeleteDeploymentFn = func(string) (*bosh.Task, error) { return &bosh.Task{ID: 91, State: "queued"}, nil }
+		director.GetTaskFn = func(taskID int) (*bosh.Task, error) { return &bosh.Task{ID: taskID, State: "processing"}, nil }
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			return &bosh.DeploymentDetail{Name: name}, nil
+		}
+
+		brokerInstance = newBroker(internalVault.New(suite.vault.Addr, suite.vault.RootToken, true))
+	})
+
+	AfterEach(func() {
+		stopBrokerGoroutines(stopService)
+
+		_ = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true).Index(ctx, instanceID, nil)
+	})
+
+	It("deletes a deployment the director still has", func() {
+		response, async, err := brokerInstance.Deprovision(ctx, instanceID, request, true)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(async).To(BeTrue())
+		Expect(response).To(Equal(osbapi.DeprovisionResponse{Operation: "deprovision"}))
+
+		Expect(director.Calls("GetDeployment")).To(ContainElement(deploymentName))
+		Eventually(func() []string { return director.Calls("DeleteDeployment") }, 10*time.Second).Should(ConsistOf(deploymentName))
+	})
+
+	It("fails a delete it cannot record while the director still has the deployment", func() {
+		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		defer proxy.Close()
+
+		brokerInstance = newBroker(internalVault.New(proxy.Addr, suite.vault.RootToken, true))
+		proxy.FailWrites("secret/data/db", http.StatusForbidden, "permission denied", -1)
+
+		_, async, err := brokerInstance.Deprovision(ctx, instanceID, request, true)
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, osbapi.ErrGoneError)).To(BeFalse(), "a deployment that exists was answered as gone: %v", err)
+		Expect(errors.Is(err, osbapi.ErrInstanceNotFound)).To(BeFalse(), "a deployment that exists was answered as not found: %v", err)
+		Expect(async).To(BeFalse())
+		Consistently(func() []string { return director.Calls("DeleteDeployment") }, 500*time.Millisecond).Should(BeEmpty())
+	})
+
+	It("answers 410 when the deployment is gone by the time the unrecorded delete checks again", func() {
+		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		defer proxy.Close()
+
+		var lookups sync.Map
+
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			if _, seen := lookups.LoadOrStore(name, true); !seen {
+				return &bosh.DeploymentDetail{Name: name}, nil
+			}
+
+			return nil, fmt.Errorf("deployment %s: %w", name, bosh.ErrDeploymentNotFound)
+		}
+
+		brokerInstance = newBroker(internalVault.New(proxy.Addr, suite.vault.RootToken, true))
+		proxy.FailWrites("secret/data/db", http.StatusForbidden, "permission denied", -1)
+
+		_, async, err := brokerInstance.Deprovision(ctx, instanceID, request, true)
+		Expect(errors.Is(err, osbapi.ErrGoneError)).To(BeTrue(), "the delete answered %v", err)
+		Expect(async).To(BeFalse())
+		Expect(director.Calls("DeleteDeployment")).To(BeEmpty())
 	})
 })
