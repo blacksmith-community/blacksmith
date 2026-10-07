@@ -33,6 +33,7 @@ const (
 	outcomeManifestName     = "placeholder"
 	outcomeTaskDone         = "done"
 	outcomeTaskProcessing   = "processing"
+	outcomeStateFailed      = "failed"
 )
 
 // newOutcomeBroker returns a broker for the valkey standalone plan whose
@@ -84,8 +85,9 @@ type sentRequest struct {
 
 // The broker chooses the context ID of each deploy and delete it sends, and
 // it records the ID before the request goes out, so the outcome of a request
-// whose answer is lost can be looked up by that ID.
-var _ = Describe("Context IDs of director mutations", func() {
+// whose answer is lost can be looked up by that ID. Only the director's word
+// that a deployment is gone lets a delete remove the instance.
+var _ = Describe("Deploys and deletes sent to the director", func() {
 	const (
 		createTaskID = 77
 		deleteTaskID = 300
@@ -109,6 +111,37 @@ var _ = Describe("Context IDs of director mutations", func() {
 		ExpectWithOffset(1, err).ToNot(HaveOccurred())
 
 		return record
+	}
+
+	history := func() []string {
+		metadata, err := suite.vault.ReadSecret(instanceID + "/metadata")
+		ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+		entries, _ := metadata["history"].([]interface{})
+		descriptions := make([]string, 0, len(entries))
+
+		for _, raw := range entries {
+			entry, _ := raw.(map[string]interface{})
+			if description, isString := entry["description"].(string); isString {
+				descriptions = append(descriptions, description)
+			}
+		}
+
+		return descriptions
+	}
+
+	stillIndexed := func() bool {
+		_, exists, err := vaultClient.FindInstance(ctx, instanceID)
+		ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+		return exists
+	}
+
+	useCleaner := func() *recordingCleaner {
+		cleaner := newRecordingCleaner(cleanerSucceeds)
+		brokerInstance.CredentialCleaner = cleaner
+
+		return cleaner
 	}
 
 	settled := func() bool {
@@ -365,6 +398,90 @@ var _ = Describe("Context IDs of director mutations", func() {
 			brokerInstance.RecordProgress(ctx, instanceID, "deprovision", "Starting deprovisioning process")
 
 			Expect(readRecord()).ToNot(HaveKey("context_id"), "a deprovision took over the context ID of the provision before it")
+		})
+	})
+
+	Describe("a gone deployment during delete retries cleans up as before", func() {
+		// goneAfterDeletes makes the deployment exist until the broker has
+		// sent the given number of deletes, each of which fails, and be gone,
+		// by the director's word, from then on. It returns a count of the
+		// deletes sent.
+		goneAfterDeletes := func(failedDeletes int) func() int {
+			var (
+				deletesMu sync.Mutex
+				deletes   int
+			)
+
+			sent := func() int {
+				deletesMu.Lock()
+				defer deletesMu.Unlock()
+
+				return deletes
+			}
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				if sent() < failedDeletes {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deploymentName)
+			}
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deletesMu.Lock()
+				defer deletesMu.Unlock()
+
+				deletes++
+
+				return nil, errDeleteFailed
+			}
+
+			return sent
+		}
+
+		expectCleanedUp := func() {
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			ExpectWithOffset(1, history()).To(ContainElement("Deprovisioning completed (cleanup during retry)"))
+			ExpectWithOffset(1, readRecord()).To(HaveKeyWithValue("action", "deprovision"))
+			ExpectWithOffset(1, readRecord()).ToNot(HaveKeyWithValue("state", outcomeStateFailed), "the delete of a gone deployment was recorded as failed")
+		}
+
+		It("when the deployment is gone by the retry after a failed delete", func() {
+			indexInstance()
+
+			cleaner := useCleaner()
+			deletes := goneAfterDeletes(1)
+
+			deprovision()
+
+			Eventually(stillIndexed, 15*time.Second).Should(BeFalse(), "the instance was left in the index")
+			expectCleanedUp()
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(HaveLen(1), "the CredHub cleanup did not run")
+			Expect(deletes()).To(Equal(1), "the broker deleted a deployment the director said was gone")
+		})
+
+		It("when the deployment of an abandoned deploy is gone before its delete", func() {
+			cleaner := useCleaner()
+			deletes := goneAfterDeletes(0)
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			expectCleanedUp()
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(HaveLen(1), "the CredHub cleanup did not run")
+			Expect(deletes()).To(BeZero(), "the broker deleted a deployment the director said was gone")
+		})
+
+		It("reports the deployment as not found rather than as a task", func() {
+			goneAfterDeletes(0)
+
+			err := brokerInstance.RetryDeleteDeployment(ctx, deploymentName, instanceID, 1)
+
+			Expect(err).To(MatchError(bosh.ErrDeploymentNotFound))
+			Expect(err.Error()).To(ContainSubstring(deploymentName))
 		})
 	})
 })

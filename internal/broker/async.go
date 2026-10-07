@@ -464,13 +464,9 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 		contextID:      contextID,
 	}
 
-	task, ok := phase.deleteDeploymentWithRetry(ctx)
-	if !ok {
-		return
-	}
-
-	if task.ID == 0 {
-		phase.handleDeploymentCleanedDuringRetry(ctx)
+	err = phase.deleteDeploymentWithRetry(ctx)
+	if err != nil {
+		phase.handleDeleteError(ctx, err)
 
 		return
 	}
@@ -558,29 +554,49 @@ func (d *deprovisioningPhase) handleDeploymentNotFound(ctx context.Context) bool
 	return true
 }
 
-// deleteDeploymentWithRetry attempts to delete deployment with retry logic.
-func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) (*bosh.Task, bool) {
+// deleteDeploymentWithRetry sends the delete, retrying a failed one, and
+// returns the error that ended the retries, which handleDeleteError settles.
+func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) error {
 	d.broker.trackProgressWithContextID(ctx, d.instanceID, "deprovision", "Initiating BOSH deployment deletion with retry", d.contextID, nil, d.logger)
 
 	task, err := d.broker.retryDeleteDeployment(ctx, d.deploymentName, d.instanceID, d.contextID, defaultDeleteRetryAttempts)
 	if err != nil {
-		d.logger.Error("Failed to delete BOSH deployment %s: %s", d.deploymentName, err)
-
-		// The director's delete task keeps running when the broker stops, and
-		// LastOperation adopts it from the director's events. The retry loop
-		// has left a progress record, so no failure is recorded here.
-		if ctx.Err() != nil {
-			d.logger.Warning("Deprovision of instance %s stopped before the delete finished (%s); LastOperation settles it", d.instanceID, ctx.Err())
-
-			return nil, false
-		}
-
-		d.broker.failWithTracking(ctx, d.instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed: %s", err), nil, d.logger)
-
-		return nil, false
+		return err
 	}
 
-	return task, true
+	// The task the director reported is the deployment's newest, which can
+	// be one another client ran in the meantime, so the delete event, not
+	// this task, names the delete task. It is logged to compare the two.
+	if task != nil {
+		d.logger.Debug("The delete of deployment %s reported task %d (state: %s)", d.deploymentName, task.ID, task.State)
+	}
+
+	return nil
+}
+
+// handleDeleteError settles a deprovision whose delete returned an error.
+// A deployment the director says is gone was deleted, whether by the
+// broker's earlier attempt or by someone else, and the instance is
+// removed. Every other error leaves the deployment where it was.
+func (d *deprovisioningPhase) handleDeleteError(ctx context.Context, err error) {
+	if errors.Is(err, bosh.ErrDeploymentNotFound) {
+		d.handleDeploymentCleanedDuringRetry(ctx)
+
+		return
+	}
+
+	d.logger.Error("Failed to delete BOSH deployment %s: %s", d.deploymentName, err)
+
+	// The director's delete task keeps running when the broker stops, and
+	// LastOperation adopts it from the director's events. The retry loop
+	// has left a progress record, so no failure is recorded here.
+	if ctx.Err() != nil {
+		d.logger.Warning("Deprovision of instance %s stopped before the delete finished (%s); LastOperation settles it", d.instanceID, ctx.Err())
+
+		return
+	}
+
+	d.broker.failWithTracking(ctx, d.instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed: %s", err), nil, d.logger)
 }
 
 // handleDeploymentCleanedDuringRetry handles case where deployment was cleaned up during retry.
@@ -958,14 +974,9 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	}
 
 	// Delete deployment with retry logic
-	task, ok := phase.deleteDeploymentWithRetry(ctx)
-	if !ok {
-		return
-	}
-
-	if task.ID == 0 {
-		// Deployment was already gone during retry
-		phase.handleDeploymentCleanedDuringRetry(ctx)
+	err = phase.deleteDeploymentWithRetry(ctx)
+	if err != nil {
+		phase.handleDeleteError(ctx, err)
 
 		return
 	}
@@ -1000,10 +1011,12 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, inst
 		_, err := b.BOSH.GetDeployment(ctx, deploymentName)
 		if err != nil {
 			if errors.Is(err, bosh.ErrDeploymentNotFound) {
-				// Deployment not found is success for deletion
+				// The director says the deployment is gone, so there is no
+				// delete task to follow. The caller settles the deprovision
+				// from the error.
 				logger.Info("Deployment %s no longer exists, deletion successful", deploymentName)
 
-				return &bosh.Task{ID: 0, State: "done"}, nil
+				return nil, fmt.Errorf("deployment %s of instance %s is gone before delete attempt %d: %w", deploymentName, instanceID, attempt, err)
 			}
 
 			// Existence is unknown; let the delete attempt decide rather than
