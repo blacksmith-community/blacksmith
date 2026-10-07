@@ -2,6 +2,7 @@ package broker_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,12 @@ const (
 	outcomeTaskDone         = "done"
 	outcomeTaskProcessing   = "processing"
 	outcomeStateFailed      = "failed"
+	outcomeStateUnknown     = "outcome_unknown"
+	outcomeDirectorAddress  = "https://director.example:25555"
 )
+
+// errAnswerLost is what a request whose answer never came back saw.
+var errAnswerLost = errors.New("the connection closed after the request was sent")
 
 // newOutcomeBroker returns a broker for the valkey standalone plan whose
 // init script does nothing, and the directory that holds the script.
@@ -482,6 +488,147 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			Expect(err).To(MatchError(bosh.ErrDeploymentNotFound))
 			Expect(err.Error()).To(ContainSubstring(deploymentName))
+		})
+	})
+
+	Describe("an unknown delete outcome never removes the index entry", func() {
+		// loseDeleteAnswers makes the deployment exist and every delete
+		// lose its answer. It returns the context IDs the deletes carried.
+		loseDeleteAnswers := func() func() []string {
+			var (
+				sentMu sync.Mutex
+				sent   []string
+			)
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+			director.onDeleteDeployment = func(callCtx context.Context, name string) (*bosh.Task, error) {
+				sentMu.Lock()
+				defer sentMu.Unlock()
+
+				sent = append(sent, boshapi.ContextIDFrom(callCtx))
+
+				return nil, &bosh.OutcomeUnknownError{
+					Operation:  "DeleteDeployment",
+					Director:   outcomeDirectorAddress,
+					Deployment: name,
+					ContextID:  boshapi.ContextIDFrom(callCtx),
+					Err:        errAnswerLost,
+				}
+			}
+
+			return func() []string {
+				sentMu.Lock()
+				defer sentMu.Unlock()
+
+				return append([]string(nil), sent...)
+			}
+		}
+
+		// expectRecordedUnknown checks that the record says the outcome of
+		// the request that carried contextID is unknown, with no task.
+		expectRecordedUnknown := func(action, contextID string, before time.Time) {
+			record := readRecord()
+
+			ExpectWithOffset(1, record).To(HaveKeyWithValue("action", action))
+			ExpectWithOffset(1, record).To(HaveKeyWithValue("state", outcomeStateUnknown))
+			ExpectWithOffset(1, record).To(HaveKeyWithValue("context_id", contextID))
+			ExpectWithOffset(1, record).ToNot(HaveKey("task"), "the record of an unknown outcome carries a task ID")
+			ExpectWithOffset(1, record["description"]).To(ContainSubstring(contextID), "the description does not name the context ID")
+
+			recorded, err := brokerInstance.RecordedOperation(ctx, instanceID)
+			ExpectWithOffset(1, err).ToNot(HaveOccurred())
+			ExpectWithOffset(1, recorded.State).To(Equal(outcomeStateUnknown))
+			ExpectWithOffset(1, recorded.ContextID).To(Equal(contextID))
+			ExpectWithOffset(1, recorded.TaskID).To(BeZero())
+			ExpectWithOffset(1, recorded.UnknownSince).To(BeTemporally(">=", before.Truncate(time.Second)))
+			ExpectWithOffset(1, recorded.UnknownSince).To(BeTemporally("<=", time.Now()))
+
+			ExpectWithOffset(1, history()).To(ContainElement(record["description"]), "the unknown outcome is not in the history")
+		}
+
+		It("for a deprovision", func() {
+			indexInstance()
+
+			cleaner := useCleaner()
+			sent := loseDeleteAnswers()
+			before := time.Now()
+
+			deprovision()
+
+			Eventually(sent, 10*time.Second).Should(HaveLen(1))
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			Expect(stillIndexed()).To(BeTrue(), "an unknown delete removed the index entry")
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "an unknown delete started the CredHub cleanup")
+
+			expectRecordedUnknown("deprovision", sent()[0], before)
+			Expect(sent()).To(HaveLen(1), "the broker resent a delete whose answer was lost")
+		})
+
+		It("for the teardown of an abandoned deploy", func() {
+			cleaner := useCleaner()
+			sent := loseDeleteAnswers()
+			before := time.Now()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "an unknown delete started the CredHub cleanup")
+
+			Expect(sent()).To(HaveLen(1), "the broker resent a delete whose answer was lost")
+			expectRecordedUnknown("deprovision", sent()[0], before)
+		})
+
+		It("and the retry loop stops at the first unknown outcome", func() {
+			sent := loseDeleteAnswers()
+
+			err := brokerInstance.RetryDeleteDeployment(ctx, deploymentName, instanceID, 3)
+
+			Expect(err).To(MatchError(bosh.ErrOutcomeUnknown))
+			Expect(sent()).To(HaveLen(1), "the broker resent a delete whose answer was lost")
+		})
+
+		It("nor does an unknown deploy outcome", func() {
+			var (
+				sentMu sync.Mutex
+				sent   string
+			)
+
+			director.onCreateDeployment = func(callCtx context.Context, _ string) (*bosh.Task, error) {
+				sentMu.Lock()
+				defer sentMu.Unlock()
+
+				sent = boshapi.ContextIDFrom(callCtx)
+
+				return nil, &bosh.OutcomeUnknownError{
+					Operation:  "CreateDeployment",
+					Director:   outcomeDirectorAddress,
+					Deployment: deploymentName,
+					ContextID:  sent,
+					Err:        errAnswerLost,
+				}
+			}
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+				return deploymentEvents(boshEventCreate, deploymentName, createTaskID), nil
+			}
+
+			before := time.Now()
+
+			provision()
+
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			sentMu.Lock()
+			contextID := sent
+			sentMu.Unlock()
+
+			Expect(contextID).ToNot(BeEmpty(), "the deploy was never sent")
+			Expect(stillIndexed()).To(BeTrue(), "an unknown deploy removed the index entry")
+			expectRecordedUnknown("provision", contextID, before)
 		})
 	})
 })

@@ -20,6 +20,15 @@ var ErrEmptyContextID = errors.New("the context ID to record is empty")
 // taskRecordContextIDKey is the key of the context ID in a task record.
 const taskRecordContextIDKey = "context_id"
 
+// TaskStateOutcomeUnknown is the state of a task record whose director
+// request was sent and whose answer was lost, so whether the director
+// started a task for it is unknown.
+const TaskStateOutcomeUnknown = "outcome_unknown"
+
+// TaskRecordUnknownSinceKey is the key of the time a task record's outcome
+// became unknown, in RFC 3339 form with nanoseconds, in UTC.
+const TaskRecordUnknownSinceKey = "unknown_since"
+
 // Track stores tracking information for a task (deprecated, kept for backward compatibility).
 func (vault *Vault) Track(ctx context.Context, instanceID, action string, taskID int, params interface{}) error {
 	logger := logger.Get().Named("vault track " + instanceID)
@@ -129,6 +138,52 @@ func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, descr
 	logger.Debug("successfully stored task progress with ID %d", taskID)
 
 	// Append to history
+	return vault.AppendHistory(ctx, instanceID, action, description)
+}
+
+// TrackOutcomeUnknown records that the director request of the operation,
+// which carried contextID, was sent and its answer was lost at since. The
+// record has the state outcome_unknown and no task ID at all, so nothing
+// can take it for a task, or for task 0, which once meant a deployment was
+// gone. The params of the replaced record are kept when it is for the same
+// action, and the description goes into the history as TrackProgress
+// writes it.
+func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action, description, contextID string, since time.Time) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s, unknown outcome", ErrEmptyContextID, instanceID, action)
+	}
+
+	logger := logger.Get().Named("vault track outcome unknown " + instanceID)
+	logger.Debug("recording an unknown outcome for '%s' with context ID %s: %s", action, contextID, description)
+
+	task := struct {
+		Action       string      `json:"action"`
+		State        string      `json:"state"`
+		Description  string      `json:"description"`
+		UpdatedAt    int64       `json:"updated_at"`
+		Params       interface{} `json:"params"`
+		ContextID    string      `json:"context_id"`
+		UnknownSince string      `json:"unknown_since"`
+	}{
+		Action:       action,
+		State:        TaskStateOutcomeUnknown,
+		Description:  description,
+		UpdatedAt:    time.Now().Unix(),
+		ContextID:    contextID,
+		UnknownSince: since.UTC().Format(time.RFC3339Nano),
+	}
+
+	err := vault.writeTaskRecord(ctx, instanceID, action, logger, func(replaced map[string]interface{}) interface{} {
+		task.Params = replaced["params"]
+
+		return task
+	})
+	if err != nil {
+		logger.Error("failed to record the unknown outcome of context ID %s: %s", contextID, err)
+
+		return err
+	}
+
 	return vault.AppendHistory(ctx, instanceID, action, description)
 }
 

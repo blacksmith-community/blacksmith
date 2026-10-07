@@ -136,6 +136,25 @@ func (b *Broker) failWithTracking(ctx context.Context, instanceID, operation, me
 	}
 }
 
+// recordOutcomeUnknown records that the director's answer to the deploy or
+// delete that carried contextID was lost, so whether the director started
+// a task for it is unknown. Nothing is resent, the record carries no task
+// ID, and the index entry and the instance's credentials are left alone
+// until the outcome is known. request names the request for the record,
+// such as "deploy".
+func (b *Broker) recordOutcomeUnknown(ctx context.Context, instanceID, operation, request, contextID string, err error, log logger.Logger) {
+	description := fmt.Sprintf("The director's answer to the %s with context ID %s was lost, so whether the director started a task for it is unknown; it was not resent: %s", request, contextID, err)
+	log.Error("Instance %s: %s", instanceID, description)
+
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	trackErr := b.Vault.TrackOutcomeUnknown(recordCtx, instanceID, operation, description, contextID, time.Now())
+	if trackErr != nil {
+		log.Error("CRITICAL: failed to record the unknown outcome of the %s with context ID %s for instance %s: %s", request, contextID, instanceID, trackErr)
+	}
+}
+
 // stoppedProvisionDescription describes a provision whose own context ended
 // before the failing step finished, so an operator reads the cause and not a
 // failure of the step. It returns "" while the context is still live.
@@ -348,6 +367,15 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	// finds the deploy task and nothing else the provision started.
 	task, err := p.broker.BOSH.CreateDeployment(boshapi.WithContextID(ctx, p.contextID), manifestStr)
 	if err != nil {
+		// The deploy may or may not have reached the director as a task.
+		// Its context ID, not the deployment's events, says which, so the
+		// outcome is recorded as unknown and the events are not read.
+		if errors.Is(err, bosh.ErrOutcomeUnknown) {
+			p.broker.recordOutcomeUnknown(ctx, p.instanceID, operationTypeProvision, "deploy", p.contextID, err, p.logger)
+
+			return false
+		}
+
 		p.logger.Error("Failed to create service deployment: %s", err)
 
 		// bosh-cli reports a deploy task that failed as an error. When BOSH
@@ -575,10 +603,20 @@ func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) err
 }
 
 // handleDeleteError settles a deprovision whose delete returned an error.
-// A deployment the director says is gone was deleted, whether by the
+// A delete whose answer was lost is recorded as an unknown outcome. A
+// deployment the director says is gone was deleted, whether by the
 // broker's earlier attempt or by someone else, and the instance is
 // removed. Every other error leaves the deployment where it was.
 func (d *deprovisioningPhase) handleDeleteError(ctx context.Context, err error) {
+	// A delete whose answer was lost may or may not have reached the
+	// director. It is neither a failure nor a deletion: it is recorded as
+	// unknown, the index entry stays, and the credentials are kept.
+	if errors.Is(err, bosh.ErrOutcomeUnknown) {
+		d.broker.recordOutcomeUnknown(ctx, d.instanceID, operationTypeDeprovision, "delete", d.contextID, err, d.logger)
+
+		return
+	}
+
 	if errors.Is(err, bosh.ErrDeploymentNotFound) {
 		d.handleDeploymentCleanedDuringRetry(ctx)
 
@@ -1030,6 +1068,13 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, inst
 			logger.Info("Deletion task started on attempt %d for deployment %s (task %d)", attempt, deploymentName, task.ID)
 
 			return task, nil
+		}
+
+		// The director may have accepted a delete whose answer was lost.
+		// Sending another could act on the deployment twice, so the loop
+		// stops and the caller records the outcome as unknown.
+		if errors.Is(err, bosh.ErrOutcomeUnknown) {
+			return nil, fmt.Errorf("delete attempt %d of %d of deployment %s for instance %s lost its answer, and no further attempt was made: %w", attempt, maxRetries, deploymentName, instanceID, err)
 		}
 
 		logger.Error("Deletion attempt %d failed for deployment %s: %s", attempt, deploymentName, err)

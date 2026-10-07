@@ -2999,6 +2999,9 @@ type recordedOperation struct {
 	// carries, recorded before the request was sent. It is empty for an
 	// operation recorded before the broker chose context IDs.
 	ContextID string
+	// UnknownSince is when the outcome of the operation's director request
+	// became unknown. It is zero unless State is outcome_unknown.
+	UnknownSince time.Time
 }
 
 // hasTask reports whether a real BOSH task ID was recorded. Zero means no task
@@ -3018,6 +3021,13 @@ func (b *Broker) readRecordedOperation(ctx context.Context, instanceID string) (
 	recorded.Action, _ = task["action"].(string)
 	recorded.Description, _ = task["description"].(string)
 	recorded.ContextID, _ = task["context_id"].(string)
+
+	if since, isString := task[internalVault.TaskRecordUnknownSinceKey].(string); isString {
+		recorded.UnknownSince, err = time.Parse(time.RFC3339Nano, since)
+		if err != nil {
+			return recordedOperation{}, fmt.Errorf("the recorded operation for instance %s has an unknown-since time %q that is not RFC 3339: %w", instanceID, since, err)
+		}
+	}
 
 	return recorded, nil
 }
