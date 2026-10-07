@@ -2995,6 +2995,10 @@ type recordedOperation struct {
 	State       string
 	TaskID      int
 	Description string
+	// ContextID is the context ID the operation's director request
+	// carries, recorded before the request was sent. It is empty for an
+	// operation recorded before the broker chose context IDs.
+	ContextID string
 }
 
 // hasTask reports whether a real BOSH task ID was recorded. Zero means no task
@@ -3013,6 +3017,7 @@ func (b *Broker) readRecordedOperation(ctx context.Context, instanceID string) (
 	recorded := recordedOperation{State: state, TaskID: taskID}
 	recorded.Action, _ = task["action"].(string)
 	recorded.Description, _ = task["description"].(string)
+	recorded.ContextID, _ = task["context_id"].(string)
 
 	return recorded, nil
 }

@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,12 @@ import (
 const (
 	eventStateFailed = "failed"
 )
+
+// ErrEmptyContextID is returned when a context ID to record is empty.
+var ErrEmptyContextID = errors.New("the context ID to record is empty")
+
+// taskRecordContextIDKey is the key of the context ID in a task record.
+const taskRecordContextIDKey = "context_id"
 
 // Track stores tracking information for a task (deprecated, kept for backward compatibility).
 func (vault *Vault) Track(ctx context.Context, instanceID, action string, taskID int, params interface{}) error {
@@ -37,11 +44,39 @@ func (vault *Vault) Track(ctx context.Context, instanceID, action string, taskID
 		Params:      deinterface(params),
 	}
 
+	unlock, err := vault.taskLocks.lock(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	return vault.Put(ctx, instanceID+"/task", task)
 }
 
-// TrackProgress stores progress information for a task.
+// TrackProgress stores progress information for a task. When the record it
+// replaces is for the same action, the context ID that record carries is
+// kept, so progress written after the operation recorded its context ID
+// does not drop it.
 func (vault *Vault) TrackProgress(ctx context.Context, instanceID, action, description string, taskID int, params interface{}) error {
+	return vault.trackProgress(ctx, instanceID, action, description, "", taskID, params)
+}
+
+// TrackProgressWithContextID stores progress information for a task as
+// TrackProgress does, and records contextID as the context ID of the
+// operation in place of any the replaced record carries. The broker calls
+// it before it sends the request that carries the context ID, so a restart
+// at any point leaves the ID on record.
+func (vault *Vault) TrackProgressWithContextID(ctx context.Context, instanceID, action, description, contextID string, taskID int, params interface{}) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyContextID, instanceID, action)
+	}
+
+	return vault.trackProgress(ctx, instanceID, action, description, contextID, taskID, params)
+}
+
+// trackProgress writes the task record. An empty contextID keeps the one the
+// replaced record carries when that record is for the same action.
+func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, description, contextID string, taskID int, params interface{}) error {
 	logger := logger.Get().Named("vault track progress " + instanceID)
 	logger.Debug("tracking progress for '%s': %s (taskID: %d)", action, description, taskID)
 
@@ -64,6 +99,7 @@ func (vault *Vault) TrackProgress(ctx context.Context, instanceID, action, descr
 		Description string      `json:"description"`
 		UpdatedAt   int64       `json:"updated_at"`
 		Params      interface{} `json:"params"`
+		ContextID   string      `json:"context_id,omitempty"`
 	}{
 		Action:      action,
 		Task:        taskID,
@@ -71,13 +107,19 @@ func (vault *Vault) TrackProgress(ctx context.Context, instanceID, action, descr
 		Description: description,
 		UpdatedAt:   time.Now().Unix(),
 		Params:      deinterface(params),
+		ContextID:   contextID,
 	}
 
-	// Log the task being stored for debugging
-	logger.Debug("storing task with ID %d, state '%s' at path %s/task", taskID, state, instanceID)
+	err := vault.writeTaskRecord(ctx, instanceID, action, logger, func(replaced map[string]interface{}) interface{} {
+		if task.ContextID == "" {
+			task.ContextID, _ = replaced[taskRecordContextIDKey].(string)
+		}
 
-	// Store current state
-	err := vault.Put(ctx, instanceID+"/task", task)
+		// Log the task being stored for debugging
+		logger.Debug("storing task with ID %d, state '%s' at path %s/task", taskID, state, instanceID)
+
+		return task
+	})
 	if err != nil {
 		logger.Error("failed to store task progress: %s", err)
 
@@ -88,6 +130,40 @@ func (vault *Vault) TrackProgress(ctx context.Context, instanceID, action, descr
 
 	// Append to history
 	return vault.AppendHistory(ctx, instanceID, action, description)
+}
+
+// writeTaskRecord writes the record that build returns to <instance>/task,
+// holding the instance's task record lock from the read of the record it
+// replaces to the write. build gets the replaced record when that record is
+// for the same action, and an empty map otherwise. When the replaced record
+// cannot be read, build gets an empty map and the write still goes ahead,
+// because losing a kept field is better than losing the progress or the
+// failure the write records. The caller writes the ID it must not lose
+// with that ID in hand, rather than relying on it being kept.
+func (vault *Vault) writeTaskRecord(ctx context.Context, instanceID, action string, logger logger.Logger, build func(replaced map[string]interface{}) interface{}) error {
+	unlock, err := vault.taskLocks.lock(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	replaced := map[string]interface{}{}
+
+	var current map[string]interface{}
+
+	exists, err := vault.Get(ctx, instanceID+"/task", &current)
+
+	switch {
+	case err != nil:
+		logger.Warning("could not read %s/task before replacing it, so nothing it records is kept: %s", instanceID, err)
+	case exists && current != nil:
+		recordedAction, _ := current["action"].(string)
+		if recordedAction == action {
+			replaced = current
+		}
+	}
+
+	return vault.Put(ctx, instanceID+"/task", build(replaced))
 }
 
 // AppendHistory adds an entry to the instance's history log.

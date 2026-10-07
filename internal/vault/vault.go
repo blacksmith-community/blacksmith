@@ -44,6 +44,11 @@ type Vault struct {
 	// and is separate from mu. Another Vault value, even in this process,
 	// and other processes writing the index are not covered.
 	indexMu sync.Mutex
+
+	// taskLocks serializes the writes of each instance's task record made
+	// through this Vault, so a write that keeps fields of the record it
+	// replaces never puts back fields another write just replaced.
+	taskLocks taskRecordLocks
 }
 
 // New creates a new Vault instance.

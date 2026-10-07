@@ -10,6 +10,7 @@ import (
 	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
+	"github.com/google/uuid"
 )
 
 // CreateValkeyACLUser exposes the bind path's ACL user creation to package
@@ -131,9 +132,10 @@ func (b *Broker) CompleteBind(ctx context.Context, instanceID, bindingID string,
 // RedactedQuery exposes the query string redaction used by the request logs.
 func RedactedQuery(rawQuery string) string { return redactedQuery(rawQuery) }
 
-// RetryDeleteDeployment exposes the deprovision delete retry loop.
+// RetryDeleteDeployment exposes the deprovision delete retry loop. Its delete
+// requests carry a fresh context ID.
 func (b *Broker) RetryDeleteDeployment(ctx context.Context, deploymentName, instanceID string, maxRetries int) error {
-	_, err := b.retryDeleteDeployment(ctx, deploymentName, instanceID, maxRetries)
+	_, err := b.retryDeleteDeployment(ctx, deploymentName, instanceID, uuid.NewString(), maxRetries)
 
 	return err
 }
@@ -284,4 +286,12 @@ func BackgroundGoroutines() []string {
 	}
 
 	return running
+}
+
+// RecordedOperation is the operation the broker records for an instance.
+type RecordedOperation = recordedOperation
+
+// RecordedOperation exposes the read of an instance's recorded operation.
+func (b *Broker) RecordedOperation(ctx context.Context, instanceID string) (RecordedOperation, error) {
+	return b.readRecordedOperation(ctx, instanceID)
 }
