@@ -353,6 +353,115 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		})
 	})
 
+	Describe("the context ID is written again just before the request is sent", func() {
+		const refusal = "permission denied"
+
+		It("for a deploy, after an earlier progress write lost it", func() {
+			proxy := useProxy()
+
+			// The progress write after the director check reads the record
+			// it replaces and fails to, so it keeps no context ID.
+			director.GetInfoFn = func() (*bosh.Info, error) {
+				proxy.FailReads(instanceID+"/task", http.StatusForbidden, refusal, 1)
+
+				return &bosh.Info{UUID: outcomeDirectorUUID}, nil
+			}
+
+			var beforeRewrite map[string]interface{}
+
+			director.GetReleasesFn = func() ([]bosh.Release, error) {
+				beforeRewrite, _ = suite.vault.ReadSecret(instanceID + "/task")
+
+				return []bosh.Release{}, nil
+			}
+
+			sent := scriptDeploy()
+
+			provision()
+
+			var deploy sentRequest
+			Eventually(sent, 10*time.Second).Should(Receive(&deploy))
+			Expect(beforeRewrite).ToNot(HaveKey("context_id"), "no progress write lost the context ID")
+			expectRecordedBeforeSending(deploy, outcomeProvision)
+		})
+
+		It("for a delete, when the read of the record it replaces fails", func() {
+			indexInstance()
+
+			sent := scriptDelete()
+			proxy := useProxy()
+
+			var checked atomic.Bool
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				if !checked.Swap(true) {
+					proxy.FailReads(instanceID+"/task", http.StatusForbidden, refusal, 1)
+				}
+
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+
+			deprovision()
+
+			var deleteRequest sentRequest
+			Eventually(sent, 10*time.Second).Should(Receive(&deleteRequest))
+			expectRecordedBeforeSending(deleteRequest, outcomeDeprovision)
+		})
+
+		It("for a teardown, whose first record already names its own context ID", func() {
+			previous := uuid.NewString()
+			Expect(vaultClient.TrackProgressWithContextID(ctx, instanceID, outcomeDeprovision, "Deprovisioning completed", previous, 0, nil)).To(Succeed())
+
+			proxy := useProxy()
+
+			// The teardown's first record goes through, and the write just
+			// before the delete fails, so the delete is not sent and the
+			// first record is the one left.
+			proxy.FailWritesAfter(instanceID+"/task", 1, http.StatusForbidden, refusal, -1)
+
+			var deletes atomic.Int32
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deletes.Add(1)
+
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+			}
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(deletes.Load()).To(BeZero())
+
+			record := readRecord()
+			Expect(record).To(HaveKeyWithValue("description", "Deleting deployment that finished after the instance was deprovisioned"))
+			Expect(record["context_id"]).ToNot(Equal(previous), "the teardown's first record kept the context ID of the deprovision before it")
+
+			contextID, _ := record["context_id"].(string)
+			_, err := uuid.Parse(contextID)
+			Expect(err).ToNot(HaveOccurred(), "the teardown's first record names no context ID")
+		})
+	})
+
+	It("fails the read of a record whose unknown-since time is not RFC 3339", func() {
+		indexInstance()
+
+		Expect(vaultClient.TrackOutcomeUnknown(ctx, instanceID, outcomeDeprovision, "The delete's answer was lost", uuid.NewString(), time.Now())).To(Succeed())
+
+		record := readRecord()
+		record[internalVault.TaskRecordUnknownSinceKey] = "yesterday"
+		Expect(suite.vault.WriteSecret(instanceID+"/task", record)).To(Succeed())
+
+		_, err := brokerInstance.RecordedOperation(ctx, instanceID)
+		Expect(err).To(MatchError(ContainSubstring("not RFC 3339")))
+
+		_, err = brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+			ServiceID: serviceID, PlanID: planID, Operation: outcomeDeprovision,
+		})
+		Expect(err).To(MatchError(ContainSubstring("not RFC 3339")))
+	})
+
 	Describe("progress written after acceptance keeps the context ID", func() {
 		It("when the deploy task is recorded", func() {
 			sent := scriptDeploy()

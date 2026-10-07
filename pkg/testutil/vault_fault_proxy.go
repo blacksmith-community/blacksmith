@@ -32,6 +32,9 @@ type faultRule struct {
 	message      string
 	remaining    int
 	hold         bool
+	// skip is how many more matching requests pass through before the
+	// rule applies.
+	skip int
 }
 
 // NewVaultFaultProxy starts a proxy to the Vault server at target, which is a
@@ -77,6 +80,16 @@ func (p *VaultFaultProxy) FailWrites(pathContains string, status int, message st
 	defer p.mu.Unlock()
 
 	p.rules = append(p.rules, &faultRule{write: true, pathContains: pathContains, status: status, message: message, remaining: times})
+}
+
+// FailWritesAfter lets the next skip writes and deletes whose path contains
+// pathContains through, and then fails the next times of them as FailWrites
+// does. A negative times fails every matching write after the skipped ones.
+func (p *VaultFaultProxy) FailWritesAfter(pathContains string, skip, status int, message string, times int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.rules = append(p.rules, &faultRule{write: true, pathContains: pathContains, status: status, message: message, remaining: times, skip: skip})
 }
 
 // HoldWrites makes the next times writes and deletes whose path contains
@@ -172,6 +185,12 @@ func (p *VaultFaultProxy) matchRule(request *http.Request) *faultRule {
 
 	for _, rule := range p.rules {
 		if rule.write != isWrite || rule.remaining == 0 || !strings.Contains(request.URL.Path, rule.pathContains) {
+			continue
+		}
+
+		if rule.skip > 0 {
+			rule.skip--
+
 			continue
 		}
 
