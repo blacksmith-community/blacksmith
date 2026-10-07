@@ -486,3 +486,63 @@ func TestConfigReadsByIDMapAMissingIDToNotFound(t *testing.T) {
 		})
 	}
 }
+
+// A message names a deployment only when the request had one, and sends the
+// operator to /b/tasks only when the request could have made a task.
+func TestOutcomeUnknownErrorLeavesOutWhatIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a config write without a deployment", func(t *testing.T) {
+		t.Parallel()
+
+		message := (&bosh.OutcomeUnknownError{
+			Operation: "EnableResurrection",
+			Director:  "https://10.0.0.4:25555",
+			Config:    "resurrection/blacksmith.dep-1",
+			Err:       errConnectionReset,
+		}).Error()
+
+		for _, unwanted := range []string{"for deployment", "the deployment", "/b/tasks"} {
+			if strings.Contains(message, unwanted) {
+				t.Errorf("expected no %q in the message, got: %s", unwanted, message)
+			}
+		}
+	})
+
+	t.Run("a config write with a deployment", func(t *testing.T) {
+		t.Parallel()
+
+		message := (&bosh.OutcomeUnknownError{
+			Operation:  "EnableResurrection",
+			Director:   "https://10.0.0.4:25555",
+			Deployment: "dep-1",
+			Config:     "resurrection/blacksmith.dep-1",
+			Err:        errConnectionReset,
+		}).Error()
+
+		if strings.Contains(message, "/b/tasks") {
+			t.Errorf("a config write has no task, so the message must not mention /b/tasks: %s", message)
+		}
+	})
+
+	t.Run("neither a config nor a deployment", func(t *testing.T) {
+		t.Parallel()
+
+		message := (&bosh.OutcomeUnknownError{
+			Operation: "CleanUp",
+			Director:  "https://10.0.0.4:25555",
+			ContextID: "ctx-123",
+			Err:       errConnectionReset,
+		}).Error()
+
+		for _, unwanted := range []string{"for deployment", "the deployment", "deployment ."} {
+			if strings.Contains(message, unwanted) {
+				t.Errorf("expected no %q in the message, got: %s", unwanted, message)
+			}
+		}
+
+		if !strings.Contains(message, "Check /b/tasks for the task with context ID ctx-123") {
+			t.Errorf("expected the message to send the operator to /b/tasks for that context ID, got: %s", message)
+		}
+	})
+}

@@ -62,7 +62,15 @@ func (e *OutcomeUnknownError) Error() string {
 	}
 
 	msg.WriteString("Blacksmith looked for a task with that context ID and found none yet. ")
-	fmt.Fprintf(&msg, "Check /b/tasks for a task on the deployment %s", e.Deployment)
+
+	switch {
+	case e.Deployment != "":
+		fmt.Fprintf(&msg, "Check /b/tasks for a task on the deployment %s", e.Deployment)
+	case e.ContextID != "":
+		fmt.Fprintf(&msg, "Check /b/tasks for the task with context ID %s", e.ContextID)
+	default:
+		msg.WriteString("Check /b/tasks for a recent task")
+	}
 
 	return msg.String()
 }
