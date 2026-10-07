@@ -460,6 +460,13 @@ func (h *Handler) computeDiff(ctx context.Context, writer http.ResponseWriter, l
 	diff, err := h.director.ComputeConfigDiff(ctx, fromID, toID)
 	if err != nil {
 		logger.Errorf("Failed to compute config diff for %s/%s: %v", configType, configName, err)
+
+		if errors.Is(err, bosh.ErrConfigNotFound) {
+			response.WriteError(writer, http.StatusNotFound, fmt.Sprintf("config not found: %s or %s", fromID, toID))
+
+			return nil, false
+		}
+
 		response.HandleJSON(writer, nil, fmt.Errorf("failed to compute config diff: %w", err))
 
 		return nil, false
