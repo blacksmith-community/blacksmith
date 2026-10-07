@@ -1,15 +1,14 @@
 package bosh_test
 
 import (
-	"encoding/pem"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/boshtest"
 )
 
 const configLogSentinel = "sentinel-config-secret-do-not-log"
@@ -42,25 +41,19 @@ func TestGetConfigNeverLogsTheConfigBody(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
-	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/configs" {
-			writer.WriteHeader(http.StatusNotFound)
-
-			return
+			return false
 		}
 
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`[{"id":"7","type":"resurrection","name":"blacksmith","content":"password: ` + configLogSentinel + `\nrules: []\n","created_at":"2026-10-05 00:00:00 UTC"}]`))
-	}))
-	defer server.Close()
 
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+		return true
+	})
+
 	logs := &recordingBoshLogger{}
-
-	director, err := bosh.NewDirectorAdapter(bosh.Config{Address: server.URL, Username: "admin", Password: "admin", CACert: string(caPEM), Logger: logs})
-	if err != nil {
-		t.Fatalf("failed to create director adapter: %v", err)
-	}
+	director := newReadAdapter(t, server, func(config *bosh.Config) { config.Logger = logs })
 
 	got, err := director.GetConfig(t.Context(), "resurrection", "blacksmith")
 	if err != nil {

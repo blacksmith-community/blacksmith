@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -101,31 +102,32 @@ var (
 	ErrUAAClientCredentialsMissing    = errors.New("missing UAA client credentials")
 )
 
-// DirectorAdapter wraps bosh-cli director to implement Director interface
 // GetConfig retrieves a configuration by type and name from BOSH director.
 func (da *DirectorAdapter) GetConfig(ctx context.Context, configType, configName string) (_ interface{}, err error) {
 	defer da.explainContext(ctx, "GetConfig", &err)
 
-	director := da.bind(ctx)
-
 	da.log.Debugf("Getting config type=%s name=%s", configType, configName)
 
-	// Get the config using the BOSH director
-	config, err := director.LatestConfig(configType, configName)
+	// The director answers a config it does not hold with an empty list.
+	entries, err := da.api.Configs().List(ctx, &boshapi.ConfigListOptions{
+		Type:   configType,
+		Name:   configName,
+		Latest: true,
+	})
 	if err != nil {
-		// Check if it's a "not found" or "doesn't exist" error (normal case, not an error)
-		errMsg := strings.ToLower(err.Error())
-		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") ||
-			strings.Contains(errMsg, "no config") || strings.Contains(errMsg, "does not exist") {
-			da.log.Debugf("Config %s/%s does not exist", configType, configName)
-
-			return nil, ErrConfigNotFound
-		}
-
 		da.log.Errorf("Failed to get config %s/%s: %v", configType, configName, err)
 
-		return nil, fmt.Errorf("%w %s/%s: %w", ErrGetConfigFailed, configType, configName, err)
+		return nil, fmt.Errorf("%w %s/%s: %w", ErrGetConfigFailed, configType, configName,
+			da.requestFailure("get config "+configType+"/"+configName, err))
 	}
+
+	if len(entries) == 0 {
+		da.log.Debugf("Config %s/%s does not exist", configType, configName)
+
+		return nil, ErrConfigNotFound
+	}
+
+	config := entries[0]
 
 	da.log.Debugf("Retrieved config %s/%s successfully (size: %d bytes, content not logged)", configType, configName, len(config.Content))
 
@@ -144,6 +146,7 @@ func (da *DirectorAdapter) GetConfig(ctx context.Context, configType, configName
 	return configData, nil
 }
 
+// DirectorAdapter wraps bosh-cli director to implement Director interface
 type DirectorAdapter struct {
 	director boshdirector.Director
 	// api is the boshapi client the methods that have moved off bosh-cli
@@ -1162,18 +1165,18 @@ func (d *DirectorAdapter) UpdateCloudConfig(ctx context.Context, config string) 
 func (d *DirectorAdapter) GetCloudConfig(ctx context.Context) (_ string, err error) {
 	defer d.explainContext(ctx, "GetCloudConfig", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting cloud config")
 	d.log.Debugf("Listing cloud configs (limit: 1)")
 
-	configs, err := director.ListConfigs(1, boshdirector.ConfigsFilter{
-		Type: "cloud",
+	configs, err := d.api.Configs().List(ctx, &boshapi.ConfigListOptions{
+		Type:   "cloud",
+		Latest: true,
+		Limit:  1,
 	})
 	if err != nil {
 		d.log.Errorf("Failed to get cloud config: %v", err)
 
-		return "", fmt.Errorf("failed to get cloud config: %w", err)
+		return "", d.requestFailure("get cloud config", err)
 	}
 
 	if len(configs) == 0 {
@@ -1194,44 +1197,30 @@ func (d *DirectorAdapter) GetCloudConfig(ctx context.Context) (_ string, err err
 func (d *DirectorAdapter) GetConfigs(ctx context.Context, limit int, configTypes []string) (_ []BoshConfig, err error) {
 	defer d.explainContext(ctx, "GetConfigs", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting configs (limit: %d, types: %v)", limit, configTypes)
 
 	limit = d.normalizeConfigLimit(limit)
-	tempLimit := 1000
 
-	allConfigs, err := director.ListConfigs(tempLimit, boshdirector.ConfigsFilter{})
+	// The latest version of every config comes back in one read, and the
+	// type filter applies here.
+	entries, err := d.api.Configs().List(ctx, &boshapi.ConfigListOptions{Latest: true})
 	if err != nil {
 		d.log.Errorf("Failed to get configs list: %v", err)
 
-		return nil, fmt.Errorf("failed to get configs: %w", err)
+		return nil, d.requestFailure("list configs", err)
 	}
-
-	seen := make(map[string]bool)
 
 	var result []BoshConfig
 
-	for _, config := range allConfigs {
-		key := fmt.Sprintf("%s:%s", config.Type, config.Name)
-		if seen[key] {
+	for _, entry := range entries {
+		if !d.shouldIncludeConfigType(entry.Type, configTypes) {
 			continue
 		}
 
-		seen[key] = true
-
-		if !d.shouldIncludeConfigType(config.Type, configTypes) {
-			continue
-		}
-
-		latestConfig, err := d.fetchLatestConfig(director, config)
-		if err != nil {
-			continue
-		}
-
-		if latestConfig != nil {
-			result = append(result, *latestConfig)
-		}
+		bc := convertConfigEntry(entry)
+		bc.IsActive = true
+		bc.ID = strings.TrimSuffix(entry.ID, "*") + "*"
+		result = append(result, bc)
 	}
 
 	d.sortConfigsByTypeAndName(result)
@@ -1248,30 +1237,31 @@ func (d *DirectorAdapter) GetConfigs(ctx context.Context, limit int, configTypes
 func (d *DirectorAdapter) GetConfigVersions(ctx context.Context, configType, name string, limit int) (_ []BoshConfig, err error) {
 	defer d.explainContext(ctx, "GetConfigVersions", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting config versions for type: %s, name: %s (limit: %d)", configType, name, limit)
 
 	if limit <= 0 || limit > 100 {
 		limit = 20 // Default limit for version history
 	}
 
-	// Use filter to get all versions of a specific config
-	configs, err := director.ListConfigs(limit, boshdirector.ConfigsFilter{
-		Type: configType,
-		Name: name,
+	// Latest stays false so the director returns every version, up to the
+	// limit.
+	entries, err := d.api.Configs().List(ctx, &boshapi.ConfigListOptions{
+		Type:   configType,
+		Name:   name,
+		Latest: false,
+		Limit:  limit,
 	})
 	if err != nil {
 		d.log.Errorf("Failed to get config versions: %v", err)
 
-		return nil, fmt.Errorf("failed to get config versions: %w", err)
+		return nil, d.requestFailure("get versions of config "+configType+"/"+name, err)
 	}
 
 	// Convert and mark which version is current/active
-	result := make([]BoshConfig, len(configs))
-	for i, config := range configs {
-		bc := convertDirectorBoshConfig(config)
-		bc.IsActive = config.Current
+	result := make([]BoshConfig, len(entries))
+	for i, entry := range entries {
+		bc := convertConfigEntry(entry)
+		bc.IsActive = entry.Current
 		result[i] = bc
 	}
 
@@ -1283,8 +1273,6 @@ func (d *DirectorAdapter) GetConfigVersions(ctx context.Context, configType, nam
 // GetConfigByID retrieves detailed config information by ID.
 func (d *DirectorAdapter) GetConfigByID(ctx context.Context, configID string) (_ *BoshConfigDetail, err error) {
 	defer d.explainContext(ctx, "GetConfigByID", &err)
-
-	director := d.bind(ctx)
 
 	d.log.Infof("Getting config details for ID: %s", configID)
 
@@ -1300,25 +1288,26 @@ func (d *DirectorAdapter) GetConfigByID(ctx context.Context, configID string) (_
 	}
 
 	// Get the config by ID
-	config, err := director.LatestConfigByID(cleanID)
+	config, err := d.getConfigEntry(ctx, "get config "+cleanID, cleanID)
 	if err != nil {
 		d.log.Errorf("Failed to get config by ID %d: %v", configIDInt, err)
 
-		return nil, fmt.Errorf("failed to get config: %w", err)
+		return nil, err
 	}
 
 	// Fix YAML key casing issues that may be introduced by BOSH CLI library
 	fixedContent := fixYAMLKeyCasing(config.Content)
 
 	// Convert to our BoshConfigDetail type
+	summary := convertConfigEntry(*config)
 	result := &BoshConfigDetail{
-		BoshConfig: convertDirectorBoshConfig(config),
+		BoshConfig: summary,
 		Content:    fixedContent,
 		Metadata: map[string]interface{}{
 			"id":         config.ID,
 			"name":       config.Name,
 			"type":       config.Type,
-			"team":       config.Team,
+			"team":       summary.Team,
 			"created_at": config.CreatedAt,
 		},
 	}
@@ -1332,19 +1321,17 @@ func (d *DirectorAdapter) GetConfigByID(ctx context.Context, configID string) (_
 func (d *DirectorAdapter) GetConfigContent(ctx context.Context, configID string) (_ string, err error) {
 	defer d.explainContext(ctx, "GetConfigContent", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting config content for ID: %s", configID)
 
 	// Remove the * suffix if present (indicates active config)
 	cleanID := strings.TrimSuffix(configID, "*")
 
 	// Get the config by ID
-	config, err := director.LatestConfigByID(cleanID)
+	config, err := d.getConfigEntry(ctx, "get config content "+cleanID, cleanID)
 	if err != nil {
 		d.log.Errorf("Failed to get config content by ID %s: %v", cleanID, err)
 
-		return "", fmt.Errorf("failed to get config content: %w", err)
+		return "", err
 	}
 
 	d.log.Infof("Successfully retrieved config content for ID: %s (size: %d bytes)", configID, len(config.Content))
@@ -1530,7 +1517,9 @@ func extractChangedValue(line string) string {
 }
 
 // convertDirectorBoshConfig converts a BOSH director config to our BoshConfig type.
-func convertDirectorBoshConfig(config boshdirector.Config) BoshConfig {
+// convertConfigEntry converts a config the director returned into the
+// broker's type. The team is the director's team list joined with commas.
+func convertConfigEntry(config boshapi.ConfigEntry) BoshConfig {
 	createdAt := time.Time{}
 	if config.CreatedAt != "" {
 		parsed, err := time.Parse("2006-01-02 15:04:05 MST", config.CreatedAt)
@@ -1548,7 +1537,7 @@ func convertDirectorBoshConfig(config boshdirector.Config) BoshConfig {
 		ID:        config.ID,
 		Name:      config.Name,
 		Type:      config.Type,
-		Team:      config.Team,
+		Team:      strings.Join(config.Teams, ","),
 		CreatedAt: createdAt,
 		IsActive:  false, // Will be set based on * suffix logic
 	}
@@ -2231,8 +2220,6 @@ func (d *DirectorAdapter) SSHSession(ctx context.Context, deployment, instance s
 func (da *DirectorAdapter) EnableResurrection(ctx context.Context, deployment string, enabled bool) (err error) {
 	defer da.explainContext(ctx, "EnableResurrection", &err)
 
-	director := da.bind(ctx)
-
 	da.log.Infof("Setting resurrection to %v for deployment %s", enabled, deployment)
 
 	// Create resurrection configuration YAML according to BOSH documentation
@@ -2245,16 +2232,32 @@ func (da *DirectorAdapter) EnableResurrection(ctx context.Context, deployment st
 
 	// Generate a unique config name for this deployment
 	// Use 'blacksmith.{deployment}' format as type already indicates 'resurrection'
-	configName := "blacksmith." + deployment
+	configName := resurrectionConfigName(deployment)
 
 	da.log.Debugf("Updating resurrection config %s with content:\n%s", configName, configYAML)
 
-	// Update the resurrection config using the BOSH director
-	config, err := director.UpdateConfig("resurrection", configName, "", []byte(configYAML))
+	// A config write creates no director task, so a write whose answer was
+	// lost has nothing to look up, and it is not sent again.
+	config, err := da.api.Configs().Create(ctx, &boshapi.CreateConfigRequest{
+		Type:    "resurrection",
+		Name:    configName,
+		Content: configYAML,
+	})
 	if err != nil {
 		da.log.Errorf("Failed to update resurrection config for deployment %s: %v", deployment, err)
 
-		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigUpdateFailed, deployment, err)
+		if boshapi.IsOutcomeUnknown(err) && ctx.Err() == nil {
+			return &OutcomeUnknownError{
+				Operation:  "EnableResurrection",
+				Director:   da.address,
+				Deployment: deployment,
+				Config:     "resurrection/" + configName,
+				Err:        err,
+			}
+		}
+
+		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigUpdateFailed, deployment,
+			da.requestFailure("update resurrection config "+configName, err))
 	}
 
 	da.log.Debugf("Successfully updated resurrection config %s for deployment %s", configName, deployment)
@@ -2265,31 +2268,47 @@ func (da *DirectorAdapter) EnableResurrection(ctx context.Context, deployment st
 	return nil
 }
 
+// resurrectionConfigName is the name of a deployment's resurrection config.
+func resurrectionConfigName(deployment string) string {
+	return "blacksmith." + deployment
+}
+
 // DeleteResurrectionConfig deletes resurrection config for a deployment.
 func (da *DirectorAdapter) DeleteResurrectionConfig(ctx context.Context, deployment string) (err error) {
 	defer da.explainContext(ctx, "DeleteResurrectionConfig", &err)
 
-	director := da.bind(ctx)
-
 	da.log.Infof("Deleting resurrection config for deployment %s", deployment)
 
 	// Use 'blacksmith.{deployment}' format as type already indicates 'resurrection'
-	configName := "blacksmith." + deployment
+	configName := resurrectionConfigName(deployment)
 
 	da.log.Debugf("Deleting resurrection config %s", configName)
 
-	// Delete the resurrection config using the BOSH director
-	deleted, err := director.DeleteConfig("resurrection", configName)
+	err = da.api.Configs().DeleteByTypeAndName(ctx, "resurrection", configName)
 	if err != nil {
+		// The director answers a delete of a config it does not hold with a
+		// 404, as it did for the bosh CLI.
+		var apiErr *boshapi.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			da.log.Errorf("Resurrection config %s did not exist or was already deleted", configName)
+
+			return fmt.Errorf("%w %s", ErrResurrectionConfigNotFound, deployment)
+		}
+
 		da.log.Errorf("Failed to delete resurrection config for deployment %s: %v", deployment, err)
 
-		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigDeleteFailed, deployment, err)
-	}
+		if boshapi.IsOutcomeUnknown(err) && ctx.Err() == nil {
+			return &OutcomeUnknownError{
+				Operation:  "DeleteResurrectionConfig",
+				Director:   da.address,
+				Deployment: deployment,
+				Config:     "resurrection/" + configName,
+				Err:        err,
+			}
+		}
 
-	if !deleted {
-		da.log.Errorf("Resurrection config %s did not exist or was already deleted", configName)
-
-		return fmt.Errorf("%w %s", ErrResurrectionConfigNotFound, deployment)
+		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigDeleteFailed, deployment,
+			da.requestFailure("delete resurrection config "+configName, err))
 	}
 
 	da.log.Debugf("Successfully deleted resurrection config %s for deployment %s", configName, deployment)
@@ -2850,29 +2869,6 @@ func (d *DirectorAdapter) shouldIncludeConfigType(configType string, configTypes
 	}
 
 	return false
-}
-
-func (d *DirectorAdapter) fetchLatestConfig(director boshdirector.Director, config boshdirector.Config) (*BoshConfig, error) {
-	latestConfigs, err := director.ListConfigs(1, boshdirector.ConfigsFilter{
-		Type: config.Type,
-		Name: config.Name,
-	})
-	if err != nil {
-		d.log.Errorf("Failed to get latest config for %s/%s: %v", config.Type, config.Name, err)
-
-		return nil, fmt.Errorf("failed to list configs for %s/%s: %w", config.Type, config.Name, err)
-	}
-
-	if len(latestConfigs) == 0 {
-		return nil, ErrConfigNotFound
-	}
-
-	latest := latestConfigs[0]
-	bc := convertDirectorBoshConfig(latest)
-	bc.IsActive = true
-	bc.ID = strings.TrimSuffix(latest.ID, "*") + "*"
-
-	return &bc, nil
 }
 
 func (d *DirectorAdapter) sortConfigsByTypeAndName(configs []BoshConfig) {
@@ -3640,3 +3636,23 @@ func convertBoshTask(boshTask boshdirector.Task) *Task {
 
 // Ensure DirectorAdapter implements Director interface.
 var _ Director = (*DirectorAdapter)(nil)
+
+// getConfigEntry reads one config version by ID. A missing ID maps to
+// ErrConfigNotFound.
+func (d *DirectorAdapter) getConfigEntry(ctx context.Context, what, id string) (*boshapi.ConfigEntry, error) {
+	entry, err := d.api.Configs().Get(ctx, id)
+	if err != nil {
+		var missing *boshapi.ConfigNotFoundError
+		if errors.As(err, &missing) {
+			return nil, fmt.Errorf("%w: %s", ErrConfigNotFound, id)
+		}
+
+		return nil, d.requestFailure(what, err)
+	}
+
+	if entry == nil {
+		return nil, d.requestFailure(what, ErrEmptyDirectorAnswer)
+	}
+
+	return entry, nil
+}
