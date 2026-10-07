@@ -354,13 +354,11 @@ func (m *Monitor) scanAllServices(ctx context.Context) error {
 				continue
 			}
 
-			planID, hasPlan := instanceMap["plan_id"].(string)
-			if !hasPlan {
+			if _, hasPlan := instanceMap["plan_id"].(string); !hasPlan {
 				continue
 			}
 
-			// Create deployment name following the pattern: planID-instanceID
-			deploymentName := planID + "-" + instanceID
+			deploymentName := indexEntryDeploymentName(instanceID, instanceMap)
 
 			serviceMonitor := &ServiceMonitor{
 				ServiceID:      instanceID,
@@ -382,6 +380,22 @@ func (m *Monitor) scanAllServices(ctx context.Context) error {
 	logger.Info("Discovered %d service instances to monitor", count)
 
 	return nil
+}
+
+// indexEntryDeploymentName returns the deployment name an index entry
+// records, and builds it from the entry's plan ID and the instance ID only
+// when the entry records none. The reconciler can rewrite the plan ID after
+// the deployment was created, and a name built from it then names a
+// deployment that does not exist, which the monitor would take for a deleted
+// instance.
+func indexEntryDeploymentName(instanceID string, entry map[string]interface{}) string {
+	if name, _ := entry["deployment_name"].(string); name != "" {
+		return name
+	}
+
+	planID, _ := entry["plan_id"].(string)
+
+	return planID + "-" + instanceID
 }
 
 // rescanServices periodically rescans Vault index to discover new services and remove deleted ones.
@@ -417,12 +431,11 @@ func (m *Monitor) rescanServices(ctx context.Context) {
 			continue
 		}
 
-		planID, hasPlan := instanceMap["plan_id"].(string)
-		if !hasPlan {
+		if _, hasPlan := instanceMap["plan_id"].(string); !hasPlan {
 			continue
 		}
 
-		deploymentName := planID + "-" + instanceID
+		deploymentName := indexEntryDeploymentName(instanceID, instanceMap)
 		m.services[instanceID] = &ServiceMonitor{
 			ServiceID:      instanceID,
 			DeploymentName: deploymentName,
