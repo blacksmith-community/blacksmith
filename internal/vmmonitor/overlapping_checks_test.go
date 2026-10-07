@@ -36,12 +36,13 @@ func (h *heldListing) list() {
 	}
 }
 
-// Two check cycles can overlap, because the monitor loop's tick and the
-// refresh that Start triggers both run one. When the second cycle marks an
-// instance deleted while the first is still checking it, the first finds
-// the entry already marked. It must take that for the tombstone it is, and
-// not for a young entry in flight, so the instance ends up with the VM
-// status "deleted" and unwatched.
+// One monitor never checks an instance in two cycles at once, but two
+// monitors that share one index can, as the monitors of two broker
+// processes over one Vault do. When the second marks an instance deleted
+// while the first is still checking it, the first finds the entry already
+// marked. It must take that for the tombstone it is, and not for a young
+// entry in flight, so the instance ends up with the VM status "deleted",
+// marked once, and unwatched by both.
 func TestOverlappingChecksLeaveADeletedInstanceDeleted(t *testing.T) {
 	t.Parallel()
 
@@ -55,11 +56,14 @@ func TestOverlappingChecksLeaveADeletedInstanceDeleted(t *testing.T) {
 	}
 
 	vault := &indexVault{entries: map[string]interface{}{inFlightID: oldEntry()}}
-	monitor := vmmonitor.NewWithVault(vault, director, &heldClaims{})
+	first := vmmonitor.NewWithVault(vault, director, &heldClaims{})
+	second := vmmonitor.NewWithVault(vault, director, &heldClaims{})
 
-	err := monitor.ScanAllServices(t.Context())
-	if err != nil {
-		t.Fatalf("the scan failed: %v", err)
+	for _, monitor := range []*vmmonitor.Monitor{first, second} {
+		err := monitor.ScanAllServices(t.Context())
+		if err != nil {
+			t.Fatalf("the scan failed: %v", err)
+		}
 	}
 
 	firstDone := make(chan struct{})
@@ -67,23 +71,28 @@ func TestOverlappingChecksLeaveADeletedInstanceDeleted(t *testing.T) {
 	go func() {
 		defer close(firstDone)
 
-		monitor.CheckScheduledServices(t.Context())
+		first.CheckScheduledServices(t.Context())
 	}()
 
 	<-held.entered
 
-	monitor.CheckScheduledServices(t.Context())
+	second.CheckScheduledServices(t.Context())
+
+	if marked := vault.markedDeleted(); len(marked) != 1 {
+		t.Fatalf("the second monitor marked %v deleted while the first was checking, want %s marked", marked, inFlightID)
+	}
 
 	close(held.release)
 	<-firstDone
 
 	marked := vault.markedDeleted()
-	_, stillMonitored := monitor.MonitoredDeployment(inFlightID)
+	_, firstWatches := first.MonitoredDeployment(inFlightID)
+	_, secondWatches := second.MonitoredDeployment(inFlightID)
 	status := vault.storedStatus(inFlightID)
 
-	if entryStatus(vault.entry(inFlightID)) != statusDeleted || len(marked) != 1 || stillMonitored || status != statusDeleted {
-		t.Errorf("after overlapping checks: index status %q, marked %v, still monitored %t, VM status %q; want the entry marked deleted once, unmonitored, and deleted",
-			entryStatus(vault.entry(inFlightID)), marked, stillMonitored, status)
+	if entryStatus(vault.entry(inFlightID)) != statusDeleted || len(marked) != 1 || firstWatches || secondWatches || status != statusDeleted {
+		t.Errorf("after overlapping checks: index status %q, marked %v, watched by the first %t and the second %t, VM status %q; want the entry marked deleted once, unwatched, and deleted",
+			entryStatus(vault.entry(inFlightID)), marked, firstWatches, secondWatches, status)
 	}
 }
 
