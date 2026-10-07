@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/vmmonitor"
@@ -14,9 +15,10 @@ import (
 )
 
 // indexVault serves an index and fixed records to the monitor, and records
-// the instances the monitor marks deleted and the last VM status it stores
-// for each. A test can make later reads of the index or of a record fail,
-// make index writes fail, and run a hook at the start of each index write.
+// the instances the monitor marks deleted, how many index writes it saved,
+// and the last VM status it stores for each instance. A test can make later
+// reads of the index or of a record fail, make index writes fail, and run a
+// hook at the start of each index write.
 type indexVault struct {
 	entries map[string]interface{}
 
@@ -25,6 +27,7 @@ type indexVault struct {
 
 	mu         sync.Mutex
 	marked     []string
+	saves      int
 	statuses   map[string]interface{}
 	indexErr   error
 	getErr     error
@@ -83,6 +86,7 @@ func (v *indexVault) UpdateIndex(_ context.Context, change func(entries map[stri
 	}
 
 	v.entries = entries
+	v.saves++
 
 	return nil
 }
@@ -200,6 +204,42 @@ func (v *indexVault) failRecordReads(err error) {
 	defer v.mu.Unlock()
 
 	v.getErr = err
+}
+
+// entry returns an instance's index entry as it is stored now.
+func (v *indexVault) entry(instanceID string) interface{} {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	return v.entries[instanceID]
+}
+
+// savedWrites returns how many index writes the monitor saved.
+func (v *indexVault) savedWrites() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	return v.saves
+}
+
+// markEntryDeleted marks an instance's index entry deleted at a time, as
+// another check of the monitor would have.
+func (v *indexVault) markEntryDeleted(instanceID string, deletedAt time.Time) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	entry, _ := v.entries[instanceID].(map[string]interface{})
+
+	marked := make(map[string]interface{}, len(entry)+4)
+	for key, existing := range entry {
+		marked[key] = existing
+	}
+
+	marked["status"] = statusDeleted
+	marked["deleted_at"] = deletedAt.Format(time.RFC3339)
+	marked["deleted_by"] = deletedByMonitor
+	marked["deletion_reason"] = "deployment not found in BOSH director"
+	v.entries[instanceID] = marked
 }
 
 func (v *indexVault) markedDeleted() []string {

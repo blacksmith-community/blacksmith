@@ -34,6 +34,9 @@ const (
 	statusError        = "error"
 	statusProvisioning = "provisioning"
 	vmStatusRunning    = "running"
+
+	// deletedByMonitor is the deleted_by of an entry the monitor marked.
+	deletedByMonitor = "vm-monitor"
 )
 
 // checkErrorCase is a failed VM listing, the director's answer when the

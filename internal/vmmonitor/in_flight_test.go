@@ -75,6 +75,11 @@ type inFlightCase struct {
 	// withoutClaims builds the monitor with nothing to ask about claims.
 	withoutClaims bool
 
+	// added has the monitor learn of the instance through AddService, as
+	// the broker's provision hook does, on top of the scan, which skips an
+	// entry marked deleted.
+	added bool
+
 	// runningTask answers the running-task check for the monitored name.
 	runningTask func(deployment string) (*bosh.Task, error)
 
@@ -113,6 +118,11 @@ const (
 
 	// unindexed finds no index entry to mark and stops monitoring.
 	unindexed
+
+	// alreadyMarked finds the index entry already marked deleted, writes
+	// nothing to the index, records the VM status "deleted", and stops
+	// monitoring.
+	alreadyMarked
 )
 
 const (
@@ -216,6 +226,34 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 			inWindow: func(vault *indexVault, _ *heldClaims) { vault.removeEntry(inFlightID) },
 			want:     unindexed,
 		},
+		{
+			name: "the monitor stops watching an instance whose entry was just marked deleted",
+			entry: map[string]interface{}{
+				"status": statusDeleted, "deleted_at": young.Format(time.RFC3339), "deleted_by": deletedByMonitor,
+			},
+			added: true,
+			want:  alreadyMarked,
+		},
+		{
+			name: "the monitor stops watching an instance whose entry was marked deleted long ago",
+			entry: map[string]interface{}{
+				"status": statusDeleted, "deleted_at": time.Now().Add(-3 * time.Hour).Format(time.RFC3339), "deleted_by": deletedByMonitor,
+			},
+			added: true,
+			want:  alreadyMarked,
+		},
+		{
+			name:      "the monitor stops watching an instance whose entry was marked deleted after the scan",
+			afterScan: func(vault *indexVault) { vault.markEntryDeleted(inFlightID, time.Now()) },
+			want:      alreadyMarked,
+		},
+		{
+			name: "the monitor stops watching an instance whose entry was marked deleted before its tombstone write",
+			inWindow: func(vault *indexVault, _ *heldClaims) {
+				vault.markEntryDeleted(inFlightID, time.Now())
+			},
+			want: alreadyMarked,
+		},
 	}
 
 	for _, inFlight := range cases {
@@ -234,15 +272,7 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 func checkInFlight(t *testing.T, inFlight inFlightCase) {
 	t.Helper()
 
-	old := time.Now().Add(-3 * time.Hour)
-
-	entry := map[string]interface{}{
-		serviceKey:     serviceID,
-		planKey:        inFlightPlan,
-		nameKey:        inFlightDeployment,
-		"requested_at": old.Format(time.RFC3339),
-		"created":      float64(old.Unix()),
-	}
+	entry := oldEntry()
 	for field, value := range inFlight.entry {
 		entry[field] = value
 	}
@@ -271,9 +301,18 @@ func checkInFlight(t *testing.T, inFlight inFlightCase) {
 		t.Fatalf("the scan failed: %v", err)
 	}
 
+	if inFlight.added {
+		err = monitor.AddService(t.Context(), inFlightID, inFlightDeployment)
+		if err != nil {
+			t.Fatalf("adding the instance failed: %v", err)
+		}
+	}
+
 	if inFlight.afterScan != nil {
 		inFlight.afterScan(vault)
 	}
+
+	savesBefore := vault.savedWrites()
 
 	monitor.CheckScheduledServices(t.Context())
 
@@ -293,6 +332,12 @@ func checkInFlight(t *testing.T, inFlight inFlightCase) {
 			t.Errorf("an old, idle instance: marked %v, still monitored %t, status %q; want %s marked, unmonitored, and deleted",
 				marked, stillMonitored, status, inFlightID)
 		}
+	case alreadyMarked:
+		saved := vault.savedWrites() - savesBefore
+		if saved != 0 || stillMonitored || status != statusDeleted {
+			t.Errorf("an instance already marked deleted: %d index writes, still monitored %t, status %q; want no write, unmonitored, and deleted",
+				saved, stillMonitored, status)
+		}
 	case unindexed:
 		if len(marked) != 0 || stillMonitored || status != statusDeleted {
 			t.Errorf("an instance no longer indexed: marked %v, still monitored %t, status %q; want nothing marked, unmonitored, and deleted",
@@ -310,6 +355,20 @@ func checkInFlight(t *testing.T, inFlight inFlightCase) {
 		}
 	case unset:
 		t.Fatalf("the case names no outcome")
+	}
+}
+
+// oldEntry is the index entry of an instance whose deployment name differs
+// from the one its plan ID builds, requested and created three hours ago.
+func oldEntry() map[string]interface{} {
+	old := time.Now().Add(-3 * time.Hour)
+
+	return map[string]interface{}{
+		serviceKey:     serviceID,
+		planKey:        inFlightPlan,
+		nameKey:        inFlightDeployment,
+		"requested_at": old.Format(time.RFC3339),
+		"created":      float64(old.Unix()),
 	}
 }
 
