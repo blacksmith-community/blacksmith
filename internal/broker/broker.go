@@ -403,8 +403,16 @@ func (b *Broker) Provision(
 		}
 	}()
 
+	// An instance the index already has is answered from its records, so a
+	// repeat that arrives after the first provision's claim is gone never
+	// starts a second deploy over it.
+	response, async, answered, err := b.answerProvisionFromIndex(ctx, instanceID, details, logger)
+	if answered || err != nil {
+		return response, async, err
+	}
+
 	// Record the initial request
-	err := b.recordInitialRequest(ctx, instanceID, details, logger)
+	err = b.recordInitialRequest(ctx, instanceID, details, logger)
 	if err != nil {
 		return osbapi.ProvisionResponse{}, false, err
 	}
@@ -1015,6 +1023,203 @@ func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operatio
 	logger.Info("Deprovision of instance %s is already in progress", instanceID)
 
 	return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
+}
+
+// answerProvisionFromIndex answers a provision request for an instance the
+// index already has, from the instance's records, and reports whether it
+// answered. An instance with no index entry is not answered, and neither is
+// one whose entry a refused accept chain left before the provision was
+// accepted. Those requests go on as new provisions. An index or record that
+// cannot be read fails the request, because taking it for a missing instance
+// could deploy over one that exists.
+//
+// An instance that is marked deleted, is being deprovisioned, or whose
+// provision failed gets 409 Conflict, and nothing is deployed over it. Any
+// other instance is compared with the request, which matches when its service,
+// plan, organization, space, and parameters all equal the instance's. A match
+// gets success with no operation when the provision has finished, which the
+// OSB library sends as 201 Created, and 202 Accepted with the provision
+// operation while it runs, so the platform polls last_operation for the
+// outcome. A difference gets 409 Conflict.
+func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, logger logger.Logger) (osbapi.ProvisionResponse, bool, bool, error) {
+	// The reads run under the bound the accept chain's records use.
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	idx, err := b.Vault.GetIndex(readCtx, "db")
+	if err != nil {
+		logger.Error("Refusing provision of instance %s: could not read the index to check for an existing instance: %s", instanceID, err)
+
+		return osbapi.ProvisionResponse{}, false, false, fmt.Errorf("could not read the index to check whether instance %s already exists, so the provision was refused: %w", instanceID, err)
+	}
+
+	raw, found := idx.Data[instanceID]
+	if !found || raw == nil {
+		return osbapi.ProvisionResponse{}, false, false, nil
+	}
+
+	entry := copyIndexEntry(raw)
+
+	if isDeletedTombstone(entry) {
+		logger.Warning("Refusing provision of instance %s: its index entry marks it deleted", instanceID)
+
+		return osbapi.ProvisionResponse{}, false, true, fmt.Errorf("%w: instance %s was deleted, and a provision with the same ID is refused", osbapi.ErrInstanceAlreadyExists, instanceID)
+	}
+
+	recorded, err := b.readRecordedOperation(readCtx, instanceID)
+	if err != nil {
+		logger.Error("Refusing provision of instance %s: could not read its recorded operation: %s", instanceID, err)
+
+		return osbapi.ProvisionResponse{}, false, false, fmt.Errorf("could not read the recorded operation of existing instance %s, so the provision was refused: %w", instanceID, err)
+	}
+
+	if !provisionAccepted(entry, recorded) {
+		logger.Info("Instance %s has an index entry from a provision that was never accepted; provisioning it as a new instance", instanceID)
+
+		return osbapi.ProvisionResponse{}, false, false, nil
+	}
+
+	switch {
+	case recorded.Action == operationTypeDeprovision:
+		logger.Warning("Refusing provision of instance %s: it is being deprovisioned or its deprovision failed", instanceID)
+
+		return osbapi.ProvisionResponse{}, false, true, fmt.Errorf("%w: instance %s has a deprovision recorded, and a provision with the same ID is refused", osbapi.ErrInstanceAlreadyExists, instanceID)
+	case recorded.Action == operationTypeProvision && recorded.State == recordedStateFailed:
+		logger.Warning("Refusing provision of instance %s: its provision failed (%s)", instanceID, recorded.Description)
+
+		return osbapi.ProvisionResponse{}, false, true, fmt.Errorf("%w: the provision of instance %s failed, and it must be deleted before a provision with the same ID", osbapi.ErrInstanceAlreadyExists, instanceID)
+	}
+
+	difference, err := b.provisionDifference(readCtx, instanceID, entry, details)
+	if err != nil {
+		logger.Error("Refusing provision of instance %s: could not compare the request with the existing instance: %s", instanceID, err)
+
+		return osbapi.ProvisionResponse{}, false, false, fmt.Errorf("could not compare the provision of instance %s with the existing instance, so it was refused: %w", instanceID, err)
+	}
+
+	if difference != "" {
+		logger.Warning("Refusing provision of instance %s: the instance exists with attributes that differ from the request's (%s)", instanceID, difference)
+
+		return osbapi.ProvisionResponse{}, false, true, fmt.Errorf("%w: instance %s exists with attributes that differ from the request's (%s)", osbapi.ErrInstanceAlreadyExists, instanceID, difference)
+	}
+
+	if createdAt, _ := entry["created_at"].(string); createdAt != "" {
+		logger.Info("Instance %s was provisioned with the same attributes at %s; answering the repeat without deploying", instanceID, createdAt)
+
+		return osbapi.ProvisionResponse{}, false, true, nil
+	}
+
+	logger.Info("Instance %s is being provisioned with the same attributes; accepting the repeat without starting another deploy", instanceID)
+
+	return osbapi.ProvisionResponse{Operation: operationTypeProvision}, true, true, nil
+}
+
+// provisionAccepted reports whether an index entry belongs to an instance the
+// broker accepted. The accept chain records the provision as the instance's
+// operation just before it answers 202, and an accepted deprovision replaces
+// it, so an entry with either belongs to an instance. A created_at shows a
+// provision that finished, whatever its record says. An entry with none of
+// them was left by an accept chain that refused its request, or by a delete
+// of an instance the broker never had.
+func provisionAccepted(entry map[string]interface{}, recorded recordedOperation) bool {
+	switch recorded.Action {
+	case operationTypeProvision, operationTypeDeprovision:
+		return true
+	}
+
+	created, _ := entry["created_at"].(string)
+
+	return created != ""
+}
+
+// provisionDifference compares a provision request with the instance the
+// index holds. It names the first attribute that differs, or returns "" when
+// they match. The parameters are compared with the details stored at
+// <instance>/<deployment> when the instance was provisioned, with an omitted
+// object and an empty one treated alike. Stored details that are missing do
+// not match any request, because a match cannot be shown.
+func (b *Broker) provisionDifference(ctx context.Context, instanceID string, entry map[string]interface{}, details osbapi.ProvisionRequest) (string, error) {
+	fields := []struct{ name, requested string }{
+		{"service_id", details.ServiceID},
+		{"plan_id", details.PlanID},
+		{"organization_guid", details.OrganizationGUID},
+		{"space_guid", details.SpaceGUID},
+	}
+
+	for _, field := range fields {
+		stored, _ := entry[field.name].(string)
+		if stored != field.requested {
+			return field.name, nil
+		}
+	}
+
+	deploymentName, _ := entry["deployment_name"].(string)
+	if deploymentName == "" {
+		deploymentName = details.PlanID + "-" + instanceID
+	}
+
+	var record map[string]interface{}
+
+	exists, err := b.Vault.Get(ctx, instanceID+"/"+deploymentName, &record)
+	if err != nil {
+		return "", fmt.Errorf("failed to read the stored details of instance %s: %w", instanceID, err)
+	}
+
+	stored, ok := record["details"].(map[string]interface{})
+	if !exists || !ok {
+		return "parameters, because the stored details are missing", nil
+	}
+
+	storedParameters, _ := stored["parameters"].(map[string]interface{})
+
+	same, err := sameJSONObjects(storedParameters, details.Parameters)
+	if err != nil {
+		return "", fmt.Errorf("failed to compare the parameters of instance %s: %w", instanceID, err)
+	}
+
+	if !same {
+		return "parameters", nil
+	}
+
+	return "", nil
+}
+
+// sameJSONObjects reports whether two objects decoded from JSON hold the same
+// values. Each is encoded and decoded again first, so a number decoded as a
+// json.Number and one decoded as a float64 compare equal. A nil object equals
+// an empty one.
+func sameJSONObjects(first, second map[string]any) (bool, error) {
+	if len(first) == 0 || len(second) == 0 {
+		return len(first) == len(second), nil
+	}
+
+	canonical := func(object map[string]any) (any, error) {
+		encoded, err := json.Marshal(object)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode an object: %w", err)
+		}
+
+		var decoded any
+
+		err = json.Unmarshal(encoded, &decoded)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode an object: %w", err)
+		}
+
+		return decoded, nil
+	}
+
+	firstValue, err := canonical(first)
+	if err != nil {
+		return false, err
+	}
+
+	secondValue, err := canonical(second)
+	if err != nil {
+		return false, err
+	}
+
+	return reflect.DeepEqual(firstValue, secondValue), nil
 }
 
 // provisionRequestsMatch reports whether two provision requests carry the same
