@@ -13,21 +13,23 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 )
 
-// indexVault serves a fixed index and fixed records to the monitor, and
-// records the instances the monitor marks deleted and the last VM status it
-// stores for each. A test can make later reads of the index or of a record
-// fail.
+// indexVault serves an index and fixed records to the monitor, and records
+// the instances the monitor marks deleted and the last VM status it stores
+// for each. A test can make later reads of the index or of a record fail,
+// make index writes fail, and run a hook at the start of each index write.
 type indexVault struct {
 	entries map[string]interface{}
 
 	// records holds the secrets Get serves, by path.
 	records map[string]map[string]interface{}
 
-	mu       sync.Mutex
-	marked   []string
-	statuses map[string]interface{}
-	indexErr error
-	getErr   error
+	mu         sync.Mutex
+	marked     []string
+	statuses   map[string]interface{}
+	indexErr   error
+	getErr     error
+	writeErr   error
+	beforeEach func()
 }
 
 func (v *indexVault) GetIndex(context.Context, string) (*vaultPkg.Index, error) {
@@ -38,12 +40,83 @@ func (v *indexVault) GetIndex(context.Context, string) (*vaultPkg.Index, error) 
 		return nil, v.indexErr
 	}
 
-	data := make(map[string]interface{}, len(v.entries))
-	for id, entry := range v.entries {
-		data[id] = entry
+	return &vaultPkg.Index{Data: copyEntries(v.entries)}, nil
+}
+
+// UpdateIndex runs change on a fresh copy of the entries and saves the copy
+// when change reports that it changed something, as the vault does under
+// its index lock. It first runs the hook beforeIndexWrite set, which stands
+// for whatever another goroutine does after the monitor's checks and before
+// its write reads the index. An entry whose status the save turns to
+// "deleted" is recorded as marked.
+func (v *indexVault) UpdateIndex(_ context.Context, change func(entries map[string]interface{}) (bool, error)) error {
+	v.mu.Lock()
+	hook, writeErr := v.beforeEach, v.writeErr
+	v.mu.Unlock()
+
+	if hook != nil {
+		hook()
+
+		v.mu.Lock()
+		writeErr = v.writeErr
+		v.mu.Unlock()
 	}
 
-	return &vaultPkg.Index{Data: data}, nil
+	if writeErr != nil {
+		return writeErr
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	entries := copyEntries(v.entries)
+
+	changed, err := change(entries)
+	if err != nil || !changed {
+		return err
+	}
+
+	for instanceID, entry := range entries {
+		if entryStatus(entry) == statusDeleted && entryStatus(v.entries[instanceID]) != statusDeleted {
+			v.marked = append(v.marked, instanceID)
+		}
+	}
+
+	v.entries = entries
+
+	return nil
+}
+
+// copyEntries copies an index and each entry in it, the way a fresh read
+// decodes new maps, so no caller shares an entry with the stored index.
+func copyEntries(entries map[string]interface{}) map[string]interface{} {
+	copied := make(map[string]interface{}, len(entries))
+
+	for instanceID, entry := range entries {
+		fields, isMap := entry.(map[string]interface{})
+		if !isMap {
+			copied[instanceID] = entry
+
+			continue
+		}
+
+		copiedFields := make(map[string]interface{}, len(fields))
+		for key, value := range fields {
+			copiedFields[key] = value
+		}
+
+		copied[instanceID] = copiedFields
+	}
+
+	return copied
+}
+
+// entryStatus returns the status an index entry records, or "".
+func entryStatus(entry interface{}) string {
+	fields, _ := entry.(map[string]interface{})
+	status, _ := fields["status"].(string)
+
+	return status
 }
 
 // Get decodes the record at path into out the way the vault client does,
@@ -87,18 +160,30 @@ func (v *indexVault) Put(_ context.Context, path string, data interface{}) error
 	return nil
 }
 
-func (v *indexVault) UpdateIndexEntry(_ context.Context, instanceID string, updates map[string]interface{}) error {
-	if status, _ := updates["status"].(string); status == "deleted" {
-		v.record(instanceID)
-	}
+// beforeIndexWrite sets a hook that runs at the start of every later index
+// write, before the write reads the index.
+func (v *indexVault) beforeIndexWrite(hook func()) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 
-	return nil
+	v.beforeEach = hook
 }
 
-func (v *indexVault) MarkInstanceDeleted(_ context.Context, instanceID string) error {
-	v.record(instanceID)
+// failIndexWrites makes every later index write fail with err.
+func (v *indexVault) failIndexWrites(err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 
-	return nil
+	v.writeErr = err
+}
+
+// removeEntry removes an instance from the index, as a finished
+// deprovision would.
+func (v *indexVault) removeEntry(instanceID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	delete(v.entries, instanceID)
 }
 
 // failIndexReads makes every later read of the index fail with err.
@@ -115,13 +200,6 @@ func (v *indexVault) failRecordReads(err error) {
 	defer v.mu.Unlock()
 
 	v.getErr = err
-}
-
-func (v *indexVault) record(instanceID string) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-
-	v.marked = append(v.marked, instanceID)
 }
 
 func (v *indexVault) markedDeleted() []string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,8 +48,7 @@ type vmVault interface {
 	GetIndex(ctx context.Context, name string) (*vaultPkg.Index, error)
 	Get(ctx context.Context, path string, out interface{}) (bool, error)
 	Put(ctx context.Context, path string, data interface{}) error
-	UpdateIndexEntry(ctx context.Context, instanceID string, updates map[string]interface{}) error
-	MarkInstanceDeleted(ctx context.Context, instanceID string) error
+	UpdateIndex(ctx context.Context, change func(entries map[string]interface{}) (bool, error)) error
 }
 
 // OperationClaims reports whether a provision or a deprovision running in
@@ -660,53 +660,22 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 // front of the director, and the director adapter wraps any 404 from the
 // listing in bosh.ErrDeploymentNotFound. So the instance is marked deleted
 // only when deploymentConfirmedGone says the director itself answered with
-// its deployment-not-found code, and inFlightReason finds nothing to show
-// that the instance belongs to work in flight. Any other answer records a
-// failed check and keeps monitoring the instance.
+// its deployment-not-found code, and tombstoneUnlessInFlight finds nothing
+// to show that the instance belongs to work in flight. Any other answer
+// records a failed check and keeps monitoring the instance.
 func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err error) {
 	logger := logger.Get().Named("vm-monitor")
 
 	gone, confirmErr := m.deploymentConfirmedGone(ctx, svc.DeploymentName)
 
-	inFlight := ""
-	if gone {
-		inFlight = m.inFlightReason(ctx, svc)
-	}
-
 	switch {
-	case gone && inFlight != "":
-		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist, but instance %s is kept, because %s", svc.DeploymentName, err, svc.ServiceID, inFlight)
 	case gone:
-		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist. Marking instance %s as deleted and stopping monitoring.", svc.DeploymentName, err, svc.ServiceID)
-
-		// Mark deleted in index and store VM status as deleted
-		m.markInstanceDeleted(ctx, svc)
-
-		deletedStatus := VMStatus{
-			Status:      "deleted",
-			VMCount:     0,
-			HealthyVMs:  0,
-			LastUpdated: time.Now(),
-			NextUpdate:  time.Time{},
-			Details: map[string]interface{}{
-				"error":           err.Error(),
-				"deleted":         true,
-				"deleted_at":      time.Now().Format(time.RFC3339),
-				"deployment_name": svc.DeploymentName,
-			},
+		keptBecause := m.tombstoneUnlessInFlight(ctx, svc, err)
+		if keptBecause == "" {
+			return
 		}
 
-		err := m.storeVMStatus(ctx, svc.ServiceID, deletedStatus)
-		if err != nil {
-			logger.Error("Failed to store deleted status for service %s: %s", svc.ServiceID, err)
-		}
-
-		// Remove from monitoring to avoid further BOSH queries
-		m.mu.Lock()
-		delete(m.services, svc.ServiceID)
-		m.mu.Unlock()
-
-		return
+		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist, but instance %s is kept, because %s", svc.DeploymentName, err, svc.ServiceID, keptBecause)
 	case confirmErr != nil:
 		logger.Error("Failed to check VMs for service %s: %s; the instance is kept, because the director %s", svc.ServiceID, err, confirmErr)
 	default:
@@ -738,37 +707,6 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 	if err != nil {
 		logger.Error("Failed to store error status for service %s: %s", svc.ServiceID, err)
 	}
-}
-
-// markInstanceDeleted marks an instance as deleted in the vault.
-func (m *Monitor) markInstanceDeleted(ctx context.Context, svc *ServiceMonitor) {
-	logger := logger.Get().Named("vm-monitor")
-
-	// Mark the instance as deleted in the vault index
-	err := m.vault.MarkInstanceDeleted(ctx, svc.ServiceID)
-	if err != nil {
-		logger.Error("Failed to mark instance %s as deleted: %v", svc.ServiceID, err)
-		// Try alternative approach with more details
-		err = m.vault.UpdateIndexEntry(ctx, svc.ServiceID, map[string]interface{}{
-			"status":          "deleted",
-			"deleted_at":      time.Now().Format(time.RFC3339),
-			"deleted_by":      "vm-monitor",
-			"deletion_reason": fmt.Sprintf("deployment %s not found in BOSH director", svc.DeploymentName),
-			"last_deployment": svc.DeploymentName,
-		})
-		if err != nil {
-			logger.Error("Failed to update index entry for deleted instance %s: %v", svc.ServiceID, err)
-		}
-
-		return
-	}
-
-	logger.Info("Successfully marked instance %s as deleted in vault index", svc.ServiceID)
-
-	// Remove the service from monitoring
-	m.mu.Lock()
-	delete(m.services, svc.ServiceID)
-	m.mu.Unlock()
 }
 
 // calculateOverallStatus determines the overall status from VM states.
@@ -928,22 +866,156 @@ func (m *Monitor) GetStatus() MonitorStatus {
 	}
 }
 
-// inFlightReason returns why an instance whose deployment the director says
-// is gone may belong to work in flight, or "" when nothing shows that it
-// does. It applies the broker orphan check's rules. It reads the instance's
-// index entry afresh and judges it, and its task record, by inflight.Reason.
-// Then it asks the director whether a task is running on the deployment the
-// monitor watches, because a deploy may be creating it. Last, it asks
-// whether an operation in this process holds the claim on the instance, as
-// close to the tombstone as it can. A read or a check that fails counts as
-// in flight, and so does a monitor built without the claims to ask.
-func (m *Monitor) inFlightReason(ctx context.Context, svc *ServiceMonitor) string {
-	idx, err := m.vault.GetIndex(ctx, "db")
-	if err != nil {
-		return fmt.Sprintf("its index entry could not be read (%s)", err)
+// tombstoneUnlessInFlight marks an instance whose deployment the director
+// confirmed gone as deleted, stores its VM status as deleted, and stops
+// monitoring it. It returns "" when it did. It returns why the instance is
+// kept when inFlightReason or writeTombstone finds that the instance may
+// belong to work in flight, or when the tombstone could not be written, and
+// then it writes nothing. An instance that is no longer indexed has no entry
+// to mark, and the monitor stops watching it all the same.
+func (m *Monitor) tombstoneUnlessInFlight(ctx context.Context, svc *ServiceMonitor, listErr error) string {
+	logger := logger.Get().Named("vm-monitor")
+
+	judged, keptBecause := m.inFlightReason(ctx, svc)
+	if keptBecause != "" {
+		return keptBecause
 	}
 
-	entry, _ := idx.Data[svc.ServiceID].(map[string]interface{})
+	indexed, keptBecause, err := m.writeTombstone(ctx, svc, judged)
+	if err != nil {
+		return fmt.Sprintf("its tombstone could not be written (%s)", err)
+	}
+
+	if keptBecause != "" {
+		return keptBecause
+	}
+
+	if indexed {
+		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist. Marked instance %s as deleted and stopping monitoring.", svc.DeploymentName, listErr, svc.ServiceID)
+	} else {
+		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist. Instance %s is no longer in the index, so there is nothing to mark deleted, and monitoring stops.", svc.DeploymentName, listErr, svc.ServiceID)
+	}
+
+	deletedStatus := VMStatus{
+		Status:      "deleted",
+		VMCount:     0,
+		HealthyVMs:  0,
+		LastUpdated: time.Now(),
+		NextUpdate:  time.Time{},
+		Details: map[string]interface{}{
+			"error":           listErr.Error(),
+			"deleted":         true,
+			"deleted_at":      time.Now().Format(time.RFC3339),
+			"deployment_name": svc.DeploymentName,
+		},
+	}
+
+	err = m.storeVMStatus(ctx, svc.ServiceID, deletedStatus)
+	if err != nil {
+		logger.Error("Failed to store deleted status for service %s: %s", svc.ServiceID, err)
+	}
+
+	// Remove from monitoring to avoid further BOSH queries
+	m.mu.Lock()
+	delete(m.services, svc.ServiceID)
+	m.mu.Unlock()
+
+	return ""
+}
+
+// writeTombstone marks an instance deleted in the index in one locked
+// write, the way the broker's orphan check removes an entry. Inside that
+// write it reads the entry again, and it marks the entry only when the entry
+// still equals judged, the entry inFlightReason judged, and no operation in
+// this process holds the claim on the instance. Otherwise it writes nothing
+// and returns why the instance is kept. It reports false, and writes
+// nothing, when the instance is no longer indexed. A claim taken after the
+// recheck is not seen here, but that operation's own index write waits for
+// the lock and lands after the mark.
+func (m *Monitor) writeTombstone(ctx context.Context, svc *ServiceMonitor, judged interface{}) (bool, string, error) {
+	var (
+		indexed     bool
+		keptBecause string
+	)
+
+	err := m.vault.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
+		keptBecause = ""
+
+		current, exists := entries[svc.ServiceID]
+
+		indexed = exists
+		if !exists {
+			return false, nil
+		}
+
+		if !reflect.DeepEqual(current, judged) {
+			keptBecause = "its index entry changed after the monitor checked whether it is in flight"
+
+			return false, nil
+		}
+
+		if m.claims == nil {
+			keptBecause = "the monitor has no way to ask for the operation claims of this process"
+
+			return false, nil
+		}
+
+		if m.claims.OperationClaimed(svc.ServiceID) {
+			keptBecause = "an operation in this process claimed it after the monitor checked whether it is in flight"
+
+			return false, nil
+		}
+
+		entries[svc.ServiceID] = deletedEntry(current)
+
+		return true, nil
+	})
+	if err != nil {
+		return false, "", fmt.Errorf("failed to mark instance %s as deleted: %w", svc.ServiceID, err)
+	}
+
+	return indexed, keptBecause, nil
+}
+
+// deletedEntry returns a copy of an index entry marked deleted by the
+// vm-monitor, with the fields Vault.MarkInstanceDeleted writes. An entry
+// that is not a map is replaced by one that holds only the mark, as
+// MarkInstanceDeleted does.
+func deletedEntry(entry interface{}) map[string]interface{} {
+	fields, _ := entry.(map[string]interface{})
+
+	marked := make(map[string]interface{}, len(fields))
+	for key, value := range fields {
+		marked[key] = value
+	}
+
+	marked["status"] = "deleted"
+	marked["deleted_at"] = time.Now().Format(time.RFC3339)
+	marked["deleted_by"] = "vm-monitor"
+	marked["deletion_reason"] = "deployment not found in BOSH director"
+
+	return marked
+}
+
+// inFlightReason returns why an instance whose deployment the director says
+// is gone may belong to work in flight, or "" when nothing shows that it
+// does, together with the index entry it judged, which is nil when the
+// instance is not indexed. It applies the broker orphan check's rules. It
+// reads the instance's index entry afresh and judges it, and its task
+// record, by inflight.Reason. Then it asks the director whether a task is
+// running on the deployment the monitor watches, because a deploy may be
+// creating it. Last, it asks whether an operation in this process holds the
+// claim on the instance. A read or a check that fails counts as in flight,
+// and so does a monitor built without the claims to ask. writeTombstone
+// checks the entry and the claim again under the index lock.
+func (m *Monitor) inFlightReason(ctx context.Context, svc *ServiceMonitor) (interface{}, string) {
+	idx, err := m.vault.GetIndex(ctx, "db")
+	if err != nil {
+		return nil, fmt.Sprintf("its index entry could not be read (%s)", err)
+	}
+
+	judged := idx.Data[svc.ServiceID]
+	entry, _ := judged.(map[string]interface{})
 
 	reason := inflight.Reason(entry, func() (map[string]interface{}, bool, error) {
 		var task map[string]interface{}
@@ -956,27 +1028,27 @@ func (m *Monitor) inFlightReason(ctx context.Context, svc *ServiceMonitor) strin
 		return task, exists, nil
 	})
 	if reason != "" {
-		return reason
+		return judged, reason
 	}
 
 	task, err := m.boshDirector.FindRunningTaskForDeployment(ctx, svc.DeploymentName)
 	if err != nil {
-		return fmt.Sprintf("the director could not say whether a task is running on deployment %s (%s)", svc.DeploymentName, err)
+		return judged, fmt.Sprintf("the director could not say whether a task is running on deployment %s (%s)", svc.DeploymentName, err)
 	}
 
 	if task != nil {
-		return fmt.Sprintf("BOSH task %d (%s) is %s on deployment %s", task.ID, task.Description, task.State, svc.DeploymentName)
+		return judged, fmt.Sprintf("BOSH task %d (%s) is %s on deployment %s", task.ID, task.Description, task.State, svc.DeploymentName)
 	}
 
 	if m.claims == nil {
-		return "the monitor has no way to ask for the operation claims of this process"
+		return judged, "the monitor has no way to ask for the operation claims of this process"
 	}
 
 	if m.claims.OperationClaimed(svc.ServiceID) {
-		return "an operation in this process holds its claim"
+		return judged, "an operation in this process holds its claim"
 	}
 
-	return ""
+	return judged, ""
 }
 
 // deploymentConfirmedGone asks the director for a deployment, and reports

@@ -2,6 +2,7 @@ package vmmonitor_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,11 +24,31 @@ type noClaims struct{}
 
 func (noClaims) OperationClaimed(string) bool { return false }
 
-// claimedInstances is a process where an operation holds the claim on each
-// instance in the set.
-type claimedInstances map[string]bool
+// heldClaims is a process where an operation holds the claim on each
+// instance in the set. A test can take a claim while the monitor runs.
+type heldClaims struct {
+	mu   sync.Mutex
+	held map[string]bool
+}
 
-func (c claimedInstances) OperationClaimed(instanceID string) bool { return c[instanceID] }
+func (c *heldClaims) OperationClaimed(instanceID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.held[instanceID]
+}
+
+// take has an operation in this process claim an instance.
+func (c *heldClaims) take(instanceID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.held == nil {
+		c.held = map[string]bool{}
+	}
+
+	c.held[instanceID] = true
+}
 
 // noRunningTask is a director with no task running on any deployment.
 func noRunningTask(string) (*bosh.Task, error) {
@@ -47,8 +68,9 @@ type inFlightCase struct {
 	// records holds the instance's records, by path.
 	records map[string]map[string]interface{}
 
-	// claims holds the claims of this process, and none when it is nil.
-	claims vmmonitor.OperationClaims
+	// claimed lists the instances an operation in this process holds the
+	// claim on when the check starts.
+	claimed []string
 
 	// withoutClaims builds the monitor with nothing to ask about claims.
 	withoutClaims bool
@@ -60,8 +82,28 @@ type inFlightCase struct {
 	// before it checks the instance.
 	afterScan func(vault *indexVault)
 
-	deleted bool
+	// inWindow changes the world after the monitor found nothing in flight
+	// and before its tombstone write reads the index under the lock.
+	inWindow func(vault *indexVault, claims *heldClaims)
+
+	want inFlightOutcome
 }
+
+// inFlightOutcome is what the monitor does about an instance whose
+// deployment the director says is gone.
+type inFlightOutcome int
+
+const (
+	// kept leaves the index entry alone, keeps monitoring the instance,
+	// and records a failed check.
+	kept inFlightOutcome = iota
+
+	// tombstoned marks the index entry deleted and stops monitoring.
+	tombstoned
+
+	// unindexed finds no index entry to mark and stops monitoring.
+	unindexed
+)
 
 const (
 	inFlightID         = "in-flight"
@@ -73,7 +115,9 @@ const (
 // rules for work in flight. An instance that this process holds a claim on,
 // whose index entry is less than two hours old, whose task record shows a
 // provision in progress, or whose deployment has a task running is kept. A
-// read or a task check that fails keeps it too.
+// read or a task check that fails keeps it too. The tombstone write reads the
+// entry again under the index lock, and keeps the instance when the entry
+// changed or a claim was taken after those checks.
 func TestMonitorSparesInFlightWork(t *testing.T) {
 	t.Parallel()
 
@@ -91,16 +135,16 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 			},
 		},
 		{
-			name:   "the monitor keeps a claimed instance",
-			claims: claimedInstances{inFlightID: true},
+			name:    "the monitor keeps a claimed instance",
+			claimed: []string{inFlightID},
 		},
 		{
 			name:        "the monitor keeps an instance when the task check fails",
 			runningTask: func(string) (*bosh.Task, error) { return nil, errTasksUnavailable },
 		},
 		{
-			name:    "the monitor tombstones an old, idle instance on 70000",
-			deleted: true,
+			name: "the monitor tombstones an old, idle instance on 70000",
+			want: tombstoned,
 		},
 		{
 			name: "the monitor keeps an instance whose task record shows a provision in progress",
@@ -125,6 +169,27 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 		{
 			name:          "the monitor keeps an instance when it cannot see the claims",
 			withoutClaims: true,
+		},
+		{
+			name:     "the monitor keeps an instance claimed after its in-flight check and before its tombstone write",
+			inWindow: func(_ *indexVault, claims *heldClaims) { claims.take(inFlightID) },
+		},
+		{
+			name: "the monitor keeps an instance whose entry changed after its in-flight check and before its tombstone write",
+			inWindow: func(vault *indexVault, _ *heldClaims) {
+				vault.setEntryTime(inFlightID, "requested_at", young.Format(time.RFC3339))
+			},
+		},
+		{
+			name: "the monitor keeps an instance whose tombstone write fails",
+			inWindow: func(vault *indexVault, _ *heldClaims) {
+				vault.failIndexWrites(errVaultSealed)
+			},
+		},
+		{
+			name:     "the monitor stops watching an instance whose entry was removed before its tombstone write",
+			inWindow: func(vault *indexVault, _ *heldClaims) { vault.removeEntry(inFlightID) },
+			want:     unindexed,
 		},
 	}
 
@@ -160,7 +225,21 @@ func checkInFlight(t *testing.T, inFlight inFlightCase) {
 	vault := &indexVault{entries: map[string]interface{}{inFlightID: entry}, records: inFlight.records}
 	director := goneDirector(inFlight.runningTask)
 
-	monitor := vmmonitor.NewWithVault(vault, director, inFlight.monitorClaims())
+	claims := &heldClaims{}
+	for _, instanceID := range inFlight.claimed {
+		claims.take(instanceID)
+	}
+
+	if inFlight.inWindow != nil {
+		vault.beforeIndexWrite(func() { inFlight.inWindow(vault, claims) })
+	}
+
+	var monitorClaims vmmonitor.OperationClaims = claims
+	if inFlight.withoutClaims {
+		monitorClaims = nil
+	}
+
+	monitor := vmmonitor.NewWithVault(vault, director, monitorClaims)
 
 	err := monitor.ScanAllServices(t.Context())
 	if err != nil {
@@ -183,30 +262,22 @@ func checkInFlight(t *testing.T, inFlight inFlightCase) {
 	_, stillMonitored := monitor.MonitoredDeployment(inFlightID)
 	status := vault.storedStatus(inFlightID)
 
-	if inFlight.deleted {
+	switch inFlight.want {
+	case tombstoned:
 		if len(marked) != 1 || marked[0] != inFlightID || stillMonitored || status != statusDeleted {
 			t.Errorf("an old, idle instance: marked %v, still monitored %t, status %q; want %s marked, unmonitored, and deleted",
 				marked, stillMonitored, status, inFlightID)
 		}
-
-		return
-	}
-
-	if len(marked) != 0 || !stillMonitored || status != statusError {
-		t.Errorf("an instance in flight: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and error",
-			marked, stillMonitored, status)
-	}
-}
-
-// monitorClaims returns the claims the case builds the monitor with.
-func (inFlight inFlightCase) monitorClaims() vmmonitor.OperationClaims {
-	switch {
-	case inFlight.withoutClaims:
-		return nil
-	case inFlight.claims != nil:
-		return inFlight.claims
-	default:
-		return noClaims{}
+	case unindexed:
+		if len(marked) != 0 || stillMonitored || status != statusDeleted {
+			t.Errorf("an instance no longer indexed: marked %v, still monitored %t, status %q; want nothing marked, unmonitored, and deleted",
+				marked, stillMonitored, status)
+		}
+	case kept:
+		if len(marked) != 0 || !stillMonitored || status != statusError {
+			t.Errorf("an instance in flight: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and error",
+				marked, stillMonitored, status)
+		}
 	}
 }
 
