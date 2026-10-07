@@ -2023,17 +2023,18 @@ func (b *Broker) processOrphanedInstances(ctx context.Context, vaultDB *vaultPkg
 
 // orphanInFlight returns why an index entry with no deployment may belong to
 // work in flight, or "" when nothing shows that it does. The entry is in
-// flight when its requested_at or created time is less than
-// orphanCheckMinimumAge old, or when its task record shows a provision in
-// progress. A task record that cannot be read counts as in flight, so the
-// entry is kept. An operation claim this process holds is checked when the
-// entry is removed, under the index lock.
+// flight when the newest time it carries is less than orphanCheckMinimumAge
+// old, or when its task record shows a provision in progress. An entry that
+// carries no time is judged by its task record alone. A task record that
+// cannot be read counts as in flight, so the entry is kept. An operation
+// claim this process holds is checked when the entry is removed, under the
+// index lock.
 func (b *Broker) orphanInFlight(ctx context.Context, instanceID string, serviceInstance interface{}) string {
 	entry, _ := serviceInstance.(map[string]interface{})
 
-	newest, dated := indexEntryRequestTime(entry)
+	newest, dated := indexEntryNewestTime(entry)
 	if dated && time.Since(newest) < orphanCheckMinimumAge {
-		return fmt.Sprintf("it was requested at %s, less than %s ago", newest.Format(time.RFC3339), orphanCheckMinimumAge)
+		return fmt.Sprintf("its newest time is %s, less than %s ago", newest.Format(time.RFC3339), orphanCheckMinimumAge)
 	}
 
 	readCtx, cancel := recordContext(ctx)
@@ -2077,17 +2078,33 @@ func (b *Broker) operationClaimed(instanceID string) bool {
 	return held
 }
 
-// indexEntryRequestTime returns the newest of an index entry's requested_at,
-// an RFC 3339 time, and its created, a Unix time. The second result is false
-// when the entry carries neither.
-func indexEntryRequestTime(entry map[string]interface{}) (time.Time, bool) {
+// indexEntryTimeFields are the RFC 3339 times that the broker, the
+// reconciler, and the vm-monitor write on an index entry. The reconciler's
+// orphan sweep dates an entry from the same fields.
+var indexEntryTimeFields = []string{
+	"requested_at",
+	"created_at",
+	"reconciled_at",
+	"discovered_at",
+	"updated_at",
+	"unorphaned_at",
+	"deprovision_requested_at",
+	"deleted_at",
+}
+
+// indexEntryNewestTime returns the newest of the RFC 3339 times named in
+// indexEntryTimeFields and the entry's created, a Unix time. The second
+// result is false when the entry carries none of them.
+func indexEntryNewestTime(entry map[string]interface{}) (time.Time, bool) {
 	var newest time.Time
 
-	raw, _ := entry["requested_at"].(string)
+	for _, field := range indexEntryTimeFields {
+		raw, _ := entry[field].(string)
 
-	requested, err := time.Parse(time.RFC3339, raw)
-	if err == nil {
-		newest = requested
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err == nil && parsed.After(newest) {
+			newest = parsed
+		}
 	}
 
 	created, known := unixTimestamp(entry["created"])

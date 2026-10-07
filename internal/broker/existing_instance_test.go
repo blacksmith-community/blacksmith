@@ -1019,8 +1019,8 @@ var _ = Describe("A delete whose index lookup fails", func() {
 // The broker's orphan check removes index entries that have no BOSH
 // deployment, and an accepted provision has no deployment until its deploy
 // task starts. So the check spares an entry this process holds a claim for,
-// one requested or created less than two hours ago, and one whose task record
-// shows a provision in progress. It removes an entry only while the entry
+// one whose newest time is less than two hours old, and one whose task
+// record shows a provision in progress. It removes an entry only while the entry
 // still equals the one it checked.
 var _ = Describe("The broker's orphan check", func() {
 	const planID = "standalone"
@@ -1053,7 +1053,8 @@ var _ = Describe("The broker's orphan check", func() {
 	})
 
 	// seedEntry indexes an instance with no deployment, requested at the
-	// given time, and returns its ID and the deployment name it maps to.
+	// given time, and returns its ID and the deployment name it maps to. A
+	// field that extra sets to nil is left out of the entry.
 	seedEntry := func(name string, requestedAt time.Time, extra map[string]interface{}) (string, string) {
 		id := name + "-" + suffix
 		entry := map[string]interface{}{
@@ -1063,6 +1064,12 @@ var _ = Describe("The broker's orphan check", func() {
 		}
 
 		for key, value := range extra {
+			if value == nil {
+				delete(entry, key)
+
+				continue
+			}
+
 			entry[key] = value
 		}
 
@@ -1098,6 +1105,23 @@ var _ = Describe("The broker's orphan check", func() {
 		Expect(indexed(youngID)).To(BeTrue(), "a young entry was removed")
 		Expect(indexed(createdID)).To(BeTrue(), "an entry created moments ago was removed")
 		Expect(indexed(claimedID)).To(BeTrue(), "an entry this process holds a claim for was removed")
+	})
+
+	// The reconciler dates an entry it adopted by discovered_at, and a delete
+	// of an instance the index did not have leaves only
+	// deprovision_requested_at. Either time shows a young entry.
+	It("keeps a young entry dated only by a time the broker does not write at provision", func() {
+		now := time.Now().UTC().Format(time.RFC3339)
+
+		discoveredID, discoveredName := seedEntry("discovered", old, map[string]interface{}{"requested_at": nil, "discovered_at": now})
+		deleteID, deleteName := seedEntry("delete-requested", old, map[string]interface{}{"requested_at": nil, "deprovision_requested_at": now})
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(discoveredName))
+		Expect(removed).ToNot(ContainElement(deleteName))
+		Expect(indexed(discoveredID)).To(BeTrue(), "an entry discovered moments ago was removed")
+		Expect(indexed(deleteID)).To(BeTrue(), "an entry whose delete was requested moments ago was removed")
 	})
 
 	It("the orphan check still removes an old entry with no deployment", func() {
