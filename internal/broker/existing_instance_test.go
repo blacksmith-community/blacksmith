@@ -1179,8 +1179,9 @@ var _ = Describe("A delete whose index lookup fails", func() {
 // deployment, and an accepted provision has no deployment until its deploy
 // task starts. So the check spares an entry this process holds a claim for,
 // one whose newest time is less than two hours old, and one whose task
-// record shows a provision in progress. It removes an entry only while the entry
-// still equals the one it checked.
+// record shows a provision in progress. It removes an entry only when the
+// director confirms that its deployment is gone and that no task runs on it,
+// and only while the entry still equals the one it checked.
 var _ = Describe("The broker's orphan check", func() {
 	const planID = "standalone"
 
@@ -1213,6 +1214,18 @@ var _ = Describe("The broker's orphan check", func() {
 
 			return deployments, nil
 		}
+
+		// Asked for one deployment, the director finds the ones in live and
+		// answers its deployment-not-found code for any other, and it runs no
+		// tasks.
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			if live[name] {
+				return &bosh.DeploymentDetail{Name: name}, nil
+			}
+
+			return deploymentNotFound(name)
+		}
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil }
 
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 		brokerInstance = &broker.Broker{BOSH: director, Vault: vaultClient, Config: &config.Config{}}
@@ -1328,14 +1341,63 @@ var _ = Describe("The broker's orphan check", func() {
 		goneID, goneName := seedEntry("empty-list", old, map[string]interface{}{"created": old.Unix()})
 
 		live = map[string]bool{}
-		director.GetDeploymentFn = deploymentNotFound
-		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil }
 
 		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(removed).To(BeEmpty())
 		Expect(removed).ToNot(ContainElement(goneName))
 		Expect(indexed(goneID)).To(BeTrue(), "an entry was removed on an empty deployment list")
+	})
+
+	// The deployment list alone never proves a deployment gone. The director
+	// is asked for the deployment itself, and only its deployment-not-found
+	// code counts, and a task still running on the deployment keeps the
+	// entry as well. Any answer that leaves this unknown keeps the entry.
+	confirmations := []struct {
+		name  string
+		setup func()
+	}{
+		{"the orphan check keeps an entry whose deployment the director still has", func() {
+			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: name}, nil
+			}
+		}},
+		{"the orphan check keeps an entry whose deployment the director cannot confirm is gone", func() {
+			director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) { return nil, errDirectorUnreachable }
+		}},
+		{"the orphan check keeps an entry whose deployment has a running task", func() {
+			director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
+				return &bosh.Task{ID: 88, State: "processing", Description: "create deployment", Deployment: name}, nil
+			}
+		}},
+		{"the orphan check keeps an entry when it cannot check for a running task", func() {
+			director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, errDirectorUnreachable }
+		}},
+	}
+
+	for _, confirmation := range confirmations {
+		It(confirmation.name, func() {
+			keptID, keptName := seedEntry("unconfirmed", old, map[string]interface{}{"created": old.Unix()})
+
+			confirmation.setup()
+
+			removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(removed).ToNot(ContainElement(keptName))
+			Expect(indexed(keptID)).To(BeTrue(), "an entry was removed before the director confirmed its deployment gone")
+			Expect(director.Calls("GetDeployment")).To(ContainElement(keptName), "the director was not asked for the deployment")
+		})
+	}
+
+	It("the orphan check removes an entry once the director confirms its deployment is gone", func() {
+		goneID, goneName := seedEntry("confirmed-gone", old, map[string]interface{}{"created": old.Unix()})
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).To(ContainElement(goneName))
+		Expect(indexed(goneID)).To(BeFalse())
+		Expect(director.Calls("GetDeployment")).To(ContainElement(goneName))
+		Expect(director.Calls("FindRunningTaskForDeployment")).To(ContainElement(goneName))
 	})
 
 	// An entry indexed before deployment_name existed is named from its plan

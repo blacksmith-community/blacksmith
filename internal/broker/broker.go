@@ -2088,6 +2088,13 @@ func (b *Broker) processOrphanedInstances(ctx context.Context, vaultDB *vaultPkg
 			continue
 		}
 
+		reason = b.orphanDeploymentUnconfirmed(ctx, deploymentName)
+		if reason != "" {
+			logger.Info("Keeping instance %s missing from the BOSH deployment list, because %s", instanceID, reason)
+
+			continue
+		}
+
 		candidates = append(candidates, orphanCandidate{instanceID: instanceID, deploymentName: deploymentName, entry: serviceInstance})
 	}
 
@@ -2138,6 +2145,36 @@ func (b *Broker) orphanInFlight(ctx context.Context, instanceID string, serviceI
 
 	if time.Since(time.Unix(updatedAt, 0)) < orphanCheckMinimumAge {
 		return fmt.Sprintf("its task record shows a provision in progress, updated less than %s ago", orphanCheckMinimumAge)
+	}
+
+	return ""
+}
+
+// orphanDeploymentUnconfirmed returns why the director has not confirmed that
+// a deployment missing from its list is gone, or "" when it has. The list
+// alone never proves a deployment gone, so the director is asked for the
+// deployment itself, and only its deployment-not-found code counts. A
+// deployment with a task still running on it is not gone either, because the
+// task may be creating it. Any other answer leaves the deployment's state
+// unknown, and the entry is kept. The reconciler's orphan sweep confirms a
+// deployment gone the same way.
+func (b *Broker) orphanDeploymentUnconfirmed(ctx context.Context, deploymentName string) string {
+	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
+	if err == nil {
+		return fmt.Sprintf("the director still has deployment %s", deploymentName)
+	}
+
+	if !errors.Is(err, bosh.ErrDeploymentNotFound) {
+		return fmt.Sprintf("the director could not confirm that deployment %s is gone (%s)", deploymentName, err)
+	}
+
+	task, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
+	if err != nil {
+		return fmt.Sprintf("the director could not say whether a task is running on deployment %s (%s)", deploymentName, err)
+	}
+
+	if task != nil {
+		return fmt.Sprintf("BOSH task %d (%s) is %s on deployment %s", task.ID, task.Description, task.State, deploymentName)
 	}
 
 	return ""
