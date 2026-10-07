@@ -154,15 +154,14 @@ func (b *Broker) failWithTracking(ctx context.Context, instanceID, operation, me
 // a task for it is unknown. Nothing is resent, the record carries no task
 // ID, and the index entry and the instance's credentials are left alone
 // until the outcome is known. request names the request for the record,
-// such as "deploy".
+// such as "deploy". The record's description is shown to the platform's
+// users, so it is one sentence that names the context ID, and the error
+// goes only to the log.
 func (b *Broker) recordOutcomeUnknown(ctx context.Context, instanceID, operation, request, contextID string, err error, log logger.Logger) {
-	description := fmt.Sprintf("The director's answer to the %s with context ID %s was lost, so whether the director started a task for it is unknown; it was not resent: %s", request, contextID, err)
-	log.Error("Instance %s: %s", instanceID, description)
+	description := fmt.Sprintf("The director's answer to the %s with context ID %s was lost, so whether it started a task is not known yet", request, contextID)
+	log.Error("Instance %s: %s, and it was not resent: %s", instanceID, description, err)
 
-	recordCtx, cancel := recordContext(ctx)
-	defer cancel()
-
-	trackErr := b.Vault.TrackOutcomeUnknown(recordCtx, instanceID, operation, description, contextID, time.Now())
+	trackErr := b.Vault.TrackOutcomeUnknown(ctx, instanceID, operation, description, contextID, b.unknownOutcomeNow())
 	if trackErr != nil {
 		log.Error("CRITICAL: failed to record the unknown outcome of the %s with context ID %s for instance %s: %s", request, contextID, instanceID, trackErr)
 	}

@@ -298,6 +298,62 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		return proxy
 	}
 
+	// loseDeleteAnswers makes the deployment exist and every delete lose
+	// its answer. It returns the context IDs the deletes carried.
+	loseDeleteAnswers := func() func() []string {
+		var (
+			sentMu sync.Mutex
+			sent   []string
+		)
+
+		director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+			return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+		}
+		director.onDeleteDeployment = func(callCtx context.Context, name string) (*bosh.Task, error) {
+			sentMu.Lock()
+			defer sentMu.Unlock()
+
+			sent = append(sent, boshapi.ContextIDFrom(callCtx))
+
+			return nil, &bosh.OutcomeUnknownError{
+				Operation:  "DeleteDeployment",
+				Director:   outcomeDirectorAddress,
+				Deployment: name,
+				ContextID:  boshapi.ContextIDFrom(callCtx),
+				Err:        errAnswerLost,
+			}
+		}
+
+		return func() []string {
+			sentMu.Lock()
+			defer sentMu.Unlock()
+
+			return append([]string(nil), sent...)
+		}
+	}
+
+	// expectRecordedUnknown checks that the record says the outcome of
+	// the request that carried contextID is unknown, with no task.
+	expectRecordedUnknown := func(action, contextID string, before time.Time) {
+		record := readRecord()
+
+		ExpectWithOffset(1, record).To(HaveKeyWithValue("action", action))
+		ExpectWithOffset(1, record).To(HaveKeyWithValue("state", outcomeStateUnknown))
+		ExpectWithOffset(1, record).To(HaveKeyWithValue("context_id", contextID))
+		ExpectWithOffset(1, record).ToNot(HaveKey("task"), "the record of an unknown outcome carries a task ID")
+		ExpectWithOffset(1, record["description"]).To(ContainSubstring(contextID), "the description does not name the context ID")
+
+		recorded, err := brokerInstance.RecordedOperation(ctx, instanceID)
+		ExpectWithOffset(1, err).ToNot(HaveOccurred())
+		ExpectWithOffset(1, recorded.State).To(Equal(outcomeStateUnknown))
+		ExpectWithOffset(1, recorded.ContextID).To(Equal(contextID))
+		ExpectWithOffset(1, recorded.TaskID).To(BeZero())
+		ExpectWithOffset(1, recorded.UnknownSince).To(BeTemporally(">=", before.Truncate(time.Second)))
+		ExpectWithOffset(1, recorded.UnknownSince).To(BeTemporally("<=", time.Now()))
+
+		ExpectWithOffset(1, history()).To(ContainElement(record["description"]), "the unknown outcome is not in the history")
+	}
+
 	Describe("the accepted record carries the context ID sent to the director", func() {
 		It("for a deploy", func() {
 			sent := scriptDeploy()
@@ -752,62 +808,6 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 	})
 
 	Describe("an unknown delete outcome never removes the index entry", func() {
-		// loseDeleteAnswers makes the deployment exist and every delete
-		// lose its answer. It returns the context IDs the deletes carried.
-		loseDeleteAnswers := func() func() []string {
-			var (
-				sentMu sync.Mutex
-				sent   []string
-			)
-
-			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
-				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
-			}
-			director.onDeleteDeployment = func(callCtx context.Context, name string) (*bosh.Task, error) {
-				sentMu.Lock()
-				defer sentMu.Unlock()
-
-				sent = append(sent, boshapi.ContextIDFrom(callCtx))
-
-				return nil, &bosh.OutcomeUnknownError{
-					Operation:  "DeleteDeployment",
-					Director:   outcomeDirectorAddress,
-					Deployment: name,
-					ContextID:  boshapi.ContextIDFrom(callCtx),
-					Err:        errAnswerLost,
-				}
-			}
-
-			return func() []string {
-				sentMu.Lock()
-				defer sentMu.Unlock()
-
-				return append([]string(nil), sent...)
-			}
-		}
-
-		// expectRecordedUnknown checks that the record says the outcome of
-		// the request that carried contextID is unknown, with no task.
-		expectRecordedUnknown := func(action, contextID string, before time.Time) {
-			record := readRecord()
-
-			ExpectWithOffset(1, record).To(HaveKeyWithValue("action", action))
-			ExpectWithOffset(1, record).To(HaveKeyWithValue("state", outcomeStateUnknown))
-			ExpectWithOffset(1, record).To(HaveKeyWithValue("context_id", contextID))
-			ExpectWithOffset(1, record).ToNot(HaveKey("task"), "the record of an unknown outcome carries a task ID")
-			ExpectWithOffset(1, record["description"]).To(ContainSubstring(contextID), "the description does not name the context ID")
-
-			recorded, err := brokerInstance.RecordedOperation(ctx, instanceID)
-			ExpectWithOffset(1, err).ToNot(HaveOccurred())
-			ExpectWithOffset(1, recorded.State).To(Equal(outcomeStateUnknown))
-			ExpectWithOffset(1, recorded.ContextID).To(Equal(contextID))
-			ExpectWithOffset(1, recorded.TaskID).To(BeZero())
-			ExpectWithOffset(1, recorded.UnknownSince).To(BeTemporally(">=", before.Truncate(time.Second)))
-			ExpectWithOffset(1, recorded.UnknownSince).To(BeTemporally("<=", time.Now()))
-
-			ExpectWithOffset(1, history()).To(ContainElement(record["description"]), "the unknown outcome is not in the history")
-		}
-
 		It("for a deprovision", func() {
 			indexInstance()
 
@@ -858,22 +858,6 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			}
 		})
 
-		It("nor is the teardown's unknown delete settled by a poll that finds the deployment gone", func() {
-			sent := loseDeleteAnswers()
-
-			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
-
-			Expect(sent()).To(HaveLen(1))
-
-			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
-				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deploymentName)
-			}
-
-			response := pollUnindexed(outcomeDeprovision)
-			Expect(response.State).To(Equal(osbapi.StateInProgress), "a poll settled an unknown delete as %+v", response)
-			Expect(response.Description).To(ContainSubstring(sent()[0]))
-		})
-
 		It("and the retry loop stops at the first unknown outcome", func() {
 			sent := loseDeleteAnswers()
 
@@ -920,6 +904,361 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(contextID).ToNot(BeEmpty(), "the deploy was never sent")
 			Expect(stillIndexed()).To(BeTrue(), "an unknown deploy removed the index entry")
 			expectRecordedUnknown(outcomeProvision, contextID, before)
+		})
+	})
+
+	// An unknown outcome is settled only by what the director says. A task
+	// found by the context ID, or for a deploy a task on its deployment, is
+	// followed. A delete whose deployment the director says is missing is
+	// deleted. A request is failed only once a lookup that succeeded after
+	// the grace period found nothing, and while lookups fail it stays in
+	// progress.
+	Describe("an unknown outcome is settled from what the director says", func() {
+		const refusal = "permission denied"
+
+		var clockOffset atomic.Int64
+
+		BeforeEach(func() {
+			clockOffset.Store(0)
+			brokerInstance.SetUnknownOutcomeClock(func() time.Time {
+				return time.Now().Add(time.Duration(clockOffset.Load()))
+			})
+
+			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no task is a nil task without an error
+		})
+
+		// passGrace moves the clock past the grace period of an unknown
+		// outcome recorded now.
+		passGrace := func() {
+			clockOffset.Store(int64(bosh.UnknownOutcomeGrace + time.Second))
+		}
+
+		poll := func(operation string) osbapi.LastOperationResponse {
+			response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+				ServiceID: serviceID, PlanID: planID, Operation: operation,
+			})
+			ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+			return response
+		}
+
+		// loseDelete deprovisions the indexed instance with a delete whose
+		// answer is lost, and returns the context ID the delete carried.
+		loseDelete := func() string {
+			indexInstance()
+
+			sent := loseDeleteAnswers()
+
+			deprovision()
+
+			EventuallyWithOffset(1, sent, 10*time.Second).Should(HaveLen(1))
+			EventuallyWithOffset(1, settled, 10*time.Second).Should(BeTrue())
+
+			return sent()[0]
+		}
+
+		// loseDeploy provisions the instance with a deploy whose answer is
+		// lost, and returns the context ID the deploy carried.
+		loseDeploy := func() string {
+			var (
+				sentMu sync.Mutex
+				sent   string
+			)
+
+			director.onCreateDeployment = func(callCtx context.Context, _ string) (*bosh.Task, error) {
+				sentMu.Lock()
+				defer sentMu.Unlock()
+
+				sent = boshapi.ContextIDFrom(callCtx)
+
+				return nil, &bosh.OutcomeUnknownError{
+					Operation:  "CreateDeployment",
+					Director:   outcomeDirectorAddress,
+					Deployment: deploymentName,
+					ContextID:  sent,
+					Err:        errAnswerLost,
+				}
+			}
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) { return nil, nil }
+
+			provision()
+
+			EventuallyWithOffset(1, settled, 10*time.Second).Should(BeTrue())
+
+			sentMu.Lock()
+			defer sentMu.Unlock()
+
+			ExpectWithOffset(1, sent).ToNot(BeEmpty(), "the deploy was never sent")
+			ExpectWithOffset(1, readRecord()).To(HaveKeyWithValue("state", outcomeStateUnknown))
+
+			return sent
+		}
+
+		deploymentMissing := func() {
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+			}
+		}
+
+		routeNotFound := func() error {
+			return fmt.Errorf("get deployment %s: %w", deploymentName, &boshapi.APIError{
+				StatusCode: http.StatusNotFound, Method: http.MethodGet, Path: "/deployments/" + deploymentName,
+			})
+		}
+
+		recorded := func() broker.RecordedOperation {
+			operation, err := brokerInstance.RecordedOperation(ctx, instanceID)
+			ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+			return operation
+		}
+
+		It("an unknown delete is reported in progress with the context ID", func() {
+			contextID := loseDelete()
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown delete answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(director.Calls("FindTaskByContextID")).To(ContainElement(contextID), "the poll did not look the task up by its context ID")
+			Expect(stillIndexed()).To(BeTrue())
+			Expect(recorded().State).To(Equal(outcomeStateUnknown))
+		})
+
+		It("an unknown delete is settled when its task turns up by context ID", func() {
+			contextID := loseDelete()
+
+			director.FindTaskByContextIDFn = func(id string) (*bosh.Task, error) {
+				if id != contextID {
+					return nil, nil //nolint:nilnil // no task is a nil task without an error
+				}
+
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment, ContextID: contextID}, nil
+			}
+			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+				return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+			}
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a running delete answered %+v", response)
+			Expect(recorded().TaskID).To(Equal(deleteTaskID), "the task found by the context ID was not recorded")
+			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+			Expect(recorded().ContextID).To(Equal(contextID))
+			Expect(stillIndexed()).To(BeTrue())
+		})
+
+		It("an unknown delete is settled as deleted when the director says the deployment is missing", func() {
+			contextID := loseDelete()
+			cleaner := useCleaner()
+
+			deploymentMissing()
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateSucceeded), "a delete whose deployment is missing answered %+v", response)
+			Expect(stillIndexed()).To(BeFalse(), "the deleted instance is still indexed")
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).ToNot(BeEmpty(), "the deleted instance's CredHub cleanup did not start")
+			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown), "the settled delete is still recorded as unknown")
+			Expect(director.Calls("FindTaskByContextID")).To(ContainElement(contextID))
+		})
+
+		It("an unknown delete is not settled by a route 404", func() {
+			contextID := loseDelete()
+			cleaner := useCleaner()
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return nil, routeNotFound()
+			}
+
+			passGrace()
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a route 404 settled an unknown delete as %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(response.Description).To(ContainSubstring("/deployments/"+deploymentName), "the answer does not carry the failed check")
+			Expect(stillIndexed()).To(BeTrue(), "a route 404 removed the index entry")
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "a route 404 started the CredHub cleanup")
+			Expect(recorded().State).To(Equal(outcomeStateUnknown))
+		})
+
+		It("an unknown delete fails after the grace period and keeps the index entry", func() {
+			contextID := loseDelete()
+			cleaner := useCleaner()
+
+			response := poll(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown delete in its grace period answered %+v", response)
+
+			passGrace()
+
+			response = poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateFailed), "an unknown delete past its grace period answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(stillIndexed()).To(BeTrue(), "a failed delete removed the index entry")
+			Expect(recorded().State).To(Equal(outcomeStateFailed))
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "a failed delete started the CredHub cleanup")
+		})
+
+		It("an unknown delete is not failed while lookups error past the grace period", func() {
+			contextID := loseDelete()
+
+			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) {
+				return nil, &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: "/tasks"}
+			}
+
+			passGrace()
+
+			for range 2 {
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown delete whose lookup failed answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(response.Description).To(ContainSubstring("/tasks"), "the answer does not carry the failed lookup")
+			}
+
+			Expect(stillIndexed()).To(BeTrue())
+			Expect(recorded().State).To(Equal(outcomeStateUnknown))
+		})
+
+		It("an unknown deploy is adopted when a running task on its deployment turns up", func() {
+			loseDeploy()
+
+			director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
+				if name != deploymentName {
+					return nil, nil //nolint:nilnil // no running task is a nil task without an error
+				}
+
+				return &bosh.Task{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment, Deployment: name}, nil
+			}
+			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+				return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment}, nil
+			}
+
+			response := poll(outcomeProvision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a running deploy answered %+v", response)
+			Expect(recorded().TaskID).To(Equal(createTaskID), "the running task was not adopted")
+			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+		})
+
+		It("an unknown deploy fails the provision after the grace period", func() {
+			contextID := loseDeploy()
+
+			deploymentMissing()
+
+			response := poll(outcomeProvision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown deploy in its grace period answered %+v", response)
+
+			passGrace()
+
+			response = poll(outcomeProvision)
+
+			Expect(response.State).To(Equal(osbapi.StateFailed), "an unknown deploy past its grace period answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(recorded().State).To(Equal(outcomeStateFailed))
+		})
+
+		It("an unknown deploy is not failed while lookups error past the grace period", func() {
+			contextID := loseDeploy()
+
+			deploymentMissing()
+			passGrace()
+
+			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) {
+				return nil, &boshapi.APIError{StatusCode: http.StatusServiceUnavailable, Method: http.MethodGet, Path: "/tasks"}
+			}
+
+			response := poll(outcomeProvision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown deploy whose lookup failed answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(response.Description).To(ContainSubstring("/tasks"), "the answer does not carry the failed lookup")
+
+			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no task is a nil task without an error
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return nil, routeNotFound()
+			}
+
+			response = poll(outcomeProvision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown deploy whose deployment check failed answered %+v", response)
+			Expect(response.Description).To(ContainSubstring("/deployments/"+deploymentName), "the answer does not carry the failed check")
+
+			Expect(recorded().State).To(Equal(outcomeStateUnknown))
+		})
+
+		It("an unknown teardown delete is settled from its record without an index entry", func() {
+			sent := loseDeleteAnswers()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(sent()).To(HaveLen(1))
+			Expect(stillIndexed()).To(BeFalse())
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "the teardown's unknown delete answered %+v", response)
+
+			deploymentMissing()
+
+			response = pollUnindexed(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateSucceeded), "the teardown's delete whose deployment is missing answered %+v", response)
+			Expect(director.Calls("FindTaskByContextID")).To(ContainElement(sent()[0]), "the poll did not look the task up by its context ID")
+			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown), "the settled delete is still recorded as unknown")
+		})
+
+		It("a lost unknown-outcome write is tried again", func() {
+			indexInstance()
+
+			proxy := useProxy()
+
+			var (
+				sentMu sync.Mutex
+				sent   string
+			)
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+			director.onDeleteDeployment = func(callCtx context.Context, name string) (*bosh.Task, error) {
+				sentMu.Lock()
+				defer sentMu.Unlock()
+
+				sent = boshapi.ContextIDFrom(callCtx)
+
+				// The next task record write is the one that records
+				// the unknown outcome.
+				proxy.FailWrites(instanceID+"/task", http.StatusForbidden, refusal, 1)
+
+				return nil, &bosh.OutcomeUnknownError{
+					Operation:  "DeleteDeployment",
+					Director:   outcomeDirectorAddress,
+					Deployment: name,
+					ContextID:  sent,
+					Err:        errAnswerLost,
+				}
+			}
+
+			before := time.Now()
+			writesBefore := len(proxy.WritesTo(instanceID + "/task"))
+
+			deprovision()
+
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			sentMu.Lock()
+			contextID := sent
+			sentMu.Unlock()
+
+			Expect(contextID).ToNot(BeEmpty(), "the delete was never sent")
+			expectRecordedUnknown(outcomeDeprovision, contextID, before)
+			Expect(len(proxy.WritesTo(instanceID+"/task")) - writesBefore).To(BeNumerically(">=", 2))
 		})
 	})
 

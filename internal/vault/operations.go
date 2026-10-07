@@ -167,6 +167,16 @@ func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, descr
 	return vault.AppendHistory(ctx, instanceID, action, description)
 }
 
+// Bounds on the write of an unknown outcome. A lost write leaves the
+// operation to the older recovery paths, which cannot look its task up by
+// the context ID, so the write is tried again a few times within a bound of
+// its own.
+const (
+	outcomeUnknownWriteAttempts = 3
+	outcomeUnknownWriteBound    = 10 * time.Second
+	outcomeUnknownWriteBackoff  = 100 * time.Millisecond
+)
+
 // TrackOutcomeUnknown records that the director request of the operation,
 // which carried contextID, was sent and its answer was lost at since. The
 // record has the state outcome_unknown and no task ID at all, so nothing
@@ -174,10 +184,16 @@ func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, descr
 // gone. The params and the deployment name of the replaced record are kept
 // when it is for the same action, and the description goes into the
 // history as TrackProgress writes it.
+//
+// The write runs detached from ctx's cancellation, under a bound of its
+// own, and a failed write is tried up to three times in all within it.
 func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action, description, contextID string, since time.Time) error {
 	if contextID == "" {
 		return fmt.Errorf("%w: instance %s, action %s, unknown outcome", ErrEmptyContextID, instanceID, action)
 	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeUnknownWriteBound)
+	defer cancel()
 
 	logger := logger.Get().Named("vault track outcome unknown " + instanceID)
 	logger.Debug("recording an unknown outcome for '%s' with context ID %s: %s", action, contextID, description)
@@ -200,16 +216,36 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 		UnknownSince: since.UTC().Format(time.RFC3339Nano),
 	}
 
-	err := vault.writeTaskRecord(ctx, instanceID, action, logger, func(replaced map[string]interface{}) interface{} {
+	build := func(replaced map[string]interface{}) interface{} {
 		task.Params = replaced["params"]
 		task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
 
 		return task
-	})
-	if err != nil {
-		logger.Error("failed to record the unknown outcome of context ID %s: %s", contextID, err)
+	}
 
-		return err
+	var err error
+
+	for attempt := 1; attempt <= outcomeUnknownWriteAttempts; attempt++ {
+		err = vault.writeTaskRecord(ctx, instanceID, action, logger, build)
+		if err == nil {
+			break
+		}
+
+		logger.Error("attempt %d of %d to record the unknown outcome of context ID %s failed: %s", attempt, outcomeUnknownWriteAttempts, contextID, err)
+
+		if attempt == outcomeUnknownWriteAttempts {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("the unknown outcome of context ID %s was not recorded within %s: %w", contextID, outcomeUnknownWriteBound, err)
+		case <-time.After(time.Duration(attempt) * outcomeUnknownWriteBackoff):
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("the unknown outcome of context ID %s was not recorded in %d attempts: %w", contextID, outcomeUnknownWriteAttempts, err)
 	}
 
 	return vault.AppendHistory(ctx, instanceID, action, description)

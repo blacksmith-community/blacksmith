@@ -186,6 +186,11 @@ type Broker struct {
 
 	// credentialSweep keeps one sweep pass at a time and at most one an hour.
 	credentialSweep credentialSweepState
+
+	// unknownOutcomeClock, when set, replaces time.Now as the clock an
+	// unknown outcome is recorded and judged by, so tests can let the
+	// grace period pass without waiting for it.
+	unknownOutcomeClock func() time.Time
 }
 
 // operationClaim is the claim an operation holds on an instance ID in
@@ -2208,24 +2213,15 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, d
 // delete, so a record with a context ID answers succeeded only when the
 // director answers that the deployment does not exist. The deployment is
 // the one the record names, and the one planID and the instance ID name
-// when the record names none. While the delete's outcome is unknown, it
-// answers in progress without asking. A deployment that still exists
-// answers failed when the record says the delete failed, and in progress
-// otherwise.
+// when the record names none. When neither names one, it answers in
+// progress without asking. A delete whose outcome is unknown is settled
+// by resolveUnknownOutcome. A deployment that still exists answers failed
+// when the record says the delete failed, and in progress otherwise.
 func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.ContextID == "" {
 		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
-	}
-
-	if recorded.State == internalVault.TaskStateOutcomeUnknown {
-		logger.Warning("instance %s has no index entry, and the outcome of its delete with context ID %s is unknown, so it is not reported as deleted", instanceID, recorded.ContextID)
-
-		return osbapi.LastOperationResponse{
-			State:       osbapi.StateInProgress,
-			Description: fmt.Sprintf("Whether the director started the delete with context ID %s is not known yet", recorded.ContextID),
-		}, nil
 	}
 
 	if recorded.DeploymentName == "" && planID == "" {
@@ -2238,6 +2234,10 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 	}
 
 	deploymentName := deploymentNameForInstance(instanceID, &vaultPkg.Instance{PlanID: planID, DeploymentName: recorded.DeploymentName})
+
+	if recorded.State == internalVault.TaskStateOutcomeUnknown {
+		return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
+	}
 
 	err := b.deploymentGone(ctx, instanceID, deploymentName, logger)
 
@@ -3135,7 +3135,8 @@ func pollOperation(requested string, recorded recordedOperation) string {
 // provisionStatus answers a provision poll from the provision the broker
 // recorded. Only the create deployment task the broker started can finish it,
 // so a task someone runs by hand on the deployment can neither complete the
-// provision early nor hide a failed deploy.
+// provision early nor hide a failed deploy. A deploy whose answer was lost
+// is settled by resolveUnknownOutcome.
 func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.Action != operationTypeProvision {
 		recorded = recordedOperation{}
@@ -3146,6 +3147,8 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 		logger.Error("provision of instance %s failed: %s", instanceID, recorded.Description)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
+	case recorded.State == internalVault.TaskStateOutcomeUnknown:
+		return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
 	case recorded.hasTask():
 		return b.handleProvisionTask(ctx, instanceID, deploymentName, recorded.TaskID, logger)
 	case b.provisionActive(instanceID):
@@ -3180,7 +3183,9 @@ func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentNam
 
 // deprovisionStatus answers a deprovision poll from the deprovision the broker
 // recorded. It finishes only on the delete deployment task the broker started,
-// and it never runs the provision completion hook.
+// or on the director's word that the deployment does not exist, and it never
+// runs the provision completion hook. A delete whose answer was lost is
+// settled by resolveUnknownOutcome.
 func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.Action != operationTypeDeprovision {
 		recorded = recordedOperation{}
@@ -3191,6 +3196,8 @@ func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentNa
 		logger.Error("deprovision of instance %s failed: %s", instanceID, recorded.Description)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
+	case recorded.State == internalVault.TaskStateOutcomeUnknown:
+		return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
 	case recorded.hasTask():
 		return b.handleDeprovisionTask(ctx, instanceID, deploymentName, recorded.TaskID, logger)
 	case b.deprovisionActive(instanceID):

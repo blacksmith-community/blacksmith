@@ -4,7 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// UnknownOutcomeGrace is how long an operation whose director answer was
+// lost stays unknown before a lookup that finds no task for its context ID
+// may fail it. It is far longer than a request's timeout, so a task the
+// director accepted while its answer was being lost has long since been
+// listed by the time it ends.
+const UnknownOutcomeGrace = 15 * time.Minute
 
 // ErrOutcomeUnknown is the sentinel an OutcomeUnknownError wraps. It means a
 // mutation was sent to the director and no answer came back, so the

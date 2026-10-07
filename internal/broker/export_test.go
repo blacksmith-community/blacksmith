@@ -76,6 +76,12 @@ func (b *Broker) SetCredentialSweepClock(now func() time.Time) {
 	b.credentialSweep.now = now
 }
 
+// SetUnknownOutcomeClock replaces the clock an unknown outcome is recorded
+// and judged by. Set it before the broker starts any work.
+func (b *Broker) SetUnknownOutcomeClock(now func() time.Time) {
+	b.unknownOutcomeClock = now
+}
+
 // SetCredentialSweepPassTimeout replaces the deadline of one sweep pass.
 func (b *Broker) SetCredentialSweepPassTimeout(timeout time.Duration) {
 	b.credentialSweep.mu.Lock()
