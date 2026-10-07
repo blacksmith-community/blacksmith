@@ -31,12 +31,15 @@ var (
 	ErrInstanceNotFound        = errors.New("service instance not found")
 	ErrBindingNotFound         = errors.New("service binding not found")
 	ErrInstanceAlreadyExists   = errors.New("service instance already exists")
-	ErrBindingAlreadyExists    = errors.New("service binding already exists")
-	ErrGoneError               = errors.New("resource has been deleted")
-	ErrBadRequest              = errors.New("bad request")
-	ErrUnauthorized            = errors.New("unauthorized")
-	ErrPlanQuotaExceeded       = errors.New("plan quota exceeded")
-	ErrInvalidParameters       = errors.New("invalid parameters")
+	// ErrInstanceAlreadyProvisioned means the instance exists, is fully
+	// provisioned, and the request is identical, so provision answers 200 OK.
+	ErrInstanceAlreadyProvisioned = errors.New("service instance already provisioned")
+	ErrBindingAlreadyExists       = errors.New("service binding already exists")
+	ErrGoneError                  = errors.New("resource has been deleted")
+	ErrBadRequest                 = errors.New("bad request")
+	ErrUnauthorized               = errors.New("unauthorized")
+	ErrPlanQuotaExceeded          = errors.New("plan quota exceeded")
+	ErrInvalidParameters          = errors.New("invalid parameters")
 )
 
 // OSB API error code constants.

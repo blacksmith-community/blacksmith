@@ -205,6 +205,12 @@ func (h *handler) provisionHandler(w http.ResponseWriter, r *http.Request) {
 	async := r.URL.Query().Get("accepts_incomplete") == "true"
 
 	resp, isAsync, err := h.broker.Provision(r.Context(), instanceID, req, async)
+	if errors.Is(err, osbapi.ErrInstanceAlreadyProvisioned) {
+		// An identical repeat of a finished provision answers 200 with the
+		// response as returned, even when it is empty.
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	if err != nil {
 		h.handleError(w, r, "provision", err)
 		return
@@ -358,7 +364,7 @@ func (h *handler) handleError(w http.ResponseWriter, r *http.Request, op string,
 			Description: err.Error(),
 		})
 
-	case errors.Is(err, osbapi.ErrInstanceAlreadyExists):
+	case errors.Is(err, osbapi.ErrInstanceAlreadyExists), errors.Is(err, osbapi.ErrInstanceAlreadyProvisioned):
 		writeError(w, http.StatusConflict, &osbapi.OSBError{
 			Description: err.Error(),
 		})
