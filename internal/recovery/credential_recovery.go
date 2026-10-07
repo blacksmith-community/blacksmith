@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/broker"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
@@ -573,14 +574,22 @@ func (cr *CredentialRecovery) checkRegenerationPossible(ctx context.Context, ins
 		return ErrInstanceNotFound
 	}
 
-	// Check if deployment still exists
+	// Check that the deployment still exists. Only the director's
+	// deployment-not-found answer means it is gone. Any other failure leaves
+	// that unknown, and is reported as the director's error.
 	deploymentName := instance.DeploymentNameFor(instanceID)
 
 	_, err = cr.broker.BOSH.GetDeployment(ctx, deploymentName)
-	if err != nil {
+	if errors.Is(err, bosh.ErrDeploymentNotFound) {
 		cr.logger.Error("Deployment %s does not exist in BOSH", deploymentName)
 
-		return ErrDeploymentNotFound
+		return fmt.Errorf("%w: %s", ErrDeploymentNotFound, deploymentName)
+	}
+
+	if err != nil {
+		cr.logger.Error("Could not confirm whether deployment %s exists in BOSH: %s", deploymentName, err)
+
+		return fmt.Errorf("could not confirm whether deployment %s exists: %w", deploymentName, err)
 	}
 
 	// Check service type
