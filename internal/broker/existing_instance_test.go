@@ -1570,6 +1570,35 @@ var _ = Describe("The broker's orphan check", func() {
 		Expect(indexed(failedID)).To(BeFalse())
 	})
 
+	It("the orphan sweeps treat an unknown outcome as in flight", func() {
+		kept := map[string]string{}
+
+		for _, action := range []string{"provision", "deprovision"} {
+			unknownID, unknownName := seedEntry("unknown-"+action, old, nil)
+			Expect(vaultClient.TrackOutcomeUnknown(ctx, unknownID, action, "The director's answer was lost",
+				"5f0c2a52-6a1e-4d0c-9a8e-1f6c7e0b9d11", old)).To(Succeed())
+
+			// The record is as old as the entry.
+			var task map[string]interface{}
+
+			_, err := vaultClient.Get(ctx, unknownID+"/task", &task)
+			Expect(err).ToNot(HaveOccurred())
+
+			task["updated_at"] = old.Unix()
+			Expect(vaultClient.Put(ctx, unknownID+"/task", task)).To(Succeed())
+
+			kept[unknownID] = unknownName
+		}
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+
+		for unknownID, unknownName := range kept {
+			Expect(removed).ToNot(ContainElement(unknownName))
+			Expect(indexed(unknownID)).To(BeTrue(), "an entry whose outcome is unknown was removed")
+		}
+	})
+
 	// writeTask stores a provision task record in progress, with updated_at
 	// only when updatedAt is not nil.
 	writeTask := func(taskInstanceID string, updatedAt *time.Time) {

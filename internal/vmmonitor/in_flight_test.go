@@ -184,6 +184,14 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 			want: provisioning,
 		},
 		{
+			name: "the monitor keeps an instance whose task record shows an unknown outcome, whatever its action and age",
+			records: map[string]map[string]interface{}{inFlightID + "/task": {
+				"action": "deprovision", "state": "outcome_unknown", "context_id": "5f0c2a52-6a1e-4d0c-9a8e-1f6c7e0b9d11",
+				"updated_at": time.Now().Add(-3 * time.Hour).Unix(),
+			}},
+			want: provisioning,
+		},
+		{
 			name: "the monitor keeps an instance whose entry turned young after the scan",
 			afterScan: func(vault *indexVault) {
 				vault.setEntryTime(inFlightID, "requested_at", young.Format(time.RFC3339))

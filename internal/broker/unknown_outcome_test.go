@@ -1280,6 +1280,142 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(recorded().State).To(Equal(outcomeStateUnknown))
 		})
 
+		deprovisionRefused := func() error {
+			_, _, err := brokerInstance.Deprovision(ctx, instanceID, osbapi.DeprovisionRequest{ServiceID: serviceID, PlanID: planID}, true)
+
+			return err //nolint:wrapcheck // the spec matches the broker's own error
+		}
+
+		// refusedFirst runs a deprovision that the recorded unknown outcome
+		// must refuse before it asks the director anything.
+		refusedFirst := func() {
+			checks := len(director.Calls("FindRunningTaskForDeployment"))
+
+			ExpectWithOffset(1, deprovisionRefused()).To(MatchError(osbapi.ErrConcurrencyError))
+			ExpectWithOffset(1, director.Calls("FindRunningTaskForDeployment")).To(HaveLen(checks),
+				"the deprovision was not refused before it asked the director for running tasks")
+		}
+
+		// countDeletes counts the deletes sent from now on, which answer
+		// with a running task.
+		countDeletes := func() *atomic.Int32 {
+			var deletes atomic.Int32
+
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deletes.Add(1)
+
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+			}
+
+			return &deletes
+		}
+
+		Describe("a deprovision is refused while the provision's outcome is unknown", func() {
+			It("when the record shows it before the deprovision starts", func() {
+				contextID := loseDeploy()
+				unknown := recorded()
+				deletes := countDeletes()
+
+				refusedFirst()
+
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+				Expect(stillIndexed()).To(BeTrue())
+				Expect(settled()).To(BeTrue(), "the refused deprovision left its claim behind")
+			})
+
+			It("when the outcome becomes unknown while the deprovision is being accepted", func() {
+				indexInstance()
+
+				contextID := uuid.NewString()
+				deletes := countDeletes()
+
+				var lost sync.Once
+
+				// The provision's answer is lost after the deprovision read
+				// the record and before it writes its own.
+				director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+					lost.Do(func() {
+						defer GinkgoRecover()
+
+						Expect(vaultClient.TrackOutcomeUnknown(context.Background(), instanceID, outcomeProvision,
+							"The deploy's answer was lost", contextID, time.Now())).To(Succeed())
+					})
+
+					return nil, nil //nolint:nilnil // no running task is a nil task without an error
+				}
+
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrConcurrencyError))
+
+				Expect(recorded().State).To(Equal(outcomeStateUnknown), "the accepted deprovision replaced the unknown outcome")
+				Expect(recorded().Action).To(Equal(outcomeProvision))
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+				Expect(stillIndexed()).To(BeTrue())
+			})
+		})
+
+		It("progress written during an unknown outcome keeps the unknown-since time", func() {
+			contextID := loseDelete()
+			unknown := recorded()
+
+			Expect(unknown.UnknownSince).ToNot(BeZero())
+
+			brokerInstance.RecordProgress(ctx, instanceID, outcomeDeprovision, "Still waiting for the director")
+
+			Expect(recorded().State).To(Equal(outcomeStateUnknown), "progress settled the unknown outcome")
+			Expect(recorded().UnknownSince).To(Equal(unknown.UnknownSince), "progress dropped the unknown-since time")
+			Expect(recorded().ContextID).To(Equal(contextID))
+			Expect(readRecord()).ToNot(HaveKey("task"), "progress gave the unknown outcome a task ID")
+
+			// The same outcome recorded again keeps the time it first became
+			// unknown.
+			Expect(vaultClient.TrackOutcomeUnknown(ctx, instanceID, outcomeDeprovision, "The delete's answer was lost again", contextID,
+				time.Now().Add(time.Hour))).To(Succeed())
+			Expect(recorded().UnknownSince).To(Equal(unknown.UnknownSince), "a second unknown-outcome write moved the unknown-since time")
+
+			// The write that names the delete's task settles it.
+			brokerInstance.RecordTask(ctx, instanceID, outcomeDeprovision, "BOSH deletion in progress (task 300)", deleteTaskID)
+
+			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+			Expect(recorded().TaskID).To(Equal(deleteTaskID))
+			Expect(readRecord()).ToNot(HaveKey("unknown_since"), "the settling write kept the unknown-since time")
+		})
+
+		Describe("a repeat deprovision is refused while the delete's outcome is unknown", func() {
+			It("for a deprovision", func() {
+				contextID := loseDelete()
+				unknown := recorded()
+				deletes := countDeletes()
+
+				refusedFirst()
+
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+				Expect(stillIndexed()).To(BeTrue())
+			})
+
+			It("for the teardown of an abandoned deploy, which has no index entry", func() {
+				sent := loseDeleteAnswers()
+
+				brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+				Expect(sent()).To(HaveLen(1))
+				Expect(stillIndexed()).To(BeFalse())
+
+				unknown := recorded()
+				deletes := countDeletes()
+
+				refusedFirst()
+
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+				Expect(stillIndexed()).To(BeFalse(), "the refused deprovision indexed the instance")
+			})
+		})
+
 		It("an unknown teardown delete is settled from its record without an index entry", func() {
 			sent := loseDeleteAnswers()
 

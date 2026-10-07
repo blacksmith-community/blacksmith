@@ -22,6 +22,10 @@ const (
 
 	// stateFailed is the state a task record holds once its operation failed.
 	stateFailed = "failed"
+
+	// stateOutcomeUnknown is the state of a task record whose director
+	// request lost its answer. It matches vault.TaskStateOutcomeUnknown.
+	stateOutcomeUnknown = "outcome_unknown"
 )
 
 // TaskRecordReader reads the task record stored at <instance>/task. It
@@ -30,8 +34,9 @@ type TaskRecordReader func() (map[string]interface{}, bool, error)
 
 // Reason returns why an index entry with no deployment may belong to work in
 // flight, or "" when nothing shows that it does. The entry is in flight when
-// the newest time it carries is less than MinimumAge old, or when its task
-// record shows a provision in progress. An entry that carries no time is
+// the newest time it carries is less than MinimumAge old, when its task
+// record shows a provision in progress, or when its task record shows an
+// operation whose outcome is unknown, whatever its action and age. An entry that carries no time is
 // judged by its task record alone. A task record that cannot be read counts
 // as in flight, so the entry is kept.
 func Reason(entry map[string]interface{}, readTaskRecord TaskRecordReader) string {
@@ -51,6 +56,14 @@ func Reason(entry map[string]interface{}, readTaskRecord TaskRecordReader) strin
 
 	action, _ := task["action"].(string)
 	state, _ := task["state"].(string)
+
+	// Only a LastOperation poll settles an unknown outcome, so the record
+	// keeps the entry whatever its action and age.
+	if state == stateOutcomeUnknown {
+		contextID, _ := task["context_id"].(string)
+
+		return fmt.Sprintf("its task record shows a %s whose outcome is unknown, with context ID %s", action, contextID)
+	}
 
 	if action != actionProvision || state == stateFailed {
 		return ""

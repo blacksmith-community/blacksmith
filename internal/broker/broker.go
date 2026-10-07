@@ -529,10 +529,18 @@ func (b *Broker) Deprovision(
 	// this deprovision and not from the provision recorded before it.
 	// The write runs detached from the request, because a request that ends
 	// here would otherwise leave the deprovision running with no record of it.
+	// The write is refused while the record holds an unknown outcome, which
+	// may have been recorded since rejectIfOperationInProgress read it.
 	trackCtx, cancelTrack := recordContext(ctx)
-	err = b.Vault.TrackProgress(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted", 0, nil)
+	err = b.Vault.TrackProgressUnlessOutcomeUnknown(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted", 0, nil)
 
 	cancelTrack()
+
+	if errors.Is(err, internalVault.ErrOutcomeUnknownRecorded) {
+		logger.Warning("Rejecting deprovision of instance %s: %s", instanceID, err)
+
+		return osbapi.DeprovisionResponse{}, false, osbapi.ErrConcurrencyError
+	}
 
 	if err != nil {
 		logger.Error("failed to record the accepted deprovision in vault: %s", err)
@@ -1716,11 +1724,30 @@ func (b *Broker) deploymentGone(ctx context.Context, instanceID, deploymentName 
 // deployment behind. A provision still in flight in this process holds the
 // instance's operation claim, so Deprovision has refused it already.
 //
+// It reads the instance's recorded operation first, whether or not the
+// index has the instance, and returns the concurrency error while that
+// operation's outcome is unknown, because a new delete would replace the
+// record that holds the context ID and the unknown-since time. A record that
+// cannot be read returns an error, because it may hold an unknown outcome.
+//
 // An instance the index does not have is checked by
 // refuseDeleteOfGoneInstance, once the director confirms that the deployment
 // named from the request's plan and the instance ID exists. A failed lookup is
 // left to refuseDeleteOfGoneInstance as well, which reports it.
 func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID string, logger logger.Logger) error {
+	recorded, err := b.readRecordedOperation(ctx, instanceID)
+	if err != nil {
+		logger.Error("could not read the recorded operation of instance %s before accepting its deprovision: %s", instanceID, err)
+
+		return err
+	}
+
+	if recorded.State == internalVault.TaskStateOutcomeUnknown {
+		logger.Warning("Rejecting deprovision of instance %s: the outcome of its %s with context ID %s is unknown", instanceID, recorded.Action, recorded.ContextID)
+
+		return osbapi.ErrConcurrencyError
+	}
+
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
 	if err != nil || !exists {
 		return nil //nolint:nilerr // refuseDeleteOfGoneInstance re-runs the lookup and surfaces the error

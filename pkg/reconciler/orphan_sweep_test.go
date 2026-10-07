@@ -223,6 +223,53 @@ func TestOrphanSweep_RemovesEntryWithStaleProvisionRecord(t *testing.T) {
 	}
 }
 
+// unknownOutcomeRecord is the task record of an operation whose director
+// answer was lost hours ago.
+func unknownOutcomeRecord(action string) map[string]interface{} {
+	return map[string]interface{}{
+		"action": action, "state": "outcome_unknown", "context_id": "5f0c2a52-6a1e-4d0c-9a8e-1f6c7e0b9d11",
+		"unknown_since": time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339Nano),
+		"updated_at":    time.Now().Add(-3 * time.Hour).Unix(),
+	}
+}
+
+// The orphan sweeps treat an unknown outcome as in flight. A record whose
+// outcome is unknown keeps the entry whatever its action and age, a
+// tombstone's included, because only a LastOperation poll settles it.
+func TestOrphanSweep_KeepsEntryWithUnknownOutcome(t *testing.T) {
+	t.Parallel()
+
+	tombstones := map[string]map[string]interface{}{
+		"entry":           nil,
+		"named tombstone": tombstoneEntry(3*time.Hour, map[string]interface{}{"last_deployment": sweepZombieName}),
+		"bare tombstone":  tombstoneEntry(3*time.Hour, nil),
+	}
+
+	for _, action := range []string{"provision", "deprovision"} {
+		for kind, entry := range tombstones {
+			t.Run(action+" "+kind, func(t *testing.T) {
+				t.Parallel()
+
+				fixture := newSweepFixture(t, 3*time.Hour)
+				if entry != nil {
+					fixture.seedZombieEntry(t, entry)
+				}
+
+				err := fixture.vault.Put(sweepZombieID+"/task", unknownOutcomeRecord(action))
+				if err != nil {
+					t.Fatalf("failed to write task record: %v", err)
+				}
+
+				fixture.manager.RunReconciliation(context.Background())
+
+				if !fixture.indexHas(t, sweepZombieID) {
+					t.Fatalf("expected %s %s to be kept while the outcome of its %s is unknown", kind, sweepZombieID, action)
+				}
+			})
+		}
+	}
+}
+
 // tombstoneEntry builds the bare entry the vm-monitor leaves behind: status
 // deleted with no service, plan, or deployment fields.
 func tombstoneEntry(deletedAgo time.Duration, extra map[string]interface{}) map[string]interface{} {

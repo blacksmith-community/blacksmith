@@ -212,6 +212,10 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(ctx context.Context, synchroni
 	deploymentName := indexEntryDeploymentName(instanceID, dataMap)
 	if deploymentName == "" {
 		if tombstone {
+			if r.taskRecordInFlight(synchronizer, instanceID, tombstone) {
+				return false
+			}
+
 			r.logger.Infof("Orphan cleanup: removing tombstone index entry %s, it names no deployment and was marked deleted %s ago", instanceID, age.Round(time.Minute))
 
 			return true
@@ -224,9 +228,7 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(ctx context.Context, synchroni
 		return false
 	}
 
-	if !tombstone && r.provisionRecordInFlight(synchronizer, instanceID) {
-		r.logger.Debugf("Orphan sweep: keeping %s, its provision task record is still in progress", instanceID)
-
+	if r.taskRecordInFlight(synchronizer, instanceID, tombstone) {
 		return false
 	}
 
@@ -265,12 +267,19 @@ func (r *ReconcilerManager) shouldSweepIndexEntry(ctx context.Context, synchroni
 	return true
 }
 
-// provisionRecordInFlight reports whether the instance's vault task record
-// describes a provision that is still running: action "provision", a state
-// other than failed, and an update within OrphanSweepMinimumAge. A missing
-// record means no provision is in flight; any other vault error is treated as
-// in flight so the entry is kept.
-func (r *ReconcilerManager) provisionRecordInFlight(synchronizer *IndexSynchronizer, instanceID string) bool {
+// taskRecordOutcomeUnknown is the state of a task record whose director
+// request lost its answer. It matches vault.TaskStateOutcomeUnknown.
+const taskRecordOutcomeUnknown = "outcome_unknown"
+
+// taskRecordInFlight reports whether the instance's vault task record shows
+// work in flight. A record whose outcome is unknown is in flight whatever
+// its action and age, and for a tombstone too, because only a LastOperation
+// poll settles it. Otherwise only an entry that is not a tombstone is in
+// flight, when its record describes a provision that is still running:
+// action "provision", a state other than failed, and an update within
+// OrphanSweepMinimumAge. A missing record means nothing is in flight; any
+// other vault error is treated as in flight so the entry is kept.
+func (r *ReconcilerManager) taskRecordInFlight(synchronizer *IndexSynchronizer, instanceID string, tombstone bool) bool {
 	vaultClient, isVault := synchronizer.vault.(VaultInterface)
 	if !isVault || vaultClient == nil {
 		return true
@@ -282,7 +291,7 @@ func (r *ReconcilerManager) provisionRecordInFlight(synchronizer *IndexSynchroni
 			return false
 		}
 
-		r.logger.Debugf("Orphan sweep: could not read task record for %s: %v", instanceID, err)
+		r.logger.Debugf("Orphan sweep: keeping %s, could not read its task record: %v", instanceID, err)
 
 		return true
 	}
@@ -294,16 +303,32 @@ func (r *ReconcilerManager) provisionRecordInFlight(synchronizer *IndexSynchroni
 	action, _ := task["action"].(string)
 	state, _ := task["state"].(string)
 
-	if action != "provision" || state == "failed" {
+	if state == taskRecordOutcomeUnknown {
+		contextID, _ := task["context_id"].(string)
+
+		r.logger.Infof("Orphan sweep: keeping %s, the outcome of its %s with context ID %s is unknown", instanceID, action, contextID)
+
+		return true
+	}
+
+	if tombstone || action != "provision" || state == "failed" {
 		return false
 	}
 
 	updatedAt, ok := numericTimestamp(task["updated_at"])
 	if !ok {
+		r.logger.Debugf("Orphan sweep: keeping %s, its provision task record has no update time", instanceID)
+
 		return true
 	}
 
-	return time.Since(time.Unix(updatedAt, 0)) < OrphanSweepMinimumAge
+	if time.Since(time.Unix(updatedAt, 0)) < OrphanSweepMinimumAge {
+		r.logger.Debugf("Orphan sweep: keeping %s, its provision task record is still in progress", instanceID)
+
+		return true
+	}
+
+	return false
 }
 
 // indexEntryDeploymentName returns the deployment name recorded on the entry,

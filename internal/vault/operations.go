@@ -75,6 +75,33 @@ func (vault *Vault) TrackProgress(ctx context.Context, instanceID, action, descr
 	return vault.trackProgress(ctx, instanceID, action, description, "", "", taskID, params)
 }
 
+// ErrOutcomeUnknownRecorded is returned when a write would replace a task
+// record whose operation's outcome is unknown. Only the write that settles
+// that outcome may replace it.
+var ErrOutcomeUnknownRecorded = errors.New("the task record holds an operation whose outcome is unknown")
+
+// TrackProgressUnlessOutcomeUnknown stores progress information as
+// TrackProgress does, unless the current record, for any action, has the
+// state outcome_unknown. Then it writes nothing and returns an error that
+// wraps ErrOutcomeUnknownRecorded and names the record's action and context
+// ID. The check and the write happen under the instance's task record
+// lock, and a current record that cannot be read stops the write too.
+func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, instanceID, action, description string, taskID int, params interface{}) error {
+	guard := func(current map[string]interface{}) error {
+		state, _ := current["state"].(string)
+		if state != TaskStateOutcomeUnknown {
+			return nil
+		}
+
+		recordedAction, _ := current["action"].(string)
+		contextID, _ := current[taskRecordContextIDKey].(string)
+
+		return fmt.Errorf("%w: instance %s, %s with context ID %s", ErrOutcomeUnknownRecorded, instanceID, recordedAction, contextID)
+	}
+
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, guard)
+}
+
 // TrackProgressWithContextID stores progress information for a task as
 // TrackProgress does, and records contextID as the context ID of the
 // operation in place of any the replaced record carries. The broker calls
@@ -105,7 +132,18 @@ func (vault *Vault) TrackProgressWithDeployment(ctx context.Context, instanceID,
 // trackProgress writes the task record. An empty contextID or deploymentName
 // keeps the one the replaced record carries when that record is for the
 // same action.
+//
+// A write over a record of the same action whose outcome is unknown keeps
+// the state outcome_unknown, the unknown-since time, and the absence of a
+// task ID, unless it settles the outcome. A write settles it when it names
+// a task, or the failure -1, or a context ID other than the recorded one.
 func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}) error {
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, deploymentName, taskID, params, nil)
+}
+
+// trackProgressGuarded writes the task record as trackProgress does, and
+// writes nothing when guard returns an error. See writeTaskRecordGuarded.
+func (vault *Vault) trackProgressGuarded(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}, guard func(current map[string]interface{}) error) error {
 	logger := logger.Get().Named("vault track progress " + instanceID)
 	logger.Debug("tracking progress for '%s': %s (taskID: %d)", action, description, taskID)
 
@@ -141,13 +179,26 @@ func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, descr
 		DeploymentName: deploymentName,
 	}
 
-	err := vault.writeTaskRecord(ctx, instanceID, action, logger, func(replaced map[string]interface{}) interface{} {
+	err := vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
 		if task.ContextID == "" {
 			task.ContextID, _ = replaced[taskRecordContextIDKey].(string)
 		}
 
 		if task.DeploymentName == "" {
 			task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
+		}
+
+		kept, keeps := keptUnknownOutcome(replaced, task.ContextID, taskID)
+		if keeps {
+			logger.Debug("keeping the unknown outcome of context ID %s, unknown since %s, under the progress written", kept.ContextID, kept.UnknownSince)
+
+			kept.Action = action
+			kept.Description = description
+			kept.UpdatedAt = task.UpdatedAt
+			kept.Params = task.Params
+			kept.DeploymentName = task.DeploymentName
+
+			return kept
 		}
 
 		// Log the task being stored for debugging
@@ -167,6 +218,37 @@ func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, descr
 	return vault.AppendHistory(ctx, instanceID, action, description)
 }
 
+// keptUnknownOutcome returns the state, the context ID, and the
+// unknown-since time a progress write keeps from the record it replaces,
+// and true, when that record's outcome is unknown and the write does not
+// settle it. A write settles it when it names a task, or the failure -1,
+// or a context ID other than the recorded one.
+func keptUnknownOutcome(replaced map[string]interface{}, contextID string, taskID int) (unknownOutcomeRecord, bool) {
+	replacedState, _ := replaced["state"].(string)
+	replacedContextID, _ := replaced[taskRecordContextIDKey].(string)
+
+	if replacedState != TaskStateOutcomeUnknown || taskID != 0 || contextID != replacedContextID {
+		return unknownOutcomeRecord{}, false
+	}
+
+	unknownSince, _ := replaced[TaskRecordUnknownSinceKey].(string)
+
+	return unknownOutcomeRecord{State: TaskStateOutcomeUnknown, ContextID: replacedContextID, UnknownSince: unknownSince}, true
+}
+
+// unknownOutcomeRecord is the task record of an operation whose director
+// request was sent and whose answer was lost. It has no task ID at all.
+type unknownOutcomeRecord struct {
+	Action         string      `json:"action"`
+	State          string      `json:"state"`
+	Description    string      `json:"description"`
+	UpdatedAt      int64       `json:"updated_at"`
+	Params         interface{} `json:"params"`
+	ContextID      string      `json:"context_id"`
+	UnknownSince   string      `json:"unknown_since"`
+	DeploymentName string      `json:"deployment_name,omitempty"`
+}
+
 // Bounds on the write of an unknown outcome. A lost write leaves the
 // operation to the older recovery paths, which cannot look its task up by
 // the context ID, so the write is tried again a few times within a bound of
@@ -183,7 +265,9 @@ const (
 // can take it for a task, or for task 0, which once meant a deployment was
 // gone. The params and the deployment name of the replaced record are kept
 // when it is for the same action, and the description goes into the
-// history as TrackProgress writes it.
+// history as TrackProgress writes it. When the replaced record already
+// holds the unknown outcome of the same context ID, its unknown-since time
+// is kept.
 //
 // The write runs detached from ctx's cancellation, under a bound of its
 // own, and a failed write is tried up to three times in all within it.
@@ -198,27 +282,29 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 	logger := logger.Get().Named("vault track outcome unknown " + instanceID)
 	logger.Debug("recording an unknown outcome for '%s' with context ID %s: %s", action, contextID, description)
 
-	task := struct {
-		Action         string      `json:"action"`
-		State          string      `json:"state"`
-		Description    string      `json:"description"`
-		UpdatedAt      int64       `json:"updated_at"`
-		Params         interface{} `json:"params"`
-		ContextID      string      `json:"context_id"`
-		UnknownSince   string      `json:"unknown_since"`
-		DeploymentName string      `json:"deployment_name,omitempty"`
-	}{
-		Action:       action,
-		State:        TaskStateOutcomeUnknown,
-		Description:  description,
-		UpdatedAt:    time.Now().Unix(),
-		ContextID:    contextID,
-		UnknownSince: since.UTC().Format(time.RFC3339Nano),
-	}
+	sinceText := since.UTC().Format(time.RFC3339Nano)
 
 	build := func(replaced map[string]interface{}) interface{} {
-		task.Params = replaced["params"]
+		task := unknownOutcomeRecord{
+			Action:       action,
+			State:        TaskStateOutcomeUnknown,
+			Description:  description,
+			UpdatedAt:    time.Now().Unix(),
+			ContextID:    contextID,
+			UnknownSince: sinceText,
+			Params:       replaced["params"],
+		}
 		task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
+
+		// The same request's outcome recorded again keeps the time it
+		// first became unknown.
+		replacedState, _ := replaced["state"].(string)
+		replacedContextID, _ := replaced[taskRecordContextIDKey].(string)
+		replacedSince, _ := replaced[TaskRecordUnknownSinceKey].(string)
+
+		if replacedState == TaskStateOutcomeUnknown && replacedContextID == contextID && replacedSince != "" {
+			task.UnknownSince = replacedSince
+		}
 
 		return task
 	}
@@ -260,6 +346,15 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 // failure the write records. The caller writes the ID it must not lose
 // with that ID in hand, rather than relying on it being kept.
 func (vault *Vault) writeTaskRecord(ctx context.Context, instanceID, action string, logger logger.Logger, build func(replaced map[string]interface{}) interface{}) error {
+	return vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, nil, build)
+}
+
+// writeTaskRecordGuarded writes the task record as writeTaskRecord does.
+// When guard is not nil, it gets the current record whatever its action,
+// or nil when there is none, and an error it returns stops the write. A
+// guarded write also stops when the current record cannot be read, because
+// the guard cannot judge it.
+func (vault *Vault) writeTaskRecordGuarded(ctx context.Context, instanceID, action string, logger logger.Logger, guard func(current map[string]interface{}) error, build func(replaced map[string]interface{}) interface{}) error {
 	unlock, err := vault.taskLocks.lock(ctx, instanceID)
 	if err != nil {
 		return err
@@ -273,12 +368,25 @@ func (vault *Vault) writeTaskRecord(ctx context.Context, instanceID, action stri
 	exists, err := vault.Get(ctx, instanceID+"/task", &current)
 
 	switch {
+	case err != nil && guard != nil:
+		return fmt.Errorf("could not read %s/task to check it before replacing it: %w", instanceID, err)
 	case err != nil:
 		logger.Warning("could not read %s/task before replacing it, so nothing it records is kept: %s", instanceID, err)
 	case exists && current != nil:
 		recordedAction, _ := current["action"].(string)
 		if recordedAction == action {
 			replaced = current
+		}
+	}
+
+	if guard != nil {
+		if !exists {
+			current = nil
+		}
+
+		err = guard(current)
+		if err != nil {
+			return err
 		}
 	}
 
