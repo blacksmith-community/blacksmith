@@ -853,6 +853,55 @@ var _ = Describe("A delete of an instance the index does not have", func() {
 		Eventually(func() []string { return director.Calls("DeleteDeployment") }, 10*time.Second).Should(ConsistOf(deploymentName))
 	})
 
+	// expectNothingRecorded checks that the delete left no index entry, task
+	// record, or metadata behind.
+	expectNothingRecorded := func() {
+		vaultClient := internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
+
+		_, indexed, err := vaultClient.FindInstance(ctx, instanceID)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(indexed).To(BeFalse(), "the refused delete left an index entry")
+
+		for _, path := range []string{"/task", "/metadata"} {
+			var record map[string]interface{}
+
+			exists, err := vaultClient.Get(ctx, instanceID+path, &record)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(exists).To(BeFalse(), "the refused delete wrote %s%s", instanceID, path)
+		}
+	}
+
+	// A deployment with a task still running on it, such as the create of a
+	// provision whose index entry is gone, must not be deleted under it.
+	It("refuses the delete while a BOSH task runs on the deployment", func() {
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+			return &bosh.Task{ID: 55, State: "processing", Description: "create deployment"}, nil
+		}
+
+		_, async, err := brokerInstance.Deprovision(ctx, instanceID, request, true)
+		Expect(errors.Is(err, osbapi.ErrConcurrencyError)).To(BeTrue(), "the delete answered %v", err)
+		Expect(async).To(BeFalse())
+		Expect(director.Calls("FindRunningTaskForDeployment")).To(ContainElement(deploymentName))
+		Consistently(func() []string { return director.Calls("DeleteDeployment") }, 500*time.Millisecond).Should(BeEmpty())
+
+		expectNothingRecorded()
+	})
+
+	It("fails the delete when it cannot check for a running BOSH task", func() {
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+			return nil, errors.New("director failure")
+		}
+
+		_, async, err := brokerInstance.Deprovision(ctx, instanceID, request, true)
+		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, osbapi.ErrGoneError)).To(BeFalse(), "a deployment that exists was answered as gone: %v", err)
+		Expect(errors.Is(err, osbapi.ErrConcurrencyError)).To(BeFalse(), "an unknown task state was answered as a running task: %v", err)
+		Expect(async).To(BeFalse())
+		Consistently(func() []string { return director.Calls("DeleteDeployment") }, 500*time.Millisecond).Should(BeEmpty())
+
+		expectNothingRecorded()
+	})
+
 	It("fails a delete it cannot record while the director still has the deployment", func() {
 		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
 		Expect(err).ToNot(HaveOccurred())

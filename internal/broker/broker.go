@@ -1616,8 +1616,10 @@ var errInstanceUnindexed = errors.New("instance has no index entry")
 // does not have. The instance is gone when the director confirms that the
 // deployment named from the request's plan and the instance ID is gone, and
 // the request then answers 410 Gone with nothing recorded. A deployment that
-// still exists is left to the deprovision, which records the request and
-// deletes it. An indexed instance is left to the deprovision as well.
+// still exists gets the running-task check that rejectIfOperationInProgress
+// gives an indexed instance, and with no task running it is left to the
+// deprovision, which records the request and deletes it. An indexed instance
+// is left to the deprovision as well.
 func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, logger logger.Logger) error {
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
@@ -1636,6 +1638,11 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 	deploymentName := details.PlanID + "-" + instanceID
 
 	err = b.deploymentGone(readCtx, instanceID, deploymentName, logger)
+	if err != nil {
+		return err
+	}
+
+	err = b.rejectIfDeploymentBusy(readCtx, instanceID, deploymentName, logger)
 	if err != nil {
 		return err
 	}
@@ -1674,17 +1681,23 @@ func (b *Broker) deploymentGone(ctx context.Context, instanceID, deploymentName 
 // deployment behind. A provision still in flight in this process holds the
 // instance's operation claim, so Deprovision has refused it already.
 //
-// Instances that are not in the index are left to the regular flow, which
-// still records the request and answers with the OSB "does not exist" error.
+// An instance the index does not have is checked by
+// refuseDeleteOfGoneInstance, once the director confirms that the deployment
+// named from the request's plan and the instance ID exists. A failed lookup is
+// left to refuseDeleteOfGoneInstance as well, which reports it.
 func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID string, logger logger.Logger) error {
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
 	if err != nil || !exists {
-		// validateInstanceExists reports lookup failures and missing instances.
-		return nil //nolint:nilerr // the caller re-runs the lookup and surfaces the error
+		return nil //nolint:nilerr // refuseDeleteOfGoneInstance re-runs the lookup and surfaces the error
 	}
 
-	deploymentName := deploymentNameForInstance(instanceID, instance)
+	return b.rejectIfDeploymentBusy(ctx, instanceID, deploymentNameForInstance(instanceID, instance), logger)
+}
 
+// rejectIfDeploymentBusy returns the OSB concurrency error when BOSH still
+// reports a queued or running task for deploymentName, and an error when the
+// director cannot say whether it does.
+func (b *Broker) rejectIfDeploymentBusy(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) error {
 	task, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("could not determine whether deployment %s has a running BOSH task: %s", deploymentName, err)
