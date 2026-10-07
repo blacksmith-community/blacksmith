@@ -108,6 +108,11 @@ type ServiceMonitor struct {
 	FailureCount   int
 	IsHealthy      bool
 	IsProvisioning bool // true until status is "running" or "failing", uses 5-min interval
+
+	// checking is true while a check cycle checks the instance. Another
+	// cycle skips the instance until that check ends, so two cycles never
+	// check it at the same time. It is guarded by Monitor.mu.
+	checking bool
 }
 
 // StemcellInfo contains basic stemcell information for a service instance.
@@ -563,23 +568,38 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 	}
 }
 
-// checkScheduledServices checks which services need to be monitored.
+// checkScheduledServices checks the services that are due. Two cycles can
+// overlap, because the monitor loop's tick and TriggerRefreshAll both run
+// one, so a cycle marks each service it takes as being checked and skips a
+// service another cycle is still checking.
 func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	logger := logger.Get().Named("vm-monitor")
 
-	m.mu.RLock()
+	m.mu.Lock()
 
 	servicesDue := make([]*ServiceMonitor, 0)
 	totalServices := len(m.services)
 	now := time.Now()
+	inProgress := 0
 
 	for _, svc := range m.services {
+		if svc.checking {
+			inProgress++
+
+			continue
+		}
+
 		if now.After(svc.NextCheck) || svc.NextCheck.IsZero() {
+			svc.checking = true
 			servicesDue = append(servicesDue, svc)
 		}
 	}
 
-	m.mu.RUnlock()
+	m.mu.Unlock()
+
+	if inProgress > 0 {
+		logger.Debug("Skipping %d services that another check cycle is still checking", inProgress)
+	}
 
 	if len(servicesDue) == 0 {
 		logger.Debug("No services due for check (total tracked: %d)", totalServices)
@@ -608,6 +628,7 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 		go func(s *ServiceMonitor) {
 			defer waitGroup.Done()
 			defer func() { <-sem }()
+			defer m.finishCheck(s)
 			defer func() {
 				// Track worker completion
 				count := atomic.AddInt32(&completed, 1)
@@ -914,6 +935,15 @@ func (m *Monitor) GetStatus() MonitorStatus {
 			"failing":       failingCount,
 		},
 	}
+}
+
+// finishCheck marks a service as no longer being checked, so a later cycle
+// can check it again.
+func (m *Monitor) finishCheck(svc *ServiceMonitor) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	svc.checking = false
 }
 
 // tombstoneUnlessInFlight marks an instance whose deployment the director

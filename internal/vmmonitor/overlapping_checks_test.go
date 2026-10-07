@@ -85,3 +85,65 @@ func TestOverlappingChecksLeaveADeletedInstanceDeleted(t *testing.T) {
 			entryStatus(vault.entry(inFlightID)), marked, stillMonitored, status)
 	}
 }
+
+// count returns how many listings the director was asked for.
+func (h *heldListing) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.listings
+}
+
+// A check cycle skips an instance that another cycle is still checking, so
+// two cycles never check one instance at the same time, and the instance is
+// checked again by a later cycle once the first check ends.
+func TestOverlappingChecksNeverCheckOneInstanceTwice(t *testing.T) {
+	t.Parallel()
+
+	held := newHeldListing()
+
+	director := goneDirector(nil)
+	director.GetDeploymentVMsFn = func(name string) ([]bosh.VM, error) {
+		held.list()
+
+		return []bosh.VM{{ID: name + "-vm", JobState: vmStatusRunning}}, nil
+	}
+
+	vault := &indexVault{entries: map[string]interface{}{inFlightID: oldEntry()}}
+	monitor := vmmonitor.NewWithVault(vault, director, &heldClaims{})
+
+	err := monitor.ScanAllServices(t.Context())
+	if err != nil {
+		t.Fatalf("the scan failed: %v", err)
+	}
+
+	firstDone := make(chan struct{})
+
+	go func() {
+		defer close(firstDone)
+
+		monitor.CheckScheduledServices(t.Context())
+	}()
+
+	<-held.entered
+
+	monitor.CheckScheduledServices(t.Context())
+
+	during := held.count()
+
+	close(held.release)
+	<-firstDone
+
+	if during != 1 {
+		t.Errorf("a second cycle listed the VMs of an instance the first cycle was still checking: %d listings, want 1", during)
+	}
+
+	monitor.TriggerRefreshAll(t.Context())
+
+	after := held.count()
+	status := vault.storedStatus(inFlightID)
+
+	if after != 2 || status != vmStatusRunning {
+		t.Errorf("a cycle after the first check ended: %d listings in all, status %q; want 2 listings and running", after, status)
+	}
+}
