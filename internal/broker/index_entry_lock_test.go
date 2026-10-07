@@ -286,8 +286,8 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 		index, err := suite.vault.ReadSecret("db")
 		Expect(err).ToNot(HaveOccurred())
 
-		marked, ok := index[instanceID].(map[string]interface{})
-		Expect(ok).To(BeTrue(), "the instance's index entry is gone")
+		marked, isEntry := index[instanceID].(map[string]interface{})
+		Expect(isEntry).To(BeTrue(), "the instance's index entry is gone")
 
 		for _, field := range markFields {
 			Expect(marked).To(HaveKey(field), "the mark did not write %s", field)

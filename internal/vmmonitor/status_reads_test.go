@@ -242,15 +242,15 @@ func TestAFreshProvisionStaysProvisioningThroughAFailedCheck(t *testing.T) {
 	t.Parallel()
 
 	var (
-		mu       sync.Mutex
+		answerMu sync.Mutex
 		answered bool
 	)
 
 	director := goneDirector(nil)
 	director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) { return nil, errDirectorUnavailable }
 	director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) {
-		mu.Lock()
-		defer mu.Unlock()
+		answerMu.Lock()
+		defer answerMu.Unlock()
 
 		if !answered {
 			return nil, errDirectorUnavailable
@@ -270,9 +270,9 @@ func TestAFreshProvisionStaysProvisioningThroughAFailedCheck(t *testing.T) {
 	monitor.CheckScheduledServices(t.Context())
 	expectErrorAndStillProvisioning(t, monitor, vault)
 
-	mu.Lock()
+	answerMu.Lock()
 	answered = true
-	mu.Unlock()
+	answerMu.Unlock()
 
 	monitor.TriggerRefreshAll(t.Context())
 
