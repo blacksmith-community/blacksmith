@@ -51,6 +51,9 @@ const (
 	// The state TrackProgress records for an operation that failed.
 	recordedStateFailed = "failed"
 
+	// The description LastOperation gives a deprovision that has finished.
+	descriptionInstanceDeleted = "Instance has been deleted"
+
 	// Deployment-level BOSH event actions that name the task of a deploy or
 	// a delete of the deployment itself.
 	boshEventObjectDeployment = "deployment"
@@ -2168,7 +2171,7 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID, planID s
 		if followErr == nil {
 			logger.Info("instance %s has no index entry, and a delete request is on record, so it has been deleted", instanceID)
 
-			return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+			return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
 		}
 
 		logger.Info("instance %s has no index entry, and its delete request does not count: %s", instanceID, followErr)
@@ -2198,7 +2201,7 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 	if recorded.ContextID == "" {
 		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
 
-		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
 	}
 
 	if recorded.State == internalVault.TaskStateOutcomeUnknown {
@@ -2225,7 +2228,7 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 
 	switch {
 	case errors.Is(err, osbapi.ErrGoneError):
-		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
 	case err != nil:
 		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to confirm the delete with context ID %s: %w", recorded.ContextID, err)
 	case recorded.State == recordedStateFailed:
