@@ -631,7 +631,7 @@ func (b *Broker) LastOperation(
 	}
 
 	if instance == nil {
-		return b.pollWithoutIndexEntry(ctx, instanceID, logger)
+		return b.pollWithoutIndexEntry(ctx, instanceID, details.PlanID, logger)
 	}
 
 	logger.Debug("Instance %s found, deployment: %s", instanceID, deploymentName)
@@ -2124,12 +2124,13 @@ func (b *Broker) OperationClaimed(instanceID string) bool {
 // can remove the entry of a provision that is still running or that lost its
 // deployment. A provision this process is still accepting answers in
 // progress. Otherwise only the records that outlive the entry can show the
-// instance was deleted, which are a deprovision in <instance>/task or a delete
-// request in <instance>/metadata that follows the instance's creation. Every
-// other poll answers failed, so the platform does not take a lost provision
-// for a finished one. A read error returns an error, and the platform polls
-// again.
-func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// instance was deleted, which are a deprovision in <instance>/task, settled
+// by deprovisionWithoutIndexEntry, or a delete request in <instance>/metadata
+// that follows the instance's creation. Every other poll answers failed, so
+// the platform does not take a lost provision for a finished one. A read
+// error returns an error, and the platform polls again. planID is the plan
+// the poll names, and it names the deployment.
+func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID, planID string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if b.provisionActive(instanceID) {
 		logger.Debug("instance %s has no index entry yet, and its provision is still being accepted", instanceID)
 
@@ -2147,9 +2148,7 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, l
 	}
 
 	if recorded.Action == operationTypeDeprovision {
-		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
-
-		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+		return b.deprovisionWithoutIndexEntry(ctx, instanceID, planID, recorded, logger)
 	}
 
 	var metadata map[string]interface{}
@@ -2180,6 +2179,66 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, l
 	return osbapi.LastOperationResponse{
 		State:       osbapi.StateFailed,
 		Description: fmt.Sprintf("Blacksmith has no record of service instance %s, so it cannot finish. Delete the service instance.", instanceID),
+	}, nil
+}
+
+// deprovisionWithoutIndexEntry answers a poll for an instance whose index
+// entry is gone and whose last recorded operation is a deprovision. A
+// deprovision removes the entry only once the director has said the
+// deployment is gone. A record without a context ID, which a deprovision
+// leaves when the deployment was gone before its delete and which a
+// broker from before context IDs left, answers succeeded. The teardown of
+// a deployment that finished after its instance was deprovisioned runs
+// with no entry at all, and its records carry the context ID of its
+// delete, so a record with a context ID answers succeeded only when the
+// director answers that the deployment does not exist. While the delete's outcome is unknown, it answers in progress
+// without asking. A deployment that still exists answers failed when the
+// record says the delete failed, and in progress otherwise.
+func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	if recorded.ContextID == "" {
+		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+	}
+
+	if recorded.State == internalVault.TaskStateOutcomeUnknown {
+		logger.Warning("instance %s has no index entry, and the outcome of its delete with context ID %s is unknown, so it is not reported as deleted", instanceID, recorded.ContextID)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("Whether the director started the delete with context ID %s is not known yet", recorded.ContextID),
+		}, nil
+	}
+
+	if planID == "" {
+		logger.Warning("instance %s has no index entry, and the poll names no plan, so whether the delete with context ID %s removed its deployment cannot be checked", instanceID, recorded.ContextID)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("The delete with context ID %s is not confirmed, and the poll names no plan to check the deployment by", recorded.ContextID),
+		}, nil
+	}
+
+	deploymentName := planID + "-" + instanceID
+
+	err := b.deploymentGone(ctx, instanceID, deploymentName, logger)
+
+	switch {
+	case errors.Is(err, osbapi.ErrGoneError):
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+	case err != nil:
+		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to confirm the delete with context ID %s: %w", recorded.ContextID, err)
+	case recorded.State == recordedStateFailed:
+		logger.Error("instance %s has no index entry, and the delete of deployment %s with context ID %s failed: %s", instanceID, deploymentName, recorded.ContextID, recorded.Description)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
+	}
+
+	logger.Debug("instance %s has no index entry, and deployment %s is still there while its delete with context ID %s runs", instanceID, deploymentName, recorded.ContextID)
+
+	return osbapi.LastOperationResponse{
+		State:       osbapi.StateInProgress,
+		Description: fmt.Sprintf("Deleting deployment %s with context ID %s: %s", deploymentName, recorded.ContextID, recorded.Description),
 	}, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -36,6 +37,7 @@ const (
 	outcomeTaskProcessing   = "processing"
 	outcomeStateFailed      = "failed"
 	outcomeStateUnknown     = "outcome_unknown"
+	outcomeDeprovision      = "deprovision"
 	outcomeDirectorAddress  = "https://director.example:25555"
 )
 
@@ -174,6 +176,17 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		ExpectWithOffset(1, async).To(BeTrue())
 	}
 
+	// pollUnindexed polls the deprovision of the instance, which has no
+	// index entry, with the plan the platform names in each poll.
+	pollUnindexed := func(operation string) osbapi.LastOperationResponse {
+		response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+			ServiceID: serviceID, PlanID: planID, Operation: operation,
+		})
+		ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+		return response
+	}
+
 	// capture returns what the director saw when the request was sent. The
 	// record is read while the request is in flight, so it is the record a
 	// broker restart at that moment would leave.
@@ -283,7 +296,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			var deleteRequest sentRequest
 			Eventually(sent, 10*time.Second).Should(Receive(&deleteRequest))
-			expectRecordedBeforeSending(deleteRequest, "deprovision")
+			expectRecordedBeforeSending(deleteRequest, outcomeDeprovision)
 		})
 
 		It("for the delete of a deployment whose instance was deprovisioned during the deploy", func() {
@@ -293,7 +306,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			var deleteRequest sentRequest
 			Eventually(sent, 10*time.Second).Should(Receive(&deleteRequest))
-			expectRecordedBeforeSending(deleteRequest, "deprovision")
+			expectRecordedBeforeSending(deleteRequest, outcomeDeprovision)
 		})
 
 		It("with an ID no earlier operation used", func() {
@@ -314,7 +327,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			var secondDelete sentRequest
 			Eventually(second, 10*time.Second).Should(Receive(&secondDelete))
 			Expect(secondDelete.contextID).ToNot(Equal(firstDelete.contextID), "two operations sent the same context ID")
-			expectRecordedBeforeSending(secondDelete, "deprovision")
+			expectRecordedBeforeSending(secondDelete, outcomeDeprovision)
 		})
 	})
 
@@ -401,7 +414,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		It("only for the same action", func() {
 			Expect(vaultClient.TrackProgressWithContextID(ctx, instanceID, "provision", "Creating BOSH deployment", uuid.NewString(), 0, nil)).To(Succeed())
 
-			brokerInstance.RecordProgress(ctx, instanceID, "deprovision", "Starting deprovisioning process")
+			brokerInstance.RecordProgress(ctx, instanceID, outcomeDeprovision, "Starting deprovisioning process")
 
 			Expect(readRecord()).ToNot(HaveKey("context_id"), "a deprovision took over the context ID of the provision before it")
 		})
@@ -448,7 +461,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Eventually(settled, 10*time.Second).Should(BeTrue())
 
 			ExpectWithOffset(1, history()).To(ContainElement("Deprovisioning completed (cleanup during retry)"))
-			ExpectWithOffset(1, readRecord()).To(HaveKeyWithValue("action", "deprovision"))
+			ExpectWithOffset(1, readRecord()).To(HaveKeyWithValue("action", outcomeDeprovision))
 			ExpectWithOffset(1, readRecord()).ToNot(HaveKeyWithValue("state", outcomeStateFailed), "the delete of a gone deployment was recorded as failed")
 		}
 
@@ -565,7 +578,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			brokerInstance.WaitForCredentialCleanups()
 			Expect(cleaner.Targets()).To(BeEmpty(), "an unknown delete started the CredHub cleanup")
 
-			expectRecordedUnknown("deprovision", sent()[0], before)
+			expectRecordedUnknown(outcomeDeprovision, sent()[0], before)
 			Expect(sent()).To(HaveLen(1), "the broker resent a delete whose answer was lost")
 		})
 
@@ -580,7 +593,38 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(cleaner.Targets()).To(BeEmpty(), "an unknown delete started the CredHub cleanup")
 
 			Expect(sent()).To(HaveLen(1), "the broker resent a delete whose answer was lost")
-			expectRecordedUnknown("deprovision", sent()[0], before)
+			expectRecordedUnknown(outcomeDeprovision, sent()[0], before)
+		})
+
+		It("nor is the teardown's unknown delete reported as a deletion", func() {
+			sent := loseDeleteAnswers()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(sent()).To(HaveLen(1))
+			Expect(stillIndexed()).To(BeFalse())
+
+			for _, operation := range []string{outcomeDeprovision, ""} {
+				response := pollUnindexed(operation)
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a poll with operation %q answered %+v", operation, response)
+				Expect(response.Description).To(ContainSubstring(sent()[0]), "the answer does not name the context ID")
+			}
+		})
+
+		It("nor is the teardown's unknown delete settled by a poll that finds the deployment gone", func() {
+			sent := loseDeleteAnswers()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(sent()).To(HaveLen(1))
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deploymentName)
+			}
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a poll settled an unknown delete as %+v", response)
+			Expect(response.Description).To(ContainSubstring(sent()[0]))
 		})
 
 		It("and the retry loop stops at the first unknown outcome", func() {
@@ -629,6 +673,138 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(contextID).ToNot(BeEmpty(), "the deploy was never sent")
 			Expect(stillIndexed()).To(BeTrue(), "an unknown deploy removed the index entry")
 			expectRecordedUnknown("provision", contextID, before)
+		})
+	})
+
+	Describe("a poll after the teardown of an abandoned deploy", func() {
+		// recordTeardown writes the record a teardown leaves when it has
+		// recorded its context ID, and returns the ID.
+		recordTeardown := func() string {
+			contextID := uuid.NewString()
+
+			ExpectWithOffset(1, vaultClient.TrackProgressWithContextID(ctx, instanceID, outcomeDeprovision,
+				"Initiating BOSH deployment deletion with retry", contextID, 0, nil)).To(Succeed())
+
+			return contextID
+		}
+
+		existingDeployment := func() *bosh.DeploymentDetail {
+			return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}
+		}
+
+		// deploymentExists makes the director say the deployment exists.
+		deploymentExists := func() {
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return existingDeployment(), nil
+			}
+		}
+
+		It("answers in progress while the delete task runs", func() {
+			sent := scriptDelete()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			var deleteRequest sentRequest
+			Eventually(sent, 10*time.Second).Should(Receive(&deleteRequest))
+			Expect(readRecord()).To(HaveKeyWithValue("state", "in_progress"))
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a running delete was reported as %+v", response)
+			Expect(response.Description).To(ContainSubstring(deleteRequest.contextID))
+		})
+
+		It("answers in progress before the delete is sent", func() {
+			contextID := recordTeardown()
+
+			deploymentExists()
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete not yet sent was reported as %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+		})
+
+		It("answers failed when the delete failed and the deployment is still there", func() {
+			recordTeardown()
+			brokerInstance.RecordFailure(ctx, instanceID, outcomeDeprovision, "Deployment deletion failed: director refused the delete")
+
+			deploymentExists()
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateFailed), "a failed delete was reported as %+v", response)
+			Expect(response.Description).To(ContainSubstring("director refused the delete"))
+		})
+
+		It("answers in progress without a plan to name the deployment by", func() {
+			contextID := recordTeardown()
+
+			var asked []string
+
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				asked = append(asked, name)
+
+				return existingDeployment(), nil
+			}
+
+			response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: outcomeDeprovision})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete that could not be checked was reported as %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(asked).To(BeEmpty(), "the broker asked for a deployment it named without a plan")
+		})
+
+		It("returns an error when the director cannot say whether the deployment exists", func() {
+			recordTeardown()
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return nil, errAnswerLost
+			}
+
+			_, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+				ServiceID: serviceID, PlanID: planID, Operation: outcomeDeprovision,
+			})
+			Expect(err).To(MatchError(errAnswerLost))
+		})
+
+		It("answers succeeded once the director says the deployment is gone", func() {
+			sent := scriptDelete()
+
+			// The delete task finishes, and the deployment is gone, once
+			// the spec says so.
+			var gone atomic.Bool
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				if gone.Load() {
+					return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deploymentName)
+				}
+
+				return existingDeployment(), nil
+			}
+			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+				if gone.Load() {
+					return &bosh.Task{ID: taskID, State: outcomeTaskDone}, nil
+				}
+
+				return &bosh.Task{ID: taskID, State: outcomeTaskProcessing}, nil
+			}
+
+			monitorExited := make(chan string, 1)
+
+			brokerInstance.SetMonitorExited(func(id string) { monitorExited <- id })
+
+			defer broker.SetTaskPollInterval(10 * time.Millisecond)()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+			Eventually(sent, 10*time.Second).Should(Receive())
+
+			gone.Store(true)
+
+			Eventually(monitorExited, 10*time.Second).Should(Receive(Equal(instanceID)))
+			Expect(readRecord()).To(HaveKey("context_id"), "the finished teardown's record lost its context ID")
+
+			for _, operation := range []string{outcomeDeprovision, ""} {
+				response := pollUnindexed(operation)
+				Expect(response.State).To(Equal(osbapi.StateSucceeded), "a poll with operation %q answered %+v", operation, response)
+			}
 		})
 	})
 })
