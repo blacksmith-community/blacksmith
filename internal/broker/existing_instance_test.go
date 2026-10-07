@@ -567,6 +567,53 @@ var _ = Describe("A provision for an instance the index already has", func() {
 			Expect(err).To(MatchError(testutil.ErrSecretNotFound), "the provision wrote a task record")
 		})
 	}
+
+	// A partial entry indexed before deployment_name existed records no
+	// name, and its deployment is named from its own plan ID, which can
+	// differ from the request's. The director is asked for that name too.
+	It("a provision over an entry with no recorded name asks for the name its plan ID builds", func() {
+		entryName := otherPlanID + "-" + instanceID
+		earlier := request
+		earlier.PlanID = otherPlanID
+
+		Expect(brokerInstance.RecordInitialRequest(ctx, instanceID, earlier)).To(Succeed())
+
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			if name == entryName {
+				return &bosh.DeploymentDetail{Name: name}, nil
+			}
+
+			return deploymentNotFound(name)
+		}
+
+		entryBefore := indexEntry()
+		Expect(entryBefore).ToNot(HaveKey(deploymentNameKey))
+
+		_, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
+		Expect(err).To(HaveOccurred(), "the provision went ahead beside the entry's deployment")
+		Expect(errors.Is(err, osbapi.ErrInstanceAlreadyExists)).To(BeTrue(), "the provision answered %v", err)
+		Expect(async).To(BeFalse())
+		Expect(director.Calls("GetDeployment")).To(ContainElements(deploymentName, entryName))
+
+		Expect(indexEntry()).To(Equal(entryBefore), "the provision rewrote the index entry")
+		Consistently(func() []string { return director.Calls("CreateDeployment") }, 500*time.Millisecond).Should(BeEmpty(), "the provision started a deploy")
+	})
+
+	// An entry with neither a recorded name nor a plan ID names no
+	// deployment of its own, so only the requested one is checked.
+	It("a provision over an entry with no name and no plan ID checks only the requested deployment", func() {
+		Expect(vaultClient.Index(ctx, instanceID, map[string]interface{}{"service_id": serviceID})).To(Succeed())
+
+		director.GetDeploymentFn = deploymentNotFound
+
+		_, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(async).To(BeTrue())
+		Expect(director.Calls("GetDeployment")).To(ContainElement(deploymentName))
+		Expect(director.Calls("GetDeployment")).ToNot(ContainElement("-"+instanceID), "the director was asked for a name built from an empty plan ID")
+
+		Eventually(func() []string { return director.Calls("CreateDeployment") }, 10*time.Second).ShouldNot(BeEmpty())
+	})
 })
 
 // deploymentNameKey is the index entry field that records an instance's

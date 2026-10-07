@@ -1196,9 +1196,12 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 
 // refuseProvisionOverDeployments runs refuseProvisionOverDeployment for the
 // deployment the provision would create, named from the request's plan and
-// the instance ID, and then for the deployment the entry records when that
-// name differs. A recorded deployment, such as one the reconciler adopted
-// under another plan, would otherwise be left beside a second deployment.
+// the instance ID, and then for the entry's own deployment when that name
+// differs. The entry's deployment is the one it records, or the one its plan
+// ID and the instance ID name when it records none. Such a deployment, like
+// one the reconciler adopted under another plan, would otherwise be left
+// beside a second deployment. An entry with neither a name nor a plan ID
+// names no deployment of its own.
 func (b *Broker) refuseProvisionOverDeployments(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, entry map[string]interface{}, logger logger.Logger) error {
 	requested := details.PlanID + "-" + instanceID
 
@@ -1207,12 +1210,19 @@ func (b *Broker) refuseProvisionOverDeployments(ctx context.Context, instanceID 
 		return err
 	}
 
-	recorded, _ := entry["deployment_name"].(string)
-	if recorded == "" || recorded == requested {
+	recordedName, _ := entry["deployment_name"].(string)
+	entryPlanID, _ := entry["plan_id"].(string)
+
+	if recordedName == "" && entryPlanID == "" {
 		return nil
 	}
 
-	return b.refuseProvisionOverDeployment(ctx, instanceID, recorded, logger)
+	entryDeployment := indexEntryDeploymentName(instanceID, entry)
+	if entryDeployment == requested {
+		return nil
+	}
+
+	return b.refuseProvisionOverDeployment(ctx, instanceID, entryDeployment, logger)
 }
 
 // refuseProvisionOverDeployment asks the director for a deployment that a
