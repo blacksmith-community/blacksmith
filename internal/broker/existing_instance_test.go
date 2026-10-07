@@ -297,7 +297,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 			brokerInstance.RecordTask(ctx, instanceID, "provision", "BOSH deployment task 77 is error", -1)
 		}},
 		{"a repeat for an instance the vm-monitor marked deleted answers 409", true, func() {
-			Expect(vaultClient.MarkInstanceDeleted(ctx, instanceID)).To(Succeed())
+			Expect(markDeletedAsTheMonitorDoes(ctx, vaultClient, instanceID)).To(Succeed())
 		}},
 		{"a repeat for an instance with the older deleted flag answers 409", true, func() {
 			Expect(vaultClient.UpdateIndexEntry(ctx, instanceID, map[string]interface{}{"deleted": true})).To(Succeed())

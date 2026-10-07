@@ -372,52 +372,6 @@ func applyIndexUpdates(logger logger.Logger, idx *vaultPkg.Index, instanceID str
 	idx.Data[instanceID] = entry
 }
 
-// MarkInstanceDeleted marks an instance as deleted in the vault index.
-func (vault *Vault) MarkInstanceDeleted(ctx context.Context, instanceID string) error {
-	logger := logger.Get().Named("vault")
-
-	var marked bool
-
-	// Only an instance that is still indexed can be marked. Creating a bare
-	// tombstone for one that a deprovision or the reconciler already removed
-	// leaves an entry with no service, plan, or deployment fields behind. The
-	// check and the mark happen under one hold of the index lock, so a
-	// removal in this process cannot land between them.
-	err := vault.updateIndex(ctx, func(idx *vaultPkg.Index) (bool, error) {
-		_, exists, err := instanceFromIndex(idx, instanceID)
-		if err != nil {
-			return false, fmt.Errorf("failed to check whether instance %s is indexed: %w", instanceID, err)
-		}
-
-		marked = exists
-		if !exists {
-			return false, nil
-		}
-
-		applyIndexUpdates(logger, idx, instanceID, map[string]interface{}{
-			"status":          "deleted",
-			"deleted_at":      time.Now().Format(time.RFC3339),
-			"deleted_by":      "vm-monitor",
-			"deletion_reason": "deployment not found in BOSH director",
-		})
-
-		return true, nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to mark instance %s as deleted: %w", instanceID, err)
-	}
-
-	if !marked {
-		logger.Info("instance %s is not in the vault index, nothing to mark as deleted", instanceID)
-
-		return nil
-	}
-
-	logger.Info("successfully marked instance %s as deleted", instanceID)
-
-	return nil
-}
-
 // Helper function to convert interface{} recursively.
 func deinterface(option interface{}) interface{} {
 	switch option := option.(type) {

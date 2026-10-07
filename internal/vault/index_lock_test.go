@@ -125,7 +125,7 @@ var _ = Describe("Vault index read-modify-writes", func() {
 			case 1:
 				return client.UpdateIndexEntry(ctx, key(entry), map[string]interface{}{"note": "updated"})
 			case 2:
-				return client.MarkInstanceDeleted(ctx, key(entry))
+				return markDeletedAsTheMonitorDoes(ctx, client, key(entry))
 			case 3:
 				client.Clear(key(entry))
 
@@ -247,3 +247,27 @@ var _ = Describe("Vault index read-modify-writes", func() {
 		})
 	})
 })
+
+// markDeletedAsTheMonitorDoes marks an indexed instance deleted the way the vm-monitor does,
+// in one index update that keeps every field of the entry. It marks nothing
+// when the instance is not indexed.
+func markDeletedAsTheMonitorDoes(ctx context.Context, client *vault.Vault, instanceID string) error {
+	err := client.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
+		entry, indexed := entries[instanceID].(map[string]interface{})
+		if !indexed {
+			return false, nil
+		}
+
+		entry["status"] = "deleted"
+		entry["deleted_at"] = time.Now().Format(time.RFC3339)
+		entry["deleted_by"] = "vm-monitor"
+		entry["deletion_reason"] = "deployment not found in BOSH director"
+
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("mark %s deleted: %w", instanceID, err)
+	}
+
+	return nil
+}

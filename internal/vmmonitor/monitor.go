@@ -1092,9 +1092,9 @@ func entryMarkedDeleted(entry interface{}) bool {
 }
 
 // deletedEntry returns a copy of an index entry marked deleted by the
-// vm-monitor, with the fields Vault.MarkInstanceDeleted writes. An entry
-// that is not a map is replaced by one that holds only the mark, as
-// MarkInstanceDeleted does.
+// vm-monitor. The mark sets status, deleted_at, deleted_by, and
+// deletion_reason, and the copy keeps every other field of the entry. An
+// entry that is not a map is replaced by one that holds only the mark.
 func deletedEntry(entry interface{}) map[string]interface{} {
 	fields, _ := entry.(map[string]interface{})
 

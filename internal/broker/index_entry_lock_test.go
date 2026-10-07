@@ -166,7 +166,7 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 
 		markErr := make(chan error, 1)
 
-		go func() { markErr <- b.Vault.MarkInstanceDeleted(ctx, instanceID) }()
+		go func() { markErr <- markDeletedAsTheMonitorDoes(ctx, b.Vault, instanceID) }()
 
 		select {
 		case err := <-markErr:
@@ -253,3 +253,30 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 		Expect(entry).To(HaveKey("requested_at"))
 	})
 })
+
+// indexStatusDeleted is the status of an index entry marked deleted.
+const indexStatusDeleted = "deleted"
+
+// markDeletedAsTheMonitorDoes marks an indexed instance deleted the way the vm-monitor does,
+// in one index update that keeps every field of the entry. It marks nothing
+// when the instance is not indexed.
+func markDeletedAsTheMonitorDoes(ctx context.Context, client *internalVault.Vault, instanceID string) error {
+	err := client.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
+		entry, indexed := entries[instanceID].(map[string]interface{})
+		if !indexed {
+			return false, nil
+		}
+
+		entry["status"] = indexStatusDeleted
+		entry["deleted_at"] = time.Now().Format(time.RFC3339)
+		entry["deleted_by"] = "vm-monitor"
+		entry["deletion_reason"] = "deployment not found in BOSH director"
+
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("mark %s deleted: %w", instanceID, err)
+	}
+
+	return nil
+}
