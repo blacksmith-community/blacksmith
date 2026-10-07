@@ -223,6 +223,10 @@ var _ = Describe("The operation claim on an instance", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(brokerInstance.DeprovisionActive(instanceID)).To(BeFalse(), "a failed deprovision left its claim behind")
 
+		// The seeded entry records no accepted provision, so the provision
+		// asks the director for its deployment, which does not exist.
+		director.GetDeploymentFn = deploymentNotFound
+
 		_, async, err := brokerInstance.Provision(ctx, instanceID, provisionArg, true)
 		Expect(err).ToNot(HaveOccurred(), "a provision was refused by the claim of a failed deprovision")
 		Expect(async).To(BeTrue())
@@ -238,6 +242,8 @@ var _ = Describe("The operation claim on an instance", func() {
 		}).To(PanicWith("injected director panic"))
 		Expect(brokerInstance.DeprovisionActive(instanceID)).To(BeFalse(), "a deprovision that panicked left its claim behind")
 
+		director.GetDeploymentFn = deploymentNotFound
+
 		_, async, err := brokerInstance.Provision(ctx, instanceID, provisionArg, true)
 		Expect(err).ToNot(HaveOccurred(), "a provision was refused by the claim of a deprovision that panicked")
 		Expect(async).To(BeTrue())
@@ -248,6 +254,10 @@ var _ = Describe("The operation claim on an instance", func() {
 
 		logger.Set(&panicLogger{NoOpLogger: &logger.NoOpLogger{}, trigger: "Looking up plan"})
 
+		// The seeded entry records no accepted provision, so the provision
+		// asks the director for its deployment before it looks up the plan.
+		director.GetDeploymentFn = deploymentNotFound
+
 		Expect(func() {
 			defer logger.Set(previous)
 
@@ -255,6 +265,7 @@ var _ = Describe("The operation claim on an instance", func() {
 		}).To(PanicWith("injected accept chain panic"))
 		Expect(brokerInstance.ProvisionActive(instanceID)).To(BeFalse(), "a provision that panicked left its claim behind")
 
+		director.GetDeploymentFn = nil
 		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
 			return nil, nil //nolint:nilnil // no running task is a nil task without an error
 		}

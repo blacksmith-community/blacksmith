@@ -455,15 +455,61 @@ var _ = Describe("A provision for an instance the index already has", func() {
 		It(partial.name, func() {
 			partial.seed()
 
+			director.GetDeploymentFn = deploymentNotFound
+
 			response, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(async).To(BeTrue())
 			Expect(response).To(Equal(osbapi.ProvisionResponse{Operation: "provision"}))
+			Expect(director.Calls("GetDeployment")).To(ContainElement(deploymentName), "the director was not asked for the deployment the provision creates")
 
 			Eventually(func() []string { return director.Calls("CreateDeployment") }, 10*time.Second).ShouldNot(BeEmpty())
 		})
 	}
+
+	// A partial entry can sit beside a deployment that exists, such as one
+	// the reconciler adopted with no task record and no created_at. Only the
+	// director's deployment-not-found answer lets the provision deploy.
+	directorAnswers := []struct {
+		name      string
+		answer    func(name string) (*bosh.DeploymentDetail, error)
+		conflicts bool
+	}{
+		{"a provision over a partial entry whose deployment exists answers 409 and deploys nothing", func(name string) (*bosh.DeploymentDetail, error) {
+			return &bosh.DeploymentDetail{Name: name}, nil
+		}, true},
+		{"a provision over a partial entry fails and deploys nothing when the director cannot say whether its deployment exists", func(string) (*bosh.DeploymentDetail, error) {
+			return nil, errors.New("director failure")
+		}, false},
+	}
+
+	for _, directorAnswer := range directorAnswers {
+		It(directorAnswer.name, func() {
+			Expect(brokerInstance.RecordInitialRequest(ctx, instanceID, request)).To(Succeed())
+
+			director.GetDeploymentFn = directorAnswer.answer
+			entryBefore := indexEntry()
+
+			_, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, osbapi.ErrInstanceAlreadyExists)).To(Equal(directorAnswer.conflicts), "the provision answered %v", err)
+			Expect(async).To(BeFalse())
+			Expect(director.Calls("GetDeployment")).To(ContainElement(deploymentName))
+
+			Expect(indexEntry()).To(Equal(entryBefore), "the provision rewrote the index entry")
+			Consistently(func() []string { return director.Calls("CreateDeployment") }, 500*time.Millisecond).Should(BeEmpty(), "the provision started a deploy")
+
+			_, err = suite.vault.ReadSecret(instanceID + "/task")
+			Expect(err).To(MatchError(testutil.ErrSecretNotFound), "the provision wrote a task record")
+		})
+	}
 })
+
+// deploymentNotFound answers a GetDeployment the way the director adapter
+// does when the director answers with its deployment-not-found code.
+func deploymentNotFound(name string) (*bosh.DeploymentDetail, error) {
+	return nil, fmt.Errorf("deployment %s: %w", name, bosh.ErrDeploymentNotFound)
+}
 
 // osbHandlerServer serves b through the OSB library's HTTP handler on a
 // loopback address.

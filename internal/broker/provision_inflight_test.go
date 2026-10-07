@@ -299,6 +299,10 @@ var _ = Describe("Provision repeated while the first is in flight", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(brokerInstance.ProvisionActive(instanceID)).To(BeFalse(), "a refused provision left its claim behind")
 
+		// The refused request left a partial index entry, so the retry asks
+		// the director for its deployment, which does not exist.
+		director.GetDeploymentFn = deploymentNotFound
+
 		_, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(async).To(BeTrue())

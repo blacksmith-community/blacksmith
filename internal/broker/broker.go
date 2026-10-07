@@ -1094,9 +1094,10 @@ func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operatio
 // index already has, from the instance's records, and reports whether it
 // answered. An instance with no index entry is not answered, and neither is
 // one whose entry a refused accept chain left before the provision was
-// accepted. Those requests go on as new provisions. An index or record that
-// cannot be read fails the request, because taking it for a missing instance
-// could deploy over one that exists.
+// accepted, once the director confirms that the deployment the provision
+// would create does not exist. Those requests go on as new provisions. An
+// index or record that cannot be read fails the request, because taking it
+// for a missing instance could deploy over one that exists.
 //
 // An instance that is marked deleted, is being deprovisioned, or whose
 // provision failed gets 409 Conflict, and nothing is deployed over it. Any
@@ -1139,6 +1140,11 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 	}
 
 	if !provisionAccepted(entry, recorded) {
+		err = b.refuseProvisionOverDeployment(readCtx, instanceID, details.PlanID+"-"+instanceID, logger)
+		if err != nil {
+			return osbapi.ProvisionResponse{}, false, errors.Is(err, osbapi.ErrInstanceAlreadyExists), err
+		}
+
 		logger.Info("Instance %s has an index entry from a provision that was never accepted; provisioning it as a new instance", instanceID)
 
 		return osbapi.ProvisionResponse{}, false, false, nil
@@ -1177,6 +1183,30 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 	logger.Info("Instance %s is being provisioned with the same attributes; accepting the repeat without starting another deploy", instanceID)
 
 	return osbapi.ProvisionResponse{Operation: operationTypeProvision}, true, true, nil
+}
+
+// refuseProvisionOverDeployment asks the director for the deployment that a
+// provision of an instance with a partial index entry would create. Such an
+// entry records no accepted provision, but a deployment can still sit beside
+// it, such as one the reconciler adopted. It returns nil only when the
+// director answers with its own deployment-not-found code. A deployment that
+// exists answers 409 Conflict, and any other answer fails the request, so
+// nothing is deployed over a deployment that may exist.
+func (b *Broker) refuseProvisionOverDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) error {
+	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
+
+	switch {
+	case err == nil:
+		logger.Warning("Refusing provision of instance %s: its index entry records no accepted provision, but deployment %s exists", instanceID, deploymentName)
+
+		return fmt.Errorf("%w: deployment %s of instance %s already exists, and a provision with the same ID is refused", osbapi.ErrInstanceAlreadyExists, deploymentName, instanceID)
+	case errors.Is(err, bosh.ErrDeploymentNotFound):
+		return nil
+	default:
+		logger.Error("Refusing provision of instance %s: the director could not confirm whether deployment %s exists: %s", instanceID, deploymentName, err)
+
+		return fmt.Errorf("could not confirm whether deployment %s of instance %s exists, so the provision was refused: %w", deploymentName, instanceID, err)
+	}
 }
 
 // provisionAccepted reports whether an index entry belongs to an instance the
