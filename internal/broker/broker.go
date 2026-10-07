@@ -1112,8 +1112,9 @@ func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operatio
 // provision failed gets 409 Conflict, and nothing is deployed over it. Any
 // other instance is compared with the request, which matches when its service,
 // plan, organization, space, and parameters all equal the instance's. A match
-// gets success with no operation when the provision has finished, which the
-// OSB library sends as 201 Created, and 202 Accepted with the provision
+// gets osbapi.ErrInstanceAlreadyProvisioned with an empty response when the
+// provision has finished, which the OSB library sends as 200 OK with the body
+// {}, and 202 Accepted with the provision
 // operation while it runs, so the platform polls last_operation for the
 // outcome. A difference gets 409 Conflict.
 func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, logger logger.Logger) (osbapi.ProvisionResponse, bool, bool, error) {
@@ -1186,7 +1187,7 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 	if createdAt, _ := entry["created_at"].(string); createdAt != "" {
 		logger.Info("Instance %s was provisioned with the same attributes at %s; answering the repeat without deploying", instanceID, createdAt)
 
-		return osbapi.ProvisionResponse{}, false, true, nil
+		return osbapi.ProvisionResponse{}, false, true, osbapi.ErrInstanceAlreadyProvisioned
 	}
 
 	logger.Info("Instance %s is being provisioned with the same attributes; accepting the repeat without starting another deploy", instanceID)

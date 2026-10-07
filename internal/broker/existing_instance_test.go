@@ -188,25 +188,26 @@ var _ = Describe("A provision for an instance the index already has", func() {
 		entryBefore, taskBefore := indexEntry(), taskRecord()
 
 		response, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
-		Expect(err).ToNot(HaveOccurred())
+		Expect(err).To(MatchError(osbapi.ErrInstanceAlreadyProvisioned))
 		Expect(async).To(BeFalse(), "a finished instance was answered as an operation in progress")
 		Expect(response).To(Equal(osbapi.ProvisionResponse{}), "the answer carried an operation or a dashboard URL")
 
 		expectNothingDeployed(entryBefore, taskBefore)
 	})
 
-	// The OSB library answers a provision that returns no operation with 201
-	// Created, its only synchronous success. The platform treats it as it
-	// treats 200 OK, and the instance is not deployed again.
-	It("a repeat of a finished provision answers 201 through the OSB handler", func() {
+	// The OSB library answers 200 OK, with the returned response as the
+	// body, when the provision returns ErrInstanceAlreadyProvisioned. The
+	// response is empty, so the body is {}, and the instance is not deployed
+	// again.
+	It("a repeat of a finished provision answers 200 and {} through the OSB handler", func() {
 		seedAcceptedProvision(request, true)
 
 		server := osbHandlerServer(brokerInstance)
 		defer server.Close()
 
 		status, body := sendOSBRequest(server.URL, http.MethodPut, "/v2/service_instances/"+instanceID+"?accepts_incomplete=true", request)
-		Expect(status).To(Equal(http.StatusCreated), "body: %s", body)
-		Expect(body).ToNot(ContainSubstring("dashboard_url"))
+		Expect(status).To(Equal(http.StatusOK), "body: %s", body)
+		Expect(strings.TrimSpace(body)).To(Equal("{}"))
 		Expect(director.Calls("CreateDeployment")).To(BeEmpty())
 	})
 
@@ -391,7 +392,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 
 	// The created_at that the completion hook writes shows a finished
 	// provision, even when the task record that would show it is gone.
-	It("a repeat of a finished provision whose task record is gone answers 201 and deploys nothing", func() {
+	It("a repeat of a finished provision whose task record is gone answers 200 and deploys nothing", func() {
 		seedAcceptedProvision(request, true)
 		Expect(vaultClient.Delete(ctx, instanceID+"/task")).To(Succeed())
 
@@ -401,7 +402,8 @@ var _ = Describe("A provision for an instance the index already has", func() {
 		defer server.Close()
 
 		status, body := sendOSBRequest(server.URL, http.MethodPut, "/v2/service_instances/"+instanceID+"?accepts_incomplete=true", request)
-		Expect(status).To(Equal(http.StatusCreated), "body: %s", body)
+		Expect(status).To(Equal(http.StatusOK), "body: %s", body)
+		Expect(strings.TrimSpace(body)).To(Equal("{}"))
 
 		Expect(indexEntry()).To(Equal(entryBefore), "the repeat rewrote the index entry")
 		Consistently(func() []string { return director.Calls("CreateDeployment") }, 500*time.Millisecond).Should(BeEmpty(), "the repeat started a deploy")
