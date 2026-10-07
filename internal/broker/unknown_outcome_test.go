@@ -633,6 +633,30 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(err).To(MatchError(bosh.ErrDeploymentNotFound))
 			Expect(err.Error()).To(ContainSubstring(deploymentName))
 		})
+
+		It("refuses a delete with no context ID rather than sending one", func() {
+			var asked atomic.Int32
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				asked.Add(1)
+
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				asked.Add(1)
+
+				return &bosh.Task{ID: 1, State: outcomeTaskProcessing}, nil
+			}
+
+			var err error
+
+			Expect(func() {
+				err = brokerInstance.RetryDeleteDeploymentWithContextID(ctx, deploymentName, instanceID, "", 3)
+			}).NotTo(Panic())
+			Expect(err).To(MatchError(broker.ErrNoDeleteContextID))
+			Expect(err.Error()).To(ContainSubstring(deploymentName))
+			Expect(asked.Load()).To(BeZero(), "the broker asked the director about a delete it cannot name")
+		})
 	})
 
 	Describe("an unknown delete outcome never removes the index entry", func() {

@@ -99,6 +99,9 @@ var (
 	// ErrContextIDNotRecorded marks a deploy or delete that was not sent,
 	// because the context ID it would carry could not be recorded first.
 	ErrContextIDNotRecorded = errors.New("the context ID could not be recorded, so the request was not sent")
+	// ErrNoDeleteContextID marks a delete that was not sent, because it had
+	// no context ID to carry.
+	ErrNoDeleteContextID = errors.New("the delete has no context ID to carry, so it was not sent")
 )
 
 // Helper methods for provisionAsync refactoring
@@ -1063,6 +1066,10 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 // Every delete request carries contextID, the context ID the deprovision
 // recorded before it started.
 func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, instanceID, contextID string, maxRetries int) (*bosh.Task, error) {
+	if contextID == "" {
+		return nil, fmt.Errorf("%w: deployment %s of instance %s", ErrNoDeleteContextID, deploymentName, instanceID)
+	}
+
 	logger := logger.Get().Named("broker")
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
