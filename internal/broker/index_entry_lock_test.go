@@ -15,6 +15,7 @@ import (
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
+	"blacksmith/internal/vmmonitor"
 	"blacksmith/internal/vmmonitor/vmmonitortest"
 	"blacksmith/pkg/testutil"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
@@ -264,6 +265,45 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 		Expect(entry).ToNot(HaveKey("deleted_by"))
 		Expect(entry).ToNot(HaveKey("deletion_reason"))
 		Expect(entry).To(HaveKeyWithValue("deployment_name", planID+"-"+instanceID))
+	})
+
+	// The broker clears a fixed list of the mark's fields, so a field added to
+	// the mark must fail this spec until the broker clears it too. The names
+	// come from the mark itself, minus the status, which a provision sets.
+	It("clears every field the vm-monitor's mark adds when the first provision record lands after it", func() {
+		var markFields []string
+
+		for field := range vmmonitor.DeletedEntry(nil) {
+			if field != "status" {
+				markFields = append(markFields, field)
+			}
+		}
+
+		Expect(markFields).ToNot(BeEmpty())
+
+		Expect(vmmonitortest.MarkDeleted(ctx, b.Vault, instanceID)).To(Succeed())
+
+		index, err := suite.vault.ReadSecret("db")
+		Expect(err).ToNot(HaveOccurred())
+
+		marked, ok := index[instanceID].(map[string]interface{})
+		Expect(ok).To(BeTrue(), "the instance's index entry is gone")
+
+		for _, field := range markFields {
+			Expect(marked).To(HaveKey(field), "the mark did not write %s", field)
+		}
+
+		Expect(b.RecordInitialRequest(ctx, instanceID, provisionRequest())).To(Succeed())
+
+		index, err = suite.vault.ReadSecret("db")
+		Expect(err).ToNot(HaveOccurred())
+
+		entry, ok := index[instanceID].(map[string]interface{})
+		Expect(ok).To(BeTrue(), "the instance's index entry is gone")
+
+		for _, field := range markFields {
+			Expect(entry).ToNot(HaveKey(field), "the provision kept the mark's %s", field)
+		}
 	})
 
 	It("keeps the whole mark when the deployment name is recorded after it", func() {
