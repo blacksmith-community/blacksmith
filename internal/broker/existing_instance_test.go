@@ -479,7 +479,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 			return &bosh.DeploymentDetail{Name: name}, nil
 		}, true},
 		{"a provision over a partial entry fails and deploys nothing when the director cannot say whether its deployment exists", func(string) (*bosh.DeploymentDetail, error) {
-			return nil, errors.New("director failure")
+			return nil, errDirectorUnreachable
 		}, false},
 	}
 
@@ -935,7 +935,7 @@ var _ = Describe("A delete of an instance the index does not have", func() {
 
 	It("fails the delete when it cannot check for a running BOSH task", func() {
 		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
-			return nil, errors.New("director failure")
+			return nil, errDirectorUnreachable
 		}
 
 		_, async, err := brokerInstance.Deprovision(ctx, instanceID, request, true)
@@ -1105,6 +1105,7 @@ var _ = Describe("A delete whose index lookup fails", func() {
 		defer proxy.Close()
 
 		status, body := deleteThrough(proxy.URL)
+
 		Expect(recorded.Load()).To(BeTrue(), "the delete never recorded its request")
 		Expect(status).To(Equal(http.StatusInternalServerError), "body: %s", body)
 		Expect(director.Calls("DeleteDeployment")).To(BeEmpty())
@@ -1245,7 +1246,7 @@ var _ = Describe("The broker's orphan check", func() {
 
 	// writeTask stores a provision task record in progress, with updated_at
 	// only when updatedAt is not nil.
-	writeTask := func(id string, updatedAt *time.Time) {
+	writeTask := func(taskInstanceID string, updatedAt *time.Time) {
 		task := map[string]interface{}{
 			"action":      "provision",
 			"task":        77,
@@ -1257,7 +1258,7 @@ var _ = Describe("The broker's orphan check", func() {
 			task["updated_at"] = updatedAt.Unix()
 		}
 
-		Expect(vaultClient.Put(ctx, id+"/task", task)).To(Succeed())
+		Expect(vaultClient.Put(ctx, taskInstanceID+"/task", task)).To(Succeed())
 	}
 
 	It("removes an old entry whose provision task record has not been updated for two hours", func() {

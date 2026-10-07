@@ -2121,27 +2121,15 @@ func (b *Broker) operationClaimed(instanceID string) bool {
 	return held
 }
 
-// indexEntryTimeFields are the RFC 3339 times that the broker, the
-// reconciler, and the vm-monitor write on an index entry. The reconciler's
-// orphan sweep dates an entry from the same fields.
-var indexEntryTimeFields = []string{
-	"requested_at",
-	"created_at",
-	"reconciled_at",
-	"discovered_at",
-	"updated_at",
-	"unorphaned_at",
-	"deprovision_requested_at",
-	"deleted_at",
-}
-
-// indexEntryNewestTime returns the newest of the RFC 3339 times named in
-// indexEntryTimeFields and the entry's created, a Unix time. The second
-// result is false when the entry carries none of them.
+// indexEntryNewestTime returns the newest of the times an index entry
+// carries, and false when it carries none. They are the RFC 3339 times that
+// the broker, the reconciler, and the vm-monitor write on an entry, and its
+// created, a Unix time. The reconciler's orphan sweep dates an entry from the
+// same fields.
 func indexEntryNewestTime(entry map[string]interface{}) (time.Time, bool) {
 	var newest time.Time
 
-	for _, field := range indexEntryTimeFields {
+	for _, field := range []string{"requested_at", "created_at", "reconciled_at", "discovered_at", "updated_at", "unorphaned_at", "deprovision_requested_at", "deleted_at"} {
 		raw, _ := entry[field].(string)
 
 		parsed, err := time.Parse(time.RFC3339, raw)
