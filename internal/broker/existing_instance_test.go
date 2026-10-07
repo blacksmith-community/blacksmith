@@ -1342,6 +1342,33 @@ var _ = Describe("The broker's orphan check", func() {
 		Expect(indexed(adoptedID)).To(BeTrue(), "the entry of a live deployment was removed")
 	})
 
+	// A deployment list can miss a live deployment, so the director is asked
+	// for the deployment before the entry goes. For an entry that records a
+	// name other than the one its plan ID builds, it must be asked for the
+	// recorded name, because the built name has no deployment and the
+	// director answers deployment-not-found for it.
+	It("the orphan check confirms the stored deployment name with the director", func() {
+		adoptedID, builtName := seedEntry("adopted-unlisted", old, map[string]interface{}{"created": old.Unix()})
+		storedName := "standalone-classic-" + adoptedID
+		Expect(vaultClient.UpdateIndexEntry(ctx, adoptedID, map[string]interface{}{deploymentNameKey: storedName})).To(Succeed())
+
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			if name == storedName {
+				return &bosh.DeploymentDetail{Name: name}, nil
+			}
+
+			return deploymentNotFound(name)
+		}
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(storedName))
+		Expect(removed).ToNot(ContainElement(builtName))
+		Expect(indexed(adoptedID)).To(BeTrue(), "the entry of a live deployment the list missed was removed")
+		Expect(director.Calls("GetDeployment")).To(ContainElement(storedName), "the director was not asked for the stored deployment name")
+		Expect(director.Calls("GetDeployment")).ToNot(ContainElement(builtName), "the director was asked for the name the plan ID builds")
+	})
+
 	// An empty list is more likely a failed scan than an empty director, so
 	// the check removes nothing, even an entry whose deployment is gone.
 	It("the orphan check removes nothing when the deployment list is empty", func() {
