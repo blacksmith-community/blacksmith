@@ -415,3 +415,134 @@ func sendOSBRequest(baseURL, method, path string, body interface{}) (int, string
 
 	return response.StatusCode, strings.TrimSpace(string(answer))
 }
+
+// A poll for an instance the index no longer has must not tell the platform
+// a provision succeeded. Only the records that outlive the index entry, the
+// task record and the metadata, can show that the instance was deleted.
+var _ = Describe("A poll for an instance the index does not have", func() {
+	var (
+		ctx            context.Context
+		stopService    context.CancelFunc
+		vaultClient    *internalVault.Vault
+		brokerInstance *broker.Broker
+		instanceID     string
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		instanceID = fmt.Sprintf("unindexed-%d", time.Now().UnixNano())
+
+		var serviceCtx context.Context
+
+		serviceCtx, stopService = context.WithCancel(context.Background())
+		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
+		brokerInstance = &broker.Broker{
+			Plans:          map[string]services.Plan{},
+			BOSH:           testutil.NewScriptedBOSHDirector(),
+			Vault:          vaultClient,
+			Shield:         &shield.NoopClient{},
+			Config:         &config.Config{},
+			InstanceLocks:  make(map[string]*sync.Mutex),
+			ServiceContext: serviceCtx,
+		}
+	})
+
+	AfterEach(func() {
+		stopBrokerGoroutines(stopService)
+	})
+
+	writeMetadata := func(metadata map[string]interface{}) {
+		Expect(vaultClient.Put(ctx, instanceID+"/metadata", metadata)).To(Succeed())
+	}
+
+	poll := func(operation string) osbapi.LastOperationResponse {
+		response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: operation})
+		Expect(err).ToNot(HaveOccurred())
+
+		return response
+	}
+
+	It("a provision poll with no entry and no delete record answers failed", func() {
+		brokerInstance.RecordTask(ctx, instanceID, "provision", "BOSH deployment in progress (task 77)", 77)
+		writeMetadata(map[string]interface{}{"provision_requested_at": time.Now().UTC().Format(time.RFC3339)})
+
+		for _, operation := range []string{"provision", ""} {
+			response := poll(operation)
+			Expect(response.State).To(Equal(osbapi.StateFailed), "a poll with operation %q answered %+v", operation, response)
+			Expect(response.Description).To(ContainSubstring("no record of service instance " + instanceID))
+			Expect(response.Description).To(ContainSubstring("Delete the service instance"))
+		}
+	})
+
+	It("a poll for an instance with no records at all answers failed", func() {
+		Expect(poll("provision").State).To(Equal(osbapi.StateFailed))
+	})
+
+	It("a deprovision poll after the entry is removed still answers succeeded", func() {
+		brokerInstance.RecordTask(ctx, instanceID, "deprovision", "BOSH delete in progress (task 78)", 78)
+
+		for _, operation := range []string{"deprovision", ""} {
+			response := poll(operation)
+			Expect(response.State).To(Equal(osbapi.StateSucceeded), "a poll with operation %q answered %+v", operation, response)
+		}
+	})
+
+	It("a poll after a delete request on record answers succeeded", func() {
+		created := time.Now().UTC().Add(-time.Hour)
+
+		brokerInstance.RecordTask(ctx, instanceID, "provision", "BOSH deployment in progress (task 77)", 77)
+		writeMetadata(map[string]interface{}{
+			"provision_requested_at": created.Format(time.RFC3339),
+			"created_at":             created.Format(time.RFC3339),
+			"delete_requested_at":    time.Now().UTC().Format(time.RFC3339),
+		})
+
+		Expect(poll("").State).To(Equal(osbapi.StateSucceeded))
+	})
+
+	It("a delete request from an earlier instance with the same ID does not count", func() {
+		earlier := time.Now().UTC().Add(-time.Hour)
+
+		brokerInstance.RecordTask(ctx, instanceID, "provision", "BOSH deployment in progress (task 77)", 77)
+		writeMetadata(map[string]interface{}{
+			"delete_requested_at":    earlier.Format(time.RFC3339),
+			"provision_requested_at": time.Now().UTC().Format(time.RFC3339),
+		})
+
+		Expect(poll("provision").State).To(Equal(osbapi.StateFailed))
+	})
+
+	It("a provision poll while this process holds the provision claim answers in progress", func() {
+		release := brokerInstance.HoldOperationClaim(instanceID, "provision")
+		defer release()
+
+		Expect(poll("provision").State).To(Equal(osbapi.StateInProgress))
+	})
+
+	It("a poll whose task record read fails returns an error", func() {
+		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		defer proxy.Close()
+
+		brokerInstance.Vault = internalVault.New(proxy.Addr, suite.vault.RootToken, true)
+		proxy.FailReads(instanceID+"/task", http.StatusForbidden, "permission denied", 1)
+
+		_, err = brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: "provision"})
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("a poll whose metadata read fails returns an error", func() {
+		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		defer proxy.Close()
+
+		brokerInstance.RecordTask(ctx, instanceID, "provision", "BOSH deployment in progress (task 77)", 77)
+		brokerInstance.Vault = internalVault.New(proxy.Addr, suite.vault.RootToken, true)
+		proxy.FailReads(instanceID+"/metadata", http.StatusForbidden, "permission denied", 1)
+
+		_, err = brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: "provision"})
+		Expect(err).To(HaveOccurred())
+	})
+})

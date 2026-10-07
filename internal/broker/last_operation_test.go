@@ -836,7 +836,9 @@ var _ = Describe("LastOperation", func() {
 		})
 	})
 
-	It("keeps answering succeeded for an instance that is no longer indexed", func() {
+	It("keeps answering succeeded for a deleted instance that is no longer indexed", func() {
+		brokerInstance.RecordTask(ctx, instanceID, "deprovision", "BOSH delete in progress (task 78)", 78)
+
 		Expect(poll("deprovision").State).To(Equal(osbapi.StateSucceeded))
 		Expect(poll("").State).To(Equal(osbapi.StateSucceeded))
 	})

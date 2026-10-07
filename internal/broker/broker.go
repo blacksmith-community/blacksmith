@@ -622,14 +622,8 @@ func (b *Broker) LastOperation(
 		return osbapi.LastOperationResponse{}, err
 	}
 
-	// Handle case where instance was deleted
 	if instance == nil {
-		logger.Info("Instance %s not found in index, returning succeeded", instanceID)
-
-		return osbapi.LastOperationResponse{
-			State:       osbapi.StateSucceeded,
-			Description: "Instance has been deleted",
-		}, nil
+		return b.pollWithoutIndexEntry(ctx, instanceID, logger)
 	}
 
 	logger.Debug("Instance %s found, deployment: %s", instanceID, deploymentName)
@@ -649,6 +643,70 @@ func (b *Broker) LastOperation(
 	}
 
 	return b.provisionStatus(ctx, instanceID, deploymentName, recorded, logger)
+}
+
+// pollWithoutIndexEntry answers a poll for an instance the index does not
+// have. A missing entry proves nothing on its own, because the orphan checks
+// can remove the entry of a provision that is still running or that lost its
+// deployment. A provision this process is still accepting answers in
+// progress. Otherwise only the records that outlive the entry can show the
+// instance was deleted, which are a deprovision in <instance>/task or a delete
+// request in <instance>/metadata that follows the instance's creation. Every
+// other poll answers failed, so the platform does not take a lost provision
+// for a finished one. A read error returns an error, and the platform polls
+// again.
+func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	if b.provisionActive(instanceID) {
+		logger.Debug("instance %s has no index entry yet, and its provision is still being accepted", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: "Provision request accepted"}, nil
+	}
+
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	recorded, err := b.readRecordedOperation(readCtx, instanceID)
+	if err != nil {
+		logger.Error("instance %s has no index entry, and its recorded operation could not be read: %s", instanceID, err)
+
+		return osbapi.LastOperationResponse{}, err
+	}
+
+	if recorded.Action == operationTypeDeprovision {
+		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+	}
+
+	var metadata map[string]interface{}
+
+	_, err = b.Vault.Get(readCtx, instanceID+"/metadata", &metadata)
+	if err != nil {
+		logger.Error("instance %s has no index entry, and %s/metadata could not be read: %s", instanceID, instanceID, err)
+
+		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to read the metadata of instance %s: %w", instanceID, err)
+	}
+
+	raw, _ := metadata["delete_requested_at"].(string)
+
+	requestedAt, parseErr := time.Parse(time.RFC3339, raw)
+	if raw != "" && parseErr == nil {
+		followErr := b.checkRequestFollowsCreation(instanceID, metadata, raw, requestedAt)
+		if followErr == nil {
+			logger.Info("instance %s has no index entry, and a delete request is on record, so it has been deleted", instanceID)
+
+			return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: "Instance has been deleted"}, nil
+		}
+
+		logger.Info("instance %s has no index entry, and its delete request does not count: %s", instanceID, followErr)
+	}
+
+	logger.Error("instance %s has no index entry and no record of a delete, so its operation is reported as failed", instanceID)
+
+	return osbapi.LastOperationResponse{
+		State:       osbapi.StateFailed,
+		Description: fmt.Sprintf("Blacksmith has no record of service instance %s, so it cannot finish. Delete the service instance.", instanceID),
+	}, nil
 }
 
 func (b *Broker) Bind(

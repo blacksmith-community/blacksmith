@@ -89,6 +89,21 @@ func (b *Broker) ProvisionActive(instanceID string) bool {
 	return b.provisionActive(instanceID)
 }
 
+// HoldOperationClaim takes the claim on instanceID that an operation of the
+// given type holds from its accept chain until its goroutine returns, and
+// returns the function that gives it up. It fails the spec when another
+// claim is already held.
+func (b *Broker) HoldOperationClaim(instanceID, operation string) func() {
+	claim := &operationClaim{operation: operation, claimed: time.Now()}
+
+	_, claimed := b.claimOperation(instanceID, claim)
+	if !claimed {
+		panic("an operation claim is already held on instance " + instanceID)
+	}
+
+	return func() { b.releaseOperation(instanceID, claim) }
+}
+
 // DeprovisionActive reports whether a deprovision of instanceID is in flight
 // in this process, from its accept chain until its goroutine returns.
 func (b *Broker) DeprovisionActive(instanceID string) bool {
