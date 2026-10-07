@@ -1,11 +1,14 @@
 package bosh_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -711,5 +714,262 @@ func TestMissingConfigIDKeepsTheDirectorsAnswer(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "GET /configs/<id>") {
 		t.Errorf("expected the director's 404 detail in the message, got: %v", err)
+	}
+}
+
+// configWrite is one of the two config writes, with the error that stands
+// for a director that refused it.
+type configWrite struct {
+	method   string
+	call     func(ctx context.Context, director bosh.Director) error
+	rejected error
+}
+
+func configWrites() map[string]configWrite {
+	return map[string]configWrite{
+		"EnableResurrection": {
+			method: http.MethodPost,
+			call: func(ctx context.Context, director bosh.Director) error {
+				return director.EnableResurrection(ctx, "dep-1", true)
+			},
+			rejected: bosh.ErrResurrectionConfigUpdateFailed,
+		},
+		"DeleteResurrectionConfig": {
+			method: http.MethodDelete,
+			call: func(ctx context.Context, director bosh.Director) error {
+				return director.DeleteResurrectionConfig(ctx, "dep-1")
+			},
+			rejected: bosh.ErrResurrectionConfigDeleteFailed,
+		},
+	}
+}
+
+// Only a lost answer is an unknown outcome. A director that answered with a
+// rejection told Blacksmith what happened, except for a 502 or 504 from a
+// proxy in front of it, which says nothing about the director's own result.
+func TestConfigWriteRejectionIsNotAnUnknownOutcome(t *testing.T) {
+	statuses := []struct {
+		status  int
+		unknown bool
+	}{
+		{http.StatusBadRequest, false},
+		{http.StatusForbidden, false},
+		{http.StatusInternalServerError, false},
+		{http.StatusBadGateway, true},
+		{http.StatusGatewayTimeout, true},
+	}
+
+	for writeName, write := range configWrites() {
+		for _, answer := range statuses {
+			t.Run(writeName+"/"+strconv.Itoa(answer.status), func(t *testing.T) {
+				t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+				server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+					if request.URL.Path != "/configs" {
+						return false
+					}
+
+					boshtest.WriteError(writer, answer.status, 100, "the director said no")
+
+					return true
+				})
+
+				director := newReadAdapter(t, server, nil)
+
+				err := write.call(t.Context(), director)
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+
+				if got := errors.Is(err, bosh.ErrOutcomeUnknown); got != answer.unknown {
+					t.Errorf("status %d: ErrOutcomeUnknown is %v, want %v: %v", answer.status, got, answer.unknown, err)
+				}
+
+				if !answer.unknown && !errors.Is(err, write.rejected) {
+					t.Errorf("status %d: expected %v in the chain, got: %v", answer.status, write.rejected, err)
+				}
+
+				if errors.Is(err, bosh.ErrResurrectionConfigNotFound) {
+					t.Errorf("status %d is not a missing config, got: %v", answer.status, err)
+				}
+
+				if sent := requestsTo(server, write.method, "/configs"); len(sent) != 1 {
+					t.Errorf("expected the write to be sent once, got %d", len(sent))
+				}
+			})
+		}
+	}
+}
+
+// Only a 404 says the resurrection config was not there.
+func TestDeleteResurrectionConfigMapsOnlyA404ToNotFound(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != "/configs" {
+			return false
+		}
+
+		boshtest.WriteError(writer, http.StatusNotFound, 440000, "config not found")
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	err := director.DeleteResurrectionConfig(t.Context(), "dep-1")
+	if !errors.Is(err, bosh.ErrResurrectionConfigNotFound) || errors.Is(err, bosh.ErrOutcomeUnknown) {
+		t.Errorf("expected ErrResurrectionConfigNotFound and no unknown outcome for a 404, got: %v", err)
+	}
+}
+
+// A caller whose context ended during the write gets the call error that
+// says so, and not an unknown outcome the caller did not cause.
+func TestConfigWriteWithAnEndedContextIsNotAnUnknownOutcome(t *testing.T) {
+	for writeName, write := range configWrites() {
+		t.Run(writeName, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				if request.URL.Path != "/configs" {
+					return false
+				}
+
+				cancel()
+				boshtest.DropAnswer(writer)
+
+				return true
+			})
+
+			director := newReadAdapter(t, server, nil)
+
+			err := write.call(ctx, director)
+
+			var callErr *bosh.DirectorCallError
+			if !errors.As(err, &callErr) {
+				t.Fatalf("expected a *bosh.DirectorCallError, got %T: %v", err, err)
+			}
+
+			if errors.Is(err, bosh.ErrOutcomeUnknown) {
+				t.Errorf("an ended caller context must not read as an unknown outcome: %v", err)
+			}
+		})
+	}
+}
+
+// A director failure on a read by ID is not a missing config, whatever the
+// route, so the UI does not answer "not found" for an outage or a refusal.
+func TestConfigReadsByIDKeepAFailureThatIsNotA404(t *testing.T) {
+	reads := map[string]func(director bosh.Director) error{
+		"GetConfigByID": func(director bosh.Director) error {
+			_, err := director.GetConfigByID(t.Context(), "7")
+
+			return err
+		},
+		"GetConfigContent": func(director bosh.Director) error {
+			_, err := director.GetConfigContent(t.Context(), "7")
+
+			return err
+		},
+		"ComputeConfigDiff": func(director bosh.Director) error {
+			_, err := director.ComputeConfigDiff(t.Context(), "7", "8")
+
+			return err
+		},
+	}
+
+	for readName, read := range reads {
+		for _, status := range []int{http.StatusInternalServerError, http.StatusForbidden} {
+			t.Run(readName+"/"+strconv.Itoa(status), func(t *testing.T) {
+				t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+				server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+					if !strings.HasPrefix(request.URL.Path, "/configs/") {
+						return false
+					}
+
+					boshtest.WriteError(writer, status, 100, "the director said no")
+
+					return true
+				})
+
+				err := read(newReadAdapter(t, server, nil))
+				if err == nil || errors.Is(err, bosh.ErrConfigNotFound) {
+					t.Errorf("status %d: expected a failure that is not ErrConfigNotFound, got: %v", status, err)
+				}
+			})
+		}
+	}
+}
+
+// The cloud config is the latest version of the one config of type cloud, so
+// the director is asked for exactly that, and the content comes back as sent.
+func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/configs" {
+			return false
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{configEntry("4", "cloud", "default")})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	content, err := director.GetCloudConfig(t.Context())
+	if err != nil {
+		t.Fatalf("GetCloudConfig failed: %v", err)
+	}
+
+	if content != "key: 4\n" {
+		t.Errorf("expected the config content, got %q", content)
+	}
+
+	reads := requestsTo(server, http.MethodGet, "/configs")
+	if len(reads) != 1 {
+		t.Fatalf("expected exactly one GET /configs, got %d", len(reads))
+	}
+
+	query, err := url.ParseQuery(reads[0].RawQuery)
+	if err != nil {
+		t.Fatalf("failed to parse the query %q: %v", reads[0].RawQuery, err)
+	}
+
+	want := url.Values{"type": {"cloud"}, "latest": {"true"}, "limit": {"1"}}
+	if !reflect.DeepEqual(query, want) {
+		t.Errorf("expected exactly type=cloud&latest=true&limit=1, got %q", reads[0].RawQuery)
+	}
+}
+
+// The main list reads every config in one call, so it sends no limit that
+// would cut the list short before the type filter runs.
+func TestGetConfigsSendsNoLimit(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/configs" {
+			return false
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{configEntry("4", "cloud", "default")})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	_, err := director.GetConfigs(t.Context(), 0, nil)
+	if err != nil {
+		t.Fatalf("GetConfigs failed: %v", err)
+	}
+
+	if query := configsQuery(t, server); query.Has("limit") {
+		t.Errorf("expected no limit in the query, got %v", query)
 	}
 }
