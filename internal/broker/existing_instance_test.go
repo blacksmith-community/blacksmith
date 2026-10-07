@@ -529,7 +529,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 			recordedName := otherPlanID + "-" + instanceID
 
 			Expect(brokerInstance.RecordInitialRequest(ctx, instanceID, request)).To(Succeed())
-			Expect(vaultClient.UpdateIndexEntry(ctx, instanceID, map[string]interface{}{"deployment_name": recordedName})).To(Succeed())
+			Expect(vaultClient.UpdateIndexEntry(ctx, instanceID, map[string]interface{}{deploymentNameKey: recordedName})).To(Succeed())
 
 			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
 				if name == recordedName {
@@ -542,6 +542,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 			entryBefore := indexEntry()
 
 			response, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
+
 			Expect(director.Calls("GetDeployment")).To(ContainElement(recordedName), "the director was not asked for the recorded deployment")
 
 			if recordedAnswer.deploys {
@@ -567,6 +568,10 @@ var _ = Describe("A provision for an instance the index already has", func() {
 		})
 	}
 })
+
+// deploymentNameKey is the index entry field that records an instance's
+// deployment.
+const deploymentNameKey = "deployment_name"
 
 // deploymentNotFound answers a GetDeployment the way the director adapter
 // does when the director answers with its deployment-not-found code.
@@ -1206,7 +1211,7 @@ var _ = Describe("The broker's orphan check", func() {
 
 		director = testutil.NewScriptedBOSHDirector()
 		director.GetDeploymentsFn = func() ([]bosh.Deployment, error) {
-			deployments := []bosh.Deployment{}
+			deployments := make([]bosh.Deployment, 0, len(live))
 
 			for name := range live {
 				deployments = append(deployments, bosh.Deployment{Name: name})
@@ -1225,7 +1230,9 @@ var _ = Describe("The broker's orphan check", func() {
 
 			return deploymentNotFound(name)
 		}
-		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil }
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+			return nil, nil //nolint:nilnil // no running task is a nil task without an error
+		}
 
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 		brokerInstance = &broker.Broker{BOSH: director, Vault: vaultClient, Config: &config.Config{}}
@@ -1324,7 +1331,7 @@ var _ = Describe("The broker's orphan check", func() {
 	It("the orphan check keeps an entry whose stored deployment name exists", func() {
 		adoptedID, builtName := seedEntry("adopted", old, map[string]interface{}{"created": old.Unix()})
 		storedName := "standalone-classic-" + adoptedID
-		Expect(vaultClient.UpdateIndexEntry(ctx, adoptedID, map[string]interface{}{"deployment_name": storedName})).To(Succeed())
+		Expect(vaultClient.UpdateIndexEntry(ctx, adoptedID, map[string]interface{}{deploymentNameKey: storedName})).To(Succeed())
 
 		live[storedName] = true
 

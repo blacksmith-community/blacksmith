@@ -2161,7 +2161,7 @@ func (b *Broker) orphanInFlight(ctx context.Context, instanceID string, serviceI
 func (b *Broker) orphanDeploymentUnconfirmed(ctx context.Context, deploymentName string) string {
 	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
 	if err == nil {
-		return fmt.Sprintf("the director still has deployment %s", deploymentName)
+		return "the director still has deployment " + deploymentName
 	}
 
 	if !errors.Is(err, bosh.ErrDeploymentNotFound) {

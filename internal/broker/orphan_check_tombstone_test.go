@@ -57,7 +57,9 @@ var _ = Describe("ServiceWithNoDeploymentCheck with a deleted tombstone", func()
 
 			return deploymentNotFound(name)
 		}
-		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil }
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+			return nil, nil //nolint:nilnil // no running task is a nil task without an error
+		}
 
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 		brokerInstance = &broker.Broker{BOSH: director, Vault: vaultClient, Config: &config.Config{}}

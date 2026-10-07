@@ -52,7 +52,7 @@ func TestToggleResurrectionNamesTheDeploymentAnIndexEntryRecords(t *testing.T) {
 			Director: director,
 		})
 
-		request := httptest.NewRequest(http.MethodPut, "/b/"+instanceID+"/resurrection", strings.NewReader(`{"enabled": true}`))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/b/"+instanceID+"/resurrection", strings.NewReader(`{"enabled": true}`))
 		recorder := httptest.NewRecorder()
 
 		handler.ToggleResurrection(recorder, request)

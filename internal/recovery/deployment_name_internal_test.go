@@ -10,6 +10,12 @@ import (
 	"blacksmith/pkg/testutil"
 )
 
+// The index entry fields that record an instance's plan and deployment.
+const (
+	planKey         = "plan_id"
+	recordedNameKey = "deployment_name"
+)
+
 // The reconciler can rewrite an index entry's plan ID after the deployment
 // was created, so the regeneration check asks the director for the deployment
 // the entry records, and builds the name from the plan ID only for an entry
@@ -27,8 +33,8 @@ func TestRegenerationCheckAsksForTheDeploymentAnIndexEntryRecords(t *testing.T) 
 	vaultClient := internalVault.New(server.Addr, server.RootToken, true)
 
 	entries := map[string]map[string]interface{}{
-		"adopted": {"service_id": "redis", "plan_id": "redis-standalone", "deployment_name": "redis-standalone-classic-adopted"},
-		"legacy":  {"service_id": "redis", "plan_id": "redis-standalone"},
+		"adopted": {planKey: "redis-standalone", recordedNameKey: "redis-standalone-classic-adopted"},
+		"legacy":  {planKey: "redis-standalone"},
 	}
 
 	for id, entry := range entries {
