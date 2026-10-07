@@ -1082,7 +1082,7 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, inst
 				// The director says the deployment is gone, so there is no
 				// delete task to follow. The caller settles the deprovision
 				// from the error.
-				logger.Info("Deployment %s no longer exists, deletion successful", deploymentName)
+				logger.Info("Deployment %s is already gone before delete attempt %d, so no delete was sent", deploymentName, attempt)
 
 				return nil, fmt.Errorf("deployment %s of instance %s is gone before delete attempt %d: %w", deploymentName, instanceID, attempt, err)
 			}
