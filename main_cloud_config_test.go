@@ -300,3 +300,28 @@ func TestBootCloudConfigFailedWriteIsNotFatalAndNamesTheDirector(t *testing.T) {
 
 	requireContains(t, joinLines(logger.lines("error")), server.URL, "400", "bad cloud config")
 }
+
+// A cloud config on the director that does not parse, or is not a map, means
+// the broker cannot show that a write is safe, so it writes nothing and says
+// why.
+func TestBootCloudConfigSkipsWhenADirectorConfigIsUnreadable(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	for name, odd := range map[string]string{"unparseable": "azs: [unclosed", "not a map": "- a\n- b\n"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			boot, director, cfg := newBootDirector(t, false, cloudEntry("odd", odd))
+			logger := newRecordingLogger()
+
+			updateBOSHCloudConfig(t.Context(), cfg, director, logger)
+
+			if len(boot.posted()) != 0 {
+				t.Errorf("expected no write, got %v", boot.posted())
+			}
+
+			requireContains(t, joinLines(logger.lines("error")),
+				boot.URL, `cloud config "odd"`, "cannot show that a write is safe", "continues without")
+		})
+	}
+}

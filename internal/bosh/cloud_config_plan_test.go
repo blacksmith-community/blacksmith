@@ -135,6 +135,13 @@ func planRefuseCases() []planCase {
 func planBlankAndUnreadableCases() []planCase {
 	return []planCase{
 		{
+			name:     "a null compilation value still counts as defining compilation",
+			existing: []bosh.CloudConfigEntry{{Name: "x", Content: "compilation:\nazs: [{name: z9}]\n"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "x", Key: "compilation"}},
+		},
+		{
 			name:     "blank other config overlaps nothing",
 			existing: []bosh.CloudConfigEntry{{Name: "", Content: "---\n"}},
 			content:  planBrokerContent,
