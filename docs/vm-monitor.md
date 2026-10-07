@@ -371,6 +371,18 @@ Based on BOSH Director VM information:
 - **`starting`**: VM is in the process of starting up
 - **`stopped`**: VM is intentionally stopped
 
+### Statuses the Monitor Records Itself
+
+The monitor also stores a few statuses that don't come from a VM's job state:
+
+- **`unknown`**: The director listed the deployment, but it has no VMs.
+
+- **`error`**: The VM listing failed, and either the director still has the deployment or the monitor couldn't tell. A read of the index or the task record, the running-task check, or the tombstone write can fail this way.
+
+- **`provisioning`**: The director says the deployment doesn't exist, but the instance belongs to work in flight, so the monitor keeps it. Its index entry is less than two hours old, its task record shows a provision updated in the last two hours, a BOSH task is running on its deployment, or an operation in this broker holds its claim.
+
+- **`deleted`**: The director says the deployment doesn't exist, and nothing shows work in flight, so the monitor marks the index entry deleted and stops watching the instance.
+
 ### Service Health Calculation
 
 Overall service health is determined by the worst VM state:

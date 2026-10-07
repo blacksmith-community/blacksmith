@@ -24,7 +24,26 @@ var (
 
 const (
 	vmStatusRunning = "running"
+
+	// vmStatusProvisioning is the VM status of an instance whose deployment
+	// the director says is gone, kept because it belongs to work in flight.
+	vmStatusProvisioning = "provisioning"
+
+	// vmStatusError is the VM status of an instance whose VMs could not be
+	// listed, kept because nothing proved its deployment gone or because the
+	// monitor could not tell whether it is in flight.
+	vmStatusError = "error"
 )
+
+// keepReason says why the monitor keeps an instance whose deployment the
+// director says is gone. It keeps none when reason is "". inFlight is true
+// when something shows that the instance belongs to work in flight, and
+// false when a read, a check, or the tombstone write failed, so the monitor
+// cannot tell whether it does.
+type keepReason struct {
+	reason   string
+	inFlight bool
+}
 
 // Monitor handles scheduled VM monitoring for service instances.
 type Monitor struct {
@@ -662,20 +681,24 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 // only when deploymentConfirmedGone says the director itself answered with
 // its deployment-not-found code, and tombstoneUnlessInFlight finds nothing
 // to show that the instance belongs to work in flight. Any other answer
-// records a failed check and keeps monitoring the instance.
+// records a failed check and keeps monitoring the instance. The check is
+// stored with the VM status "provisioning" when the instance was kept
+// because it is in flight, and with "error" otherwise.
 func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err error) {
 	logger := logger.Get().Named("vm-monitor")
 
 	gone, confirmErr := m.deploymentConfirmedGone(ctx, svc.DeploymentName)
 
+	var kept keepReason
+
 	switch {
 	case gone:
-		keptBecause := m.tombstoneUnlessInFlight(ctx, svc, err)
-		if keptBecause == "" {
+		kept = m.tombstoneUnlessInFlight(ctx, svc, err)
+		if kept.reason == "" {
 			return
 		}
 
-		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist, but instance %s is kept, because %s", svc.DeploymentName, err, svc.ServiceID, keptBecause)
+		logger.Info("Listing the VMs of deployment %s failed (%s), and the director confirms the deployment does not exist, but instance %s is kept, because %s", svc.DeploymentName, err, svc.ServiceID, kept.reason)
 	case confirmErr != nil:
 		logger.Error("Failed to check VMs for service %s: %s; the instance is kept, because the director %s", svc.ServiceID, err, confirmErr)
 	default:
@@ -690,9 +713,15 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 	// Use failed interval for retry
 	svc.NextCheck = time.Now().Add(m.failedInterval)
 
-	// Store error status
+	// Store the failed check. An instance kept because it is in flight
+	// shows as provisioning, and any other as an error.
+	status := vmStatusError
+	if kept.inFlight {
+		status = vmStatusProvisioning
+	}
+
 	vmStatus := VMStatus{
-		Status:      "error",
+		Status:      status,
 		VMCount:     0,
 		HealthyVMs:  0,
 		LastUpdated: time.Now(),
@@ -705,7 +734,7 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 
 	err = m.storeVMStatus(ctx, svc.ServiceID, vmStatus)
 	if err != nil {
-		logger.Error("Failed to store error status for service %s: %s", svc.ServiceID, err)
+		logger.Error("Failed to store %s status for service %s: %s", status, svc.ServiceID, err)
 	}
 }
 
@@ -868,26 +897,26 @@ func (m *Monitor) GetStatus() MonitorStatus {
 
 // tombstoneUnlessInFlight marks an instance whose deployment the director
 // confirmed gone as deleted, stores its VM status as deleted, and stops
-// monitoring it. It returns "" when it did. It returns why the instance is
-// kept when inFlightReason or writeTombstone finds that the instance may
-// belong to work in flight, or when the tombstone could not be written, and
-// then it writes nothing. An instance that is no longer indexed has no entry
-// to mark, and the monitor stops watching it all the same.
-func (m *Monitor) tombstoneUnlessInFlight(ctx context.Context, svc *ServiceMonitor, listErr error) string {
+// monitoring it. It returns no reason when it did. It returns why the
+// instance is kept when inFlightReason or writeTombstone finds that the
+// instance may belong to work in flight, or when the tombstone could not be
+// written, and then it writes nothing. An instance that is no longer indexed
+// has no entry to mark, and the monitor stops watching it all the same.
+func (m *Monitor) tombstoneUnlessInFlight(ctx context.Context, svc *ServiceMonitor, listErr error) keepReason {
 	logger := logger.Get().Named("vm-monitor")
 
-	judged, keptBecause := m.inFlightReason(ctx, svc)
-	if keptBecause != "" {
-		return keptBecause
+	judged, kept := m.inFlightReason(ctx, svc)
+	if kept.reason != "" {
+		return kept
 	}
 
-	indexed, keptBecause, err := m.writeTombstone(ctx, svc, judged)
+	indexed, kept, err := m.writeTombstone(ctx, svc, judged)
 	if err != nil {
-		return fmt.Sprintf("its tombstone could not be written (%s)", err)
+		return keepReason{reason: fmt.Sprintf("its tombstone could not be written (%s)", err)}
 	}
 
-	if keptBecause != "" {
-		return keptBecause
+	if kept.reason != "" {
+		return kept
 	}
 
 	if indexed {
@@ -920,7 +949,7 @@ func (m *Monitor) tombstoneUnlessInFlight(ctx context.Context, svc *ServiceMonit
 	delete(m.services, svc.ServiceID)
 	m.mu.Unlock()
 
-	return ""
+	return keepReason{}
 }
 
 // writeTombstone marks an instance deleted in the index in one locked
@@ -932,14 +961,14 @@ func (m *Monitor) tombstoneUnlessInFlight(ctx context.Context, svc *ServiceMonit
 // nothing, when the instance is no longer indexed. A claim taken after the
 // recheck is not seen here, but that operation's own index write waits for
 // the lock and lands after the mark.
-func (m *Monitor) writeTombstone(ctx context.Context, svc *ServiceMonitor, judged interface{}) (bool, string, error) {
+func (m *Monitor) writeTombstone(ctx context.Context, svc *ServiceMonitor, judged interface{}) (bool, keepReason, error) {
 	var (
-		indexed     bool
-		keptBecause string
+		indexed bool
+		kept    keepReason
 	)
 
 	err := m.vault.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
-		keptBecause = ""
+		kept = keepReason{}
 
 		current, exists := entries[svc.ServiceID]
 
@@ -949,19 +978,19 @@ func (m *Monitor) writeTombstone(ctx context.Context, svc *ServiceMonitor, judge
 		}
 
 		if !reflect.DeepEqual(current, judged) {
-			keptBecause = "its index entry changed after the monitor checked whether it is in flight"
+			kept = keepReason{reason: "its index entry changed after the monitor checked whether it is in flight", inFlight: true}
 
 			return false, nil
 		}
 
 		if m.claims == nil {
-			keptBecause = "the monitor has no way to ask for the operation claims of this process"
+			kept = keepReason{reason: "the monitor has no way to ask for the operation claims of this process"}
 
 			return false, nil
 		}
 
 		if m.claims.OperationClaimed(svc.ServiceID) {
-			keptBecause = "an operation in this process claimed it after the monitor checked whether it is in flight"
+			kept = keepReason{reason: "an operation in this process claimed it after the monitor checked whether it is in flight", inFlight: true}
 
 			return false, nil
 		}
@@ -971,10 +1000,10 @@ func (m *Monitor) writeTombstone(ctx context.Context, svc *ServiceMonitor, judge
 		return true, nil
 	})
 	if err != nil {
-		return false, "", fmt.Errorf("failed to mark instance %s as deleted: %w", svc.ServiceID, err)
+		return false, keepReason{}, fmt.Errorf("failed to mark instance %s as deleted: %w", svc.ServiceID, err)
 	}
 
-	return indexed, keptBecause, nil
+	return indexed, kept, nil
 }
 
 // deletedEntry returns a copy of an index entry marked deleted by the
@@ -998,57 +1027,62 @@ func deletedEntry(entry interface{}) map[string]interface{} {
 }
 
 // inFlightReason returns why an instance whose deployment the director says
-// is gone may belong to work in flight, or "" when nothing shows that it
-// does, together with the index entry it judged, which is nil when the
+// is gone may belong to work in flight, or no reason when nothing shows that
+// it does, together with the index entry it judged, which is nil when the
 // instance is not indexed. It applies the broker orphan check's rules. It
 // reads the instance's index entry afresh and judges it, and its task
 // record, by inflight.Reason. Then it asks the director whether a task is
 // running on the deployment the monitor watches, because a deploy may be
 // creating it. Last, it asks whether an operation in this process holds the
-// claim on the instance. A read or a check that fails counts as in flight,
-// and so does a monitor built without the claims to ask. writeTombstone
-// checks the entry and the claim again under the index lock.
-func (m *Monitor) inFlightReason(ctx context.Context, svc *ServiceMonitor) (interface{}, string) {
+// claim on the instance. A read or a check that fails keeps the instance,
+// and so does a monitor built without the claims to ask, but they do not
+// show that it is in flight. writeTombstone checks the entry and the claim
+// again under the index lock.
+func (m *Monitor) inFlightReason(ctx context.Context, svc *ServiceMonitor) (interface{}, keepReason) {
 	idx, err := m.vault.GetIndex(ctx, "db")
 	if err != nil {
-		return nil, fmt.Sprintf("its index entry could not be read (%s)", err)
+		return nil, keepReason{reason: fmt.Sprintf("its index entry could not be read (%s)", err)}
 	}
 
 	judged := idx.Data[svc.ServiceID]
 	entry, _ := judged.(map[string]interface{})
+
+	taskReadFailed := false
 
 	reason := inflight.Reason(entry, func() (map[string]interface{}, bool, error) {
 		var task map[string]interface{}
 
 		exists, err := m.vault.Get(ctx, svc.ServiceID+"/task", &task)
 		if err != nil {
+			taskReadFailed = true
+
 			return nil, false, fmt.Errorf("read %s/task: %w", svc.ServiceID, err)
 		}
 
 		return task, exists, nil
 	})
 	if reason != "" {
-		return judged, reason
+		return judged, keepReason{reason: reason, inFlight: !taskReadFailed}
 	}
 
 	task, err := m.boshDirector.FindRunningTaskForDeployment(ctx, svc.DeploymentName)
 	if err != nil {
-		return judged, fmt.Sprintf("the director could not say whether a task is running on deployment %s (%s)", svc.DeploymentName, err)
+		return judged, keepReason{reason: fmt.Sprintf("the director could not say whether a task is running on deployment %s (%s)", svc.DeploymentName, err)}
 	}
 
 	if task != nil {
-		return judged, fmt.Sprintf("BOSH task %d (%s) is %s on deployment %s", task.ID, task.Description, task.State, svc.DeploymentName)
+		return judged, keepReason{reason: fmt.Sprintf("BOSH task %d (%s) is %s on deployment %s", task.ID, task.Description, task.State, svc.DeploymentName), inFlight: true}
 	}
 
 	if m.claims == nil {
-		return judged, "the monitor has no way to ask for the operation claims of this process"
+		return judged, keepReason{reason: "the monitor has no way to ask for the operation claims of this process"}
 	}
 
 	if m.claims.OperationClaimed(svc.ServiceID) {
-		return judged, "an operation in this process holds its claim"
+		return judged, keepReason{reason: "an operation in this process holds its claim", inFlight: true}
 	}
 
-	return judged, ""
+	return judged, keepReason{}
 }
 
 // deploymentConfirmedGone asks the director for a deployment, and reports

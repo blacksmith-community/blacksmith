@@ -94,9 +94,19 @@ type inFlightCase struct {
 type inFlightOutcome int
 
 const (
-	// kept leaves the index entry alone, keeps monitoring the instance,
-	// and records a failed check.
-	kept inFlightOutcome = iota
+	// unset is a case that names no outcome, which fails the case.
+	unset inFlightOutcome = iota
+
+	// provisioning leaves the index entry alone, keeps monitoring the
+	// instance, and records the VM status "provisioning", because something
+	// shows that the instance belongs to work in flight.
+	provisioning
+
+	// failedCheck leaves the index entry alone, keeps monitoring the
+	// instance, and records the VM status "error", because a read, a check,
+	// or the tombstone write failed, so the monitor cannot tell whether the
+	// instance is in flight.
+	failedCheck
 
 	// tombstoned marks the index entry deleted and stops monitoring.
 	tombstoned
@@ -117,7 +127,10 @@ const (
 // provision in progress, or whose deployment has a task running is kept. A
 // read or a task check that fails keeps it too. The tombstone write reads the
 // entry again under the index lock, and keeps the instance when the entry
-// changed or a claim was taken after those checks.
+// changed or a claim was taken after those checks. An instance kept because
+// it is in flight shows the VM status "provisioning". One kept because a
+// read, a check, or the write failed shows "error", because the monitor
+// cannot tell whether it is in flight.
 func TestMonitorSparesInFlightWork(t *testing.T) {
 	t.Parallel()
 
@@ -127,20 +140,24 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 		{
 			name:  "the monitor keeps a young instance whose deployment answers 70000",
 			entry: map[string]interface{}{"requested_at": young.Format(time.RFC3339)},
+			want:  provisioning,
 		},
 		{
 			name: "the monitor keeps an instance with a running task",
 			runningTask: func(deployment string) (*bosh.Task, error) {
 				return &bosh.Task{ID: 42, State: "processing", Description: "create deployment", Deployment: deployment}, nil
 			},
+			want: provisioning,
 		},
 		{
 			name:    "the monitor keeps a claimed instance",
 			claimed: []string{inFlightID},
+			want:    provisioning,
 		},
 		{
 			name:        "the monitor keeps an instance when the task check fails",
 			runningTask: func(string) (*bosh.Task, error) { return nil, errTasksUnavailable },
+			want:        failedCheck,
 		},
 		{
 			name: "the monitor tombstones an old, idle instance on 70000",
@@ -151,40 +168,48 @@ func TestMonitorSparesInFlightWork(t *testing.T) {
 			records: map[string]map[string]interface{}{inFlightID + "/task": {
 				"action": "provision", "state": "processing", "updated_at": young.Unix(),
 			}},
+			want: provisioning,
 		},
 		{
 			name: "the monitor keeps an instance whose entry turned young after the scan",
 			afterScan: func(vault *indexVault) {
 				vault.setEntryTime(inFlightID, "requested_at", young.Format(time.RFC3339))
 			},
+			want: provisioning,
 		},
 		{
 			name:      "the monitor keeps an instance whose index cannot be read",
 			afterScan: func(vault *indexVault) { vault.failIndexReads(errVaultSealed) },
+			want:      failedCheck,
 		},
 		{
 			name:      "the monitor keeps an instance whose task record cannot be read",
 			afterScan: func(vault *indexVault) { vault.failRecordReads(errVaultSealed) },
+			want:      failedCheck,
 		},
 		{
 			name:          "the monitor keeps an instance when it cannot see the claims",
 			withoutClaims: true,
+			want:          failedCheck,
 		},
 		{
 			name:     "the monitor keeps an instance claimed after its in-flight check and before its tombstone write",
 			inWindow: func(_ *indexVault, claims *heldClaims) { claims.take(inFlightID) },
+			want:     provisioning,
 		},
 		{
 			name: "the monitor keeps an instance whose entry changed after its in-flight check and before its tombstone write",
 			inWindow: func(vault *indexVault, _ *heldClaims) {
 				vault.setEntryTime(inFlightID, "requested_at", young.Format(time.RFC3339))
 			},
+			want: provisioning,
 		},
 		{
 			name: "the monitor keeps an instance whose tombstone write fails",
 			inWindow: func(vault *indexVault, _ *heldClaims) {
 				vault.failIndexWrites(errVaultSealed)
 			},
+			want: failedCheck,
 		},
 		{
 			name:     "the monitor stops watching an instance whose entry was removed before its tombstone write",
@@ -273,11 +298,18 @@ func checkInFlight(t *testing.T, inFlight inFlightCase) {
 			t.Errorf("an instance no longer indexed: marked %v, still monitored %t, status %q; want nothing marked, unmonitored, and deleted",
 				marked, stillMonitored, status)
 		}
-	case kept:
-		if len(marked) != 0 || !stillMonitored || status != statusError {
-			t.Errorf("an instance in flight: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and error",
+	case provisioning:
+		if len(marked) != 0 || !stillMonitored || status != statusProvisioning {
+			t.Errorf("an instance in flight: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and provisioning",
 				marked, stillMonitored, status)
 		}
+	case failedCheck:
+		if len(marked) != 0 || !stillMonitored || status != statusError {
+			t.Errorf("an instance the monitor cannot judge: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and error",
+				marked, stillMonitored, status)
+		}
+	case unset:
+		t.Fatalf("the case names no outcome")
 	}
 }
 

@@ -3486,14 +3486,16 @@ th[style*="cursor: pointer"]:hover {
 }
 
 .vm-status-starting,
-.vm-status-stopping {
+.vm-status-stopping,
+.vm-status-provisioning {
   background-color: #fff3cd;
   color: #856404;
   border: 1px solid #ffeaa7;
 }
 
 .vm-status-starting .vm-status-icon::before,
-.vm-status-stopping .vm-status-icon::before {
+.vm-status-stopping .vm-status-icon::before,
+.vm-status-provisioning .vm-status-icon::before {
   background-color: #ffc107;
 }
 
@@ -3540,7 +3542,8 @@ th[style*="cursor: pointer"]:hover {
 }
 
 [data-theme="dark"] .vm-status-starting,
-[data-theme="dark"] .vm-status-stopping {
+[data-theme="dark"] .vm-status-stopping,
+[data-theme="dark"] .vm-status-provisioning {
   background-color: #856404;
   color: #fff3cd;
   border-color: #ffc107;
