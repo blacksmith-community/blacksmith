@@ -66,11 +66,64 @@ var _ = Describe("Task record writes", func() {
 			Expect(proxy.Writes()).To(BeEmpty())
 		})
 
+		It("is refused by TrackProgressWithDeployment before anything is written", func() {
+			err := client.TrackProgressWithDeployment(ctx, instanceID, deprovision, "Initiating BOSH deployment deletion with retry", "", "a-deployment", 0, nil)
+
+			Expect(err).To(MatchError(vault.ErrEmptyContextID))
+			Expect(proxy.Writes()).To(BeEmpty())
+		})
+
 		It("is refused by TrackOutcomeUnknown before anything is written", func() {
 			err := client.TrackOutcomeUnknown(ctx, instanceID, deprovision, "The delete's answer was lost", "", time.Now())
 
 			Expect(err).To(MatchError(vault.ErrEmptyContextID))
 			Expect(proxy.Writes()).To(BeEmpty())
+		})
+	})
+
+	Describe("the deployment name a delete records", func() {
+		const (
+			deploymentName = "renamed-deployment"
+			deleting       = "Initiating BOSH deployment deletion with retry"
+		)
+
+		BeforeEach(func() {
+			Expect(client.TrackProgressWithDeployment(ctx, instanceID, deprovision, deleting, uuid.NewString(), deploymentName, 0, nil)).To(Succeed())
+		})
+
+		It("is recorded with the context ID", func() {
+			Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordDeploymentNameKey, deploymentName))
+			Expect(readRecord()).To(HaveKey("context_id"))
+		})
+
+		It("is kept by later progress of the same action", func() {
+			Expect(client.TrackProgress(ctx, instanceID, deprovision, "BOSH deletion in progress (task 300)", 300, nil)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordDeploymentNameKey, deploymentName))
+		})
+
+		It("is kept by a later write with a new context ID and no name", func() {
+			Expect(client.TrackProgressWithContextID(ctx, instanceID, deprovision, "Deletion retry 1/3 failed", uuid.NewString(), 0, nil)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordDeploymentNameKey, deploymentName))
+		})
+
+		It("is replaced by a later write that names another deployment", func() {
+			Expect(client.TrackProgressWithDeployment(ctx, instanceID, deprovision, deleting, uuid.NewString(), "another-deployment", 0, nil)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordDeploymentNameKey, "another-deployment"))
+		})
+
+		It("is kept by an unknown outcome of the same action", func() {
+			Expect(client.TrackOutcomeUnknown(ctx, instanceID, deprovision, "The delete's answer was lost", uuid.NewString(), time.Now())).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordDeploymentNameKey, deploymentName))
+		})
+
+		It("is not taken by a record for another action", func() {
+			Expect(client.TrackProgress(ctx, instanceID, provision, "Starting provisioning process", 0, nil)).To(Succeed())
+
+			Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordDeploymentNameKey))
 		})
 	})
 

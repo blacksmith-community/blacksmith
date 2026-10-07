@@ -444,6 +444,98 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		})
 	})
 
+	// A deployment whose name is not the one the plan and the instance ID
+	// give, so a name built from the plan cannot pass for it.
+	renameDeployment := func() {
+		deploymentName = "renamed-" + instanceID
+	}
+
+	Describe("the delete's record names the deployment the delete names", func() {
+		const refusal = "permission denied"
+
+		It("for a deprovision, from its first record on", func() {
+			renameDeployment()
+			indexInstance()
+
+			sent := scriptDelete()
+
+			var checked atomic.Pointer[map[string]interface{}]
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				record, _ := suite.vault.ReadSecret(instanceID + "/task")
+				checked.CompareAndSwap(nil, &record)
+
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+
+			deprovision()
+
+			var deleteRequest sentRequest
+			Eventually(sent, 10*time.Second).Should(Receive(&deleteRequest))
+			Expect(checked.Load()).ToNot(BeNil(), "the deployment was never checked")
+			Expect(*checked.Load()).To(HaveKeyWithValue(internalVault.TaskRecordDeploymentNameKey, deploymentName),
+				"the record did not name the deployment while its existence was checked")
+			Expect(deleteRequest.record).To(HaveKeyWithValue(internalVault.TaskRecordDeploymentNameKey, deploymentName),
+				"the record did not name the deployment while the delete was being sent")
+		})
+
+		It("for a deprovision, when the read of the record it replaces fails", func() {
+			renameDeployment()
+			indexInstance()
+
+			sent := scriptDelete()
+			proxy := useProxy()
+
+			var checked atomic.Bool
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				if !checked.Swap(true) {
+					proxy.FailReads(instanceID+"/task", http.StatusForbidden, refusal, 1)
+				}
+
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+
+			deprovision()
+
+			var deleteRequest sentRequest
+			Eventually(sent, 10*time.Second).Should(Receive(&deleteRequest))
+			Expect(deleteRequest.record).To(HaveKeyWithValue(internalVault.TaskRecordDeploymentNameKey, deploymentName),
+				"the write just before the delete did not name the deployment")
+		})
+
+		It("for a teardown, from its first record on", func() {
+			renameDeployment()
+
+			proxy := useProxy()
+
+			// The teardown's first record goes through, and the write just
+			// before the delete fails, so the first record is the one left.
+			proxy.FailWritesAfter(instanceID+"/task", 1, http.StatusForbidden, refusal, -1)
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(readRecord()).To(HaveKeyWithValue("description", "Deleting deployment that finished after the instance was deprovisioned"))
+			Expect(readRecord()).To(HaveKeyWithValue(internalVault.TaskRecordDeploymentNameKey, deploymentName))
+		})
+
+		It("for a teardown, while the delete is being sent", func() {
+			renameDeployment()
+
+			sent := scriptDelete()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			var deleteRequest sentRequest
+			Eventually(sent, 10*time.Second).Should(Receive(&deleteRequest))
+			Expect(deleteRequest.record).To(HaveKeyWithValue(internalVault.TaskRecordDeploymentNameKey, deploymentName))
+		})
+	})
+
 	It("fails the read of a record whose unknown-since time is not RFC 3339", func() {
 		indexInstance()
 
@@ -887,6 +979,71 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			response := pollUnindexed(outcomeDeprovision)
 			Expect(response.State).To(Equal(osbapi.StateFailed), "a failed delete was reported as %+v", response)
 			Expect(response.Description).To(ContainSubstring("director refused the delete"))
+		})
+
+		// askedFor makes the director say any deployment is gone, and
+		// returns the names the broker asked it about.
+		askedFor := func() func() []string {
+			var (
+				askedMu sync.Mutex
+				asked   []string
+			)
+
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				askedMu.Lock()
+				defer askedMu.Unlock()
+
+				asked = append(asked, name)
+
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+			}
+
+			return func() []string {
+				askedMu.Lock()
+				defer askedMu.Unlock()
+
+				return append([]string(nil), asked...)
+			}
+		}
+
+		// recordNamedTeardown writes the record a teardown leaves when it
+		// has recorded its context ID and the deployment's name.
+		recordNamedTeardown := func() {
+			ExpectWithOffset(1, vaultClient.TrackProgressWithDeployment(ctx, instanceID, outcomeDeprovision,
+				"Initiating BOSH deployment deletion with retry", uuid.NewString(), deploymentName, 0, nil)).To(Succeed())
+		}
+
+		It("asks the director about the deployment the record names", func() {
+			renameDeployment()
+			recordNamedTeardown()
+
+			asked := askedFor()
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateSucceeded), "a confirmed delete was reported as %+v", response)
+			Expect(asked()).To(Equal([]string{deploymentName}))
+		})
+
+		It("asks about the deployment the plan names when the record names none", func() {
+			recordTeardown()
+
+			asked := askedFor()
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateSucceeded), "a confirmed delete was reported as %+v", response)
+			Expect(asked()).To(Equal([]string{planID + "-" + instanceID}))
+		})
+
+		It("asks about the deployment the record names when the poll names no plan", func() {
+			renameDeployment()
+			recordNamedTeardown()
+
+			asked := askedFor()
+
+			response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: outcomeDeprovision})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateSucceeded), "a confirmed delete was reported as %+v", response)
+			Expect(asked()).To(Equal([]string{deploymentName}))
 		})
 
 		It("answers in progress without a plan to name the deployment by", func() {

@@ -20,6 +20,11 @@ var ErrEmptyContextID = errors.New("the context ID to record is empty")
 // taskRecordContextIDKey is the key of the context ID in a task record.
 const taskRecordContextIDKey = "context_id"
 
+// TaskRecordDeploymentNameKey is the key of the name of the deployment a
+// task record's director request acts on. A deprovision records it with
+// the context ID of its delete.
+const TaskRecordDeploymentNameKey = "deployment_name"
+
 // TaskStateOutcomeUnknown is the state of a task record whose director
 // request was sent and whose answer was lost, so whether the director
 // started a task for it is unknown.
@@ -63,11 +68,11 @@ func (vault *Vault) Track(ctx context.Context, instanceID, action string, taskID
 }
 
 // TrackProgress stores progress information for a task. When the record it
-// replaces is for the same action, the context ID that record carries is
-// kept, so progress written after the operation recorded its context ID
-// does not drop it.
+// replaces is for the same action, the context ID and the deployment name
+// that record carries are kept, so progress written after the operation
+// recorded them does not drop them.
 func (vault *Vault) TrackProgress(ctx context.Context, instanceID, action, description string, taskID int, params interface{}) error {
-	return vault.trackProgress(ctx, instanceID, action, description, "", taskID, params)
+	return vault.trackProgress(ctx, instanceID, action, description, "", "", taskID, params)
 }
 
 // TrackProgressWithContextID stores progress information for a task as
@@ -80,12 +85,27 @@ func (vault *Vault) TrackProgressWithContextID(ctx context.Context, instanceID, 
 		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyContextID, instanceID, action)
 	}
 
-	return vault.trackProgress(ctx, instanceID, action, description, contextID, taskID, params)
+	return vault.trackProgress(ctx, instanceID, action, description, contextID, "", taskID, params)
 }
 
-// trackProgress writes the task record. An empty contextID keeps the one the
-// replaced record carries when that record is for the same action.
-func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, description, contextID string, taskID int, params interface{}) error {
+// TrackProgressWithDeployment stores progress information for a task as
+// TrackProgressWithContextID does, and records deploymentName as the name
+// of the deployment the request acts on, in place of any the replaced
+// record carries. A deprovision calls it before it sends its delete, so a
+// poll that finds no index entry can ask the director about the
+// deployment the delete named.
+func (vault *Vault) TrackProgressWithDeployment(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s", ErrEmptyContextID, instanceID, action)
+	}
+
+	return vault.trackProgress(ctx, instanceID, action, description, contextID, deploymentName, taskID, params)
+}
+
+// trackProgress writes the task record. An empty contextID or deploymentName
+// keeps the one the replaced record carries when that record is for the
+// same action.
+func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, description, contextID, deploymentName string, taskID int, params interface{}) error {
 	logger := logger.Get().Named("vault track progress " + instanceID)
 	logger.Debug("tracking progress for '%s': %s (taskID: %d)", action, description, taskID)
 
@@ -102,26 +122,32 @@ func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, descr
 	}
 
 	task := struct {
-		Action      string      `json:"action"`
-		Task        int         `json:"task"`
-		State       string      `json:"state"`
-		Description string      `json:"description"`
-		UpdatedAt   int64       `json:"updated_at"`
-		Params      interface{} `json:"params"`
-		ContextID   string      `json:"context_id,omitempty"`
+		Action         string      `json:"action"`
+		Task           int         `json:"task"`
+		State          string      `json:"state"`
+		Description    string      `json:"description"`
+		UpdatedAt      int64       `json:"updated_at"`
+		Params         interface{} `json:"params"`
+		ContextID      string      `json:"context_id,omitempty"`
+		DeploymentName string      `json:"deployment_name,omitempty"`
 	}{
-		Action:      action,
-		Task:        taskID,
-		State:       state,
-		Description: description,
-		UpdatedAt:   time.Now().Unix(),
-		Params:      deinterface(params),
-		ContextID:   contextID,
+		Action:         action,
+		Task:           taskID,
+		State:          state,
+		Description:    description,
+		UpdatedAt:      time.Now().Unix(),
+		Params:         deinterface(params),
+		ContextID:      contextID,
+		DeploymentName: deploymentName,
 	}
 
 	err := vault.writeTaskRecord(ctx, instanceID, action, logger, func(replaced map[string]interface{}) interface{} {
 		if task.ContextID == "" {
 			task.ContextID, _ = replaced[taskRecordContextIDKey].(string)
+		}
+
+		if task.DeploymentName == "" {
+			task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
 		}
 
 		// Log the task being stored for debugging
@@ -145,9 +171,9 @@ func (vault *Vault) trackProgress(ctx context.Context, instanceID, action, descr
 // which carried contextID, was sent and its answer was lost at since. The
 // record has the state outcome_unknown and no task ID at all, so nothing
 // can take it for a task, or for task 0, which once meant a deployment was
-// gone. The params of the replaced record are kept when it is for the same
-// action, and the description goes into the history as TrackProgress
-// writes it.
+// gone. The params and the deployment name of the replaced record are kept
+// when it is for the same action, and the description goes into the
+// history as TrackProgress writes it.
 func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action, description, contextID string, since time.Time) error {
 	if contextID == "" {
 		return fmt.Errorf("%w: instance %s, action %s, unknown outcome", ErrEmptyContextID, instanceID, action)
@@ -157,13 +183,14 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 	logger.Debug("recording an unknown outcome for '%s' with context ID %s: %s", action, contextID, description)
 
 	task := struct {
-		Action       string      `json:"action"`
-		State        string      `json:"state"`
-		Description  string      `json:"description"`
-		UpdatedAt    int64       `json:"updated_at"`
-		Params       interface{} `json:"params"`
-		ContextID    string      `json:"context_id"`
-		UnknownSince string      `json:"unknown_since"`
+		Action         string      `json:"action"`
+		State          string      `json:"state"`
+		Description    string      `json:"description"`
+		UpdatedAt      int64       `json:"updated_at"`
+		Params         interface{} `json:"params"`
+		ContextID      string      `json:"context_id"`
+		UnknownSince   string      `json:"unknown_since"`
+		DeploymentName string      `json:"deployment_name,omitempty"`
 	}{
 		Action:       action,
 		State:        TaskStateOutcomeUnknown,
@@ -175,6 +202,7 @@ func (vault *Vault) TrackOutcomeUnknown(ctx context.Context, instanceID, action,
 
 	err := vault.writeTaskRecord(ctx, instanceID, action, logger, func(replaced map[string]interface{}) interface{} {
 		task.Params = replaced["params"]
+		task.DeploymentName, _ = replaced[TaskRecordDeploymentNameKey].(string)
 
 		return task
 	})

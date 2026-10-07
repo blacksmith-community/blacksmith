@@ -2132,7 +2132,7 @@ func (b *Broker) OperationClaimed(instanceID string) bool {
 // that follows the instance's creation. Every other poll answers failed, so
 // the platform does not take a lost provision for a finished one. A read
 // error returns an error, and the platform polls again. planID is the plan
-// the poll names, and it names the deployment.
+// the poll names, and it names the deployment when the record names none.
 func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID, planID string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if b.provisionActive(instanceID) {
 		logger.Debug("instance %s has no index entry yet, and its provision is still being accepted", instanceID)
@@ -2194,9 +2194,12 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID, planID s
 // a deployment that finished after its instance was deprovisioned runs
 // with no entry at all, and its records carry the context ID of its
 // delete, so a record with a context ID answers succeeded only when the
-// director answers that the deployment does not exist. While the delete's outcome is unknown, it answers in progress
-// without asking. A deployment that still exists answers failed when the
-// record says the delete failed, and in progress otherwise.
+// director answers that the deployment does not exist. The deployment is
+// the one the record names, and the one planID and the instance ID name
+// when the record names none. While the delete's outcome is unknown, it
+// answers in progress without asking. A deployment that still exists
+// answers failed when the record says the delete failed, and in progress
+// otherwise.
 func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.ContextID == "" {
 		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
@@ -2213,16 +2216,16 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 		}, nil
 	}
 
-	if planID == "" {
-		logger.Warning("instance %s has no index entry, and the poll names no plan, so whether the delete with context ID %s removed its deployment cannot be checked", instanceID, recorded.ContextID)
+	if recorded.DeploymentName == "" && planID == "" {
+		logger.Warning("instance %s has no index entry, its record names no deployment, and the poll names no plan, so whether the delete with context ID %s removed its deployment cannot be checked", instanceID, recorded.ContextID)
 
 		return osbapi.LastOperationResponse{
 			State:       osbapi.StateInProgress,
-			Description: fmt.Sprintf("The delete with context ID %s is not confirmed, and the poll names no plan to check the deployment by", recorded.ContextID),
+			Description: fmt.Sprintf("The delete with context ID %s is not confirmed, and neither its record nor the poll names the deployment to check", recorded.ContextID),
 		}, nil
 	}
 
-	deploymentName := planID + "-" + instanceID
+	deploymentName := deploymentNameForInstance(instanceID, &vaultPkg.Instance{PlanID: planID, DeploymentName: recorded.DeploymentName})
 
 	err := b.deploymentGone(ctx, instanceID, deploymentName, logger)
 
@@ -3061,6 +3064,11 @@ type recordedOperation struct {
 	// carries, recorded before the request was sent. It is empty for an
 	// operation recorded before the broker chose context IDs.
 	ContextID string
+	// DeploymentName is the name of the deployment the operation's
+	// director request acts on, recorded with ContextID. It is empty for
+	// an operation that records none, such as a provision, or one recorded
+	// before the broker recorded deployment names.
+	DeploymentName string
 	// UnknownSince is when the outcome of the operation's director request
 	// became unknown. It is zero unless State is outcome_unknown.
 	UnknownSince time.Time
@@ -3083,6 +3091,7 @@ func (b *Broker) readRecordedOperation(ctx context.Context, instanceID string) (
 	recorded.Action, _ = task["action"].(string)
 	recorded.Description, _ = task["description"].(string)
 	recorded.ContextID, _ = task["context_id"].(string)
+	recorded.DeploymentName, _ = task[internalVault.TaskRecordDeploymentNameKey].(string)
 
 	if since, isString := task[internalVault.TaskRecordUnknownSinceKey].(string); isString {
 		recorded.UnknownSince, err = time.Parse(time.RFC3339Nano, since)

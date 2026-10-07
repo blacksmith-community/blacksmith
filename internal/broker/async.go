@@ -118,16 +118,17 @@ func (b *Broker) trackProgress(ctx context.Context, instanceID, operation, messa
 }
 
 // trackProgressWithContextID records progress as trackProgress does and
-// records contextID as the operation's context ID. It runs before the
-// request that carries the ID is sent, so the ID is on record whatever
+// records contextID as the operation's context ID, and deploymentName as
+// the deployment the request acts on unless it is empty. It runs before
+// the request that carries the ID is sent, so the ID is on record whatever
 // happens to the request or to the broker. When the write fails, it
 // returns an error wrapping ErrContextIDNotRecorded, and the caller must
 // not send the request.
-func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, operation, message, contextID string, params map[interface{}]interface{}, log logger.Logger) error {
+func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, operation, message, contextID, deploymentName string, params map[interface{}]interface{}, log logger.Logger) error {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	err := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, operation, message, contextID, 0, params)
+	err := b.Vault.TrackProgressWithDeployment(recordCtx, instanceID, operation, message, contextID, deploymentName, 0, params)
 	if err != nil {
 		log.Error("failed to track progress (%s) with context ID %s: %s", message, contextID, err)
 
@@ -374,7 +375,7 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 
 	// A deploy whose context ID is not on record could not be looked up
 	// if its answer were lost, so it is not sent.
-	err := p.broker.trackProgressWithContextID(ctx, p.instanceID, "provision", "Creating BOSH deployment", p.contextID, p.params, p.logger)
+	err := p.broker.trackProgressWithContextID(ctx, p.instanceID, "provision", "Creating BOSH deployment", p.contextID, "", p.params, p.logger)
 	if err != nil {
 		p.failStep(ctx, "Deployment creation was not started", err)
 
@@ -492,11 +493,12 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 	defer cancel()
 
 	// The teardown is a deprovision of its own, so its delete carries a
-	// context ID of its own, recorded before the delete is sent.
+	// context ID of its own, recorded with the deployment's name before the
+	// delete is sent.
 	contextID := uuid.NewString()
 
 	recordCtx, cancelRecord := recordContext(ctx)
-	err := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, "deprovision", "Deleting deployment that finished after the instance was deprovisioned", contextID, 0, nil)
+	err := b.Vault.TrackProgressWithDeployment(recordCtx, instanceID, "deprovision", "Deleting deployment that finished after the instance was deprovisioned", contextID, deploymentName, 0, nil)
 
 	cancelRecord()
 
@@ -607,8 +609,10 @@ func (d *deprovisioningPhase) handleDeploymentNotFound(ctx context.Context) bool
 func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) error {
 	// A delete whose context ID is not on record could not be looked up
 	// if its answer were lost, so it is not sent, and the error settles
-	// the deprovision as a failed delete.
-	err := d.broker.trackProgressWithContextID(ctx, d.instanceID, "deprovision", "Initiating BOSH deployment deletion with retry", d.contextID, nil, d.logger)
+	// the deprovision as a failed delete. The deployment's name goes on
+	// record with the ID, so a poll that finds no index entry asks the
+	// director about the deployment this delete names.
+	err := d.broker.trackProgressWithContextID(ctx, d.instanceID, "deprovision", "Initiating BOSH deployment deletion with retry", d.contextID, d.deploymentName, nil, d.logger)
 	if err != nil {
 		return err
 	}
@@ -999,13 +1003,15 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	logger.Info("Starting async deprovisioning for instance %s", instanceID)
 
 	// The delete request carries this context ID. It goes on record now,
-	// before anything is sent, so a restart at any point leaves an ID to
-	// look the delete task up by.
+	// with the name of the deployment the delete names, before anything is
+	// sent, so a restart at any point leaves an ID to look the delete task
+	// up by.
 	contextID := uuid.NewString()
+	deploymentName := deploymentNameForInstance(instanceID, instance)
 
 	// Track initial state
 	recordCtx, cancelRecord := recordContext(ctx)
-	err := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, "deprovision", "Starting deprovisioning process", contextID, 0, nil)
+	err := b.Vault.TrackProgressWithDeployment(recordCtx, instanceID, "deprovision", "Starting deprovisioning process", contextID, deploymentName, 0, nil)
 
 	cancelRecord()
 
@@ -1015,7 +1021,6 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 		return
 	}
 
-	deploymentName := deploymentNameForInstance(instanceID, instance)
 	logger.Info("Deleting BOSH deployment %s", deploymentName)
 
 	// Create deprovisioning phase helper
