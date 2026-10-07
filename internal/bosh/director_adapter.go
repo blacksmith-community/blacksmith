@@ -1537,7 +1537,7 @@ func convertConfigEntry(config boshapi.ConfigEntry) BoshConfig {
 		ID:        config.ID,
 		Name:      config.Name,
 		Type:      config.Type,
-		Team:      strings.Join(config.Teams, ","),
+		Team:      config.Team,
 		CreatedAt: createdAt,
 		IsActive:  false, // Will be set based on * suffix logic
 	}

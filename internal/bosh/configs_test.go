@@ -389,3 +389,100 @@ func TestOutcomeUnknownErrorNamesTheConfig(t *testing.T) {
 		}
 	})
 }
+
+// A config read by ID goes to GET /configs/<id>, which answers one object, and
+// the director's team lands in BoshConfig.Team.
+func TestGetConfigByIDReadsTheConfigPathAndDecodesTheTeam(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/configs/7" {
+			return false
+		}
+
+		entry := configEntry("7", "cloud", "default")
+		entry["team"] = "blacksmith"
+
+		boshtest.WriteJSON(writer, http.StatusOK, entry)
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	detail, err := director.GetConfigByID(t.Context(), "7*")
+	if err != nil {
+		t.Fatalf("GetConfigByID failed: %v", err)
+	}
+
+	if detail.Team != "blacksmith" {
+		t.Errorf("expected the team blacksmith, got %q", detail.Team)
+	}
+
+	if detail.Content != "key: 7\n" {
+		t.Errorf("expected the config content, got %q", detail.Content)
+	}
+
+	if reads := requestsTo(server, http.MethodGet, "/configs/7"); len(reads) != 1 {
+		t.Errorf("expected exactly one GET /configs/7, got %d", len(reads))
+	}
+
+	if reads := requestsTo(server, http.MethodGet, "/configs"); len(reads) != 0 {
+		t.Errorf("expected no GET /configs list read, got %d", len(reads))
+	}
+}
+
+// A 404 on GET /configs/<id> is a missing config for every read by ID,
+// including the two sides of a diff.
+func TestConfigReadsByIDMapAMissingIDToNotFound(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		switch request.URL.Path {
+		case "/configs/7":
+			entry := configEntry("7", "cloud", "default")
+			entry["team"] = "blacksmith"
+
+			boshtest.WriteJSON(writer, http.StatusOK, entry)
+		case "/configs/99":
+			boshtest.WriteError(writer, http.StatusNotFound, 440000, "config not found")
+		default:
+			return false
+		}
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	reads := map[string]func() error{
+		"GetConfigByID": func() error {
+			_, err := director.GetConfigByID(t.Context(), "99")
+
+			return err
+		},
+		"GetConfigContent": func() error {
+			_, err := director.GetConfigContent(t.Context(), "99")
+
+			return err
+		},
+		"ComputeConfigDiff from": func() error {
+			_, err := director.ComputeConfigDiff(t.Context(), "99", "7")
+
+			return err
+		},
+		"ComputeConfigDiff to": func() error {
+			_, err := director.ComputeConfigDiff(t.Context(), "7", "99")
+
+			return err
+		},
+	}
+
+	for name, read := range reads {
+		t.Run(name, func(t *testing.T) {
+			if err := read(); !errors.Is(err, bosh.ErrConfigNotFound) {
+				t.Fatalf("expected ErrConfigNotFound, got: %v", err)
+			}
+		})
+	}
+}

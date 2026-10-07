@@ -7,24 +7,24 @@ import (
 
 // ConfigEntry represents a BOSH config entry (cloud, runtime, cpi, or generic).
 type ConfigEntry struct {
-	ID        string   `json:"id,omitempty"`
-	Name      string   `json:"name"`
-	Type      string   `json:"type"`
-	Content   string   `json:"content"`
-	Teams     []string `json:"teams,omitempty"`
-	CreatedAt string   `json:"created_at,omitempty"`
-	Current   bool     `json:"current,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	Team      string `json:"team,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	Current   bool   `json:"current,omitempty"`
 }
 
 // ConfigVersion represents a versioned config entry.
 type ConfigVersion struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Type      string   `json:"type"`
-	Content   string   `json:"content"`
-	Teams     []string `json:"teams,omitempty"`
-	CreatedAt string   `json:"created_at,omitempty"`
-	Current   bool     `json:"current,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	Team      string `json:"team,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	Current   bool   `json:"current,omitempty"`
 }
 
 // ConfigListOptions represents options for listing configs.

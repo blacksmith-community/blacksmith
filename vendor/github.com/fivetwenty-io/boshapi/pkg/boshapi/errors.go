@@ -386,16 +386,17 @@ var (
 	ErrInvalidAuthConfig = errors.New("invalid auth configuration")
 )
 
-// ConfigNotFoundError reports that the director answered GET /configs with
-// HTTP 200 and a list that holds no config with the requested ID. The
-// director sent no error status, so there is no APIError.
+// ConfigNotFoundError reports that the director answered GET /configs/<id>
+// with HTTP 404, which means it holds no config with the requested ID. It
+// replaces the APIError for that one answer, as bosh-cli does with its "No
+// config" message.
 type ConfigNotFoundError struct {
 	ID string
 }
 
 // Error implements the error interface.
 func (e *ConfigNotFoundError) Error() string {
-	return fmt.Sprintf("the director answered GET /configs with no config of ID %q. "+
+	return fmt.Sprintf("the director answered GET /configs/<id> with 404 for ID %q. "+
 		"Check that the ID is right, that it was not deleted or replaced by a "+
 		"newer version, and that the UAA client has the scope to see it", e.ID)
 }

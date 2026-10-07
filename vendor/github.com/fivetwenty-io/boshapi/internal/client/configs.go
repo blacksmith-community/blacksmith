@@ -3,7 +3,9 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	nethttp "net/http"
 	"net/url"
 
 	"github.com/fivetwenty-io/boshapi/internal/http"
@@ -39,24 +41,23 @@ func (c *configsClient) List(ctx context.Context, opts *boshapi.ConfigListOption
 }
 
 func (c *configsClient) Get(ctx context.Context, configID string) (*boshapi.ConfigEntry, error) {
-	query := url.Values{"id": {configID}}
-
-	resp, err := c.httpClient.Get(ctx, "/configs", query)
+	resp, err := c.httpClient.Get(ctx, "/configs/"+url.PathEscape(configID), nil)
 	if err != nil {
+		var apiErr *boshapi.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == nethttp.StatusNotFound {
+			return nil, &boshapi.ConfigNotFoundError{ID: configID}
+		}
+
 		return nil, fmt.Errorf("getting config %s: %w", configID, err)
 	}
 
-	var configs []boshapi.ConfigEntry
+	var config boshapi.ConfigEntry
 
-	if err := json.Unmarshal(resp.Body, &configs); err != nil {
+	if err := json.Unmarshal(resp.Body, &config); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	if len(configs) == 0 {
-		return nil, &boshapi.ConfigNotFoundError{ID: configID}
-	}
-
-	return &configs[0], nil
+	return &config, nil
 }
 
 func (c *configsClient) Create(ctx context.Context, req *boshapi.CreateConfigRequest) (*boshapi.ConfigEntry, error) {

@@ -94,6 +94,8 @@ type EventsClient interface {
 // ConfigsClient provides access to generic config operations.
 type ConfigsClient interface {
 	List(ctx context.Context, opts *ConfigListOptions) ([]ConfigEntry, error)
+	// Get reads one config by ID with GET /configs/<id>. A director 404
+	// returns a *ConfigNotFoundError.
 	Get(ctx context.Context, id string) (*ConfigEntry, error)
 	Create(ctx context.Context, req *CreateConfigRequest) (*ConfigEntry, error)
 	Delete(ctx context.Context, id string) error
