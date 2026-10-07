@@ -22,6 +22,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/config"
+	"blacksmith/internal/inflight"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/manifest"
 	"blacksmith/internal/planstore"
@@ -2053,12 +2054,6 @@ func (b *Broker) getVaultDBIndex(ctx context.Context, logger logger.Logger) (*va
 	return vaultDB, nil
 }
 
-// orphanCheckMinimumAge is how old an index entry must be before the orphan
-// check may remove it. An accepted provision has no deployment until its
-// deploy task starts, so a younger entry may belong to one. It matches the
-// reconciler's orphan sweep.
-const orphanCheckMinimumAge = 2 * time.Hour
-
 // orphanCandidate is an index entry the orphan check found without a
 // deployment, with the entry as it was checked.
 type orphanCandidate struct {
@@ -2113,52 +2108,25 @@ func (b *Broker) processOrphanedInstances(ctx context.Context, vaultDB *vaultPkg
 }
 
 // orphanInFlight returns why an index entry with no deployment may belong to
-// work in flight, or "" when nothing shows that it does. The entry is in
-// flight when the newest time it carries is less than orphanCheckMinimumAge
-// old, or when its task record shows a provision in progress. An entry that
-// carries no time is judged by its task record alone. A task record that
-// cannot be read counts as in flight, so the entry is kept. An operation
-// claim this process holds is checked when the entry is removed, under the
-// index lock.
+// work in flight, or "" when nothing shows that it does, by the rule in
+// inflight.Reason. An operation claim this process holds is checked when the
+// entry is removed, under the index lock.
 func (b *Broker) orphanInFlight(ctx context.Context, instanceID string, serviceInstance interface{}) string {
 	entry, _ := serviceInstance.(map[string]interface{})
 
-	newest, dated := indexEntryNewestTime(entry)
-	if dated && time.Since(newest) < orphanCheckMinimumAge {
-		return fmt.Sprintf("its newest time is %s, less than %s ago", newest.Format(time.RFC3339), orphanCheckMinimumAge)
-	}
+	return inflight.Reason(entry, func() (map[string]interface{}, bool, error) {
+		readCtx, cancel := recordContext(ctx)
+		defer cancel()
 
-	readCtx, cancel := recordContext(ctx)
-	defer cancel()
+		var task map[string]interface{}
 
-	var task map[string]interface{}
+		exists, err := b.Vault.Get(readCtx, instanceID+"/task", &task)
+		if err != nil {
+			return nil, false, fmt.Errorf("read %s/task: %w", instanceID, err)
+		}
 
-	exists, err := b.Vault.Get(readCtx, instanceID+"/task", &task)
-	if err != nil {
-		return fmt.Sprintf("its task record could not be read (%s)", err)
-	}
-
-	if !exists {
-		return ""
-	}
-
-	action, _ := task["action"].(string)
-	state, _ := task["state"].(string)
-
-	if action != operationTypeProvision || state == recordedStateFailed {
-		return ""
-	}
-
-	updatedAt, known := unixTimestamp(task["updated_at"])
-	if !known {
-		return "its task record shows a provision in progress with no update time"
-	}
-
-	if time.Since(time.Unix(updatedAt, 0)) < orphanCheckMinimumAge {
-		return fmt.Sprintf("its task record shows a provision in progress, updated less than %s ago", orphanCheckMinimumAge)
-	}
-
-	return ""
+		return task, exists, nil
+	})
 }
 
 // orphanDeploymentUnconfirmed returns why the director has not confirmed that
@@ -2197,58 +2165,6 @@ func (b *Broker) operationClaimed(instanceID string) bool {
 	_, held := b.activeOperations.Load(instanceID)
 
 	return held
-}
-
-// indexEntryNewestTime returns the newest of the times an index entry
-// carries, and false when it carries none. They are the RFC 3339 times that
-// the broker, the reconciler, and the vm-monitor write on an entry, and its
-// created, a Unix time. The reconciler's orphan sweep dates an entry from the
-// same fields.
-func indexEntryNewestTime(entry map[string]interface{}) (time.Time, bool) {
-	var newest time.Time
-
-	for _, field := range []string{"requested_at", "created_at", "reconciled_at", "discovered_at", "updated_at", "unorphaned_at", "deprovision_requested_at", "deleted_at"} {
-		raw, _ := entry[field].(string)
-
-		parsed, err := time.Parse(time.RFC3339, raw)
-		if err == nil && parsed.After(newest) {
-			newest = parsed
-		}
-	}
-
-	created, known := unixTimestamp(entry["created"])
-	if known && time.Unix(created, 0).After(newest) {
-		newest = time.Unix(created, 0)
-	}
-
-	return newest, !newest.IsZero()
-}
-
-// unixTimestamp reads a Unix time that was decoded from JSON as a float64 or a
-// json.Number, or stored as an integer.
-func unixTimestamp(value interface{}) (int64, bool) {
-	switch typed := value.(type) {
-	case int64:
-		return typed, true
-	case int:
-		return int64(typed), true
-	case float64:
-		return int64(typed), true
-	case json.Number:
-		parsed, err := typed.Int64()
-		if err == nil {
-			return parsed, true
-		}
-
-		asFloat, err := typed.Float64()
-		if err != nil {
-			return 0, false
-		}
-
-		return int64(asFloat), true
-	}
-
-	return 0, false
 }
 
 func (b *Broker) validateAndGetDeploymentName(instanceID string, serviceInstance interface{}, logger logger.Logger) (string, error) {
