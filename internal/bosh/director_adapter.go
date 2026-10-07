@@ -118,7 +118,7 @@ func (da *DirectorAdapter) GetConfig(ctx context.Context, configType, configName
 		da.log.Errorf("Failed to get config %s/%s: %v", configType, configName, err)
 
 		return nil, fmt.Errorf("%w %s/%s: %w", ErrGetConfigFailed, configType, configName,
-			da.requestFailure("get config "+configType+"/"+configName, err))
+			da.requestFailure("read it", err))
 	}
 
 	if len(entries) == 0 {
@@ -2257,7 +2257,7 @@ func (da *DirectorAdapter) EnableResurrection(ctx context.Context, deployment st
 		}
 
 		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigUpdateFailed, deployment,
-			da.requestFailure("update resurrection config "+configName, err))
+			da.requestFailure("send the request", err))
 	}
 
 	da.log.Debugf("Successfully updated resurrection config %s for deployment %s", configName, deployment)
@@ -2308,7 +2308,7 @@ func (da *DirectorAdapter) DeleteResurrectionConfig(ctx context.Context, deploym
 		}
 
 		return fmt.Errorf("%w %s: %w", ErrResurrectionConfigDeleteFailed, deployment,
-			da.requestFailure("delete resurrection config "+configName, err))
+			da.requestFailure("send the request", err))
 	}
 
 	da.log.Debugf("Successfully deleted resurrection config %s for deployment %s", configName, deployment)
@@ -3644,7 +3644,7 @@ func (d *DirectorAdapter) getConfigEntry(ctx context.Context, what, id string) (
 	if err != nil {
 		var missing *boshapi.ConfigNotFoundError
 		if errors.As(err, &missing) {
-			return nil, fmt.Errorf("%w: %s", ErrConfigNotFound, id)
+			return nil, fmt.Errorf("%w: %w", ErrConfigNotFound, err)
 		}
 
 		return nil, d.requestFailure(what, err)

@@ -11,6 +11,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
 var errConnectionReset = errors.New("connection reset")
@@ -631,4 +632,84 @@ func TestOutcomeUnknownErrorLeavesOutWhatIsEmpty(t *testing.T) {
 			t.Errorf("expected the message to end by sending the operator to /b/tasks for a recent task, got: %s", message)
 		}
 	})
+}
+
+// A wrapped config error names the failure once, so the log line and the
+// UI do not repeat "failed to get config" or "failed to update".
+func TestConfigErrorsNameTheFailureOnce(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if !strings.HasPrefix(request.URL.Path, "/configs") {
+			return false
+		}
+
+		boshtest.WriteError(writer, http.StatusInternalServerError, 100, "the director broke")
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	calls := map[string]struct {
+		call     func() error
+		repeated string
+	}{
+		"GetConfig": {func() error {
+			_, err := director.GetConfig(t.Context(), "runtime", "x")
+
+			return err
+		}, "failed to get config"},
+		"EnableResurrection": {func() error {
+			return director.EnableResurrection(t.Context(), "dep-1", true)
+		}, "failed to update"},
+		"DeleteResurrectionConfig": {func() error {
+			return director.DeleteResurrectionConfig(t.Context(), "dep-1")
+		}, "failed to delete"},
+	}
+
+	for name, entry := range calls {
+		t.Run(name, func(t *testing.T) {
+			err := entry.call()
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+
+			if count := strings.Count(err.Error(), entry.repeated); count != 1 {
+				t.Errorf("expected %q once, found it %d times in: %v", entry.repeated, count, err)
+			}
+		})
+	}
+}
+
+// A missing ID keeps the director's own 404 text in the chain, so the log
+// line shows which route and ID the director refused.
+func TestMissingConfigIDKeepsTheDirectorsAnswer(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != "/configs/99" {
+			return false
+		}
+
+		boshtest.WriteError(writer, http.StatusNotFound, 440000, "config not found")
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	_, err := director.GetConfigByID(t.Context(), "99")
+	if !errors.Is(err, bosh.ErrConfigNotFound) {
+		t.Fatalf("expected ErrConfigNotFound, got: %v", err)
+	}
+
+	var missing *boshapi.ConfigNotFoundError
+	if !errors.As(err, &missing) || missing.ID != "99" {
+		t.Errorf("expected the director's ConfigNotFoundError for 99 in the chain, got: %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "GET /configs/<id>") {
+		t.Errorf("expected the director's 404 detail in the message, got: %v", err)
+	}
 }
