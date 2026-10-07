@@ -135,10 +135,10 @@ func readStatusDuringCheck(t *testing.T, read statusReadCase) {
 }
 
 // A failed check that follows a check that held an instance in flight, or a
-// fresh provision whose first check fails, counts the failure and leaves
-// provisioning mode. GetStatus then never shows an instance as provisioning
-// and failing at the same time.
-func TestAFailedCheckEndsProvisioning(t *testing.T) {
+// fresh provision whose first check fails, counts the failure and leaves the
+// provisioning flag alone. GetStatus counts the instance as provisioning and
+// not as failing.
+func TestAFailedCheckLeavesProvisioningAlone(t *testing.T) {
 	t.Parallel()
 
 	t.Run("after a check held the instance in flight", func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestAFailedCheckEndsProvisioning(t *testing.T) {
 
 		monitor.TriggerRefreshAll(t.Context())
 
-		expectFailingAndNotProvisioning(t, monitor, vault)
+		expectErrorAndStillProvisioning(t, monitor, vault)
 	})
 
 	t.Run("after a fresh provision was added", func(t *testing.T) {
@@ -200,24 +200,85 @@ func TestAFailedCheckEndsProvisioning(t *testing.T) {
 
 		monitor.CheckScheduledServices(t.Context())
 
-		expectFailingAndNotProvisioning(t, monitor, vault)
+		expectErrorAndStillProvisioning(t, monitor, vault)
 	})
 }
 
-// expectFailingAndNotProvisioning checks that the last check of the
+// expectErrorAndStillProvisioning checks that the last check of the
 // instance stored "error", counted one failure, and left the instance
-// unhealthy and out of provisioning mode.
-func expectFailingAndNotProvisioning(t *testing.T, monitor *vmmonitor.Monitor, vault *indexVault) {
+// unhealthy and still provisioning, and that the summary counts it under
+// provisioning and not under failing.
+func expectErrorAndStillProvisioning(t *testing.T, monitor *vmmonitor.Monitor, vault *indexVault) {
 	t.Helper()
 
 	if status := vault.storedStatus(inFlightID); status != statusError {
 		t.Errorf("the failed check stored status %q, want error", status)
 	}
 
-	expectHeldAsFailing(t, monitor, inFlightID, 1)
+	expectProvisioningInSummary(t, monitor, 1, true)
+}
+
+// expectProvisioningInSummary checks the monitored instance's failure count,
+// that it is unhealthy and still provisioning, and that the summary counts it
+// as provisioning and never as failing.
+func expectProvisioningInSummary(t *testing.T, monitor *vmmonitor.Monitor, failures int, unhealthy bool) {
+	t.Helper()
+
+	status := monitor.GetStatus()
+	provisioning, _ := status.Summary["provisioning"].(int)
+	failing, _ := status.Summary["failing"].(int)
 
 	watched, _ := watchedState(t, monitor, inFlightID)
-	if watched.IsProvisioning {
-		t.Errorf("a failing instance is still provisioning; want it out of provisioning mode")
+	if watched.FailureCount != failures || watched.IsHealthy == unhealthy || !watched.IsProvisioning || provisioning != 1 || failing != 0 {
+		t.Errorf("the instance has %d failures, healthy %t, provisioning %t, with %d provisioning and %d failing in the summary; want %d failures, healthy %t, provisioning, 1 provisioning, and 0 failing",
+			watched.FailureCount, watched.IsHealthy, watched.IsProvisioning, provisioning, failing, failures, !unhealthy)
 	}
+}
+
+// A fresh provision whose first check fails, and whose later check finds the
+// deployment starting, is still provisioning, and the summary counts it
+// under provisioning and never under failing.
+func TestAFreshProvisionStaysProvisioningThroughAFailedCheck(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu       sync.Mutex
+		answered bool
+	)
+
+	director := goneDirector(nil)
+	director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) { return nil, errDirectorUnavailable }
+	director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if !answered {
+			return nil, errDirectorUnavailable
+		}
+
+		return []bosh.VM{{JobState: "starting"}}, nil
+	}
+
+	vault := &indexVault{entries: map[string]interface{}{inFlightID: oldEntry()}}
+	monitor := vmmonitor.NewWithVault(vault, director, noClaims{})
+
+	err := monitor.AddService(t.Context(), inFlightID, inFlightDeployment)
+	if err != nil {
+		t.Fatalf("adding the instance failed: %v", err)
+	}
+
+	monitor.CheckScheduledServices(t.Context())
+	expectErrorAndStillProvisioning(t, monitor, vault)
+
+	mu.Lock()
+	answered = true
+	mu.Unlock()
+
+	monitor.TriggerRefreshAll(t.Context())
+
+	if status := vault.storedStatus(inFlightID); status != "starting" {
+		t.Errorf("the later check stored status %q, want starting", status)
+	}
+
+	expectProvisioningInSummary(t, monitor, 1, true)
 }

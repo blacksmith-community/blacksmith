@@ -119,7 +119,7 @@ type ServiceMonitor struct {
 	NextCheck      time.Time
 	FailureCount   int
 	IsHealthy      bool
-	IsProvisioning bool // true until status is "running" or "failing", or a check fails, uses 5-min interval
+	IsProvisioning bool // true until status is "running" or "failing", uses 5-min interval; a failed check leaves it alone
 }
 
 // StemcellInfo contains basic stemcell information for a service instance.
@@ -878,7 +878,7 @@ func (m *Monitor) GetStatus() MonitorStatus {
 	now := time.Now()
 	services := make([]ServiceStatus, 0, len(m.services))
 
-	var dueCount, healthyCount, failingCount int
+	var dueCount, healthyCount, failingCount, provisioningCount int
 
 	for _, svc := range m.services {
 		isDue := now.After(svc.NextCheck) || svc.NextCheck.IsZero()
@@ -886,9 +886,14 @@ func (m *Monitor) GetStatus() MonitorStatus {
 			dueCount++
 		}
 
-		if svc.IsHealthy {
+		// An instance that is still provisioning counts as provisioning
+		// only, whatever its failure count or health say.
+		switch {
+		case svc.IsProvisioning:
+			provisioningCount++
+		case svc.IsHealthy:
 			healthyCount++
-		} else {
+		default:
 			failingCount++
 		}
 
@@ -916,6 +921,7 @@ func (m *Monitor) GetStatus() MonitorStatus {
 			"due_for_check": dueCount,
 			"healthy":       healthyCount,
 			"failing":       failingCount,
+			"provisioning":  provisioningCount,
 		},
 	}
 }
@@ -972,9 +978,10 @@ func (m *Monitor) recordListing(svc *ServiceMonitor, status string, checkedAt ti
 // failed in the instance's state, under the monitor's lock, and returns the
 // failure count and when to check the instance next, which is at the failed
 // interval. An instance in flight is held as a fresh provision is, healthy
-// and provisioning with no failure counted. Any other keep counts a failure,
-// marks the instance unhealthy, and ends its provisioning, so GetStatus
-// never shows an instance as provisioning and failing at once.
+// and provisioning with no failure counted. Any other keep counts a failure
+// and marks the instance unhealthy. It leaves IsProvisioning as it was, and
+// GetStatus counts an instance that is still provisioning under
+// provisioning only.
 func (m *Monitor) recordKeep(svc *ServiceMonitor, inFlight bool, checkedAt time.Time) (int, time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -986,7 +993,6 @@ func (m *Monitor) recordKeep(svc *ServiceMonitor, inFlight bool, checkedAt time.
 	} else {
 		svc.FailureCount++
 		svc.IsHealthy = false
-		svc.IsProvisioning = false
 	}
 
 	svc.LastCheck = checkedAt
