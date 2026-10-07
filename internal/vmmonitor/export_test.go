@@ -18,6 +18,7 @@ func NewWithVault(vault vmVault, director bosh.Director, claims OperationClaims)
 		normalInterval: time.Hour,
 		failedInterval: 5 * time.Minute,
 		services:       make(map[string]*ServiceMonitor),
+		checking:       make(map[string]bool),
 	}
 }
 

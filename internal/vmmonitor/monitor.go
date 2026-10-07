@@ -77,7 +77,16 @@ type Monitor struct {
 	failedInterval time.Duration
 
 	services map[string]*ServiceMonitor
-	mu       sync.RWMutex
+
+	// checking holds the IDs of the instances a check cycle is checking.
+	// Another cycle skips an instance until that check ends, so two cycles
+	// never check one instance at the same time. It is keyed by instance
+	// ID, not by the watched record, because a rescan can drop the record
+	// of an instance that is being checked and AddService can then build a
+	// new one. It is guarded by mu.
+	checking map[string]bool
+
+	mu sync.RWMutex
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -111,11 +120,6 @@ type ServiceMonitor struct {
 	FailureCount   int
 	IsHealthy      bool
 	IsProvisioning bool // true until status is "running" or "failing", or a check fails, uses 5-min interval
-
-	// checking is true while a check cycle checks the instance. Another
-	// cycle skips the instance until that check ends, so two cycles never
-	// check it at the same time. It is guarded by Monitor.mu.
-	checking bool
 }
 
 // StemcellInfo contains basic stemcell information for a service instance.
@@ -171,6 +175,7 @@ func New(vault *internalVault.Vault, boshDirector bosh.Director, claims Operatio
 		normalInterval: normalInterval,
 		failedInterval: failedInterval,
 		services:       make(map[string]*ServiceMonitor),
+		checking:       make(map[string]bool),
 		cancel:         nil, // Will be set in Start()
 	}
 }
@@ -573,8 +578,11 @@ func (m *Monitor) monitorLoop(ctx context.Context) {
 
 // checkScheduledServices checks the services that are due. Two cycles can
 // overlap, because the monitor loop's tick and TriggerRefreshAll both run
-// one, so a cycle marks each service it takes as being checked and skips a
-// service another cycle is still checking.
+// one, so a cycle marks the ID of each instance it takes as being checked
+// and skips an instance another cycle is still checking, even when a rescan
+// and AddService rebuilt its watched record in the meantime. Every worker
+// releases its instance in a deferred call, so a check that panics, returns
+// early, or runs with a cancelled context still releases it.
 func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	logger := logger.Get().Named("vm-monitor")
 
@@ -586,14 +594,14 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 	inProgress := 0
 
 	for _, svc := range m.services {
-		if svc.checking {
+		if m.checking[svc.ServiceID] {
 			inProgress++
 
 			continue
 		}
 
 		if now.After(svc.NextCheck) || svc.NextCheck.IsZero() {
-			svc.checking = true
+			m.checking[svc.ServiceID] = true
 			servicesDue = append(servicesDue, svc)
 		}
 	}
@@ -631,7 +639,7 @@ func (m *Monitor) checkScheduledServices(ctx context.Context) {
 		go func(s *ServiceMonitor) {
 			defer waitGroup.Done()
 			defer func() { <-sem }()
-			defer m.finishCheck(s)
+			defer m.finishCheck(s.ServiceID)
 			defer func() {
 				// Track worker completion
 				count := atomic.AddInt32(&completed, 1)
@@ -912,13 +920,13 @@ func (m *Monitor) GetStatus() MonitorStatus {
 	}
 }
 
-// finishCheck marks a service as no longer being checked, so a later cycle
-// can check it again.
-func (m *Monitor) finishCheck(svc *ServiceMonitor) {
+// finishCheck marks an instance as no longer being checked, so a later
+// cycle can check it again.
+func (m *Monitor) finishCheck(instanceID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	svc.checking = false
+	delete(m.checking, instanceID)
 }
 
 // recordListing records a check whose VM listing succeeded in the

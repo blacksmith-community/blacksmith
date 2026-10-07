@@ -1,6 +1,7 @@
 package vmmonitor_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -145,5 +146,150 @@ func TestOverlappingChecksNeverCheckOneInstanceTwice(t *testing.T) {
 
 	if after != 2 || status != vmStatusRunning {
 		t.Errorf("a cycle after the first check ended: %d listings in all, status %q; want 2 listings and running", after, status)
+	}
+}
+
+// A rescan can stop watching an instance whose index entry is gone while a
+// cycle is still checking it, and AddService can then watch the instance
+// again under a new record. A later cycle must still skip the instance
+// until the first check ends, and a cycle after that checks it again.
+func TestOverlappingChecksSkipAnInstanceDroppedAndAddedAgain(t *testing.T) {
+	t.Parallel()
+
+	held := newHeldListing()
+
+	director := goneDirector(nil)
+	director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) {
+		held.list()
+
+		return nil, errProxyNotFound
+	}
+
+	vault := &indexVault{entries: map[string]interface{}{inFlightID: oldEntry()}}
+	monitor := vmmonitor.NewWithVault(vault, director, &heldClaims{})
+
+	err := monitor.ScanAllServices(t.Context())
+	if err != nil {
+		t.Fatalf("the scan failed: %v", err)
+	}
+
+	firstDone := make(chan struct{})
+
+	go func() {
+		defer close(firstDone)
+
+		monitor.CheckScheduledServices(t.Context())
+	}()
+
+	<-held.entered
+
+	vault.removeEntry(inFlightID)
+	monitor.RescanServices(t.Context())
+
+	if _, watched := monitor.MonitoredDeployment(inFlightID); watched {
+		t.Fatalf("the rescan still watches %s after its index entry was removed", inFlightID)
+	}
+
+	addInFlight(t, monitor)
+	monitor.CheckScheduledServices(t.Context())
+
+	during := held.count()
+
+	close(held.release)
+	<-firstDone
+
+	if during != 1 {
+		t.Errorf("a cycle listed the VMs of an instance dropped and added again while the first check was still running: %d listings, want 1", during)
+	}
+
+	addInFlight(t, monitor)
+	monitor.CheckScheduledServices(t.Context())
+
+	if after := held.count(); after != 2 {
+		t.Errorf("a cycle after the first check ended: %d listings in all, want 2", after)
+	}
+}
+
+// addInFlight has the monitor watch the in-flight instance through
+// AddService, as the broker's provision hook does.
+func addInFlight(t *testing.T, monitor *vmmonitor.Monitor) {
+	t.Helper()
+
+	err := monitor.AddService(t.Context(), inFlightID, inFlightDeployment)
+	if err != nil {
+		t.Fatalf("adding the instance failed: %v", err)
+	}
+}
+
+// A check that panics, or that runs with a cancelled context, still ends,
+// so the next cycle checks the instance again.
+func TestAnEndedCheckLetsTheNextCycleCheckAgain(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		listed func(listings int) ([]bosh.VM, error)
+		cancel bool
+	}{
+		{
+			name: "a check that panics",
+			listed: func(listings int) ([]bosh.VM, error) {
+				if listings == 1 {
+					panic("the director client panicked")
+				}
+
+				return nil, errProxyNotFound
+			},
+		},
+		{
+			name:   "a check run with a cancelled context",
+			listed: func(int) ([]bosh.VM, error) { return nil, errProxyNotFound },
+			cancel: true,
+		},
+	}
+
+	for _, ended := range cases {
+		t.Run(ended.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				listMu   sync.Mutex
+				listings int
+			)
+
+			director := goneDirector(nil)
+			director.GetDeploymentFn = func(string) (*bosh.DeploymentDetail, error) { return nil, errDirectorUnavailable }
+			director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) {
+				listMu.Lock()
+				listings++
+				count := listings
+				listMu.Unlock()
+
+				return ended.listed(count)
+			}
+
+			vault := &indexVault{entries: map[string]interface{}{inFlightID: oldEntry()}}
+			monitor := vmmonitor.NewWithVault(vault, director, noClaims{})
+
+			addInFlight(t, monitor)
+
+			ctx := t.Context()
+			if ended.cancel {
+				cancelled, cancel := context.WithCancel(ctx)
+				cancel()
+
+				ctx = cancelled
+			}
+
+			monitor.CheckScheduledServices(ctx)
+			monitor.TriggerRefreshAll(t.Context())
+
+			listMu.Lock()
+			defer listMu.Unlock()
+
+			if listings != 2 {
+				t.Errorf("after %s: %d listings in all, want 2", ended.name, listings)
+			}
+		})
 	}
 }

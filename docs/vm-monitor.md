@@ -427,7 +427,7 @@ else:
 ### Concurrency Management
 
 - **Maximum Concurrent Checks**: 3 (hardcoded in `checkScheduledServices`)
-- **One Check per Instance**: The monitor loop's tick and the refresh that `Start` triggers can run overlapping cycles. A cycle marks each instance it takes as being checked and skips an instance that another cycle is still checking, so no two cycles check the same instance at once.
+- **One Check per Instance**: The monitor loop's tick and the refresh that `Start` triggers can run overlapping cycles. A cycle marks the ID of each instance it takes as being checked and skips an instance that another cycle is still checking, so no two cycles check the same instance at once. The mark belongs to the instance ID, not to the watched record, so it still holds when a rescan drops an instance that's being checked and `AddService` watches it again. Each check releases its mark when it ends, even when it panics, returns early, or runs with a cancelled context.
 - **Locked State**: `GetStatus` reads each instance's state from request goroutines while a cycle runs. A check updates that state under the monitor's lock, and it never holds the lock while it calls the director or Vault.
 - **Semaphore-Based Limiting**: Prevents BOSH Director overload
 - **Goroutine Management**: Each health check runs in separate goroutine
