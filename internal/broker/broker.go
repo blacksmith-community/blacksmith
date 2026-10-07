@@ -1140,7 +1140,7 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 	}
 
 	if !provisionAccepted(entry, recorded) {
-		err = b.refuseProvisionOverDeployment(readCtx, instanceID, details.PlanID+"-"+instanceID, logger)
+		err = b.refuseProvisionOverDeployments(readCtx, instanceID, details, entry, logger)
 		if err != nil {
 			return osbapi.ProvisionResponse{}, false, errors.Is(err, osbapi.ErrInstanceAlreadyExists), err
 		}
@@ -1185,13 +1185,34 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 	return osbapi.ProvisionResponse{Operation: operationTypeProvision}, true, true, nil
 }
 
-// refuseProvisionOverDeployment asks the director for the deployment that a
-// provision of an instance with a partial index entry would create. Such an
-// entry records no accepted provision, but a deployment can still sit beside
-// it, such as one the reconciler adopted. It returns nil only when the
-// director answers with its own deployment-not-found code. A deployment that
-// exists answers 409 Conflict, and any other answer fails the request, so
-// nothing is deployed over a deployment that may exist.
+// refuseProvisionOverDeployments runs refuseProvisionOverDeployment for the
+// deployment the provision would create, named from the request's plan and
+// the instance ID, and then for the deployment the entry records when that
+// name differs. A recorded deployment, such as one the reconciler adopted
+// under another plan, would otherwise be left beside a second deployment.
+func (b *Broker) refuseProvisionOverDeployments(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, entry map[string]interface{}, logger logger.Logger) error {
+	requested := details.PlanID + "-" + instanceID
+
+	err := b.refuseProvisionOverDeployment(ctx, instanceID, requested, logger)
+	if err != nil {
+		return err
+	}
+
+	recorded, _ := entry["deployment_name"].(string)
+	if recorded == "" || recorded == requested {
+		return nil
+	}
+
+	return b.refuseProvisionOverDeployment(ctx, instanceID, recorded, logger)
+}
+
+// refuseProvisionOverDeployment asks the director for a deployment that a
+// provision of an instance with a partial index entry would deploy over or
+// beside. Such an entry records no accepted provision, but a deployment can
+// still sit beside it, such as one the reconciler adopted. It returns nil
+// only when the director answers with its own deployment-not-found code. A
+// deployment that exists answers 409 Conflict, and any other answer fails the
+// request, so nothing is deployed over or beside a deployment that may exist.
 func (b *Broker) refuseProvisionOverDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) error {
 	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
 
@@ -2199,10 +2220,26 @@ func (b *Broker) validateAndGetDeploymentName(instanceID string, serviceInstance
 
 	logger.Debug("Instance %s - plan_id: %s", instanceID, plan)
 
-	deploymentName := plan + "-" + instanceID
+	deploymentName := indexEntryDeploymentName(instanceID, serviceData)
 	logger.Debug("Looking for deployment: %s", deploymentName)
 
 	return deploymentName, nil
+}
+
+// indexEntryDeploymentName returns the deployment name an index entry
+// records, and builds it from the entry's plan ID and the instance ID only
+// when the entry records none, as deploymentNameForInstance does for a
+// decoded entry. The reconciler can rewrite the plan ID after the deployment
+// was created, and a name built from it then names a deployment that does
+// not exist.
+func indexEntryDeploymentName(instanceID string, entry map[string]interface{}) string {
+	if name, _ := entry["deployment_name"].(string); name != "" {
+		return name
+	}
+
+	planID, _ := entry["plan_id"].(string)
+
+	return planID + "-" + instanceID
 }
 
 // isDeletedTombstone reports whether an index entry is a tombstone left by the
@@ -2730,8 +2767,9 @@ func (b *Broker) getInstanceDetails(ctx context.Context, instanceID string, logg
 		return osbapi.ProvisionRequest{}, "", ErrCouldNotFindInstanceInVaultIndex
 	}
 
-	// Construct deployment name and vault path
-	deploymentName := instance.PlanID + "-" + instanceID
+	// The details are stored under the deployment's name, which the entry
+	// records, so a plan ID the reconciler rewrote does not hide them.
+	deploymentName := deploymentNameForInstance(instanceID, instance)
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
 
 	// Get details from vault

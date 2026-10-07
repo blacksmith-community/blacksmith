@@ -209,6 +209,12 @@ func (b *Broker) RecordDeprovisionRequest(ctx context.Context, instanceID string
 	return b.recordDeprovisionRequest(ctx, instanceID, details, logger.Get().Named("broker"))
 }
 
+// InstanceDetails exposes the read of an instance's provision details and
+// deployment name that the provision completion hook makes.
+func (b *Broker) InstanceDetails(ctx context.Context, instanceID string) (osbapi.ProvisionRequest, string, error) {
+	return b.getInstanceDetails(ctx, instanceID, logger.Get().Named("broker"))
+}
+
 // StoreDeploymentNameInIndex exposes the write of the deployment name into the
 // index.
 func (b *Broker) StoreDeploymentNameInIndex(ctx context.Context, instanceID, deploymentName string) {

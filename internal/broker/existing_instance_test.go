@@ -503,6 +503,69 @@ var _ = Describe("A provision for an instance the index already has", func() {
 			Expect(err).To(MatchError(testutil.ErrSecretNotFound), "the provision wrote a task record")
 		})
 	}
+
+	// A partial entry can record the name of a deployment the reconciler
+	// adopted under another plan. The provision would create a second
+	// deployment beside it, so the director is asked for that name as well,
+	// and only its deployment-not-found answer for both names lets the
+	// provision deploy.
+	recordedAnswers := []struct {
+		name     string
+		answer   func(name string) (*bosh.DeploymentDetail, error)
+		deploys  bool
+		conflict bool
+	}{
+		{"a provision over an entry with a recorded deployment name asks the director for that name", func(name string) (*bosh.DeploymentDetail, error) {
+			return &bosh.DeploymentDetail{Name: name}, nil
+		}, false, true},
+		{"a provision over an entry whose recorded deployment cannot be checked fails", func(string) (*bosh.DeploymentDetail, error) {
+			return nil, errDirectorUnreachable
+		}, false, false},
+		{"a provision over an entry whose recorded deployment is gone is provisioned as new", deploymentNotFound, true, false},
+	}
+
+	for _, recordedAnswer := range recordedAnswers {
+		It(recordedAnswer.name, func() {
+			recordedName := otherPlanID + "-" + instanceID
+
+			Expect(brokerInstance.RecordInitialRequest(ctx, instanceID, request)).To(Succeed())
+			Expect(vaultClient.UpdateIndexEntry(ctx, instanceID, map[string]interface{}{"deployment_name": recordedName})).To(Succeed())
+
+			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+				if name == recordedName {
+					return recordedAnswer.answer(name)
+				}
+
+				return deploymentNotFound(name)
+			}
+
+			entryBefore := indexEntry()
+
+			response, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
+			Expect(director.Calls("GetDeployment")).To(ContainElement(recordedName), "the director was not asked for the recorded deployment")
+
+			if recordedAnswer.deploys {
+				Expect(err).ToNot(HaveOccurred())
+				Expect(async).To(BeTrue())
+				Expect(response).To(Equal(osbapi.ProvisionResponse{Operation: "provision"}))
+				Expect(director.Calls("GetDeployment")).To(ContainElement(deploymentName), "the director was not asked for the deployment the provision creates")
+
+				Eventually(func() []string { return director.Calls("CreateDeployment") }, 10*time.Second).ShouldNot(BeEmpty())
+
+				return
+			}
+
+			Expect(err).To(HaveOccurred(), "the provision went ahead")
+			Expect(errors.Is(err, osbapi.ErrInstanceAlreadyExists)).To(Equal(recordedAnswer.conflict), "the provision answered %v", err)
+			Expect(async).To(BeFalse())
+
+			Expect(indexEntry()).To(Equal(entryBefore), "the provision rewrote the index entry")
+			Consistently(func() []string { return director.Calls("CreateDeployment") }, 500*time.Millisecond).Should(BeEmpty(), "the provision started a deploy")
+
+			_, err = suite.vault.ReadSecret(instanceID + "/task")
+			Expect(err).To(MatchError(testutil.ErrSecretNotFound), "the provision wrote a task record")
+		})
+	}
 })
 
 // deploymentNotFound answers a GetDeployment the way the director adapter
@@ -1128,15 +1191,26 @@ var _ = Describe("The broker's orphan check", func() {
 		brokerInstance *broker.Broker
 		suffix         string
 		seeded         []string
+		live           map[string]bool
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		suffix = strconv.FormatInt(time.Now().UnixNano(), 10)
 		seeded = nil
+		live = map[string]bool{}
 
+		// The director lists the deployments a spec puts in live.
 		director = testutil.NewScriptedBOSHDirector()
-		director.GetDeploymentsFn = func() ([]bosh.Deployment, error) { return []bosh.Deployment{}, nil }
+		director.GetDeploymentsFn = func() ([]bosh.Deployment, error) {
+			deployments := []bosh.Deployment{}
+
+			for name := range live {
+				deployments = append(deployments, bosh.Deployment{Name: name})
+			}
+
+			return deployments, nil
+		}
 
 		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
 		brokerInstance = &broker.Broker{BOSH: director, Vault: vaultClient, Config: &config.Config{}}
@@ -1227,6 +1301,40 @@ var _ = Describe("The broker's orphan check", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(removed).To(ContainElement(oldName))
 		Expect(indexed(oldID)).To(BeFalse())
+	})
+
+	// The reconciler can rewrite an entry's plan ID after the deployment was
+	// created, so the name built from the plan ID no longer matches the
+	// deployment. The name the entry records still does.
+	It("the orphan check keeps an entry whose stored deployment name exists", func() {
+		adoptedID, builtName := seedEntry("adopted", old, map[string]interface{}{"created": old.Unix()})
+		storedName := "standalone-classic-" + adoptedID
+		Expect(vaultClient.UpdateIndexEntry(ctx, adoptedID, map[string]interface{}{"deployment_name": storedName})).To(Succeed())
+
+		live[storedName] = true
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(storedName))
+		Expect(removed).ToNot(ContainElement(builtName))
+		Expect(indexed(adoptedID)).To(BeTrue(), "the entry of a live deployment was removed")
+	})
+
+	// An entry indexed before deployment_name existed is named from its plan
+	// ID, so its deployment is still found, and it is still removed once the
+	// deployment is gone.
+	It("an entry without a stored name still uses the plan and instance ID", func() {
+		liveID, liveName := seedEntry("unnamed-live", old, map[string]interface{}{"created": old.Unix()})
+		goneID, goneName := seedEntry("unnamed-gone", old, map[string]interface{}{"created": old.Unix()})
+
+		live[liveName] = true
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(liveName))
+		Expect(indexed(liveID)).To(BeTrue(), "the entry of a live deployment was removed")
+		Expect(removed).To(ContainElement(goneName))
+		Expect(indexed(goneID)).To(BeFalse())
 	})
 
 	It("keeps an old entry whose provision task record is in progress", func() {
@@ -1354,5 +1462,67 @@ var _ = Describe("The broker's orphan check", func() {
 
 		Expect(removed).ToNot(ContainElement(claimedName))
 		Expect(indexed(claimedID)).To(BeTrue(), "an entry claimed during the check was removed")
+	})
+})
+
+// The provision completion hook reads an instance's details from
+// <instance>/<deployment> and hands the deployment name to the vm-monitor and
+// the VM lookup. The name comes from the index entry, because the reconciler
+// can rewrite the entry's plan ID after the deployment was created.
+var _ = Describe("An instance's provision details", func() {
+	const planID = "standalone"
+
+	var (
+		ctx            context.Context
+		vaultClient    *internalVault.Vault
+		brokerInstance *broker.Broker
+		instanceID     string
+		request        osbapi.ProvisionRequest
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		instanceID = fmt.Sprintf("details-%d", time.Now().UnixNano())
+		request = osbapi.ProvisionRequest{
+			ServiceID:        "valkey",
+			PlanID:           planID,
+			OrganizationGUID: "org-guid",
+			SpaceGUID:        "space-guid",
+			Parameters:       map[string]any{"memory": "small"},
+		}
+
+		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
+		brokerInstance = &broker.Broker{BOSH: testutil.NewScriptedBOSHDirector(), Vault: vaultClient, Config: &config.Config{}}
+
+		Expect(brokerInstance.RecordInitialRequest(ctx, instanceID, request)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		_ = vaultClient.Index(ctx, instanceID, nil)
+	})
+
+	It("instance details name the stored deployment", func() {
+		storedName := "standalone-classic-" + instanceID
+
+		Expect(brokerInstance.StoreDeploymentDetails(ctx, instanceID, storedName, request)).To(Succeed())
+		brokerInstance.StoreDeploymentNameInIndex(ctx, instanceID, storedName)
+
+		details, deployment, err := brokerInstance.InstanceDetails(ctx, instanceID)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment).To(Equal(storedName))
+		Expect(details.PlanID).To(Equal(planID))
+		Expect(details.Parameters).To(HaveKeyWithValue("memory", "small"))
+	})
+
+	It("instance details of an entry without a stored name use the plan and instance ID", func() {
+		builtName := planID + "-" + instanceID
+
+		Expect(brokerInstance.StoreDeploymentDetails(ctx, instanceID, builtName, request)).To(Succeed())
+
+		details, deployment, err := brokerInstance.InstanceDetails(ctx, instanceID)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(deployment).To(Equal(builtName))
+		Expect(details.PlanID).To(Equal(planID))
+		Expect(details.Parameters).To(HaveKeyWithValue("memory", "small"))
 	})
 })
