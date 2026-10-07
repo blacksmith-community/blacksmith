@@ -98,7 +98,10 @@ type OperationClaims interface {
 	OperationClaimed(instanceID string) bool
 }
 
-// ServiceMonitor tracks the monitoring state of a service instance.
+// ServiceMonitor tracks the monitoring state of a service instance. Its
+// ServiceID and DeploymentName never change once it is built. Monitor.mu
+// guards every other field, because GetStatus reads them from request
+// goroutines while a check cycle updates them.
 type ServiceMonitor struct {
 	ServiceID      string
 	DeploymentName string
@@ -107,7 +110,7 @@ type ServiceMonitor struct {
 	NextCheck      time.Time
 	FailureCount   int
 	IsHealthy      bool
-	IsProvisioning bool // true until status is "running" or "failing", uses 5-min interval
+	IsProvisioning bool // true until status is "running" or "failing", or a check fails, uses 5-min interval
 
 	// checking is true while a check cycle checks the instance. Another
 	// cycle skips the instance until that check ends, so two cycles never
@@ -667,34 +670,20 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 	// Calculate overall status
 	status := m.calculateOverallStatus(vms)
 	healthyCount := m.countHealthyVMs(vms)
+	checkedAt := time.Now()
+
+	nextCheck, provisioningDone := m.recordListing(svc, status, checkedAt)
+	if provisioningDone {
+		logger.Info("Service %s provisioning complete, switching to normal interval", svc.ServiceID)
+	}
 
 	vmStatus := VMStatus{
 		Status:      status,
 		VMCount:     len(vms),
 		HealthyVMs:  healthyCount,
-		LastUpdated: time.Now(),
+		LastUpdated: checkedAt,
+		NextUpdate:  nextCheck,
 		VMs:         vms,
-	}
-
-	// Check if provisioning is complete (reached stable state)
-	if svc.IsProvisioning && (status == vmStatusRunning || status == "failing") {
-		svc.IsProvisioning = false
-		logger.Info("Service %s provisioning complete, switching to normal interval", svc.ServiceID)
-	}
-
-	// Determine next check interval
-	// Use failedInterval (5 min) during provisioning or when status is not running
-	if svc.IsProvisioning {
-		// Still provisioning - use 5-min interval
-		vmStatus.NextUpdate = time.Now().Add(m.failedInterval)
-	} else if status != vmStatusRunning {
-		svc.IsHealthy = false
-		svc.FailureCount++
-		vmStatus.NextUpdate = time.Now().Add(m.failedInterval)
-	} else {
-		svc.IsHealthy = true
-		svc.FailureCount = 0
-		vmStatus.NextUpdate = time.Now().Add(m.normalInterval)
 	}
 
 	// Store in Vault
@@ -705,15 +694,6 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 		logger.Info("Stored VM status for %s: status=%s, healthy=%d, total=%d",
 			svc.ServiceID, status, healthyCount, len(vms))
 	}
-
-	// Update service monitor
-	m.mu.Lock()
-
-	svc.LastStatus = status
-	svc.LastCheck = vmStatus.LastUpdated
-	svc.NextCheck = vmStatus.NextUpdate
-
-	m.mu.Unlock()
 }
 
 // handleCheckError handles a failed VM listing for a service. The listing's
@@ -726,7 +706,8 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 // keeps monitoring the instance. An instance kept because it is in flight is
 // held as a fresh provision is, healthy and provisioning with no failure
 // counted, and its check is stored with the VM status "provisioning". Any
-// other keep records a failed check, and its check is stored with "error".
+// other keep records a failed check, ends the instance's provisioning, and
+// stores its check with "error".
 func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err error) {
 	logger := logger.Get().Named("vm-monitor")
 
@@ -748,33 +729,23 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 		logger.Error("Failed to check VMs for service %s: %s; the director still has deployment %s, so the instance is kept", svc.ServiceID, err, svc.DeploymentName)
 	}
 
-	// An instance in flight looks as a fresh provision does, and any other
-	// keep counts as a failed check. Both are checked again at the failed
-	// interval.
 	status := vmStatusError
-
 	if kept.inFlight {
 		status = vmStatusProvisioning
-		svc.FailureCount = 0
-		svc.IsHealthy = true
-		svc.IsProvisioning = true
-	} else {
-		svc.FailureCount++
-		svc.IsHealthy = false
 	}
 
-	svc.LastCheck = time.Now()
-	svc.NextCheck = time.Now().Add(m.failedInterval)
+	checkedAt := time.Now()
+	failureCount, nextCheck := m.recordKeep(svc, kept.inFlight, checkedAt)
 
 	vmStatus := VMStatus{
 		Status:      status,
 		VMCount:     0,
 		HealthyVMs:  0,
-		LastUpdated: time.Now(),
-		NextUpdate:  svc.NextCheck,
+		LastUpdated: checkedAt,
+		NextUpdate:  nextCheck,
 		Details: map[string]interface{}{
 			"error":         err.Error(),
-			"failure_count": svc.FailureCount,
+			"failure_count": failureCount,
 		},
 	}
 
@@ -948,6 +919,72 @@ func (m *Monitor) finishCheck(svc *ServiceMonitor) {
 	defer m.mu.Unlock()
 
 	svc.checking = false
+}
+
+// recordListing records a check whose VM listing succeeded in the
+// instance's state, under the monitor's lock, and returns when to check the
+// instance next and whether the check ended its provisioning. A provision
+// ends when the instance reaches "running" or "failing". Until then it is
+// checked at the failed interval with no failure counted. After that, any
+// status but "running" counts a failure and is checked at the failed
+// interval, and "running" clears the failures.
+func (m *Monitor) recordListing(svc *ServiceMonitor, status string, checkedAt time.Time) (time.Time, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	provisioningDone := false
+
+	if svc.IsProvisioning && (status == vmStatusRunning || status == "failing") {
+		svc.IsProvisioning = false
+		provisioningDone = true
+	}
+
+	next := checkedAt.Add(m.failedInterval)
+
+	switch {
+	case svc.IsProvisioning:
+		// A provision still in progress counts no failure.
+	case status != vmStatusRunning:
+		svc.IsHealthy = false
+		svc.FailureCount++
+	default:
+		svc.IsHealthy = true
+		svc.FailureCount = 0
+		next = checkedAt.Add(m.normalInterval)
+	}
+
+	svc.LastStatus = status
+	svc.LastCheck = checkedAt
+	svc.NextCheck = next
+
+	return next, provisioningDone
+}
+
+// recordKeep records a check that kept an instance after its VM listing
+// failed in the instance's state, under the monitor's lock, and returns the
+// failure count and when to check the instance next, which is at the failed
+// interval. An instance in flight is held as a fresh provision is, healthy
+// and provisioning with no failure counted. Any other keep counts a failure,
+// marks the instance unhealthy, and ends its provisioning, so GetStatus
+// never shows an instance as provisioning and failing at once.
+func (m *Monitor) recordKeep(svc *ServiceMonitor, inFlight bool, checkedAt time.Time) (int, time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if inFlight {
+		svc.FailureCount = 0
+		svc.IsHealthy = true
+		svc.IsProvisioning = true
+	} else {
+		svc.FailureCount++
+		svc.IsHealthy = false
+		svc.IsProvisioning = false
+	}
+
+	svc.LastCheck = checkedAt
+	svc.NextCheck = checkedAt.Add(m.failedInterval)
+
+	return svc.FailureCount, svc.NextCheck
 }
 
 // tombstoneUnlessInFlight marks an instance whose deployment the director

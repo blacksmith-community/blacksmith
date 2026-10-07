@@ -261,6 +261,7 @@ When health checks fail:
 2. **Failure Tracking**
    - Increment `FailureCount` for affected service
    - Mark service as unhealthy (`IsHealthy = false`)
+   - End provisioning mode (`IsProvisioning = false`), so `GetStatus` never shows an instance as provisioning and failing at once
    - Schedule retry using `failedInterval`
    - An instance the monitor keeps because it belongs to work in flight is not a failure. It's held as a fresh provision is, as the `provisioning` status below describes.
 
@@ -378,7 +379,7 @@ The monitor also stores a few statuses that don't come from a VM's job state:
 
 - **`unknown`**: The director listed the deployment, but it has no VMs.
 
-- **`error`**: The VM listing failed, and either the director still has the deployment or the monitor couldn't tell. A read of the index or the task record, the running-task check, or the tombstone write can fail this way. The monitor counts a failed check, marks the instance unhealthy, and `GetStatus` counts it as failing.
+- **`error`**: The VM listing failed, and either the director still has the deployment or the monitor couldn't tell. A read of the index or the task record, the running-task check, or the tombstone write can fail this way. The monitor counts a failed check, marks the instance unhealthy, and takes it out of provisioning mode, so `GetStatus` counts it as failing and never as provisioning.
 
 - **`provisioning`**: The director says the deployment doesn't exist, but the instance belongs to work in flight, so the monitor keeps it. Its index entry is less than two hours old, its task record shows a provision updated in the last two hours, a BOSH task is running on its deployment, or an operation in this broker holds its claim. The monitor also keeps it when the entry changed, or an operation took the claim, after those checks and before the tombstone write, which reads the entry and asks for the claim again under the index lock. The monitor holds such an instance as it holds a fresh provision. It clears the failure count, keeps the instance healthy and provisioning, so `GetStatus` doesn't count it as failing, and checks it again at the failed interval.
 
@@ -427,6 +428,7 @@ else:
 
 - **Maximum Concurrent Checks**: 3 (hardcoded in `checkScheduledServices`)
 - **One Check per Instance**: The monitor loop's tick and the refresh that `Start` triggers can run overlapping cycles. A cycle marks each instance it takes as being checked and skips an instance that another cycle is still checking, so no two cycles check the same instance at once.
+- **Locked State**: `GetStatus` reads each instance's state from request goroutines while a cycle runs. A check updates that state under the monitor's lock, and it never holds the lock while it calls the director or Vault.
 - **Semaphore-Based Limiting**: Prevents BOSH Director overload
 - **Goroutine Management**: Each health check runs in separate goroutine
 - **Wait Group Coordination**: Ensures all checks complete before scheduling cycle ends
