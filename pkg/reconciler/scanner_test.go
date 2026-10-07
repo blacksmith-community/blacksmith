@@ -117,6 +117,10 @@ func (d *mockDirector) UpdateCloudConfig(_ context.Context, config string) error
 	return ErrScannerNotImplemented
 }
 
+func (d *mockDirector) ListCloudConfigs(_ context.Context) ([]bosh.CloudConfigEntry, error) {
+	return nil, ErrScannerNotImplemented
+}
+
 func (d *mockDirector) GetCloudConfig(_ context.Context) (string, error) {
 	return "", ErrScannerNotImplemented
 }

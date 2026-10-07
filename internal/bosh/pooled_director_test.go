@@ -220,6 +220,16 @@ func (m *MockDirector) UpdateCloudConfig(_ context.Context, config string) error
 	return nil
 }
 
+func (m *MockDirector) ListCloudConfigs(_ context.Context) ([]bosh.CloudConfigEntry, error) {
+	m.incrementCallCount()
+
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+
+	return nil, nil
+}
+
 func (m *MockDirector) GetCloudConfig(_ context.Context) (string, error) {
 	m.incrementCallCount()
 

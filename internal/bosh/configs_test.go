@@ -964,6 +964,80 @@ func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
 	}
 }
 
+// The boot cloud config check needs every cloud config the director holds, so
+// the read asks for the latest version of type cloud with no limit, and keeps
+// the default config, which has an empty name.
+func TestListCloudConfigsSendsTypeCloudAndLatest(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != configsPath {
+			return false
+		}
+
+		first := configEntry("4", typeCloud, "default")
+		first["name"] = ""
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{first, configEntry("7", typeCloud, "extra")})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	entries, err := director.ListCloudConfigs(t.Context())
+	if err != nil {
+		t.Fatalf("ListCloudConfigs failed: %v", err)
+	}
+
+	want := []bosh.CloudConfigEntry{{Name: "", Content: "key: 4\n"}, {Name: "extra", Content: "key: 7\n"}}
+	if !reflect.DeepEqual(entries, want) {
+		t.Errorf("expected %v, got %v", want, entries)
+	}
+
+	reads := requestsTo(server, http.MethodGet, configsPath)
+	if len(reads) != 1 {
+		t.Fatalf("expected exactly one GET /configs, got %d", len(reads))
+	}
+
+	if reads[0].RawQuery != "latest=true&type=cloud" && reads[0].RawQuery != "type=cloud&latest=true" {
+		t.Errorf("expected exactly type=cloud&latest=true, got %q", reads[0].RawQuery)
+	}
+
+	query, err := url.ParseQuery(reads[0].RawQuery)
+	if err != nil || len(query) != 2 || query.Get("limit") != "" {
+		t.Errorf("expected only type and latest in the query, got %q", reads[0].RawQuery)
+	}
+}
+
+// A failed read keeps the director's address, status, and description.
+func TestListCloudConfigsKeepsTheDirectorFailure(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != configsPath {
+			return false
+		}
+
+		boshtest.WriteError(writer, http.StatusInternalServerError, 100, "the database is down")
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	_, err := director.ListCloudConfigs(t.Context())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	for _, want := range []string{server.URL, "500", "the database is down"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected the error to hold %q, got: %v", want, err)
+		}
+	}
+}
+
 // The main list reads every config in one call, so it sends no limit that
 // would cut the list short before the type filter runs.
 func TestGetConfigsSendsNoLimit(t *testing.T) {

@@ -203,6 +203,10 @@ func (b *BatchDirector) GetCloudConfig(ctx context.Context) (string, error) {
 	return b.director.GetCloudConfig(ctx)
 }
 
+func (b *BatchDirector) ListCloudConfigs(ctx context.Context) ([]CloudConfigEntry, error) {
+	return b.director.ListCloudConfigs(ctx)
+}
+
 func (b *BatchDirector) GetConfigs(ctx context.Context, limit int, configTypes []string) ([]BoshConfig, error) {
 	return b.director.GetConfigs(ctx, limit, configTypes)
 }

@@ -50,6 +50,10 @@ type Director interface {
 	// Config operations
 	UpdateCloudConfig(ctx context.Context, config string) error
 	GetCloudConfig(ctx context.Context) (string, error)
+	// ListCloudConfigs returns the latest version of every cloud config on
+	// the director, the default one included. The default cloud config has
+	// an empty name.
+	ListCloudConfigs(ctx context.Context) ([]CloudConfigEntry, error)
 	GetConfig(ctx context.Context, configType, configName string) (interface{}, error)
 	GetConfigs(ctx context.Context, limit int, configTypes []string) ([]BoshConfig, error)
 	GetConfigVersions(ctx context.Context, configType, name string, limit int) ([]BoshConfig, error)
@@ -259,6 +263,14 @@ type BoshConfig struct {
 	Team      string    `json:"team"`
 	CreatedAt time.Time `json:"created_at"`
 	IsActive  bool      `json:"is_active"`
+}
+
+// CloudConfigEntry is one cloud config the director holds, with the name it
+// was uploaded under and its content. The director's default cloud config
+// has an empty name.
+type CloudConfigEntry struct {
+	Name    string
+	Content string
 }
 
 // BoshConfigDetail represents detailed config information.

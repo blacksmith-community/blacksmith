@@ -163,6 +163,11 @@ func (p *PooledDirector) GetCloudConfig(ctx context.Context) (string, error) {
 	return p.director.GetCloudConfig(ctx)
 }
 
+// ListCloudConfigs implements Director interface - no pooling for read operations.
+func (p *PooledDirector) ListCloudConfigs(ctx context.Context) ([]CloudConfigEntry, error) {
+	return p.director.ListCloudConfigs(ctx)
+}
+
 // GetConfigs implements Director interface - no pooling for read operations.
 func (p *PooledDirector) GetConfigs(ctx context.Context, limit int, configTypes []string) ([]BoshConfig, error) {
 	return p.director.GetConfigs(ctx, limit, configTypes)

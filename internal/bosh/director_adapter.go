@@ -1192,6 +1192,33 @@ func (d *DirectorAdapter) GetCloudConfig(ctx context.Context) (_ string, err err
 	return configs[0].Content, nil
 }
 
+// ListCloudConfigs returns the latest version of every cloud config on the
+// director, the default one included.
+func (d *DirectorAdapter) ListCloudConfigs(ctx context.Context) (_ []CloudConfigEntry, err error) {
+	defer d.explainContext(ctx, "ListCloudConfigs", &err)
+
+	d.log.Infof("Listing cloud configs")
+
+	entries, err := d.api.Configs().List(ctx, &boshapi.ConfigListOptions{
+		Type:   "cloud",
+		Latest: true,
+	})
+	if err != nil {
+		d.log.Errorf("Failed to list cloud configs: %v", err)
+
+		return nil, d.requestFailure("list cloud configs", err)
+	}
+
+	result := make([]CloudConfigEntry, 0, len(entries))
+	for _, entry := range entries {
+		result = append(result, CloudConfigEntry{Name: entry.Name, Content: entry.Content})
+	}
+
+	d.log.Infof("Successfully listed %d cloud configs", len(result))
+
+	return result, nil
+}
+
 // normalizeConfigLimit ensures the limit is within sensible bounds.
 
 // GetConfigs retrieves configs based on limit and type filters

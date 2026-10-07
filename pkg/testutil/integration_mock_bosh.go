@@ -139,6 +139,11 @@ func (imb *IntegrationMockBOSH) UpdateCloudConfig(_ context.Context, yaml string
 // GetCloudConfig implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) GetCloudConfig(_ context.Context) (string, error) { return "", nil }
 
+// ListCloudConfigs implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) ListCloudConfigs(_ context.Context) ([]bosh.CloudConfigEntry, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
 // Cleanup implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) Cleanup(_ context.Context, removeAll bool) (*bosh.Task, error) {
 	return nil, ErrIntegrationMockNotImplemented

@@ -179,6 +179,11 @@ func (mb *MockBOSHDirector) WaitForTask(_ context.Context, taskID int) (*bosh.Ta
 	return nil, ErrMockNotImplemented
 }
 
+// ListCloudConfigs implements the BOSH Director interface.
+func (mb *MockBOSHDirector) ListCloudConfigs(_ context.Context) ([]bosh.CloudConfigEntry, error) {
+	return nil, ErrMockNotImplemented
+}
+
 // GetConfigs implements the BOSH Director interface.
 func (mb *MockBOSHDirector) GetConfigs(_ context.Context, limit int, configTypes []string) ([]bosh.BoshConfig, error) {
 	return nil, ErrMockNotImplemented

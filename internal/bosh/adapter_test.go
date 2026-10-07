@@ -151,6 +151,9 @@ func (m *mockDirector) FetchLogs(_ context.Context, deployment string, jobName s
 func (m *mockDirector) UpdateCloudConfig(_ context.Context, config string) error {
 	return ErrMockNotImplemented
 }
+func (m *mockDirector) ListCloudConfigs(_ context.Context) ([]bosh.CloudConfigEntry, error) {
+	return nil, ErrMockNotImplemented
+}
 func (m *mockDirector) GetCloudConfig(_ context.Context) (string, error) {
 	return "", ErrMockNotImplemented
 }
