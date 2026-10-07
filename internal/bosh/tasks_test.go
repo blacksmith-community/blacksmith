@@ -441,7 +441,8 @@ func contextTask(id int, state, contextID string) map[string]interface{} {
 // A lookup by context ID asks the director for every task that carries the
 // ID, at verbose level 2 so orphan cleanup tasks show, and with no
 // deployment filter so uploads, which carry no deployment name, show too.
-// The newest match wins.
+// The newest match wins. The director lists its tasks newest first, so the
+// list here does too, and the last match in it is the oldest.
 func TestFindTaskByContextIDSendsVerbose2WithoutADeployment(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
@@ -457,9 +458,9 @@ func TestFindTaskByContextIDSendsVerbose2WithoutADeployment(t *testing.T) {
 		newest["description"] = "upload release"
 
 		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{
-			contextTask(41, "error", contextID),
 			newest,
 			contextTask(43, "done", "another-context-id"),
+			contextTask(41, "error", contextID),
 		})
 
 		return true
