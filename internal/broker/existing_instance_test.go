@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -303,6 +304,11 @@ var _ = Describe("A provision for an instance the index already has", func() {
 		{"a repeat for an instance being deprovisioned answers 409", true, func() {
 			brokerInstance.RecordProgress(ctx, instanceID, "deprovision", "Deprovision request accepted")
 		}},
+		// The deprovision record alone shows that the instance exists, because
+		// a provision that never finished leaves no created_at behind.
+		{"a repeat for an unfinished instance being deprovisioned answers 409", false, func() {
+			brokerInstance.RecordProgress(ctx, instanceID, "deprovision", "Deprovision request accepted")
+		}},
 	}
 
 	for _, ending := range endings {
@@ -342,6 +348,79 @@ var _ = Describe("A provision for an instance the index already has", func() {
 		Expect(async).To(BeFalse())
 		Expect(proxy.WritesTo("/db")).To(BeEmpty(), "the broker wrote the index after it failed to read it")
 		Expect(brokerInstance.ProvisionActive(instanceID)).To(BeFalse(), "the refused provision left its claim behind")
+
+		expectNothingDeployed(entryBefore, taskBefore)
+	})
+
+	// A record of an existing instance that cannot be read must fail the
+	// repeat. Taking it for a missing record would provision the instance as
+	// new and deploy over it.
+	unreadable := []struct {
+		name string
+		path func() string
+	}{
+		{"a repeat whose task record cannot be read deploys nothing", func() string { return instanceID + "/task" }},
+		{"a repeat whose stored details cannot be read deploys nothing", func() string { return instanceID + "/" + deploymentName }},
+	}
+
+	for _, record := range unreadable {
+		It(record.name, func() {
+			seedAcceptedProvision(request, true)
+
+			entryBefore, taskBefore := indexEntry(), taskRecord()
+
+			proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+			Expect(err).ToNot(HaveOccurred())
+
+			defer proxy.Close()
+
+			brokerInstance = newBroker(internalVault.New(proxy.Addr, suite.vault.RootToken, true))
+
+			// Only the first read fails, so a broker that takes the failure for
+			// a missing record finds every record readable when it goes on.
+			proxy.FailReads(record.path(), http.StatusForbidden, "permission denied", 1)
+
+			_, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
+			Expect(err).To(HaveOccurred())
+			Expect(errors.Is(err, osbapi.ErrInstanceAlreadyExists)).To(BeFalse(), "a read failure was answered as a conflict: %v", err)
+			Expect(async).To(BeFalse())
+
+			expectNothingDeployed(entryBefore, taskBefore)
+		})
+	}
+
+	// The created_at that the completion hook writes shows a finished
+	// provision, even when the task record that would show it is gone.
+	It("a repeat of a finished provision whose task record is gone answers 201 and deploys nothing", func() {
+		seedAcceptedProvision(request, true)
+		Expect(vaultClient.Delete(ctx, instanceID+"/task")).To(Succeed())
+
+		entryBefore := indexEntry()
+
+		server := osbHandlerServer(brokerInstance)
+		defer server.Close()
+
+		status, body := sendOSBRequest(server.URL, http.MethodPut, "/v2/service_instances/"+instanceID+"?accepts_incomplete=true", request)
+		Expect(status).To(Equal(http.StatusCreated), "body: %s", body)
+
+		Expect(indexEntry()).To(Equal(entryBefore), "the repeat rewrote the index entry")
+		Consistently(func() []string { return director.Calls("CreateDeployment") }, 500*time.Millisecond).Should(BeEmpty(), "the repeat started a deploy")
+
+		_, err := suite.vault.ReadSecret(instanceID + "/task")
+		Expect(err).To(MatchError(testutil.ErrSecretNotFound), "the repeat wrote a task record")
+	})
+
+	// Without the details stored at provision, the request cannot be shown
+	// to match the instance, so it is refused rather than taken for a match.
+	It("a repeat whose stored details are missing answers 409", func() {
+		seedAcceptedProvision(request, true)
+		Expect(vaultClient.Delete(ctx, instanceID+"/"+deploymentName)).To(Succeed())
+
+		entryBefore, taskBefore := indexEntry(), taskRecord()
+
+		_, async, err := brokerInstance.Provision(ctx, instanceID, request, true)
+		Expect(errors.Is(err, osbapi.ErrInstanceAlreadyExists)).To(BeTrue(), "the repeat was not refused as a conflict: async=%t err=%v", async, err)
+		Expect(async).To(BeFalse())
 
 		expectNothingDeployed(entryBefore, taskBefore)
 	})
@@ -817,6 +896,126 @@ var _ = Describe("A delete of an instance the index does not have", func() {
 	})
 })
 
+// A delete whose index lookup fails must not answer 410. The broker cannot
+// tell whether the instance is indexed, and the deployment named from the
+// request's plan is not the instance's when the entry records another name,
+// so the director's answer for that name says nothing about the instance.
+var _ = Describe("A delete whose index lookup fails", func() {
+	var (
+		ctx            context.Context
+		stopService    context.CancelFunc
+		director       *testutil.ScriptedBOSHDirector
+		vaultClient    *internalVault.Vault
+		instanceID     string
+		deploymentName string
+		derivedName    string
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		stopService = nil
+		instanceID = fmt.Sprintf("lookup-fails-%d", time.Now().UnixNano())
+		deploymentName = "renamed-" + instanceID
+		derivedName = "standalone-" + instanceID
+
+		director = testutil.NewScriptedBOSHDirector()
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return nil, nil } //nolint:nilnil // no running task is a nil task without an error
+		director.DeleteDeploymentFn = func(string) (*bosh.Task, error) { return &bosh.Task{ID: 91, State: "queued"}, nil }
+		director.GetTaskFn = func(taskID int) (*bosh.Task, error) { return &bosh.Task{ID: taskID, State: "processing"}, nil }
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			if name == derivedName {
+				return nil, fmt.Errorf("deployment %s: %w", name, bosh.ErrDeploymentNotFound)
+			}
+
+			return &bosh.DeploymentDetail{Name: name}, nil
+		}
+
+		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
+		Expect(vaultClient.Index(ctx, instanceID, map[string]interface{}{
+			"service_id":      "valkey",
+			"plan_id":         "standalone",
+			"deployment_name": deploymentName,
+			"created_at":      time.Now().UTC().Format(time.RFC3339),
+		})).To(Succeed())
+	})
+
+	AfterEach(func() {
+		stopBrokerGoroutines(stopService)
+
+		_ = vaultClient.Index(ctx, instanceID, nil)
+	})
+
+	deleteThrough := func(vaultAddr string) (int, string) {
+		var serviceCtx context.Context
+
+		serviceCtx, stopService = context.WithCancel(context.Background())
+
+		brokerInstance := &broker.Broker{
+			Plans:          map[string]services.Plan{},
+			BOSH:           director,
+			Vault:          internalVault.New(vaultAddr, suite.vault.RootToken, true),
+			Shield:         &shield.NoopClient{},
+			Config:         &config.Config{},
+			InstanceLocks:  make(map[string]*sync.Mutex),
+			ServiceContext: serviceCtx,
+		}
+
+		server := osbHandlerServer(brokerInstance)
+		defer server.Close()
+
+		return sendOSBRequest(server.URL, http.MethodDelete, "/v2/service_instances/"+instanceID+"?service_id=valkey&plan_id=standalone&accepts_incomplete=true", nil)
+	}
+
+	It("a delete whose first index lookup fails answers 500", func() {
+		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		defer proxy.Close()
+
+		proxy.FailReads("secret/data/db", http.StatusForbidden, "permission denied", -1)
+
+		status, body := deleteThrough(proxy.Addr)
+		Expect(status).To(Equal(http.StatusInternalServerError), "body: %s", body)
+		Expect(director.Calls("DeleteDeployment")).To(BeEmpty())
+	})
+
+	// The lookup after the deprovision request is recorded fails, while the
+	// lookups before it succeed.
+	It("a delete whose lookup after recording the request fails answers 500", func() {
+		target, err := url.Parse(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		reverse := httputil.NewSingleHostReverseProxy(target)
+
+		var recorded atomic.Bool
+
+		proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if strings.HasSuffix(request.URL.Path, "/secret/data/db") {
+				switch request.Method {
+				case http.MethodPut, http.MethodPost:
+					recorded.Store(true)
+				case http.MethodGet:
+					if recorded.Load() {
+						writer.Header().Set("Content-Type", "application/json")
+						writer.WriteHeader(http.StatusForbidden)
+						_, _ = writer.Write([]byte(`{"errors":["permission denied"]}`))
+
+						return
+					}
+				}
+			}
+
+			reverse.ServeHTTP(writer, request)
+		}))
+		defer proxy.Close()
+
+		status, body := deleteThrough(proxy.URL)
+		Expect(recorded.Load()).To(BeTrue(), "the delete never recorded its request")
+		Expect(status).To(Equal(http.StatusInternalServerError), "body: %s", body)
+		Expect(director.Calls("DeleteDeployment")).To(BeEmpty())
+	})
+})
+
 // The broker's orphan check removes index entries that have no BOSH
 // deployment, and an accepted provision has no deployment until its deploy
 // task starts. So the check spares an entry this process holds a claim for,
@@ -923,6 +1122,45 @@ var _ = Describe("The broker's orphan check", func() {
 		Expect(indexed(runningID)).To(BeTrue(), "an entry whose provision is in progress was removed")
 		Expect(removed).To(ContainElement(failedName), "an entry whose provision failed was kept")
 		Expect(indexed(failedID)).To(BeFalse())
+	})
+
+	// writeTask stores a provision task record in progress, with updated_at
+	// only when updatedAt is not nil.
+	writeTask := func(id string, updatedAt *time.Time) {
+		task := map[string]interface{}{
+			"action":      "provision",
+			"task":        77,
+			"state":       "in_progress",
+			"description": "BOSH deployment in progress (task 77)",
+		}
+
+		if updatedAt != nil {
+			task["updated_at"] = updatedAt.Unix()
+		}
+
+		Expect(vaultClient.Put(ctx, id+"/task", task)).To(Succeed())
+	}
+
+	It("removes an old entry whose provision task record has not been updated for two hours", func() {
+		staleID, staleName := seedEntry("stale", old, nil)
+		writeTask(staleID, &old)
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).To(ContainElement(staleName), "an entry whose provision stopped updating three hours ago was kept")
+		Expect(indexed(staleID)).To(BeFalse())
+	})
+
+	// A provision running in another broker process holds no claim here, and
+	// a record with no update time cannot show how old it is.
+	It("keeps an old entry whose provision task record has no update time", func() {
+		undatedID, undatedName := seedEntry("undated-task", old, nil)
+		writeTask(undatedID, nil)
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(undatedName))
+		Expect(indexed(undatedID)).To(BeTrue(), "an entry whose provision record has no update time was removed")
 	})
 
 	It("keeps an entry whose task record cannot be read", func() {
