@@ -39,10 +39,12 @@ const (
 	boshEventDelete = "delete"
 )
 
-// recordingVMMonitor records which instances the broker hands to vm-monitor.
+// recordingVMMonitor records which instances the broker hands to vm-monitor,
+// and the deployment name it hands over with each.
 type recordingVMMonitor struct {
-	mu    sync.Mutex
-	added []string
+	mu          sync.Mutex
+	added       []string
+	deployments []string
 }
 
 func (m *recordingVMMonitor) IsVMMonitor() bool { return true }
@@ -53,11 +55,12 @@ func (m *recordingVMMonitor) GetServiceVMStatus(context.Context, string) (*vmmon
 
 func (m *recordingVMMonitor) GetStatus() vmmonitor.MonitorStatus { return vmmonitor.MonitorStatus{} }
 
-func (m *recordingVMMonitor) AddService(_ context.Context, instanceID, _ string) error {
+func (m *recordingVMMonitor) AddService(_ context.Context, instanceID, deploymentName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.added = append(m.added, instanceID)
+	m.deployments = append(m.deployments, deploymentName)
 
 	return nil
 }
@@ -67,6 +70,13 @@ func (m *recordingVMMonitor) Added() []string {
 	defer m.mu.Unlock()
 
 	return append([]string(nil), m.added...)
+}
+
+func (m *recordingVMMonitor) Deployments() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return append([]string(nil), m.deployments...)
 }
 
 // recordingShield records the backup schedules the broker creates and removes.
@@ -749,6 +759,17 @@ var _ = Describe("LastOperation", func() {
 			Expect(poll("provision").State).To(Equal(osbapi.StateSucceeded))
 			Expect(monitor.Added()).To(Equal([]string{instanceID}))
 			Expect(backups.Scheduled()).To(Equal([]string{instanceID}))
+		})
+
+		// The monitor watches the deployment the entry records, so a name
+		// that does not end in plan_id-instance_id must reach it whole.
+		It("hands the vm-monitor the deployment name its index entry records", func() {
+			deploymentName = planID + "-classic-" + instanceID
+
+			indexProvisionedInstance()
+
+			Expect(poll("provision").State).To(Equal(osbapi.StateSucceeded))
+			Expect(monitor.Deployments()).To(Equal([]string{deploymentName}))
 		})
 
 		It("stays in progress while the provision task it recorded is still running", func() {

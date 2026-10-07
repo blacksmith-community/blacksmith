@@ -236,3 +236,65 @@ func (v *indexVault) setEntryTime(instanceID, field, value string) {
 	updated[field] = value
 	v.entries[instanceID] = updated
 }
+
+// The broker hands the monitor the deployment name an instance's index entry
+// records when its provision completes. The monitor watches that name as it
+// is, even when it does not end in plan_id-instance_id, because a name
+// rebuilt from the plan ID would name a deployment the director does not
+// have.
+func TestMonitorWatchesTheStoredDeploymentName(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the monitor watches the stored deployment name", func(t *testing.T) {
+		t.Parallel()
+
+		const (
+			instanceID = "renamed"
+			stored     = "valkey-blue-7f3a"
+		)
+
+		vault := &indexVault{entries: map[string]interface{}{
+			instanceID: map[string]interface{}{serviceKey: serviceID, planKey: "standalone", nameKey: stored},
+		}}
+
+		director := testutil.NewScriptedBOSHDirector()
+		director.GetDeploymentVMsFn = func(name string) ([]bosh.VM, error) {
+			if name == stored {
+				return []bosh.VM{{ID: name + "-vm", JobState: "running"}}, nil
+			}
+
+			return nil, fmt.Errorf("deployment %s: %w", name, bosh.ErrDeploymentNotFound)
+		}
+		director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
+			if name == stored {
+				return &bosh.DeploymentDetail{Name: name}, nil
+			}
+
+			return deploymentNotFound(name)
+		}
+		director.FindRunningTaskForDeploymentFn = noRunningTask
+
+		monitor := vmmonitor.NewWithVault(vault, director, noClaims{})
+
+		err := monitor.AddService(t.Context(), instanceID, stored)
+		if err != nil {
+			t.Fatalf("adding the instance failed: %v", err)
+		}
+
+		got, monitored := monitor.MonitoredDeployment(instanceID)
+		if !monitored || got != stored {
+			t.Errorf("instance %s is monitored as deployment %q (monitored %t), want %q", instanceID, got, monitored, stored)
+		}
+
+		monitor.CheckScheduledServices(t.Context())
+
+		listed := director.Calls("GetDeploymentVMs")
+		marked := vault.markedDeleted()
+		status := vault.storedStatus(instanceID)
+
+		if len(listed) != 1 || listed[0] != stored || len(marked) != 0 || status != vmStatusRunning {
+			t.Errorf("the monitor listed the VMs of %v, marked %v deleted, and stored status %q; want only %q listed, nothing marked, and running",
+				listed, marked, status, stored)
+		}
+	})
+}

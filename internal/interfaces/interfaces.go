@@ -72,8 +72,9 @@ type VMMonitor interface {
 	GetServiceVMStatus(ctx context.Context, serviceID string) (*vmmonitor.VMStatus, error)
 	// GetStatus returns the current state of the VM monitor for debugging
 	GetStatus() vmmonitor.MonitorStatus
-	// AddService adds a new service to monitoring (called by broker on provision)
-	AddService(ctx context.Context, instanceID, planID string) error
+	// AddService adds a new service to monitoring (called by broker on
+	// provision), watching the deployment name its index entry records
+	AddService(ctx context.Context, instanceID, deploymentName string) error
 }
 
 // SSHService interface for SSH operations across all internal packages.

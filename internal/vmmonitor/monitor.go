@@ -188,9 +188,13 @@ func (m *Monitor) IsVMMonitor() bool {
 }
 
 // AddService adds a new service to monitoring (called by broker on provision).
-// The service is added with IsProvisioning=true and will be checked every 5 minutes
-// until it reaches "running" or "failing" status.
-func (m *Monitor) AddService(ctx context.Context, instanceID, planID string) error {
+// deploymentName is the name the instance's index entry records, which the
+// broker reads through Instance.DeploymentNameFor. The monitor watches it as
+// it is and never rebuilds it from a plan ID, because a rebuilt name can name
+// a deployment the director does not have, and the instance would then be
+// taken for deleted. The service is added with IsProvisioning=true and will
+// be checked every 5 minutes until it reaches "running" or "failing" status.
+func (m *Monitor) AddService(ctx context.Context, instanceID, deploymentName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -198,7 +202,6 @@ func (m *Monitor) AddService(ctx context.Context, instanceID, planID string) err
 		return nil // Already monitoring
 	}
 
-	deploymentName := planID + "-" + instanceID
 	m.services[instanceID] = &ServiceMonitor{
 		ServiceID:      instanceID,
 		DeploymentName: deploymentName,

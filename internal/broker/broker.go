@@ -576,11 +576,11 @@ func (b *Broker) OnProvisionCompleted(
 		return err
 	}
 
-	// Notify vm-monitor to start monitoring this service
-	// Extract planID from deployment name (format: planID-instanceID)
+	// Notify vm-monitor to start monitoring this service. It watches the
+	// deployment name the index entry records, as getInstanceDetails read it.
 	if b.vmMonitor != nil {
-		planID := strings.TrimSuffix(deployment, "-"+instanceID)
-		if addErr := b.vmMonitor.AddService(ctx, instanceID, planID); addErr != nil {
+		addErr := b.vmMonitor.AddService(ctx, instanceID, deployment)
+		if addErr != nil {
 			logger.Error("failed to add service %s to vm-monitor: %s", instanceID, addErr)
 			// Continue anyway, this is non-fatal
 		} else {
@@ -2743,7 +2743,7 @@ func (b *Broker) getInstanceDetails(ctx context.Context, instanceID string, logg
 
 	// The details are stored under the deployment's name, which the entry
 	// records, so a plan ID the reconciler rewrote does not hide them.
-	deploymentName := deploymentNameForInstance(instanceID, instance)
+	deploymentName := instance.DeploymentNameFor(instanceID)
 	vaultPath := fmt.Sprintf("%s/%s", instanceID, deploymentName)
 
 	// Get details from vault

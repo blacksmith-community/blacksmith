@@ -26,12 +26,13 @@ var (
 // The service and the index entry fields the specs set, and the VM statuses
 // they expect.
 const (
-	serviceID     = "valkey"
-	serviceKey    = "service_id"
-	planKey       = "plan_id"
-	nameKey       = "deployment_name"
-	statusDeleted = "deleted"
-	statusError   = "error"
+	serviceID       = "valkey"
+	serviceKey      = "service_id"
+	planKey         = "plan_id"
+	nameKey         = "deployment_name"
+	statusDeleted   = "deleted"
+	statusError     = "error"
+	vmStatusRunning = "running"
 )
 
 // checkErrorCase is a failed VM listing, the director's answer when the
