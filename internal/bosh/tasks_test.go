@@ -381,6 +381,10 @@ func TestFindRunningTaskForDeploymentFiltersByState(t *testing.T) {
 		t.Fatalf("expected running task 31 with its fields, got %+v", task)
 	}
 
+	if task.EndedAt != nil {
+		t.Errorf("a task that is still running has no end time, got %v", task.EndedAt)
+	}
+
 	lists := requestsTo(server, http.MethodGet, "/tasks")
 	if len(lists) != 1 {
 		t.Fatalf("expected one task list request, got %d: %+v", len(lists), server.APIRequests())
@@ -401,7 +405,9 @@ func TestFindRunningTaskForDeploymentFiltersByState(t *testing.T) {
 	}
 }
 
-// When no task is running, the answer is nil with no error.
+// When no task is running, the answer is nil with no error. A finished task
+// in the answer, from a director or proxy that ignored the state filter,
+// does not count as running.
 func TestFindRunningTaskForDeploymentReturnsNilWhenNoneRuns(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
@@ -410,7 +416,7 @@ func TestFindRunningTaskForDeploymentReturnsNilWhenNoneRuns(t *testing.T) {
 			return false
 		}
 
-		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{})
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{directorTask(30, "done")})
 
 		return true
 	})
