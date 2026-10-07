@@ -146,7 +146,9 @@ func (da *DirectorAdapter) GetConfig(ctx context.Context, configType, configName
 	return configData, nil
 }
 
-// DirectorAdapter wraps bosh-cli director to implement Director interface
+// DirectorAdapter implements the Director interface. The methods that have
+// moved off bosh-cli call the boshapi client, and the rest still go through
+// the bosh-cli director.
 type DirectorAdapter struct {
 	director boshdirector.Director
 	// api is the boshapi client the methods that have moved off bosh-cli
@@ -1516,9 +1518,9 @@ func extractChangedValue(line string) string {
 	return strings.TrimSpace(cleaned)
 }
 
-// convertDirectorBoshConfig converts a BOSH director config to our BoshConfig type.
 // convertConfigEntry converts a config the director returned into the
-// broker's type. The team is the director's team list joined with commas.
+// broker's type. The team is the director's team name as a string, and
+// IsActive is left false for the caller to set.
 func convertConfigEntry(config boshapi.ConfigEntry) BoshConfig {
 	createdAt := time.Time{}
 	if config.CreatedAt != "" {
