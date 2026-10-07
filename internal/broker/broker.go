@@ -1526,12 +1526,20 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	return nil
 }
 
+// indexStatusRequestReceived is the status of an index entry whose provision
+// was received and has not been validated yet.
+const indexStatusRequestReceived = "request_received"
+
 // mergeIndexEntry sets the fields of base, then the non-empty fields taken
 // from contextData, on the instance's entry in the 'db' index, keeping every
 // other field the entry holds. An instance that is not in the index gets a new
 // entry. The read of the entry and the write of the index happen under one
 // hold of the index lock, so a change another writer makes to the entry in
-// between, such as the vm-monitor's deleted mark, is kept. An index that
+// between, such as the vm-monitor's deleted mark, is kept. A base that sets
+// the status request_received starts a provision, so it also clears the
+// fields a deleted mark left on the entry. A provision can start over an
+// entry the vm-monitor marked after the provision found it live, and the
+// live entry must not keep part of that mark. An index that
 // cannot be read is an error and is not written, because merging into an
 // empty entry would erase the fields the stored entry holds. The error is
 // logged by the caller, which knows the step it stops.
@@ -1553,6 +1561,13 @@ func (b *Broker) mergeIndexEntry(ctx context.Context, instanceID string, base ma
 
 		for key, value := range fields {
 			entry[key] = value
+		}
+
+		// The fields a deleted mark adds to an entry, on top of its status.
+		if fields["status"] == indexStatusRequestReceived {
+			for _, field := range []string{"deleted_at", "deleted_by", "deletion_reason"} {
+				delete(entry, field)
+			}
 		}
 
 		entries[instanceID] = entry
@@ -2321,7 +2336,7 @@ func (b *Broker) recordInitialRequest(ctx context.Context, instanceID string, de
 		"plan_id":      details.PlanID,
 		"created":      now.Unix(), // Keep for backward compatibility
 		"requested_at": now.Format(time.RFC3339),
-		"status":       "request_received",
+		"status":       indexStatusRequestReceived,
 	}
 
 	if details.OrganizationGUID != "" {

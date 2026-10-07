@@ -244,6 +244,41 @@ var _ = Describe("Index entry writes that overlap a deleted mark", func() {
 		Expect(entry).To(HaveKey("requested_at"))
 	})
 
+	// A provision can start over an entry the vm-monitor marked deleted just
+	// after the provision read the index and found it live. Its first record
+	// then lands after the mark and sets the status back to request_received.
+	// The entry is live again, so it must keep no part of the mark.
+	It("clears the mark's fields when the first provision record lands after it", func() {
+		Expect(markDeletedAsTheMonitorDoes(ctx, b.Vault, instanceID)).To(Succeed())
+
+		Expect(b.RecordInitialRequest(ctx, instanceID, provisionRequest())).To(Succeed())
+
+		index, err := suite.vault.ReadSecret("db")
+		Expect(err).ToNot(HaveOccurred())
+
+		entry, ok := index[instanceID].(map[string]interface{})
+		Expect(ok).To(BeTrue(), "the instance's index entry is gone")
+		Expect(entry).To(HaveKeyWithValue("status", "request_received"))
+		Expect(entry).ToNot(HaveKey("deleted_at"))
+		Expect(entry).ToNot(HaveKey("deleted_by"))
+		Expect(entry).ToNot(HaveKey("deletion_reason"))
+		Expect(entry).To(HaveKeyWithValue("deployment_name", planID+"-"+instanceID))
+	})
+
+	It("keeps the whole mark when the deployment name is recorded after it", func() {
+		Expect(markDeletedAsTheMonitorDoes(ctx, b.Vault, instanceID)).To(Succeed())
+
+		b.StoreDeploymentNameInIndex(ctx, instanceID, planID+"-"+instanceID)
+
+		index, err := suite.vault.ReadSecret("db")
+		Expect(err).ToNot(HaveOccurred())
+
+		entry, ok := index[instanceID].(map[string]interface{})
+		Expect(ok).To(BeTrue(), "the instance's index entry is gone")
+		Expect(entry).To(HaveKeyWithValue("status", indexStatusDeleted))
+		expectMarked(entry)
+	})
+
 	It("keeps the mark when a provision status is written at the same time", func() {
 		entry := overlapWithMark(func() error {
 			return b.UpdateInstanceStatus(ctx, instanceID, provisionRequest(), &services.Plan{ID: planID}, "provisioning")
