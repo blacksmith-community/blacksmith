@@ -1299,21 +1299,68 @@ var _ = Describe("The broker's orphan check", func() {
 		Expect(indexed(claimedID)).To(BeTrue(), "an entry this process holds a claim for was removed")
 	})
 
-	// The reconciler dates an entry it adopted by discovered_at, and a delete
-	// of an instance the index did not have leaves only
-	// deprovision_requested_at. Either time shows a young entry.
-	It("keeps a young entry dated only by a time the broker does not write at provision", func() {
-		now := time.Now().UTC().Format(time.RFC3339)
+	// The broker, the reconciler, and the vm-monitor each write their own
+	// times on an entry, such as the discovered_at of an adopted entry or the
+	// deprovision_requested_at a delete of an unknown instance leaves, and
+	// the newest of them gives the entry's age. created is a Unix time, and
+	// the others are RFC 3339 times.
+	datingFields := []string{
+		"requested_at", "created_at", "reconciled_at", "discovered_at", "updated_at",
+		"unorphaned_at", "deprovision_requested_at", "deleted_at", "created",
+	}
 
-		discoveredID, discoveredName := seedEntry("discovered", old, map[string]interface{}{"requested_at": nil, "discovered_at": now})
-		deleteID, deleteName := seedEntry("delete-requested", old, map[string]interface{}{"requested_at": nil, "deprovision_requested_at": now})
+	// datedBy returns entry fields that set every dating field to old,
+	// except young, which is set to now. When alone is true, it leaves out
+	// every field but young.
+	datedBy := func(young string, alone bool) map[string]interface{} {
+		fields := map[string]interface{}{}
+
+		for _, field := range datingFields {
+			at := old
+
+			switch {
+			case field == young:
+				at = time.Now()
+			case alone:
+				fields[field] = nil
+
+				continue
+			}
+
+			if field == "created" {
+				fields[field] = at.Unix()
+			} else {
+				fields[field] = at.UTC().Format(time.RFC3339)
+			}
+		}
+
+		return fields
+	}
+
+	// Each field must date an entry on its own, and must date it when every
+	// other field is older, so a field left out of the dating, or an entry
+	// dated by any of its times but the newest, removes a young entry.
+	for _, field := range datingFields {
+		It("keeps an entry whose "+field+" is young, whatever its other times", func() {
+			aloneID, aloneName := seedEntry("alone-"+field, old, datedBy(field, true))
+			newestID, newestName := seedEntry("newest-"+field, old, datedBy(field, false))
+
+			removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(removed).ToNot(ContainElement(aloneName))
+			Expect(removed).ToNot(ContainElement(newestName))
+			Expect(indexed(aloneID)).To(BeTrue(), "an entry dated only by a young %s was removed", field)
+			Expect(indexed(newestID)).To(BeTrue(), "an entry whose newest time is a young %s was removed", field)
+		})
+	}
+
+	It("removes an entry whose every time is old", func() {
+		staleID, staleName := seedEntry("all-old", old, datedBy("", false))
 
 		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(removed).ToNot(ContainElement(discoveredName))
-		Expect(removed).ToNot(ContainElement(deleteName))
-		Expect(indexed(discoveredID)).To(BeTrue(), "an entry discovered moments ago was removed")
-		Expect(indexed(deleteID)).To(BeTrue(), "an entry whose delete was requested moments ago was removed")
+		Expect(removed).To(ContainElement(staleName))
+		Expect(indexed(staleID)).To(BeFalse(), "an entry with only old times was kept")
 	})
 
 	It("the orphan check still removes an old entry with no deployment", func() {
