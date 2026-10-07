@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -553,6 +554,155 @@ func TestLostCancelAnswerIsResentWhileTheTaskRuns(t *testing.T) {
 
 	if got := cancels.Load(); got != 2 {
 		t.Errorf("expected two cancels, got %d", got)
+	}
+
+	assertCancelReadCancel(t, server)
+}
+
+// assertCancelReadCancel checks that the director saw a cancel, one read of
+// the task, and then the second cancel, in that order.
+func assertCancelReadCancel(t *testing.T, server *boshtest.Director) {
+	t.Helper()
+
+	var sequence []string
+	for _, request := range server.APIRequests() {
+		sequence = append(sequence, request.Method+" "+request.Path)
+	}
+
+	want := []string{"DELETE /task/42", "GET /tasks/42", "DELETE /task/42"}
+	if strings.Join(sequence, ", ") != strings.Join(want, ", ") {
+		t.Errorf("expected the requests %v, got %v", want, sequence)
+	}
+}
+
+// lostCancelDirector is a director that drops the answer to the first cancel
+// of task 42, answers a read of the task with state, and answers any later
+// cancel with second.
+func lostCancelDirector(t *testing.T, state string, second func(http.ResponseWriter)) *boshtest.Director {
+	t.Helper()
+
+	var cancels atomic.Int32
+
+	return boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		switch {
+		case request.Method == http.MethodDelete && request.URL.Path == "/task/42":
+			if cancels.Add(1) == 1 || second == nil {
+				boshtest.DropAnswer(writer)
+			} else {
+				second(writer)
+			}
+		case request.Method == http.MethodGet && request.URL.Path == "/tasks/42":
+			boshtest.WriteJSON(writer, http.StatusOK, directorTask(42, state))
+		default:
+			return false
+		}
+
+		return true
+	})
+}
+
+// When a cancel's answer is lost and the task has finished, there is nothing
+// left to cancel, so no second cancel is sent and the tasks handler answers
+// 409.
+func TestLostCancelAnswerToAFinishedTaskIsNotResent(t *testing.T) {
+	for _, state := range []string{"done", "error", "timeout"} {
+		t.Run(state, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			server := lostCancelDirector(t, state, nil)
+			director := newReadAdapter(t, server, nil)
+
+			err := director.CancelTask(t.Context(), 42)
+			if !errors.Is(err, bosh.ErrTaskCannotBeCancelled) {
+				t.Fatalf("expected ErrTaskCannotBeCancelled for a task that ended %s, got: %v", state, err)
+			}
+
+			for _, want := range []string{`"` + state + `"`, "/b/tasks/42"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("expected the error to mention %q, got: %v", want, err)
+				}
+			}
+
+			if deletes := requestsTo(server, http.MethodDelete, "/task/42"); len(deletes) != 1 {
+				t.Errorf("expected exactly one cancel, got %d", len(deletes))
+			}
+		})
+	}
+}
+
+// When a cancel's answer is lost and the task reads cancelled, the cancel
+// landed, so it succeeds and no second cancel is sent.
+func TestLostCancelAnswerToACancelledTaskIsNotResent(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := lostCancelDirector(t, "cancelled", nil)
+	director := newReadAdapter(t, server, nil)
+
+	err := director.CancelTask(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("expected a cancel that landed to succeed, got: %v", err)
+	}
+
+	if deletes := requestsTo(server, http.MethodDelete, "/task/42"); len(deletes) != 1 {
+		t.Errorf("expected exactly one cancel, got %d", len(deletes))
+	}
+}
+
+// When the second cancel finds the task cancelling or cancelled, the first
+// cancel landed after all, so the cancel succeeds rather than answering 409.
+func TestSecondCancelThatFindsTheCancelLandedSucceeds(t *testing.T) {
+	for _, state := range []string{"cancelling", "cancelled"} {
+		t.Run(state, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			server := lostCancelDirector(t, "processing", func(writer http.ResponseWriter) {
+				boshtest.WriteText(writer, http.StatusBadRequest, "Cannot cancel task 42: invalid state ("+state+")")
+			})
+			director := newReadAdapter(t, server, nil)
+
+			err := director.CancelTask(t.Context(), 42)
+			if err != nil {
+				t.Fatalf("expected the cancel to succeed when the second cancel finds the task %s, got: %v", state, err)
+			}
+
+			assertCancelReadCancel(t, server)
+		})
+	}
+}
+
+// After a lost answer, only a task that is queued or processing gets the
+// cancel once more. A state the director does not use, such as an empty one
+// from a proxy that rewrote the answer, gets no second cancel, and the error
+// names the state and the task's path.
+func TestLostCancelAnswerIsNotResentToATaskInAnUnknownState(t *testing.T) {
+	for _, state := range []string{"", "paused"} {
+		t.Run("state "+strconv.Quote(state), func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			server := lostCancelDirector(t, state, func(writer http.ResponseWriter) {
+				writer.WriteHeader(http.StatusNoContent)
+			})
+			director := newReadAdapter(t, server, nil)
+
+			err := director.CancelTask(t.Context(), 42)
+			if err == nil {
+				t.Fatal("expected an error for a task in a state the director does not use")
+			}
+
+			if errors.Is(err, bosh.ErrTaskCannotBeCancelled) {
+				t.Errorf("a task in an unknown state may still run, so the error must not say it cannot be cancelled: %v", err)
+			}
+
+			for _, want := range []string{strconv.Quote(state), "/b/tasks/42"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("expected the error to mention %q, got: %v", want, err)
+				}
+			}
+
+			if deletes := requestsTo(server, http.MethodDelete, "/task/42"); len(deletes) != 1 {
+				t.Errorf("expected exactly one cancel, got %d", len(deletes))
+			}
+		})
 	}
 }
 

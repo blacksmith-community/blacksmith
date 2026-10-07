@@ -949,10 +949,13 @@ func (d *DirectorAdapter) listAllTasks(ctx context.Context, limit int) ([]Task, 
 // finished or a cancel already landed, returns ErrTaskCannotBeCancelled.
 //
 // When the cancel's answer is lost, the director may have taken it, so the
-// task is read: a task that is cancelling or cancelled needs nothing more, a
-// finished one returns ErrTaskCannotBeCancelled, and one that still runs gets
-// the cancel once more. A second cancel is safe, because a cancel starts no
-// task and can only cancel the same one.
+// task is read. A task that is cancelling or cancelled needs nothing more, a
+// finished one returns ErrTaskCannotBeCancelled, and one that is still queued
+// or processing gets the cancel once more. A task in any other state gets no
+// second cancel and returns an error that names the state. A second cancel is
+// safe, because a cancel starts no task and can only cancel the same one, and
+// a second cancel that finds the task cancelling or cancelled means the first
+// one landed, so it succeeds.
 func (d *DirectorAdapter) CancelTask(ctx context.Context, taskID int) (err error) {
 	defer d.explainContext(ctx, "CancelTask", &err)
 
@@ -996,6 +999,16 @@ func (d *DirectorAdapter) CancelTask(ctx context.Context, taskID int) (err error
 		return fmt.Errorf("%w: BOSH task %d on BOSH director %s ended in state %q before the cancel took effect, "+
 			"so there is nothing left to cancel. Check its result at /b/tasks/%d",
 			ErrTaskCannotBeCancelled, taskID, d.address, task.State, taskID)
+	case task.State != taskStateQueued && task.State != taskStateProcessing:
+		// The director uses no other state, so the answer did not come from
+		// it as sent, and a second cancel would go to a task Blacksmith knows
+		// nothing about.
+		d.log.Errorf("BOSH task %d reads as state %q after its cancel's answer was lost, which the director does not use", taskID, task.State)
+
+		return fmt.Errorf("failed to cancel BOSH task %d on BOSH director %s: the director's answer to the cancel was lost (%w), "+
+			"and the task then read as state %q, which the director does not use, so Blacksmith did not send the cancel again. "+
+			"Check the task at /b/tasks/%d, and cancel it again if it is still queued or processing",
+			taskID, d.address, err, task.State, taskID)
 	}
 
 	d.log.Infof("BOSH task %d is still %s, so the cancel whose answer was lost never landed, and Blacksmith sends it once more", taskID, task.State)
@@ -1007,9 +1020,11 @@ func (d *DirectorAdapter) CancelTask(ctx context.Context, taskID int) (err error
 		return nil
 	}
 
+	// The first cancel may still have been on its way when the task was
+	// read, and a task it reached is now cancelling or cancelled.
 	var stateErr *boshapi.TaskStateError
-	if errors.As(err, &stateErr) && stateErr.State == taskStateCancelling {
-		d.log.Infof("BOSH task %d is cancelling, so the first cancel landed after all", taskID)
+	if errors.As(err, &stateErr) && (stateErr.State == taskStateCancelling || stateErr.State == taskStateCancelled) {
+		d.log.Infof("BOSH task %d is %s, so the first cancel landed after all", taskID, stateErr.State)
 
 		return nil
 	}
