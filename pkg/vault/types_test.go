@@ -13,7 +13,10 @@ import (
 func TestDeploymentNameForPrefersTheRecordedName(t *testing.T) {
 	t.Parallel()
 
-	const instanceID = "instance-1"
+	const (
+		instanceID = "instance-1"
+		builtName  = "standalone-" + instanceID
+	)
 
 	cases := []struct {
 		name  string
@@ -21,26 +24,26 @@ func TestDeploymentNameForPrefersTheRecordedName(t *testing.T) {
 		want  string
 	}{
 		{"a recorded name", `{"plan_id":"standalone","deployment_name":"standalone-classic-instance-1"}`, "standalone-classic-instance-1"},
-		{"a missing name", `{"plan_id":"standalone"}`, "standalone-instance-1"},
-		{"an empty name", `{"plan_id":"standalone","deployment_name":""}`, "standalone-instance-1"},
-		{"a null name", `{"plan_id":"standalone","deployment_name":null}`, "standalone-instance-1"},
+		{"a missing name", `{"plan_id":"standalone"}`, builtName},
+		{"an empty name", `{"plan_id":"standalone","deployment_name":""}`, builtName},
+		{"a null name", `{"plan_id":"standalone","deployment_name":null}`, builtName},
 		{"no name and no plan ID", `{}`, "-instance-1"},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, entryCase := range cases {
+		t.Run(entryCase.name, func(t *testing.T) {
 			t.Parallel()
 
 			var instance vault.Instance
 
-			err := json.Unmarshal([]byte(tc.entry), &instance)
+			err := json.Unmarshal([]byte(entryCase.entry), &instance)
 			if err != nil {
-				t.Fatalf("failed to decode %s: %v", tc.entry, err)
+				t.Fatalf("failed to decode %s: %v", entryCase.entry, err)
 			}
 
 			got := instance.DeploymentNameFor(instanceID)
-			if got != tc.want {
-				t.Errorf("DeploymentNameFor(%q) on %s = %q, want %q", instanceID, tc.entry, got, tc.want)
+			if got != entryCase.want {
+				t.Errorf("DeploymentNameFor(%q) on %s = %q, want %q", instanceID, entryCase.entry, got, entryCase.want)
 			}
 		})
 	}

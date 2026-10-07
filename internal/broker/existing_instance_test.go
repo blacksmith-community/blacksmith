@@ -602,7 +602,7 @@ var _ = Describe("A provision for an instance the index already has", func() {
 	// An entry with neither a recorded name nor a plan ID names no
 	// deployment of its own, so only the requested one is checked.
 	It("a provision over an entry with no name and no plan ID checks only the requested deployment", func() {
-		Expect(vaultClient.Index(ctx, instanceID, map[string]interface{}{"service_id": serviceID})).To(Succeed())
+		Expect(vaultClient.Index(ctx, instanceID, map[string]interface{}{serviceIDKey: serviceID})).To(Succeed())
 
 		director.GetDeploymentFn = deploymentNotFound
 
@@ -619,6 +619,13 @@ var _ = Describe("A provision for an instance the index already has", func() {
 // deploymentNameKey is the index entry field that records an instance's
 // deployment.
 const deploymentNameKey = "deployment_name"
+
+// Other index entry fields a spec writes by name.
+const (
+	serviceIDKey              = "service_id"
+	deletedAtKey              = "deleted_at"
+	deprovisionRequestedAtKey = "deprovision_requested_at"
+)
 
 // deploymentNotFound answers a GetDeployment the way the director adapter
 // does when the director answers with its deployment-not-found code.
@@ -1353,7 +1360,7 @@ var _ = Describe("The broker's orphan check", func() {
 	// the others are RFC 3339 times.
 	datingFields := []string{
 		"requested_at", "created_at", "reconciled_at", "discovered_at", "updated_at",
-		"unorphaned_at", "deprovision_requested_at", "deleted_at", "created",
+		"unorphaned_at", deprovisionRequestedAtKey, deletedAtKey, "created",
 	}
 
 	// datedBy returns entry fields that set every dating field to old,
@@ -1363,11 +1370,11 @@ var _ = Describe("The broker's orphan check", func() {
 		fields := map[string]interface{}{}
 
 		for _, field := range datingFields {
-			at := old
+			stamp := old
 
 			switch {
 			case field == young:
-				at = time.Now()
+				stamp = time.Now()
 			case alone:
 				fields[field] = nil
 
@@ -1375,9 +1382,9 @@ var _ = Describe("The broker's orphan check", func() {
 			}
 
 			if field == "created" {
-				fields[field] = at.Unix()
+				fields[field] = stamp.Unix()
 			} else {
-				fields[field] = at.UTC().Format(time.RFC3339)
+				fields[field] = stamp.UTC().Format(time.RFC3339)
 			}
 		}
 
