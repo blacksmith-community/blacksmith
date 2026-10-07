@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -38,6 +39,7 @@ const (
 	outcomeStateFailed      = "failed"
 	outcomeStateUnknown     = "outcome_unknown"
 	outcomeDeprovision      = "deprovision"
+	outcomeProvision        = "provision"
 	outcomeDirectorAddress  = "https://director.example:25555"
 )
 
@@ -112,6 +114,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		deploymentName string
 		shutdown       context.CancelFunc
 		dir            string
+		cleanups       []func()
 	)
 
 	readRecord := func() map[string]interface{} {
@@ -272,9 +275,28 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 	AfterEach(func() {
 		stopBrokerGoroutines(shutdown)
 
+		for _, cleanup := range cleanups {
+			cleanup()
+		}
+
+		cleanups = nil
+
 		_ = vaultClient.Index(ctx, instanceID, nil)
 		_ = os.RemoveAll(dir)
 	})
+
+	// useProxy puts a fault proxy between the broker and Vault, and bounds
+	// each record write, so a write the proxy holds gives up.
+	useProxy := func() *testutil.VaultFaultProxy {
+		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+		ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+		cleanups = append(cleanups, proxy.Close, broker.SetRecordWriteTimeout(time.Second))
+
+		brokerInstance.Vault = internalVault.New(proxy.Addr, suite.vault.RootToken, true)
+
+		return proxy
+	}
 
 	Describe("the accepted record carries the context ID sent to the director", func() {
 		It("for a deploy", func() {
@@ -284,7 +306,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			var deploy sentRequest
 			Eventually(sent, 10*time.Second).Should(Receive(&deploy))
-			expectRecordedBeforeSending(deploy, "provision")
+			expectRecordedBeforeSending(deploy, outcomeProvision)
 		})
 
 		It("for a delete", func() {
@@ -387,7 +409,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 					<-start
 
-					recordErr = vaultClient.TrackProgressWithContextID(ctx, instanceID, "provision", fmt.Sprintf("Round %d", round), contextID, 0, nil)
+					recordErr = vaultClient.TrackProgressWithContextID(ctx, instanceID, outcomeProvision, fmt.Sprintf("Round %d", round), contextID, 0, nil)
 				}()
 
 				for writer := range writers {
@@ -398,7 +420,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 						<-start
 
-						brokerInstance.RecordProgress(ctx, instanceID, "provision", fmt.Sprintf("Round %d, step %d", round, writer))
+						brokerInstance.RecordProgress(ctx, instanceID, outcomeProvision, fmt.Sprintf("Round %d, step %d", round, writer))
 					}()
 				}
 
@@ -412,7 +434,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		})
 
 		It("only for the same action", func() {
-			Expect(vaultClient.TrackProgressWithContextID(ctx, instanceID, "provision", "Creating BOSH deployment", uuid.NewString(), 0, nil)).To(Succeed())
+			Expect(vaultClient.TrackProgressWithContextID(ctx, instanceID, outcomeProvision, "Creating BOSH deployment", uuid.NewString(), 0, nil)).To(Succeed())
 
 			brokerInstance.RecordProgress(ctx, instanceID, outcomeDeprovision, "Starting deprovisioning process")
 
@@ -672,7 +694,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			Expect(contextID).ToNot(BeEmpty(), "the deploy was never sent")
 			Expect(stillIndexed()).To(BeTrue(), "an unknown deploy removed the index entry")
-			expectRecordedUnknown("provision", contextID, before)
+			expectRecordedUnknown(outcomeProvision, contextID, before)
 		})
 	})
 
@@ -805,6 +827,110 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				response := pollUnindexed(operation)
 				Expect(response.State).To(Equal(osbapi.StateSucceeded), "a poll with operation %q answered %+v", operation, response)
 			}
+		})
+	})
+
+	Describe("a context ID that cannot be recorded stops the request before it is sent", func() {
+		const refusal = "permission denied"
+
+		It("for a deploy, which fails the provision", func() {
+			proxy := useProxy()
+
+			// The task record write after the release upload is the one
+			// that records the deploy's context ID.
+			director.GetReleasesFn = func() ([]bosh.Release, error) {
+				proxy.FailWrites(instanceID+"/task", http.StatusForbidden, refusal, 1)
+
+				return []bosh.Release{}, nil
+			}
+
+			var deploys atomic.Int32
+
+			director.onCreateDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deploys.Add(1)
+
+				return &bosh.Task{ID: createTaskID, State: outcomeTaskDone, Description: outcomeCreateDeployment}, nil
+			}
+
+			provision()
+
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			Expect(deploys.Load()).To(BeZero(), "the deploy was sent without its context ID on record")
+			Expect(readRecord()).To(HaveKeyWithValue("state", outcomeStateFailed))
+			Expect(readRecord()["description"]).To(ContainSubstring(refusal))
+
+			response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+				ServiceID: serviceID, PlanID: planID, Operation: outcomeProvision,
+			})
+			Expect(err).ToNot(HaveOccurred())
+			Expect(response.State).To(Equal(osbapi.StateFailed))
+		})
+
+		It("for a delete, which fails the deprovision and keeps the index entry", func() {
+			indexInstance()
+
+			cleaner := useCleaner()
+			proxy := useProxy()
+
+			// The task record write after the deployment check is the one
+			// that records the delete's context ID.
+			var checked atomic.Bool
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				if !checked.Swap(true) {
+					proxy.FailWrites(instanceID+"/task", http.StatusForbidden, refusal, 1)
+				}
+
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+
+			var deletes atomic.Int32
+
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deletes.Add(1)
+
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+			}
+
+			deprovision()
+
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			Expect(deletes.Load()).To(BeZero(), "the delete was sent without its context ID on record")
+			Expect(stillIndexed()).To(BeTrue(), "a delete that was never sent removed the index entry")
+			Expect(readRecord()).To(HaveKeyWithValue("action", outcomeDeprovision))
+			Expect(readRecord()).To(HaveKeyWithValue("state", outcomeStateFailed))
+			Expect(readRecord()["description"]).To(ContainSubstring(refusal))
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "a delete that was never sent started the CredHub cleanup")
+		})
+
+		It("for the delete of an abandoned deploy's teardown", func() {
+			cleaner := useCleaner()
+			proxy := useProxy()
+
+			proxy.FailWrites(instanceID+"/task", http.StatusForbidden, refusal, -1)
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+
+			var deletes atomic.Int32
+
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deletes.Add(1)
+
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+			}
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(deletes.Load()).To(BeZero(), "the delete was sent without its context ID on record")
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "a delete that was never sent started the CredHub cleanup")
 		})
 	})
 })

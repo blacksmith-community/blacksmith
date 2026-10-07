@@ -96,6 +96,9 @@ func taskPollInterval() time.Duration {
 // Static errors for err113 compliance.
 var (
 	ErrFailedToDeleteDeployment = errors.New("failed to delete deployment after maximum attempts")
+	// ErrContextIDNotRecorded marks a deploy or delete that was not sent,
+	// because the context ID it would carry could not be recorded first.
+	ErrContextIDNotRecorded = errors.New("the context ID could not be recorded, so the request was not sent")
 )
 
 // Helper methods for provisionAsync refactoring
@@ -114,15 +117,21 @@ func (b *Broker) trackProgress(ctx context.Context, instanceID, operation, messa
 // trackProgressWithContextID records progress as trackProgress does and
 // records contextID as the operation's context ID. It runs before the
 // request that carries the ID is sent, so the ID is on record whatever
-// happens to the request or to the broker.
-func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, operation, message, contextID string, params map[interface{}]interface{}, log logger.Logger) {
+// happens to the request or to the broker. When the write fails, it
+// returns an error wrapping ErrContextIDNotRecorded, and the caller must
+// not send the request.
+func (b *Broker) trackProgressWithContextID(ctx context.Context, instanceID, operation, message, contextID string, params map[interface{}]interface{}, log logger.Logger) error {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
 	err := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, operation, message, contextID, 0, params)
 	if err != nil {
 		log.Error("failed to track progress (%s) with context ID %s: %s", message, contextID, err)
+
+		return fmt.Errorf("%w: %s of instance %s with context ID %s: %w", ErrContextIDNotRecorded, operation, instanceID, contextID, err)
 	}
+
+	return nil
 }
 
 // failWithTracking tracks a failure.
@@ -359,7 +368,15 @@ func (p *provisioningPhase) uploadReleases(ctx context.Context, manifestStr stri
 // createDeployment creates the BOSH deployment and handles task ID resolution.
 func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.Plan, manifestStr string) bool {
 	p.logger.Info("Deploying service instance to BOSH director with context ID %s", p.contextID)
-	p.broker.trackProgressWithContextID(ctx, p.instanceID, "provision", "Creating BOSH deployment", p.contextID, p.params, p.logger)
+
+	// A deploy whose context ID is not on record could not be looked up
+	// if its answer were lost, so it is not sent.
+	err := p.broker.trackProgressWithContextID(ctx, p.instanceID, "provision", "Creating BOSH deployment", p.contextID, p.params, p.logger)
+	if err != nil {
+		p.failStep(ctx, "Deployment creation was not started", err)
+
+		return false
+	}
 
 	deploymentName := plan.ID + "-" + p.instanceID
 
@@ -585,7 +602,13 @@ func (d *deprovisioningPhase) handleDeploymentNotFound(ctx context.Context) bool
 // deleteDeploymentWithRetry sends the delete, retrying a failed one, and
 // returns the error that ended the retries, which handleDeleteError settles.
 func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) error {
-	d.broker.trackProgressWithContextID(ctx, d.instanceID, "deprovision", "Initiating BOSH deployment deletion with retry", d.contextID, nil, d.logger)
+	// A delete whose context ID is not on record could not be looked up
+	// if its answer were lost, so it is not sent, and the error settles
+	// the deprovision as a failed delete.
+	err := d.broker.trackProgressWithContextID(ctx, d.instanceID, "deprovision", "Initiating BOSH deployment deletion with retry", d.contextID, nil, d.logger)
+	if err != nil {
+		return err
+	}
 
 	task, err := d.broker.retryDeleteDeployment(ctx, d.deploymentName, d.instanceID, d.contextID, defaultDeleteRetryAttempts)
 	if err != nil {
