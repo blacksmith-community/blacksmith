@@ -130,7 +130,7 @@ func TestBootCloudConfigWritesWhenNothingOverlaps(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	boot, director, cfg := newBootDirector(t, false,
-		cloudEntry("", "azs:\n- name: z9\nvm_types:\n- name: big\nnetworks:\n- name: n\n"))
+		cloudEntry("default", "azs:\n- name: z9\nvm_types:\n- name: big\nnetworks:\n- name: n\n"))
 	logger := newRecordingLogger()
 
 	updateBOSHCloudConfig(t.Context(), cfg, director, logger)
@@ -201,7 +201,7 @@ func TestBootCloudConfigSkipsWhenTheDefaultHoldsTheSameContent(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	same := "compilation: {workers: 2}\nvm_types: [ {name: small} ]\nazs:\n    - {name: z1}\n"
-	boot, director, cfg := newBootDirector(t, false, cloudEntry("", same))
+	boot, director, cfg := newBootDirector(t, false, cloudEntry("default", same))
 	logger := newRecordingLogger()
 
 	updateBOSHCloudConfig(t.Context(), cfg, director, logger)
@@ -242,7 +242,7 @@ func TestBootCloudConfigRefusesASecondCompilationBlock(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	boot, director, cfg := newBootDirector(t, false,
-		cloudEntry("", "compilation: {workers: 5}\nazs: [{name: z9}]\n"))
+		cloudEntry("default", "compilation: {workers: 5}\nazs: [{name: z9}]\n"))
 	logger := newRecordingLogger()
 
 	updateBOSHCloudConfig(t.Context(), cfg, director, logger)

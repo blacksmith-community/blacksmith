@@ -29,7 +29,7 @@ func (l *listingDirector) ListCloudConfigs(_ context.Context) ([]bosh.CloudConfi
 func TestCloudConfigListForwardsThroughThePooledAndBatchDirectors(t *testing.T) {
 	t.Parallel()
 
-	entries := []bosh.CloudConfigEntry{{Name: "default", Content: "azs: []\n"}, {Name: "extra", Content: "vm_types: []\n"}}
+	entries := []bosh.CloudConfigEntry{{Name: planDefaultName, Content: "azs: []\n"}, {Name: "extra", Content: "vm_types: []\n"}}
 
 	wrap := map[string]func(bosh.Director) bosh.Director{
 		"pooled": func(inner bosh.Director) bosh.Director {

@@ -9,8 +9,11 @@ import (
 )
 
 const (
-	planOneAz      = "azs:\n- name: z1\n"
-	planBrokerName = "blacksmith"
+	planOneAz       = "azs:\n- name: z1\n"
+	planBrokerName  = "blacksmith"
+	planCompilation = "compilation"
+	// The director stores its default cloud config under this name.
+	planDefaultName = "default"
 )
 
 const planBrokerContent = `
@@ -37,16 +40,16 @@ func planWriteAndSkipCases() []planCase {
 		{name: "no other configs", content: planBrokerContent, action: bosh.CloudConfigWrite},
 		{
 			name:     "other config with different names and no compilation",
-			existing: []bosh.CloudConfigEntry{{Name: "", Content: "azs:\n- name: z9\nvm_types:\n- name: big\n"}},
+			existing: []bosh.CloudConfigEntry{{Name: planDefaultName, Content: "azs:\n- name: z9\nvm_types:\n- name: big\n"}},
 			content:  planBrokerContent,
 			action:   bosh.CloudConfigWrite,
 		},
 		{
 			name:     "the default holds the same value in another order",
-			existing: []bosh.CloudConfigEntry{{Name: "", Content: "compilation: {workers: 2}\nvm_types: [{cloud_properties: {size: 1}, name: small}]\nazs:\n  - {name: z1}\n"}},
+			existing: []bosh.CloudConfigEntry{{Name: planDefaultName, Content: "compilation: {workers: 2}\nvm_types: [{cloud_properties: {size: 1}, name: small}]\nazs:\n  - {name: z1}\n"}},
 			content:  planBrokerContent,
 			action:   bosh.CloudConfigSkipIdentical,
-			holder:   "",
+			holder:   planDefaultName,
 		},
 		{
 			name:     "a named config holds the same value",
@@ -63,10 +66,10 @@ func planWriteAndSkipCases() []planCase {
 		},
 		{
 			name:     "the default holds a one-az config exactly",
-			existing: []bosh.CloudConfigEntry{{Name: "", Content: planOneAz}},
+			existing: []bosh.CloudConfigEntry{{Name: planDefaultName, Content: planOneAz}},
 			content:  planOneAz,
 			action:   bosh.CloudConfigSkipIdentical,
-			holder:   "",
+			holder:   planDefaultName,
 		},
 	}
 }
@@ -75,10 +78,10 @@ func planRefuseCases() []planCase {
 	return []planCase{
 		{
 			name:     "shared az in a larger config",
-			existing: []bosh.CloudConfigEntry{{Name: "", Content: "azs:\n- name: z1\n- name: z2\n"}},
+			existing: []bosh.CloudConfigEntry{{Name: planDefaultName, Content: "azs:\n- name: z1\n- name: z2\n"}},
 			content:  "azs:\n- name: z1\nnetworks:\n- name: n\n",
 			action:   bosh.CloudConfigRefuse,
-			overlaps: []bosh.CloudConfigOverlap{{Config: "", Key: "azs", Name: "z1"}},
+			overlaps: []bosh.CloudConfigOverlap{{Config: planDefaultName, Key: "azs", Name: "z1"}},
 		},
 		{
 			name:     "shared vm type",
@@ -110,10 +113,10 @@ func planRefuseCases() []planCase {
 		},
 		{
 			name:     "second compilation block",
-			existing: []bosh.CloudConfigEntry{{Name: "", Content: "compilation: {workers: 5}\nazs: [{name: z9}]\n"}},
+			existing: []bosh.CloudConfigEntry{{Name: planDefaultName, Content: "compilation: {workers: 5}\nazs: [{name: z9}]\n"}},
 			content:  planBrokerContent,
 			action:   bosh.CloudConfigRefuse,
-			overlaps: []bosh.CloudConfigOverlap{{Config: "", Key: "compilation"}},
+			overlaps: []bosh.CloudConfigOverlap{{Config: planDefaultName, Key: planCompilation}},
 		},
 		{
 			name: "overlaps in two configs are all reported",
@@ -126,7 +129,7 @@ func planRefuseCases() []planCase {
 			overlaps: []bosh.CloudConfigOverlap{
 				{Config: "a", Key: "azs", Name: "z1"},
 				{Config: "b", Key: "vm_types", Name: "small"},
-				{Config: "b", Key: "compilation"},
+				{Config: "b", Key: planCompilation},
 			},
 		},
 	}
@@ -139,11 +142,18 @@ func planBlankAndUnreadableCases() []planCase {
 			existing: []bosh.CloudConfigEntry{{Name: "x", Content: "compilation:\nazs: [{name: z9}]\n"}},
 			content:  planBrokerContent,
 			action:   bosh.CloudConfigRefuse,
-			overlaps: []bosh.CloudConfigOverlap{{Config: "x", Key: "compilation"}},
+			overlaps: []bosh.CloudConfigOverlap{{Config: "x", Key: planCompilation}},
+		},
+		{
+			name:     "a config with an empty name is another config",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: "compilation: {workers: 5}\n"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "", Key: planCompilation}},
 		},
 		{
 			name:     "blank other config overlaps nothing",
-			existing: []bosh.CloudConfigEntry{{Name: "", Content: "---\n"}},
+			existing: []bosh.CloudConfigEntry{{Name: planDefaultName, Content: "---\n"}},
 			content:  planBrokerContent,
 			action:   bosh.CloudConfigWrite,
 		},

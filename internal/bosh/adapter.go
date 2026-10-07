@@ -55,8 +55,8 @@ type Director interface {
 	UpdateCloudConfig(ctx context.Context, config string) error
 	GetCloudConfig(ctx context.Context) (string, error)
 	// ListCloudConfigs returns the latest version of every cloud config on
-	// the director, the default one included. The default cloud config has
-	// an empty name.
+	// the director, the default one included. The director stores its
+	// default cloud config under the name default.
 	ListCloudConfigs(ctx context.Context) ([]CloudConfigEntry, error)
 	GetConfig(ctx context.Context, configType, configName string) (interface{}, error)
 	GetConfigs(ctx context.Context, limit int, configTypes []string) ([]BoshConfig, error)
@@ -270,8 +270,8 @@ type BoshConfig struct {
 }
 
 // CloudConfigEntry is one cloud config the director holds, with the name it
-// was uploaded under and its content. The director's default cloud config
-// has an empty name.
+// was uploaded under and its content. The director stores its default
+// cloud config under the name default.
 type CloudConfigEntry struct {
 	Name    string
 	Content string

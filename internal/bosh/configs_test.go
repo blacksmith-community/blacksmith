@@ -1038,7 +1038,7 @@ func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
 
 // The boot cloud config check needs every cloud config the director holds, so
 // the read asks for the latest version of type cloud with no limit, and keeps
-// the default config, which has an empty name.
+// the default config, which the director names default.
 func TestListCloudConfigsSendsTypeCloudAndLatest(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
@@ -1048,7 +1048,6 @@ func TestListCloudConfigsSendsTypeCloudAndLatest(t *testing.T) {
 		}
 
 		first := configEntry("4", typeCloud, "default")
-		first["name"] = ""
 
 		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{first, configEntry("7", typeCloud, "extra")})
 
@@ -1062,7 +1061,7 @@ func TestListCloudConfigsSendsTypeCloudAndLatest(t *testing.T) {
 		t.Fatalf("ListCloudConfigs failed: %v", err)
 	}
 
-	want := []bosh.CloudConfigEntry{{Name: "", Content: "key: 4\n"}, {Name: "extra", Content: "key: 7\n"}}
+	want := []bosh.CloudConfigEntry{{Name: "default", Content: "key: 4\n"}, {Name: "extra", Content: "key: 7\n"}}
 	if !reflect.DeepEqual(entries, want) {
 		t.Errorf("expected %v, got %v", want, entries)
 	}

@@ -15,6 +15,10 @@ import (
 // broker's config adds to the director's and never replaces it.
 const BoshCloudConfigName = "blacksmith"
 
+// DefaultCloudConfigName is the name the director stores its default cloud
+// config under.
+const DefaultCloudConfigName = "default"
+
 // CloudConfigAction is what the boot cloud config write should do.
 type CloudConfigAction int
 
@@ -53,8 +57,8 @@ const compilationKey = "compilation"
 // CloudConfigOverlap is one thing the broker's content shares with another
 // cloud config.
 type CloudConfigOverlap struct {
-	// Config is the name of the other cloud config. The default cloud
-	// config has an empty name.
+	// Config is the name of the other cloud config. The director stores
+	// its default cloud config under the name default.
 	Config string
 	// Key is the cloud config section, such as vm_types.
 	Key string

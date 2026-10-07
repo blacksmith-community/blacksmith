@@ -484,7 +484,7 @@ func updateBOSHCloudConfig(ctx context.Context, cfg *config.Config, boshDirector
 // describeCloudConfig names a cloud config for a log line. The director's
 // default cloud config has no name.
 func describeCloudConfig(name string) string {
-	if name == "" {
+	if name == "" || name == bosh.DefaultCloudConfigName {
 		return "default cloud config"
 	}
 
