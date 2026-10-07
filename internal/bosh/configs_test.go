@@ -17,18 +17,40 @@ import (
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
+// Strings the tests below repeat.
+const (
+	valueTrue             = "true"
+	queryType             = "type"
+	queryName             = "name"
+	queryLatest           = "latest"
+	configsPath           = "/configs"
+	typeRuntime           = "runtime"
+	typeCloud             = "cloud"
+	writeCreate           = "create"
+	resurrectionConfigRef = "resurrection/blacksmith.dep-1"
+	opEnableResurrection  = "EnableResurrection"
+	opDeleteResurrection  = "DeleteResurrectionConfig"
+	directorAddress       = "https://10.0.0.4:25555"
+	deploymentName        = "dep-1"
+	contextID             = "ctx-123"
+	teamBlacksmith        = "blacksmith"
+	opGetConfigByID       = "GetConfigByID"
+	opGetConfigContent    = "GetConfigContent"
+	opCleanUp             = "CleanUp"
+)
+
 var errConnectionReset = errors.New("connection reset")
 
 // errTransportAdvice has the words boshapi's transport error ends with, which
 // send an operator to a director task a config write never creates.
-var errTransportAdvice = errors.New("no answer came back. Look for a recent director task for the same deployment before you send it again.")
+var errTransportAdvice = errors.New("no answer came back. Look for a recent director task for the same deployment before you send it again")
 
 // configEntry is one entry of the director's GET /configs answer.
 func configEntry(id, configType, name string) map[string]interface{} {
 	return map[string]interface{}{
 		"id":         id,
-		"type":       configType,
-		"name":       name,
+		queryType:    configType,
+		queryName:    name,
 		"content":    "key: " + id + "\n",
 		"created_at": "2026-10-01 12:00:00 UTC",
 	}
@@ -38,7 +60,7 @@ func configEntry(id, configType, name string) map[string]interface{} {
 func configsQuery(t *testing.T, server *boshtest.Director) url.Values {
 	t.Helper()
 
-	reads := requestsTo(server, http.MethodGet, "/configs")
+	reads := requestsTo(server, http.MethodGet, configsPath)
 	if len(reads) != 1 {
 		t.Fatalf("expected exactly one GET /configs, got %d", len(reads))
 	}
@@ -57,7 +79,7 @@ func TestGetConfigMapsAnEmptyListToNotFound(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.Method != http.MethodGet || request.URL.Path != "/configs" {
+		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
 		}
 
@@ -68,13 +90,13 @@ func TestGetConfigMapsAnEmptyListToNotFound(t *testing.T) {
 
 	director := newReadAdapter(t, server, nil)
 
-	_, err := director.GetConfig(t.Context(), "runtime", "absent")
+	_, err := director.GetConfig(t.Context(), typeRuntime, "absent")
 	if !errors.Is(err, bosh.ErrConfigNotFound) {
 		t.Fatalf("expected ErrConfigNotFound for an empty list, got: %v", err)
 	}
 
 	query := configsQuery(t, server)
-	if query.Get("type") != "runtime" || query.Get("name") != "absent" || query.Get("latest") != "true" {
+	if query.Get(queryType) != typeRuntime || query.Get(queryName) != "absent" || query.Get(queryLatest) != valueTrue {
 		t.Errorf("expected type=runtime, name=absent, and latest=true, got %v", query)
 	}
 }
@@ -85,7 +107,7 @@ func TestGetConfigKeepsADirectorFailureAsAnError(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.URL.Path != "/configs" {
+		if request.URL.Path != configsPath {
 			return false
 		}
 
@@ -96,7 +118,7 @@ func TestGetConfigKeepsADirectorFailureAsAnError(t *testing.T) {
 
 	director := newReadAdapter(t, server, nil)
 
-	_, err := director.GetConfig(t.Context(), "cloud", "x")
+	_, err := director.GetConfig(t.Context(), typeCloud, "x")
 	if err == nil || errors.Is(err, bosh.ErrConfigNotFound) {
 		t.Fatalf("expected a failure that is not ErrConfigNotFound, got: %v", err)
 	}
@@ -112,13 +134,13 @@ func TestGetConfigsMarksTheLatestVersionsActive(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.Method != http.MethodGet || request.URL.Path != "/configs" {
+		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
 		}
 
 		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{
-			configEntry("9", "runtime", "dns"),
-			configEntry("4", "cloud", "default"),
+			configEntry("9", typeRuntime, "dns"),
+			configEntry("4", typeCloud, "default"),
 			configEntry("7", "cpi", "aws"),
 		})
 
@@ -127,7 +149,7 @@ func TestGetConfigsMarksTheLatestVersionsActive(t *testing.T) {
 
 	director := newReadAdapter(t, server, nil)
 
-	configs, err := director.GetConfigs(t.Context(), 0, []string{"cloud", "runtime"})
+	configs, err := director.GetConfigs(t.Context(), 0, []string{typeCloud, typeRuntime})
 	if err != nil {
 		t.Fatalf("GetConfigs failed: %v", err)
 	}
@@ -136,11 +158,11 @@ func TestGetConfigsMarksTheLatestVersionsActive(t *testing.T) {
 		t.Fatalf("expected the cpi config to be filtered out, got %d configs: %+v", len(configs), configs)
 	}
 
-	if configs[0].Type != "cloud" || configs[0].ID != "4*" || !configs[0].IsActive {
+	if configs[0].Type != typeCloud || configs[0].ID != "4*" || !configs[0].IsActive {
 		t.Errorf("expected the cloud config first, as 4* and active, got %+v", configs[0])
 	}
 
-	if configs[1].Type != "runtime" || configs[1].ID != "9*" || !configs[1].IsActive {
+	if configs[1].Type != typeRuntime || configs[1].ID != "9*" || !configs[1].IsActive {
 		t.Errorf("expected the runtime config second, as 9* and active, got %+v", configs[1])
 	}
 
@@ -148,7 +170,7 @@ func TestGetConfigsMarksTheLatestVersionsActive(t *testing.T) {
 		t.Errorf("expected created_at to parse, got a zero time")
 	}
 
-	if query := configsQuery(t, server); query.Get("latest") != "true" {
+	if query := configsQuery(t, server); query.Get(queryLatest) != "true" {
 		t.Errorf("expected latest=true, got %v", query)
 	}
 }
@@ -159,27 +181,27 @@ func TestGetConfigVersionsSendsLatestFalseAndLimit(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.Method != http.MethodGet || request.URL.Path != "/configs" {
+		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
 		}
 
-		current := configEntry("12", "cloud", "default")
+		current := configEntry("12", typeCloud, "default")
 		current["current"] = true
 
-		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{current, configEntry("11", "cloud", "default")})
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{current, configEntry("11", typeCloud, "default")})
 
 		return true
 	})
 
 	director := newReadAdapter(t, server, nil)
 
-	versions, err := director.GetConfigVersions(t.Context(), "cloud", "default", 5)
+	versions, err := director.GetConfigVersions(t.Context(), typeCloud, "default", 5)
 	if err != nil {
 		t.Fatalf("GetConfigVersions failed: %v", err)
 	}
 
 	query := configsQuery(t, server)
-	if query.Get("type") != "cloud" || query.Get("name") != "default" || query.Get("latest") != "false" || query.Get("limit") != "5" {
+	if query.Get(queryType) != typeCloud || query.Get(queryName) != "default" || query.Get(queryLatest) != "false" || query.Get("limit") != "5" {
 		t.Errorf("expected type=cloud, name=default, latest=false, and limit=5, got %v", query)
 	}
 
@@ -196,7 +218,7 @@ func TestEnableResurrectionCreatesAResurrectionConfig(t *testing.T) {
 	var body map[string]string
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.Method != http.MethodPost || request.URL.Path != "/configs" {
+		if request.Method != http.MethodPost || request.URL.Path != configsPath {
 			return false
 		}
 
@@ -210,12 +232,12 @@ func TestEnableResurrectionCreatesAResurrectionConfig(t *testing.T) {
 
 	director := newReadAdapter(t, server, nil)
 
-	err := director.EnableResurrection(t.Context(), "dep-1", false)
+	err := director.EnableResurrection(t.Context(), deploymentName, false)
 	if err != nil {
 		t.Fatalf("EnableResurrection failed: %v", err)
 	}
 
-	if body["type"] != "resurrection" || body["name"] != "blacksmith.dep-1" {
+	if body[queryType] != "resurrection" || body[queryName] != "blacksmith.dep-1" {
 		t.Errorf("expected type resurrection and name blacksmith.dep-1, got %v", body)
 	}
 
@@ -223,7 +245,7 @@ func TestEnableResurrectionCreatesAResurrectionConfig(t *testing.T) {
 		t.Errorf("expected the content to disable resurrection for dep-1, got %q", body["content"])
 	}
 
-	if posts := requestsTo(server, http.MethodPost, "/configs"); len(posts) != 1 {
+	if posts := requestsTo(server, http.MethodPost, configsPath); len(posts) != 1 {
 		t.Errorf("expected one POST /configs, got %d", len(posts))
 	}
 }
@@ -238,7 +260,7 @@ func TestDeleteResurrectionConfigSendsTypeAndName(t *testing.T) {
 			t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-				if request.Method != http.MethodDelete || request.URL.Path != "/configs" {
+				if request.Method != http.MethodDelete || request.URL.Path != configsPath {
 					return false
 				}
 
@@ -249,7 +271,7 @@ func TestDeleteResurrectionConfigSendsTypeAndName(t *testing.T) {
 
 			director := newReadAdapter(t, server, nil)
 
-			err := director.DeleteResurrectionConfig(t.Context(), "dep-1")
+			err := director.DeleteResurrectionConfig(t.Context(), deploymentName)
 
 			if status == http.StatusNotFound {
 				if !errors.Is(err, bosh.ErrResurrectionConfigNotFound) {
@@ -259,13 +281,13 @@ func TestDeleteResurrectionConfigSendsTypeAndName(t *testing.T) {
 				t.Errorf("expected the delete to succeed, got: %v", err)
 			}
 
-			deletes := requestsTo(server, http.MethodDelete, "/configs")
+			deletes := requestsTo(server, http.MethodDelete, configsPath)
 			if len(deletes) != 1 {
 				t.Fatalf("expected one DELETE /configs, got %d", len(deletes))
 			}
 
 			query, _ := url.ParseQuery(deletes[0].RawQuery)
-			if query.Get("type") != "resurrection" || query.Get("name") != "blacksmith.dep-1" {
+			if query.Get(queryType) != "resurrection" || query.Get(queryName) != "blacksmith.dep-1" {
 				t.Errorf("expected type=resurrection and name=blacksmith.dep-1, got %v", query)
 			}
 		})
@@ -280,11 +302,11 @@ func TestLostConfigWriteAnswerIsOutcomeUnknown(t *testing.T) {
 		method string
 		call   func(director bosh.Director) error
 	}{
-		"create": {http.MethodPost, func(director bosh.Director) error {
-			return director.EnableResurrection(t.Context(), "dep-1", true)
+		writeCreate: {http.MethodPost, func(director bosh.Director) error {
+			return director.EnableResurrection(t.Context(), deploymentName, true)
 		}},
 		"delete": {http.MethodDelete, func(director bosh.Director) error {
-			return director.DeleteResurrectionConfig(t.Context(), "dep-1")
+			return director.DeleteResurrectionConfig(t.Context(), deploymentName)
 		}},
 	}
 
@@ -293,7 +315,7 @@ func TestLostConfigWriteAnswerIsOutcomeUnknown(t *testing.T) {
 			t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-				if request.URL.Path != "/configs" {
+				if request.URL.Path != configsPath {
 					return false
 				}
 
@@ -310,15 +332,15 @@ func TestLostConfigWriteAnswerIsOutcomeUnknown(t *testing.T) {
 			}
 
 			var unknown *bosh.OutcomeUnknownError
-			if !errors.As(err, &unknown) || unknown.Config != "resurrection/blacksmith.dep-1" {
+			if !errors.As(err, &unknown) || unknown.Config != resurrectionConfigRef {
 				t.Fatalf("expected an OutcomeUnknownError for resurrection/blacksmith.dep-1, got: %v", err)
 			}
 
-			if sent := requestsTo(server, write.method, "/configs"); len(sent) != 1 {
+			if sent := requestsTo(server, write.method, configsPath); len(sent) != 1 {
 				t.Errorf("expected the write to be sent once, got %d", len(sent))
 			}
 
-			if reads := requestsTo(server, http.MethodGet, "/configs"); len(reads) != 0 {
+			if reads := requestsTo(server, http.MethodGet, configsPath); len(reads) != 0 {
 				t.Errorf("expected no lookup after the lost answer, got %d reads", len(reads))
 			}
 
@@ -329,123 +351,121 @@ func TestLostConfigWriteAnswerIsOutcomeUnknown(t *testing.T) {
 	}
 }
 
+// A config write names the config it was for and leaves the operator no task to look for.
 func TestOutcomeUnknownErrorNamesTheConfig(t *testing.T) {
 	t.Parallel()
 
-	base := errConnectionReset
-
-	t.Run("a config write", func(t *testing.T) {
-		t.Parallel()
-
-		err := error(&bosh.OutcomeUnknownError{
-			Operation: "EnableResurrection",
-			Director:  "https://10.0.0.4:25555",
-			Config:    "resurrection/blacksmith.dep-1",
-			Err:       base,
-		})
-
-		message := err.Error()
-		for _, want := range []string{
-			"may have accepted the request",
-			"did not resend it",
-			"creates no director task",
-			"GET https://10.0.0.4:25555/configs?type=resurrection&name=blacksmith.dep-1&latest=true",
-		} {
-			if !strings.Contains(message, want) {
-				t.Errorf("expected the message to contain %q, got: %s", want, message)
-			}
-		}
-
-		if strings.Contains(message, "/b/tasks") {
-			t.Errorf("a config write has no task, so the message must not send the operator to /b/tasks: %s", message)
-		}
-
-		var unknown *bosh.OutcomeUnknownError
-
-		if !errors.Is(err, bosh.ErrOutcomeUnknown) || !errors.Is(err, base) || !errors.As(err, &unknown) {
-			t.Errorf("expected errors.Is for the sentinel and the cause, and errors.As for the type, got: %v", err)
-		}
+	err := error(&bosh.OutcomeUnknownError{
+		Operation: opEnableResurrection,
+		Director:  directorAddress,
+		Config:    resurrectionConfigRef,
+		Err:       errConnectionReset,
 	})
 
-	t.Run("a config write leaves out the text of its cause", func(t *testing.T) {
-		t.Parallel()
-
-		err := error(&bosh.OutcomeUnknownError{
-			Operation: "EnableResurrection",
-			Director:  "https://10.0.0.4:25555",
-			Config:    "resurrection/blacksmith.dep-1",
-			Err:       errTransportAdvice,
-		})
-
-		message := err.Error()
-		for _, unwanted := range []string{"Look for a recent director task", "no answer came back", "task for the same deployment"} {
-			if strings.Contains(message, unwanted) {
-				t.Errorf("expected no %q in a config message, got: %s", unwanted, message)
-			}
+	message := err.Error()
+	for _, want := range []string{
+		"may have accepted the request",
+		"did not resend it",
+		"creates no director task",
+		"GET https://10.0.0.4:25555/configs?type=resurrection&name=blacksmith.dep-1&latest=true",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the message to contain %q, got: %s", want, message)
 		}
+	}
 
-		if !errors.Is(err, errTransportAdvice) || !errors.Is(err, bosh.ErrOutcomeUnknown) {
-			t.Errorf("expected the cause and the sentinel to stay reachable through Unwrap, got: %v", err)
-		}
+	if strings.Contains(message, "/b/tasks") {
+		t.Errorf("a config write has no task, so the message must not send the operator to /b/tasks: %s", message)
+	}
+
+	var unknown *bosh.OutcomeUnknownError
+
+	if !errors.Is(err, bosh.ErrOutcomeUnknown) || !errors.Is(err, errConnectionReset) || !errors.As(err, &unknown) {
+		t.Errorf("expected errors.Is for the sentinel and the cause, and errors.As for the type, got: %v", err)
+	}
+}
+
+// The message for a config write leaves out the text of its cause, which tells the operator to look for a task, and keeps the cause reachable.
+func TestOutcomeUnknownErrorLeavesOutTheCauseOfAConfigWrite(t *testing.T) {
+	t.Parallel()
+
+	err := error(&bosh.OutcomeUnknownError{
+		Operation: opEnableResurrection,
+		Director:  directorAddress,
+		Config:    resurrectionConfigRef,
+		Err:       errTransportAdvice,
 	})
 
-	t.Run("a config write says what each result means", func(t *testing.T) {
-		t.Parallel()
-
-		message := (&bosh.OutcomeUnknownError{
-			Operation: "DeleteResurrectionConfig",
-			Director:  "https://10.0.0.4:25555",
-			Config:    "resurrection/blacksmith.dep-1",
-			Err:       errConnectionReset,
-		}).Error()
-
-		for _, want := range []string{
-			"For a create, the config is present with the new content",
-			"For a delete, the latest list for that type and name is empty",
-		} {
-			if !strings.Contains(message, want) {
-				t.Errorf("expected the message to contain %q, got: %s", want, message)
-			}
+	message := err.Error()
+	for _, unwanted := range []string{"Look for a recent director task", "no answer came back", "task for the same deployment"} {
+		if strings.Contains(message, unwanted) {
+			t.Errorf("expected no %q in a config message, got: %s", unwanted, message)
 		}
+	}
 
-		if strings.Contains(strings.ToLower(message), "bosh cli") || strings.Contains(message, "bosh configs") {
-			t.Errorf("the message must not send the operator to the bosh CLI: %s", message)
+	if !errors.Is(err, errTransportAdvice) || !errors.Is(err, bosh.ErrOutcomeUnknown) {
+		t.Errorf("expected the cause and the sentinel to stay reachable through Unwrap, got: %v", err)
+	}
+}
+
+// The message for a config write says what a landed create and a landed delete look like.
+func TestOutcomeUnknownErrorSaysWhatEachResultMeans(t *testing.T) {
+	t.Parallel()
+
+	message := (&bosh.OutcomeUnknownError{
+		Operation: opDeleteResurrection,
+		Director:  directorAddress,
+		Config:    resurrectionConfigRef,
+		Err:       errConnectionReset,
+	}).Error()
+
+	for _, want := range []string{
+		"For a create, the config is present with the new content",
+		"For a delete, the latest list for that type and name is empty",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the message to contain %q, got: %s", want, message)
 		}
+	}
+
+	if strings.Contains(strings.ToLower(message), "bosh cli") || strings.Contains(message, "bosh configs") {
+		t.Errorf("the message must not send the operator to the bosh CLI: %s", message)
+	}
+}
+
+// A request with a context ID names it, and sends the operator to its task.
+func TestOutcomeUnknownErrorNamesTheContextID(t *testing.T) {
+	t.Parallel()
+
+	err := error(&bosh.OutcomeUnknownError{
+		Operation:  "CreateDeployment",
+		Director:   directorAddress,
+		Deployment: deploymentName,
+		ContextID:  contextID,
+		Err:        errConnectionReset,
 	})
 
-	t.Run("a request with a context ID", func(t *testing.T) {
-		t.Parallel()
-
-		err := error(&bosh.OutcomeUnknownError{
-			Operation:  "CreateDeployment",
-			Director:   "https://10.0.0.4:25555",
-			Deployment: "dep-1",
-			ContextID:  "ctx-123",
-			Err:        base,
-		})
-
-		message := err.Error()
-		for _, want := range []string{
-			"may have accepted the request",
-			"did not resend it",
-			"ctx-123",
-			"found none yet",
-			"/b/tasks",
-			"dep-1",
-		} {
-			if !strings.Contains(message, want) {
-				t.Errorf("expected the message to contain %q, got: %s", want, message)
-			}
+	message := err.Error()
+	for _, want := range []string{
+		"may have accepted the request",
+		"did not resend it",
+		contextID,
+		"found none yet",
+		"/b/tasks",
+		deploymentName,
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the message to contain %q, got: %s", want, message)
 		}
+	}
 
-		if strings.Contains(message, "/configs?") {
-			t.Errorf("a request with no config must not point at /configs: %s", message)
-		}
+	if strings.Contains(message, "/configs?") {
+		t.Errorf("a request with no config must not point at /configs: %s", message)
+	}
 
-		if !errors.Is(err, bosh.ErrOutcomeUnknown) {
-			t.Errorf("expected errors.Is for the sentinel, got: %v", err)
-		}
-	})
+	if !errors.Is(err, bosh.ErrOutcomeUnknown) {
+		t.Errorf("expected errors.Is for the sentinel, got: %v", err)
+	}
 }
 
 // A config read by ID goes to GET /configs/<id>, which answers one object, and
@@ -458,8 +478,8 @@ func TestGetConfigByIDReadsTheConfigPathAndDecodesTheTeam(t *testing.T) {
 			return false
 		}
 
-		entry := configEntry("7", "cloud", "default")
-		entry["team"] = "blacksmith"
+		entry := configEntry("7", typeCloud, "default")
+		entry["team"] = teamBlacksmith
 
 		boshtest.WriteJSON(writer, http.StatusOK, entry)
 
@@ -473,7 +493,7 @@ func TestGetConfigByIDReadsTheConfigPathAndDecodesTheTeam(t *testing.T) {
 		t.Fatalf("GetConfigByID failed: %v", err)
 	}
 
-	if detail.Team != "blacksmith" {
+	if detail.Team != teamBlacksmith {
 		t.Errorf("expected the team blacksmith, got %q", detail.Team)
 	}
 
@@ -485,7 +505,7 @@ func TestGetConfigByIDReadsTheConfigPathAndDecodesTheTeam(t *testing.T) {
 		t.Errorf("expected exactly one GET /configs/7, got %d", len(reads))
 	}
 
-	if reads := requestsTo(server, http.MethodGet, "/configs"); len(reads) != 0 {
+	if reads := requestsTo(server, http.MethodGet, configsPath); len(reads) != 0 {
 		t.Errorf("expected no GET /configs list read, got %d", len(reads))
 	}
 }
@@ -493,187 +513,184 @@ func TestGetConfigByIDReadsTheConfigPathAndDecodesTheTeam(t *testing.T) {
 // A 404 on GET /configs/<id> is a missing config for every read by ID,
 // including the two sides of a diff.
 func TestConfigReadsByIDMapAMissingIDToNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		switch request.URL.Path {
-		case "/configs/7":
-			entry := configEntry("7", "cloud", "default")
-			entry["team"] = "blacksmith"
-
-			boshtest.WriteJSON(writer, http.StatusOK, entry)
-		case "/configs/99":
-			boshtest.WriteError(writer, http.StatusNotFound, 440000, "config not found")
-		default:
-			return false
-		}
-
-		return true
-	})
-
-	director := newReadAdapter(t, server, nil)
-
-	reads := map[string]func() error{
-		"GetConfigByID": func() error {
+	reads := map[string]func(director bosh.Director) error{
+		opGetConfigByID: func(director bosh.Director) error {
 			_, err := director.GetConfigByID(t.Context(), "99")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		},
-		"GetConfigContent": func() error {
+		opGetConfigContent: func(director bosh.Director) error {
 			_, err := director.GetConfigContent(t.Context(), "99")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		},
-		"ComputeConfigDiff from": func() error {
+		"ComputeConfigDiff from": func(director bosh.Director) error {
 			_, err := director.ComputeConfigDiff(t.Context(), "99", "7")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		},
-		"ComputeConfigDiff to": func() error {
+		"ComputeConfigDiff to": func(director bosh.Director) error {
 			_, err := director.ComputeConfigDiff(t.Context(), "7", "99")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		},
 	}
 
 	for name, read := range reads {
 		t.Run(name, func(t *testing.T) {
-			if err := read(); !errors.Is(err, bosh.ErrConfigNotFound) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				switch request.URL.Path {
+				case "/configs/7":
+					entry := configEntry("7", typeCloud, "default")
+					entry["team"] = teamBlacksmith
+
+					boshtest.WriteJSON(writer, http.StatusOK, entry)
+				case "/configs/99":
+					boshtest.WriteError(writer, http.StatusNotFound, 440000, "config not found")
+				default:
+					return false
+				}
+
+				return true
+			})
+
+			err := read(newReadAdapter(t, server, nil))
+			if !errors.Is(err, bosh.ErrConfigNotFound) {
 				t.Fatalf("expected ErrConfigNotFound, got: %v", err)
 			}
 		})
 	}
 }
 
-// A message names a deployment only when the request had one, and sends the
-// operator to /b/tasks only when the request could have made a task.
-func TestOutcomeUnknownErrorLeavesOutWhatIsEmpty(t *testing.T) {
+// A config write without a deployment names none and sends the operator to no task.
+func TestOutcomeUnknownErrorLeavesOutADeployment(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a config write without a deployment", func(t *testing.T) {
-		t.Parallel()
+	message := (&bosh.OutcomeUnknownError{
+		Operation: opEnableResurrection,
+		Director:  directorAddress,
+		Config:    resurrectionConfigRef,
+		Err:       errConnectionReset,
+	}).Error()
 
-		message := (&bosh.OutcomeUnknownError{
-			Operation: "EnableResurrection",
-			Director:  "https://10.0.0.4:25555",
-			Config:    "resurrection/blacksmith.dep-1",
-			Err:       errConnectionReset,
-		}).Error()
-
-		for _, unwanted := range []string{"for deployment", "the deployment", "/b/tasks"} {
-			if strings.Contains(message, unwanted) {
-				t.Errorf("expected no %q in the message, got: %s", unwanted, message)
-			}
+	for _, unwanted := range []string{"for deployment", "the deployment", "/b/tasks"} {
+		if strings.Contains(message, unwanted) {
+			t.Errorf("expected no %q in the message, got: %s", unwanted, message)
 		}
-	})
+	}
+}
 
-	t.Run("a config write with a deployment", func(t *testing.T) {
-		t.Parallel()
+// A config write with a deployment still has no task to send the operator to.
+func TestOutcomeUnknownErrorAConfigWriteWithADeploymentHasNoTask(t *testing.T) {
+	t.Parallel()
 
-		message := (&bosh.OutcomeUnknownError{
-			Operation:  "EnableResurrection",
-			Director:   "https://10.0.0.4:25555",
-			Deployment: "dep-1",
-			Config:     "resurrection/blacksmith.dep-1",
-			Err:        errConnectionReset,
-		}).Error()
+	message := (&bosh.OutcomeUnknownError{
+		Operation:  opEnableResurrection,
+		Director:   directorAddress,
+		Deployment: deploymentName,
+		Config:     resurrectionConfigRef,
+		Err:        errConnectionReset,
+	}).Error()
 
-		if strings.Contains(message, "/b/tasks") {
-			t.Errorf("a config write has no task, so the message must not mention /b/tasks: %s", message)
+	if strings.Contains(message, "/b/tasks") {
+		t.Errorf("a config write has no task, so the message must not mention /b/tasks: %s", message)
+	}
+}
+
+// A request with only a context ID sends the operator to the task with that context ID.
+func TestOutcomeUnknownErrorWithOnlyAContextID(t *testing.T) {
+	t.Parallel()
+
+	message := (&bosh.OutcomeUnknownError{
+		Operation: opCleanUp,
+		Director:  directorAddress,
+		ContextID: contextID,
+		Err:       errConnectionReset,
+	}).Error()
+
+	for _, unwanted := range []string{"for deployment", "the deployment", "deployment ."} {
+		if strings.Contains(message, unwanted) {
+			t.Errorf("expected no %q in the message, got: %s", unwanted, message)
 		}
-	})
+	}
 
-	t.Run("neither a config nor a deployment", func(t *testing.T) {
-		t.Parallel()
+	if !strings.Contains(message, "Check /b/tasks for the task with context ID ctx-123") {
+		t.Errorf("expected the message to send the operator to /b/tasks for that context ID, got: %s", message)
+	}
+}
 
-		message := (&bosh.OutcomeUnknownError{
-			Operation: "CleanUp",
-			Director:  "https://10.0.0.4:25555",
-			ContextID: "ctx-123",
-			Err:       errConnectionReset,
-		}).Error()
+// A request with a context ID says a task with that context ID was sought.
+func TestOutcomeUnknownErrorNamesTheContextIDOnce(t *testing.T) {
+	t.Parallel()
 
-		for _, unwanted := range []string{"for deployment", "the deployment", "deployment ."} {
-			if strings.Contains(message, unwanted) {
-				t.Errorf("expected no %q in the message, got: %s", unwanted, message)
-			}
-		}
+	message := (&bosh.OutcomeUnknownError{
+		Operation: opCleanUp,
+		Director:  directorAddress,
+		ContextID: contextID,
+		Err:       errConnectionReset,
+	}).Error()
 
-		if !strings.Contains(message, "Check /b/tasks for the task with context ID ctx-123") {
-			t.Errorf("expected the message to send the operator to /b/tasks for that context ID, got: %s", message)
-		}
-	})
-	t.Run("a request with a context ID names it once", func(t *testing.T) {
-		t.Parallel()
+	if !strings.Contains(message, "with that context ID and found none yet") {
+		t.Errorf("expected the message to say a task with that context ID was sought, got: %s", message)
+	}
+}
 
-		message := (&bosh.OutcomeUnknownError{
-			Operation: "CleanUp",
-			Director:  "https://10.0.0.4:25555",
-			ContextID: "ctx-123",
-			Err:       errConnectionReset,
-		}).Error()
+// A request with no config, deployment, or context ID sends the operator to a recent task.
+func TestOutcomeUnknownErrorWithNothingToName(t *testing.T) {
+	t.Parallel()
 
-		if !strings.Contains(message, "with that context ID and found none yet") {
-			t.Errorf("expected the message to say a task with that context ID was sought, got: %s", message)
-		}
-	})
+	message := (&bosh.OutcomeUnknownError{
+		Operation: opCleanUp,
+		Director:  directorAddress,
+		Err:       errConnectionReset,
+	}).Error()
 
-	t.Run("neither a config, a deployment, nor a context ID", func(t *testing.T) {
-		t.Parallel()
+	if strings.Contains(message, "context ID") {
+		t.Errorf("a request with no context ID must not mention one, got: %s", message)
+	}
 
-		message := (&bosh.OutcomeUnknownError{
-			Operation: "CleanUp",
-			Director:  "https://10.0.0.4:25555",
-			Err:       errConnectionReset,
-		}).Error()
-
-		if strings.Contains(message, "context ID") {
-			t.Errorf("a request with no context ID must not mention one, got: %s", message)
-		}
-
-		if !strings.HasSuffix(message, "did not resend it. Check /b/tasks for a recent task") {
-			t.Errorf("expected the message to end by sending the operator to /b/tasks for a recent task, got: %s", message)
-		}
-	})
+	if !strings.HasSuffix(message, "did not resend it. Check /b/tasks for a recent task") {
+		t.Errorf("expected the message to end by sending the operator to /b/tasks for a recent task, got: %s", message)
+	}
 }
 
 // A wrapped config error names the failure once, so the log line and the
 // UI do not repeat "failed to get config" or "failed to update".
 func TestConfigErrorsNameTheFailureOnce(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if !strings.HasPrefix(request.URL.Path, "/configs") {
-			return false
-		}
-
-		boshtest.WriteError(writer, http.StatusInternalServerError, 100, "the director broke")
-
-		return true
-	})
-
-	director := newReadAdapter(t, server, nil)
-
 	calls := map[string]struct {
-		call     func() error
+		call     func(director bosh.Director) error
 		repeated string
 	}{
-		"GetConfig": {func() error {
-			_, err := director.GetConfig(t.Context(), "runtime", "x")
+		"GetConfig": {func(director bosh.Director) error {
+			_, err := director.GetConfig(t.Context(), typeRuntime, "x")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		}, "failed to get config"},
-		"EnableResurrection": {func() error {
-			return director.EnableResurrection(t.Context(), "dep-1", true)
+		opEnableResurrection: {func(director bosh.Director) error {
+			return director.EnableResurrection(t.Context(), deploymentName, true)
 		}, "failed to update"},
-		"DeleteResurrectionConfig": {func() error {
-			return director.DeleteResurrectionConfig(t.Context(), "dep-1")
+		opDeleteResurrection: {func(director bosh.Director) error {
+			return director.DeleteResurrectionConfig(t.Context(), deploymentName)
 		}, "failed to delete"},
 	}
 
 	for name, entry := range calls {
 		t.Run(name, func(t *testing.T) {
-			err := entry.call()
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				if !strings.HasPrefix(request.URL.Path, configsPath) {
+					return false
+				}
+
+				boshtest.WriteError(writer, http.StatusInternalServerError, 100, "the director broke")
+
+				return true
+			})
+
+			err := entry.call(newReadAdapter(t, server, nil))
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -727,17 +744,17 @@ type configWrite struct {
 
 func configWrites() map[string]configWrite {
 	return map[string]configWrite{
-		"EnableResurrection": {
+		opEnableResurrection: {
 			method: http.MethodPost,
 			call: func(ctx context.Context, director bosh.Director) error {
-				return director.EnableResurrection(ctx, "dep-1", true)
+				return director.EnableResurrection(ctx, deploymentName, true)
 			},
 			rejected: bosh.ErrResurrectionConfigUpdateFailed,
 		},
-		"DeleteResurrectionConfig": {
+		opDeleteResurrection: {
 			method: http.MethodDelete,
 			call: func(ctx context.Context, director bosh.Director) error {
-				return director.DeleteResurrectionConfig(ctx, "dep-1")
+				return director.DeleteResurrectionConfig(ctx, deploymentName)
 			},
 			rejected: bosh.ErrResurrectionConfigDeleteFailed,
 		},
@@ -765,7 +782,7 @@ func TestConfigWriteRejectionIsNotAnUnknownOutcome(t *testing.T) {
 				t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 				server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-					if request.URL.Path != "/configs" {
+					if request.URL.Path != configsPath {
 						return false
 					}
 
@@ -793,7 +810,7 @@ func TestConfigWriteRejectionIsNotAnUnknownOutcome(t *testing.T) {
 					t.Errorf("status %d is not a missing config, got: %v", answer.status, err)
 				}
 
-				if sent := requestsTo(server, write.method, "/configs"); len(sent) != 1 {
+				if sent := requestsTo(server, write.method, configsPath); len(sent) != 1 {
 					t.Errorf("expected the write to be sent once, got %d", len(sent))
 				}
 			})
@@ -806,7 +823,7 @@ func TestDeleteResurrectionConfigMapsOnlyA404ToNotFound(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.URL.Path != "/configs" {
+		if request.URL.Path != configsPath {
 			return false
 		}
 
@@ -817,7 +834,7 @@ func TestDeleteResurrectionConfigMapsOnlyA404ToNotFound(t *testing.T) {
 
 	director := newReadAdapter(t, server, nil)
 
-	err := director.DeleteResurrectionConfig(t.Context(), "dep-1")
+	err := director.DeleteResurrectionConfig(t.Context(), deploymentName)
 	if !errors.Is(err, bosh.ErrResurrectionConfigNotFound) || errors.Is(err, bosh.ErrOutcomeUnknown) {
 		t.Errorf("expected ErrResurrectionConfigNotFound and no unknown outcome for a 404, got: %v", err)
 	}
@@ -834,7 +851,7 @@ func TestConfigWriteWithAnEndedContextIsNotAnUnknownOutcome(t *testing.T) {
 			defer cancel()
 
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-				if request.URL.Path != "/configs" {
+				if request.URL.Path != configsPath {
 					return false
 				}
 
@@ -864,20 +881,20 @@ func TestConfigWriteWithAnEndedContextIsNotAnUnknownOutcome(t *testing.T) {
 // route, so the UI does not answer "not found" for an outage or a refusal.
 func TestConfigReadsByIDKeepAFailureThatIsNotA404(t *testing.T) {
 	reads := map[string]func(director bosh.Director) error{
-		"GetConfigByID": func(director bosh.Director) error {
+		opGetConfigByID: func(director bosh.Director) error {
 			_, err := director.GetConfigByID(t.Context(), "7")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		},
-		"GetConfigContent": func(director bosh.Director) error {
+		opGetConfigContent: func(director bosh.Director) error {
 			_, err := director.GetConfigContent(t.Context(), "7")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		},
 		"ComputeConfigDiff": func(director bosh.Director) error {
 			_, err := director.ComputeConfigDiff(t.Context(), "7", "8")
 
-			return err
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
 		},
 	}
 
@@ -911,11 +928,11 @@ func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.Method != http.MethodGet || request.URL.Path != "/configs" {
+		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
 		}
 
-		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{configEntry("4", "cloud", "default")})
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{configEntry("4", typeCloud, "default")})
 
 		return true
 	})
@@ -931,7 +948,7 @@ func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
 		t.Errorf("expected the config content, got %q", content)
 	}
 
-	reads := requestsTo(server, http.MethodGet, "/configs")
+	reads := requestsTo(server, http.MethodGet, configsPath)
 	if len(reads) != 1 {
 		t.Fatalf("expected exactly one GET /configs, got %d", len(reads))
 	}
@@ -941,7 +958,7 @@ func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
 		t.Fatalf("failed to parse the query %q: %v", reads[0].RawQuery, err)
 	}
 
-	want := url.Values{"type": {"cloud"}, "latest": {"true"}, "limit": {"1"}}
+	want := url.Values{queryType: {typeCloud}, queryLatest: {"true"}, "limit": {"1"}}
 	if !reflect.DeepEqual(query, want) {
 		t.Errorf("expected exactly type=cloud&latest=true&limit=1, got %q", reads[0].RawQuery)
 	}
@@ -953,11 +970,11 @@ func TestGetConfigsSendsNoLimit(t *testing.T) {
 	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.Method != http.MethodGet || request.URL.Path != "/configs" {
+		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
 		}
 
-		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{configEntry("4", "cloud", "default")})
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{configEntry("4", typeCloud, "default")})
 
 		return true
 	})

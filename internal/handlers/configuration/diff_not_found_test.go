@@ -1,4 +1,4 @@
-package configuration
+package configuration_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/handlers/configuration"
 	"blacksmith/pkg/logger"
 	"blacksmith/pkg/testutil"
 )
@@ -29,13 +30,13 @@ func (d *diffDirector) ComputeConfigDiff(context.Context, string, string) (*bosh
 func diffStatus(t *testing.T, diffErr error) int {
 	t.Helper()
 
-	handler := NewHandler(Dependencies{
+	handler := configuration.NewHandler(configuration.Dependencies{
 		Logger:   logger.Get().Named("test"),
 		Director: &diffDirector{IntegrationMockBOSH: testutil.NewIntegrationMockBOSH(), diffErr: diffErr},
 	})
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/b/configs/cloud/default/diff?from=1&to=99", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/configs/cloud/default/diff?from=1&to=99", nil)
 
 	handler.ServeHTTP(recorder, request)
 
