@@ -10,11 +10,12 @@ import (
 )
 
 // DirectorCallError is the error a director call returns when its context
-// ended before the director answered. It names the operation, the director,
-// and the deadline, and for a call that followed a director task, the task and
-// what became of it. It unwraps to both the context's error and the
-// error the call itself saw, so errors.Is(err, context.DeadlineExceeded)
-// and errors.Is(err, context.Canceled) work on it.
+// ended before the director answered, and the error WaitForTask returns
+// whenever it stops before its task finished. It names the operation, the
+// director, and the deadline, and for a call that followed a director task,
+// the task and what became of it. It unwraps to both its cause and the error
+// the call itself saw, so errors.Is(err, context.DeadlineExceeded) and
+// errors.Is(err, context.Canceled) work on it.
 type DirectorCallError struct {
 	// Operation is the Director method that was running.
 	Operation string
@@ -23,7 +24,9 @@ type DirectorCallError struct {
 	// Deadline is the context's deadline, zero when it had none.
 	Deadline time.Time
 	// Cause is the context's error, context.DeadlineExceeded or
-	// context.Canceled.
+	// context.Canceled. For a request that got no answer within the request
+	// timeout, it names that timeout instead, and for a wait that stopped on
+	// a failed read of its task, it names that read.
 	Cause error
 	// Err is the error the call returned when the context ended.
 	Err error
@@ -85,6 +88,14 @@ func (o TaskOutcome) sentence(taskID int) string {
 }
 
 func (e *DirectorCallError) Error() string {
+	// A failed read is the director's own answer, which carries its own
+	// advice, so the advice for a call that got no answer does not apply.
+	var readFailed *taskReadError
+	if errors.As(e.Cause, &readFailed) {
+		return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %sThe failed read's error was: %v",
+			e.Operation, e.Director, readFailed.Error(), e.Task.sentence(e.TaskID), e.Err)
+	}
+
 	var why string
 
 	var timeout *requestTimeoutError
@@ -112,6 +123,23 @@ func (e *DirectorCallError) Error() string {
 		"Check that the director answers bosh env, look at its running tasks with bosh tasks and at monit summary on the director, "+
 		"and check the network path from the broker to %s. The call's own error was: %v",
 		e.Operation, e.Director, why, e.Task.sentence(e.TaskID), e.Director, e.Err)
+}
+
+// taskReadError is the cause of a wait that stopped because a read of its
+// task failed while the caller's context was still live.
+type taskReadError struct {
+	taskID int
+	// lastState is the state the last good read saw, or empty when no read
+	// succeeded.
+	lastState string
+}
+
+func (e *taskReadError) Error() string {
+	if e.lastState == "" {
+		return fmt.Sprintf("a read of BOSH task %d failed before its state was read", e.taskID)
+	}
+
+	return fmt.Sprintf("a read of BOSH task %d failed while the task was %q", e.taskID, e.lastState)
 }
 
 func (e *DirectorCallError) Unwrap() []error {

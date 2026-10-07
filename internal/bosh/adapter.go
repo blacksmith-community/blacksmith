@@ -36,8 +36,9 @@ type Director interface {
 	GetTaskEvents(ctx context.Context, id int) ([]TaskEvent, error)
 	// WaitForTask waits until the task reaches a terminal state and returns
 	// it with a nil error for every terminal state, so callers judge the
-	// state themselves. When the context ends first, the task is left
-	// running and the error is a *DirectorCallError with TaskLeftRunning.
+	// state themselves. When the wait stops first, because the context
+	// ended or a read of the task failed, the task is left running and the
+	// error is a *DirectorCallError with the task's ID and TaskLeftRunning.
 	WaitForTask(ctx context.Context, id int) (*Task, error)
 
 	// Event operations

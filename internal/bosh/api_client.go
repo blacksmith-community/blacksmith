@@ -197,7 +197,9 @@ func (e *directorRequestError) Error() string {
 		return msg
 	}
 
-	return msg + ". " + advice
+	// The advice starts a sentence of its own, and the error before it may
+	// already end one.
+	return strings.TrimSuffix(msg, ".") + ". " + advice
 }
 
 func (e *directorRequestError) Unwrap() error {

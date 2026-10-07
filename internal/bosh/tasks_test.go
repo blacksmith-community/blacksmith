@@ -118,6 +118,81 @@ func TestWaitForTaskLeavesTheTaskRunningWhenTheContextEnds(t *testing.T) {
 	}
 }
 
+// A read of the task that fails ends the wait as a context that ended does.
+// The task is left running, and the error says so, names the task, and
+// points at /b/tasks/N, so a caller can follow the task again.
+func TestWaitForTaskThatCannotReadTheTaskLeavesItRunning(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	var polls atomic.Int32
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks/42" {
+			return false
+		}
+
+		if polls.Add(1) == 1 {
+			boshtest.WriteJSON(writer, http.StatusOK, directorTask(42, "processing"))
+		} else {
+			boshtest.WriteError(writer, http.StatusInternalServerError, 100, "The database is locked.")
+		}
+
+		return true
+	})
+
+	director := newTaskAdapter(t, server)
+
+	task, err := director.WaitForTask(t.Context(), 42)
+	if task != nil {
+		t.Fatalf("expected no task when a read fails, got %+v", task)
+	}
+
+	var callErr *bosh.DirectorCallError
+	if !errors.As(err, &callErr) {
+		t.Fatalf("expected a *bosh.DirectorCallError, got %T: %v", err, err)
+	}
+
+	if callErr.Operation != "WaitForTask" || callErr.Director != server.URL || callErr.TaskID != 42 || callErr.Task != bosh.TaskLeftRunning {
+		t.Fatalf("DirectorCallError names operation %q, director %q, task %d, and outcome %v, want WaitForTask, %s, 42, and TaskLeftRunning",
+			callErr.Operation, callErr.Director, callErr.TaskID, callErr.Task, server.URL)
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		t.Errorf("a failed read is not a context that ended, got: %v", err)
+	}
+
+	message := err.Error()
+	for _, want := range []string{
+		"WaitForTask", server.URL, `a read of BOSH task 42 failed while the task was "processing"`,
+		"BOSH task 42 is still running; Blacksmith stopped waiting and did not cancel it", "/b/tasks/42",
+		"The database is locked. The director reported an internal error",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the error to mention %q, got: %s", want, message)
+		}
+	}
+
+	// The director's own routes are no help to an operator, who follows the
+	// task in Blacksmith.
+	for _, unwanted := range []string{"..", "Check its state with GET /tasks/42", "DELETE /task/42"} {
+		if strings.Contains(message, unwanted) {
+			t.Errorf("expected the error not to contain %q, got: %s", unwanted, message)
+		}
+	}
+
+	// boshapi already retries the reads that can recover, so one failed
+	// read ends the wait.
+	if got := polls.Load(); got != 2 {
+		t.Errorf("expected the wait to stop at the failed read, the second poll, got %d polls", got)
+	}
+
+	for _, request := range server.APIRequests() {
+		if request.Method == http.MethodDelete {
+			t.Errorf("the wait sent %s %s, but it must never cancel the task", request.Method, request.Path)
+		}
+	}
+}
+
 // Every terminal state ends the wait with the final task and no error,
 // because callers judge the state themselves.
 func TestWaitForTaskReturnsFailedTasksWithoutError(t *testing.T) {
@@ -236,6 +311,44 @@ func TestPooledWaitDoesNotHoldASlot(t *testing.T) {
 	case <-waited:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the pooled wait did not end with its context")
+	}
+}
+
+// A wait through the batch director ends with the caller's context, so a
+// batch wait still stops at shutdown.
+func TestBatchWaitEndsWithTheCallersContext(t *testing.T) {
+	t.Parallel()
+
+	base := &slowWaitDirector{entered: make(chan struct{})}
+	batch := bosh.NewBatchDirector(base, 1, 200*time.Millisecond, nil)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	waited := make(chan error, 1)
+
+	go func() {
+		_, err := batch.WaitForTask(ctx, 1)
+		waited <- err
+	}()
+
+	select {
+	case <-base.entered:
+	case err := <-waited:
+		t.Fatalf("the batch director never reached the base director's WaitForTask, and returned: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the batch director never reached the base director's WaitForTask")
+	}
+
+	cancel()
+
+	select {
+	case err := <-waited:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected the batch wait to end with context.Canceled, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the batch wait did not end with its caller's context")
 	}
 }
 

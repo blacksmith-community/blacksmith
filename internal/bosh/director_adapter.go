@@ -771,13 +771,20 @@ func (d *DirectorAdapter) GetTask(ctx context.Context, taskID int) (_ *Task, err
 
 // WaitForTask waits until the task reaches a terminal state, reading it every
 // few seconds, and returns the final task with a nil error whatever that state
-// is, because callers judge the state themselves. When the context ends, or a
-// read of the task fails, it stops waiting and leaves the task running: the
-// error is a *DirectorCallError with TaskLeftRunning when the context ended or
-// a read got no answer within the request timeout, and the failed read's
-// error otherwise.
+// is, because callers judge the state themselves.
+//
+// Every other way the wait can stop leaves the task running, and returns a
+// *DirectorCallError with the task's ID and TaskLeftRunning. That covers a
+// context that ended, a read that got no answer within the request timeout,
+// and a read the director answered with an error. boshapi already retries a
+// read that can recover, such as one that met a dropped connection or a 503,
+// so a read that still fails ends the wait: a caller that must follow the
+// task further has its ID, and the batch director keeps watching a deploy
+// through such failures.
 func (d *DirectorAdapter) WaitForTask(ctx context.Context, taskID int) (_ *Task, err error) {
-	defer d.explainTaskWait(ctx, taskID, &err)
+	var lastState string
+
+	defer func() { d.explainTaskWait(ctx, taskID, lastState, &err) }()
 
 	d.log.Debugf("Waiting for BOSH task %d", taskID)
 
@@ -793,13 +800,21 @@ func (d *DirectorAdapter) WaitForTask(ctx context.Context, taskID int) (_ *Task,
 	if err != nil {
 		d.log.Errorf("Stopped waiting for BOSH task %d: %v", taskID, err)
 
-		return nil, d.requestFailure(fmt.Sprintf("wait for BOSH task %d", taskID), err)
+		// boshapi's wait error tells the reader to follow the task on the
+		// director's own routes. Blacksmith's error points at /b/tasks/N
+		// instead, so only the read's own error is kept.
+		var waitErr *boshapi.TaskWaitError
+		if errors.As(err, &waitErr) && waitErr.Err != nil {
+			lastState, err = waitErr.LastState, waitErr.Err
+		}
+
+		return nil, d.requestFailure(fmt.Sprintf("read BOSH task %d", taskID), err)
 	}
 
 	if task == nil {
 		d.log.Errorf("The director answered GET /tasks/%d with no data", taskID)
 
-		return nil, d.requestFailure(fmt.Sprintf("wait for BOSH task %d", taskID), ErrEmptyDirectorAnswer)
+		return nil, d.requestFailure(fmt.Sprintf("read BOSH task %d", taskID), ErrEmptyDirectorAnswer)
 	}
 
 	converted := convertAPITask(*task)
@@ -809,15 +824,30 @@ func (d *DirectorAdapter) WaitForTask(ctx context.Context, taskID int) (_ *Task,
 }
 
 // explainTaskWait explains a wait that stopped, as explainContext does, and
-// records that the task was left running.
-func (d *DirectorAdapter) explainTaskWait(ctx context.Context, taskID int, err *error) {
+// records that the task was left running. A wait that stopped on a failed
+// read of the task, while the context was still live, is explained the same
+// way, with the failed read as its cause. lastState is the state the last
+// good read saw, or empty when no read succeeded.
+func (d *DirectorAdapter) explainTaskWait(ctx context.Context, taskID int, lastState string, err *error) {
+	if *err == nil {
+		return
+	}
+
 	d.explainContext(ctx, "WaitForTask", err)
 
 	var callErr *DirectorCallError
-	if errors.As(*err, &callErr) {
-		callErr.TaskID = taskID
-		callErr.Task = TaskLeftRunning
+	if !errors.As(*err, &callErr) {
+		callErr = &DirectorCallError{
+			Operation: "WaitForTask",
+			Director:  d.address,
+			Cause:     &taskReadError{taskID: taskID, lastState: lastState},
+			Err:       *err,
+		}
+		*err = callErr
 	}
+
+	callErr.TaskID = taskID
+	callErr.Task = TaskLeftRunning
 }
 
 // GetTasks lists tasks in one of Blacksmith's modes: "recent" asks for twice
