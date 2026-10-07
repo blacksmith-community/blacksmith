@@ -1,0 +1,188 @@
+package bosh_test
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+
+	"blacksmith/internal/bosh"
+)
+
+const planBrokerContent = `
+azs:
+- name: z1
+vm_types:
+- name: small
+  cloud_properties: {size: 1}
+compilation:
+  workers: 2
+`
+
+func TestPlanCloudConfigWriteDecidesByMeaning(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		existing []bosh.CloudConfigEntry
+		content  string
+		action   bosh.CloudConfigAction
+		holder   string
+		overlaps []bosh.CloudConfigOverlap
+	}{
+		{name: "no other configs", content: planBrokerContent, action: bosh.CloudConfigWrite},
+		{
+			name:     "other config with different names and no compilation",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: "azs:\n- name: z9\nvm_types:\n- name: big\n"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigWrite,
+		},
+		{
+			name:     "the default holds the same value in another order",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: "compilation: {workers: 2}\nvm_types: [{cloud_properties: {size: 1}, name: small}]\nazs:\n  - {name: z1}\n"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigSkipIdentical,
+			holder:   "",
+		},
+		{
+			name:     "a named config holds the same value",
+			existing: []bosh.CloudConfigEntry{{Name: "other", Content: planBrokerContent}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigSkipIdentical,
+			holder:   "other",
+		},
+		{
+			name:     "the broker's own config is not another config",
+			existing: []bosh.CloudConfigEntry{{Name: "blacksmith", Content: planBrokerContent}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigWrite,
+		},
+		{
+			name:     "shared az",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: "azs:\n- name: z1\n"}},
+			content:  "azs:\n- name: z1\n",
+			action:   bosh.CloudConfigSkipIdentical,
+			holder:   "",
+		},
+		{
+			name:     "shared az in a larger config",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: "azs:\n- name: z1\n- name: z2\n"}},
+			content:  "azs:\n- name: z1\nnetworks:\n- name: n\n",
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "", Key: "azs", Name: "z1"}},
+		},
+		{
+			name:     "shared vm type",
+			existing: []bosh.CloudConfigEntry{{Name: "x", Content: "vm_types:\n- name: small\n"}},
+			content:  "vm_types:\n- name: small\n- name: tiny\n",
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "x", Key: "vm_types", Name: "small"}},
+		},
+		{
+			name:     "shared disk type",
+			existing: []bosh.CloudConfigEntry{{Name: "x", Content: "disk_types:\n- name: d\n- name: e\n"}},
+			content:  "disk_types:\n- name: d\n- name: f\n",
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "x", Key: "disk_types", Name: "d"}},
+		},
+		{
+			name:     "shared network",
+			existing: []bosh.CloudConfigEntry{{Name: "x", Content: "networks:\n- name: n\n- name: o\n"}},
+			content:  "networks:\n- name: n\n- name: p\n",
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "x", Key: "networks", Name: "n"}},
+		},
+		{
+			name:     "shared vm extension",
+			existing: []bosh.CloudConfigEntry{{Name: "x", Content: "vm_extensions:\n- name: e\n- name: f\n"}},
+			content:  "vm_extensions:\n- name: e\n- name: g\n",
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "x", Key: "vm_extensions", Name: "e"}},
+		},
+		{
+			name:     "second compilation block",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: "compilation: {workers: 5}\nazs: [{name: z9}]\n"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{{Config: "", Key: "compilation"}},
+		},
+		{
+			name: "overlaps in two configs are all reported",
+			existing: []bosh.CloudConfigEntry{
+				{Name: "a", Content: "azs: [{name: z1}]\n"},
+				{Name: "b", Content: "vm_types: [{name: small}]\ncompilation: {}\n"},
+			},
+			content: planBrokerContent,
+			action:  bosh.CloudConfigRefuse,
+			overlaps: []bosh.CloudConfigOverlap{
+				{Config: "a", Key: "azs", Name: "z1"},
+				{Config: "b", Key: "vm_types", Name: "small"},
+				{Config: "b", Key: "compilation"},
+			},
+		},
+		{
+			name:     "blank other config overlaps nothing",
+			existing: []bosh.CloudConfigEntry{{Name: "", Content: "---\n"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigWrite,
+		},
+		{
+			name:     "an unparseable director config writes nothing",
+			existing: []bosh.CloudConfigEntry{{Name: "bad", Content: "azs: [unclosed"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigSkipUnreadable,
+		},
+		{
+			name:     "a director config that is a list writes nothing",
+			existing: []bosh.CloudConfigEntry{{Name: "odd", Content: "- a\n"}},
+			content:  planBrokerContent,
+			action:   bosh.CloudConfigSkipUnreadable,
+		},
+		{name: "unparseable broker content writes nothing", content: "azs: [unclosed", action: bosh.CloudConfigSkipUnreadable},
+		{name: "broker content that is a list writes nothing", content: "- a\n", action: bosh.CloudConfigSkipUnreadable},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			plan := bosh.PlanCloudConfigWrite(testCase.existing, testCase.content)
+
+			if plan.Action != testCase.action {
+				t.Fatalf("expected action %d, got %d (%+v)", testCase.action, plan.Action, plan)
+			}
+
+			if plan.Holder != testCase.holder {
+				t.Errorf("expected holder %q, got %q", testCase.holder, plan.Holder)
+			}
+
+			if !reflect.DeepEqual(plan.Overlaps, testCase.overlaps) {
+				t.Errorf("expected overlaps %v, got %v", testCase.overlaps, plan.Overlaps)
+			}
+
+			if plan.Action == bosh.CloudConfigSkipUnreadable && strings.TrimSpace(plan.Reason) == "" {
+				t.Error("expected a reason for an unreadable config")
+			}
+		})
+	}
+}
+
+func TestIsEmptyCloudConfig(t *testing.T) {
+	t.Parallel()
+
+	for _, content := range []string{"", "---", "{}", "--- {}", "[]", "--- []", "~", "  \n"} {
+		empty, err := bosh.IsEmptyCloudConfig(content)
+		if err != nil || !empty {
+			t.Errorf("expected %q to be empty, got %v, %v", content, empty, err)
+		}
+	}
+
+	empty, err := bosh.IsEmptyCloudConfig("azs: []\n")
+	if err != nil || empty {
+		t.Errorf("expected content to be non-empty, got %v, %v", empty, err)
+	}
+
+	_, err = bosh.IsEmptyCloudConfig("azs: [unclosed")
+	if err == nil {
+		t.Error("expected a YAML error")
+	}
+}
