@@ -723,9 +723,10 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 // only when deploymentConfirmedGone says the director itself answered with
 // its deployment-not-found code, and tombstoneUnlessInFlight finds nothing
 // to show that the instance belongs to work in flight. Any other answer
-// records a failed check and keeps monitoring the instance. The check is
-// stored with the VM status "provisioning" when the instance was kept
-// because it is in flight, and with "error" otherwise.
+// keeps monitoring the instance. An instance kept because it is in flight is
+// held as a fresh provision is, healthy and provisioning with no failure
+// counted, and its check is stored with the VM status "provisioning". Any
+// other keep records a failed check, and its check is stored with "error".
 func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err error) {
 	logger := logger.Get().Named("vm-monitor")
 
@@ -747,20 +748,23 @@ func (m *Monitor) handleCheckError(ctx context.Context, svc *ServiceMonitor, err
 		logger.Error("Failed to check VMs for service %s: %s; the director still has deployment %s, so the instance is kept", svc.ServiceID, err, svc.DeploymentName)
 	}
 
-	// Default error handling with retry
-	svc.FailureCount++
-	svc.IsHealthy = false
-	svc.LastCheck = time.Now()
-
-	// Use failed interval for retry
-	svc.NextCheck = time.Now().Add(m.failedInterval)
-
-	// Store the failed check. An instance kept because it is in flight
-	// shows as provisioning, and any other as an error.
+	// An instance in flight looks as a fresh provision does, and any other
+	// keep counts as a failed check. Both are checked again at the failed
+	// interval.
 	status := vmStatusError
+
 	if kept.inFlight {
 		status = vmStatusProvisioning
+		svc.FailureCount = 0
+		svc.IsHealthy = true
+		svc.IsProvisioning = true
+	} else {
+		svc.FailureCount++
+		svc.IsHealthy = false
 	}
+
+	svc.LastCheck = time.Now()
+	svc.NextCheck = time.Now().Add(m.failedInterval)
 
 	vmStatus := VMStatus{
 		Status:      status,

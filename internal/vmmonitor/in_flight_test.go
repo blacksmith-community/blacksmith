@@ -104,13 +104,16 @@ const (
 
 	// provisioning leaves the index entry alone, keeps monitoring the
 	// instance, and records the VM status "provisioning", because something
-	// shows that the instance belongs to work in flight.
+	// shows that the instance belongs to work in flight. The monitor then
+	// holds the instance as it holds a fresh provision, healthy and
+	// provisioning with no failure counted.
 	provisioning
 
 	// failedCheck leaves the index entry alone, keeps monitoring the
 	// instance, and records the VM status "error", because a read, a check,
 	// or the tombstone write failed, so the monitor cannot tell whether the
-	// instance is in flight.
+	// instance is in flight. The monitor counts the failure and holds the
+	// instance as unhealthy.
 	failedCheck
 
 	// tombstoned marks the index entry deleted and stops monitoring.
@@ -348,14 +351,114 @@ func checkInFlight(t *testing.T, inFlight inFlightCase) {
 			t.Errorf("an instance in flight: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and provisioning",
 				marked, stillMonitored, status)
 		}
+
+		expectHeldAsProvisioning(t, monitor, inFlightID)
 	case failedCheck:
 		if len(marked) != 0 || !stillMonitored || status != statusError {
 			t.Errorf("an instance the monitor cannot judge: marked %v, still monitored %t, status %q; want nothing marked, still monitored, and error",
 				marked, stillMonitored, status)
 		}
+
+		expectHeldAsFailing(t, monitor, inFlightID, 1)
 	case unset:
 		t.Fatalf("the case names no outcome")
 	}
+}
+
+// watchedState returns the monitor's state for an instance and the number of
+// instances its status summary counts as failing.
+func watchedState(t *testing.T, monitor *vmmonitor.Monitor, instanceID string) (vmmonitor.ServiceStatus, int) {
+	t.Helper()
+
+	status := monitor.GetStatus()
+	failing, _ := status.Summary["failing"].(int)
+
+	for _, watched := range status.Services {
+		if watched.ServiceID == instanceID {
+			return watched, failing
+		}
+	}
+
+	t.Fatalf("the monitor does not watch instance %s", instanceID)
+
+	return vmmonitor.ServiceStatus{}, failing
+}
+
+// expectHeldAsProvisioning checks that the monitor holds an instance as it
+// holds a fresh provision, healthy and provisioning with no failure counted,
+// and that its summary counts nothing as failing.
+func expectHeldAsProvisioning(t *testing.T, monitor *vmmonitor.Monitor, instanceID string) {
+	t.Helper()
+
+	watched, failing := watchedState(t, monitor, instanceID)
+	if watched.FailureCount != 0 || !watched.IsHealthy || !watched.IsProvisioning || failing != 0 {
+		t.Errorf("an instance in flight is held with %d failures, healthy %t, provisioning %t, and %d failing in the summary; want 0, healthy, provisioning, and 0 failing",
+			watched.FailureCount, watched.IsHealthy, watched.IsProvisioning, failing)
+	}
+}
+
+// expectHeldAsFailing checks that the monitor counted failures for an
+// instance, holds it as unhealthy, and counts it as failing in its summary.
+func expectHeldAsFailing(t *testing.T, monitor *vmmonitor.Monitor, instanceID string, failures int) {
+	t.Helper()
+
+	watched, failing := watchedState(t, monitor, instanceID)
+	if watched.FailureCount != failures || watched.IsHealthy || failing != 1 {
+		t.Errorf("an instance the monitor cannot judge is held with %d failures, healthy %t, and %d failing in the summary; want %d, unhealthy, and 1 failing",
+			watched.FailureCount, watched.IsHealthy, failing, failures)
+	}
+}
+
+// An instance whose earlier check failed and that a later check finds in
+// flight is held as a fresh provision is, so the earlier failure no longer
+// counts against it.
+func TestMonitorHoldsAnInFlightInstanceAsAProvision(t *testing.T) {
+	t.Parallel()
+
+	tasksFail := true
+
+	var tasksMu sync.Mutex
+
+	director := goneDirector(func(string) (*bosh.Task, error) {
+		tasksMu.Lock()
+		defer tasksMu.Unlock()
+
+		if tasksFail {
+			return nil, errTasksUnavailable
+		}
+
+		return noRunningTask("")
+	})
+
+	vault := &indexVault{entries: map[string]interface{}{inFlightID: oldEntry()}}
+	claims := &heldClaims{}
+	monitor := vmmonitor.NewWithVault(vault, director, claims)
+
+	err := monitor.ScanAllServices(t.Context())
+	if err != nil {
+		t.Fatalf("the scan failed: %v", err)
+	}
+
+	monitor.CheckScheduledServices(t.Context())
+
+	if status := vault.storedStatus(inFlightID); status != statusError {
+		t.Fatalf("the first check stored status %q, want error", status)
+	}
+
+	expectHeldAsFailing(t, monitor, inFlightID, 1)
+
+	tasksMu.Lock()
+	tasksFail = false
+	tasksMu.Unlock()
+
+	claims.take(inFlightID)
+	monitor.TriggerRefreshAll(t.Context())
+
+	if status := vault.storedStatus(inFlightID); status != statusProvisioning {
+		t.Fatalf("the second check stored status %q, want provisioning", status)
+	}
+
+	expectHeldAsProvisioning(t, monitor, inFlightID)
 }
 
 // oldEntry is the index entry of an instance whose deployment name differs
