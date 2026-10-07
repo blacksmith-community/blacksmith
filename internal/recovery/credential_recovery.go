@@ -574,7 +574,7 @@ func (cr *CredentialRecovery) checkRegenerationPossible(ctx context.Context, ins
 	}
 
 	// Check if deployment still exists
-	deploymentName := instance.PlanID + "-" + instanceID
+	deploymentName := instance.DeploymentNameFor(instanceID)
 
 	_, err = cr.broker.BOSH.GetDeployment(ctx, deploymentName)
 	if err != nil {
