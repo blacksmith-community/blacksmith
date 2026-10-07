@@ -17,3 +17,14 @@ type Instance struct {
 	// does not exist.
 	DeploymentName string `json:"deployment_name,omitempty"`
 }
+
+// DeploymentNameFor returns the deployment name the instance's entry
+// records, and builds it from the plan ID and instanceID only when the entry
+// records none, as an entry indexed before the field existed does.
+func (instance *Instance) DeploymentNameFor(instanceID string) string {
+	if instance.DeploymentName != "" {
+		return instance.DeploymentName
+	}
+
+	return instance.PlanID + "-" + instanceID
+}

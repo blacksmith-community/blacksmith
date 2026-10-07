@@ -355,7 +355,7 @@ func (h *Handler) getDeploymentContext(ctx context.Context, instanceID string) (
 		return "", "", errInstanceMissingPlanOrServiceID
 	}
 
-	deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
+	deploymentName := inst.DeploymentNameFor(instanceID)
 
 	plan, hasPlan := h.lookupPlan(inst.ServiceID, inst.PlanID)
 

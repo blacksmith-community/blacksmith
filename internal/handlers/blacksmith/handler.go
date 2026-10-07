@@ -1006,7 +1006,7 @@ func (h *Handler) getServiceDeploymentName(req *http.Request, instanceID string,
 		return "", false
 	}
 
-	deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
+	deploymentName := inst.DeploymentNameFor(instanceID)
 	logger.Debug("Resolved service deployment name: %s", deploymentName)
 
 	return deploymentName, true

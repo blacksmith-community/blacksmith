@@ -301,7 +301,7 @@ func (h *Handler) resolveServiceInstanceDeployment(ctx context.Context, instance
 		return "", "", errServiceInstanceNotFound
 	}
 
-	deploymentName := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
+	deploymentName := inst.DeploymentNameFor(instanceID)
 
 	plan, hasPlan := h.lookupPlan(inst.ServiceID, inst.PlanID)
 

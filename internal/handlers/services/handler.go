@@ -2094,7 +2094,7 @@ func (h *Handler) resolveDeploymentInfo(ctx context.Context, instanceID string) 
 		return nil, errInstanceNotFound
 	}
 
-	deployment := fmt.Sprintf("%s-%s", inst.PlanID, instanceID)
+	deployment := inst.DeploymentNameFor(instanceID)
 
 	instanceGroup, err := h.extractInstanceGroupName(ctx, instanceID)
 	if err != nil {
