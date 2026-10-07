@@ -1046,6 +1046,18 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(asked()).To(Equal([]string{deploymentName}))
 		})
 
+		It("answers succeeded when the delete failed and the director says the deployment is gone", func() {
+			renameDeployment()
+			recordNamedTeardown()
+			brokerInstance.RecordFailure(ctx, instanceID, outcomeDeprovision, "Deployment deletion failed: director refused the delete")
+
+			asked := askedFor()
+
+			response := pollUnindexed(outcomeDeprovision)
+			Expect(response.State).To(Equal(osbapi.StateSucceeded), "a deployment the director says is gone was reported as %+v", response)
+			Expect(asked()).To(Equal([]string{deploymentName}))
+		})
+
 		It("answers in progress without a plan to name the deployment by", func() {
 			contextID := recordTeardown()
 
@@ -1251,6 +1263,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(deploys.Load()).To(BeZero(), "the deploy was sent without its context ID on record")
 			Expect(readRecord()).To(HaveKeyWithValue("state", outcomeStateFailed))
 			Expect(readRecord()["description"]).To(ContainSubstring(refusal))
+			Expect(readRecord()["description"]).To(ContainSubstring(broker.ErrContextIDNotRecorded.Error()))
 
 			response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
 				ServiceID: serviceID, PlanID: planID, Operation: outcomeProvision,
@@ -1297,6 +1310,25 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			brokerInstance.WaitForCredentialCleanups()
 			Expect(cleaner.Targets()).To(BeEmpty(), "a delete that was never sent started the CredHub cleanup")
+		})
+
+		It("returns an error that wraps ErrContextIDNotRecorded and the cause", func() {
+			proxy := useProxy()
+			proxy.FailWrites(instanceID+"/task", http.StatusForbidden, refusal, -1)
+
+			var deletes atomic.Int32
+
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				deletes.Add(1)
+
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+			}
+
+			err := brokerInstance.DeleteDeploymentWithRetry(ctx, instanceID, deploymentName, uuid.NewString())
+
+			Expect(err).To(MatchError(broker.ErrContextIDNotRecorded))
+			Expect(err.Error()).To(ContainSubstring(refusal))
+			Expect(deletes.Load()).To(BeZero(), "the delete was sent without its context ID on record")
 		})
 
 		It("for the delete of an abandoned deploy's teardown", func() {

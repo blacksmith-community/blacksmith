@@ -148,6 +148,20 @@ func (b *Broker) RetryDeleteDeploymentWithContextID(ctx context.Context, deploym
 	return err
 }
 
+// DeleteDeploymentWithRetry exposes the delete a deprovision sends under
+// contextID, with the record write of the ID that comes before it.
+func (b *Broker) DeleteDeploymentWithRetry(ctx context.Context, instanceID, deploymentName, contextID string) error {
+	phase := &deprovisioningPhase{
+		broker:         b,
+		instanceID:     instanceID,
+		deploymentName: deploymentName,
+		logger:         logger.Get().Named("broker"),
+		contextID:      contextID,
+	}
+
+	return phase.deleteDeploymentWithRetry(ctx)
+}
+
 // CleanupFailedDeployment exposes the best-effort delete of a failed deployment.
 func (b *Broker) CleanupFailedDeployment(ctx context.Context, deploymentName string) {
 	b.cleanupFailedDeployment(ctx, deploymentName, logger.Get().Named("broker"))
