@@ -9,8 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -811,5 +814,187 @@ var _ = Describe("A delete of an instance the index does not have", func() {
 		Expect(errors.Is(err, osbapi.ErrGoneError)).To(BeTrue(), "the delete answered %v", err)
 		Expect(async).To(BeFalse())
 		Expect(director.Calls("DeleteDeployment")).To(BeEmpty())
+	})
+})
+
+// The broker's orphan check removes index entries that have no BOSH
+// deployment, and an accepted provision has no deployment until its deploy
+// task starts. So the check spares an entry this process holds a claim for,
+// one requested or created less than two hours ago, and one whose task record
+// shows a provision in progress. It removes an entry only while the entry
+// still equals the one it checked.
+var _ = Describe("The broker's orphan check", func() {
+	const planID = "standalone"
+
+	var (
+		ctx            context.Context
+		director       *testutil.ScriptedBOSHDirector
+		vaultClient    *internalVault.Vault
+		brokerInstance *broker.Broker
+		suffix         string
+		seeded         []string
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		suffix = strconv.FormatInt(time.Now().UnixNano(), 10)
+		seeded = nil
+
+		director = testutil.NewScriptedBOSHDirector()
+		director.GetDeploymentsFn = func() ([]bosh.Deployment, error) { return []bosh.Deployment{}, nil }
+
+		vaultClient = internalVault.New(suite.vault.Addr, suite.vault.RootToken, true)
+		brokerInstance = &broker.Broker{BOSH: director, Vault: vaultClient, Config: &config.Config{}}
+	})
+
+	AfterEach(func() {
+		for _, id := range seeded {
+			_ = vaultClient.Index(ctx, id, nil)
+		}
+	})
+
+	// seedEntry indexes an instance with no deployment, requested at the
+	// given time, and returns its ID and the deployment name it maps to.
+	seedEntry := func(name string, requestedAt time.Time, extra map[string]interface{}) (string, string) {
+		id := name + "-" + suffix
+		entry := map[string]interface{}{
+			"service_id":   "valkey",
+			"plan_id":      planID,
+			"requested_at": requestedAt.Format(time.RFC3339),
+		}
+
+		for key, value := range extra {
+			entry[key] = value
+		}
+
+		Expect(vaultClient.Index(ctx, id, entry)).To(Succeed())
+
+		seeded = append(seeded, id)
+
+		return id, planID + "-" + id
+	}
+
+	indexed := func(id string) bool {
+		_, exists, err := vaultClient.FindInstance(ctx, id)
+		Expect(err).ToNot(HaveOccurred())
+
+		return exists
+	}
+
+	old := time.Now().Add(-3 * time.Hour)
+
+	It("the orphan check keeps a young entry and a claimed entry", func() {
+		youngID, youngName := seedEntry("young", time.Now(), nil)
+		createdID, createdName := seedEntry("created", old, map[string]interface{}{"created": time.Now().Unix()})
+		claimedID, claimedName := seedEntry("claimed", old, nil)
+
+		release := brokerInstance.HoldOperationClaim(claimedID, "provision")
+		defer release()
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElements(youngName))
+		Expect(removed).ToNot(ContainElements(createdName))
+		Expect(removed).ToNot(ContainElements(claimedName))
+		Expect(indexed(youngID)).To(BeTrue(), "a young entry was removed")
+		Expect(indexed(createdID)).To(BeTrue(), "an entry created moments ago was removed")
+		Expect(indexed(claimedID)).To(BeTrue(), "an entry this process holds a claim for was removed")
+	})
+
+	It("the orphan check still removes an old entry with no deployment", func() {
+		oldID, oldName := seedEntry("old", old, map[string]interface{}{"created": old.Unix()})
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).To(ContainElement(oldName))
+		Expect(indexed(oldID)).To(BeFalse())
+	})
+
+	It("keeps an old entry whose provision task record is in progress", func() {
+		runningID, runningName := seedEntry("running", old, nil)
+		brokerInstance.RecordTask(ctx, runningID, "provision", "BOSH deployment in progress (task 77)", 77)
+
+		failedID, failedName := seedEntry("failed", old, nil)
+		brokerInstance.RecordTask(ctx, failedID, "provision", "BOSH deployment task 77 is error", -1)
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(runningName))
+		Expect(indexed(runningID)).To(BeTrue(), "an entry whose provision is in progress was removed")
+		Expect(removed).To(ContainElement(failedName), "an entry whose provision failed was kept")
+		Expect(indexed(failedID)).To(BeFalse())
+	})
+
+	It("keeps an entry whose task record cannot be read", func() {
+		proxy, err := testutil.NewVaultFaultProxy(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		defer proxy.Close()
+
+		unreadableID, unreadableName := seedEntry("unreadable", old, nil)
+
+		brokerInstance.Vault = internalVault.New(proxy.Addr, suite.vault.RootToken, true)
+		proxy.FailReads(unreadableID+"/task", http.StatusForbidden, "permission denied", -1)
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(unreadableName))
+		Expect(indexed(unreadableID)).To(BeTrue())
+	})
+
+	// duringCheck runs act once, when the orphan check reads the task record
+	// of instanceID, which falls between the check of the entry and its
+	// removal.
+	duringCheck := func(instanceID string, act func()) *httptest.Server {
+		target, err := url.Parse(suite.vault.Addr)
+		Expect(err).ToNot(HaveOccurred())
+
+		reverse := httputil.NewSingleHostReverseProxy(target)
+
+		var once sync.Once
+
+		return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/"+instanceID+"/task") {
+				once.Do(act)
+			}
+
+			reverse.ServeHTTP(writer, request)
+		}))
+	}
+
+	It("keeps an entry that changed during the check", func() {
+		changedID, changedName := seedEntry("changed", old, nil)
+
+		proxy := duringCheck(changedID, func() {
+			Expect(vaultClient.UpdateIndexEntry(ctx, changedID, map[string]interface{}{"status": "provisioning_started"})).To(Succeed())
+		})
+		defer proxy.Close()
+
+		brokerInstance.Vault = internalVault.New(proxy.URL, suite.vault.RootToken, true)
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removed).ToNot(ContainElement(changedName), "the check reported an entry it did not remove")
+		Expect(indexed(changedID)).To(BeTrue(), "an entry that changed after it was checked was removed")
+	})
+
+	It("keeps an entry whose claim was taken during the check", func() {
+		claimedID, claimedName := seedEntry("late-claim", old, nil)
+
+		var release func()
+
+		proxy := duringCheck(claimedID, func() { release = brokerInstance.HoldOperationClaim(claimedID, "provision") })
+		defer proxy.Close()
+
+		brokerInstance.Vault = internalVault.New(proxy.URL, suite.vault.RootToken, true)
+
+		removed, err := brokerInstance.ServiceWithNoDeploymentCheck(ctx)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(release).ToNot(BeNil(), "the check never read the entry's task record")
+
+		release()
+
+		Expect(removed).ToNot(ContainElement(claimedName))
+		Expect(indexed(claimedID)).To(BeTrue(), "an entry claimed during the check was removed")
 	})
 })

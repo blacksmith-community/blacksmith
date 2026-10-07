@@ -1969,10 +1969,24 @@ func (b *Broker) getVaultDBIndex(ctx context.Context, logger logger.Logger) (*va
 	return vaultDB, nil
 }
 
-func (b *Broker) processOrphanedInstances(ctx context.Context, vaultDB *vaultPkg.Index, deploymentNames map[string]bool, logger logger.Logger) []string {
-	var removedDeploymentNames []string
+// orphanCheckMinimumAge is how old an index entry must be before the orphan
+// check may remove it. An accepted provision has no deployment until its
+// deploy task starts, so a younger entry may belong to one. It matches the
+// reconciler's orphan sweep.
+const orphanCheckMinimumAge = 2 * time.Hour
 
+// orphanCandidate is an index entry the orphan check found without a
+// deployment, with the entry as it was checked.
+type orphanCandidate struct {
+	instanceID     string
+	deploymentName string
+	entry          interface{}
+}
+
+func (b *Broker) processOrphanedInstances(ctx context.Context, vaultDB *vaultPkg.Index, deploymentNames map[string]bool, logger logger.Logger) []string {
 	logger.Debug("Checking each service instance for corresponding BOSH deployment")
+
+	var candidates []orphanCandidate
 
 	for instanceID, serviceInstance := range vaultDB.Data {
 		logger.Debug("Checking instance: %s", instanceID)
@@ -1988,15 +2002,127 @@ func (b *Broker) processOrphanedInstances(ctx context.Context, vaultDB *vaultPkg
 			continue // Error already logged
 		}
 
-		if b.isOrphanedInstance(deploymentName, deploymentNames) {
-			removedDeploymentNames = append(removedDeploymentNames, deploymentName)
-			b.removeOrphanedInstance(ctx, instanceID, deploymentName, logger)
-		} else {
+		if !b.isOrphanedInstance(deploymentName, deploymentNames) {
 			logger.Debug("Instance %s has valid BOSH deployment %s", instanceID, deploymentName)
+
+			continue
 		}
+
+		reason := b.orphanInFlight(ctx, instanceID, serviceInstance)
+		if reason != "" {
+			logger.Info("Keeping instance %s with no BOSH deployment named %s, because %s", instanceID, deploymentName, reason)
+
+			continue
+		}
+
+		candidates = append(candidates, orphanCandidate{instanceID: instanceID, deploymentName: deploymentName, entry: serviceInstance})
 	}
 
-	return removedDeploymentNames
+	return b.removeOrphanedInstances(ctx, candidates, logger)
+}
+
+// orphanInFlight returns why an index entry with no deployment may belong to
+// work in flight, or "" when nothing shows that it does. The entry is in
+// flight when its requested_at or created time is less than
+// orphanCheckMinimumAge old, or when its task record shows a provision in
+// progress. A task record that cannot be read counts as in flight, so the
+// entry is kept. An operation claim this process holds is checked when the
+// entry is removed, under the index lock.
+func (b *Broker) orphanInFlight(ctx context.Context, instanceID string, serviceInstance interface{}) string {
+	entry, _ := serviceInstance.(map[string]interface{})
+
+	newest, dated := indexEntryRequestTime(entry)
+	if dated && time.Since(newest) < orphanCheckMinimumAge {
+		return fmt.Sprintf("it was requested at %s, less than %s ago", newest.Format(time.RFC3339), orphanCheckMinimumAge)
+	}
+
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	var task map[string]interface{}
+
+	exists, err := b.Vault.Get(readCtx, instanceID+"/task", &task)
+	if err != nil {
+		return fmt.Sprintf("its task record could not be read (%s)", err)
+	}
+
+	if !exists {
+		return ""
+	}
+
+	action, _ := task["action"].(string)
+	state, _ := task["state"].(string)
+
+	if action != operationTypeProvision || state == recordedStateFailed {
+		return ""
+	}
+
+	updatedAt, known := unixTimestamp(task["updated_at"])
+	if !known {
+		return "its task record shows a provision in progress with no update time"
+	}
+
+	if time.Since(time.Unix(updatedAt, 0)) < orphanCheckMinimumAge {
+		return fmt.Sprintf("its task record shows a provision in progress, updated less than %s ago", orphanCheckMinimumAge)
+	}
+
+	return ""
+}
+
+// operationClaimed reports whether an operation of any type holds the claim
+// on instanceID in this process.
+func (b *Broker) operationClaimed(instanceID string) bool {
+	_, held := b.activeOperations.Load(instanceID)
+
+	return held
+}
+
+// indexEntryRequestTime returns the newest of an index entry's requested_at,
+// an RFC 3339 time, and its created, a Unix time. The second result is false
+// when the entry carries neither.
+func indexEntryRequestTime(entry map[string]interface{}) (time.Time, bool) {
+	var newest time.Time
+
+	raw, _ := entry["requested_at"].(string)
+
+	requested, err := time.Parse(time.RFC3339, raw)
+	if err == nil {
+		newest = requested
+	}
+
+	created, known := unixTimestamp(entry["created"])
+	if known && time.Unix(created, 0).After(newest) {
+		newest = time.Unix(created, 0)
+	}
+
+	return newest, !newest.IsZero()
+}
+
+// unixTimestamp reads a Unix time that was decoded from JSON as a float64 or a
+// json.Number, or stored as an integer.
+func unixTimestamp(value interface{}) (int64, bool) {
+	switch typed := value.(type) {
+	case int64:
+		return typed, true
+	case int:
+		return int64(typed), true
+	case float64:
+		return int64(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return parsed, true
+		}
+
+		asFloat, err := typed.Float64()
+		if err != nil {
+			return 0, false
+		}
+
+		return int64(asFloat), true
+	}
+
+	return 0, false
 }
 
 func (b *Broker) validateAndGetDeploymentName(instanceID string, serviceInstance interface{}, logger logger.Logger) (string, error) {
@@ -2057,16 +2183,54 @@ func (b *Broker) isOrphanedInstance(deploymentName string, deploymentNames map[s
 	return !exists
 }
 
-func (b *Broker) removeOrphanedInstance(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
-	logger.Info("Found orphaned instance %s - no BOSH deployment named: %s", instanceID, deploymentName)
-	logger.Info("Removing orphaned service instance %s from vault DB", instanceID)
-
-	err := b.Vault.Index(ctx, instanceID, nil)
-	if err != nil {
-		logger.Error("Failed to remove orphaned service instance '%s' from vault DB: %s", instanceID, err)
-	} else {
-		logger.Debug("Successfully removed orphaned instance %s from vault DB", instanceID)
+// removeOrphanedInstances removes the candidates from the index in one
+// update, and returns the deployment names of the entries it removed. An
+// entry that changed since it was checked, or that an operation has claimed
+// since then, is kept, because it may now belong to work in flight.
+func (b *Broker) removeOrphanedInstances(ctx context.Context, candidates []orphanCandidate, logger logger.Logger) []string {
+	if len(candidates) == 0 {
+		return nil
 	}
+
+	var removed []string
+
+	err := b.Vault.UpdateIndex(ctx, func(entries map[string]interface{}) (bool, error) {
+		removed = nil
+
+		for _, candidate := range candidates {
+			current, exists := entries[candidate.instanceID]
+			if !exists {
+				continue
+			}
+
+			if !reflect.DeepEqual(current, candidate.entry) {
+				logger.Info("Keeping instance %s, because its index entry changed after the orphan check read it", candidate.instanceID)
+
+				continue
+			}
+
+			if b.operationClaimed(candidate.instanceID) {
+				logger.Info("Keeping instance %s, because an operation claimed it during the orphan check", candidate.instanceID)
+
+				continue
+			}
+
+			logger.Info("Removing orphaned service instance %s from vault DB, because no BOSH deployment named %s exists", candidate.instanceID, candidate.deploymentName)
+
+			delete(entries, candidate.instanceID)
+
+			removed = append(removed, candidate.deploymentName)
+		}
+
+		return len(removed) > 0, nil
+	})
+	if err != nil {
+		logger.Error("Failed to remove orphaned service instances from vault DB: %s", err)
+
+		return nil
+	}
+
+	return removed
 }
 
 // storeDeploymentNameInIndex records the BOSH deployment name in the 'db' index.
