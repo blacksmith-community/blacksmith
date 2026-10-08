@@ -155,6 +155,50 @@ var _ = Describe("Task record writes", func() {
 
 			Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordUnknownSinceKey, "2026-10-07T16:30:45.123456789Z"))
 		})
+
+		It("is tried three times in all", func() {
+			contextID := uuid.NewString()
+
+			proxy.FailWrites(instanceID+"/task", http.StatusForbidden, "permission denied", 2)
+
+			Expect(client.TrackOutcomeUnknown(ctx, instanceID, deprovision, "The delete's answer was lost", contextID, time.Now())).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue("context_id", contextID))
+			Expect(proxy.WritesTo(instanceID + "/task")).To(HaveLen(3))
+		})
+
+		It("gives up after the third failed write", func() {
+			proxy.FailWrites(instanceID+"/task", http.StatusForbidden, "permission denied", 3)
+
+			Expect(client.TrackOutcomeUnknown(ctx, instanceID, deprovision, "The delete's answer was lost", uuid.NewString(), time.Now())).ToNot(Succeed())
+
+			Expect(proxy.WritesTo(instanceID + "/task")).To(HaveLen(3))
+		})
+
+		It("is written after the caller's context is cancelled", func() {
+			cancelled, cancel := context.WithCancel(ctx)
+			cancel()
+
+			contextID := uuid.NewString()
+
+			Expect(client.TrackOutcomeUnknown(cancelled, instanceID, deprovision, "The delete's answer was lost", contextID, time.Now())).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue("state", vault.TaskStateOutcomeUnknown))
+			Expect(readRecord()).To(HaveKeyWithValue("context_id", contextID))
+		})
+
+		It("is replaced by progress that names another context ID", func() {
+			Expect(client.TrackOutcomeUnknown(ctx, instanceID, provision, "The deploy's answer was lost", uuid.NewString(), time.Now())).To(Succeed())
+
+			next := uuid.NewString()
+
+			Expect(client.TrackProgressWithContextID(ctx, instanceID, provision, "Deploying again", next, 0, nil)).To(Succeed())
+
+			record := readRecord()
+			Expect(record).To(HaveKeyWithValue("context_id", next))
+			Expect(record["state"]).ToNot(Equal(vault.TaskStateOutcomeUnknown))
+			Expect(record).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
+		})
 	})
 
 	// Only the write that settles an unknown outcome may replace it, and
