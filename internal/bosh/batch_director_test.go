@@ -32,6 +32,7 @@ const (
 	firstDeployment  = "dep-1"
 	secondDeployment = "dep-2"
 	thirdDeployment  = "dep-3"
+	fourthDeployment = "dep-4"
 	firstContextID   = "ctx-" + firstDeployment
 	batchTestAddress = "https://127.0.0.1:25555"
 	deploymentsRoute = "/deployments"
@@ -556,12 +557,201 @@ func TestBatchLimitOfZeroOrLessMeansTheDefault(t *testing.T) {
 		t.Fatalf("expected max_batch_jobs of 0 to mean 4, got %d", limit)
 	}
 
-	batch.UpdateMaxBatchJobs(-1)
+	for _, size := range []int{0, -1} {
+		batch.UpdateMaxBatchJobs(2)
+		batch.UpdateMaxBatchJobs(size)
 
-	_, _, limit = batch.GetBatchPoolStats()
-	if limit != 4 {
-		t.Fatalf("expected max_batch_jobs of -1 to mean 4, got %d", limit)
+		_, _, limit = batch.GetBatchPoolStats()
+		if limit != 4 {
+			t.Fatalf("expected max_batch_jobs of %d to mean 4, got %d", size, limit)
+		}
 	}
+}
+
+// queueDeploy starts a deploy that has to wait for a slot, and waits until
+// it is counted as waiting, so the deploys a test queues ask in order.
+func queueDeploy(ctx context.Context, t *testing.T, batch *bosh.BatchDirector, name string) <-chan error {
+	t.Helper()
+
+	_, queued, _ := batch.GetBatchPoolStats()
+	result := deployInBackground(ctx, batch, name)
+
+	waitUntil(t, name+" waits for a slot", func() bool {
+		_, waiting, _ := batch.GetBatchPoolStats()
+
+		return waiting == queued+1
+	})
+
+	return result
+}
+
+func TestBatchSlotsGoToWaitingDeploysInTheOrderTheyAsked(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	held := startDeploy(t, base, batch, firstDeployment)
+
+	waiting := []string{secondDeployment, thirdDeployment, fourthDeployment}
+	for _, name := range waiting {
+		queueDeploy(t.Context(), t, batch, name)
+	}
+
+	for _, want := range waiting {
+		base.finish(t, held, batchTaskDone)
+
+		name := base.waitAccepted(t)
+		if name != want {
+			t.Fatalf("expected %s to get the slot next, got %s", want, name)
+		}
+
+		held = base.taskOf(t, name)
+	}
+}
+
+// A deploy that asks for a slot while another deploy waits joins the end
+// of the queue, even when a slot is free at that moment.
+func TestANewDeployDoesNotTakeASlotAheadOfAWaitingOne(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	startDeploy(t, base, batch, firstDeployment)
+	waiter := queueDeploy(t.Context(), t, batch, secondDeployment)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	firstAccepted := make(chan string, 1)
+
+	go func() {
+		defer cancel()
+
+		select {
+		case name := <-base.acceptCh:
+			firstAccepted <- name
+		case <-time.After(batchWaitLimit):
+			firstAccepted <- "no deploy"
+		}
+	}()
+
+	batch.UpdateMaxBatchJobs(2)
+
+	_, err := batch.UpdateDeployment(ctx, thirdDeployment, "manifest")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the new deploy to wait behind dep-2 until it gave up, got %v", err)
+	}
+
+	if name := <-firstAccepted; name != secondDeployment {
+		t.Fatalf("expected the waiting dep-2 to get the free slot, got %s", name)
+	}
+
+	err = <-waiter
+	if err != nil {
+		t.Fatalf("expected dep-2 to be accepted, got %v", err)
+	}
+
+	waitBatchStats(t, batch, 2, 0)
+}
+
+// A waiter that stops waiting leaves the queue, so the waiter behind it
+// gets the next slot.
+func TestACancelledWaiterLetsTheNextWaiterIn(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	held := startDeploy(t, base, batch, firstDeployment)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancelled := queueDeploy(ctx, t, batch, secondDeployment)
+	next := queueDeploy(t.Context(), t, batch, thirdDeployment)
+
+	cancel()
+
+	err := <-cancelled
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the cancelled waiter to end with its context, got %v", err)
+	}
+
+	waitBatchStats(t, batch, 1, 1)
+	base.finish(t, held, batchTaskDone)
+
+	if name := base.waitAccepted(t); name != thirdDeployment {
+		t.Fatalf("expected dep-3 to get the slot, got %s", name)
+	}
+
+	err = <-next
+	if err != nil {
+		t.Fatalf("expected dep-3 to be accepted, got %v", err)
+	}
+}
+
+func TestAWaiterThatTimesOutLeavesTheQueue(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch := bosh.NewBatchDirector(base, 1, 50*time.Millisecond, nil)
+	bosh.SetBatchClock(batch, newFakeBatchClock())
+	t.Cleanup(batch.Stop)
+
+	startDeploy(t, base, batch, firstDeployment)
+
+	_, err := batch.UpdateDeployment(t.Context(), secondDeployment, "manifest")
+	if !errors.Is(err, bosh.ErrBatchPoolTimeout) {
+		t.Fatalf("expected the waiter to time out, got %v", err)
+	}
+
+	waitBatchStats(t, batch, 1, 0)
+}
+
+func TestStopWakesTheDeploysWaitingForASlot(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	startDeploy(t, base, batch, firstDeployment)
+	waiting := queueDeploy(t.Context(), t, batch, secondDeployment)
+
+	batch.Stop()
+
+	select {
+	case err := <-waiting:
+		if !errors.Is(err, bosh.ErrBatchDirectorStopped) {
+			t.Fatalf("expected the waiter to get ErrBatchDirectorStopped, got %v", err)
+		}
+	case <-time.After(batchWaitLimit):
+		t.Fatal("Stop did not wake the deploy waiting for a slot")
+	}
+
+	waitBatchStats(t, batch, 0, 0)
+}
+
+func TestRaisingTheLimitWakesAWaitingDeploy(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	startDeploy(t, base, batch, firstDeployment)
+	waiting := queueDeploy(t.Context(), t, batch, secondDeployment)
+
+	batch.UpdateMaxBatchJobs(2)
+
+	if name := base.waitAccepted(t); name != secondDeployment {
+		t.Fatalf("expected dep-2 to be accepted once the limit was raised, got %s", name)
+	}
+
+	err := <-waiting
+	if err != nil {
+		t.Fatalf("expected dep-2 to be accepted, got %v", err)
+	}
+
+	waitBatchStats(t, batch, 2, 0)
 }
 
 func TestResizingTheBatchCountsDeploysAlreadyRunning(t *testing.T) {

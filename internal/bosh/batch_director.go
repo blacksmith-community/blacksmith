@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -109,9 +110,11 @@ func (w *batchWatch) describe(taskID int) string {
 // normal API operations for connection slots.
 //
 // The slots are counted under one mutex. inFlight is how many deploys hold a
-// slot, limit is how many may, and changed is closed and replaced whenever a
-// slot is released or the limit changes, so a deploy waiting for a slot
-// looks again.
+// slot, limit is how many may, and waiters holds the deploys waiting for a
+// slot in the order they asked. Only the first waiter may take a free slot,
+// so a deploy that asks later never takes a slot ahead of one that waits.
+// changed is closed and replaced whenever a slot is released, the limit
+// changes, or the first waiter changes, so the waiting deploys look again.
 //
 // A deploy holds its slot until its director task ends. When the director
 // accepts a deploy, a watcher goroutine follows the task and releases the
@@ -132,9 +135,12 @@ type BatchDirector struct {
 	mu       sync.Mutex
 	inFlight int
 	limit    int
-	queued   int
-	changed  chan struct{}
-	stopped  bool
+	// waiters holds a ticket for each deploy waiting for a slot, in the
+	// order the deploys asked, and nextTicket is the ticket of the next.
+	waiters    []uint64
+	nextTicket uint64
+	changed    chan struct{}
+	stopped    bool
 	// running counts the watcher goroutines that have not returned.
 	running int
 	// byTask and byContextID hold each watcher until batchDonePrune after
@@ -177,7 +183,7 @@ func (b *BatchDirector) GetBatchPoolStats() (int, int, int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return b.inFlight, b.queued, b.limit
+	return b.inFlight, len(b.waiters), b.limit
 }
 
 // UpdateMaxBatchJobs changes the maximum number of concurrent batch jobs.
@@ -545,19 +551,23 @@ var _ Director = (*BatchDirector)(nil)
 // Batch slot accounting
 // =====================================================
 
-// acquireSlot takes a batch slot when fewer deploys hold one than the
-// limit allows, and otherwise waits for a slot to be released or the limit
-// to change, for its context to end, or for its timeout.
+// acquireSlot joins the end of the queue of deploys waiting for a batch
+// slot, and takes a slot once it is first in the queue and fewer deploys
+// hold one than the limit allows. Until then it waits for the slots, the
+// limit, or the queue to change, for its context to end, or for its
+// timeout.
 func (b *BatchDirector) acquireSlot(ctx context.Context) error {
 	timer := time.NewTimer(b.timeout)
 	defer timer.Stop()
 
 	b.mu.Lock()
-	b.queued++
+	ticket := b.nextTicket
+	b.nextTicket++
+	b.waiters = append(b.waiters, ticket)
 
-	for b.inFlight >= b.limit || b.stopped {
+	for b.stopped || b.inFlight >= b.limit || b.waiters[0] != ticket {
 		if b.stopped {
-			b.queued--
+			b.leaveQueueLocked(ticket)
 			b.mu.Unlock()
 
 			return ErrBatchDirectorStopped
@@ -569,11 +579,11 @@ func (b *BatchDirector) acquireSlot(ctx context.Context) error {
 		select {
 		case <-changed:
 		case <-timer.C:
-			b.leaveQueue()
+			b.leaveQueue(ticket)
 
 			return fmt.Errorf("%w after %v", ErrBatchPoolTimeout, b.timeout)
 		case <-ctx.Done():
-			b.leaveQueue()
+			b.leaveQueue(ticket)
 
 			return fmt.Errorf("context cancelled while waiting for batch slot: %w", ctx.Err())
 		}
@@ -581,9 +591,16 @@ func (b *BatchDirector) acquireSlot(ctx context.Context) error {
 		b.mu.Lock()
 	}
 
-	b.queued--
+	b.waiters = b.waiters[1:]
 	b.inFlight++
-	active, queued := b.inFlight, b.queued
+
+	// The next waiter is first in the queue now, and may take a slot the
+	// limit still allows.
+	if len(b.waiters) > 0 {
+		b.signalLocked()
+	}
+
+	active, queued := b.inFlight, len(b.waiters)
 	b.mu.Unlock()
 
 	b.logger.Debugf("Acquired batch slot (active: %d, queued: %d)", active, queued)
@@ -591,11 +608,19 @@ func (b *BatchDirector) acquireSlot(ctx context.Context) error {
 	return nil
 }
 
-// leaveQueue counts out a deploy that stopped waiting for a slot.
-func (b *BatchDirector) leaveQueue() {
+// leaveQueue takes a deploy that stopped waiting for a slot out of the
+// queue.
+func (b *BatchDirector) leaveQueue(ticket uint64) {
 	b.mu.Lock()
-	b.queued--
+	b.leaveQueueLocked(ticket)
 	b.mu.Unlock()
+}
+
+// leaveQueueLocked takes a waiter out of the queue, and wakes the others,
+// because the waiter after it may now be first. The caller holds mu.
+func (b *BatchDirector) leaveQueueLocked(ticket uint64) {
+	b.waiters = slices.DeleteFunc(b.waiters, func(waiting uint64) bool { return waiting == ticket })
+	b.signalLocked()
 }
 
 // releaseSlot releases a batch slot back to the pool.
@@ -603,7 +628,7 @@ func (b *BatchDirector) releaseSlot() {
 	b.mu.Lock()
 	b.inFlight--
 	b.signalLocked()
-	active, queued := b.inFlight, b.queued
+	active, queued := b.inFlight, len(b.waiters)
 	b.mu.Unlock()
 
 	b.logger.Debugf("Released batch slot (active: %d, queued: %d)", active, queued)
