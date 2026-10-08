@@ -1107,6 +1107,46 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Consistently(checks.Load, 300*time.Millisecond).Should(Equal(polled), "the cleanup of a failure that was not recorded started")
 		})
 
+		It("a provision poll over an unknown delete answers in progress and keeps the record", func() {
+			contextID := loseDelete()
+			unknown := recorded()
+
+			// The instance's old create event would name a task for a
+			// provision that lost track of its own.
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+				return deploymentEvents(boshEventCreate, deploymentName, createTaskID), nil
+			}
+			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+				return &bosh.Task{ID: taskID, State: outcomeTaskProcessing}, nil
+			}
+
+			response := poll(outcomeProvision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a provision poll over an unknown delete answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(recorded()).To(Equal(unknown), "the provision poll changed the unknown delete's record")
+			Expect(director.Calls("GetTask")).To(BeEmpty(), "the provision poll followed a task")
+			Expect(stillIndexed()).To(BeTrue())
+		})
+
+		It("a deprovision poll over an unknown deploy answers in progress and keeps the instance", func() {
+			contextID := loseDeploy()
+			unknown := recorded()
+			cleaner := useCleaner()
+
+			deploymentMissing()
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a deprovision poll over an unknown deploy answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(stillIndexed()).To(BeTrue(), "a deprovision poll over an unknown deploy removed the index entry")
+			Expect(recorded()).To(Equal(unknown), "the deprovision poll changed the unknown deploy's record")
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "a deprovision poll over an unknown deploy started the CredHub cleanup")
+		})
+
 		It("an unknown delete is settled as deleted when the director says the deployment is missing", func() {
 			contextID := loseDelete()
 			cleaner := useCleaner()

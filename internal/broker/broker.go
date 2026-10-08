@@ -3167,8 +3167,13 @@ func pollOperation(requested string, recorded recordedOperation) string {
 // recorded. Only the create deployment task the broker started can finish it,
 // so a task someone runs by hand on the deployment can neither complete the
 // provision early nor hide a failed deploy. A deploy whose answer was lost
-// is settled by resolveUnknownOutcome.
+// is settled by resolveUnknownOutcome, and a record that holds the unknown
+// outcome of a delete answers in progress and is left as it is.
 func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	if recorded.State == internalVault.TaskStateOutcomeUnknown && recorded.Action != operationTypeProvision {
+		return unknownOutcomeOfOtherOperation(instanceID, operationTypeProvision, recorded, logger), nil
+	}
+
 	if recorded.Action != operationTypeProvision {
 		recorded = recordedOperation{}
 	}
@@ -3189,6 +3194,19 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 	}
 
 	return b.recoverProvision(ctx, instanceID, deploymentName, logger)
+}
+
+// unknownOutcomeOfOtherOperation answers a poll for one operation over a
+// record that holds the unknown outcome of another. Only a poll for the
+// operation that lost its answer settles that outcome, so this poll
+// answers in progress with the context ID and changes nothing.
+func unknownOutcomeOfOtherOperation(instanceID, polled string, recorded recordedOperation, logger logger.Logger) osbapi.LastOperationResponse {
+	logger.Warning("Instance %s: a %s poll found the unknown outcome of the %s with context ID %s, which only a %s poll settles", instanceID, polled, recorded.Action, recorded.ContextID, recorded.Action)
+
+	return osbapi.LastOperationResponse{
+		State:       osbapi.StateInProgress,
+		Description: fmt.Sprintf("Waiting for the director to show whether it started the %s with context ID %s", requestNoun(recorded.Action), recorded.ContextID),
+	}
 }
 
 // recoverProvision answers for a provision whose goroutine is gone without
@@ -3216,8 +3234,13 @@ func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentNam
 // recorded. It finishes only on the delete deployment task the broker started,
 // or on the director's word that the deployment does not exist, and it never
 // runs the provision completion hook. A delete whose answer was lost is
-// settled by resolveUnknownOutcome.
+// settled by resolveUnknownOutcome, and a record that holds the unknown
+// outcome of a deploy answers in progress and is left as it is.
 func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentName string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	if recorded.State == internalVault.TaskStateOutcomeUnknown && recorded.Action != operationTypeDeprovision {
+		return unknownOutcomeOfOtherOperation(instanceID, operationTypeDeprovision, recorded, logger), nil
+	}
+
 	if recorded.Action != operationTypeDeprovision {
 		recorded = recordedOperation{}
 	}
