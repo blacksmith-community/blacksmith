@@ -238,10 +238,23 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 	return unknownOutcomeFinding{verdict: outcomeNeverStarted}
 }
 
+// directorTaskDescriptionDeploy is the description the director gives the
+// task of a deploy. The director adapter passes a task's description
+// through as the director wrote it.
+const directorTaskDescriptionDeploy = "create deployment"
+
+// isRunningTaskOf reports whether a running task the director listed is
+// the task description names, on deploymentName. A task someone ran by
+// hand on the deployment, such as ssh, recreate, or cck, is not.
+func isRunningTaskOf(task *bosh.Task, deploymentName, description string) bool {
+	return task.Deployment == deploymentName && task.Description == description
+}
+
 // findCreateTask looks for the deploy task of a provision on its
 // deployment, the way recoverProvision does. It reports true with the
-// finding when a task runs on the deployment, when a create event names
-// one, or when either check fails.
+// finding when a deploy task runs on the deployment, when a create event
+// names one, or when either check fails. A running task that is not a
+// deploy of the deployment is not adopted.
 func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, logger logger.Logger) (unknownOutcomeFinding, bool) {
 	running, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
@@ -249,7 +262,11 @@ func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, logg
 	}
 
 	if running != nil {
-		return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: running.ID, source: "a task running on deployment " + deploymentName}, true
+		if isRunningTaskOf(running, deploymentName, directorTaskDescriptionDeploy) {
+			return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: running.ID, source: "a deploy task running on deployment " + deploymentName}, true
+		}
+
+		logger.Info("Task %d (%q on deployment %q) runs on deployment %s, and it is not a deploy, so it is not taken for the provision's task", running.ID, running.Description, running.Deployment, deploymentName)
 	}
 
 	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionCreate, logger)

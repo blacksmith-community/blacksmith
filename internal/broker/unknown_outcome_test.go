@@ -1298,6 +1298,26 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
 		})
 
+		It("an unknown deploy does not adopt a running task that is not a deploy of its deployment", func() {
+			contextID := loseDeploy()
+
+			for _, running := range []bosh.Task{
+				{ID: createTaskID, State: outcomeTaskProcessing, Description: "run ssh", Deployment: deploymentName},
+				{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment, Deployment: "another-deployment"},
+			} {
+				director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+					return &running, nil
+				}
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy with task %+v running answered %+v", running, response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(recorded().State).To(Equal(outcomeStateUnknown), "task %+v was adopted", running)
+				Expect(director.Calls("GetTask")).To(BeEmpty(), "the poll followed task %+v", running)
+			}
+		})
+
 		It("an unknown deploy fails the provision after the grace period", func() {
 			contextID := loseDeploy()
 
