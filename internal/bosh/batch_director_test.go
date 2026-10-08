@@ -226,6 +226,10 @@ func (f *fakeBatchBase) FindTaskByContextID(_ context.Context, contextID string)
 
 	f.contextLookups++
 
+	if contextID == "" {
+		return nil, bosh.ErrEmptyContextID
+	}
+
 	if f.contextErr != nil {
 		return nil, f.contextErr
 	}
@@ -546,12 +550,13 @@ func (l *recordingLogger) count(level string, parts ...string) int {
 	return count
 }
 
-// newLoggedTestBatch is newTestBatch with a logger that records each line.
-func newLoggedTestBatch(t *testing.T, base *fakeBatchBase, limit int) (*bosh.BatchDirector, *fakeBatchClock, *recordingLogger) {
+// newLoggedTestBatch is newTestBatch with a limit of one and a logger that
+// records each line.
+func newLoggedTestBatch(t *testing.T, base *fakeBatchBase) (*bosh.BatchDirector, *fakeBatchClock, *recordingLogger) {
 	t.Helper()
 
 	logger := &recordingLogger{}
-	batch := bosh.NewBatchDirector(base, limit, time.Minute, logger)
+	batch := bosh.NewBatchDirector(base, 1, time.Minute, logger)
 	clock := newFakeBatchClock()
 	bosh.SetBatchClock(batch, clock)
 	t.Cleanup(batch.Stop)
@@ -2005,7 +2010,7 @@ func TestWatcherLogsEveryHourWhileItFollowsATask(t *testing.T) {
 	t.Parallel()
 
 	base := newFakeBatchBase()
-	batch, clock, logger := newLoggedTestBatch(t, base, 1)
+	batch, clock, logger := newLoggedTestBatch(t, base)
 
 	taskID := startDeploy(t, base, batch, firstDeployment)
 	what := fmt.Sprintf("BOSH task %d of deployment %s", taskID, firstDeployment)
@@ -2044,7 +2049,7 @@ func TestWatcherGivesUpOnRefusedReadsAfterTheGrace(t *testing.T) {
 
 			base := newFakeBatchBase()
 			base.set(func(f *fakeBatchBase) { f.waitErr, f.getErr = refusal, refusal })
-			batch, clock, logger := newLoggedTestBatch(t, base, 1)
+			batch, clock, logger := newLoggedTestBatch(t, base)
 
 			start := clock.Now()
 			taskID := startDeploy(t, base, batch, firstDeployment)
@@ -2075,7 +2080,7 @@ func TestBatchLostAnswerGivesUpOnRefusedLookupsAfterTheGrace(t *testing.T) {
 
 	base := newFakeBatchBase()
 	base.set(func(f *fakeBatchBase) { f.contextErr = refusal })
-	batch, clock, logger := newLoggedTestBatch(t, base, 1)
+	batch, clock, logger := newLoggedTestBatch(t, base)
 
 	waited := startLostAnswer(t, base, batch)
 
@@ -2125,5 +2130,36 @@ func TestBatchLostAnswerFollowsACreateTaskBehindAnotherRunningTask(t *testing.T)
 
 	if calls := base.waitCallsFor(errandTaskID); calls != 0 {
 		t.Fatalf("expected the errand not to be followed, but it was waited for %d times", calls)
+	}
+}
+
+// A lost deploy that carries no context ID cannot be looked up by it, so
+// a check at or after the grace that finds no deploy running on the
+// deployment releases the slot.
+func TestBatchLostAnswerWithNoContextIDIsGivenUpWhenNoDeployRuns(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.updateErr = func(string) error { return errBatchTestRejected }
+	batch, clock, logger := newLoggedTestBatch(t, base)
+
+	_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	if !errors.Is(err, errBatchTestRejected) {
+		t.Fatalf("expected the deploy's error, got %v", err)
+	}
+
+	checkLostAnswerHeld(t, batch, clock, bosh.UnknownOutcomeGrace)
+	waitBatchStats(t, batch, 0, 0)
+
+	if lookups := base.lookups(); lookups != 0 {
+		t.Fatalf("expected no lookup by an empty context ID, got %d", lookups)
+	}
+
+	if logged := logger.count("ERROR", "No deploy runs on deployment "+firstDeployment); logged != 1 {
+		t.Fatalf("expected one error saying no deploy runs, got %d", logged)
+	}
+
+	if running := bosh.BatchWatchersRunning(batch); running != 1 {
+		t.Fatalf("expected the watcher to be pruning, got %d watchers", running)
 	}
 }

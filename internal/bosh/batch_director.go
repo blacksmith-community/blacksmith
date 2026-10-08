@@ -19,7 +19,9 @@ var (
 	ErrBatchDirectorStopped = errors.New("the batch director is stopped")
 	// ErrWatchAbandoned is reported to the waiters of a watcher that gave
 	// up on its task and released its slot, because the director no longer
-	// knew the task or could not be read for batchWatchMax.
+	// knew the task, could not be read for batchWatchMax, or refused reads
+	// for UnknownOutcomeGrace, or because no deploy ran on the deployment
+	// of a lost answer that carried no context ID.
 	ErrWatchAbandoned = errors.New("the batch director stopped following the BOSH task and released its slot")
 	// ErrNoTaskWithContextID is reported to the waiters of a watcher whose
 	// deploy lost its answer, when the director showed that no task has its
@@ -1000,7 +1002,9 @@ func (b *BatchDirector) readUntilAnswered(ctx context.Context, watch *batchWatch
 // every batchLostAnswerInterval, and follows it once found. It gives up
 // only after a lookup by context ID that succeeded, made at or after
 // unknownSince plus UnknownOutcomeGrace, found no task, while no deploy
-// task runs on the deployment. It also gives up once lookups have failed
+// task runs on the deployment. For a deploy that carries no context ID, a
+// check made at or after that time that found no deploy running on the
+// deployment is enough. It also gives up once lookups have failed
 // for watchMax with no lookup that succeeded in between, or once the
 // director has refused them for UnknownOutcomeGrace.
 func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch, unknownSince time.Time) (*Task, error) {
@@ -1020,6 +1024,13 @@ func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch
 			b.followFoundTask(watch, taskID)
 
 			return b.followTask(ctx, watch, taskID)
+		}
+
+		if err == nil && !now.Before(unknownSince.Add(UnknownOutcomeGrace)) && watch.contextID == "" {
+			b.logger.Errorf("No deploy runs on deployment %s %v after the answer to %s was lost, so the batch director released its slot",
+				watch.deployment, UnknownOutcomeGrace, what)
+
+			return nil, fmt.Errorf("%w: no deploy runs on deployment %s, and its lost deploy carries no context ID", ErrWatchAbandoned, watch.deployment)
 		}
 
 		if err == nil && !now.Before(unknownSince.Add(UnknownOutcomeGrace)) {
@@ -1067,15 +1078,13 @@ func (b *BatchDirector) followFoundTask(watch *batchWatch, taskID int) {
 }
 
 // findLostTask looks for the task of a deploy whose answer was lost, by
-// its context ID and then as a deploy running on its deployment, behind
-// any other task that runs there. It returns the task ID when either finds
-// the task, and an error when either lookup failed.
+// its context ID, when it carries one, and then as a deploy running on its
+// deployment, behind any other task that runs there. It returns the task
+// ID when either finds the task, and an error when either lookup failed.
 func (b *BatchDirector) findLostTask(ctx context.Context, watch *batchWatch) (int, error) {
 	var lookupErr error
 
-	if watch.contextID == "" {
-		lookupErr = ErrEmptyContextID
-	} else {
+	if watch.contextID != "" {
 		task, err := b.director.FindTaskByContextID(ctx, watch.contextID)
 		if err != nil {
 			lookupErr = fmt.Errorf("the lookup of the task with context ID %s failed: %w", watch.contextID, err)
