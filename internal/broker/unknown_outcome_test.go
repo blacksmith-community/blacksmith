@@ -2121,6 +2121,26 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(director.Calls("FindTaskByContextID")).ToNot(ContainElement(contextID), "the pass asked the director without the record")
 		})
 
+		It("a deprovision is refused when the record cannot be read", func() {
+			indexInstance()
+
+			proxy := useProxy()
+			deletes := countDeletes()
+
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+
+			// The first read of the record is the check before the
+			// deprovision is accepted.
+			proxy.FailReads(instanceID+"/task", http.StatusForbidden, refusal, 1)
+
+			Expect(deprovisionRefused()).To(MatchError(ContainSubstring(refusal)))
+
+			Expect(proxy.WritesTo(instanceID+"/task")).To(BeEmpty(), "the refused deprovision wrote a record")
+			Consistently(deletes.Load, 300*time.Millisecond).Should(BeZero(), "the refused deprovision sent a delete")
+		})
+
 		Describe("a deprovision is refused while the provision's outcome is unknown", func() {
 			It("when the record shows it before the deprovision starts", func() {
 				contextID := loseDeploy()
