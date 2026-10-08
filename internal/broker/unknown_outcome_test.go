@@ -1204,6 +1204,119 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(director.Calls("FindTaskByContextID")).To(ContainElement(contextID))
 		})
 
+		Describe("the state that keeps resolver passes apart", func() {
+			passState := func() (bool, string) {
+				return brokerInstance.UnknownOutcomePassState(instanceID)
+			}
+
+			It("keeps the last error while lookups fail, and is dropped once a found task settles the outcome", func() {
+				loseDelete()
+
+				director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) { return nil, routeNotFound() }
+
+				Expect(poll(outcomeDeprovision).State).To(Equal(osbapi.StateInProgress))
+
+				kept, lastErr := passState()
+				Expect(kept).To(BeTrue(), "a pass whose lookup failed kept no state")
+				Expect(lastErr).To(ContainSubstring("404"), "the pass state lost the lookup's error")
+
+				director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) {
+					return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+				}
+				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+					return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+				}
+
+				Expect(poll(outcomeDeprovision).State).To(Equal(osbapi.StateInProgress))
+				Expect(recorded().TaskID).To(Equal(deleteTaskID))
+
+				kept, _ = passState()
+				Expect(kept).To(BeFalse(), "the pass state outlived the settled outcome")
+			})
+
+			It("is dropped once a pass fails an unknown deploy", func() {
+				loseDeploy()
+				deploymentMissing()
+				passGrace()
+
+				Expect(poll(outcomeProvision).State).To(Equal(osbapi.StateFailed))
+
+				kept, _ := passState()
+				Expect(kept).To(BeFalse(), "the pass state outlived the failed deploy")
+			})
+
+			It("is dropped once a pass settles an unknown delete as deleted", func() {
+				loseDelete()
+				deploymentMissing()
+
+				Expect(poll(outcomeDeprovision).State).To(Equal(osbapi.StateSucceeded))
+
+				kept, _ := passState()
+				Expect(kept).To(BeFalse(), "the pass state outlived the deleted instance")
+			})
+
+			It("is kept, with its last error, while the outcome stays unknown", func() {
+				loseDeploy()
+
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return nil, routeNotFound()
+				}
+
+				passGrace()
+
+				Expect(poll(outcomeProvision).State).To(Equal(osbapi.StateInProgress))
+
+				kept, lastErr := passState()
+				Expect(kept).To(BeTrue())
+				Expect(lastErr).To(ContainSubstring("404"))
+			})
+
+			It("is dropped by a pass that finds the outcome settled since the poll read it", func() {
+				contextID := loseDelete()
+				unknown := recorded()
+
+				director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) { return nil, routeNotFound() }
+
+				Expect(poll(outcomeDeprovision).State).To(Equal(osbapi.StateInProgress))
+
+				kept, lastErr := passState()
+				Expect(kept).To(BeTrue())
+				Expect(lastErr).ToNot(BeEmpty())
+
+				// A poll that loaded the pass state before it was dropped
+				// still reads its last error.
+				heldLastErr := brokerInstance.UnknownOutcomePassReader(instanceID)
+
+				// Another writer settles the outcome after a poll read it
+				// and before its pass reads it again.
+				Expect(vaultClient.SettleOutcomeUnknown(ctx, instanceID, outcomeDeprovision, "BOSH deletion in progress (task 300)", contextID, deleteTaskID)).To(Succeed())
+
+				response, err := brokerInstance.ResolveUnknownOutcome(ctx, instanceID, deploymentName, unknown)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(response.State).To(Equal(osbapi.StateInProgress))
+				Expect(response.Description).To(ContainSubstring("was just settled"))
+
+				kept, _ = passState()
+				Expect(kept).To(BeFalse(), "the pass state outlived the settled outcome")
+				Expect(heldLastErr()).To(BeEmpty(), "the dropped pass state kept an error from before the outcome settled")
+			})
+
+			It("is kept when the settling write fails", func() {
+				loseDeploy()
+				deploymentMissing()
+				passGrace()
+
+				proxy := useProxy()
+
+				proxy.FailWrites(instanceID+"/task", http.StatusForbidden, refusal, -1)
+
+				Expect(poll(outcomeProvision).State).To(Equal(osbapi.StateInProgress))
+
+				kept, _ := passState()
+				Expect(kept).To(BeTrue(), "the pass state was dropped while the outcome is still unknown")
+			})
+		})
+
 		It("an unknown delete stays in progress when the deployment is missing and then present", func() {
 			contextID := loseDelete()
 			unknown := recorded()

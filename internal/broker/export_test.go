@@ -331,3 +331,36 @@ func (b *Broker) RecordedOperation(ctx context.Context, instanceID string) (Reco
 func WithdrawIndexFields(entries map[string]interface{}, instanceID string, fields, previous map[string]interface{}, existed bool) bool {
 	return withdrawIndexFields(entries, instanceID, fields, previous, existed)
 }
+
+// UnknownOutcomePassState reports whether the broker keeps resolver pass
+// state for instanceID, and the error the last pass ended with.
+func (b *Broker) UnknownOutcomePassState(instanceID string) (bool, string) {
+	value, kept := b.unknownOutcomePasses.Load(instanceID)
+	if !kept {
+		return false, ""
+	}
+
+	pass, _ := value.(*unknownOutcomePass)
+
+	return true, pass.lastError()
+}
+
+// ResolveUnknownOutcome exposes a resolver pass over operation, the
+// unknown outcome a poll read from the record.
+func (b *Broker) ResolveUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation RecordedOperation) (osbapi.LastOperationResponse, error) {
+	return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, operation, logger.Get().Named("broker"))
+}
+
+// UnknownOutcomePassReader returns a reader of the last error held by the
+// resolver pass state the broker keeps for instanceID now, as a poll that
+// loaded that state reads it, or nil when it keeps none.
+func (b *Broker) UnknownOutcomePassReader(instanceID string) func() string {
+	value, kept := b.unknownOutcomePasses.Load(instanceID)
+	if !kept {
+		return nil
+	}
+
+	pass, _ := value.(*unknownOutcomePass)
+
+	return pass.lastError
+}

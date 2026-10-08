@@ -111,6 +111,15 @@ func (b *Broker) unknownOutcomePassFor(instanceID string) *unknownOutcomePass {
 	return pass
 }
 
+// forgetUnknownOutcomePass drops the pass state of an instance whose
+// unknown outcome is settled, so the broker keeps no state for it and a
+// later unknown outcome starts with no last error. A poll that already
+// holds the dropped state finds the record settled when it reads it again.
+func (b *Broker) forgetUnknownOutcomePass(instanceID string, pass *unknownOutcomePass) {
+	pass.setLastErr(nil)
+	b.unknownOutcomePasses.CompareAndDelete(instanceID, pass)
+}
+
 // unknownOutcomeToReplace returns the recorded operation a deprovision may
 // replace, and an empty one when the record holds no unknown outcome. It
 // returns the OSB concurrency error for an unknown outcome a deprovision
@@ -152,7 +161,9 @@ func (b *Broker) unknownOutcomeToReplace(instanceID string, recorded recordedOpe
 // director call fails.
 //
 // One pass runs per instance at a time, and a poll that finds one running
-// answers in progress with the error the last pass ended with. The
+// answers in progress with the error the last pass ended with. The state
+// that keeps the passes apart is dropped once a pass settles the outcome
+// or finds it settled. The
 // record's second read, the director lookups, and the director reads of
 // the settle step all run under one unknownOutcomePassTimeout with the
 // director client's retries turned off. The record writes run detached
@@ -194,6 +205,8 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 	if current.State != internalVault.TaskStateOutcomeUnknown || current.Action != operation.Action || current.ContextID != operation.ContextID {
 		logger.Info("Instance %s: the unknown outcome of the %s with context ID %s was settled while this poll waited", instanceID, noun, operation.ContextID)
 
+		b.forgetUnknownOutcomePass(instanceID, pass)
+
 		return osbapi.LastOperationResponse{
 			State:       osbapi.StateInProgress,
 			Description: fmt.Sprintf("The outcome of the %s with context ID %s was just settled", noun, operation.ContextID),
@@ -213,7 +226,12 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 
 	pass.setLastErr(finding.err)
 
-	return b.settleUnknownOutcome(ctx, passCtx, instanceID, deploymentName, current, finding, logger)
+	response, settled := b.settleUnknownOutcome(ctx, passCtx, instanceID, deploymentName, current, finding, logger)
+	if settled {
+		b.forgetUnknownOutcomePass(instanceID, pass)
+	}
+
+	return response, nil
 }
 
 // findUnknownOutcome asks the director what became of the request that
@@ -361,8 +379,9 @@ func (b *Broker) findOperationTask(ctx context.Context, deploymentName, descript
 //
 // ctx is the poll's own context, which work that outlives the poll keeps.
 // directorCtx is the pass's bounded context, which every director read of
-// the settle step runs under.
-func (b *Broker) settleUnknownOutcome(ctx, directorCtx context.Context, instanceID, deploymentName string, operation recordedOperation, finding unknownOutcomeFinding, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// the settle step runs under. It reports whether its own write settled the
+// record.
+func (b *Broker) settleUnknownOutcome(ctx, directorCtx context.Context, instanceID, deploymentName string, operation recordedOperation, finding unknownOutcomeFinding, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	noun := requestNoun(operation.Action)
 
 	switch finding.verdict {
@@ -371,7 +390,7 @@ func (b *Broker) settleUnknownOutcome(ctx, directorCtx context.Context, instance
 	case outcomeDeploymentGone:
 		return b.settleUnknownDeleteAsDeleted(directorCtx, instanceID, deploymentName, operation, logger)
 	case outcomeNeverStarted:
-		return b.failUnknownOutcome(ctx, instanceID, deploymentName, operation, logger), nil
+		return b.failUnknownOutcome(ctx, instanceID, deploymentName, operation, logger)
 	case outcomeStillUnknown:
 	}
 
@@ -390,14 +409,14 @@ func (b *Broker) settleUnknownOutcome(ctx, directorCtx context.Context, instance
 		logger.Debug("The outcome of the %s of instance %s with context ID %s is still unknown, and its grace period runs until %s", noun, instanceID, operation.ContextID, operation.UnknownSince.Add(bosh.UnknownOutcomeGrace).Format(time.RFC3339))
 	}
 
-	return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: description}, nil
+	return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: description}, false
 }
 
 // followFoundTask records the task a resolver pass found over the unknown
 // outcome and follows it as any recorded task is followed. Once the task is
 // recorded, a failed read of its state answers in progress, and the next
-// poll follows the recorded task.
-func (b *Broker) followFoundTask(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, finding unknownOutcomeFinding, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// poll follows the recorded task. It reports whether it recorded the task.
+func (b *Broker) followFoundTask(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, finding unknownOutcomeFinding, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	noun := requestNoun(operation.Action)
 
 	logger.Info("The %s of instance %s with context ID %s started task %d, found by %s", noun, instanceID, operation.ContextID, finding.taskID, finding.source)
@@ -412,7 +431,7 @@ func (b *Broker) followFoundTask(ctx context.Context, instanceID, deploymentName
 
 	unsettled, settled := b.recordSettledOutcome(ctx, instanceID, operation, description, finding.taskID, logger)
 	if !settled {
-		return unsettled, nil
+		return unsettled, false
 	}
 
 	response, err := follow(ctx, instanceID, deploymentName, finding.taskID, logger)
@@ -422,18 +441,19 @@ func (b *Broker) followFoundTask(ctx context.Context, instanceID, deploymentName
 		return osbapi.LastOperationResponse{
 			State:       osbapi.StateInProgress,
 			Description: fmt.Sprintf("%s; its state could not be read: %s", description, err),
-		}, nil
+		}, true
 	}
 
-	return response, nil
+	return response, true
 }
 
 // settleUnknownDeleteAsDeleted finishes a deprovision whose deployment the
 // director says does not exist, as a finished delete task would, and then
 // records the deprovision as finished. When the director's next answer does
 // not confirm the deployment is gone, it answers in progress with the
-// reason and leaves the record unknown.
-func (b *Broker) settleUnknownDeleteAsDeleted(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// reason and leaves the record unknown. It reports whether it recorded the
+// deprovision as finished.
+func (b *Broker) settleUnknownDeleteAsDeleted(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	logger.Info("The director says deployment %s of instance %s does not exist, so the delete with context ID %s is settled as deleted", deploymentName, instanceID, operation.ContextID)
 
 	response, err := b.handleSuccessfulDeprovision(ctx, instanceID, deploymentName, logger)
@@ -452,7 +472,7 @@ func (b *Broker) settleUnknownDeleteAsDeleted(ctx context.Context, instanceID, d
 		return osbapi.LastOperationResponse{
 			State:       osbapi.StateInProgress,
 			Description: fmt.Sprintf("Waiting for the director to show whether it started the delete with context ID %s; %s", operation.ContextID, reason),
-		}, nil
+		}, false
 	}
 
 	recordCtx, cancel := recordContext(ctx)
@@ -464,9 +484,11 @@ func (b *Broker) settleUnknownDeleteAsDeleted(ctx context.Context, instanceID, d
 	trackErr := b.Vault.SettleOutcomeUnknownAsDeleted(recordCtx, instanceID, operation.Action, operation.ContextID)
 	if trackErr != nil {
 		logger.Error("failed to record the settled delete with context ID %s of instance %s: %s", operation.ContextID, instanceID, trackErr)
+
+		return response, false
 	}
 
-	return response, nil
+	return response, true
 }
 
 // recordSettledOutcome records taskID, or the failure -1, as the outcome of
@@ -506,8 +528,9 @@ func (b *Broker) recordSettledOutcome(ctx context.Context, instanceID string, op
 // took as a task as failed. The index entry stays, so a deprovision can be
 // retried, and a failed provision is cleaned up as any other is. When the
 // failure cannot be recorded over the unknown outcome, it answers in
-// progress and starts no cleanup.
-func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) osbapi.LastOperationResponse {
+// progress and starts no cleanup. It reports whether it recorded the
+// failure.
+func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	description := fmt.Sprintf("The deploy with context ID %s never reached the director as a task, so nothing was deployed", operation.ContextID)
 	if operation.Action == operationTypeDeprovision {
 		description = fmt.Sprintf("The delete with context ID %s never reached the director as a task, so nothing was deleted. Retry the deprovision", operation.ContextID)
@@ -517,7 +540,7 @@ func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentN
 
 	unsettled, settled := b.recordSettledOutcome(ctx, instanceID, operation, description, -1, logger)
 	if !settled {
-		return unsettled
+		return unsettled, false
 	}
 
 	if operation.Action == operationTypeProvision {
@@ -526,5 +549,5 @@ func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentN
 		go b.cleanupFailedDeployment(ctx, deploymentName, logger)
 	}
 
-	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}
+	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, true
 }
