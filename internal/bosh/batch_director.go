@@ -330,6 +330,16 @@ func (b *BatchDirector) FindRunningTaskForDeployment(ctx context.Context, deploy
 	return b.director.FindRunningTaskForDeployment(ctx, deploymentName)
 }
 
+// FindRunningTasksForDeployment passes through (read operation).
+func (b *BatchDirector) FindRunningTasksForDeployment(ctx context.Context, deploymentName string) ([]Task, error) {
+	tasks, err := b.director.FindRunningTasksForDeployment(ctx, deploymentName)
+	if err != nil {
+		return nil, fmt.Errorf("list the running tasks of deployment %s: %w", deploymentName, err)
+	}
+
+	return tasks, nil
+}
+
 // FindTaskByContextID passes through (read operation).
 func (b *BatchDirector) FindTaskByContextID(ctx context.Context, contextID string) (*Task, error) {
 	task, err := b.director.FindTaskByContextID(ctx, contextID)

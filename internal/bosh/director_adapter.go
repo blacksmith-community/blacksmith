@@ -2770,6 +2770,35 @@ func (d *DirectorAdapter) FindRunningTaskForDeployment(ctx context.Context, depl
 	return nil, nil //nolint:nilnil // no running task is an answer, not an error
 }
 
+// FindRunningTasksForDeployment returns every task on the deployment that
+// has not finished, newest first as the director lists them, or an empty
+// list when none runs. The director filters by deployment and state
+// itself, and a finished task in its answer, from a director or proxy that
+// ignored the state filter, is left out.
+func (d *DirectorAdapter) FindRunningTasksForDeployment(ctx context.Context, deploymentName string) ([]Task, error) {
+	d.log.Debugf("Finding the running tasks of deployment: %s", deploymentName)
+
+	tasks, err := d.listTasks(ctx, "list the running tasks of deployment "+deploymentName,
+		&boshapi.TaskListOptions{Deployment: deploymentName, State: runningTaskStates, Verbose: 1})
+	if err != nil {
+		d.explainContext(ctx, "FindRunningTasksForDeployment", &err)
+
+		return nil, err
+	}
+
+	running := make([]Task, 0, len(tasks))
+
+	for _, task := range tasks {
+		if isRunningTaskState(task.State) {
+			running = append(running, task)
+		}
+	}
+
+	d.log.Debugf("Found %d running tasks for deployment %s", len(running), deploymentName)
+
+	return running, nil
+}
+
 // FindTaskByContextID returns the newest task the director recorded with the
 // context ID, or nil when it has none. The director filters by the ID
 // itself, and a task that carries another ID, from a director or proxy that

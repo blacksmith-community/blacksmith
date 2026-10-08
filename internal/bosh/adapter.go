@@ -96,6 +96,10 @@ type Director interface {
 	// Returns nil if no running task is found.
 	FindRunningTaskForDeployment(ctx context.Context, deploymentName string) (*Task, error)
 
+	// FindRunningTasksForDeployment returns every task on the deployment
+	// that has not finished, newest first, or an empty list when none runs.
+	FindRunningTasksForDeployment(ctx context.Context, deploymentName string) ([]Task, error)
+
 	// FindTaskByContextID returns the newest task the director recorded
 	// with the context ID, or nil when it has none. It looks across every
 	// deployment, because an upload carries no deployment name, and asks at

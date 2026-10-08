@@ -429,6 +429,74 @@ func TestFindRunningTaskForDeploymentReturnsNilWhenNoneRuns(t *testing.T) {
 	}
 }
 
+// The list of running tasks holds every task the director lists as running,
+// newest first, so a deploy behind a newer task on the deployment is in it.
+// A finished task, from a director or proxy that ignored the state filter,
+// is left out.
+func TestFindRunningTasksForDeploymentListsEveryRunningTask(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
+			return false
+		}
+
+		errand := directorTask(42, "processing")
+		errand["description"] = "run errand smoke-tests"
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{errand, directorTask(41, "done"), directorTask(40, "queued")})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	tasks, err := director.FindRunningTasksForDeployment(t.Context(), "valkey-1")
+	if err != nil {
+		t.Fatalf("FindRunningTasksForDeployment failed: %v", err)
+	}
+
+	if len(tasks) != 2 || tasks[0].ID != 42 || tasks[1].ID != 40 || tasks[1].Description != "create deployment" {
+		t.Fatalf("expected running tasks 42 and 40, newest first, got %+v", tasks)
+	}
+
+	lists := requestsTo(server, http.MethodGet, "/tasks")
+	if len(lists) != 1 {
+		t.Fatalf("expected one task list request, got %d: %+v", len(lists), server.APIRequests())
+	}
+
+	query, err := url.ParseQuery(lists[0].RawQuery)
+	if err != nil {
+		t.Fatalf("parse query %q: %v", lists[0].RawQuery, err)
+	}
+
+	if query.Get("deployment") != "valkey-1" || query.Get("state") != "processing,cancelling,queued" {
+		t.Errorf("expected the running states of valkey-1 to be asked for, got %q", query.Encode())
+	}
+}
+
+// When no task runs, the list is empty with no error.
+func TestFindRunningTasksForDeploymentIsEmptyWhenNoneRuns(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
+			return false
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{directorTask(30, "done")})
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	tasks, err := director.FindRunningTasksForDeployment(t.Context(), "valkey-1")
+	if err != nil || len(tasks) != 0 {
+		t.Fatalf("expected no task and no error, got %+v and %v", tasks, err)
+	}
+}
+
 // contextTask is a task in the director's JSON shape that carries the
 // context ID.
 func contextTask(id int, state, contextID string) map[string]interface{} {

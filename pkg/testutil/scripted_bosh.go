@@ -172,6 +172,23 @@ func (s *ScriptedBOSHDirector) FindRunningTaskForDeployment(ctx context.Context,
 	return s.IntegrationMockBOSH.FindRunningTaskForDeployment(ctx, deployment)
 }
 
+// FindRunningTasksForDeployment answers with the task
+// FindRunningTaskForDeploymentFn gives, as a list, when that is set.
+func (s *ScriptedBOSHDirector) FindRunningTasksForDeployment(ctx context.Context, deployment string) ([]bosh.Task, error) {
+	s.record("FindRunningTasksForDeployment", deployment)
+
+	if s.FindRunningTaskForDeploymentFn == nil {
+		return s.IntegrationMockBOSH.FindRunningTasksForDeployment(ctx, deployment)
+	}
+
+	task, err := s.FindRunningTaskForDeploymentFn(deployment)
+	if err != nil || task == nil {
+		return nil, err
+	}
+
+	return []bosh.Task{*task}, nil
+}
+
 // FindTaskByContextID runs FindTaskByContextIDFn when set.
 func (s *ScriptedBOSHDirector) FindTaskByContextID(ctx context.Context, contextID string) (*bosh.Task, error) {
 	s.record("FindTaskByContextID", contextID)

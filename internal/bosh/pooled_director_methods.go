@@ -362,6 +362,16 @@ func (p *PooledDirector) FindRunningTaskForDeployment(ctx context.Context, deplo
 	return p.director.FindRunningTaskForDeployment(ctx, deploymentName)
 }
 
+// FindRunningTasksForDeployment implements Director interface - no pooling for read operations.
+func (p *PooledDirector) FindRunningTasksForDeployment(ctx context.Context, deploymentName string) ([]Task, error) {
+	tasks, err := p.director.FindRunningTasksForDeployment(ctx, deploymentName)
+	if err != nil {
+		return nil, fmt.Errorf("list the running tasks of deployment %s: %w", deploymentName, err)
+	}
+
+	return tasks, nil
+}
+
 // FindTaskByContextID implements Director interface - no pooling for read operations.
 func (p *PooledDirector) FindTaskByContextID(ctx context.Context, contextID string) (*Task, error) {
 	task, err := p.director.FindTaskByContextID(ctx, contextID)

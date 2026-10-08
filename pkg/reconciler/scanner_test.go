@@ -217,6 +217,10 @@ func (d *mockDirector) FindRunningTaskForDeployment(_ context.Context, deploymen
 	return nil, nil
 }
 
+func (d *mockDirector) FindRunningTasksForDeployment(_ context.Context, _ string) ([]bosh.Task, error) {
+	return nil, nil
+}
+
 func (d *mockDirector) FindTaskByContextID(_ context.Context, _ string) (*bosh.Task, error) {
 	return nil, ErrScannerNotImplemented
 }

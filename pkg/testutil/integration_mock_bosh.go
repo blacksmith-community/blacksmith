@@ -262,6 +262,11 @@ func (imb *IntegrationMockBOSH) FindRunningTaskForDeployment(_ context.Context, 
 	return nil, ErrIntegrationMockNotImplemented
 }
 
+// FindRunningTasksForDeployment implements the BOSH Director interface.
+func (imb *IntegrationMockBOSH) FindRunningTasksForDeployment(_ context.Context, _ string) ([]bosh.Task, error) {
+	return nil, ErrIntegrationMockNotImplemented
+}
+
 // FindTaskByContextID implements the BOSH Director interface.
 func (imb *IntegrationMockBOSH) FindTaskByContextID(_ context.Context, _ string) (*bosh.Task, error) {
 	return nil, ErrIntegrationMockNotImplemented
