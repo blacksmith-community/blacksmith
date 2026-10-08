@@ -3346,12 +3346,14 @@ func (b *Broker) resolveDeploymentTask(ctx context.Context, deploymentName, acti
 	return taskID
 }
 
-// recordTask stores a BOSH task ID for the instance's current operation.
+// recordTask stores a BOSH task ID for the instance's current operation. It
+// writes nothing over a record whose outcome is unknown, for any action,
+// because only the unknown-outcome resolver may settle that outcome.
 func (b *Broker) recordTask(ctx context.Context, instanceID, operation, description string, taskID int, logger logger.Logger) {
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	err := b.Vault.TrackProgress(recordCtx, instanceID, operation, description, taskID, nil)
+	err := b.Vault.TrackProgressUnlessOutcomeUnknown(recordCtx, instanceID, operation, description, taskID, nil)
 	if err != nil {
 		logger.Error("failed to record task %d for instance %s: %s", taskID, instanceID, err)
 	}

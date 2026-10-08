@@ -157,6 +157,147 @@ var _ = Describe("Task record writes", func() {
 		})
 	})
 
+	// Only the write that settles an unknown outcome may replace it, and
+	// only while the record still holds that outcome.
+	Describe("a write that settles an unknown outcome", func() {
+		const (
+			lost     = "The delete's answer was lost"
+			deleting = "BOSH deletion in progress (task 300)"
+			taskID   = 300
+		)
+
+		var contextID string
+
+		BeforeEach(func() {
+			contextID = uuid.NewString()
+		})
+
+		recordUnknown := func(action string) {
+			ExpectWithOffset(1, client.TrackOutcomeUnknown(ctx, instanceID, action, lost, contextID, time.Now())).To(Succeed())
+		}
+
+		taskWrites := func() int {
+			return len(proxy.WritesTo(instanceID + "/task"))
+		}
+
+		It("records the task over the unknown outcome of the same action and context ID", func() {
+			recordUnknown(deprovision)
+
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, taskID)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue("state", "in_progress"))
+			Expect(fmt.Sprint(readRecord()["task"])).To(Equal("300"))
+			Expect(readRecord()).To(HaveKeyWithValue("context_id", contextID))
+			Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
+		})
+
+		It("records the failure -1 over the unknown outcome", func() {
+			recordUnknown(provision)
+
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, provision, "The deploy never reached the director", contextID, -1)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue("state", "failed"))
+		})
+
+		It("refuses a write with no task, which would keep the outcome unknown", func() {
+			recordUnknown(deprovision)
+
+			writes := taskWrites()
+
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, 0)).To(MatchError(vault.ErrOutcomeUnknownSettled))
+			Expect(taskWrites()).To(Equal(writes))
+		})
+
+		It("refuses when the record names another context ID", func() {
+			recordUnknown(deprovision)
+
+			writes := taskWrites()
+
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, uuid.NewString(), taskID)).To(MatchError(vault.ErrOutcomeUnknownSettled))
+			Expect(taskWrites()).To(Equal(writes))
+			Expect(readRecord()).To(HaveKeyWithValue("state", vault.TaskStateOutcomeUnknown))
+		})
+
+		It("refuses when the record names another action", func() {
+			recordUnknown(provision)
+
+			writes := taskWrites()
+
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, taskID)).To(MatchError(vault.ErrOutcomeUnknownSettled))
+			Expect(taskWrites()).To(Equal(writes))
+			Expect(readRecord()).To(HaveKeyWithValue("action", provision))
+		})
+
+		It("refuses when the outcome was already settled", func() {
+			recordUnknown(deprovision)
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, taskID)).To(Succeed())
+
+			writes := taskWrites()
+
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, "failed", contextID, -1)).To(MatchError(vault.ErrOutcomeUnknownSettled))
+			Expect(taskWrites()).To(Equal(writes))
+			Expect(readRecord()).To(HaveKeyWithValue("state", "in_progress"))
+		})
+
+		It("refuses when there is no record", func() {
+			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, taskID)).To(MatchError(vault.ErrOutcomeUnknownSettled))
+			Expect(proxy.WritesTo(instanceID + "/task")).To(BeEmpty())
+		})
+
+		It("refuses when the record cannot be read", func() {
+			recordUnknown(deprovision)
+
+			writes := taskWrites()
+
+			proxy.FailReads(instanceID+"/task", http.StatusForbidden, "permission denied", 1)
+
+			err := client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, taskID)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("permission denied"))
+			Expect(taskWrites()).To(Equal(writes))
+		})
+
+		It("records a deleted instance with no context ID", func() {
+			recordUnknown(deprovision)
+
+			Expect(client.SettleOutcomeUnknownAsDeleted(ctx, instanceID, deprovision, contextID)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue("action", deprovision))
+			Expect(readRecord()).To(HaveKeyWithValue("state", "in_progress"))
+			Expect(readRecord()).ToNot(HaveKey("context_id"))
+			Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
+		})
+
+		It("records a deleted instance only over the same unknown outcome", func() {
+			recordUnknown(deprovision)
+
+			writes := taskWrites()
+
+			Expect(client.SettleOutcomeUnknownAsDeleted(ctx, instanceID, deprovision, uuid.NewString())).To(MatchError(vault.ErrOutcomeUnknownSettled))
+			Expect(taskWrites()).To(Equal(writes))
+			Expect(readRecord()).To(HaveKeyWithValue("context_id", contextID))
+		})
+	})
+
+	// The write that refuses to replace an unknown outcome cannot judge a
+	// record it cannot read, so it writes nothing.
+	Describe("a write that must not replace an unknown outcome", func() {
+		It("writes nothing when the record cannot be read", func() {
+			contextID := uuid.NewString()
+			Expect(client.TrackOutcomeUnknown(ctx, instanceID, provision, "The deploy's answer was lost", contextID, time.Now())).To(Succeed())
+
+			writes := len(proxy.WritesTo(instanceID + "/task"))
+
+			proxy.FailReads(instanceID+"/task", http.StatusForbidden, "permission denied", 1)
+
+			err := client.TrackProgressUnlessOutcomeUnknown(ctx, instanceID, deprovision, "Deprovision request accepted", 0, nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("permission denied"))
+			Expect(proxy.WritesTo(instanceID + "/task")).To(HaveLen(writes))
+			Expect(readRecord()).To(HaveKeyWithValue("context_id", contextID))
+		})
+	})
+
 	Describe("a write whose read of the record it replaces fails", func() {
 		It("still records the context ID it was given", func() {
 			Expect(client.TrackProgressWithContextID(ctx, instanceID, provision, "Starting provisioning process", uuid.NewString(), 0, nil)).To(Succeed())

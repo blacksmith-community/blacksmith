@@ -43,28 +43,32 @@ func (vault *Vault) Track(ctx context.Context, instanceID, action string, taskID
 	// This function is kept for backward compatibility but will be removed
 	// Task IDs are now retrieved from BOSH deployment events
 
-	// Store minimal tracking info for audit purposes
-	task := struct {
-		Action      string      `json:"action"`
-		State       string      `json:"state"`
-		Description string      `json:"description"`
-		UpdatedAt   int64       `json:"updated_at"`
-		Params      interface{} `json:"params"`
-	}{
-		Action:      action,
-		State:       "in_progress",
-		Description: fmt.Sprintf("Operation %s in progress", action),
-		UpdatedAt:   time.Now().Unix(),
-		Params:      deinterface(params),
-	}
-
 	unlock, err := vault.taskLocks.lock(ctx, instanceID)
 	if err != nil {
 		return err
 	}
 	defer unlock()
 
-	return vault.Put(ctx, instanceID+"/task", task)
+	return vault.Put(ctx, instanceID+"/task", trackedTask(action, params))
+}
+
+// trackedTaskRecord is the minimal record Track writes for audit purposes.
+type trackedTaskRecord struct {
+	Action      string      `json:"action"`
+	State       string      `json:"state"`
+	Description string      `json:"description"`
+	UpdatedAt   int64       `json:"updated_at"`
+	Params      interface{} `json:"params"`
+}
+
+func trackedTask(action string, params interface{}) trackedTaskRecord {
+	return trackedTaskRecord{
+		Action:      action,
+		State:       "in_progress",
+		Description: fmt.Sprintf("Operation %s in progress", action),
+		UpdatedAt:   time.Now().Unix(),
+		Params:      deinterface(params),
+	}
 }
 
 // TrackProgress stores progress information for a task. When the record it
@@ -100,6 +104,66 @@ func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, insta
 	}
 
 	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, guard)
+}
+
+// ErrOutcomeUnknownSettled is returned when a write that settles an unknown
+// outcome finds that the record no longer holds that outcome, because it is
+// gone, holds another state, or names another action or context ID.
+var ErrOutcomeUnknownSettled = errors.New("the task record no longer holds the unknown outcome to settle")
+
+// settlingOutcomeUnknown returns a guard that lets a write through only when
+// the current record holds the unknown outcome of action with contextID.
+func settlingOutcomeUnknown(instanceID, action, contextID string) func(current map[string]interface{}) error {
+	return func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrOutcomeUnknownSettled, instanceID)
+		}
+
+		state, _ := current["state"].(string)
+		recordedAction, _ := current["action"].(string)
+		recordedContextID, _ := current[taskRecordContextIDKey].(string)
+
+		if state != TaskStateOutcomeUnknown || recordedAction != action || recordedContextID != contextID {
+			return fmt.Errorf("%w: instance %s records the %s state of a %s with context ID %s, not the unknown outcome of the %s with context ID %s",
+				ErrOutcomeUnknownSettled, instanceID, state, recordedAction, recordedContextID, action, contextID)
+		}
+
+		return nil
+	}
+}
+
+// SettleOutcomeUnknown records taskID, a task the director started, or the
+// failure -1, as the outcome of the operation whose unknown outcome the
+// record holds. It writes only when the record holds the unknown outcome of
+// action with contextID, checked under the instance's task record lock, and
+// otherwise writes nothing and returns an error that wraps
+// ErrOutcomeUnknownSettled. A record that cannot be read stops the write.
+func (vault *Vault) SettleOutcomeUnknown(ctx context.Context, instanceID, action, description, contextID string, taskID int) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s, settled outcome", ErrEmptyContextID, instanceID, action)
+	}
+
+	if taskID == 0 {
+		return fmt.Errorf("%w: instance %s, a write with no task would keep the outcome unknown", ErrOutcomeUnknownSettled, instanceID)
+	}
+
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, "", taskID, nil, settlingOutcomeUnknown(instanceID, action, contextID))
+}
+
+// SettleOutcomeUnknownAsDeleted records the deprovision whose unknown
+// outcome the record holds as finished, as Track does, once the director
+// has said the deployment does not exist. The record it writes has no
+// context ID. It writes only under the same check as SettleOutcomeUnknown.
+func (vault *Vault) SettleOutcomeUnknownAsDeleted(ctx context.Context, instanceID, action, contextID string) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s, settled delete", ErrEmptyContextID, instanceID, action)
+	}
+
+	logger := logger.Get().Named("vault settle deleted " + instanceID)
+
+	return vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, settlingOutcomeUnknown(instanceID, action, contextID), func(map[string]interface{}) interface{} {
+		return trackedTask(action, nil)
+	})
 }
 
 // TrackProgressWithContextID stores progress information for a task as

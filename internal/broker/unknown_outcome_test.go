@@ -1053,6 +1053,60 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(stillIndexed()).To(BeTrue())
 		})
 
+		// replaceDuringLookup records another unknown outcome while the
+		// pass looks the task up, and returns the new context ID.
+		replaceDuringLookup := func(action string, task *bosh.Task) string {
+			replacement := uuid.NewString()
+
+			director.onFindTaskByContextID = func(context.Context, string) (*bosh.Task, error) {
+				ExpectWithOffset(1, vaultClient.TrackOutcomeUnknown(context.Background(), instanceID, action,
+					"Another request's answer was lost", replacement, time.Now())).To(Succeed())
+
+				return task, nil
+			}
+
+			return replacement
+		}
+
+		It("a task found for an unknown delete is not recorded over a record that changed during the pass", func() {
+			contextID := loseDelete()
+			replacement := replaceDuringLookup(outcomeDeprovision, &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment})
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a pass over a changed record answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(recorded().State).To(Equal(outcomeStateUnknown), "the found task was written over the changed record")
+			Expect(recorded().ContextID).To(Equal(replacement))
+			Expect(director.Calls("GetTask")).To(BeEmpty(), "the pass followed a task it could not record")
+		})
+
+		It("an unknown deploy is not failed over a record that changed during the pass", func() {
+			loseDeploy()
+			passGrace()
+
+			// The cleanup of a failed provision starts by asking for the
+			// deployment.
+			var checks atomic.Int32
+
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				checks.Add(1)
+
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+			}
+
+			replacement := replaceDuringLookup(outcomeProvision, nil)
+
+			response := poll(outcomeProvision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a pass over a changed record answered %+v", response)
+			Expect(recorded().State).To(Equal(outcomeStateUnknown), "the failure was written over the changed record")
+			Expect(recorded().ContextID).To(Equal(replacement))
+
+			polled := checks.Load()
+			Consistently(checks.Load, 300*time.Millisecond).Should(Equal(polled), "the cleanup of a failure that was not recorded started")
+		})
+
 		It("an unknown delete is settled as deleted when the director says the deployment is missing", func() {
 			contextID := loseDelete()
 			cleaner := useCleaner()
@@ -1375,8 +1429,17 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				time.Now().Add(time.Hour))).To(Succeed())
 			Expect(recorded().UnknownSince).To(Equal(unknown.UnknownSince), "a second unknown-outcome write moved the unknown-since time")
 
-			// The write that names the delete's task settles it.
-			brokerInstance.RecordTask(ctx, instanceID, outcomeDeprovision, "BOSH deletion in progress (task 300)", deleteTaskID)
+			// A task recorded outside the resolver does not settle it, for
+			// either action.
+			for _, action := range []string{outcomeDeprovision, outcomeProvision} {
+				brokerInstance.RecordTask(ctx, instanceID, action, "BOSH task in progress (task 300)", deleteTaskID)
+
+				Expect(recorded().State).To(Equal(outcomeStateUnknown), "a %s task recorded outside the resolver settled the unknown outcome", action)
+				Expect(recorded().UnknownSince).To(Equal(unknown.UnknownSince))
+			}
+
+			// The resolver's write that names the delete's task settles it.
+			Expect(vaultClient.SettleOutcomeUnknown(ctx, instanceID, outcomeDeprovision, "BOSH deletion in progress (task 300)", contextID, deleteTaskID)).To(Succeed())
 
 			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
 			Expect(recorded().TaskID).To(Equal(deleteTaskID))
