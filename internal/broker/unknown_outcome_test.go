@@ -2064,6 +2064,59 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(lines[0]).To(ContainSubstring(fmt.Sprintf("task %d", deleteTaskID)))
 				Expect(lines[0]).To(ContainSubstring(newest.UTC().Format(time.RFC3339)))
 			})
+
+			It("does not name a newer delete event for a provision", func() {
+				loseDeploy()
+
+				unknown := recorded()
+				older := unknown.UnknownSince.Add(-20 * time.Minute)
+				newer := unknown.UnknownSince.Add(-10 * time.Minute)
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					events := deploymentEventsAt(older, boshEventCreate, deploymentName, createTaskID)
+
+					return append(events, deploymentEventsAt(newer, boshEventDelete, deploymentName, deleteTaskID)...), nil
+				}
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+
+				poll(outcomeProvision)
+
+				lines := skippedWarnings()
+
+				Expect(lines).To(HaveLen(1), "the pass logged %v", warnLog.warnings())
+				Expect(lines[0]).To(ContainSubstring(fmt.Sprintf("task %d", createTaskID)))
+				Expect(lines[0]).ToNot(ContainSubstring(fmt.Sprintf("task %d", deleteTaskID)))
+				Expect(lines[0]).To(ContainSubstring(older.UTC().Format(time.RFC3339)))
+			})
+
+			It("does not name a newer create event for a delete", func() {
+				loseDelete()
+
+				unknown := recorded()
+				older := unknown.UnknownSince.Add(-20 * time.Minute)
+				newer := unknown.UnknownSince.Add(-10 * time.Minute)
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					events := deploymentEventsAt(older, boshEventDelete, deploymentName, deleteTaskID)
+
+					return append(events, deploymentEventsAt(newer, boshEventCreate, deploymentName, createTaskID)...), nil
+				}
+
+				passGrace()
+
+				poll(outcomeDeprovision)
+
+				lines := skippedWarnings()
+
+				Expect(lines).To(HaveLen(1), "the pass logged %v", warnLog.warnings())
+				Expect(lines[0]).To(ContainSubstring(fmt.Sprintf("task %d", deleteTaskID)))
+				Expect(lines[0]).ToNot(ContainSubstring(fmt.Sprintf("task %d", createTaskID)))
+				Expect(lines[0]).To(ContainSubstring(older.UTC().Format(time.RFC3339)))
+			})
 		})
 
 		Describe("a poll over an outcome unknown for a day", func() {
