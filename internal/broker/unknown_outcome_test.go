@@ -1506,6 +1506,37 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			})
 		})
 
+		It("an unknown delete with no unknown-since time asks the director for no events or running tasks", func() {
+			loseDelete()
+
+			record := readRecord()
+			delete(record, "unknown_since")
+			Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+				Fail("the poll read the events of a record with no unknown-since time")
+
+				return nil, nil
+			}
+			director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+				Fail("the poll looked for a running task of a record with no unknown-since time")
+
+				return nil, nil //nolint:nilnil // the spec has already failed
+			}
+
+			passGrace()
+
+			events := len(director.Calls("GetEvents"))
+			running := len(director.Calls("FindRunningTaskForDeployment"))
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete with no unknown-since time answered %+v", response)
+			Expect(response.Description).To(ContainSubstring("does not say when the outcome became unknown"))
+			Expect(director.Calls("GetEvents")).To(HaveLen(events))
+			Expect(director.Calls("FindRunningTaskForDeployment")).To(HaveLen(running))
+		})
+
 		It("an unknown delete is not failed while lookups error past the grace period", func() {
 			contextID := loseDelete()
 
@@ -2003,6 +2034,30 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(response.Description).To(ContainSubstring("does not say when the outcome became unknown"))
 				Expect(recorded().State).To(Equal(outcomeStateUnknown))
 				Expect(recorded().ContextID).To(Equal(contextID))
+			})
+
+			It("asks the director for no events or running tasks for such a record", func() {
+				record := readRecord()
+				delete(record, "unknown_since")
+				Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					Fail("the poll read the events of a record with no unknown-since time")
+
+					return nil, nil
+				}
+				director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+					Fail("the poll looked for a running task of a record with no unknown-since time")
+
+					return nil, nil //nolint:nilnil // the spec has already failed
+				}
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy with no unknown-since time answered %+v", response)
+				Expect(response.Description).To(ContainSubstring("does not say when the outcome became unknown"))
+				Expect(director.Calls("GetEvents")).To(BeEmpty())
+				Expect(director.Calls("FindRunningTaskForDeployment")).To(BeEmpty())
 			})
 
 			It("does not fail a deploy whose deployment exists with no task past it", func() {

@@ -282,21 +282,25 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 			return unknownOutcomeFinding{err: fmt.Errorf("the check of deployment %s failed: %w", deploymentName, err)}
 		}
 
+		if operation.UnknownSince.IsZero() {
+			return unknownOutcomeFinding{reason: reasonNoUnknownSince}
+		}
+
 		finding, found := b.findDeleteTask(ctx, deploymentName, operation.UnknownSince, logger)
 		if found {
 			return finding
 		}
 	case operationTypeProvision:
+		if operation.UnknownSince.IsZero() {
+			return unknownOutcomeFinding{reason: reasonNoUnknownSince}
+		}
+
 		finding, found := b.findCreateTask(ctx, deploymentName, operation.UnknownSince, logger)
 		if found {
 			return finding
 		}
 	default:
 		return unknownOutcomeFinding{reason: fmt.Sprintf("the record names the action %q, which no deployment check covers", operation.Action)}
-	}
-
-	if operation.UnknownSince.IsZero() {
-		return unknownOutcomeFinding{reason: "the record does not say when the outcome became unknown"}
 	}
 
 	if now.Before(operation.UnknownSince.Add(bosh.UnknownOutcomeGrace)) {
@@ -316,6 +320,11 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 
 	return unknownOutcomeFinding{verdict: outcomeNeverStarted}
 }
+
+// reasonNoUnknownSince is why a record that does not say when its outcome
+// became unknown stays unknown. The event window and the grace period both
+// start at that time, so no event or running task is read without it.
+const reasonNoUnknownSince = "the record does not say when the outcome became unknown"
 
 // The descriptions the director gives the task of a deploy and the task of
 // a delete. The director adapter passes a task's description through as
