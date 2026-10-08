@@ -10,12 +10,12 @@
 //	  -drop-delete <deployment> -hold-lookups 3m
 //
 // The proxy serves TLS with a certificate it generates for the listen
-// address and writes that certificate's PEM to the -cert-out path. It
-// forwards each DELETE /deployments/<deployment>, and for the first one
-// the director answers, it closes the client's connection without passing
-// the answer on. With -hold-lookups, every GET /tasks that carries context_id
-// gets a 503 for that long after the drop. Every other request passes
-// through.
+// address and writes that certificate's PEM to the -cert-out path once it
+// is listening on a loopback address. It forwards each DELETE
+// /deployments/<deployment>, and for the first one the director answers,
+// it closes the client's connection without passing the answer on. With
+// -hold-lookups, every GET /tasks that carries context_id gets a 503 for
+// that long after the drop. Every other request passes through.
 package main
 
 import (
@@ -69,15 +69,25 @@ type options struct {
 func main() {
 	logger := log.New(os.Stderr, "faultproxy: ", log.LstdFlags)
 
-	err := run(os.Args[1:], logger)
+	err := run(context.Background(), os.Args[1:], listenTCP, logger)
 	if err != nil {
 		logger.Fatal(err)
 	}
 }
 
-// run parses the flags, writes the proxy's certificate, and serves until
-// an interrupt or a terminate signal.
-func run(args []string, logger *log.Logger) error {
+// listenFunc opens the proxy's listener on an address.
+type listenFunc func(ctx context.Context, address string) (net.Listener, error)
+
+// listenTCP opens a TCP listener on address.
+func listenTCP(ctx context.Context, address string) (net.Listener, error) {
+	return (&net.ListenConfig{}).Listen(ctx, "tcp", address) //nolint:wrapcheck // run wraps it with the address
+}
+
+// run parses the flags, listens with listen, writes the proxy's
+// certificate, and serves until ctx ends or an interrupt or a terminate
+// signal arrives. The certificate is written only once the listener is
+// bound to a loopback address.
+func run(ctx context.Context, args []string, listen listenFunc, logger *log.Logger) error {
 	opts, err := parseOptions(args)
 	if err != nil {
 		return err
@@ -98,6 +108,29 @@ func run(args []string, logger *log.Logger) error {
 		return err
 	}
 
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	listener, err := listen(ctx, opts.listen)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", opts.listen, err)
+	}
+
+	served := false
+
+	defer func() {
+		if !served {
+			_ = listener.Close()
+		}
+	}()
+
+	// A name such as localhost can resolve to an address that is not a
+	// loopback address, so the address the listener bound is checked too.
+	err = requireLoopbackListener(listener)
+	if err != nil {
+		return err
+	}
+
 	certificate, certificatePEM, err := generateCertificate(host, time.Now())
 	if err != nil {
 		return err
@@ -108,18 +141,24 @@ func run(args []string, logger *log.Logger) error {
 		return fmt.Errorf("write the certificate to %s: %w", opts.certOut, err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", opts.listen)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", opts.listen, err)
-	}
-
 	logger.Printf("forwarding https://%s to %s, dropping the first delete of %q, holding lookups for %s",
 		listener.Addr(), config.Director, opts.dropDelete, opts.holdLookups)
 
+	// The server closes the listener once it serves on it.
+	served = true
+
 	return serve(ctx, listener, newServer(proxy, certificate))
+}
+
+// requireLoopbackListener returns an error unless listener is bound to a
+// TCP loopback address.
+func requireLoopbackListener(listener net.Listener) error {
+	address, isTCP := listener.Addr().(*net.TCPAddr)
+	if !isTCP || !address.IP.IsLoopback() {
+		return fmt.Errorf("%w: the listener is bound to %s", errNotLoopback, listener.Addr())
+	}
+
+	return nil
 }
 
 // serve serves TLS on listener until ctx ends, and then shuts the server

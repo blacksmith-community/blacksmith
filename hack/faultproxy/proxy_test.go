@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -319,14 +320,17 @@ func TestFaultProxyHoldsContextIDLookups(t *testing.T) {
 func TestFaultProxyListensOnlyOnLoopback(t *testing.T) {
 	t.Parallel()
 
-	for _, listen := range []string{"127.0.0.1:25556", "[::1]:25556", "localhost:25556"} {
+	for _, listen := range []string{"127.0.0.1:25556", "[::1]:25556", "localhost:25556", "[::ffff:127.0.0.1]:25556"} {
 		_, err := loopbackHost(listen)
 		if err != nil {
 			t.Errorf("the loopback address %s was refused: %v", listen, err)
 		}
 	}
 
-	for _, listen := range []string{"0.0.0.0:25556", "10.0.0.6:25556", ":25556", "director.example:25556"} {
+	for _, listen := range []string{
+		"0.0.0.0:25556", "10.0.0.6:25556", ":25556", "director.example:25556",
+		"[::]:25556", "[::1%lo0]:25556", "[fe80::1%lo0]:25556",
+	} {
 		_, err := loopbackHost(listen)
 		if !errors.Is(err, errNotLoopback) {
 			t.Errorf("the address %s was not refused as not loopback: %v", listen, err)
@@ -350,4 +354,134 @@ func TestFaultProxyKeepsTheDropWhenTheDirectorDoesNotAnswer(t *testing.T) {
 
 	client.expectDropped(resentContextID)
 	client.expectStatus(http.MethodDelete, "/deployments/"+droppedDeployment, resentContextID, http.StatusFound)
+}
+
+// offLoopbackListener is a loopback listener that reports an address that
+// is not a loopback address, as a listen on a name that resolves off
+// loopback would.
+type offLoopbackListener struct {
+	net.Listener
+
+	closed atomic.Bool
+}
+
+func (l *offLoopbackListener) Addr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 25556}
+}
+
+func (l *offLoopbackListener) Close() error {
+	l.closed.Store(true)
+
+	return l.Listener.Close() //nolint:wrapcheck // the test only closes its own listener
+}
+
+// runArgs are the flags of a run that forwards to an address nothing
+// answers on, and writes its certificate to certOut.
+func runArgs(listenAddress, certOut string) []string {
+	return []string{"-listen", listenAddress, "-cert-out", certOut, "-director", "https://127.0.0.1:1"}
+}
+
+func TestRunRefusesAnAddressThatIsNotLoopback(t *testing.T) {
+	t.Parallel()
+
+	certOut := t.TempDir() + "/proxy.pem"
+
+	err := run(t.Context(), runArgs("192.0.2.1:0", certOut), listenTCP, log.New(io.Discard, "", 0))
+	if !errors.Is(err, errNotLoopback) {
+		t.Fatalf("run on 192.0.2.1 returned %v, want %v", err, errNotLoopback)
+	}
+
+	_, statErr := os.Stat(certOut)
+	if !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("run wrote a certificate for an address it refused: %v", statErr)
+	}
+}
+
+func TestRunRefusesAListenerBoundOffLoopback(t *testing.T) {
+	t.Parallel()
+
+	certOut := t.TempDir() + "/proxy.pem"
+
+	var bound *offLoopbackListener
+
+	listenOffLoopback := func(ctx context.Context, _ string) (net.Listener, error) {
+		listener, err := listenTCP(ctx, "127.0.0.1:0")
+		if err != nil {
+			return nil, err
+		}
+
+		bound = &offLoopbackListener{Listener: listener}
+
+		return bound, nil
+	}
+
+	// A run that serves on the refused listener ends with the deadline.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	err := run(ctx, runArgs("localhost:0", certOut), listenOffLoopback, log.New(io.Discard, "", 0))
+	if !errors.Is(err, errNotLoopback) {
+		t.Fatalf("run on a listener bound off loopback returned %v, want %v", err, errNotLoopback)
+	}
+
+	if bound == nil || !bound.closed.Load() {
+		t.Fatal("run left open the listener it refused")
+	}
+
+	_, statErr := os.Stat(certOut)
+	if !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("run wrote a certificate for a listener it refused: %v", statErr)
+	}
+}
+
+func TestRunWritesACertificateOnlyItsUserCanRead(t *testing.T) {
+	t.Parallel()
+
+	certOut := t.TempDir() + "/proxy.pem"
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	finished := make(chan error, 1)
+
+	go func() { finished <- run(ctx, runArgs("127.0.0.1:0", certOut), listenTCP, log.New(io.Discard, "", 0)) }()
+
+	deadline := time.Now().Add(10 * time.Second)
+
+	var info os.FileInfo
+
+	for {
+		var err error
+
+		info, err = os.Stat(certOut)
+		if err == nil && info.Size() > 0 {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("run wrote no certificate: %v", err)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("the certificate has mode %o, want 600", mode)
+	}
+
+	certificatePEM, err := os.ReadFile(certOut) //nolint:gosec // the test reads the file it named in its own temporary directory
+	if err != nil {
+		t.Fatalf("read the certificate: %v", err)
+	}
+
+	if !x509.NewCertPool().AppendCertsFromPEM(certificatePEM) {
+		t.Fatal("the certificate file holds no PEM certificate")
+	}
+
+	cancel()
+
+	err = <-finished
+	if err != nil {
+		t.Fatalf("run did not stop cleanly: %v", err)
+	}
 }
