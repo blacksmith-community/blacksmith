@@ -75,3 +75,32 @@ func BatchWatchesHeld(batch *BatchDirector) (int, int) {
 
 	return len(batch.byTask), len(batch.byContextID)
 }
+
+// JoinBatchQueue puts a waiter that never takes a slot at the back of a
+// batch director's queue, and returns its ticket.
+func JoinBatchQueue(batch *BatchDirector) uint64 {
+	batch.mu.Lock()
+	defer batch.mu.Unlock()
+
+	ticket := batch.nextTicket
+	batch.nextTicket++
+	batch.waiters = append(batch.waiters, ticket)
+
+	return ticket
+}
+
+// LeaveBatchQueue takes a ticket out of a batch director's queue, the way
+// a waiter that times out or is cancelled leaves it.
+func LeaveBatchQueue(batch *BatchDirector, ticket uint64) {
+	batch.leaveQueue(ticket)
+}
+
+// TakeBatchSlotAtHead gives a slot to the waiter at the head of a batch
+// director's queue, the way acquireSlot does for a waiter whose turn has
+// come.
+func TakeBatchSlotAtHead(batch *BatchDirector) {
+	batch.mu.Lock()
+	defer batch.mu.Unlock()
+
+	batch.takeHeadLocked()
+}

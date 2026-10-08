@@ -21,10 +21,11 @@ import (
 // long.
 const batchWaitLimit = 5 * time.Second
 
-// The description of an errand's task, and the task states the tests
-// use.
+// The description of an errand's task, a refusal's text, and the task
+// states the tests use.
 const (
 	errandDescription   = "run errand smoke-tests"
+	notAuthorized       = "Not authorized"
 	batchTaskProcessing = "processing"
 	batchTaskDone       = "done"
 	batchTaskError      = "error"
@@ -86,8 +87,13 @@ type fakeBatchBase struct {
 	// contextLookups counts the FindTaskByContextID calls.
 	contextLookups int
 	// onLookup, when set, runs at the start of each FindTaskByContextID
-	// call, outside the fake's lock.
-	onLookup func()
+	// call, outside the fake's lock, with the call's context.
+	onLookup func(ctx context.Context)
+	// completeAnswer makes a blocking deploy return the task with its
+	// deployment and end time, as the director records it.
+	completeAnswer bool
+	// getState, when set, replaces the state of the task GetTask returns.
+	getState string
 	// running is the tasks FindRunningTasksForDeployment answers with.
 	running []bosh.Task
 	// runningErr, when set, is every FindRunningTasksForDeployment call's
@@ -104,6 +110,9 @@ type fakeBatchBase struct {
 	taskWithErr *bosh.Task
 	// noTask makes UpdateDeployment accept nothing and name no task.
 	noTask bool
+	// zeroTask makes UpdateDeployment accept nothing and return a task
+	// whose ID is 0.
+	zeroTask bool
 	// hold, when set, runs first in every UpdateDeployment call, so a test
 	// can keep the call in flight.
 	hold func(name string)
@@ -136,6 +145,10 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 		return nil, nil //nolint:nilnil // a deploy the director names no task for is what the test is about
 	}
 
+	if f.zeroTask {
+		return &bosh.Task{State: batchTaskProcessing, Deployment: name}, nil
+	}
+
 	f.mu.Lock()
 	f.nextID++
 	started := &fakeBatchTask{
@@ -161,7 +174,14 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 
 	// The bosh-cli adapter's task carries no deployment and no end time.
 	finished := f.taskSnapshot(accepted.ID)
-	finished.Deployment, finished.EndedAt = "", nil
+
+	f.mu.Lock()
+	complete := f.completeAnswer
+	f.mu.Unlock()
+
+	if !complete {
+		finished.Deployment, finished.EndedAt = "", nil
+	}
 
 	return finished, nil
 }
@@ -169,7 +189,7 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 func (f *fakeBatchBase) GetTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	f.mu.Lock()
 	f.getCalls++
-	getErr, getBlocks, noAnswer := f.getErr, f.getBlocks, f.noAnswer
+	getErr, getBlocks, noAnswer, getState := f.getErr, f.getBlocks, f.noAnswer, f.getState
 	_, found := f.tasks[taskID]
 	f.mu.Unlock()
 
@@ -191,7 +211,12 @@ func (f *fakeBatchBase) GetTask(ctx context.Context, taskID int) (*bosh.Task, er
 		return nil, fmt.Errorf("task %d: %w", taskID, errBatchTestRejected)
 	}
 
-	return f.taskSnapshot(taskID), nil
+	task := f.taskSnapshot(taskID)
+	if getState != "" {
+		task.State = getState
+	}
+
+	return task, nil
 }
 
 func (f *fakeBatchBase) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
@@ -223,13 +248,13 @@ func (f *fakeBatchBase) WaitForTask(ctx context.Context, taskID int) (*bosh.Task
 	}
 }
 
-func (f *fakeBatchBase) FindTaskByContextID(_ context.Context, contextID string) (*bosh.Task, error) {
+func (f *fakeBatchBase) FindTaskByContextID(ctx context.Context, contextID string) (*bosh.Task, error) {
 	f.mu.Lock()
 	onLookup := f.onLookup
 	f.mu.Unlock()
 
 	if onLookup != nil {
-		onLookup()
+		onLookup(ctx)
 	}
 
 	f.mu.Lock()
@@ -1173,6 +1198,9 @@ func TestBatchSlotOfAFinishedDeployIsReleasedWhenTheDirectorCannotBeRead(t *test
 	}{
 		"a failed read":         {setup: func(f *fakeBatchBase) { f.getErr, f.waitErr = errBatchTestRejected, errBatchTestRejected }},
 		"a read that Stop ends": {setup: func(f *fakeBatchBase) { f.getBlocks = true }, stop: true},
+		"a read that shows the task running": {
+			setup: func(f *fakeBatchBase) { f.getState, f.waitErr = batchTaskProcessing, errBatchTestRejected },
+		},
 	}
 
 	for name, failure := range failures {
@@ -1841,19 +1869,30 @@ func TestBatchSlotIsReleasedWhenTheBaseDirectorPanics(t *testing.T) {
 func TestBatchSlotIsReleasedWhenTheDirectorNamesNoTask(t *testing.T) {
 	t.Parallel()
 
-	base := newFakeBatchBase()
-	base.noTask = true
-	batch, _ := newTestBatch(t, base, 1)
-
-	task, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
-	if err != nil || task != nil {
-		t.Fatalf("expected no task and no error, got %+v and %v", task, err)
+	answers := map[string]func(f *fakeBatchBase){
+		"no task":              func(f *fakeBatchBase) { f.noTask = true },
+		"a task whose ID is 0": func(f *fakeBatchBase) { f.zeroTask = true },
 	}
 
-	waitBatchStats(t, batch, 0, 0)
+	for name, answer := range answers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	if running := bosh.BatchWatchersRunning(batch); running != 0 {
-		t.Fatalf("expected no watcher, got %d", running)
+			base := newFakeBatchBase()
+			answer(base)
+			batch, _ := newTestBatch(t, base, 1)
+
+			task, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+			if err != nil || (task != nil && task.ID != 0) {
+				t.Fatalf("expected no task named and no error, got %+v and %v", task, err)
+			}
+
+			waitBatchStats(t, batch, 0, 0)
+
+			if running := bosh.BatchWatchersRunning(batch); running != 0 {
+				t.Fatalf("expected no watcher, got %d", running)
+			}
+		})
 	}
 }
 
@@ -1897,6 +1936,9 @@ func TestStopWhileADeployIsInFlightReleasesItsSlot(t *testing.T) {
 	answers := map[string]func(base *fakeBatchBase){
 		"an accepted deploy": func(*fakeBatchBase) {},
 		"a lost answer":      func(base *fakeBatchBase) { base.updateErr = lostAnswer(firstDeployment) },
+		"an error that keeps the slot": func(base *fakeBatchBase) {
+			base.updateErr = func(string) error { return errBatchTestRejected }
+		},
 	}
 
 	for name, answer := range answers {
@@ -1950,6 +1992,12 @@ func TestBatchSlotIsKeptWhenTheDeployMayHaveStarted(t *testing.T) {
 		"a request that was sent": {
 			err: &boshapi.TransportError{
 				Method: "POST", Path: deploymentsRoute, ContextID: firstContextID, Sent: true, Mutation: true, Attempts: 1, Err: errBatchTestRejected,
+			},
+			contextID: firstContextID,
+		},
+		"a sent request not marked as a change": {
+			err: &boshapi.TransportError{
+				Method: "POST", Path: deploymentsRoute, ContextID: firstContextID, Sent: true, Attempts: 1, Err: errBatchTestRejected,
 			},
 			contextID: firstContextID,
 		},
@@ -2060,7 +2108,7 @@ func TestWatcherGivesUpOnRefusedReadsAfterTheGrace(t *testing.T) {
 	t.Parallel()
 
 	refusals := map[string]error{
-		"a 401": &boshapi.APIError{StatusCode: 401, Method: "GET", Path: "/tasks/101", Description: "Not authorized"},
+		"a 401": &boshapi.APIError{StatusCode: 401, Method: "GET", Path: "/tasks/101", Description: notAuthorized},
 		"a 403": &boshapi.APIError{StatusCode: 403, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeNotAuthorized},
 	}
 
@@ -2097,7 +2145,7 @@ func TestWatcherGivesUpOnRefusedReadsAfterTheGrace(t *testing.T) {
 func TestBatchLostAnswerGivesUpOnRefusedLookupsAfterTheGrace(t *testing.T) {
 	t.Parallel()
 
-	refusal := &boshapi.APIError{StatusCode: 401, Method: "GET", Path: taskListRoute, Description: "Not authorized"}
+	refusal := &boshapi.APIError{StatusCode: 401, Method: "GET", Path: taskListRoute, Description: notAuthorized}
 
 	base := newFakeBatchBase()
 	base.set(func(f *fakeBatchBase) { f.contextErr = refusal })
@@ -2340,7 +2388,7 @@ func TestBatchLostAnswerJudgesTheGraceByWhenTheCheckBegan(t *testing.T) {
 	var once sync.Once
 
 	base.set(func(f *fakeBatchBase) {
-		f.onLookup = func() { once.Do(func() { clock.advance(bosh.UnknownOutcomeGrace) }) }
+		f.onLookup = func(context.Context) { once.Do(func() { clock.advance(bosh.UnknownOutcomeGrace) }) }
 	})
 
 	startLostAnswer(t, base, batch)
@@ -2497,5 +2545,171 @@ func TestBatchWaitersGetTheirOwnCopyOfTheFinalTask(t *testing.T) {
 
 	if second.State != batchTaskDone || !second.EndedAt.Equal(ended) {
 		t.Fatalf("expected the second waiter's task to be untouched, got state %s and end %v", second.State, second.EndedAt)
+	}
+}
+
+// A deploy call that returns the director's full record of a finished task
+// needs no read of it, and its waiters get that record.
+func TestBatchFinishedDeployWithAFullRecordIsNotReadAgain(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.blockUntilFinished = true
+	base.completeAnswer = true
+	batch, _ := newTestBatch(t, base, 1)
+
+	returned := finishBlockingDeploy(t, base, batch)
+
+	task, err := batch.WaitForTask(t.Context(), returned.ID)
+	if err != nil || task == nil || task.Deployment != firstDeployment || task.EndedAt == nil || task.State != batchTaskDone {
+		t.Fatalf("expected the record the deploy call returned, got %+v and %v", task, err)
+	}
+
+	if gets := base.gets(); gets != 0 {
+		t.Fatalf("expected no read of a task whose record was complete, got %d", gets)
+	}
+}
+
+// Stop wakes a deploy waiting for a slot even when the slot is held by a
+// deploy still in its director call, which no watcher follows yet.
+func TestStopWakesAWaiterBehindADeployStillInItsCall(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	gate, entered := holdDeploys(base)
+	batch, _ := newTestBatch(t, base, 1)
+
+	first := deployInBackground(t.Context(), batch, firstDeployment)
+
+	select {
+	case <-entered:
+	case <-time.After(batchWaitLimit):
+		t.Fatal("the deploy never reached the base director")
+	}
+
+	waiting := queueDeploy(t.Context(), t, batch, secondDeployment)
+
+	batch.Stop()
+
+	select {
+	case err := <-waiting:
+		if !errors.Is(err, bosh.ErrBatchDirectorStopped) {
+			t.Fatalf("expected the waiter to get ErrBatchDirectorStopped, got %v", err)
+		}
+	case <-time.After(batchWaitLimit):
+		t.Fatal("Stop did not wake the deploy waiting for a slot")
+	}
+
+	close(gate)
+	<-first
+	waitBatchStats(t, batch, 0, 0)
+}
+
+// A waiter at the head of the queue that leaves while a slot is free
+// wakes the waiter behind it, which takes the slot.
+func TestAWaiterThatLeavesTheHeadWakesTheNextWaiter(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	ticket := bosh.JoinBatchQueue(batch)
+	waiting := queueDeploy(t.Context(), t, batch, firstDeployment)
+
+	bosh.LeaveBatchQueue(batch, ticket)
+
+	if name := base.waitAccepted(t); name != firstDeployment {
+		t.Fatalf("expected dep-1 to be accepted once the head left, got %s", name)
+	}
+
+	err := <-waiting
+	if err != nil {
+		t.Fatalf("expected dep-1 to be accepted, got %v", err)
+	}
+}
+
+// A waiter that takes a slot from the head of the queue wakes the waiter
+// behind it, which takes a slot the limit still allows.
+func TestAWaiterThatTakesASlotWakesTheNextWaiter(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 2)
+
+	bosh.JoinBatchQueue(batch)
+	waiting := queueDeploy(t.Context(), t, batch, firstDeployment)
+
+	bosh.TakeBatchSlotAtHead(batch)
+
+	if name := base.waitAccepted(t); name != firstDeployment {
+		t.Fatalf("expected dep-1 to be accepted once the head took its slot, got %s", name)
+	}
+
+	err := <-waiting
+	if err != nil {
+		t.Fatalf("expected dep-1 to be accepted, got %v", err)
+	}
+
+	waitBatchStats(t, batch, 2, 0)
+}
+
+// A refused lookup that follows a lookup failing some other way starts a
+// new run of refusals, so the shorter limit counts from that refusal.
+func TestBatchLostAnswerCountsRefusalsFromTheLatestRun(t *testing.T) {
+	t.Parallel()
+
+	refusal := &boshapi.APIError{StatusCode: 401, Method: "GET", Path: taskListRoute, Description: notAuthorized}
+
+	base := newFakeBatchBase()
+	base.set(func(f *fakeBatchBase) { f.contextErr = refusal })
+	batch, clock := newTestBatch(t, base, 1)
+
+	startLostAnswer(t, base, batch)
+	checkLostAnswerHeld(t, batch, clock, 10*time.Minute)
+
+	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+	base.set(func(f *fakeBatchBase) { f.contextErr = errBatchTestRejected })
+	clock.advance(bosh.BatchLostAnswerInterval)
+	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+	base.set(func(f *fakeBatchBase) { f.contextErr = refusal })
+	clock.advance(bosh.BatchLostAnswerInterval)
+
+	checkLostAnswerHeld(t, batch, clock, bosh.UnknownOutcomeGrace-time.Minute)
+	checkLostAnswerHeld(t, batch, clock, time.Minute)
+	waitBatchStats(t, batch, 0, 0)
+}
+
+// A lookup that Stop ends after the grace ends the watcher as stopped,
+// not as a lost answer that no task has the context ID of.
+func TestBatchLostAnswerStoppedDuringALookupReportsTheStop(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, clock, logger := newLoggedTestBatch(t, base)
+	graceEnds := clock.Now().Add(bosh.UnknownOutcomeGrace)
+
+	var once sync.Once
+
+	base.set(func(f *fakeBatchBase) {
+		f.onLookup = func(ctx context.Context) {
+			if clock.Now().Before(graceEnds) {
+				return
+			}
+
+			once.Do(func() {
+				go batch.Stop()
+
+				<-ctx.Done()
+			})
+		}
+	})
+
+	startLostAnswer(t, base, batch)
+	checkLostAnswerHeld(t, batch, clock, bosh.UnknownOutcomeGrace)
+	waitUntil(t, "the watcher ends", func() bool { return bosh.BatchWatchersRunning(batch) == 0 })
+	waitBatchStats(t, batch, 0, 0)
+
+	if logged := logger.count("ERROR", "No task has the context ID"); logged != 0 {
+		t.Fatalf("expected the watcher to end as stopped, but it gave up on the lost answer %d times", logged)
 	}
 }

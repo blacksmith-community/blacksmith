@@ -658,21 +658,25 @@ func (b *BatchDirector) acquireSlot(ctx context.Context) error {
 		b.mu.Lock()
 	}
 
-	b.waiters = b.waiters[1:]
-	b.inFlight++
-
-	// The next waiter is first in the queue now, and may take a slot the
-	// limit still allows.
-	if len(b.waiters) > 0 {
-		b.signalLocked()
-	}
-
+	b.takeHeadLocked()
 	active, queued := b.inFlight, len(b.waiters)
 	b.mu.Unlock()
 
 	b.logger.Debugf("Acquired batch slot (active: %d, queued: %d)", active, queued)
 
 	return nil
+}
+
+// takeHeadLocked gives a slot to the waiter at the head of the queue. The
+// next waiter is first in the queue then, and is woken, because it may
+// take a slot the limit still allows. The caller holds mu.
+func (b *BatchDirector) takeHeadLocked() {
+	b.waiters = b.waiters[1:]
+	b.inFlight++
+
+	if len(b.waiters) > 0 {
+		b.signalLocked()
+	}
 }
 
 // leaveQueue takes a deploy that stopped waiting for a slot out of the
