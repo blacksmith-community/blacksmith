@@ -11,9 +11,9 @@
 //
 // The proxy serves TLS with a certificate it generates for the listen
 // address and writes that certificate's PEM to the -cert-out path. It
-// forwards the first DELETE /deployments/<deployment> and, once the
-// director answers, closes the client's connection without passing the
-// answer on. With -hold-lookups, every GET /tasks that carries context_id
+// forwards each DELETE /deployments/<deployment>, and for the first one
+// the director answers, it closes the client's connection without passing
+// the answer on. With -hold-lookups, every GET /tasks that carries context_id
 // gets a 503 for that long after the drop. Every other request passes
 // through.
 package main

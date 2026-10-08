@@ -128,10 +128,12 @@ func NewProxy(config Config) (*Proxy, error) {
 }
 
 // ServeHTTP forwards the request, unless it is a task lookup by context ID
-// that the proxy holds.
+// that the proxy holds. A delete of the deployment is marked as one whose
+// answer may be dropped, and the drop is taken only once the director
+// answers it.
 func (p *Proxy) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	switch {
-	case p.isDropTarget(request) && p.takeDrop():
+	case p.isDropTarget(request):
 		request = request.WithContext(context.WithValue(request.Context(), dropKey{}, true))
 	case p.holdsLookup(request):
 		p.config.Log.Printf("refused GET %s with context ID %s, because lookups by context ID are held for %s after the drop",
@@ -152,7 +154,8 @@ func (p *Proxy) isDropTarget(request *http.Request) bool {
 		request.URL.Path == "/deployments/"+p.config.DropDelete
 }
 
-// takeDrop reports true once, for the first delete of the deployment.
+// takeDrop reports true once, for the first delete of the deployment that
+// the director answers.
 func (p *Proxy) takeDrop() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -182,12 +185,13 @@ func (p *Proxy) holdsLookup(request *http.Request) bool {
 	return p.config.Now().Before(p.droppedAt.Add(p.config.HoldLookups))
 }
 
-// dropAnswer reads and throws away the director's answer to the dropped
-// delete, and returns errAnswerDropped, so handleError closes the client's
-// connection. Every other answer passes through.
+// dropAnswer reads and throws away the director's answer to the first
+// delete of the deployment it answers, and returns errAnswerDropped, so
+// handleError closes the client's connection. Every other answer passes
+// through.
 func (p *Proxy) dropAnswer(response *http.Response) error {
 	dropping, _ := response.Request.Context().Value(dropKey{}).(bool)
-	if !dropping {
+	if !dropping || !p.takeDrop() {
 		return nil
 	}
 
@@ -215,6 +219,11 @@ func (p *Proxy) handleError(writer http.ResponseWriter, request *http.Request, e
 
 	p.config.Log.Printf("could not forward %s %s with context ID %s: %v",
 		request.Method, request.URL.Path, request.Header.Get(contextIDHeader), err)
+
+	if dropping, _ := request.Context().Value(dropKey{}).(bool); dropping {
+		p.config.Log.Printf("the director did not answer that delete of %s, so the drop stays for the next one", p.config.DropDelete)
+	}
+
 	writer.WriteHeader(http.StatusBadGateway)
 }
 

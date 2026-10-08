@@ -40,6 +40,10 @@ type seenRequest struct {
 type fakeDirector struct {
 	server *httptest.Server
 
+	// abortDeletes is how many deletes from now on the director drops
+	// with no answer.
+	abortDeletes atomic.Int32
+
 	mu   sync.Mutex
 	seen []seenRequest
 }
@@ -55,6 +59,10 @@ func newFakeDirector(t *testing.T) *fakeDirector {
 			contextID: request.Header.Get(contextIDHeader),
 		})
 		director.mu.Unlock()
+
+		if request.Method == http.MethodDelete && director.abortDeletes.Add(-1) >= 0 {
+			panic(http.ErrAbortHandler)
+		}
 
 		if request.Method == http.MethodDelete {
 			writer.Header().Set("Location", taskLocation)
@@ -324,4 +332,22 @@ func TestFaultProxyListensOnlyOnLoopback(t *testing.T) {
 			t.Errorf("the address %s was not refused as not loopback: %v", listen, err)
 		}
 	}
+}
+
+func TestFaultProxyKeepsTheDropWhenTheDirectorDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+
+	director := newFakeDirector(t)
+	director.abortDeletes.Store(1)
+
+	client := startProxy(t, director, 0, time.Now)
+
+	client.expectStatus(http.MethodDelete, "/deployments/"+droppedDeployment, droppedContextID, http.StatusBadGateway)
+
+	if !strings.Contains(client.logs.String(), "the drop stays for the next one") {
+		t.Fatalf("the proxy did not log that the drop stays: %q", client.logs.String())
+	}
+
+	client.expectDropped(resentContextID)
+	client.expectStatus(http.MethodDelete, "/deployments/"+droppedDeployment, resentContextID, http.StatusFound)
 }
