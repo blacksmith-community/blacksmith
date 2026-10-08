@@ -2784,6 +2784,53 @@ func TestBatchSupersedingALostAnswerNeverFreesTheSlotToAQueuedDeploy(t *testing.
 	}
 }
 
+// The batch and pooled directors pass the listing of the running tasks of
+// a deployment on to the base director, with the deployment and the error.
+func TestRunningTasksListingPassesThroughTheBatchAndPooledDirectors(t *testing.T) {
+	t.Parallel()
+
+	const (
+		batchWrapper  = "batch"
+		pooledWrapper = "pooled"
+	)
+
+	wrappers := map[string]func(base bosh.Director) bosh.Director{
+		batchWrapper:  func(base bosh.Director) bosh.Director { return bosh.NewBatchDirector(base, 1, time.Minute, nil) },
+		pooledWrapper: func(base bosh.Director) bosh.Director { return bosh.NewPooledDirector(base, 1, time.Minute, nil) },
+	}
+
+	for name, wrap := range wrappers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base := newFakeBatchBase()
+			base.running = []bosh.Task{{ID: 700, State: batchTaskProcessing, Description: bosh.DeployTaskDescription, Deployment: firstDeployment}}
+			wrapped := wrap(base)
+
+			tasks, err := wrapped.FindRunningTasksForDeployment(t.Context(), firstDeployment)
+			if err != nil || len(tasks) != 1 || tasks[0].ID != 700 {
+				t.Fatalf("expected the running task of %s, got %+v and %v", firstDeployment, tasks, err)
+			}
+
+			tasks, err = wrapped.FindRunningTasksForDeployment(t.Context(), secondDeployment)
+			if err != nil || len(tasks) != 0 {
+				t.Fatalf("expected no task for %s, got %+v and %v", secondDeployment, tasks, err)
+			}
+
+			if asked := base.runningAskedFor(); !slices.Equal(asked, []string{firstDeployment, secondDeployment}) {
+				t.Fatalf("expected the listings to name the deployments asked about, got %q", asked)
+			}
+
+			base.set(func(f *fakeBatchBase) { f.runningErr = errBatchTestRejected })
+
+			_, err = wrapped.FindRunningTasksForDeployment(t.Context(), firstDeployment)
+			if !errors.Is(err, errBatchTestRejected) {
+				t.Fatalf("expected the base director's error, got %v", err)
+			}
+		})
+	}
+}
+
 // A task kept for waiters shares no end time with the task the deploy call
 // returned, so a caller that changes the one does not change the other.
 func TestBatchFinishedDeployKeepsItsOwnEndTime(t *testing.T) {
