@@ -36,12 +36,24 @@ const (
 
 	// Timeout for init script execution.
 	InitScriptTimeout = 5 * time.Minute
+
+	// releaseUploadDone is the state of an upload task that succeeded.
+	releaseUploadDone = "done"
 )
 
 // Error variables for err113 compliance.
 var (
 	ErrCredentialsFieldNotFound = errors.New("credentials field not found in manifest")
 	ErrCredentialsNotMap        = errors.New("failed to get credentials map: credentials is a string, not a map")
+	// ErrReleaseUploadFailed marks a plan release whose upload task did not
+	// succeed and which the director still does not have.
+	ErrReleaseUploadFailed = errors.New("BOSH release upload failed")
+	// ErrNoReleaseUploadTask marks a release upload the director accepted
+	// without naming a task to wait for.
+	ErrNoReleaseUploadTask = errors.New("the director named no task for the BOSH release upload")
+	// ErrReleaseUploadUnanswered marks a wait on a release upload task that
+	// returned neither the task nor an error.
+	ErrReleaseUploadUnanswered = errors.New("the wait on the BOSH release upload task returned no task")
 )
 
 func GetWorkDir() string {
@@ -289,7 +301,7 @@ func GenManifest(p services.Plan, manifests ...map[interface{}]interface{}) (str
 	return manifestStr, nil
 }
 
-func UploadReleasesFromManifest(ctx context.Context, raw string, director bosh.Director, loggerInstance logger.Logger) error {
+func UploadReleasesFromManifest(ctx context.Context, raw string, director bosh.Director, loggerInstance logger.Logger, progress func(message string)) error {
 	manifest, err := parseManifestReleases(raw)
 	if err != nil {
 		return err
@@ -300,7 +312,7 @@ func UploadReleasesFromManifest(ctx context.Context, raw string, director bosh.D
 		return err
 	}
 
-	return uploadMissingReleases(ctx, manifest.Releases, existingReleases, director, loggerInstance)
+	return uploadMissingReleases(ctx, manifest.Releases, existingReleases, director, loggerInstance, progress)
 }
 
 type manifestReleases struct {
@@ -366,11 +378,11 @@ func uploadMissingReleases(ctx context.Context, releases []struct {
 	Version string `yaml:"version"`
 	URL     string `yaml:"url"`
 	SHA1    string `yaml:"sha1"`
-}, existingReleases map[string]bool, director bosh.Director, loggerInstance logger.Logger) error {
+}, existingReleases map[string]bool, director bosh.Director, loggerInstance logger.Logger, progress func(message string)) error {
 	loggerInstance.Debug("determining which BOSH releases need uploaded")
 
 	for _, release := range releases {
-		err := processRelease(ctx, release, existingReleases, director, loggerInstance)
+		err := processRelease(ctx, release, existingReleases, director, loggerInstance, progress)
 		if err != nil {
 			return err
 		}
@@ -384,7 +396,7 @@ func processRelease(ctx context.Context, release struct {
 	Version string `yaml:"version"`
 	URL     string `yaml:"url"`
 	SHA1    string `yaml:"sha1"`
-}, existingReleases map[string]bool, director bosh.Director, loggerInstance logger.Logger) error {
+}, existingReleases map[string]bool, director bosh.Director, loggerInstance logger.Logger, progress func(message string)) error {
 	releaseKey := release.Name + "/" + release.Version
 
 	switch {
@@ -397,13 +409,93 @@ func processRelease(ctx context.Context, release struct {
 	default:
 		loggerInstance.Debug("uploading BOSH release %s/%s from %s (sha1 %s)...", release.Name, release.Version, release.URL, release.SHA1)
 
-		_, err := director.UploadRelease(ctx, release.URL, release.SHA1)
+		task, err := director.UploadRelease(ctx, release.URL, release.SHA1)
 		if err != nil {
 			return fmt.Errorf("failed to upload BOSH release %s/%s: %w", release.Name, release.Version, err)
 		}
+
+		return awaitReleaseUpload(ctx, release.Name, release.Version, release.URL, task, director, loggerInstance, progress)
 	}
 
 	return nil
+}
+
+// awaitReleaseUpload waits for the director task that uploads a plan's
+// release, so the deploy that follows finds the release on the director.
+// A failed upload task is forgiven when the release is on the director
+// anyway, because a concurrent provision uploaded the same one. A wait that
+// stops first leaves the upload task running and fails the provision, and
+// a retried provision finds the release once the upload lands.
+func awaitReleaseUpload(ctx context.Context, name, version, url string, task *bosh.Task, director bosh.Director, loggerInstance logger.Logger, progress func(message string)) error {
+	if task == nil || task.ID <= 0 {
+		return fmt.Errorf("%w: BOSH release %s/%s from %s", ErrNoReleaseUploadTask, name, version, url)
+	}
+
+	loggerInstance.Info("BOSH task %d is uploading release %s/%s from %s; waiting for it to finish", task.ID, name, version, url)
+
+	if progress != nil {
+		progress(fmt.Sprintf("Uploading BOSH release %s/%s (task %d)", name, version, task.ID))
+	}
+
+	finished, err := director.WaitForTask(ctx, task.ID)
+	if err != nil {
+		loggerInstance.Error("stopped waiting for BOSH task %d, which uploads release %s/%s, and left it running: %s", task.ID, name, version, err)
+
+		return fmt.Errorf("stopped waiting for BOSH task %d, which uploads release %s/%s from %s, so the upload task was left running, "+
+			"and a retried provision finds the release once the upload lands: %w", task.ID, name, version, url, err)
+	}
+
+	if finished == nil {
+		return fmt.Errorf("%w: BOSH task %d, which uploads release %s/%s from %s", ErrReleaseUploadUnanswered, task.ID, name, version, url)
+	}
+
+	if finished.State == releaseUploadDone {
+		loggerInstance.Info("BOSH task %d uploaded release %s/%s", task.ID, name, version)
+
+		return nil
+	}
+
+	present, listErr := releasePresent(ctx, director, name, version)
+	if listErr != nil {
+		loggerInstance.Error("BOSH task %d, which uploads release %s/%s, ended in state %s, and the releases could not be listed again: %s", task.ID, name, version, finished.State, listErr)
+
+		return fmt.Errorf("%w: BOSH release %s/%s from %s, BOSH task %d ended in state %s: %s; the releases could not be listed again to check for it: %w",
+			ErrReleaseUploadFailed, name, version, url, task.ID, finished.State, finished.Result, listErr)
+	}
+
+	if present {
+		loggerInstance.Warn("BOSH task %d, which uploads release %s/%s, ended in state %s (%s), but the director now has the release, "+
+			"most likely from a concurrent upload of the same release, so the provision goes on", task.ID, name, version, finished.State, finished.Result)
+
+		return nil
+	}
+
+	loggerInstance.Error("BOSH task %d, which uploads release %s/%s from %s, ended in state %s: %s", task.ID, name, version, url, finished.State, finished.Result)
+
+	return fmt.Errorf("%w: BOSH release %s/%s from %s, BOSH task %d ended in state %s: %s",
+		ErrReleaseUploadFailed, name, version, url, task.ID, finished.State, finished.Result)
+}
+
+// releasePresent reports whether the director has release name at version.
+func releasePresent(ctx context.Context, director bosh.Director, name, version string) (bool, error) {
+	releases, err := director.GetReleases(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get BOSH releases: %w", err)
+	}
+
+	for _, release := range releases {
+		if release.Name != name {
+			continue
+		}
+
+		for _, releaseVersion := range release.ReleaseVersions {
+			if releaseVersion.Version == version {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func GetCreds(ctx context.Context, instanceID string, plan services.Plan, director bosh.Director, deploymentManifest string, loggerInstance logger.Logger) (interface{}, error) {

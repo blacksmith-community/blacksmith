@@ -38,6 +38,24 @@ type contextDirector struct {
 
 	onFindTaskByContextID func(ctx context.Context, contextID string) (*bosh.Task, error)
 	onGetTask             func(ctx context.Context, taskID int) (*bosh.Task, error)
+	onUploadRelease       func(ctx context.Context, url, sha1 string) (*bosh.Task, error)
+	onWaitForTask         func(ctx context.Context, taskID int) (*bosh.Task, error)
+}
+
+func (d *contextDirector) UploadRelease(ctx context.Context, url, sha1 string) (*bosh.Task, error) {
+	if d.onUploadRelease != nil {
+		return d.onUploadRelease(ctx, url, sha1)
+	}
+
+	return d.ScriptedBOSHDirector.UploadRelease(ctx, url, sha1) //nolint:wrapcheck // the double passes the scripted error through
+}
+
+func (d *contextDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
+	if d.onWaitForTask != nil {
+		return d.onWaitForTask(ctx, taskID)
+	}
+
+	return d.ScriptedBOSHDirector.WaitForTask(ctx, taskID) //nolint:wrapcheck // the double passes the scripted error through
 }
 
 func (d *contextDirector) GetTask(ctx context.Context, taskID int) (*bosh.Task, error) {
@@ -544,6 +562,71 @@ var _ = Describe("Detached broker work", func() {
 			Expect(response.Description).To(HavePrefix("Provision stopped by broker shutdown: "))
 			Expect(response.Description).ToNot(ContainSubstring("Release upload failed"))
 		})
+	})
+
+	It("provision progress names the release upload without recording its task", func() {
+		serviceCtx, shutdown := context.WithCancel(ctx)
+		defer shutdown()
+
+		brokerInstance.ServiceContext = serviceCtx
+
+		plan := brokerInstance.Plans[serviceID+"/"+planID]
+		plan.Manifest = map[interface{}]interface{}{
+			"name":            "placeholder",
+			"instance_groups": []interface{}{},
+			"releases": []interface{}{
+				map[interface{}]interface{}{
+					"name":    "redis",
+					"version": "18",
+					"url":     "https://releases.example.test/redis-18.tgz",
+					"sha1":    "0123456789abcdef",
+				},
+			},
+		}
+		brokerInstance.Plans[serviceID+"/"+planID] = plan
+
+		uploadWaiting := make(chan struct{})
+
+		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
+		director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
+		director.onUploadRelease = func(context.Context, string, string) (*bosh.Task, error) {
+			return &bosh.Task{ID: 7, State: "processing", Description: "create release"}, nil
+		}
+		director.onWaitForTask = func(callCtx context.Context, taskID int) (*bosh.Task, error) {
+			close(uploadWaiting)
+			<-callCtx.Done()
+
+			return nil, &bosh.DirectorCallError{Operation: "WaitForTask", Cause: callCtx.Err(), Err: callCtx.Err(), TaskID: taskID, Task: bosh.TaskLeftRunning}
+		}
+		director.onCreateDeployment = func(context.Context, string) (*bosh.Task, error) {
+			defer GinkgoRecover()
+
+			Fail("the deploy was sent while the release upload ran")
+
+			return nil, errDirectorUnreachable
+		}
+
+		_, _, err := brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
+			ServiceID: serviceID, PlanID: planID, OrganizationGUID: "org-guid", SpaceGUID: "space-guid",
+		}, true)
+		Expect(err).ToNot(HaveOccurred())
+
+		Eventually(uploadWaiting, 10*time.Second).Should(BeClosed())
+
+		_, task, _, err := vaultClient.State(ctx, instanceID)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(task).To(BeZero(), "the upload task was recorded as the provision's task")
+
+		var record struct {
+			Description string `json:"description"`
+		}
+
+		exists, err := vaultClient.Get(ctx, instanceID+"/task", &record)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(exists).To(BeTrue())
+		Expect(record.Description).To(Equal("Uploading BOSH release redis/18 (task 7)"))
+
+		stopBrokerGoroutines(shutdown)
 	})
 
 	It("provisioning works without a service context", func() {

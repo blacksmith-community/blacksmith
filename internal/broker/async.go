@@ -357,7 +357,13 @@ func (p *provisioningPhase) uploadReleases(ctx context.Context, manifestStr stri
 	p.logger.Debug("uploading releases (if necessary) to BOSH director")
 	p.broker.trackProgress(ctx, p.instanceID, "provision", "Uploading BOSH releases", 0, p.params, p.logger)
 
-	err := manifest.UploadReleasesFromManifest(ctx, manifestStr, p.broker.BOSH, p.logger)
+	// An upload's task ID goes only into the description. In the record's
+	// task field it would read as the provision's create task.
+	progress := func(message string) {
+		p.broker.trackProgress(ctx, p.instanceID, "provision", message, 0, p.params, p.logger)
+	}
+
+	err := manifest.UploadReleasesFromManifest(ctx, manifestStr, p.broker.BOSH, p.logger, progress)
 	if err != nil {
 		p.logger.Error("failed to upload service deployment releases: %s", err)
 		p.failStep(ctx, "Release upload failed", err)
