@@ -1131,7 +1131,7 @@ func TestBatchSlotIsReleasedWhenTheDeployIsRejected(t *testing.T) {
 		"a request that was never sent": &boshapi.TransportError{
 			Method: "POST", Path: deploymentsRoute, Sent: false, Mutation: true, Attempts: 1, Err: errBatchTestRejected,
 		},
-		"a failed read of the task after the deploy returned": fmt.Errorf("deploy: %w", bosh.ErrFailedGetTaskUpdate),
+		"a context ID the director would refuse": fmt.Errorf("deploy: %w", bosh.ErrInvalidContextID),
 	}
 
 	for name, rejection := range rejections {

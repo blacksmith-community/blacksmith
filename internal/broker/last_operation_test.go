@@ -29,10 +29,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var (
-	errDeleteRejected   = errors.New("director rejected the delete")
-	errDeployTaskFailed = errors.New("updating deployment: expected task '189' to succeed but state is 'error'")
-)
+var errDeleteRejected = errors.New("director rejected the delete")
 
 const (
 	boshEventCreate = "create"
@@ -481,7 +478,7 @@ var _ = Describe("LastOperation", func() {
 			Expect(indexEntryExists()).To(BeTrue())
 		})
 
-		It("records the delete task its delete event names rather than the task the director adapter reports", func() {
+		It("records the delete task the director's answer names even when a newer task runs on the deployment", func() {
 			specWorld, name := world, deploymentName
 			director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
 				specWorld.addEvents(deploymentEvents(boshEventDelete, name, deleteTaskID)...)
@@ -491,7 +488,7 @@ var _ = Describe("LastOperation", func() {
 				specWorld.set(&bosh.Task{ID: vitalsTaskID, State: "error", Description: "retrieve vm-stats"})
 				specWorld.markDeploymentDeleted()
 
-				return &bosh.Task{ID: vitalsTaskID, State: "error", Description: "retrieve vm-stats"}, nil
+				return &bosh.Task{ID: deleteTaskID, State: "queued"}, nil
 			}
 
 			operation := deprovision().Operation
@@ -714,18 +711,18 @@ var _ = Describe("LastOperation", func() {
 			}
 		})
 
-		It("records the create task its create event names rather than the task the director adapter reports", func() {
+		It("records the create task the director's answer names even when a newer task runs on the deployment", func() {
+			// The deployment's newest task is a `bosh ssh` task someone ran
+			// by hand, and the deploy's answer names the deploy task.
 			provisionAndWait(func(string) (*bosh.Task, error) {
-				// Someone ran `bosh ssh` while bosh-cli waited on the deploy,
-				// so the adapter reports that task as the newest one.
-				return &bosh.Task{ID: sshTaskID, State: "done", Description: sshDescription}, nil
+				return &bosh.Task{ID: createTaskID, State: "queued"}, nil
 			})
 
 			Expect(recordedTask()).To(Equal(createTaskID))
 			Expect(poll("provision").State).To(Equal(osbapi.StateSucceeded))
 		})
 
-		It("fails, and cleans up the deployment once, when the deploy task fails inside the create call", func() {
+		It("fails, and cleans up the deployment once, when the deploy task it started fails", func() {
 			world.set(&bosh.Task{ID: createTaskID, State: "error", Description: "create deployment"})
 
 			director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
@@ -733,7 +730,7 @@ var _ = Describe("LastOperation", func() {
 			}
 
 			provisionAndWait(func(string) (*bosh.Task, error) {
-				return nil, errDeployTaskFailed
+				return &bosh.Task{ID: createTaskID, State: "queued"}, nil
 			})
 
 			Expect(recordedTask()).To(Equal(createTaskID))

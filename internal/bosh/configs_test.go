@@ -728,6 +728,56 @@ func TestOutcomeUnknownErrorWithNothingToName(t *testing.T) {
 	}
 }
 
+// A request that made no lookup never claims that Blacksmith looked for its
+// task, and never sends the operator to search by the context ID, which
+// the director may not store. It still names the ID for matching logs.
+func TestOutcomeUnknownErrorWithNoLookupLeavesOutTheLookupClaim(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		deployment string
+		suffix     string
+	}{
+		"with a deployment":    {deploymentName, "Check /b/tasks for a task on the deployment dep-1"},
+		"without a deployment": {"", "Check /b/tasks for a recent CleanUp task"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			message := (&bosh.OutcomeUnknownError{
+				Operation:  opCleanUp,
+				Director:   directorAddress,
+				Deployment: tc.deployment,
+				ContextID:  contextID,
+				NoLookup:   true,
+				Err: &boshapi.TransportError{
+					Method: "POST", Path: "/cleanup", ContextID: contextID, Sent: true, Mutation: true, Attempts: 1, Err: errConnectionReset,
+				},
+			}).Error()
+
+			if !strings.HasSuffix(message, tc.suffix) {
+				t.Errorf("expected the message to end with %q, got: %s", tc.suffix, message)
+			}
+
+			for _, unwanted := range []string{"looked for a task", "found none yet", "the task with context ID", "Look for a director task with context ID"} {
+				if strings.Contains(message, unwanted) {
+					t.Errorf("expected no %q in the message, got: %s", unwanted, message)
+				}
+			}
+
+			if strings.Count(message, contextID) != 1 {
+				t.Errorf("expected the message to name the context ID once, got: %s", message)
+			}
+
+			if !strings.Contains(message, "did not resend it") {
+				t.Errorf("expected the message to say the request was not resent, got: %s", message)
+			}
+		})
+	}
+}
+
 // A wrapped config error names the failure once, so the log line and the
 // UI do not repeat "failed to get config" or "failed to update".
 func TestConfigErrorsNameTheFailureOnce(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
 
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -423,7 +424,13 @@ var _ = Describe("Detached broker work", func() {
 
 			return &bosh.Task{ID: 300, State: "done"}, nil
 		}
-		director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) { return nil, nil }
+
+		// The teardown follows the delete task under the service context,
+		// which the spec ends before it returns.
+		serviceCtx, shutdown := context.WithCancel(ctx)
+		defer stopBrokerGoroutines(shutdown)
+
+		brokerInstance.ServiceContext = serviceCtx
 
 		// The provision context has ended by the time the teardown runs.
 		provisionCtx, cancel := context.WithCancel(ctx)
@@ -640,6 +647,9 @@ var _ = Describe("Detached broker work", func() {
 		var (
 			shutdown      context.CancelFunc
 			deployStarted chan struct{}
+			// deployError is what the deploy returns once the provision
+			// context ends. Nil returns the context's own error.
+			deployError func(callCtx context.Context) error
 		)
 
 		provisionUntilShutdown := func() {
@@ -654,6 +664,10 @@ var _ = Describe("Detached broker work", func() {
 			director.onCreateDeployment = func(callCtx context.Context, _ string) (*bosh.Task, error) {
 				close(deployStarted)
 				<-callCtx.Done()
+
+				if deployError != nil {
+					return nil, deployError(callCtx)
+				}
 
 				return nil, fmt.Errorf("deploy stopped: %w", callCtx.Err())
 			}
@@ -671,27 +685,47 @@ var _ = Describe("Detached broker work", func() {
 		}
 
 		AfterEach(func() {
+			deployError = nil
+
 			if shutdown != nil {
 				shutdown()
 			}
 		})
 
-		It("a failed deploy still finds its task after the provision context ends", func() {
-			// A director that honours the context cannot answer on the ended one.
-			director.onGetEvents = func(callCtx context.Context, _ string) ([]bosh.Event, error) {
-				if err := callCtx.Err(); err != nil {
-					return nil, fmt.Errorf("events not read: %w", err)
-				}
+		It("a deploy whose answer the shutdown cut off is recorded as an unknown outcome", func() {
+			sent := make(chan string, 1)
 
-				return deploymentEvents(boshEventCreate, deploymentName, 77), nil
+			// The adapter reports a deploy that was sent but got no answer
+			// as an unknown outcome, even when the caller's context ended.
+			deployError = func(callCtx context.Context) error {
+				sentContextID := boshapi.ContextIDFrom(callCtx)
+				sent <- sentContextID
+
+				return &bosh.DirectorCallError{Cause: callCtx.Err(), Err: &bosh.OutcomeUnknownError{
+					Operation:  "CreateDeployment",
+					Deployment: deploymentName,
+					ContextID:  sentContextID,
+					NoLookup:   true,
+					Err:        callCtx.Err(),
+				}}
+			}
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+				Fail("the broker read the deployment's events after a deploy whose outcome is unknown")
+
+				return nil, nil
 			}
 
 			provisionUntilShutdown()
 
-			state, task, _, err := vaultClient.State(ctx, instanceID)
+			var sentContextID string
+			Expect(sent).To(Receive(&sentContextID))
+
+			recorded, err := brokerInstance.RecordedOperation(ctx, instanceID)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(task).To(Equal(77), "the deploy task was not recorded")
-			Expect(state).To(Equal("in_progress"))
+			Expect(recorded.State).To(Equal("outcome_unknown"))
+			Expect(sentContextID).ToNot(BeEmpty())
+			Expect(recorded.ContextID).To(Equal(sentContextID))
+			Expect(recorded.HasTask()).To(BeFalse())
 		})
 
 		It("shutdown ends a running provision", func() {

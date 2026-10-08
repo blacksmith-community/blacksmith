@@ -1143,7 +1143,7 @@ func isTaskNotFound(err error) bool {
 // noTaskStarted reports whether a call's error shows that the call started
 // no task on the director, and says why. kind names the call. Only the
 // director's own error answer, a request that never reached the director,
-// and a failed read of the task after the call returned show that. A
+// and a context ID the adapter refused before sending show that. A
 // gateway's error answer to the call does not, because the director may
 // have accepted the request behind it.
 func noTaskStarted(err error, kind string) (string, bool) {
@@ -1161,11 +1161,10 @@ func noTaskStarted(err error, kind string) (string, bool) {
 		return "the " + kind + " request never reached the director", true
 	}
 
-	// The base director returns ErrFailedGetTaskUpdate only after its
-	// call returned without an error, which a bosh-cli call does once its
-	// task has ended.
-	if errors.Is(err, ErrFailedGetTaskUpdate) {
-		return "the " + kind + " call returned and only the read of its task failed", true
+	// The adapter refuses a context ID the director would refuse before
+	// it sends anything.
+	if errors.Is(err, ErrInvalidContextID) {
+		return "the " + kind + " carried a context ID the director would refuse, so it was never sent", true
 	}
 
 	return "", false

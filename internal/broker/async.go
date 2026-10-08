@@ -35,7 +35,7 @@ const (
 	defaultAbandonedCreateWait = 5 * time.Minute
 
 	// provisionTimeout bounds the provision goroutine: the manifest work, the
-	// release uploads and the deploy itself while bosh-cli still runs it.
+	// release uploads, and the deploy request.
 	provisionTimeout = 60 * time.Minute
 
 	// failedDeploymentCleanupTimeout bounds the best-effort delete of a
@@ -396,7 +396,8 @@ func (p *provisioningPhase) uploadReleases(ctx context.Context, manifestStr stri
 	return true
 }
 
-// createDeployment creates the BOSH deployment and handles task ID resolution.
+// createDeployment sends the deploy and records the task the director's
+// answer names.
 func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.Plan, manifestStr string) bool {
 	p.logger.Info("Deploying service instance to BOSH director with context ID %s", p.contextID)
 
@@ -414,6 +415,10 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	// Only the deploy request carries the context ID, so a lookup by the ID
 	// finds the deploy task and nothing else the provision started.
 	task, err := p.broker.BOSH.CreateDeployment(boshapi.WithContextID(ctx, p.contextID), manifestStr)
+	if err == nil && task == nil {
+		err = noTaskInAnswer("CreateDeployment", deploymentName, p.contextID)
+	}
+
 	if err != nil {
 		// The deploy may or may not have reached the director as a task.
 		// Its context ID, not the deployment's events, says which, so the
@@ -426,31 +431,16 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 
 		p.logger.Error("Failed to create service deployment: %s", err)
 
-		// bosh-cli reports a deploy task that failed as an error. When BOSH
-		// started the task, record it, so LastOperation answers from the
-		// task's own state and cleans up the failed deployment.
-		//
-		// The lookup runs under its own bound, because the provision context
-		// may be what ended the deploy. Reading the events on it would fail,
-		// and the instance would be recorded as failed without a task, which
-		// LastOperation cannot recover from.
-		lookupCtx, cancelLookup := recordContext(ctx)
-		createTaskID := p.broker.resolveDeploymentTask(lookupCtx, deploymentName, boshEventActionCreate, p.logger)
-
-		cancelLookup()
-
-		if createTaskID > 0 {
-			p.broker.recordTask(ctx, p.instanceID, operationTypeProvision, fmt.Sprintf("BOSH deployment task %d did not succeed: %s", createTaskID, err), createTaskID, p.logger)
-
-			return false
-		}
-
-		p.failStep(ctx, "Deployment creation failed", err)
+		// Any other error means the director started no task: it refused
+		// the deploy, or the request was never sent. The failure names
+		// the deployment, and a refusal carries the director's status and
+		// description in err.
+		p.failStep(ctx, fmt.Sprintf("Deployment creation of %s failed", manifestDeploymentName(manifestStr, deploymentName)), err)
 
 		return false
 	}
 
-	p.logger.Info("Deployment finished on the director, reported task ID: %d", task.ID)
+	p.logger.Info("The director accepted the deployment of %s as task %d", deploymentName, task.ID)
 
 	// A deprovision may have removed the instance while the deploy was running.
 	// Recording the task now would resurrect the index entry for a service
@@ -462,36 +452,44 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 		return false
 	}
 
-	// The adapter reports the deployment's newest task, which can be one
-	// someone ran on the deployment while bosh-cli waited on the deploy. The
-	// deployment-level create event names the deploy task itself. When no
-	// event names it yet, zero is recorded and LastOperation looks again.
-	actualTaskID := p.broker.resolveDeploymentTask(ctx, deploymentName, boshEventActionCreate, p.logger)
-	if actualTaskID != task.ID {
-		p.logger.Info("Recording create deployment task %d from BOSH events for %s (the director adapter reported task %d)", actualTaskID, deploymentName, task.ID)
-	}
-
-	// Update tracking with deployment status - store the actual task ID
-	p.logger.Debug("about to store task ID %d in vault for instance %s", actualTaskID, p.instanceID)
-
-	description := fmt.Sprintf("BOSH deployment in progress (task %d)", actualTaskID)
-	if actualTaskID == 0 {
-		description = "BOSH deployment returned; waiting for BOSH events to name the deploy task"
-	}
-
+	// The director's answer names the deploy task, so it is recorded as
+	// it is, while the task still runs.
 	recordCtx, cancelRecord := recordContext(ctx)
 	defer cancelRecord()
 
-	err = p.broker.Vault.TrackProgress(recordCtx, p.instanceID, "provision", description, actualTaskID, p.params)
+	err = p.broker.Vault.TrackProgress(recordCtx, p.instanceID, "provision", fmt.Sprintf("BOSH deployment in progress (task %d)", task.ID), task.ID, p.params)
 	if err != nil {
 		p.logger.Error("CRITICAL: failed to store service status in the vault: %s", err)
 	} else {
-		p.logger.Info("Successfully stored task ID %d in vault for instance %s", actualTaskID, p.instanceID)
+		p.logger.Info("Successfully stored task ID %d in vault for instance %s", task.ID, p.instanceID)
 	}
 
 	p.logger.Info("Async provisioning handed off to BOSH for instance %s", p.instanceID)
 
 	return true
+}
+
+// manifestDeploymentName returns the deployment name the manifest gives, or
+// fallback when the manifest names none.
+func manifestDeploymentName(manifestStr, fallback string) string {
+	if name := bosh.ExtractDeploymentName(manifestStr); name != "" {
+		return name
+	}
+
+	return fallback
+}
+
+// noTaskInAnswer is the error for a mutation the director accepted with no
+// task in its answer. The director may have started a task, so the outcome
+// is unknown, the way the adapter reports an answer it could not read.
+func noTaskInAnswer(operation, deploymentName, contextID string) error {
+	return &bosh.OutcomeUnknownError{
+		Operation:  operation,
+		Deployment: deploymentName,
+		ContextID:  contextID,
+		NoLookup:   true,
+		Err:        bosh.ErrEmptyDirectorAnswer,
+	}
 }
 
 // instanceStillIndexed reports whether the instance is still present in the
@@ -550,15 +548,10 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 		contextID:      contextID,
 	}
 
-	err = phase.deleteDeploymentWithRetry(ctx)
+	deleteTask, err := phase.deleteDeploymentWithRetry(ctx)
 	if err != nil {
 		phase.handleDeleteError(ctx, err)
 
-		return
-	}
-
-	deleteTask := phase.resolveDeleteTask(ctx)
-	if deleteTask == nil {
 		return
 	}
 
@@ -688,8 +681,9 @@ func (d *deprovisioningPhase) handleDeploymentNotFound(ctx context.Context) bool
 }
 
 // deleteDeploymentWithRetry sends the delete, retrying a failed one, and
-// returns the error that ended the retries, which handleDeleteError settles.
-func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) error {
+// returns the delete task the director's answer names, or the error that
+// ended the retries, which handleDeleteError settles.
+func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) (*bosh.Task, error) {
 	// A delete whose context ID is not on record could not be looked up
 	// if its answer were lost, so it is not sent, and the error settles
 	// the deprovision as a failed delete. The deployment's name goes on
@@ -697,22 +691,21 @@ func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) err
 	// director about the deployment this delete names.
 	err := d.broker.trackProgressWithContextID(ctx, d.instanceID, "deprovision", "Initiating BOSH deployment deletion with retry", d.contextID, d.deploymentName, nil, d.logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	task, err := d.broker.retryDeleteDeployment(ctx, d.deploymentName, d.instanceID, d.contextID, defaultDeleteRetryAttempts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// The task the director reported is the deployment's newest, which can
-	// be one another client ran in the meantime, so the delete event, not
-	// this task, names the delete task. It is logged to compare the two.
-	if task != nil {
-		d.logger.Debug("The delete of deployment %s reported task %d (state: %s)", d.deploymentName, task.ID, task.State)
+	if task == nil {
+		return nil, noTaskInAnswer("DeleteDeployment", d.deploymentName, d.contextID)
 	}
 
-	return nil
+	// The director's answer names the delete task itself, so the task it
+	// returns is the one to follow. The answer carries no description.
+	return &bosh.Task{ID: task.ID, State: task.State, Description: "delete deployment " + d.deploymentName}, nil
 }
 
 // handleDeleteError settles a deprovision whose delete returned an error.
@@ -943,23 +936,6 @@ func (b *Broker) noteMonitorExited(instanceID string) {
 	}
 }
 
-// resolveDeleteTask names the delete task the broker started. bosh-cli returns
-// once the delete task has finished, and the adapter then reports the
-// deployment's newest task, which can be one someone or vm-monitor ran on the
-// deployment in the meantime. The deployment-level delete event names the
-// delete task itself. When no event names it, nil is returned after recording
-// that, and LastOperation looks again on the next poll.
-func (d *deprovisioningPhase) resolveDeleteTask(ctx context.Context) *bosh.Task {
-	taskID := d.broker.resolveDeploymentTask(ctx, d.deploymentName, boshEventActionDelete, d.logger)
-	if taskID == 0 {
-		d.broker.trackProgress(ctx, d.instanceID, "deprovision", "BOSH deletion returned; waiting for BOSH events to name the delete task", 0, nil, d.logger)
-
-		return nil
-	}
-
-	return &bosh.Task{ID: taskID, Description: "delete deployment " + d.deploymentName}
-}
-
 // trackDeletionProgress tracks the ongoing deletion task.
 func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *bosh.Task) {
 	d.logger.Info("Delete operation started successfully, BOSH task ID: %d", task.ID)
@@ -1126,15 +1102,10 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	}
 
 	// Delete deployment with retry logic
-	err = phase.deleteDeploymentWithRetry(ctx)
+	deleteTask, err := phase.deleteDeploymentWithRetry(ctx)
 	if err != nil {
 		phase.handleDeleteError(ctx, err)
 
-		return
-	}
-
-	deleteTask := phase.resolveDeleteTask(ctx)
-	if deleteTask == nil {
 		return
 	}
 

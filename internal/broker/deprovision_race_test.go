@@ -40,6 +40,7 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 		deploymentName string
 		provisionSpec  osbapi.ProvisionRequest
 		deprovisionArg osbapi.DeprovisionRequest
+		shutdown       context.CancelFunc
 	)
 
 	indexEntry := func() (*vaultPkg.Instance, bool) {
@@ -103,13 +104,20 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 			Service: &services.Service{ID: serviceID, Name: serviceID},
 		}
 
+		// The delete task's monitor runs under the service context, which
+		// each spec ends before it returns.
+		var serviceCtx context.Context
+
+		serviceCtx, shutdown = context.WithCancel(ctx)
+
 		brokerInstance = &broker.Broker{
-			Plans:         map[string]services.Plan{serviceID + "/" + planID: plan},
-			BOSH:          director,
-			Vault:         vaultClient,
-			Shield:        &shield.NoopClient{},
-			Config:        &config.Config{},
-			InstanceLocks: make(map[string]*sync.Mutex),
+			Plans:          map[string]services.Plan{serviceID + "/" + planID: plan},
+			BOSH:           director,
+			Vault:          vaultClient,
+			Shield:         &shield.NoopClient{},
+			Config:         &config.Config{},
+			InstanceLocks:  make(map[string]*sync.Mutex),
+			ServiceContext: serviceCtx,
 		}
 
 		provisionSpec = osbapi.ProvisionRequest{
@@ -122,6 +130,8 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 	})
 
 	AfterEach(func() {
+		stopBrokerGoroutines(shutdown)
+
 		_ = vaultClient.Index(ctx, instanceID, nil)
 	})
 

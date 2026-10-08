@@ -171,11 +171,12 @@ func (h *Handler) DeleteDeployment(writer http.ResponseWriter, req *http.Request
 		return
 	}
 
+	// The director has only accepted the delete, so nothing is deleted
+	// yet. The task ID lets the caller follow the delete.
 	result := map[string]interface{}{
 		"deployment": deploymentName,
-		"deleted":    true,
+		"accepted":   true,
 		"task_id":    task.ID,
-		"state":      task.State,
 	}
 
 	response.HandleJSON(writer, result, nil)
@@ -415,6 +416,8 @@ func (h *Handler) RecreateDeployment(writer http.ResponseWriter, req *http.Reque
 	logger := h.logger.Named("deployment-recreate")
 	logger.Info("Recreating deployment: %s", deploymentName)
 
+	warnIgnoredForce(logger, req)
+
 	opts := parseRecreateOpts(req)
 
 	task, err := h.director.RecreateDeployment(ctx, deploymentName, opts)
@@ -442,6 +445,8 @@ func (h *Handler) RestartDeployment(writer http.ResponseWriter, req *http.Reques
 
 	logger := h.logger.Named("deployment-restart")
 	logger.Info("Restarting deployment: %s", deploymentName)
+
+	warnIgnoredForce(logger, req)
 
 	opts := parseRestartOpts(req)
 
@@ -471,6 +476,8 @@ func (h *Handler) StopDeployment(writer http.ResponseWriter, req *http.Request, 
 	logger := h.logger.Named("deployment-stop")
 	logger.Info("Stopping deployment: %s", deploymentName)
 
+	warnIgnoredForce(logger, req)
+
 	opts := parseStopOpts(req)
 
 	task, err := h.director.StopDeployment(ctx, deploymentName, opts)
@@ -498,6 +505,8 @@ func (h *Handler) StartDeployment(writer http.ResponseWriter, req *http.Request,
 
 	logger := h.logger.Named("deployment-start")
 	logger.Info("Starting deployment: %s", deploymentName)
+
+	warnIgnoredForce(logger, req)
 
 	opts := parseStartOpts(req)
 
@@ -918,19 +927,22 @@ func extractOSFromStemcell(name string) string {
 	return "linux"
 }
 
+// warnIgnoredForce warns when a job-state request carries force. The
+// director ignores force on job-state changes, so it is never sent, and the
+// request goes ahead without it.
+func warnIgnoredForce(logger interfaces.Logger, req *http.Request) {
+	if req.URL.Query().Has("force") {
+		logger.Warning("The BOSH director ignores force on job-state changes, so %s %s goes ahead without it", req.Method, req.URL.Path)
+	}
+}
+
 // Request parsing helper functions.
 func parseRestartOpts(req *http.Request) bosh.RestartOpts {
-	opts := bosh.RestartOpts{
-		Converge: true, // Default to converged operations
-	}
+	opts := bosh.RestartOpts{}
 
 	query := req.URL.Query()
 	if v := query.Get("skip_drain"); v != "" {
 		opts.SkipDrain = v == stringTrue
-	}
-
-	if v := query.Get("force"); v != "" {
-		opts.Force = v == stringTrue
 	}
 
 	if v := query.Get("canaries"); v != "" {
@@ -945,15 +957,9 @@ func parseRestartOpts(req *http.Request) bosh.RestartOpts {
 }
 
 func parseStopOpts(req *http.Request) bosh.StopOpts {
-	opts := bosh.StopOpts{
-		Converge: true,
-	}
+	opts := bosh.StopOpts{}
 
 	query := req.URL.Query()
-	if v := query.Get("force"); v != "" {
-		opts.Force = v == stringTrue
-	}
-
 	if v := query.Get("skip_drain"); v != "" {
 		opts.SkipDrain = v == stringTrue
 	}
@@ -974,9 +980,7 @@ func parseStopOpts(req *http.Request) bosh.StopOpts {
 }
 
 func parseStartOpts(req *http.Request) bosh.StartOpts {
-	opts := bosh.StartOpts{
-		Converge: true,
-	}
+	opts := bosh.StartOpts{}
 
 	query := req.URL.Query()
 	if v := query.Get("canaries"); v != "" {
@@ -991,17 +995,11 @@ func parseStartOpts(req *http.Request) bosh.StartOpts {
 }
 
 func parseRecreateOpts(req *http.Request) bosh.RecreateOpts {
-	opts := bosh.RecreateOpts{
-		Converge: true,
-	}
+	opts := bosh.RecreateOpts{}
 
 	query := req.URL.Query()
 	if v := query.Get("skip_drain"); v != "" {
 		opts.SkipDrain = v == stringTrue
-	}
-
-	if v := query.Get("force"); v != "" {
-		opts.Force = v == stringTrue
 	}
 
 	if v := query.Get("fix"); v != "" {

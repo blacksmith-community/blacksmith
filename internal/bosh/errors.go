@@ -19,6 +19,10 @@ const UnknownOutcomeGrace = 15 * time.Minute
 // director may or may not have acted on it.
 var ErrOutcomeUnknown = errors.New("the director's answer was lost, so the outcome of the request is unknown")
 
+// ErrInvalidContextID is the sentinel a mutation returns when its caller's
+// context ID is one the director would refuse. Nothing is sent.
+var ErrInvalidContextID = errors.New("the context ID is not one the BOSH director accepts")
+
 // OutcomeUnknownError is the error a mutation returns when the director may
 // have accepted it and its answer never came back. Blacksmith never resends
 // such a request on its own, because a second copy could act twice.
@@ -34,6 +38,9 @@ type OutcomeUnknownError struct {
 	// Config names the config a config write was for, as "<type>/<name>".
 	// It is empty for every other request.
 	Config string
+	// NoLookup is true when Blacksmith made no lookup for the request's
+	// task, so the message never says it looked for one.
+	NoLookup bool
 	// Err is the error the request saw.
 	Err error
 }
@@ -56,7 +63,11 @@ func (e *OutcomeUnknownError) Error() string {
 	// A config write creates no director task, and the transport text
 	// tells the operator to look for one, so it stays out of that message.
 	// It is still reachable through Unwrap.
-	if e.Err != nil && e.Config == "" {
+	//
+	// A request that made no lookup leaves it out too, because the text
+	// tells the operator to look a task up by the context ID, which the
+	// director may not store for that request.
+	if e.Err != nil && e.Config == "" && !e.NoLookup {
 		fmt.Fprintf(&msg, " (%v)", e.Err)
 	}
 
@@ -70,6 +81,16 @@ func (e *OutcomeUnknownError) Error() string {
 			"For a create, the config is present with the new content. "+
 			"For a delete, the latest list for that type and name is empty",
 			e.Director, configType, configName)
+
+		return msg.String()
+	}
+
+	if e.NoLookup {
+		if e.Deployment != "" {
+			fmt.Fprintf(&msg, "Check /b/tasks for a task on the deployment %s", e.Deployment)
+		} else {
+			fmt.Fprintf(&msg, "Check /b/tasks for a recent %s task", e.Operation)
+		}
 
 		return msg.String()
 	}

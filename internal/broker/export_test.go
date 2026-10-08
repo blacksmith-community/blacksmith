@@ -165,7 +165,9 @@ func (b *Broker) DeleteDeploymentWithRetry(ctx context.Context, instanceID, depl
 		contextID:      contextID,
 	}
 
-	return phase.deleteDeploymentWithRetry(ctx)
+	_, err := phase.deleteDeploymentWithRetry(ctx)
+
+	return err
 }
 
 // CleanupFailedDeployment exposes the best-effort delete of a failed deployment.
@@ -336,6 +338,9 @@ func BackgroundGoroutines() []string {
 
 // RecordedOperation is the operation the broker records for an instance.
 type RecordedOperation = recordedOperation
+
+// HasTask exposes whether the recorded operation names a BOSH task.
+func (r recordedOperation) HasTask() bool { return r.hasTask() }
 
 // RecordedOperation exposes the read of an instance's recorded operation.
 func (b *Broker) RecordedOperation(ctx context.Context, instanceID string) (RecordedOperation, error) {

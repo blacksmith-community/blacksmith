@@ -411,38 +411,32 @@ type UAAConfig struct {
 	CACert            string
 }
 
-// Operation options structures.
+// Operation options structures. A job-state change always converges, and
+// the director ignores force on job-state routes, so neither is an option.
 type RestartOpts struct {
 	Canaries    string `json:"canaries,omitempty"`
 	MaxInFlight string `json:"max_in_flight,omitempty"`
-	Converge    bool   `json:"converge"`
 	SkipDrain   bool   `json:"skip_drain"`
-	Force       bool   `json:"force"`
 }
 
 type StopOpts struct {
 	Canaries    string `json:"canaries,omitempty"`
 	MaxInFlight string `json:"max_in_flight,omitempty"`
-	Force       bool   `json:"force"`
 	SkipDrain   bool   `json:"skip_drain"`
 	Hard        bool   `json:"hard"`
-	Converge    bool   `json:"converge"`
 }
 
 type StartOpts struct {
 	Canaries    string `json:"canaries,omitempty"`
 	MaxInFlight string `json:"max_in_flight,omitempty"`
-	Converge    bool   `json:"converge"`
 }
 
 type RecreateOpts struct {
 	Canaries    string `json:"canaries,omitempty"`
 	MaxInFlight string `json:"max_in_flight,omitempty"`
 	SkipDrain   bool   `json:"skip_drain"`
-	Force       bool   `json:"force"`
 	Fix         bool   `json:"fix"`
 	DryRun      bool   `json:"dry_run"`
-	Converge    bool   `json:"converge"`
 }
 
 type ErrandOpts struct {

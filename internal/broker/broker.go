@@ -45,9 +45,6 @@ const (
 	operationTypeProvision   = "provision"
 	operationTypeDeprovision = "deprovision"
 
-	// The task ID the director adapter returns before it knows the real one.
-	placeholderTaskID = 1
-
 	// The state TrackProgress records for an operation that failed.
 	recordedStateFailed = "failed"
 
@@ -3338,11 +3335,10 @@ type recordedOperation struct {
 	UnknownSince time.Time
 }
 
-// hasTask reports whether a real BOSH task ID was recorded. Zero means no task
-// yet, and one is the placeholder the director adapter hands back when it has
-// not found the task, so neither identifies a task the broker started.
+// hasTask reports whether a BOSH task ID was recorded. Zero means no task
+// yet. Any other ID is one the director named in its answer.
 func (r recordedOperation) hasTask() bool {
-	return r.TaskID > placeholderTaskID
+	return r.TaskID > 0
 }
 
 func (b *Broker) readRecordedOperation(ctx context.Context, instanceID string) (recordedOperation, error) {
@@ -3432,9 +3428,10 @@ func unknownOutcomeOfOtherOperation(instanceID, polled string, recorded recorded
 
 // recoverProvision answers for a provision whose goroutine is gone without
 // having recorded a create deployment task, which happens when the broker
-// restarts while bosh-cli waits on the deploy. BOSH records the deploy as a
-// deployment-level "create" event, so that event names the task the broker
-// started. Once found, the task is recorded so later polls use it directly.
+// restarts between sending the deploy and recording its task. BOSH records
+// the deploy as a deployment-level "create" event, so that event names the
+// task the broker started. Once found, the task is recorded so later polls
+// use it directly.
 func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionCreate, logger)
 	if err != nil {
@@ -3485,10 +3482,11 @@ func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentNa
 }
 
 // recoverDeprovision answers for a deprovision whose goroutine is gone without
-// having recorded a delete task, which happens when the broker restarts while
-// bosh-cli waits on the delete. BOSH records the delete as a deployment-level
-// "delete" event, so that event names the task the broker started. Without
-// one, a deployment the director no longer has needs nothing more deleted.
+// having recorded a delete task, which happens when the broker restarts
+// between sending the delete and recording its task. BOSH records the delete
+// as a deployment-level "delete" event, so that event names the task the
+// broker started. Without one, a deployment the director no longer has needs
+// nothing more deleted.
 func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionDelete, logger)
 	if err != nil {
@@ -3584,23 +3582,6 @@ func (b *Broker) findDeploymentEventTaskSince(ctx context.Context, deploymentNam
 	return taskID, nil
 }
 
-// resolveDeploymentTask returns the task named by the deployment-level event
-// with the given action, or zero when the events cannot be read or name none.
-func (b *Broker) resolveDeploymentTask(ctx context.Context, deploymentName, action string, logger logger.Logger) int {
-	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, action, logger)
-	if err != nil {
-		logger.Info("Could not look up the %s deployment task of %s, LastOperation will look again: %s", action, deploymentName, err)
-
-		return 0
-	}
-
-	if taskID == 0 {
-		logger.Info("No %s deployment event names a task for %s yet, LastOperation will look again", action, deploymentName)
-	}
-
-	return taskID
-}
-
 // recordTask stores a BOSH task ID for the instance's current operation. It
 // writes nothing over a record whose outcome is unknown, for any action,
 // because only the unknown-outcome resolver may settle that outcome.
@@ -3661,8 +3642,8 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 		logger.Error("provision operation failed: %s", description)
 
 		// Record the failure so later polls answer from it and the cleanup
-		// starts only once. bosh-cli waits for the delete task to finish, so
-		// the cleanup runs in the background rather than holding up the poll.
+		// starts only once. The cleanup's director calls can be slow, so it
+		// runs in the background rather than holding up the poll.
 		b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
 
 		// The cleanup outlives this poll; it keeps the values of cleanupCtx
