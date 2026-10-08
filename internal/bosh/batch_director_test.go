@@ -69,6 +69,12 @@ type fakeBatchBase struct {
 	getErr   error
 	// getBlocks makes GetTask wait for its context to end.
 	getBlocks bool
+	// noAnswer makes WaitForTask and GetTask answer with no task and no
+	// error.
+	noAnswer bool
+	// interrupt ends a WaitForTask call that waits for its task with the
+	// error sent on it.
+	interrupt chan error
 	// byContextID maps a context ID to the task the director lists for it.
 	byContextID map[string]int
 	// contextErr, when set, is every FindTaskByContextID call's answer.
@@ -103,6 +109,7 @@ func newFakeBatchBase() *fakeBatchBase {
 		acceptCh:    make(chan string, 64),
 		waitCalls:   map[int]int{},
 		byContextID: map[string]int{},
+		interrupt:   make(chan error, 1),
 	}
 }
 
@@ -155,9 +162,13 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 func (f *fakeBatchBase) GetTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	f.mu.Lock()
 	f.getCalls++
-	getErr, getBlocks := f.getErr, f.getBlocks
+	getErr, getBlocks, noAnswer := f.getErr, f.getBlocks, f.noAnswer
 	_, found := f.tasks[taskID]
 	f.mu.Unlock()
+
+	if noAnswer {
+		return nil, nil //nolint:nilnil // a director that answers with nothing is what the test is about
+	}
 
 	if getBlocks {
 		<-ctx.Done()
@@ -180,8 +191,12 @@ func (f *fakeBatchBase) WaitForTask(ctx context.Context, taskID int) (*bosh.Task
 	f.mu.Lock()
 	f.waitCalls[taskID]++
 	started, found := f.tasks[taskID]
-	waitErr := f.waitErr
+	waitErr, noAnswer := f.waitErr, f.noAnswer
 	f.mu.Unlock()
+
+	if noAnswer {
+		return nil, nil //nolint:nilnil // a director that answers with nothing is what the test is about
+	}
 
 	if waitErr != nil {
 		return nil, waitErr
@@ -194,6 +209,8 @@ func (f *fakeBatchBase) WaitForTask(ctx context.Context, taskID int) (*bosh.Task
 	select {
 	case <-started.done:
 		return f.taskSnapshot(taskID), nil
+	case err := <-f.interrupt:
+		return nil, err
 	case <-ctx.Done():
 		return nil, fmt.Errorf("wait for task %d: %w", taskID, ctx.Err())
 	}
@@ -1394,21 +1411,15 @@ func TestWatcherKeepsTheSlotWhenTheTaskRouteIs404(t *testing.T) {
 	}
 }
 
-func TestWatcherReleasesTheSlotAfterTheMaximumWatch(t *testing.T) {
-	t.Parallel()
+// retryUntil advances the fake clock through the watcher's retries until
+// the clock reaches until or the watcher gives up, checks that the slot
+// stays held meanwhile, and returns the retry waits it saw.
+func retryUntil(t *testing.T, batch *bosh.BatchDirector, clock *fakeBatchClock, until time.Time) []time.Duration {
+	t.Helper()
 
-	const watchMax = time.Hour
+	var waits []time.Duration
 
-	base := newFakeBatchBase()
-	base.set(func(f *fakeBatchBase) { f.waitErr = errBatchTestRejected })
-	batch, clock := newTestBatch(t, base, 1)
-	bosh.SetBatchWatchMax(batch, watchMax)
-
-	start := clock.Now()
-
-	taskID := startDeploy(t, base, batch, firstDeployment)
-
-	for {
+	for clock.Now().Before(until) {
 		waitUntil(t, "the watcher waits to read again or gives up", func() bool {
 			active, _, _ := batch.GetBatchPoolStats()
 
@@ -1420,21 +1431,174 @@ func TestWatcherReleasesTheSlotAfterTheMaximumWatch(t *testing.T) {
 			break
 		}
 
-		if clock.Now().Sub(start) >= watchMax {
-			t.Fatalf("expected the watcher to give up once %v had passed, but it still waits at %v", watchMax, clock.Now().Sub(start))
-		}
-
 		waitBatchStats(t, batch, 1, 0)
+
+		waits = append(waits, backoff)
 		clock.advance(backoff)
 	}
 
-	if elapsed := clock.Now().Sub(start); elapsed < watchMax {
-		t.Fatalf("expected the watcher to keep the slot for %v, but it gave up after %v", watchMax, elapsed)
-	}
+	return waits
+}
+
+// expectAbandoned checks that the watcher of the task gave up, released
+// its slot, and reported ErrWatchAbandoned with the read's error.
+func expectAbandoned(t *testing.T, batch *bosh.BatchDirector, taskID int) {
+	t.Helper()
+
+	waitBatchStats(t, batch, 0, 0)
 
 	_, err := batch.WaitForTask(t.Context(), taskID)
 	if !errors.Is(err, bosh.ErrWatchAbandoned) || !errors.Is(err, errBatchTestRejected) {
 		t.Fatalf("expected ErrWatchAbandoned with the read's error, got %v", err)
+	}
+}
+
+// A watcher whose reads all fail waits 5 s, then twice as long each time
+// up to 2 minutes, and gives up once the reads have failed for the
+// maximum watch.
+func TestWatcherReleasesTheSlotAfterTheMaximumWatch(t *testing.T) {
+	t.Parallel()
+
+	backoffs := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, 80 * time.Second, 2 * time.Minute, 2 * time.Minute}
+
+	var watchMax time.Duration
+	for _, backoff := range backoffs {
+		watchMax += backoff
+	}
+
+	base := newFakeBatchBase()
+	base.set(func(f *fakeBatchBase) { f.waitErr, f.getErr = errBatchTestRejected, errBatchTestRejected })
+	batch, clock := newTestBatch(t, base, 1)
+	bosh.SetBatchWatchMax(batch, watchMax)
+
+	start := clock.Now()
+	taskID := startDeploy(t, base, batch, firstDeployment)
+
+	waits := retryUntil(t, batch, clock, start.Add(time.Hour))
+	if fmt.Sprint(waits) != fmt.Sprint(backoffs) {
+		t.Fatalf("expected the watcher to wait %v between reads, got %v", backoffs, waits)
+	}
+
+	if elapsed := clock.Now().Sub(start); elapsed != watchMax {
+		t.Fatalf("expected the watcher to give up once the reads had failed for %v, but it gave up after %v", watchMax, elapsed)
+	}
+
+	expectAbandoned(t, batch, taskID)
+}
+
+// A deploy that runs longer than the maximum watch keeps its slot when a
+// read then fails, because the count starts at the first failed read.
+func TestWatcherOfALongDeployKeepsTheSlotWhenOneReadFails(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, clock := newTestBatch(t, base, 1)
+	bosh.SetBatchWatchMax(batch, time.Hour)
+
+	taskID := startDeploy(t, base, batch, firstDeployment)
+	waitUntil(t, "the watcher waits for the task", func() bool { return base.waitCallsFor(taskID) == 1 })
+
+	clock.advance(2 * time.Hour)
+
+	base.interrupt <- errBatchTestRejected
+
+	waitUntil(t, "the watcher waits to read the task again", func() bool { return clock.retrySleep() > 0 })
+	waitBatchStats(t, batch, 1, 0)
+
+	clock.advance(clock.retrySleep())
+	waitUntil(t, "the watcher waits for the task again", func() bool { return base.waitCallsFor(taskID) == 2 })
+
+	base.finish(t, taskID, batchTaskDone)
+	waitBatchStats(t, batch, 0, 0)
+}
+
+// A read that succeeds ends a run of failed reads, so the maximum watch
+// counts again from the next failed read.
+func TestWatcherCountsTheMaximumWatchFromTheLatestFailedRead(t *testing.T) {
+	t.Parallel()
+
+	const watchMax = time.Hour
+
+	base := newFakeBatchBase()
+	batch, clock := newTestBatch(t, base, 1)
+	bosh.SetBatchWatchMax(batch, watchMax)
+
+	taskID := startDeploy(t, base, batch, firstDeployment)
+	waitUntil(t, "the watcher waits for the task", func() bool { return base.waitCallsFor(taskID) == 1 })
+
+	base.set(func(f *fakeBatchBase) { f.getErr = errBatchTestRejected })
+
+	base.interrupt <- errBatchTestRejected
+
+	retryUntil(t, batch, clock, clock.Now().Add(watchMax-10*time.Minute))
+	base.set(func(f *fakeBatchBase) { f.getErr = nil })
+	clock.advance(clock.retrySleep())
+	waitUntil(t, "the watcher waits for the task again", func() bool { return base.waitCallsFor(taskID) == 2 })
+
+	base.set(func(f *fakeBatchBase) { f.getErr = errBatchTestRejected })
+
+	base.interrupt <- errBatchTestRejected
+
+	failedAt := clock.Now()
+	retryUntil(t, batch, clock, failedAt.Add(watchMax+time.Hour))
+
+	if elapsed := clock.Now().Sub(failedAt); elapsed < watchMax || elapsed >= watchMax+2*time.Minute {
+		t.Fatalf("expected the watcher to give up %v after the latest failed read, but it gave up after %v", watchMax, elapsed)
+	}
+
+	expectAbandoned(t, batch, taskID)
+}
+
+// A director that answers a read with no task and no error has not been
+// read, so the watcher retries it and reports the empty answer when it
+// gives up.
+func TestWatcherTreatsAnEmptyAnswerAsAFailedRead(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.set(func(f *fakeBatchBase) { f.noAnswer = true })
+	batch, clock := newTestBatch(t, base, 1)
+	bosh.SetBatchWatchMax(batch, time.Minute)
+
+	taskID := startDeploy(t, base, batch, firstDeployment)
+	retryUntil(t, batch, clock, clock.Now().Add(time.Hour))
+	waitBatchStats(t, batch, 0, 0)
+
+	_, err := batch.WaitForTask(t.Context(), taskID)
+	if !errors.Is(err, bosh.ErrWatchAbandoned) || !errors.Is(err, bosh.ErrEmptyDirectorAnswer) {
+		t.Fatalf("expected ErrWatchAbandoned with the empty answer, got %v", err)
+	}
+}
+
+// The maximum watch of a lost answer counts from the first lookup that
+// failed after the latest lookup that succeeded, not from when the answer
+// was lost.
+func TestBatchLostAnswerIsAbandonedOnceLookupsFailForTheMaximumWatch(t *testing.T) {
+	t.Parallel()
+
+	const watchMax = time.Hour
+
+	base := newFakeBatchBase()
+	base.set(func(f *fakeBatchBase) { f.contextErr = errBatchTestRejected })
+	batch, clock := newTestBatch(t, base, 1)
+	bosh.SetBatchWatchMax(batch, watchMax)
+
+	waited := startLostAnswer(t, base, batch)
+
+	checkLostAnswerHeld(t, batch, clock, 10*time.Minute)
+
+	for _, lookupErr := range []error{nil, errBatchTestRejected} {
+		clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+		base.set(func(f *fakeBatchBase) { f.contextErr = lookupErr })
+		clock.advance(bosh.BatchLostAnswerInterval)
+	}
+
+	checkLostAnswerHeld(t, batch, clock, watchMax)
+	waitBatchStats(t, batch, 0, 0)
+
+	got := receive(t, waited)
+	if !errors.Is(got.err, bosh.ErrWatchAbandoned) || !errors.Is(got.err, errBatchTestRejected) || got.task != nil {
+		t.Fatalf("expected ErrWatchAbandoned with the lookup's error, got %+v and %v", got.task, got.err)
 	}
 }
 

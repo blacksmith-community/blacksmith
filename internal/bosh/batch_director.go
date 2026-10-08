@@ -31,8 +31,10 @@ const (
 	// defaultMaxBatchJobs is the limit a max_batch_jobs of zero or less
 	// means.
 	defaultMaxBatchJobs = 4
-	// batchWatchMax is how long a watcher keeps reading a task the director
-	// does not answer for. It is longer than any deploy has run.
+	// batchWatchMax is how long a watcher keeps reading a task, or looking
+	// for the task of a lost answer, while every read fails. It counts from
+	// the first failed read of a run of failures, and a read that succeeds
+	// starts the count again, so a task that runs longer is still followed.
 	batchWatchMax = 6 * time.Hour
 	// batchLostAnswerInterval is how often a watcher looks for the task of
 	// a deploy whose answer was lost.
@@ -240,7 +242,6 @@ func (b *BatchDirector) Adopt(taskID int) {
 	}
 
 	watch := newBatchWatch("", "")
-	deadline := b.clock.Now().Add(b.watchMax)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -259,7 +260,7 @@ func (b *BatchDirector) Adopt(taskID int) {
 
 	b.inFlight++
 	b.startWatchLocked(watch, taskID, func(ctx context.Context) (*Task, error) {
-		return b.followTask(ctx, watch, taskID, deadline)
+		return b.followTask(ctx, watch, taskID)
 	})
 
 	b.logger.Infof("Adopted BOSH task %d into the batch (active: %d, limit: %d)", taskID, b.inFlight, b.limit)
@@ -733,11 +734,10 @@ func (b *BatchDirector) readFinishedTask(ctx context.Context, watch *batchWatch,
 // stopped.
 func (b *BatchDirector) watchTask(deployment string, taskID int) bool {
 	watch := newBatchWatch(deployment, "")
-	deadline := b.clock.Now().Add(b.watchMax)
 
 	b.mu.Lock()
 	started := b.startWatchLocked(watch, taskID, func(ctx context.Context) (*Task, error) {
-		return b.followTask(ctx, watch, taskID, deadline)
+		return b.followTask(ctx, watch, taskID)
 	})
 	b.mu.Unlock()
 
@@ -755,11 +755,10 @@ func (b *BatchDirector) watchTask(deployment string, taskID int) bool {
 func (b *BatchDirector) watchLostAnswer(deployment, contextID string) bool {
 	watch := newBatchWatch(deployment, contextID)
 	unknownSince := b.clock.Now()
-	deadline := unknownSince.Add(b.watchMax)
 
 	b.mu.Lock()
 	started := b.startWatchLocked(watch, 0, func(ctx context.Context) (*Task, error) {
-		return b.resolveLostAnswer(ctx, watch, unknownSince, deadline)
+		return b.resolveLostAnswer(ctx, watch, unknownSince)
 	})
 	b.mu.Unlock()
 
@@ -848,11 +847,35 @@ func (b *BatchDirector) watcherReturned() {
 	b.mu.Unlock()
 }
 
-// followTask waits for the task to end and returns it. A failed read is
-// retried with backoff until the deadline has passed, and a task the
-// director does not know ends the watch at once.
-func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskID int, deadline time.Time) (*Task, error) {
-	backoff := batchWatchBackoffMin
+// readFailures tracks a run of failed reads. since is when the first
+// failed read of the run happened, and it is zero after a read that
+// succeeded.
+type readFailures struct {
+	since time.Time
+}
+
+// succeeded ends the run of failed reads.
+func (r *readFailures) succeeded() {
+	r.since = time.Time{}
+}
+
+// failedFor records a read that failed at now, and returns how long reads
+// have failed with no read that succeeded in between.
+func (r *readFailures) failedFor(now time.Time) time.Duration {
+	if r.since.IsZero() {
+		r.since = now
+	}
+
+	return now.Sub(r.since)
+}
+
+// followTask waits for the task to end and returns it. After a wait that
+// fails, it reads the task with backoff until a read succeeds, and then
+// waits again. It gives up once reads have failed for watchMax with no
+// read that succeeded in between, and a task the director answers it has
+// no record of ends the watch at once.
+func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskID int) (*Task, error) {
+	var failures readFailures
 
 	for {
 		task, err := b.director.WaitForTask(ctx, taskID)
@@ -862,6 +885,22 @@ func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskI
 			return task, nil
 		}
 
+		task, err = b.readUntilAnswered(ctx, watch, taskID, &failures, err)
+		if err != nil || task != nil {
+			return task, err
+		}
+	}
+}
+
+// readUntilAnswered handles a wait for a task that failed with waitErr. It
+// reads the task with backoff until a read succeeds. It returns the task
+// when the read shows that it ended, nil with no error when it still runs,
+// and an error when the watch ends.
+func (b *BatchDirector) readUntilAnswered(ctx context.Context, watch *batchWatch, taskID int, failures *readFailures, waitErr error) (*Task, error) {
+	backoff := batchWatchBackoffMin
+	err := waitErr
+
+	for {
 		if err == nil {
 			err = ErrEmptyDirectorAnswer
 		}
@@ -876,10 +915,11 @@ func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskI
 			return nil, fmt.Errorf("%w: the director has no %s: %w", ErrWatchAbandoned, watch.describe(taskID), err)
 		}
 
-		if !b.clock.Now().Before(deadline) {
-			b.logger.Errorf("The batch director could not read %s for %v, so it released the slot of the deploy: %v", watch.describe(taskID), b.watchMax, err)
+		failing := failures.failedFor(b.clock.Now())
+		if failing >= b.watchMax {
+			b.logger.Errorf("The batch director could not read %s for %v, so it released the slot of the deploy: %v", watch.describe(taskID), failing, err)
 
-			return nil, fmt.Errorf("%w: %s could not be read for %v: %w", ErrWatchAbandoned, watch.describe(taskID), b.watchMax, err)
+			return nil, fmt.Errorf("%w: %s could not be read for %v: %w", ErrWatchAbandoned, watch.describe(taskID), failing, err)
 		}
 
 		b.logger.Infof("Reading %s failed, so the batch director reads it again in %v: %v", watch.describe(taskID), backoff, err)
@@ -889,6 +929,21 @@ func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskI
 		}
 
 		backoff = min(backoff*batchWatchBackoffFactor, batchWatchBackoffMax)
+
+		var task *Task
+
+		task, err = b.director.GetTask(ctx, taskID)
+		if err == nil && task != nil {
+			failures.succeeded()
+
+			if isTerminalTaskState(task.State) {
+				b.logger.Infof("%s ended in state %s, so its batch slot is released", watch.describe(taskID), task.State)
+
+				return task, nil
+			}
+
+			return nil, nil //nolint:nilnil // a task that still runs is waited for again
+		}
 	}
 }
 
@@ -896,9 +951,12 @@ func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskI
 // every batchLostAnswerInterval, and follows it once found. It gives up
 // only after a lookup by context ID that succeeded, made at or after
 // unknownSince plus UnknownOutcomeGrace, found no task, while no deploy
-// task runs on the deployment.
-func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch, unknownSince, deadline time.Time) (*Task, error) {
+// task runs on the deployment. It also gives up once lookups have failed
+// for watchMax with no lookup that succeeded in between.
+func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch, unknownSince time.Time) (*Task, error) {
 	what := watch.lostDeploy()
+
+	var failures readFailures
 
 	for {
 		now := b.clock.Now()
@@ -911,7 +969,7 @@ func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch
 		if taskID > 0 {
 			b.followFoundTask(watch, taskID)
 
-			return b.followTask(ctx, watch, taskID, deadline)
+			return b.followTask(ctx, watch, taskID)
 		}
 
 		if err == nil && !now.Before(unknownSince.Add(UnknownOutcomeGrace)) {
@@ -921,11 +979,14 @@ func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch
 			return nil, fmt.Errorf("%w %s, and no deploy runs on deployment %s", ErrNoTaskWithContextID, watch.contextID, watch.deployment)
 		}
 
-		if err != nil {
-			if !now.Before(deadline) {
-				b.logger.Errorf("The batch director could not look for the task of %s for %v, so it released the slot: %v", what, b.watchMax, err)
+		if err == nil {
+			failures.succeeded()
+		} else {
+			failing := failures.failedFor(now)
+			if failing >= b.watchMax {
+				b.logger.Errorf("The batch director could not look for the task of %s for %v, so it released the slot: %v", what, failing, err)
 
-				return nil, fmt.Errorf("%w: the task of %s could not be looked up for %v: %w", ErrWatchAbandoned, what, b.watchMax, err)
+				return nil, fmt.Errorf("%w: the task of %s could not be looked up for %v: %w", ErrWatchAbandoned, what, failing, err)
 			}
 
 			b.logger.Infof("Looking for the task of %s failed, so the batch director looks again in %v: %v", what, batchLostAnswerInterval, err)
