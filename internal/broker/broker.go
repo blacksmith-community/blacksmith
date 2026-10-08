@@ -925,6 +925,15 @@ func (b *Broker) ServiceWithNoDeploymentCheck(ctx context.Context) (
 	return removedDeploymentNames, nil
 }
 
+// OperationClaimed reports whether an operation of any type holds the claim
+// on instanceID in this process. The vm-monitor asks it before it marks an
+// instance deleted.
+func (b *Broker) OperationClaimed(instanceID string) bool {
+	_, held := b.activeOperations.Load(instanceID)
+
+	return held
+}
+
 // GetInstanceLock returns a mutex for the given instance ID, creating one if it doesn't exist.
 func (b *Broker) GetInstanceLock(instanceID string) *sync.Mutex {
 	b.instanceMu.RLock()
@@ -2147,15 +2156,6 @@ func (b *Broker) orphanDeploymentUnconfirmed(ctx context.Context, deploymentName
 	}
 
 	return ""
-}
-
-// OperationClaimed reports whether an operation of any type holds the claim
-// on instanceID in this process. The vm-monitor asks it before it marks an
-// instance deleted.
-func (b *Broker) OperationClaimed(instanceID string) bool {
-	_, held := b.activeOperations.Load(instanceID)
-
-	return held
 }
 
 // pollWithoutIndexEntry answers a poll for an instance the index does not
