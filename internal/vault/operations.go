@@ -386,7 +386,7 @@ type unknownOutcomeRecord struct {
 	UpdatedAt      int64       `json:"updated_at"`
 	Params         interface{} `json:"params"`
 	ContextID      string      `json:"context_id"`
-	UnknownSince   string      `json:"unknown_since"`
+	UnknownSince   string      `json:"unknown_since,omitempty"`
 	DeploymentName string      `json:"deployment_name,omitempty"`
 }
 

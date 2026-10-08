@@ -308,6 +308,45 @@ var _ = Describe("Task record writes", func() {
 				Expect(after).To(Equal(before))
 			})
 
+			It("is stamped on a record whose time is empty", func() {
+				recordUnknown(deprovision)
+
+				record := readRecord()
+				record[vault.TaskRecordUnknownSinceKey] = ""
+				Expect(client.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+				since := time.Now().Add(-time.Minute).UTC().Truncate(time.Millisecond)
+
+				Expect(client.StampUnknownSince(ctx, instanceID, deprovision, contextID, since)).To(Succeed())
+				Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordUnknownSinceKey, since.Format(time.RFC3339Nano)))
+			})
+
+			It("is not written as empty by progress over a record that lacks it", func() {
+				recordWithoutSince()
+
+				Expect(client.TrackProgress(ctx, instanceID, deprovision, "Still waiting", 0, nil)).To(Succeed())
+
+				after := readRecord()
+
+				Expect(after).To(HaveKeyWithValue("state", vault.TaskStateOutcomeUnknown))
+				Expect(after).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
+			})
+
+			It("is not written as empty by progress over a record whose time is empty", func() {
+				recordUnknown(deprovision)
+
+				record := readRecord()
+				record[vault.TaskRecordUnknownSinceKey] = ""
+				Expect(client.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+				Expect(client.TrackProgress(ctx, instanceID, deprovision, "Still waiting", 0, nil)).To(Succeed())
+
+				after := readRecord()
+
+				Expect(after).To(HaveKeyWithValue("state", vault.TaskStateOutcomeUnknown))
+				Expect(after).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
+			})
+
 			It("is not stamped over a time the record already has", func() {
 				recordUnknown(deprovision)
 

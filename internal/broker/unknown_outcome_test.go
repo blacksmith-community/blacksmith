@@ -2396,6 +2396,23 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(recorded().State).To(Equal(outcomeStateFailed))
 			})
 
+			It("stamps a record whose unknown-since time is the empty string", func() {
+				record := readRecord()
+				record["unknown_since"] = ""
+				Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+				stampedAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+
+				frozenAt.Store(stampedAt.UnixNano())
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy with an empty unknown-since time answered %+v", response)
+				Expect(response.Description).To(ContainSubstring("grace period runs until"))
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+				Expect(recorded().UnknownSince.Equal(stampedAt)).To(BeTrue(), "the record says unknown since %s, not %s", recorded().UnknownSince, stampedAt)
+			})
+
 			It("asks the director for no events or running tasks for such a record", func() {
 				record := readRecord()
 				delete(record, "unknown_since")

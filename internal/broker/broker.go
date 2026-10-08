@@ -3357,7 +3357,7 @@ func (b *Broker) readRecordedOperation(ctx context.Context, instanceID string) (
 	recorded.ContextID, _ = task["context_id"].(string)
 	recorded.DeploymentName, _ = task[internalVault.TaskRecordDeploymentNameKey].(string)
 
-	if since, isString := task[internalVault.TaskRecordUnknownSinceKey].(string); isString {
+	if since, isString := task[internalVault.TaskRecordUnknownSinceKey].(string); isString && since != "" {
 		recorded.UnknownSince, err = time.Parse(time.RFC3339Nano, since)
 		if err != nil {
 			return recordedOperation{}, fmt.Errorf("the recorded operation for instance %s has an unknown-since time %q that is not RFC 3339: %w", instanceID, since, err)
