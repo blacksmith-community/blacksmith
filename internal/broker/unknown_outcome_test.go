@@ -1424,6 +1424,69 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(recorded().State).To(Equal(outcomeStateUnknown))
 		})
 
+		It("a LastOperation poll answers within 10 seconds while the read of the task found hangs", func() {
+			contextID := loseDelete()
+
+			director.onFindTaskByContextID = func(context.Context, string) (*bosh.Task, error) {
+				return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment, ContextID: contextID}, nil
+			}
+
+			type readSeen struct {
+				hasDeadline     bool
+				retriesDisabled bool
+			}
+
+			var (
+				seen     = make(chan readSeen, 1)
+				released = make(chan struct{})
+			)
+
+			cleanups = append(cleanups, func() { close(released) })
+
+			// The read of the task hangs until its context ends, or until
+			// the spec ends.
+			director.onGetTask = func(callCtx context.Context, _ int) (*bosh.Task, error) {
+				_, hasDeadline := callCtx.Deadline()
+				seen <- readSeen{hasDeadline: hasDeadline, retriesDisabled: boshapi.RetriesDisabled(callCtx)}
+
+				select {
+				case <-callCtx.Done():
+					return nil, fmt.Errorf("get /tasks/%d: %w", deleteTaskID, callCtx.Err())
+				case <-released:
+					return nil, errAnswerLost
+				}
+			}
+
+			started := time.Now()
+			answered := make(chan osbapi.LastOperationResponse, 1)
+
+			go func() {
+				defer GinkgoRecover()
+
+				answered <- poll(outcomeDeprovision)
+			}()
+
+			var read readSeen
+
+			Eventually(seen, 5*time.Second).Should(Receive(&read), "the poll never read the task it found")
+			Expect(read.retriesDisabled).To(BeTrue(), "the read of the task ran with the director client's retries on")
+			Expect(read.hasDeadline).To(BeTrue(), "the read of the task ran without a deadline")
+
+			var response osbapi.LastOperationResponse
+
+			Eventually(answered, 11*time.Second).Should(Receive(&response), "the poll whose task read hangs did not answer")
+			Expect(time.Since(started)).To(BeNumerically("<=", 10*time.Second+500*time.Millisecond))
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "the poll whose task read hung answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(fmt.Sprintf("task %d", deleteTaskID)))
+			Expect(response.Description).To(ContainSubstring("could not be read"))
+
+			// The task was recorded before the read, so the next poll
+			// follows it.
+			Expect(recorded().TaskID).To(Equal(deleteTaskID))
+			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+			Expect(stillIndexed()).To(BeTrue())
+		})
+
 		deprovisionRefused := func() error {
 			_, _, err := brokerInstance.Deprovision(ctx, instanceID, osbapi.DeprovisionRequest{ServiceID: serviceID, PlanID: planID}, true)
 

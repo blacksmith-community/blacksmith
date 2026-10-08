@@ -37,6 +37,15 @@ type contextDirector struct {
 	onGetEvents        func(ctx context.Context, deployment string) ([]bosh.Event, error)
 
 	onFindTaskByContextID func(ctx context.Context, contextID string) (*bosh.Task, error)
+	onGetTask             func(ctx context.Context, taskID int) (*bosh.Task, error)
+}
+
+func (d *contextDirector) GetTask(ctx context.Context, taskID int) (*bosh.Task, error) {
+	if d.onGetTask != nil {
+		return d.onGetTask(ctx, taskID)
+	}
+
+	return d.ScriptedBOSHDirector.GetTask(ctx, taskID) //nolint:wrapcheck // the double passes the scripted error through
 }
 
 func (d *contextDirector) FindTaskByContextID(ctx context.Context, contextID string) (*bosh.Task, error) {
