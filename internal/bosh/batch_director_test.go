@@ -85,6 +85,9 @@ type fakeBatchBase struct {
 	contextErr error
 	// contextLookups counts the FindTaskByContextID calls.
 	contextLookups int
+	// onLookup, when set, runs at the start of each FindTaskByContextID
+	// call, outside the fake's lock.
+	onLookup func()
 	// running is the tasks FindRunningTasksForDeployment answers with.
 	running []bosh.Task
 	// runningErr, when set, is every FindRunningTasksForDeployment call's
@@ -221,6 +224,14 @@ func (f *fakeBatchBase) WaitForTask(ctx context.Context, taskID int) (*bosh.Task
 }
 
 func (f *fakeBatchBase) FindTaskByContextID(_ context.Context, contextID string) (*bosh.Task, error) {
+	f.mu.Lock()
+	onLookup := f.onLookup
+	f.mu.Unlock()
+
+	if onLookup != nil {
+		onLookup()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -2239,4 +2250,90 @@ func TestBatchWaitForContextIDWithNoWatcherIsServedByTheTaskWatcher(t *testing.T
 	if calls := base.waitCallsFor(foundTaskID); calls != 1 {
 		t.Fatalf("expected only the watcher to wait on the base director, got %d waits", calls)
 	}
+}
+
+// A wait for the task a lost answer's watcher found, by its task ID, is
+// served by that watcher, with no second wait on the base director.
+func TestBatchLostAnswerServesAWaitForTheTaskItFound(t *testing.T) {
+	t.Parallel()
+
+	const lostTaskID = 630
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	base.addTask(lostTaskID, firstDeployment, createDeploymentDescription)
+	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
+	startLostAnswer(t, base, batch)
+	waitUntil(t, "the watcher follows the task it found", func() bool { return base.waitCallsFor(lostTaskID) == 1 })
+
+	waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForTask(t.Context(), lostTaskID) })
+
+	base.finish(t, lostTaskID, batchTaskDone)
+
+	got := receive(t, waited)
+	if got.err != nil || got.task == nil || got.task.ID != lostTaskID || got.task.State != batchTaskDone {
+		t.Fatalf("expected the found task, done, got %+v and %v", got.task, got.err)
+	}
+
+	if calls := base.waitCallsFor(lostTaskID); calls != 1 {
+		t.Fatalf("expected only the watcher to wait on the base director, got %d waits", calls)
+	}
+}
+
+// The watcher of a lost answer is pruned by its context ID as well as by
+// its task ID, so a later wait for the context ID looks the task up again.
+func TestBatchLostAnswerIsPrunedByItsContextID(t *testing.T) {
+	t.Parallel()
+
+	const lostTaskID = 640
+
+	base := newFakeBatchBase()
+	batch, clock := newTestBatch(t, base, 1)
+
+	base.addTask(lostTaskID, firstDeployment, createDeploymentDescription)
+	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
+	waited := startLostAnswer(t, base, batch)
+	waitUntil(t, "the watcher follows the task it found", func() bool { return base.waitCallsFor(lostTaskID) == 1 })
+	base.finish(t, lostTaskID, batchTaskDone)
+	receive(t, waited)
+
+	clock.waitSleeping(t, bosh.BatchDonePrune)
+	clock.advance(bosh.BatchDonePrune)
+	waitUntil(t, "the watcher is pruned", func() bool {
+		tasks, contextIDs := bosh.BatchWatchesHeld(batch)
+
+		return tasks == 0 && contextIDs == 0 && bosh.BatchWatchersRunning(batch) == 0
+	})
+
+	before := base.lookups()
+
+	task, err := batch.WaitForContextID(t.Context(), firstContextID)
+	if err != nil || task == nil || task.ID != lostTaskID {
+		t.Fatalf("expected the task found by a fresh lookup, got %+v and %v", task, err)
+	}
+
+	if lookups := base.lookups(); lookups != before+1 {
+		t.Fatalf("expected one more lookup after the prune, got %d then %d", before, lookups)
+	}
+}
+
+// The watcher of a lost answer judges the grace by the time its check
+// began, so a lookup that ends past the grace does not let a check that
+// began inside it give up.
+func TestBatchLostAnswerJudgesTheGraceByWhenTheCheckBegan(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, clock := newTestBatch(t, base, 1)
+
+	var once sync.Once
+
+	base.set(func(f *fakeBatchBase) {
+		f.onLookup = func() { once.Do(func() { clock.advance(bosh.UnknownOutcomeGrace) }) }
+	})
+
+	startLostAnswer(t, base, batch)
+	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+	waitBatchStats(t, batch, 1, 0)
 }
