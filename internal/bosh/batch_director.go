@@ -47,6 +47,9 @@ const (
 	// batchDonePrune is how long a watcher keeps the final task of its
 	// deploy for waiters after the task ends.
 	batchDonePrune = 10 * time.Minute
+	// batchFinishedReadTimeout bounds the read of a task that had already
+	// ended when UpdateDeployment returned it.
+	batchFinishedReadTimeout = 30 * time.Second
 	// batchCreateDeploymentDescription is the director's description of a
 	// deploy, which a watcher of a lost answer follows when it runs on the
 	// deployment.
@@ -90,6 +93,9 @@ type batchWatch struct {
 	// taskID is the task the watcher follows, or 0 while it looks for the
 	// task of a lost answer. It is guarded by the BatchDirector's mu.
 	taskID int
+	// holdsSlot is false for the watcher of a task that had already ended
+	// when UpdateDeployment returned it, whose slot was released at once.
+	holdsSlot bool
 	// done is closed once task and err hold the watcher's result.
 	done chan struct{}
 	task *Task
@@ -315,6 +321,17 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 
 	if task == nil || task.ID <= 0 {
 		b.logger.Errorf("Released the batch slot of deployment %s at once, because the director named no task for the deploy", name)
+
+		return task, nil
+	}
+
+	if isTerminalTaskState(task.State) {
+		handedOff = true
+
+		b.releaseSlot()
+		b.logger.Infof("BOSH task %d of deployment %s had ended in state %s when the deploy call returned, so its batch slot is released at once",
+			task.ID, name, task.State)
+		b.keepFinishedTask(name, *task)
 
 		return task, nil
 	}
@@ -670,7 +687,44 @@ func (b *BatchDirector) signalLocked() {
 // =====================================================
 
 func newBatchWatch(deployment, contextID string) *batchWatch {
-	return &batchWatch{deployment: deployment, contextID: contextID, done: make(chan struct{})}
+	return &batchWatch{deployment: deployment, contextID: contextID, holdsSlot: true, done: make(chan struct{})}
+}
+
+// keepFinishedTask keeps a task that had already ended when the deploy
+// call returned it, so a wait for it gets the final task. It holds no
+// slot. When the task lacks the deployment or the end time, it reads the
+// task once, bounded by batchFinishedReadTimeout, and when that read
+// fails, waiters get the task the deploy call returned.
+func (b *BatchDirector) keepFinishedTask(deployment string, returned Task) {
+	watch := newBatchWatch(deployment, "")
+	watch.holdsSlot = false
+
+	b.mu.Lock()
+	b.startWatchLocked(watch, returned.ID, func(ctx context.Context) (*Task, error) {
+		return b.readFinishedTask(ctx, watch, returned), nil
+	})
+	b.mu.Unlock()
+}
+
+// readFinishedTask returns the director's record of a finished task, or
+// the task the deploy call returned when that record cannot be read.
+func (b *BatchDirector) readFinishedTask(ctx context.Context, watch *batchWatch, returned Task) *Task {
+	if returned.EndedAt != nil && returned.Deployment != "" {
+		return &returned
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, batchFinishedReadTimeout)
+	defer cancel()
+
+	task, err := b.director.GetTask(readCtx, returned.ID)
+	if err != nil || task == nil || task.ID != returned.ID || !isTerminalTaskState(task.State) {
+		b.logger.Infof("The read of finished %s did not give its final record, so its waiters get the task the deploy call returned: %v",
+			watch.describe(returned.ID), err)
+
+		return &returned
+	}
+
+	return task
 }
 
 // watchTask follows the task of a deploy the director accepted, and
@@ -721,9 +775,10 @@ func (b *BatchDirector) watchLostAnswer(deployment, contextID string) bool {
 }
 
 // startWatchLocked registers a watch and runs it on its own goroutine,
-// which releases the watch's slot when the watch ends. It reports false,
-// and starts nothing, once the batch director is stopped. The caller holds
-// mu, and has counted the watch's slot in inFlight.
+// which releases the watch's slot, if it holds one, when the watch ends.
+// It reports false, and starts nothing, once the batch director is
+// stopped. The caller holds mu, and has counted a watch that holds a slot
+// in inFlight.
 func (b *BatchDirector) startWatchLocked(watch *batchWatch, taskID int, follow func(ctx context.Context) (*Task, error)) bool {
 	if b.stopped {
 		return false
@@ -746,14 +801,20 @@ func (b *BatchDirector) startWatchLocked(watch *batchWatch, taskID int, follow f
 	return true
 }
 
-// runWatch runs one watcher. It releases the slot before it reports the
-// result, so a waiter that starts the next deploy finds the slot free, and
-// it keeps the result for waiters until batchDonePrune has passed.
+// runWatch runs one watcher. A watcher that holds a slot releases it
+// before it reports the result, so a waiter that starts the next deploy
+// finds the slot free, and every watcher keeps its result for waiters
+// until batchDonePrune has passed.
 func (b *BatchDirector) runWatch(watch *batchWatch, follow func(ctx context.Context) (*Task, error)) {
 	defer b.watchers.Done()
 	defer b.watcherReturned()
 
-	watch.task, watch.err = b.followHoldingSlot(follow)
+	if watch.holdsSlot {
+		watch.task, watch.err = b.followHoldingSlot(follow)
+	} else {
+		watch.task, watch.err = follow(b.lifetime)
+	}
+
 	close(watch.done)
 
 	err := b.clock.Sleep(b.lifetime, batchDonePrune)

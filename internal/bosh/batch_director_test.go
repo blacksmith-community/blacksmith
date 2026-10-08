@@ -63,6 +63,12 @@ type fakeBatchBase struct {
 	waitCalls map[int]int
 	// waitErr, when set, is every WaitForTask call's answer.
 	waitErr error
+	// getCalls counts the GetTask calls, and getErr, when set, is every
+	// GetTask call's answer.
+	getCalls int
+	getErr   error
+	// getBlocks makes GetTask wait for its context to end.
+	getBlocks bool
 	// byContextID maps a context ID to the task the director lists for it.
 	byContextID map[string]int
 	// contextErr, when set, is every FindTaskByContextID call's answer.
@@ -139,7 +145,35 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 		return nil, fmt.Errorf("deploy of %s: %w", name, ctx.Err())
 	}
 
-	return f.taskSnapshot(accepted.ID), nil
+	// The bosh-cli adapter's task carries no deployment and no end time.
+	finished := f.taskSnapshot(accepted.ID)
+	finished.Deployment, finished.EndedAt = "", nil
+
+	return finished, nil
+}
+
+func (f *fakeBatchBase) GetTask(ctx context.Context, taskID int) (*bosh.Task, error) {
+	f.mu.Lock()
+	f.getCalls++
+	getErr, getBlocks := f.getErr, f.getBlocks
+	_, found := f.tasks[taskID]
+	f.mu.Unlock()
+
+	if getBlocks {
+		<-ctx.Done()
+
+		return nil, fmt.Errorf("get task %d: %w", taskID, ctx.Err())
+	}
+
+	if getErr != nil {
+		return nil, getErr
+	}
+
+	if !found {
+		return nil, fmt.Errorf("task %d: %w", taskID, errBatchTestRejected)
+	}
+
+	return f.taskSnapshot(taskID), nil
 }
 
 func (f *fakeBatchBase) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
@@ -230,6 +264,14 @@ func (f *fakeBatchBase) waitCallsFor(taskID int) int {
 	return f.waitCalls[taskID]
 }
 
+// gets reports how many times GetTask was called.
+func (f *fakeBatchBase) gets() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.getCalls
+}
+
 // lookups reports how many times FindTaskByContextID was called.
 func (f *fakeBatchBase) lookups() int {
 	f.mu.Lock()
@@ -277,7 +319,8 @@ func (f *fakeBatchBase) finish(t *testing.T, taskID int, state string) {
 		t.Fatalf("task %d was never started", taskID)
 	}
 
-	started.task.State = state
+	ended := started.task.StartedAt.Add(time.Minute)
+	started.task.State, started.task.EndedAt = state, &ended
 	close(started.done)
 }
 
@@ -951,8 +994,46 @@ func TestBatchSlotIsReleasedWhenTheDeployIsRejected(t *testing.T) {
 	}
 }
 
+// finishBlockingDeploy runs a deploy through a base director whose
+// UpdateDeployment returns once the deploy has finished, finishes it, and
+// returns the task the deploy call returned. The slot is free by the time
+// the call returns.
+func finishBlockingDeploy(t *testing.T, base *fakeBatchBase, batch *bosh.BatchDirector) *bosh.Task {
+	t.Helper()
+
+	type deployed struct {
+		task *bosh.Task
+		err  error
+	}
+
+	result := make(chan deployed, 1)
+
+	go func() {
+		task, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+		active, _, _ := batch.GetBatchPoolStats()
+
+		if active != 0 {
+			err = fmt.Errorf("%w: %d slots held when the deploy call returned", errBatchTestRejected, active)
+		}
+
+		result <- deployed{task: task, err: err}
+	}()
+
+	base.waitAccepted(t)
+	base.finish(t, base.taskOf(t, firstDeployment), batchTaskDone)
+
+	got := <-result
+	if got.err != nil || got.task == nil {
+		t.Fatalf("expected the finished task with the slot free, got %+v and %v", got.task, got.err)
+	}
+
+	return got.task
+}
+
 // The bosh-cli adapter's UpdateDeployment returns once the deploy has
-// finished, so the watcher's wait returns at once and frees the slot.
+// finished, so the slot is released before the call returns, with no read
+// of the task. Waiters get the director's record of the task, read after
+// the slot was released.
 func TestBatchSlotIsReleasedWhenABlockingDeployReturnsAFinishedTask(t *testing.T) {
 	t.Parallel()
 
@@ -960,22 +1041,56 @@ func TestBatchSlotIsReleasedWhenABlockingDeployReturnsAFinishedTask(t *testing.T
 	base.blockUntilFinished = true
 	batch, _ := newTestBatch(t, base, 1)
 
-	result := deployInBackground(t.Context(), batch, firstDeployment)
-	base.waitAccepted(t)
-	waitBatchStats(t, batch, 1, 0)
+	returned := finishBlockingDeploy(t, base, batch)
 
-	taskID := base.taskOf(t, firstDeployment)
-	base.finish(t, taskID, batchTaskDone)
-
-	err := <-result
-	if err != nil {
-		t.Fatalf("expected the deploy to succeed, got %v", err)
+	task, err := batch.WaitForTask(t.Context(), returned.ID)
+	if err != nil || task == nil || task.Deployment != firstDeployment || task.EndedAt == nil || task.State != batchTaskDone {
+		t.Fatalf("expected the director's record of the finished task, got %+v and %v", task, err)
 	}
 
-	waitBatchStats(t, batch, 0, 0)
+	if calls, gets := base.waitCallsFor(returned.ID), base.gets(); calls != 0 || gets != 1 {
+		t.Fatalf("expected one read of the finished task and no wait, got %d reads and %d waits", gets, calls)
+	}
+}
 
-	if calls := base.waitCallsFor(taskID); calls != 1 {
-		t.Fatalf("expected the watcher to read the finished task once, got %d reads", calls)
+// A finished deploy's slot does not wait for a director that cannot be
+// read, and its waiters get the task the deploy call returned.
+func TestBatchSlotOfAFinishedDeployIsReleasedWhenTheDirectorCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	failures := map[string]struct {
+		setup func(f *fakeBatchBase)
+		stop  bool
+	}{
+		"a failed read":         {setup: func(f *fakeBatchBase) { f.getErr, f.waitErr = errBatchTestRejected, errBatchTestRejected }},
+		"a read that Stop ends": {setup: func(f *fakeBatchBase) { f.getBlocks = true }, stop: true},
+	}
+
+	for name, failure := range failures {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base := newFakeBatchBase()
+			base.blockUntilFinished = true
+			base.set(failure.setup)
+			batch, _ := newTestBatch(t, base, 1)
+
+			returned := finishBlockingDeploy(t, base, batch)
+			waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForTask(t.Context(), returned.ID) })
+
+			base.set(func(f *fakeBatchBase) { f.blockUntilFinished = false })
+			startDeploy(t, base, batch, secondDeployment)
+
+			if failure.stop {
+				waitUntil(t, "the finished task is read", func() bool { return base.gets() == 1 })
+				batch.Stop()
+			}
+
+			got := receive(t, waited)
+			if got.err != nil || got.task == nil || got.task.ID != returned.ID || got.task.State != batchTaskDone {
+				t.Fatalf("expected the task the deploy call returned, got %+v and %v", got.task, got.err)
+			}
+		})
 	}
 }
 
