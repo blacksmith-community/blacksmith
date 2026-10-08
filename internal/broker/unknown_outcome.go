@@ -179,6 +179,10 @@ func (b *Broker) unknownOutcomeToReplace(instanceID string, recorded recordedOpe
 // the director shows what happened, and it changes nothing while any
 // director call fails.
 //
+// A record that does not say when its outcome became unknown gets the
+// pass's own time as that time, and the pass answers in progress, so the
+// grace period starts from the first time the broker saw the record.
+//
 // One pass runs per instance at a time, and a poll that finds one running
 // answers in progress with the error the last pass ended with. The state
 // that keeps the passes apart is dropped once a pass settles the outcome
@@ -231,7 +235,11 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 		}, nil
 	}
 
-	if !current.UnknownSince.IsZero() && b.unknownOutcomeNow().Sub(current.UnknownSince) >= unknownOutcomeAlarmAge {
+	if current.UnknownSince.IsZero() {
+		return b.stampUnknownSince(ctx, instanceID, current, logger), nil
+	}
+
+	if b.unknownOutcomeNow().Sub(current.UnknownSince) >= unknownOutcomeAlarmAge {
 		logger.Error("Instance %s: the outcome of the %s with context ID %s has been unknown since %s, more than %s ago. An operator should look at the director's tasks and events for deployment %s",
 			instanceID, noun, current.ContextID, current.UnknownSince.Format(time.RFC3339), unknownOutcomeAlarmAge, deploymentName)
 	}
@@ -250,6 +258,45 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 	}
 
 	return response, nil
+}
+
+// stampUnknownSince records the pass's own time as the time the outcome
+// became unknown, on a record that does not say when, so the grace period
+// starts from the first time the broker saw the record. The write is made
+// only while the record still holds that unknown outcome and still has no
+// such time. The pass asks the director nothing and answers in progress.
+func (b *Broker) stampUnknownSince(ctx context.Context, instanceID string, operation recordedOperation, logger logger.Logger) osbapi.LastOperationResponse {
+	noun := requestNoun(operation.Action)
+	now := b.unknownOutcomeNow()
+
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.StampUnknownSince(recordCtx, instanceID, operation.Action, operation.ContextID, now)
+
+	switch {
+	case err == nil:
+		logger.Warning("Instance %s: the record of the %s with context ID %s did not say when its outcome became unknown, so it now says %s", instanceID, noun, operation.ContextID, now.Format(time.RFC3339))
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("Waiting for the director to show whether it started the %s with context ID %s; its grace period runs until %s", noun, operation.ContextID, now.Add(bosh.UnknownOutcomeGrace).Format(time.RFC3339)),
+		}
+	case errors.Is(err, internalVault.ErrOutcomeUnknownSettled) || errors.Is(err, internalVault.ErrUnknownSinceRecorded):
+		logger.Info("Instance %s: the record of the %s with context ID %s changed before its unknown-since time was written: %s", instanceID, noun, operation.ContextID, err)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("The record of the %s with context ID %s changed while this poll waited", noun, operation.ContextID),
+		}
+	default:
+		logger.Error("Instance %s: the time the outcome of the %s with context ID %s became unknown could not be recorded: %s", instanceID, noun, operation.ContextID, err)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("Waiting for the director to show whether it started the %s with context ID %s; %s", noun, operation.ContextID, reasonNoUnknownSince),
+		}
+	}
 }
 
 // findUnknownOutcome asks the director what became of the request that

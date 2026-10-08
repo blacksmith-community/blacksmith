@@ -283,6 +283,63 @@ var _ = Describe("Task record writes", func() {
 			Expect(readRecord()).To(HaveKeyWithValue("state", "in_progress"))
 		})
 
+		Describe("the time the outcome became unknown", func() {
+			recordWithoutSince := func() {
+				recordUnknown(deprovision)
+
+				record := readRecord()
+				delete(record, vault.TaskRecordUnknownSinceKey)
+				ExpectWithOffset(1, client.Put(ctx, instanceID+"/task", record)).To(Succeed())
+			}
+
+			It("is stamped on a record that lacks it, and nothing else changes", func() {
+				recordWithoutSince()
+
+				before := readRecord()
+				since := time.Now().Add(-time.Minute).UTC().Truncate(time.Millisecond)
+
+				Expect(client.StampUnknownSince(ctx, instanceID, deprovision, contextID, since)).To(Succeed())
+
+				after := readRecord()
+
+				Expect(after).To(HaveKeyWithValue(vault.TaskRecordUnknownSinceKey, since.Format(time.RFC3339Nano)))
+
+				delete(after, vault.TaskRecordUnknownSinceKey)
+				Expect(after).To(Equal(before))
+			})
+
+			It("is not stamped over a time the record already has", func() {
+				recordUnknown(deprovision)
+
+				writes := taskWrites()
+				recorded := readRecord()[vault.TaskRecordUnknownSinceKey]
+
+				Expect(client.StampUnknownSince(ctx, instanceID, deprovision, contextID, time.Now().Add(time.Hour))).To(MatchError(vault.ErrUnknownSinceRecorded))
+				Expect(taskWrites()).To(Equal(writes))
+				Expect(readRecord()).To(HaveKeyWithValue(vault.TaskRecordUnknownSinceKey, recorded))
+			})
+
+			It("is not stamped when the record names another context ID", func() {
+				recordWithoutSince()
+
+				writes := taskWrites()
+
+				Expect(client.StampUnknownSince(ctx, instanceID, deprovision, uuid.NewString(), time.Now())).To(MatchError(vault.ErrOutcomeUnknownSettled))
+				Expect(taskWrites()).To(Equal(writes))
+			})
+
+			It("is not stamped when the outcome was settled", func() {
+				recordWithoutSince()
+				Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, taskID)).To(Succeed())
+
+				writes := taskWrites()
+
+				Expect(client.StampUnknownSince(ctx, instanceID, deprovision, contextID, time.Now())).To(MatchError(vault.ErrOutcomeUnknownSettled))
+				Expect(taskWrites()).To(Equal(writes))
+				Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
+			})
+		})
+
 		It("refuses when there is no record", func() {
 			Expect(client.SettleOutcomeUnknown(ctx, instanceID, deprovision, deleting, contextID, taskID)).To(MatchError(vault.ErrOutcomeUnknownSettled))
 			Expect(proxy.WritesTo(instanceID + "/task")).To(BeEmpty())

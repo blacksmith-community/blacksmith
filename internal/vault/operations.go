@@ -170,6 +170,52 @@ func (vault *Vault) SettleOutcomeUnknown(ctx context.Context, instanceID, action
 	return vault.trackProgressGuarded(ctx, instanceID, action, description, contextID, "", taskID, nil, settlingOutcomeUnknown(instanceID, action, contextID))
 }
 
+// ErrUnknownSinceRecorded is returned when StampUnknownSince finds that the
+// record already says when its outcome became unknown.
+var ErrUnknownSinceRecorded = errors.New("the task record already says when its outcome became unknown")
+
+// StampUnknownSince records since as the time the outcome of the operation
+// became unknown, on a record that holds the unknown outcome of action with
+// contextID and has no such time. Every other field of the record is kept.
+// The check and the write happen under the instance's task record lock. It
+// writes nothing and returns an error that wraps ErrOutcomeUnknownSettled
+// when the record no longer holds that outcome, and one that wraps
+// ErrUnknownSinceRecorded when the record already has the time. A record
+// that cannot be read stops the write.
+func (vault *Vault) StampUnknownSince(ctx context.Context, instanceID, action, contextID string, since time.Time) error {
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s, unknown since", ErrEmptyContextID, instanceID, action)
+	}
+
+	logger := logger.Get().Named("vault stamp unknown since " + instanceID)
+	settling := settlingOutcomeUnknown(instanceID, action, contextID)
+
+	guard := func(current map[string]interface{}) error {
+		err := settling(current)
+		if err != nil {
+			return err
+		}
+
+		recorded, _ := current[TaskRecordUnknownSinceKey].(string)
+		if recorded != "" {
+			return fmt.Errorf("%w: instance %s, %s with context ID %s, unknown since %s", ErrUnknownSinceRecorded, instanceID, action, contextID, recorded)
+		}
+
+		return nil
+	}
+
+	return vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
+		stamped := make(map[string]interface{}, len(replaced)+1)
+		for key, value := range replaced {
+			stamped[key] = value
+		}
+
+		stamped[TaskRecordUnknownSinceKey] = since.UTC().Format(time.RFC3339Nano)
+
+		return stamped
+	})
+}
+
 // SettleOutcomeUnknownAsDeleted records the deprovision whose unknown
 // outcome the record holds as finished, as Track does, once the director
 // has said the deployment does not exist. The record it writes has no

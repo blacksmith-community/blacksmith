@@ -1561,9 +1561,33 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			response := poll(outcomeDeprovision)
 
 			Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete with no unknown-since time answered %+v", response)
-			Expect(response.Description).To(ContainSubstring("does not say when the outcome became unknown"))
+			Expect(response.Description).To(ContainSubstring("grace period runs until"))
+			Expect(recorded().UnknownSince).ToNot(BeZero(), "the poll did not stamp the record")
 			Expect(director.Calls("GetEvents")).To(HaveLen(events))
 			Expect(director.Calls("FindRunningTaskForDeployment")).To(HaveLen(running))
+		})
+
+		It("an unknown delete with no unknown-since time is failed once the new grace period has passed", func() {
+			loseDelete()
+
+			record := readRecord()
+			delete(record, "unknown_since")
+			Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+			stampedAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+
+			frozenAt.Store(stampedAt.UnixNano())
+
+			Expect(poll(outcomeDeprovision).State).To(Equal(osbapi.StateInProgress))
+			Expect(recorded().UnknownSince.Equal(stampedAt)).To(BeTrue(), "the record says unknown since %s, not %s", recorded().UnknownSince, stampedAt)
+
+			frozenAt.Store(stampedAt.Add(bosh.UnknownOutcomeGrace).UnixNano())
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateFailed), "a delete past the new grace period answered %+v", response)
+			Expect(recorded().State).To(Equal(outcomeStateFailed))
+			Expect(stillIndexed()).To(BeTrue())
 		})
 
 		It("an unknown delete is not failed while lookups error past the grace period", func() {
@@ -2333,20 +2357,43 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(recorded().State).To(Equal(outcomeStateFailed))
 			})
 
-			It("never ends for a record that does not say when the outcome became unknown", func() {
+			It("starts its grace period at the first poll of a record that does not say when the outcome became unknown", func() {
 				record := readRecord()
 				delete(record, "unknown_since")
 				Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
 				Expect(recorded().UnknownSince).To(BeZero())
 
-				passGrace()
+				stampedAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+
+				frozenAt.Store(stampedAt.UnixNano())
 
 				response := poll(outcomeProvision)
 
 				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy with no unknown-since time answered %+v", response)
-				Expect(response.Description).To(ContainSubstring("does not say when the outcome became unknown"))
+				Expect(response.Description).To(ContainSubstring("grace period runs until"))
 				Expect(recorded().State).To(Equal(outcomeStateUnknown))
 				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(recorded().UnknownSince.Equal(stampedAt)).To(BeTrue(), "the record says unknown since %s, not %s", recorded().UnknownSince, stampedAt)
+
+				By("a poll inside the new grace period leaves the stamp and the record as they are")
+
+				frozenAt.Store(stampedAt.Add(bosh.UnknownOutcomeGrace - time.Second).UnixNano())
+
+				stamped := recorded()
+
+				response = poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a poll inside the new grace period answered %+v", response)
+				Expect(recorded()).To(Equal(stamped), "the poll changed the record")
+
+				By("a poll past it settles under the usual rules")
+
+				frozenAt.Store(stampedAt.Add(bosh.UnknownOutcomeGrace).UnixNano())
+
+				response = poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a poll past the new grace period answered %+v", response)
+				Expect(recorded().State).To(Equal(outcomeStateFailed))
 			})
 
 			It("asks the director for no events or running tasks for such a record", func() {
@@ -2368,7 +2415,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				response := poll(outcomeProvision)
 
 				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy with no unknown-since time answered %+v", response)
-				Expect(response.Description).To(ContainSubstring("does not say when the outcome became unknown"))
+				Expect(response.Description).To(ContainSubstring("grace period runs until"))
 				Expect(director.Calls("GetEvents")).To(BeEmpty())
 				Expect(director.Calls("FindRunningTaskForDeployment")).To(BeEmpty())
 			})
