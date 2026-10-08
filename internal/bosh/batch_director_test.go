@@ -96,6 +96,12 @@ type fakeBatchBase struct {
 	getState string
 	// running is the tasks FindRunningTasksForDeployment answers with.
 	running []bosh.Task
+	// runningOn is the deployment the director lists running as running on,
+	// and runningAsked holds the deployment of each
+	// FindRunningTasksForDeployment call. A call for any other deployment
+	// finds no task.
+	runningOn    string
+	runningAsked []string
 	// runningErr, when set, is every FindRunningTasksForDeployment call's
 	// answer.
 	runningErr error
@@ -126,6 +132,7 @@ func newFakeBatchBase() *fakeBatchBase {
 		waitCalls:   map[int]int{},
 		byContextID: map[string]int{},
 		interrupt:   make(chan error, 1),
+		runningOn:   firstDeployment,
 	}
 }
 
@@ -280,15 +287,30 @@ func (f *fakeBatchBase) FindTaskByContextID(ctx context.Context, contextID strin
 	return &task, nil
 }
 
-func (f *fakeBatchBase) FindRunningTasksForDeployment(_ context.Context, _ string) ([]bosh.Task, error) {
+func (f *fakeBatchBase) FindRunningTasksForDeployment(_ context.Context, deployment string) ([]bosh.Task, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	f.runningAsked = append(f.runningAsked, deployment)
 
 	if f.runningErr != nil {
 		return nil, f.runningErr
 	}
 
+	if deployment != f.runningOn {
+		return nil, nil
+	}
+
 	return slices.Clone(f.running), nil
+}
+
+// runningAskedFor returns the deployment of each
+// FindRunningTasksForDeployment call so far.
+func (f *fakeBatchBase) runningAskedFor() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.runningAsked)
 }
 
 // addTask records a task the director runs that no deploy through the fake
@@ -1386,6 +1408,17 @@ func TestBatchLostAnswerFollowsARunningCreateTask(t *testing.T) {
 	got := receive(t, waited)
 	if got.err != nil || got.task == nil || got.task.ID != runningTaskID {
 		t.Fatalf("expected the running deploy's task, got %+v and %v", got.task, got.err)
+	}
+
+	asked := base.runningAskedFor()
+	if len(asked) == 0 {
+		t.Fatal("expected the watcher to list the running tasks of the deployment")
+	}
+
+	for _, deployment := range asked {
+		if deployment != firstDeployment {
+			t.Fatalf("expected every listing to name %s, got %q", firstDeployment, asked)
+		}
 	}
 }
 
