@@ -557,6 +557,12 @@ func (b *Broker) Deprovision(
 		return osbapi.DeprovisionResponse{}, false, fmt.Errorf("failed to record the deprovision of instance %s: %w", instanceID, err)
 	}
 
+	if superseded.ContextID != "" {
+		// The unknown outcome the deprovision replaced is settled, so the
+		// state of the passes that resolved it is dropped.
+		b.forgetUnknownOutcomePass(instanceID, b.unknownOutcomePassFor(instanceID))
+	}
+
 	b.storeDeleteRequestedTimestamp(ctx, instanceID, logger)
 	b.descheduleShieldBackup(instanceID, details.ServiceID, details.PlanID, logger)
 

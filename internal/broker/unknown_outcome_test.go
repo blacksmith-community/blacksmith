@@ -1867,6 +1867,32 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
 			})
 
+			It("drops the pass state of the record it replaces", func() {
+				director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) { return nil, routeNotFound() }
+
+				Expect(poll(outcomeProvision).State).To(Equal(osbapi.StateInProgress))
+
+				kept, _ := brokerInstance.UnknownOutcomePassState(instanceID)
+				Expect(kept).To(BeTrue(), "a pass whose lookup failed kept no state")
+
+				frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace).UnixNano())
+
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				deletes := countDeletes()
+
+				deprovision()
+
+				Eventually(deletes.Load, 10*time.Second).Should(BeEquivalentTo(1), "the accepted deprovision sent no delete")
+				Eventually(settled, 10*time.Second).Should(BeTrue())
+				Expect(recorded().Action).To(Equal(outcomeDeprovision))
+
+				kept, _ = brokerInstance.UnknownOutcomePassState(instanceID)
+				Expect(kept).To(BeFalse(), "the pass state outlived the record the deprovision replaced")
+			})
+
 			It("is accepted once the grace period ends, and its own delete replaces the record", func() {
 				frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace).UnixNano())
 
