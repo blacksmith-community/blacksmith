@@ -1923,6 +1923,204 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			})
 		})
 
+		Describe("the grace period of an unknown deploy", func() {
+			var (
+				contextID string
+				unknown   broker.RecordedOperation
+			)
+
+			BeforeEach(func() {
+				contextID = loseDeploy()
+				unknown = recorded()
+
+				Expect(unknown.UnknownSince).ToNot(BeZero())
+
+				deploymentMissing()
+			})
+
+			It("keeps the deploy in progress a second before it ends", func() {
+				frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace - time.Second).UnixNano())
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a poll a second before the grace period ends answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(recorded()).To(Equal(unknown), "the poll changed the record")
+			})
+
+			It("fails the deploy once it ends", func() {
+				frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace).UnixNano())
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a poll as the grace period ends answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(recorded().State).To(Equal(outcomeStateFailed))
+			})
+
+			It("never ends for a record that does not say when the outcome became unknown", func() {
+				record := readRecord()
+				delete(record, "unknown_since")
+				Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+				Expect(recorded().UnknownSince).To(BeZero())
+
+				passGrace()
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy with no unknown-since time answered %+v", response)
+				Expect(response.Description).To(ContainSubstring("does not say when the outcome became unknown"))
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+				Expect(recorded().ContextID).To(Equal(contextID))
+			})
+
+			It("does not fail a deploy whose deployment exists with no task past it", func() {
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy whose deployment exists answered %+v", response)
+				Expect(response.Description).To(ContainSubstring("deployment " + deploymentName + " exists, and no task the director lists names it"))
+				Expect(recorded()).To(Equal(unknown), "the poll changed the record")
+			})
+
+			It("starts the cleanup of a failed provision once the deploy fails", func() {
+				var checks atomic.Int32
+
+				director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+					checks.Add(1)
+
+					return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+				}
+
+				passGrace()
+
+				response := poll(outcomeProvision)
+				Expect(response.State).To(Equal(osbapi.StateFailed), "an unknown deploy past its grace period answered %+v", response)
+
+				// The pass checks the deployment once, and the cleanup asks
+				// for it again.
+				Eventually(checks.Load, 10*time.Second).Should(BeNumerically(">=", 2), "the cleanup of the failed provision did not start")
+			})
+		})
+
+		It("an unknown deploy adopts the task a create event on its deployment names", func() {
+			contextID := loseDeploy()
+
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+				return deploymentEvents(boshEventCreate, deploymentName, createTaskID), nil
+			}
+			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+				return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment}, nil
+			}
+
+			response := poll(outcomeProvision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy whose create event names a task answered %+v", response)
+			Expect(recorded().TaskID).To(Equal(createTaskID), "the create event's task was not adopted")
+			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+			Expect(recorded().ContextID).To(Equal(contextID))
+		})
+
+		Describe("a pass handed an operation the record no longer holds", func() {
+			var unknown broker.RecordedOperation
+
+			BeforeEach(func() {
+				loseDeploy()
+
+				unknown = recorded()
+
+				deploymentMissing()
+				passGrace()
+			})
+
+			resolve := func(operation broker.RecordedOperation) {
+				response, err := brokerInstance.ResolveUnknownOutcome(ctx, instanceID, deploymentName, operation)
+				ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+				ExpectWithOffset(1, response.State).To(Equal(osbapi.StateInProgress), "a pass over a changed record answered %+v", response)
+				ExpectWithOffset(1, response.Description).To(ContainSubstring("was just settled"))
+				ExpectWithOffset(1, recorded()).To(Equal(unknown), "the pass changed a record it was not handed")
+			}
+
+			It("leaves the record when it names another context ID", func() {
+				operation := unknown
+				operation.ContextID = uuid.NewString()
+
+				resolve(operation)
+			})
+
+			It("leaves the record when it names another action", func() {
+				operation := unknown
+				operation.Action = outcomeDeprovision
+
+				resolve(operation)
+			})
+		})
+
+		It("a pass asks the director about the deployment its record names", func() {
+			loseDelete()
+
+			unknown := recorded()
+
+			Expect(unknown.DeploymentName).To(Equal(deploymentName))
+
+			var (
+				namesMu sync.Mutex
+				names   []string
+			)
+
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				namesMu.Lock()
+				defer namesMu.Unlock()
+
+				names = append(names, name)
+
+				return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
+			}
+
+			_, err := brokerInstance.ResolveUnknownOutcome(ctx, instanceID, "a-deployment-the-poll-names", unknown)
+			Expect(err).ToNot(HaveOccurred())
+
+			namesMu.Lock()
+			defer namesMu.Unlock()
+
+			Expect(names).ToNot(BeEmpty(), "the pass did not check the deployment")
+			Expect(names).To(HaveEach(deploymentName), "the pass checked a deployment its record does not name")
+		})
+
+		It("a pass reads the record again under its own bound", func() {
+			contextID := loseDeploy()
+			unknown := recorded()
+			proxy := useProxy()
+
+			// The pass is handed the poll's read, so the read it makes
+			// itself is the one held.
+			proxy.HoldReads(instanceID+"/task", 1)
+
+			answered := make(chan osbapi.LastOperationResponse, 1)
+
+			go func() {
+				defer GinkgoRecover()
+
+				response, err := brokerInstance.ResolveUnknownOutcome(context.Background(), instanceID, deploymentName, unknown)
+				Expect(err).ToNot(HaveOccurred())
+
+				answered <- response
+			}()
+
+			var response osbapi.LastOperationResponse
+
+			Eventually(answered, 15*time.Second).Should(Receive(&response), "the pass waited on a held read of the record past its bound")
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a pass whose read of the record was held answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(director.Calls("FindTaskByContextID")).ToNot(ContainElement(contextID), "the pass asked the director without the record")
+		})
+
 		Describe("a deprovision is refused while the provision's outcome is unknown", func() {
 			It("when the record shows it before the deprovision starts", func() {
 				contextID := loseDeploy()
