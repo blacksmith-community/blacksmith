@@ -442,7 +442,7 @@ func TestFindRunningTasksForDeploymentListsEveryRunningTask(t *testing.T) {
 		}
 
 		errand := directorTask(42, "processing")
-		errand["description"] = "run errand smoke-tests"
+		errand["description"] = errandDescription
 
 		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{errand, directorTask(41, "done"), directorTask(40, "queued")})
 

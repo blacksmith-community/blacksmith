@@ -1067,9 +1067,9 @@ func (b *BatchDirector) followFoundTask(watch *batchWatch, taskID int) {
 }
 
 // findLostTask looks for the task of a deploy whose answer was lost, by
-// its context ID and then as a deploy running on its deployment. It
-// returns the task ID when either finds the task, and an error when either
-// lookup failed.
+// its context ID and then as a deploy running on its deployment, behind
+// any other task that runs there. It returns the task ID when either finds
+// the task, and an error when either lookup failed.
 func (b *BatchDirector) findLostTask(ctx context.Context, watch *batchWatch) (int, error) {
 	var lookupErr error
 
@@ -1086,21 +1086,23 @@ func (b *BatchDirector) findLostTask(ctx context.Context, watch *batchWatch) (in
 		}
 	}
 
-	running, err := b.director.FindRunningTaskForDeployment(ctx, watch.deployment)
+	running, err := b.director.FindRunningTasksForDeployment(ctx, watch.deployment)
 	if err != nil {
 		return 0, errors.Join(lookupErr, fmt.Errorf("the check for a task running on deployment %s failed: %w", watch.deployment, err))
 	}
 
-	if running != nil {
-		if running.Deployment == watch.deployment && running.Description == batchCreateDeploymentDescription {
-			b.logger.Infof("BOSH task %d is a deploy running on deployment %s, so the batch director follows it for the deploy with context ID %s",
-				running.ID, watch.deployment, watch.contextID)
+	for _, task := range running {
+		if task.Deployment == watch.deployment && task.Description == batchCreateDeploymentDescription {
+			b.logger.Infof("BOSH task %d is a deploy running on deployment %s, so the batch director follows it for %s",
+				task.ID, watch.deployment, watch.lostDeploy())
 
-			return running.ID, nil
+			return task.ID, nil
 		}
+	}
 
+	for _, task := range running {
 		b.logger.Infof("BOSH task %d (%q on deployment %q) runs on deployment %s, and it is not a %q task, so it is not followed",
-			running.ID, running.Description, running.Deployment, watch.deployment, batchCreateDeploymentDescription)
+			task.ID, task.Description, task.Deployment, watch.deployment, batchCreateDeploymentDescription)
 	}
 
 	return 0, lookupErr

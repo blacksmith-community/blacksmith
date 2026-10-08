@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,7 @@ const batchWaitLimit = 5 * time.Second
 // use.
 const (
 	createDeploymentDescription = "create deployment"
+	errandDescription           = "run errand smoke-tests"
 	batchTaskProcessing         = "processing"
 	batchTaskDone               = "done"
 	batchTaskError              = "error"
@@ -83,9 +85,9 @@ type fakeBatchBase struct {
 	contextErr error
 	// contextLookups counts the FindTaskByContextID calls.
 	contextLookups int
-	// running is the task FindRunningTaskForDeployment answers with.
-	running *bosh.Task
-	// runningErr, when set, is every FindRunningTaskForDeployment call's
+	// running is the tasks FindRunningTasksForDeployment answers with.
+	running []bosh.Task
+	// runningErr, when set, is every FindRunningTasksForDeployment call's
 	// answer.
 	runningErr error
 
@@ -238,7 +240,7 @@ func (f *fakeBatchBase) FindTaskByContextID(_ context.Context, contextID string)
 	return &task, nil
 }
 
-func (f *fakeBatchBase) FindRunningTaskForDeployment(_ context.Context, _ string) (*bosh.Task, error) {
+func (f *fakeBatchBase) FindRunningTasksForDeployment(_ context.Context, _ string) ([]bosh.Task, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -246,13 +248,7 @@ func (f *fakeBatchBase) FindRunningTaskForDeployment(_ context.Context, _ string
 		return nil, f.runningErr
 	}
 
-	if f.running == nil {
-		return nil, nil //nolint:nilnil // no running task is an answer
-	}
-
-	task := *f.running
-
-	return &task, nil
+	return slices.Clone(f.running), nil
 }
 
 // addTask records a task the director runs that no deploy through the fake
@@ -502,9 +498,15 @@ type recordingLogger struct {
 	lines []string
 }
 
-func (l *recordingLogger) Infof(format string, args ...interface{})  { l.recordf("INFO", format, args...) }
-func (l *recordingLogger) Debugf(format string, args ...interface{}) { l.recordf("DEBUG", format, args...) }
-func (l *recordingLogger) Errorf(format string, args ...interface{}) { l.recordf("ERROR", format, args...) }
+func (l *recordingLogger) Infof(format string, args ...interface{}) {
+	l.recordf("INFO", format, args...)
+}
+func (l *recordingLogger) Debugf(format string, args ...interface{}) {
+	l.recordf("DEBUG", format, args...)
+}
+func (l *recordingLogger) Errorf(format string, args ...interface{}) {
+	l.recordf("ERROR", format, args...)
+}
 
 func (l *recordingLogger) recordf(level, format string, args ...interface{}) {
 	l.mu.Lock()
@@ -1316,7 +1318,7 @@ func TestBatchLostAnswerFollowsARunningCreateTask(t *testing.T) {
 
 	base.addTask(runningTaskID, firstDeployment, createDeploymentDescription)
 	base.set(func(f *fakeBatchBase) {
-		f.running = &bosh.Task{ID: runningTaskID, State: batchTaskProcessing, Description: createDeploymentDescription, Deployment: firstDeployment}
+		f.running = []bosh.Task{{ID: runningTaskID, State: batchTaskProcessing, Description: createDeploymentDescription, Deployment: firstDeployment}}
 	})
 	clock.advance(bosh.BatchLostAnswerInterval)
 
@@ -1341,7 +1343,7 @@ func TestBatchLostAnswerDoesNotFollowOtherRunningTasks(t *testing.T) {
 
 	others := map[string]bosh.Task{
 		"a dry run":                    {ID: 700, Description: "create deployment (dry run)", Deployment: firstDeployment},
-		"an errand":                    {ID: 700, Description: "run errand smoke-tests", Deployment: firstDeployment},
+		"an errand":                    {ID: 700, Description: errandDescription, Deployment: firstDeployment},
 		"a deploy of another instance": {ID: 700, Description: createDeploymentDescription, Deployment: "dep-9"},
 	}
 
@@ -1354,7 +1356,7 @@ func TestBatchLostAnswerDoesNotFollowOtherRunningTasks(t *testing.T) {
 			base.set(func(f *fakeBatchBase) {
 				running := other
 				running.State = batchTaskProcessing
-				f.running = &running
+				f.running = []bosh.Task{running}
 			})
 			batch, clock := newTestBatch(t, base, 1)
 			waited := startLostAnswer(t, base, batch)
@@ -1983,7 +1985,7 @@ func TestBatchSlotIsHeldThroughADeployWhoseCallEnded(t *testing.T) {
 
 	taskID := base.taskOf(t, firstDeployment)
 	running := base.taskSnapshot(taskID)
-	base.set(func(f *fakeBatchBase) { f.running = running })
+	base.set(func(f *fakeBatchBase) { f.running = []bosh.Task{*running} })
 
 	cancel()
 
@@ -2087,5 +2089,41 @@ func TestBatchLostAnswerGivesUpOnRefusedLookupsAfterTheGrace(t *testing.T) {
 
 	if logged := logger.count("ERROR", "refused"); logged < 2 {
 		t.Fatalf("expected each refused lookup to be logged at Error, got %d lines", logged)
+	}
+}
+
+// A deploy that runs on the deployment behind a newer task of another kind
+// is still found and followed for a lost answer.
+func TestBatchLostAnswerFollowsACreateTaskBehindAnotherRunningTask(t *testing.T) {
+	t.Parallel()
+
+	const errandTaskID, createTaskID = 701, 601
+
+	base := newFakeBatchBase()
+	base.addTask(errandTaskID, firstDeployment, errandDescription)
+	base.addTask(createTaskID, firstDeployment, createDeploymentDescription)
+	base.set(func(f *fakeBatchBase) {
+		f.running = []bosh.Task{
+			{ID: errandTaskID, State: batchTaskProcessing, Description: errandDescription, Deployment: firstDeployment},
+			{ID: createTaskID, State: batchTaskProcessing, Description: createDeploymentDescription, Deployment: firstDeployment},
+		}
+	})
+	batch, clock := newTestBatch(t, base, 1)
+	waited := startLostAnswer(t, base, batch)
+
+	waitUntil(t, "the watcher follows the deploy", func() bool { return base.waitCallsFor(createTaskID) == 1 })
+	clock.advance(bosh.UnknownOutcomeGrace + time.Hour)
+	waitBatchStats(t, batch, 1, 0)
+
+	base.finish(t, createTaskID, batchTaskDone)
+	waitBatchStats(t, batch, 0, 0)
+
+	got := receive(t, waited)
+	if got.err != nil || got.task == nil || got.task.ID != createTaskID {
+		t.Fatalf("expected the deploy's task, got %+v and %v", got.task, got.err)
+	}
+
+	if calls := base.waitCallsFor(errandTaskID); calls != 0 {
+		t.Fatalf("expected the errand not to be followed, but it was waited for %d times", calls)
 	}
 }
