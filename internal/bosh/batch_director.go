@@ -27,6 +27,12 @@ var (
 	// deploy lost its answer, when the director showed that no task has its
 	// context ID.
 	ErrNoTaskWithContextID = errors.New("the BOSH director lists no task with the context ID")
+	// ErrNoWatcherForContextID is returned by WaitForContextID when no
+	// watcher looks for the context ID and a lookup on the director found
+	// no task with it. It says nothing about whether a deploy ran, because
+	// the director may not have recorded the task yet, or may have pruned
+	// it.
+	ErrNoWatcherForContextID = errors.New("no batch watcher looks for the context ID, and the BOSH director found no task with it")
 )
 
 const (
@@ -349,10 +355,14 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 
 // WaitForContextID waits for the task of a deploy whose answer was lost,
 // once the batch director's watcher has found and followed it, or for the
-// caller's context. It returns ErrNoTaskWithContextID when the director
-// showed that no task has the context ID. With no watcher for the context
-// ID, it looks the task up once on the base director and waits for it
-// there.
+// caller's context. It returns ErrNoTaskWithContextID when that watcher
+// showed that no task has the context ID.
+//
+// With no watcher for the context ID, it looks the task up once on the
+// base director. A task it finds is waited for through WaitForTask, so a
+// watcher that follows the task serves the wait. When the lookup finds no
+// task, it returns ErrNoWatcherForContextID, never ErrNoTaskWithContextID,
+// because a single lookup does not show that no deploy ran.
 func (b *BatchDirector) WaitForContextID(ctx context.Context, contextID string) (*Task, error) {
 	b.mu.Lock()
 	watch := b.byContextID[contextID]
@@ -367,13 +377,13 @@ func (b *BatchDirector) WaitForContextID(ctx context.Context, contextID string) 
 		return nil, fmt.Errorf("find the task with context ID %s: %w", contextID, err)
 	}
 
-	if task == nil {
-		return nil, fmt.Errorf("%w %s", ErrNoTaskWithContextID, contextID)
+	if task == nil || task.ID <= 0 {
+		return nil, fmt.Errorf("%w: %s", ErrNoWatcherForContextID, contextID)
 	}
 
-	waited, err := b.director.WaitForTask(ctx, task.ID)
+	waited, err := b.WaitForTask(ctx, task.ID)
 	if err != nil {
-		return nil, fmt.Errorf("wait for BOSH task %d with context ID %s: %w", task.ID, contextID, err)
+		return nil, fmt.Errorf("context ID %s: %w", contextID, err)
 	}
 
 	return waited, nil

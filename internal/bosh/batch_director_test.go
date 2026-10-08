@@ -2163,3 +2163,80 @@ func TestBatchLostAnswerWithNoContextIDIsGivenUpWhenNoDeployRuns(t *testing.T) {
 		t.Fatalf("expected the watcher to be pruning, got %d watchers", running)
 	}
 }
+
+// With no watcher for a context ID, a lookup that finds no task does not
+// show that no deploy ran, so the wait reports that no watcher looks for
+// the context ID rather than that no task has it.
+func TestBatchWaitForContextIDWithNoWatcherOrTask(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	task, err := batch.WaitForContextID(t.Context(), firstContextID)
+	if !errors.Is(err, bosh.ErrNoWatcherForContextID) || task != nil {
+		t.Fatalf("expected ErrNoWatcherForContextID and no task, got %+v and %v", task, err)
+	}
+
+	if errors.Is(err, bosh.ErrNoTaskWithContextID) {
+		t.Fatalf("expected no claim that no task has the context ID, got %v", err)
+	}
+
+	if lookups := base.lookups(); lookups != 1 {
+		t.Fatalf("expected one lookup by the context ID, got %d", lookups)
+	}
+}
+
+// With no watcher for a context ID, a task the lookup finds is waited for
+// on the base director when no watcher follows it either.
+func TestBatchWaitForContextIDWithNoWatcherWaitsForTheFoundTask(t *testing.T) {
+	t.Parallel()
+
+	const foundTaskID = 610
+
+	base := newFakeBatchBase()
+	base.addTask(foundTaskID, firstDeployment, createDeploymentDescription)
+	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = foundTaskID })
+	batch, _ := newTestBatch(t, base, 1)
+
+	waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForContextID(t.Context(), firstContextID) })
+
+	waitUntil(t, "the base director waits for the found task", func() bool { return base.waitCallsFor(foundTaskID) == 1 })
+	base.finish(t, foundTaskID, batchTaskDone)
+
+	got := receive(t, waited)
+	if got.err != nil || got.task == nil || got.task.ID != foundTaskID || got.task.State != batchTaskDone {
+		t.Fatalf("expected the found task, done, got %+v and %v", got.task, got.err)
+	}
+}
+
+// With no watcher for a context ID, a task the lookup finds that a watcher
+// already follows is served by that watcher, with no second wait on the
+// base director.
+func TestBatchWaitForContextIDWithNoWatcherIsServedByTheTaskWatcher(t *testing.T) {
+	t.Parallel()
+
+	const foundTaskID = 620
+
+	base := newFakeBatchBase()
+	base.addTask(foundTaskID, firstDeployment, createDeploymentDescription)
+	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = foundTaskID })
+	batch, _ := newTestBatch(t, base, 1)
+
+	batch.Adopt(foundTaskID)
+	waitUntil(t, "the watcher follows the adopted task", func() bool { return base.waitCallsFor(foundTaskID) == 1 })
+
+	waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForContextID(t.Context(), firstContextID) })
+
+	waitUntil(t, "the context ID is looked up", func() bool { return base.lookups() == 1 })
+	base.finish(t, foundTaskID, batchTaskDone)
+
+	got := receive(t, waited)
+	if got.err != nil || got.task == nil || got.task.ID != foundTaskID || got.task.State != batchTaskDone {
+		t.Fatalf("expected the found task, done, got %+v and %v", got.task, got.err)
+	}
+
+	if calls := base.waitCallsFor(foundTaskID); calls != 1 {
+		t.Fatalf("expected only the watcher to wait on the base director, got %d waits", calls)
+	}
+}
