@@ -188,11 +188,11 @@ func (b *Broker) unknownOutcomeToReplace(instanceID string, recorded recordedOpe
 // One pass runs per instance at a time, and a poll that finds one running
 // answers in progress with the error the last pass ended with. The state
 // that keeps the passes apart is dropped once a pass settles the outcome
-// or finds it settled. The record's second read, the director lookups,
-// and the director reads of the settle step all run under one
-// unknownOutcomePassTimeout with the director client's retries turned
-// off. The record writes run detached under a bound of their own, and
-// work that outlives the poll keeps the poll's own context.
+// or finds it settled. The record's second read, the stamp write, the
+// director lookups, and the director reads of the settle step all run
+// under one unknownOutcomePassTimeout with the director client's retries
+// turned off. The other record writes run detached under a bound of their
+// own, and work that outlives the poll keeps the poll's own context.
 func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	noun := requestNoun(operation.Action)
 	pass := b.unknownOutcomePassFor(instanceID)
@@ -238,7 +238,7 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 	}
 
 	if current.UnknownSince.IsZero() {
-		return b.stampUnknownSince(ctx, instanceID, current, logger), nil
+		return b.stampUnknownSince(passCtx, instanceID, current, logger), nil
 	}
 
 	if b.unknownOutcomeNow().Sub(current.UnknownSince) >= unknownOutcomeAlarmAge {
@@ -267,14 +267,14 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 // starts from the first time the broker saw the record. The write is made
 // only while the record still holds that unknown outcome and still has no
 // such time. The pass asks the director nothing and answers in progress.
-func (b *Broker) stampUnknownSince(ctx context.Context, instanceID string, operation recordedOperation, logger logger.Logger) osbapi.LastOperationResponse {
+// The write runs under the pass's own bound, which the record's second
+// read has already used part of, so the poll answers in about that time. A
+// write that fails or runs out of time is tried again by the next poll.
+func (b *Broker) stampUnknownSince(passCtx context.Context, instanceID string, operation recordedOperation, logger logger.Logger) osbapi.LastOperationResponse {
 	noun := requestNoun(operation.Action)
 	now := b.unknownOutcomeNow()
 
-	recordCtx, cancel := recordContext(ctx)
-	defer cancel()
-
-	err := b.Vault.StampUnknownSince(recordCtx, instanceID, operation.Action, operation.ContextID, now)
+	err := b.Vault.StampUnknownSince(passCtx, instanceID, operation.Action, operation.ContextID, now)
 
 	switch {
 	case err == nil:

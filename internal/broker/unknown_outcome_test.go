@@ -2865,6 +2865,48 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(director.Calls("FindTaskByContextID")).ToNot(ContainElement(contextID), "the pass asked the director without the record")
 		})
 
+		It("a pass that stamps a record answers within its own bound when the stamp write hangs", func() {
+			loseDeploy()
+
+			record := readRecord()
+			delete(record, "unknown_since")
+			Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+			unknown := recorded()
+			proxy := useProxy()
+
+			// A bound on the write that is longer than the pass's own, so
+			// only the pass's bound can end the held write in time.
+			broker.SetRecordWriteTimeout(time.Minute)
+
+			cleanups = append(cleanups, func() { broker.SetRecordWriteTimeout(0) })
+
+			proxy.HoldWrites(instanceID+"/task", -1)
+
+			answered := make(chan osbapi.LastOperationResponse, 1)
+
+			go func() {
+				defer GinkgoRecover()
+
+				response, err := brokerInstance.ResolveUnknownOutcome(context.Background(), instanceID, deploymentName, unknown)
+				Expect(err).ToNot(HaveOccurred())
+
+				answered <- response
+			}()
+
+			var response osbapi.LastOperationResponse
+
+			Eventually(answered, 15*time.Second).Should(Receive(&response), "the pass waited on a held stamp write past its bound")
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a pass whose stamp write hung answered %+v", response)
+			Expect(director.Calls("FindTaskByContextID")).To(BeEmpty(), "the pass asked the director while it could not stamp the record")
+
+			proxy.ClearFaults()
+
+			Expect(recorded().UnknownSince).To(BeZero())
+			Expect(poll(outcomeProvision).State).To(Equal(osbapi.StateInProgress))
+			Expect(recorded().UnknownSince).ToNot(BeZero(), "the next poll did not try the stamp again")
+		})
+
 		It("a deprovision is refused when the record cannot be read", func() {
 			indexInstance()
 
