@@ -274,13 +274,23 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 		return nil, fmt.Errorf("failed to acquire batch slot: %w", err)
 	}
 
+	// handedOff is set once a watcher owns the slot. Until then the
+	// deferred release returns the slot however the call ends, a panic in
+	// the base director included.
+	handedOff := false
+
+	defer func() {
+		if !handedOff {
+			b.releaseSlot()
+		}
+	}()
+
 	task, err := b.director.UpdateDeployment(ctx, name, manifest)
 	if err != nil {
 		var unknown *OutcomeUnknownError
 		if errors.As(err, &unknown) {
-			b.watchLostAnswer(name, unknown.ContextID)
+			handedOff = b.watchLostAnswer(name, unknown.ContextID)
 		} else {
-			b.releaseSlot()
 			b.logger.Infof("Released the batch slot of deployment %s at once, because the deploy failed without a task to follow: %v", name, err)
 		}
 
@@ -288,13 +298,12 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 	}
 
 	if task == nil || task.ID <= 0 {
-		b.releaseSlot()
 		b.logger.Errorf("Released the batch slot of deployment %s at once, because the director named no task for the deploy", name)
 
 		return task, nil
 	}
 
-	b.watchTask(name, task.ID)
+	handedOff = b.watchTask(name, task.ID)
 
 	return task, nil
 }
@@ -649,8 +658,10 @@ func newBatchWatch(deployment, contextID string) *batchWatch {
 }
 
 // watchTask follows the task of a deploy the director accepted, and
-// releases the deploy's slot when the task ends.
-func (b *BatchDirector) watchTask(deployment string, taskID int) {
+// releases the deploy's slot when the task ends. It reports whether a
+// watcher took the slot, which it does not once the batch director is
+// stopped.
+func (b *BatchDirector) watchTask(deployment string, taskID int) bool {
 	watch := newBatchWatch(deployment, "")
 	deadline := b.clock.Now().Add(b.watchMax)
 
@@ -661,15 +672,17 @@ func (b *BatchDirector) watchTask(deployment string, taskID int) {
 	b.mu.Unlock()
 
 	if !started {
-		b.releaseSlot()
 		b.logger.Infof("The batch director is stopped, so it released the slot of %s without following it", watch.describe(taskID))
 	}
+
+	return started
 }
 
 // watchLostAnswer keeps the slot of a deploy whose answer was lost, and
 // looks for its task until it finds it, or until the director shows that
-// the deploy never became a task.
-func (b *BatchDirector) watchLostAnswer(deployment, contextID string) {
+// the deploy never became a task. It reports whether a watcher took the
+// slot, which it does not once the batch director is stopped.
+func (b *BatchDirector) watchLostAnswer(deployment, contextID string) bool {
 	watch := newBatchWatch(deployment, contextID)
 	unknownSince := b.clock.Now()
 	deadline := unknownSince.Add(b.watchMax)
@@ -681,15 +694,16 @@ func (b *BatchDirector) watchLostAnswer(deployment, contextID string) {
 	b.mu.Unlock()
 
 	if !started {
-		b.releaseSlot()
 		b.logger.Infof("The batch director is stopped, so it released the slot of deployment %s, whose answer with context ID %s was lost, without looking for its task",
 			deployment, contextID)
 
-		return
+		return false
 	}
 
 	b.logger.Infof("The answer to the deploy of %s with context ID %s was lost, so its batch slot stays held while the batch director looks for its task",
 		deployment, contextID)
+
+	return true
 }
 
 // startWatchLocked registers a watch and runs it on its own goroutine,

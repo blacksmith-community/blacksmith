@@ -80,6 +80,14 @@ type fakeBatchBase struct {
 	blockUntilFinished bool
 	// updateErr, when it returns an error, is UpdateDeployment's answer.
 	updateErr func(name string) error
+	// taskWithErr, when set, is the task UpdateDeployment returns with the
+	// error updateErr gives.
+	taskWithErr *bosh.Task
+	// noTask makes UpdateDeployment accept nothing and name no task.
+	noTask bool
+	// hold, when set, runs first in every UpdateDeployment call, so a test
+	// can keep the call in flight.
+	hold func(name string)
 }
 
 func newFakeBatchBase() *fakeBatchBase {
@@ -93,11 +101,19 @@ func newFakeBatchBase() *fakeBatchBase {
 }
 
 func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*bosh.Task, error) {
+	if f.hold != nil {
+		f.hold(name)
+	}
+
 	if f.updateErr != nil {
 		err := f.updateErr(name)
 		if err != nil {
-			return nil, err
+			return f.taskWithErr, err
 		}
+	}
+
+	if f.noTask {
+		return nil, nil //nolint:nilnil // a deploy the director names no task for is what the test is about
 	}
 
 	f.mu.Lock()
@@ -1400,5 +1416,133 @@ func TestBatchWaitReturnsTheWatchersFinalTask(t *testing.T) {
 
 	if calls := base.waitCallsFor(taskID); calls != 1 {
 		t.Fatalf("expected only the watcher to read the task, got %d reads", calls)
+	}
+}
+
+func TestBatchSlotIsReleasedWhenTheBaseDirectorPanics(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.updateErr = func(name string) error {
+		if name == firstDeployment {
+			panic("the base director panicked")
+		}
+
+		return nil
+	}
+	batch, _ := newTestBatch(t, base, 1)
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected the base director's panic to reach the caller")
+			}
+		}()
+
+		_, _ = batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	}()
+
+	waitBatchStats(t, batch, 0, 0)
+	startDeploy(t, base, batch, secondDeployment)
+}
+
+// A deploy the director accepted, but named no task for, has nothing a
+// watcher could follow, so its slot is released at once.
+func TestBatchSlotIsReleasedWhenTheDirectorNamesNoTask(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.noTask = true
+	batch, _ := newTestBatch(t, base, 1)
+
+	task, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	if err != nil || task != nil {
+		t.Fatalf("expected no task and no error, got %+v and %v", task, err)
+	}
+
+	waitBatchStats(t, batch, 0, 0)
+
+	if running := bosh.BatchWatchersRunning(batch); running != 0 {
+		t.Fatalf("expected no watcher, got %d", running)
+	}
+}
+
+func TestBatchDeployReturnsTheTaskThatCameWithAnError(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.taskWithErr = &bosh.Task{ID: 900, State: batchTaskError}
+	base.updateErr = func(string) error {
+		return &boshapi.APIError{StatusCode: 400, Method: "POST", Path: deploymentsRoute, Code: 440001, Mutation: true}
+	}
+	batch, _ := newTestBatch(t, base, 1)
+
+	task, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	if err == nil || task == nil || task.ID != 900 {
+		t.Fatalf("expected task 900 with the director's error, got %+v and %v", task, err)
+	}
+}
+
+// holdDeploys keeps every UpdateDeployment call of the base director in
+// flight until the test closes the gate it returns, and reports each call
+// that starts on the channel it returns.
+func holdDeploys(base *fakeBatchBase) (chan<- struct{}, <-chan string) {
+	gate := make(chan struct{})
+	entered := make(chan string, 8)
+
+	base.hold = func(name string) {
+		entered <- name
+
+		<-gate
+	}
+
+	return gate, entered
+}
+
+// A deploy whose director call returns after Stop finds no watcher to hand
+// its slot to, so the slot is released and nothing follows the deploy.
+func TestStopWhileADeployIsInFlightReleasesItsSlot(t *testing.T) {
+	t.Parallel()
+
+	answers := map[string]func(base *fakeBatchBase){
+		"an accepted deploy": func(*fakeBatchBase) {},
+		"a lost answer":      func(base *fakeBatchBase) { base.updateErr = lostAnswer(firstDeployment) },
+	}
+
+	for name, answer := range answers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base := newFakeBatchBase()
+			answer(base)
+			gate, entered := holdDeploys(base)
+			batch, _ := newTestBatch(t, base, 1)
+
+			result := deployInBackground(t.Context(), batch, firstDeployment)
+
+			select {
+			case <-entered:
+			case <-time.After(batchWaitLimit):
+				t.Fatal("the deploy never reached the base director")
+			}
+
+			waitBatchStats(t, batch, 1, 0)
+
+			batch.Stop()
+			close(gate)
+
+			select {
+			case <-result:
+			case <-time.After(batchWaitLimit):
+				t.Fatal("the deploy never returned")
+			}
+
+			waitBatchStats(t, batch, 0, 0)
+
+			tasks, contextIDs := bosh.BatchWatchesHeld(batch)
+			if running := bosh.BatchWatchersRunning(batch); running != 0 || tasks != 0 || contextIDs != 0 {
+				t.Fatalf("expected no watcher after Stop, got %d running and %d and %d held", running, tasks, contextIDs)
+			}
+		})
 	}
 }
