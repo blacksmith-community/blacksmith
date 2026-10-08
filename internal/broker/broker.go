@@ -2165,13 +2165,16 @@ func (b *Broker) OperationClaimed(instanceID string) bool {
 // progress. Otherwise only the records that outlive the entry can show the
 // instance was deleted, which are a deprovision in <instance>/task, settled
 // by deprovisionWithoutIndexEntry, or a delete request in <instance>/metadata
-// that follows the instance's creation. Every other poll answers failed, so
-// the platform does not take a lost provision for a finished one. A read
-// error returns an error, and the platform polls again. A provision poll
-// that finds a deprovision record answers failed, because the instance was
-// deleted while it was being provisioned. A poll that names no operation
-// follows the record's action. When the record names no deployment, the
-// deployment is named from the plan the poll names.
+// that follows the instance's creation. A record that holds an unknown
+// outcome, of either action, is settled by unknownOutcomeWithoutIndexEntry
+// and never answered failed without the director's word. Every other poll
+// answers failed, so the platform does not take a lost provision for a
+// finished one. A read error returns an error, and the platform polls
+// again. A provision poll that finds a deprovision record answers failed,
+// because the instance was deleted while it was being provisioned. A poll
+// that names no operation follows the record's action. When the record
+// names no deployment, the deployment is named from the plan the poll
+// names.
 func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, details osbapi.LastOperationRequest, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if b.provisionActive(instanceID) {
 		logger.Debug("instance %s has no index entry yet, and its provision is still being accepted", instanceID)
@@ -2187,6 +2190,10 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, d
 		logger.Error("instance %s has no index entry, and its recorded operation could not be read: %s", instanceID, err)
 
 		return osbapi.LastOperationResponse{}, err
+	}
+
+	if recorded.State == internalVault.TaskStateOutcomeUnknown {
+		return b.unknownOutcomeWithoutIndexEntry(ctx, instanceID, details, recorded, logger)
 	}
 
 	if recorded.Action == operationTypeDeprovision {
@@ -2245,9 +2252,35 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, d
 // director answers that the deployment does not exist. The deployment is
 // the one the record names, and the one planID and the instance ID name
 // when the record names none. When neither names one, it answers in
-// progress without asking. A delete whose outcome is unknown is settled
-// by resolveUnknownOutcome. A deployment that still exists answers failed
+// progress without asking. A deployment that still exists answers failed
 // when the record says the delete failed, and in progress otherwise.
+// unknownOutcomeWithoutIndexEntry answers a poll for an instance the index
+// does not have, whose record holds an unknown outcome of either action.
+// A poll for the other operation answers in progress and changes nothing.
+// Otherwise the outcome is settled by resolveUnknownOutcome, which asks the
+// director about the deployment the record names, or the one the poll's
+// plan and the instance ID name when the record names none. When neither
+// names one, it answers in progress without asking.
+func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID string, details osbapi.LastOperationRequest, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	polled := pollOperation(details.Operation, recorded)
+	if polled != recorded.Action {
+		return unknownOutcomeOfOtherOperation(instanceID, polled, recorded, logger), nil
+	}
+
+	if recorded.DeploymentName == "" && details.PlanID == "" {
+		logger.Warning("instance %s has no index entry, the outcome of its %s with context ID %s is unknown, and neither its record nor the poll names the deployment to check", instanceID, recorded.Action, recorded.ContextID)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("Waiting for the director to show whether it started the %s with context ID %s, and neither its record nor the poll names the deployment to check", requestNoun(recorded.Action), recorded.ContextID),
+		}, nil
+	}
+
+	deploymentName := deploymentNameForInstance(instanceID, &vaultPkg.Instance{PlanID: details.PlanID, DeploymentName: recorded.DeploymentName})
+
+	return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
+}
+
 func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.ContextID == "" {
 		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
@@ -2265,10 +2298,6 @@ func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, p
 	}
 
 	deploymentName := deploymentNameForInstance(instanceID, &vaultPkg.Instance{PlanID: planID, DeploymentName: recorded.DeploymentName})
-
-	if recorded.State == internalVault.TaskStateOutcomeUnknown {
-		return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
-	}
 
 	err := b.deploymentGone(ctx, instanceID, deploymentName, logger)
 

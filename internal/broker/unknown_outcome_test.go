@@ -1539,6 +1539,88 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(recorded().State).ToNot(Equal(outcomeStateUnknown), "the settled delete is still recorded as unknown")
 		})
 
+		Describe("an unknown deploy whose index entry is gone", func() {
+			var contextID string
+
+			BeforeEach(func() {
+				contextID = loseDeploy()
+
+				Expect(vaultClient.Index(ctx, instanceID, nil)).To(Succeed())
+			})
+
+			It("is failed only after the grace period, when the director says the deployment is missing", func() {
+				deploymentMissing()
+
+				response := pollUnindexed(outcomeProvision)
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an index-less unknown deploy in its grace period answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(director.Calls("FindTaskByContextID")).To(ContainElement(contextID), "the poll did not look the task up by its context ID")
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+
+				passGrace()
+
+				response = pollUnindexed(outcomeProvision)
+				Expect(response.State).To(Equal(osbapi.StateFailed), "an index-less unknown deploy past its grace period answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(recorded().State).To(Equal(outcomeStateFailed))
+
+				// The platform's deprovision after the failure is no longer
+				// refused as an unknown outcome.
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrGoneError))
+			})
+
+			It("stays in progress past the grace period while the deployment check fails", func() {
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return nil, routeNotFound()
+				}
+
+				passGrace()
+
+				response := pollUnindexed(outcomeProvision)
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an index-less unknown deploy whose check failed answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+			})
+
+			It("answers in progress without asking when no plan names the deployment", func() {
+				passGrace()
+
+				response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{Operation: outcomeProvision})
+				Expect(err).ToNot(HaveOccurred())
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an index-less unknown deploy with no plan answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(director.Calls("FindTaskByContextID")).To(BeEmpty(), "the broker asked about a deployment it could not name")
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+			})
+
+			It("answers a deprovision poll in progress and keeps the record", func() {
+				unknown := recorded()
+
+				deploymentMissing()
+				passGrace()
+
+				response := pollUnindexed(outcomeDeprovision)
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deprovision poll over an index-less unknown deploy answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(recorded()).To(Equal(unknown))
+			})
+		})
+
+		It("a provision poll over an index-less unknown delete answers in progress and keeps the record", func() {
+			sent := loseDeleteAnswers()
+
+			brokerInstance.TearDownAbandonedDeployment(ctx, instanceID, deploymentName)
+
+			Expect(sent()).To(HaveLen(1))
+
+			unknown := recorded()
+
+			response := pollUnindexed(outcomeProvision)
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a provision poll over an index-less unknown delete answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(sent()[0]))
+			Expect(recorded()).To(Equal(unknown))
+		})
+
 		It("a lost unknown-outcome write is tried again", func() {
 			indexInstance()
 
