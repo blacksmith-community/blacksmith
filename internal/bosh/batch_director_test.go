@@ -1360,20 +1360,38 @@ func TestWatcherReleasesTheSlotWhenTheTaskIs404(t *testing.T) {
 	}
 }
 
-// A 404 for a route the director does not serve is a routing problem, not
-// a missing task, so the watcher keeps the slot and reads the task again.
+// Only the director's task-not-found answer ends a watch at once. A 404
+// for a route the director does not serve is a routing problem, and any
+// other not-found answer, such as one a proxy gives, does not say that
+// the task is gone, so the watcher keeps the slot and reads the task
+// again.
 func TestWatcherKeepsTheSlotWhenTheTaskRouteIs404(t *testing.T) {
 	t.Parallel()
 
-	base := newFakeBatchBase()
-	base.set(func(f *fakeBatchBase) {
-		f.waitErr = &boshapi.APIError{StatusCode: 404, Method: "GET", Path: "/tasks/101", Description: "Endpoint '/tasks/101' not found."}
-	})
-	batch, clock := newTestBatch(t, base, 1)
+	answers := map[string]error{
+		"a route 404": &boshapi.APIError{StatusCode: 404, Method: "GET", Path: "/tasks/101", Description: "Endpoint '/tasks/101' not found."},
+		"a director-not-found answer": &boshapi.APIError{
+			StatusCode: 404, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeDirectorNotFound, Description: "Director not found",
+		},
+		"a deployment-not-found answer": &boshapi.APIError{
+			StatusCode: 404, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeDeploymentNotFound, Description: "Deployment not found",
+		},
+		"a not-found error with no answer": fmt.Errorf("read BOSH task: %w", boshapi.ErrNotFound),
+	}
 
-	startDeploy(t, base, batch, firstDeployment)
-	waitUntil(t, "the watcher waits to read the task again", func() bool { return clock.retrySleep() > 0 })
-	waitBatchStats(t, batch, 1, 0)
+	for name, answer := range answers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base := newFakeBatchBase()
+			base.set(func(f *fakeBatchBase) { f.waitErr, f.getErr = answer, answer })
+			batch, clock := newTestBatch(t, base, 1)
+
+			startDeploy(t, base, batch, firstDeployment)
+			waitUntil(t, "the watcher waits to read the task again", func() bool { return clock.retrySleep() > 0 })
+			waitBatchStats(t, batch, 1, 0)
+		})
+	}
 }
 
 func TestWatcherReleasesTheSlotAfterTheMaximumWatch(t *testing.T) {

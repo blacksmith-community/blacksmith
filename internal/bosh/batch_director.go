@@ -870,7 +870,7 @@ func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskI
 			return nil, stoppedFollowing(watch.describe(taskID))
 		}
 
-		if boshapi.IsNotFound(err) {
+		if isTaskNotFound(err) {
 			b.logger.Errorf("The director has no %s, so the batch director released its slot: %v", watch.describe(taskID), err)
 
 			return nil, fmt.Errorf("%w: the director has no %s: %w", ErrWatchAbandoned, watch.describe(taskID), err)
@@ -989,6 +989,16 @@ func (b *BatchDirector) findLostTask(ctx context.Context, watch *batchWatch) (in
 	}
 
 	return 0, lookupErr
+}
+
+// isTaskNotFound reports whether the director answered that it has no
+// such task, with its task-not-found code. Any other not-found answer,
+// such as a route the director does not serve or a director-not-found
+// code from a proxy, is a failed read.
+func isTaskNotFound(err error) bool {
+	var apiErr *boshapi.APIError
+
+	return errors.As(err, &apiErr) && apiErr.Code == boshapi.ErrorCodeTaskNotFound
 }
 
 // noDeployTaskRuns reports whether a deploy's error shows that no task of
