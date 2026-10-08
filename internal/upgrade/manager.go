@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 
 	"github.com/google/uuid"
@@ -18,9 +19,15 @@ const (
 	upgradeSettingsVaultPath = "upgrade-settings"
 )
 
-// cancelTaskTimeout bounds the director calls that find and cancel a running
-// upgrade task, so a hung director cannot hold up a cancel or a Stop.
+// cancelTaskTimeout bounds the director call that cancels a running upgrade
+// task, so a hung director cannot hold up a cancel.
 const cancelTaskTimeout = 30 * time.Second
+
+// Final states of a director task.
+const (
+	boshTaskDone      = "done"
+	boshTaskCancelled = "cancelled"
+)
 
 // persistTaskTimeout bounds the Vault writes that save an upgrade task.
 const persistTaskTimeout = 10 * time.Second
@@ -414,10 +421,9 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount)
 }
 
-// upgradeInstance upgrades a single instance using 2 goroutines:
-// 1. Goroutine 1: Runs UpdateDeployment (blocking until BOSH task completes)
-// 2. Goroutine 2: Polls to find and store the BOSH task ID for UI display
-// Main thread waits for completion or task-level cancel signal.
+// upgradeInstance upgrades a single instance. It sends the deploy, saves
+// the deploy's task ID at once, and then waits for that task to end, so
+// the outcome comes from the task's own final state.
 func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) {
 	// Progress is saved even after Stop ends ctx, so the stored task shows
 	// how far the upgrade got.
@@ -493,127 +499,152 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	m.logger.Debug("Stemcell overlay merged successfully for %s, new manifest size: %d bytes",
 		instance.DeploymentName, len(newManifest))
 
-	// === START 2 GOROUTINES APPROACH ===
-
-	// Channel to receive result from update goroutine
-	updateDoneCh := make(chan error, 1)
-
-	// Channel to signal task ID finder to stop
-	stopTaskFinderCh := make(chan struct{})
-
-	// Goroutine 1: Run UpdateDeployment (blocking)
-	m.logger.Debug("Starting deployment update goroutine for %s", instance.DeploymentName)
-	go func() {
-		_, err := m.director.UpdateDeployment(ctx, instance.DeploymentName, newManifest)
-		updateDoneCh <- err
-	}()
-
-	// Goroutine 2: Poll to find BOSH task ID for UI display
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-stopTaskFinderCh:
-				return
-			case <-ticker.C:
-				// Skip if we already have the task ID
-				m.mu.RLock()
-				hasTaskID := instance.BOSHTaskID > 0
-				m.mu.RUnlock()
-				if hasTaskID {
-					return
-				}
-
-				// Find running task for this deployment
-				runningTask, err := m.director.FindRunningTaskForDeployment(ctx, instance.DeploymentName)
-				if err != nil {
-					m.logger.Debug("Error finding running task for %s: %v", instance.DeploymentName, err)
-					continue
-				}
-
-				if runningTask != nil {
-					m.mu.Lock()
-					instance.BOSHTaskID = runningTask.ID
-					m.mu.Unlock()
-					m.logger.Info("Found BOSH task %d for deployment %s", runningTask.ID, instance.DeploymentName)
-					m.persistTask(persistCtx, task) //nolint:errcheck
-					return
-				}
-			}
-		}
-	}()
-
-	// Main thread: Wait for completion or task-level cancel signal
-	var updateErr error
-	select {
-	case updateErr = <-updateDoneCh:
-		// Update completed (success or failure)
-		m.logger.Debug("Update goroutine completed for %s", instance.DeploymentName)
-
-	case <-cancelCh:
-		// Task-level cancel
-		m.logger.Info("Task-level cancel for instance %s", instance.InstanceID)
-		m.cancelRunningTaskForDeployment(ctx, instance.DeploymentName)
-		updateErr = <-updateDoneCh
-
-	case <-m.stopCh:
-		// Manager stopped
-		m.logger.Info("Manager stopped while upgrading instance %s", instance.InstanceID)
-		m.cancelRunningTaskForDeployment(ctx, instance.DeploymentName)
-		updateErr = <-updateDoneCh
-	}
-
-	// Stop the task finder goroutine
-	close(stopTaskFinderCh)
-
-	// Handle result
-	if updateErr != nil {
+	deployTask, err := m.director.UpdateDeployment(ctx, instance.DeploymentName, newManifest)
+	if err != nil {
 		m.mu.Lock()
 		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("BOSH task failed: %v", updateErr)
+		instance.Error = fmt.Sprintf("BOSH task failed: %v", err)
 		task.FailedCount++
-		m.logger.Error("Update failed for %s: %v", instance.DeploymentName, updateErr)
+		m.logger.Error("Update failed for %s: %v", instance.DeploymentName, err)
 		m.mu.Unlock()
 		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
-	// Success
-	m.mu.Lock()
-	completedAt := time.Now()
-	instance.CompletedAt = &completedAt
-	instance.Status = InstanceStatusSuccess
-	task.CompletedCount++
-	m.logger.Info("Successfully upgraded instance %s", instance.InstanceID)
-	m.mu.Unlock()
-
-	// Persist progress
-	m.persistTask(persistCtx, task) //nolint:errcheck
-}
-
-// cancelRunningTaskForDeployment finds and cancels any running BOSH task for
-// the deployment. It runs when the upgrade is being cancelled or the manager
-// is stopping, which may already have ended ctx, so it keeps ctx's values but
-// gets its own deadline.
-func (m *Manager) cancelRunningTaskForDeployment(ctx context.Context, deploymentName string) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTaskTimeout)
-	defer cancel()
-
-	runningTask, err := m.director.FindRunningTaskForDeployment(ctx, deploymentName)
-	if err != nil {
-		m.logger.Error("Failed to find running task for %s: %v", deploymentName, err)
+	if deployTask == nil || deployTask.ID <= 0 {
+		m.mu.Lock()
+		instance.Status = InstanceStatusFailed
+		instance.Error = "the director named no task for the deploy"
+		task.FailedCount++
+		m.logger.Error("The director named no task for the deploy of %s", instance.DeploymentName)
+		m.mu.Unlock()
+		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
-	if runningTask != nil {
-		m.logger.Info("Cancelling BOSH task %d for deployment %s", runningTask.ID, deploymentName)
-		if err := m.director.CancelTask(ctx, runningTask.ID); err != nil {
-			m.logger.Error("Failed to cancel BOSH task %d: %v", runningTask.ID, err)
+	// The task ID is saved before the wait, so the UI shows it while the
+	// deploy runs, and a broker that stops during the wait leaves it on
+	// record.
+	m.mu.Lock()
+	instance.BOSHTaskID = deployTask.ID
+	m.mu.Unlock()
+	m.logger.Info("BOSH task %d deploys %s for instance %s", deployTask.ID, instance.DeploymentName, instance.InstanceID)
+	m.persistTask(persistCtx, task) //nolint:errcheck
+
+	finished, err := m.awaitDeployTask(ctx, task, instance, deployTask.ID, cancelCh)
+	if err != nil {
+		if ctx.Err() != nil {
+			// Stop ended the wait. The task keeps running on the director,
+			// and its ID stays on record.
+			message := fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", deployTask.ID)
+
+			m.mu.Lock()
+			instance.Error = message
+			m.mu.Unlock()
+			m.logger.Info("Instance %s: %s", instance.InstanceID, message)
+			m.persistTask(persistCtx, task) //nolint:errcheck
+			return
 		}
-	} else {
-		m.logger.Debug("No running task found to cancel for %s", deploymentName)
+
+		m.mu.Lock()
+		instance.Status = InstanceStatusFailed
+		instance.Error = fmt.Sprintf("stopped waiting for BOSH task %d, which may still be running: %v", deployTask.ID, err)
+		task.FailedCount++
+		m.logger.Error("Stopped waiting for BOSH task %d of %s: %v", deployTask.ID, instance.DeploymentName, err)
+		m.mu.Unlock()
+		m.persistTask(persistCtx, task) //nolint:errcheck
+		return
+	}
+
+	m.settleInstance(task, instance, finished)
+	m.persistTask(persistCtx, task) //nolint:errcheck
+}
+
+// awaitDeployTask waits for the deploy task of an upgrade instance to end.
+// When the upgrade is cancelled during the wait, it asks the director to
+// cancel the task and keeps waiting for the task's own end. A signal on
+// cancelCh that is not a cancel, such as a resume, changes nothing.
+func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, taskID int, cancelCh <-chan struct{}) (*bosh.Task, error) {
+	type waitResult struct {
+		task *bosh.Task
+		err  error
+	}
+
+	waited := make(chan waitResult, 1)
+
+	go func() {
+		finished, err := m.director.WaitForTask(ctx, taskID)
+		waited <- waitResult{task: finished, err: err}
+	}()
+
+	for {
+		select {
+		case result := <-waited:
+			return result.task, result.err
+		case <-cancelCh:
+			m.mu.RLock()
+			cancelled := task.Status == TaskStatusCancelled
+			m.mu.RUnlock()
+
+			if !cancelled {
+				continue
+			}
+
+			// A closed channel stays ready, so it is not watched again.
+			cancelCh = nil
+
+			m.logger.Info("Task-level cancel for instance %s", instance.InstanceID)
+			m.cancelDeployTask(ctx, taskID)
+		}
+	}
+}
+
+// cancelDeployTask asks the director to cancel an upgrade's deploy task. It
+// runs when the upgrade is being cancelled, which may already have ended
+// ctx, so it keeps ctx's values but gets its own deadline.
+func (m *Manager) cancelDeployTask(ctx context.Context, taskID int) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTaskTimeout)
+	defer cancel()
+
+	m.logger.Info("Cancelling BOSH task %d", taskID)
+
+	if err := m.director.CancelTask(ctx, taskID); err != nil {
+		m.logger.Error("Failed to cancel BOSH task %d: %v", taskID, err)
+	}
+}
+
+// settleInstance records the outcome of an upgrade instance from the final
+// state of its deploy task. An instance a cancel has already settled keeps
+// that outcome.
+func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, finished *bosh.Task) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if instance.Status != InstanceStatusRunning {
+		m.logger.Info("BOSH task %d of %s ended in state %s, and instance %s was already recorded as %s",
+			finished.ID, instance.DeploymentName, finished.State, instance.InstanceID, instance.Status)
+
+		return
+	}
+
+	completedAt := time.Now()
+	instance.CompletedAt = &completedAt
+
+	switch finished.State {
+	case boshTaskDone:
+		instance.Status = InstanceStatusSuccess
+		task.CompletedCount++
+		m.logger.Info("Successfully upgraded instance %s", instance.InstanceID)
+	case boshTaskCancelled:
+		instance.Status = InstanceStatusCancelled
+		instance.Error = fmt.Sprintf("BOSH task %d was cancelled", finished.ID)
+		task.CancelledCount++
+		m.logger.Info("BOSH task %d of %s was cancelled", finished.ID, instance.DeploymentName)
+	default:
+		instance.Status = InstanceStatusFailed
+		instance.Error = fmt.Sprintf("BOSH task %d ended in state %s: %s", finished.ID, finished.State, finished.Result)
+		task.FailedCount++
+		m.logger.Error("Update failed for %s: BOSH task %d ended in state %s: %s", instance.DeploymentName, finished.ID, finished.State, finished.Result)
 	}
 }
 

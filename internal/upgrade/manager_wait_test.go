@@ -1,0 +1,288 @@
+package upgrade
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"blacksmith/internal/bosh"
+	"blacksmith/internal/interfaces"
+	"blacksmith/pkg/logger"
+)
+
+const (
+	waitInstanceID   = "instance-1"
+	waitDeployment   = "redis-instance-1"
+	waitDeployTaskID = 42
+	waitTimeout      = 5 * time.Second
+	waitManifest     = "name: redis-instance-1\nstemcells:\n- alias: default\n  os: ubuntu-noble\n  version: \"1.1\"\n"
+	waitStateRunning = "processing"
+)
+
+var errNoTaskInTest = errors.New("the test director has no such task")
+
+// waitVault is an interfaces.Vault that holds the instance the upgrade
+// reads and keeps a JSON copy of every upgrade task the manager saves. A
+// call it does not script panics through the nil embedded Vault.
+type waitVault struct {
+	interfaces.Vault
+
+	mu    sync.Mutex
+	saved map[string][]byte
+}
+
+func newWaitVault() *waitVault { return &waitVault{saved: make(map[string][]byte)} }
+
+func (v *waitVault) Get(_ context.Context, path string, result interface{}) (bool, error) {
+	if path == waitInstanceID {
+		raw, _ := json.Marshal(map[string]string{"deployment_name": waitDeployment})
+
+		return true, json.Unmarshal(raw, result)
+	}
+
+	v.mu.Lock()
+	raw, ok := v.saved[path]
+	v.mu.Unlock()
+
+	if !ok {
+		return false, nil
+	}
+
+	return true, json.Unmarshal(raw, result)
+}
+
+func (v *waitVault) Put(_ context.Context, path string, data interface{}) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	v.saved[path] = raw
+
+	return nil
+}
+
+// savedTask returns the upgrade task as the manager last saved it.
+func (v *waitVault) savedTask(t *testing.T, taskID string) UpgradeTask {
+	t.Helper()
+
+	v.mu.Lock()
+	raw := v.saved[upgradeTasksVaultPath+"/"+taskID]
+	v.mu.Unlock()
+
+	var task UpgradeTask
+	if err := json.Unmarshal(raw, &task); err != nil {
+		t.Fatalf("the upgrade task was not saved: %v", err)
+	}
+
+	return task
+}
+
+// waitDirector is a director for one upgrade deploy. The deploy returns
+// task 42 at once, and the wait on it returns the task the test sends on
+// finish, or stops when its context ends. A call it does not script
+// panics through the nil embedded Director.
+type waitDirector struct {
+	bosh.Director
+
+	finish      chan *bosh.Task
+	waitStarted chan struct{}
+	startOnce   sync.Once
+
+	// onCancel answers CancelTask when it is set.
+	onCancel func(ctx context.Context, taskID int) error
+
+	mu      sync.Mutex
+	cancels []int
+	waits   int
+}
+
+func newWaitDirector() *waitDirector {
+	return &waitDirector{finish: make(chan *bosh.Task, 1), waitStarted: make(chan struct{})}
+}
+
+func (d *waitDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+	return &bosh.DeploymentDetail{Name: name, Manifest: waitManifest}, nil
+}
+
+func (d *waitDirector) UpdateDeployment(_ context.Context, _, _ string) (*bosh.Task, error) {
+	return &bosh.Task{ID: waitDeployTaskID, State: waitStateRunning, Deployment: waitDeployment}, nil
+}
+
+func (d *waitDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
+	d.mu.Lock()
+	d.waits++
+	d.mu.Unlock()
+
+	if taskID != waitDeployTaskID {
+		return nil, fmt.Errorf("%w: %d", errNoTaskInTest, taskID)
+	}
+
+	d.startOnce.Do(func() { close(d.waitStarted) })
+
+	select {
+	case task := <-d.finish:
+		return task, nil
+	case <-ctx.Done():
+		return nil, &bosh.DirectorCallError{
+			Operation: "WaitForTask",
+			Director:  "https://director.example.test:25555",
+			Cause:     ctx.Err(),
+			Err:       ctx.Err(),
+			TaskID:    taskID,
+			Task:      bosh.TaskLeftRunning,
+		}
+	}
+}
+
+func (d *waitDirector) CancelTask(ctx context.Context, taskID int) error {
+	d.mu.Lock()
+	d.cancels = append(d.cancels, taskID)
+	onCancel := d.onCancel
+	d.mu.Unlock()
+
+	if onCancel != nil {
+		return onCancel(ctx, taskID)
+	}
+
+	return nil
+}
+
+func (d *waitDirector) cancelled() []int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return append([]int(nil), d.cancels...)
+}
+
+// startUpgrade starts a manager and an upgrade of one instance, and waits
+// until the upgrade waits on its deploy task. The returned stop ends the
+// manager once, and the test's cleanup calls it too.
+func startUpgrade(t *testing.T, director *waitDirector, vault *waitVault) (*Manager, *UpgradeTask, func()) {
+	t.Helper()
+
+	manager := NewManager(&logger.NoOpLogger{}, director, vault)
+
+	var once sync.Once
+
+	stop := func() { once.Do(manager.Stop) }
+
+	t.Cleanup(stop)
+
+	task, err := manager.CreateTask(context.Background(), CreateTaskRequest{
+		InstanceIDs:    []string{waitInstanceID},
+		TargetStemcell: StemcellTarget{OS: "ubuntu-noble", Version: "1.2"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create the upgrade task: %v", err)
+	}
+
+	select {
+	case <-director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never waited on its deploy task")
+	}
+
+	return manager, task, stop
+}
+
+// snapshot copies the upgrade task under the manager's lock.
+func snapshot(manager *Manager, task *UpgradeTask) UpgradeTask {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	copied := *task
+	copied.Instances = append([]InstanceUpgrade(nil), task.Instances...)
+
+	return copied
+}
+
+// eventually waits until done holds for the upgrade task, and fails the
+// test with the last snapshot when it never does.
+func eventually(t *testing.T, manager *Manager, task *UpgradeTask, what string, done func(UpgradeTask) bool) UpgradeTask {
+	t.Helper()
+
+	deadline := time.Now().Add(waitTimeout)
+
+	for {
+		current := snapshot(manager, task)
+		if done(current) {
+			return current
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never happened; the upgrade task is %+v", what, current)
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeRecordsTheTaskBeforeItFinishes(t *testing.T) {
+	director := newWaitDirector()
+	vault := newWaitVault()
+
+	manager, task, _ := startUpgrade(t, director, vault)
+
+	running := snapshot(manager, task)
+	if running.Instances[0].BOSHTaskID != waitDeployTaskID || running.Instances[0].Status != InstanceStatusRunning {
+		t.Fatalf("expected the running instance to hold BOSH task %d, got %+v", waitDeployTaskID, running.Instances[0])
+	}
+
+	saved := vault.savedTask(t, task.ID)
+	if saved.Instances[0].BOSHTaskID != waitDeployTaskID {
+		t.Fatalf("expected BOSH task %d to be saved before the task finished, got %+v", waitDeployTaskID, saved.Instances[0])
+	}
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: "done"}
+
+	done := eventually(t, manager, task, "the upgrade's completion", func(current UpgradeTask) bool {
+		return current.Status == TaskStatusCompleted
+	})
+
+	if done.Instances[0].Status != InstanceStatusSuccess || done.CompletedCount != 1 || done.FailedCount != 0 {
+		t.Fatalf("expected one successful instance, got %+v", done)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeShutdownLeavesTheTaskRunningAndRecordsIt(t *testing.T) {
+	director := newWaitDirector()
+	vault := newWaitVault()
+
+	manager, task, stop := startUpgrade(t, director, vault)
+
+	stop()
+
+	if cancels := director.cancelled(); len(cancels) != 0 {
+		t.Fatalf("expected the shutdown to leave the task running, but it cancelled %v", cancels)
+	}
+
+	instance := snapshot(manager, task).Instances[0]
+	if instance.Status != InstanceStatusRunning || instance.BOSHTaskID != waitDeployTaskID {
+		t.Fatalf("expected the instance to stay running with BOSH task %d, got %+v", waitDeployTaskID, instance)
+	}
+
+	want := fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", waitDeployTaskID)
+	if instance.Error != want {
+		t.Errorf("expected the instance to say %q, got %q", want, instance.Error)
+	}
+
+	saved := vault.savedTask(t, task.ID).Instances[0]
+	if saved.Status != InstanceStatusRunning || saved.BOSHTaskID != waitDeployTaskID || !strings.Contains(saved.Error, "still running") {
+		t.Fatalf("expected the saved instance to be running with BOSH task %d, got %+v", waitDeployTaskID, saved)
+	}
+
+	if counts := snapshot(manager, task); counts.FailedCount != 0 || counts.CancelledCount != 0 {
+		t.Fatalf("expected no failed or cancelled count, got %+v", counts)
+	}
+}
