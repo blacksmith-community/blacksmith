@@ -178,12 +178,11 @@ func (b *Broker) unknownOutcomeToReplace(instanceID string, recorded recordedOpe
 // One pass runs per instance at a time, and a poll that finds one running
 // answers in progress with the error the last pass ended with. The state
 // that keeps the passes apart is dropped once a pass settles the outcome
-// or finds it settled. The
-// record's second read, the director lookups, and the director reads of
-// the settle step all run under one unknownOutcomePassTimeout with the
-// director client's retries turned off. The record writes run detached
-// under a bound of their own, and work that outlives the poll keeps the
-// poll's own context.
+// or finds it settled. The record's second read, the director lookups,
+// and the director reads of the settle step all run under one
+// unknownOutcomePassTimeout with the director client's retries turned
+// off. The record writes run detached under a bound of their own, and
+// work that outlives the poll keeps the poll's own context.
 func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	noun := requestNoun(operation.Action)
 	pass := b.unknownOutcomePassFor(instanceID)
@@ -450,12 +449,11 @@ func (b *Broker) findOperationTask(ctx context.Context, deploymentName, descript
 
 // settleUnknownOutcome acts on a resolver pass's finding. A task found is
 // recorded over the unknown outcome and then followed like any other
-// recorded task. A deployment
-// the director says is gone settles a deprovision as deleted. A request
-// the director never took as a task fails the operation, and a provision
-// failed this way gets the cleanup of any failed provision. Anything else
-// answers in progress with the context ID, and the record is left as it
-// is.
+// recorded task. A deployment the director says is gone settles a
+// deprovision as deleted. A request the director never took as a task
+// fails the operation, and a provision failed this way gets the cleanup
+// of any failed provision. Anything else answers in progress with the
+// context ID, and the record is left as it is.
 //
 // ctx is the poll's own context, which work that outlives the poll keeps.
 // directorCtx is the pass's bounded context, which every director read of

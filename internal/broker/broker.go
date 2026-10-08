@@ -2426,20 +2426,6 @@ func (b *Broker) pollWithoutIndexEntry(ctx context.Context, instanceID string, d
 	}, nil
 }
 
-// deprovisionWithoutIndexEntry answers a poll for an instance whose index
-// entry is gone and whose last recorded operation is a deprovision. A
-// deprovision removes the entry only once the director has said the
-// deployment is gone. A record without a context ID, which a deprovision
-// leaves when the deployment was gone before its delete and which a
-// broker from before context IDs left, answers succeeded. The teardown of
-// a deployment that finished after its instance was deprovisioned runs
-// with no entry at all, and its records carry the context ID of its
-// delete, so a record with a context ID answers succeeded only when the
-// director answers that the deployment does not exist. The deployment is
-// the one the record names, and the one planID and the instance ID name
-// when the record names none. When neither names one, it answers in
-// progress without asking. A deployment that still exists answers failed
-// when the record says the delete failed, and in progress otherwise.
 // unknownOutcomeWithoutIndexEntry answers a poll for an instance the index
 // does not have, whose record holds an unknown outcome of either action.
 // A poll for the other operation answers in progress and changes nothing.
@@ -2467,6 +2453,20 @@ func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID
 	return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
 }
 
+// deprovisionWithoutIndexEntry answers a poll for an instance whose index
+// entry is gone and whose last recorded operation is a deprovision. A
+// deprovision removes the entry only once the director has said the
+// deployment is gone. A record without a context ID, which a deprovision
+// leaves when the deployment was gone before its delete and which a
+// broker from before context IDs left, answers succeeded. The teardown of
+// a deployment that finished after its instance was deprovisioned runs
+// with no entry at all, and its records carry the context ID of its
+// delete, so a record with a context ID answers succeeded only when the
+// director answers that the deployment does not exist. The deployment is
+// the one the record names, and the one planID and the instance ID name
+// when the record names none. When neither names one, it answers in
+// progress without asking. A deployment that still exists answers failed
+// when the record says the delete failed, and in progress otherwise.
 func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	if recorded.ContextID == "" {
 		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
