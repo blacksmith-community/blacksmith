@@ -34,28 +34,28 @@ func RequestTimeoutCause(timeout time.Duration, attempts int) error {
 }
 
 // BatchClock is the time source a batch director's watchers read.
-type BatchClock = batchClock
+type BatchClock = followClock
 
 // How often a watcher looks for the task of a lost answer, how long it
 // keeps a final task for waiters, and how often it logs a task it still
 // follows.
 const (
-	BatchLostAnswerInterval   = batchLostAnswerInterval
-	BatchDonePrune            = batchDonePrune
-	BatchFollowReportInterval = batchFollowReportInterval
+	BatchLostAnswerInterval   = followLostAnswerInterval
+	BatchDonePrune            = followDonePrune
+	BatchFollowReportInterval = followReportInterval
 )
 
 // SetBatchClock replaces the time source of a batch director's watchers.
 // It is set before the batch director starts any deploy.
 func SetBatchClock(batch *BatchDirector, clock BatchClock) {
-	batch.clock = clock
+	batch.follow.clock = clock
 }
 
 // SetBatchWatchMax shortens how long a watcher reads a task the director
 // does not answer for. It is set before the batch director starts any
 // deploy.
 func SetBatchWatchMax(batch *BatchDirector, watchMax time.Duration) {
-	batch.watchMax = watchMax
+	batch.follow.watchMax = watchMax
 }
 
 // BatchWatchersRunning reports how many watcher goroutines have not
@@ -64,7 +64,7 @@ func BatchWatchersRunning(batch *BatchDirector) int {
 	batch.mu.Lock()
 	defer batch.mu.Unlock()
 
-	return batch.running
+	return batch.follow.running
 }
 
 // BatchWatchesHeld reports how many watchers a batch director holds by
@@ -73,7 +73,7 @@ func BatchWatchesHeld(batch *BatchDirector) (int, int) {
 	batch.mu.Lock()
 	defer batch.mu.Unlock()
 
-	return len(batch.byTask), len(batch.byContextID)
+	return len(batch.follow.byTask), len(batch.follow.byContextID)
 }
 
 // JoinBatchQueue puts a waiter that never takes a slot at the back of a
