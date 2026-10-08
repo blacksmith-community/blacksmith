@@ -36,9 +36,9 @@ type TaskRecordReader func() (map[string]interface{}, bool, error)
 // flight, or "" when nothing shows that it does. The entry is in flight when
 // the newest time it carries is less than MinimumAge old, when its task
 // record shows a provision in progress, or when its task record shows an
-// operation whose outcome is unknown, whatever its action and age. An entry that carries no time is
-// judged by its task record alone. A task record that cannot be read counts
-// as in flight, so the entry is kept.
+// operation whose outcome is unknown, whatever its action and age. An entry
+// that carries no time is judged by its task record alone. A task record
+// that cannot be read counts as in flight, so the entry is kept.
 func Reason(entry map[string]interface{}, readTaskRecord TaskRecordReader) string {
 	newest, dated := NewestTime(entry)
 	if dated && time.Since(newest) < MinimumAge {
