@@ -2110,6 +2110,44 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			})
 		})
 
+		It("cleans up a found provision task that failed with the director client's retries on", func() {
+			loseDeploy()
+
+			director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) {
+				return &bosh.Task{ID: createTaskID, State: outcomeTaskError, Description: outcomeCreateDeployment}, nil
+			}
+			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+				return &bosh.Task{ID: taskID, State: outcomeTaskError, Description: outcomeCreateDeployment}, nil
+			}
+
+			type cleanupSeen struct {
+				retriesDisabled bool
+				hasDeadline     bool
+				deadline        time.Duration
+			}
+
+			seen := make(chan cleanupSeen, 4)
+
+			// The task is found by its context ID, so the pass asks nothing
+			// about the deployment, and the first question is the cleanup's.
+			director.onGetDeployment = func(callCtx context.Context, name string) (*bosh.DeploymentDetail, error) {
+				deadline, hasDeadline := callCtx.Deadline()
+				seen <- cleanupSeen{retriesDisabled: boshapi.RetriesDisabled(callCtx), hasDeadline: hasDeadline, deadline: time.Until(deadline)}
+
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+			}
+
+			response := poll(outcomeProvision)
+			Expect(response.State).To(Equal(osbapi.StateFailed), "a provision whose task failed answered %+v", response)
+
+			var cleanup cleanupSeen
+
+			Eventually(seen, 10*time.Second).Should(Receive(&cleanup), "the cleanup of the failed provision did not start")
+			Expect(cleanup.retriesDisabled).To(BeFalse(), "the cleanup ran with the director client's retries off")
+			Expect(cleanup.hasDeadline).To(BeTrue())
+			Expect(cleanup.deadline).To(BeNumerically(">", time.Minute), "the cleanup ran under the pass's bound")
+		})
+
 		It("an unknown deploy adopts the task a create event on its deployment names", func() {
 			contextID := loseDeploy()
 

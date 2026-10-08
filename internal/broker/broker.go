@@ -3590,6 +3590,14 @@ func isFailedTaskState(state string) bool {
 }
 
 func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	return b.handleProvisionTaskCleaningUpOn(ctx, ctx, instanceID, deploymentName, taskID, logger)
+}
+
+// handleProvisionTaskCleaningUpOn answers for a provision task as
+// handleProvisionTask does. The director reads run on ctx, and the cleanup
+// of a failed provision starts from cleanupCtx, which a caller that bounds
+// or restricts ctx keeps free of those limits.
+func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Debug("retrieving task %d from BOSH director", taskID)
 
 	task, err := b.BOSH.GetTask(ctx, taskID)
@@ -3619,9 +3627,9 @@ func (b *Broker) handleProvisionTask(ctx context.Context, instanceID, deployment
 		// the cleanup runs in the background rather than holding up the poll.
 		b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
 
-		// The cleanup outlives this poll; it keeps the poll's values and sets
-		// its own deadline.
-		go b.cleanupFailedDeployment(ctx, deploymentName, logger)
+		// The cleanup outlives this poll; it keeps the values of cleanupCtx
+		// and sets its own deadline.
+		go b.cleanupFailedDeployment(cleanupCtx, deploymentName, logger)
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
 

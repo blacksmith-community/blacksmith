@@ -395,7 +395,7 @@ func (b *Broker) settleUnknownOutcome(ctx, directorCtx context.Context, instance
 
 	switch finding.verdict {
 	case outcomeTaskFound:
-		return b.followFoundTask(directorCtx, instanceID, deploymentName, operation, finding, logger)
+		return b.followFoundTask(ctx, directorCtx, instanceID, deploymentName, operation, finding, logger)
 	case outcomeDeploymentGone:
 		return b.settleUnknownDeleteAsDeleted(directorCtx, instanceID, deploymentName, operation, logger)
 	case outcomeNeverStarted:
@@ -425,17 +425,20 @@ func (b *Broker) settleUnknownOutcome(ctx, directorCtx context.Context, instance
 // outcome and follows it as any recorded task is followed. Once the task is
 // recorded, a failed read of its state answers in progress, and the next
 // poll follows the recorded task. It reports whether it recorded the task.
-func (b *Broker) followFoundTask(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, finding unknownOutcomeFinding, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
+//
+// ctx is the poll's own context. The cleanup of a failed provision starts
+// from it, so the cleanup keeps the director client's retries and has none
+// of the pass's bound. directorCtx is the pass's context, which the reads
+// of the task run on.
+func (b *Broker) followFoundTask(pollCtx, ctx context.Context, instanceID, deploymentName string, operation recordedOperation, finding unknownOutcomeFinding, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
 	noun := requestNoun(operation.Action)
 
 	logger.Info("The %s of instance %s with context ID %s started task %d, found by %s", noun, instanceID, operation.ContextID, finding.taskID, finding.source)
 
 	description := fmt.Sprintf("BOSH deployment in progress (task %d)", finding.taskID)
-	follow := b.handleProvisionTask
 
 	if operation.Action == operationTypeDeprovision {
 		description = fmt.Sprintf("BOSH deletion in progress (task %d)", finding.taskID)
-		follow = b.handleDeprovisionTask
 	}
 
 	unsettled, settled := b.recordSettledOutcome(ctx, instanceID, operation, description, finding.taskID, logger)
@@ -443,7 +446,17 @@ func (b *Broker) followFoundTask(ctx context.Context, instanceID, deploymentName
 		return unsettled, false
 	}
 
-	response, err := follow(ctx, instanceID, deploymentName, finding.taskID, logger)
+	var (
+		response osbapi.LastOperationResponse
+		err      error
+	)
+
+	if operation.Action == operationTypeDeprovision {
+		response, err = b.handleDeprovisionTask(ctx, instanceID, deploymentName, finding.taskID, logger)
+	} else {
+		response, err = b.handleProvisionTaskCleaningUpOn(ctx, pollCtx, instanceID, deploymentName, finding.taskID, logger)
+	}
+
 	if err != nil {
 		logger.Warning("Instance %s: task %d of the %s with context ID %s is recorded, and its state could not be read: %s", instanceID, finding.taskID, noun, operation.ContextID, err)
 
