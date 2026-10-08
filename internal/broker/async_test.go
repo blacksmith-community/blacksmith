@@ -40,6 +40,15 @@ type contextDirector struct {
 	onGetTask             func(ctx context.Context, taskID int) (*bosh.Task, error)
 	onUploadRelease       func(ctx context.Context, url, sha1 string) (*bosh.Task, error)
 	onWaitForTask         func(ctx context.Context, taskID int) (*bosh.Task, error)
+	onCancelTask          func(ctx context.Context, taskID int) error
+}
+
+func (d *contextDirector) CancelTask(ctx context.Context, taskID int) error {
+	if d.onCancelTask != nil {
+		return d.onCancelTask(ctx, taskID)
+	}
+
+	return d.ScriptedBOSHDirector.CancelTask(ctx, taskID) //nolint:wrapcheck // the double passes the scripted error through
 }
 
 func (d *contextDirector) UploadRelease(ctx context.Context, url, sha1 string) (*bosh.Task, error) {
@@ -429,6 +438,144 @@ var _ = Describe("Detached broker work", func() {
 		Expect(contextErr).ToNot(HaveOccurred(), "the teardown context ended with the provision context")
 		Expect(hasLimit).To(BeTrue(), "the teardown context has no deadline of its own")
 		Expect(deadline).To(BeTemporally("~", started.Add(2*time.Hour), 10*time.Second))
+	})
+
+	It("index removal during provision cancels the create task", func() {
+		serviceCtx, shutdown := context.WithCancel(ctx)
+		defer shutdown()
+
+		brokerInstance.ServiceContext = serviceCtx
+
+		var (
+			callsMu  sync.Mutex
+			calls    []string
+			indexErr error
+		)
+
+		note := func(call string) {
+			callsMu.Lock()
+			defer callsMu.Unlock()
+
+			calls = append(calls, call)
+		}
+
+		deleted := make(chan struct{})
+
+		director.GetInfoFn = func() (*bosh.Info, error) { return &bosh.Info{UUID: "director-uuid"}, nil }
+		director.GetReleasesFn = func() ([]bosh.Release, error) { return []bosh.Release{}, nil }
+		director.onCreateDeployment = func(context.Context, string) (*bosh.Task, error) {
+			// Another writer, such as a purge, removes the index entry
+			// while the deploy runs.
+			err := vaultClient.Index(ctx, instanceID, nil)
+
+			callsMu.Lock()
+			indexErr = err
+			callsMu.Unlock()
+
+			return &bosh.Task{ID: 501, State: "processing", Description: outcomeCreateDeployment}, nil
+		}
+		director.onCancelTask = func(_ context.Context, taskID int) error {
+			note(fmt.Sprintf("cancel %d", taskID))
+
+			return nil
+		}
+		director.onWaitForTask = func(_ context.Context, taskID int) (*bosh.Task, error) {
+			note(fmt.Sprintf("wait %d", taskID))
+
+			return &bosh.Task{ID: taskID, State: "cancelled"}, nil
+		}
+		director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+			return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+		}
+		director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+			note("delete")
+			close(deleted)
+
+			return &bosh.Task{ID: 502, State: "done"}, nil
+		}
+		director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) { return nil, nil }
+
+		_, _, err := brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
+			ServiceID: serviceID, PlanID: planID, OrganizationGUID: "org-guid", SpaceGUID: "space-guid",
+		}, true)
+		Expect(err).ToNot(HaveOccurred())
+
+		Eventually(deleted, 10*time.Second).Should(BeClosed())
+		Eventually(func() bool { return brokerInstance.ProvisionActive(instanceID) }, 10*time.Second).Should(BeFalse())
+
+		stopBrokerGoroutines(shutdown)
+
+		callsMu.Lock()
+		defer callsMu.Unlock()
+
+		Expect(indexErr).ToNot(HaveOccurred())
+		Expect(calls).To(Equal([]string{"cancel 501", "wait 501", "delete"}))
+	})
+
+	Context("when the create task of an abandoned deployment outlives the wait", func() {
+		var (
+			callsMu     sync.Mutex
+			cancelled   []int
+			deletes     int
+			restoreWait func()
+		)
+
+		BeforeEach(func() {
+			restoreWait = broker.SetAbandonedCreateWait(50 * time.Millisecond)
+
+			cancelled = nil
+			deletes = 0
+
+			director.onCancelTask = func(_ context.Context, taskID int) error {
+				callsMu.Lock()
+				defer callsMu.Unlock()
+
+				cancelled = append(cancelled, taskID)
+
+				return nil
+			}
+			director.onWaitForTask = func(callCtx context.Context, taskID int) (*bosh.Task, error) {
+				<-callCtx.Done()
+
+				return nil, &bosh.DirectorCallError{Operation: "WaitForTask", Cause: callCtx.Err(), Err: callCtx.Err(), TaskID: taskID, Task: bosh.TaskLeftRunning}
+			}
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+			director.onDeleteDeployment = func(context.Context, string) (*bosh.Task, error) {
+				callsMu.Lock()
+				defer callsMu.Unlock()
+
+				deletes++
+
+				return &bosh.Task{ID: 502, State: "processing"}, nil
+			}
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) { return nil, nil }
+		})
+
+		AfterEach(func() {
+			restoreWait()
+		})
+
+		It("abandoned teardown leaves a still-running create task to the orphan sweep", func() {
+			brokerInstance.TearDownAbandonedDeploymentOfTask(ctx, instanceID, deploymentName, 501)
+
+			callsMu.Lock()
+			defer callsMu.Unlock()
+
+			Expect(cancelled).To(Equal([]int{501}))
+			Expect(deletes).To(BeZero(), "a delete was sent while the create task still ran")
+		})
+
+		It("abandoned teardown writes no deprovision record when the wait deadline passes", func() {
+			brokerInstance.TearDownAbandonedDeploymentOfTask(ctx, instanceID, deploymentName, 501)
+
+			var record map[string]interface{}
+
+			exists, err := vaultClient.Get(ctx, instanceID+"/task", &record)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(exists).To(BeFalse(), "a deprovision record was written for a delete that was never sent")
+		})
 	})
 
 	It("cleanup of a failed deployment has a deadline", func() {

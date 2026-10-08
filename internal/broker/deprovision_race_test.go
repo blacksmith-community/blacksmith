@@ -307,6 +307,11 @@ var _ = Describe("Deprovision racing an in-flight provision", func() {
 
 				return &bosh.Task{ID: 189, State: "done", Description: "create deployment"}, nil
 			}
+			// The teardown waits for the create task to stop, which it
+			// already has.
+			director.WaitForTaskFn = func(taskID int) (*bosh.Task, error) {
+				return &bosh.Task{ID: taskID, State: "done"}, nil
+			}
 			director.GetDeploymentFn = func(name string) (*bosh.DeploymentDetail, error) {
 				return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
 			}

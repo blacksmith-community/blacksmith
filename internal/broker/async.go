@@ -30,6 +30,10 @@ const (
 	// Task monitoring timeout duration.
 	taskMonitorTimeout = 2 * time.Hour
 
+	// defaultAbandonedCreateWait bounds the wait for the cancelled create
+	// task of an abandoned deployment to stop before its delete is sent.
+	defaultAbandonedCreateWait = 5 * time.Minute
+
 	// provisionTimeout bounds the provision goroutine: the manifest work, the
 	// release uploads and the deploy itself while bosh-cli still runs it.
 	provisionTimeout = 60 * time.Minute
@@ -91,6 +95,24 @@ func taskPollInterval() time.Duration {
 	}
 
 	return defaultTaskPollInterval
+}
+
+// abandonedCreateWaitOverride, when positive, replaces
+// defaultAbandonedCreateWait in nanoseconds. It is atomic because a
+// teardown started earlier may read it while a test changes it.
+//
+//nolint:gochecknoglobals // a test seam, set only through export_test.go
+var abandonedCreateWaitOverride atomic.Int64
+
+// abandonedCreateWait returns how long the teardown of an abandoned
+// deployment waits for its cancelled create task to stop.
+func abandonedCreateWait() time.Duration {
+	override := abandonedCreateWaitOverride.Load()
+	if override > 0 {
+		return time.Duration(override)
+	}
+
+	return defaultAbandonedCreateWait
 }
 
 // Static errors for err113 compliance.
@@ -435,7 +457,7 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	// instance Cloud Foundry no longer has, so tear the deployment down instead.
 	if !p.instanceStillIndexed(ctx) {
 		p.logger.Warning("Instance %s was deprovisioned while deployment %s was being created; deleting the deployment instead of recording it", p.instanceID, deploymentName)
-		p.broker.tearDownAbandonedDeployment(ctx, p.instanceID, deploymentName, p.logger)
+		p.broker.tearDownAbandonedDeployment(ctx, p.instanceID, deploymentName, task.ID, p.logger)
 
 		return false
 	}
@@ -487,19 +509,28 @@ func (p *provisioningPhase) instanceStillIndexed(ctx context.Context) bool {
 }
 
 // tearDownAbandonedDeployment deletes a deployment whose instance was removed
-// from the index while the create deployment task was still running. It runs
-// the same delete-with-retry and background monitoring as deprovisionAsync and
-// leaves the instance out of the index.
-func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) {
+// from the index while the create deployment task was still running. It
+// first cancels the create task and waits for it to stop, because a delete
+// sent while the create holds the deployment's lock would only queue
+// behind it. A create task that has not stopped by the deadline is left
+// running, and the orphan sweep removes the deployment later. Once the
+// task stops, the teardown runs the same delete-with-retry and background
+// monitoring as deprovisionAsync and leaves the instance out of the index.
+func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string, createTaskID int, logger logger.Logger) {
 	// The provision context may be nearly spent by now, so the teardown keeps
 	// its values and sets its own deadline. The delete waits on the director
 	// task, so it gets the same bound as a regular deprovision.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), taskMonitorTimeout)
 	defer cancel()
 
+	if !b.stopAbandonedCreate(ctx, deploymentName, createTaskID, logger) {
+		return
+	}
+
 	// The teardown is a deprovision of its own, so its delete carries a
 	// context ID of its own, recorded with the deployment's name before the
-	// delete is sent.
+	// delete is sent. It is recorded only once the create task has stopped,
+	// so no record names a delete that was never sent.
 	contextID := uuid.NewString()
 
 	recordCtx, cancelRecord := recordContext(ctx)
@@ -531,9 +562,56 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 		return
 	}
 
+	logger.Info("Deleting abandoned deployment %s in BOSH task %d, after its create task %d stopped", deploymentName, deleteTask.ID, createTaskID)
+
 	phase.trackDeletionProgress(ctx, deleteTask)
 
 	go phase.monitorAndCleanupTask(b.serviceContext(), deleteTask)
+}
+
+// stopAbandonedCreate cancels the create task of an abandoned deployment
+// and waits up to abandonedCreateWait for it to end. It reports whether
+// the delete may be sent, which is when the task has ended or no task is
+// known. A task that cannot be cancelled has already ended or is ending,
+// and the wait confirms which.
+func (b *Broker) stopAbandonedCreate(ctx context.Context, deploymentName string, createTaskID int, logger logger.Logger) bool {
+	if createTaskID <= 0 {
+		logger.Info("No create task is known for abandoned deployment %s, so none is cancelled before the delete", deploymentName)
+
+		return true
+	}
+
+	waitFor := abandonedCreateWait()
+
+	waitCtx, cancelWait := context.WithTimeout(ctx, waitFor)
+	defer cancelWait()
+
+	err := b.BOSH.CancelTask(waitCtx, createTaskID)
+
+	switch {
+	case err == nil:
+		logger.Info("Cancelled create task %d of abandoned deployment %s", createTaskID, deploymentName)
+	case errors.Is(err, bosh.ErrTaskCannotBeCancelled):
+		logger.Info("Create task %d of abandoned deployment %s had already ended or was being cancelled: %s", createTaskID, deploymentName, err)
+	default:
+		logger.Error("Failed to cancel create task %d of abandoned deployment %s: %s", createTaskID, deploymentName, err)
+	}
+
+	finished, err := b.BOSH.WaitForTask(waitCtx, createTaskID)
+	if err != nil || finished == nil {
+		reason := fmt.Sprintf("could not be confirmed as stopped (%v)", err)
+		if waitCtx.Err() != nil {
+			reason = fmt.Sprintf("had not stopped within %s", waitFor)
+		}
+
+		logger.Error("Left abandoned deployment %s to the orphan sweep: its create task %d %s, so no delete was sent", deploymentName, createTaskID, reason)
+
+		return false
+	}
+
+	logger.Info("Create task %d of abandoned deployment %s ended in state %s", createTaskID, deploymentName, finished.State)
+
+	return true
 }
 
 // deprovisioningPhase represents a phase in the deprovisioning process.

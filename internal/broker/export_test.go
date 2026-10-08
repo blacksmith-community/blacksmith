@@ -174,9 +174,25 @@ func (b *Broker) CleanupFailedDeployment(ctx context.Context, deploymentName str
 }
 
 // TearDownAbandonedDeployment exposes the delete of a deployment whose
-// instance was deprovisioned while the deploy was running.
+// instance was deprovisioned while the deploy was running, for a deploy
+// whose task is not known.
 func (b *Broker) TearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string) {
-	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, logger.Get().Named("broker"))
+	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, 0, logger.Get().Named("broker"))
+}
+
+// TearDownAbandonedDeploymentOfTask exposes the same teardown for a deploy
+// that ran as the given create task.
+func (b *Broker) TearDownAbandonedDeploymentOfTask(ctx context.Context, instanceID, deploymentName string, createTaskID int) {
+	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, createTaskID, logger.Get().Named("broker"))
+}
+
+// SetAbandonedCreateWait sets how long the teardown of an abandoned
+// deployment waits for its cancelled create task to stop. The returned
+// function restores the previous value.
+func SetAbandonedCreateWait(d time.Duration) func() {
+	previous := abandonedCreateWaitOverride.Swap(int64(d))
+
+	return func() { abandonedCreateWaitOverride.Store(previous) }
 }
 
 // StoreDeleteRequestedTimestamp exposes the write of delete_requested_at that
