@@ -1436,7 +1436,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			It("adopts a delete task running on its deployment", func() {
 				director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
-					return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment, Deployment: name}, nil
+					return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment + " " + name, Deployment: name}, nil
 				}
 				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
 					return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
@@ -1479,6 +1479,17 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(response.State).To(Equal(osbapi.StateFailed), "a delete with no delete task answered %+v", response)
 				Expect(response.Description).To(ContainSubstring(contextID))
 				Expect(director.Calls("GetTask")).To(BeEmpty(), "the poll followed a task that is not a delete")
+			})
+
+			It("does not adopt a delete task of another deployment", func() {
+				director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
+					return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment + " " + name + "-other", Deployment: name}, nil
+				}
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a delete with only another deployment's delete task answered %+v", response)
+				Expect(director.Calls("GetTask")).To(BeEmpty(), "the poll followed another deployment's delete task")
 			})
 
 			It("stays in progress while the check for a running task fails", func() {
@@ -1542,6 +1553,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			for _, running := range []bosh.Task{
 				{ID: createTaskID, State: outcomeTaskProcessing, Description: "run ssh", Deployment: deploymentName},
 				{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment, Deployment: "another-deployment"},
+				{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment + " (dry run)", Deployment: deploymentName},
 			} {
 				director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
 					return &running, nil

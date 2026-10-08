@@ -316,14 +316,18 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 // The descriptions the director gives the task of a deploy and the task of
 // a delete. The director adapter passes a task's description through as
 // the director wrote it.
+// The director writes a deploy as the bare "create deployment", a dry run
+// of it as "create deployment (dry run)", and a delete as "delete
+// deployment " followed by the name of the deployment.
 const (
-	directorTaskDescriptionDeploy = "create deployment"
-	directorTaskDescriptionDelete = "delete deployment"
+	directorTaskDescriptionDeploy       = "create deployment"
+	directorTaskDescriptionDeletePrefix = "delete deployment "
 )
 
 // isRunningTaskOf reports whether a running task the director listed is
-// the task description names, on deploymentName. A task someone ran by
-// hand on the deployment, such as ssh, recreate, or cck, is not.
+// the task with exactly the description given, on deploymentName. A task
+// someone ran by hand on the deployment, such as ssh, recreate, or cck,
+// is not, and neither is a dry run or the delete of another deployment.
 func isRunningTaskOf(task *bosh.Task, deploymentName, description string) bool {
 	return task.Deployment == deploymentName && task.Description == description
 }
@@ -344,7 +348,7 @@ func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, unkn
 // Only a delete event dated within eventTimeAllowance of unknownSince is
 // adopted, so a delete that ran before the request is not taken for it.
 func (b *Broker) findDeleteTask(ctx context.Context, deploymentName string, unknownSince time.Time, logger logger.Logger) (unknownOutcomeFinding, bool) {
-	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDelete, boshEventActionDelete, unknownSince, logger)
+	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDeletePrefix+deploymentName, boshEventActionDelete, unknownSince, logger)
 }
 
 // findOperationTask looks for a task that runs on the deployment with the
