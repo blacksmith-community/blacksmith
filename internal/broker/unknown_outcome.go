@@ -177,8 +177,10 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 // findUnknownOutcome asks the director what became of the request that
 // carried the operation's context ID. It looks for the task by its context
 // ID first, and then at the deployment. A deprovision whose deployment the
-// director says does not exist is settled as deleted. A provision adopts a
-// task running on its deployment, or the task a create event on it names.
+// director says does not exist is settled as deleted. A deprovision whose
+// deployment exists adopts a delete task running on it, or the task a
+// delete event on it names. A provision adopts a deploy task running on
+// its deployment, or the task a create event on it names.
 // Only after a lookup by the context ID that succeeded, made at or after the
 // grace period's end, found no task, and the deployment check found nothing
 // either, is the request taken as never started. For a provision, that also
@@ -206,6 +208,11 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 
 		if err != nil {
 			return unknownOutcomeFinding{err: fmt.Errorf("the check of deployment %s failed: %w", deploymentName, err)}
+		}
+
+		finding, found := b.findDeleteTask(ctx, deploymentName, logger)
+		if found {
+			return finding
 		}
 	case operationTypeProvision:
 		finding, found := b.findCreateTask(ctx, deploymentName, logger)
@@ -238,10 +245,13 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 	return unknownOutcomeFinding{verdict: outcomeNeverStarted}
 }
 
-// directorTaskDescriptionDeploy is the description the director gives the
-// task of a deploy. The director adapter passes a task's description
-// through as the director wrote it.
-const directorTaskDescriptionDeploy = "create deployment"
+// The descriptions the director gives the task of a deploy and the task of
+// a delete. The director adapter passes a task's description through as
+// the director wrote it.
+const (
+	directorTaskDescriptionDeploy = "create deployment"
+	directorTaskDescriptionDelete = "delete deployment"
+)
 
 // isRunningTaskOf reports whether a running task the director listed is
 // the task description names, on deploymentName. A task someone ran by
@@ -256,26 +266,43 @@ func isRunningTaskOf(task *bosh.Task, deploymentName, description string) bool {
 // names one, or when either check fails. A running task that is not a
 // deploy of the deployment is not adopted.
 func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, logger logger.Logger) (unknownOutcomeFinding, bool) {
+	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDeploy, boshEventActionCreate, logger)
+}
+
+// findDeleteTask looks for the delete task of a deprovision on a
+// deployment that still exists, the way recoverDeprovision does. It
+// reports true with the finding when a delete task runs on the
+// deployment, when a delete event names one, or when either check fails.
+// The newest delete event may name an earlier delete of the same
+// deployment, as recoverDeprovision may.
+func (b *Broker) findDeleteTask(ctx context.Context, deploymentName string, logger logger.Logger) (unknownOutcomeFinding, bool) {
+	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDelete, boshEventActionDelete, logger)
+}
+
+// findOperationTask looks for a task that runs on the deployment with the
+// description given, and then for the newest task a deployment event with
+// the action given names.
+func (b *Broker) findOperationTask(ctx context.Context, deploymentName, description, eventAction string, logger logger.Logger) (unknownOutcomeFinding, bool) {
 	running, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		return unknownOutcomeFinding{err: fmt.Errorf("the check for a task running on deployment %s failed: %w", deploymentName, err)}, true
 	}
 
 	if running != nil {
-		if isRunningTaskOf(running, deploymentName, directorTaskDescriptionDeploy) {
-			return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: running.ID, source: "a deploy task running on deployment " + deploymentName}, true
+		if isRunningTaskOf(running, deploymentName, description) {
+			return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: running.ID, source: fmt.Sprintf("a %q task running on deployment %s", description, deploymentName)}, true
 		}
 
-		logger.Info("Task %d (%q on deployment %q) runs on deployment %s, and it is not a deploy, so it is not taken for the provision's task", running.ID, running.Description, running.Deployment, deploymentName)
+		logger.Info("Task %d (%q on deployment %q) runs on deployment %s, and it is not a %q task, so it is not adopted", running.ID, running.Description, running.Deployment, deploymentName, description)
 	}
 
-	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionCreate, logger)
+	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, eventAction, logger)
 	if err != nil {
 		return unknownOutcomeFinding{err: fmt.Errorf("the read of the events of deployment %s failed: %w", deploymentName, err)}, true
 	}
 
 	if taskID > 0 {
-		return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: taskID, source: "a create event on deployment " + deploymentName}, true
+		return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: taskID, source: fmt.Sprintf("a %s event on deployment %s", eventAction, deploymentName)}, true
 	}
 
 	return unknownOutcomeFinding{}, false

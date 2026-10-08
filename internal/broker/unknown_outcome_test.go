@@ -298,13 +298,16 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		return proxy
 	}
 
-	// loseDeleteAnswers makes the deployment exist and every delete lose
-	// its answer. It returns the context IDs the deletes carried.
+	// loseDeleteAnswers makes the deployment exist with no events and
+	// every delete lose its answer. It returns the context IDs the deletes
+	// carried.
 	loseDeleteAnswers := func() func() []string {
 		var (
 			sentMu sync.Mutex
 			sent   []string
 		)
+
+		director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) { return nil, nil }
 
 		director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
 			return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
@@ -1254,6 +1257,75 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			brokerInstance.WaitForCredentialCleanups()
 			Expect(cleaner.Targets()).To(BeEmpty(), "a failed delete started the CredHub cleanup")
+		})
+
+		Describe("an unknown delete past the grace period whose deployment still exists", func() {
+			var contextID string
+
+			BeforeEach(func() {
+				contextID = loseDelete()
+
+				passGrace()
+			})
+
+			It("adopts a delete task running on its deployment", func() {
+				director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
+					return &bosh.Task{ID: deleteTaskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment, Deployment: name}, nil
+				}
+				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+					return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+				}
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete whose task runs answered %+v", response)
+				Expect(recorded().TaskID).To(Equal(deleteTaskID), "the running delete task was not adopted")
+				Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(stillIndexed()).To(BeTrue())
+			})
+
+			It("adopts the task a delete event on its deployment names", func() {
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEvents(boshEventDelete, deploymentName, deleteTaskID), nil
+				}
+				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+					return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+				}
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete whose event names a task answered %+v", response)
+				Expect(recorded().TaskID).To(Equal(deleteTaskID), "the delete event's task was not adopted")
+				Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+			})
+
+			It("does not adopt a running task that is not a delete, nor a create event", func() {
+				director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
+					return &bosh.Task{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment, Deployment: name}, nil
+				}
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEvents(boshEventCreate, deploymentName, createTaskID), nil
+				}
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a delete with no delete task answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(director.Calls("GetTask")).To(BeEmpty(), "the poll followed a task that is not a delete")
+			})
+
+			It("stays in progress while the check for a running task fails", func() {
+				director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+					return nil, routeNotFound()
+				}
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete whose task check failed answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+			})
 		})
 
 		It("an unknown delete is not failed while lookups error past the grace period", func() {
