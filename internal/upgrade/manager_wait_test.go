@@ -39,8 +39,8 @@ type waitVault struct {
 func newWaitVault() *waitVault { return &waitVault{saved: make(map[string][]byte)} }
 
 func (v *waitVault) Get(_ context.Context, path string, result interface{}) (bool, error) {
-	if path == waitInstanceID {
-		raw, _ := json.Marshal(map[string]string{"deployment_name": waitDeployment})
+	if strings.HasPrefix(path, "instance-") {
+		raw, _ := json.Marshal(map[string]string{"deployment_name": "redis-" + path})
 
 		return true, json.Unmarshal(raw, result)
 	}
@@ -163,11 +163,16 @@ func (d *waitDirector) cancelled() []int {
 	return append([]int(nil), d.cancels...)
 }
 
-// startUpgrade starts a manager and an upgrade of one instance, and waits
-// until the upgrade waits on its deploy task. The returned stop ends the
-// manager once, and the test's cleanup calls it too.
-func startUpgrade(t *testing.T, director *waitDirector, vault *waitVault) (*Manager, *UpgradeTask, func()) {
+// startUpgrade starts a manager and an upgrade of the instances, one
+// instance when none is named, and waits until the upgrade waits on its
+// first deploy task. The returned stop ends the manager once, and the
+// test's cleanup calls it too.
+func startUpgrade(t *testing.T, director *waitDirector, vault *waitVault, instanceIDs ...string) (*Manager, *UpgradeTask, func()) {
 	t.Helper()
+
+	if len(instanceIDs) == 0 {
+		instanceIDs = []string{waitInstanceID}
+	}
 
 	manager := NewManager(&logger.NoOpLogger{}, director, vault)
 
@@ -178,7 +183,7 @@ func startUpgrade(t *testing.T, director *waitDirector, vault *waitVault) (*Mana
 	t.Cleanup(stop)
 
 	task, err := manager.CreateTask(context.Background(), CreateTaskRequest{
-		InstanceIDs:    []string{waitInstanceID},
+		InstanceIDs:    instanceIDs,
 		TargetStemcell: StemcellTarget{OS: "ubuntu-noble", Version: "1.2"},
 	})
 	if err != nil {

@@ -23,6 +23,12 @@ const (
 // task, so a hung director cannot hold up a cancel.
 const cancelTaskTimeout = 30 * time.Second
 
+// cancelWaitTimeout bounds how long an upgrade instance keeps waiting for
+// its deploy task once the upgrade is cancelled. A test shortens it.
+//
+//nolint:gochecknoglobals // a test seam
+var cancelWaitTimeout = 5 * time.Minute
+
 // Final states of a director task.
 const (
 	boshTaskDone      = "done"
@@ -346,6 +352,7 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		if task.Status == TaskStatusCancelled {
 			m.mu.RUnlock()
 			m.logger.Info("Task %s was cancelled, stopping processing", task.ID)
+			m.skipPendingInstances(ctx, task)
 			return
 		}
 		m.mu.RUnlock()
@@ -359,6 +366,7 @@ func (m *Manager) processTask(task *UpgradeTask) {
 
 			if isCancelled {
 				m.logger.Info("Task %s was cancelled while paused, stopping processing", task.ID)
+				m.skipPendingInstances(ctx, task)
 				return
 			}
 
@@ -432,7 +440,17 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 
 	now := time.Now()
 
+	// A cancel collects the task IDs of running instances, so an instance
+	// starts only while the upgrade is not cancelled, checked in the same
+	// step that marks it running.
 	m.mu.Lock()
+	if task.Status == TaskStatusCancelled {
+		m.mu.Unlock()
+		m.logger.Info("Task %s was cancelled, so instance %s is not started", task.ID, instance.InstanceID)
+
+		return
+	}
+
 	instance.StartedAt = &now
 	instance.Status = InstanceStatusRunning
 	m.mu.Unlock()
@@ -531,8 +549,21 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	m.logger.Info("BOSH task %d deploys %s for instance %s", deployTask.ID, instance.DeploymentName, instance.InstanceID)
 	m.persistTask(persistCtx, task) //nolint:errcheck
 
-	finished, err := m.awaitDeployTask(ctx, task, instance, deployTask.ID, cancelCh)
+	finished, cancelRequested, err := m.awaitDeployTask(ctx, task, instance, deployTask.ID, cancelCh)
 	if err != nil {
+		if cancelRequested {
+			// The task outlived the wait after the cancel, or could not be
+			// read, so its outcome is not known yet.
+			message := fmt.Sprintf("cancel requested for BOSH task %d", deployTask.ID)
+
+			m.mu.Lock()
+			instance.Error = message
+			m.mu.Unlock()
+			m.logger.Error("Instance %s: %s, and the task had not ended when Blacksmith stopped waiting: %v", instance.InstanceID, message, err)
+			m.persistTask(persistCtx, task) //nolint:errcheck
+			return
+		}
+
 		if ctx.Err() != nil {
 			// Stop ended the wait. The task keeps running on the director,
 			// and its ID stays on record.
@@ -561,26 +592,31 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 }
 
 // awaitDeployTask waits for the deploy task of an upgrade instance to end.
-// When the upgrade is cancelled during the wait, it asks the director to
-// cancel the task and keeps waiting for the task's own end. A signal on
-// cancelCh that is not a cancel, such as a resume, changes nothing.
-func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, taskID int, cancelCh <-chan struct{}) (*bosh.Task, error) {
+// The cancel itself is sent by CancelTask. When the upgrade is cancelled
+// during the wait, it keeps waiting for the task's own end under a
+// deadline of cancelWaitTimeout that does not end with ctx, and reports
+// that a cancel was requested. A signal on cancelCh that is not a cancel,
+// such as a resume, changes nothing.
+func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, taskID int, cancelCh <-chan struct{}) (*bosh.Task, bool, error) {
 	type waitResult struct {
 		task *bosh.Task
 		err  error
 	}
 
+	waitCtx, stopWaiting := context.WithCancel(ctx)
+	defer stopWaiting()
+
 	waited := make(chan waitResult, 1)
 
 	go func() {
-		finished, err := m.director.WaitForTask(ctx, taskID)
+		finished, err := m.director.WaitForTask(waitCtx, taskID)
 		waited <- waitResult{task: finished, err: err}
 	}()
 
 	for {
 		select {
 		case result := <-waited:
-			return result.task, result.err
+			return result.task, false, result.err
 		case <-cancelCh:
 			m.mu.RLock()
 			cancelled := task.Status == TaskStatusCancelled
@@ -590,42 +626,31 @@ func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instan
 				continue
 			}
 
-			// A closed channel stays ready, so it is not watched again.
-			cancelCh = nil
+			stopWaiting()
 
-			m.logger.Info("Task-level cancel for instance %s", instance.InstanceID)
-			m.cancelDeployTask(ctx, taskID)
+			// The wait may have ended with the task just before it was
+			// stopped.
+			if result := <-waited; result.err == nil {
+				return result.task, true, nil
+			}
+
+			m.logger.Info("Task-level cancel for instance %s; waiting up to %s for BOSH task %d to end", instance.InstanceID, cancelWaitTimeout, taskID)
+
+			afterCancel, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelWaitTimeout)
+			finished, err := m.director.WaitForTask(afterCancel, taskID)
+
+			cancel()
+
+			return finished, true, err //nolint:wrapcheck // the caller adds the context
 		}
 	}
 }
 
-// cancelDeployTask asks the director to cancel an upgrade's deploy task. It
-// runs when the upgrade is being cancelled, which may already have ended
-// ctx, so it keeps ctx's values but gets its own deadline.
-func (m *Manager) cancelDeployTask(ctx context.Context, taskID int) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTaskTimeout)
-	defer cancel()
-
-	m.logger.Info("Cancelling BOSH task %d", taskID)
-
-	if err := m.director.CancelTask(ctx, taskID); err != nil {
-		m.logger.Error("Failed to cancel BOSH task %d: %v", taskID, err)
-	}
-}
-
 // settleInstance records the outcome of an upgrade instance from the final
-// state of its deploy task. An instance a cancel has already settled keeps
-// that outcome.
+// state of its deploy task. It alone settles an instance that started.
 func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, finished *bosh.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	if instance.Status != InstanceStatusRunning {
-		m.logger.Info("BOSH task %d of %s ended in state %s, and instance %s was already recorded as %s",
-			finished.ID, instance.DeploymentName, finished.State, instance.InstanceID, instance.Status)
-
-		return
-	}
 
 	completedAt := time.Now()
 	instance.CompletedAt = &completedAt
@@ -638,6 +663,11 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, f
 	case boshTaskCancelled:
 		instance.Status = InstanceStatusCancelled
 		instance.Error = fmt.Sprintf("BOSH task %d was cancelled", finished.ID)
+
+		if task.Status == TaskStatusCancelled {
+			instance.Error = "cancelled by user"
+		}
+
 		task.CancelledCount++
 		m.logger.Info("BOSH task %d of %s was cancelled", finished.ID, instance.DeploymentName)
 	default:
@@ -645,6 +675,37 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, f
 		instance.Error = fmt.Sprintf("BOSH task %d ended in state %s: %s", finished.ID, finished.State, finished.Result)
 		task.FailedCount++
 		m.logger.Error("Update failed for %s: BOSH task %d ended in state %s: %s", instance.DeploymentName, finished.ID, finished.State, finished.Result)
+	}
+}
+
+// skipPendingInstances marks every instance of a cancelled upgrade that
+// never started as skipped.
+func (m *Manager) skipPendingInstances(ctx context.Context, task *UpgradeTask) {
+	skipped := 0
+
+	m.mu.Lock()
+	for i := range task.Instances {
+		instance := &task.Instances[i]
+		if instance.Status != InstanceStatusPending {
+			continue
+		}
+
+		instance.Status = InstanceStatusSkipped
+		instance.Error = "skipped due to task cancellation"
+		task.SkippedCount++
+		skipped++
+	}
+	m.mu.Unlock()
+
+	if skipped == 0 {
+		return
+	}
+
+	m.logger.Info("Skipped %d pending instances of cancelled task %s", skipped, task.ID)
+
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist the skipped instances of task %s: %v", task.ID, err)
 	}
 }
 
@@ -741,7 +802,11 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// CancelTask cancels a running or paused task.
+// CancelTask cancels a running or paused task. It sends one cancel for the
+// deploy task of each running instance and leaves every instance's status
+// and the counts to the upgrade, which records each instance's outcome
+// from its task's final state. The manager's lock is never held across a
+// director call.
 func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	m.mu.Lock()
 	task, exists := m.tasks[taskID]
@@ -757,21 +822,17 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 
 	m.logger.Info("Cancelling task %s", taskID)
 
-	// Find and cancel any running instance's BOSH task
+	type runningDeploy struct {
+		instanceID string
+		boshTaskID int
+	}
+
+	var running []runningDeploy
+
 	for i := range task.Instances {
 		instance := &task.Instances[i]
 		if instance.Status == InstanceStatusRunning && instance.BOSHTaskID > 0 {
-			m.logger.Info("Cancelling BOSH task %d for instance %s", instance.BOSHTaskID, instance.InstanceID)
-			if err := m.director.CancelTask(ctx, instance.BOSHTaskID); err != nil {
-				m.logger.Error("Failed to cancel BOSH task %d: %v", instance.BOSHTaskID, err)
-			}
-			instance.Status = InstanceStatusCancelled
-			instance.Error = "cancelled by user"
-			task.CancelledCount++
-		} else if instance.Status == InstanceStatusPending {
-			instance.Status = InstanceStatusSkipped
-			instance.Error = "skipped due to task cancellation"
-			task.SkippedCount++
+			running = append(running, runningDeploy{instanceID: instance.InstanceID, boshTaskID: instance.BOSHTaskID})
 		}
 	}
 
@@ -779,6 +840,24 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	completedAt := time.Now()
 	task.CompletedAt = &completedAt
 	m.mu.Unlock()
+
+	// The cancel is sent even when the request that asked for it ends.
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTaskTimeout)
+	defer cancel()
+
+	for _, deploy := range running {
+		m.logger.Info("Cancelling BOSH task %d for instance %s", deploy.boshTaskID, deploy.instanceID)
+
+		err := m.director.CancelTask(cancelCtx, deploy.boshTaskID)
+
+		switch {
+		case err == nil:
+		case errors.Is(err, bosh.ErrTaskCannotBeCancelled):
+			m.logger.Info("BOSH task %d for instance %s had already ended or was being cancelled: %v", deploy.boshTaskID, deploy.instanceID, err)
+		default:
+			m.logger.Error("Failed to cancel BOSH task %d: %v", deploy.boshTaskID, err)
+		}
+	}
 
 	// Signal cancellation
 	m.taskCancelLock.Lock()
