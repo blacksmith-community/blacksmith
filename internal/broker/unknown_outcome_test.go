@@ -119,6 +119,13 @@ func (e *errorLogger) Error(msg string, args ...interface{}) {
 
 func (e *errorLogger) Named(string) logger.Logger { return e }
 
+func (e *errorLogger) errors() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return append([]string(nil), e.lines...)
+}
+
 // warningLogger records the messages logged at the Warning level.
 type warningLogger struct {
 	*logger.NoOpLogger
@@ -141,13 +148,6 @@ func (w *warningLogger) warnings() []string {
 	defer w.mu.Unlock()
 
 	return append([]string(nil), w.lines...)
-}
-
-func (e *errorLogger) errors() []string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	return append([]string(nil), e.lines...)
 }
 
 // deploymentEventsAt returns the events deploymentEvents does, dated at.
