@@ -2549,6 +2549,30 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrGoneError))
 			})
 
+			It("is settled as deleted when a deprovision past the grace period finds the deployment gone", func() {
+				deploymentMissing()
+				passGrace()
+
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrGoneError))
+
+				settledRecord := recorded()
+				Expect(settledRecord.Action).To(Equal(outcomeDeprovision))
+				Expect(settledRecord.State).ToNot(Equal(outcomeStateUnknown), "the unknown deploy is still recorded as in flight")
+				Expect(settledRecord.ContextID).To(BeEmpty(), "the settled record kept the deploy's context ID %s", contextID)
+
+				response := pollUnindexed(outcomeDeprovision)
+				Expect(response.State).To(Equal(osbapi.StateSucceeded), "a poll over the settled record answered %+v", response)
+			})
+
+			It("is left as it is when a deprovision inside the grace period is refused", func() {
+				deploymentMissing()
+
+				unknown := recorded()
+
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrConcurrencyError))
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
+			})
+
 			// provisionAgain sends a provision with the instance's ID and
 			// returns a count of the deploys it sends, and its error.
 			provisionAgain := func() (*atomic.Int32, error) {

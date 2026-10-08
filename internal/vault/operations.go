@@ -175,14 +175,25 @@ func (vault *Vault) SettleOutcomeUnknown(ctx context.Context, instanceID, action
 // has said the deployment does not exist. The record it writes has no
 // context ID. It writes only under the same check as SettleOutcomeUnknown.
 func (vault *Vault) SettleOutcomeUnknownAsDeleted(ctx context.Context, instanceID, action, contextID string) error {
+	return vault.SettleOutcomeUnknownReplacedByDelete(ctx, instanceID, action, action, contextID)
+}
+
+// SettleOutcomeUnknownReplacedByDelete records a finished deleteAction over
+// the unknown outcome of unknownAction with contextID, once the director has
+// said the deployment does not exist. It serves an unknown provision whose
+// deployment turns out to be gone, which the record then shows as a deleted
+// instance and no longer as an operation in flight. The record it writes has
+// no context ID. It writes only under the same check as
+// SettleOutcomeUnknown, made for unknownAction.
+func (vault *Vault) SettleOutcomeUnknownReplacedByDelete(ctx context.Context, instanceID, unknownAction, deleteAction, contextID string) error {
 	if contextID == "" {
-		return fmt.Errorf("%w: instance %s, action %s, settled delete", ErrEmptyContextID, instanceID, action)
+		return fmt.Errorf("%w: instance %s, action %s, settled delete", ErrEmptyContextID, instanceID, unknownAction)
 	}
 
 	logger := logger.Get().Named("vault settle deleted " + instanceID)
 
-	return vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, settlingOutcomeUnknown(instanceID, action, contextID), func(map[string]interface{}) interface{} {
-		return trackedTask(action, nil)
+	return vault.writeTaskRecordGuarded(ctx, instanceID, deleteAction, logger, settlingOutcomeUnknown(instanceID, unknownAction, contextID), func(map[string]interface{}) interface{} {
+		return trackedTask(deleteAction, nil)
 	})
 }
 

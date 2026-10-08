@@ -312,6 +312,27 @@ var _ = Describe("Task record writes", func() {
 			Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
 		})
 
+		It("records a finished delete over the unknown outcome of a provision", func() {
+			recordUnknown(provision)
+
+			Expect(client.SettleOutcomeUnknownReplacedByDelete(ctx, instanceID, provision, deprovision, contextID)).To(Succeed())
+
+			Expect(readRecord()).To(HaveKeyWithValue("action", deprovision))
+			Expect(readRecord()).To(HaveKeyWithValue("state", "in_progress"))
+			Expect(readRecord()).ToNot(HaveKey("context_id"))
+			Expect(readRecord()).ToNot(HaveKey(vault.TaskRecordUnknownSinceKey))
+		})
+
+		It("records a finished delete only over the unknown outcome of the action named", func() {
+			recordUnknown(provision)
+
+			writes := taskWrites()
+
+			Expect(client.SettleOutcomeUnknownReplacedByDelete(ctx, instanceID, deprovision, deprovision, contextID)).To(MatchError(vault.ErrOutcomeUnknownSettled))
+			Expect(taskWrites()).To(Equal(writes))
+			Expect(readRecord()).To(HaveKeyWithValue("action", provision))
+		})
+
 		It("records a deleted instance only over the same unknown outcome", func() {
 			recordUnknown(deprovision)
 

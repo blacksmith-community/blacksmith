@@ -508,7 +508,7 @@ func (b *Broker) Deprovision(
 
 	// An instance the index does not have is gone only when the director
 	// confirms its deployment is, and then nothing is recorded for it.
-	err = b.refuseDeleteOfGoneInstance(ctx, instanceID, details, logger)
+	err = b.refuseDeleteOfGoneInstance(ctx, instanceID, details, superseded, logger)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, err
 	}
@@ -1812,7 +1812,12 @@ var errInstanceUnindexed = errors.New("instance has no index entry")
 // gives an indexed instance, and with no task running it is left to the
 // deprovision, which records the request and deletes it. An indexed instance
 // is left to the deprovision as well.
-func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, logger logger.Logger) error {
+//
+// When the deprovision would replace an unknown provision, and the director
+// confirms the deployment is gone, the unknown provision is recorded as a
+// finished delete, so the record does not show an operation in flight for an
+// instance the platform has been told is gone.
+func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, superseded recordedOperation, logger logger.Logger) error {
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
 
@@ -1831,6 +1836,10 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 
 	err = b.deploymentGone(readCtx, instanceID, deploymentName, logger)
 	if err != nil {
+		if errors.Is(err, osbapi.ErrGoneError) {
+			b.settleSupersededProvisionAsDeleted(ctx, instanceID, superseded, logger)
+		}
+
 		return err
 	}
 
@@ -1842,6 +1851,29 @@ func (b *Broker) refuseDeleteOfGoneInstance(ctx context.Context, instanceID stri
 	logger.Info("instance %s has no index entry, but the director still has deployment %s, so the delete goes ahead", instanceID, deploymentName)
 
 	return nil
+}
+
+// settleSupersededProvisionAsDeleted records the unknown provision a
+// deprovision would have replaced as a finished delete, as the director's
+// word that its deployment is gone settles it. It writes only while the record
+// still holds that unknown provision. A write that fails leaves the record
+// as it is, and the answer to the deprovision stands.
+func (b *Broker) settleSupersededProvisionAsDeleted(ctx context.Context, instanceID string, superseded recordedOperation, logger logger.Logger) {
+	if superseded.ContextID == "" {
+		return
+	}
+
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.SettleOutcomeUnknownReplacedByDelete(recordCtx, instanceID, superseded.Action, operationTypeDeprovision, superseded.ContextID)
+	if err != nil {
+		logger.Error("failed to record the %s with context ID %s of instance %s as deleted: %s", superseded.Action, superseded.ContextID, instanceID, err)
+
+		return
+	}
+
+	logger.Info("The %s of instance %s with context ID %s is recorded as deleted, because the director has no deployment for it", superseded.Action, instanceID, superseded.ContextID)
 }
 
 // deploymentGone asks the director for the deployment of an instance the
