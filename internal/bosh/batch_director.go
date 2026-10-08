@@ -105,6 +105,16 @@ func (w *batchWatch) describe(taskID int) string {
 	return fmt.Sprintf("BOSH task %d of deployment %s", taskID, w.deployment)
 }
 
+// lostDeploy names the deploy of a watch whose answer was lost, for logs
+// and errors.
+func (w *batchWatch) lostDeploy() string {
+	if w.contextID == "" {
+		return fmt.Sprintf("the deploy of %s, which carries no context ID,", w.deployment)
+	}
+
+	return fmt.Sprintf("the deploy of %s with context ID %s", w.deployment, w.contextID)
+}
+
 // BatchDirector wraps a Director with a separate connection pool for batch operations.
 // This allows batch upgrade jobs to use their own pool without competing with
 // normal API operations for connection slots.
@@ -265,9 +275,10 @@ func (b *BatchDirector) Stop() {
 
 // UpdateDeployment uses the batch pool for rate limiting. The deploy holds
 // its slot until its director task ends, which a watcher follows after the
-// call returns. A deploy the director rejected, or never received, releases
-// its slot at once, and a deploy whose answer was lost keeps it while a
-// watcher looks for its task.
+// call returns. A deploy whose error shows that no task of it runs, because
+// the director answered it with an error or never received it, releases its
+// slot at once. Any other error keeps the slot while a watcher looks for
+// the task, because the director may have started one.
 func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*Task, error) {
 	err := b.acquireSlot(ctx)
 	if err != nil {
@@ -288,10 +299,15 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 	task, err := b.director.UpdateDeployment(ctx, name, manifest)
 	if err != nil {
 		var unknown *OutcomeUnknownError
+
 		if errors.As(err, &unknown) {
 			handedOff = b.watchLostAnswer(name, unknown.ContextID)
+		} else if reason, ok := noDeployTaskRuns(err); ok {
+			b.logger.Infof("Released the batch slot of deployment %s at once, because %s: %v", name, reason, err)
 		} else {
-			b.logger.Infof("Released the batch slot of deployment %s at once, because the deploy failed without a task to follow: %v", name, err)
+			b.logger.Infof("Kept the batch slot of deployment %s, because the deploy's error does not show that no deploy task runs: %v", name, err)
+
+			handedOff = b.watchLostAnswer(name, contextIDOf(err))
 		}
 
 		return task, fmt.Errorf("update deployment %s: %w", name, err)
@@ -694,14 +710,12 @@ func (b *BatchDirector) watchLostAnswer(deployment, contextID string) bool {
 	b.mu.Unlock()
 
 	if !started {
-		b.logger.Infof("The batch director is stopped, so it released the slot of deployment %s, whose answer with context ID %s was lost, without looking for its task",
-			deployment, contextID)
+		b.logger.Infof("The batch director is stopped, so it released the slot of %s without looking for its task", watch.lostDeploy())
 
 		return false
 	}
 
-	b.logger.Infof("The answer to the deploy of %s with context ID %s was lost, so its batch slot stays held while the batch director looks for its task",
-		deployment, contextID)
+	b.logger.Infof("The batch slot of %s stays held while the batch director looks for its task", watch.lostDeploy())
 
 	return true
 }
@@ -823,7 +837,7 @@ func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskI
 // unknownSince plus UnknownOutcomeGrace, found no task, while no deploy
 // task runs on the deployment.
 func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch, unknownSince, deadline time.Time) (*Task, error) {
-	what := fmt.Sprintf("the deploy of %s with context ID %s", watch.deployment, watch.contextID)
+	what := watch.lostDeploy()
 
 	for {
 		now := b.clock.Now()
@@ -914,6 +928,58 @@ func (b *BatchDirector) findLostTask(ctx context.Context, watch *batchWatch) (in
 	}
 
 	return 0, lookupErr
+}
+
+// noDeployTaskRuns reports whether a deploy's error shows that no task of
+// the deploy runs on the director, and says why. Only the director's own
+// error answer, a request that never reached the director, and a failed
+// read of the task after the deploy call returned show that. A gateway's
+// error answer to the deploy does not, because the director may have
+// accepted the request behind it.
+func noDeployTaskRuns(err error) (string, bool) {
+	if boshapi.IsOutcomeUnknown(err) {
+		return "", false
+	}
+
+	var apiErr *boshapi.APIError
+	if errors.As(err, &apiErr) {
+		return "the director answered the deploy with an error", true
+	}
+
+	var transportErr *boshapi.TransportError
+	if errors.As(err, &transportErr) && !transportErr.Sent {
+		return "the deploy request never reached the director", true
+	}
+
+	// The base director returns ErrFailedGetTaskUpdate only after its
+	// deploy call returned without an error, which the bosh-cli deploy call
+	// does once its task has ended.
+	if errors.Is(err, ErrFailedGetTaskUpdate) {
+		return "the deploy call returned and only the read of its task failed", true
+	}
+
+	return "", false
+}
+
+// contextIDOf returns the context ID a deploy's error carries, or an empty
+// string when it carries none.
+func contextIDOf(err error) string {
+	var transportErr *boshapi.TransportError
+	if errors.As(err, &transportErr) && transportErr.ContextID != "" {
+		return transportErr.ContextID
+	}
+
+	var answerErr *boshapi.TaskAnswerError
+	if errors.As(err, &answerErr) && answerErr.ContextID != "" {
+		return answerErr.ContextID
+	}
+
+	var redirectErr *boshapi.RedirectError
+	if errors.As(err, &redirectErr) {
+		return redirectErr.ContextID
+	}
+
+	return ""
 }
 
 // awaitWatch waits for a watcher's result or for the caller's context.

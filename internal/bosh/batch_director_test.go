@@ -915,6 +915,7 @@ func TestBatchSlotIsReleasedWhenTheDeployIsRejected(t *testing.T) {
 		"a request that was never sent": &boshapi.TransportError{
 			Method: "POST", Path: deploymentsRoute, Sent: false, Mutation: true, Attempts: 1, Err: errBatchTestRejected,
 		},
+		"a failed read of the task after the deploy returned": fmt.Errorf("deploy: %w", bosh.ErrFailedGetTaskUpdate),
 	}
 
 	for name, rejection := range rejections {
@@ -1545,4 +1546,94 @@ func TestStopWhileADeployIsInFlightReleasesItsSlot(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An error that does not show that no deploy task runs keeps the slot, and
+// a watcher looks for the task by the context ID the error carries, if
+// any, and as a deploy running on the deployment.
+func TestBatchSlotIsKeptWhenTheDeployMayHaveStarted(t *testing.T) {
+	t.Parallel()
+
+	errs := map[string]struct {
+		err       error
+		contextID string
+	}{
+		"a request that was sent": {
+			err: &boshapi.TransportError{
+				Method: "POST", Path: deploymentsRoute, ContextID: firstContextID, Sent: true, Mutation: true, Attempts: 1, Err: errBatchTestRejected,
+			},
+			contextID: firstContextID,
+		},
+		"a gateway's error answer": {
+			err: &boshapi.APIError{StatusCode: 502, Method: "POST", Path: deploymentsRoute, Mutation: true},
+		},
+		"a call whose context ended": {
+			err: &bosh.DirectorCallError{Operation: "UpdateDeployment", Director: batchTestAddress, Cause: context.Canceled, Err: errBatchTestRejected},
+		},
+		"an error of no known kind": {
+			err: errBatchTestRejected,
+		},
+	}
+
+	for name, answer := range errs {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base := newFakeBatchBase()
+			base.updateErr = func(string) error { return answer.err }
+			batch, clock := newTestBatch(t, base, 1)
+
+			_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+			if !errors.Is(err, answer.err) {
+				t.Fatalf("expected the deploy's error, got %v", err)
+			}
+
+			clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+			waitBatchStats(t, batch, 1, 0)
+
+			_, contextIDs := bosh.BatchWatchesHeld(batch)
+			wantContextIDs, wantLookups := 0, 0
+
+			if answer.contextID != "" {
+				wantContextIDs, wantLookups = 1, 1
+			}
+
+			if contextIDs != wantContextIDs || base.lookups() != wantLookups {
+				t.Fatalf("expected %d watches by context ID and %d lookups, got %d and %d", wantContextIDs, wantLookups, contextIDs, base.lookups())
+			}
+		})
+	}
+}
+
+// A deploy call whose context ends while the director runs the deploy
+// keeps its slot, and the watcher follows the deploy running on the
+// deployment until it ends.
+func TestBatchSlotIsHeldThroughADeployWhoseCallEnded(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.blockUntilFinished = true
+	batch, _ := newTestBatch(t, base, 1)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	result := deployInBackground(ctx, batch, firstDeployment)
+
+	base.waitAccepted(t)
+
+	taskID := base.taskOf(t, firstDeployment)
+	running := base.taskSnapshot(taskID)
+	base.set(func(f *fakeBatchBase) { f.running = running })
+
+	cancel()
+
+	err := <-result
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the deploy call to end with its context, got %v", err)
+	}
+
+	waitUntil(t, "the watcher follows the running deploy", func() bool { return base.waitCallsFor(taskID) == 1 })
+	waitBatchStats(t, batch, 1, 0)
+
+	base.finish(t, taskID, batchTaskDone)
+	waitBatchStats(t, batch, 0, 0)
 }
