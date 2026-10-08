@@ -97,6 +97,10 @@ type unknownOutcomePass struct {
 	// running is held by the pass that runs.
 	running sync.Mutex
 
+	// warnedContextID is the context ID whose skipped-event warning the
+	// last pass logged. It is read and written only while running is held.
+	warnedContextID string
+
 	lastErrMu sync.Mutex
 	lastErr   string
 }
@@ -236,7 +240,7 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 		deploymentName = current.DeploymentName
 	}
 
-	finding := b.findUnknownOutcome(passCtx, deploymentName, current, logger)
+	finding := b.findUnknownOutcome(passCtx, pass, deploymentName, current, logger)
 
 	pass.setLastErr(finding.err)
 
@@ -259,7 +263,7 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 // grace period's end, found no task, and the deployment check found nothing
 // either, is the request taken as never started. For a provision, that also
 // takes the director's word that the deployment does not exist.
-func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, operation recordedOperation, logger logger.Logger) unknownOutcomeFinding {
+func (b *Broker) findUnknownOutcome(ctx context.Context, pass *unknownOutcomePass, deploymentName string, operation recordedOperation, logger logger.Logger) unknownOutcomeFinding {
 	// The time is read before the lookup, so the lookup is made at or
 	// after it.
 	now := b.unknownOutcomeNow()
@@ -309,10 +313,18 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 		return unknownOutcomeFinding{}
 	}
 
+	return b.findPastGrace(ctx, pass, deploymentName, operation, logger)
+}
+
+// findPastGrace decides what a pass past the grace period takes from the
+// absence of a task. A provision checks that its deployment is gone, and
+// otherwise stays unknown. A deprovision, whose deployment the check
+// above found, is taken as never started.
+func (b *Broker) findPastGrace(ctx context.Context, pass *unknownOutcomePass, deploymentName string, operation recordedOperation, logger logger.Logger) unknownOutcomeFinding {
 	if operation.Action == operationTypeProvision {
-		_, err = b.BOSH.GetDeployment(ctx, deploymentName)
+		_, err := b.BOSH.GetDeployment(ctx, deploymentName)
 		if err == nil {
-			b.warnOfSkippedEvent(ctx, deploymentName, boshEventActionCreate, operation, logger)
+			b.warnOfSkippedCreateEvent(ctx, pass, deploymentName, operation, logger)
 
 			return unknownOutcomeFinding{reason: fmt.Sprintf("deployment %s exists, and no task the director lists names it", deploymentName)}
 		}
@@ -328,6 +340,20 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 	}
 
 	return unknownOutcomeFinding{verdict: outcomeNeverStarted}
+}
+
+// warnOfSkippedCreateEvent logs the skipped-event warning of a provision
+// that stays in progress. Each poll runs a new pass over such a provision,
+// so the warning is logged for the first pass over a context ID, and again
+// once the outcome has been unknown for the alarm age.
+func (b *Broker) warnOfSkippedCreateEvent(ctx context.Context, pass *unknownOutcomePass, deploymentName string, operation recordedOperation, logger logger.Logger) {
+	if pass.warnedContextID == operation.ContextID && b.unknownOutcomeNow().Sub(operation.UnknownSince) < unknownOutcomeAlarmAge {
+		return
+	}
+
+	pass.warnedContextID = operation.ContextID
+
+	b.warnOfSkippedEvent(ctx, deploymentName, boshEventActionCreate, operation, logger)
 }
 
 // warnOfSkippedEvent logs one warning for a pass that found the deployment

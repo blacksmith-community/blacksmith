@@ -2121,6 +2121,58 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(lines[0]).To(ContainSubstring(older.UTC().Format(time.RFC3339)))
 			})
 
+			It("warns of the skipped event once for two polls past the grace period", func() {
+				loseDeploy()
+
+				unknown := recorded()
+
+				var reads atomic.Int32
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					reads.Add(1)
+
+					return deploymentEventsAt(unknown.UnknownSince.Add(-10*time.Minute), boshEventCreate, deploymentName, createTaskID), nil
+				}
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+
+				Expect(poll(outcomeProvision).State).To(Equal(osbapi.StateInProgress))
+				Expect(poll(outcomeProvision).State).To(Equal(osbapi.StateInProgress))
+
+				Expect(skippedWarnings()).To(HaveLen(1), "the polls logged %v", warnLog.warnings())
+				// Each poll reads the events to look for a task, and only the
+				// first one reads them again for the warning.
+				Expect(reads.Load()).To(BeEquivalentTo(3), "the second poll read the events for a warning it did not log")
+			})
+
+			It("warns again once the outcome has been unknown for a day", func() {
+				loseDeploy()
+
+				unknown := recorded()
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-10*time.Minute), boshEventCreate, deploymentName, createTaskID), nil
+				}
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+
+				poll(outcomeProvision)
+				poll(outcomeProvision)
+
+				Expect(skippedWarnings()).To(HaveLen(1), "the polls logged %v", warnLog.warnings())
+
+				frozenAt.Store(unknown.UnknownSince.Add(24 * time.Hour).UnixNano())
+
+				poll(outcomeProvision)
+
+				Expect(skippedWarnings()).To(HaveLen(2), "the poll at the alarm age logged %v", warnLog.warnings())
+			})
 			It("says the events could not be read when the second read fails", func() {
 				loseDeploy()
 
