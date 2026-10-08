@@ -32,3 +32,44 @@ func SetTaskPollInterval(director Director, interval time.Duration) {
 func RequestTimeoutCause(timeout time.Duration, attempts int) error {
 	return &requestTimeoutError{timeout: timeout, attempts: attempts}
 }
+
+// BatchClock is the time source a batch director's watchers read.
+type BatchClock = batchClock
+
+// How often a watcher looks for the task of a lost answer, and how long it
+// keeps a final task for waiters.
+const (
+	BatchLostAnswerInterval = batchLostAnswerInterval
+	BatchDonePrune          = batchDonePrune
+)
+
+// SetBatchClock replaces the time source of a batch director's watchers.
+// It is set before the batch director starts any deploy.
+func SetBatchClock(batch *BatchDirector, clock BatchClock) {
+	batch.clock = clock
+}
+
+// SetBatchWatchMax shortens how long a watcher reads a task the director
+// does not answer for. It is set before the batch director starts any
+// deploy.
+func SetBatchWatchMax(batch *BatchDirector, watchMax time.Duration) {
+	batch.watchMax = watchMax
+}
+
+// BatchWatchersRunning reports how many watcher goroutines have not
+// returned.
+func BatchWatchersRunning(batch *BatchDirector) int {
+	batch.mu.Lock()
+	defer batch.mu.Unlock()
+
+	return batch.running
+}
+
+// BatchWatchesHeld reports how many watchers a batch director holds by
+// task ID and by context ID.
+func BatchWatchesHeld(batch *BatchDirector) (int, int) {
+	batch.mu.Lock()
+	defer batch.mu.Unlock()
+
+	return len(batch.byTask), len(batch.byContextID)
+}

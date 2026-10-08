@@ -173,7 +173,9 @@ func CreatePooledDirector(address, username, password, caCert string, skipSSL bo
 
 // CreatePooledAndBatchDirectors creates both a PooledDirector for general use
 // and a BatchDirector for batch upgrade operations. They share the same base
-// director but have separate connection pools.
+// director but have separate connection pools. The BatchDirector follows
+// each deploy it starts until the deploy's task ends, and its owner calls
+// its Stop to end those watchers.
 func CreatePooledAndBatchDirectors(address, username, password, caCert string, skipSSL bool, requestTimeout time.Duration, maxConnections, maxBatchJobs int, timeout time.Duration, logger Logger) (*PooledDirector, *BatchDirector, error) {
 	// Create base director (shared between both)
 	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, requestTimeout, logger)
@@ -185,7 +187,8 @@ func CreatePooledAndBatchDirectors(address, username, password, caCert string, s
 	pooledDirector := NewPooledDirector(baseDirector, maxConnections, timeout, logger)
 
 	// Create batch director for batch upgrade operations
-	// Uses its own pool, bypassing the general pool for UpdateDeployment
+	// Uses its own pool, bypassing the general pool for UpdateDeployment,
+	// and holds each deploy's slot until the deploy's task ends
 	batchDirector := NewBatchDirector(baseDirector, maxBatchJobs, timeout, logger)
 
 	return pooledDirector, batchDirector, nil
