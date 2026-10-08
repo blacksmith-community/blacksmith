@@ -19,11 +19,12 @@ const kindDeploy = "deploy"
 var (
 	// ErrWatchAbandoned is reported to the waiters of a watcher that gave
 	// up on its task and released its slot, because the director no longer
-	// knew the task, could not be read for followWatchMax, or refused reads
-	// for UnknownOutcomeGrace, because no matching task ran on the
+	// knew the task, could not be read for the watch limit, or refused
+	// reads for UnknownOutcomeGrace, because no matching task ran on the
 	// deployment of a lost answer that carried no context ID, because the
 	// director can't be asked for the task of a lost answer, or because the
-	// deployment of a lost answer never went idle.
+	// deployment of a lost job-state answer was not seen idle within the
+	// watch limit.
 	ErrWatchAbandoned = errors.New("Blacksmith stopped following the BOSH task and released its slot") //nolint:staticcheck // Blacksmith is a proper noun
 	// ErrNoTaskWithContextID is reported to the waiters of a watcher whose
 	// deploy lost its answer, when the director showed that no task has its
@@ -37,12 +38,14 @@ var (
 )
 
 const (
-	// followWatchMax is how long a watcher keeps reading a task, or looking
-	// for the task of a lost answer, while every read fails. It counts from
-	// the first failed read of a run of failures, and a read that succeeds
-	// starts the count again, so a task that runs longer is still followed.
-	// It also caps how long a lost answer is held while its lookup finds
-	// the deployment busy, counted from when the answer was lost.
+	// followWatchMax is the default watch limit, which bosh.task_watch_max
+	// overrides. The watch limit is how long a watcher keeps reading a
+	// task, or looking for the task of a lost answer, while every read
+	// fails. It counts from the first failed read of a run of failures,
+	// and a read that succeeds starts the count again, so a task that runs
+	// longer is still followed. It also caps how long a lost job-state
+	// answer holds its slot, counted from when the answer was lost,
+	// whatever its checks found.
 	followWatchMax = 6 * time.Hour
 	// followLostAnswerInterval is how often a watcher looks for the task of
 	// a call whose answer was lost.
@@ -120,13 +123,27 @@ func (c follow) subject() string {
 type lostLookup interface {
 	// find returns the call's task ID when it found the task. busy means a
 	// task that may be the call's runs on the deployment, so this check
-	// can't end the grace. 0, false, and a nil error mean every check it
-	// made succeeded and found nothing.
+	// can't end the grace, and only an idleLookup reports it. 0, false,
+	// and a nil error mean every check it made succeeded and found
+	// nothing.
 	find(ctx context.Context, f *taskFollower, w *followWatch) (taskID int, busy bool, err error)
 	// giveUp logs the Error line and returns the error the watch's waiters
 	// get, once a check that succeeded at or after the grace found
-	// nothing, or once a busy deployment outlasted the watch limit.
+	// nothing.
 	giveUp(f *taskFollower, w *followWatch) error
+}
+
+// idleLookup is a lostLookup whose watch holds the slot until a check that
+// succeeded, made at or after the grace, finds nothing running, or until
+// the watch limit has passed since the answer was lost, whatever the
+// latest check found. A failed or refused check never ends its watch and
+// never moves the cap.
+type idleLookup interface {
+	lostLookup
+	// giveUpAtCap logs the Error line and returns the error the watch's
+	// waiters get once the watch limit has passed since the answer was
+	// lost. busy and err are what the latest check found.
+	giveUpAtCap(f *taskFollower, w *followWatch, busy bool, err error) error
 }
 
 // runningMatch picks the call's task out of the tasks running on its
@@ -241,10 +258,11 @@ func (l contextIDLookup) giveUp(follower *taskFollower, watch *followWatch) erro
 }
 
 // runningTaskLookup holds the slot of a lost call that can't be told apart
-// from other tasks on its deployment, such as a job-state change, for as
-// long as the match finds a task running there. It never picks a task to
-// follow, and it never looks a task up by context ID, because the
-// director may not store the ID for these calls.
+// from other tasks on its deployment, such as a job-state change, until a
+// check that succeeded at or after the grace finds no task there that the
+// match accepts, or until the watch limit has passed since the answer was
+// lost. It never picks a task to follow, and it never looks a task up by
+// context ID, because the director may not store the ID for these calls.
 type runningTaskLookup struct {
 	match runningMatch
 }
@@ -269,22 +287,38 @@ func (l runningTaskLookup) find(ctx context.Context, follower *taskFollower, wat
 	return 0, false, nil
 }
 
-// giveUp ends the watch once the deployment went idle after the grace, or
-// once it stayed busy for the watch limit.
+// giveUp ends the watch once the deployment went idle after the grace.
 func (l runningTaskLookup) giveUp(follower *taskFollower, watch *followWatch) error {
-	if watch.busy {
-		follower.logger.Errorf("Deployment %s never went idle in the %v after the answer to %s was lost, so the %s released its slot",
-			watch.call.deployment, follower.watchMax, watch.lostCall(), follower.owner)
-
-		return fmt.Errorf("%w: deployment %s never went idle in the %v after the answer to its %s was lost",
-			ErrWatchAbandoned, watch.call.deployment, follower.watchMax, watch.call.kind)
-	}
-
 	follower.logger.Errorf("No %s runs on deployment %s %v after the answer to %s was lost, so the %s released its slot",
 		l.match.noun, watch.call.deployment, UnknownOutcomeGrace, watch.lostCall(), follower.owner)
 
 	return fmt.Errorf("%w: no %s runs on deployment %s %v after the answer to its %s was lost",
 		ErrWatchAbandoned, l.match.noun, watch.call.deployment, UnknownOutcomeGrace, watch.call.kind)
+}
+
+// giveUpAtCap ends the watch once the watch limit has passed since the
+// answer was lost, and says what the latest check found.
+func (l runningTaskLookup) giveUpAtCap(follower *taskFollower, watch *followWatch, busy bool, err error) error {
+	switch {
+	case busy:
+		follower.logger.Errorf("Deployment %s never went idle in the %v after the answer to %s was lost, so the %s released its slot",
+			watch.call.deployment, follower.watchMax, watch.lostCall(), follower.owner)
+
+		return fmt.Errorf("%w: deployment %s never went idle in the %v after the answer to its %s was lost",
+			ErrWatchAbandoned, watch.call.deployment, follower.watchMax, watch.call.kind)
+	case err != nil:
+		follower.logger.Errorf("%s released its slot for %s, because deployment %s was not seen idle in the %v after the answer was lost, and the latest check failed: %v",
+			follower.owned(), watch.lostCall(), watch.call.deployment, follower.watchMax, err)
+
+		return fmt.Errorf("%w: deployment %s was not seen idle in the %v after the answer to its %s was lost, and the latest check failed: %w",
+			ErrWatchAbandoned, watch.call.deployment, follower.watchMax, watch.call.kind, err)
+	default:
+		follower.logger.Errorf("%s released its slot for %s, because the %v after the answer was lost have passed, and no %s runs on deployment %s",
+			follower.owned(), watch.lostCall(), follower.watchMax, l.match.noun, watch.call.deployment)
+
+		return fmt.Errorf("%w: no %s runs on deployment %s, and the %v after the answer to its %s was lost have passed",
+			ErrWatchAbandoned, l.match.noun, watch.call.deployment, follower.watchMax, watch.call.kind)
+	}
 }
 
 // graceHold holds the slot of a lost call whose task the director can't
@@ -320,10 +354,6 @@ type followWatch struct {
 	// lostAt is when the follower learned that the answer was lost.
 	lost   bool
 	lostAt time.Time
-	// busy is what the latest lookup of a lost answer's task reported, so
-	// the lookup's giveUp can tell a deployment that stayed busy from one
-	// that went idle. Only the watcher's own goroutine touches it.
-	busy bool
 	// cancel ends the watcher's follow. The watcher sets it, under mu, as
 	// it starts.
 	cancel context.CancelFunc
@@ -463,6 +493,14 @@ func newTaskFollower(cfg followerConfig) *taskFollower {
 func (f *taskFollower) Stop() {
 	f.stop()
 	f.watchers.Wait()
+}
+
+// setWatchMax sets the follower's watch limit, before it starts any
+// watch. Zero or less keeps followWatchMax.
+func (f *taskFollower) setWatchMax(watchMax time.Duration) {
+	if watchMax > 0 {
+		f.watchMax = watchMax
+	}
 }
 
 // owned is the follower's owner with a capital first letter, for the
@@ -962,14 +1000,16 @@ func (f *taskFollower) readUntilAnswered(ctx context.Context, watch *followWatch
 
 // resolveLostAnswer looks for the task of a call whose answer was lost
 // every followLostAnswerInterval, through the call's lookup, and follows
-// the task once found. The lookup gives up only after a check that
-// succeeded, made at or after lostAt plus UnknownOutcomeGrace, found
-// nothing and did not find the deployment busy, or once the deployment has
-// stayed busy for watchMax since lostAt. The watch also ends once lookups
-// have failed for watchMax with no lookup that succeeded in between, or
-// once the director has refused them for UnknownOutcomeGrace.
+// the task once found. The lookup gives up after a check that succeeded,
+// made at or after lostAt plus UnknownOutcomeGrace, found nothing and did
+// not find the deployment busy. An idleLookup's watch otherwise ends only
+// once watchMax has passed since lostAt, whatever its latest check found.
+// Any other watch also ends once lookups have failed for watchMax with no
+// lookup that succeeded in between, or once the director has refused them
+// for UnknownOutcomeGrace.
 func (f *taskFollower) resolveLostAnswer(ctx context.Context, watch *followWatch) (*Task, error) {
 	what := watch.lostCall()
+	idle, holdsUntilIdle := watch.call.lookup.(idleLookup)
 
 	var failures readFailures
 
@@ -987,37 +1027,77 @@ func (f *taskFollower) resolveLostAnswer(ctx context.Context, watch *followWatch
 			return f.followTask(ctx, watch, taskID)
 		}
 
-		watch.busy = busy
-
-		if busy && !now.Before(watch.lostAt.Add(f.watchMax)) {
-			return nil, watch.call.lookup.giveUp(f, watch)
-		}
-
 		if err == nil && !busy && !now.Before(watch.lostAt.Add(UnknownOutcomeGrace)) {
 			return nil, watch.call.lookup.giveUp(f, watch)
 		}
 
-		if err == nil {
-			failures.succeeded()
+		if holdsUntilIdle {
+			if !now.Before(watch.lostAt.Add(f.watchMax)) {
+				return nil, idle.giveUpAtCap(f, watch, busy, err)
+			}
+
+			f.idleCheckFailed(watch, err)
 		} else {
-			failing, limit, refused := failures.failed(now, err, f.watchMax)
-			if refused {
-				f.logger.Errorf("The director refused the %s's lookup of the task of %s, which it retries for at most %v: %v", f.owner, what, limit, err)
+			abandoned := f.lookupFailed(watch, &failures, now, err)
+			if abandoned != nil {
+				return nil, abandoned
 			}
-
-			if failing >= limit {
-				f.logger.Errorf("%s could not look for the task of %s for %v, so it released the slot: %v", f.owned(), what, failing, err)
-
-				return nil, fmt.Errorf("%w: the task of %s could not be looked up for %v: %w", ErrWatchAbandoned, what, failing, err)
-			}
-
-			f.logger.Infof("Looking for the task of %s failed, so the %s looks again in %v: %v", what, f.owner, followLostAnswerInterval, err)
 		}
 
 		if f.clock.Sleep(ctx, followLostAnswerInterval) != nil {
 			return nil, f.stoppedFollowing(what)
 		}
 	}
+}
+
+// idleCheckFailed logs a failed check of an idleLookup's watch, which
+// keeps its slot until a check finds the deployment idle or until the
+// watch limit has passed since the answer was lost. It logs nothing when
+// err is nil.
+func (f *taskFollower) idleCheckFailed(watch *followWatch, err error) {
+	if err == nil {
+		return
+	}
+
+	if boshapi.IsUnauthorized(err) || boshapi.IsForbidden(err) {
+		f.logger.Errorf("The director refused the check for the task of %s, so the %s keeps its %s until a check finds the deployment idle, or until %v after the answer was lost: %v",
+			watch.lostCall(), f.owner, f.slot, f.watchMax, err)
+
+		return
+	}
+
+	f.logger.Infof("Checking for the task of %s failed, so the %s keeps its %s and checks again in %v: %v",
+		watch.lostCall(), f.owner, f.slot, followLostAnswerInterval, err)
+}
+
+// lookupFailed counts a lookup of a lost answer's task that failed with
+// err, or ends the run of failures when err is nil. It returns the error
+// the watch's waiters get once lookups have failed for the watch limit, or
+// the director has refused them for UnknownOutcomeGrace, and nil while the
+// watch goes on.
+func (f *taskFollower) lookupFailed(watch *followWatch, failures *readFailures, now time.Time, err error) error {
+	if err == nil {
+		failures.succeeded()
+
+		return nil
+	}
+
+	what := watch.lostCall()
+
+	failing, limit, refused := failures.failed(now, err, f.watchMax)
+	if refused {
+		f.logger.Errorf("The director refused the %s's lookup of the task of %s, which it retries for at most %v: %v", f.owner, what, limit, err)
+	}
+
+	if failing >= limit {
+		f.logger.Errorf("%s could not look for the task of %s for %v, so it released the slot: %v", f.owned(), what, failing, err)
+
+		return fmt.Errorf("%w: the task of %s could not be looked up for %v: %w", ErrWatchAbandoned, what, failing, err)
+	}
+
+	f.logger.Infof("Looking for the task of %s failed, so the %s looks again in %v: %v", what, f.owner, followLostAnswerInterval, err)
+
+	return nil
 }
 
 // followFoundTask records the task a watcher of a lost answer found, so a

@@ -2211,6 +2211,113 @@ func TestPooledJobStateHoldGivesUpAfterTheCapWhileBusy(t *testing.T) {
 	}
 }
 
+// newTestPoolWithWatchMax builds a pool like newTestPool whose watch limit
+// is watchMax.
+func newTestPoolWithWatchMax(t *testing.T, base bosh.Director, watchMax time.Duration) (*bosh.PooledDirector, *fakeBatchClock, *recordingLogger) {
+	t.Helper()
+
+	logger := &recordingLogger{}
+	pool := bosh.NewPooledDirector(base, 1, time.Minute, logger)
+	clock := newFakeBatchClock()
+	bosh.SetPoolClock(pool, clock)
+	bosh.SetPoolWatchMax(pool, watchMax)
+	t.Cleanup(pool.Stop)
+
+	return pool, clock, logger
+}
+
+// poolCheckFailure is the director's error answer, with the HTTP status
+// given, to a check for the tasks running on a deployment.
+func poolCheckFailure(status int) error {
+	return fmt.Errorf("the check for running tasks failed: %w", &boshapi.APIError{
+		StatusCode: status, Method: http.MethodGet, Path: taskListRoute, Description: http.StatusText(status),
+	})
+}
+
+// awaitLostRestart starts a lost restart answer on the pool and returns a
+// channel that gets the error its waiter gets.
+func awaitLostRestart(t *testing.T, pool *bosh.PooledDirector) chan error {
+	t.Helper()
+
+	_, err := pool.RestartDeployment(t.Context(), poolDeployment, bosh.RestartOpts{})
+	if !errors.Is(err, bosh.ErrOutcomeUnknown) {
+		t.Fatalf("expected the lost answer, got %v", err)
+	}
+
+	return runAsync(func() error {
+		_, err := bosh.AwaitPoolContextID(t.Context(), pool, poolRestartContext)
+
+		return err
+	})
+}
+
+// A lost restart answer whose checks find the deployment busy until just
+// before the cap, and then fail, is given up at the cap and not later,
+// because a failed check neither ends the hold nor moves the cap.
+func TestPooledLostJobStateAnswerCapIgnoresFailedReads(t *testing.T) {
+	t.Parallel()
+
+	const watchMax = 20 * time.Minute
+
+	base := newFakePoolBase()
+	base.running = []bosh.Task{{ID: 30, State: batchTaskProcessing, Description: errandDescription, Deployment: poolDeployment}}
+	base.answers[poolRestart] = fakePoolAnswer{err: poolLostAnswer(poolRestart, poolDeployment, poolRestartContext)}
+	pool, clock, logger := newTestPoolWithWatchMax(t, base, watchMax)
+	waited := awaitLostRestart(t, pool)
+
+	capChecks := int(watchMax / bosh.BatchLostAnswerInterval)
+	stepLostChecks(t, clock, capChecks-2)
+	checkSlotHeld(t, pool, clock)
+
+	base.set(func(f *fakePoolBase) { f.runningErr = poolCheckFailure(http.StatusInternalServerError) })
+	stepLostChecks(t, clock, 1)
+	checkSlotHeld(t, pool, clock)
+	stepLostChecks(t, clock, 1)
+	waitSlotsFree(t, pool)
+
+	err := expectResult(t, waited, "the waiter")
+	if !errors.Is(err, bosh.ErrWatchAbandoned) {
+		t.Fatalf("expected the waiter to get ErrWatchAbandoned, got %v", err)
+	}
+
+	if logger.count("ERROR", "deployment "+poolDeployment, watchMax.String(), "released its slot") != 1 {
+		t.Fatalf("expected one Error line that names %s and the %v cap and frees the slot, got %q", poolDeployment, watchMax, poolLogLines(logger))
+	}
+}
+
+// A lost restart answer whose every check the director refuses keeps its
+// slot past the grace, and frees it once the watch limit has passed since
+// the answer was lost.
+func TestPooledLostJobStateAnswerKeepsTheSlotThroughRefusedReads(t *testing.T) {
+	t.Parallel()
+
+	const watchMax = 30 * time.Minute
+
+	base := newFakePoolBase()
+	base.runningErr = poolCheckFailure(http.StatusForbidden)
+	base.answers[poolRestart] = fakePoolAnswer{err: poolLostAnswer(poolRestart, poolDeployment, poolRestartContext)}
+	pool, clock, logger := newTestPoolWithWatchMax(t, base, watchMax)
+	waited := awaitLostRestart(t, pool)
+
+	stepLostChecks(t, clock, graceChecks+1)
+	checkSlotHeld(t, pool, clock)
+
+	capChecks := int(watchMax / bosh.BatchLostAnswerInterval)
+	stepLostChecks(t, clock, capChecks-graceChecks-2)
+	checkSlotHeld(t, pool, clock)
+	stepLostChecks(t, clock, 1)
+	waitSlotsFree(t, pool)
+
+	err := expectResult(t, waited, "the waiter")
+	if !errors.Is(err, bosh.ErrWatchAbandoned) {
+		t.Fatalf("expected the waiter to get ErrWatchAbandoned, got %v", err)
+	}
+
+	if logger.count("ERROR", "deployment "+poolDeployment, watchMax.String(), "released its slot") != 1 {
+		t.Fatalf("expected one Error line that names %s and the %v cap and frees the slot, got %q", poolDeployment, watchMax, poolLogLines(logger))
+	}
+}
+
 // A lost upload or Cleanup answer, which has no task the director can be
 // asked for, holds its slot for the grace and asks the director nothing.
 func TestPooledLostUploadAndCleanupAnswersHoldTheSlotForTheGrace(t *testing.T) {

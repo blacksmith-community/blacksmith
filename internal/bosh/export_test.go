@@ -2,6 +2,8 @@ package bosh
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
@@ -85,8 +87,8 @@ func SetPoolClock(pool *PooledDirector, clock BatchClock) {
 
 // SetPoolWatchMax shortens how long a pooled director's watcher reads a
 // task the director does not answer for, and how long it holds a lost
-// answer while the deployment stays busy. It is set before the pooled
-// director starts any mutation.
+// job-state answer. It is set before the pooled director starts any
+// mutation.
 func SetPoolWatchMax(pool *PooledDirector, watchMax time.Duration) {
 	pool.follow.watchMax = watchMax
 }
@@ -100,13 +102,28 @@ func PoolWatchersRunning(pool *PooledDirector) int {
 	return pool.follow.running
 }
 
+// PoolWatchMaxOf reports the watch limit of a pooled director's follower.
+func PoolWatchMaxOf(pool *PooledDirector) time.Duration {
+	return pool.follow.watchMax
+}
+
+// BatchWatchMaxOf reports the watch limit of a batch director's follower.
+func BatchWatchMaxOf(batch *BatchDirector) time.Duration {
+	return batch.follow.watchMax
+}
+
+// ErrNoPoolWatcherForContextID is returned by AwaitPoolContextID when no
+// watch of the pooled director looks for the context ID. The pool makes no
+// lookup on the director for it.
+var ErrNoPoolWatcherForContextID = errors.New("no pooled director watcher looks for the context ID")
+
 // AwaitPoolContextID waits for a pooled director's watch of the lost
-// answer with the context ID, and returns ErrNoWatcherForContextID when no
-// watch looks for it.
+// answer with the context ID, and returns ErrNoPoolWatcherForContextID
+// when no watch looks for it.
 func AwaitPoolContextID(ctx context.Context, pool *PooledDirector, contextID string) (*Task, error) {
 	task, found, err := pool.follow.awaitContextID(ctx, contextID)
 	if !found {
-		return nil, ErrNoWatcherForContextID
+		return nil, fmt.Errorf("%w: %s", ErrNoPoolWatcherForContextID, contextID)
 	}
 
 	return task, err

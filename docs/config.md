@@ -386,6 +386,7 @@ bosh:
   max_connections: 4                                    # Optional (connection pool size)
   connection_timeout: 300                               # Optional (timeout in seconds)
   request_timeout: 60                                   # Optional (timeout in seconds)
+  task_watch_max: 21600                                 # Optional (limit in seconds)
   stemcells:                                            # Optional
     - name: "bosh-warden-boshlite-ubuntu-noble-go_agent"
       version: "1.25"
@@ -469,6 +470,11 @@ This setting helps prevent operations from waiting indefinitely when the BOSH di
 **Default:** `60` (1 minute)
 
 Timeout in seconds for one HTTP request to the BOSH director, which also bounds how long the director may take to start answering it. A request that gets no answer in that time is an attempt that failed. Blacksmith retries a read up to 3 times, each attempt with its own timeout, so a director that never answers can hold a read for four times this value, plus the wait between attempts. The retry count is fixed and has no setting in the `bosh` section. When the attempts are exhausted, the error names this setting, how many attempts timed out, and the director's address. A negative value is rejected when the configuration is read.
+
+#### `task_watch_max` (integer)
+**Default:** `21600` (6 hours)
+
+The limit in seconds on how long Blacksmith keeps a pool slot or a batch slot for a director task it can't settle. It applies in two places. When every read of a task Blacksmith follows fails, Blacksmith keeps reading for this long before it frees the task's slot, and a read that succeeds starts the count again. When the director's answer to a restart, stop, start, or recreate is lost, Blacksmith holds the slot until a successful check, made at least 15 minutes after the answer was lost, finds no task running on the deployment. If that never happens, Blacksmith frees the slot once this limit has passed since the answer was lost, with an Error log that names the deployment. Failed or refused checks don't free that slot early, and they don't extend the limit. A value of 0 means the default, and a negative value is rejected when the configuration is read.
 
 ### Connection Pool Monitoring
 

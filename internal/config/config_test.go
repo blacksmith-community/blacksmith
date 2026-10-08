@@ -420,3 +420,65 @@ func TestReadConfigReadsBOSHRequestTimeout(t *testing.T) {
 		})
 	}
 }
+
+// writeBOSHConfig writes a configuration whose bosh block carries the
+// extra setting, and returns its path.
+func writeBOSHConfig(t *testing.T, setting string) string {
+	t.Helper()
+
+	raw := "vault:\n  address: https://vault.example.com\nbosh:\n  address: https://10.0.0.6:25555\n  username: admin\n  password: bosh-secret\n" + setting
+	path := filepath.Join(t.TempDir(), "blacksmith.yml")
+
+	err := os.WriteFile(path, []byte(raw), 0o600)
+	if err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	return path
+}
+
+// bosh.task_watch_max is a number of seconds. It loads as written, and an
+// absent or zero value loads as 21600, which is 6 hours.
+func TestBOSHTaskWatchMaxDefaultsToSixHours(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		setting string
+		want    int
+	}{
+		{name: "absent", setting: "", want: 21600},
+		{name: "zero", setting: "  task_watch_max: 0\n", want: 21600},
+		{name: "set", setting: "  task_watch_max: 60\n", want: 60},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.ReadConfig(writeBOSHConfig(t, testCase.setting))
+			if err != nil {
+				t.Fatalf("ReadConfig: %v", err)
+			}
+
+			if cfg.BOSH.TaskWatchMax != testCase.want {
+				t.Errorf("TaskWatchMax = %d, want %d", cfg.BOSH.TaskWatchMax, testCase.want)
+			}
+		})
+	}
+}
+
+// A negative bosh.task_watch_max is refused with a message that names the
+// setting and the value.
+func TestBOSHTaskWatchMaxRejectsANegativeValue(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.ReadConfig(writeBOSHConfig(t, "  task_watch_max: -5\n"))
+	if !errors.Is(err, config.ErrBOSHTaskWatchMaxNegative) {
+		t.Fatalf("expected %v, got %v", config.ErrBOSHTaskWatchMaxNegative, err)
+	}
+
+	if !strings.Contains(err.Error(), "task_watch_max") || !strings.Contains(err.Error(), "-5") {
+		t.Errorf("expected the error to name task_watch_max and the value -5, got %q", err.Error())
+	}
+}

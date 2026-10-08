@@ -22,7 +22,12 @@ var (
 	ErrBOSHUsernameNotSet         = errors.New("BOSH username is not set")
 	ErrBOSHPasswordNotSet         = errors.New("BOSH password is not set")
 	ErrBOSHRequestTimeoutNegative = errors.New("bosh.request_timeout must not be negative")
+	ErrBOSHTaskWatchMaxNegative   = errors.New("bosh.task_watch_max must not be negative")
 )
+
+// defaultBOSHTaskWatchMax is what a bosh.task_watch_max of 0 means, in
+// seconds, which is 6 hours.
+const defaultBOSHTaskWatchMax = 21600
 
 type Config struct {
 	Broker       BrokerConfig       `yaml:"broker"`
@@ -316,6 +321,7 @@ type BOSHConfig struct {
 	MaxBatchConnections int       `yaml:"max_batch_connections"` // Max concurrent batch upgrade connections (separate pool)
 	ConnectionTimeout   int       `yaml:"connection_timeout"`    // Timeout waiting for connection slot (seconds)
 	RequestTimeout      int       `yaml:"request_timeout"`       // Timeout for one director HTTP request (seconds); 0 means 60
+	TaskWatchMax        int       `yaml:"task_watch_max"`        // How long a lost job-state answer holds its slot, and how long a task is followed while reads fail (seconds); 0 means 21600
 	SSH                 SSHConfig `yaml:"ssh,omitempty"`         // Deprecated: Use top-level SSH config instead
 }
 
@@ -546,6 +552,15 @@ func setBOSHDefaults(config *Config) error {
 	// own default of 60 seconds.
 	if config.BOSH.RequestTimeout < 0 {
 		return fmt.Errorf("%w: it is %d, and it must be a number of seconds, or 0 for the default of 60", ErrBOSHRequestTimeoutNegative, config.BOSH.RequestTimeout)
+	}
+
+	// A task watch limit of 0 means 6 hours.
+	if config.BOSH.TaskWatchMax < 0 {
+		return fmt.Errorf("%w: it is %d, and it must be a number of seconds, or 0 for the default of %d", ErrBOSHTaskWatchMaxNegative, config.BOSH.TaskWatchMax, defaultBOSHTaskWatchMax)
+	}
+
+	if config.BOSH.TaskWatchMax == 0 {
+		config.BOSH.TaskWatchMax = defaultBOSHTaskWatchMax
 	}
 
 	return nil
