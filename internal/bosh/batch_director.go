@@ -49,6 +49,9 @@ const (
 	// batchDonePrune is how long a watcher keeps the final task of its
 	// deploy for waiters after the task ends.
 	batchDonePrune = 10 * time.Minute
+	// batchFollowReportInterval is how often a watcher logs that it still
+	// follows a task that holds a batch slot.
+	batchFollowReportInterval = time.Hour
 	// batchFinishedReadTimeout bounds the read of a task that had already
 	// ended when UpdateDeployment returned it.
 	batchFinishedReadTimeout = 30 * time.Second
@@ -848,33 +851,53 @@ func (b *BatchDirector) watcherReturned() {
 }
 
 // readFailures tracks a run of failed reads. since is when the first
-// failed read of the run happened, and it is zero after a read that
-// succeeded.
+// failed read of the run happened, and refusedSince is when the first of
+// the latest run of reads the director refused happened. Each is zero when
+// no such run is going on.
 type readFailures struct {
-	since time.Time
+	since        time.Time
+	refusedSince time.Time
 }
 
 // succeeded ends the run of failed reads.
 func (r *readFailures) succeeded() {
-	r.since = time.Time{}
+	r.since, r.refusedSince = time.Time{}, time.Time{}
 }
 
-// failedFor records a read that failed at now, and returns how long reads
-// have failed with no read that succeeded in between.
-func (r *readFailures) failedFor(now time.Time) time.Duration {
+// failed records a read that failed at now with err. It returns how long
+// the run of failures has gone on and how long it may go on, and whether
+// the director refused the read. A run of refused reads, which a retry
+// cannot fix on its own, may go on for UnknownOutcomeGrace, and any other
+// run for watchMax.
+func (r *readFailures) failed(now time.Time, err error, watchMax time.Duration) (time.Duration, time.Duration, bool) {
 	if r.since.IsZero() {
 		r.since = now
 	}
 
-	return now.Sub(r.since)
+	if !boshapi.IsUnauthorized(err) && !boshapi.IsForbidden(err) {
+		r.refusedSince = time.Time{}
+
+		return now.Sub(r.since), watchMax, false
+	}
+
+	if r.refusedSince.IsZero() {
+		r.refusedSince = now
+	}
+
+	return now.Sub(r.refusedSince), min(UnknownOutcomeGrace, watchMax), true
 }
 
 // followTask waits for the task to end and returns it. After a wait that
 // fails, it reads the task with backoff until a read succeeds, and then
 // waits again. It gives up once reads have failed for watchMax with no
-// read that succeeded in between, and a task the director answers it has
-// no record of ends the watch at once.
+// read that succeeded in between, or once the director has refused them
+// for UnknownOutcomeGrace, and a task the director answers it has no
+// record of ends the watch at once. It logs every hour that it still
+// follows the task.
 func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskID int) (*Task, error) {
+	stopReports := b.reportFollow(ctx, watch, taskID)
+	defer stopReports()
+
 	var failures readFailures
 
 	for {
@@ -889,6 +912,28 @@ func (b *BatchDirector) followTask(ctx context.Context, watch *batchWatch, taskI
 		if err != nil || task != nil {
 			return task, err
 		}
+	}
+}
+
+// reportFollow logs every batchFollowReportInterval that the watcher still
+// follows the task, until the function it returns is called.
+func (b *BatchDirector) reportFollow(ctx context.Context, watch *batchWatch, taskID int) func() {
+	reportCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	started := b.clock.Now()
+
+	go func() {
+		defer close(done)
+
+		for b.clock.Sleep(reportCtx, batchFollowReportInterval) == nil {
+			b.logger.Infof("The batch director has followed %s for %v, and the task still holds a batch slot",
+				watch.describe(taskID), b.clock.Now().Sub(started))
+		}
+	}()
+
+	return func() {
+		cancel()
+		<-done
 	}
 }
 
@@ -915,8 +960,12 @@ func (b *BatchDirector) readUntilAnswered(ctx context.Context, watch *batchWatch
 			return nil, fmt.Errorf("%w: the director has no %s: %w", ErrWatchAbandoned, watch.describe(taskID), err)
 		}
 
-		failing := failures.failedFor(b.clock.Now())
-		if failing >= b.watchMax {
+		failing, limit, refused := failures.failed(b.clock.Now(), err, b.watchMax)
+		if refused {
+			b.logger.Errorf("The director refused the batch director's read of %s, which it retries for at most %v: %v", watch.describe(taskID), limit, err)
+		}
+
+		if failing >= limit {
 			b.logger.Errorf("The batch director could not read %s for %v, so it released the slot of the deploy: %v", watch.describe(taskID), failing, err)
 
 			return nil, fmt.Errorf("%w: %s could not be read for %v: %w", ErrWatchAbandoned, watch.describe(taskID), failing, err)
@@ -952,7 +1001,8 @@ func (b *BatchDirector) readUntilAnswered(ctx context.Context, watch *batchWatch
 // only after a lookup by context ID that succeeded, made at or after
 // unknownSince plus UnknownOutcomeGrace, found no task, while no deploy
 // task runs on the deployment. It also gives up once lookups have failed
-// for watchMax with no lookup that succeeded in between.
+// for watchMax with no lookup that succeeded in between, or once the
+// director has refused them for UnknownOutcomeGrace.
 func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch, unknownSince time.Time) (*Task, error) {
 	what := watch.lostDeploy()
 
@@ -982,8 +1032,12 @@ func (b *BatchDirector) resolveLostAnswer(ctx context.Context, watch *batchWatch
 		if err == nil {
 			failures.succeeded()
 		} else {
-			failing := failures.failedFor(now)
-			if failing >= b.watchMax {
+			failing, limit, refused := failures.failed(now, err, b.watchMax)
+			if refused {
+				b.logger.Errorf("The director refused the batch director's lookup of the task of %s, which it retries for at most %v: %v", what, limit, err)
+			}
+
+			if failing >= limit {
 				b.logger.Errorf("The batch director could not look for the task of %s for %v, so it released the slot: %v", what, failing, err)
 
 				return nil, fmt.Errorf("%w: the task of %s could not be looked up for %v: %w", ErrWatchAbandoned, what, failing, err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,6 +37,7 @@ const (
 	firstContextID   = "ctx-" + firstDeployment
 	batchTestAddress = "https://127.0.0.1:25555"
 	deploymentsRoute = "/deployments"
+	taskListRoute    = "/tasks"
 )
 
 var errBatchTestRejected = errors.New("the director rejected the deploy")
@@ -462,7 +464,8 @@ func (c *fakeBatchClock) retrySleep() time.Duration {
 	defer c.mu.Unlock()
 
 	for _, sleeper := range c.sleepers {
-		if sleeper.duration != bosh.BatchDonePrune && sleeper.duration != bosh.BatchLostAnswerInterval {
+		if sleeper.duration != bosh.BatchDonePrune && sleeper.duration != bosh.BatchLostAnswerInterval &&
+			sleeper.duration != bosh.BatchFollowReportInterval {
 			return sleeper.duration
 		}
 	}
@@ -491,6 +494,67 @@ func (c *fakeBatchClock) waitSleeping(t *testing.T, duration time.Duration) {
 	t.Helper()
 
 	waitUntil(t, fmt.Sprintf("a watcher sleeps for %v", duration), func() bool { return c.sleeping(duration) > 0 })
+}
+
+// recordingLogger keeps every line a batch director logs.
+type recordingLogger struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *recordingLogger) Infof(format string, args ...interface{})  { l.recordf("INFO", format, args...) }
+func (l *recordingLogger) Debugf(format string, args ...interface{}) { l.recordf("DEBUG", format, args...) }
+func (l *recordingLogger) Errorf(format string, args ...interface{}) { l.recordf("ERROR", format, args...) }
+
+func (l *recordingLogger) recordf(level, format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.lines = append(l.lines, level+" "+fmt.Sprintf(format, args...))
+}
+
+// count reports how many lines start with the level and hold every part
+// given.
+func (l *recordingLogger) count(level string, parts ...string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	count := 0
+
+	for _, line := range l.lines {
+		if !strings.HasPrefix(line, level+" ") {
+			continue
+		}
+
+		matched := true
+
+		for _, part := range parts {
+			if !strings.Contains(line, part) {
+				matched = false
+
+				break
+			}
+		}
+
+		if matched {
+			count++
+		}
+	}
+
+	return count
+}
+
+// newLoggedTestBatch is newTestBatch with a logger that records each line.
+func newLoggedTestBatch(t *testing.T, base *fakeBatchBase, limit int) (*bosh.BatchDirector, *fakeBatchClock, *recordingLogger) {
+	t.Helper()
+
+	logger := &recordingLogger{}
+	batch := bosh.NewBatchDirector(base, limit, time.Minute, logger)
+	clock := newFakeBatchClock()
+	bosh.SetBatchClock(batch, clock)
+	t.Cleanup(batch.Stop)
+
+	return batch, clock, logger
 }
 
 // newTestBatch returns a batch director over the fake base director with
@@ -1933,4 +1997,95 @@ func TestBatchSlotIsHeldThroughADeployWhoseCallEnded(t *testing.T) {
 
 	base.finish(t, taskID, batchTaskDone)
 	waitBatchStats(t, batch, 0, 0)
+}
+
+func TestWatcherLogsEveryHourWhileItFollowsATask(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, clock, logger := newLoggedTestBatch(t, base, 1)
+
+	taskID := startDeploy(t, base, batch, firstDeployment)
+	what := fmt.Sprintf("BOSH task %d of deployment %s", taskID, firstDeployment)
+
+	for hours := 1; hours <= 2; hours++ {
+		clock.waitSleeping(t, bosh.BatchFollowReportInterval)
+		clock.advance(bosh.BatchFollowReportInterval)
+
+		waitUntil(t, fmt.Sprintf("the watcher logs hour %d", hours), func() bool {
+			return logger.count("INFO", what, fmt.Sprintf("for %v", time.Duration(hours)*time.Hour)) == 1
+		})
+	}
+
+	base.finish(t, taskID, batchTaskDone)
+	waitBatchStats(t, batch, 0, 0)
+
+	if sleeping := clock.sleeping(bosh.BatchFollowReportInterval); sleeping != 0 {
+		t.Fatalf("expected the hourly log to stop with the follow, got %d waiting", sleeping)
+	}
+}
+
+// A read the director refuses cannot succeed on its own, so the watcher
+// gives up after UnknownOutcomeGrace of refused reads, and logs each at
+// Error.
+func TestWatcherGivesUpOnRefusedReadsAfterTheGrace(t *testing.T) {
+	t.Parallel()
+
+	refusals := map[string]error{
+		"a 401": &boshapi.APIError{StatusCode: 401, Method: "GET", Path: "/tasks/101", Description: "Not authorized"},
+		"a 403": &boshapi.APIError{StatusCode: 403, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeNotAuthorized},
+	}
+
+	for name, refusal := range refusals {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base := newFakeBatchBase()
+			base.set(func(f *fakeBatchBase) { f.waitErr, f.getErr = refusal, refusal })
+			batch, clock, logger := newLoggedTestBatch(t, base, 1)
+
+			start := clock.Now()
+			taskID := startDeploy(t, base, batch, firstDeployment)
+			retryUntil(t, batch, clock, start.Add(time.Hour))
+
+			if elapsed := clock.Now().Sub(start); elapsed < bosh.UnknownOutcomeGrace || elapsed >= bosh.UnknownOutcomeGrace+2*time.Minute {
+				t.Fatalf("expected the watcher to give up %v after the first refused read, but it gave up after %v", bosh.UnknownOutcomeGrace, elapsed)
+			}
+
+			waitBatchStats(t, batch, 0, 0)
+
+			_, err := batch.WaitForTask(t.Context(), taskID)
+			if !errors.Is(err, bosh.ErrWatchAbandoned) || !errors.Is(err, refusal) {
+				t.Fatalf("expected ErrWatchAbandoned with the refusal, got %v", err)
+			}
+
+			if logged := logger.count("ERROR", "refused"); logged < 2 {
+				t.Fatalf("expected each refused read to be logged at Error, got %d lines", logged)
+			}
+		})
+	}
+}
+
+func TestBatchLostAnswerGivesUpOnRefusedLookupsAfterTheGrace(t *testing.T) {
+	t.Parallel()
+
+	refusal := &boshapi.APIError{StatusCode: 401, Method: "GET", Path: taskListRoute, Description: "Not authorized"}
+
+	base := newFakeBatchBase()
+	base.set(func(f *fakeBatchBase) { f.contextErr = refusal })
+	batch, clock, logger := newLoggedTestBatch(t, base, 1)
+
+	waited := startLostAnswer(t, base, batch)
+
+	checkLostAnswerHeld(t, batch, clock, bosh.UnknownOutcomeGrace)
+	waitBatchStats(t, batch, 0, 0)
+
+	got := receive(t, waited)
+	if !errors.Is(got.err, bosh.ErrWatchAbandoned) || !errors.Is(got.err, refusal) {
+		t.Fatalf("expected ErrWatchAbandoned with the refusal, got %+v and %v", got.task, got.err)
+	}
+
+	if logged := logger.count("ERROR", "refused"); logged < 2 {
+		t.Fatalf("expected each refused lookup to be logged at Error, got %d lines", logged)
+	}
 }

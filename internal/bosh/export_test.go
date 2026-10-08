@@ -36,11 +36,13 @@ func RequestTimeoutCause(timeout time.Duration, attempts int) error {
 // BatchClock is the time source a batch director's watchers read.
 type BatchClock = batchClock
 
-// How often a watcher looks for the task of a lost answer, and how long it
-// keeps a final task for waiters.
+// How often a watcher looks for the task of a lost answer, how long it
+// keeps a final task for waiters, and how often it logs a task it still
+// follows.
 const (
-	BatchLostAnswerInterval = batchLostAnswerInterval
-	BatchDonePrune          = batchDonePrune
+	BatchLostAnswerInterval   = batchLostAnswerInterval
+	BatchDonePrune            = batchDonePrune
+	BatchFollowReportInterval = batchFollowReportInterval
 )
 
 // SetBatchClock replaces the time source of a batch director's watchers.
