@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2064,6 +2065,89 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(response.Description).To(ContainSubstring(contextID))
 				Expect(director.Calls("GetTask")).To(BeEmpty(), "the poll followed the task of an older delete")
 				Expect(recorded()).To(Equal(unknown), "the poll changed the record")
+			})
+
+			Describe("that names a failed task", func() {
+				// atGrace freezes the clock at the end of the grace period.
+				atGrace := func(since time.Time) {
+					frozenAt.Store(since.Add(bosh.UnknownOutcomeGrace).UnixNano())
+				}
+
+				It("leaves an unknown delete in progress inside the grace period", func() {
+					loseDelete()
+
+					unknown := recorded()
+
+					director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+						return deploymentEventsAt(unknown.UnknownSince.Add(-2*time.Minute), boshEventDelete, deploymentName, deleteTaskID), nil
+					}
+
+					failedTask()
+					frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace - time.Second).UnixNano())
+
+					response := poll(outcomeDeprovision)
+
+					Expect(response.State).To(Equal(osbapi.StateInProgress), "a failed delete task inside the grace period answered %+v", response)
+					Expect(response.Description).To(ContainSubstring(strconv.Itoa(deleteTaskID)))
+					Expect(response.Description).To(ContainSubstring("grace"))
+					Expect(recorded()).To(Equal(unknown), "the poll changed the record")
+				})
+
+				It("fails an unknown delete at the end of the grace period", func() {
+					loseDelete()
+
+					unknown := recorded()
+
+					director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+						return deploymentEventsAt(unknown.UnknownSince.Add(-2*time.Minute), boshEventDelete, deploymentName, deleteTaskID), nil
+					}
+
+					failedTask()
+					atGrace(unknown.UnknownSince)
+
+					response := poll(outcomeDeprovision)
+
+					Expect(response.State).To(Equal(osbapi.StateFailed), "a failed delete task at the grace period's end answered %+v", response)
+					Expect(recorded().TaskID).To(Equal(deleteTaskID))
+				})
+
+				It("leaves an unknown deploy in progress inside the grace period", func() {
+					loseDeploy()
+
+					unknown := recorded()
+
+					director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+						return deploymentEventsAt(unknown.UnknownSince.Add(-2*time.Minute), boshEventCreate, deploymentName, createTaskID), nil
+					}
+
+					failedTask()
+					frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace - time.Second).UnixNano())
+
+					response := poll(outcomeProvision)
+
+					Expect(response.State).To(Equal(osbapi.StateInProgress), "a failed deploy task inside the grace period answered %+v", response)
+					Expect(response.Description).To(ContainSubstring(strconv.Itoa(createTaskID)))
+					Expect(response.Description).To(ContainSubstring("grace"))
+					Expect(recorded()).To(Equal(unknown), "the poll changed the record")
+				})
+
+				It("fails an unknown deploy at the end of the grace period", func() {
+					loseDeploy()
+
+					unknown := recorded()
+
+					director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+						return deploymentEventsAt(unknown.UnknownSince.Add(-2*time.Minute), boshEventCreate, deploymentName, createTaskID), nil
+					}
+
+					failedTask()
+					atGrace(unknown.UnknownSince)
+
+					response := poll(outcomeProvision)
+
+					Expect(response.State).To(Equal(osbapi.StateFailed), "a failed deploy task at the grace period's end answered %+v", response)
+					Expect(recorded().State).To(Equal(outcomeStateFailed))
+				})
 			})
 
 			It("is adopted by an unknown delete when it falls inside the window", func() {

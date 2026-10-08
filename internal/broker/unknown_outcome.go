@@ -41,6 +41,10 @@ type unknownOutcomeFinding struct {
 	taskID int
 	// source says how the task was found, for outcomeTaskFound.
 	source string
+	// byContextID is true when the task was found by the context ID of
+	// the request, and false when it was found on the deployment, which
+	// may name a task of an earlier attempt.
+	byContextID bool
 	// err is the error of the director call that failed, when one did.
 	err error
 	// reason says why the outcome is still unknown when no call failed
@@ -264,7 +268,7 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 	}
 
 	if task != nil {
-		return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: task.ID, source: "its context ID " + operation.ContextID}
+		return unknownOutcomeFinding{verdict: outcomeTaskFound, taskID: task.ID, source: "its context ID " + operation.ContextID, byContextID: true}
 	}
 
 	switch operation.Action {
@@ -439,6 +443,11 @@ func (b *Broker) followFoundTask(pollCtx, ctx context.Context, instanceID, deplo
 
 	logger.Info("The %s of instance %s with context ID %s started task %d, found by %s", noun, instanceID, operation.ContextID, finding.taskID, finding.source)
 
+	waiting, hold := b.holdFailedTaskInsideGrace(ctx, operation, finding, logger)
+	if hold {
+		return waiting, false
+	}
+
 	description := fmt.Sprintf("BOSH deployment in progress (task %d)", finding.taskID)
 
 	if operation.Action == operationTypeDeprovision {
@@ -471,6 +480,34 @@ func (b *Broker) followFoundTask(pollCtx, ctx context.Context, instanceID, deplo
 	}
 
 	return response, true
+}
+
+// holdFailedTaskInsideGrace answers in progress, and records nothing, for a
+// task found on the deployment, not by the request's context ID, that has
+// failed while the grace period has not passed. Such a task may belong to
+// an earlier attempt, so only the grace rule may fail the operation. It
+// reports false when the task was found by its context ID, when the grace
+// period has passed, when the task has not failed, or when its state
+// cannot be read, and the task is followed as usual then.
+func (b *Broker) holdFailedTaskInsideGrace(ctx context.Context, operation recordedOperation, finding unknownOutcomeFinding, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
+	graceEnds := operation.UnknownSince.Add(bosh.UnknownOutcomeGrace)
+	if finding.byContextID || !b.unknownOutcomeNow().Before(graceEnds) {
+		return osbapi.LastOperationResponse{}, false
+	}
+
+	task, err := b.BOSH.GetTask(ctx, finding.taskID)
+	if err != nil || !isFailedTaskState(task.State) {
+		return osbapi.LastOperationResponse{}, false
+	}
+
+	noun := requestNoun(operation.Action)
+
+	logger.Info("Task %d, found by %s, is %s, and it may belong to an earlier attempt, so the %s with context ID %s stays unknown until %s", finding.taskID, finding.source, task.State, noun, operation.ContextID, graceEnds.Format(time.RFC3339))
+
+	return osbapi.LastOperationResponse{
+		State:       osbapi.StateInProgress,
+		Description: fmt.Sprintf("Task %d is %s, and the broker is waiting out the grace period until %s before it takes that task for the %s with context ID %s", finding.taskID, task.State, graceEnds.Format(time.RFC3339), noun, operation.ContextID),
+	}, true
 }
 
 // settleUnknownDeleteAsDeleted finishes a deprovision whose deployment the
