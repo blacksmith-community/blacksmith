@@ -72,6 +72,9 @@ type fakeBatchBase struct {
 	// GetTask call's answer.
 	getCalls int
 	getErr   error
+	// getBounds holds, for each GetTask call, how long its context allowed
+	// the call to run, or zero when the context had no deadline.
+	getBounds []time.Duration
 	// getBlocks makes GetTask wait for its context to end.
 	getBlocks bool
 	// noAnswer makes WaitForTask and GetTask answer with no task and no
@@ -196,6 +199,13 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 func (f *fakeBatchBase) GetTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	f.mu.Lock()
 	f.getCalls++
+
+	var bound time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		bound = time.Until(deadline)
+	}
+
+	f.getBounds = append(f.getBounds, bound)
 	getErr, getBlocks, noAnswer, getState := f.getErr, f.getBlocks, f.noAnswer, f.getState
 	_, found := f.tasks[taskID]
 	f.mu.Unlock()
@@ -342,6 +352,13 @@ func (f *fakeBatchBase) waitCallsFor(taskID int) int {
 }
 
 // gets reports how many times GetTask was called.
+func (f *fakeBatchBase) getBoundsSeen() []time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.getBounds)
+}
+
 func (f *fakeBatchBase) gets() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -2868,6 +2885,33 @@ func TestRunningTasksListingPassesThroughTheBatchAndPooledDirectors(t *testing.T
 				t.Fatalf("expected the base director's error, got %v", err)
 			}
 		})
+	}
+}
+
+// The read of a task that had already ended when the deploy call returned
+// is bounded to thirty seconds, so a director that does not answer cannot
+// keep the watcher.
+func TestBatchFinishedDeployReadIsBoundedToThirtySeconds(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.blockUntilFinished = true
+	batch, _ := newTestBatch(t, base, 1)
+
+	returned := finishBlockingDeploy(t, base, batch)
+
+	_, err := batch.WaitForTask(t.Context(), returned.ID)
+	if err != nil {
+		t.Fatalf("expected the finished task, got %v", err)
+	}
+
+	bounds := base.getBoundsSeen()
+	if len(bounds) != 1 {
+		t.Fatalf("expected one read of the finished task, got %d", len(bounds))
+	}
+
+	if bounds[0] <= 25*time.Second || bounds[0] > 30*time.Second {
+		t.Fatalf("expected the read to be bounded to thirty seconds, got %v", bounds[0])
 	}
 }
 
