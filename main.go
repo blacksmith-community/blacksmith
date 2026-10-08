@@ -81,6 +81,15 @@ type BuildInfo struct {
 	GitCommit string
 }
 
+// bootUploadTimeout bounds the wait on each boot upload's director task. A
+// test shortens it.
+//
+//nolint:gochecknoglobals // a test seam
+var bootUploadTimeout = 30 * time.Minute
+
+// bootUploadDone is the state of a boot upload task that succeeded.
+const bootUploadDone = "done"
+
 // These variables get set via ldflags during build
 //
 //nolint:gochecknoglobals // Set via ldflags at build time
@@ -571,7 +580,7 @@ func uploadBOSHReleases(ctx context.Context, cfg *config.Config, boshDirector bo
 			continue
 		}
 
-		logger.Info("uploading release %s/%s [sha1 %s] in BOSH task %d, from %s", release.Name, release.Version, release.SHA1, task.ID, release.URL)
+		awaitBootUpload(ctx, "release", release, task, boshDirector, logger)
 	}
 }
 
@@ -613,8 +622,50 @@ func uploadBOSHStemcells(ctx context.Context, cfg *config.Config, boshDirector b
 			continue
 		}
 
-		logger.Info("uploading stemcell %s/%s [sha1 %s] in BOSH task %d, from %s", stemcell.Name, stemcell.Version, stemcell.SHA1, task.ID, stemcell.URL)
+		awaitBootUpload(ctx, "stemcell", stemcell, task, boshDirector, logger)
 	}
+}
+
+// awaitBootUpload waits for the director task that uploads a configured
+// release or stemcell, under the boot context and a deadline of
+// bootUploadTimeout, and logs how it ended. kind names the upload as
+// "release" or "stemcell". A wait that stops first leaves the task
+// running, and the next boot finds the upload on the director or repeats
+// it.
+func awaitBootUpload(ctx context.Context, kind string, upload config.Uploadable, task *bosh.Task, boshDirector bosh.Director, logger loggerPkg.Logger) {
+	if task == nil || task.ID <= 0 {
+		logger.Error("The director named no task for the upload of %s %s/%s from %s, so Blacksmith cannot tell whether it landed", kind, upload.Name, upload.Version, upload.URL)
+
+		return
+	}
+
+	logger.Info("uploading %s %s/%s [sha1 %s] in BOSH task %d, from %s", kind, upload.Name, upload.Version, upload.SHA1, task.ID, upload.URL)
+
+	waitCtx, cancel := context.WithTimeout(ctx, bootUploadTimeout)
+	defer cancel()
+
+	finished, err := boshDirector.WaitForTask(waitCtx, task.ID)
+	if err != nil {
+		logger.Error("Stopped waiting for BOSH task %d, which uploads %s %s/%s, and left it running; the next boot repeats the upload safely: %s",
+			task.ID, kind, upload.Name, upload.Version, err)
+
+		return
+	}
+
+	if finished == nil {
+		logger.Error("The wait on BOSH task %d, which uploads %s %s/%s, returned no task", task.ID, kind, upload.Name, upload.Version)
+
+		return
+	}
+
+	if finished.State == bootUploadDone {
+		logger.Info("BOSH task %d, which uploads %s %s/%s, ended in state done", task.ID, kind, upload.Name, upload.Version)
+
+		return
+	}
+
+	logger.Error("BOSH task %d, which uploads %s %s/%s from %s, ended in state %s: %s", task.ID, kind, upload.Name, upload.Version, upload.URL, finished.State, finished.Result)
+	logger.Error("Continuing without this %s - manual intervention may be required", kind)
 }
 
 // initializeShieldClient creates SHIELD client if enabled
