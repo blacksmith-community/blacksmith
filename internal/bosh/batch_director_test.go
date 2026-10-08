@@ -2603,6 +2603,48 @@ func TestBatchFinishedDeployWithAFullRecordIsNotReadAgain(t *testing.T) {
 	}
 }
 
+// panicLogger panics on the log line that has the text given.
+type panicLogger struct {
+	on string
+}
+
+func (l panicLogger) Infof(format string, _ ...interface{}) {
+	if strings.Contains(format, l.on) {
+		panic("the logger failed")
+	}
+}
+func (panicLogger) Debugf(string, ...interface{}) {}
+func (panicLogger) Errorf(string, ...interface{}) {}
+
+// A panic in the logger after a watcher took over the slot leaves the slot
+// to that watcher, which releases it once.
+func TestBatchSlotIsReleasedOnceWhenTheLoggerPanicsAfterTheHandOff(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.updateErr = lostAnswer(firstDeployment)
+	batch := bosh.NewBatchDirector(base, 1, time.Minute, panicLogger{on: "stays held"})
+	bosh.SetBatchClock(batch, newFakeBatchClock())
+	t.Cleanup(batch.Stop)
+
+	func() {
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Error("expected the logger's panic to reach the caller")
+			}
+		}()
+
+		_, _ = batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	}()
+
+	waitBatchStats(t, batch, 1, 0)
+	batch.Stop()
+
+	if active, _, _ := batch.GetBatchPoolStats(); active != 0 {
+		t.Fatalf("expected the slot to be released once, got %d slots held", active)
+	}
+}
+
 // A task kept for waiters shares no end time with the task the deploy call
 // returned, so a caller that changes the one does not change the other.
 func TestBatchFinishedDeployKeepsItsOwnEndTime(t *testing.T) {
