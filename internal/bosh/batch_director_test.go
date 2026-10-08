@@ -2469,3 +2469,33 @@ func TestAdoptLogsOutsideTheBatchLock(t *testing.T) {
 		}
 	}
 }
+
+// Each waiter gets its own copy of the watcher's final task, so one that
+// changes it does not change what another waiter gets.
+func TestBatchWaitersGetTheirOwnCopyOfTheFinalTask(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _ := newTestBatch(t, base, 1)
+
+	taskID := startDeploy(t, base, batch, firstDeployment)
+	base.finish(t, taskID, batchTaskDone)
+
+	first, err := batch.WaitForTask(t.Context(), taskID)
+	if err != nil || first == nil || first.EndedAt == nil {
+		t.Fatalf("expected the watcher's final task with its end time, got %+v and %v", first, err)
+	}
+
+	ended := *first.EndedAt
+	first.State = batchTaskError
+	*first.EndedAt = ended.Add(time.Hour)
+
+	second, err := batch.WaitForTask(t.Context(), taskID)
+	if err != nil || second == nil || second.EndedAt == nil {
+		t.Fatalf("expected the watcher's final task with its end time, got %+v and %v", second, err)
+	}
+
+	if second.State != batchTaskDone || !second.EndedAt.Equal(ended) {
+		t.Fatalf("expected the second waiter's task to be untouched, got state %s and end %v", second.State, second.EndedAt)
+	}
+}

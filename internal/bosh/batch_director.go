@@ -1199,13 +1199,31 @@ func contextIDOf(err error) string {
 }
 
 // awaitWatch waits for a watcher's result or for the caller's context.
+// Each waiter gets its own copy of the watcher's final task.
 func awaitWatch(ctx context.Context, watch *batchWatch, what string) (*Task, error) {
 	select {
 	case <-watch.done:
-		return watch.task, watch.err
+		return copyTask(watch.task), watch.err
 	case <-ctx.Done():
 		return nil, fmt.Errorf("stopped waiting for %s, which the batch director still follows: %w", what, ctx.Err())
 	}
+}
+
+// copyTask returns a copy of a task, its end time included, so a waiter
+// that changes the task it got does not change what other waiters get.
+func copyTask(task *Task) *Task {
+	if task == nil {
+		return nil
+	}
+
+	copied := *task
+
+	if task.EndedAt != nil {
+		ended := *task.EndedAt
+		copied.EndedAt = &ended
+	}
+
+	return &copied
 }
 
 // stoppedFollowing is the result of a watcher that Stop ended.
