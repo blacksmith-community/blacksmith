@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -510,6 +511,8 @@ func (c *fakeBatchClock) waitSleeping(t *testing.T, duration time.Duration) {
 type recordingLogger struct {
 	mu    sync.Mutex
 	lines []string
+	// onLog, when set, runs at the start of each log call.
+	onLog func()
 }
 
 func (l *recordingLogger) Infof(format string, args ...interface{}) {
@@ -523,6 +526,14 @@ func (l *recordingLogger) Errorf(format string, args ...interface{}) {
 }
 
 func (l *recordingLogger) recordf(level, format string, args ...interface{}) {
+	l.mu.Lock()
+	onLog := l.onLog
+	l.mu.Unlock()
+
+	if onLog != nil {
+		onLog()
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -2335,4 +2346,126 @@ func TestBatchLostAnswerJudgesTheGraceByWhenTheCheckBegan(t *testing.T) {
 	startLostAnswer(t, base, batch)
 	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
 	waitBatchStats(t, batch, 1, 0)
+}
+
+// A task ID of zero or less names no task, so Adopt takes no slot and
+// starts no watcher for it.
+func TestAdoptIgnoresATaskIDThatNamesNoTask(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	batch, _, logger := newLoggedTestBatch(t, base)
+
+	batch.Adopt(0)
+	batch.Adopt(-1)
+
+	if active, queued, _ := batch.GetBatchPoolStats(); active != 0 || queued != 0 {
+		t.Fatalf("expected no slot taken, got %d active and %d queued", active, queued)
+	}
+
+	if running := bosh.BatchWatchersRunning(batch); running != 0 {
+		t.Fatalf("expected no watcher, got %d", running)
+	}
+
+	if logged := logger.count("ERROR", "names no task"); logged != 2 {
+		t.Fatalf("expected two errors naming no task, got %d", logged)
+	}
+}
+
+// After Stop, Adopt of a task no watcher follows takes no slot.
+func TestAdoptAfterStopTakesNoSlot(t *testing.T) {
+	t.Parallel()
+
+	const adopted = 811
+
+	base := newFakeBatchBase()
+	base.addTask(adopted, firstDeployment, bosh.DeployTaskDescription)
+	batch, _ := newTestBatch(t, base, 1)
+
+	batch.Stop()
+	batch.Adopt(adopted)
+
+	if active, queued, _ := batch.GetBatchPoolStats(); active != 0 || queued != 0 {
+		t.Fatalf("expected no slot taken after Stop, got %d active and %d queued", active, queued)
+	}
+
+	if running := bosh.BatchWatchersRunning(batch); running != 0 {
+		t.Fatalf("expected no watcher after Stop, got %d", running)
+	}
+}
+
+// A watcher that has finished stays in the batch director for a while, so
+// a later Adopt of its task follows the task again rather than taking the
+// finished watcher for a running one.
+func TestAdoptFollowsAgainATaskWhoseWatcherFinished(t *testing.T) {
+	t.Parallel()
+
+	const adopted = 821
+
+	base := newFakeBatchBase()
+	base.addTask(adopted, firstDeployment, bosh.DeployTaskDescription)
+	batch, _, logger := newLoggedTestBatch(t, base)
+
+	batch.Adopt(adopted)
+	waitUntil(t, "the watcher follows the adopted task", func() bool { return base.waitCallsFor(adopted) == 1 })
+	base.finish(t, adopted, batchTaskDone)
+	waitBatchStats(t, batch, 0, 0)
+
+	if tasks, _ := bosh.BatchWatchesHeld(batch); tasks != 1 {
+		t.Fatalf("expected the finished watcher to be kept until it is pruned, got %d watches", tasks)
+	}
+
+	batch.Adopt(adopted)
+	waitUntil(t, "a new watcher follows the task", func() bool { return base.waitCallsFor(adopted) == 2 })
+	waitBatchStats(t, batch, 0, 0)
+
+	if logged := logger.count("INFO", fmt.Sprintf("Adopted BOSH task %d", adopted)); logged != 2 {
+		t.Fatalf("expected the task to be adopted twice, got %d", logged)
+	}
+}
+
+// Adopt logs after it lets go of the batch director's lock, so a logger
+// that reads the batch's stats does not wait on it.
+func TestAdoptLogsOutsideTheBatchLock(t *testing.T) {
+	t.Parallel()
+
+	const adopted, missed = 831, 832
+
+	base := newFakeBatchBase()
+	base.addTask(adopted, firstDeployment, bosh.DeployTaskDescription)
+	batch, _, logger := newLoggedTestBatch(t, base)
+
+	var blocked atomic.Int32
+
+	logger.mu.Lock()
+	logger.onLog = func() {
+		read := make(chan struct{})
+
+		go func() {
+			batch.GetBatchPoolStats()
+			close(read)
+		}()
+
+		select {
+		case <-read:
+		case <-time.After(200 * time.Millisecond):
+			blocked.Add(1)
+		}
+	}
+	logger.mu.Unlock()
+
+	batch.Adopt(adopted)
+	batch.Adopt(adopted)
+	batch.Stop()
+	batch.Adopt(missed)
+
+	if got := blocked.Load(); got != 0 {
+		t.Fatalf("expected no log line written under the batch lock, got %d", got)
+	}
+
+	for _, part := range []string{"Adopted BOSH task", "already follows", "is stopped"} {
+		if logged := logger.count("INFO", part); logged != 1 {
+			t.Fatalf("expected one line saying %q, got %d", part, logged)
+		}
+	}
 }

@@ -120,6 +120,16 @@ func (w *batchWatch) describe(taskID int) string {
 	return fmt.Sprintf("BOSH task %d of deployment %s", taskID, w.deployment)
 }
 
+// finished reports whether the watcher's follow has returned.
+func (w *batchWatch) finished() bool {
+	select {
+	case <-w.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // lostDeploy names the deploy of a watch whose answer was lost, for logs
 // and errors.
 func (w *batchWatch) lostDeploy() string {
@@ -239,8 +249,9 @@ func (b *BatchDirector) GetDeployment(ctx context.Context, name string) (*Deploy
 // Adopt counts, in the batch, a deploy task that was started before a
 // restart, and follows it like a deploy the batch director started. It
 // takes a slot without waiting, even past the limit, so new deploys wait
-// until enough adopted ones finish. A task already followed is not counted
-// twice, and nothing is adopted after Stop.
+// until enough adopted ones finish. A task a running watcher follows is not
+// counted twice, a task whose watcher has finished is adopted again, and
+// nothing is adopted after Stop.
 func (b *BatchDirector) Adopt(taskID int) {
 	if taskID <= 0 {
 		b.logger.Errorf("BOSH task ID %d names no task, so it is not adopted into the batch", taskID)
@@ -251,26 +262,28 @@ func (b *BatchDirector) Adopt(taskID int) {
 	watch := newBatchWatch("", "")
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	current := b.byTask[taskID]
+	followed := current != nil && !current.finished()
+	stopped := b.stopped
 
-	if b.byTask[taskID] != nil {
-		b.logger.Infof("BOSH task %d already holds a batch slot, so it is not adopted again", taskID)
-
-		return
+	if !followed && !stopped {
+		b.inFlight++
+		b.startWatchLocked(watch, taskID, func(ctx context.Context) (*Task, error) {
+			return b.followTask(ctx, watch, taskID)
+		})
 	}
 
-	if b.stopped {
+	active, limit := b.inFlight, b.limit
+	b.mu.Unlock()
+
+	switch {
+	case followed:
+		b.logger.Infof("The batch director already follows BOSH task %d, so it is not adopted again", taskID)
+	case stopped:
 		b.logger.Infof("The batch director is stopped, so BOSH task %d is not adopted", taskID)
-
-		return
+	default:
+		b.logger.Infof("Adopted BOSH task %d into the batch (active: %d, limit: %d)", taskID, active, limit)
 	}
-
-	b.inFlight++
-	b.startWatchLocked(watch, taskID, func(ctx context.Context) (*Task, error) {
-		return b.followTask(ctx, watch, taskID)
-	})
-
-	b.logger.Infof("Adopted BOSH task %d into the batch (active: %d, limit: %d)", taskID, b.inFlight, b.limit)
 }
 
 // Stop ends every watcher and waits for them to return. A watcher ended
