@@ -2343,6 +2343,46 @@ func TestBatchWaitForContextIDWithNoWatcherIsServedByTheTaskWatcher(t *testing.T
 	}
 }
 
+// A lost answer's watcher that finds a task another watcher already follows
+// leaves that watcher as the one that serves waits for the task, so ending
+// the lost answer's watcher does not end those waits.
+func TestBatchLostAnswerKeepsTheWatcherThatAlreadyFollowsTheTask(t *testing.T) {
+	t.Parallel()
+
+	const followedTaskID = 640
+
+	base := newFakeBatchBase()
+	base.addTask(followedTaskID, firstDeployment, bosh.DeployTaskDescription)
+	base.set(func(f *fakeBatchBase) {
+		f.running = []bosh.Task{{ID: followedTaskID, State: batchTaskProcessing, Description: bosh.DeployTaskDescription, Deployment: firstDeployment}}
+		f.updateErr = func(string) error { return errBatchTestRejected }
+	})
+
+	batch, _ := newTestBatch(t, base, 2)
+
+	batch.Adopt(followedTaskID)
+	waitUntil(t, "the adopted task is followed", func() bool { return base.waitCallsFor(followedTaskID) == 1 })
+
+	_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	if err == nil {
+		t.Fatal("expected the deploy's error to reach the caller")
+	}
+
+	waitUntil(t, "the lost deploy's watcher follows the task too", func() bool { return base.waitCallsFor(followedTaskID) == 2 })
+
+	base.set(func(f *fakeBatchBase) { f.updateErr = nil })
+	deployWithin(t, batch, firstDeployment)
+
+	waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForTask(t.Context(), followedTaskID) })
+
+	base.finish(t, followedTaskID, batchTaskDone)
+
+	got := receive(t, waited)
+	if got.err != nil || got.task == nil || got.task.ID != followedTaskID || got.task.State != batchTaskDone {
+		t.Fatalf("expected the adopted watcher to serve the task, done, got %+v and %v", got.task, got.err)
+	}
+}
+
 // A wait for the task a lost answer's watcher found, by its task ID, is
 // served by that watcher, with no second wait on the base director.
 func TestBatchLostAnswerServesAWaitForTheTaskItFound(t *testing.T) {
