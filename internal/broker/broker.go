@@ -501,7 +501,7 @@ func (b *Broker) Deprovision(
 		}
 	}()
 
-	err := b.rejectIfOperationInProgress(ctx, instanceID, logger)
+	superseded, err := b.rejectIfOperationInProgress(ctx, instanceID, details.PlanID, logger)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, err
 	}
@@ -530,9 +530,12 @@ func (b *Broker) Deprovision(
 	// The write runs detached from the request, because a request that ends
 	// here would otherwise leave the deprovision running with no record of it.
 	// The write is refused while the record holds an unknown outcome, which
-	// may have been recorded since rejectIfOperationInProgress read it.
+	// may have been recorded since rejectIfOperationInProgress read it. The
+	// one exception is the unknown provision that rejectIfOperationInProgress
+	// let this deprovision replace.
 	trackCtx, cancelTrack := recordContext(ctx)
-	err = b.Vault.TrackProgressUnlessOutcomeUnknown(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted", 0, nil)
+	err = b.Vault.TrackProgressReplacingOutcomeUnknown(trackCtx, instanceID, operationTypeDeprovision, "Deprovision request accepted",
+		superseded.Action, superseded.ContextID, 0, nil)
 
 	cancelTrack()
 
@@ -1734,35 +1737,49 @@ func (b *Broker) deploymentGone(ctx context.Context, instanceID, deploymentName 
 // instance's operation claim, so Deprovision has refused it already.
 //
 // It reads the instance's recorded operation first, whether or not the
-// index has the instance, and returns the concurrency error while that
-// operation's outcome is unknown, because a new delete would replace the
-// record that holds the context ID and the unknown-since time. A record that
-// cannot be read returns an error, because it may hold an unknown outcome.
+// index has the instance. While that operation's outcome is unknown, it
+// returns the concurrency error, because a new delete would replace the
+// record that holds the context ID and the unknown-since time. The one
+// exception is a provision whose outcome has been unknown for longer than
+// the grace period, which it returns as the operation the deprovision may
+// replace, once no task runs on the deployment. A record that cannot be
+// read returns an error, because it may hold an unknown outcome.
 //
 // An instance the index does not have is checked by
 // refuseDeleteOfGoneInstance, once the director confirms that the deployment
 // named from the request's plan and the instance ID exists. A failed lookup is
-// left to refuseDeleteOfGoneInstance as well, which reports it.
-func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID string, logger logger.Logger) error {
+// left to refuseDeleteOfGoneInstance as well, which reports it. When the
+// deprovision would replace an unknown provision, the running-task check
+// runs here first, whether or not the index has the instance, so a deploy
+// still queued is never taken for a deployment that is gone.
+func (b *Broker) rejectIfOperationInProgress(ctx context.Context, instanceID, planID string, logger logger.Logger) (recordedOperation, error) {
 	recorded, err := b.readRecordedOperation(ctx, instanceID)
 	if err != nil {
 		logger.Error("could not read the recorded operation of instance %s before accepting its deprovision: %s", instanceID, err)
 
-		return err
+		return recordedOperation{}, err
 	}
 
-	if recorded.State == internalVault.TaskStateOutcomeUnknown {
-		logger.Warning("Rejecting deprovision of instance %s: the outcome of its %s with context ID %s is unknown", instanceID, recorded.Action, recorded.ContextID)
-
-		return osbapi.ErrConcurrencyError
+	superseded, err := b.unknownOutcomeToReplace(instanceID, recorded, logger)
+	if err != nil {
+		return recordedOperation{}, err
 	}
 
 	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
 	if err != nil || !exists {
-		return nil //nolint:nilerr // refuseDeleteOfGoneInstance re-runs the lookup and surfaces the error
+		if superseded.ContextID == "" {
+			return recordedOperation{}, nil //nolint:nilerr // refuseDeleteOfGoneInstance re-runs the lookup and surfaces the error
+		}
+
+		deploymentName := superseded.DeploymentName
+		if deploymentName == "" {
+			deploymentName = planID + "-" + instanceID
+		}
+
+		return superseded, b.rejectIfDeploymentBusy(ctx, instanceID, deploymentName, logger)
 	}
 
-	return b.rejectIfDeploymentBusy(ctx, instanceID, deploymentNameForInstance(instanceID, instance), logger)
+	return superseded, b.rejectIfDeploymentBusy(ctx, instanceID, deploymentNameForInstance(instanceID, instance), logger)
 }
 
 // rejectIfDeploymentBusy returns the OSB concurrency error when BOSH still

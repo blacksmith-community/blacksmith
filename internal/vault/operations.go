@@ -91,7 +91,25 @@ var ErrOutcomeUnknownRecorded = errors.New("the task record holds an operation w
 // ID. The check and the write happen under the instance's task record
 // lock, and a current record that cannot be read stops the write too.
 func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, instanceID, action, description string, taskID int, params interface{}) error {
-	guard := func(current map[string]interface{}) error {
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, unlessOutcomeUnknown(instanceID, "", ""))
+}
+
+// TrackProgressReplacingOutcomeUnknown stores progress information as
+// TrackProgressUnlessOutcomeUnknown does, except that it may also replace
+// the unknown outcome of replacedAction with replacedContextID. Any other
+// unknown outcome stops the write with an error that wraps
+// ErrOutcomeUnknownRecorded. An empty replacedContextID replaces no
+// unknown outcome.
+func (vault *Vault) TrackProgressReplacingOutcomeUnknown(ctx context.Context, instanceID, action, description, replacedAction, replacedContextID string, taskID int, params interface{}) error {
+	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, unlessOutcomeUnknown(instanceID, replacedAction, replacedContextID))
+}
+
+// unlessOutcomeUnknown returns a guard that refuses a write over a record
+// whose outcome is unknown, unless that outcome is the one of
+// replacedAction with replacedContextID and replacedContextID is not
+// empty.
+func unlessOutcomeUnknown(instanceID, replacedAction, replacedContextID string) func(current map[string]interface{}) error {
+	return func(current map[string]interface{}) error {
 		state, _ := current["state"].(string)
 		if state != TaskStateOutcomeUnknown {
 			return nil
@@ -100,10 +118,12 @@ func (vault *Vault) TrackProgressUnlessOutcomeUnknown(ctx context.Context, insta
 		recordedAction, _ := current["action"].(string)
 		contextID, _ := current[taskRecordContextIDKey].(string)
 
+		if replacedContextID != "" && recordedAction == replacedAction && contextID == replacedContextID {
+			return nil
+		}
+
 		return fmt.Errorf("%w: instance %s, %s with context ID %s", ErrOutcomeUnknownRecorded, instanceID, recordedAction, contextID)
 	}
-
-	return vault.trackProgressGuarded(ctx, instanceID, action, description, "", "", taskID, params, guard)
 }
 
 // ErrOutcomeUnknownSettled is returned when a write that settles an unknown

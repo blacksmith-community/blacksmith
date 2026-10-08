@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"blacksmith/internal/config"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
+	"blacksmith/pkg/logger"
 	"blacksmith/pkg/testutil"
 	vaultPkg "blacksmith/pkg/vault"
 	"blacksmith/shield"
@@ -36,6 +38,7 @@ const (
 	outcomeManifestName     = "placeholder"
 	outcomeTaskDone         = "done"
 	outcomeTaskProcessing   = "processing"
+	outcomeTaskQueued       = "queued"
 	outcomeStateFailed      = "failed"
 	outcomeStateUnknown     = "outcome_unknown"
 	outcomeDeprovision      = "deprovision"
@@ -97,6 +100,30 @@ type sentRequest struct {
 // it records the ID before the request goes out, so the outcome of a request
 // whose answer is lost can be looked up by that ID. Only the director's word
 // that a deployment is gone lets a delete remove the instance.
+// errorLogger records the messages logged at the Error level.
+type errorLogger struct {
+	*logger.NoOpLogger
+
+	mu    sync.Mutex
+	lines []string
+}
+
+func (e *errorLogger) Error(msg string, args ...interface{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.lines = append(e.lines, fmt.Sprintf(msg, args...))
+}
+
+func (e *errorLogger) Named(string) logger.Logger { return e }
+
+func (e *errorLogger) errors() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return append([]string(nil), e.lines...)
+}
+
 var _ = Describe("Deploys and deletes sent to the director", func() {
 	const (
 		createTaskID = 77
@@ -924,11 +951,21 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			taskListPath = "/tasks"
 		)
 
-		var clockOffset atomic.Int64
+		var (
+			clockOffset atomic.Int64
+			// frozenAt is the time the clock stands at, in Unix
+			// nanoseconds, or zero when it runs.
+			frozenAt atomic.Int64
+		)
 
 		BeforeEach(func() {
 			clockOffset.Store(0)
+			frozenAt.Store(0)
 			brokerInstance.SetUnknownOutcomeClock(func() time.Time {
+				if frozen := frozenAt.Load(); frozen != 0 {
+					return time.Unix(0, frozen)
+				}
+
 				return time.Now().Add(time.Duration(clockOffset.Load()))
 			})
 
@@ -1609,6 +1646,170 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			return &deletes
 		}
 
+		Describe("a deprovision over a provision whose outcome is unknown", func() {
+			var (
+				contextID string
+				unknown   broker.RecordedOperation
+			)
+
+			BeforeEach(func() {
+				contextID = loseDeploy()
+				unknown = recorded()
+
+				Expect(unknown.UnknownSince).ToNot(BeZero())
+			})
+
+			It("is refused a second before the grace period ends", func() {
+				frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace - time.Second).UnixNano())
+
+				deletes := countDeletes()
+
+				refusedFirst()
+
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+			})
+
+			It("is accepted once the grace period ends, and its own delete replaces the record", func() {
+				frozenAt.Store(unknown.UnknownSince.Add(bosh.UnknownOutcomeGrace).UnixNano())
+
+				deletes := countDeletes()
+
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				deprovision()
+
+				Eventually(deletes.Load, 10*time.Second).Should(BeEquivalentTo(1), "the accepted deprovision sent no delete")
+				Eventually(settled, 10*time.Second).Should(BeTrue())
+
+				Expect(recorded().Action).To(Equal(outcomeDeprovision))
+				Expect(recorded().State).ToNot(Equal(outcomeStateUnknown))
+				Expect(recorded().ContextID).ToNot(BeEmpty(), "the delete's record carries no context ID")
+				Expect(recorded().ContextID).ToNot(Equal(contextID), "the delete's record kept the deploy's context ID")
+				Expect(recorded().DeploymentName).To(Equal(deploymentName))
+			})
+
+			It("is refused past the grace period while a task runs on the deployment", func() {
+				passGrace()
+
+				deletes := countDeletes()
+
+				director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
+					return &bosh.Task{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment, Deployment: name}, nil
+				}
+
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrConcurrencyError))
+
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+				Expect(stillIndexed()).To(BeTrue())
+			})
+
+			It("is refused past the grace period when the record does not say when the outcome became unknown", func() {
+				record := readRecord()
+				delete(record, "unknown_since")
+				Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+				Expect(recorded().UnknownSince).To(BeZero())
+
+				passGrace()
+
+				deletes := countDeletes()
+
+				refusedFirst()
+
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+			})
+
+			It("past the grace period is refused when the record changed to another unknown provision", func() {
+				passGrace()
+
+				deletes := countDeletes()
+				replacement := uuid.NewString()
+
+				var changed sync.Once
+
+				// Another unknown deploy is recorded after the deprovision
+				// read the record and before it writes its own.
+				director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+					changed.Do(func() {
+						defer GinkgoRecover()
+
+						Expect(vaultClient.TrackOutcomeUnknown(context.Background(), instanceID, outcomeProvision,
+							"The deploy's answer was lost", replacement, time.Now())).To(Succeed())
+					})
+
+					return nil, nil //nolint:nilnil // no running task is a nil task without an error
+				}
+
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrConcurrencyError))
+
+				Expect(recorded().State).To(Equal(outcomeStateUnknown))
+				Expect(recorded().ContextID).To(Equal(replacement))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+			})
+		})
+
+		Describe("a poll over an outcome unknown for a day", func() {
+			var (
+				errorLog *errorLogger
+				previous logger.Logger
+			)
+
+			BeforeEach(func() {
+				errorLog = &errorLogger{NoOpLogger: &logger.NoOpLogger{}}
+
+				previous = logger.Get()
+
+				logger.Set(errorLog)
+			})
+
+			AfterEach(func() {
+				logger.Set(previous)
+			})
+
+			// alarm reports whether line is the error a day-old unknown
+			// outcome logs.
+			alarm := func(line, contextID string) bool {
+				return strings.Contains(line, contextID) && strings.Contains(line, "more than 24h0m0s ago")
+			}
+
+			It("logs an error once for the pass", func() {
+				contextID := loseDeploy()
+				unknown := recorded()
+
+				frozenAt.Store(unknown.UnknownSince.Add(24 * time.Hour).UnixNano())
+
+				poll(outcomeProvision)
+
+				alarms := 0
+
+				for _, line := range errorLog.errors() {
+					if alarm(line, contextID) {
+						alarms++
+					}
+				}
+
+				Expect(alarms).To(Equal(1), "the pass logged %v", errorLog.errors())
+			})
+
+			It("logs no such error a second before the day ends", func() {
+				contextID := loseDeploy()
+				unknown := recorded()
+
+				frozenAt.Store(unknown.UnknownSince.Add(24*time.Hour - time.Second).UnixNano())
+
+				poll(outcomeProvision)
+
+				for _, line := range errorLog.errors() {
+					Expect(alarm(line, contextID)).To(BeFalse(), "the pass logged %q", line)
+				}
+			})
+		})
+
 		Describe("a deprovision is refused while the provision's outcome is unknown", func() {
 			It("when the record shows it before the deprovision starts", func() {
 				contextID := loseDeploy()
@@ -1692,6 +1893,20 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		})
 
 		Describe("a repeat deprovision is refused while the delete's outcome is unknown", func() {
+			It("past the grace period", func() {
+				contextID := loseDelete()
+				unknown := recorded()
+				deletes := countDeletes()
+
+				passGrace()
+
+				refusedFirst()
+
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+			})
+
 			It("for a deprovision", func() {
 				contextID := loseDelete()
 				unknown := recorded()
@@ -1772,6 +1987,21 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				// The platform's deprovision after the failure is no longer
 				// refused as an unknown outcome.
 				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrGoneError))
+			})
+
+			It("refuses a deprovision past the grace period while a task runs on the deployment the director lacks", func() {
+				unknown := recorded()
+
+				deploymentMissing()
+				passGrace()
+
+				director.FindRunningTaskForDeploymentFn = func(name string) (*bosh.Task, error) {
+					return &bosh.Task{ID: createTaskID, State: outcomeTaskQueued, Description: outcomeCreateDeployment, Deployment: name}, nil
+				}
+
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrConcurrencyError), "a queued deploy was taken for a deployment that is gone")
+				Expect(director.Calls("FindRunningTaskForDeployment")).To(ContainElement(deploymentName))
+				Expect(recorded()).To(Equal(unknown), "the refused deprovision changed the record")
 			})
 
 			It("stays in progress past the grace period while the deployment check fails", func() {

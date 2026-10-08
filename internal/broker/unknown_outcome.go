@@ -72,6 +72,10 @@ func requestNoun(action string) string {
 // is.
 const unknownOutcomePassTimeout = 10 * time.Second
 
+// unknownOutcomeAlarmAge is how long an outcome stays unknown before each
+// resolver pass over it logs an error for an operator.
+const unknownOutcomeAlarmAge = 24 * time.Hour
+
 // unknownOutcomePass keeps the resolver passes over one instance's unknown
 // outcome to one at a time, and holds the error the last pass ended with.
 type unknownOutcomePass struct {
@@ -105,6 +109,39 @@ func (b *Broker) unknownOutcomePassFor(instanceID string) *unknownOutcomePass {
 	pass, _ := value.(*unknownOutcomePass)
 
 	return pass
+}
+
+// unknownOutcomeToReplace returns the recorded operation a deprovision may
+// replace, and an empty one when the record holds no unknown outcome. It
+// returns the OSB concurrency error for an unknown outcome a deprovision
+// must wait for. That is the outcome of a deprovision, of a provision
+// whose record does not say when its outcome became unknown or names no
+// context ID, and of a provision still inside the grace period. A
+// provision past the grace period is returned, and its deploy is left to
+// the running-task check.
+func (b *Broker) unknownOutcomeToReplace(instanceID string, recorded recordedOperation, logger logger.Logger) (recordedOperation, error) {
+	if recorded.State != internalVault.TaskStateOutcomeUnknown {
+		return recordedOperation{}, nil
+	}
+
+	if recorded.Action != operationTypeProvision || recorded.UnknownSince.IsZero() || recorded.ContextID == "" {
+		logger.Warning("Rejecting deprovision of instance %s: the outcome of its %s with context ID %s is unknown", instanceID, recorded.Action, recorded.ContextID)
+
+		return recordedOperation{}, osbapi.ErrConcurrencyError
+	}
+
+	graceEnds := recorded.UnknownSince.Add(bosh.UnknownOutcomeGrace)
+	if b.unknownOutcomeNow().Before(graceEnds) {
+		logger.Warning("Rejecting deprovision of instance %s: the outcome of its deploy with context ID %s is unknown, and the grace period runs until %s",
+			instanceID, recorded.ContextID, graceEnds.Format(time.RFC3339))
+
+		return recordedOperation{}, osbapi.ErrConcurrencyError
+	}
+
+	logger.Warning("Instance %s: the outcome of its deploy with context ID %s has been unknown since %s, past the grace period, so a deprovision may replace it once no task runs on its deployment",
+		instanceID, recorded.ContextID, recorded.UnknownSince.Format(time.RFC3339))
+
+	return recorded, nil
 }
 
 // resolveUnknownOutcome settles an operation whose director request lost
@@ -161,6 +198,11 @@ func (b *Broker) resolveUnknownOutcome(ctx context.Context, instanceID, deployme
 			State:       osbapi.StateInProgress,
 			Description: fmt.Sprintf("The outcome of the %s with context ID %s was just settled", noun, operation.ContextID),
 		}, nil
+	}
+
+	if !current.UnknownSince.IsZero() && b.unknownOutcomeNow().Sub(current.UnknownSince) >= unknownOutcomeAlarmAge {
+		logger.Error("Instance %s: the outcome of the %s with context ID %s has been unknown since %s, more than %s ago. An operator should look at the director's tasks and events for deployment %s",
+			instanceID, noun, current.ContextID, current.UnknownSince.Format(time.RFC3339), unknownOutcomeAlarmAge, deploymentName)
 	}
 
 	if current.DeploymentName != "" {
