@@ -2603,6 +2603,34 @@ func TestBatchFinishedDeployWithAFullRecordIsNotReadAgain(t *testing.T) {
 	}
 }
 
+// A task kept for waiters shares no end time with the task the deploy call
+// returned, so a caller that changes the one does not change the other.
+func TestBatchFinishedDeployKeepsItsOwnEndTime(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.blockUntilFinished = true
+	base.completeAnswer = true
+	batch, _ := newTestBatch(t, base, 1)
+
+	returned := finishBlockingDeploy(t, base, batch)
+	if returned.EndedAt == nil {
+		t.Fatal("expected the deploy call to return an end time")
+	}
+
+	ended := *returned.EndedAt
+	*returned.EndedAt = ended.Add(-time.Hour)
+
+	task, err := batch.WaitForTask(t.Context(), returned.ID)
+	if err != nil || task == nil || task.EndedAt == nil {
+		t.Fatalf("expected the kept task with its end time, got %+v and %v", task, err)
+	}
+
+	if !task.EndedAt.Equal(ended) {
+		t.Fatalf("expected the kept end time %v to be untouched, got %v", ended, *task.EndedAt)
+	}
+}
+
 // Stop wakes a deploy waiting for a slot even when the slot is held by a
 // deploy still in its director call, which no watcher follows yet.
 func TestStopWakesAWaiterBehindADeployStillInItsCall(t *testing.T) {

@@ -352,7 +352,7 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 		b.releaseSlot()
 		b.logger.Infof("BOSH task %d of deployment %s had ended in state %s when the deploy call returned, so its batch slot is released at once",
 			task.ID, name, task.State)
-		b.keepFinishedTask(name, *task)
+		b.keepFinishedTask(name, *copyTask(task))
 
 		return task, nil
 	}
