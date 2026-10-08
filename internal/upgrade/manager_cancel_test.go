@@ -3,10 +3,13 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/pkg/logger"
 )
 
 // cancelUpgrade cancels the upgrade task through the manager, as the
@@ -171,6 +174,20 @@ func TestUpgradeCancelSkipsThePendingInstances(t *testing.T) {
 	}
 }
 
+// endTheTaskAtCleanup ends the deploy task as cancelled when the test
+// ends, should the test stop before it does, so the upgrade's wait after
+// the cancel ends and the manager can stop.
+func endTheTaskAtCleanup(t *testing.T, director *waitDirector) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		select {
+		case director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskCancelled}:
+		default:
+		}
+	})
+}
+
 // eventuallySaved waits until the saved upgrade task satisfies done.
 func eventuallySaved(t *testing.T, vault *waitVault, taskID string, done func(UpgradeTask) bool) UpgradeTask {
 	t.Helper()
@@ -188,5 +205,189 @@ func eventuallySaved(t *testing.T, vault *waitVault, taskID string, done func(Up
 		}
 
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeCancelBeforeTheTaskIDIsStoredCancelsTheTask(t *testing.T) {
+	director := newWaitDirector()
+	director.updateStarted = make(chan struct{})
+	director.updateGate = make(chan struct{})
+
+	manager, task, _ := beginUpgrade(t, &logger.NoOpLogger{}, director, newWaitVault())
+	endTheTaskAtCleanup(t, director)
+
+	select {
+	case <-director.updateStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never sent its deploy")
+	}
+
+	// The instance is running, but the deploy has not named its task yet.
+	cancelUpgrade(t, manager, task)
+
+	if cancels := director.cancelled(); len(cancels) != 0 {
+		t.Fatalf("expected no cancel before the task was named, got %v", cancels)
+	}
+
+	close(director.updateGate)
+
+	select {
+	case <-director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never waited on its deploy task")
+	}
+
+	if cancels := director.cancelled(); len(cancels) != 1 || cancels[0] != waitDeployTaskID {
+		t.Fatalf("expected exactly one cancel of BOSH task %d once the deploy named it, got %v", waitDeployTaskID, cancels)
+	}
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskCancelled}
+
+	done := eventually(t, manager, task, "the instance's settling", func(current UpgradeTask) bool {
+		return current.Instances[0].Status != InstanceStatusRunning
+	})
+
+	if cancels := director.cancelled(); len(cancels) != 1 {
+		t.Fatalf("expected exactly one cancel of BOSH task %d, got %v", waitDeployTaskID, cancels)
+	}
+
+	if done.Instances[0].Status != InstanceStatusCancelled || done.CancelledCount != 1 || done.FailedCount != 0 {
+		t.Fatalf("expected the instance to settle as cancelled from the task's final state, got %+v", done)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeCancelAfterTheTaskIDIsStoredCancelsOnce(t *testing.T) {
+	director := newWaitDirector()
+	vault := newWaitVault()
+
+	stored := make(chan struct{})
+	release := make(chan struct{})
+
+	var storedOnce sync.Once
+
+	// The first save that holds the task ID stops until the test has
+	// cancelled, so the cancel lands after the ID is stored and before the
+	// upgrade waits on the task.
+	vault.onPut = func(path string, raw []byte) {
+		if !strings.HasPrefix(path, upgradeTasksVaultPath+"/") || !strings.Contains(string(raw), fmt.Sprintf(`"bosh_task_id":%d`, waitDeployTaskID)) {
+			return
+		}
+
+		first := false
+
+		storedOnce.Do(func() { first = true })
+
+		if first {
+			close(stored)
+			<-release
+		}
+	}
+
+	manager, task, _ := beginUpgrade(t, &logger.NoOpLogger{}, director, vault)
+	endTheTaskAtCleanup(t, director)
+
+	select {
+	case <-stored:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never saved the task ID")
+	}
+
+	cancelUpgrade(t, manager, task)
+	close(release)
+
+	select {
+	case <-director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never waited on its deploy task")
+	}
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskCancelled}
+
+	done := eventually(t, manager, task, "the instance's settling", func(current UpgradeTask) bool {
+		return current.Instances[0].Status != InstanceStatusRunning
+	})
+
+	if cancels := director.cancelled(); len(cancels) != 1 || cancels[0] != waitDeployTaskID {
+		t.Fatalf("expected exactly one cancel of BOSH task %d, got %v", waitDeployTaskID, cancels)
+	}
+
+	if done.Instances[0].Status != InstanceStatusCancelled || done.CancelledCount != 1 {
+		t.Fatalf("expected the instance to be cancelled, got %+v", done)
+	}
+}
+
+// gateLogger holds the upgrade at the line that announces an instance's
+// start, for the instance it names, until release closes. The upgrade
+// logs that line before it checks for a cancel, so the test can cancel
+// as the instance is about to start.
+type gateLogger struct {
+	*logger.NoOpLogger
+
+	instanceID string
+	reached    chan struct{}
+	release    chan struct{}
+	once       sync.Once
+}
+
+func (l *gateLogger) Named(string) logger.Logger { return l }
+
+func (l *gateLogger) Info(msg string, args ...interface{}) {
+	if !strings.HasPrefix(msg, "Upgrading instance") || len(args) == 0 || args[0] != l.instanceID {
+		return
+	}
+
+	l.once.Do(func() {
+		close(l.reached)
+		<-l.release
+	})
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeCancelBeforeTheLastInstanceStartsSkipsIt(t *testing.T) {
+	const lastInstanceID = "instance-2"
+
+	director := newWaitDirector()
+	gate := &gateLogger{
+		NoOpLogger: &logger.NoOpLogger{},
+		instanceID: lastInstanceID,
+		reached:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+
+	manager, task, _ := beginUpgrade(t, gate, director, newWaitVault(), waitInstanceID, lastInstanceID)
+
+	select {
+	case <-director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never waited on its first deploy task")
+	}
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskDone}
+
+	select {
+	case <-gate.reached:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never reached the last instance")
+	}
+
+	cancelUpgrade(t, manager, task)
+	close(gate.release)
+
+	done := eventually(t, manager, task, "the last instance's settling", func(current UpgradeTask) bool {
+		return current.Instances[1].Status != InstanceStatusPending
+	})
+
+	if done.Instances[1].Status != InstanceStatusSkipped || done.SkippedCount != 1 {
+		t.Fatalf("expected the last instance to be skipped, got %+v", done)
+	}
+
+	if done.Instances[0].Status != InstanceStatusSuccess || done.CompletedCount != 1 {
+		t.Fatalf("expected the first instance to keep its success, got %+v", done)
+	}
+
+	if cancels := director.cancelled(); len(cancels) != 0 {
+		t.Fatalf("expected no cancel, since no deploy was running, got %v", cancels)
 	}
 }

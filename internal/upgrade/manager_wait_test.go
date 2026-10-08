@@ -32,6 +32,9 @@ var errNoTaskInTest = errors.New("the test director has no such task")
 type waitVault struct {
 	interfaces.Vault
 
+	// onPut, when set, sees each saved value as JSON after it is saved.
+	onPut func(path string, raw []byte)
+
 	mu    sync.Mutex
 	saved map[string][]byte
 }
@@ -63,9 +66,12 @@ func (v *waitVault) Put(_ context.Context, path string, data interface{}) error 
 	}
 
 	v.mu.Lock()
-	defer v.mu.Unlock()
-
 	v.saved[path] = raw
+	v.mu.Unlock()
+
+	if v.onPut != nil {
+		v.onPut(path, raw)
+	}
 
 	return nil
 }
@@ -87,7 +93,7 @@ func (v *waitVault) savedTask(t *testing.T, taskID string) UpgradeTask {
 }
 
 // waitDirector is a director for one upgrade deploy. The deploy returns
-// task 42 at once, and the wait on it returns the task the test sends on
+// task 42, at once unless the test gates it, and the wait on it returns the task the test sends on
 // finish, or stops when its context ends. A call it does not script
 // panics through the nil embedded Director.
 type waitDirector struct {
@@ -96,6 +102,11 @@ type waitDirector struct {
 	finish      chan *bosh.Task
 	waitStarted chan struct{}
 	startOnce   sync.Once
+
+	// updateStarted, when set, is closed as the deploy is sent, and the
+	// deploy then holds its answer until updateGate closes.
+	updateStarted chan struct{}
+	updateGate    chan struct{}
 
 	// onCancel answers CancelTask when it is set.
 	onCancel func(ctx context.Context, taskID int) error
@@ -114,6 +125,11 @@ func (d *waitDirector) GetDeployment(_ context.Context, name string) (*bosh.Depl
 }
 
 func (d *waitDirector) UpdateDeployment(_ context.Context, _, _ string) (*bosh.Task, error) {
+	if d.updateStarted != nil {
+		close(d.updateStarted)
+		<-d.updateGate
+	}
+
 	return &bosh.Task{ID: waitDeployTaskID, State: waitStateRunning, Deployment: waitDeployment}, nil
 }
 
@@ -170,11 +186,29 @@ func (d *waitDirector) cancelled() []int {
 func startUpgrade(t *testing.T, director *waitDirector, vault *waitVault, instanceIDs ...string) (*Manager, *UpgradeTask, func()) {
 	t.Helper()
 
+	manager, task, stop := beginUpgrade(t, &logger.NoOpLogger{}, director, vault, instanceIDs...)
+
+	select {
+	case <-director.waitStarted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never waited on its deploy task")
+	}
+
+	return manager, task, stop
+}
+
+// beginUpgrade starts a manager with the logger and an upgrade of the
+// instances, one instance when none is named, and returns without waiting
+// for the upgrade to reach the director. The returned stop ends the
+// manager once, and the test's cleanup calls it too.
+func beginUpgrade(t *testing.T, log logger.Logger, director *waitDirector, vault *waitVault, instanceIDs ...string) (*Manager, *UpgradeTask, func()) {
+	t.Helper()
+
 	if len(instanceIDs) == 0 {
 		instanceIDs = []string{waitInstanceID}
 	}
 
-	manager := NewManager(&logger.NoOpLogger{}, director, vault)
+	manager := NewManager(log, director, vault)
 
 	var once sync.Once
 
@@ -188,12 +222,6 @@ func startUpgrade(t *testing.T, director *waitDirector, vault *waitVault, instan
 	})
 	if err != nil {
 		t.Fatalf("failed to create the upgrade task: %v", err)
-	}
-
-	select {
-	case <-director.waitStarted:
-	case <-time.After(waitTimeout):
-		t.Fatal("the upgrade never waited on its deploy task")
 	}
 
 	return manager, task, stop
@@ -289,5 +317,33 @@ func TestUpgradeShutdownLeavesTheTaskRunningAndRecordsIt(t *testing.T) {
 
 	if counts := snapshot(manager, task); counts.FailedCount != 0 || counts.CancelledCount != 0 {
 		t.Fatalf("expected no failed or cancelled count, got %+v", counts)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeNilTaskFailsTheInstance(t *testing.T) {
+	director := newWaitDirector()
+	vault := newWaitVault()
+
+	manager, task, _ := startUpgrade(t, director, vault)
+
+	// The wait answers with no task and no error.
+	director.finish <- nil
+
+	done := eventually(t, manager, task, "the upgrade's end", func(current UpgradeTask) bool {
+		return current.Status != TaskStatusRunning
+	})
+
+	instance := done.Instances[0]
+	if instance.Status != InstanceStatusFailed || !strings.Contains(instance.Error, "no task") {
+		t.Fatalf("expected the instance to fail with a message that the director returned no task, got %+v", instance)
+	}
+
+	if done.FailedCount != 1 || done.CompletedCount != 0 || done.CancelledCount != 0 {
+		t.Fatalf("expected one failed instance, got %+v", done)
+	}
+
+	if done.Status != TaskStatusFailed || done.CompletedAt == nil {
+		t.Fatalf("expected the upgrade to end failed, got %+v", done)
 	}
 }

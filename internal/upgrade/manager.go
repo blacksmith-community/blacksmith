@@ -448,6 +448,10 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		m.mu.Unlock()
 		m.logger.Info("Task %s was cancelled, so instance %s is not started", task.ID, instance.InstanceID)
 
+		// This instance may be the last one, which no later pass of the
+		// upgrade's loop would skip.
+		m.skipPendingInstances(persistCtx, task)
+
 		return
 	}
 
@@ -542,11 +546,20 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 
 	// The task ID is saved before the wait, so the UI shows it while the
 	// deploy runs, and a broker that stops during the wait leaves it on
-	// record.
+	// record. A cancel that came after the instance started but before
+	// this point found no task ID to cancel, so the upgrade cancels the
+	// task itself. The ID and the upgrade's status are read and written
+	// under the same lock as CancelTask's, so exactly one side sends it.
 	m.mu.Lock()
 	instance.BOSHTaskID = deployTask.ID
+	cancelledBeforeTheTask := task.Status == TaskStatusCancelled
 	m.mu.Unlock()
 	m.logger.Info("BOSH task %d deploys %s for instance %s", deployTask.ID, instance.DeploymentName, instance.InstanceID)
+
+	if cancelledBeforeTheTask {
+		m.cancelDeployTask(ctx, instance.InstanceID, deployTask.ID)
+	}
+
 	m.persistTask(persistCtx, task) //nolint:errcheck
 
 	finished, cancelRequested, err := m.awaitDeployTask(ctx, task, instance, deployTask.ID, cancelCh)
@@ -587,12 +600,13 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		return
 	}
 
-	m.settleInstance(task, instance, finished)
+	m.settleInstance(task, instance, deployTask.ID, finished)
 	m.persistTask(persistCtx, task) //nolint:errcheck
 }
 
 // awaitDeployTask waits for the deploy task of an upgrade instance to end.
-// The cancel itself is sent by CancelTask. When the upgrade is cancelled
+// The cancel itself is sent by CancelTask, or by upgradeInstance when the
+// cancel came before the deploy named its task. When the upgrade is cancelled
 // during the wait, it keeps waiting for the task's own end under a
 // deadline of cancelWaitTimeout that does not end with ctx, and reports
 // that a cancel was requested. A signal on cancelCh that is not a cancel,
@@ -647,13 +661,24 @@ func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instan
 }
 
 // settleInstance records the outcome of an upgrade instance from the final
-// state of its deploy task. It alone settles an instance that started.
-func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, finished *bosh.Task) {
+// state of its deploy task. It alone settles an instance that started. A
+// wait that ended with no task and no error is a failed wait.
+func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, taskID int, finished *bosh.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	completedAt := time.Now()
 	instance.CompletedAt = &completedAt
+
+	if finished == nil {
+		instance.Status = InstanceStatusFailed
+		instance.Error = fmt.Sprintf("the director returned no task when Blacksmith waited on BOSH task %d, which may still be running", taskID)
+		task.FailedCount++
+
+		m.logger.Error("The director returned no task for BOSH task %d of %s", taskID, instance.DeploymentName)
+
+		return
+	}
 
 	switch finished.State {
 	case boshTaskDone:
@@ -803,10 +828,11 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 }
 
 // CancelTask cancels a running or paused task. It sends one cancel for the
-// deploy task of each running instance and leaves every instance's status
-// and the counts to the upgrade, which records each instance's outcome
-// from its task's final state. The manager's lock is never held across a
-// director call.
+// deploy task of each running instance that has recorded one, since an
+// instance whose deploy has not named its task yet cancels it itself. It
+// leaves every instance's status and the counts to the upgrade, which
+// records each instance's outcome from its task's final state. The
+// manager's lock is never held across a director call.
 func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	m.mu.Lock()
 	task, exists := m.tasks[taskID]
@@ -841,22 +867,8 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	task.CompletedAt = &completedAt
 	m.mu.Unlock()
 
-	// The cancel is sent even when the request that asked for it ends.
-	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTaskTimeout)
-	defer cancel()
-
 	for _, deploy := range running {
-		m.logger.Info("Cancelling BOSH task %d for instance %s", deploy.boshTaskID, deploy.instanceID)
-
-		err := m.director.CancelTask(cancelCtx, deploy.boshTaskID)
-
-		switch {
-		case err == nil:
-		case errors.Is(err, bosh.ErrTaskCannotBeCancelled):
-			m.logger.Info("BOSH task %d for instance %s had already ended or was being cancelled: %v", deploy.boshTaskID, deploy.instanceID, err)
-		default:
-			m.logger.Error("Failed to cancel BOSH task %d: %v", deploy.boshTaskID, err)
-		}
+		m.cancelDeployTask(ctx, deploy.instanceID, deploy.boshTaskID)
 	}
 
 	// Signal cancellation
@@ -1063,5 +1075,25 @@ func (m *Manager) updateJobSemaphore() {
 	} else {
 		m.jobSemaphore = nil
 		m.logger.Info("No limit on parallel batch jobs")
+	}
+}
+
+// cancelDeployTask sends one cancel for the deploy task of an upgrade
+// instance. The cancel is sent even when ctx has ended, under its own
+// deadline, and the caller must not hold the manager's lock.
+func (m *Manager) cancelDeployTask(ctx context.Context, instanceID string, boshTaskID int) {
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTaskTimeout)
+	defer cancel()
+
+	m.logger.Info("Cancelling BOSH task %d for instance %s", boshTaskID, instanceID)
+
+	err := m.director.CancelTask(cancelCtx, boshTaskID)
+
+	switch {
+	case err == nil:
+	case errors.Is(err, bosh.ErrTaskCannotBeCancelled):
+		m.logger.Info("BOSH task %d for instance %s had already ended or was being cancelled: %v", boshTaskID, instanceID, err)
+	default:
+		m.logger.Error("Failed to cancel BOSH task %d: %v", boshTaskID, err)
 	}
 }
