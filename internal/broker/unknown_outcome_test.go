@@ -37,6 +37,7 @@ const (
 	outcomeDeleteDeployment = "delete deployment"
 	outcomeManifestName     = "placeholder"
 	outcomeTaskDone         = "done"
+	outcomeTaskError        = "error"
 	outcomeTaskProcessing   = "processing"
 	outcomeTaskQueued       = "queued"
 	outcomeStateFailed      = "failed"
@@ -122,6 +123,16 @@ func (e *errorLogger) errors() []string {
 	defer e.mu.Unlock()
 
 	return append([]string(nil), e.lines...)
+}
+
+// deploymentEventsAt returns the events deploymentEvents does, dated at.
+func deploymentEventsAt(at time.Time, action, deploymentName string, taskID int) []bosh.Event {
+	events := deploymentEvents(action, deploymentName, taskID)
+	for index := range events {
+		events[index].Time = at
+	}
+
+	return events
 }
 
 var _ = Describe("Deploys and deletes sent to the director", func() {
@@ -918,7 +929,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				}
 			}
 			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
-				return deploymentEvents(boshEventCreate, deploymentName, createTaskID), nil
+				return deploymentEventsAt(time.Now(), boshEventCreate, deploymentName, createTaskID), nil
 			}
 
 			before := time.Now()
@@ -1149,12 +1160,13 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("a provision poll over an unknown delete answers in progress and keeps the record", func() {
 			contextID := loseDelete()
+
 			unknown := recorded()
 
 			// The instance's old create event would name a task for a
 			// provision that lost track of its own.
 			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
-				return deploymentEvents(boshEventCreate, deploymentName, createTaskID), nil
+				return deploymentEventsAt(time.Now(), boshEventCreate, deploymentName, createTaskID), nil
 			}
 			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
 				return &bosh.Task{ID: taskID, State: outcomeTaskProcessing}, nil
@@ -1171,6 +1183,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("a deprovision poll over an unknown deploy answers in progress and keeps the instance", func() {
 			contextID := loseDeploy()
+
 			unknown := recorded()
 			cleaner := useCleaner()
 
@@ -1273,6 +1286,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			It("is dropped by a pass that finds the outcome settled since the poll read it", func() {
 				contextID := loseDelete()
+
 				unknown := recorded()
 
 				director.FindTaskByContextIDFn = func(string) (*bosh.Task, error) { return nil, routeNotFound() }
@@ -1319,6 +1333,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("an unknown delete stays in progress when the deployment is missing and then present", func() {
 			contextID := loseDelete()
+
 			unknown := recorded()
 			cleaner := useCleaner()
 
@@ -1346,6 +1361,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("an unknown delete stays in progress when the second deployment check fails", func() {
 			contextID := loseDelete()
+
 			unknown := recorded()
 
 			var checks atomic.Int32
@@ -1437,7 +1453,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			It("adopts the task a delete event on its deployment names", func() {
 				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
-					return deploymentEvents(boshEventDelete, deploymentName, deleteTaskID), nil
+					return deploymentEventsAt(time.Now(), boshEventDelete, deploymentName, deleteTaskID), nil
 				}
 				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
 					return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
@@ -1892,6 +1908,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			It("logs an error once for the pass", func() {
 				contextID := loseDeploy()
+
 				unknown := recorded()
 
 				frozenAt.Store(unknown.UnknownSince.Add(24 * time.Hour).UnixNano())
@@ -1911,6 +1928,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			It("logs no such error a second before the day ends", func() {
 				contextID := loseDeploy()
+
 				unknown := recorded()
 
 				frozenAt.Store(unknown.UnknownSince.Add(24*time.Hour - time.Second).UnixNano())
@@ -2008,11 +2026,95 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			})
 		})
 
+		Describe("an event dated before the request", func() {
+			// failedTask makes any task the poll follows a failed one, so a
+			// task adopted from an event shows as a failure.
+			failedTask := func() {
+				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+					return &bosh.Task{ID: taskID, State: outcomeTaskError}, nil
+				}
+			}
+
+			It("is not adopted by an unknown delete inside its grace period", func() {
+				contextID := loseDelete()
+
+				unknown := recorded()
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-time.Hour), boshEventDelete, deploymentName, deleteTaskID), nil
+				}
+
+				failedTask()
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown delete over an older delete event answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(director.Calls("GetTask")).To(BeEmpty(), "the poll followed the task of an older delete")
+				Expect(recorded()).To(Equal(unknown), "the poll changed the record")
+			})
+
+			It("is adopted by an unknown delete when it falls inside the window", func() {
+				loseDelete()
+
+				unknown := recorded()
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-time.Minute), boshEventDelete, deploymentName, deleteTaskID), nil
+				}
+				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+					return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+				}
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown delete over a recent delete event answered %+v", response)
+				Expect(recorded().TaskID).To(Equal(deleteTaskID), "the recent delete event's task was not adopted")
+			})
+
+			It("is not adopted by an unknown deploy inside its grace period", func() {
+				contextID := loseDeploy()
+
+				unknown := recorded()
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-time.Hour), boshEventCreate, deploymentName, createTaskID), nil
+				}
+
+				failedTask()
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown deploy over an older create event answered %+v", response)
+				Expect(response.Description).To(ContainSubstring(contextID))
+				Expect(director.Calls("GetTask")).To(BeEmpty(), "the poll followed the task of an older deploy")
+				Expect(recorded()).To(Equal(unknown), "the poll changed the record")
+			})
+
+			It("is adopted by an unknown deploy when it falls inside the window", func() {
+				loseDeploy()
+
+				unknown := recorded()
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-time.Minute), boshEventCreate, deploymentName, createTaskID), nil
+				}
+				director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+					return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment}, nil
+				}
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "an unknown deploy over a recent create event answered %+v", response)
+				Expect(recorded().TaskID).To(Equal(createTaskID), "the recent create event's task was not adopted")
+			})
+		})
+
 		It("an unknown deploy adopts the task a create event on its deployment names", func() {
 			contextID := loseDeploy()
 
 			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
-				return deploymentEvents(boshEventCreate, deploymentName, createTaskID), nil
+				return deploymentEventsAt(time.Now(), boshEventCreate, deploymentName, createTaskID), nil
 			}
 			director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
 				return &bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment}, nil
@@ -2095,6 +2197,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("a pass reads the record again under its own bound", func() {
 			contextID := loseDeploy()
+
 			unknown := recorded()
 			proxy := useProxy()
 
@@ -2144,6 +2247,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		Describe("a deprovision is refused while the provision's outcome is unknown", func() {
 			It("when the record shows it before the deprovision starts", func() {
 				contextID := loseDeploy()
+
 				unknown := recorded()
 				deletes := countDeletes()
 
@@ -2273,6 +2377,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 		It("progress written during an unknown outcome keeps the unknown-since time", func() {
 			contextID := loseDelete()
+
 			unknown := recorded()
 
 			Expect(unknown.UnknownSince).ToNot(BeZero())
@@ -2310,6 +2415,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 		Describe("a repeat deprovision is refused while the delete's outcome is unknown", func() {
 			It("past the grace period", func() {
 				contextID := loseDelete()
+
 				unknown := recorded()
 				deletes := countDeletes()
 
@@ -2324,6 +2430,7 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			It("for a deprovision", func() {
 				contextID := loseDelete()
+
 				unknown := recorded()
 				deletes := countDeletes()
 

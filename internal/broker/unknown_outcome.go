@@ -76,6 +76,14 @@ const unknownOutcomePassTimeout = 10 * time.Second
 // resolver pass over it logs an error for an operator.
 const unknownOutcomeAlarmAge = 24 * time.Hour
 
+// eventTimeAllowance is how much earlier than the time a request's outcome
+// became unknown a deployment event may be dated and still belong to that
+// request. The request may have started its task up to its own timeout
+// before the broker gave up on the answer, and the broker's clock and the
+// director's may differ, so the window opens well before unknown_since.
+// The director's request timeout is 60 seconds by default.
+const eventTimeAllowance = 5 * time.Minute
+
 // unknownOutcomePass keeps the resolver passes over one instance's unknown
 // outcome to one at a time, and holds the error the last pass ended with.
 type unknownOutcomePass struct {
@@ -270,12 +278,12 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 			return unknownOutcomeFinding{err: fmt.Errorf("the check of deployment %s failed: %w", deploymentName, err)}
 		}
 
-		finding, found := b.findDeleteTask(ctx, deploymentName, logger)
+		finding, found := b.findDeleteTask(ctx, deploymentName, operation.UnknownSince, logger)
 		if found {
 			return finding
 		}
 	case operationTypeProvision:
-		finding, found := b.findCreateTask(ctx, deploymentName, logger)
+		finding, found := b.findCreateTask(ctx, deploymentName, operation.UnknownSince, logger)
 		if found {
 			return finding
 		}
@@ -325,24 +333,25 @@ func isRunningTaskOf(task *bosh.Task, deploymentName, description string) bool {
 // finding when a deploy task runs on the deployment, when a create event
 // names one, or when either check fails. A running task that is not a
 // deploy of the deployment is not adopted.
-func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, logger logger.Logger) (unknownOutcomeFinding, bool) {
-	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDeploy, boshEventActionCreate, logger)
+func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, unknownSince time.Time, logger logger.Logger) (unknownOutcomeFinding, bool) {
+	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDeploy, boshEventActionCreate, unknownSince, logger)
 }
 
 // findDeleteTask looks for the delete task of a deprovision on a
 // deployment that still exists, the way recoverDeprovision does. It
 // reports true with the finding when a delete task runs on the
 // deployment, when a delete event names one, or when either check fails.
-// The newest delete event may name an earlier delete of the same
-// deployment, as recoverDeprovision may.
-func (b *Broker) findDeleteTask(ctx context.Context, deploymentName string, logger logger.Logger) (unknownOutcomeFinding, bool) {
-	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDelete, boshEventActionDelete, logger)
+// Only a delete event dated within eventTimeAllowance of unknownSince is
+// adopted, so a delete that ran before the request is not taken for it.
+func (b *Broker) findDeleteTask(ctx context.Context, deploymentName string, unknownSince time.Time, logger logger.Logger) (unknownOutcomeFinding, bool) {
+	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDelete, boshEventActionDelete, unknownSince, logger)
 }
 
 // findOperationTask looks for a task that runs on the deployment with the
 // description given, and then for the newest task a deployment event with
-// the action given names.
-func (b *Broker) findOperationTask(ctx context.Context, deploymentName, description, eventAction string, logger logger.Logger) (unknownOutcomeFinding, bool) {
+// the action given names. An event dated more than eventTimeAllowance
+// before unknownSince belongs to an earlier request, so it is not adopted.
+func (b *Broker) findOperationTask(ctx context.Context, deploymentName, description, eventAction string, unknownSince time.Time, logger logger.Logger) (unknownOutcomeFinding, bool) {
 	running, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		return unknownOutcomeFinding{err: fmt.Errorf("the check for a task running on deployment %s failed: %w", deploymentName, err)}, true
@@ -356,7 +365,7 @@ func (b *Broker) findOperationTask(ctx context.Context, deploymentName, descript
 		logger.Info("Task %d (%q on deployment %q) runs on deployment %s, and it is not a %q task, so it is not adopted", running.ID, running.Description, running.Deployment, deploymentName, description)
 	}
 
-	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, eventAction, logger)
+	taskID, err := b.findDeploymentEventTaskSince(ctx, deploymentName, eventAction, unknownSince.Add(-eventTimeAllowance), logger)
 	if err != nil {
 		return unknownOutcomeFinding{err: fmt.Errorf("the read of the events of deployment %s failed: %w", deploymentName, err)}, true
 	}

@@ -3508,6 +3508,13 @@ func (b *Broker) interruptedOperationStatus(ctx context.Context, instanceID, dep
 // none. Unlike the newest task overall, this cannot be a task someone ran by
 // hand on the deployment, such as ssh, restart, recreate, or cck.
 func (b *Broker) findDeploymentEventTask(ctx context.Context, deploymentName, action string, logger logger.Logger) (int, error) {
+	return b.findDeploymentEventTaskSince(ctx, deploymentName, action, time.Time{}, logger)
+}
+
+// findDeploymentEventTaskSince returns the newest task as
+// findDeploymentEventTask does, but looks only at events whose time is no
+// earlier than notBefore. A zero notBefore looks at every event.
+func (b *Broker) findDeploymentEventTaskSince(ctx context.Context, deploymentName, action string, notBefore time.Time, logger logger.Logger) (int, error) {
 	events, err := b.BOSH.GetEvents(ctx, deploymentName)
 	if err != nil {
 		logger.Error("failed to get events for deployment %s: %s", deploymentName, err)
@@ -3519,6 +3526,10 @@ func (b *Broker) findDeploymentEventTask(ctx context.Context, deploymentName, ac
 
 	for _, event := range events {
 		if event.ObjectType != boshEventObjectDeployment || event.Action != action {
+			continue
+		}
+
+		if event.Time.Before(notBefore) {
 			continue
 		}
 
