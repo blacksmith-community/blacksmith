@@ -48,6 +48,9 @@ const (
 	outcomeDirectorAddress  = "https://director.example:25555"
 )
 
+// errEventsDown is what a read of the events saw when the endpoint was down.
+var errEventsDown = errors.New("events endpoint down")
+
 // errAnswerLost is what a request whose answer never came back saw.
 var errAnswerLost = errors.New("the connection closed after the request was sent")
 
@@ -2116,6 +2119,71 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(lines[0]).To(ContainSubstring(fmt.Sprintf("task %d", deleteTaskID)))
 				Expect(lines[0]).ToNot(ContainSubstring(fmt.Sprintf("task %d", createTaskID)))
 				Expect(lines[0]).To(ContainSubstring(older.UTC().Format(time.RFC3339)))
+			})
+
+			It("says the events could not be read when the second read fails", func() {
+				loseDeploy()
+
+				var reads atomic.Int32
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					if reads.Add(1) > 1 {
+						return nil, errEventsDown
+					}
+
+					return nil, nil
+				}
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+
+				poll(outcomeProvision)
+
+				Expect(reads.Load()).To(BeEquivalentTo(2))
+
+				lines := warnLog.warnings()
+
+				found := false
+
+				for _, line := range lines {
+					if strings.Contains(line, "could not be read") {
+						found = true
+
+						Expect(line).To(ContainSubstring("events endpoint down"))
+						Expect(line).ToNot(ContainSubstring("was left out of the event window"))
+					}
+				}
+
+				Expect(found).To(BeTrue(), "the pass logged %v", lines)
+			})
+
+			It("says no event was left out when none was skipped", func() {
+				loseDeploy()
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) { return nil, nil }
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+
+				poll(outcomeProvision)
+
+				lines := warnLog.warnings()
+
+				found := false
+
+				for _, line := range lines {
+					if strings.Contains(line, "was left out of the event window") {
+						found = true
+
+						Expect(line).ToNot(ContainSubstring("could not be read"))
+					}
+				}
+
+				Expect(found).To(BeTrue(), "the pass logged %v", lines)
 			})
 		})
 

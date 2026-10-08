@@ -335,33 +335,38 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 // event of the action given that the event window left out, with its time.
 // The window compares the director's clock with the broker's, so a
 // director whose clock runs more than eventTimeAllowance behind has its
-// event for this request left out. A failed read of the events only
-// shortens the warning.
+// event for this request left out. A failed read of the events logs a
+// warning of its own with the error, since no skipped event can be named
+// without the events.
 func (b *Broker) warnOfSkippedEvent(ctx context.Context, deploymentName, action string, operation recordedOperation, logger logger.Logger) {
 	noun := requestNoun(operation.Action)
 	notBefore := operation.UnknownSince.Add(-eventTimeAllowance)
+
+	outcome := "A deprovision can now replace the record."
+	if operation.Action == operationTypeDeprovision {
+		outcome = "The delete is answered failed, and the deprovision can be retried."
+	}
+
+	events, err := b.BOSH.GetEvents(ctx, deploymentName)
+	if err != nil {
+		logger.Warning("Deployment %s exists past the grace period, and no task the director lists names the %s with context ID %s. The events of the deployment could not be read, so a skipped %s event cannot be named: %s. %s", deploymentName, noun, operation.ContextID, action, err, outcome)
+
+		return
+	}
 
 	var (
 		newest bosh.Event
 		found  bool
 	)
 
-	events, err := b.BOSH.GetEvents(ctx, deploymentName)
-	if err == nil {
-		for _, event := range events {
-			if event.ObjectType != boshEventObjectDeployment || event.Action != action || !event.Time.Before(notBefore) {
-				continue
-			}
-
-			if !found || event.Time.After(newest.Time) {
-				newest, found = event, true
-			}
+	for _, event := range events {
+		if event.ObjectType != boshEventObjectDeployment || event.Action != action || !event.Time.Before(notBefore) {
+			continue
 		}
-	}
 
-	outcome := "A deprovision can now replace the record."
-	if operation.Action == operationTypeDeprovision {
-		outcome = "The delete is answered failed, and the deprovision can be retried."
+		if !found || event.Time.After(newest.Time) {
+			newest, found = event, true
+		}
 	}
 
 	if !found {
