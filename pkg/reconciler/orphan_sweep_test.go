@@ -14,7 +14,10 @@ import (
 	"blacksmith/pkg/testutil"
 )
 
-var errSweepDirectorDown = errors.New("director unreachable")
+var (
+	errSweepDirectorDown = errors.New("director unreachable")
+	errSweepVaultRefused = errors.New("permission denied")
+)
 
 const (
 	sweepZombieID     = "181c0984-f4b6-461c-83ff-98ff41872f4b"
@@ -266,6 +269,37 @@ func TestOrphanSweep_KeepsEntryWithUnknownOutcome(t *testing.T) {
 					t.Fatalf("expected %s %s to be kept while the outcome of its %s is unknown", kind, sweepZombieID, action)
 				}
 			})
+		}
+	}
+}
+
+// The orphan sweep keeps an entry whose task record it cannot read, since
+// the record may hold work in flight or an unknown outcome.
+func TestOrphanSweep_KeepsEntryWhoseTaskRecordCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	fixture := newSweepFixture(t, 3*time.Hour)
+	fixture.vault.SetError(sweepZombieID+"/task", errSweepVaultRefused)
+
+	fixture.manager.RunReconciliation(context.Background())
+
+	if !fixture.indexHas(t, sweepZombieID) {
+		t.Fatalf("expected %s to be kept while its task record cannot be read", sweepZombieID)
+	}
+}
+
+// A sweep with no Vault client to read task records with takes every
+// record to be in flight.
+func TestOrphanSweep_TakesARecordItCannotReadWithoutVaultAsInFlight(t *testing.T) {
+	t.Parallel()
+
+	logger := NewMockLogger()
+	manager := NewReconcilerManager(newTestManagerConfig(), nil, nil, testutil.NewScriptedBOSHDirector(), logger, nil)
+	synchronizer := NewIndexSynchronizer(struct{}{}, logger)
+
+	for _, tombstone := range []bool{false, true} {
+		if !manager.TaskRecordInFlight(synchronizer, sweepZombieID, tombstone) {
+			t.Fatalf("expected a sweep with no Vault client to take the task record of %s (tombstone %t) as in flight", sweepZombieID, tombstone)
 		}
 	}
 }
