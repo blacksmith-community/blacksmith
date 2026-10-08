@@ -33,6 +33,11 @@ var (
 	// the director may not have recorded the task yet, or may have pruned
 	// it.
 	ErrNoWatcherForContextID = errors.New("no batch watcher looks for the context ID, and the BOSH director found no task with it")
+	// ErrLostAnswerSuperseded is reported to the waiters of a watcher of a
+	// lost answer that a later deploy of the same deployment ended. The
+	// director takes a lock for each deployment, so once it accepted the
+	// later deploy, the lost one is not running.
+	ErrLostAnswerSuperseded = errors.New("a later deploy of the same deployment superseded the deploy whose answer was lost")
 )
 
 const (
@@ -105,6 +110,16 @@ type batchWatch struct {
 	// holdsSlot is false for the watcher of a task that had already ended
 	// when UpdateDeployment returned it, whose slot was released at once.
 	holdsSlot bool
+	// lost is true for the watcher of a deploy whose answer was lost.
+	lost bool
+	// cancel ends the watcher's follow. The watcher sets it, under mu, as
+	// it starts.
+	cancel context.CancelFunc
+	// slotSettled is set once the watcher has decided who releases its
+	// slot, and superseded when a later deploy of the deployment took the
+	// slot over. Both are guarded by the BatchDirector's mu.
+	slotSettled bool
+	superseded  bool
 	// done is closed once task and err hold the watcher's result.
 	done chan struct{}
 	task *Task
@@ -183,6 +198,9 @@ type BatchDirector struct {
 	// answer.
 	byTask      map[int]*batchWatch
 	byContextID map[string]*batchWatch
+	// lostByDeployment holds the watcher of a lost answer for each
+	// deployment, until the watcher ends.
+	lostByDeployment map[string]*batchWatch
 }
 
 // NewBatchDirector creates a new batch director wrapper.
@@ -209,6 +227,8 @@ func NewBatchDirector(director Director, maxBatchJobs int, timeout time.Duration
 		changed:     make(chan struct{}),
 		byTask:      map[int]*batchWatch{},
 		byContextID: map[string]*batchWatch{},
+
+		lostByDeployment: map[string]*batchWatch{},
 	}
 }
 
@@ -306,10 +326,20 @@ func (b *BatchDirector) Stop() {
 // the director answered it with an error or never received it, releases its
 // slot at once. Any other error keeps the slot while a watcher looks for
 // the task, because the director may have started one.
+//
+// A deploy of a deployment whose earlier deploy lost its answer ends that
+// deploy's watcher first, and takes over the slot the watcher held, with no
+// change to the count of slots held. The director takes a lock for each
+// deployment, so once it accepts this deploy the lost one is not running.
+// The deploy does not wait in the queue for the slot, because it is the
+// slot of its own deployment, and no deploy queued for another deployment
+// can take it in between.
 func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*Task, error) {
-	err := b.acquireSlot(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to acquire batch slot: %w", err)
+	if !b.supersedeLostAnswer(name) {
+		err := b.acquireSlot(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire batch slot: %w", err)
+		}
 	}
 
 	// handedOff is set, under mu, in the same step that starts the watcher
@@ -612,6 +642,37 @@ func (b *BatchDirector) GetPoolStats() (*PoolStats, error) {
 	return b.director.GetPoolStats()
 }
 
+// supersedeLostAnswer ends the watcher of a lost answer for the
+// deployment, if one still holds its slot, and reports whether the caller
+// now owns that slot. The watcher is told, under mu, not to release the
+// slot, so the slot is never free in between. Its waiters get
+// ErrLostAnswerSuperseded.
+func (b *BatchDirector) supersedeLostAnswer(deployment string) bool {
+	b.mu.Lock()
+	watch := b.lostByDeployment[deployment]
+
+	if watch == nil || watch.slotSettled {
+		b.mu.Unlock()
+
+		return false
+	}
+
+	watch.superseded = true
+	watch.slotSettled = true
+
+	delete(b.lostByDeployment, deployment)
+
+	if watch.cancel != nil {
+		watch.cancel()
+	}
+
+	b.mu.Unlock()
+
+	b.logger.Infof("A new deploy of deployment %s ended the batch watcher of %s and took over its batch slot", deployment, watch.lostDeploy())
+
+	return true
+}
+
 // Ensure BatchDirector implements Director interface.
 var _ Director = (*BatchDirector)(nil)
 
@@ -783,6 +844,7 @@ func (b *BatchDirector) watchTask(deployment string, taskID int, handedOff *bool
 // the batch director is stopped.
 func (b *BatchDirector) watchLostAnswer(deployment, contextID string, handedOff *bool) {
 	watch := newBatchWatch(deployment, contextID)
+	watch.lost = true
 	unknownSince := b.clock.Now()
 
 	b.mu.Lock()
@@ -820,10 +882,14 @@ func (b *BatchDirector) startWatchLocked(watch *batchWatch, taskID int, follow f
 		b.byContextID[watch.contextID] = watch
 	}
 
+	if watch.lost {
+		b.lostByDeployment[watch.deployment] = watch
+	}
+
 	b.running++
 	b.watchers.Add(1)
 
-	go b.runWatch(watch, follow)
+	go b.runWatch(b.lifetime, watch, follow)
 
 	return true
 }
@@ -832,14 +898,34 @@ func (b *BatchDirector) startWatchLocked(watch *batchWatch, taskID int, follow f
 // before it reports the result, so a waiter that starts the next deploy
 // finds the slot free, and every watcher keeps its result for waiters
 // until batchDonePrune has passed.
-func (b *BatchDirector) runWatch(watch *batchWatch, follow func(ctx context.Context) (*Task, error)) {
+func (b *BatchDirector) runWatch(parent context.Context, watch *batchWatch, follow func(ctx context.Context) (*Task, error)) {
 	defer b.watchers.Done()
 	defer b.watcherReturned()
 
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	b.mu.Lock()
+	watch.cancel = cancel
+
+	if watch.superseded {
+		cancel()
+	}
+
+	b.mu.Unlock()
+
 	if watch.holdsSlot {
-		watch.task, watch.err = b.followHoldingSlot(follow)
+		watch.task, watch.err = b.followHoldingSlot(ctx, watch, follow)
 	} else {
-		watch.task, watch.err = follow(b.lifetime)
+		watch.task, watch.err = follow(ctx)
+	}
+
+	b.mu.Lock()
+	superseded := watch.superseded
+	b.mu.Unlock()
+
+	if superseded {
+		watch.task, watch.err = nil, ErrLostAnswerSuperseded
 	}
 
 	close(watch.done)
@@ -862,11 +948,30 @@ func (b *BatchDirector) runWatch(watch *batchWatch, follow func(ctx context.Cont
 }
 
 // followHoldingSlot runs a watcher's follow, and releases its slot however
-// the follow ends.
-func (b *BatchDirector) followHoldingSlot(follow func(ctx context.Context) (*Task, error)) (*Task, error) {
-	defer b.releaseSlot()
+// the follow ends, unless a later deploy took the slot over.
+func (b *BatchDirector) followHoldingSlot(ctx context.Context, watch *batchWatch, follow func(ctx context.Context) (*Task, error)) (*Task, error) {
+	defer b.releaseWatchSlot(watch)
 
-	return follow(b.lifetime)
+	return follow(ctx)
+}
+
+// releaseWatchSlot releases the slot of a watcher that ended, unless a
+// later deploy took it over. It decides that under mu, so a deploy takes
+// the slot over or the watcher releases it, never both.
+func (b *BatchDirector) releaseWatchSlot(watch *batchWatch) {
+	b.mu.Lock()
+	taken := watch.superseded
+	watch.slotSettled = true
+
+	if b.lostByDeployment[watch.deployment] == watch {
+		delete(b.lostByDeployment, watch.deployment)
+	}
+
+	b.mu.Unlock()
+
+	if !taken {
+		b.releaseSlot()
+	}
 }
 
 func (b *BatchDirector) watcherReturned() {

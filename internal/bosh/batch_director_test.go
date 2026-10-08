@@ -2645,6 +2645,145 @@ func TestBatchSlotIsReleasedOnceWhenTheLoggerPanicsAfterTheHandOff(t *testing.T)
 	}
 }
 
+// deployWithin runs a deploy of the deployment and fails the test if it
+// does not return within a few seconds, the way a deploy that waits for a
+// slot that never frees would not.
+func deployWithin(t *testing.T, batch *bosh.BatchDirector, name string) *bosh.Task {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), batchWaitLimit)
+	defer cancel()
+
+	task, err := batch.UpdateDeployment(ctx, name, "manifest")
+	if err != nil || task == nil {
+		t.Fatalf("expected the deploy of %s to be accepted, got %+v and %v", name, task, err)
+	}
+
+	return task
+}
+
+// A deploy of a deployment whose earlier deploy lost its answer ends that
+// deploy's watcher and takes over its slot, whether or not the lost deploy
+// carried a context ID. The old watcher gives back no slot of its own, so
+// the deployment holds one slot, and its waiters get ErrLostAnswerSuperseded.
+func TestBatchNewDeployEndsTheLostAnswerWatcherOfItsDeployment(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		lose func(f *fakeBatchBase)
+	}{
+		"with a context ID":    {lose: func(f *fakeBatchBase) { f.updateErr = lostAnswer(firstDeployment) }},
+		"without a context ID": {lose: func(f *fakeBatchBase) { f.updateErr = func(string) error { return errBatchTestRejected } }},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base := newFakeBatchBase()
+			tc.lose(base)
+			batch, clock := newTestBatch(t, base, 1)
+
+			_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+			if err == nil {
+				t.Fatal("expected the lost answer to reach the caller")
+			}
+
+			waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForContextID(t.Context(), firstContextID) })
+
+			clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+			waitBatchStats(t, batch, 1, 0)
+
+			base.set(func(f *fakeBatchBase) { f.updateErr = nil })
+
+			task := deployWithin(t, batch, firstDeployment)
+			waitBatchStats(t, batch, 1, 0)
+
+			// The old watcher is gone, so no lapse of the grace frees the new
+			// deploy's slot.
+			clock.advance(bosh.UnknownOutcomeGrace + time.Hour)
+			waitBatchStats(t, batch, 1, 0)
+
+			if name == "with a context ID" {
+				got := receive(t, waited)
+				if !errors.Is(got.err, bosh.ErrLostAnswerSuperseded) || got.task != nil {
+					t.Fatalf("expected ErrLostAnswerSuperseded and no task, got %+v and %v", got.task, got.err)
+				}
+			}
+
+			base.finish(t, task.ID, batchTaskDone)
+			waitBatchStats(t, batch, 0, 0)
+		})
+	}
+}
+
+// The slot passes from the lost deploy's watcher to the new deploy with no
+// moment in which it is free, so a deploy queued for another deployment
+// does not take it, and the count never goes over the limit.
+func TestBatchSupersedingALostAnswerNeverFreesTheSlotToAQueuedDeploy(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.updateErr = lostAnswer(firstDeployment)
+	batch, _ := newTestBatch(t, base, 1)
+
+	_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	if err == nil {
+		t.Fatal("expected the lost answer to reach the caller")
+	}
+
+	queued := deployInBackground(t.Context(), batch, secondDeployment)
+	waitBatchStats(t, batch, 1, 1)
+
+	base.set(func(f *fakeBatchBase) { f.updateErr = nil })
+
+	stopSampling := make(chan struct{})
+	sampled := make(chan int, 1)
+
+	go func() {
+		most := 0
+
+		for {
+			select {
+			case <-stopSampling:
+				sampled <- most
+
+				return
+			default:
+			}
+
+			active, _, _ := batch.GetBatchPoolStats()
+			most = max(most, active)
+
+			time.Sleep(50 * time.Microsecond)
+		}
+	}()
+
+	task := deployWithin(t, batch, firstDeployment)
+	waitBatchStats(t, batch, 1, 1)
+
+	if accepted := base.acceptedCount(); accepted != 1 {
+		t.Fatalf("expected only the new deploy of %s to be accepted, got %d accepted", firstDeployment, accepted)
+	}
+
+	close(stopSampling)
+
+	if most := <-sampled; most > 1 {
+		t.Fatalf("expected at most one slot held, got %d", most)
+	}
+
+	base.finish(t, task.ID, batchTaskDone)
+
+	select {
+	case err := <-queued:
+		if err != nil {
+			t.Fatalf("expected the queued deploy to be accepted once the slot frees, got %v", err)
+		}
+	case <-time.After(batchWaitLimit):
+		t.Fatal("the queued deploy never got the slot")
+	}
+}
+
 // A task kept for waiters shares no end time with the task the deploy call
 // returned, so a caller that changes the one does not change the other.
 func TestBatchFinishedDeployKeepsItsOwnEndTime(t *testing.T) {
