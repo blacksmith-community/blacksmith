@@ -648,16 +648,16 @@ func (b *Broker) recordSettledOutcome(ctx context.Context, instanceID string, op
 	}, false
 }
 
-// failUnknownOutcome records an operation whose request the director never
-// took as a task as failed. The index entry stays, so a deprovision can be
+// failUnknownOutcome records as failed an operation whose request the
+// director lists no task for. The index entry stays, so a deprovision can be
 // retried, and a failed provision is cleaned up as any other is. When the
 // failure cannot be recorded over the unknown outcome, it answers in
 // progress and starts no cleanup. It reports whether it recorded the
 // failure.
 func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, bool) {
-	description := fmt.Sprintf("The deploy with context ID %s never reached the director as a task, so nothing was deployed", operation.ContextID)
+	description := fmt.Sprintf("The director lists no task for the deploy with context ID %s, and the deployment does not exist", operation.ContextID)
 	if operation.Action == operationTypeDeprovision {
-		description = fmt.Sprintf("The delete with context ID %s never reached the director as a task, so nothing was deleted. Retry the deprovision", operation.ContextID)
+		description = fmt.Sprintf("The director lists no task for the delete with context ID %s, and the deployment is still there. Retry the deprovision", operation.ContextID)
 	}
 
 	logger.Error("Instance %s: %s (the outcome was unknown since %s)", instanceID, description, operation.UnknownSince.Format(time.RFC3339))

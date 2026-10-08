@@ -1443,6 +1443,8 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			Expect(response.State).To(Equal(osbapi.StateFailed), "an unknown delete past its grace period answered %+v", response)
 			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(response.Description).To(ContainSubstring("the deployment is still there"))
+			Expect(response.Description).NotTo(ContainSubstring("never reached"), "the answer claims more than the director showed")
 			Expect(stillIndexed()).To(BeTrue(), "a failed delete removed the index entry")
 			Expect(recorded().State).To(Equal(outcomeStateFailed))
 
@@ -1638,6 +1640,8 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 			Expect(response.State).To(Equal(osbapi.StateFailed), "an unknown deploy past its grace period answered %+v", response)
 			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(response.Description).To(ContainSubstring("the deployment does not exist"))
+			Expect(response.Description).NotTo(ContainSubstring("never reached"), "the answer claims more than the director showed")
 			Expect(recorded().State).To(Equal(outcomeStateFailed))
 		})
 
