@@ -119,6 +119,30 @@ func (e *errorLogger) Error(msg string, args ...interface{}) {
 
 func (e *errorLogger) Named(string) logger.Logger { return e }
 
+// warningLogger records the messages logged at the Warning level.
+type warningLogger struct {
+	*logger.NoOpLogger
+
+	mu    sync.Mutex
+	lines []string
+}
+
+func (w *warningLogger) Warning(msg string, args ...interface{}) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.lines = append(w.lines, fmt.Sprintf(msg, args...))
+}
+
+func (w *warningLogger) Named(string) logger.Logger { return w }
+
+func (w *warningLogger) warnings() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return append([]string(nil), w.lines...)
+}
+
 func (e *errorLogger) errors() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1926,6 +1950,92 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			})
 		})
 
+		Describe("a poll past the grace period that finds the deployment and no task", func() {
+			var (
+				warnLog  *warningLogger
+				previous logger.Logger
+			)
+
+			BeforeEach(func() {
+				warnLog = &warningLogger{NoOpLogger: &logger.NoOpLogger{}}
+
+				previous = logger.Get()
+
+				logger.Set(warnLog)
+			})
+
+			AfterEach(func() {
+				logger.Set(previous)
+			})
+
+			// skippedWarnings returns the warnings that name an event left
+			// out of the window.
+			skippedWarnings := func() []string {
+				var lines []string
+
+				for _, line := range warnLog.warnings() {
+					if strings.Contains(line, "so it was skipped") {
+						lines = append(lines, line)
+					}
+				}
+
+				return lines
+			}
+
+			It("warns once about the newest create event it skipped", func() {
+				loseDeploy()
+
+				unknown := recorded()
+				older := unknown.UnknownSince.Add(-20 * time.Minute)
+				newest := unknown.UnknownSince.Add(-10 * time.Minute)
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					events := deploymentEventsAt(older, boshEventCreate, deploymentName, createTaskID-1)
+
+					return append(events, deploymentEventsAt(newest, boshEventCreate, deploymentName, createTaskID)...), nil
+				}
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+
+				response := poll(outcomeProvision)
+
+				Expect(response.State).To(Equal(osbapi.StateInProgress), "a deploy over a skipped event answered %+v", response)
+
+				lines := skippedWarnings()
+
+				Expect(lines).To(HaveLen(1), "the pass logged %v", warnLog.warnings())
+				Expect(lines[0]).To(ContainSubstring(fmt.Sprintf("task %d", createTaskID)))
+				Expect(lines[0]).To(ContainSubstring(newest.UTC().Format(time.RFC3339)))
+				Expect(lines[0]).To(ContainSubstring("deprovision can now replace the record"))
+			})
+
+			It("warns once about the newest delete event it skipped", func() {
+				loseDelete()
+
+				unknown := recorded()
+				newest := unknown.UnknownSince.Add(-10 * time.Minute)
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(newest, boshEventDelete, deploymentName, deleteTaskID), nil
+				}
+
+				passGrace()
+
+				response := poll(outcomeDeprovision)
+
+				Expect(response.State).To(Equal(osbapi.StateFailed), "a delete over a skipped event answered %+v", response)
+
+				lines := skippedWarnings()
+
+				Expect(lines).To(HaveLen(1), "the pass logged %v", warnLog.warnings())
+				Expect(lines[0]).To(ContainSubstring(fmt.Sprintf("task %d", deleteTaskID)))
+				Expect(lines[0]).To(ContainSubstring(newest.UTC().Format(time.RFC3339)))
+			})
+		})
+
 		Describe("a poll over an outcome unknown for a day", func() {
 			var (
 				errorLog *errorLogger
@@ -2203,6 +2313,44 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 					Expect(response.State).To(Equal(osbapi.StateFailed), "a failed deploy task at the grace period's end answered %+v", response)
 					Expect(recorded().State).To(Equal(outcomeStateFailed))
 				})
+			})
+
+			// checkAllowance pins eventTimeAllowance. An event dated a second
+			// before the allowance opens is skipped, and one dated a second
+			// after it is adopted.
+			checkAllowance := func(action, eventAction string, taskID int, lose func() string) {
+				lose()
+
+				unknown := recorded()
+
+				director.GetTaskFn = func(id int) (*bosh.Task, error) {
+					return &bosh.Task{ID: id, State: outcomeTaskProcessing}, nil
+				}
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-5*time.Minute-time.Second), eventAction, deploymentName, taskID), nil
+				}
+
+				response := poll(action)
+
+				ExpectWithOffset(1, response.State).To(Equal(osbapi.StateInProgress), "an event a second past the allowance answered %+v", response)
+				ExpectWithOffset(1, recorded()).To(Equal(unknown), "an event a second past the allowance was adopted")
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-5*time.Minute+time.Second), eventAction, deploymentName, taskID), nil
+				}
+
+				response = poll(action)
+
+				ExpectWithOffset(1, response.State).To(Equal(osbapi.StateInProgress), "an event a second inside the allowance answered %+v", response)
+				ExpectWithOffset(1, recorded().TaskID).To(Equal(taskID), "an event a second inside the allowance was not adopted")
+			}
+
+			It("is skipped by an unknown delete just past the allowance and adopted just inside it", func() {
+				checkAllowance(outcomeDeprovision, boshEventDelete, deleteTaskID, loseDelete)
+			})
+
+			It("is skipped by an unknown deploy just past the allowance and adopted just inside it", func() {
+				checkAllowance(outcomeProvision, boshEventCreate, createTaskID, loseDeploy)
 			})
 
 			It("is adopted by an unknown delete when it falls inside the window", func() {

@@ -86,6 +86,9 @@ const unknownOutcomeAlarmAge = 24 * time.Hour
 // before the broker gave up on the answer, and the broker's clock and the
 // director's may differ, so the window opens well before unknown_since.
 // The director's request timeout is 60 seconds by default.
+// A director whose clock runs further behind than this has its event for a
+// request left out, and a pass past the grace period warns of the newest
+// event left out.
 const eventTimeAllowance = 5 * time.Minute
 
 // unknownOutcomePass keeps the resolver passes over one instance's unknown
@@ -310,6 +313,8 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 	if operation.Action == operationTypeProvision {
 		_, err = b.BOSH.GetDeployment(ctx, deploymentName)
 		if err == nil {
+			b.warnOfSkippedEvent(ctx, deploymentName, boshEventActionCreate, operation, logger)
+
 			return unknownOutcomeFinding{reason: fmt.Sprintf("deployment %s exists, and no task the director lists names it", deploymentName)}
 		}
 
@@ -318,7 +323,56 @@ func (b *Broker) findUnknownOutcome(ctx context.Context, deploymentName string, 
 		}
 	}
 
+	if operation.Action == operationTypeDeprovision {
+		// The deployment check above found the deployment.
+		b.warnOfSkippedEvent(ctx, deploymentName, boshEventActionDelete, operation, logger)
+	}
+
 	return unknownOutcomeFinding{verdict: outcomeNeverStarted}
+}
+
+// warnOfSkippedEvent logs one warning for a pass that found the deployment
+// past the grace period and no task for the request. It names the newest
+// event of the action given that the event window left out, with its time.
+// The window compares the director's clock with the broker's, so a
+// director whose clock runs more than eventTimeAllowance behind has its
+// event for this request left out. A failed read of the events only
+// shortens the warning.
+func (b *Broker) warnOfSkippedEvent(ctx context.Context, deploymentName, action string, operation recordedOperation, logger logger.Logger) {
+	noun := requestNoun(operation.Action)
+	notBefore := operation.UnknownSince.Add(-eventTimeAllowance)
+
+	var (
+		newest bosh.Event
+		found  bool
+	)
+
+	events, err := b.BOSH.GetEvents(ctx, deploymentName)
+	if err == nil {
+		for _, event := range events {
+			if event.ObjectType != boshEventObjectDeployment || event.Action != action || !event.Time.Before(notBefore) {
+				continue
+			}
+
+			if !found || event.Time.After(newest.Time) {
+				newest, found = event, true
+			}
+		}
+	}
+
+	outcome := "A deprovision can now replace the record."
+	if operation.Action == operationTypeDeprovision {
+		outcome = "The delete is answered failed, and the deprovision can be retried."
+	}
+
+	if !found {
+		logger.Warning("Deployment %s exists past the grace period, and no task the director lists names the %s with context ID %s, and no %s event on it was left out of the event window. %s", deploymentName, noun, operation.ContextID, action, outcome)
+
+		return
+	}
+
+	logger.Warning("Deployment %s exists past the grace period, and no task the director lists names the %s with context ID %s. The newest %s event on it, for task %s, is dated %s, before the event window opens at %s, so it was skipped. If the director's clock runs more than %s behind the broker's, it belongs to this request. %s",
+		deploymentName, noun, operation.ContextID, action, newest.TaskID, newest.Time.UTC().Format(time.RFC3339), notBefore.UTC().Format(time.RFC3339), eventTimeAllowance, outcome)
 }
 
 // reasonNoUnknownSince is why a record that does not say when its outcome
