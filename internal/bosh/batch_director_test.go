@@ -20,14 +20,13 @@ import (
 // long.
 const batchWaitLimit = 5 * time.Second
 
-// The director's description of a deploy, and the task states the tests
+// The description of an errand's task, and the task states the tests
 // use.
 const (
-	createDeploymentDescription = "create deployment"
-	errandDescription           = "run errand smoke-tests"
-	batchTaskProcessing         = "processing"
-	batchTaskDone               = "done"
-	batchTaskError              = "error"
+	errandDescription   = "run errand smoke-tests"
+	batchTaskProcessing = "processing"
+	batchTaskDone       = "done"
+	batchTaskError      = "error"
 )
 
 // The deployments and the context ID the tests deploy with.
@@ -139,7 +138,7 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 	f.mu.Lock()
 	f.nextID++
 	started := &fakeBatchTask{
-		task: bosh.Task{ID: f.nextID, State: batchTaskProcessing, Description: createDeploymentDescription, Deployment: name},
+		task: bosh.Task{ID: f.nextID, State: batchTaskProcessing, Description: bosh.DeployTaskDescription, Deployment: name},
 		done: make(chan struct{}),
 	}
 	f.tasks[started.task.ID] = started
@@ -1215,7 +1214,7 @@ func TestBatchSlotIsHeldWhileAnUnknownOutcomeIsResolved(t *testing.T) {
 
 	const lostTaskID = 500
 
-	base.addTask(lostTaskID, firstDeployment, createDeploymentDescription)
+	base.addTask(lostTaskID, firstDeployment, bosh.DeployTaskDescription)
 	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
 
 	waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForContextID(t.Context(), firstContextID) })
@@ -1332,9 +1331,9 @@ func TestBatchLostAnswerFollowsARunningCreateTask(t *testing.T) {
 
 	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
 
-	base.addTask(runningTaskID, firstDeployment, createDeploymentDescription)
+	base.addTask(runningTaskID, firstDeployment, bosh.DeployTaskDescription)
 	base.set(func(f *fakeBatchBase) {
-		f.running = []bosh.Task{{ID: runningTaskID, State: batchTaskProcessing, Description: createDeploymentDescription, Deployment: firstDeployment}}
+		f.running = []bosh.Task{{ID: runningTaskID, State: batchTaskProcessing, Description: bosh.DeployTaskDescription, Deployment: firstDeployment}}
 	})
 	clock.advance(bosh.BatchLostAnswerInterval)
 
@@ -1360,7 +1359,7 @@ func TestBatchLostAnswerDoesNotFollowOtherRunningTasks(t *testing.T) {
 	others := map[string]bosh.Task{
 		"a dry run":                    {ID: 700, Description: "create deployment (dry run)", Deployment: firstDeployment},
 		"an errand":                    {ID: 700, Description: errandDescription, Deployment: firstDeployment},
-		"a deploy of another instance": {ID: 700, Description: createDeploymentDescription, Deployment: "dep-9"},
+		"a deploy of another instance": {ID: 700, Description: bosh.DeployTaskDescription, Deployment: "dep-9"},
 	}
 
 	for name, other := range others {
@@ -1393,8 +1392,8 @@ func TestAdoptOverTheLimitDelaysTheNextDeploy(t *testing.T) {
 	const firstAdopted, secondAdopted = 801, 802
 
 	base := newFakeBatchBase()
-	base.addTask(firstAdopted, firstDeployment, createDeploymentDescription)
-	base.addTask(secondAdopted, secondDeployment, createDeploymentDescription)
+	base.addTask(firstAdopted, firstDeployment, bosh.DeployTaskDescription)
+	base.addTask(secondAdopted, secondDeployment, bosh.DeployTaskDescription)
 	batch, _ := newTestBatch(t, base, 1)
 
 	batch.Adopt(firstAdopted)
@@ -2117,11 +2116,11 @@ func TestBatchLostAnswerFollowsACreateTaskBehindAnotherRunningTask(t *testing.T)
 
 	base := newFakeBatchBase()
 	base.addTask(errandTaskID, firstDeployment, errandDescription)
-	base.addTask(createTaskID, firstDeployment, createDeploymentDescription)
+	base.addTask(createTaskID, firstDeployment, bosh.DeployTaskDescription)
 	base.set(func(f *fakeBatchBase) {
 		f.running = []bosh.Task{
 			{ID: errandTaskID, State: batchTaskProcessing, Description: errandDescription, Deployment: firstDeployment},
-			{ID: createTaskID, State: batchTaskProcessing, Description: createDeploymentDescription, Deployment: firstDeployment},
+			{ID: createTaskID, State: batchTaskProcessing, Description: bosh.DeployTaskDescription, Deployment: firstDeployment},
 		}
 	})
 	batch, clock := newTestBatch(t, base, 1)
@@ -2206,7 +2205,7 @@ func TestBatchWaitForContextIDWithNoWatcherWaitsForTheFoundTask(t *testing.T) {
 	const foundTaskID = 610
 
 	base := newFakeBatchBase()
-	base.addTask(foundTaskID, firstDeployment, createDeploymentDescription)
+	base.addTask(foundTaskID, firstDeployment, bosh.DeployTaskDescription)
 	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = foundTaskID })
 	batch, _ := newTestBatch(t, base, 1)
 
@@ -2230,7 +2229,7 @@ func TestBatchWaitForContextIDWithNoWatcherIsServedByTheTaskWatcher(t *testing.T
 	const foundTaskID = 620
 
 	base := newFakeBatchBase()
-	base.addTask(foundTaskID, firstDeployment, createDeploymentDescription)
+	base.addTask(foundTaskID, firstDeployment, bosh.DeployTaskDescription)
 	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = foundTaskID })
 	batch, _ := newTestBatch(t, base, 1)
 
@@ -2262,7 +2261,7 @@ func TestBatchLostAnswerServesAWaitForTheTaskItFound(t *testing.T) {
 	base := newFakeBatchBase()
 	batch, _ := newTestBatch(t, base, 1)
 
-	base.addTask(lostTaskID, firstDeployment, createDeploymentDescription)
+	base.addTask(lostTaskID, firstDeployment, bosh.DeployTaskDescription)
 	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
 	startLostAnswer(t, base, batch)
 	waitUntil(t, "the watcher follows the task it found", func() bool { return base.waitCallsFor(lostTaskID) == 1 })
@@ -2291,7 +2290,7 @@ func TestBatchLostAnswerIsPrunedByItsContextID(t *testing.T) {
 	base := newFakeBatchBase()
 	batch, clock := newTestBatch(t, base, 1)
 
-	base.addTask(lostTaskID, firstDeployment, createDeploymentDescription)
+	base.addTask(lostTaskID, firstDeployment, bosh.DeployTaskDescription)
 	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
 	waited := startLostAnswer(t, base, batch)
 	waitUntil(t, "the watcher follows the task it found", func() bool { return base.waitCallsFor(lostTaskID) == 1 })

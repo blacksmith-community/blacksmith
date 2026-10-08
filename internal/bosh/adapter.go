@@ -258,6 +258,11 @@ type Stemcell struct {
 	Deployments []string `json:"deployments"`
 }
 
+// DeployTaskDescription is the description the director gives the task
+// of a deploy. A dry run of a deploy is described as "create deployment
+// (dry run)", so a deploy is matched on the whole description.
+const DeployTaskDescription = "create deployment"
+
 // Task represents a BOSH task.
 type Task struct {
 	ID          int        `json:"id"`

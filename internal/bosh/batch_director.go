@@ -63,10 +63,6 @@ const (
 	// batchFinishedReadTimeout bounds the read of a task that had already
 	// ended when UpdateDeployment returned it.
 	batchFinishedReadTimeout = 30 * time.Second
-	// batchCreateDeploymentDescription is the director's description of a
-	// deploy, which a watcher of a lost answer follows when it runs on the
-	// deployment.
-	batchCreateDeploymentDescription = "create deployment"
 )
 
 // batchClock is the time source of the batch director's watchers.
@@ -1111,7 +1107,7 @@ func (b *BatchDirector) findLostTask(ctx context.Context, watch *batchWatch) (in
 	}
 
 	for _, task := range running {
-		if task.Deployment == watch.deployment && task.Description == batchCreateDeploymentDescription {
+		if task.Deployment == watch.deployment && task.Description == DeployTaskDescription {
 			b.logger.Infof("BOSH task %d is a deploy running on deployment %s, so the batch director follows it for %s",
 				task.ID, watch.deployment, watch.lostDeploy())
 
@@ -1121,7 +1117,7 @@ func (b *BatchDirector) findLostTask(ctx context.Context, watch *batchWatch) (in
 
 	for _, task := range running {
 		b.logger.Infof("BOSH task %d (%q on deployment %q) runs on deployment %s, and it is not a %q task, so it is not followed",
-			task.ID, task.Description, task.Deployment, watch.deployment, batchCreateDeploymentDescription)
+			task.ID, task.Description, task.Deployment, watch.deployment, DeployTaskDescription)
 	}
 
 	return 0, lookupErr

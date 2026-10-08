@@ -468,16 +468,12 @@ func (b *Broker) warnOfSkippedEvent(ctx context.Context, deploymentName, action 
 // start at that time, so no event or running task is read without it.
 const reasonNoUnknownSince = "the record does not say when the outcome became unknown"
 
-// The descriptions the director gives the task of a deploy and the task of
-// a delete. The director adapter passes a task's description through as
-// the director wrote it.
-// The director writes a deploy as the bare "create deployment", a dry run
-// of it as "create deployment (dry run)", and a delete as "delete
-// deployment " followed by the name of the deployment.
-const (
-	directorTaskDescriptionDeploy       = "create deployment"
-	directorTaskDescriptionDeletePrefix = "delete deployment "
-)
+// directorTaskDescriptionDeletePrefix starts the description the director
+// gives the task of a delete, which goes on with the name of the
+// deployment. The director adapter passes a task's description through as
+// the director wrote it, and bosh.DeployTaskDescription is the description
+// of a deploy.
+const directorTaskDescriptionDeletePrefix = "delete deployment "
 
 // isRunningTaskOf reports whether a running task the director listed is
 // the task with exactly the description given, on deploymentName. A task
@@ -493,7 +489,7 @@ func isRunningTaskOf(task *bosh.Task, deploymentName, description string) bool {
 // names one, or when either check fails. A running task that is not a
 // deploy of the deployment is not adopted.
 func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, unknownSince time.Time, logger logger.Logger) (unknownOutcomeFinding, bool) {
-	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDeploy, boshEventActionCreate, unknownSince, logger)
+	return b.findOperationTask(ctx, deploymentName, bosh.DeployTaskDescription, boshEventActionCreate, unknownSince, logger)
 }
 
 // findDeleteTask looks for the delete task of a deprovision on a
