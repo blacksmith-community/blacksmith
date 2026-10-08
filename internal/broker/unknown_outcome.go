@@ -97,9 +97,11 @@ type unknownOutcomePass struct {
 	// running is held by the pass that runs.
 	running sync.Mutex
 
-	// warnedContextID is the context ID whose skipped-event warning the
-	// last pass logged. It is read and written only while running is held.
+	// warnedContextID and warnedAt are the context ID whose skipped-event
+	// warning the last pass logged, and when. They are read and written
+	// only while running is held.
 	warnedContextID string
+	warnedAt        time.Time
 
 	lastErrMu sync.Mutex
 	lastErr   string
@@ -391,14 +393,23 @@ func (b *Broker) findPastGrace(ctx context.Context, pass *unknownOutcomePass, de
 
 // warnOfSkippedCreateEvent logs the skipped-event warning of a provision
 // that stays in progress. Each poll runs a new pass over such a provision,
-// so the warning is logged for the first pass over a context ID, and again
-// once the outcome has been unknown for the alarm age.
+// so the warning is logged for the first pass over a context ID, again at
+// the first pass once the outcome has been unknown for the alarm age, and
+// after that no more than once in each alarm age.
 func (b *Broker) warnOfSkippedCreateEvent(ctx context.Context, pass *unknownOutcomePass, deploymentName string, operation recordedOperation, logger logger.Logger) {
-	if pass.warnedContextID == operation.ContextID && b.unknownOutcomeNow().Sub(operation.UnknownSince) < unknownOutcomeAlarmAge {
-		return
+	now := b.unknownOutcomeNow()
+
+	if pass.warnedContextID == operation.ContextID {
+		pastAlarmAge := now.Sub(operation.UnknownSince) >= unknownOutcomeAlarmAge
+		warnedSinceAlarmAge := !pass.warnedAt.Before(operation.UnknownSince.Add(unknownOutcomeAlarmAge))
+
+		if !pastAlarmAge || (warnedSinceAlarmAge && now.Sub(pass.warnedAt) < unknownOutcomeAlarmAge) {
+			return
+		}
 	}
 
 	pass.warnedContextID = operation.ContextID
+	pass.warnedAt = now
 
 	b.warnOfSkippedEvent(ctx, deploymentName, boshEventActionCreate, operation, logger)
 }

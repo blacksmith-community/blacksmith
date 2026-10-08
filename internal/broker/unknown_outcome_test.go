@@ -2197,6 +2197,43 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 
 				Expect(skippedWarnings()).To(HaveLen(2), "the poll at the alarm age logged %v", warnLog.warnings())
 			})
+
+			It("warns once for several polls past the day, and again a day later", func() {
+				loseDeploy()
+
+				unknown := recorded()
+
+				director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) {
+					return deploymentEventsAt(unknown.UnknownSince.Add(-10*time.Minute), boshEventCreate, deploymentName, createTaskID), nil
+				}
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				passGrace()
+				poll(outcomeProvision)
+
+				Expect(skippedWarnings()).To(HaveLen(1), "the first poll logged %v", warnLog.warnings())
+
+				frozenAt.Store(unknown.UnknownSince.Add(24 * time.Hour).UnixNano())
+
+				for range 3 {
+					poll(outcomeProvision)
+				}
+
+				Expect(skippedWarnings()).To(HaveLen(2), "the polls past the day logged %v", warnLog.warnings())
+
+				frozenAt.Store(unknown.UnknownSince.Add(47 * time.Hour).UnixNano())
+				poll(outcomeProvision)
+
+				Expect(skippedWarnings()).To(HaveLen(2), "a poll inside the second day logged %v", warnLog.warnings())
+
+				frozenAt.Store(unknown.UnknownSince.Add(48 * time.Hour).UnixNano())
+				poll(outcomeProvision)
+
+				Expect(skippedWarnings()).To(HaveLen(3), "a poll a day after the last warning logged %v", warnLog.warnings())
+			})
+
 			It("says the events could not be read when the second read fails", func() {
 				loseDeploy()
 
