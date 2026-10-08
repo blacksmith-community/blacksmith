@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
@@ -13,86 +13,71 @@ var (
 	ErrBatchPoolTimeout = errors.New("timeout waiting for batch connection slot")
 )
 
+// defaultMaxBatchJobs is the limit a max_batch_jobs of zero or less means.
+const defaultMaxBatchJobs = 4
+
 // BatchDirector wraps a Director with a separate connection pool for batch operations.
 // This allows batch upgrade jobs to use their own pool without competing with
 // normal API operations for connection slots.
+//
+// The slots are counted under one mutex. inFlight is how many deploys hold a
+// slot, limit is how many may, and changed is closed and replaced whenever a
+// slot is released or the limit changes, so a deploy waiting for a slot
+// looks again.
 type BatchDirector struct {
-	director  Director      // Base director (not pooled)
-	semaphore chan struct{} // Batch operation semaphore
-	timeout   time.Duration // Timeout for acquiring slot
-	logger    Logger
+	director Director      // Base director (not pooled)
+	timeout  time.Duration // Timeout for acquiring slot
+	logger   Logger
 
-	// Metrics
-	activeConnections int32
-	queuedRequests    int32
+	mu       sync.Mutex
+	inFlight int
+	limit    int
+	queued   int
+	changed  chan struct{}
 }
 
 // NewBatchDirector creates a new batch director wrapper.
 func NewBatchDirector(director Director, maxBatchJobs int, timeout time.Duration, logger Logger) *BatchDirector {
 	if maxBatchJobs <= 0 {
-		maxBatchJobs = 4 // Default
+		maxBatchJobs = defaultMaxBatchJobs
+	}
+
+	if logger == nil {
+		logger = &noOpLogger{}
 	}
 
 	return &BatchDirector{
-		director:  director,
-		semaphore: make(chan struct{}, maxBatchJobs),
-		timeout:   timeout,
-		logger:    logger,
+		director: director,
+		timeout:  timeout,
+		logger:   logger,
+		limit:    maxBatchJobs,
+		changed:  make(chan struct{}),
 	}
 }
 
-// acquireSlot waits for an available batch slot.
-func (b *BatchDirector) acquireSlot(ctx context.Context) error {
-	atomic.AddInt32(&b.queuedRequests, 1)
-	defer atomic.AddInt32(&b.queuedRequests, -1)
+// GetBatchPoolStats returns how many deploys hold a slot, how many wait
+// for one, and the limit.
+func (b *BatchDirector) GetBatchPoolStats() (int, int, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	select {
-	case b.semaphore <- struct{}{}:
-		atomic.AddInt32(&b.activeConnections, 1)
-		if b.logger != nil {
-			b.logger.Debugf("Acquired batch slot (active: %d, queued: %d)",
-				atomic.LoadInt32(&b.activeConnections),
-				atomic.LoadInt32(&b.queuedRequests))
-		}
-		return nil
-
-	case <-time.After(b.timeout):
-		return fmt.Errorf("%w after %v", ErrBatchPoolTimeout, b.timeout)
-
-	case <-ctx.Done():
-		return fmt.Errorf("context cancelled while waiting for batch slot: %w", ctx.Err())
-	}
+	return b.inFlight, b.queued, b.limit
 }
 
-// releaseSlot releases a batch slot back to the pool.
-func (b *BatchDirector) releaseSlot() {
-	<-b.semaphore
-	atomic.AddInt32(&b.activeConnections, -1)
-	if b.logger != nil {
-		b.logger.Debugf("Released batch slot (active: %d, queued: %d)",
-			atomic.LoadInt32(&b.activeConnections),
-			atomic.LoadInt32(&b.queuedRequests))
-	}
-}
-
-// GetBatchPoolStats returns current batch pool statistics.
-func (b *BatchDirector) GetBatchPoolStats() (active, queued, max int) {
-	return int(atomic.LoadInt32(&b.activeConnections)),
-		int(atomic.LoadInt32(&b.queuedRequests)),
-		cap(b.semaphore)
-}
-
-// UpdateMaxBatchJobs updates the maximum number of concurrent batch jobs.
-// Note: This creates a new semaphore. Existing in-flight operations continue
-// with the old semaphore until they complete.
+// UpdateMaxBatchJobs changes the maximum number of concurrent batch jobs.
+// Deploys that already hold a slot stay counted against the new limit, so
+// a smaller limit admits no new deploy until enough of them finish.
 func (b *BatchDirector) UpdateMaxBatchJobs(maxBatchJobs int) {
 	if maxBatchJobs <= 0 {
-		maxBatchJobs = 4
+		maxBatchJobs = defaultMaxBatchJobs
 	}
-	b.semaphore = make(chan struct{}, maxBatchJobs)
-	if b.logger != nil {
-		b.logger.Infof("Updated batch pool size to %d", maxBatchJobs)
-	}
+
+	b.mu.Lock()
+	b.limit = maxBatchJobs
+	b.signalLocked()
+	b.mu.Unlock()
+
+	b.logger.Infof("Updated batch pool size to %d", maxBatchJobs)
 }
 
 // =====================================================
@@ -304,3 +289,70 @@ func (b *BatchDirector) GetPoolStats() (*PoolStats, error) {
 
 // Ensure BatchDirector implements Director interface.
 var _ Director = (*BatchDirector)(nil)
+
+// =====================================================
+// Batch slot accounting
+// =====================================================
+
+// acquireSlot takes a batch slot when fewer deploys hold one than the
+// limit allows, and otherwise waits for a slot to be released or the limit
+// to change, for its context to end, or for its timeout.
+func (b *BatchDirector) acquireSlot(ctx context.Context) error {
+	timer := time.NewTimer(b.timeout)
+	defer timer.Stop()
+
+	b.mu.Lock()
+	b.queued++
+
+	for b.inFlight >= b.limit {
+		changed := b.changed
+		b.mu.Unlock()
+
+		select {
+		case <-changed:
+		case <-timer.C:
+			b.leaveQueue()
+
+			return fmt.Errorf("%w after %v", ErrBatchPoolTimeout, b.timeout)
+		case <-ctx.Done():
+			b.leaveQueue()
+
+			return fmt.Errorf("context cancelled while waiting for batch slot: %w", ctx.Err())
+		}
+
+		b.mu.Lock()
+	}
+
+	b.queued--
+	b.inFlight++
+	active, queued := b.inFlight, b.queued
+	b.mu.Unlock()
+
+	b.logger.Debugf("Acquired batch slot (active: %d, queued: %d)", active, queued)
+
+	return nil
+}
+
+// leaveQueue counts out a deploy that stopped waiting for a slot.
+func (b *BatchDirector) leaveQueue() {
+	b.mu.Lock()
+	b.queued--
+	b.mu.Unlock()
+}
+
+// releaseSlot releases a batch slot back to the pool.
+func (b *BatchDirector) releaseSlot() {
+	b.mu.Lock()
+	b.inFlight--
+	b.signalLocked()
+	active, queued := b.inFlight, b.queued
+	b.mu.Unlock()
+
+	b.logger.Debugf("Released batch slot (active: %d, queued: %d)", active, queued)
+}
+
+// signalLocked wakes every deploy waiting for a slot. The caller holds mu.
+func (b *BatchDirector) signalLocked() {
+	close(b.changed)
+	b.changed = make(chan struct{})
+}
