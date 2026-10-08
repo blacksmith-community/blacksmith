@@ -1164,6 +1164,56 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(director.Calls("FindTaskByContextID")).To(ContainElement(contextID))
 		})
 
+		It("an unknown delete stays in progress when the deployment is missing and then present", func() {
+			contextID := loseDelete()
+			unknown := recorded()
+			cleaner := useCleaner()
+
+			var checks atomic.Int32
+
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				if checks.Add(1) == 1 {
+					return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+				}
+
+				return &bosh.DeploymentDetail{Name: name, Manifest: "name: " + name}, nil
+			}
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete whose deployment came back answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(response.Description).To(ContainSubstring("still exists"), "the answer does not carry the reason")
+			Expect(recorded()).To(Equal(unknown), "the record of the unknown delete changed")
+			Expect(stillIndexed()).To(BeTrue())
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "a delete that was not confirmed started the CredHub cleanup")
+		})
+
+		It("an unknown delete stays in progress when the second deployment check fails", func() {
+			contextID := loseDelete()
+			unknown := recorded()
+
+			var checks atomic.Int32
+
+			director.onGetDeployment = func(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+				if checks.Add(1) == 1 {
+					return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, name)
+				}
+
+				return nil, routeNotFound()
+			}
+
+			response := poll(outcomeDeprovision)
+
+			Expect(response.State).To(Equal(osbapi.StateInProgress), "a delete whose second check failed answered %+v", response)
+			Expect(response.Description).To(ContainSubstring(contextID))
+			Expect(response.Description).To(ContainSubstring("/deployments/"+deploymentName), "the answer does not carry the failed check")
+			Expect(recorded()).To(Equal(unknown))
+			Expect(stillIndexed()).To(BeTrue())
+		})
+
 		It("an unknown delete is not settled by a route 404", func() {
 			contextID := loseDelete()
 			cleaner := useCleaner()

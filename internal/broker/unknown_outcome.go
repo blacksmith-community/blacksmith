@@ -322,13 +322,29 @@ func (b *Broker) settleUnknownOutcome(ctx context.Context, instanceID, deploymen
 
 // settleUnknownDeleteAsDeleted finishes a deprovision whose deployment the
 // director says does not exist, as a finished delete task would, and then
-// records the deprovision as finished.
+// records the deprovision as finished. When the director's next answer does
+// not confirm the deployment is gone, it answers in progress with the
+// reason and leaves the record unknown.
 func (b *Broker) settleUnknownDeleteAsDeleted(ctx context.Context, instanceID, deploymentName string, operation recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Info("The director says deployment %s of instance %s does not exist, so the delete with context ID %s is settled as deleted", deploymentName, instanceID, operation.ContextID)
 
 	response, err := b.handleSuccessfulDeprovision(ctx, instanceID, deploymentName, logger)
 	if err != nil || response.State != osbapi.StateSucceeded {
-		return response, err
+		// The director's word may change between two reads, as when a
+		// deployment is recreated. Only the grace rule may fail the
+		// operation, so the record stays unknown and the next poll asks
+		// again.
+		reason := response.Description
+		if err != nil {
+			reason = err.Error()
+		}
+
+		logger.Warning("Instance %s: the delete with context ID %s is not settled as deleted, because the director said deployment %s does not exist and then: %s", instanceID, operation.ContextID, deploymentName, reason)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateInProgress,
+			Description: fmt.Sprintf("Waiting for the director to show whether it started the delete with context ID %s; %s", operation.ContextID, reason),
+		}, nil
 	}
 
 	recordCtx, cancel := recordContext(ctx)
