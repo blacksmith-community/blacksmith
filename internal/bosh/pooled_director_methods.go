@@ -26,38 +26,26 @@ func (p *PooledDirector) GetDeployment(ctx context.Context, name string) (*Deplo
 	return p.director.GetDeployment(ctx, name)
 }
 
-// CreateDeployment implements Director interface with pooling.
+// CreateDeployment implements Director interface with pooling. The deploy
+// holds its slot until its task ends. A manifest that names no deployment
+// is refused before a slot is taken.
 func (p *PooledDirector) CreateDeployment(ctx context.Context, manifest string) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	name := ExtractDeploymentName(manifest)
+	if name == "" {
+		return nil, fmt.Errorf("%w: the manifest names no deployment", ErrDeploymentNameExtractionFailed)
+	}
+
+	return p.followMutation(ctx, poolDeployFollow(name), func(ctx context.Context) (*Task, error) {
 		return p.director.CreateDeployment(ctx, manifest)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w for CreateDeployment result: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
-// DeleteDeployment implements Director interface with pooling.
+// DeleteDeployment implements Director interface with pooling. The delete
+// holds its slot until its task ends.
 func (p *PooledDirector) DeleteDeployment(ctx context.Context, name string) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, follow{kind: "delete", deployment: name, lookup: contextIDLookup{match: deleteMatch(name)}}, func(ctx context.Context) (*Task, error) {
 		return p.director.DeleteDeployment(ctx, name)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w for DeleteDeployment result: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
 // GetDeploymentVMs implements Director interface - no pooling for read operations.
@@ -70,21 +58,12 @@ func (p *PooledDirector) GetReleases(ctx context.Context) ([]Release, error) {
 	return p.director.GetReleases(ctx)
 }
 
-// UploadRelease implements Director interface with pooling.
+// UploadRelease implements Director interface with pooling. The upload
+// holds its slot until its task ends.
 func (p *PooledDirector) UploadRelease(ctx context.Context, url string, sha1 string) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, follow{kind: "release upload", lookup: graceHold{}}, func(ctx context.Context) (*Task, error) {
 		return p.director.UploadRelease(ctx, url, sha1)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w for UploadRelease result: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
 // GetStemcells implements Director interface - no pooling for read operations.
@@ -92,21 +71,12 @@ func (p *PooledDirector) GetStemcells(ctx context.Context) ([]Stemcell, error) {
 	return p.director.GetStemcells(ctx)
 }
 
-// UploadStemcell implements Director interface with pooling.
+// UploadStemcell implements Director interface with pooling. The upload
+// holds its slot until its task ends.
 func (p *PooledDirector) UploadStemcell(ctx context.Context, url string, sha1 string) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, follow{kind: "stemcell upload", lookup: graceHold{}}, func(ctx context.Context) (*Task, error) {
 		return p.director.UploadStemcell(ctx, url, sha1)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
 // GetTask implements Director interface - no pooling for read operations.
@@ -129,10 +99,16 @@ func (p *PooledDirector) CancelTask(ctx context.Context, taskID int) error {
 	return p.director.CancelTask(ctx, taskID)
 }
 
-// WaitForTask implements Director interface - no pooling. A wait is a series
-// of task reads, and the pool holds no slot for a read, so a wait holds none
-// however long the task runs.
+// WaitForTask implements Director interface - no pooling. A wait for a task
+// the pool follows gets the follow's final task, so it never reads the
+// director alongside the follower. A wait for any other task passes
+// through. A wait holds no slot however long the task runs.
 func (p *PooledDirector) WaitForTask(ctx context.Context, id int) (*Task, error) {
+	task, followed, err := p.follow.awaitTask(ctx, id)
+	if followed {
+		return task, err
+	}
+
 	return p.director.WaitForTask(ctx, id)
 }
 
@@ -203,21 +179,12 @@ func (p *PooledDirector) ComputeConfigDiff(ctx context.Context, fromID, toID str
 	return p.director.ComputeConfigDiff(ctx, fromID, toID)
 }
 
-// Cleanup implements Director interface with pooling.
+// Cleanup implements Director interface with pooling. The cleanup holds
+// its slot until its task ends.
 func (p *PooledDirector) Cleanup(ctx context.Context, removeAll bool) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, follow{kind: "cleanup", lookup: graceHold{}}, func(ctx context.Context) (*Task, error) {
 		return p.director.Cleanup(ctx, removeAll)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
 // FetchLogs implements Director interface - no pooling for read operations.
@@ -245,72 +212,36 @@ func (p *PooledDirector) DeleteResurrectionConfig(ctx context.Context, deploymen
 	return p.director.DeleteResurrectionConfig(ctx, deploymentName)
 }
 
-// RestartDeployment implements Director interface with pooling.
+// RestartDeployment implements Director interface with pooling. The
+// restart holds its slot until its task ends.
 func (p *PooledDirector) RestartDeployment(ctx context.Context, name string, opts RestartOpts) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, jobStateFollow("restart", name), func(ctx context.Context) (*Task, error) {
 		return p.director.RestartDeployment(ctx, name, opts)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
-// StopDeployment implements Director interface with pooling.
+// StopDeployment implements Director interface with pooling. The
+// stop holds its slot until its task ends.
 func (p *PooledDirector) StopDeployment(ctx context.Context, name string, opts StopOpts) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, jobStateFollow("stop", name), func(ctx context.Context) (*Task, error) {
 		return p.director.StopDeployment(ctx, name, opts)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
-// StartDeployment implements Director interface with pooling.
+// StartDeployment implements Director interface with pooling. The
+// start holds its slot until its task ends.
 func (p *PooledDirector) StartDeployment(ctx context.Context, name string, opts StartOpts) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, jobStateFollow("start", name), func(ctx context.Context) (*Task, error) {
 		return p.director.StartDeployment(ctx, name, opts)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
-// RecreateDeployment implements Director interface with pooling.
+// RecreateDeployment implements Director interface with pooling. The
+// recreate holds its slot until its task ends.
 func (p *PooledDirector) RecreateDeployment(ctx context.Context, name string, opts RecreateOpts) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, jobStateFollow("recreate", name), func(ctx context.Context) (*Task, error) {
 		return p.director.RecreateDeployment(ctx, name, opts)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
 // ListErrands implements Director interface - no pooling for read operations.
@@ -318,7 +249,9 @@ func (p *PooledDirector) ListErrands(ctx context.Context, deployment string) ([]
 	return p.director.ListErrands(ctx, deployment)
 }
 
-// RunErrand implements Director interface with pooling.
+// RunErrand implements Director interface with pooling. An errand returns
+// no task to follow, so it holds its slot for the call only, and when the
+// caller's context ends early, the slot frees while the errand runs on.
 func (p *PooledDirector) RunErrand(ctx context.Context, deployment, errand string, opts ErrandOpts) (*ErrandResult, error) {
 	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
 		return p.director.RunErrand(ctx, deployment, errand, opts)
@@ -340,21 +273,12 @@ func (p *PooledDirector) GetInstances(ctx context.Context, deployment string) ([
 	return p.director.GetInstances(ctx, deployment)
 }
 
-// UpdateDeployment implements Director interface with pooling.
+// UpdateDeployment implements Director interface with pooling. The deploy
+// holds its slot until its task ends.
 func (p *PooledDirector) UpdateDeployment(ctx context.Context, name, manifest string) (*Task, error) {
-	result, err := p.withConnectionResult(ctx, func() (interface{}, error) {
+	return p.followMutation(ctx, poolDeployFollow(name), func(ctx context.Context) (*Task, error) {
 		return p.director.UpdateDeployment(ctx, name, manifest)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	task, ok := result.(*Task)
-	if !ok {
-		return nil, fmt.Errorf("%w: %T", ErrUnexpectedResultType, result)
-	}
-
-	return task, nil
 }
 
 // FindRunningTaskForDeployment implements Director interface - no pooling for read operations.
@@ -380,4 +304,19 @@ func (p *PooledDirector) FindTaskByContextID(ctx context.Context, contextID stri
 	}
 
 	return task, nil
+}
+
+// poolDeployFollow is the follow of a deploy of the deployment. Unlike the
+// batch director's, it is not supersedable, so a later deploy never takes
+// over its slot.
+func poolDeployFollow(deployment string) follow {
+	return follow{kind: kindDeploy, deployment: deployment, lookup: contextIDLookup{match: deployMatch(deployment)}}
+}
+
+// jobStateFollow is the follow of a job-state change on the deployment. The
+// director may store no context ID for it, and its task can't be told
+// apart from others on the deployment, so a lost answer holds the slot
+// while any task runs there.
+func jobStateFollow(kind, deployment string) follow {
+	return follow{kind: kind, deployment: deployment, lookup: runningTaskLookup{match: anyRunning()}}
 }

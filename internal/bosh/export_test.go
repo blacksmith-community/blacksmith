@@ -1,6 +1,7 @@
 package bosh
 
 import (
+	"context"
 	"time"
 
 	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
@@ -74,6 +75,41 @@ func BatchWatchesHeld(batch *BatchDirector) (int, int) {
 	defer batch.mu.Unlock()
 
 	return len(batch.follow.byTask), len(batch.follow.byContextID)
+}
+
+// SetPoolClock replaces the time source of a pooled director's watchers.
+// It is set before the pooled director starts any mutation.
+func SetPoolClock(pool *PooledDirector, clock BatchClock) {
+	pool.follow.clock = clock
+}
+
+// SetPoolWatchMax shortens how long a pooled director's watcher reads a
+// task the director does not answer for, and how long it holds a lost
+// answer while the deployment stays busy. It is set before the pooled
+// director starts any mutation.
+func SetPoolWatchMax(pool *PooledDirector, watchMax time.Duration) {
+	pool.follow.watchMax = watchMax
+}
+
+// PoolWatchersRunning reports how many of a pooled director's watcher
+// goroutines have not returned.
+func PoolWatchersRunning(pool *PooledDirector) int {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	return pool.follow.running
+}
+
+// AwaitPoolContextID waits for a pooled director's watch of the lost
+// answer with the context ID, and returns ErrNoWatcherForContextID when no
+// watch looks for it.
+func AwaitPoolContextID(ctx context.Context, pool *PooledDirector, contextID string) (*Task, error) {
+	task, found, err := pool.follow.awaitContextID(ctx, contextID)
+	if !found {
+		return nil, ErrNoWatcherForContextID
+	}
+
+	return task, err
 }
 
 // JoinBatchQueue puts a waiter that never takes a slot at the back of a

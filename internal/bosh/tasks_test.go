@@ -269,6 +269,7 @@ func TestPooledWaitDoesNotHoldASlot(t *testing.T) {
 
 	base := &slowWaitDirector{entered: make(chan struct{})}
 	pool := bosh.NewPooledDirector(base, 1, 200*time.Millisecond, nil)
+	t.Cleanup(pool.Stop)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

@@ -20,9 +20,11 @@ var (
 	// ErrWatchAbandoned is reported to the waiters of a watcher that gave
 	// up on its task and released its slot, because the director no longer
 	// knew the task, could not be read for followWatchMax, or refused reads
-	// for UnknownOutcomeGrace, or because no deploy ran on the deployment
-	// of a lost answer that carried no context ID.
-	ErrWatchAbandoned = errors.New("the batch director stopped following the BOSH task and released its slot")
+	// for UnknownOutcomeGrace, because no matching task ran on the
+	// deployment of a lost answer that carried no context ID, because the
+	// director can't be asked for the task of a lost answer, or because the
+	// deployment of a lost answer never went idle.
+	ErrWatchAbandoned = errors.New("Blacksmith stopped following the BOSH task and released its slot") //nolint:staticcheck // Blacksmith is a proper noun
 	// ErrNoTaskWithContextID is reported to the waiters of a watcher whose
 	// deploy lost its answer, when the director showed that no task has its
 	// context ID.
@@ -150,6 +152,29 @@ func deployMatch(deployment string) runningMatch {
 	}
 }
 
+// deleteMatch matches a delete running on the deployment, whose
+// description is exactly "delete deployment <name>".
+func deleteMatch(deployment string) runningMatch {
+	description := "delete deployment " + deployment
+
+	return runningMatch{
+		noun: "delete",
+		name: description,
+		match: func(task Task) bool {
+			return task.Deployment == deployment && task.Description == description
+		},
+	}
+}
+
+// anyRunning matches every task that runs on the deployment.
+func anyRunning() runningMatch {
+	return runningMatch{
+		noun:  "task",
+		name:  "any",
+		match: func(Task) bool { return true },
+	}
+}
+
 // contextIDLookup looks for a lost call's task by its context ID, when it
 // carries one, and then among the tasks running on its deployment.
 type contextIDLookup struct {
@@ -213,6 +238,70 @@ func (l contextIDLookup) giveUp(follower *taskFollower, watch *followWatch) erro
 		watch.lostCall(), l.match.noun, UnknownOutcomeGrace, follower.owner)
 
 	return fmt.Errorf("%w %s, and no %s runs on deployment %s", ErrNoTaskWithContextID, watch.contextID, l.match.noun, watch.call.deployment)
+}
+
+// runningTaskLookup holds the slot of a lost call that can't be told apart
+// from other tasks on its deployment, such as a job-state change, for as
+// long as the match finds a task running there. It never picks a task to
+// follow, and it never looks a task up by context ID, because the
+// director may not store the ID for these calls.
+type runningTaskLookup struct {
+	match runningMatch
+}
+
+// find reports the deployment busy when the match accepts any task that
+// runs on it, and an error when the check failed.
+func (l runningTaskLookup) find(ctx context.Context, follower *taskFollower, watch *followWatch) (int, bool, error) {
+	running, err := follower.director.FindRunningTasksForDeployment(ctx, watch.call.deployment)
+	if err != nil {
+		return 0, false, fmt.Errorf("the check for a task running on deployment %s failed: %w", watch.call.deployment, err)
+	}
+
+	for _, task := range running {
+		if l.match.match(task) {
+			follower.logger.Debugf("BOSH task %d (%q) runs on deployment %s, so the %s keeps the %s of %s",
+				task.ID, task.Description, watch.call.deployment, follower.owner, follower.slot, watch.lostCall())
+
+			return 0, true, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
+// giveUp ends the watch once the deployment went idle after the grace, or
+// once it stayed busy for the watch limit.
+func (l runningTaskLookup) giveUp(follower *taskFollower, watch *followWatch) error {
+	if watch.busy {
+		follower.logger.Errorf("Deployment %s never went idle in the %v after the answer to %s was lost, so the %s released its slot",
+			watch.call.deployment, follower.watchMax, watch.lostCall(), follower.owner)
+
+		return fmt.Errorf("%w: deployment %s never went idle in the %v after the answer to its %s was lost",
+			ErrWatchAbandoned, watch.call.deployment, follower.watchMax, watch.call.kind)
+	}
+
+	follower.logger.Errorf("No %s runs on deployment %s %v after the answer to %s was lost, so the %s released its slot",
+		l.match.noun, watch.call.deployment, UnknownOutcomeGrace, watch.lostCall(), follower.owner)
+
+	return fmt.Errorf("%w: no %s runs on deployment %s %v after the answer to its %s was lost",
+		ErrWatchAbandoned, l.match.noun, watch.call.deployment, UnknownOutcomeGrace, watch.call.kind)
+}
+
+// graceHold holds the slot of a lost call whose task the director can't
+// be asked for, such as an upload or a cleanup, for UnknownOutcomeGrace.
+type graceHold struct{}
+
+// find reports nothing found, and calls nothing on the director.
+func (graceHold) find(context.Context, *taskFollower, *followWatch) (int, bool, error) {
+	return 0, false, nil
+}
+
+// giveUp ends the watch once the grace has passed.
+func (graceHold) giveUp(follower *taskFollower, watch *followWatch) error {
+	follower.logger.Errorf("The director can't be asked for the task of %s, so the %s released its %s %v after the answer was lost",
+		watch.lostCall(), follower.owner, follower.slot, UnknownOutcomeGrace)
+
+	return fmt.Errorf("%w: the director can't be asked for the task of the %s whose answer was lost", ErrWatchAbandoned, watch.call.kind)
 }
 
 // followWatch is the watch of one call's task.
@@ -527,9 +616,10 @@ func (f *taskFollower) supersedeLostAnswer(deployment string) bool {
 
 // keepFinishedTask keeps a task that had already ended when the call
 // returned it, so a wait for it gets the final task. It holds no slot.
-// When the task lacks the deployment or the end time, it reads the task
-// once, bounded by followFinishedReadTimeout, and when that read fails,
-// waiters get the task the call returned.
+// When the task lacks the end time, or lacks the deployment of a call
+// that names one, it reads the task once, bounded by
+// followFinishedReadTimeout, and when that read fails, waiters get the
+// task the call returned.
 func (f *taskFollower) keepFinishedTask(c follow, returned Task) {
 	watch := newFollowWatch(c, "")
 	watch.holdsSlot = false
@@ -544,7 +634,7 @@ func (f *taskFollower) keepFinishedTask(c follow, returned Task) {
 // readFinishedTask returns the director's record of a finished task, or
 // the task the call returned when that record cannot be read.
 func (f *taskFollower) readFinishedTask(ctx context.Context, watch *followWatch, returned Task) *Task {
-	if returned.EndedAt != nil && returned.Deployment != "" {
+	if returned.EndedAt != nil && (returned.Deployment != "" || watch.call.deployment == "") {
 		return &returned
 	}
 
