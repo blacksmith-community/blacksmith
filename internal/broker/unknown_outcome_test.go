@@ -2450,6 +2450,47 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(recorded().UnknownSince.Equal(stampedAt)).To(BeTrue(), "the record says unknown since %s, not %s", recorded().UnknownSince, stampedAt)
 			})
 
+			It("stamps the record once when two polls find it at the same time", func() {
+				record := readRecord()
+				delete(record, "unknown_since")
+				Expect(vaultClient.Put(ctx, instanceID+"/task", record)).To(Succeed())
+
+				proxy := useProxy()
+
+				stampedAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+
+				frozenAt.Store(stampedAt.UnixNano())
+
+				var (
+					polling   sync.WaitGroup
+					start     = make(chan struct{})
+					responses = make([]osbapi.LastOperationResponse, 2)
+				)
+
+				for index := range responses {
+					polling.Add(1)
+
+					go func() {
+						defer GinkgoRecover()
+						defer polling.Done()
+
+						<-start
+
+						responses[index] = poll(outcomeProvision)
+					}()
+				}
+
+				close(start)
+				polling.Wait()
+
+				for _, response := range responses {
+					Expect(response.State).To(Equal(osbapi.StateInProgress), "a concurrent poll answered %+v", response)
+				}
+
+				Expect(proxy.WritesTo(instanceID+"/task")).To(HaveLen(1), "the polls wrote the record %d times", len(proxy.WritesTo(instanceID+"/task")))
+				Expect(recorded().UnknownSince.Equal(stampedAt)).To(BeTrue(), "the record says unknown since %s, not %s", recorded().UnknownSince, stampedAt)
+			})
+
 			It("asks the director for no events or running tasks for such a record", func() {
 				record := readRecord()
 				delete(record, "unknown_since")
