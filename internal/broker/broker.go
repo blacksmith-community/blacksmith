@@ -513,7 +513,7 @@ func (b *Broker) Deprovision(
 		return osbapi.DeprovisionResponse{}, false, err
 	}
 
-	err = b.recordDeprovisionRequest(ctx, instanceID, details, logger)
+	withdrawRequest, err := b.recordDeprovisionRequest(ctx, instanceID, details, logger)
 	if err != nil {
 		logger.Error("failed to record deprovision request in vault: %s", err)
 		// Continue anyway, this is non-fatal for existing instances
@@ -538,6 +538,12 @@ func (b *Broker) Deprovision(
 		superseded.Action, superseded.ContextID, 0, nil)
 
 	cancelTrack()
+
+	if err != nil {
+		// The refused deprovision takes its request back off the index
+		// entry, so the entry does not show a deprovision that never ran.
+		b.withdrawDeprovisionRequest(ctx, instanceID, withdrawRequest, logger)
+	}
 
 	if errors.Is(err, internalVault.ErrOutcomeUnknownRecorded) {
 		logger.Warning("Rejecting deprovision of instance %s: %s", instanceID, err)
@@ -1471,12 +1477,19 @@ func (b *Broker) buildCatalogAndPlans(serviceList []services.Service, logger log
 	logger.Info("Successfully built catalog with %d services and %d total plans", len(b.Catalog), totalPlans)
 }
 
-func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, logger logger.Logger) error {
+// recordDeprovisionRequest sets the deprovision request's fields on the
+// instance's index entry, and creates the entry when the index has none.
+// It returns a function that withdraws the request, for a deprovision that
+// is refused after it was recorded. The withdrawal puts back the value
+// each field held before, and removes a field the entry did not have,
+// but only where the field still holds what the request wrote. An entry
+// the request created, and that holds nothing else, is removed.
+func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest, logger logger.Logger) (func(context.Context) error, error) {
 	logger.Debug("recording deprovision request in vault immediately")
 
 	now := time.Now()
 
-	baseData := map[string]interface{}{
+	fields := map[string]interface{}{
 		"service_id":               details.ServiceID,
 		"plan_id":                  details.PlanID,
 		"deprovision_requested_at": now.Format(time.RFC3339),
@@ -1486,12 +1499,110 @@ func (b *Broker) recordDeprovisionRequest(ctx context.Context, instanceID string
 	recordCtx, cancel := recordContext(ctx)
 	defer cancel()
 
-	err := b.mergeIndexEntry(recordCtx, instanceID, baseData, nil)
+	var (
+		previous map[string]interface{}
+		existed  bool
+	)
+
+	err := b.Vault.UpdateIndex(recordCtx, func(entries map[string]interface{}) (bool, error) {
+		raw, found := entries[instanceID]
+		existed = found
+		previous = copyIndexEntry(raw)
+
+		entry := copyIndexEntry(raw)
+		for key, value := range fields {
+			entry[key] = value
+		}
+
+		entries[instanceID] = entry
+
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to record deprovision request in vault: %w", err)
+		return nil, fmt.Errorf("failed to record deprovision request in vault: failed to update the index entry for %s: %w", instanceID, err)
 	}
 
-	return nil
+	withdraw := func(withdrawCtx context.Context) error {
+		err := b.Vault.UpdateIndex(withdrawCtx, func(entries map[string]interface{}) (bool, error) {
+			return withdrawIndexFields(entries, instanceID, fields, previous, existed), nil
+		})
+		if err != nil {
+			return fmt.Errorf("failed to withdraw the deprovision request from the index entry for %s: %w", instanceID, err)
+		}
+
+		return nil
+	}
+
+	return withdraw, nil
+}
+
+// withdrawIndexFields puts back on the instance's index entry the value
+// each of fields held in previous, and removes a field previous did not
+// have, where the entry still holds the value fields gave it. When the
+// entry did not exist before and holds nothing but fields, it is removed.
+// It reports whether it changed the entries.
+func withdrawIndexFields(entries map[string]interface{}, instanceID string, fields, previous map[string]interface{}, existed bool) bool {
+	raw, found := entries[instanceID]
+	if !found {
+		return false
+	}
+
+	entry := copyIndexEntry(raw)
+
+	if !existed && len(entry) == len(fields) {
+		untouched := true
+
+		for key, value := range fields {
+			if entry[key] != value {
+				untouched = false
+			}
+		}
+
+		if untouched {
+			delete(entries, instanceID)
+
+			return true
+		}
+	}
+
+	changed := false
+
+	for key, value := range fields {
+		if entry[key] != value {
+			continue
+		}
+
+		if before, had := previous[key]; had {
+			entry[key] = before
+		} else {
+			delete(entry, key)
+		}
+
+		changed = true
+	}
+
+	if changed {
+		entries[instanceID] = entry
+	}
+
+	return changed
+}
+
+// withdrawDeprovisionRequest runs the withdrawal recordDeprovisionRequest
+// returned, detached from the request, and logs an error when it fails. A
+// request that was never recorded has nothing to withdraw.
+func (b *Broker) withdrawDeprovisionRequest(ctx context.Context, instanceID string, withdraw func(context.Context) error, logger logger.Logger) {
+	if withdraw == nil {
+		return
+	}
+
+	withdrawCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := withdraw(withdrawCtx)
+	if err != nil {
+		logger.Error("Instance %s: %s", instanceID, err)
+	}
 }
 
 // indexStatusRequestReceived is the status of an index entry whose provision

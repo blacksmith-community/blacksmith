@@ -236,7 +236,9 @@ func (b *Broker) DeleteRabbitMQUser(ctx context.Context, bindingID string, creds
 // RecordDeprovisionRequest exposes the index write that Deprovision makes
 // before it answers.
 func (b *Broker) RecordDeprovisionRequest(ctx context.Context, instanceID string, details osbapi.DeprovisionRequest) error {
-	return b.recordDeprovisionRequest(ctx, instanceID, details, logger.Get().Named("broker"))
+	_, err := b.recordDeprovisionRequest(ctx, instanceID, details, logger.Get().Named("broker"))
+
+	return err
 }
 
 // InstanceDetails exposes the read of an instance's provision details and
@@ -322,4 +324,10 @@ type RecordedOperation = recordedOperation
 // RecordedOperation exposes the read of an instance's recorded operation.
 func (b *Broker) RecordedOperation(ctx context.Context, instanceID string) (RecordedOperation, error) {
 	return b.readRecordedOperation(ctx, instanceID)
+}
+
+// WithdrawIndexFields exposes the change that takes a refused deprovision
+// request back off an index entry.
+func WithdrawIndexFields(entries map[string]interface{}, instanceID string, fields, previous map[string]interface{}, existed bool) bool {
+	return withdrawIndexFields(entries, instanceID, fields, previous, existed)
 }

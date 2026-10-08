@@ -1825,8 +1825,22 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(settled()).To(BeTrue(), "the refused deprovision left its claim behind")
 			})
 
+			// rawIndexEntry returns the instance's index entry as stored,
+			// and false when the index has none.
+			rawIndexEntry := func() (map[string]interface{}, bool) {
+				index, err := suite.vault.ReadSecret("db")
+				ExpectWithOffset(1, err).ToNot(HaveOccurred())
+
+				entry, found := index[instanceID].(map[string]interface{})
+
+				return entry, found
+			}
+
 			It("when the outcome becomes unknown while the deprovision is being accepted", func() {
 				indexInstance()
+
+				before, found := rawIndexEntry()
+				Expect(found).To(BeTrue())
 
 				contextID := uuid.NewString()
 				deletes := countDeletes()
@@ -1853,6 +1867,60 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				Expect(recorded().ContextID).To(Equal(contextID))
 				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
 				Expect(stillIndexed()).To(BeTrue())
+
+				after, found := rawIndexEntry()
+				Expect(found).To(BeTrue())
+				Expect(after).To(Equal(before), "the refused deprovision left its request on the index entry")
+			})
+
+			It("takes its request back off the index entry when its record write fails", func() {
+				indexInstance()
+
+				before, found := rawIndexEntry()
+				Expect(found).To(BeTrue())
+
+				deletes := countDeletes()
+				proxy := useProxy()
+
+				proxy.FailWrites(instanceID+"/task", http.StatusForbidden, refusal, -1)
+
+				err := deprovisionRefused()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(refusal))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+
+				after, found := rawIndexEntry()
+				Expect(found).To(BeTrue())
+				Expect(after).To(Equal(before), "the refused deprovision left its request on the index entry")
+			})
+
+			It("when the outcome becomes unknown while the deprovision of an unindexed instance is being accepted", func() {
+				contextID := uuid.NewString()
+				deletes := countDeletes()
+
+				director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				var lost sync.Once
+
+				director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+					lost.Do(func() {
+						defer GinkgoRecover()
+
+						Expect(vaultClient.TrackOutcomeUnknown(context.Background(), instanceID, outcomeProvision,
+							"The deploy's answer was lost", contextID, time.Now())).To(Succeed())
+					})
+
+					return nil, nil //nolint:nilnil // no running task is a nil task without an error
+				}
+
+				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrConcurrencyError))
+
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(deletes.Load()).To(BeZero(), "the refused deprovision sent a delete")
+
+				Expect(stillIndexed()).To(BeFalse(), "the refused deprovision left the index entry it created")
 			})
 		})
 
