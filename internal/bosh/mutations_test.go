@@ -970,3 +970,470 @@ func TestBatchSlotIsKeptWhenTheRealAdapterGetsA502Or504OnTheDeploy(t *testing.T)
 		})
 	}
 }
+
+// lookedUpTaskID is the task the test director lists under the context ID
+// of a request whose answer it dropped.
+const lookedUpTaskID = 77
+
+// lostAnswerDirector is a test director that drops the answer to every
+// mutating request after recording it, and hands each task list query to
+// a lookup answer. A GET of a single task answers with taskState.
+type lostAnswerDirector struct {
+	server    *boshtest.Director
+	mutations *mutationLog
+	lists     *mutationLog
+	taskState func() string
+}
+
+// newLostAnswerDirector starts a lostAnswerDirector whose single tasks are
+// done.
+func newLostAnswerDirector(t *testing.T, lookup func(http.ResponseWriter, *http.Request)) *lostAnswerDirector {
+	t.Helper()
+
+	director := &lostAnswerDirector{
+		mutations: &mutationLog{},
+		lists:     &mutationLog{},
+		taskState: func() string { return batchTaskDone },
+	}
+
+	director.server = boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet {
+			director.mutations.add(request)
+			boshtest.DropAnswer(writer)
+
+			return true
+		}
+
+		switch {
+		case request.URL.Path == taskListRoute:
+			director.lists.add(request)
+			lookup(writer, request)
+
+			return true
+		case strings.HasPrefix(request.URL.Path, "/tasks/"):
+			taskID, err := strconv.Atoi(strings.TrimPrefix(request.URL.Path, "/tasks/"))
+			if err != nil {
+				return false
+			}
+
+			boshtest.WriteJSON(writer, http.StatusOK, directorTask(taskID, director.taskState()))
+
+			return true
+		default:
+			return false
+		}
+	})
+
+	return director
+}
+
+// contextIDLookups returns the task list queries that asked for a context
+// ID.
+func (d *lostAnswerDirector) contextIDLookups() []sentMutation {
+	var lookups []sentMutation
+
+	for _, sent := range d.lists.all() {
+		if sent.Query.Has("context_id") {
+			lookups = append(lookups, sent)
+		}
+	}
+
+	return lookups
+}
+
+// lookedUpTask is the task the director lists under contextID for the
+// call, described the way the director describes it.
+func lookedUpTask(call mutationCall) map[string]interface{} {
+	task := contextTask(lookedUpTaskID, batchTaskProcessing, contextID)
+	task["deployment"] = call.deployment
+
+	if call.method == http.MethodDelete {
+		task["description"] = "delete deployment " + call.deployment
+	}
+
+	return task
+}
+
+// listsTheTask answers a query for contextID with the call's task, and
+// every other task list with nothing.
+func listsTheTask(call mutationCall) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("context_id") != contextID {
+			boshtest.WriteJSON(writer, http.StatusOK, []interface{}{})
+
+			return
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{lookedUpTask(call)})
+	}
+}
+
+// listsNothing answers every task list with nothing.
+func listsNothing(writer http.ResponseWriter, _ *http.Request) {
+	boshtest.WriteJSON(writer, http.StatusOK, []interface{}{})
+}
+
+// lookupFailure is the description of the director's error answer to a
+// task list.
+const lookupFailure = "the task list is unavailable"
+
+// failsEveryList answers every task list with a director error.
+func failsEveryList(writer http.ResponseWriter, _ *http.Request) {
+	boshtest.WriteError(writer, http.StatusInternalServerError, 100, lookupFailure)
+}
+
+// newLoggedAdapter returns an adapter over the test director whose log
+// lines a recordingLogger keeps.
+func newLoggedAdapter(t *testing.T, server *boshtest.Director, mutate func(*bosh.Config)) (bosh.Director, *recordingLogger) {
+	t.Helper()
+
+	logs := &recordingLogger{}
+	director := newReadAdapter(t, server, func(config *bosh.Config) {
+		config.Logger = logs
+
+		if mutate != nil {
+			mutate(config)
+		}
+	})
+
+	return director, logs
+}
+
+// checkFoundTask checks that a mutation whose answer was lost returned the
+// task the lookup by its context ID found, and that it looked up exactly
+// that ID once.
+func checkFoundTask(t *testing.T, director *lostAnswerDirector, task *bosh.Task, err error) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("expected the task the lookup found, got %v", err)
+	}
+
+	if task == nil || task.ID != lookedUpTaskID || task.ContextID != contextID {
+		t.Fatalf("expected task %d with context ID %s, got %+v", lookedUpTaskID, contextID, task)
+	}
+
+	lookups := director.contextIDLookups()
+	if len(lookups) != 1 {
+		t.Fatalf("expected one lookup by context ID, got %+v", lookups)
+	}
+
+	if lookups[0].Query.Get("verbose") != "2" || lookups[0].Query.Has("deployment") {
+		t.Errorf("expected a lookup at verbose 2 with no deployment, got %q", lookups[0].RequestURI)
+	}
+}
+
+// A deploy whose answer was lost is found by its context ID, so the caller
+// gets the deploy's task and never learns the answer was lost.
+func TestCreateDeploymentFindsTheTaskByContextIDAfterALostAnswer(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	call := createCall()
+	director := newLostAnswerDirector(t, listsTheTask(call))
+	adapter, logs := newLoggedAdapter(t, director.server, nil)
+
+	task, err := call.call(boshapi.WithContextID(t.Context(), contextID), adapter)
+	checkFoundTask(t, director, task, err)
+
+	if task.Description != bosh.DeployTaskDescription || task.Deployment != deploymentName {
+		t.Errorf("expected the deploy of %s as the director lists it, got %+v", deploymentName, task)
+	}
+
+	if sent := director.mutations.only(t); sent.Method != http.MethodPost || sent.ContextID != contextID {
+		t.Errorf("expected one POST with context ID %s, got %+v", contextID, sent)
+	}
+
+	if logs.count("INFO", "lost", contextID, "task "+strconv.Itoa(lookedUpTaskID)) != 1 {
+		t.Errorf("expected a log line that the answer was lost and the task was found, got %v", logs.lines)
+	}
+}
+
+// A delete whose answer was lost is found by its context ID the same way.
+func TestDeleteDeploymentFindsTheTaskByContextIDAfterALostAnswer(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	call := deleteCall()
+	director := newLostAnswerDirector(t, listsTheTask(call))
+	adapter, logs := newLoggedAdapter(t, director.server, nil)
+
+	task, err := call.call(boshapi.WithContextID(t.Context(), contextID), adapter)
+	checkFoundTask(t, director, task, err)
+
+	if task.Description != "delete deployment "+deploymentName {
+		t.Errorf("expected the delete of %s as the director lists it, got %+v", deploymentName, task)
+	}
+
+	if sent := director.mutations.only(t); sent.Method != http.MethodDelete || sent.Path != deploymentPath || sent.ContextID != contextID {
+		t.Errorf("expected one DELETE %s with context ID %s, got %+v", deploymentPath, contextID, sent)
+	}
+
+	if logs.count("INFO", "lost", contextID, "task "+strconv.Itoa(lookedUpTaskID)) != 1 {
+		t.Errorf("expected a log line that the answer was lost and the task was found, got %v", logs.lines)
+	}
+}
+
+// A deploy whose answer was lost is sent once, whatever the lookup finds,
+// even when the adapter may retry requests.
+func TestCreateDeploymentIsNeverResentAfterALostAnswer(t *testing.T) {
+	lookups := map[string]func(http.ResponseWriter, *http.Request){
+		"the lookup finds the task": listsTheTask(createCall()),
+		"the lookup finds nothing":  listsNothing,
+		"the lookup itself fails":   failsEveryList,
+	}
+
+	for name, lookup := range lookups {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			director := newLostAnswerDirector(t, lookup)
+			adapter, _ := newLoggedAdapter(t, director.server, func(config *bosh.Config) { config.MaxRetries = 3 })
+
+			_, _ = adapter.CreateDeployment(boshapi.WithContextID(t.Context(), contextID), mutationManifest)
+
+			if posts := requestsTo(director.server, http.MethodPost, deploymentsRoute); len(posts) != 1 {
+				t.Errorf("expected exactly one deploy POST, got %d: %+v", len(posts), director.server.APIRequests())
+			}
+
+			if lookups := director.contextIDLookups(); len(lookups) != 1 {
+				t.Errorf("expected one lookup by context ID, got %+v", lookups)
+			}
+		})
+	}
+}
+
+// A lost deploy whose task the lookup did not find is an unknown outcome
+// that names the deployment and the context ID, and says Blacksmith looked
+// for the task.
+func TestCreateDeploymentLostAnswerReturnsOutcomeUnknownWithDeploymentAndContextID(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	call := createCall()
+	director := newLostAnswerDirector(t, listsNothing)
+	adapter, _ := newLoggedAdapter(t, director.server, nil)
+
+	task, err := call.call(boshapi.WithContextID(t.Context(), contextID), adapter)
+	if task != nil {
+		t.Errorf("expected no task, got %+v", task)
+	}
+
+	unknown := checkLostAnswer(t, err, call, contextID)
+	if unknown.NoLookup {
+		t.Errorf("expected NoLookup false once the adapter looked, got %+v", unknown)
+	}
+
+	message := err.Error()
+	for _, want := range []string{"looked for a task with that context ID and found none yet", deploymentName, contextID} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the message to contain %q, got: %s", want, message)
+		}
+	}
+
+	lookups := director.contextIDLookups()
+	if len(lookups) != 1 || lookups[0].Query.Get("context_id") != contextID {
+		t.Errorf("expected one lookup by context ID %s, got %+v", contextID, lookups)
+	}
+}
+
+// A lookup that fails never replaces the unknown outcome with its own
+// error, and the adapter logs the lookup's error with the context ID.
+func TestLostAnswerLookupFailureStillReturnsOutcomeUnknown(t *testing.T) {
+	calls := map[string]mutationCall{"create": createCall(), "delete": deleteCall()}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			director := newLostAnswerDirector(t, failsEveryList)
+			adapter, logs := newLoggedAdapter(t, director.server, nil)
+
+			_, err := call.call(boshapi.WithContextID(t.Context(), contextID), adapter)
+
+			unknown := checkLostAnswer(t, err, call, contextID)
+			if unknown.NoLookup {
+				t.Errorf("expected NoLookup false once the adapter looked, got %+v", unknown)
+			}
+
+			var apiErr *boshapi.APIError
+			if errors.As(err, &apiErr) {
+				t.Errorf("the lookup's error must not reach the caller, got %v", err)
+			}
+
+			if sent := director.mutations.only(t); sent.Method != call.method || sent.ContextID != contextID {
+				t.Errorf("expected one %s with context ID %s, got %+v", call.method, contextID, sent)
+			}
+
+			if len(director.contextIDLookups()) != 1 {
+				t.Errorf("expected one lookup by context ID, got %+v", director.contextIDLookups())
+			}
+
+			if logs.count("ERROR", "lookup", contextID, lookupFailure) != 1 {
+				t.Errorf("expected one Error line about the lookup with the context ID and its error, got %v", logs.lines)
+			}
+		})
+	}
+}
+
+// The lookup runs on a context of its own, so a caller whose context ended
+// while the answer was lost still gets it.
+func TestLostAnswerLookupRunsAfterTheCallersContextEnds(t *testing.T) {
+	lookups := map[string]func(http.ResponseWriter, *http.Request){
+		"the lookup finds the task": listsTheTask(createCall()),
+		"the lookup finds nothing":  listsNothing,
+	}
+
+	for name, lookup := range lookups {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			ctx, cancel := context.WithCancel(boshapi.WithContextID(t.Context(), contextID))
+			defer cancel()
+
+			var mutations mutationLog
+
+			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+				if request.Method == http.MethodGet && request.URL.Path == taskListRoute {
+					lookup(writer, request)
+
+					return true
+				}
+
+				if request.Method == http.MethodGet {
+					return false
+				}
+
+				mutations.add(request)
+				cancelOnArrival(cancel)(writer, request)
+
+				return true
+			})
+			adapter, _ := newLoggedAdapter(t, server, nil)
+
+			task, err := adapter.CreateDeployment(ctx, mutationManifest)
+
+			lists := requestsTo(server, http.MethodGet, taskListRoute)
+			if len(lists) != 1 || !strings.Contains(lists[0].RawQuery, "context_id="+contextID) {
+				t.Fatalf("expected the lookup by context ID after the caller's context ended, got %+v", server.APIRequests())
+			}
+
+			if len(mutations.all()) != 1 {
+				t.Errorf("expected one deploy, got %+v", mutations.all())
+			}
+
+			if name == "the lookup finds the task" {
+				if err != nil || task == nil || task.ID != lookedUpTaskID {
+					t.Errorf("expected the task the lookup found, got %+v and %v", task, err)
+				}
+
+				return
+			}
+
+			_ = checkLostAnswer(t, err, createCall(), contextID)
+		})
+	}
+}
+
+// The batch director keeps the slot of a deploy whose answer was lost and
+// whose task the adapter's lookup did not find yet. Its watcher finds the
+// task by the context ID later, follows it to the end, and then frees the
+// slot.
+func TestBatchDirectorFollowsALostDeployAnswerThroughTheRealAdapter(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	var (
+		mu       sync.Mutex
+		listed   bool
+		finished bool
+	)
+
+	director := newLostAnswerDirector(t, func(writer http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		show := listed
+		mu.Unlock()
+
+		if !show || request.URL.Query().Get("context_id") != contextID {
+			boshtest.WriteJSON(writer, http.StatusOK, []interface{}{})
+
+			return
+		}
+
+		boshtest.WriteJSON(writer, http.StatusOK, []interface{}{lookedUpTask(updateCall())})
+	})
+	director.taskState = func() string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if finished {
+			return batchTaskDone
+		}
+
+		return batchTaskProcessing
+	}
+
+	adapter := newReadAdapter(t, director.server, nil)
+	bosh.SetTaskPollInterval(adapter, testPollInterval)
+
+	batch := bosh.NewBatchDirector(adapter, 1, time.Minute, nil)
+	clock := newFakeBatchClock()
+	bosh.SetBatchClock(batch, clock)
+	t.Cleanup(batch.Stop)
+
+	_, err := batch.UpdateDeployment(boshapi.WithContextID(t.Context(), contextID), deploymentName, mutationManifest)
+
+	unknown := checkLostAnswer(t, err, updateCall(), contextID)
+	if unknown.NoLookup {
+		t.Errorf("expected NoLookup false once the adapter looked, got %+v", unknown)
+	}
+
+	// The adapter's own lookup carries the request's context ID header,
+	// and the watcher's carries none.
+	inline := 0
+
+	for _, lookup := range director.contextIDLookups() {
+		if lookup.ContextID == contextID {
+			inline++
+		}
+	}
+
+	if inline != 1 {
+		t.Fatalf("expected the adapter to look for the task once before it returned, got %+v", director.contextIDLookups())
+	}
+
+	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+
+	if active, _, _ := batch.GetBatchPoolStats(); active != 1 {
+		t.Fatalf("expected the slot held while the watcher looks, got %d active", active)
+	}
+
+	mu.Lock()
+	listed = true
+	mu.Unlock()
+
+	clock.advance(bosh.BatchLostAnswerInterval)
+
+	taskPath := "/tasks/" + strconv.Itoa(lookedUpTaskID)
+	waitUntil(t, "the watcher reads the task it found", func() bool {
+		return len(requestsTo(director.server, http.MethodGet, taskPath)) > 0
+	})
+
+	if active, _, _ := batch.GetBatchPoolStats(); active != 1 {
+		t.Errorf("expected the slot held while the task runs, got %d active", active)
+	}
+
+	mu.Lock()
+	finished = true
+	mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(t.Context(), batchWaitLimit)
+	defer cancel()
+
+	task, err := batch.WaitForContextID(ctx, contextID)
+	if err != nil || task == nil || task.ID != lookedUpTaskID || task.State != batchTaskDone {
+		t.Fatalf("expected the watcher to follow task %d to done, got %+v and %v", lookedUpTaskID, task, err)
+	}
+
+	waitBatchStats(t, batch, 0, 0)
+
+	if posts := requestsTo(director.server, http.MethodPost, deploymentsRoute); len(posts) != 1 {
+		t.Errorf("expected exactly one deploy POST, got %d", len(posts))
+	}
+}

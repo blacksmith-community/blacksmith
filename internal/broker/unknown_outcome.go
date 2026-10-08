@@ -487,7 +487,10 @@ func isRunningTaskOf(task *bosh.Task, deploymentName, description string) bool {
 // deployment, the way recoverProvision does. It reports true with the
 // finding when a deploy task runs on the deployment, when a create event
 // names one, or when either check fails. A running task that is not a
-// deploy of the deployment is not adopted.
+// deploy of the deployment is not adopted. It is the fallback to the
+// lookup by context ID, and the director describes a restart, stop,
+// start, or recreate the same way as a deploy, so a running job-state
+// change on the deployment matches too.
 func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, unknownSince time.Time, logger logger.Logger) (unknownOutcomeFinding, bool) {
 	return b.findOperationTask(ctx, deploymentName, bosh.DeployTaskDescription, boshEventActionCreate, unknownSince, logger)
 }

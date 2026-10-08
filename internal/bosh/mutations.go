@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/google/uuid"
@@ -12,6 +13,10 @@ import (
 // maxContextIDLength is the longest context ID the director accepts in its
 // X-Bosh-Context-Id header.
 const maxContextIDLength = 64
+
+// lostAnswerLookupTimeout bounds the lookup by context ID that a deploy or
+// a delete makes once its answer was lost.
+const lostAnswerLookupTimeout = 30 * time.Second
 
 // allJobs is the job a job-state change targets to act on every instance
 // of a deployment. boshapi sends it as a literal "*", as bosh-cli does.
@@ -69,16 +74,22 @@ type mutation struct {
 	contextID string
 	// what says what the request does, for a failure message.
 	what string
+	// lookup is true for a request whose task the director tags with the
+	// context ID, which are deploys and deletes, so a lost answer is
+	// looked up by that ID.
+	lookup bool
 }
 
 // accepted turns a mutation's answer into the task the director's redirect
 // names, as soon as the director has accepted the request. An error that
-// may hide a request the director accepted becomes an OutcomeUnknownError
-// with NoLookup set, even when the caller's context has ended, because the
-// caller must not resend such a request. Any other error keeps the
-// director's answer or the transport failure reachable through errors.As,
-// so a follower can see that no task started.
-func (d *DirectorAdapter) accepted(call mutation, task *boshapi.Task, err error) (*Task, error) {
+// may hide a request the director accepted becomes an OutcomeUnknownError,
+// even when the caller's context has ended, because the caller must not
+// resend such a request. A deploy or a delete first looks for its task by
+// the context ID, and returns that task when the director lists it. Other
+// mutations make no lookup, and their error has NoLookup set. Any other
+// error keeps the director's answer or the transport failure reachable
+// through errors.As, so a follower can see that no task started.
+func (d *DirectorAdapter) accepted(ctx context.Context, call mutation, task *boshapi.Task, err error) (*Task, error) {
 	if err == nil && task == nil {
 		err = ErrEmptyDirectorAnswer
 	}
@@ -87,14 +98,7 @@ func (d *DirectorAdapter) accepted(call mutation, task *boshapi.Task, err error)
 		d.log.Errorf("Failed to %s (context ID %s): %v", call.what, call.contextID, err)
 
 		if boshapi.IsOutcomeUnknown(err) || errors.Is(err, ErrEmptyDirectorAnswer) {
-			return nil, &OutcomeUnknownError{
-				Operation:  call.operation,
-				Director:   d.address,
-				Deployment: call.deployment,
-				ContextID:  call.contextID,
-				NoLookup:   true,
-				Err:        err,
-			}
+			return d.lostAnswer(ctx, call, err)
 		}
 
 		return nil, d.requestFailure(call.what, err)
@@ -105,6 +109,50 @@ func (d *DirectorAdapter) accepted(call mutation, task *boshapi.Task, err error)
 	d.log.Infof("The director accepted the request to %s as task %d (context ID %s)", call.what, result.ID, call.contextID)
 
 	return &result, nil
+}
+
+// lostAnswer settles a mutation whose answer was lost. A deploy or a
+// delete looks for its task by the context ID it carried, on a context of
+// its own bounded by lostAnswerLookupTimeout, so the lookup runs even when
+// the caller's context has ended. The director's task for that ID is the
+// request's task, and it is returned with no error. When the director
+// lists none, or the lookup fails, the outcome stays unknown, and a failed
+// lookup is only logged. Every other mutation makes no lookup, because the
+// director may not tag its task with the ID.
+func (d *DirectorAdapter) lostAnswer(ctx context.Context, call mutation, err error) (*Task, error) {
+	unknown := &OutcomeUnknownError{
+		Operation:  call.operation,
+		Director:   d.address,
+		Deployment: call.deployment,
+		ContextID:  call.contextID,
+		NoLookup:   !call.lookup,
+		Err:        err,
+	}
+
+	if !call.lookup {
+		return nil, unknown
+	}
+
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lostAnswerLookupTimeout)
+	defer cancel()
+
+	found, lookupErr := d.findTaskByContextID(lookupCtx, call.contextID)
+
+	switch {
+	case lookupErr != nil:
+		d.log.Errorf("The answer to the request to %s was lost, and the lookup of its task by the context ID %s failed, so its outcome stays unknown: %v",
+			call.what, call.contextID, lookupErr)
+	case found == nil || found.ID <= 0:
+		d.log.Infof("The answer to the request to %s was lost, and the director lists no task with its context ID %s yet, so its outcome stays unknown",
+			call.what, call.contextID)
+	default:
+		d.log.Infof("The answer to the request to %s was lost, and the director lists task %d (state %s) with its context ID %s, so that task is the request's",
+			call.what, found.ID, found.State, call.contextID)
+
+		return found, nil
+	}
+
+	return nil, unknown
 }
 
 // CreateDeployment sends the manifest to the director and returns the
@@ -142,11 +190,12 @@ func (d *DirectorAdapter) deploy(ctx context.Context, operation, deploymentName,
 
 	task, err := d.api.Deployments().Deploy(ctx, manifest, nil)
 
-	return d.accepted(mutation{
+	return d.accepted(ctx, mutation{
 		operation:  operation,
 		deployment: deploymentName,
 		contextID:  contextID,
 		what:       "deploy deployment " + deploymentName,
+		lookup:     true,
 	}, task, err)
 }
 
@@ -174,11 +223,12 @@ func (d *DirectorAdapter) DeleteDeployment(ctx context.Context, name string) (_ 
 		return nil, fmt.Errorf("%w: %w", ErrDeploymentNotFound, err)
 	}
 
-	return d.accepted(mutation{
+	return d.accepted(ctx, mutation{
 		operation:  "DeleteDeployment",
 		deployment: name,
 		contextID:  contextID,
 		what:       "delete deployment " + name,
+		lookup:     true,
 	}, task, err)
 }
 
@@ -197,7 +247,7 @@ func (d *DirectorAdapter) UploadRelease(ctx context.Context, url, sha1 string) (
 
 	task, err := d.api.Releases().Upload(ctx, &boshapi.UploadReleaseOptions{URL: url, SHA1: sha1})
 
-	return d.accepted(mutation{
+	return d.accepted(ctx, mutation{
 		operation: "UploadRelease",
 		contextID: contextID,
 		what:      "upload release from " + url,
@@ -219,7 +269,7 @@ func (d *DirectorAdapter) UploadStemcell(ctx context.Context, url, sha1 string) 
 
 	task, err := d.api.Stemcells().Upload(ctx, &boshapi.UploadStemcellOptions{URL: url, SHA1: sha1})
 
-	return d.accepted(mutation{
+	return d.accepted(ctx, mutation{
 		operation: "UploadStemcell",
 		contextID: contextID,
 		what:      "upload stemcell from " + url,
@@ -240,7 +290,7 @@ func (d *DirectorAdapter) Cleanup(ctx context.Context, removeAll bool) (_ *Task,
 
 	task, err := d.api.Cleanup().Cleanup(ctx, &boshapi.CleanupRequest{Config: boshapi.CleanupConfig{RemoveAll: removeAll}})
 
-	return d.accepted(mutation{
+	return d.accepted(ctx, mutation{
 		operation: "Cleanup",
 		contextID: contextID,
 		what:      "run cleanup",
@@ -310,7 +360,7 @@ func (d *DirectorAdapter) changeJobState(ctx context.Context, operation, name st
 
 	task, err := d.api.Instances().UpdateJobState(ctx, name, allJobs, opts)
 
-	return d.accepted(mutation{
+	return d.accepted(ctx, mutation{
 		operation:  operation,
 		deployment: name,
 		contextID:  contextID,

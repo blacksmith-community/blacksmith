@@ -260,7 +260,11 @@ type Stemcell struct {
 
 // DeployTaskDescription is the description the director gives the task
 // of a deploy. A dry run of a deploy is described as "create deployment
-// (dry run)", so a deploy is matched on the whole description.
+// (dry run)", so a deploy is matched on the whole description. The
+// director gives a restart, stop, start, or recreate of a deployment the
+// same description, so a match on it alone can take a job-state change
+// for a deploy. A deploy's task is found by its context ID first, and a
+// match on the description is only the fallback.
 const DeployTaskDescription = "create deployment"
 
 // Task represents a BOSH task.

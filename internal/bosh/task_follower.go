@@ -158,7 +158,9 @@ type runningMatch struct {
 }
 
 // deployMatch matches a deploy running on the deployment, whose
-// description is exactly DeployTaskDescription.
+// description is exactly DeployTaskDescription. It is the fallback to the
+// lookup by context ID, and it also matches a job-state change, which the
+// director describes the same way.
 func deployMatch(deployment string) runningMatch {
 	return runningMatch{
 		noun: kindDeploy,
@@ -170,7 +172,8 @@ func deployMatch(deployment string) runningMatch {
 }
 
 // deleteMatch matches a delete running on the deployment, whose
-// description is exactly "delete deployment <name>".
+// description is exactly "delete deployment <name>". It is the fallback
+// to the lookup by context ID.
 func deleteMatch(deployment string) runningMatch {
 	description := "delete deployment " + deployment
 
