@@ -1074,6 +1074,29 @@ func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operatio
 	return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
 }
 
+// refuseProvisionOverUnknownOutcome answers a provision of an instance the
+// index does not have. It refuses the provision with the OSB concurrency
+// error when the instance's record holds an operation whose outcome is
+// unknown, and fails it when the record cannot be read. Otherwise it leaves
+// the request unanswered, so it goes on as a new provision.
+func (b *Broker) refuseProvisionOverUnknownOutcome(ctx context.Context, instanceID string, logger logger.Logger) (osbapi.ProvisionResponse, bool, bool, error) {
+	recorded, err := b.readRecordedOperation(ctx, instanceID)
+	if err != nil {
+		logger.Error("Refusing provision of instance %s: it has no index entry, and its recorded operation could not be read: %s", instanceID, err)
+
+		return osbapi.ProvisionResponse{}, false, false, fmt.Errorf("could not read the recorded operation of instance %s, which has no index entry, so the provision was refused: %w", instanceID, err)
+	}
+
+	if recorded.State == internalVault.TaskStateOutcomeUnknown {
+		logger.Warning("Refusing provision of instance %s: it has no index entry, and the outcome of its %s with context ID %s is unknown",
+			instanceID, recorded.Action, recorded.ContextID)
+
+		return osbapi.ProvisionResponse{}, false, true, osbapi.ErrConcurrencyError
+	}
+
+	return osbapi.ProvisionResponse{}, false, false, nil
+}
+
 // answerProvisionFromIndex answers a provision request for an instance the
 // index already has, from the instance's records, and reports whether it
 // answered. An instance with no index entry is not answered, and neither is
@@ -1081,7 +1104,10 @@ func (b *Broker) answerDeprovisionWhileClaimed(instanceID string, held *operatio
 // accepted, once the director confirms that the deployment the provision
 // would create does not exist. Those requests go on as new provisions. An
 // index or record that cannot be read fails the request, because taking it
-// for a missing instance could deploy over one that exists.
+// for a missing instance could deploy over one that exists. An instance
+// with no index entry whose record holds an operation with an unknown
+// outcome gets the OSB concurrency error, because a new deploy would
+// replace the record that holds the context ID and the unknown-since time.
 //
 // An instance that is marked deleted, is being deprovisioned, or whose
 // provision failed gets 409 Conflict, and nothing is deployed over it. Any
@@ -1106,7 +1132,7 @@ func (b *Broker) answerProvisionFromIndex(ctx context.Context, instanceID string
 
 	raw, found := idx.Data[instanceID]
 	if !found || raw == nil {
-		return osbapi.ProvisionResponse{}, false, false, nil
+		return b.refuseProvisionOverUnknownOutcome(readCtx, instanceID, logger)
 	}
 
 	entry := copyIndexEntry(raw)

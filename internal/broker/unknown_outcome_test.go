@@ -1924,6 +1924,22 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			})
 		})
 
+		It("a provision of an instance whose unknown delete has no index entry is refused", func() {
+			contextID := loseDelete()
+
+			Expect(vaultClient.Index(ctx, instanceID, nil)).To(Succeed())
+
+			_, _, err := brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
+				ServiceID: serviceID, PlanID: planID, OrganizationGUID: outcomeOrgGUID, SpaceGUID: outcomeSpaceGUID,
+			}, true)
+			Expect(err).To(MatchError(osbapi.ErrConcurrencyError))
+
+			Expect(recorded().State).To(Equal(outcomeStateUnknown))
+			Expect(recorded().Action).To(Equal(outcomeDeprovision))
+			Expect(recorded().ContextID).To(Equal(contextID))
+			Expect(stillIndexed()).To(BeFalse(), "the refused provision indexed the instance")
+		})
+
 		It("progress written during an unknown outcome keeps the unknown-since time", func() {
 			contextID := loseDelete()
 			unknown := recorded()
@@ -2055,6 +2071,49 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 				// The platform's deprovision after the failure is no longer
 				// refused as an unknown outcome.
 				Expect(deprovisionRefused()).To(MatchError(osbapi.ErrGoneError))
+			})
+
+			// provisionAgain sends a provision with the instance's ID and
+			// returns a count of the deploys it sends, and its error.
+			provisionAgain := func() (*atomic.Int32, error) {
+				var deploys atomic.Int32
+
+				director.onCreateDeployment = func(context.Context, string) (*bosh.Task, error) {
+					deploys.Add(1)
+
+					return &bosh.Task{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment}, nil
+				}
+
+				_, _, err := brokerInstance.Provision(ctx, instanceID, osbapi.ProvisionRequest{
+					ServiceID: serviceID, PlanID: planID, OrganizationGUID: outcomeOrgGUID, SpaceGUID: outcomeSpaceGUID,
+				}, true)
+
+				return &deploys, err //nolint:wrapcheck // the spec matches the broker's own error
+			}
+
+			It("refuses a provision with the same ID and keeps the record", func() {
+				unknown := recorded()
+
+				deploys, err := provisionAgain()
+				Expect(err).To(MatchError(osbapi.ErrConcurrencyError))
+
+				Consistently(deploys.Load, 200*time.Millisecond).Should(BeZero(), "the refused provision sent a deploy")
+				Expect(recorded()).To(Equal(unknown), "the refused provision changed the record")
+				Expect(recorded().ContextID).To(Equal(contextID))
+				Expect(stillIndexed()).To(BeFalse(), "the refused provision indexed the instance")
+			})
+
+			It("refuses a provision with the same ID when the record cannot be read", func() {
+				proxy := useProxy()
+
+				proxy.FailReads(instanceID+"/task", http.StatusForbidden, refusal, -1)
+
+				deploys, err := provisionAgain()
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring(refusal))
+
+				Consistently(deploys.Load, 200*time.Millisecond).Should(BeZero(), "the refused provision sent a deploy")
+				Expect(stillIndexed()).To(BeFalse(), "the refused provision indexed the instance")
 			})
 
 			It("refuses a deprovision past the grace period while a task runs on the deployment the director lacks", func() {
