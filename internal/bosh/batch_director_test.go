@@ -53,8 +53,8 @@ type fakeBatchTask struct {
 
 // fakeBatchBase is a base director for the batch director. A deploy it
 // accepts stays processing until the test finishes its task, unless the
-// test makes deploys block until they finish, the way the bosh-cli adapter
-// does.
+// test makes deploys block until they finish, so the deploy call returns
+// a task that has already ended.
 type fakeBatchBase struct {
 	bosh.Director
 
@@ -182,7 +182,9 @@ func (f *fakeBatchBase) UpdateDeployment(ctx context.Context, name, _ string) (*
 		return nil, fmt.Errorf("deploy of %s: %w", name, ctx.Err())
 	}
 
-	// The bosh-cli adapter's task carries no deployment and no end time.
+	// Unless completeAnswer is set, the task the call returns lacks its
+	// deployment and end time, so the batch director reads the director's
+	// record of it.
 	finished := f.taskSnapshot(accepted.ID)
 
 	f.mu.Lock()
@@ -1203,10 +1205,11 @@ func finishBlockingDeploy(t *testing.T, base *fakeBatchBase, batch *bosh.BatchDi
 	return got.task
 }
 
-// The bosh-cli adapter's UpdateDeployment returns once the deploy has
-// finished, so the slot is released before the call returns, with no read
-// of the task. Waiters get the director's record of the task, read after
-// the slot was released.
+// A deploy call can return a task that has already ended, such as the
+// task the adapter found by context ID after the deploy's answer was lost.
+// Its slot is released before the call returns, with no read of the task.
+// When the returned task lacks its deployment and end time, waiters get
+// the director's record of the task, read after the slot was released.
 func TestBatchSlotIsReleasedWhenABlockingDeployReturnsAFinishedTask(t *testing.T) {
 	t.Parallel()
 
