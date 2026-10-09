@@ -475,6 +475,12 @@ const reasonNoUnknownSince = "the record does not say when the outcome became un
 // of a deploy.
 const directorTaskDescriptionDeletePrefix = "delete deployment "
 
+// deleteTaskDescription is the description the director gives the task
+// of the delete of deploymentName.
+func deleteTaskDescription(deploymentName string) string {
+	return directorTaskDescriptionDeletePrefix + deploymentName
+}
+
 // isRunningTaskOf reports whether a running task the director listed is
 // the task with exactly the description given, on deploymentName. A task
 // someone ran by hand on the deployment, such as ssh, recreate, or cck,
@@ -502,7 +508,7 @@ func (b *Broker) findCreateTask(ctx context.Context, deploymentName string, unkn
 // Only a delete event dated within eventTimeAllowance of unknownSince is
 // adopted, so a delete that ran before the request is not taken for it.
 func (b *Broker) findDeleteTask(ctx context.Context, deploymentName string, unknownSince time.Time, logger logger.Logger) (unknownOutcomeFinding, bool) {
-	return b.findOperationTask(ctx, deploymentName, directorTaskDescriptionDeletePrefix+deploymentName, boshEventActionDelete, unknownSince, logger)
+	return b.findOperationTask(ctx, deploymentName, deleteTaskDescription(deploymentName), boshEventActionDelete, unknownSince, logger)
 }
 
 // findOperationTask looks for a task that runs on the deployment with the

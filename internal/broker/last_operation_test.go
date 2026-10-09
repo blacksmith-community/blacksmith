@@ -2,7 +2,6 @@ package broker_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,12 +23,22 @@ import (
 	"blacksmith/pkg/testutil"
 	vaultPkg "blacksmith/pkg/vault"
 
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
-var errDeleteRejected = errors.New("director rejected the delete")
+// errDeleteRejected is the director's answer refusing a delete, which
+// started no task, so the broker may send the delete again.
+var errDeleteRejected error = &boshapi.APIError{
+	StatusCode:  http.StatusBadRequest,
+	Method:      http.MethodDelete,
+	Path:        "/deployments/rejected",
+	Code:        deleteRefusedCode,
+	Description: "director rejected the delete",
+	Mutation:    true,
+}
 
 const (
 	boshEventCreate = "create"

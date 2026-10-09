@@ -104,6 +104,24 @@ func taskPollInterval() time.Duration {
 //nolint:gochecknoglobals // a test seam, set only through export_test.go
 var abandonedCreateWaitOverride atomic.Int64
 
+// deleteRetryBackoffOverride, when positive, replaces
+// retryBackoffMultiplier in nanoseconds. It is atomic because a delete
+// started earlier may read it while a test changes it.
+//
+//nolint:gochecknoglobals // a test seam, set only through export_test.go
+var deleteRetryBackoffOverride atomic.Int64
+
+// deleteRetryBackoff returns the wait that, multiplied by the number of
+// the attempt that failed, comes before the next delete attempt.
+func deleteRetryBackoff() time.Duration {
+	override := deleteRetryBackoffOverride.Load()
+	if override > 0 {
+		return time.Duration(override)
+	}
+
+	return retryBackoffMultiplier
+}
+
 // abandonedCreateWait returns how long the teardown of an abandoned
 // deployment waits for its cancelled create task to stop.
 func abandonedCreateWait() time.Duration {
@@ -703,9 +721,11 @@ func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) (*b
 		return nil, noTaskInAnswer("DeleteDeployment", d.deploymentName, d.contextID)
 	}
 
-	// The director's answer names the delete task itself, so the task it
-	// returns is the one to follow. The answer carries no description.
-	return &bosh.Task{ID: task.ID, State: task.State, Description: "delete deployment " + d.deploymentName}, nil
+	// The task is the one the director's answer to the delete named, or a
+	// delete task already running on the deployment that a resend adopted
+	// instead of sending, so it is the one to follow. The director's answer
+	// carries no description.
+	return &bosh.Task{ID: task.ID, State: task.State, Description: deleteTaskDescription(d.deploymentName)}, nil
 }
 
 // handleDeleteError settles a deprovision whose delete returned an error.
@@ -718,7 +738,7 @@ func (d *deprovisioningPhase) handleDeleteError(ctx context.Context, err error) 
 	// director. It is neither a failure nor a deletion: it is recorded as
 	// unknown, the index entry stays, and the credentials are kept.
 	if errors.Is(err, bosh.ErrOutcomeUnknown) {
-		d.broker.recordOutcomeUnknown(ctx, d.instanceID, operationTypeDeprovision, "delete", d.contextID, err, d.logger)
+		d.broker.recordOutcomeUnknown(ctx, d.instanceID, operationTypeDeprovision, "delete", lostDeleteContextID(err, d.contextID), err, d.logger)
 
 		return
 	}
@@ -741,6 +761,19 @@ func (d *deprovisioningPhase) handleDeleteError(ctx context.Context, err error) 
 	}
 
 	d.broker.failWithTracking(ctx, d.instanceID, "deprovision", fmt.Sprintf("Deployment deletion failed: %s", err), nil, d.logger)
+}
+
+// lostDeleteContextID returns the context ID of the delete whose answer was
+// lost. A resend carries a context ID of its own, which the error names, so
+// fallback, the ID of the first delete, counts only when the error names
+// none.
+func lostDeleteContextID(err error, fallback string) string {
+	var unknown *bosh.OutcomeUnknownError
+	if errors.As(err, &unknown) && unknown.ContextID != "" {
+		return unknown.ContextID
+	}
+
+	return fallback
 }
 
 // handleDeploymentCleanedDuringRetry handles case where deployment was cleaned up during retry.
@@ -1121,9 +1154,24 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	logger.Info("Launched background task monitor for instance %s (task %d)", instanceID, deleteTask.ID)
 }
 
-// retryDeleteDeployment attempts to delete a BOSH deployment with retry logic.
-// Every delete request carries contextID, the context ID the deprovision
-// recorded before it started.
+// retryDeleteDeployment sends the delete of a deployment, and sends it
+// again only when the answer shows the director started no task for it.
+// That is a refusal other than code 70000 or a 404 for a route the
+// director does not serve, a request that never reached the director, or
+// one that never got a pool slot. Any other answer ends the loop, because
+// a resend could act on the deployment a second time.
+//
+// The first request carries contextID, the context ID the deprovision
+// recorded before it started. Before each resend, the loop adopts a delete
+// task already running on the deployment. Otherwise it records a fresh
+// context ID, with the deployment's name, and sends the resend under it,
+// so each context ID goes on exactly one request. A resend whose context
+// ID cannot be recorded is not sent.
+//
+// The deployment is gone only when the director's read of it says so. The
+// loop reads it before every attempt, and again after a delete answered
+// code 70000, on any attempt. Code 70000 that the read does not confirm
+// is a refusal like any other.
 func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, instanceID, contextID string, maxRetries int) (*bosh.Task, error) {
 	if contextID == "" {
 		return nil, fmt.Errorf("%w: deployment %s of instance %s", ErrNoDeleteContextID, deploymentName, instanceID)
@@ -1131,30 +1179,56 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, inst
 
 	logger := logger.Get().Named("broker")
 
+	attemptID := contextID
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		logger.Debug("Deletion attempt %d/%d for deployment %s", attempt, maxRetries, deploymentName)
-
-		// Check if deployment still exists
-		_, err := b.BOSH.GetDeployment(ctx, deploymentName)
-		if err != nil {
-			if errors.Is(err, bosh.ErrDeploymentNotFound) {
-				// The director says the deployment is gone, so there is no
-				// delete task to follow. The caller settles the deprovision
-				// from the error.
-				logger.Info("Deployment %s is already gone before delete attempt %d, so no delete was sent", deploymentName, attempt)
-
-				return nil, fmt.Errorf("deployment %s of instance %s is gone before delete attempt %d: %w", deploymentName, instanceID, attempt, err)
+		if attempt > 1 {
+			err := waitBeforeDeleteAttempt(ctx, attempt, logger)
+			if err != nil {
+				return nil, fmt.Errorf("stopped deleting deployment %s for instance %s after attempt %d of %d because the broker context ended (%w); check whether the broker is shutting down and whether the deployment still exists on the director", deploymentName, instanceID, attempt-1, maxRetries, err)
 			}
-
-			// Existence is unknown; let the delete attempt decide rather than
-			// declaring success on a director error.
-			logger.Warning("Could not confirm whether deployment %s exists (%s); attempting deletion anyway", deploymentName, err)
 		}
 
-		// Attempt deletion
-		task, err := b.BOSH.DeleteDeployment(boshapi.WithContextID(ctx, contextID), deploymentName)
+		logger.Debug("Deletion attempt %d/%d for deployment %s", attempt, maxRetries, deploymentName)
+
+		goneErr := b.deletedDeploymentGone(ctx, deploymentName, logger)
+		if goneErr != nil {
+			// The director says the deployment is gone, so there is no
+			// delete task to follow. The caller settles the deprovision
+			// from the error.
+			logger.Info("Deployment %s is already gone before delete attempt %d, so no delete was sent", deploymentName, attempt)
+
+			return nil, fmt.Errorf("deployment %s of instance %s is gone before delete attempt %d: %w", deploymentName, instanceID, attempt, goneErr)
+		}
+
+		if attempt > 1 {
+			running, err := b.runningDeleteTask(ctx, deploymentName)
+			if err != nil {
+				// Whether a delete already runs is not known, so this
+				// attempt sends nothing and counts as failed.
+				b.trackFailedDeleteAttempt(ctx, instanceID, deploymentName, attemptID, attempt, maxRetries,
+					fmt.Errorf("no delete was sent, because the delete tasks running on the deployment could not be listed: %w", err), logger)
+
+				continue
+			}
+
+			if running != nil {
+				logger.Info("Delete task %d already runs on deployment %s, so delete attempt %d adopts it and sends nothing", running.ID, deploymentName, attempt)
+
+				return running, nil
+			}
+
+			attemptID = uuid.NewString()
+
+			err = b.trackProgressWithContextID(ctx, instanceID, "deprovision", fmt.Sprintf("Resending the delete of deployment %s, attempt %d/%d", deploymentName, attempt, maxRetries), attemptID, deploymentName, nil, logger)
+			if err != nil {
+				return nil, fmt.Errorf("delete attempt %d of %d of deployment %s for instance %s was not sent: %w", attempt, maxRetries, deploymentName, instanceID, err)
+			}
+		}
+
+		task, err := b.BOSH.DeleteDeployment(boshapi.WithContextID(ctx, attemptID), deploymentName)
 		if err == nil {
-			logger.Info("Deletion task started on attempt %d for deployment %s (task %d)", attempt, deploymentName, task.ID)
+			logger.Info("Deletion task started on attempt %d for deployment %s (task %d, context ID %s)", attempt, deploymentName, task.ID, attemptID)
 
 			return task, nil
 		}
@@ -1166,35 +1240,124 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, inst
 			return nil, fmt.Errorf("delete attempt %d of %d of deployment %s for instance %s lost its answer, and no further attempt was made: %w", attempt, maxRetries, deploymentName, instanceID, err)
 		}
 
-		logger.Error("Deletion attempt %d failed for deployment %s: %s", attempt, deploymentName, err)
+		if errors.Is(err, bosh.ErrDeploymentNotFound) {
+			// Code 70000 started no task. The deployment is gone only when
+			// the director's read of it agrees.
+			goneErr = b.deletedDeploymentGone(ctx, deploymentName, logger)
+			if goneErr != nil {
+				logger.Info("The director says deployment %s does not exist, both in its answer to delete attempt %d and in a read after it", deploymentName, attempt)
 
-		// Track the retry attempt without a task, which keeps the operation in
-		// progress. Only the caller records the deprovision as failed, once
-		// every attempt is spent.
-		recordCtx, cancelRecord := recordContext(ctx)
-		trackErr := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, "deprovision", fmt.Sprintf("Deletion retry %d/%d failed: %s", attempt, maxRetries, err), contextID, 0, nil)
-
-		cancelRecord()
-
-		if trackErr != nil {
-			logger.Error("failed to track retry attempt: %s", trackErr)
-		}
-
-		// Wait before retry (except on last attempt)
-		if attempt < maxRetries {
-			waitTime := time.Duration(attempt) * retryBackoffMultiplier
-			logger.Debug("Waiting %v before retry attempt %d", waitTime, attempt+1)
-
-			timer := time.NewTimer(waitTime)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				timer.Stop()
-
-				return nil, fmt.Errorf("stopped deleting deployment %s for instance %s after attempt %d of %d because the broker context ended (%w); check whether the broker is shutting down and whether the deployment still exists on the director", deploymentName, instanceID, attempt, maxRetries, ctx.Err())
+				return nil, fmt.Errorf("deployment %s of instance %s is gone, by the answer to delete attempt %d and a read after it: %w", deploymentName, instanceID, attempt, goneErr)
 			}
+
+			logger.Warning("The director answered delete attempt %d of deployment %s with code 70000, but its read of the deployment did not confirm the deployment is gone, so the answer counts as a refusal", attempt, deploymentName)
+		} else if !deleteMayBeResent(err) {
+			return nil, fmt.Errorf("delete attempt %d of %d of deployment %s for instance %s failed, and it was not sent again, because the error does not show that the director started no task: %w", attempt, maxRetries, deploymentName, instanceID, err)
 		}
+
+		b.trackFailedDeleteAttempt(ctx, instanceID, deploymentName, attemptID, attempt, maxRetries, err, logger)
 	}
 
 	return nil, fmt.Errorf("%w: %s after %d attempts", ErrFailedToDeleteDeployment, deploymentName, maxRetries)
+}
+
+// waitBeforeDeleteAttempt waits out the backoff before a delete attempt
+// after the first, and returns the context's error when it ends first.
+func waitBeforeDeleteAttempt(ctx context.Context, attempt int, logger logger.Logger) error {
+	waitTime := time.Duration(attempt-1) * deleteRetryBackoff()
+	logger.Debug("Waiting %v before retry attempt %d", waitTime, attempt)
+
+	timer := time.NewTimer(waitTime)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("the wait before delete attempt %d ended: %w", attempt, ctx.Err())
+	}
+}
+
+// deletedDeploymentGone reads the deployment a delete acts on, and returns
+// the read's error when the director says the deployment does not exist.
+// It returns nil when the read finds the deployment, and when the read
+// fails, because only the director's word that the deployment is missing
+// shows it is gone.
+func (b *Broker) deletedDeploymentGone(ctx context.Context, deploymentName string, logger logger.Logger) error {
+	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, bosh.ErrDeploymentNotFound) {
+		return fmt.Errorf("the director's read of deployment %s found none: %w", deploymentName, err)
+	}
+
+	// Existence is unknown, and a director error is never taken for a
+	// deployment that is gone.
+	logger.Warning("Could not confirm whether deployment %s exists (%s), so it is not taken as gone", deploymentName, err)
+
+	return nil
+}
+
+// runningDeleteTask returns the delete task of deploymentName when one
+// runs on it, or nil when none does. It reads every running task on the
+// deployment, because the newest one may be another task that hides the
+// delete.
+func (b *Broker) runningDeleteTask(ctx context.Context, deploymentName string) (*bosh.Task, error) {
+	running, err := b.BOSH.FindRunningTasksForDeployment(ctx, deploymentName)
+	if err != nil {
+		return nil, fmt.Errorf("list the running tasks of deployment %s: %w", deploymentName, err)
+	}
+
+	description := deleteTaskDescription(deploymentName)
+
+	for index := range running {
+		if isRunningTaskOf(&running[index], deploymentName, description) {
+			task := running[index]
+
+			return &task, nil
+		}
+	}
+
+	return nil, nil //nolint:nilnil // no delete task runs on the deployment
+}
+
+// deleteMayBeResent reports whether the error of a delete shows that the
+// director started no task for it, so the delete may be sent again. A
+// refusal shows that, unless it is a 404 for a route the director does not
+// serve, which another attempt would only repeat. So do a request that
+// never reached the director and one that never got a pool slot. An error
+// that may hide a request the director accepted does not.
+func deleteMayBeResent(err error) bool {
+	if boshapi.IsOutcomeUnknown(err) || boshapi.IsRouteNotFound(err) {
+		return false
+	}
+
+	var apiErr *boshapi.APIError
+	if errors.As(err, &apiErr) {
+		return true
+	}
+
+	var transportErr *boshapi.TransportError
+	if errors.As(err, &transportErr) {
+		return !transportErr.Sent
+	}
+
+	return errors.Is(err, bosh.ErrConnectionPoolTimeout)
+}
+
+// trackFailedDeleteAttempt records a delete attempt that failed without a
+// task, which keeps the operation in progress. Only the caller records the
+// deprovision as failed, once every attempt is spent.
+func (b *Broker) trackFailedDeleteAttempt(ctx context.Context, instanceID, deploymentName, attemptID string, attempt, maxRetries int, err error, logger logger.Logger) {
+	logger.Error("Deletion attempt %d failed for deployment %s: %s", attempt, deploymentName, err)
+
+	recordCtx, cancelRecord := recordContext(ctx)
+	defer cancelRecord()
+
+	trackErr := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, "deprovision", fmt.Sprintf("Deletion retry %d/%d failed: %s", attempt, maxRetries, err), attemptID, 0, nil)
+	if trackErr != nil {
+		logger.Error("failed to track retry attempt: %s", trackErr)
+	}
 }

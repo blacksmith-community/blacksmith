@@ -54,6 +54,17 @@ var errEventsDown = errors.New("events endpoint down")
 // errAnswerLost is what a request whose answer never came back saw.
 var errAnswerLost = errors.New("the connection closed after the request was sent")
 
+// errDialRefused is what a request that never reached the director saw.
+var errDialRefused = errors.New("dial tcp: connection refused")
+
+// errConnectionReset is an error that does not show whether the request
+// reached the director.
+var errConnectionReset = errors.New("connection reset by peer")
+
+// errTasksDown is what a read of the running tasks saw when the director
+// did not answer it.
+var errTasksDown = errors.New("task list unavailable")
+
 // newOutcomeBroker returns a broker for the valkey standalone plan whose
 // init script does nothing, and the directory that holds the script.
 func newOutcomeBroker(director bosh.Director, vaultClient *internalVault.Vault, serviceCtx context.Context) (*broker.Broker, string) {
@@ -341,8 +352,10 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 	AfterEach(func() {
 		stopBrokerGoroutines(shutdown)
 
-		for _, cleanup := range cleanups {
-			cleanup()
+		// The cleanups run last first, so each restores what the one
+		// before it set.
+		for index := len(cleanups) - 1; index >= 0; index-- {
+			cleanups[index]()
 		}
 
 		cleanups = nil
@@ -973,6 +986,489 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			Expect(contextID).ToNot(BeEmpty(), "the deploy was never sent")
 			Expect(stillIndexed()).To(BeTrue(), "an unknown deploy removed the index entry")
 			expectRecordedUnknown(outcomeProvision, contextID, before)
+		})
+	})
+
+	// A delete is sent again only after an answer that shows the director
+	// started no task for it, which is a refusal other than code 70000 or
+	// a route 404, or a request that never reached the director. Before
+	// each resend, the broker adopts a delete task that already runs on
+	// the deployment, and otherwise records a fresh context ID with the
+	// deployment's name, so each context ID goes on one request. Code
+	// 70000 after a send means the deployment is gone only once the
+	// director's own read of the deployment confirms it.
+	Describe("resending a delete", func() {
+		const (
+			adoptedTaskID      = 4242
+			otherTaskID        = 4243
+			writeRefusal       = "permission denied"
+			deleteAnswerBound  = 5 * time.Second
+			noResendBackoff    = time.Minute
+			resendBackoff      = time.Millisecond
+			unexpectedDelete   = "the broker sent a delete the spec did not expect"
+			directorRouteError = "Endpoint '/deployments/%s' not found."
+		)
+
+		type deleteAnswer func(callCtx context.Context, name string) (*bosh.Task, error)
+
+		var (
+			sendsMu       sync.Mutex
+			sends         []sentRequest
+			runningChecks atomic.Int32
+			stopRetries   []func()
+		)
+
+		sent := func() []sentRequest {
+			sendsMu.Lock()
+			defer sendsMu.Unlock()
+
+			return append([]sentRequest(nil), sends...)
+		}
+
+		// answerDeletes answers the deletes the broker sends with the
+		// answers given, in order, and records what the director saw
+		// when each one was sent.
+		answerDeletes := func(answers ...deleteAnswer) {
+			director.onDeleteDeployment = func(callCtx context.Context, name string) (*bosh.Task, error) {
+				sendsMu.Lock()
+
+				sends = append(sends, capture(callCtx))
+				index := len(sends) - 1
+				sendsMu.Unlock()
+
+				if index >= len(answers) {
+					return nil, errors.New(unexpectedDelete) //nolint:err113 // a one-off answer the spec never expects
+				}
+
+				return answers[index](callCtx, name)
+			}
+		}
+
+		// goneAfter makes the director show the deployment until the
+		// broker has sent the given number of deletes, and say it does
+		// not exist from then on.
+		goneAfter := func(deletes int) {
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				if len(sent()) < deletes {
+					return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+				}
+
+				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deploymentName)
+			}
+		}
+
+		refuse := func(context.Context, string) (*bosh.Task, error) {
+			return nil, fmt.Errorf("failed to delete deployment: %w", errDeleteFailed)
+		}
+
+		accept := func(context.Context, string) (*bosh.Task, error) {
+			return &bosh.Task{ID: deleteTaskID, State: outcomeTaskQueued}, nil
+		}
+
+		loseAnswer := func(callCtx context.Context, name string) (*bosh.Task, error) {
+			return nil, &bosh.OutcomeUnknownError{
+				Operation:  "DeleteDeployment",
+				Director:   outcomeDirectorAddress,
+				Deployment: name,
+				ContextID:  boshapi.ContextIDFrom(callCtx),
+				Err:        errAnswerLost,
+			}
+		}
+
+		notFound := func(_ context.Context, name string) (*bosh.Task, error) {
+			return nil, fmt.Errorf("%w: %w", bosh.ErrDeploymentNotFound, &boshapi.APIError{
+				StatusCode:  http.StatusNotFound,
+				Method:      http.MethodDelete,
+				Path:        "/deployments/" + name,
+				Code:        boshapi.ErrorCodeDeploymentNotFound,
+				Description: fmt.Sprintf("Deployment '%s' doesn't exist", name),
+				Mutation:    true,
+			})
+		}
+
+		routeNotFound := func(_ context.Context, name string) (*bosh.Task, error) {
+			return nil, fmt.Errorf("failed to delete deployment: %w", &boshapi.APIError{
+				StatusCode:  http.StatusNotFound,
+				Method:      http.MethodDelete,
+				Path:        "/deployments/" + name,
+				Description: fmt.Sprintf(directorRouteError, name),
+				Mutation:    true,
+			})
+		}
+
+		neverSent := func(callCtx context.Context, name string) (*bosh.Task, error) {
+			return nil, fmt.Errorf("failed to delete deployment: %w", &boshapi.TransportError{
+				Method:    http.MethodDelete,
+				Path:      "/deployments/" + name,
+				ContextID: boshapi.ContextIDFrom(callCtx),
+				Sent:      false,
+				Mutation:  true,
+				Attempts:  1,
+				Err:       errDialRefused,
+			})
+		}
+
+		runningDelete := func(taskID int) bosh.Task {
+			return bosh.Task{ID: taskID, State: outcomeTaskProcessing, Description: "delete deployment " + deploymentName, Deployment: deploymentName}
+		}
+
+		// retryInBackground runs the retry loop and returns its result on
+		// the channel. The loop's context ends with the spec, before the
+		// check that no goroutine of package broker outlives it, so a loop
+		// left waiting to resend never does.
+		retryInBackground := func(contextID string, maxRetries int) chan error {
+			retryCtx, cancel := context.WithCancel(ctx)
+			finished := make(chan error, 1)
+			done := make(chan struct{})
+
+			stopRetries = append(stopRetries, func() {
+				cancel()
+				Eventually(done, deleteAnswerBound).Should(BeClosed(), "the retry loop outlived its context")
+			})
+
+			go func() {
+				defer close(done)
+
+				_, err := brokerInstance.RetryDeleteDeploymentTask(retryCtx, deploymentName, instanceID, contextID, maxRetries)
+				finished <- err
+			}()
+
+			return finished
+		}
+
+		expectFreshContextID := func(resent sentRequest, earlier ...sentRequest) {
+			ExpectWithOffset(1, resent.contextID).ToNot(BeEmpty(), "the resend carried no context ID")
+
+			_, err := uuid.Parse(resent.contextID)
+			ExpectWithOffset(1, err).ToNot(HaveOccurred(), "the resend's context ID %q is not a UUID", resent.contextID)
+
+			for _, before := range earlier {
+				ExpectWithOffset(1, resent.contextID).ToNot(Equal(before.contextID), "the resend carried the context ID of an earlier delete")
+			}
+
+			ExpectWithOffset(1, resent.record).To(HaveKeyWithValue("action", outcomeDeprovision))
+			ExpectWithOffset(1, resent.record).To(HaveKeyWithValue("context_id", resent.contextID),
+				"the record did not hold the resend's context ID while the resend was being sent")
+			ExpectWithOffset(1, resent.record).To(HaveKeyWithValue(internalVault.TaskRecordDeploymentNameKey, deploymentName),
+				"the record did not name the deployment while the resend was being sent")
+		}
+
+		BeforeEach(func() {
+			sendsMu.Lock()
+			sends = nil
+			sendsMu.Unlock()
+
+			runningChecks.Store(0)
+
+			cleanups = append(cleanups, broker.SetDeleteRetryBackoff(resendBackoff))
+
+			director.onGetEvents = func(context.Context, string) ([]bosh.Event, error) { return nil, nil }
+			director.onGetDeployment = func(context.Context, string) (*bosh.DeploymentDetail, error) {
+				return &bosh.DeploymentDetail{Name: deploymentName, Manifest: "name: " + deploymentName}, nil
+			}
+			director.onFindRunningTasksForDeployment = func(context.Context, string) ([]bosh.Task, error) {
+				runningChecks.Add(1)
+
+				return nil, nil
+			}
+		})
+
+		AfterEach(func() {
+			for _, stop := range stopRetries {
+				stop()
+			}
+
+			stopRetries = nil
+		})
+
+		It("retry delete adopts a running delete task", func() {
+			answerDeletes(refuse)
+
+			director.onFindRunningTasksForDeployment = func(context.Context, string) ([]bosh.Task, error) {
+				runningChecks.Add(1)
+
+				return []bosh.Task{runningDelete(adoptedTaskID)}, nil
+			}
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task).ToNot(BeNil())
+			Expect(task.ID).To(Equal(adoptedTaskID), "the broker did not adopt the delete task running on the deployment")
+			Expect(sent()).To(HaveLen(1), "the broker resent a delete while a delete task ran on the deployment")
+			Expect(runningChecks.Load()).To(BeEquivalentTo(1))
+		})
+
+		It("retry delete adopts its delete task when another task also runs on the deployment", func() {
+			answerDeletes(refuse)
+
+			other := bosh.Task{ID: otherTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment, Deployment: deploymentName}
+
+			// The newest running task is another one, so a check that
+			// reads only the newest task misses the delete.
+			director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) { return &other, nil }
+			director.onFindRunningTasksForDeployment = func(context.Context, string) ([]bosh.Task, error) {
+				runningChecks.Add(1)
+
+				return []bosh.Task{other, runningDelete(adoptedTaskID)}, nil
+			}
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task).ToNot(BeNil())
+			Expect(task.ID).To(Equal(adoptedTaskID), "the broker did not adopt the delete task behind another running task")
+			Expect(sent()).To(HaveLen(1), "the broker resent a delete while a delete task ran on the deployment")
+		})
+
+		It("retry delete adopts no running task other than its delete", func() {
+			answerDeletes(refuse, accept)
+
+			director.onFindRunningTasksForDeployment = func(context.Context, string) ([]bosh.Task, error) {
+				runningChecks.Add(1)
+
+				return []bosh.Task{
+					{ID: otherTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment, Deployment: deploymentName},
+					{ID: adoptedTaskID, State: outcomeTaskProcessing, Description: "delete deployment " + deploymentName + "-other", Deployment: deploymentName},
+				}, nil
+			}
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task.ID).To(Equal(deleteTaskID), "the broker adopted a task that is not the delete of its deployment")
+			Expect(sent()).To(HaveLen(2))
+		})
+
+		It("retry delete resends with a fresh context ID", func() {
+			answerDeletes(refuse, accept)
+
+			firstID := uuid.NewString()
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, firstID, 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task.ID).To(Equal(deleteTaskID))
+			Expect(sent()).To(HaveLen(2))
+			Expect(sent()[0].contextID).To(Equal(firstID), "the first delete did not carry the context ID it was given")
+			expectFreshContextID(sent()[1], sent()[0])
+			Expect(runningChecks.Load()).To(BeEquivalentTo(1), "the broker did not look for a running delete task before the resend")
+		})
+
+		It("retry delete gives every resend a context ID of its own", func() {
+			answerDeletes(refuse, refuse, accept)
+
+			_, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(sent()).To(HaveLen(3))
+			expectFreshContextID(sent()[1], sent()[0])
+			expectFreshContextID(sent()[2], sent()[0], sent()[1])
+			Expect(runningChecks.Load()).To(BeEquivalentTo(2))
+		})
+
+		It("retry delete records the second attempt's context ID when its answer is lost", func() {
+			indexInstance()
+
+			cleaner := useCleaner()
+
+			answerDeletes(refuse, loseAnswer)
+
+			before := time.Now()
+
+			deprovision()
+
+			Eventually(func() []sentRequest { return sent() }, 10*time.Second).Should(HaveLen(2))
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			first, second := sent()[0], sent()[1]
+
+			Expect(second.contextID).ToNot(Equal(first.contextID), "the resend carried the first delete's context ID")
+			expectRecordedUnknown(outcomeDeprovision, second.contextID, before)
+			Expect(readRecord()["context_id"]).ToNot(Equal(first.contextID), "the unknown outcome names the first delete's context ID")
+			Expect(stillIndexed()).To(BeTrue(), "an unknown delete removed the index entry")
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(BeEmpty(), "an unknown delete started the CredHub cleanup")
+			Expect(sent()).To(HaveLen(2), "the broker resent a delete whose answer was lost")
+		})
+
+		It("retry delete skips the resend when the fresh context ID cannot be recorded", func() {
+			proxy := useProxy()
+
+			answerDeletes(func(callCtx context.Context, name string) (*bosh.Task, error) {
+				proxy.FailWrites(instanceID+"/task", http.StatusForbidden, writeRefusal, -1)
+
+				return refuse(callCtx, name)
+			})
+
+			err := brokerInstance.RetryDeleteDeploymentWithContextID(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).To(MatchError(broker.ErrContextIDNotRecorded))
+			Expect(err.Error()).To(ContainSubstring(writeRefusal))
+			Expect(sent()).To(HaveLen(1), "the broker resent a delete whose context ID was not on record")
+		})
+
+		It("retry delete stops at once on code 70000 after a send", func() {
+			cleanups = append(cleanups, broker.SetDeleteRetryBackoff(noResendBackoff))
+
+			goneAfter(1)
+			answerDeletes(notFound)
+
+			finished := retryInBackground(uuid.NewString(), 3)
+
+			var err error
+
+			Eventually(finished, deleteAnswerBound).Should(Receive(&err), "the broker waited to resend after the director said the deployment does not exist")
+			Expect(err).To(MatchError(bosh.ErrDeploymentNotFound))
+			Expect(err.Error()).To(ContainSubstring(deploymentName))
+			Expect(sent()).To(HaveLen(1))
+			Expect(runningChecks.Load()).To(BeZero())
+		})
+
+		It("retry delete takes code 70000 on its last attempt as gone once the director confirms it", func() {
+			goneAfter(1)
+			answerDeletes(notFound)
+
+			err := brokerInstance.RetryDeleteDeploymentWithContextID(ctx, deploymentName, instanceID, uuid.NewString(), 1)
+
+			Expect(err).To(MatchError(bosh.ErrDeploymentNotFound))
+			Expect(err).ToNot(MatchError(broker.ErrFailedToDeleteDeployment), "a deployment the director confirmed gone was taken as a failed delete")
+			Expect(sent()).To(HaveLen(1))
+		})
+
+		It("a deprovision whose last delete attempt finds the deployment gone cleans up", func() {
+			indexInstance()
+
+			cleaner := useCleaner()
+
+			goneAfter(3)
+			answerDeletes(refuse, refuse, notFound)
+
+			deprovision()
+
+			Eventually(stillIndexed, 10*time.Second).Should(BeFalse(), "the instance was left in the index")
+			Eventually(settled, 10*time.Second).Should(BeTrue())
+
+			Expect(history()).To(ContainElement("Deprovisioning completed (cleanup during retry)"))
+			Expect(readRecord()).ToNot(HaveKeyWithValue("state", outcomeStateFailed), "the delete of a deployment the director confirmed gone was recorded as failed")
+
+			brokerInstance.WaitForCredentialCleanups()
+			Expect(cleaner.Targets()).To(HaveLen(1), "the CredHub cleanup did not run")
+			Expect(sent()).To(HaveLen(3))
+		})
+
+		It("retry delete does not take code 70000 as gone while the director still shows the deployment", func() {
+			answerDeletes(notFound)
+
+			err := brokerInstance.RetryDeleteDeploymentWithContextID(ctx, deploymentName, instanceID, uuid.NewString(), 1)
+
+			Expect(err).To(MatchError(broker.ErrFailedToDeleteDeployment))
+			Expect(err).ToNot(MatchError(bosh.ErrDeploymentNotFound), "code 70000 the director did not confirm was taken as a deletion")
+		})
+
+		It("retry delete resends after code 70000 the director does not confirm", func() {
+			answerDeletes(notFound, accept)
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 2)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task.ID).To(Equal(deleteTaskID))
+			Expect(sent()).To(HaveLen(2))
+			expectFreshContextID(sent()[1], sent()[0])
+		})
+
+		It("retry delete never resends after a route 404", func() {
+			cleanups = append(cleanups, broker.SetDeleteRetryBackoff(noResendBackoff))
+
+			answerDeletes(routeNotFound)
+
+			finished := retryInBackground(uuid.NewString(), 3)
+
+			var err error
+
+			Eventually(finished, deleteAnswerBound).Should(Receive(&err), "the broker waited to resend after a route 404")
+			Expect(boshapi.IsRouteNotFound(err)).To(BeTrue(), "the error %v is not the route 404", err)
+			Expect(err).ToNot(MatchError(bosh.ErrDeploymentNotFound), "a route 404 was taken as a missing deployment")
+			Expect(sent()).To(HaveLen(1))
+			Expect(runningChecks.Load()).To(BeZero())
+		})
+
+		It("retry delete resends a delete that never reached the director", func() {
+			answerDeletes(neverSent, accept)
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task.ID).To(Equal(deleteTaskID))
+			Expect(sent()).To(HaveLen(2))
+			expectFreshContextID(sent()[1], sent()[0])
+		})
+
+		It("retry delete resends a delete that never got a pool slot", func() {
+			answerDeletes(func(context.Context, string) (*bosh.Task, error) {
+				return nil, fmt.Errorf("%w after %v", bosh.ErrConnectionPoolTimeout, time.Second)
+			}, accept)
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task.ID).To(Equal(deleteTaskID))
+			Expect(sent()).To(HaveLen(2))
+			expectFreshContextID(sent()[1], sent()[0])
+		})
+
+		It("retry delete never resends after an error that does not show the director started no task", func() {
+			cleanups = append(cleanups, broker.SetDeleteRetryBackoff(noResendBackoff))
+
+			answerDeletes(func(context.Context, string) (*bosh.Task, error) {
+				return nil, errConnectionReset
+			})
+
+			finished := retryInBackground(uuid.NewString(), 3)
+
+			var err error
+
+			Eventually(finished, deleteAnswerBound).Should(Receive(&err), "the broker waited to resend after an error that may hide a task")
+			Expect(err).To(MatchError(errConnectionReset))
+			Expect(sent()).To(HaveLen(1))
+			Expect(runningChecks.Load()).To(BeZero())
+		})
+
+		It("retry delete sends nothing on an attempt whose running-task check fails", func() {
+			answerDeletes(refuse, accept)
+
+			director.onFindRunningTasksForDeployment = func(context.Context, string) ([]bosh.Task, error) {
+				if runningChecks.Add(1) == 1 {
+					return nil, errTasksDown
+				}
+
+				return nil, nil
+			}
+
+			task, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(task.ID).To(Equal(deleteTaskID))
+			Expect(sent()).To(HaveLen(2), "the broker resent a delete without knowing whether a delete task ran")
+			Expect(runningChecks.Load()).To(BeEquivalentTo(2))
+			expectFreshContextID(sent()[1], sent()[0])
+		})
+
+		It("retry delete fails once every attempt's running-task check fails", func() {
+			answerDeletes(refuse)
+
+			director.onFindRunningTasksForDeployment = func(context.Context, string) ([]bosh.Task, error) {
+				runningChecks.Add(1)
+
+				return nil, errTasksDown
+			}
+
+			_, err := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			Expect(err).To(MatchError(broker.ErrFailedToDeleteDeployment))
+			Expect(sent()).To(HaveLen(1))
+			Expect(runningChecks.Load()).To(BeEquivalentTo(2))
 		})
 	})
 

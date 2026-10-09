@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/services"
 	"blacksmith/pkg/logger"
 	"github.com/fivetwenty-io/osbapi/v2/pkg/osbapi"
@@ -152,6 +153,22 @@ func (b *Broker) RetryDeleteDeploymentWithContextID(ctx context.Context, deploym
 	_, err := b.retryDeleteDeployment(ctx, deploymentName, instanceID, contextID, maxRetries)
 
 	return err
+}
+
+// RetryDeleteDeploymentTask exposes the deprovision delete retry loop with
+// the context ID its first delete request carries, and returns the delete
+// task it settles on.
+func (b *Broker) RetryDeleteDeploymentTask(ctx context.Context, deploymentName, instanceID, contextID string, maxRetries int) (*bosh.Task, error) {
+	return b.retryDeleteDeployment(ctx, deploymentName, instanceID, contextID, maxRetries)
+}
+
+// SetDeleteRetryBackoff sets the wait that, multiplied by the number of
+// the attempt that failed, comes before the next delete attempt. The
+// returned function restores the previous value.
+func SetDeleteRetryBackoff(d time.Duration) func() {
+	previous := deleteRetryBackoffOverride.Swap(int64(d))
+
+	return func() { deleteRetryBackoffOverride.Store(previous) }
 }
 
 // DeleteDeploymentWithRetry exposes the delete a deprovision sends under

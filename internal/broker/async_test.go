@@ -2,8 +2,8 @@ package broker_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -24,7 +24,21 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var errDeleteFailed = errors.New("director refused the delete")
+// errDeleteFailed is the director's answer refusing a delete. The director
+// started no task for it, so the broker may send the delete again.
+var errDeleteFailed error = &boshapi.APIError{
+	StatusCode:  http.StatusBadRequest,
+	Method:      http.MethodDelete,
+	Path:        "/deployments/refused",
+	Code:        deleteRefusedCode,
+	Description: "director refused the delete",
+	Mutation:    true,
+}
+
+// deleteRefusedCode is the error code of the director's refusal of a
+// delete in these specs. It is neither the code for a missing deployment
+// nor absent, as it is in the 404 for a route the director does not serve.
+const deleteRefusedCode = 100
 
 // contextDirector reports the context each director call received, which the
 // scripted director's context-free hooks cannot do.
@@ -36,6 +50,8 @@ type contextDirector struct {
 	onDeleteDeployment func(ctx context.Context, name string) (*bosh.Task, error)
 	onCreateDeployment func(ctx context.Context, manifest string) (*bosh.Task, error)
 	onGetEvents        func(ctx context.Context, deployment string) ([]bosh.Event, error)
+
+	onFindRunningTasksForDeployment func(ctx context.Context, deployment string) ([]bosh.Task, error)
 
 	onFindTaskByContextID func(ctx context.Context, contextID string) (*bosh.Task, error)
 	onGetTask             func(ctx context.Context, taskID int) (*bosh.Task, error)
@@ -90,6 +106,14 @@ func (d *contextDirector) CreateDeployment(ctx context.Context, manifest string)
 	}
 
 	return d.ScriptedBOSHDirector.CreateDeployment(ctx, manifest)
+}
+
+func (d *contextDirector) FindRunningTasksForDeployment(ctx context.Context, deployment string) ([]bosh.Task, error) {
+	if d.onFindRunningTasksForDeployment != nil {
+		return d.onFindRunningTasksForDeployment(ctx, deployment)
+	}
+
+	return d.ScriptedBOSHDirector.FindRunningTasksForDeployment(ctx, deployment) //nolint:wrapcheck // the double passes the scripted error through
 }
 
 func (d *contextDirector) GetEvents(ctx context.Context, deployment string) ([]bosh.Event, error) {
