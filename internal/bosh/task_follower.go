@@ -351,6 +351,9 @@ type followWatch struct {
 	// taskID is the task the watcher follows, or 0 while it looks for the
 	// task of a lost answer. It is guarded by the follower's mu.
 	taskID int
+	// found is closed, under mu, once the watcher of a lost answer has
+	// found the task it follows and set taskID.
+	found chan struct{}
 	// holdsSlot is false for the watcher of a task that had already ended
 	// when the call returned it, whose slot was released at once.
 	holdsSlot bool
@@ -375,7 +378,7 @@ type followWatch struct {
 }
 
 func newFollowWatch(call follow, contextID string) *followWatch {
-	return &followWatch{call: call, contextID: contextID, holdsSlot: true, done: make(chan struct{})}
+	return &followWatch{call: call, contextID: contextID, holdsSlot: true, found: make(chan struct{}), done: make(chan struct{})}
 }
 
 // describeTask names a task, and its deployment when there is one, for
@@ -613,6 +616,14 @@ func (f *taskFollower) awaitTask(ctx context.Context, taskID int) (*Task, bool, 
 // awaitContextID waits for the watch of the lost answer with the context
 // ID, and reports false when no watch looks for it.
 func (f *taskFollower) awaitContextID(ctx context.Context, contextID string) (*Task, bool, error) {
+	return f.awaitContextIDReporting(ctx, contextID, nil)
+}
+
+// awaitContextIDReporting is awaitContextID that also calls found, on the
+// caller's goroutine and without mu held, with the task's ID once the
+// watch has found the task, unless the watch has already ended. A nil
+// found is never called.
+func (f *taskFollower) awaitContextIDReporting(ctx context.Context, contextID string, found func(taskID int)) (*Task, bool, error) {
 	f.mu.Lock()
 	watch := f.byContextID[contextID]
 	f.mu.Unlock()
@@ -621,7 +632,24 @@ func (f *taskFollower) awaitContextID(ctx context.Context, contextID string) (*T
 		return nil, false, nil
 	}
 
-	task, err := f.awaitWatch(ctx, watch, "the BOSH task with context ID "+contextID)
+	what := "the BOSH task with context ID " + contextID
+
+	if found != nil {
+		select {
+		case <-watch.found:
+			if !watch.finished() {
+				f.mu.Lock()
+				taskID := watch.taskID
+				f.mu.Unlock()
+
+				found(taskID)
+			}
+		case <-watch.done:
+		case <-ctx.Done():
+		}
+	}
+
+	task, err := f.awaitWatch(ctx, watch, what)
 
 	return task, true, err
 }
@@ -1109,13 +1137,15 @@ func (f *taskFollower) lookupFailed(watch *followWatch, failures *readFailures, 
 }
 
 // followFoundTask records the task a watcher of a lost answer found, so a
-// wait for that task is served by the watcher. A task another watcher
-// already follows keeps that watcher.
+// wait for that task is served by the watcher, and tells the waits by its
+// context ID that it found the task. A task another watcher already
+// follows keeps that watcher.
 func (f *taskFollower) followFoundTask(watch *followWatch, taskID int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	watch.taskID = taskID
+	close(watch.found)
 
 	if f.byTask[taskID] == nil {
 		f.byTask[taskID] = watch

@@ -30,8 +30,8 @@ var errAnswerLostInTest = errors.New("the connection closed before the director 
 // lostDirector is a waitDirector whose deploys can lose their answer. It
 // records the context ID each deploy carried, can end WaitForTask calls
 // with ErrWatchAbandoned, and answers each lookup by context ID with the
-// task the test sets. It has no WaitForContextID, the way a director with
-// no batch wrapper has none.
+// task the test sets. It has no WaitForContextIDReporting, the way a
+// director with no batch wrapper has none.
 type lostDirector struct {
 	*waitDirector
 
@@ -129,9 +129,10 @@ type contextAnswer struct {
 	err  error
 }
 
-// waiterDirector is a lostDirector with WaitForContextID, the way the
-// batch director has it. Each wait reports its context ID on waitedFor
-// and returns the next answer the test sends, or ends with its context.
+// waiterDirector is a lostDirector with WaitForContextIDReporting, the way
+// the batch director has it. Each wait reports its context ID on waitedFor
+// and returns the next answer the test sends, or ends with its context. It
+// never reports a found task.
 type waiterDirector struct {
 	*lostDirector
 
@@ -147,7 +148,7 @@ func newWaiterDirector() *waiterDirector {
 	}
 }
 
-func (d *waiterDirector) WaitForContextID(ctx context.Context, contextID string) (*bosh.Task, error) {
+func (d *waiterDirector) WaitForContextIDReporting(ctx context.Context, contextID string, _ func(taskID int)) (*bosh.Task, error) {
 	d.waitedFor <- contextID
 
 	select {

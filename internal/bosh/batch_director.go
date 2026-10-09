@@ -235,7 +235,17 @@ func (b *BatchDirector) UpdateDeployment(ctx context.Context, name, manifest str
 // task, it returns ErrNoWatcherForContextID, never ErrNoTaskWithContextID,
 // because a single lookup does not show that no deploy ran.
 func (b *BatchDirector) WaitForContextID(ctx context.Context, contextID string) (*Task, error) {
-	followed, watched, err := b.follow.awaitContextID(ctx, contextID)
+	return b.WaitForContextIDReporting(ctx, contextID, nil)
+}
+
+// WaitForContextIDReporting is WaitForContextID that also reports the
+// task's ID to found as soon as the task is known, before the task ends:
+// once the watcher has found the task, or once the lookup with no watcher
+// has found it. found runs on the caller's goroutine, at most once, and is
+// not called for a task already known to have ended. A nil found is never
+// called.
+func (b *BatchDirector) WaitForContextIDReporting(ctx context.Context, contextID string, found func(taskID int)) (*Task, error) {
+	followed, watched, err := b.follow.awaitContextIDReporting(ctx, contextID, found)
 	if watched {
 		return followed, err
 	}
@@ -247,6 +257,10 @@ func (b *BatchDirector) WaitForContextID(ctx context.Context, contextID string) 
 
 	if task == nil || task.ID <= 0 {
 		return nil, fmt.Errorf("%w: %s", ErrNoWatcherForContextID, contextID)
+	}
+
+	if found != nil && !isTerminalTaskState(task.State) {
+		found(task.ID)
 	}
 
 	waited, err := b.WaitForTask(ctx, task.ID)

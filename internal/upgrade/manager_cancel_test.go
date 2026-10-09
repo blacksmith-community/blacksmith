@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -316,6 +317,158 @@ func TestUpgradeCancelAfterTheTaskIDIsStoredCancelsOnce(t *testing.T) {
 	if done.Instances[0].Status != InstanceStatusCancelled || done.CancelledCount != 1 {
 		t.Fatalf("expected the instance to be cancelled, got %+v", done)
 	}
+}
+
+// gatedLookupDirector is a lostDirector whose lookups by context ID wait
+// until the test closes gate, so the test can cancel the upgrade while the
+// batch watcher looks for the deploy's task.
+type gatedLookupDirector struct {
+	*lostDirector
+
+	lookupStarted chan struct{}
+	gate          chan struct{}
+	startOnce     sync.Once
+}
+
+func (d *gatedLookupDirector) FindTaskByContextID(ctx context.Context, contextID string) (*bosh.Task, error) {
+	d.startOnce.Do(func() { close(d.lookupStarted) })
+
+	select {
+	case <-d.gate:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("the lookup of context ID %s stopped: %w", contextID, ctx.Err())
+	}
+
+	return d.lostDirector.FindTaskByContextID(ctx, contextID)
+}
+
+// lostAnswerDirector returns a lostDirector whose next deploy loses its
+// answer, and whose lookups by context ID find BOSH task 42 running.
+func lostAnswerDirector() *lostDirector {
+	director := newLostDirector()
+	director.lose = 1
+	director.found = &bosh.Task{ID: waitDeployTaskID, State: waitStateRunning, Deployment: waitDeployment}
+
+	return director
+}
+
+// newTestBatchDirector returns a batch director over base, whose watcher
+// looks for the task of a deploy whose answer was lost, and stops it when
+// the test ends.
+func newTestBatchDirector(t *testing.T, base bosh.Director) *bosh.BatchDirector {
+	t.Helper()
+
+	batch := bosh.NewBatchDirector(base, 1, waitTimeout, nil)
+	t.Cleanup(batch.Stop)
+
+	return batch
+}
+
+// expectOneCancelOfTheFoundTask ends BOSH task 42 as cancelled, waits for
+// the instance to settle, and checks that exactly one cancel of the task
+// was sent and that the instance settled as cancelled.
+func expectOneCancelOfTheFoundTask(t *testing.T, manager *Manager, task *UpgradeTask, director *waitDirector) {
+	t.Helper()
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskCancelled}
+
+	done := eventually(t, manager, task, "the instance's settling", func(current UpgradeTask) bool {
+		return current.Instances[0].Status != InstanceStatusRunning
+	})
+
+	// Give a second cancel, were one coming, time to arrive.
+	time.Sleep(50 * time.Millisecond)
+
+	if cancels := director.cancelled(); len(cancels) != 1 || cancels[0] != waitDeployTaskID {
+		t.Fatalf("expected exactly one cancel of BOSH task %d, got %v", waitDeployTaskID, cancels)
+	}
+
+	instance := done.Instances[0]
+	if instance.Status != InstanceStatusCancelled || instance.BOSHTaskID != waitDeployTaskID || done.CancelledCount != 1 || done.FailedCount != 0 {
+		t.Fatalf("expected the instance to settle as cancelled from BOSH task %d, got %+v", waitDeployTaskID, done)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeCancelDuringALostAnswerWaitCancelsTheFoundTask(t *testing.T) {
+	director := lostAnswerDirector()
+	gated := &gatedLookupDirector{lostDirector: director, lookupStarted: make(chan struct{}), gate: make(chan struct{})}
+	batch := newTestBatchDirector(t, gated)
+	vault := newWaitVault()
+
+	// The upgrade saves when the answer was lost, and then updates the
+	// tasks index, before it waits for the task. The cancel waits for that
+	// save to end.
+	lostSaved := make(chan struct{})
+
+	var (
+		lostOnce    sync.Once
+		sawLostSave atomic.Bool
+	)
+
+	vault.onPut = func(path string, raw []byte) {
+		switch {
+		case strings.HasPrefix(path, upgradeTasksVaultPath+"/") && strings.Contains(string(raw), `"unknown_since"`):
+			sawLostSave.Store(true)
+		case path == upgradeTasksVaultPath && sawLostSave.Load():
+			lostOnce.Do(func() { close(lostSaved) })
+		}
+	}
+
+	manager, task, _ := beginUpgrade(t, &logger.NoOpLogger{}, batch, vault)
+	endTheTaskAtCleanup(t, director.waitDirector)
+
+	for what, reached := range map[string]chan struct{}{
+		"the batch watcher looked for the deploy's task": gated.lookupStarted,
+		"the upgrade saved when the answer was lost":     lostSaved,
+	} {
+		select {
+		case <-reached:
+		case <-time.After(waitTimeout):
+			t.Fatalf("expected that %s, but it never happened", what)
+		}
+	}
+
+	// The watcher has not found the task, so the cancel has no task ID to
+	// send yet.
+	cancelUpgrade(t, manager, task)
+
+	if cancels := director.cancelled(); len(cancels) != 0 {
+		t.Fatalf("expected no cancel before the watcher found the task, got %v", cancels)
+	}
+
+	close(gated.gate)
+	waitForTheDeployWait(t, director.waitDirector)
+
+	deadline := time.Now().Add(waitTimeout)
+	for len(director.cancelled()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the upgrade never cancelled BOSH task %d, which the batch watcher found after the cancel", waitDeployTaskID)
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	expectOneCancelOfTheFoundTask(t, manager, task, director.waitDirector)
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestUpgradeCancelAfterTheFoundTaskIsStoredCancelsOnce(t *testing.T) {
+	director := lostAnswerDirector()
+	batch := newTestBatchDirector(t, director)
+
+	manager, task, _ := beginUpgrade(t, &logger.NoOpLogger{}, batch, newWaitVault())
+	endTheTaskAtCleanup(t, director.waitDirector)
+
+	waitForTheDeployWait(t, director.waitDirector)
+
+	eventually(t, manager, task, "the found task's ID on the instance", func(current UpgradeTask) bool {
+		return current.Instances[0].BOSHTaskID == waitDeployTaskID
+	})
+
+	cancelUpgrade(t, manager, task)
+
+	expectOneCancelOfTheFoundTask(t, manager, task, director.waitDirector)
 }
 
 // gateLogger holds the upgrade at the line that announces an instance's

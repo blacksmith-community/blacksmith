@@ -2360,6 +2360,84 @@ func TestBatchWaitForContextIDWithNoWatcherIsServedByTheTaskWatcher(t *testing.T
 	}
 }
 
+// expectFoundBeforeTheEnd checks that a wait reported the task given once,
+// before the task ended, and that the wait then returned the task, done.
+func expectFoundBeforeTheEnd(t *testing.T, base *fakeBatchBase, taskID int, found <-chan int, waited <-chan waitResult) {
+	t.Helper()
+
+	select {
+	case reported := <-found:
+		if reported != taskID {
+			t.Fatalf("expected the wait to report BOSH task %d, got %d", taskID, reported)
+		}
+	case <-time.After(batchWaitLimit):
+		t.Fatalf("the wait never reported BOSH task %d while it ran", taskID)
+	}
+
+	select {
+	case got := <-waited:
+		t.Fatalf("expected the wait to go on while the task runs, got %+v and %v", got.task, got.err)
+	default:
+	}
+
+	base.finish(t, taskID, batchTaskDone)
+
+	got := receive(t, waited)
+	if got.err != nil || got.task == nil || got.task.ID != taskID || got.task.State != batchTaskDone {
+		t.Fatalf("expected the found task, done, got %+v and %v", got.task, got.err)
+	}
+
+	if extra := len(found); extra != 0 {
+		t.Fatalf("expected the found task to be reported once, got %d more reports", extra)
+	}
+}
+
+// A wait for a lost answer's context ID reports the task the watcher found
+// as soon as the watcher finds it, before the task ends.
+func TestBatchWaitForContextIDReportsTheTaskTheWatcherFound(t *testing.T) {
+	t.Parallel()
+
+	const lostTaskID = 630
+
+	base := newFakeBatchBase()
+	base.addTask(lostTaskID, firstDeployment, bosh.DeployTaskDescription)
+	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = lostTaskID })
+	base.updateErr = lostAnswer(firstDeployment)
+	batch, _ := newTestBatch(t, base, 1)
+
+	_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	if !errors.Is(err, bosh.ErrOutcomeUnknown) {
+		t.Fatalf("expected the lost answer to reach the caller, got %v", err)
+	}
+
+	found := make(chan int, 2)
+	waited := waitInBackground(func() (*bosh.Task, error) {
+		return batch.WaitForContextIDReporting(t.Context(), firstContextID, func(taskID int) { found <- taskID })
+	})
+
+	expectFoundBeforeTheEnd(t, base, lostTaskID, found, waited)
+}
+
+// With no watcher for a context ID, a wait reports the task its lookup
+// found before it waits for the task to end.
+func TestBatchWaitForContextIDWithNoWatcherReportsTheFoundTask(t *testing.T) {
+	t.Parallel()
+
+	const foundTaskID = 640
+
+	base := newFakeBatchBase()
+	base.addTask(foundTaskID, firstDeployment, bosh.DeployTaskDescription)
+	base.set(func(f *fakeBatchBase) { f.byContextID[firstContextID] = foundTaskID })
+	batch, _ := newTestBatch(t, base, 1)
+
+	found := make(chan int, 2)
+	waited := waitInBackground(func() (*bosh.Task, error) {
+		return batch.WaitForContextIDReporting(t.Context(), firstContextID, func(taskID int) { found <- taskID })
+	})
+
+	expectFoundBeforeTheEnd(t, base, foundTaskID, found, waited)
+}
+
 // A lost answer's watcher that finds a task another watcher already follows
 // leaves that watcher as the one that serves waits for the task, so ending
 // the lost answer's watcher does not end those waits.

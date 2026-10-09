@@ -37,10 +37,11 @@ var cancelWaitTimeout = 5 * time.Minute
 var awaitTaskByContextID = bosh.AwaitTaskByContextID
 
 // contextIDWaiter is a director that can wait for the task of a deploy
-// whose answer was lost, by the deploy's context ID. The batch director is
-// one, and its watcher serves the wait.
+// whose answer was lost, by the deploy's context ID, and report the task's
+// ID to found as soon as it finds the task. The batch director is one, and
+// its watcher serves the wait.
 type contextIDWaiter interface {
-	WaitForContextID(ctx context.Context, contextID string) (*bosh.Task, error)
+	WaitForContextIDReporting(ctx context.Context, contextID string, found func(taskID int)) (*bosh.Task, error)
 }
 
 // Final states of a director task.
@@ -663,10 +664,11 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 // and records the instance's outcome once the wait settles it. It saves
 // when the answer was lost, and never marks the instance failed before
 // the wait settles it. A batch director's watcher serves the wait when one
-// looks for the context ID. Otherwise AwaitTaskByContextID looks for the
-// task, from the time the answer was lost, and a task it finds is followed
-// like any accepted deploy. When Stop ends the wait, the instance stays as
-// it is.
+// looks for the context ID, and the ID of the task it finds is stored as
+// soon as the task is found, so a cancel reaches the task. Otherwise
+// AwaitTaskByContextID looks for the task, from the time the answer was
+// lost, and a task it finds is followed like any accepted deploy. When
+// Stop ends the wait, the instance stays as it is.
 func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, contextID string, lost error, cancelCh <-chan struct{}) {
 	persistCtx := context.WithoutCancel(ctx)
 	unknownSince := time.Now()
@@ -685,7 +687,8 @@ func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instan
 	}
 
 	if waiter, ok := m.director.(contextIDWaiter); ok {
-		finished, err := waiter.WaitForContextID(ctx, contextID)
+		found := func(taskID int) { m.storeFoundTask(ctx, task, instance, contextID, taskID) }
+		finished, err := waiter.WaitForContextIDReporting(ctx, contextID, found)
 
 		switch {
 		case err == nil:
@@ -1315,5 +1318,27 @@ func (m *Manager) cancelDeployTask(ctx context.Context, instanceID string, boshT
 		m.logger.Info("BOSH task %d for instance %s had already ended or was being cancelled: %v", boshTaskID, instanceID, err)
 	default:
 		m.logger.Error("Failed to cancel BOSH task %d: %v", boshTaskID, err)
+	}
+}
+
+// storeFoundTask stores the ID of a deploy task found by its context ID
+// while the wait for it goes on. A cancel that came before this point
+// found no task ID to cancel, so the upgrade cancels the task itself. The
+// ID and the upgrade's status are read and written under the same lock as
+// CancelTask's, so exactly one side sends the cancel.
+func (m *Manager) storeFoundTask(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, contextID string, taskID int) {
+	if taskID <= 0 {
+		return
+	}
+
+	m.mu.Lock()
+	instance.BOSHTaskID = taskID
+	cancelledBeforeTheTask := task.Status == TaskStatusCancelled
+	m.mu.Unlock()
+
+	m.logger.Info("Found BOSH task %d for the deploy of %s with context ID %s, whose answer was lost", taskID, instance.DeploymentName, contextID)
+
+	if cancelledBeforeTheTask {
+		m.cancelDeployTask(ctx, instance.InstanceID, taskID)
 	}
 }
