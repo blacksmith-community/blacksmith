@@ -41,6 +41,19 @@ const (
 	releaseUploadDone = "done"
 )
 
+// How a provision looks for a plan release whose upload answer was lost.
+// They are variables so a test can shorten them.
+//
+//nolint:gochecknoglobals // a test seam
+var (
+	// releasePollInterval is how long the provision waits between
+	// listings of the director's releases.
+	releasePollInterval = 30 * time.Second
+	// releasePollDeadline is how long after the lost answer the provision
+	// keeps listing, which matches the deadline of a boot upload.
+	releasePollDeadline = 30 * time.Minute
+)
+
 // Error variables for err113 compliance.
 var (
 	ErrCredentialsFieldNotFound = errors.New("credentials field not found in manifest")
@@ -410,6 +423,12 @@ func processRelease(ctx context.Context, release struct {
 		loggerInstance.Debug("uploading BOSH release %s/%s from %s (sha1 %s)...", release.Name, release.Version, release.URL, release.SHA1)
 
 		task, err := director.UploadRelease(ctx, release.URL, release.SHA1)
+
+		var unknown *bosh.OutcomeUnknownError
+		if errors.As(err, &unknown) {
+			return awaitLostReleaseUpload(ctx, release.Name, release.Version, release.URL, unknown, director, loggerInstance, progress)
+		}
+
 		if err != nil {
 			return fmt.Errorf("failed to upload BOSH release %s/%s: %w", release.Name, release.Version, err)
 		}
@@ -474,6 +493,104 @@ func awaitReleaseUpload(ctx context.Context, name, version, url string, task *bo
 
 	return fmt.Errorf("%w: BOSH release %s/%s from %s, BOSH task %d ended in state %s: %s",
 		ErrReleaseUploadFailed, name, version, url, task.ID, finished.State, finished.Result)
+}
+
+// awaitLostReleaseUpload looks for a plan's release after the answer to its
+// upload was lost, because the director may have accepted the upload. It
+// lists the director's releases at once and then every
+// releasePollInterval, and the deploy goes ahead as soon as the release is
+// listed. A failed listing is logged, and the poll goes on. When
+// releasePollDeadline passes first, the provision fails, and the upload may
+// still be running. When ctx ends first, the provision stops, and a retried
+// provision finds the release once the upload lands.
+func awaitLostReleaseUpload(ctx context.Context, name, version, url string, unknown *bosh.OutcomeUnknownError,
+	director bosh.Director, loggerInstance logger.Logger, progress func(message string),
+) error {
+	deadline := time.Now().Add(releasePollDeadline)
+
+	loggerInstance.Info("the answer to the upload of BOSH release %s/%s from %s was lost, so the director may have accepted it; "+
+		"listing the director's releases every %s until %s for it: %s", name, version, url, releasePollInterval, deadline.UTC().Format(time.RFC3339), unknown)
+
+	if progress != nil {
+		progress(fmt.Sprintf("Waiting for BOSH release %s/%s, whose upload answer was lost", name, version))
+	}
+
+	var lastListErr error
+
+	for {
+		present, err := releasePresent(ctx, director, name, version)
+
+		switch {
+		case err == nil && present:
+			loggerInstance.Warn("the answer to the upload of BOSH release %s/%s from %s was lost, and the director now lists the release, "+
+				"so the provision goes on", name, version, url)
+
+			return nil
+		case err != nil && ctx.Err() == nil:
+			lastListErr = err
+
+			loggerInstance.Error("listing the director's releases to look for BOSH release %s/%s, whose upload answer was lost, failed: %s", name, version, err)
+		}
+
+		if ctx.Err() != nil {
+			return lostUploadStopped(ctx, name, version, url, unknown, loggerInstance)
+		}
+
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			return lostUploadDeadlinePassed(name, version, url, deadline, unknown, lastListErr, loggerInstance)
+		}
+
+		timer := time.NewTimer(min(releasePollInterval, wait))
+
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+
+			return lostUploadStopped(ctx, name, version, url, unknown, loggerInstance)
+		case <-timer.C:
+		}
+	}
+}
+
+// lostUploadStopped is the error of a provision whose context ended while it
+// looked for a release whose upload answer was lost.
+func lostUploadStopped(ctx context.Context, name, version, url string, unknown *bosh.OutcomeUnknownError, loggerInstance logger.Logger) error {
+	ctxDeadline, _ := ctx.Deadline()
+
+	loggerInstance.Error("stopped looking for BOSH release %s/%s, whose upload answer was lost, because the provision ended: %s", name, version, ctx.Err())
+
+	return fmt.Errorf("stopped looking for BOSH release %s/%s from %s, whose upload answer was lost, so the upload may still be running, "+
+		"and a retried provision finds the release once the upload lands: %w", name, version, url, &bosh.DirectorCallError{
+		Operation: unknown.Operation,
+		Director:  unknown.Director,
+		Deadline:  ctxDeadline,
+		Cause:     ctx.Err(),
+		Err:       unknown,
+	})
+}
+
+// lostUploadDeadlinePassed is the error of a provision that looked for a
+// release whose upload answer was lost until releasePollDeadline passed.
+// lastListErr is the last listing that failed, or nil.
+func lostUploadDeadlinePassed(name, version, url string, deadline time.Time, unknown *bosh.OutcomeUnknownError, lastListErr error, loggerInstance logger.Logger) error {
+	listed := ""
+	if lastListErr != nil {
+		listed = fmt.Sprintf("; the last listing of the director's releases that failed said: %s", lastListErr)
+	}
+
+	loggerInstance.Error("BOSH release %s/%s, whose upload answer was lost, was not on the director by %s, so the provision fails, "+
+		"and the upload may still be running%s", name, version, deadline.UTC().Format(time.RFC3339), listed)
+
+	return fmt.Errorf("the answer to the upload of BOSH release %s/%s from %s was lost, and the director did not list the release within %s, "+
+		"so the upload may still be running; check /b/tasks for it, and retry the provision once it lands%s: %w",
+		name, version, url, releasePollDeadline, listed, &bosh.DirectorCallError{
+			Operation: unknown.Operation,
+			Director:  unknown.Director,
+			Deadline:  deadline,
+			Cause:     context.DeadlineExceeded,
+			Err:       unknown,
+		})
 }
 
 // releasePresent reports whether the director has release name at version.
