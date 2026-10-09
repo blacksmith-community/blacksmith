@@ -2446,6 +2446,19 @@ func TestPooledSlotIsReleasedAtOnceOnAnUnsentRequest(t *testing.T) {
 	expectSlotFreedAtOnce(t, newFakePoolBase(), unsent, "the deploy request never reached the director")
 }
 
+// The director's 401 to a sent request, whose token then failed to
+// refresh, carries an AuthError as well. It still frees the slot as the
+// director's answer, because the request was sent.
+func TestPooledSlotNamesTheDirectorsAnswerWhenARefreshFailsAfterA401(t *testing.T) {
+	t.Parallel()
+
+	rejected := fmt.Errorf("deploy: %w; the request was not resent, because refreshing the token failed: %w",
+		&boshapi.APIError{StatusCode: http.StatusUnauthorized, Method: http.MethodPost, Path: deploymentsRoute, Mutation: true},
+		&boshapi.AuthError{Stage: boshapi.AuthStageToken, Err: errPoolRead})
+
+	expectSlotFreedAtOnce(t, newFakePoolBase(), rejected, "the director answered the deploy with an error")
+}
+
 // A task the director has no record of frees its slot.
 func TestPooledFollowerReleasesTheSlotWhenTheTaskIs404(t *testing.T) {
 	t.Parallel()

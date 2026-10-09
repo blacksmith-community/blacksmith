@@ -2,9 +2,11 @@ package bosh_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -937,6 +939,139 @@ func TestBatchSlotIsReleasedWhenTheRealAdapterGetsAnUnsentRequest(t *testing.T) 
 
 	if sent := log.all(); len(sent) != 0 {
 		t.Errorf("expected nothing to reach the director, got %+v", sent)
+	}
+}
+
+// neverAuthenticatedReason is how the follower says why it freed the slot
+// of a deploy whose UAA token request failed.
+const neverAuthenticatedReason = "the deploy request was never authenticated, so it was never sent"
+
+// resetConnection ends the connection behind writer with a TCP reset, the
+// way a UAA that drops the connection does.
+func resetConnection(writer http.ResponseWriter) {
+	hijacker, ok := writer.(http.Hijacker)
+	if !ok {
+		panic("the response writer cannot reset the connection")
+	}
+
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		panic("resetting the connection failed: " + err.Error())
+	}
+
+	raw := conn
+	if tlsConn, isTLS := conn.(*tls.Conn); isTLS {
+		raw = tlsConn.NetConn()
+	}
+
+	if tcpConn, isTCP := raw.(*net.TCPConn); isTCP {
+		_ = tcpConn.SetLinger(0)
+	}
+
+	_ = raw.Close()
+}
+
+// newResettingUAAAdapter returns a real adapter over the test director
+// that takes its token from a UAA whose token request ends in a
+// connection reset, and the UAA.
+func newResettingUAAAdapter(t *testing.T, server *boshtest.Director) (bosh.Director, *boshtest.Director) {
+	t.Helper()
+
+	uaa := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != "/oauth/token" {
+			return false
+		}
+
+		resetConnection(writer)
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, func(config *bosh.Config) {
+		config.Username, config.Password = "", ""
+		config.UAA = &bosh.UAAConfig{URL: uaa.URL, ClientID: "uaa-client", ClientSecret: "uaa-secret"}
+	})
+
+	return director, uaa
+}
+
+// expectNeverAuthenticated checks that err is the failed UAA token request
+// and that the UAA, and nothing else, was asked.
+func expectNeverAuthenticated(t *testing.T, err error, uaa, server *boshtest.Director, log *mutationLog) {
+	t.Helper()
+
+	var authErr *boshapi.AuthError
+	if !errors.As(err, &authErr) || authErr.Stage != boshapi.AuthStageToken {
+		t.Fatalf("expected the UAA token request to fail, got %v", err)
+	}
+
+	if len(uaa.Requests()) == 0 {
+		t.Fatal("the UAA got no token request")
+	}
+
+	if sent := log.all(); len(sent) != 0 {
+		t.Fatalf("expected nothing to reach the director, got %+v", sent)
+	}
+
+	if requests := server.Requests(); len(requests) != 0 {
+		t.Fatalf("expected no request to reach the director, got %+v", requests)
+	}
+}
+
+// A deploy whose UAA token request failed was never sent, so the pool frees
+// its slot as soon as the call returns and follows nothing.
+func TestPooledAuthErrorFreesTheSlotAtOnce(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
+		redirectToTask(writer)
+	})
+	director, uaa := newResettingUAAAdapter(t, server)
+	pool, _, logger := newTestPool(t, director, 1)
+
+	_, err := pool.CreateDeployment(t.Context(), mutationManifest)
+	expectNeverAuthenticated(t, err, uaa, server, log)
+
+	if active := activeSlots(t, pool); active != 0 {
+		t.Fatalf("expected the slot to free when the call returned, got %d held", active)
+	}
+
+	if running := bosh.PoolWatchersRunning(pool); running != 0 {
+		t.Fatalf("expected no watcher, got %d", running)
+	}
+
+	if logger.count("INFO", "Released the pool slot of deployment "+deploymentName+" at once", neverAuthenticatedReason) != 1 {
+		t.Fatalf("expected the release to be logged with %q, got %q", neverAuthenticatedReason, poolLogLines(logger))
+	}
+}
+
+// A deploy whose UAA token request failed was never sent, so the batch
+// director frees its slot as soon as the call returns and follows nothing.
+func TestBatchAuthErrorFreesTheSlotAtOnce(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
+		redirectToTask(writer)
+	})
+	director, uaa := newResettingUAAAdapter(t, server)
+	logger := &recordingLogger{}
+	batch := bosh.NewBatchDirector(director, 1, time.Minute, logger)
+	bosh.SetBatchClock(batch, newFakeBatchClock())
+	t.Cleanup(batch.Stop)
+
+	_, err := batch.UpdateDeployment(t.Context(), deploymentName, mutationManifest)
+	expectNeverAuthenticated(t, err, uaa, server, log)
+
+	if active, queued, _ := batch.GetBatchPoolStats(); active != 0 || queued != 0 {
+		t.Fatalf("expected the slot to free when the call returned, got %d active and %d queued", active, queued)
+	}
+
+	if running := bosh.BatchWatchersRunning(batch); running != 0 {
+		t.Fatalf("expected no watcher, got %d", running)
+	}
+
+	if logger.count("INFO", "Released the batch slot of deployment "+deploymentName+" at once", neverAuthenticatedReason) != 1 {
+		t.Fatalf("expected the release to be logged with %q, got %q", neverAuthenticatedReason, poolLogLines(logger))
 	}
 }
 

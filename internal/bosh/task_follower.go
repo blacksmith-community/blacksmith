@@ -1150,10 +1150,10 @@ func isTaskNotFound(err error) bool {
 
 // noTaskStarted reports whether a call's error shows that the call started
 // no task on the director, and says why. kind names the call. Only the
-// director's own error answer, a request that never reached the director,
-// and a context ID the adapter refused before sending show that. A
-// gateway's error answer to the call does not, because the director may
-// have accepted the request behind it.
+// director's own error answer, a request that could not be authenticated,
+// a request that never reached the director, and a context ID the adapter
+// refused before sending show that. A gateway's error answer to the call
+// does not, because the director may have accepted the request behind it.
 func noTaskStarted(err error, kind string) (string, bool) {
 	if boshapi.IsOutcomeUnknown(err) {
 		return "", false
@@ -1162,6 +1162,15 @@ func noTaskStarted(err error, kind string) (string, bool) {
 	var apiErr *boshapi.APIError
 	if errors.As(err, &apiErr) {
 		return "the director answered the " + kind + " with an error", true
+	}
+
+	// boshapi gets the request's credentials before it sends anything, so a
+	// failure to authenticate means the request never left. The director's
+	// 401 to a sent request carries an AuthError too, when the token's
+	// refresh failed, so the director's answer is matched above first.
+	var authErr *boshapi.AuthError
+	if errors.As(err, &authErr) {
+		return "the " + kind + " request was never authenticated, so it was never sent", true
 	}
 
 	var transportErr *boshapi.TransportError
