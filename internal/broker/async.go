@@ -1351,9 +1351,10 @@ func (b *Broker) runningDeleteTask(ctx context.Context, deploymentName string) (
 // deleteMayBeResent reports whether the error of a delete shows that the
 // director started no task for it, so the delete may be sent again. A
 // refusal shows that, unless it is a 404 for a route the director does not
-// serve, which another attempt would only repeat. So do a request that
-// never reached the director and one that never got a pool slot. An error
-// that may hide a request the director accepted does not.
+// serve, which another attempt would only repeat. So do a request that was
+// never authenticated, one that never reached the director, and one that
+// never got a pool slot. An error that may hide a request the director
+// accepted does not.
 func deleteMayBeResent(err error) bool {
 	if boshapi.IsOutcomeUnknown(err) || boshapi.IsRouteNotFound(err) {
 		return false
@@ -1361,6 +1362,16 @@ func deleteMayBeResent(err error) bool {
 
 	var apiErr *boshapi.APIError
 	if errors.As(err, &apiErr) {
+		return true
+	}
+
+	// boshapi gets the request's credentials before it sends anything, so a
+	// failure to authenticate means the request never left, whatever the
+	// failed authentication's own requests did. The director's 401 to a
+	// sent request carries an AuthError too, when the token's refresh
+	// failed, so the director's answer is matched above first.
+	var authErr *boshapi.AuthError
+	if errors.As(err, &authErr) {
 		return true
 	}
 

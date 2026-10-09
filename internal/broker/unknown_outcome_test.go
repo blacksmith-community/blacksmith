@@ -1418,6 +1418,45 @@ var _ = Describe("Deploys and deletes sent to the director", func() {
 			expectFreshContextID(sent()[1], sent()[0])
 		})
 
+		// expectResentAfter checks that a delete whose first attempt failed
+		// with err is sent again, with a fresh context ID, and accepted.
+		expectResentAfter := func(err error) {
+			answerDeletes(func(context.Context, string) (*bosh.Task, error) {
+				return nil, fmt.Errorf("failed to delete deployment: %w", err)
+			}, accept)
+
+			task, retryErr := brokerInstance.RetryDeleteDeploymentTask(ctx, deploymentName, instanceID, uuid.NewString(), 3)
+
+			ExpectWithOffset(1, retryErr).ToNot(HaveOccurred(), "the delete was not sent again after it was never authenticated")
+			ExpectWithOffset(1, task).ToNot(BeNil())
+			ExpectWithOffset(1, task.ID).To(Equal(deleteTaskID))
+			ExpectWithOffset(1, sent()).To(HaveLen(2))
+			expectFreshContextID(sent()[1], sent()[0])
+		}
+
+		It("retry delete resends a delete whose token UAA refused", func() {
+			expectResentAfter(&boshapi.AuthError{
+				Stage:      boshapi.AuthStageToken,
+				Director:   outcomeDirectorAddress,
+				StatusCode: http.StatusUnauthorized,
+				Code:       "invalid_client",
+			})
+		})
+
+		It("retry delete resends a delete whose director could not say how it authenticates", func() {
+			expectResentAfter(&boshapi.AuthError{
+				Stage:    boshapi.AuthStageDiscovery,
+				Director: outcomeDirectorAddress,
+				Err: &boshapi.TransportError{
+					Method:   http.MethodGet,
+					Path:     "/info",
+					Sent:     true,
+					Attempts: 1,
+					Err:      errConnectionReset,
+				},
+			})
+		})
+
 		It("retry delete never resends after an error that does not show the director started no task", func() {
 			cleanups = append(cleanups, broker.SetDeleteRetryBackoff(noResendBackoff))
 
