@@ -2719,6 +2719,59 @@ func deployWithin(t *testing.T, batch *bosh.BatchDirector, name string) *bosh.Ta
 	return task
 }
 
+// The waiters of a superseded lost answer learn which deployment's later
+// deploy replaced it, and when that deploy took over the slot, which is
+// just before it was sent.
+func TestLostAnswerSupersededErrorNamesTheLaterDeploy(t *testing.T) {
+	t.Parallel()
+
+	base := newFakeBatchBase()
+	base.updateErr = lostAnswer(firstDeployment)
+	batch, clock := newTestBatch(t, base, 1)
+
+	_, err := batch.UpdateDeployment(t.Context(), firstDeployment, "manifest")
+	if err == nil {
+		t.Fatal("expected the lost answer to reach the caller")
+	}
+
+	waited := waitInBackground(func() (*bosh.Task, error) { return batch.WaitForContextID(t.Context(), firstContextID) })
+
+	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+
+	// The later deploy is sent some minutes after the answer was lost, so
+	// its time is not the time of the loss.
+	clock.advance(3*time.Minute + 11*time.Second)
+	clock.waitSleeping(t, bosh.BatchLostAnswerInterval)
+
+	sentAt := clock.Now()
+
+	base.set(func(f *fakeBatchBase) { f.updateErr = nil })
+
+	task := deployWithin(t, batch, firstDeployment)
+
+	got := receive(t, waited)
+	if !errors.Is(got.err, bosh.ErrLostAnswerSuperseded) || got.task != nil {
+		t.Fatalf("expected ErrLostAnswerSuperseded and no task, got %+v and %v", got.task, got.err)
+	}
+
+	var superseded *bosh.LostAnswerSupersededError
+	if !errors.As(got.err, &superseded) {
+		t.Fatalf("expected a LostAnswerSupersededError, got %T: %v", got.err, got.err)
+	}
+
+	if superseded.Deployment != firstDeployment || !superseded.At.Equal(sentAt) {
+		t.Errorf("expected the later deploy of %s at %s, got %s at %s", firstDeployment, sentAt, superseded.Deployment, superseded.At)
+	}
+
+	want := "a later deploy of " + firstDeployment + ", sent at " + sentAt.UTC().Format(time.RFC3339) + ", replaced the deploy whose answer was lost"
+	if got.err.Error() != want {
+		t.Errorf("expected the error to read %q, got %q", want, got.err.Error())
+	}
+
+	base.finish(t, task.ID, batchTaskDone)
+	waitBatchStats(t, batch, 0, 0)
+}
+
 // A deploy of a deployment whose earlier deploy lost its answer ends that
 // deploy's watcher and takes over its slot, whether or not the lost deploy
 // carried a context ID. The old watcher gives back no slot of its own, so

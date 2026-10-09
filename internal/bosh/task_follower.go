@@ -31,7 +31,8 @@ var (
 	// context ID.
 	ErrNoTaskWithContextID = errors.New("the BOSH director lists no task with the context ID")
 	// ErrLostAnswerSuperseded is reported to the waiters of a watcher of a
-	// lost answer that a later deploy of the same deployment ended. The
+	// lost answer that a later deploy of the same deployment ended, wrapped
+	// in a LostAnswerSupersededError that names the later deploy. The
 	// director takes a lock for each deployment, so once it accepted the
 	// later deploy, the lost one is not running.
 	ErrLostAnswerSuperseded = errors.New("a later deploy of the same deployment superseded the deploy whose answer was lost")
@@ -362,9 +363,11 @@ type followWatch struct {
 	cancel context.CancelFunc
 	// slotSettled is set once the watcher has decided who releases its
 	// slot, and superseded when a later call on the deployment took the
-	// slot over. Both are guarded by the follower's mu.
-	slotSettled bool
-	superseded  bool
+	// slot over, at supersededAt. All three are guarded by the follower's
+	// mu.
+	slotSettled  bool
+	superseded   bool
+	supersededAt time.Time
 	// done is closed once task and err hold the watcher's result.
 	done chan struct{}
 	task *Task
@@ -626,8 +629,9 @@ func (f *taskFollower) awaitContextID(ctx context.Context, contextID string) (*T
 // supersedeLostAnswer ends the watcher of a lost answer for the
 // deployment, if one still holds its slot, and reports whether the caller
 // now owns that slot. The watcher is told, under mu, not to release the
-// slot, so the slot is never free in between. Its waiters get
-// ErrLostAnswerSuperseded.
+// slot, so the slot is never free in between. Its waiters get a
+// LostAnswerSupersededError, which wraps ErrLostAnswerSuperseded and names
+// the deployment and the time the caller took the slot over.
 func (f *taskFollower) supersedeLostAnswer(deployment string) bool {
 	f.mu.Lock()
 	watch := f.lostByDeployment[deployment]
@@ -639,6 +643,7 @@ func (f *taskFollower) supersedeLostAnswer(deployment string) bool {
 	}
 
 	watch.superseded = true
+	watch.supersededAt = f.clock.Now()
 	watch.slotSettled = true
 
 	delete(f.lostByDeployment, deployment)
@@ -795,11 +800,11 @@ func (f *taskFollower) runWatch(parent context.Context, watch *followWatch, run 
 	}
 
 	f.mu.Lock()
-	superseded := watch.superseded
+	superseded, supersededAt := watch.superseded, watch.supersededAt
 	f.mu.Unlock()
 
 	if superseded {
-		watch.task, watch.err = nil, ErrLostAnswerSuperseded
+		watch.task, watch.err = nil, &LostAnswerSupersededError{Deployment: watch.call.deployment, At: supersededAt}
 	}
 
 	close(watch.done)

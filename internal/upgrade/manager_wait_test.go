@@ -201,7 +201,7 @@ func startUpgrade(t *testing.T, director *waitDirector, vault *waitVault, instan
 // instances, one instance when none is named, and returns without waiting
 // for the upgrade to reach the director. The returned stop ends the
 // manager once, and the test's cleanup calls it too.
-func beginUpgrade(t *testing.T, log logger.Logger, director *waitDirector, vault *waitVault, instanceIDs ...string) (*Manager, *UpgradeTask, func()) {
+func beginUpgrade(t *testing.T, log logger.Logger, director bosh.Director, vault *waitVault, instanceIDs ...string) (*Manager, *UpgradeTask, func()) {
 	t.Helper()
 
 	if len(instanceIDs) == 0 {

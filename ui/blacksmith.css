@@ -11423,6 +11423,10 @@ span.config-type.resurrection {
   border-left: 3px solid #9ca3af;
 }
 
+#upgrade .upgrade-task-instance.instance-outcome-unknown {
+  border-left: 3px solid #8b5cf6;
+}
+
 /* Instance actions container */
 #upgrade .upgrade-task-instance .instance-actions {
   display: flex;
@@ -11535,4 +11539,9 @@ span.config-type.resurrection {
 
 #upgrade .status-icon.skipped {
   color: #9ca3af;
+}
+
+#upgrade .status-icon.outcome-unknown {
+  color: #8b5cf6;
+  font-weight: 700;
 }

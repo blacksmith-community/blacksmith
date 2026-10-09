@@ -10,6 +10,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
 
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/google/uuid"
 )
 
@@ -28,6 +29,19 @@ const cancelTaskTimeout = 30 * time.Second
 //
 //nolint:gochecknoglobals // a test seam
 var cancelWaitTimeout = 5 * time.Minute
+
+// awaitTaskByContextID looks for the task of a deploy whose answer was
+// lost when no batch watcher looks for it. A test replaces it.
+//
+//nolint:gochecknoglobals // a test seam
+var awaitTaskByContextID = bosh.AwaitTaskByContextID
+
+// contextIDWaiter is a director that can wait for the task of a deploy
+// whose answer was lost, by the deploy's context ID. The batch director is
+// one, and its watcher serves the wait.
+type contextIDWaiter interface {
+	WaitForContextID(ctx context.Context, contextID string) (*bosh.Task, error)
+}
 
 // Final states of a director task.
 const (
@@ -397,7 +411,8 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		}
 		if instance.Status == InstanceStatusSuccess ||
 			instance.Status == InstanceStatusCancelled ||
-			instance.Status == InstanceStatusSkipped {
+			instance.Status == InstanceStatusSkipped ||
+			instance.Status == InstanceStatusOutcomeUnknown {
 			continue
 		}
 
@@ -425,13 +440,16 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		m.logger.Error("Failed to persist task %s completed state: %v", task.ID, err)
 	}
 
-	m.logger.Info("Upgrade task %s completed: %d/%d succeeded, %d failed, %d cancelled",
-		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount)
+	m.logger.Info("Upgrade task %s completed: %d/%d succeeded, %d failed, %d cancelled, %d with an unknown outcome",
+		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount, task.UnknownCount)
 }
 
-// upgradeInstance upgrades a single instance. It sends the deploy, saves
-// the deploy's task ID at once, and then waits for that task to end, so
-// the outcome comes from the task's own final state.
+// upgradeInstance upgrades a single instance. It saves a fresh context ID
+// for the deploy, sends the deploy with that ID, saves the deploy's task
+// ID at once, and then waits for that task to end, so the outcome comes
+// from the task's own final state. A deploy whose answer was lost is never
+// marked failed for that, and the instance waits for its task by the
+// context ID instead.
 func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) {
 	// Progress is saved even after Stop ends ctx, so the stored task shows
 	// how far the upgrade got.
@@ -521,7 +539,27 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	m.logger.Debug("Stemcell overlay merged successfully for %s, new manifest size: %d bytes",
 		instance.DeploymentName, len(newManifest))
 
-	deployTask, err := m.director.UpdateDeployment(ctx, instance.DeploymentName, newManifest)
+	// The context ID is saved before the deploy is sent, so a broker that
+	// stops while the deploy is in flight leaves it on record, and the
+	// deploy's task can still be found by it.
+	contextID := uuid.NewString()
+
+	m.mu.Lock()
+	instance.ContextID = contextID
+	m.mu.Unlock()
+
+	err = m.persistTask(persistCtx, task)
+	if err != nil {
+		m.logger.Error("Failed to save context ID %s of the deploy of %s before sending it: %v", contextID, instance.DeploymentName, err)
+	}
+
+	deployTask, err := m.director.UpdateDeployment(boshapi.WithContextID(ctx, contextID), instance.DeploymentName, newManifest)
+	if errors.Is(err, bosh.ErrOutcomeUnknown) {
+		m.awaitLostAnswer(ctx, task, instance, contextID, err, cancelCh)
+
+		return
+	}
+
 	if err != nil {
 		m.mu.Lock()
 		instance.Status = InstanceStatusFailed
@@ -544,6 +582,14 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 		return
 	}
 
+	m.followDeployTask(ctx, task, instance, deployTask.ID, cancelCh)
+}
+
+// followDeployTask saves the deploy's task ID and waits for the task to
+// end, then records the instance's outcome from the task's final state.
+func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, taskID int, cancelCh <-chan struct{}) {
+	persistCtx := context.WithoutCancel(ctx)
+
 	// The task ID is saved before the wait, so the UI shows it while the
 	// deploy runs, and a broker that stops during the wait leaves it on
 	// record. A cancel that came after the instance started but before
@@ -551,23 +597,32 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	// task itself. The ID and the upgrade's status are read and written
 	// under the same lock as CancelTask's, so exactly one side sends it.
 	m.mu.Lock()
-	instance.BOSHTaskID = deployTask.ID
+	instance.BOSHTaskID = taskID
 	cancelledBeforeTheTask := task.Status == TaskStatusCancelled
 	m.mu.Unlock()
-	m.logger.Info("BOSH task %d deploys %s for instance %s", deployTask.ID, instance.DeploymentName, instance.InstanceID)
+	m.logger.Info("BOSH task %d deploys %s for instance %s", taskID, instance.DeploymentName, instance.InstanceID)
 
 	if cancelledBeforeTheTask {
-		m.cancelDeployTask(ctx, instance.InstanceID, deployTask.ID)
+		m.cancelDeployTask(ctx, instance.InstanceID, taskID)
 	}
 
 	m.persistTask(persistCtx, task) //nolint:errcheck
 
-	finished, cancelRequested, err := m.awaitDeployTask(ctx, task, instance, deployTask.ID, cancelCh)
+	finished, cancelRequested, err := m.awaitDeployTask(ctx, task, instance, taskID, cancelCh)
 	if err != nil {
+		if errors.Is(err, bosh.ErrWatchAbandoned) {
+			// Blacksmith no longer follows the task, so its outcome will
+			// not be known here.
+			m.settleOutcomeUnknown(task, instance, taskID, err.Error())
+			m.persistTask(persistCtx, task) //nolint:errcheck
+
+			return
+		}
+
 		if cancelRequested {
 			// The task outlived the wait after the cancel, or could not be
 			// read, so its outcome is not known yet.
-			message := fmt.Sprintf("cancel requested for BOSH task %d", deployTask.ID)
+			message := fmt.Sprintf("cancel requested for BOSH task %d", taskID)
 
 			m.mu.Lock()
 			instance.Error = message
@@ -577,10 +632,10 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 			return
 		}
 
-		if ctx.Err() != nil {
+		if waitStopped(ctx, err) {
 			// Stop ended the wait. The task keeps running on the director,
 			// and its ID stays on record.
-			message := fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", deployTask.ID)
+			message := fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", taskID)
 
 			m.mu.Lock()
 			instance.Error = message
@@ -592,16 +647,180 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 
 		m.mu.Lock()
 		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("stopped waiting for BOSH task %d, which may still be running: %v", deployTask.ID, err)
+		instance.Error = fmt.Sprintf("stopped waiting for BOSH task %d, which may still be running: %v", taskID, err)
 		task.FailedCount++
-		m.logger.Error("Stopped waiting for BOSH task %d of %s: %v", deployTask.ID, instance.DeploymentName, err)
+		m.logger.Error("Stopped waiting for BOSH task %d of %s: %v", taskID, instance.DeploymentName, err)
 		m.mu.Unlock()
 		m.persistTask(persistCtx, task) //nolint:errcheck
 		return
 	}
 
-	m.settleInstance(task, instance, deployTask.ID, finished)
+	m.settleInstance(task, instance, taskID, finished)
 	m.persistTask(persistCtx, task) //nolint:errcheck
+}
+
+// awaitLostAnswer waits for the task of a deploy whose answer was lost,
+// and records the instance's outcome once the wait settles it. It saves
+// when the answer was lost, and never marks the instance failed before
+// the wait settles it. A batch director's watcher serves the wait when one
+// looks for the context ID. Otherwise AwaitTaskByContextID looks for the
+// task, from the time the answer was lost, and a task it finds is followed
+// like any accepted deploy. When Stop ends the wait, the instance stays as
+// it is.
+func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, contextID string, lost error, cancelCh <-chan struct{}) {
+	persistCtx := context.WithoutCancel(ctx)
+	unknownSince := time.Now()
+
+	m.mu.Lock()
+	instance.UnknownSince = &unknownSince
+	instance.Error = "answer lost; looking for the BOSH task by context ID " + contextID
+	m.mu.Unlock()
+
+	m.logger.Error("The answer to the deploy of %s for instance %s was lost, so Blacksmith looks for its BOSH task by context ID %s: %v",
+		instance.DeploymentName, instance.InstanceID, contextID, lost)
+
+	err := m.persistTask(persistCtx, task)
+	if err != nil {
+		m.logger.Error("Failed to save when the answer to the deploy of %s was lost: %v", instance.DeploymentName, err)
+	}
+
+	if waiter, ok := m.director.(contextIDWaiter); ok {
+		finished, err := waiter.WaitForContextID(ctx, contextID)
+
+		switch {
+		case err == nil:
+			taskID := 0
+			if finished != nil {
+				taskID = finished.ID
+			}
+
+			m.mu.Lock()
+			instance.BOSHTaskID = taskID
+			m.mu.Unlock()
+
+			m.settleInstance(task, instance, taskID, finished)
+			m.persistTask(persistCtx, task) //nolint:errcheck
+
+			return
+		case waitStopped(ctx, err):
+			m.logger.Info("Blacksmith stopped waiting for the deploy of %s with context ID %s, whose answer was lost: %v", instance.DeploymentName, contextID, err)
+
+			return
+		case !errors.Is(err, bosh.ErrNoWatcherForContextID) && m.settleLostAnswer(task, instance, contextID, err):
+			m.persistTask(persistCtx, task) //nolint:errcheck
+
+			return
+		}
+
+		m.logger.Info("No batch watcher settled the deploy of %s with context ID %s, so Blacksmith looks for its task on the director: %v", instance.DeploymentName, contextID, err)
+	}
+
+	found, err := awaitTaskByContextID(ctx, m.director, contextID, unknownSince)
+	if err != nil {
+		if waitStopped(ctx, err) {
+			m.logger.Info("Blacksmith stopped looking for the deploy of %s with context ID %s, whose answer was lost: %v", instance.DeploymentName, contextID, err)
+
+			return
+		}
+
+		if !m.settleLostAnswer(task, instance, contextID, err) {
+			m.settleOutcomeUnknown(task, instance, 0, err.Error())
+		}
+
+		m.persistTask(persistCtx, task) //nolint:errcheck
+
+		return
+	}
+
+	if found == nil || found.ID <= 0 {
+		m.settleOutcomeUnknown(task, instance, 0, "the lookup by context ID named no task")
+		m.persistTask(persistCtx, task) //nolint:errcheck
+
+		return
+	}
+
+	m.logger.Info("Found BOSH task %d for the deploy of %s with context ID %s, whose answer was lost", found.ID, instance.DeploymentName, contextID)
+	m.followDeployTask(ctx, task, instance, found.ID, cancelCh)
+}
+
+// waitStopped reports whether a wait ended because Stop ended it, either
+// the manager's own Stop, which ends ctx, or the batch director's, which
+// ends its watchers with context.Canceled.
+func waitStopped(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.Canceled)
+}
+
+// settleLostAnswer records the outcome of an instance whose deploy lost
+// its answer, when the wait for its task ended with an error that settles
+// it, and reports whether it did. A later deploy of the deployment skips
+// the instance, a watch that gave up leaves its outcome unknown, and no
+// task with the context ID fails it.
+func (m *Manager) settleLostAnswer(task *UpgradeTask, instance *InstanceUpgrade, contextID string, err error) bool {
+	switch {
+	case errors.Is(err, bosh.ErrLostAnswerSuperseded):
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		replaced := "a later deploy of " + instance.DeploymentName + " replaced the deploy whose answer was lost"
+
+		var superseded *bosh.LostAnswerSupersededError
+		if errors.As(err, &superseded) {
+			replaced = superseded.Error()
+		}
+
+		completedAt := time.Now()
+		instance.CompletedAt = &completedAt
+		instance.Status = InstanceStatusSkipped
+		instance.Error = fmt.Sprintf("skipped, because %s (context ID %s)", replaced, contextID)
+		task.SkippedCount++
+
+		m.logger.Info("Instance %s: %s", instance.InstanceID, instance.Error)
+
+		return true
+	case errors.Is(err, bosh.ErrWatchAbandoned):
+		m.settleOutcomeUnknown(task, instance, 0, err.Error())
+
+		return true
+	case errors.Is(err, bosh.ErrNoTaskWithContextID):
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		completedAt := time.Now()
+		instance.CompletedAt = &completedAt
+		instance.Status = InstanceStatusFailed
+		instance.Error = fmt.Sprintf("no BOSH task with context ID %s turned up within %v after the deploy's answer was lost", contextID, bosh.UnknownOutcomeGrace)
+		task.FailedCount++
+
+		m.logger.Error("Instance %s: %s: %v", instance.InstanceID, instance.Error, err)
+
+		return true
+	default:
+		return false
+	}
+}
+
+// settleOutcomeUnknown records that Blacksmith stopped following the
+// instance's deploy before its outcome was known. The instance counts as
+// finished, so the upgrade moves on, and it neither fails the upgrade nor
+// counts as a success. taskID is the BOSH task that was followed, or 0
+// when none was, and reason says why the following stopped, for the log.
+func (m *Manager) settleOutcomeUnknown(task *UpgradeTask, instance *InstanceUpgrade, taskID int, reason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	followed := ""
+	if taskID > 0 {
+		followed = fmt.Sprintf(" (BOSH task %d)", taskID)
+	}
+
+	completedAt := time.Now()
+	instance.CompletedAt = &completedAt
+	instance.Status = InstanceStatusOutcomeUnknown
+	instance.Error = fmt.Sprintf("Blacksmith stopped following the deploy with context ID %s%s before its outcome was known. "+
+		"Check the director's task list for that context ID.", instance.ContextID, followed)
+	task.UnknownCount++
+
+	m.logger.Error("Instance %s of %s: %s: %s", instance.InstanceID, instance.DeploymentName, instance.Error, reason)
 }
 
 // awaitDeployTask waits for the deploy task of an upgrade instance to end.
@@ -683,6 +902,7 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 	switch finished.State {
 	case boshTaskDone:
 		instance.Status = InstanceStatusSuccess
+		instance.Error = ""
 		task.CompletedCount++
 		m.logger.Info("Successfully upgraded instance %s", instance.InstanceID)
 	case boshTaskCancelled:

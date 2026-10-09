@@ -36,8 +36,16 @@ const (
 	InstanceStatusFailed InstanceStatus = "failed"
 	// InstanceStatusCancelled indicates the instance upgrade was cancelled.
 	InstanceStatusCancelled InstanceStatus = "cancelled"
-	// InstanceStatusSkipped indicates the instance upgrade was skipped (due to job cancellation).
+	// InstanceStatusSkipped indicates the instance upgrade was skipped
+	// because the job was cancelled before it started, or because a later
+	// deploy of its deployment replaced a deploy whose answer was lost.
 	InstanceStatusSkipped InstanceStatus = "skipped"
+	// InstanceStatusOutcomeUnknown indicates Blacksmith stopped following
+	// the instance's deploy before its outcome was known. It counts as
+	// finished, so the upgrade moves on, and it neither fails the upgrade
+	// nor counts as a success. The operator checks the director for the
+	// deploy by its context ID.
+	InstanceStatusOutcomeUnknown InstanceStatus = "outcome_unknown"
 )
 
 // InstanceUpgrade represents the upgrade status for a single instance.
@@ -49,9 +57,15 @@ type InstanceUpgrade struct {
 	PlanID         string         `json:"plan_id,omitempty"`
 	Status         InstanceStatus `json:"status"`
 	BOSHTaskID     int            `json:"bosh_task_id,omitempty"`
-	Error          string         `json:"error,omitempty"`
-	StartedAt      *time.Time     `json:"started_at,omitempty"`
-	CompletedAt    *time.Time     `json:"completed_at,omitempty"`
+	// ContextID is the context ID the instance's deploy carried, saved
+	// before the deploy is sent.
+	ContextID string `json:"context_id,omitempty"`
+	// UnknownSince is when the deploy's answer was lost, and is nil while
+	// no answer has been lost.
+	UnknownSince *time.Time `json:"unknown_since,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
 // UpgradeTask represents a batch upgrade task.
@@ -67,10 +81,12 @@ type UpgradeTask struct {
 	FailedCount    int               `json:"failed_count"`
 	CancelledCount int               `json:"cancelled_count"`
 	SkippedCount   int               `json:"skipped_count"`
-	CreatedAt      time.Time         `json:"created_at"`
-	StartedAt      *time.Time        `json:"started_at,omitempty"`
-	CompletedAt    *time.Time        `json:"completed_at,omitempty"`
-	CreatedBy      string            `json:"created_by,omitempty"`
+	// UnknownCount is how many instances settled as outcome_unknown.
+	UnknownCount int        `json:"unknown_count"`
+	CreatedAt    time.Time  `json:"created_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	CreatedBy    string     `json:"created_by,omitempty"`
 }
 
 // StemcellTarget represents the target stemcell for an upgrade.
@@ -95,6 +111,7 @@ type TaskSummary struct {
 	TotalCount     int        `json:"total_count"`
 	CompletedCount int        `json:"completed_count"`
 	FailedCount    int        `json:"failed_count"`
+	UnknownCount   int        `json:"unknown_count"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
@@ -108,6 +125,7 @@ func (t *UpgradeTask) ToSummary() TaskSummary {
 		TotalCount:     t.TotalCount,
 		CompletedCount: t.CompletedCount,
 		FailedCount:    t.FailedCount,
+		UnknownCount:   t.UnknownCount,
 		CreatedAt:      t.CreatedAt,
 	}
 }

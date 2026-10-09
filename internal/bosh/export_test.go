@@ -157,3 +157,9 @@ func TakeBatchSlotAtHead(batch *BatchDirector) {
 
 	batch.takeHeadLocked()
 }
+
+// AwaitTaskByContextIDWithClock is AwaitTaskByContextID on the clock
+// given.
+func AwaitTaskByContextIDWithClock(ctx context.Context, director Director, contextID string, since time.Time, clock BatchClock) (*Task, error) {
+	return awaitTaskByContextID(ctx, director, contextID, since, clock)
+}
