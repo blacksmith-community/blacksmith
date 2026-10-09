@@ -41,6 +41,10 @@ type OutcomeUnknownError struct {
 	// NoLookup is true when Blacksmith made no lookup for the request's
 	// task, so the message never says it looked for one.
 	NoLookup bool
+	// LookupFailed is true when Blacksmith tried to look for the request's
+	// task by its context ID and the lookup itself failed, so the message
+	// never says it found none.
+	LookupFailed bool
 	// Err is the error the request saw.
 	Err error
 }
@@ -87,15 +91,20 @@ func (e *OutcomeUnknownError) Error() string {
 
 	if e.NoLookup {
 		if e.Deployment != "" {
-			fmt.Fprintf(&msg, "Check /b/tasks for a task on the deployment %s", e.Deployment)
+			fmt.Fprintf(&msg, "Check /b/tasks for a task on the deployment %s.", e.Deployment)
 		} else {
-			fmt.Fprintf(&msg, "Check /b/tasks for a recent %s task", e.Operation)
+			fmt.Fprintf(&msg, "Check /b/tasks for a recent %s task.", e.Operation)
 		}
 
 		return msg.String()
 	}
 
-	if e.ContextID != "" {
+	// A lookup that failed found nothing either way, so the message says
+	// the task could not be sought rather than that none was found.
+	switch {
+	case e.ContextID != "" && e.LookupFailed:
+		msg.WriteString("Blacksmith could not look for a task with that context ID, because the lookup failed. ")
+	case e.ContextID != "":
 		msg.WriteString("Blacksmith looked for a task with that context ID and found none yet. ")
 	}
 

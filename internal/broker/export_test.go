@@ -402,3 +402,9 @@ func (b *Broker) UnknownOutcomePassReader(instanceID string) func() string {
 
 	return pass.lastError
 }
+
+// NoTaskInAnswer exposes the error for a mutation the director accepted
+// with no task in its answer.
+func (b *Broker) NoTaskInAnswer(operation, deploymentName, contextID string) error {
+	return b.noTaskInAnswer(operation, deploymentName, contextID)
+}

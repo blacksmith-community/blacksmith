@@ -434,7 +434,7 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	// finds the deploy task and nothing else the provision started.
 	task, err := p.broker.BOSH.CreateDeployment(boshapi.WithContextID(ctx, p.contextID), manifestStr)
 	if err == nil && task == nil {
-		err = noTaskInAnswer("CreateDeployment", deploymentName, p.contextID)
+		err = p.broker.noTaskInAnswer("CreateDeployment", deploymentName, p.contextID)
 	}
 
 	if err != nil {
@@ -499,15 +499,28 @@ func manifestDeploymentName(manifestStr, fallback string) string {
 
 // noTaskInAnswer is the error for a mutation the director accepted with no
 // task in its answer. The director may have started a task, so the outcome
-// is unknown, the way the adapter reports an answer it could not read.
-func noTaskInAnswer(operation, deploymentName, contextID string) error {
+// is unknown, the way the adapter reports an answer it could not read. It
+// names the director the broker is configured for, and contextID is the
+// context ID the request that got the answer carried.
+func (b *Broker) noTaskInAnswer(operation, deploymentName, contextID string) error {
 	return &bosh.OutcomeUnknownError{
 		Operation:  operation,
+		Director:   b.directorAddress(),
 		Deployment: deploymentName,
 		ContextID:  contextID,
 		NoLookup:   true,
 		Err:        bosh.ErrEmptyDirectorAnswer,
 	}
+}
+
+// directorAddress returns the address of the BOSH director the broker is
+// configured for, or an empty string when it has no configuration.
+func (b *Broker) directorAddress() string {
+	if b.Config == nil {
+		return ""
+	}
+
+	return b.Config.BOSH.Address
 }
 
 // instanceStillIndexed reports whether the instance is still present in the
@@ -715,10 +728,6 @@ func (d *deprovisioningPhase) deleteDeploymentWithRetry(ctx context.Context) (*b
 	task, err := d.broker.retryDeleteDeployment(ctx, d.deploymentName, d.instanceID, d.contextID, defaultDeleteRetryAttempts)
 	if err != nil {
 		return nil, err
-	}
-
-	if task == nil {
-		return nil, noTaskInAnswer("DeleteDeployment", d.deploymentName, d.contextID)
 	}
 
 	// The task is the one the director's answer to the delete named, or a
@@ -1172,6 +1181,10 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 // loop reads it before every attempt, and again after a delete answered
 // code 70000, on any attempt. Code 70000 that the read does not confirm
 // is a refusal like any other.
+//
+// A delete the director accepted with no task in its answer is an unknown
+// outcome under the context ID that attempt carried, so the loop never
+// returns a nil task without an error.
 func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, instanceID, contextID string, maxRetries int) (*bosh.Task, error) {
 	if contextID == "" {
 		return nil, fmt.Errorf("%w: deployment %s of instance %s", ErrNoDeleteContextID, deploymentName, instanceID)
@@ -1226,7 +1239,7 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, inst
 			}
 		}
 
-		task, err := b.BOSH.DeleteDeployment(boshapi.WithContextID(ctx, attemptID), deploymentName)
+		task, err := b.sendDelete(ctx, deploymentName, attemptID)
 		if err == nil {
 			logger.Info("Deletion task started on attempt %d for deployment %s (task %d, context ID %s)", attempt, deploymentName, task.ID, attemptID)
 
@@ -1259,6 +1272,18 @@ func (b *Broker) retryDeleteDeployment(ctx context.Context, deploymentName, inst
 	}
 
 	return nil, fmt.Errorf("%w: %s after %d attempts", ErrFailedToDeleteDeployment, deploymentName, maxRetries)
+}
+
+// sendDelete sends one delete of deploymentName under attemptID. A delete
+// the director accepted with no task in its answer is an unknown outcome
+// under attemptID, so it never returns a nil task without an error.
+func (b *Broker) sendDelete(ctx context.Context, deploymentName, attemptID string) (*bosh.Task, error) {
+	task, err := b.BOSH.DeleteDeployment(boshapi.WithContextID(ctx, attemptID), deploymentName)
+	if err == nil && task == nil {
+		return nil, b.noTaskInAnswer("DeleteDeployment", deploymentName, attemptID)
+	}
+
+	return task, err //nolint:wrapcheck // the director's own error, which the loop sorts by type
 }
 
 // waitBeforeDeleteAttempt waits out the backoff before a delete attempt

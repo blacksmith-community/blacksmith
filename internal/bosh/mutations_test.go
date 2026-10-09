@@ -1408,6 +1408,39 @@ func TestLostAnswerLookupFailureStillReturnsOutcomeUnknown(t *testing.T) {
 	}
 }
 
+// A lost answer whose lookup by context ID failed says Blacksmith could
+// not look for the task, and never claims it looked and found none.
+func TestFailedLookupSaysTheTaskCouldNotBeSought(t *testing.T) {
+	calls := map[string]mutationCall{"create": createCall(), "delete": deleteCall()}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			director := newLostAnswerDirector(t, failsEveryList)
+			adapter, _ := newLoggedAdapter(t, director.server, nil)
+
+			_, err := call.call(boshapi.WithContextID(t.Context(), contextID), adapter)
+
+			unknown := checkLostAnswer(t, err, call, contextID)
+			if !unknown.LookupFailed {
+				t.Errorf("expected LookupFailed once the lookup failed, got %+v", unknown)
+			}
+
+			message := err.Error()
+			if !strings.Contains(message, "Blacksmith could not look for a task with that context ID") {
+				t.Errorf("expected the message to say the task could not be sought, got: %s", message)
+			}
+
+			for _, unwanted := range []string{"looked for a task", "found none"} {
+				if strings.Contains(message, unwanted) {
+					t.Errorf("expected no %q in the message, got: %s", unwanted, message)
+				}
+			}
+		})
+	}
+}
+
 // The lookup runs on a context of its own, so a caller whose context ended
 // while the answer was lost still gets it.
 func TestLostAnswerLookupRunsAfterTheCallersContextEnds(t *testing.T) {

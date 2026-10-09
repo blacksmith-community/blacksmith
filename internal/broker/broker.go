@@ -4563,13 +4563,10 @@ func populateServiceFields(binding *BindingCredentials) {
 // scheduleBackup schedules Shield backup for the instance.
 // getCredentialsForBackup retrieves credentials for backup scheduling.
 // getInstanceForOperation retrieves instance information for the operation.
-// getLatestTask retrieves the latest task for the deployment.
-// handleTaskRetrievalError handles errors when retrieving tasks.
-// handleOperationStatus handles the operation status based on task ID and type.
-// handleTaskIDZero handles the special case where task ID is 0.
-// handleTaskIDNegativeOne handles the special case where task ID is -1.
-// handleTaskIDOne handles the special case where task ID is 1.
-// handleRegularTask handles regular task IDs for provision and deprovision operations.
+// readRecordedOperation reads the provision or deprovision on record for the instance.
+// provisionStatus answers a provision poll from the provision the broker recorded.
+// deprovisionStatus answers a deprovision poll from the deprovision the broker recorded.
+// resolveUnknownOutcome settles a deploy or delete whose answer was lost.
 // handleProvisionTask handles provision task operations.
 // handleDeprovisionTask handles deprovision task operations.
 // cleanupFailedDeployment attempts to clean up a failed deployment.

@@ -116,8 +116,10 @@ func (d *DirectorAdapter) accepted(ctx context.Context, call mutation, task *bos
 // its own bounded by lostAnswerLookupTimeout, so the lookup runs even when
 // the caller's context has ended. The director's task for that ID is the
 // request's task, and it is returned with no error. When the director
-// lists none, or the lookup fails, the outcome stays unknown, and a failed
-// lookup is only logged. Every other mutation makes no lookup, because the
+// lists none, or the lookup fails, the outcome stays unknown. A failed
+// lookup is logged, and the error says the task could not be sought, but
+// the lookup's own error never reaches the caller. Every other mutation
+// makes no lookup, because the
 // director may not tag its task with the ID.
 func (d *DirectorAdapter) lostAnswer(ctx context.Context, call mutation, err error) (*Task, error) {
 	unknown := &OutcomeUnknownError{
@@ -142,6 +144,8 @@ func (d *DirectorAdapter) lostAnswer(ctx context.Context, call mutation, err err
 	case lookupErr != nil:
 		d.log.Errorf("The answer to the request to %s was lost, and the lookup of its task by the context ID %s failed, so its outcome stays unknown: %v",
 			call.what, call.contextID, lookupErr)
+
+		unknown.LookupFailed = true
 	case found == nil || found.ID <= 0:
 		d.log.Infof("The answer to the request to %s was lost, and the director lists no task with its context ID %s yet, so its outcome stays unknown",
 			call.what, call.contextID)

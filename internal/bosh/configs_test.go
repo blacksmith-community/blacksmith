@@ -728,6 +728,27 @@ func TestOutcomeUnknownErrorWithNothingToName(t *testing.T) {
 	}
 }
 
+// The message of a request that made no lookup ends with a full stop,
+// whether or not it names a deployment.
+func TestNoLookupMessageEndsWithAPeriod(t *testing.T) {
+	t.Parallel()
+
+	for _, deployment := range []string{deploymentName, ""} {
+		message := (&bosh.OutcomeUnknownError{
+			Operation:  opCleanUp,
+			Director:   directorAddress,
+			Deployment: deployment,
+			ContextID:  contextID,
+			NoLookup:   true,
+			Err:        errConnectionReset,
+		}).Error()
+
+		if !strings.HasSuffix(message, ".") || strings.HasSuffix(message, "..") {
+			t.Errorf("expected the message for deployment %q to end with one full stop, got: %s", deployment, message)
+		}
+	}
+}
+
 // A request that made no lookup never claims that Blacksmith looked for its
 // task, and never sends the operator to search by the context ID, which
 // the director may not store. It still names the ID for matching logs.
@@ -738,8 +759,8 @@ func TestOutcomeUnknownErrorWithNoLookupLeavesOutTheLookupClaim(t *testing.T) {
 		deployment string
 		suffix     string
 	}{
-		"with a deployment":    {deploymentName, "Check /b/tasks for a task on the deployment dep-1"},
-		"without a deployment": {"", "Check /b/tasks for a recent CleanUp task"},
+		"with a deployment":    {deploymentName, "Check /b/tasks for a task on the deployment dep-1."},
+		"without a deployment": {"", "Check /b/tasks for a recent CleanUp task."},
 	}
 
 	for name, tc := range cases {
