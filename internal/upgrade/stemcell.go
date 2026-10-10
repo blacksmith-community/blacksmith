@@ -3,6 +3,8 @@ package upgrade
 import (
 	"fmt"
 
+	manifestPkg "blacksmith/internal/manifest"
+
 	"github.com/geofffranks/spruce"
 	"gopkg.in/yaml.v2"
 )
@@ -27,27 +29,43 @@ func MergeStemcellOverlay(manifestYAML string, stemcellOS, stemcellVersion strin
 	// Create the stemcell overlay
 	overlay := createStemcellOverlay(stemcellOS, stemcellVersion)
 
-	// Merge the overlay into the manifest
-	merged, err := spruce.Merge(manifest, overlay)
-	if err != nil {
-		return "", fmt.Errorf("failed to merge stemcell overlay: %w", err)
-	}
+	// Spruce keeps global state, so the merge and the evaluation run under
+	// the lock the manifest package holds around its own spruce calls.
+	var tree map[interface{}]interface{}
 
-	// Run the spruce evaluator
-	eval := &spruce.Evaluator{Tree: merged}
-
-	err = eval.Run(nil, nil)
+	manifestPkg.WithSpruceLock(func() {
+		tree, err = mergeAndEvaluate(manifest, overlay)
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to evaluate spruce expressions: %w", err)
+		return "", err
 	}
 
 	// Marshal back to YAML
-	result, err := yaml.Marshal(eval.Tree)
+	result, err := yaml.Marshal(tree)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal merged manifest: %w", err)
 	}
 
 	return string(result), nil
+}
+
+// mergeAndEvaluate merges the overlay into the manifest with spruce and
+// runs the spruce evaluator on the result. The caller holds the spruce
+// lock.
+func mergeAndEvaluate(manifest, overlay map[interface{}]interface{}) (map[interface{}]interface{}, error) {
+	merged, err := spruce.Merge(manifest, overlay)
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge stemcell overlay: %w", err)
+	}
+
+	eval := &spruce.Evaluator{Tree: merged}
+
+	err = eval.Run(nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate spruce expressions: %w", err)
+	}
+
+	return eval.Tree, nil
 }
 
 // createStemcellOverlay creates the stemcell overlay structure.

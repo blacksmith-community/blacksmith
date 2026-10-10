@@ -27,6 +27,16 @@ import (
 // and spruce.Evaluator.Run() modify global variables without synchronization.
 var spruceMu sync.Mutex
 
+// WithSpruceLock runs fn under the lock that serializes every use of the
+// spruce library, so code outside this package that merges or evaluates
+// with spruce never races the manifests this package generates.
+func WithSpruceLock(fn func()) {
+	spruceMu.Lock()
+	defer spruceMu.Unlock()
+
+	fn()
+}
+
 const (
 	// If BLACKSMITH_INSTANCE_DATA_DIR environment variable is not set, use this as a default.
 	DefaultBlacksmithWorkDir = "/var/vcap/data/blacksmith/"
