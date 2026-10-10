@@ -535,6 +535,12 @@ func getSystemHealthStatus(deps Dependencies) SystemHealth {
 	return health
 }
 
+// UpgradeHandler returns the upgrade handler the API built, so shutdown can
+// stop its manager.
+func (api *InternalAPI) UpgradeHandler() *upgradehandler.Handler {
+	return api.upgradeHandler
+}
+
 // ServeHTTP implements the http.Handler interface.
 func (api *InternalAPI) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// Use the router to find and execute the appropriate handler

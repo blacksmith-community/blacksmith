@@ -26,6 +26,8 @@ import (
 	"blacksmith/internal/compression"
 	"blacksmith/internal/config"
 	"blacksmith/internal/credhub"
+	upgradehandler "blacksmith/internal/handlers/upgrade"
+	"blacksmith/internal/interfaces"
 	"blacksmith/internal/planstore"
 	"blacksmith/internal/recovery"
 	"blacksmith/internal/services/rabbitmq"
@@ -60,9 +62,12 @@ const (
 	DefaultWSSessionTimeout   = 30 * time.Minute
 	DefaultWSCheckInterval    = 15 * time.Second
 
-	// Application defaults.
-	DefaultShutdownTimeout = 30 * time.Second
-	DefaultMinArgsRequired = 3
+	// Application defaults. Shutdown gets one deadline for all its steps,
+	// and the HTTP servers get a shorter one inside it to drain requests in
+	// flight.
+	DefaultShutdownTimeout       = 15 * time.Second
+	DefaultServerShutdownTimeout = 5 * time.Second
+	DefaultMinArgsRequired       = 3
 
 	// Vault defaults.
 	DefaultVaultTimeout        = 30 * time.Second
@@ -1066,36 +1071,10 @@ func checkServicesWithoutDeployments(brokerInstance *broker.Broker, ctx context.
 	}
 }
 
-func setupGracefulShutdown(httpServer, httpsServer *http.Server, ctx context.Context, logger loggerPkg.Logger) {
-	go func() {
-		<-ctx.Done()
-		logger.Info("Shutting down servers...")
-
-		shutdownCtx, shutdownCancel := context.WithTimeout(ctx, DefaultShutdownTimeout)
-		defer shutdownCancel()
-
-		shutdownHTTPServer(httpServer, shutdownCtx, logger)
-		shutdownHTTPSServer(httpsServer, shutdownCtx, logger)
-	}()
-}
-
-func shutdownHTTPServer(httpServer *http.Server, shutdownCtx context.Context, logger loggerPkg.Logger) {
-	err := httpServer.Shutdown(shutdownCtx)
-	if err != nil {
-		logger.Error("Error shutting down HTTP server: %s", err)
-	}
-}
-
-func shutdownHTTPSServer(httpsServer *http.Server, shutdownCtx context.Context, logger loggerPkg.Logger) {
-	if httpsServer != nil {
-		err := httpsServer.Shutdown(shutdownCtx)
-		if err != nil {
-			logger.Error("Error shutting down HTTPS server: %s", err)
-		}
-	}
-}
-
-func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, brokerInstance *broker.Broker, vault *internalVault.Vault, ctx context.Context, cancel context.CancelFunc, logger loggerPkg.Logger) *sync.WaitGroup {
+// runServersAndMaintenance starts the HTTP and HTTPS servers and the
+// maintenance loop. It returns the wait group they run under and the
+// servers that started, which shutdown drains.
+func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, brokerInstance *broker.Broker, vault *internalVault.Vault, ctx context.Context, cancel context.CancelFunc, logger loggerPkg.Logger) (*sync.WaitGroup, []*http.Server) {
 	httpServer := startHTTPServer(cfg, apiHandler, logger)
 
 	httpsServer, err := startHTTPSServer(cfg, apiHandler, logger)
@@ -1111,9 +1090,13 @@ func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, broker
 	startHTTPServerGoroutine(&waitGroup, httpServer, cancel, logger)
 	startHTTPSServerGoroutine(&waitGroup, httpsServer, cancel, logger)
 	startMaintenanceLoop(&waitGroup, brokerInstance, vault, ctx, logger)
-	setupGracefulShutdown(httpServer, httpsServer, ctx, logger)
 
-	return &waitGroup
+	servers := []*http.Server{httpServer}
+	if httpsServer != nil {
+		servers = append(servers, httpsServer)
+	}
+
+	return &waitGroup, servers
 }
 
 func setupSignalHandlingAndContext() (context.Context, context.CancelFunc, chan os.Signal) {
@@ -1217,7 +1200,20 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
 	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
 	rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService, rabbitmqPluginsAuditService *rabbitmq.PluginsAuditService,
-	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, logger loggerPkg.Logger) *broker.API {
+	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, logger loggerPkg.Logger) (*broker.API, *upgradehandler.Handler) {
+	// A nil director pointer inside an interface would not compare equal to
+	// nil, so the API gets a true nil for each director initializeBOSH did
+	// not build. The upgrade handler then falls back to the pooled director,
+	// or has none.
+	var director, upgradeDirector interfaces.Director
+	if boshDirector != nil {
+		director = boshDirector
+	}
+
+	if batchDirector != nil {
+		upgradeDirector = batchDirector
+	}
+
 	// Create callback to sync BatchDirector pool with max_batch_jobs setting
 	var onMaxBatchJobsChanged func(maxJobs int)
 	if batchDirector != nil {
@@ -1232,8 +1228,8 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Logger:                         logger,
 		Vault:                          vault,
 		Broker:                         brokerInstance,
-		Director:                       boshDirector,
-		BatchDirector:                  batchDirector,
+		Director:                       director,
+		BatchDirector:                  upgradeDirector,
 		OnMaxBatchJobsChanged:          onMaxBatchJobsChanged,
 		ServicesManager:                services.NewManagerWithCFConfig(logger.Named("services").Debug, config.Broker.CF.BrokerURL, config.Broker.CF.BrokerUser, config.Broker.CF.BrokerPass),
 		CFManager:                      cfManager,
@@ -1258,7 +1254,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		Logger:   logger.Named("api"),
 		Internal: internalAPI,
 		Primary:  osbapibroker.NewHandler(brokerInstance, osbapibroker.WithLogger(broker.NewOSBAPILogger(logger.Named("osbapi")))),
-	}
+	}, internalAPI.UpgradeHandler()
 }
 
 // runService runs the main service logic.
@@ -1311,16 +1307,16 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 		defer vmMonitor.Stop()
 	}
 
-	sshService, apiHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
+	sshService, apiHandler, upgradeHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
 
-	serverWaitGroup := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
+	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
 
 	startCredHubProbe(ctx, config, brokerInstance, credhubClient, logger)
 
 	waitForShutdownSignal(sigChan, ctx, logger)
 
-	cancel()
+	shutdown(shutdownDepsFor(servers, cancel, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger))
 	serverWaitGroup.Wait()
 
 	return nil
@@ -1431,17 +1427,17 @@ func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirecto
 	return nil
 }
 
-func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API) {
+func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API, *upgradehandler.Handler) {
 	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
 
 	uiHandler := getUIHandler(config)
 
-	apiHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler,
+	apiHandler, upgradeHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
 		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, logger)
 
-	return sshService, apiHandler
+	return sshService, apiHandler, upgradeHandler
 }
 
 func closeSSHService(sshService *ssh.ServiceImpl, logger loggerPkg.Logger) {
@@ -1460,6 +1456,181 @@ func waitForShutdownSignal(sigChan <-chan os.Signal, ctx context.Context, logger
 	case <-ctx.Done():
 		logger.Info("Context cancelled, shutting down...")
 	}
+}
+
+// The shutdown deadlines. They are variables so the tests can shorten them.
+var (
+	shutdownTimeout       = DefaultShutdownTimeout       //nolint:gochecknoglobals // a test seam
+	serverShutdownTimeout = DefaultServerShutdownTimeout //nolint:gochecknoglobals // a test seam
+)
+
+// httpServer is a server that shutdown drains.
+type httpServer interface {
+	Shutdown(ctx context.Context) error
+}
+
+// stopper is a part of the broker that shutdown stops.
+type stopper interface {
+	Stop()
+}
+
+// backgroundWaiter is the broker's wait for its background goroutines.
+type backgroundWaiter interface {
+	WaitForBackground(ctx context.Context)
+}
+
+// shutdownDeps holds everything shutdown stops. A nil field is skipped.
+type shutdownDeps struct {
+	servers    []httpServer
+	cancel     context.CancelFunc
+	upgrades   stopper
+	background backgroundWaiter
+	batch      stopper
+	pool       stopper
+	logger     loggerPkg.Logger
+}
+
+// shutdownStep is one named step of shutdown.
+type shutdownStep struct {
+	name string
+	run  func(ctx context.Context)
+}
+
+// steps returns the steps shutdown runs, in order. The servers stop first,
+// so no request starts once the service context ends. The service context
+// is cancelled next, which ends the async provisions and deprovisions and
+// their monitors. The upgrade manager stops before the broker's wait, and
+// the directors stop last, after everything that uses them.
+func (deps shutdownDeps) steps() []shutdownStep {
+	var steps []shutdownStep
+
+	if len(deps.servers) > 0 {
+		steps = append(steps, shutdownStep{name: "stop the HTTP servers", run: deps.stopServers})
+	}
+
+	if deps.cancel != nil {
+		steps = append(steps, shutdownStep{name: "cancel the service context", run: func(context.Context) { deps.cancel() }})
+	}
+
+	if deps.upgrades != nil {
+		steps = append(steps, shutdownStep{name: "stop the upgrade manager", run: func(context.Context) { deps.upgrades.Stop() }})
+	}
+
+	if deps.background != nil {
+		steps = append(steps, shutdownStep{name: "wait for the broker's background work", run: deps.background.WaitForBackground})
+	}
+
+	if deps.batch != nil {
+		steps = append(steps, shutdownStep{name: "stop the batch director", run: func(context.Context) { deps.batch.Stop() }})
+	}
+
+	if deps.pool != nil {
+		steps = append(steps, shutdownStep{name: "stop the director pool", run: func(context.Context) { deps.pool.Stop() }})
+	}
+
+	return steps
+}
+
+// stopServers drains every server at once, so none accepts a new request
+// while another drains. Requests in flight get the shorter server deadline
+// to finish.
+func (deps shutdownDeps) stopServers(ctx context.Context) {
+	serverCtx, cancel := context.WithTimeout(ctx, serverShutdownTimeout)
+	defer cancel()
+
+	var drained sync.WaitGroup
+
+	for _, server := range deps.servers {
+		drained.Add(1)
+
+		go func() {
+			defer drained.Done()
+
+			err := server.Shutdown(serverCtx)
+			if err != nil {
+				deps.logger.Error("Error shutting down a server: %s", err)
+			}
+		}()
+	}
+
+	drained.Wait()
+}
+
+// shutdownDepsFor gathers what shutdown stops from the values runService
+// built. A nil pointer inside an interface would not compare equal to nil,
+// so each part the broker does not have becomes a true nil, which shutdown
+// skips.
+func shutdownDepsFor(servers []*http.Server, cancel context.CancelFunc, upgradeHandler *upgradehandler.Handler, brokerInstance *broker.Broker,
+	batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) shutdownDeps {
+	deps := shutdownDeps{cancel: cancel, logger: logger}
+
+	for _, server := range servers {
+		if server != nil {
+			deps.servers = append(deps.servers, server)
+		}
+	}
+
+	if upgradeHandler != nil {
+		deps.upgrades = upgradeHandler
+	}
+
+	if brokerInstance != nil {
+		deps.background = brokerInstance
+	}
+
+	if batchDirector != nil {
+		deps.batch = batchDirector
+	}
+
+	if boshDirector != nil {
+		deps.pool = boshDirector
+	}
+
+	return deps
+}
+
+// shutdown runs the shutdown steps in order under one deadline, which comes
+// from context.Background() because the service context ends during
+// shutdown. Each step runs in its own goroutine. A step still running at
+// the deadline is logged by name, and every later step then starts without
+// shutdown waiting for it, so the directors are always told to stop. The
+// saves the steps make are best effort, because the upgrade manager settles
+// its tasks again when the broker next starts.
+func shutdown(deps shutdownDeps) {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	deps.logger.Info("Shutting down, with a deadline of %s", shutdownTimeout)
+
+	for _, step := range deps.steps() {
+		if ctx.Err() != nil {
+			go step.run(ctx)
+
+			deps.logger.Error("Shutdown step %q overran the deadline of %s, which passed before the step could start, so it runs without shutdown waiting for it", step.name, shutdownTimeout)
+
+			continue
+		}
+
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+
+			step.run(ctx)
+		}()
+
+		select {
+		case <-done:
+		case <-ctx.Done():
+			select {
+			case <-done:
+			default:
+				deps.logger.Error("Shutdown step %q overran the deadline of %s and is still running", step.name, shutdownTimeout)
+			}
+		}
+	}
+
+	deps.logger.Info("Shutdown finished")
 }
 
 func main() {
