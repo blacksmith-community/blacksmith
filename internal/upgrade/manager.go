@@ -469,18 +469,25 @@ func (m *Manager) processTask(task *UpgradeTask) {
 			}
 		}
 
-		// Skip already processed instances
-		if instance.Status == InstanceStatusFailed {
-			m.mu.Lock()
-			task.FailedCount++
-			m.mu.Unlock()
+		m.mu.RLock()
+
+		status := instance.Status
+
+		m.mu.RUnlock()
+
+		// An instance that has settled was counted when it settled, so a
+		// resumed upgrade skips it without counting it again.
+		if status.settled() {
 			continue
 		}
-		if instance.Status == InstanceStatusSuccess ||
-			instance.Status == InstanceStatusCancelled ||
-			instance.Status == InstanceStatusSkipped ||
-			instance.Status == InstanceStatusOutcomeUnknown {
-			continue
+
+		// An instance whose deploy is still in flight has not settled, so
+		// the upgrade stops here rather than deploy it again or finish
+		// while that deploy runs.
+		if status == InstanceStatusRunning || status == InstanceStatusInterrupted {
+			m.logger.Info("Instance %s of task %s is still %s, so the upgrade stops until it settles", instance.InstanceID, task.ID, status)
+
+			return
 		}
 
 		m.upgradeInstance(m.ctx, task, instance, cancelCh)

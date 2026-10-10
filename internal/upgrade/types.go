@@ -53,6 +53,19 @@ const (
 	InstanceStatusInterrupted InstanceStatus = "interrupted"
 )
 
+// settled reports whether an instance in the status has settled, which
+// counted it in its upgrade's totals.
+func (s InstanceStatus) settled() bool {
+	switch s {
+	case InstanceStatusSuccess, InstanceStatusFailed, InstanceStatusCancelled, InstanceStatusSkipped, InstanceStatusOutcomeUnknown:
+		return true
+	case InstanceStatusPending, InstanceStatusRunning, InstanceStatusInterrupted:
+		return false
+	default:
+		return false
+	}
+}
+
 // InstanceUpgrade represents the upgrade status for a single instance.
 type InstanceUpgrade struct {
 	InstanceID     string         `json:"instance_id"`

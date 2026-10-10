@@ -662,3 +662,110 @@ func TestCancelSendsACancelForAnInterruptedInstance(t *testing.T) {
 		t.Fatalf("expected the instance to settle as cancelled, got %+v", done)
 	}
 }
+
+// managerWithUpgrade starts a manager over the director, waits for its
+// load, and puts the upgrade in it, as a loaded upgrade is held. The
+// manager stops when the test ends.
+func managerWithUpgrade(t *testing.T, director bosh.Director, upgrade UpgradeTask) (*Manager, *UpgradeTask) {
+	t.Helper()
+
+	manager := NewManager(&logger.NoOpLogger{}, director, newWaitVault())
+	t.Cleanup(manager.Stop)
+
+	waitForLoad(t, manager)
+
+	task := copyTask(&upgrade)
+
+	manager.mu.Lock()
+	manager.tasks[task.ID] = task
+	manager.mu.Unlock()
+
+	return manager, task
+}
+
+// runProcessTask runs the upgrade's processing the way the dispatcher
+// does, and returns a channel that closes when it returns.
+func runProcessTask(manager *Manager, task *UpgradeTask) <-chan struct{} {
+	returned := make(chan struct{})
+
+	go func() {
+		defer close(returned)
+
+		manager.processTask(task)
+	}()
+
+	return returned
+}
+
+// awaitReturn fails the test unless the processing returns in time.
+func awaitReturn(t *testing.T, returned <-chan struct{}, what string) {
+	t.Helper()
+
+	select {
+	case <-returned:
+	case <-time.After(waitTimeout):
+		t.Fatalf("%s never returned", what)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestResumeDoesNotRecountSettledFailures(t *testing.T) {
+	director := newWaitDirector()
+
+	failed := inFlight(waitDeployment, InstanceStatusFailed, 0, "")
+	failed.Error = "BOSH task 41 ended in state error"
+	pending := InstanceUpgrade{InstanceID: secondInstanceID, DeploymentName: "redis-" + secondInstanceID, Status: InstanceStatusPending}
+
+	upgrade := storedUpgrade(loadedTaskID, failed, pending)
+	upgrade.FailedCount = 1
+
+	manager, task := managerWithUpgrade(t, director, upgrade)
+
+	returned := runProcessTask(manager, task)
+
+	waitForTheDeployWait(t, director)
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskDone}
+
+	awaitReturn(t, returned, "the resumed upgrade")
+
+	done := snapshot(manager, task)
+	if done.FailedCount != 1 || done.CompletedCount != 1 {
+		t.Fatalf("expected the failure settled before the resume to be counted once, got %+v", done)
+	}
+}
+
+//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
+func TestProcessTaskStopsAtAnInstanceStillInFlight(t *testing.T) {
+	director := newWaitDirector()
+	director.updateStarted = make(chan struct{})
+	director.updateGate = make(chan struct{})
+
+	pending := InstanceUpgrade{InstanceID: secondInstanceID, DeploymentName: "redis-" + secondInstanceID, Status: InstanceStatusPending}
+
+	manager, task := managerWithUpgrade(t, director, storedUpgrade(loadedTaskID,
+		inFlight(waitDeployment, InstanceStatusInterrupted, waitDeployTaskID, loadedContextID), pending))
+
+	// Should the upgrade deploy, its deploy is let go when the test ends,
+	// so the manager can stop.
+	t.Cleanup(func() { close(director.updateGate) })
+
+	returned := runProcessTask(manager, task)
+
+	select {
+	case <-returned:
+	case <-director.updateStarted:
+		t.Fatal("the upgrade sent a deploy while an instance's deploy was still in flight")
+	case <-time.After(waitTimeout):
+		t.Fatal("the upgrade never returned")
+	}
+
+	done := snapshot(manager, task)
+	if done.Status == TaskStatusCompleted || done.CompletedAt != nil {
+		t.Fatalf("expected the upgrade not to finish while an instance's deploy is in flight, got %+v", done)
+	}
+
+	if done.Instances[0].Status != InstanceStatusInterrupted || done.Instances[1].Status != InstanceStatusPending {
+		t.Fatalf("expected the instances to stay as they were, got %+v", done.Instances)
+	}
+}
