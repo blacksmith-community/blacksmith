@@ -409,6 +409,34 @@ func TestLoadResumesARunningUpgradeWithNoInstanceInFlight(t *testing.T) {
 }
 
 //nolint:paralleltest // the resumed upgrade waits on a shared test director
+func TestLoadResumesAnUpgradeQueuedBeforeTheRestart(t *testing.T) {
+	director := newResumeDirector()
+	vault := newWaitVault()
+
+	// The upgrade was queued, but the broker stopped before it was
+	// processed, so it is stored pending and never started.
+	stored := storedUpgrade(loadedTaskID,
+		pendingInstance("instance-1", firstDeployment),
+		pendingInstance("instance-2", nextDeployment))
+	stored.Status = TaskStatusPending
+	stored.StartedAt = nil
+
+	storeUpgrade(t, vault, stored)
+
+	manager := loadManager(t, director, vault)
+
+	done := expectCompleted(t, manager, loadedTaskID)
+
+	if done.CompletedCount != 2 || done.StartedAt == nil {
+		t.Fatalf("expected both instances to succeed and the upgrade to record its start, got %+v", done)
+	}
+
+	if deploys := director.allDeploys(); !slices.Equal(deploys, []string{firstDeployment, nextDeployment}) {
+		t.Fatalf("expected one deploy of each instance in order, got %v", deploys)
+	}
+}
+
+//nolint:paralleltest // the resumed upgrade waits on a shared test director
 func TestLoadLeavesAPausedUpgradePaused(t *testing.T) {
 	director := newResumeDirector()
 	vault := newWaitVault()
@@ -769,7 +797,27 @@ func TestResumeQueuesMoreUpgradesThanTheQueueHolds(t *testing.T) {
 		storeUpgrade(t, vault, storedUpgrade(taskID, pendingInstance(instanceID, "redis-"+instanceID)))
 	}
 
-	manager := loadManager(t, director, vault)
+	manager := NewManager(&logger.NoOpLogger{}, director, vault)
+	t.Cleanup(manager.Stop)
+
+	// The loader starts without the dispatcher, so nothing drains the queue
+	// while the load queues the three upgrades.
+	manager.wg.Add(1)
+
+	go manager.loadAndSettle()
+
+	waitUntil(t, "a full queue", func() bool { return len(manager.taskQueue) == cap(manager.taskQueue) })
+
+	// A load whose send skips a full queue has finished by now, and one
+	// whose send waits for room is still waiting.
+	select {
+	case <-manager.loaded:
+	case <-time.After(quietPeriod):
+	}
+
+	manager.wg.Add(1)
+
+	go manager.dispatchTasks()
 
 	for _, taskID := range taskIDs {
 		expectCompleted(t, manager, taskID)

@@ -1471,16 +1471,18 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 }
 
 // resumeIfReady moves on an upgrade that has no processor, deciding under
-// mu. A running upgrade that is not paused, has no instance settling, and
-// is not owned becomes owned and is queued. A cancelled upgrade with no
-// instance settling skips its pending instances. Anything else waits for
-// its settles, its resume, or its processor, and a manager that is
-// stopping queues nothing.
+// mu. A running upgrade, or a pending one that was queued but never
+// processed before a restart, that is not paused, has no instance
+// settling, and is not owned becomes owned and is queued. A cancelled
+// upgrade with no instance settling skips its pending instances. Anything
+// else waits for its settles, its resume, or its processor, and a manager
+// that is stopping queues nothing.
 func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	m.mu.Lock()
 	settled := m.settling[task.ID] == 0
+	resumable := task.Status == TaskStatusRunning || task.Status == TaskStatusPending
 
-	queue := settled && m.ctx.Err() == nil && task.Status == TaskStatusRunning && !task.Paused && !m.owned[task.ID]
+	queue := settled && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
 	if queue {
 		m.owned[task.ID] = true
 	}
