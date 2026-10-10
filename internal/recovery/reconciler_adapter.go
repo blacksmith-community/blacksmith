@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -31,7 +33,7 @@ const (
 // Reconciler configuration constants.
 const (
 	// General reconciler defaults.
-	DefaultReconcilerInterval   = 5 * time.Minute
+	DefaultReconcilerInterval   = reconciler.DefaultReconcileInterval
 	DefaultMaxConcurrent        = 4
 	DefaultMaxDeploymentsPerRun = 100
 	DefaultQueueSize            = 1000
@@ -109,14 +111,19 @@ type ReconcilerAdapter struct {
 	bosh      bosh.Director
 	logger    logger.Logger
 	config    reconciler.ReconcilerConfig
-	cfManager interface{} // CF connection manager as interface for package compatibility
+	configMu  sync.RWMutex // protects config.Interval for concurrent access
+	cfManager interface{}  // CF connection manager as interface for package compatibility
 }
 
-// NewReconcilerAdapter creates a new reconciler adapter.
-func buildReconcilerConfig(cfg *config.Config) reconciler.ReconcilerConfig {
+func buildReconcilerConfig(cfg *config.Config, log logger.Logger) reconciler.ReconcilerConfig {
+	configInterval, err := parseDuration(cfg.Reconciler.Interval)
+	if err != nil {
+		log.Warn("Failed to parse reconciler.interval %q: %v (using default)", cfg.Reconciler.Interval, err)
+	}
+
 	reconcilerConfig := reconciler.ReconcilerConfig{
 		Enabled:  getEnvBoolWithDefault("BLACKSMITH_RECONCILER_ENABLED", cfg.Reconciler.Enabled, true),
-		Interval: getEnvDurationWithDefault("BLACKSMITH_RECONCILER_INTERVAL", parseDuration(cfg.Reconciler.Interval), DefaultReconcilerInterval),
+		Interval: getEnvDurationWithDefault("BLACKSMITH_RECONCILER_INTERVAL", configInterval, DefaultReconcilerInterval),
 		Debug:    getEnvBoolWithDefault("BLACKSMITH_RECONCILER_DEBUG", cfg.Reconciler.Debug, cfg.Debug),
 	}
 
@@ -266,7 +273,13 @@ func buildMetricsConfig() reconciler.MetricsConfig {
 func NewReconcilerAdapter(cfg *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDir bosh.Director, cfManager interface{}) *ReconcilerAdapter {
 	logger := logger.Get().Named("reconciler")
 
-	reconcilerConfig := buildReconcilerConfig(cfg)
+	reconcilerConfig := buildReconcilerConfig(cfg, logger)
+
+	if cfg.Reconciler.Interval != "" {
+		logger.Info("Reconciler interval: configured=%q effective=%v", cfg.Reconciler.Interval, reconcilerConfig.Interval)
+	} else {
+		logger.Info("Reconciler interval: not configured, using default=%v", reconcilerConfig.Interval)
+	}
 
 	logger.Info("Reconciler configured with production safety features")
 	logger.Info("BOSH rate limit: %d req/s, CF rate limit: %d req/s, Vault rate limit: %d req/s",
@@ -284,14 +297,24 @@ func NewReconcilerAdapter(cfg *config.Config, brokerInstance *broker.Broker, vau
 	}
 }
 
-func parseDuration(s string) time.Duration {
+func parseDuration(s string) (time.Duration, error) {
 	if s == "" {
-		return 0
+		return 0, nil
 	}
 
-	d, _ := time.ParseDuration(s)
+	// Try standard Go duration first ("5m", "1h", "30s")
+	d, err := time.ParseDuration(s)
+	if err == nil {
+		return d, nil
+	}
 
-	return d
+	// Try bare number as seconds (handles YAML integer values like 3600)
+	seconds, numErr := strconv.ParseFloat(s, 64)
+	if numErr == nil {
+		return time.Duration(seconds * float64(time.Second)), nil
+	}
+
+	return 0, fmt.Errorf("invalid duration %q: not a Go duration or numeric seconds", s)
 }
 
 // Start starts the reconciler.
@@ -410,15 +433,25 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 		r.manager.UpdateInterval(interval)
 	}
 
+	r.configMu.Lock()
 	r.config.Interval = interval
+	r.configMu.Unlock()
 
-	// Persist to Vault so it survives redeployment
+	// Persist to Vault using read-modify-write to preserve other settings
 	if r.vault != nil {
-		err := r.vault.Put(ctx, "blacksmith/settings", map[string]interface{}{
-			"reconciler_interval": interval.String(),
-		})
+		var existing map[string]interface{}
+
+		exists, err := r.vault.Get(ctx, "blacksmith/settings", &existing)
+		if err != nil || !exists {
+			existing = make(map[string]interface{})
+		}
+
+		existing["reconciler_interval"] = interval.String()
+
+		err = r.vault.Put(ctx, "blacksmith/settings", existing)
 		if err != nil {
 			r.logger.Error("Failed to persist reconciler interval to Vault: %s", err)
+
 			return fmt.Errorf("failed to persist interval: %w", err)
 		}
 	}
@@ -430,12 +463,23 @@ func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Du
 
 // GetInterval returns the current reconciler interval.
 func (r *ReconcilerAdapter) GetInterval() time.Duration {
+	r.configMu.RLock()
+	defer r.configMu.RUnlock()
+
 	return r.config.Interval
 }
 
 // loadSettingsFromVault loads persisted settings from Vault and applies them to config.
+// Precedence: env var > Vault > YAML config > default.
 func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 	if r.vault == nil {
+		return
+	}
+
+	// Don't override if env var explicitly set (env var has highest precedence)
+	if os.Getenv("BLACKSMITH_RECONCILER_INTERVAL") != "" {
+		r.logger.Info("Reconciler interval set via env var, skipping Vault override")
+
 		return
 	}
 
@@ -447,8 +491,8 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 	}
 
 	if intervalStr, ok := settings["reconciler_interval"].(string); ok {
-		d, err := time.ParseDuration(intervalStr)
-		if err == nil && d >= 10*time.Second {
+		d, parseErr := time.ParseDuration(intervalStr)
+		if parseErr == nil && d >= 10*time.Second {
 			r.config.Interval = d
 			r.logger.Info("Loaded reconciler interval from Vault: %v", d)
 		}

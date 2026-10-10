@@ -7,7 +7,7 @@ import (
 // Constants for reconciler configuration defaults.
 const (
 	// Default intervals and durations.
-	defaultReconcileInterval        = 5 * time.Minute
+	DefaultReconcileInterval        = 1 * time.Hour
 	defaultCooldownPeriod           = 2 * time.Second
 	defaultRetryMaxDelay            = 30 * time.Second
 	defaultBatchDelay               = 500 * time.Millisecond
@@ -239,7 +239,7 @@ func (c *ReconcilerConfig) Validate() error {
 // loadBasicDefaults sets basic configuration defaults.
 func (c *ReconcilerConfig) loadBasicDefaults() {
 	if c.Interval == 0 {
-		c.Interval = defaultReconcileInterval
+		c.Interval = DefaultReconcileInterval
 	}
 }
 

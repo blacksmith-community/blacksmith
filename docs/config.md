@@ -753,7 +753,7 @@ The `reconciler` section configures the deployment reconciler that monitors and 
 ```yaml
 reconciler:
   enabled: true                    # Enable reconciler
-  interval: "5m"                   # Reconciliation interval
+  interval: "1h"                   # Reconciliation interval (Go duration or bare seconds e.g. 3600)
   max_concurrency: 5              # Maximum concurrent reconciliations
   batch_size: 10                  # Batch size for processing instances
   retry_attempts: 3               # Retry attempts for failed operations
@@ -891,7 +891,7 @@ vm_monitoring:
 
 reconciler:
   enabled: true
-  interval: "5m"
+  interval: "1h"
   max_concurrency: 5
   batch_size: 10
   retry_attempts: 3

@@ -63,6 +63,26 @@ type ReconcilerInterface interface {
 	GetInterval() time.Duration
 }
 
+// parseDurationRobust parses a duration string, supporting both Go duration
+// format ("5m", "1h") and bare numeric seconds (3600).
+func parseDurationRobust(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty duration string")
+	}
+
+	d, err := time.ParseDuration(s)
+	if err == nil {
+		return d, nil
+	}
+
+	seconds, numErr := strconv.ParseFloat(s, 64)
+	if numErr == nil {
+		return time.Duration(seconds * float64(time.Second)), nil
+	}
+
+	return 0, fmt.Errorf("invalid duration %q: not a Go duration or numeric seconds", s)
+}
+
 // Handler handles Blacksmith-specific management endpoints.
 type Handler struct {
 	logger     interfaces.Logger
@@ -513,11 +533,11 @@ func (h *Handler) UpdateSettings(responseWriter http.ResponseWriter, req *http.R
 
 	// Update reconciler interval if provided
 	if body.ReconcilerInterval != nil {
-		d, err := time.ParseDuration(*body.ReconcilerInterval)
+		d, err := parseDurationRobust(*body.ReconcilerInterval)
 		if err != nil || d < 10*time.Second {
 			responseWriter.WriteHeader(http.StatusBadRequest)
 			response.HandleJSON(responseWriter, map[string]interface{}{
-				"error": "reconciler_interval must be a valid duration >= 10s (e.g. '5m', '1h')",
+				"error": "reconciler_interval must be a valid duration >= 10s (e.g. '5m', '1h', or 3600 for seconds)",
 			}, nil)
 
 			return
