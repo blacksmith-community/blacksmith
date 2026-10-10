@@ -1476,13 +1476,19 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 // settling, and is not owned becomes owned and is queued. A cancelled
 // upgrade with no instance settling skips its pending instances. Anything
 // else waits for its settles, its resume, or its processor, and a manager
-// that is stopping queues nothing.
+// that is stopping queues nothing. With no BOSH director, an upgrade that
+// would be queued stays as it is, because it has nothing to deploy with,
+// and the log says why.
 func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	m.mu.Lock()
 	settled := m.settling[task.ID] == 0
 	resumable := task.Status == TaskStatusRunning || task.Status == TaskStatusPending
+	status := task.Status
 
-	queue := settled && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
+	ready := settled && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
+	noDirector := ready && m.director == nil
+
+	queue := ready && !noDirector
 	if queue {
 		m.owned[task.ID] = true
 	}
@@ -1500,6 +1506,10 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 		if err != nil {
 			m.logger.Error("Failed to persist the skipped instances of task %s: %v", task.ID, err)
 		}
+	}
+
+	if noDirector {
+		m.logger.Error("Upgrade task %s cannot resume, because Blacksmith has no BOSH director configured, so it stays %s until Blacksmith restarts with one", task.ID, status)
 	}
 
 	if queue {

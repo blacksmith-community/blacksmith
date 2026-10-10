@@ -673,6 +673,50 @@ func TestLoadWithoutABOSHDirectorMarksInstancesInterrupted(t *testing.T) {
 	}
 }
 
+func TestLoadWithoutABOSHDirectorLeavesAResumableUpgradeAsItIs(t *testing.T) {
+	t.Parallel()
+
+	const queuedTaskID = "queued-upgrade"
+
+	vault := newWaitVault()
+	log := newProcessLogger()
+
+	// The first upgrade stopped between two instances, and the second was
+	// queued but never processed.
+	running := storedUpgrade(loadedTaskID, pendingInstance("instance-1", firstDeployment))
+	queued := storedUpgrade(queuedTaskID, pendingInstance("instance-2", nextDeployment))
+	queued.Status = TaskStatusPending
+	queued.StartedAt = nil
+
+	storeUpgrade(t, vault, running)
+	storeUpgrade(t, vault, queued)
+
+	manager := loadManagerLogging(t, log, nil, vault)
+
+	time.Sleep(quietPeriod)
+
+	for _, stored := range []UpgradeTask{running, queued} {
+		for what, current := range map[string]UpgradeTask{
+			"manager's copy": eventuallyWithin(t, manager, stored.ID, 0, "a read of upgrade "+stored.ID, func(UpgradeTask) bool { return true }),
+			"saved copy":     vault.savedTask(t, stored.ID),
+		} {
+			if current.Status != stored.Status || current.CompletedAt != nil || current.Instances[0].Status != InstanceStatusPending {
+				t.Errorf("expected the %s of upgrade %s to stay %s with its instance pending, got %+v", what, stored.ID, stored.Status, current)
+			}
+
+			expectNoCounts(t, current)
+		}
+
+		if processed := log.processedCount(stored.ID); processed != 0 {
+			t.Errorf("expected upgrade %s not to be processed without a director, got %d processors", stored.ID, processed)
+		}
+
+		if !log.loggedError(stored.ID, "no BOSH director") {
+			t.Errorf("expected an Error line that says upgrade %s cannot resume without a BOSH director", stored.ID)
+		}
+	}
+}
+
 //nolint:paralleltest // it shortens the package's load backoff
 func TestLoadRetriesWhenTheIndexReadFails(t *testing.T) {
 	previous := loadRetryBackoff

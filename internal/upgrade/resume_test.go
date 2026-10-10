@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -235,12 +236,13 @@ func (d *resumeDirector) waitForDeployOf(t *testing.T, deployment string) {
 }
 
 // processLogger counts, for each upgrade, how many times its processing
-// started.
+// started, and keeps each Error line logged.
 type processLogger struct {
 	*logger.NoOpLogger
 
 	mu        sync.Mutex
 	processed map[string]int
+	errors    []string
 }
 
 func newProcessLogger() *processLogger {
@@ -259,6 +261,26 @@ func (l *processLogger) Info(msg string, args ...interface{}) {
 	l.mu.Lock()
 	l.processed[taskID]++
 	l.mu.Unlock()
+}
+
+func (l *processLogger) Error(msg string, args ...interface{}) {
+	l.mu.Lock()
+	l.errors = append(l.errors, fmt.Sprintf(msg, args...))
+	l.mu.Unlock()
+}
+
+// loggedError reports whether an Error line holds every part given.
+func (l *processLogger) loggedError(parts ...string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for _, line := range l.errors {
+		if !slices.ContainsFunc(parts, func(part string) bool { return !strings.Contains(line, part) }) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // processedCount returns how many times the upgrade's processing started.
