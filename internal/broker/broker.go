@@ -3410,6 +3410,10 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, nil
 	case recorded.State == internalVault.TaskStateOutcomeUnknown:
 		return b.resolveUnknownOutcome(ctx, instanceID, deploymentName, recorded, logger)
+	case recorded.State == internalVault.TaskStateSucceeded:
+		logger.Debug("provision of instance %s is recorded as succeeded", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: recorded.Description}, nil
 	case recorded.hasTask():
 		return b.handleProvisionTask(ctx, instanceID, deploymentName, recorded.TaskID, logger)
 	case b.provisionActive(instanceID):
@@ -3673,7 +3677,10 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 
 		logger.Debug("provision operation succeeded")
 
-		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
+		description := fmt.Sprintf("BOSH deployment task %d is %s", taskID, task.State)
+		b.recordSucceeded(ctx, instanceID, description, taskID, logger)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: description}, nil
 	}
 
 	description := fmt.Sprintf("BOSH deployment task %d is %s", taskID, task.State)
@@ -3694,10 +3701,29 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
 }
 
+// recordSucceeded records the provision that ran as taskID as succeeded,
+// once its completion steps have run, so later polls answer from the
+// record and the steps never run again. The write runs detached from the
+// poll, and it lands only while the record still holds that provision. A
+// write that fails is logged, and the next poll runs the steps again.
+func (b *Broker) recordSucceeded(ctx context.Context, instanceID, description string, taskID int, logger logger.Logger) {
+	recordCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	err := b.Vault.TrackSucceeded(recordCtx, instanceID, operationTypeProvision, description, taskID)
+
+	switch {
+	case errors.Is(err, internalVault.ErrTaskRecordReplaced):
+		logger.Info("the provision of instance %s in task %d finished, and its record now holds a newer operation, which is left as it is: %s", instanceID, taskID, err)
+	case err != nil:
+		logger.Error("failed to record the provision of instance %s in task %d as succeeded: %s", instanceID, taskID, err)
+	}
+}
+
 // settledProvision reads the instance's record again and reports whether
 // it holds a provision that is already settled, with the answer that
-// settled it. A provision recorded as failed is settled. The read runs
-// under a bound of its own.
+// settled it. A provision recorded as failed or succeeded is settled. The
+// read runs under a bound of its own.
 func (b *Broker) settledProvision(ctx context.Context, instanceID string) (osbapi.LastOperationResponse, bool, error) {
 	readCtx, cancel := recordContext(ctx)
 	defer cancel()
@@ -3707,8 +3733,15 @@ func (b *Broker) settledProvision(ctx context.Context, instanceID string) (osbap
 		return osbapi.LastOperationResponse{}, false, err
 	}
 
-	if recorded.Action == operationTypeProvision && recorded.State == recordedStateFailed {
+	if recorded.Action != operationTypeProvision {
+		return osbapi.LastOperationResponse{}, false, nil
+	}
+
+	switch recorded.State {
+	case recordedStateFailed:
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, true, nil
+	case internalVault.TaskStateSucceeded:
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: recorded.Description}, true, nil
 	}
 
 	return osbapi.LastOperationResponse{}, false, nil

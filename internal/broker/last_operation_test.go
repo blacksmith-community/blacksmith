@@ -45,6 +45,13 @@ const (
 	boshEventDelete = "delete"
 )
 
+// The names of the director methods whose calls the specs check.
+const (
+	directorCreateDeployment = "CreateDeployment"
+	directorWaitForTask      = "WaitForTask"
+	directorDeleteDeployment = "DeleteDeployment"
+)
+
 // recordingVMMonitor records which instances the broker hands to vm-monitor,
 // and the deployment name it hands over with each.
 type recordingVMMonitor struct {
@@ -765,6 +772,39 @@ var _ = Describe("LastOperation", func() {
 			Expect(poll("provision").State).To(Equal(osbapi.StateSucceeded))
 			Expect(monitor.Added()).To(Equal([]string{instanceID}))
 			Expect(backups.Scheduled()).To(Equal([]string{instanceID}))
+		})
+
+		It("a finished provision runs its completion steps once", func() {
+			indexProvisionedInstance()
+
+			Expect(poll("provision").State).To(Equal(osbapi.StateSucceeded))
+
+			vmReads := len(director.Calls("GetDeploymentVMs"))
+
+			Expect(poll("provision").State).To(Equal(osbapi.StateSucceeded))
+
+			Expect(backups.Scheduled()).To(Equal([]string{instanceID}), "the completion steps must run once")
+			Expect(monitor.Added()).To(Equal([]string{instanceID}))
+			Expect(director.Calls("GetDeploymentVMs")).To(HaveLen(vmReads), "the second poll must not read the VMs again")
+		})
+
+		It("LastOperation answers a succeeded provision from its record", func() {
+			indexProvisionedInstance()
+			Expect(vaultClient.TrackSucceeded(ctx, instanceID, "provision", "Provisioned in BOSH task 189", createTaskID)).To(Succeed())
+
+			response := poll("provision")
+
+			Expect(response.State).To(Equal(osbapi.StateSucceeded))
+			Expect(response.Description).To(Equal("Provisioned in BOSH task 189"))
+
+			for _, method := range []string{
+				"GetInfo", "GetDeployment", "GetDeployments", "GetDeploymentVMs", directorCreateDeployment, directorDeleteDeployment, "GetTask",
+				directorWaitForTask, "GetEvents", "GetReleases", "FindRunningTaskForDeployment", "FindRunningTasksForDeployment", "FindTaskByContextID",
+			} {
+				Expect(director.Calls(method)).To(BeEmpty(), "a succeeded provision must be answered without calling %s", method)
+			}
+
+			expectNoProvisionSideEffects()
 		})
 
 		// The monitor watches the deployment the entry records, so a name

@@ -2,8 +2,10 @@ package vault
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"blacksmith/pkg/logger"
@@ -30,9 +32,92 @@ const TaskRecordDeploymentNameKey = "deployment_name"
 // started a task for it is unknown.
 const TaskStateOutcomeUnknown = "outcome_unknown"
 
+// TaskStateSucceeded is the state of a task record whose provision
+// finished and whose completion steps have run. A poll answers from it
+// without asking the director, and the completion steps never run again.
+const TaskStateSucceeded = "succeeded"
+
 // TaskRecordUnknownSinceKey is the key of the time a task record's outcome
 // became unknown, in RFC 3339 form with nanoseconds, in UTC.
 const TaskRecordUnknownSinceKey = "unknown_since"
+
+// ErrTaskRecordReplaced is returned when a write that settles an operation
+// finds that the record no longer holds that operation, because it is gone
+// or holds a newer one.
+var ErrTaskRecordReplaced = errors.New("the task record no longer holds the operation to settle")
+
+// TrackSucceeded records the operation of action that ran as taskID as
+// finished, with the state succeeded and description. Every other field
+// of the record is kept. It writes only when the record still holds action
+// with taskID, checked under the instance's task record lock, so it never
+// replaces a newer operation, and otherwise writes nothing and returns an
+// error that wraps ErrTaskRecordReplaced. A record that cannot be read
+// stops the write. The description goes into the history as TrackProgress
+// writes it.
+func (vault *Vault) TrackSucceeded(ctx context.Context, instanceID, action, description string, taskID int) error {
+	logger := logger.Get().Named("vault track succeeded " + instanceID)
+	logger.Debug("recording the %s that ran as task %d as succeeded: %s", action, taskID, description)
+
+	guard := func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedTask, _ := recordedTaskID(current)
+
+		if recordedAction != action || recordedTask != taskID {
+			return fmt.Errorf("%w: instance %s records a %s with task %d, not the %s with task %d",
+				ErrTaskRecordReplaced, instanceID, recordedAction, recordedTask, action, taskID)
+		}
+
+		return nil
+	}
+
+	err := vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
+		return settledRecord(replaced, TaskStateSucceeded, description)
+	})
+	if err != nil {
+		return err
+	}
+
+	return vault.AppendHistory(ctx, instanceID, action, description)
+}
+
+// settledRecord returns a copy of replaced with the terminal state and
+// description, and the time of the write.
+func settledRecord(replaced map[string]interface{}, state, description string) map[string]interface{} {
+	settled := make(map[string]interface{}, len(replaced))
+	maps.Copy(settled, replaced)
+
+	settled["state"] = state
+	settled["description"] = description
+	settled["updated_at"] = time.Now().Unix()
+
+	return settled
+}
+
+// recordedTaskID returns the task ID a task record holds, and whether it
+// holds one in a numeric form.
+func recordedTaskID(record map[string]interface{}) (int, bool) {
+	switch typed := record["task"].(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case json.Number:
+		value, err := typed.Int64()
+		if err != nil {
+			return 0, false
+		}
+
+		return int(value), true
+	}
+
+	return 0, false
+}
 
 // Track stores tracking information for a task (deprecated, kept for backward compatibility).
 func (vault *Vault) Track(ctx context.Context, instanceID, action string, taskID int, params interface{}) error {
