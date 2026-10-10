@@ -178,8 +178,12 @@ type Broker struct {
 	CredentialFinder credentialFinder
 
 	// credentialCleanups tracks the cleanup and sweep goroutines, so tests
-	// can wait for them.
+	// and a shutdown can wait for them.
 	credentialCleanups sync.WaitGroup
+
+	// background tracks the goroutines that outlive a request and write
+	// operation records, so a shutdown can wait for them.
+	background backgroundWork
 
 	// credentialSweep keeps one sweep pass at a time and at most one an hour.
 	credentialSweep credentialSweepState
@@ -575,13 +579,13 @@ func (b *Broker) Deprovision(
 
 	handedOff = true
 
-	go func() {
+	b.track("deprovision of instance "+instanceID, func() {
 		// The goroutine gives the claim up on every return, a panic included.
 		defer b.releaseOperation(instanceID, claim)
 		defer cancelAsync()
 
 		b.deprovisionAsync(asyncCtx, instanceID, instance)
-	}()
+	})
 
 	logger.Info("Accepted deprovisioning request for service instance %s", instanceID)
 
@@ -2974,7 +2978,7 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 	// may now be answered as accepted.
 	claim.launched.Store(true)
 
-	go func() {
+	b.track("provision of instance "+instanceID, func() {
 		// The claim Provision took stays in place while the goroutine runs,
 		// so a deprovision or a repeated provision is answered from it. It
 		// is given up on every return, a panic included.
@@ -2982,7 +2986,7 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 		defer cancelAsync()
 
 		b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
-	}()
+	})
 
 	return true, nil
 }
@@ -3648,7 +3652,9 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 
 		// The cleanup outlives this poll; it keeps the values of cleanupCtx
 		// and sets its own deadline.
-		go b.cleanupFailedDeployment(cleanupCtx, deploymentName, logger)
+		b.track("cleanup of failed deployment "+deploymentName, func() {
+			b.cleanupFailedDeployment(cleanupCtx, deploymentName, logger)
+		})
 
 		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
 

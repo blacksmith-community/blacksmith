@@ -590,7 +590,11 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 
 	phase.trackDeletionProgress(ctx, deleteTask)
 
-	go phase.monitorAndCleanupTask(b.serviceContext(), deleteTask)
+	monitorCtx := b.serviceContext()
+
+	b.track(fmt.Sprintf("deprovision monitor of instance %s (BOSH task %d)", phase.instanceID, deleteTask.ID), func() {
+		phase.monitorAndCleanupTask(monitorCtx, deleteTask)
+	})
 }
 
 // stopAbandonedCreate cancels the create task of an abandoned deployment
@@ -1158,7 +1162,11 @@ func (b *Broker) deprovisionAsync(ctx context.Context, instanceID string, instan
 	// The monitor outlives the request, so it runs under the service context,
 	// which a shutdown ends. LastOperation finishes a deprovision whose
 	// monitor is gone.
-	go phase.monitorAndCleanupTask(b.serviceContext(), deleteTask)
+	monitorCtx := b.serviceContext()
+
+	b.track(fmt.Sprintf("deprovision monitor of instance %s (BOSH task %d)", phase.instanceID, deleteTask.ID), func() {
+		phase.monitorAndCleanupTask(monitorCtx, deleteTask)
+	})
 
 	logger.Info("Launched background task monitor for instance %s (task %d)", instanceID, deleteTask.ID)
 }

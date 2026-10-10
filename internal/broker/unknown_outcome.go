@@ -764,7 +764,9 @@ func (b *Broker) failUnknownOutcome(ctx context.Context, instanceID, deploymentN
 	if operation.Action == operationTypeProvision {
 		// The cleanup outlives this poll, as it does for a deploy task
 		// that failed.
-		go b.cleanupFailedDeployment(ctx, deploymentName, logger)
+		b.track("cleanup of failed deployment "+deploymentName, func() {
+			b.cleanupFailedDeployment(ctx, deploymentName, logger)
+		})
 	}
 
 	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, true

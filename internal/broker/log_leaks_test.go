@@ -45,6 +45,8 @@ func (c *captureLogger) Info(msg string, args ...interface{})  { c.record(msg, a
 func (c *captureLogger) Warn(msg string, args ...interface{})  { c.record(msg, args) }
 func (c *captureLogger) Error(msg string, args ...interface{}) { c.record(msg, args) }
 
+func (c *captureLogger) Warning(msg string, args ...interface{}) { c.record(msg, args) }
+
 func (c *captureLogger) Named(string) logger.Logger { return c }
 
 func (c *captureLogger) output() string {

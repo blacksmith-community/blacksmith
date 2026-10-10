@@ -62,6 +62,11 @@ func (b *Broker) SetMonitorExited(hook func(instanceID string)) {
 	b.monitorExited = hook
 }
 
+// Track exposes the launch of a goroutine that WaitForBackground waits for.
+func (b *Broker) Track(name string, fn func()) {
+	b.track(name, fn)
+}
+
 // WaitForCredentialCleanups blocks until every CredHub cleanup goroutine the
 // broker started has returned.
 func (b *Broker) WaitForCredentialCleanups() {
