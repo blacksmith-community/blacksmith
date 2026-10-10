@@ -52,15 +52,19 @@ func (v *gatedVault) Put(ctx context.Context, path string, data interface{}) err
 	return v.waitVault.Put(ctx, path, json.RawMessage(raw))
 }
 
-// managerWithTasks starts a manager over the vault and puts a running
-// upgrade task with one pending instance in it for each ID, as if each had
-// been created and nothing had processed it yet. The manager stops when
-// the test ends.
+// managerWithTasks starts a manager over the vault, waits for its load, and
+// puts a running upgrade task with one pending instance in it for each ID,
+// as if each had been created and nothing had processed it yet. The
+// manager stops when the test ends.
 func managerWithTasks(t *testing.T, vault interfaces.Vault, taskIDs ...string) *Manager {
 	t.Helper()
 
 	manager := NewManager(&logger.NoOpLogger{}, newWaitDirector(), vault)
 	t.Cleanup(manager.Stop)
+
+	// The load reads the vault in the background, so the test's gates are
+	// set only once it is done.
+	waitForLoad(t, manager)
 
 	manager.mu.Lock()
 	defer manager.mu.Unlock()

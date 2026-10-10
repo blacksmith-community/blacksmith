@@ -51,6 +51,26 @@ const (
 	boshTaskCancelled = "cancelled"
 )
 
+// loadRetryBackoff is how long the loader waits before it reads Vault again
+// after a failed read. The wait doubles after each failure, up to
+// loadRetryBackoffMax. A test shortens it.
+//
+//nolint:gochecknoglobals // a test seam
+var loadRetryBackoff = 5 * time.Second
+
+// loadRetryBackoffMax is the longest the loader waits between reads.
+const loadRetryBackoffMax = time.Minute
+
+// noDirectorMessage is what an instance whose deploy was in flight at a
+// restart says when the broker has no BOSH director to settle it with.
+const noDirectorMessage = "Blacksmith has no BOSH director configured, so it cannot settle this deploy until it restarts with one"
+
+// adopter is a director that can count a deploy task started before a
+// restart against its limit and follow it. The batch director is one.
+type adopter interface {
+	Adopt(taskID int)
+}
+
 // persistTaskTimeout bounds the Vault writes that save an upgrade task.
 const persistTaskTimeout = 10 * time.Second
 
@@ -108,6 +128,14 @@ type Manager struct {
 	// save lock is taken before it, and mu is never taken while either is
 	// held.
 	indexMu sync.Mutex
+
+	// settling holds, under mu, how many instances of each loaded upgrade
+	// still wait for the deploy that was in flight when the broker stopped.
+	settling map[string]int
+
+	// loaded is closed once the loader has read the stored upgrades and
+	// started settling their instances, or Stop ended it first.
+	loaded chan struct{}
 }
 
 // taskSnapshot is a copy of an upgrade task taken under the manager's lock,
@@ -135,6 +163,8 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		taskQueue:    make(chan *UpgradeTask, 100),
 		stopCh:       make(chan struct{}),
 		taskCancelCh: make(map[string]chan struct{}),
+		settling:     make(map[string]int),
+		loaded:       make(chan struct{}),
 	}
 
 	// The manager's context is a root. The manager lives as long as the
@@ -151,10 +181,10 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 	// Initialize job semaphore based on settings
 	m.updateJobSemaphore()
 
-	// Load persisted tasks from vault
-	if err := m.loadPersistedTasks(ctx); err != nil {
-		m.logger.Error("Failed to load persisted tasks: %v", err)
-	}
+	// Load the persisted tasks, and settle the deploys they left in flight
+	m.wg.Add(1)
+
+	go m.loadAndSettle()
 
 	// Start the task dispatcher
 	m.wg.Add(1)
@@ -683,9 +713,9 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 
 	finished, cancelRequested, err := m.awaitDeployTask(ctx, task, instance, taskID, cancelCh)
 	if err != nil {
-		if errors.Is(err, bosh.ErrWatchAbandoned) {
-			// Blacksmith no longer follows the task, so its outcome will
-			// not be known here.
+		if errors.Is(err, bosh.ErrWatchAbandoned) || bosh.IsTaskNotFound(err) {
+			// Blacksmith no longer follows the task, or the director no
+			// longer has it, so its outcome will not be known here.
 			m.settleOutcomeUnknown(task, instance, taskID, err.Error())
 			m.persistTask(persistCtx, task) //nolint:errcheck
 
@@ -1223,52 +1253,6 @@ type ManagerInterface interface {
 // Ensure Manager implements ManagerInterface.
 var _ ManagerInterface = (*Manager)(nil)
 
-// loadPersistedTasks loads all upgrade tasks from vault on startup.
-func (m *Manager) loadPersistedTasks(ctx context.Context) error {
-	m.logger.Debug("Loading persisted upgrade tasks from vault")
-
-	var tasksIndex map[string]interface{}
-
-	exists, err := m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
-	if err != nil {
-		return fmt.Errorf("failed to get tasks index from vault: %w", err)
-	}
-
-	if !exists {
-		m.logger.Debug("No persisted upgrade tasks found")
-
-		return nil
-	}
-
-	loadedCount := 0
-
-	for taskID := range tasksIndex {
-		var task UpgradeTask
-
-		taskPath := upgradeTasksVaultPath + "/" + taskID
-
-		taskExists, err := m.vault.Get(ctx, taskPath, &task)
-		if err != nil {
-			m.logger.Error("Failed to load task %s: %v", taskID, err)
-
-			continue
-		}
-
-		if !taskExists {
-			m.logger.Debug("Task %s not found at path %s", taskID, taskPath)
-
-			continue
-		}
-
-		m.tasks[taskID] = &task
-		loadedCount++
-	}
-
-	m.logger.Info("Loaded %d persisted upgrade tasks", loadedCount)
-
-	return nil
-}
-
 // persistTask saves an upgrade task to vault. It copies the task under the
 // manager's read lock and saves the copy, so the caller must not hold mu.
 func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
@@ -1339,6 +1323,380 @@ func (m *Manager) UpdateSettings(ctx context.Context, settings Settings) error {
 // This is used to synchronize the BatchDirector pool size with max_batch_jobs.
 func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
 	m.onMaxBatchJobsChanged = callback
+}
+
+// loadAndSettle loads the upgrade tasks saved in Vault and settles every
+// instance whose deploy was in flight when the broker stopped. Stop ends
+// it, and it closes loaded once the settles have started.
+func (m *Manager) loadAndSettle() {
+	defer m.wg.Done()
+	defer close(m.loaded)
+
+	tasks, ok := m.loadPersistedTasks()
+	if !ok {
+		m.logger.Info("Upgrade manager stopping before the persisted upgrade tasks were loaded")
+
+		return
+	}
+
+	m.settleLoadedTasks(tasks)
+}
+
+// loadPersistedTasks loads every upgrade task saved in Vault. A failed read
+// of the index or of a task is retried until it succeeds or Stop ends the
+// load, so a Vault that starts after the broker never loses an upgrade. It
+// returns the tasks it loaded, and false when Stop ended the load. A task
+// already in memory, created after the broker started, is kept.
+func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
+	m.logger.Debug("Loading persisted upgrade tasks from vault")
+
+	var tasksIndex map[string]interface{}
+
+	exists, ok := m.readWithRetry("the upgrade tasks index from Vault", func(ctx context.Context) (bool, error) {
+		tasksIndex = nil
+
+		return m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
+	})
+	if !ok {
+		return nil, false
+	}
+
+	if !exists {
+		m.logger.Debug("No persisted upgrade tasks found")
+
+		return nil, true
+	}
+
+	loaded := make([]*UpgradeTask, 0, len(tasksIndex))
+
+	for taskID := range tasksIndex {
+		var task *UpgradeTask
+
+		taskPath := upgradeTasksVaultPath + "/" + taskID
+
+		taskExists, ok := m.readWithRetry("upgrade task "+taskID+" from Vault", func(ctx context.Context) (bool, error) {
+			task = &UpgradeTask{}
+
+			return m.vault.Get(ctx, taskPath, task)
+		})
+		if !ok {
+			return nil, false
+		}
+
+		if !taskExists {
+			m.logger.Debug("Task %s not found at path %s", taskID, taskPath)
+
+			continue
+		}
+
+		m.mu.Lock()
+		_, inMemory := m.tasks[taskID]
+
+		if !inMemory {
+			m.tasks[taskID] = task
+		}
+		m.mu.Unlock()
+
+		if inMemory {
+			continue
+		}
+
+		loaded = append(loaded, task)
+	}
+
+	m.logger.Info("Loaded %d persisted upgrade tasks", len(loaded))
+
+	return loaded, true
+}
+
+// readWithRetry runs read under the manager's context until it succeeds,
+// waiting loadRetryBackoff after the first failure and twice as long after
+// each later one, up to loadRetryBackoffMax. It logs each failure as an
+// Error that names what it reads. It returns what read found, and false
+// when Stop ended the retries.
+func (m *Manager) readWithRetry(what string, read func(ctx context.Context) (bool, error)) (bool, bool) {
+	backoff := loadRetryBackoff
+
+	for {
+		exists, err := read(m.ctx)
+		if err == nil {
+			return exists, true
+		}
+
+		if m.ctx.Err() != nil {
+			return false, false
+		}
+
+		m.logger.Error("Failed to read %s, retrying in %v: %v", what, backoff, err)
+
+		select {
+		case <-m.ctx.Done():
+			return false, false
+		case <-time.After(backoff):
+		}
+
+		backoff = min(backoff+backoff, loadRetryBackoffMax)
+	}
+}
+
+// loadedDeploy is an instance of a loaded upgrade whose deploy was in
+// flight when the broker stopped, with the IDs it was saved with.
+type loadedDeploy struct {
+	task         *UpgradeTask
+	instance     *InstanceUpgrade
+	taskID       int
+	contextID    string
+	unknownSince time.Time
+	cancelCh     chan struct{}
+}
+
+// settleLoadedTasks settles each instance of the loaded upgrades that is
+// running or interrupted, whatever the upgrade's own status, because an
+// upgrade paused or cancelled before the restart can still have a deploy in
+// flight. Each upgrade's settling count holds how many of its instances
+// are settling, and each upgrade gets a cancel channel its settles share,
+// so a cancel reaches them. Every deploy with a task ID is adopted into the
+// director's limit before any settle starts.
+func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
+	loadedAt := time.Now()
+	deploys := make([]loadedDeploy, 0, len(tasks))
+
+	m.mu.Lock()
+	for _, task := range tasks {
+		deploys = append(deploys, m.prepareSettlingLocked(task, loadedAt)...)
+	}
+	m.mu.Unlock()
+
+	if len(deploys) == 0 {
+		return
+	}
+
+	if m.director == nil {
+		m.interruptWithoutDirector(deploys)
+
+		return
+	}
+
+	if batch, ok := m.director.(adopter); ok {
+		for _, deploy := range deploys {
+			if deploy.taskID > 0 {
+				batch.Adopt(deploy.taskID)
+			}
+		}
+	}
+
+	for _, deploy := range deploys {
+		m.wg.Add(1)
+
+		go m.settleLoadedDeploy(deploy)
+	}
+}
+
+// prepareSettlingLocked finds the instances of a loaded upgrade whose
+// deploy was in flight, sets the upgrade's settling count, and registers
+// the cancel channel their settles share. The caller holds mu.
+func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) []loadedDeploy {
+	var deploys []loadedDeploy
+
+	for i := range task.Instances {
+		instance := &task.Instances[i]
+		if instance.Status != InstanceStatusRunning && instance.Status != InstanceStatusInterrupted {
+			continue
+		}
+
+		// A deploy whose answer was lost before UnknownSince was saved has
+		// its grace start at the load.
+		unknownSince := loadedAt
+		if instance.UnknownSince != nil {
+			unknownSince = *instance.UnknownSince
+		}
+
+		deploys = append(deploys, loadedDeploy{
+			task:         task,
+			instance:     instance,
+			taskID:       instance.BOSHTaskID,
+			contextID:    instance.ContextID,
+			unknownSince: unknownSince,
+		})
+	}
+
+	if len(deploys) == 0 {
+		return nil
+	}
+
+	m.settling[task.ID] = len(deploys)
+
+	cancelCh := make(chan struct{})
+
+	m.taskCancelLock.Lock()
+	m.taskCancelCh[task.ID] = cancelCh
+	m.taskCancelLock.Unlock()
+
+	for i := range deploys {
+		deploys[i].cancelCh = cancelCh
+	}
+
+	m.logger.Info("Upgrade task %s has %d instances whose deploys were in flight when Blacksmith stopped, so it settles them", task.ID, len(deploys))
+
+	return deploys
+}
+
+// interruptWithoutDirector marks each loaded instance whose deploy was in
+// flight interrupted when the broker has no BOSH director. Their settling
+// counts stay, so the upgrade waits for a restart that has a director.
+func (m *Manager) interruptWithoutDirector(deploys []loadedDeploy) {
+	saved := make(map[string]*UpgradeTask)
+
+	m.mu.Lock()
+	for _, deploy := range deploys {
+		deploy.instance.Status = InstanceStatusInterrupted
+		deploy.instance.Error = noDirectorMessage
+		saved[deploy.task.ID] = deploy.task
+	}
+	m.mu.Unlock()
+
+	m.logger.Error("Blacksmith has no BOSH director configured, so the %d upgrade deploys that were in flight when it stopped stay unsettled until it restarts with one", len(deploys))
+
+	for _, task := range saved {
+		err := m.persistTask(m.ctx, task)
+		if err != nil {
+			m.logger.Error("Failed to save the interrupted instances of task %s: %v", task.ID, err)
+		}
+	}
+}
+
+// settleLoadedDeploy settles one loaded instance whose deploy was in
+// flight, by the task ID it was saved with, by its context ID, or, with
+// neither, by whatever runs on its deployment. A wait that Stop ends leaves
+// the instance unsettled for the next restart.
+func (m *Manager) settleLoadedDeploy(deploy loadedDeploy) {
+	defer m.wg.Done()
+	defer m.endSettling(deploy)
+
+	switch {
+	case deploy.taskID > 0:
+		m.followDeployTask(m.ctx, deploy.task, deploy.instance, deploy.taskID, deploy.cancelCh)
+	case deploy.contextID != "":
+		m.settleByContextID(deploy)
+	default:
+		m.settleWithoutIDs(deploy)
+	}
+}
+
+// endSettling counts a loaded instance's settle as ended. Once the last of
+// the upgrade's settles ends, its shared cancel channel is removed, unless
+// a cancel already removed it.
+func (m *Manager) endSettling(deploy loadedDeploy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.settling[deploy.task.ID]--
+	if m.settling[deploy.task.ID] > 0 {
+		return
+	}
+
+	delete(m.settling, deploy.task.ID)
+
+	m.taskCancelLock.Lock()
+	if m.taskCancelCh[deploy.task.ID] == deploy.cancelCh {
+		delete(m.taskCancelCh, deploy.task.ID)
+	}
+	m.taskCancelLock.Unlock()
+}
+
+// settleByContextID settles a loaded instance that has a context ID and no
+// task ID, by looking for its deploy's task by the context ID. A task that
+// turns up is followed like any deploy. When none turns up, an instance
+// whose answer was lost settles as a lost answer does, and an instance whose
+// deploy may never have been sent goes back to pending, so the upgrade
+// deploys it again.
+func (m *Manager) settleByContextID(deploy loadedDeploy) {
+	task, instance := deploy.task, deploy.instance
+	persistCtx := context.WithoutCancel(m.ctx)
+
+	m.mu.RLock()
+
+	answerLost := instance.UnknownSince != nil
+
+	m.mu.RUnlock()
+
+	m.logger.Info("Looking for the BOSH task of the deploy of %s with context ID %s, which was in flight when Blacksmith stopped", instance.DeploymentName, deploy.contextID)
+
+	found, err := awaitTaskByContextID(m.ctx, m.director, deploy.contextID, deploy.unknownSince)
+
+	switch {
+	case err == nil && found != nil && found.ID > 0:
+		m.logger.Info("Found BOSH task %d for the deploy of %s with context ID %s", found.ID, instance.DeploymentName, deploy.contextID)
+		m.followDeployTask(m.ctx, task, instance, found.ID, deploy.cancelCh)
+	case err == nil:
+		m.settleOutcomeUnknown(task, instance, 0, "the lookup by context ID named no task")
+		m.persistSettled(persistCtx, task)
+	case waitStopped(m.ctx, err):
+		m.logger.Info("Blacksmith stopped looking for the deploy of %s with context ID %s at shutdown, so instance %s stays unsettled", instance.DeploymentName, deploy.contextID, instance.InstanceID)
+	case errors.Is(err, bosh.ErrNoTaskWithContextID) && !answerLost:
+		m.resetToPending(persistCtx, task, instance,
+			fmt.Sprintf("no BOSH task with context ID %s turned up, so the deploy was never sent", deploy.contextID))
+	default:
+		if !m.settleLostAnswer(task, instance, deploy.contextID, err) {
+			m.settleOutcomeUnknown(task, instance, 0, err.Error())
+		}
+
+		m.persistSettled(persistCtx, task)
+	}
+}
+
+// persistSettled saves a loaded upgrade once one of its instances has
+// settled, and logs a save that fails.
+func (m *Manager) persistSettled(ctx context.Context, task *UpgradeTask) {
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist task %s after a loaded instance settled: %v", task.ID, err)
+	}
+}
+
+// settleWithoutIDs settles a loaded instance that has neither a task ID
+// nor a context ID. Its deploy may have been sent before either was saved,
+// so when a task runs on its deployment, the instance waits for that task
+// to end. Nothing ties the task to the instance, so the instance takes
+// nothing from it and goes back to pending, and the upgrade deploys it
+// again.
+func (m *Manager) settleWithoutIDs(deploy loadedDeploy) {
+	task, instance := deploy.task, deploy.instance
+	persistCtx := context.WithoutCancel(m.ctx)
+
+	var running *bosh.Task
+
+	_, answered := m.readWithRetry("the running task of deployment "+instance.DeploymentName+" from the director", func(ctx context.Context) (bool, error) {
+		var err error
+
+		running, err = m.director.FindRunningTaskForDeployment(ctx, instance.DeploymentName)
+
+		return running != nil, err //nolint:wrapcheck // readWithRetry logs it with what it read
+	})
+	if !answered {
+		return
+	}
+
+	if running != nil && running.ID > 0 {
+		m.logger.Info("BOSH task %d runs on deployment %s, so instance %s waits for it to end before it is deployed again", running.ID, instance.DeploymentName, instance.InstanceID)
+
+		if batch, ok := m.director.(adopter); ok {
+			batch.Adopt(running.ID)
+		}
+
+		_, err := m.director.WaitForTask(m.ctx, running.ID)
+		if err != nil && waitStopped(m.ctx, err) {
+			m.logger.Info("Blacksmith stopped waiting for BOSH task %d on deployment %s at shutdown, so instance %s stays unsettled", running.ID, instance.DeploymentName, instance.InstanceID)
+
+			return
+		}
+
+		if err != nil {
+			m.logger.Error("Stopped waiting for BOSH task %d on deployment %s: %v", running.ID, instance.DeploymentName, err)
+		}
+	}
+
+	m.resetToPending(persistCtx, task, instance, "no ID of its deploy was saved")
 }
 
 // updateJobSemaphore updates the job semaphore based on current settings.
@@ -1545,18 +1903,27 @@ func (m *Manager) addToTasksIndex(ctx context.Context, task *UpgradeTask) error 
 // director never received the deploy, so the counts stay as they are, and
 // the instance is deployed when the upgrade runs again.
 func (m *Manager) returnToPending(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, err error) {
+	m.resetToPending(ctx, task, instance, fmt.Sprintf("Blacksmith is stopping before its deploy was sent: %v", err))
+}
+
+// resetToPending puts an instance back to pending, with its start time,
+// IDs, and error cleared and the counts untouched, so the instance is
+// deployed when the upgrade runs again. reason says why, for the log.
+func (m *Manager) resetToPending(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, reason string) {
 	m.mu.Lock()
 	instance.Status = InstanceStatusPending
 	instance.StartedAt = nil
+	instance.BOSHTaskID = 0
 	instance.ContextID = ""
+	instance.UnknownSince = nil
 	instance.Error = ""
 	m.mu.Unlock()
 
-	m.logger.Info("Blacksmith is stopping, so instance %s goes back to pending before its deploy was sent: %v", instance.InstanceID, err)
+	m.logger.Info("Instance %s goes back to pending, because %s", instance.InstanceID, reason)
 
-	saveErr := m.persistTask(ctx, task)
-	if saveErr != nil {
-		m.logger.Error("Failed to save instance %s back to pending at shutdown: %v", instance.InstanceID, saveErr)
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to save instance %s back to pending: %v", instance.InstanceID, err)
 	}
 }
 

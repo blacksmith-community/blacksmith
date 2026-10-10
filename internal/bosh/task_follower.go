@@ -991,7 +991,7 @@ func (f *taskFollower) readUntilAnswered(ctx context.Context, watch *followWatch
 			return nil, f.stoppedFollowing(watch.describe(taskID))
 		}
 
-		if isTaskNotFound(err) {
+		if IsTaskNotFound(err) {
 			f.logger.Errorf("The director has no %s, so the %s released its slot: %v", watch.describe(taskID), f.owner, err)
 
 			return nil, fmt.Errorf("%w: the director has no %s: %w", ErrWatchAbandoned, watch.describe(taskID), err)
@@ -1168,11 +1168,11 @@ func (f *taskFollower) stoppedFollowing(what string) error {
 	return fmt.Errorf("the %s stopped and no longer follows %s: %w", f.owner, what, context.Canceled)
 }
 
-// isTaskNotFound reports whether the director answered that it has no
+// IsTaskNotFound reports whether the director answered that it has no
 // such task, with its task-not-found code. Any other not-found answer,
 // such as a route the director does not serve or a director-not-found
 // code from a proxy, is a failed read.
-func isTaskNotFound(err error) bool {
+func IsTaskNotFound(err error) bool {
 	var apiErr *boshapi.APIError
 
 	return errors.As(err, &apiErr) && apiErr.Code == boshapi.ErrorCodeTaskNotFound
