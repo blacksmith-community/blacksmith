@@ -44,7 +44,7 @@ type resumeDirector struct {
 	held        map[string]bool
 	releases    map[int]chan struct{}
 	states      map[int]string
-	waiting     map[int]bool
+	waits       map[int]int
 	cancels     []int
 }
 
@@ -55,7 +55,7 @@ func newResumeDirector() *resumeDirector {
 		held:        make(map[string]bool),
 		releases:    make(map[int]chan struct{}),
 		states:      make(map[int]string),
-		waiting:     make(map[int]bool),
+		waits:       make(map[int]int),
 	}
 }
 
@@ -85,7 +85,7 @@ func (d *resumeDirector) UpdateDeployment(_ context.Context, name, _ string) (*b
 func (d *resumeDirector) WaitForTask(ctx context.Context, taskID int) (*bosh.Task, error) {
 	d.mu.Lock()
 	release, held := d.releases[taskID]
-	d.waiting[taskID] = true
+	d.waits[taskID]++
 	deployment := d.deployments[taskID]
 	d.mu.Unlock()
 
@@ -215,8 +215,16 @@ func (d *resumeDirector) waitForWaitOn(t *testing.T, taskID int) {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 
-		return d.waiting[taskID]
+		return d.waits[taskID] > 0
 	})
+}
+
+// waitCount returns how many waits on the task were made.
+func (d *resumeDirector) waitCount(taskID int) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.waits[taskID]
 }
 
 // waitForDeployOf waits until a deploy of the deployment was sent.

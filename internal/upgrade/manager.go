@@ -1683,11 +1683,9 @@ func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
 		return
 	}
 
-	if batch, ok := m.director.(adopter); ok {
-		for _, deploy := range deploys {
-			if deploy.taskID > 0 {
-				batch.Adopt(deploy.taskID)
-			}
+	for _, deploy := range deploys {
+		if deploy.taskID > 0 {
+			m.adoptTask(deploy.taskID)
 		}
 	}
 
@@ -1771,6 +1769,16 @@ func (m *Manager) interruptWithoutDirector(deploys []loadedDeploy) {
 	}
 }
 
+// adoptTask counts a deploy task started before a restart against the
+// director's limit and has the director follow it, when the director can
+// adopt one. A wait on the task is then served by that follow, so the task
+// is followed once.
+func (m *Manager) adoptTask(taskID int) {
+	if batch, ok := m.director.(adopter); ok {
+		batch.Adopt(taskID)
+	}
+}
+
 // settleLoadedDeploy settles one loaded instance whose deploy was in
 // flight, by the task ID it was saved with, by its context ID, or, with
 // neither, by whatever runs on its deployment. A wait that Stop ends leaves
@@ -1816,10 +1824,11 @@ func (m *Manager) endSettling(deploy loadedDeploy) {
 
 // settleByContextID settles a loaded instance that has a context ID and no
 // task ID, by looking for its deploy's task by the context ID. A task that
-// turns up is followed like any deploy. When none turns up, an instance
-// whose answer was lost settles as a lost answer does, and an instance whose
-// deploy may never have been sent goes back to pending, so the upgrade
-// deploys it again.
+// turns up is adopted into the director's limit, as a task the instance
+// was saved with is, and followed like any deploy. When none turns up, an
+// instance whose answer was lost settles as a lost answer does, and an
+// instance whose deploy may never have been sent goes back to pending, so
+// the upgrade deploys it again.
 func (m *Manager) settleByContextID(deploy loadedDeploy) {
 	task, instance := deploy.task, deploy.instance
 	persistCtx := context.WithoutCancel(m.ctx)
@@ -1837,6 +1846,7 @@ func (m *Manager) settleByContextID(deploy loadedDeploy) {
 	switch {
 	case err == nil && found != nil && found.ID > 0:
 		m.logger.Info("Found BOSH task %d for the deploy of %s with context ID %s", found.ID, instance.DeploymentName, deploy.contextID)
+		m.adoptTask(found.ID)
 		m.followDeployTask(m.ctx, task, instance, found.ID, deploy.cancelCh)
 	case err == nil:
 		m.settleOutcomeUnknown(task, instance, 0, "the lookup by context ID named no task")
@@ -1890,9 +1900,7 @@ func (m *Manager) settleWithoutIDs(deploy loadedDeploy) {
 	if running != nil && running.ID > 0 {
 		m.logger.Info("BOSH task %d runs on deployment %s, so instance %s waits for it to end before it is deployed again", running.ID, instance.DeploymentName, instance.InstanceID)
 
-		if batch, ok := m.director.(adopter); ok {
-			batch.Adopt(running.ID)
-		}
+		m.adoptTask(running.ID)
 
 		_, err := m.director.WaitForTask(m.ctx, running.ID)
 		if err != nil && waitStopped(m.ctx, err) {

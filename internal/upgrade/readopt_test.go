@@ -453,6 +453,62 @@ func TestCancelDuringALoadedContextIDLookupCancelsTheFoundTask(t *testing.T) {
 }
 
 //nolint:paralleltest // it replaces the package's lookup by context ID
+func TestLoadAdoptsATaskFoundByItsContextID(t *testing.T) {
+	const otherTaskID = "other-upgrade"
+
+	replaceAwait(t, func(context.Context) (*bosh.Task, error) {
+		return &bosh.Task{ID: adoptedTaskID, State: waitStateRunning, Deployment: adoptedDeployment}, nil
+	})
+
+	director := newResumeDirector()
+	director.holdAdopted()
+
+	// The batch director allows one deploy at a time.
+	batch := newTestBatchDirector(t, director)
+	vault := newWaitVault()
+
+	// The broker stopped while the first upgrade's deploy was in flight,
+	// with only its context ID saved. The second upgrade is paused, so it
+	// deploys only once the test resumes it.
+	storeUpgrade(t, vault, storedUpgrade(loadedTaskID,
+		inFlight(adoptedDeployment, InstanceStatusInterrupted, 0, loadedContextID)))
+
+	other := storedUpgrade(otherTaskID, pendingInstance("instance-2", nextDeployment))
+	other.Status = TaskStatusPaused
+	other.Paused = true
+
+	storeUpgrade(t, vault, other)
+
+	manager := loadManager(t, batch, vault)
+
+	director.waitForWaitOn(t, adoptedTaskID)
+
+	if active, _, _ := batch.GetBatchPoolStats(); active != 1 {
+		t.Errorf("expected the task found by its context ID to count against the batch, got %d active", active)
+	}
+
+	err := manager.ResumeTask(context.Background(), otherTaskID)
+	if err != nil {
+		t.Fatalf("resuming the paused upgrade: %v", err)
+	}
+
+	time.Sleep(quietPeriod)
+
+	if count := director.deployCount(nextDeployment); count != 0 {
+		t.Fatalf("expected the resumed upgrade to wait for the slot the found task holds, got %d deploys of %s", count, nextDeployment)
+	}
+
+	director.release(adoptedTaskID)
+
+	expectCompleted(t, manager, otherTaskID)
+	expectSettledAsSuccess(t, expectCompleted(t, manager, loadedTaskID), adoptedTaskID)
+
+	if waits := director.waitCount(adoptedTaskID); waits != 1 {
+		t.Fatalf("expected BOSH task %d to be followed once, got %d waits on it", adoptedTaskID, waits)
+	}
+}
+
+//nolint:paralleltest // it replaces the package's lookup by context ID
 func TestLoadReturnsAnUnsentDeployToPending(t *testing.T) {
 	since := replaceAwait(t, noTaskWithTheContextID)
 	vault := newWaitVault()
