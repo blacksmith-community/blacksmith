@@ -632,3 +632,33 @@ func TestLoadRetriesWhenTheIndexReadFails(t *testing.T) {
 		t.Fatalf("expected the index to be read until it answered, 3 times, got %d", reads)
 	}
 }
+
+//nolint:paralleltest // the settle waits on a shared test director
+func TestCancelSendsACancelForAnInterruptedInstance(t *testing.T) {
+	director := newWaitDirector()
+	vault := newWaitVault()
+
+	storeUpgrade(t, vault, storedUpgrade(loadedTaskID,
+		inFlight(waitDeployment, InstanceStatusInterrupted, waitDeployTaskID, loadedContextID)))
+
+	manager := loadManager(t, director, vault)
+	endTheTaskAtCleanup(t, director)
+
+	waitForTheDeployWait(t, director)
+
+	cancelUpgrade(t, manager, loadedTask())
+
+	if cancels := director.cancelled(); len(cancels) != 1 || cancels[0] != waitDeployTaskID {
+		t.Fatalf("expected the cancel to reach BOSH task %d of the interrupted instance, got %v", waitDeployTaskID, cancels)
+	}
+
+	director.finish <- &bosh.Task{ID: waitDeployTaskID, State: boshTaskCancelled}
+
+	done := eventually(t, manager, loadedTask(), "the interrupted instance's settling", func(current UpgradeTask) bool {
+		return current.Instances[0].Status != InstanceStatusInterrupted
+	})
+
+	if done.Instances[0].Status != InstanceStatusCancelled || done.CancelledCount != 1 {
+		t.Fatalf("expected the instance to settle as cancelled, got %+v", done)
+	}
+}

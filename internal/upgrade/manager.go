@@ -1177,8 +1177,10 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 }
 
 // CancelTask cancels a running or paused task. It sends one cancel for the
-// deploy task of each running instance that has recorded one, since an
-// instance whose deploy has not named its task yet cancels it itself. It
+// deploy task of each running or interrupted instance that has recorded
+// one, since an instance whose deploy has not named its task yet cancels
+// it itself. An interrupted instance is one whose deploy was in flight at a
+// restart, and which a loaded upgrade is still settling. It
 // leaves every instance's status and the counts to the upgrade, which
 // records each instance's outcome from its task's final state. The
 // manager's lock is never held across a director call.
@@ -1206,7 +1208,9 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 
 	for i := range task.Instances {
 		instance := &task.Instances[i]
-		if instance.Status == InstanceStatusRunning && instance.BOSHTaskID > 0 {
+
+		inFlight := instance.Status == InstanceStatusRunning || instance.Status == InstanceStatusInterrupted
+		if inFlight && instance.BOSHTaskID > 0 {
 			running = append(running, runningDeploy{instanceID: instance.InstanceID, boshTaskID: instance.BOSHTaskID})
 		}
 	}
