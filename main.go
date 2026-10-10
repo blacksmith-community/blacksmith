@@ -1257,6 +1257,32 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 	}, internalAPI.UpgradeHandler()
 }
 
+// readoptServiceOperations re-adopts the provisions and deprovisions a
+// previous run of the broker left in flight. It runs before the VM
+// monitor, the reconciler, and the servers start, so none of them finds an
+// in-flight operation unclaimed. Re-adoption retries until Vault answers,
+// and the service context does not end on a signal, because the shutdown
+// waits for one on a channel of its own, so re-adoption runs under a
+// context that also ends on SIGINT or SIGTERM. With no director, nothing
+// is re-adopted.
+func readoptServiceOperations(ctx context.Context, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) error {
+	if boshDirector == nil {
+		logger.Warn("No BOSH director is configured, so the service operations left in flight are not re-adopted")
+
+		return nil
+	}
+
+	readoptCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	err := brokerInstance.ReadoptInFlightOperations(readoptCtx)
+	if err != nil {
+		return fmt.Errorf("blacksmith stopped before it re-adopted the service operations left in flight: %w", err)
+	}
+
+	return nil
+}
+
 // runService runs the main service logic.
 func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger) error {
 	// bootCtx is a root context. Nothing above runService carries one, and
@@ -1286,6 +1312,11 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	defer cancel()
 
 	brokerInstance.ServiceContext = ctx
+
+	err = readoptServiceOperations(ctx, brokerInstance, boshDirector, logger)
+	if err != nil {
+		return err
+	}
 
 	cfManager := initializeCFManager(config, logger)
 	reconciler := setupReconciler(config, brokerInstance, vault, boshDirector, cfManager, logger)

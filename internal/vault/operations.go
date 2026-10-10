@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"strings"
 	"time"
 
 	"blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
+	"github.com/hashicorp/vault/api"
 )
 
 const (
@@ -36,6 +39,12 @@ const TaskStateOutcomeUnknown = "outcome_unknown"
 // finished and whose completion steps have run. A poll answers from it
 // without asking the director, and the completion steps never run again.
 const TaskStateSucceeded = "succeeded"
+
+// TaskStateDeleted is the state of a task record whose deprovision is
+// finished, because the director has said its deployment is gone. A poll
+// answers from it without asking the director, and a restarted broker
+// leaves it alone.
+const TaskStateDeleted = "deleted"
 
 // TaskRecordUnknownSinceKey is the key of the time a task record's outcome
 // became unknown, in RFC 3339 form with nanoseconds, in UTC.
@@ -117,6 +126,121 @@ func recordedTaskID(record map[string]interface{}) (int, bool) {
 	}
 
 	return 0, false
+}
+
+// TrackDeleted records the deprovision whose delete carried contextID as
+// finished, with the state deleted and description. Every other field of
+// the record is kept. It writes only when the record still holds a
+// deprovision with that context ID, checked under the instance's task
+// record lock, so it never replaces a newer operation, and otherwise
+// writes nothing and returns an error that wraps ErrTaskRecordReplaced. A
+// record that cannot be read stops the write. The description goes into
+// the history as TrackProgress writes it.
+func (vault *Vault) TrackDeleted(ctx context.Context, instanceID, contextID, description string) error {
+	const action = "deprovision"
+
+	if contextID == "" {
+		return fmt.Errorf("%w: instance %s, action %s, deleted", ErrEmptyContextID, instanceID, action)
+	}
+
+	logger := logger.Get().Named("vault track deleted " + instanceID)
+	logger.Debug("recording the delete with context ID %s as finished: %s", contextID, description)
+
+	guard := func(current map[string]interface{}) error {
+		if current == nil {
+			return fmt.Errorf("%w: instance %s has no task record", ErrTaskRecordReplaced, instanceID)
+		}
+
+		recordedAction, _ := current["action"].(string)
+		recordedContextID, _ := current[taskRecordContextIDKey].(string)
+
+		if recordedAction != action || recordedContextID != contextID {
+			return fmt.Errorf("%w: instance %s records a %s with context ID %q, not the %s with context ID %s",
+				ErrTaskRecordReplaced, instanceID, recordedAction, recordedContextID, action, contextID)
+		}
+
+		return nil
+	}
+
+	err := vault.writeTaskRecordGuarded(ctx, instanceID, action, logger, guard, func(replaced map[string]interface{}) interface{} {
+		return settledRecord(replaced, TaskStateDeleted, description)
+	})
+	if err != nil {
+		return err
+	}
+
+	return vault.AppendHistory(ctx, instanceID, action, description)
+}
+
+// indexKey is the key of the instance index at the root of the mount.
+const indexKey = "db"
+
+// ErrMountListRefused is returned when Vault refuses the token's listing
+// of the root of the mount.
+var ErrMountListRefused = errors.New("vault refused to list the root of the mount")
+
+// stateFolders are the folders at the root of the mount that hold the
+// broker's own state rather than an instance's: the upgrade tasks, the
+// broker's settings, and the CF registrations under secret/.
+//
+//nolint:gochecknoglobals // a fixed set read by ListOperationRecordIDs
+var stateFolders = map[string]bool{
+	"upgrade-tasks/": true,
+	"blacksmith/":    true,
+	"secret/":        true,
+}
+
+// ListOperationRecordIDs makes one listing of the root of the mount and
+// returns the name of every folder in it other than those that hold the
+// broker's own state. The broker keeps each instance's secrets in a folder
+// named by its instance ID, and keeps the folder after a delete, so the
+// names include every instance the broker has held. A name is only a
+// candidate, and a folder whose task record is gone, such as one Clear
+// emptied, is still listed. It also reports whether the listing holds the
+// instance index. A listing that Vault refuses returns an error that wraps
+// ErrMountListRefused.
+func (vault *Vault) ListOperationRecordIDs(ctx context.Context) ([]string, bool, error) {
+	err := vault.ensureClient()
+	if err != nil {
+		return nil, false, err
+	}
+
+	var keys []string
+
+	err = vault.withAutoUnseal(ctx, func() error {
+		var listErr error
+
+		keys, listErr = vault.client.ListSecrets(ctx, "")
+
+		return listErr //nolint:wrapcheck // the caller wraps it once withAutoUnseal has seen it
+	})
+	if err != nil {
+		var responseError *api.ResponseError
+		if errors.As(err, &responseError) && responseError.StatusCode == http.StatusForbidden {
+			return nil, false, fmt.Errorf("%w: %w", ErrMountListRefused, err)
+		}
+
+		return nil, false, fmt.Errorf("failed to list the root of the mount: %w", err)
+	}
+
+	ids := make([]string, 0, len(keys))
+	indexListed := false
+
+	for _, key := range keys {
+		if key == indexKey {
+			indexListed = true
+
+			continue
+		}
+
+		if !strings.HasSuffix(key, "/") || stateFolders[key] {
+			continue
+		}
+
+		ids = append(ids, strings.TrimSuffix(key, "/"))
+	}
+
+	return ids, indexListed, nil
 }
 
 // Track stores tracking information for a task (deprecated, kept for backward compatibility).

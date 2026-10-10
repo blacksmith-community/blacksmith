@@ -48,6 +48,12 @@ const (
 	// The state TrackProgress records for an operation that failed.
 	recordedStateFailed = "failed"
 
+	// The states TrackProgress records for an operation in flight, before
+	// and after the director names its task. Track records an operation
+	// that finished with no task of its own as in progress too.
+	recordedStateInitializing = "initializing"
+	recordedStateInProgress   = "in_progress"
+
 	// The description LastOperation gives a deprovision that has finished.
 	descriptionInstanceDeleted = "Instance has been deleted"
 
@@ -200,6 +206,10 @@ type Broker struct {
 	// settling holds the settle lock of each instance whose operation is
 	// being settled, so no operation is settled twice.
 	settling settleLocks
+
+	// readoptVault, when set, replaces Vault as the store the first phase
+	// of ReadoptInFlightOperations reads.
+	readoptVault readoptStore
 }
 
 // operationClaim is the claim an operation holds on an instance ID in
@@ -217,6 +227,11 @@ type operationClaim struct {
 	// then the accept chain may still fail, so the first request's answer is
 	// not known and a repeat cannot be told the operation was accepted.
 	launched atomic.Bool
+
+	// readopted marks a claim that ReadoptInFlightOperations took for an
+	// operation a previous run of the broker started. It holds no request,
+	// so a repeated provision is answered from the stored instance.
+	readopted bool
 }
 
 // IsBroker implements the interfaces.Broker interface.
@@ -408,7 +423,7 @@ func (b *Broker) Provision(
 
 	held, claimed := b.claimOperation(instanceID, claim)
 	if !claimed {
-		return b.answerProvisionWhileClaimed(instanceID, details, held, logger)
+		return b.answerProvisionWhileClaimed(ctx, instanceID, details, held, logger)
 	}
 
 	// Until the goroutine takes the claim over, Provision owns it and gives
@@ -1028,7 +1043,24 @@ func (b *Broker) operationActive(instanceID, operation string) bool {
 // started, because the first request was then accepted. While the first
 // request is still in its accept chain, its answer is not known yet, so an
 // identical request gets 422 ConcurrencyError and the platform retries.
-func (b *Broker) answerProvisionWhileClaimed(instanceID string, details osbapi.ProvisionRequest, held *operationClaim, logger logger.Logger) (osbapi.ProvisionResponse, bool, error) {
+//
+// A provision that ReadoptInFlightOperations claimed after a restart holds
+// no request to compare, so the request is answered from the stored
+// instance by answerProvisionFromIndex instead. A request that leaves
+// unanswered gets 422 ConcurrencyError, because a new deploy must not start
+// while the re-adopted provision runs.
+func (b *Broker) answerProvisionWhileClaimed(ctx context.Context, instanceID string, details osbapi.ProvisionRequest, held *operationClaim, logger logger.Logger) (osbapi.ProvisionResponse, bool, error) {
+	if held != nil && held.operation == operationTypeProvision && held.readopted {
+		response, async, answered, err := b.answerProvisionFromIndex(ctx, instanceID, details, logger)
+		if answered || err != nil {
+			return response, async, err
+		}
+
+		logger.Warning("Rejecting provision of instance %s: a provision started before the broker restarted has been in progress since %s", instanceID, held.claimed.Format(time.RFC3339))
+
+		return osbapi.ProvisionResponse{}, false, fmt.Errorf("%w: the provision of instance %s started before the broker restarted is still in progress", osbapi.ErrConcurrencyError, instanceID)
+	}
+
 	switch {
 	case held == nil:
 		logger.Error("Rejecting provision of instance %s: its operation claim holds a value of an unexpected type", instanceID)
@@ -2467,7 +2499,8 @@ func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID
 // deprovisionWithoutIndexEntry answers a poll for an instance whose index
 // entry is gone and whose last recorded operation is a deprovision. A
 // deprovision removes the entry only once the director has said the
-// deployment is gone. A record without a context ID, which a deprovision
+// deployment is gone. A record marked deleted answers succeeded with no
+// director call. A record without a context ID, which a deprovision
 // leaves when the deployment was gone before its delete and which a
 // broker from before context IDs left, answers succeeded. The teardown of
 // a deployment that finished after its instance was deprovisioned runs
@@ -2479,6 +2512,12 @@ func (b *Broker) unknownOutcomeWithoutIndexEntry(ctx context.Context, instanceID
 // progress without asking. A deployment that still exists answers failed
 // when the record says the delete failed, and in progress otherwise.
 func (b *Broker) deprovisionWithoutIndexEntry(ctx context.Context, instanceID, planID string, recorded recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+	if recorded.State == internalVault.TaskStateDeleted {
+		logger.Info("instance %s has no index entry, and its deprovision is recorded as deleted", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded, Description: descriptionInstanceDeleted}, nil
+	}
+
 	if recorded.ContextID == "" {
 		logger.Info("instance %s has no index entry, and its last recorded operation is a deprovision, so it has been deleted", instanceID)
 
@@ -3354,6 +3393,14 @@ func (b *Broker) readRecordedOperation(ctx context.Context, instanceID string) (
 	if err != nil {
 		return recordedOperation{}, fmt.Errorf("failed to read the recorded operation for instance %s: %w", instanceID, err)
 	}
+
+	return parseRecordedOperation(instanceID, state, taskID, task)
+}
+
+// parseRecordedOperation builds the recorded operation of an instance from
+// what Vault.State read of its record.
+func parseRecordedOperation(instanceID, state string, taskID int, task map[string]interface{}) (recordedOperation, error) {
+	var err error
 
 	recorded := recordedOperation{State: state, TaskID: taskID}
 	recorded.Action, _ = task["action"].(string)

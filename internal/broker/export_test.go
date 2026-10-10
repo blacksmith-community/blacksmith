@@ -413,3 +413,29 @@ func (b *Broker) UnknownOutcomePassReader(instanceID string) func() string {
 func (b *Broker) NoTaskInAnswer(operation, deploymentName, contextID string) error {
 	return b.noTaskInAnswer(operation, deploymentName, contextID)
 }
+
+// SetReadoptIntervals replaces the backoff between Vault reads and the
+// interval between checks of a re-adopted operation, and returns a
+// function that restores the previous ones.
+func SetReadoptIntervals(d time.Duration) func() {
+	previous := readoptIntervalOverride.Swap(int64(d))
+
+	return func() { readoptIntervalOverride.Store(previous) }
+}
+
+// SetReadoptBound replaces the bound of every re-adoption goroutine
+// started from now on, and returns a function that restores the previous
+// one.
+func SetReadoptBound(d time.Duration) func() {
+	previous := readoptBoundOverride.Swap(int64(d))
+
+	return func() { readoptBoundOverride.Store(previous) }
+}
+
+// ReadoptStore is the part of Vault the first phase of re-adoption reads.
+type ReadoptStore = readoptStore
+
+// SetReadoptStore replaces the store the first phase of re-adoption reads.
+func (b *Broker) SetReadoptStore(store ReadoptStore) {
+	b.readoptVault = store
+}
