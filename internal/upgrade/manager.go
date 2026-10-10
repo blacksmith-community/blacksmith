@@ -61,6 +61,12 @@ var loadRetryBackoff = 5 * time.Second
 // loadRetryBackoffMax is the longest the loader waits between reads.
 const loadRetryBackoffMax = time.Minute
 
+// taskQueueCapacity is how many upgrades the queue holds before a send
+// waits for the dispatcher. A test lowers it.
+//
+//nolint:gochecknoglobals // a test seam
+var taskQueueCapacity = 100
+
 // noDirectorMessage is what an instance whose deploy was in flight at a
 // restart says when the broker has no BOSH director to settle it with.
 const noDirectorMessage = "Blacksmith has no BOSH director configured, so it cannot settle this deploy until it restarts with one"
@@ -136,6 +142,10 @@ type Manager struct {
 	// loaded is closed once the loader has read the stored upgrades and
 	// started settling their instances, or Stop ended it first.
 	loaded chan struct{}
+
+	// owned holds, under mu, each upgrade that is queued or being
+	// processed, so only one processor ever runs an upgrade.
+	owned map[string]bool
 }
 
 // taskSnapshot is a copy of an upgrade task taken under the manager's lock,
@@ -160,11 +170,12 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		logger:       logger.Named("upgrade-manager"),
 		director:     director,
 		vault:        vault,
-		taskQueue:    make(chan *UpgradeTask, 100),
+		taskQueue:    make(chan *UpgradeTask, taskQueueCapacity),
 		stopCh:       make(chan struct{}),
 		taskCancelCh: make(map[string]chan struct{}),
 		settling:     make(map[string]int),
 		loaded:       make(chan struct{}),
+		owned:        make(map[string]bool),
 	}
 
 	// The manager's context is a root. The manager lives as long as the
@@ -237,6 +248,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 
 	m.mu.Lock()
 	m.tasks[task.ID] = task
+	m.owned[task.ID] = true
 	created := copyTask(task)
 	m.mu.Unlock()
 
@@ -246,13 +258,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		// Continue anyway - task is in memory
 	}
 
-	// Queue the task for processing
-	select {
-	case m.taskQueue <- task:
-		m.logger.Debug("Task %s queued for processing", task.ID)
-	default:
-		m.logger.Error("Task queue is full, task %s not queued", task.ID)
-	}
+	m.enqueue(task)
 
 	return created, nil
 }
@@ -350,188 +356,9 @@ func (m *Manager) dispatchTasks() {
 			// Spawn a goroutine for each task to allow parallel processing
 			m.wg.Add(1)
 
-			go func(t *UpgradeTask) {
-				defer m.wg.Done()
-
-				// Acquire semaphore slot if max batch jobs is set
-				m.settingsLock.RLock()
-				semaphore := m.jobSemaphore
-				m.settingsLock.RUnlock()
-
-				if semaphore != nil {
-					select {
-					case semaphore <- struct{}{}:
-						// Got a slot
-						defer func() { <-semaphore }()
-					case <-m.stopCh:
-						m.logger.Info("Manager stopping, task %s not started", t.ID)
-
-						return
-					}
-				}
-
-				m.processTask(t)
-			}(task)
+			go m.runTask(task)
 		}
 	}
-}
-
-// processTask processes a single upgrade task.
-func (m *Manager) processTask(task *UpgradeTask) {
-	ctx := context.Background()
-
-	// Create cancel channel for this task
-	cancelCh := make(chan struct{})
-	m.taskCancelLock.Lock()
-	m.taskCancelCh[task.ID] = cancelCh
-	m.taskCancelLock.Unlock()
-
-	// Cleanup cancel channel when done
-	defer func() {
-		m.taskCancelLock.Lock()
-		delete(m.taskCancelCh, task.ID)
-		m.taskCancelLock.Unlock()
-	}()
-
-	// Recover from any panics to prevent crashing the entire blacksmith process
-	defer func() {
-		if r := recover(); r != nil {
-			m.logger.Error("PANIC in processTask for task %s: %v", task.ID, r)
-			m.mu.Lock()
-			task.Status = TaskStatusFailed
-			completedAt := time.Now()
-			task.CompletedAt = &completedAt
-			m.mu.Unlock()
-
-			// Persist failed state
-			if err := m.persistTask(ctx, task); err != nil {
-				m.logger.Error("Failed to persist task %s after panic: %v", task.ID, err)
-			}
-		}
-	}()
-
-	m.logger.Info("Processing upgrade task %s", task.ID)
-
-	now := time.Now()
-
-	m.mu.Lock()
-	task.StartedAt = &now
-	task.Status = TaskStatusRunning
-	m.mu.Unlock()
-
-	// Persist running state
-	if err := m.persistTask(ctx, task); err != nil {
-		m.logger.Error("Failed to persist task %s running state: %v", task.ID, err)
-	}
-
-	// Process each instance sequentially
-	for i := range task.Instances {
-		instance := &task.Instances[i]
-
-		// Check if task was cancelled
-		m.mu.RLock()
-		if task.Status == TaskStatusCancelled {
-			m.mu.RUnlock()
-			m.logger.Info("Task %s was cancelled, stopping processing", task.ID)
-			m.skipPendingInstances(ctx, task)
-			return
-		}
-		m.mu.RUnlock()
-
-		// Check if task is paused - wait for resume or cancel
-		for {
-			m.mu.RLock()
-			isPaused := task.Paused
-			isCancelled := task.Status == TaskStatusCancelled
-			m.mu.RUnlock()
-
-			if isCancelled {
-				m.logger.Info("Task %s was cancelled while paused, stopping processing", task.ID)
-				m.skipPendingInstances(ctx, task)
-				return
-			}
-
-			if !isPaused {
-				break
-			}
-
-			m.logger.Debug("Task %s is paused, waiting for resume...", task.ID)
-			select {
-			case <-cancelCh:
-				// Check status again after signal
-				continue
-			case <-m.stopCh:
-				m.logger.Info("Manager stopping while task %s is paused", task.ID)
-				return
-			case <-time.After(1 * time.Second):
-				// Periodic check
-				continue
-			}
-		}
-
-		m.mu.RLock()
-
-		status := instance.Status
-
-		m.mu.RUnlock()
-
-		// An instance that has settled was counted when it settled, so a
-		// resumed upgrade skips it without counting it again.
-		if status.settled() {
-			continue
-		}
-
-		// An instance whose deploy is still in flight has not settled, so
-		// the upgrade stops here rather than deploy it again or finish
-		// while that deploy runs.
-		if status == InstanceStatusRunning || status == InstanceStatusInterrupted {
-			m.logger.Info("Instance %s of task %s is still %s, so the upgrade stops until it settles", instance.InstanceID, task.ID, status)
-
-			return
-		}
-
-		m.upgradeInstance(m.ctx, task, instance, cancelCh)
-
-		// A manager that is stopping leaves the upgrade as it is, and the
-		// instances not yet started stay pending.
-		if m.ctx.Err() != nil {
-			m.logger.Info("Manager stopping during task %s, so its remaining instances stay pending", task.ID)
-
-			return
-		}
-	}
-
-	// A stop during the last instance leaves the upgrade running rather
-	// than marking it completed.
-	if m.ctx.Err() != nil {
-		m.logger.Info("Manager stopping at the end of task %s, so it stays running", task.ID)
-
-		return
-	}
-
-	// Update task status (only if not already cancelled)
-	m.mu.Lock()
-	if task.Status != TaskStatusCancelled {
-		completedAt := time.Now()
-		task.CompletedAt = &completedAt
-
-		if task.FailedCount > 0 && task.CompletedCount == 0 {
-			task.Status = TaskStatusFailed
-		} else if task.FailedCount > 0 || task.CancelledCount > 0 {
-			task.Status = TaskStatusCompleted // Partial success
-		} else {
-			task.Status = TaskStatusCompleted
-		}
-	}
-	m.mu.Unlock()
-
-	// Persist completed state
-	if err := m.persistTask(ctx, task); err != nil {
-		m.logger.Error("Failed to persist task %s completed state: %v", task.ID, err)
-	}
-
-	m.logger.Info("Upgrade task %s completed: %d/%d succeeded, %d failed, %d cancelled, %d with an unknown outcome",
-		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount, task.UnknownCount)
 }
 
 // upgradeInstance upgrades a single instance. It saves a fresh context ID
@@ -1052,20 +879,8 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 // skipPendingInstances marks every instance of a cancelled upgrade that
 // never started as skipped.
 func (m *Manager) skipPendingInstances(ctx context.Context, task *UpgradeTask) {
-	skipped := 0
-
 	m.mu.Lock()
-	for i := range task.Instances {
-		instance := &task.Instances[i]
-		if instance.Status != InstanceStatusPending {
-			continue
-		}
-
-		instance.Status = InstanceStatusSkipped
-		instance.Error = "skipped due to task cancellation"
-		task.SkippedCount++
-		skipped++
-	}
+	skipped := m.skipPendingLocked(task)
 	m.mu.Unlock()
 
 	if skipped == 0 {
@@ -1179,6 +994,10 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 		}
 	}
 	m.taskCancelLock.RUnlock()
+
+	// An upgrade with no processor, as a loaded one has, is queued once
+	// nothing of it is settling.
+	m.resumeIfReady(task) //nolint:contextcheck // the resume outlives the request, so it runs under the manager's context
 
 	return nil
 }
@@ -1336,9 +1155,363 @@ func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
 	m.onMaxBatchJobsChanged = callback
 }
 
-// loadAndSettle loads the upgrade tasks saved in Vault and settles every
-// instance whose deploy was in flight when the broker stopped. Stop ends
-// it, and it closes loaded once the settles have started.
+// runTask runs one queued upgrade. Its cancel channel is registered before
+// it waits for a slot, so a cancel or a resume during that wait reaches it,
+// and the upgrade stops being owned once its processing returns.
+func (m *Manager) runTask(task *UpgradeTask) {
+	defer m.wg.Done()
+
+	cancelCh := make(chan struct{})
+
+	m.taskCancelLock.Lock()
+	m.taskCancelCh[task.ID] = cancelCh
+	m.taskCancelLock.Unlock()
+
+	defer func() {
+		m.taskCancelLock.Lock()
+		if m.taskCancelCh[task.ID] == cancelCh {
+			delete(m.taskCancelCh, task.ID)
+		}
+		m.taskCancelLock.Unlock()
+
+		m.mu.Lock()
+		delete(m.owned, task.ID)
+		m.mu.Unlock()
+	}()
+
+	release, ok := m.acquireSlot(task, cancelCh)
+	if !ok {
+		return
+	}
+
+	defer release()
+
+	m.processTask(task, cancelCh)
+}
+
+// acquireSlot waits for a slot when a batch limit is set, and returns the
+// function that frees it. An upgrade cancelled during the wait goes on at
+// once without a slot, since it deploys nothing more. It returns false when
+// Stop ends the wait.
+func (m *Manager) acquireSlot(task *UpgradeTask, cancelCh <-chan struct{}) (func(), bool) {
+	m.settingsLock.RLock()
+	semaphore := m.jobSemaphore
+	m.settingsLock.RUnlock()
+
+	if semaphore == nil {
+		return func() {}, true
+	}
+
+	for {
+		select {
+		case semaphore <- struct{}{}:
+			return func() { <-semaphore }, true
+		case <-cancelCh:
+			m.mu.RLock()
+
+			cancelled := task.Status == TaskStatusCancelled
+
+			m.mu.RUnlock()
+
+			if cancelled {
+				return func() {}, true
+			}
+		case <-m.stopCh:
+			m.logger.Info("Manager stopping, task %s not started", task.ID)
+
+			return nil, false
+		}
+	}
+}
+
+// processTask processes a single upgrade task. A signal on cancelCh wakes
+// it from a pause, and a close of it is a cancel.
+func (m *Manager) processTask(task *UpgradeTask, cancelCh <-chan struct{}) {
+	ctx := context.Background()
+
+	// Recover from any panics to prevent crashing the entire blacksmith process
+	defer m.recoverTask(ctx, task)
+
+	m.logger.Info("Processing upgrade task %s", task.ID)
+
+	if m.startProcessing(task) {
+		m.logger.Info("Task %s was cancelled before it started, stopping processing", task.ID)
+		m.skipPendingInstances(ctx, task)
+
+		return
+	}
+
+	// Persist running state
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist task %s running state: %v", task.ID, err)
+	}
+
+	// Process each instance sequentially
+	for i := range task.Instances {
+		if !m.processInstance(task, &task.Instances[i], cancelCh) {
+			return
+		}
+	}
+
+	// A stop during the last instance leaves the upgrade running rather
+	// than marking it completed.
+	if m.ctx.Err() != nil {
+		m.logger.Info("Manager stopping at the end of task %s, so it stays running", task.ID)
+
+		return
+	}
+
+	m.finishTask(ctx, task)
+}
+
+// recoverTask fails an upgrade whose processing panicked, so the panic
+// never crashes the broker. processTask defers it.
+func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
+	r := recover()
+	if r == nil {
+		return
+	}
+
+	m.logger.Error("PANIC in processTask for task %s: %v", task.ID, r)
+
+	m.mu.Lock()
+
+	task.Status = TaskStatusFailed
+	completedAt := time.Now()
+	task.CompletedAt = &completedAt
+
+	m.mu.Unlock()
+
+	// Persist failed state
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist task %s after panic: %v", task.ID, err)
+	}
+}
+
+// processInstance takes one instance of an upgrade through the cancel
+// check, the pause wait, and its deploy, and reports whether the upgrade
+// goes on to its next instance. Its saves go on after Stop.
+func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) bool {
+	ctx := context.WithoutCancel(m.ctx)
+
+	// Check if task was cancelled
+	m.mu.RLock()
+
+	cancelled := task.Status == TaskStatusCancelled
+
+	m.mu.RUnlock()
+
+	if cancelled {
+		m.logger.Info("Task %s was cancelled, stopping processing", task.ID)
+		m.skipPendingInstances(ctx, task)
+
+		return false
+	}
+
+	// Check if task is paused - wait for resume or cancel
+	if !m.waitWhilePaused(ctx, task, cancelCh) {
+		return false
+	}
+
+	m.mu.RLock()
+
+	status := instance.Status
+
+	m.mu.RUnlock()
+
+	// An instance that has settled was counted when it settled, so a
+	// resumed upgrade skips it without counting it again.
+	if status.settled() {
+		return true
+	}
+
+	// An instance whose deploy is still in flight has not settled, so
+	// the upgrade stops here rather than deploy it again or finish
+	// while that deploy runs.
+	if status == InstanceStatusRunning || status == InstanceStatusInterrupted {
+		m.logger.Info("Instance %s of task %s is still %s, so the upgrade stops until it settles", instance.InstanceID, task.ID, status)
+
+		return false
+	}
+
+	m.upgradeInstance(m.ctx, task, instance, cancelCh)
+
+	// A manager that is stopping leaves the upgrade as it is, and the
+	// instances not yet started stay pending.
+	if m.ctx.Err() != nil {
+		m.logger.Info("Manager stopping during task %s, so its remaining instances stay pending", task.ID)
+
+		return false
+	}
+
+	return true
+}
+
+// startProcessing marks the upgrade running as its processing starts, and
+// reports whether it was cancelled. A resumed upgrade keeps its first start
+// time, and a cancel or a pause that landed while it waited in the queue or
+// for a slot stands.
+func (m *Manager) startProcessing(task *UpgradeTask) bool {
+	now := time.Now()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if task.StartedAt == nil {
+		task.StartedAt = &now
+	}
+
+	if task.Status != TaskStatusCancelled && task.Status != TaskStatusPaused {
+		task.Status = TaskStatusRunning
+	}
+
+	return task.Status == TaskStatusCancelled
+}
+
+// waitWhilePaused waits while the upgrade is paused, and reports whether
+// its processing goes on. A cancel ends the processing, and so does Stop.
+func (m *Manager) waitWhilePaused(ctx context.Context, task *UpgradeTask, cancelCh <-chan struct{}) bool {
+	for {
+		m.mu.RLock()
+
+		isPaused := task.Paused
+		isCancelled := task.Status == TaskStatusCancelled
+
+		m.mu.RUnlock()
+
+		if isCancelled {
+			m.logger.Info("Task %s was cancelled while paused, stopping processing", task.ID)
+			m.skipPendingInstances(ctx, task)
+
+			return false
+		}
+
+		if !isPaused {
+			return true
+		}
+
+		m.logger.Debug("Task %s is paused, waiting for resume...", task.ID)
+
+		select {
+		case <-cancelCh:
+			// Check status again after signal
+		case <-m.stopCh:
+			m.logger.Info("Manager stopping while task %s is paused", task.ID)
+
+			return false
+		case <-time.After(1 * time.Second):
+			// Periodic check
+		}
+	}
+}
+
+// finishTask records the final status of an upgrade whose instances have
+// all been processed, unless it was cancelled, and saves it.
+func (m *Manager) finishTask(ctx context.Context, task *UpgradeTask) {
+	m.mu.Lock()
+
+	if task.Status != TaskStatusCancelled {
+		completedAt := time.Now()
+		task.CompletedAt = &completedAt
+
+		if task.FailedCount > 0 && task.CompletedCount == 0 {
+			task.Status = TaskStatusFailed
+		} else {
+			// A partial success completes too.
+			task.Status = TaskStatusCompleted
+		}
+	}
+
+	m.mu.Unlock()
+
+	// Persist completed state
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist task %s completed state: %v", task.ID, err)
+	}
+
+	m.logger.Info("Upgrade task %s completed: %d/%d succeeded, %d failed, %d cancelled, %d with an unknown outcome",
+		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount, task.UnknownCount)
+}
+
+// skipPendingLocked marks every pending instance of a cancelled upgrade
+// skipped and returns how many it marked. The caller holds mu.
+func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
+	skipped := 0
+
+	for i := range task.Instances {
+		instance := &task.Instances[i]
+		if instance.Status != InstanceStatusPending {
+			continue
+		}
+
+		instance.Status = InstanceStatusSkipped
+		instance.Error = "skipped due to task cancellation"
+		task.SkippedCount++
+		skipped++
+	}
+
+	return skipped
+}
+
+// resumeIfReady moves on an upgrade that has no processor, deciding under
+// mu. A running upgrade that is not paused, has no instance settling, and
+// is not owned becomes owned and is queued. A cancelled upgrade with no
+// instance settling skips its pending instances. Anything else waits for
+// its settles, its resume, or its processor, and a manager that is
+// stopping queues nothing.
+func (m *Manager) resumeIfReady(task *UpgradeTask) {
+	m.mu.Lock()
+	settled := m.settling[task.ID] == 0
+
+	queue := settled && m.ctx.Err() == nil && task.Status == TaskStatusRunning && !task.Paused && !m.owned[task.ID]
+	if queue {
+		m.owned[task.ID] = true
+	}
+
+	skipped := 0
+	if settled && task.Status == TaskStatusCancelled {
+		skipped = m.skipPendingLocked(task)
+	}
+	m.mu.Unlock()
+
+	if skipped > 0 {
+		m.logger.Info("Skipped %d pending instances of cancelled task %s", skipped, task.ID)
+
+		err := m.persistTask(context.WithoutCancel(m.ctx), task)
+		if err != nil {
+			m.logger.Error("Failed to persist the skipped instances of task %s: %v", task.ID, err)
+		}
+	}
+
+	if queue {
+		m.logger.Info("Upgrade task %s is resuming after a restart", task.ID)
+		m.enqueue(task)
+	}
+}
+
+// enqueue puts an upgrade the caller made owned on the queue. The send
+// waits for room in the queue, and when Stop ends the manager first, the
+// upgrade is no longer owned.
+func (m *Manager) enqueue(task *UpgradeTask) {
+	select {
+	case m.taskQueue <- task:
+		m.logger.Debug("Task %s queued for processing", task.ID)
+	case <-m.ctx.Done():
+		m.mu.Lock()
+		delete(m.owned, task.ID)
+		m.mu.Unlock()
+
+		m.logger.Info("Upgrade manager stopping, so task %s was not queued", task.ID)
+	}
+}
+
+// loadAndSettle loads the upgrade tasks saved in Vault, settles every
+// instance whose deploy was in flight when the broker stopped, and resumes
+// each upgrade that has nothing settling. Stop ends it, and it closes
+// loaded once the settles have started.
 func (m *Manager) loadAndSettle() {
 	defer m.wg.Done()
 	defer close(m.loaded)
@@ -1351,6 +1524,12 @@ func (m *Manager) loadAndSettle() {
 	}
 
 	m.settleLoadedTasks(tasks)
+
+	// Each upgrade resumes on its own, so one upgrade's slow settle never
+	// holds back another.
+	for _, task := range tasks {
+		m.resumeIfReady(task)
+	}
 }
 
 // loadPersistedTasks loads every upgrade task saved in Vault. A failed read
@@ -1596,13 +1775,14 @@ func (m *Manager) settleLoadedDeploy(deploy loadedDeploy) {
 
 // endSettling counts a loaded instance's settle as ended. Once the last of
 // the upgrade's settles ends, its shared cancel channel is removed, unless
-// a cancel already removed it.
+// a cancel already removed it, and the upgrade moves on.
 func (m *Manager) endSettling(deploy loadedDeploy) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	m.settling[deploy.task.ID]--
 	if m.settling[deploy.task.ID] > 0 {
+		m.mu.Unlock()
+
 		return
 	}
 
@@ -1613,6 +1793,9 @@ func (m *Manager) endSettling(deploy loadedDeploy) {
 		delete(m.taskCancelCh, deploy.task.ID)
 	}
 	m.taskCancelLock.Unlock()
+	m.mu.Unlock()
+
+	m.resumeIfReady(deploy.task)
 }
 
 // settleByContextID settles a loaded instance that has a context ID and no

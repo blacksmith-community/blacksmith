@@ -457,8 +457,9 @@ func TestLoadReturnsAnUnsentDeployToPending(t *testing.T) {
 	vault := newWaitVault()
 
 	// The context ID was saved, but the broker stopped before the deploy
-	// went out, so no answer was ever lost.
-	storeUpgrade(t, vault, storedUpgrade(loadedTaskID,
+	// went out, so no answer was ever lost. The upgrade is paused, so no
+	// resume deploys the instance again after its reset.
+	storeUpgrade(t, vault, pausedUpgrade(
 		inFlight(waitDeployment, InstanceStatusRunning, 0, loadedContextID)))
 
 	loading := time.Now()
@@ -517,8 +518,9 @@ func TestLoadResetsARunningInstanceThatNeverSentItsDeploy(t *testing.T) {
 	vault := newWaitVault()
 
 	// The broker stopped after it saved the instance running and before it
-	// saved the deploy's context ID.
-	storeUpgrade(t, vault, storedUpgrade(loadedTaskID,
+	// saved the deploy's context ID. The upgrade is paused, so no resume
+	// deploys the instance again after its reset.
+	storeUpgrade(t, vault, pausedUpgrade(
 		inFlight(waitDeployment, InstanceStatusRunning, 0, "")))
 
 	manager := loadManager(t, director, vault)
@@ -549,7 +551,9 @@ func TestLoadWaitsForATaskOnTheDeploymentBeforeResetting(t *testing.T) {
 	}
 	vault := newWaitVault()
 
-	storeUpgrade(t, vault, storedUpgrade(loadedTaskID,
+	// The upgrade is paused, so no resume deploys the instance again after
+	// its reset.
+	storeUpgrade(t, vault, pausedUpgrade(
 		inFlight(waitDeployment, InstanceStatusRunning, 0, "")))
 
 	manager := loadManager(t, director, vault)
@@ -621,7 +625,12 @@ func TestLoadRetriesWhenTheIndexReadFails(t *testing.T) {
 
 	vault := &failingIndexVault{waitVault: newWaitVault(), failures: 2}
 
-	storeUpgrade(t, vault.waitVault, storedUpgrade(loadedTaskID))
+	// The upgrade has finished, so nothing resumes it and saves it, which
+	// would read the index again.
+	finished := storedUpgrade(loadedTaskID)
+	finished.Status = TaskStatusCompleted
+
+	storeUpgrade(t, vault.waitVault, finished)
 
 	manager := NewManager(&logger.NoOpLogger{}, newWaitDirector(), vault)
 	t.Cleanup(manager.Stop)
@@ -691,7 +700,7 @@ func runProcessTask(manager *Manager, task *UpgradeTask) <-chan struct{} {
 	go func() {
 		defer close(returned)
 
-		manager.processTask(task)
+		manager.processTask(task, make(chan struct{}))
 	}()
 
 	return returned
