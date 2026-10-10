@@ -196,6 +196,10 @@ type Broker struct {
 	// unknownOutcomePasses holds an *unknownOutcomePass for each instance
 	// whose unknown outcome a poll has tried to settle.
 	unknownOutcomePasses sync.Map
+
+	// settling holds the settle lock of each instance whose operation is
+	// being settled, so no operation is settled twice.
+	settling settleLocks
 }
 
 // operationClaim is the claim an operation holds on an instance ID in
@@ -3630,9 +3634,39 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 		return osbapi.LastOperationResponse{}, ErrUnrecognizedBackendBOSHTask
 	}
 
-	switch {
-	case task.State == taskStateDone:
-		err := b.OnProvisionCompleted(ctx, logger, instanceID)
+	if task.State != taskStateDone && !isFailedTaskState(task.State) {
+		logger.Debug("provision operation is still in progress")
+
+		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: fmt.Sprintf("BOSH deployment in progress (task %d)", taskID)}, nil
+	}
+
+	// The task has ended, so this poll settles the provision. Another
+	// settler may have settled it since the record was read, so the record
+	// is read again under the settle lock, which is held until the
+	// provision is settled.
+	unlock, err := b.lockSettle(ctx, instanceID)
+	if err != nil {
+		logger.Error("provision of instance %s was not settled: %s", instanceID, err)
+
+		return osbapi.LastOperationResponse{}, err
+	}
+	defer unlock()
+
+	settled, isSettled, err := b.settledProvision(ctx, instanceID)
+	if err != nil {
+		logger.Error("provision of instance %s was not settled: %s", instanceID, err)
+
+		return osbapi.LastOperationResponse{}, err
+	}
+
+	if isSettled {
+		logger.Debug("provision of instance %s was already settled as %s", instanceID, settled.State)
+
+		return settled, nil
+	}
+
+	if task.State == taskStateDone {
+		err = b.OnProvisionCompleted(ctx, logger, instanceID)
 		if err != nil {
 			return osbapi.LastOperationResponse{}, ErrProvisionTaskCompletedPostHookFailed
 		}
@@ -3640,29 +3674,44 @@ func (b *Broker) handleProvisionTaskCleaningUpOn(ctx, cleanupCtx context.Context
 		logger.Debug("provision operation succeeded")
 
 		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
-
-	case isFailedTaskState(task.State):
-		description := fmt.Sprintf("BOSH deployment task %d is %s", taskID, task.State)
-		logger.Error("provision operation failed: %s", description)
-
-		// Record the failure so later polls answer from it and the cleanup
-		// starts only once. The cleanup's director calls can be slow, so it
-		// runs in the background rather than holding up the poll.
-		b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
-
-		// The cleanup outlives this poll; it keeps the values of cleanupCtx
-		// and sets its own deadline.
-		b.track("cleanup of failed deployment "+deploymentName, func() {
-			b.cleanupFailedDeployment(cleanupCtx, deploymentName, logger)
-		})
-
-		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
-
-	default:
-		logger.Debug("provision operation is still in progress")
-
-		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: fmt.Sprintf("BOSH deployment in progress (task %d)", taskID)}, nil
 	}
+
+	description := fmt.Sprintf("BOSH deployment task %d is %s", taskID, task.State)
+	logger.Error("provision operation failed: %s", description)
+
+	// Record the failure so later polls answer from it, and start the
+	// cleanup while the settle lock is still held, so it starts only once.
+	// The cleanup's director calls can be slow, so it runs in the
+	// background rather than holding up the poll.
+	b.recordTask(ctx, instanceID, operationTypeProvision, description, -1, logger)
+
+	// The cleanup outlives this poll; it keeps the values of cleanupCtx
+	// and sets its own deadline.
+	b.track("cleanup of failed deployment "+deploymentName, func() {
+		b.cleanupFailedDeployment(cleanupCtx, deploymentName, logger)
+	})
+
+	return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: description}, nil
+}
+
+// settledProvision reads the instance's record again and reports whether
+// it holds a provision that is already settled, with the answer that
+// settled it. A provision recorded as failed is settled. The read runs
+// under a bound of its own.
+func (b *Broker) settledProvision(ctx context.Context, instanceID string) (osbapi.LastOperationResponse, bool, error) {
+	readCtx, cancel := recordContext(ctx)
+	defer cancel()
+
+	recorded, err := b.readRecordedOperation(readCtx, instanceID)
+	if err != nil {
+		return osbapi.LastOperationResponse{}, false, err
+	}
+
+	if recorded.Action == operationTypeProvision && recorded.State == recordedStateFailed {
+		return osbapi.LastOperationResponse{State: osbapi.StateFailed, Description: recorded.Description}, true, nil
+	}
+
+	return osbapi.LastOperationResponse{}, false, nil
 }
 
 func (b *Broker) handleDeprovisionTask(ctx context.Context, instanceID, deploymentName string, taskID int, logger logger.Logger) (osbapi.LastOperationResponse, error) {
@@ -3714,6 +3763,30 @@ func (b *Broker) cleanupFailedDeployment(ctx context.Context, deploymentName str
 func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	logger.Info("handleSuccessfulDeprovision called for instance %s, deployment %s", instanceID, deploymentName)
 
+	// The deprovision monitor may settle the same delete at the same time,
+	// so the delete is checked again under the settle lock, which is held
+	// until the instance is out of the index.
+	unlock, err := b.lockSettle(ctx, instanceID)
+	if err != nil {
+		logger.Error("deprovision of instance %s was not settled: %s", instanceID, err)
+
+		return osbapi.LastOperationResponse{}, err
+	}
+	defer unlock()
+
+	settled, err := b.deleteSettled(ctx, instanceID)
+	if err != nil {
+		logger.Error("could not check whether the delete of instance %s was already settled: %s", instanceID, err)
+
+		return osbapi.LastOperationResponse{}, err
+	}
+
+	if settled {
+		logger.Info("The delete of instance %s was already settled", instanceID)
+
+		return osbapi.LastOperationResponse{State: osbapi.StateSucceeded}, nil
+	}
+
 	logger.Debug("Verifying deployment is actually deleted")
 
 	_, deploymentErr := b.BOSH.GetDeployment(ctx, deploymentName)
@@ -3745,7 +3818,7 @@ func (b *Broker) handleSuccessfulDeprovision(ctx context.Context, instanceID, de
 	logger.Info("Removing instance %s from service index after confirmed deletion", instanceID)
 
 	removeCtx, cancelRemove := recordContext(ctx)
-	err := b.Vault.Index(removeCtx, instanceID, nil)
+	err = b.Vault.Index(removeCtx, instanceID, nil)
 
 	cancelRemove()
 

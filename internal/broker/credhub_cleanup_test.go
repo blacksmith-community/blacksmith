@@ -573,8 +573,12 @@ var _ = Describe("CredHub cleanup", func() {
 	})
 
 	Context("when LastOperation and the monitor confirm at the same moment", func() {
-		It("runs the cleaner at most once at a time", func() {
+		It("starts the cleaner once", func() {
 			restorePoll = broker.SetTaskPollInterval(10 * time.Millisecond)
+
+			monitorExited := make(chan string, 4)
+
+			brokerInstance.SetMonitorExited(func(id string) { monitorExited <- id })
 
 			credhubFake := &blockingCredHub{
 				release: make(chan struct{}),
@@ -596,7 +600,7 @@ var _ = Describe("CredHub cleanup", func() {
 			recorder := &resultRecorder{inner: credhub.NewCleaner(credhubFake, director, policy, logger.Get())}
 			brokerInstance.CredentialCleaner = recorder
 
-			// The delete task stays queued until both confirmations are armed.
+			// The delete task stays queued until the spec marks it done.
 			specWorld, name := world, deploymentName
 			director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
 				specWorld.addEvents(deploymentEvents(boshEventDelete, name, deleteTaskID)...)
@@ -606,48 +610,22 @@ var _ = Describe("CredHub cleanup", func() {
 				return &bosh.Task{ID: deleteTaskID, State: "queued", Description: "delete deployment " + name}, nil
 			}
 
-			// The first two not-found answers wait for each other, so the
-			// monitor and LastOperation confirm the delete together.
-			var (
-				armed     atomic.Bool
-				confirmed atomic.Int32
-			)
-
-			rendezvous := make(chan struct{})
-			director.GetDeploymentFn = func(deployment string) (*bosh.DeploymentDetail, error) {
-				if !specWorld.isDeploymentDeleted() {
-					return &bosh.DeploymentDetail{Name: deployment, Manifest: "name: " + deployment}, nil
-				}
-
-				if armed.Load() {
-					switch confirmed.Add(1) {
-					case 1:
-						select {
-						case <-rendezvous:
-						case <-time.After(5 * time.Second):
-						}
-					case 2:
-						close(rendezvous)
-					}
-				}
-
-				return nil, fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deployment)
-			}
-
 			deprovision()
 			Eventually(recordedTask).Should(Equal(deleteTaskID))
 			Eventually(func() int { return len(director.Calls("GetTask")) }, 5*time.Second).Should(BeNumerically(">", 0))
 
-			armed.Store(true)
 			specWorld.set(&bosh.Task{ID: deleteTaskID, State: "done", Description: "delete deployment " + name})
 
 			Expect(poll().State).To(Equal(osbapi.StateSucceeded))
-			Eventually(recorder.Duplicates, 5*time.Second).Should(Equal(1), "the second confirmation must find the first run in flight")
+			Eventually(monitorExited, 5*time.Second).Should(Receive(Equal(instanceID)))
 
 			close(credhubFake.release)
-			Eventually(func() int { return len(recorder.Results()) }, 5*time.Second).Should(Equal(2))
+			brokerInstance.WaitForCredentialCleanups()
 
 			finds, maxActive, deleted := credhubFake.counts()
+
+			Expect(recorder.Results()).To(HaveLen(1), "the second settle must find the delete already settled")
+			Expect(recorder.Duplicates()).To(BeZero())
 			Expect(finds).To(Equal(1))
 			Expect(maxActive).To(Equal(1))
 			Expect(deleted).To(Equal(credhubFake.names))

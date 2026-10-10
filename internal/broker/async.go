@@ -883,7 +883,31 @@ func (d *deprovisioningPhase) storeDeletedTimestamp(ctx context.Context) {
 }
 
 // handleTaskSuccess performs cleanup after successful task completion.
+// LastOperation may settle the same delete at the same time, so the delete
+// is checked again under the settle lock, which is held until the instance
+// is out of the index.
 func (d *deprovisioningPhase) handleTaskSuccess(ctx context.Context) {
+	unlock, err := d.broker.lockSettle(ctx, d.instanceID)
+	if err != nil {
+		d.logger.Error("Did not settle the delete of instance %s, leaving it to LastOperation: %s", d.instanceID, err)
+
+		return
+	}
+	defer unlock()
+
+	settled, err := d.broker.deleteSettled(ctx, d.instanceID)
+	if err != nil {
+		d.logger.Error("Could not check whether the delete of instance %s was already settled, leaving it to LastOperation: %s", d.instanceID, err)
+
+		return
+	}
+
+	if settled {
+		d.logger.Info("The delete of instance %s was already settled", d.instanceID)
+
+		return
+	}
+
 	// Verify deployment is actually gone
 	_, deploymentErr := d.broker.BOSH.GetDeployment(ctx, d.deploymentName)
 	if deploymentErr == nil {
