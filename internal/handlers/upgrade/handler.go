@@ -25,7 +25,9 @@ type Dependencies struct {
 	OnMaxBatchJobsChanged func(maxJobs int) // Callback to update BatchDirector pool size
 }
 
-// NewHandler creates a new upgrade handler.
+// NewHandler creates a new upgrade handler. It applies the persisted
+// max_batch_jobs before it starts the manager, so no deploy that the resume
+// of an upgrade sends runs above the persisted limit.
 func NewHandler(deps Dependencies) *Handler {
 	manager := upgrade.NewManager(deps.Logger, deps.Director, deps.Vault)
 
@@ -33,12 +35,12 @@ func NewHandler(deps Dependencies) *Handler {
 	if deps.OnMaxBatchJobsChanged != nil {
 		manager.SetOnMaxBatchJobsChanged(deps.OnMaxBatchJobsChanged)
 
-		// Sync BatchDirector pool with settings loaded from Vault at startup
-		settings := manager.GetSettings()
-		if settings.MaxBatchJobs > 0 {
-			deps.OnMaxBatchJobsChanged(settings.MaxBatchJobs)
-		}
+		// Sync BatchDirector pool with settings loaded from Vault at
+		// startup. A limit of 0 restores the configured one.
+		deps.OnMaxBatchJobsChanged(manager.GetSettings().MaxBatchJobs)
 	}
+
+	manager.Start()
 
 	return &Handler{
 		logger:  deps.Logger.Named("upgrade-handler"),

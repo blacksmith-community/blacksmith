@@ -2200,7 +2200,7 @@
       </div>
       <div class="filter-row">
         <label for="upgrade-max-batch-jobs">Max Parallel Jobs:</label>
-        <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="No limit" title="Maximum number of batch jobs that can run in parallel. Leave empty or 0 for no limit.">
+        <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="Default" title="Maximum number of batch jobs that can run in parallel. Leave empty or 0 for the configured default.">
         <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
       </div>
       <div class="upgrade-actions">

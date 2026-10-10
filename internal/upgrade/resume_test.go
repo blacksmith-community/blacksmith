@@ -306,6 +306,7 @@ func loadManagerLogging(t *testing.T, log logger.Logger, director bosh.Director,
 
 	manager := NewManager(log, director, vault)
 	t.Cleanup(manager.Stop)
+	manager.Start()
 
 	waitForLoad(t, manager)
 

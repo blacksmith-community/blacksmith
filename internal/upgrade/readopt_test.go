@@ -108,6 +108,7 @@ func loadManager(t *testing.T, director bosh.Director, vault interfaces.Vault) *
 
 	manager := NewManager(&logger.NoOpLogger{}, director, vault)
 	t.Cleanup(manager.Stop)
+	manager.Start()
 
 	waitForLoad(t, manager)
 
@@ -634,6 +635,7 @@ func TestLoadRetriesWhenTheIndexReadFails(t *testing.T) {
 
 	manager := NewManager(&logger.NoOpLogger{}, newWaitDirector(), vault)
 	t.Cleanup(manager.Stop)
+	manager.Start()
 
 	eventuallyWithin(t, manager, loadedTaskID, waitTimeout, "the load of the stored upgrade", func(UpgradeTask) bool { return true })
 
@@ -680,6 +682,7 @@ func managerWithUpgrade(t *testing.T, director bosh.Director, upgrade UpgradeTas
 
 	manager := NewManager(&logger.NoOpLogger{}, director, newWaitVault())
 	t.Cleanup(manager.Stop)
+	manager.Start()
 
 	waitForLoad(t, manager)
 

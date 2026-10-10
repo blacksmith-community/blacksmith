@@ -23,7 +23,8 @@ var (
 	ErrNoWatcherForContextID = errors.New("no batch watcher looks for the context ID, and the BOSH director found no task with it")
 )
 
-// defaultMaxBatchJobs is the limit a max_batch_jobs of zero or less means.
+// defaultMaxBatchJobs is the limit a batch director built with a
+// max_batch_jobs of zero or less has.
 const defaultMaxBatchJobs = 4
 
 // BatchDirector wraps a Director with a separate connection pool for batch operations.
@@ -49,6 +50,10 @@ type BatchDirector struct {
 	logger   Logger
 	follow   *taskFollower
 
+	// configured is the limit the batch director was built with, which a
+	// max_batch_jobs of zero or less restores.
+	configured int
+
 	mu       sync.Mutex
 	inFlight int
 	limit    int
@@ -71,11 +76,12 @@ func NewBatchDirector(director Director, maxBatchJobs int, timeout time.Duration
 	}
 
 	batch := &BatchDirector{
-		director: director,
-		timeout:  timeout,
-		logger:   logger,
-		limit:    maxBatchJobs,
-		changed:  make(chan struct{}),
+		director:   director,
+		timeout:    timeout,
+		logger:     logger,
+		configured: maxBatchJobs,
+		limit:      maxBatchJobs,
+		changed:    make(chan struct{}),
 	}
 
 	batch.follow = newTaskFollower(followerConfig{
@@ -106,12 +112,14 @@ func (b *BatchDirector) GetBatchPoolStats() (int, int, int) {
 	return b.inFlight, len(b.waiters), b.limit
 }
 
-// UpdateMaxBatchJobs changes the maximum number of concurrent batch jobs.
-// Deploys that already hold a slot stay counted against the new limit, so
-// a smaller limit admits no new deploy until enough of them finish.
+// UpdateMaxBatchJobs changes the maximum number of concurrent batch jobs,
+// and a value of zero or less restores the limit the batch director was
+// built with. Deploys that already hold a slot stay counted against the
+// new limit, so a smaller limit admits no new deploy until enough of them
+// finish.
 func (b *BatchDirector) UpdateMaxBatchJobs(maxBatchJobs int) {
 	if maxBatchJobs <= 0 {
-		maxBatchJobs = defaultMaxBatchJobs
+		maxBatchJobs = b.configured
 	}
 
 	b.mu.Lock()

@@ -802,6 +802,21 @@ func TestBatchLimitOfZeroOrLessMeansTheDefault(t *testing.T) {
 	}
 }
 
+func TestZeroBatchLimitRestoresTheConfiguredLimit(t *testing.T) {
+	t.Parallel()
+
+	batch := bosh.NewBatchDirector(newFakeBatchBase(), 10, time.Minute, nil)
+	t.Cleanup(batch.Stop)
+
+	batch.UpdateMaxBatchJobs(2)
+	batch.UpdateMaxBatchJobs(0)
+
+	_, _, limit := batch.GetBatchPoolStats()
+	if limit != 10 {
+		t.Fatalf("expected max_batch_jobs of 0 to restore the configured limit of 10, got %d", limit)
+	}
+}
+
 // queueDeploy starts a deploy that has to wait for a slot, and waits until
 // it is counted as waiting, so the deploys a test queues ask in order.
 func queueDeploy(ctx context.Context, t *testing.T, batch *bosh.BatchDirector, name string) <-chan error {

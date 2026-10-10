@@ -277,6 +277,7 @@ func TestStopTwiceDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
 	manager := NewManager(&logger.NoOpLogger{}, newWaitDirector(), newWaitVault())
+	manager.Start()
 
 	manager.Stop()
 

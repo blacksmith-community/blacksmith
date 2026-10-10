@@ -215,6 +215,7 @@ func beginUpgrade(t *testing.T, log logger.Logger, director bosh.Director, vault
 	stop := func() { once.Do(manager.Stop) }
 
 	t.Cleanup(stop)
+	manager.Start()
 	waitForLoad(t, manager)
 
 	task, err := manager.CreateTask(context.Background(), CreateTaskRequest{

@@ -61,6 +61,7 @@ func managerWithTasks(t *testing.T, vault interfaces.Vault, taskIDs ...string) *
 
 	manager := NewManager(&logger.NoOpLogger{}, newWaitDirector(), vault)
 	t.Cleanup(manager.Stop)
+	manager.Start()
 
 	// The load reads the vault in the background, so the test's gates are
 	// set only once it is done.

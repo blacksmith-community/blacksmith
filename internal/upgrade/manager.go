@@ -100,6 +100,7 @@ type Manager struct {
 	// Task execution control
 	taskQueue chan *UpgradeTask
 	stopCh    chan struct{}
+	startOnce sync.Once
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 
@@ -163,7 +164,9 @@ type taskPersistence struct {
 	written uint64
 }
 
-// NewManager creates a new upgrade manager.
+// NewManager creates a new upgrade manager and loads its settings. It
+// starts nothing, so the caller can apply the persisted batch limit before
+// Start resumes any upgrade.
 func NewManager(logger interfaces.Logger, director interfaces.Director, vault interfaces.Vault) *Manager {
 	m := &Manager{
 		tasks:        make(map[string]*UpgradeTask),
@@ -192,17 +195,28 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 	// Initialize job semaphore based on settings
 	m.updateJobSemaphore()
 
-	// Load the persisted tasks, and settle the deploys they left in flight
-	m.wg.Add(1)
-
-	go m.loadAndSettle()
-
-	// Start the task dispatcher
-	m.wg.Add(1)
-
-	go m.dispatchTasks()
-
 	return m
+}
+
+// Start starts the task dispatcher and the loader, which loads the
+// persisted tasks, settles the deploys they left in flight, and resumes
+// them. A second call, or a call after Stop, does nothing.
+func (m *Manager) Start() {
+	m.startOnce.Do(func() {
+		if m.ctx.Err() != nil {
+			close(m.loaded)
+
+			return
+		}
+
+		m.wg.Add(1)
+
+		go m.loadAndSettle()
+
+		m.wg.Add(1)
+
+		go m.dispatchTasks()
+	})
 }
 
 // Stop stops the manager and waits for pending operations to complete. A
