@@ -577,7 +577,7 @@ func TestUpgradeInstanceWithNoBatchDirectorUsesAwaitTaskByContextID(t *testing.T
 }
 
 //nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
-func TestUpgradeInstanceStoppedLeavesTheInstanceAsItIs(t *testing.T) {
+func TestUpgradeInstanceStoppedMarksTheInstanceInterrupted(t *testing.T) {
 	cases := map[string]func(director *waiterDirector, stop func()){
 		"the manager stops": func(_ *waiterDirector, stop func()) { stop() },
 		"the batch director stops": func(director *waiterDirector, _ func()) {
@@ -606,8 +606,9 @@ func TestUpgradeInstanceStoppedLeavesTheInstanceAsItIs(t *testing.T) {
 				"instance":       snapshot(manager, task).Instances[0],
 				"saved instance": vault.savedTask(t, task.ID).Instances[0],
 			} {
-				if instance.Status != InstanceStatusRunning || instance.CompletedAt != nil || instance.Error != lostAnswerMessage(contextID) {
-					t.Errorf("expected the %s to stay running and looking for its task, got %+v", what, instance)
+				want := fmt.Sprintf("Blacksmith stopped looking for the deploy with context ID %s at shutdown", contextID)
+				if instance.Status != InstanceStatusInterrupted || instance.CompletedAt != nil || instance.Error != want {
+					t.Errorf("expected the %s to be interrupted and say %q, got %+v", what, want, instance)
 				}
 
 				if instance.ContextID != contextID || instance.UnknownSince == nil {

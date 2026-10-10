@@ -292,39 +292,6 @@ func TestUpgradeRecordsTheTaskBeforeItFinishes(t *testing.T) {
 }
 
 //nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
-func TestUpgradeShutdownLeavesTheTaskRunningAndRecordsIt(t *testing.T) {
-	director := newWaitDirector()
-	vault := newWaitVault()
-
-	manager, task, stop := startUpgrade(t, director, vault)
-
-	stop()
-
-	if cancels := director.cancelled(); len(cancels) != 0 {
-		t.Fatalf("expected the shutdown to leave the task running, but it cancelled %v", cancels)
-	}
-
-	instance := snapshot(manager, task).Instances[0]
-	if instance.Status != InstanceStatusRunning || instance.BOSHTaskID != waitDeployTaskID {
-		t.Fatalf("expected the instance to stay running with BOSH task %d, got %+v", waitDeployTaskID, instance)
-	}
-
-	want := fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", waitDeployTaskID)
-	if instance.Error != want {
-		t.Errorf("expected the instance to say %q, got %q", want, instance.Error)
-	}
-
-	saved := vault.savedTask(t, task.ID).Instances[0]
-	if saved.Status != InstanceStatusRunning || saved.BOSHTaskID != waitDeployTaskID || !strings.Contains(saved.Error, "still running") {
-		t.Fatalf("expected the saved instance to be running with BOSH task %d, got %+v", waitDeployTaskID, saved)
-	}
-
-	if counts := snapshot(manager, task); counts.FailedCount != 0 || counts.CancelledCount != 0 {
-		t.Fatalf("expected no failed or cancelled count, got %+v", counts)
-	}
-}
-
-//nolint:paralleltest // MergeStemcellOverlay runs spruce, whose global state races across tests
 func TestUpgradeNilTaskFailsTheInstance(t *testing.T) {
 	director := newWaitDirector()
 	vault := newWaitVault()

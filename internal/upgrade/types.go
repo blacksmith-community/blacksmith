@@ -46,6 +46,11 @@ const (
 	// nor counts as a success. The operator checks the director for the
 	// deploy by its context ID.
 	InstanceStatusOutcomeUnknown InstanceStatus = "outcome_unknown"
+	// InstanceStatusInterrupted indicates Blacksmith stopped at shutdown
+	// while it waited for the instance's deploy. The deploy may still run
+	// on the director, and the instance keeps its task ID or context ID so
+	// it can be found after a restart.
+	InstanceStatusInterrupted InstanceStatus = "interrupted"
 )
 
 // InstanceUpgrade represents the upgrade status for a single instance.

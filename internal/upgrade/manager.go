@@ -74,6 +74,7 @@ type Manager struct {
 	// Task execution control
 	taskQueue chan *UpgradeTask
 	stopCh    chan struct{}
+	stopOnce  sync.Once
 	wg        sync.WaitGroup
 
 	// ctx bounds every director call an upgrade makes, and Stop cancels it.
@@ -163,11 +164,14 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 	return m
 }
 
-// Stop stops the manager and waits for pending operations to complete.
+// Stop stops the manager and waits for pending operations to complete. A
+// second call does nothing.
 func (m *Manager) Stop() {
-	close(m.stopCh)
-	m.cancel()
-	m.wg.Wait()
+	m.stopOnce.Do(func() {
+		close(m.stopCh)
+		m.cancel()
+		m.wg.Wait()
+	})
 }
 
 // CreateTask creates a new upgrade task.
@@ -450,6 +454,22 @@ func (m *Manager) processTask(task *UpgradeTask) {
 		}
 
 		m.upgradeInstance(m.ctx, task, instance, cancelCh)
+
+		// A manager that is stopping leaves the upgrade as it is, and the
+		// instances not yet started stay pending.
+		if m.ctx.Err() != nil {
+			m.logger.Info("Manager stopping during task %s, so its remaining instances stay pending", task.ID)
+
+			return
+		}
+	}
+
+	// A stop during the last instance leaves the upgrade running rather
+	// than marking it completed.
+	if m.ctx.Err() != nil {
+		m.logger.Info("Manager stopping at the end of task %s, so it stays running", task.ID)
+
+		return
 	}
 
 	// Update task status (only if not already cancelled)
@@ -528,6 +548,12 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	// Get current deployment manifest
 	m.logger.Debug("Getting deployment %s for instance %s", instance.DeploymentName, instance.InstanceID)
 	deployment, err := m.director.GetDeployment(ctx, instance.DeploymentName)
+	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
+		m.returnToPending(persistCtx, task, instance, err)
+
+		return
+	}
+
 	if err != nil {
 		m.mu.Lock()
 		instance.Status = InstanceStatusFailed
@@ -558,6 +584,12 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 
 	newManifest, err := MergeStemcellOverlay(deployment.Manifest,
 		task.TargetStemcell.OS, task.TargetStemcell.Version)
+	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
+		m.returnToPending(persistCtx, task, instance, err)
+
+		return
+	}
+
 	if err != nil {
 		m.mu.Lock()
 		instance.Status = InstanceStatusFailed
@@ -589,6 +621,14 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	deployTask, err := m.director.UpdateDeployment(boshapi.WithContextID(ctx, contextID), instance.DeploymentName, newManifest)
 	if errors.Is(err, bosh.ErrOutcomeUnknown) {
 		m.awaitLostAnswer(ctx, task, instance, contextID, err, cancelCh)
+
+		return
+	}
+
+	// Any error but a lost answer shows the director never received the
+	// deploy, including a wait for a batch slot that Stop ended.
+	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
+		m.returnToPending(persistCtx, task, instance, err)
 
 		return
 	}
@@ -652,6 +692,15 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 			return
 		}
 
+		if cancelRequested && waitStopped(ctx, err) {
+			// Stop ended the wait after the cancel, so the task may still
+			// run on the director, and its ID stays on record.
+			m.interruptAtShutdown(persistCtx, task, instance,
+				fmt.Sprintf("Blacksmith stopped waiting at shutdown after a cancel was requested for BOSH task %d", taskID))
+
+			return
+		}
+
 		if cancelRequested {
 			// The task outlived the wait after the cancel, or could not be
 			// read, so its outcome is not known yet.
@@ -668,13 +717,9 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 		if waitStopped(ctx, err) {
 			// Stop ended the wait. The task keeps running on the director,
 			// and its ID stays on record.
-			message := fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", taskID)
+			m.interruptAtShutdown(persistCtx, task, instance,
+				fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", taskID))
 
-			m.mu.Lock()
-			instance.Error = message
-			m.mu.Unlock()
-			m.logger.Info("Instance %s: %s", instance.InstanceID, message)
-			m.persistTask(persistCtx, task) //nolint:errcheck
 			return
 		}
 
@@ -700,7 +745,7 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 // soon as the task is found, so a cancel reaches the task. Otherwise
 // AwaitTaskByContextID looks for the task, from the time the answer was
 // lost, and a task it finds is followed like any accepted deploy. When
-// Stop ends the wait, the instance stays as it is.
+// Stop ends the wait, the instance is marked interrupted.
 func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, contextID string, lost error, cancelCh <-chan struct{}) {
 	persistCtx := context.WithoutCancel(ctx)
 	unknownSince := time.Now()
@@ -739,6 +784,7 @@ func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instan
 			return
 		case waitStopped(ctx, err):
 			m.logger.Info("Blacksmith stopped waiting for the deploy of %s with context ID %s, whose answer was lost: %v", instance.DeploymentName, contextID, err)
+			m.interruptLostAnswer(persistCtx, task, instance, contextID)
 
 			return
 		case !errors.Is(err, bosh.ErrNoWatcherForContextID) && m.settleLostAnswer(task, instance, contextID, err):
@@ -754,6 +800,7 @@ func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instan
 	if err != nil {
 		if waitStopped(ctx, err) {
 			m.logger.Info("Blacksmith stopped looking for the deploy of %s with context ID %s, whose answer was lost: %v", instance.DeploymentName, contextID, err)
+			m.interruptLostAnswer(persistCtx, task, instance, contextID)
 
 			return
 		}
@@ -776,6 +823,13 @@ func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instan
 
 	m.logger.Info("Found BOSH task %d for the deploy of %s with context ID %s, whose answer was lost", found.ID, instance.DeploymentName, contextID)
 	m.followDeployTask(ctx, task, instance, found.ID, cancelCh)
+}
+
+// stoppedBeforeTheDeploy reports whether a step before the director
+// received the deploy failed because Blacksmith is stopping, either because
+// Stop ended ctx or because the batch director stopped.
+func stoppedBeforeTheDeploy(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, bosh.ErrBatchDirectorStopped)
 }
 
 // waitStopped reports whether a wait ended because Stop ended it, either
@@ -862,8 +916,8 @@ func (m *Manager) settleOutcomeUnknown(task *UpgradeTask, instance *InstanceUpgr
 // The cancel itself is sent by CancelTask, or by upgradeInstance when the
 // cancel came before the deploy named its task. When the upgrade is cancelled
 // during the wait, it keeps waiting for the task's own end under a
-// deadline of cancelWaitTimeout that does not end with ctx, and reports
-// that a cancel was requested. A signal on cancelCh that is not a cancel,
+// deadline of cancelWaitTimeout, which Stop also ends, and reports that a
+// cancel was requested. A signal on cancelCh that is not a cancel,
 // such as a resume, changes nothing.
 func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, taskID int, cancelCh <-chan struct{}) (*bosh.Task, bool, error) {
 	type waitResult struct {
@@ -904,7 +958,7 @@ func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instan
 
 			m.logger.Info("Task-level cancel for instance %s; waiting up to %s for BOSH task %d to end", instance.InstanceID, cancelWaitTimeout, taskID)
 
-			afterCancel, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelWaitTimeout)
+			afterCancel, cancel := context.WithTimeout(ctx, cancelWaitTimeout)
 			finished, err := m.director.WaitForTask(afterCancel, taskID)
 
 			cancel()
@@ -1484,4 +1538,61 @@ func (m *Manager) addToTasksIndex(ctx context.Context, task *UpgradeTask) error 
 	}
 
 	return nil
+}
+
+// returnToPending puts an instance back to pending when a step before the
+// director received its deploy failed because Blacksmith is stopping. The
+// director never received the deploy, so the counts stay as they are, and
+// the instance is deployed when the upgrade runs again.
+func (m *Manager) returnToPending(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, err error) {
+	m.mu.Lock()
+	instance.Status = InstanceStatusPending
+	instance.StartedAt = nil
+	instance.ContextID = ""
+	instance.Error = ""
+	m.mu.Unlock()
+
+	m.logger.Info("Blacksmith is stopping, so instance %s goes back to pending before its deploy was sent: %v", instance.InstanceID, err)
+
+	saveErr := m.persistTask(ctx, task)
+	if saveErr != nil {
+		m.logger.Error("Failed to save instance %s back to pending at shutdown: %v", instance.InstanceID, saveErr)
+	}
+}
+
+// interruptAtShutdown marks an instance interrupted when Stop ended the
+// wait for its deploy. The deploy may still run on the director, and the
+// instance keeps its task ID and context ID, so it can be found after a
+// restart. The counts stay as they are.
+func (m *Manager) interruptAtShutdown(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, message string) {
+	m.mu.Lock()
+	instance.Status = InstanceStatusInterrupted
+	instance.Error = message
+	m.mu.Unlock()
+
+	m.logger.Info("Instance %s: %s", instance.InstanceID, message)
+
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to save instance %s as interrupted at shutdown: %v", instance.InstanceID, err)
+	}
+}
+
+// interruptLostAnswer marks an instance interrupted when Stop ended the
+// wait for the task of a deploy whose answer was lost. The message names
+// the task when a batch watcher found and stored it, and the context ID
+// otherwise.
+func (m *Manager) interruptLostAnswer(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, contextID string) {
+	m.mu.RLock()
+
+	taskID := instance.BOSHTaskID
+
+	m.mu.RUnlock()
+
+	message := fmt.Sprintf("Blacksmith stopped looking for the deploy with context ID %s at shutdown", contextID)
+	if taskID > 0 {
+		message = fmt.Sprintf("Blacksmith stopped waiting at shutdown; BOSH task %d is still running", taskID)
+	}
+
+	m.interruptAtShutdown(ctx, task, instance, message)
 }

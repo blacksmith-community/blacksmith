@@ -2805,6 +2805,7 @@
       case 'cancelled': return '<span class="status-icon cancelled">&#10006;</span>';
       case 'skipped': return '<span class="status-icon skipped">&#8594;</span>';
       case 'outcome_unknown': return '<span class="status-icon outcome-unknown">?</span>';
+      case 'interrupted': return '<span class="status-icon interrupted">&#8214;</span>';
       default: return '';
     }
   };
@@ -2819,6 +2820,7 @@
       case 'cancelled': return 'instance-cancelled';
       case 'skipped': return 'instance-skipped';
       case 'outcome_unknown': return 'instance-outcome-unknown';
+      case 'interrupted': return 'instance-interrupted';
       default: return '';
     }
   };
