@@ -227,13 +227,17 @@ func beginUpgrade(t *testing.T, log logger.Logger, director bosh.Director, vault
 	return manager, task, stop
 }
 
-// snapshot copies the upgrade task under the manager's lock.
+// snapshot copies the manager's own upgrade task, the one with the ID of
+// task, under the manager's lock. The task CreateTask returned is a copy,
+// so the upgrade's progress is read from the manager.
 func snapshot(manager *Manager, task *UpgradeTask) UpgradeTask {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
-	copied := *task
-	copied.Instances = append([]InstanceUpgrade(nil), task.Instances...)
+	live := manager.tasks[task.ID]
+
+	copied := *live
+	copied.Instances = append([]InstanceUpgrade(nil), live.Instances...)
 
 	return copied
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -92,6 +93,35 @@ type Manager struct {
 
 	// Callback when max_batch_jobs changes (used to update BatchDirector pool)
 	onMaxBatchJobsChanged func(maxJobs int)
+
+	// snapshotSeq numbers the copies of tasks that are saved, in the order
+	// they were taken under mu, so a save never overwrites a newer one.
+	snapshotSeq atomic.Uint64
+
+	// persistMu guards persisted, which holds the save state of each task.
+	persistMu sync.Mutex
+	persisted map[string]*taskPersistence
+
+	// indexMu is held across each read-modify-write of the tasks index, so
+	// two tasks saved at once never lose each other's entries. A task's own
+	// save lock is taken before it, and mu is never taken while either is
+	// held.
+	indexMu sync.Mutex
+}
+
+// taskSnapshot is a copy of an upgrade task taken under the manager's lock,
+// numbered in the order the copies were taken.
+type taskSnapshot struct {
+	task *UpgradeTask
+	seq  uint64
+}
+
+// taskPersistence is the save state of one upgrade task. mu is held across
+// each save of the task, and written is the number of the newest snapshot
+// saved.
+type taskPersistence struct {
+	mu      sync.Mutex
+	written uint64
 }
 
 // NewManager creates a new upgrade manager.
@@ -173,6 +203,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 
 	m.mu.Lock()
 	m.tasks[task.ID] = task
+	created := copyTask(task)
 	m.mu.Unlock()
 
 	// Persist task to vault
@@ -189,7 +220,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		m.logger.Error("Task queue is full, task %s not queued", task.ID)
 	}
 
-	return task, nil
+	return created, nil
 }
 
 // buildInstanceList builds the instance upgrade list with deployment information from vault.
@@ -244,7 +275,8 @@ func (m *Manager) buildInstanceList(ctx context.Context, instanceIDs []string) (
 	return instances, nil
 }
 
-// GetTask retrieves a task by ID.
+// GetTask retrieves a copy of a task by ID. The copy is taken under the
+// manager's lock, so a caller reads it while the upgrade goes on.
 func (m *Manager) GetTask(taskID string) (*UpgradeTask, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -254,17 +286,17 @@ func (m *Manager) GetTask(taskID string) (*UpgradeTask, error) {
 		return nil, ErrTaskNotFound
 	}
 
-	return task, nil
+	return copyTask(task), nil
 }
 
-// ListTasks returns all tasks.
+// ListTasks returns a copy of every task.
 func (m *Manager) ListTasks() []*UpgradeTask {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	tasks := make([]*UpgradeTask, 0, len(m.tasks))
 	for _, task := range m.tasks {
-		tasks = append(tasks, task)
+		tasks = append(tasks, copyTask(task))
 	}
 
 	return tasks
@@ -957,7 +989,7 @@ func (m *Manager) skipPendingInstances(ctx context.Context, task *UpgradeTask) {
 	}
 }
 
-// GetInstancesForTask retrieves instances for a specific task.
+// GetInstancesForTask retrieves a copy of the instances of a specific task.
 func (m *Manager) GetInstancesForTask(taskID string) ([]InstanceUpgrade, error) {
 	task, err := m.GetTask(taskID)
 	if err != nil {
@@ -990,23 +1022,33 @@ func (m *Manager) GetTaskWithRunningInstance(instanceID string) (*UpgradeTask, *
 // PauseTask pauses a running task. Current instance continues, but next instances won't start.
 func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	task, exists := m.tasks[taskID]
 	if !exists {
+		m.mu.Unlock()
+
 		return ErrTaskNotFound
 	}
 
 	if task.Status != TaskStatusRunning {
+		m.mu.Unlock()
+
 		return ErrTaskNotRunning
 	}
 
 	task.Paused = true
 	task.Status = TaskStatusPaused
+
+	// The paused state is copied under the lock that set it, and saved
+	// after the lock is released, so no reader waits on Vault.
+	paused := m.snapshotLocked(task)
+	m.mu.Unlock()
+
 	m.logger.Info("Paused task %s", taskID)
 
 	// Persist the paused state
-	if err := m.persistTask(ctx, task); err != nil {
+	err := m.writeSnapshot(ctx, paused)
+	if err != nil {
 		m.logger.Error("Failed to persist paused state for task %s: %v", taskID, err)
 	}
 
@@ -1173,56 +1215,14 @@ func (m *Manager) loadPersistedTasks(ctx context.Context) error {
 	return nil
 }
 
-// persistTask saves an upgrade task to vault.
+// persistTask saves an upgrade task to vault. It copies the task under the
+// manager's read lock and saves the copy, so the caller must not hold mu.
 func (m *Manager) persistTask(ctx context.Context, task *UpgradeTask) error {
-	m.logger.Debug("Persisting task %s to vault", task.ID)
+	m.mu.RLock()
+	snapshot := m.snapshotLocked(task)
+	m.mu.RUnlock()
 
-	// The task's in-memory state and the director's task have already
-	// changed by the time this runs, so the save must land even when the
-	// request or manager context has ended. It keeps ctx's values and
-	// ignores its cancellation, under its own deadline.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTaskTimeout)
-	defer cancel()
-
-	// Save the full task data
-	taskPath := upgradeTasksVaultPath + "/" + task.ID
-
-	err := m.vault.Put(ctx, taskPath, task)
-	if err != nil {
-		return fmt.Errorf("failed to save task to vault: %w", err)
-	}
-
-	// Update the tasks index
-	var tasksIndex map[string]interface{}
-
-	exists, err := m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
-	if err != nil {
-		// A fresh map written over an index that could not be read would
-		// drop every other task from it, and loadPersistedTasks would forget
-		// them at the next restart. The task's own record is already saved.
-		m.logger.Error("Failed to get tasks index: %v", err)
-
-		return fmt.Errorf("failed to read the tasks index before adding task %s: %w", task.ID, err)
-	}
-
-	if !exists || tasksIndex == nil {
-		tasksIndex = make(map[string]interface{})
-	}
-
-	// Add task reference to index
-	tasksIndex[task.ID] = map[string]interface{}{
-		"status":     task.Status,
-		"created_at": task.CreatedAt.Unix(),
-	}
-
-	err = m.vault.Put(ctx, upgradeTasksVaultPath, tasksIndex)
-	if err != nil {
-		return fmt.Errorf("failed to update tasks index: %w", err)
-	}
-
-	m.logger.Debug("Task %s persisted successfully", task.ID)
-
-	return nil
+	return m.writeSnapshot(ctx, snapshot)
 }
 
 // loadSettings loads settings from vault.
@@ -1341,4 +1341,147 @@ func (m *Manager) storeFoundTask(ctx context.Context, task *UpgradeTask, instanc
 	if cancelledBeforeTheTask {
 		m.cancelDeployTask(ctx, instance.InstanceID, taskID)
 	}
+}
+
+// snapshotLocked deep-copies the task, its instances, and every time they
+// point at, and numbers the copy. The caller holds mu, for reading or for
+// writing, so no copy is taken while the task changes, and a copy with a
+// higher number holds a state at least as new.
+func (m *Manager) snapshotLocked(task *UpgradeTask) taskSnapshot {
+	return taskSnapshot{task: copyTask(task), seq: m.snapshotSeq.Add(1)}
+}
+
+// copyTask returns a deep copy of the task, its instances, and every time
+// they point at.
+func copyTask(task *UpgradeTask) *UpgradeTask {
+	copied := *task
+	copied.StartedAt = copyTime(task.StartedAt)
+	copied.CompletedAt = copyTime(task.CompletedAt)
+
+	if task.Instances != nil {
+		copied.Instances = make([]InstanceUpgrade, len(task.Instances))
+
+		for i, instance := range task.Instances {
+			instance.UnknownSince = copyTime(instance.UnknownSince)
+			instance.StartedAt = copyTime(instance.StartedAt)
+			instance.CompletedAt = copyTime(instance.CompletedAt)
+			copied.Instances[i] = instance
+		}
+	}
+
+	return &copied
+}
+
+// copyTime returns a copy of the time t points at, or nil.
+func copyTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+
+	copied := *t
+
+	return &copied
+}
+
+// persistenceFor returns the save state of the task with the ID.
+func (m *Manager) persistenceFor(taskID string) *taskPersistence {
+	m.persistMu.Lock()
+	defer m.persistMu.Unlock()
+
+	if m.persisted == nil {
+		m.persisted = make(map[string]*taskPersistence)
+	}
+
+	persistence, exists := m.persisted[taskID]
+	if !exists {
+		persistence = &taskPersistence{}
+		m.persisted[taskID] = persistence
+	}
+
+	return persistence
+}
+
+// writeSnapshot saves a copy of an upgrade task to vault, without mu. The
+// task's saves run one at a time, and a copy no newer than the last one
+// saved is dropped, because a newer state has already landed. The copy's
+// number is recorded only once the task's record is written, so a failed
+// save never keeps a later one from landing.
+func (m *Manager) writeSnapshot(ctx context.Context, snapshot taskSnapshot) error {
+	task := snapshot.task
+
+	persistence := m.persistenceFor(task.ID)
+
+	persistence.mu.Lock()
+	defer persistence.mu.Unlock()
+
+	if snapshot.seq <= persistence.written {
+		m.logger.Debug("A newer state of task %s is already saved, so this save is dropped", task.ID)
+
+		return nil
+	}
+
+	m.logger.Debug("Persisting task %s to vault", task.ID)
+
+	// The task's in-memory state and the director's task have already
+	// changed by the time this runs, so the save must land even when the
+	// request or manager context has ended. It keeps ctx's values and
+	// ignores its cancellation, under its own deadline.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTaskTimeout)
+	defer cancel()
+
+	// Save the full task data
+	taskPath := upgradeTasksVaultPath + "/" + task.ID
+
+	err := m.vault.Put(ctx, taskPath, task)
+	if err != nil {
+		return fmt.Errorf("failed to save task to vault: %w", err)
+	}
+
+	persistence.written = snapshot.seq
+
+	err = m.addToTasksIndex(ctx, task)
+	if err != nil {
+		return err
+	}
+
+	m.logger.Debug("Task %s persisted successfully", task.ID)
+
+	return nil
+}
+
+// addToTasksIndex records the task in the tasks index. The read, the
+// change, and the write run under indexMu, so two tasks saved at once never
+// lose each other's entries.
+func (m *Manager) addToTasksIndex(ctx context.Context, task *UpgradeTask) error {
+	m.indexMu.Lock()
+	defer m.indexMu.Unlock()
+
+	var tasksIndex map[string]interface{}
+
+	exists, err := m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
+	if err != nil {
+		// A fresh map written over an index that could not be read would
+		// drop every other task from it, and loadPersistedTasks would forget
+		// them at the next restart. The task's own record is already saved.
+		m.logger.Error("Failed to get tasks index: %v", err)
+
+		return fmt.Errorf("failed to read the tasks index before adding task %s: %w", task.ID, err)
+	}
+
+	if !exists || tasksIndex == nil {
+		tasksIndex = make(map[string]interface{})
+	}
+
+	// Add task reference to index
+	tasksIndex[task.ID] = map[string]interface{}{
+		"status":     task.Status,
+		"created_at": task.CreatedAt.Unix(),
+	}
+
+	err = m.vault.Put(ctx, upgradeTasksVaultPath, tasksIndex)
+	if err != nil {
+		return fmt.Errorf("failed to update tasks index: %w", err)
+	}
+
+	return nil
 }

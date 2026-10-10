@@ -295,8 +295,34 @@ func TestUpgradeCancelAfterTheTaskIDIsStoredCancelsOnce(t *testing.T) {
 		t.Fatal("the upgrade never saved the task ID")
 	}
 
-	cancelUpgrade(t, manager, task)
+	// The held save keeps the task's later saves waiting, so the cancel
+	// runs beside the test. Once the cancel has signalled the upgrade, all
+	// that is left of it is its save, and the held save is released.
+	cancelled := make(chan struct{})
+
+	go func() {
+		defer close(cancelled)
+
+		cancelUpgrade(t, manager, task)
+	}()
+
+	signalled := time.Now().Add(waitTimeout)
+
+	for !cancelSignalled(manager, task) {
+		if time.Now().After(signalled) {
+			t.Fatal("the cancel never signalled the upgrade")
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
 	close(release)
+
+	select {
+	case <-cancelled:
+	case <-time.After(waitTimeout):
+		t.Fatal("the cancel never returned")
+	}
 
 	select {
 	case <-director.waitStarted:
@@ -317,6 +343,17 @@ func TestUpgradeCancelAfterTheTaskIDIsStoredCancelsOnce(t *testing.T) {
 	if done.Instances[0].Status != InstanceStatusCancelled || done.CancelledCount != 1 {
 		t.Fatalf("expected the instance to be cancelled, got %+v", done)
 	}
+}
+
+// cancelSignalled reports whether the manager has signalled the upgrade
+// task's cancel to the goroutine running it.
+func cancelSignalled(manager *Manager, task *UpgradeTask) bool {
+	manager.taskCancelLock.Lock()
+	defer manager.taskCancelLock.Unlock()
+
+	_, waiting := manager.taskCancelCh[task.ID]
+
+	return !waiting
 }
 
 // gatedLookupDirector is a lostDirector whose lookups by context ID wait
