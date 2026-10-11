@@ -580,6 +580,10 @@ Delay between retry attempts in seconds.
 
 Host key verification has no settings. When Blacksmith sets up an SSH user on a VM, the BOSH director reports that VM's host key, and Blacksmith connects only if the VM presents that key. A VM that presents another key, or offers no key of the type the director reported, is refused before any login. The error names the deployment, the instance, and the fingerprint of the reported key, together with the fingerprint of the key the VM presented or the key types it offered. Earlier versions read two host key settings in this section. A configuration file that still sets them loads, and Blacksmith ignores them.
 
+#### SSH gateways
+
+Blacksmith connects to each VM directly, so the broker needs a network path to port 22 on the service VMs. When the BOSH director's `default_ssh_options` name a gateway, Blacksmith refuses the SSH setup and removes the user it created, because the gateway would refuse the throwaway key Blacksmith logs in with. The error names the gateway.
+
 ## SHIELD Configuration (`shield`)
 
 The `shield` section configures optional integration with SHIELD for backup and restore functionality.

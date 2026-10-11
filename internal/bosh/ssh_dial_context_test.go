@@ -86,10 +86,12 @@ func startSilentSSHServer(t *testing.T) *silentSSHServer {
 	return server
 }
 
-// The adapter's own dial ends with its context. A VM, or a gateway, that
-// accepts the connection and never speaks lets the dial go at the
-// caller's deadline rather than holding SSHCommand.
+// The adapter's own dial ends with its context. A VM that accepts the
+// connection and never speaks lets the dial go at the caller's deadline
+// rather than holding SSHCommand.
 func TestSSHClientDialEndsWithItsContext(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
 	const deadline = 300 * time.Millisecond
 
 	_, private, err := ed25519.GenerateKey(rand.Reader)
@@ -102,53 +104,41 @@ func TestSSHClientDialEndsWithItsContext(t *testing.T) {
 		t.Fatalf("signer: %v", err)
 	}
 
-	cases := map[string]sshconn.Gateway{
-		"direct":            {},
-		"through a gateway": {User: "jumpbox", Host: loopbackHost},
+	_, director, _ := newSSHAdapter(t, nil)
+	silent := startSilentSSHServer(t)
+	bosh.SetSSHPort(director, silent.port)
+
+	session := &sshconn.Session{
+		Deployment: sshDeployment,
+		User:       "bosh_0123456789abcde",
+		Hosts:      []sshconn.Host{{Address: loopbackHost, Username: "bosh_0123456789abcde", HostKey: signer.PublicKey()}},
+		Signer:     signer,
 	}
 
-	for name, gateway := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+	ctx, cancel := context.WithTimeout(t.Context(), deadline)
+	defer cancel()
 
-			_, director, _ := newSSHAdapter(t, nil)
-			silent := startSilentSSHServer(t)
-			bosh.SetSSHPort(director, silent.port)
+	began := time.Now()
 
-			session := &sshconn.Session{
-				Deployment: sshDeployment,
-				User:       "bosh_0123456789abcde",
-				Hosts:      []sshconn.Host{{Address: loopbackHost, Username: "bosh_0123456789abcde", HostKey: signer.PublicKey()}},
-				Signer:     signer,
-				Gateway:    gateway,
-			}
+	err = callWithin(t, deadline+time.Second, func() error {
+		client, err := bosh.DialSSHSession(ctx, director, session)
+		if err != nil {
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
+		}
 
-			ctx, cancel := context.WithTimeout(t.Context(), deadline)
-			defer cancel()
+		_ = client.Close()
 
-			began := time.Now()
+		return errDialReachedASilentServer
+	})
+	if err == nil || errors.Is(err, errDialReachedASilentServer) {
+		t.Fatalf("the dial returned %v, want a failure at the deadline", err)
+	}
 
-			err := callWithin(t, deadline+time.Second, func() error {
-				client, err := bosh.DialSSHSession(ctx, director, session)
-				if err != nil {
-					return err //nolint:wrapcheck // the test asserts on the adapter's own error
-				}
+	if elapsed := time.Since(began); elapsed < deadline {
+		t.Errorf("the dial gave up after %v, before its %v deadline: %v", elapsed, deadline, err)
+	}
 
-				_ = client.Close()
-
-				return errDialReachedASilentServer
-			})
-			if err == nil || errors.Is(err, errDialReachedASilentServer) {
-				t.Fatalf("the dial returned %v, want a failure at the deadline", err)
-			}
-
-			if elapsed := time.Since(began); elapsed < deadline {
-				t.Errorf("the dial gave up after %v, before its %v deadline: %v", elapsed, deadline, err)
-			}
-
-			if got := silent.accepted.Load(); got != 1 {
-				t.Errorf("the silent server accepted %d connections, want 1", got)
-			}
-		})
+	if got := silent.accepted.Load(); got != 1 {
+		t.Errorf("the silent server accepted %d connections, want 1", got)
 	}
 }

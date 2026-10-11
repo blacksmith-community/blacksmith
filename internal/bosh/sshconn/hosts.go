@@ -21,6 +21,9 @@ var (
 	// ErrSetupFailed means the director's SSH setup returned an entry
 	// Blacksmith cannot connect with.
 	ErrSetupFailed = errors.New("the director's SSH setup did not succeed on every instance")
+	// ErrGatewayUnsupported means the director's SSH setup named a gateway
+	// to reach the instances through, which Blacksmith cannot use.
+	ErrGatewayUnsupported = errors.New("the director's SSH setup names a gateway")
 )
 
 // Host is one instance the setup created the user on.
@@ -38,13 +41,6 @@ type Host struct {
 	IndexOrID string
 }
 
-// Gateway is the SSH gateway the director's default_ssh_options name. It is
-// empty when the director names none.
-type Gateway struct {
-	User string
-	Host string
-}
-
 // Session is one SSH setup that succeeded. Cleanup removes the user from
 // the instances the setup targeted, and it acts at most once however often
 // it is called.
@@ -57,8 +53,6 @@ type Session struct {
 	User string
 	// Hosts lists each instance the user was created on.
 	Hosts []Host
-	// Gateway is the gateway the director named, if any.
-	Gateway Gateway
 	// Signer logs in as User.
 	Signer ssh.Signer
 	// Cleanup removes User. It runs on a context of its own, bounded by
@@ -74,14 +68,15 @@ func (h Host) Instance() string {
 
 // ReadHosts turns the director's setup results into the hosts to connect
 // to. It refuses an empty result, any entry whose status is not success,
-// any entry with no IP address, and any entry whose host key is missing or
-// does not parse, because the user may then be missing from an instance
-// Blacksmith would try to reach, there is nothing to connect to, or there
-// is no key to check the VM against. The gateway is the one the first
-// entry names, as bosh-cli reads it.
-func ReadHosts(results []boshapi.SSHResult, user string) ([]Host, Gateway, error) {
+// any entry with no IP address, any entry that names a gateway host, and
+// any entry whose host key is missing or does not parse. The user may then
+// be missing from an instance Blacksmith would try to reach, there is
+// nothing to connect to, the instance is reachable only through a gateway
+// that would refuse the throwaway key, or there is no key to check the VM
+// against. A gateway user without a gateway host names no gateway.
+func ReadHosts(results []boshapi.SSHResult, user string) ([]Host, error) {
 	if len(results) == 0 {
-		return nil, Gateway{}, fmt.Errorf("%w for user %s", ErrNoHosts, user)
+		return nil, fmt.Errorf("%w for user %s", ErrNoHosts, user)
 	}
 
 	hosts := make([]Host, 0, len(results))
@@ -90,18 +85,24 @@ func ReadHosts(results []boshapi.SSHResult, user string) ([]Host, Gateway, error
 		instance := resultInstance(result)
 
 		if result.Status != statusSuccess {
-			return nil, Gateway{}, fmt.Errorf("%w: user %s on instance %s ended with status %q",
+			return nil, fmt.Errorf("%w: user %s on instance %s ended with status %q",
 				ErrSetupFailed, user, instance, result.Status)
 		}
 
 		if result.IP == "" {
-			return nil, Gateway{}, fmt.Errorf("%w: user %s on instance %s came back with no IP address to connect to",
+			return nil, fmt.Errorf("%w: user %s on instance %s came back with no IP address to connect to",
 				ErrSetupFailed, user, instance)
+		}
+
+		if result.GatewayHost != "" {
+			return nil, fmt.Errorf("%w: user %s on instance %s is to be reached through the gateway %s that the director's default_ssh_options name. "+
+				"Blacksmith does not support SSH through a gateway, because the gateway would refuse the throwaway key Blacksmith logs in with",
+				ErrGatewayUnsupported, user, instance, gatewayName(result))
 		}
 
 		hostKey, err := readHostKey(result, user, instance)
 		if err != nil {
-			return nil, Gateway{}, err
+			return nil, err
 		}
 
 		hosts = append(hosts, Host{
@@ -113,7 +114,17 @@ func ReadHosts(results []boshapi.SSHResult, user string) ([]Host, Gateway, error
 		})
 	}
 
-	return hosts, Gateway{User: results[0].GatewayUser, Host: results[0].GatewayHost}, nil
+	return hosts, nil
+}
+
+// gatewayName names an entry's gateway as user@host, or as the host alone
+// when the entry names no gateway user.
+func gatewayName(result boshapi.SSHResult) string {
+	if result.GatewayUser == "" {
+		return result.GatewayHost
+	}
+
+	return result.GatewayUser + "@" + result.GatewayHost
 }
 
 // readHostKey parses the host key the director reported for an entry, in

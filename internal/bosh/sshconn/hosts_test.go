@@ -23,6 +23,10 @@ const (
 	hostsTestDeployment = "redis-1"
 	firstHostID         = "abc"
 	secondHostID        = "def"
+	// gatewayTestUser and gatewayTestHost name the gateway a director's
+	// default_ssh_options can carry.
+	gatewayTestUser = "jumpbox"
+	gatewayTestHost = "jumpbox.example.com"
 	// firstHostInstance is the first host's instance name, job/id.
 	firstHostInstance = hostsTestJob + "/" + firstHostID
 )
@@ -48,7 +52,7 @@ func TestReadHostsReturnsEveryHost(t *testing.T) {
 		{Status: statusSuccess, IP: secondHostIP, HostPublicKey: authorizedKey(keys.ecdsa.PublicKey()), Job: hostsTestJob, Index: intPointer(1), ID: secondHostID},
 	}
 
-	hosts, gateway, err := sshconn.ReadHosts(results, hostsTestUser)
+	hosts, err := sshconn.ReadHosts(results, hostsTestUser)
 	if err != nil {
 		t.Fatalf("ReadHosts: %v", err)
 	}
@@ -72,17 +76,13 @@ func TestReadHostsReturnsEveryHost(t *testing.T) {
 			t.Errorf("host %d has host key %v, want the one the director reported", index, got.HostKey)
 		}
 	}
-
-	if gateway != (sshconn.Gateway{}) {
-		t.Errorf("gateway %+v, want none", gateway)
-	}
 }
 
 // An instance with no ID is named by its index.
 func TestReadHostsNamesAnInstanceWithoutAnIDByItsIndex(t *testing.T) {
 	t.Parallel()
 
-	hosts, _, err := sshconn.ReadHosts([]boshapi.SSHResult{
+	hosts, err := sshconn.ReadHosts([]boshapi.SSHResult{
 		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: authorizedKey(hostKeys(t).ed25519.PublicKey()), Job: hostsTestJob, Index: intPointer(3)},
 	}, hostsTestUser)
 	if err != nil {
@@ -94,19 +94,20 @@ func TestReadHostsNamesAnInstanceWithoutAnIDByItsIndex(t *testing.T) {
 	}
 }
 
-// The gateway is the one the first entry names, as bosh-cli reads it.
-func TestReadHostsKeepsTheGateway(t *testing.T) {
+// A gateway user without a gateway host names no gateway, so the result
+// is read as one that reaches its hosts directly.
+func TestReadHostsIgnoresAGatewayUserWithoutAHost(t *testing.T) {
 	t.Parallel()
 
-	_, gateway, err := sshconn.ReadHosts([]boshapi.SSHResult{
-		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: authorizedKey(hostKeys(t).ed25519.PublicKey()), GatewayUser: "vcap", GatewayHost: "jumpbox.example.com"},
+	hosts, err := sshconn.ReadHosts([]boshapi.SSHResult{
+		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: authorizedKey(hostKeys(t).ed25519.PublicKey()), Job: hostsTestJob, ID: firstHostID, GatewayUser: gatewayTestUser},
 	}, hostsTestUser)
 	if err != nil {
 		t.Fatalf("ReadHosts: %v", err)
 	}
 
-	if gateway != (sshconn.Gateway{User: "vcap", Host: "jumpbox.example.com"}) {
-		t.Errorf("gateway %+v, want vcap@jumpbox.example.com", gateway)
+	if len(hosts) != 1 || hosts[0].Address != firstHostIP {
+		t.Errorf("hosts %+v, want %s alone", hosts, firstHostIP)
 	}
 }
 
@@ -148,6 +149,24 @@ func TestReadHostsRefusesAResultItCannotUse(t *testing.T) {
 			want: sshconn.ErrHostKeyUnusable,
 			says: []string{"redis/def", "no host key", hostsTestUser},
 		},
+		"entry that names a gateway": {
+			results: []boshapi.SSHResult{
+				{Status: statusSuccess, IP: firstHostIP, HostPublicKey: hostKey, Job: hostsTestJob, Index: intPointer(0), ID: firstHostID},
+				{Status: statusSuccess, IP: secondHostIP, HostPublicKey: hostKey, Job: hostsTestJob, Index: intPointer(1), ID: secondHostID, GatewayUser: gatewayTestUser, GatewayHost: gatewayTestHost},
+			},
+			want: sshconn.ErrGatewayUnsupported,
+			says: []string{
+				"redis/def", hostsTestUser, gatewayTestUser + "@" + gatewayTestHost, "default_ssh_options",
+				"does not support SSH through a gateway", "refuse the throwaway key",
+			},
+		},
+		"entry that names a gateway host without a user": {
+			results: []boshapi.SSHResult{
+				{Status: statusSuccess, IP: firstHostIP, HostPublicKey: hostKey, Job: hostsTestJob, Index: intPointer(0), ID: firstHostID, GatewayHost: gatewayTestHost},
+			},
+			want: sshconn.ErrGatewayUnsupported,
+			says: []string{firstHostInstance, "gateway " + gatewayTestHost + " ", "default_ssh_options"},
+		},
 		"entry whose host key does not parse": {
 			results: []boshapi.SSHResult{
 				{Status: statusSuccess, IP: firstHostIP, HostPublicKey: "ssh-rsa not-base64", Job: hostsTestJob, Index: intPointer(0), ID: firstHostID},
@@ -161,7 +180,7 @@ func TestReadHostsRefusesAResultItCannotUse(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			hosts, _, err := sshconn.ReadHosts(testCase.results, hostsTestUser)
+			hosts, err := sshconn.ReadHosts(testCase.results, hostsTestUser)
 			if !errors.Is(err, testCase.want) {
 				t.Fatalf("got hosts %+v and error %v, want an error that wraps %v", hosts, err, testCase.want)
 			}

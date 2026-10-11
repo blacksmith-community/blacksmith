@@ -27,9 +27,7 @@ const (
 	// Number of goroutines for reading output pipes.
 	outputPipeGoroutines = 2
 
-	// SSH connection timeout.
-	sshConnectionTimeout = 30 * time.Second
-	errorChannelBuffer   = 10
+	errorChannelBuffer = 10
 
 	// Timeouts.
 	defaultSessionInitTimeout = 60 * time.Second
@@ -65,9 +63,8 @@ type ServiceImpl struct {
 	sessionMutex sync.RWMutex
 	logger       Logger
 
-	// port is the port the terminal connects to on a VM and on a
-	// gateway. It is sshPort everywhere but in tests, which point it at
-	// a loopback server.
+	// port is the port the terminal connects to on a VM. It is sshPort
+	// everywhere but in tests, which point it at a loopback server.
 	port string
 }
 
@@ -829,32 +826,17 @@ func (s *SessionImpl) extractSessionDetails() (*sessionConnectionDetails, error)
 		host:   s.info.Hosts[0],
 	}
 
-	if s.info.Gateway.Host != "" {
-		details.gateway = &gatewayInfo{
-			host: s.info.Gateway.Host,
-			user: s.info.Gateway.User,
-		}
-	}
-
 	return details, nil
 }
 
 // sessionConnectionDetails holds SSH connection details.
 type sessionConnectionDetails struct {
-	signer  ssh.Signer
-	host    sshconn.Host
-	gateway *gatewayInfo
+	signer ssh.Signer
+	host   sshconn.Host
 }
 
-// gatewayInfo holds gateway connection details.
-type gatewayInfo struct {
-	host string
-	user string
-}
-
-// establishSSHConnection establishes the SSH connection, directly or
-// through the gateway. The connection to the VM accepts only the host key
-// the director reported for it.
+// establishSSHConnection connects to the session's VM. The connection
+// accepts only the host key the director reported for it.
 func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessionConnectionDetails) (*ssh.Client, error) {
 	signer := details.signer
 
@@ -865,64 +847,7 @@ func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessi
 
 	config.Timeout = defaultConnectTimeout
 
-	if details.gateway != nil {
-		return s.connectThroughGateway(ctx, details, config, signer)
-	}
-
 	return s.connectDirect(ctx, details.host, config)
-}
-
-// logGatewayHostKey logs the gateway's host key and accepts it. The
-// director reports no key for its gateway, and the connection to the VM
-// through the gateway is pinned end to end, so the gateway cannot read
-// the session.
-func (s *SessionImpl) logGatewayHostKey(hostname string, _ net.Addr, key ssh.PublicKey) error {
-	s.logger.Infof("SSH gateway %s presented host key %s for session %s", hostname, ssh.FingerprintSHA256(key), s.id)
-
-	return nil
-}
-
-// connectThroughGateway establishes connection through a gateway.
-func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessionConnectionDetails, config *ssh.ClientConfig, signer ssh.Signer) (*ssh.Client, error) {
-	// Check timeout
-	select {
-	case <-ctx.Done():
-		return nil, NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
-	default:
-	}
-
-	gatewayAddr := net.JoinHostPort(details.gateway.host, s.service.port)
-	gatewayConfig := &ssh.ClientConfig{
-		User: details.gateway.user,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: s.logGatewayHostKey,
-		Timeout:         sshConnectionTimeout,
-	}
-
-	gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
-	if err != nil {
-		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to connect to gateway "+gatewayAddr, err)
-	}
-
-	targetAddr := net.JoinHostPort(details.host.Address, s.service.port)
-
-	conn, err := gatewayClient.Dial("tcp", targetAddr)
-	if err != nil {
-		_ = gatewayClient.Close()
-
-		return nil, NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to target host %s through gateway", targetAddr), err)
-	}
-
-	nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
-	if err != nil {
-		_ = gatewayClient.Close()
-
-		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to establish SSH connection through gateway", err)
-	}
-
-	return ssh.NewClient(nconn, chans, reqs), nil
 }
 
 // connectDirect connects to the VM with the dial that the director

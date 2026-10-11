@@ -2931,7 +2931,7 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 		return nil, err
 	}
 
-	hosts, gateway, err := d.sshSetupHosts(ctx, operation, deployment, task.ID, credentials.User)
+	hosts, err := d.sshSetupHosts(ctx, operation, deployment, task.ID, credentials.User)
 	if err != nil {
 		return nil, d.afterFailedSSHSetup(ctx, operation, pending, task.ID, err)
 	}
@@ -2944,7 +2944,6 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 		Target:     target,
 		User:       credentials.User,
 		Hosts:      hosts,
-		Gateway:    gateway,
 		Signer:     credentials.Signer,
 	}
 	session.Cleanup = d.sessionCleanup(session, contextID)
@@ -3035,29 +3034,30 @@ func (d *DirectorAdapter) sshSetupRefused(deployment string, err error) error {
 }
 
 // sshSetupHosts waits for the setup task and reads the hosts from its
-// result.
-func (d *DirectorAdapter) sshSetupHosts(ctx context.Context, operation, deployment string, taskID int, user string) ([]sshconn.Host, sshconn.Gateway, error) {
+// result. A result that names a gateway is refused like any other result
+// Blacksmith cannot connect with, so the caller removes the user.
+func (d *DirectorAdapter) sshSetupHosts(ctx context.Context, operation, deployment string, taskID int, user string) ([]sshconn.Host, error) {
 	output, err := d.sshSetupResult(ctx, operation, deployment, taskID)
 	if err != nil {
-		return nil, sshconn.Gateway{}, err
+		return nil, err
 	}
 
 	results, err := boshapi.ParseSSHResults(output)
 	if err != nil {
 		d.log.Errorf("Failed to parse the result of SSH setup task %d for user %s: %v", taskID, user, err)
 
-		return nil, sshconn.Gateway{}, &taskResultError{resource: "SSH hosts", deployment: deployment, director: d.address, taskID: taskID, err: err}
+		return nil, &taskResultError{resource: "SSH hosts", deployment: deployment, director: d.address, taskID: taskID, err: err}
 	}
 
-	hosts, gateway, err := sshconn.ReadHosts(results, user)
+	hosts, err := sshconn.ReadHosts(results, user)
 	if err != nil {
 		d.log.Errorf("SSH setup task %d for deployment %s returned hosts Blacksmith cannot use: %v", taskID, deployment, err)
 
-		return nil, sshconn.Gateway{}, fmt.Errorf("SSH setup for deployment %s in BOSH task %d on BOSH director %s: %w",
+		return nil, fmt.Errorf("SSH setup for deployment %s in BOSH task %d on BOSH director %s: %w",
 			deployment, taskID, d.address, err)
 	}
 
-	return hosts, gateway, nil
+	return hosts, nil
 }
 
 // cleanUpSSH removes the SSH user that setUpSSH created from the same
@@ -3145,11 +3145,9 @@ func (d *DirectorAdapter) sendSSHCleanup(ctx context.Context, deployment string,
 }
 
 // createSSHClient connects to the session's first host as the session's
-// user, through the director's gateway when it names one. The connection
-// to the host accepts only the host key the director reported for it.
-//
-//nolint:ireturn // A client reached through a gateway also owns the gateway, so callers get sshconn.Client.
-func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.Session) (sshconn.Client, error) {
+// user. The connection to the host accepts only the host key the director
+// reported for it.
+func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.Session) (*ssh.Client, error) {
 	host := session.Hosts[0]
 
 	config, err := sshconn.HostConfig(session.Deployment, host, session.Signer)
@@ -3163,28 +3161,6 @@ func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.
 
 	targetAddr := net.JoinHostPort(host.Address, d.sshPort)
 
-	if session.Gateway.Host != "" {
-		gatewayConfig := &ssh.ClientConfig{
-			User: session.Gateway.User,
-			Auth: []ssh.AuthMethod{
-				ssh.PublicKeys(session.Signer),
-			},
-			HostKeyCallback: d.logGatewayHostKey,
-			Timeout:         httpClientTimeout,
-		}
-
-		gatewayAddr := net.JoinHostPort(session.Gateway.Host, d.sshPort)
-
-		client, err := sshconn.DialGateway(ctx, gatewayAddr, targetAddr, gatewayConfig, config)
-		if err != nil {
-			d.log.Errorf("Failed to connect to %s through gateway %s: %v", targetAddr, gatewayAddr, err)
-
-			return nil, fmt.Errorf("failed to connect to host through gateway: %w", err)
-		}
-
-		return client, nil
-	}
-
 	client, err := sshconn.DialDirect(ctx, targetAddr, config)
 	if err != nil {
 		err = sshconn.ExplainHostKeyRefusal(err, session.Deployment, host, targetAddr)
@@ -3194,16 +3170,6 @@ func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.
 	}
 
 	return client, nil
-}
-
-// logGatewayHostKey logs the gateway's host key and accepts it. The
-// director reports no key for its gateway, and the connection to the VM
-// through the gateway is pinned end to end, so the gateway cannot read
-// the session.
-func (d *DirectorAdapter) logGatewayHostKey(hostname string, _ net.Addr, key ssh.PublicKey) error {
-	d.log.Infof("SSH gateway %s presented host key %s", hostname, ssh.FingerprintSHA256(key))
-
-	return nil
 }
 
 // executeSSHCommand executes the command on the SSH client.

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,12 +26,6 @@ const dialSlack = time.Second
 type testSSHServer struct {
 	listener net.Listener
 	wg       sync.WaitGroup
-
-	// forwarding counts the gateway forwarders still running, and
-	// forwarderExitDelay, in nanoseconds, slows each forwarder's exit so a
-	// test can tell whether Close waits for it.
-	forwarding         atomic.Int32
-	forwarderExitDelay atomic.Int64
 
 	mu    sync.Mutex
 	conns []net.Conn
@@ -197,95 +190,6 @@ func execHandler(config *ssh.ServerConfig, output string) func(*testSSHServer, n
 	}
 }
 
-// gatewayHandler is an SSH server that forwards direct-tcpip channels to
-// their requested destination. When hold is true it reads the channel open
-// and never answers it.
-func gatewayHandler(config *ssh.ServerConfig, hold bool) func(*testSSHServer, net.Conn) {
-	return func(s *testSSHServer, conn net.Conn) {
-		serverConn, chans, reqs, err := ssh.NewServerConn(conn, config)
-		if err != nil {
-			return
-		}
-		defer serverConn.Close()
-
-		go ssh.DiscardRequests(reqs)
-
-		// Forwarders block reading their target, so closing the targets when
-		// the gateway connection ends is what lets them finish.
-		var targets []net.Conn
-
-		defer func() {
-			for _, target := range targets {
-				_ = target.Close()
-			}
-		}()
-
-		for newChannel := range chans {
-			if hold || newChannel.ChannelType() != "direct-tcpip" {
-				if !hold {
-					_ = newChannel.Reject(ssh.UnknownChannelType, "direct-tcpip only")
-				}
-
-				continue
-			}
-
-			var payload struct {
-				Host           string
-				Port           uint32
-				OriginatorHost string
-				OriginatorPort uint32
-			}
-			if err := ssh.Unmarshal(newChannel.ExtraData(), &payload); err != nil {
-				_ = newChannel.Reject(ssh.ConnectionFailed, "bad payload")
-
-				continue
-			}
-
-			target, err := net.Dial("tcp", net.JoinHostPort(payload.Host, strconv.Itoa(int(payload.Port))))
-			if err != nil {
-				_ = newChannel.Reject(ssh.ConnectionFailed, err.Error())
-
-				continue
-			}
-
-			channel, requests, err := newChannel.Accept()
-			if err != nil {
-				_ = target.Close()
-
-				return
-			}
-
-			targets = append(targets, target)
-
-			go ssh.DiscardRequests(requests)
-
-			// Tracked so that closing the server waits for the forwarder.
-			s.wg.Add(1)
-			s.forwarding.Add(1)
-
-			go func() {
-				defer s.wg.Done()
-				defer s.forwarding.Add(-1)
-				defer func() { time.Sleep(time.Duration(s.forwarderExitDelay.Load())) }()
-				defer channel.Close()
-				defer target.Close()
-
-				done := make(chan struct{})
-
-				go func() {
-					_, _ = io.Copy(target, channel)
-
-					close(done)
-				}()
-
-				_, _ = io.Copy(channel, target)
-				_ = target.Close()
-				<-done
-			}()
-		}
-	}
-}
-
 // dialDirectClient is DialDirect returning a Client, and a nil Client
 // when the dial fails, so a caller's nil check holds.
 //
@@ -377,160 +281,6 @@ func TestSSHDialEndsWithTheContext(t *testing.T) {
 
 	requireDialEndsWithContext(t, server, 300*time.Millisecond, func(ctx context.Context) (Client, error) {
 		return dialDirectClient(ctx, server.Addr(), config)
-	})
-}
-
-func TestSSHGatewayDialEndsWithTheContext(t *testing.T) {
-	t.Parallel()
-
-	gateway := startTestSSHServer(t, gatewayHandler(testHostConfig(t), true))
-
-	// Build the configs here. A helper that can call t.Fatalf must not run on
-	// the dial goroutine.
-	gatewayConfig, targetConfig := testClientConfig(t), testClientConfig(t)
-
-	requireDialEndsWithContext(t, gateway, 300*time.Millisecond, func(ctx context.Context) (Client, error) {
-		return DialGateway(ctx, gateway.Addr(), "127.0.0.1:2222", gatewayConfig, targetConfig)
-	})
-}
-
-func TestGatewayClientOutlivesSetup(t *testing.T) {
-	t.Parallel()
-
-	const output = "hello through the tunnel\n"
-
-	target := startTestSSHServer(t, execHandler(testHostConfig(t), output))
-	gateway := startTestSSHServer(t, gatewayHandler(testHostConfig(t), false))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	client, err := DialGateway(ctx, gateway.Addr(), target.Addr(), testClientConfig(t), testClientConfig(t))
-	if err != nil {
-		t.Fatalf("create gateway client: %v", err)
-	}
-
-	defer func() { _ = client.Close() }()
-
-	got, err := runCommand(client, "echo hello")
-	if err != nil {
-		t.Fatalf("command through the tunnel: %v", err)
-	}
-
-	if got != output {
-		t.Fatalf("command output = %q, want %q", got, output)
-	}
-}
-
-// dialTestClient connects to a test server and returns the SSH client.
-func dialTestClient(t *testing.T, server *testSSHServer) *ssh.Client {
-	t.Helper()
-
-	client, err := ssh.Dial("tcp", server.Addr(), testClientConfig(t))
-	if err != nil {
-		t.Fatalf("dial %s: %v", server.Addr(), err)
-	}
-
-	t.Cleanup(func() { _ = client.Close() })
-
-	return client
-}
-
-// requireClientClosed fails unless the client's connection has been closed.
-func requireClientClosed(t *testing.T, name string, client *ssh.Client) {
-	t.Helper()
-
-	done := make(chan struct{})
-
-	go func() {
-		_ = client.Wait()
-
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("the %s client is still open", name)
-	}
-}
-
-func TestGatewayedClientCloseClosesBothAndIsRepeatable(t *testing.T) {
-	t.Parallel()
-
-	newPair := func(t *testing.T) (*gatewayedClient, *ssh.Client, *ssh.Client) {
-		t.Helper()
-
-		target := dialTestClient(t, startTestSSHServer(t, execHandler(testHostConfig(t), "")))
-		gateway := dialTestClient(t, startTestSSHServer(t, execHandler(testHostConfig(t), "")))
-
-		return &gatewayedClient{Client: target, gateway: gateway}, target, gateway
-	}
-
-	t.Run("closes both clients and is safe to call twice", func(t *testing.T) {
-		t.Parallel()
-
-		client, target, gateway := newPair(t)
-
-		if err := client.Close(); err != nil {
-			t.Fatalf("first Close: %v", err)
-		}
-
-		requireClientClosed(t, "target", target)
-		requireClientClosed(t, "gateway", gateway)
-
-		// SSHCommand closes from a deferred call and from the context's
-		// AfterFunc, so a second Close is routine. It reports the target's
-		// error and must not panic.
-		second := client.Close()
-		if second == nil {
-			t.Fatal("second Close returned nil for an already closed client")
-		}
-
-		if want := target.Close(); second.Error() != want.Error() {
-			t.Fatalf("second Close = %q, want the target's error %q", second, want)
-		}
-	})
-
-	t.Run("closes the gateway when the target fails to close and returns the target error", func(t *testing.T) {
-		t.Parallel()
-
-		client, target, gateway := newPair(t)
-
-		// Close the target out from under the wrapper so its Close fails.
-		_ = target.Close()
-
-		want := target.Close()
-		if want == nil {
-			t.Fatal("test setup: closing a closed client returned nil")
-		}
-
-		got := client.Close()
-		if got == nil || got.Error() != want.Error() {
-			t.Fatalf("Close = %v, want the first error %q", got, want)
-		}
-
-		requireClientClosed(t, "gateway", gateway)
-	})
-
-	t.Run("returns the gateway error when only the gateway fails", func(t *testing.T) {
-		t.Parallel()
-
-		client, target, gateway := newPair(t)
-
-		_ = gateway.Close()
-
-		want := gateway.Close()
-		if want == nil {
-			t.Fatal("test setup: closing a closed client returned nil")
-		}
-
-		got := client.Close()
-		if got == nil || got.Error() != want.Error() {
-			t.Fatalf("Close = %v, want the gateway error %q", got, want)
-		}
-
-		requireClientClosed(t, "target", target)
 	})
 }
 
@@ -755,52 +505,5 @@ func TestSSHSessionOutlivesTheHandshakeTimeout(t *testing.T) {
 
 	if got != output {
 		t.Fatalf("command output = %q, want %q", got, output)
-	}
-}
-
-// TestGatewayCloseWaitsForItsForwarders checks that closing a gateway server
-// returns only after every forwarder it started has finished, so a test that
-// closes its servers leaves no goroutine behind to touch a closed target. Each
-// forwarder's exit is slowed, so a Close that did not wait for it would return
-// while it still runs.
-func TestGatewayCloseWaitsForItsForwarders(t *testing.T) {
-	t.Parallel()
-
-	const (
-		rounds    = 3
-		exitDelay = 100 * time.Millisecond
-	)
-
-	for round := range rounds {
-		target := startTestSSHServer(t, silentHandler)
-		gateway := startTestSSHServer(t, gatewayHandler(testHostConfig(t), false))
-		gateway.forwarderExitDelay.Store(int64(exitDelay))
-
-		client := dialTestClient(t, gateway)
-
-		tunnel, err := client.Dial("tcp", target.Addr())
-		if err != nil {
-			t.Fatalf("round %d: open a tunnel through the gateway: %v", round, err)
-		}
-
-		deadline := time.Now().Add(5 * time.Second)
-		for gateway.forwarding.Load() != 1 {
-			if time.Now().After(deadline) {
-				t.Fatalf("round %d: the gateway did not start a forwarder", round)
-			}
-
-			time.Sleep(time.Millisecond)
-		}
-
-		gateway.Close()
-
-		if running := gateway.forwarding.Load(); running != 0 {
-			t.Fatalf("round %d: Close returned with %d forwarder(s) still running", round, running)
-		}
-
-		_ = tunnel.Close()
-		_ = client.Close()
-
-		target.Close()
 	}
 }

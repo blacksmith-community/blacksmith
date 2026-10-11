@@ -17,8 +17,7 @@ import (
 // Port is the port that sshd listens on, on every BOSH VM.
 const Port = "22"
 
-// Client is the part of an SSH client that running a command needs. A
-// client reached through a gateway also owns the gateway connection.
+// Client is the part of an SSH client that running a command needs.
 type Client interface {
 	NewSession() (*ssh.Session, error)
 	Close() error
@@ -35,58 +34,6 @@ func DialDirect(ctx context.Context, addr string, config *ssh.ClientConfig) (*ss
 	}
 
 	return handshakeSSH(ctx, conn, addr, config)
-}
-
-// DialGateway connects to targetAddr through the SSH gateway at
-// gatewayAddr. Every step ends with ctx. The returned client owns the
-// gateway client, so closing it closes both.
-//
-//nolint:ireturn // The caller needs only Client, and the concrete type also owns the gateway.
-func DialGateway(ctx context.Context, gatewayAddr, targetAddr string, gatewayConfig, config *ssh.ClientConfig) (Client, error) {
-	gatewayConn, err := (&net.Dialer{Timeout: gatewayConfig.Timeout}).DialContext(ctx, "tcp", gatewayAddr)
-	if err != nil {
-		return nil, fmt.Errorf("connect to gateway %s: %w", gatewayAddr, err)
-	}
-
-	gatewayClient, err := handshakeSSH(ctx, gatewayConn, gatewayAddr, gatewayConfig)
-	if err != nil {
-		return nil, fmt.Errorf("gateway: %w", err)
-	}
-
-	conn, err := gatewayClient.DialContext(ctx, "tcp", targetAddr)
-	if err != nil {
-		_ = gatewayClient.Close()
-
-		return nil, fmt.Errorf("connect to %s through gateway %s: %w", targetAddr, gatewayAddr, err)
-	}
-
-	targetClient, err := handshakeSSH(ctx, conn, targetAddr, config)
-	if err != nil {
-		_ = gatewayClient.Close()
-
-		return nil, fmt.Errorf("through gateway %s: %w", gatewayAddr, err)
-	}
-
-	return &gatewayedClient{Client: targetClient, gateway: gatewayClient}, nil
-}
-
-// gatewayedClient is a target client that owns the gateway client its
-// connection is tunnelled through, so closing it closes both.
-type gatewayedClient struct {
-	*ssh.Client
-
-	gateway *ssh.Client
-}
-
-// Close closes the target client and the gateway client. It always closes
-// both and returns the first error.
-func (c *gatewayedClient) Close() error {
-	err := c.Client.Close()
-	if gatewayErr := c.gateway.Close(); err == nil {
-		err = gatewayErr
-	}
-
-	return err
 }
 
 // closeOnceConn closes the connection underneath it at most once, however

@@ -9,6 +9,7 @@ import (
 	"blacksmith/internal/bosh/sshconn"
 	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
+	"golang.org/x/crypto/ssh"
 )
 
 // CreateBasicFactoryConfig exposes createBasicFactoryConfig to package bosh_test.
@@ -244,10 +245,8 @@ func TaskResultUnreadable(resource, deployment string, taskID int, err error) er
 }
 
 // DialSSHSession connects to a session's first host the way SSHCommand
-// does, through the gateway when the session names one.
-//
-//nolint:ireturn // The adapter's dial returns sshconn.Client, which owns any gateway.
-func DialSSHSession(ctx context.Context, director Director, session *sshconn.Session) (sshconn.Client, error) {
+// does.
+func DialSSHSession(ctx context.Context, director Director, session *sshconn.Session) (*ssh.Client, error) {
 	adapter, ok := director.(*DirectorAdapter)
 	if !ok {
 		panic(fmt.Sprintf("DialSSHSession needs a *DirectorAdapter, got %T", director))
