@@ -469,6 +469,20 @@
   });
 
   // Helper functions
+
+  // Name a VM job_name/index. A VM the director lists without an index
+  // comes back with a negative index, so it is named job_name/id instead,
+  // because job_name/-1 names no instance.
+  const vmInstanceName = (vm) => {
+    if (!vm.job_name || vm.index === undefined) {
+      return vm.id || '-';
+    }
+    if (vm.index < 0) {
+      return `${vm.job_name}/${vm.id || '-'}`;
+    }
+    return `${vm.job_name}/${vm.index}`;
+  };
+
   const isEmpty = (obj) => {
     if (obj == null) return true;
     if (obj.length > 0) return false;
@@ -1403,7 +1417,7 @@
     } else if (tableClass === 'vms-table') {
       tbody.innerHTML = data.map(vm => {
         // Use the correct field names from our enhanced VM struct
-        const instanceName = vm.job_name && vm.index !== undefined ? `${vm.job_name}/${vm.index}` : vm.id || '-';
+        const instanceName = vmInstanceName(vm);
         const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
         const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
         const vmType = vm.vm_type || vm.resource_pool || '-';
@@ -5692,7 +5706,7 @@
         <tbody>
           ${vms.map(vm => {
       // Use the correct field names from our enhanced VM struct
-      const instanceName = vm.job_name && vm.index !== undefined ? `${vm.job_name}/${vm.index}` : vm.id || '-';
+      const instanceName = vmInstanceName(vm);
       const ips = vm.ips && vm.ips.length > 0 ? vm.ips.join(', ') : '-';
       const dns = vm.dns && vm.dns.length > 0 ? vm.dns.join(', ') : '-';
       const vmType = vm.vm_type || vm.resource_pool || '-';
@@ -5729,12 +5743,18 @@
       const sshButtonClass = isBlacksmith ? 'blacksmith-ssh' : 'service-instance-ssh';
       const deploymentType = isBlacksmith ? 'blacksmith' : 'service-instance';
 
+      // The SSH terminal reaches a VM by its index, so a VM the director
+      // lists without one gets a disabled button that says why.
+      const sshButtonAction = vm.index !== undefined && vm.index < 0
+        ? `disabled title="SSH needs an instance index, and the director lists ${instanceName} without one"`
+        : `onclick="window.openTerminal('${deploymentType}', '${deploymentName}', '${instanceName}', event)"
+                          title="SSH to ${instanceName}"`;
+
       return `
               <tr>
                 <td class="vm-ssh">
                   <button class="ssh-btn ${sshButtonClass}"
-                          onclick="window.openTerminal('${deploymentType}', '${deploymentName}', '${instanceName}', event)"
-                          title="SSH to ${instanceName}">
+                          ${sshButtonAction}>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
                       <line x1="8" y1="21" x2="16" y2="21"></line>

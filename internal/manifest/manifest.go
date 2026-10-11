@@ -748,9 +748,17 @@ func buildJobsFromVMs(vms []bosh.VM, plan services.Plan, deployment string, netw
 	return jobs, dnsname
 }
 
+// createJobFromVM builds the credentials job for one VM. The job is named
+// group/index, or group/ID for a VM the director lists without an index,
+// which the listing gives a negative index.
 func createJobFromVM(instance bosh.VM, plan services.Plan, deployment, networkDNS string) services.Job {
+	name := instance.Job + "/" + strconv.Itoa(instance.Index)
+	if instance.Index < 0 {
+		name = instance.Job + "/" + instance.ID
+	}
+
 	return services.Job{
-		Name:       instance.Job + "/" + strconv.Itoa(instance.Index),
+		Name:       name,
 		Deployment: deployment,
 		ID:         instance.ID,
 		PlanID:     plan.ID,

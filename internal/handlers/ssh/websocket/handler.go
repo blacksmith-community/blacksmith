@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -32,7 +33,39 @@ var (
 	errManifestMissingInstanceGroups   = errors.New("manifest missing instance_groups")
 	errFirstInstanceGroupInvalidFormat = errors.New("first instance group has invalid format")
 	errFirstInstanceGroupMissingName   = errors.New("first instance group missing name field")
+	errIndexIsVMID                     = errors.New("is a VM ID, not an index. The SSH terminal reaches a VM by its numeric index, and the director lists this VM without one, so the terminal cannot open a shell on it")
+	errIndexNotNumeric                 = errors.New("is not an instance index. Give a whole number of 0 or more, or leave it out for index 0")
+
+	indexDigits = regexp.MustCompile(`^[0-9]+$`)
+	vmIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
+
+// instanceIndex reads the index query parameter, which is 0 when it is
+// absent. A value it cannot read is an error and never becomes 0,
+// because that opens a shell on a VM nobody asked for. A VM the
+// director lists without an index is named by its UUID, and the SSH
+// service reaches VMs only by index, so a UUID gets its own error.
+func instanceIndex(query url.Values) (int, error) {
+	value := strings.TrimSpace(query.Get("index"))
+	if value == "" {
+		return 0, nil
+	}
+
+	if vmIDPattern.MatchString(value) {
+		return 0, fmt.Errorf("index %q %w", value, errIndexIsVMID)
+	}
+
+	if !indexDigits.MatchString(value) {
+		return 0, fmt.Errorf("index %q %w", value, errIndexNotNumeric)
+	}
+
+	index, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("index %q %w", value, errIndexNotNumeric)
+	}
+
+	return index, nil
+}
 
 // Handler handles SSH WebSocket streaming operations.
 type Handler struct {
@@ -128,6 +161,16 @@ func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Requ
 		return
 	}
 
+	query := req.URL.Query()
+
+	index, err := instanceIndex(query)
+	if err != nil {
+		logger.Error("Refusing SSH to the blacksmith deployment: %v", err)
+		response.WriteError(writer, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
 	deploymentName, instanceName, err := h.resolveBlacksmithDeployment(ctx, logger)
 	if err != nil {
 		logger.Error("Failed to resolve blacksmith deployment info: %v", err)
@@ -137,28 +180,16 @@ func (h *Handler) handleBlacksmithSSH(writer http.ResponseWriter, req *http.Requ
 		return
 	}
 
-	query := req.URL.Query()
 	if override := strings.TrimSpace(query.Get("instance")); override != "" && override != "-" {
 		logger.Debug("Using instance override from query: %s", override)
 		instanceName = override
 	}
 
-	instanceIndex := 0
-
-	if indexValue := strings.TrimSpace(query.Get("index")); indexValue != "" {
-		parsedIndex, parseErr := strconv.Atoi(indexValue)
-		if parseErr != nil {
-			logger.Error("Invalid instance index '%s', defaulting to 0", indexValue)
-		} else {
-			instanceIndex = parsedIndex
-		}
-	}
-
-	logger.Info("Establishing WebSocket SSH connection to blacksmith deployment %s/%s/%d", deploymentName, instanceName, instanceIndex)
+	logger.Info("Establishing WebSocket SSH connection to blacksmith deployment %s/%s/%d", deploymentName, instanceName, index)
 
 	// Handle WebSocket SSH connection
 	if h.webSocketHandler != nil {
-		h.webSocketHandler.HandleWebSocket(req.Context(), writer, req, deploymentName, instanceName, instanceIndex)
+		h.webSocketHandler.HandleWebSocket(req.Context(), writer, req, deploymentName, instanceName, index)
 	} else {
 		logger.Error("WebSocket handler not available")
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -501,6 +532,16 @@ func (h *Handler) handleInstanceSSH(writer http.ResponseWriter, req *http.Reques
 		return
 	}
 
+	query := req.URL.Query()
+
+	index, err := instanceIndex(query)
+	if err != nil {
+		logger.Error("Refusing SSH to instance %s: %v", instanceID, err)
+		response.WriteError(writer, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
 	deploymentName, instanceName, err := h.resolveServiceInstanceDeployment(req.Context(), instanceID, logger)
 	if err != nil {
 		switch {
@@ -515,29 +556,16 @@ func (h *Handler) handleInstanceSSH(writer http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	instanceIndex := 0
-
-	query := req.URL.Query()
-	if indexValue := strings.TrimSpace(query.Get("index")); indexValue != "" {
-		parsedIndex, parseErr := strconv.Atoi(indexValue)
-		if parseErr != nil {
-			logger.Error("Invalid instance index '%s', defaulting to 0", indexValue)
-		} else {
-			instanceIndex = parsedIndex
-			logger.Debug("Using instance index from query parameter: %d", instanceIndex)
-		}
-	}
-
 	if override := strings.TrimSpace(query.Get("instance")); override != "" && override != "-" {
 		instanceName = override
 		logger.Debug("Using instance name from query parameter: %s", instanceName)
 	}
 
-	logger.Info("Establishing WebSocket SSH connection to %s/%s/%d", deploymentName, instanceName, instanceIndex)
+	logger.Info("Establishing WebSocket SSH connection to %s/%s/%d", deploymentName, instanceName, index)
 
 	// Handle WebSocket SSH connection
 	if h.webSocketHandler != nil {
-		h.webSocketHandler.HandleWebSocket(req.Context(), writer, req, deploymentName, instanceName, instanceIndex)
+		h.webSocketHandler.HandleWebSocket(req.Context(), writer, req, deploymentName, instanceName, index)
 	} else {
 		logger.Error("WebSocket handler not available")
 		writer.WriteHeader(http.StatusInternalServerError)

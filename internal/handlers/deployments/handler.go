@@ -334,11 +334,19 @@ func (h *Handler) GetInstances(writer http.ResponseWriter, req *http.Request, de
 		return
 	}
 
-	// Convert to response format
+	// Convert to response format. An instance the director lists without
+	// an index has index "-1", so it is named by its UUID instead, because
+	// group/-1 names no instance.
 	instanceList := make([]map[string]interface{}, len(instances))
 	for i, instance := range instances {
+		name := instance.Group + "/" + instance.Index
+		if instance.Index == "-1" {
+			name = instance.Group + "/" + instance.ID
+		}
+
 		instanceList[i] = map[string]interface{}{
-			"instance":      fmt.Sprintf("%s/%s", instance.Group, instance.Index),
+			"instance":      name,
+			"id":            instance.ID,
 			"state":         instance.State,
 			"process_state": instance.ProcessState,
 			"ips":           instance.IPs,
