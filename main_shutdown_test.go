@@ -41,6 +41,8 @@ const (
 var shutdownStepNames = []string{
 	"stop the HTTP servers",
 	"cancel the service context",
+	"stop the reconciler",
+	"stop the VM monitor",
 	"stop the upgrade manager",
 	"wait for the broker's background work",
 	"stop the batch director",
@@ -119,6 +121,14 @@ type fakeStopper struct {
 
 func (f fakeStopper) Stop() { f.log.ran(f.name) }
 
+type fakeFailingStopper struct{ log *stepLog }
+
+func (f fakeFailingStopper) Stop() error {
+	f.log.ran("reconciler")
+
+	return nil
+}
+
 type fakeBackground struct{ log *stepLog }
 
 func (f fakeBackground) WaitForBackground(context.Context) { f.log.ran("background") }
@@ -129,6 +139,8 @@ func fakeShutdownDeps(log *stepLog, logger loggerPkg.Logger) shutdownDeps {
 	return shutdownDeps{
 		servers:    []httpServer{fakeServer{log: log}},
 		cancel:     func() { log.ran("cancel") },
+		reconciler: fakeFailingStopper{log: log},
+		monitor:    fakeStopper{log: log, name: "monitor"},
 		upgrades:   fakeStopper{log: log, name: "upgrades"},
 		background: fakeBackground{log: log},
 		batch:      fakeStopper{log: log, name: "batch"},
@@ -154,7 +166,7 @@ func TestShutdownRunsItsStepsInOrder(t *testing.T) {
 
 	shutdown(fakeShutdownDeps(log, newShutdownLog()))
 
-	want := []string{"servers", "cancel", "upgrades", "background", "batch", "pool"}
+	want := []string{"servers", "cancel", "reconciler", "monitor", "upgrades", "background", "batch", "pool"}
 	if got := log.order(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected the shutdown steps in the order %v, got %v", want, got)
 	}
@@ -360,7 +372,7 @@ func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logge
 
 	_, cancel := context.WithCancel(context.Background())
 
-	return apiHandler, shutdownDepsFor(nil, cancel, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger)
+	return apiHandler, shutdownDepsFor(nil, cancel, nil, nil, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger)
 }
 
 //nolint:paralleltest // the boot path sets the BOSH client environment

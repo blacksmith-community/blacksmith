@@ -224,8 +224,13 @@ func (m *Monitor) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully shuts down the VM monitor.
+// Stop gracefully shuts down the VM monitor. A monitor that never started,
+// such as one with VM monitoring disabled, has nothing to stop.
 func (m *Monitor) Stop() {
+	if m.cancel == nil {
+		return
+	}
+
 	logger := logger.Get().Named("vm-monitor")
 	logger.Info("Stopping VM monitor...")
 

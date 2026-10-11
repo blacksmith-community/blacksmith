@@ -955,7 +955,7 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 	}
 
 	// Start the reconciler asynchronously to avoid blocking startup
-	// NOTE: Cleanup is handled in runService() to ensure it runs on shutdown, not when this function returns
+	// NOTE: shutdown stops it, before it stops the directors
 	if reconciler != nil {
 		go func() {
 			logger.Info("Starting deployment reconciler asynchronously")
@@ -973,7 +973,7 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 	}
 
 	// Start the VM monitor
-	// NOTE: Cleanup is handled in runService() to ensure it runs on shutdown, not when this function returns
+	// NOTE: shutdown stops it, before it stops the directors
 	if vmMonitor != nil {
 		err := vmMonitor.Start(ctx)
 		if err != nil {
@@ -1324,20 +1324,6 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
 
-	// Ensure background services are stopped on shutdown
-	// These defers run when runService() returns (on shutdown), not immediately
-	if reconciler != nil {
-		defer func() {
-			if err := reconciler.Stop(); err != nil {
-				logger.Error("Error stopping reconciler: %s", err)
-			}
-		}()
-	}
-
-	if vmMonitor != nil {
-		defer vmMonitor.Stop()
-	}
-
 	sshService, apiHandler, upgradeHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
 
@@ -1347,7 +1333,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	waitForShutdownSignal(sigChan, ctx, logger)
 
-	shutdown(shutdownDepsFor(servers, cancel, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger))
+	shutdown(shutdownDepsFor(servers, cancel, reconciler, vmMonitor, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger))
 	serverWaitGroup.Wait()
 
 	return nil
@@ -1505,6 +1491,12 @@ type stopper interface {
 	Stop()
 }
 
+// failingStopper is a part of the broker that shutdown stops, whose stop
+// can fail.
+type failingStopper interface {
+	Stop() error
+}
+
 // backgroundWaiter is the broker's wait for its background goroutines.
 type backgroundWaiter interface {
 	WaitForBackground(ctx context.Context)
@@ -1514,6 +1506,8 @@ type backgroundWaiter interface {
 type shutdownDeps struct {
 	servers    []httpServer
 	cancel     context.CancelFunc
+	reconciler failingStopper
+	monitor    stopper
 	upgrades   stopper
 	background backgroundWaiter
 	batch      stopper
@@ -1530,8 +1524,10 @@ type shutdownStep struct {
 // steps returns the steps shutdown runs, in order. The servers stop first,
 // so no request starts once the service context ends. The service context
 // is cancelled next, which ends the async provisions and deprovisions and
-// their monitors. The upgrade manager stops before the broker's wait, and
-// the directors stop last, after everything that uses them.
+// their monitors. The reconciler and the VM monitor stop then, so neither
+// calls a director once the directors stop. The upgrade manager stops
+// before the broker's wait, and the directors stop last, after everything
+// that uses them.
 func (deps shutdownDeps) steps() []shutdownStep {
 	var steps []shutdownStep
 
@@ -1541,6 +1537,14 @@ func (deps shutdownDeps) steps() []shutdownStep {
 
 	if deps.cancel != nil {
 		steps = append(steps, shutdownStep{name: "cancel the service context", run: func(context.Context) { deps.cancel() }})
+	}
+
+	if deps.reconciler != nil {
+		steps = append(steps, shutdownStep{name: "stop the reconciler", run: deps.stopReconciler})
+	}
+
+	if deps.monitor != nil {
+		steps = append(steps, shutdownStep{name: "stop the VM monitor", run: func(context.Context) { deps.monitor.Stop() }})
 	}
 
 	if deps.upgrades != nil {
@@ -1560,6 +1564,14 @@ func (deps shutdownDeps) steps() []shutdownStep {
 	}
 
 	return steps
+}
+
+// stopReconciler stops the reconciler and logs a failure to stop it.
+func (deps shutdownDeps) stopReconciler(context.Context) {
+	err := deps.reconciler.Stop()
+	if err != nil {
+		deps.logger.Error("Error stopping reconciler: %s", err)
+	}
 }
 
 // stopServers drains every server at once, so none accepts a new request
@@ -1591,14 +1603,23 @@ func (deps shutdownDeps) stopServers(ctx context.Context) {
 // built. A nil pointer inside an interface would not compare equal to nil,
 // so each part the broker does not have becomes a true nil, which shutdown
 // skips.
-func shutdownDepsFor(servers []*http.Server, cancel context.CancelFunc, upgradeHandler *upgradehandler.Handler, brokerInstance *broker.Broker,
-	batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) shutdownDeps {
+func shutdownDepsFor(servers []*http.Server, cancel context.CancelFunc, reconciler *recovery.ReconcilerAdapter, vmMonitor *vmmonitor.Monitor,
+	upgradeHandler *upgradehandler.Handler, brokerInstance *broker.Broker, batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector,
+	logger loggerPkg.Logger) shutdownDeps {
 	deps := shutdownDeps{cancel: cancel, logger: logger}
 
 	for _, server := range servers {
 		if server != nil {
 			deps.servers = append(deps.servers, server)
 		}
+	}
+
+	if reconciler != nil {
+		deps.reconciler = reconciler
+	}
+
+	if vmMonitor != nil {
+		deps.monitor = vmMonitor
 	}
 
 	if upgradeHandler != nil {
