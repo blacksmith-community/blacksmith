@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"blacksmith/internal/bosh/sshconn"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -559,7 +560,7 @@ func (s *SessionImpl) Start() error {
 		return err
 	}
 
-	shell, err := s.setupSSHSession(client)
+	shell, err := s.openShell(ctx, client)
 	if err != nil {
 		s.discardConnection(nil, client)
 		s.failStart()
@@ -1029,23 +1030,44 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 	return ssh.NewClient(nconn, chans, reqs), nil
 }
 
-// connectDirect establishes a direct SSH connection.
+// connectDirect connects to the VM with the dial that the director
+// adapter shares, so the TCP connect and the SSH handshake both end with
+// ctx, the session's init timeout.
 func (s *SessionImpl) connectDirect(ctx context.Context, hostAddress string, config *ssh.ClientConfig) (*ssh.Client, error) {
-	// Check timeout
-	select {
-	case <-ctx.Done():
-		return nil, NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
-	default:
-	}
-
 	addr := net.JoinHostPort(hostAddress, s.service.port)
 
-	client, err := ssh.Dial("tcp", addr, config)
+	client, err := sshconn.DialDirect(ctx, addr, config)
 	if err != nil {
 		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to connect to "+addr, err)
 	}
 
 	return client, nil
+}
+
+// openShell runs setupSSHSession under ctx, the session's init timeout.
+// A VM can finish the handshake and then never answer the session, PTY,
+// or shell request, and none of those requests takes a context, so client
+// is closed when ctx ends, which ends whichever request is waiting.
+func (s *SessionImpl) openShell(ctx context.Context, client *ssh.Client) (*shellConn, error) {
+	stopClosing := context.AfterFunc(ctx, func() { _ = client.Close() })
+
+	shell, err := s.setupSSHSession(client)
+
+	if !stopClosing() {
+		// ctx ended while the requests ran and the client is closed, so
+		// a shell that started anyway cannot be used.
+		if shell != nil {
+			s.closeQuietly("SSH session", shell.session)
+		}
+
+		return nil, NewSSHError(SSHErrorCodeConnection, "SSH session ended before its shell started", context.Cause(ctx))
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return shell, nil
 }
 
 // shellConn is the SSH session of a terminal's shell, with its pipes.

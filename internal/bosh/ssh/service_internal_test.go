@@ -481,3 +481,64 @@ func TestTwoSessionsOnOneInstanceGetDistinctIDs(t *testing.T) {
 		t.Errorf("%d cleanups after the service closed, want 2", got)
 	}
 }
+
+// The terminal's dial ends at the session's init timeout, even against a
+// VM that accepts the connection and never speaks.
+func TestTerminalSessionDialEndsWithItsContext(t *testing.T) {
+	t.Parallel()
+
+	const (
+		initTimeout = 300 * time.Millisecond
+		slack       = time.Second
+	)
+
+	server := startTestVMServer(t, silentHandler)
+	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	service := newTestService(t, director, server.port(t))
+	service.config.SessionInitTimeout = initTimeout
+
+	session, err := service.CreateSession(t.Context(), terminalRequest())
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	type result struct {
+		err     error
+		elapsed time.Duration
+	}
+
+	results := make(chan result, 1)
+	started := time.Now()
+
+	go func() {
+		err := session.Start()
+		results <- result{err, time.Since(started)}
+	}()
+
+	var res result
+
+	select {
+	case res = <-results:
+	case <-time.After(initTimeout + slack):
+		// Release the blocked dial so its goroutine does not outlive the test.
+		server.Close()
+
+		<-results
+
+		t.Fatalf("Start still blocked %v after its %v init timeout", slack, initTimeout)
+	}
+
+	if res.err == nil {
+		t.Fatal("Start succeeded against a VM that never speaks")
+	}
+
+	if res.elapsed < initTimeout {
+		t.Errorf("Start failed after %v, before its %v init timeout: %v", res.elapsed, initTimeout, res.err)
+	}
+
+	_ = session.Close()
+
+	if got := director.cleanups.Load(); got != 1 {
+		t.Errorf("%d cleanups after Close, want 1", got)
+	}
+}

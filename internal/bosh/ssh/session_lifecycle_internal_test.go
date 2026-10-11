@@ -240,3 +240,84 @@ func TestCloseWhileStartRunsEndsTheStart(t *testing.T) {
 		t.Error("the connection that Start opened was left open")
 	}
 }
+
+// handshakeOnlyHandler serves a VM that finishes the SSH handshake and
+// then never answers a channel open, as a VM with a hung PAM session
+// module does. It reports on served once the client closes the
+// connection.
+func handshakeOnlyHandler(config *ssh.ServerConfig, served chan<- struct{}) func(net.Conn) {
+	return func(conn net.Conn) {
+		defer func() { served <- struct{}{} }()
+
+		serverConn, channels, requests, err := ssh.NewServerConn(conn, config)
+		if err != nil {
+			return
+		}
+
+		defer func() { _ = serverConn.Close() }()
+
+		go ssh.DiscardRequests(requests)
+
+		// Every channel open is taken and left unanswered.
+		for range channels {
+		}
+	}
+}
+
+// The session's init timeout bounds all of Start, not only the dial. A
+// VM that completes the handshake and then ignores the session request
+// still has Start return at the timeout, with the connection closed, and
+// the session's Close still removes the user once.
+func TestStartEndsAtItsInitTimeoutAfterTheHandshake(t *testing.T) {
+	t.Parallel()
+
+	const (
+		initTimeout = 300 * time.Millisecond
+		slack       = time.Second
+	)
+
+	key := newTestKey(t)
+	served := make(chan struct{}, 1)
+	server := startTestVMServer(t, handshakeOnlyHandler(vmServerConfig(t, key.signer.PublicKey()), served))
+	director := newKeyedDirector(key)
+	service := newTestService(t, director, server.port(t))
+	service.config.SessionInitTimeout = initTimeout
+
+	session, err := service.CreateSession(t.Context(), terminalRequest())
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	began := time.Now()
+	started := make(chan error, 1)
+
+	go func() { started <- session.Start() }()
+
+	select {
+	case err := <-started:
+		if err == nil {
+			t.Fatal("Start succeeded against a VM that never answers the session request")
+		}
+
+		if elapsed := time.Since(began); elapsed < initTimeout {
+			t.Errorf("Start returned after %v, before its %v init timeout: %v", elapsed, initTimeout, err)
+		}
+	case <-time.After(initTimeout + slack):
+		t.Fatalf("Start still blocked %v after its %v init timeout", slack, initTimeout)
+	}
+
+	select {
+	case <-served:
+	case <-time.After(lifecycleWait):
+		t.Error("the connection to the VM was left open after Start gave up")
+	}
+
+	err = session.Close()
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if got := director.cleanups.Load(); got != 1 {
+		t.Errorf("%d cleanups after Close, want 1", got)
+	}
+}

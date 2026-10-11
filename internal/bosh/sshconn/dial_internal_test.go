@@ -1,4 +1,4 @@
-package bosh
+package sshconn
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -272,9 +273,40 @@ func gatewayHandler(config *ssh.ServerConfig, hold bool) func(*testSSHServer, ne
 	}
 }
 
+// dialDirectClient is DialDirect returning a Client, and a nil Client
+// when the dial fails, so a caller's nil check holds.
+//
+//nolint:ireturn // The dial tests share one helper typed by Client.
+func dialDirectClient(ctx context.Context, addr string, config *ssh.ClientConfig) (Client, error) {
+	client, err := DialDirect(ctx, addr, config)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+// runCommand runs command in a new session on client and returns its
+// combined output.
+func runCommand(client Client, command string) (string, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("new session: %w", err)
+	}
+
+	defer func() { _ = session.Close() }()
+
+	output, err := session.CombinedOutput(command)
+	if err != nil {
+		return string(output), fmt.Errorf("run %q: %w", command, err)
+	}
+
+	return string(output), nil
+}
+
 // requireDialEndsWithContext runs dial and fails unless it returns an error
 // within dialSlack of the context deadline.
-func requireDialEndsWithContext(t *testing.T, server *testSSHServer, timeout time.Duration, dial func(ctx context.Context) (sshClient, error)) {
+func requireDialEndsWithContext(t *testing.T, server *testSSHServer, timeout time.Duration, dial func(ctx context.Context) (Client, error)) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -283,7 +315,7 @@ func requireDialEndsWithContext(t *testing.T, server *testSSHServer, timeout tim
 	deadline, _ := ctx.Deadline()
 
 	type result struct {
-		client   sshClient
+		client   Client
 		err      error
 		returned time.Time
 	}
@@ -328,11 +360,10 @@ func TestSSHDialEndsWithTheContext(t *testing.T) {
 	t.Parallel()
 
 	server := startTestSSHServer(t, silentHandler)
-	adapter := &DirectorAdapter{log: &noOpLogger{}}
 	config := testClientConfig(t)
 
-	requireDialEndsWithContext(t, server, 300*time.Millisecond, func(ctx context.Context) (sshClient, error) {
-		return adapter.createDirectSSHClient(ctx, server.Addr(), config)
+	requireDialEndsWithContext(t, server, 300*time.Millisecond, func(ctx context.Context) (Client, error) {
+		return dialDirectClient(ctx, server.Addr(), config)
 	})
 }
 
@@ -340,14 +371,13 @@ func TestSSHGatewayDialEndsWithTheContext(t *testing.T) {
 	t.Parallel()
 
 	gateway := startTestSSHServer(t, gatewayHandler(testHostConfig(t), true))
-	adapter := &DirectorAdapter{log: &noOpLogger{}}
 
 	// Build the configs here. A helper that can call t.Fatalf must not run on
 	// the dial goroutine.
 	gatewayConfig, targetConfig := testClientConfig(t), testClientConfig(t)
 
-	requireDialEndsWithContext(t, gateway, 300*time.Millisecond, func(ctx context.Context) (sshClient, error) {
-		return adapter.createGatewaySSHClient(ctx, gateway.Addr(), "127.0.0.1:2222", gatewayConfig, targetConfig)
+	requireDialEndsWithContext(t, gateway, 300*time.Millisecond, func(ctx context.Context) (Client, error) {
+		return DialGateway(ctx, gateway.Addr(), "127.0.0.1:2222", gatewayConfig, targetConfig)
 	})
 }
 
@@ -358,19 +388,18 @@ func TestGatewayClientOutlivesSetup(t *testing.T) {
 
 	target := startTestSSHServer(t, execHandler(testHostConfig(t), output))
 	gateway := startTestSSHServer(t, gatewayHandler(testHostConfig(t), false))
-	adapter := &DirectorAdapter{log: &noOpLogger{}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := adapter.createGatewaySSHClient(ctx, gateway.Addr(), target.Addr(), testClientConfig(t), testClientConfig(t))
+	client, err := DialGateway(ctx, gateway.Addr(), target.Addr(), testClientConfig(t), testClientConfig(t))
 	if err != nil {
 		t.Fatalf("create gateway client: %v", err)
 	}
 
 	defer func() { _ = client.Close() }()
 
-	got, err := adapter.executeSSHCommand(client, "echo", []string{"hello"})
+	got, err := runCommand(client, "echo hello")
 	if err != nil {
 		t.Fatalf("command through the tunnel: %v", err)
 	}
@@ -506,8 +535,8 @@ func TestSSHAddress(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		if got := sshAddress(test.host); got != test.want {
-			t.Errorf("sshAddress(%q) = %q, want %q", test.host, got, test.want)
+		if got := Address(test.host); got != test.want {
+			t.Errorf("Address(%q) = %q, want %q", test.host, got, test.want)
 		}
 	}
 }
@@ -661,12 +690,11 @@ func TestSSHDialIsBoundedByTheTimeoutWithoutAContextDeadline(t *testing.T) {
 	const timeout = 300 * time.Millisecond
 
 	server := startTestSSHServer(t, silentHandler)
-	adapter := &DirectorAdapter{log: &noOpLogger{}}
 	config := testClientConfig(t)
 	config.Timeout = timeout
 
 	type result struct {
-		client  sshClient
+		client  Client
 		err     error
 		elapsed time.Duration
 	}
@@ -675,7 +703,7 @@ func TestSSHDialIsBoundedByTheTimeoutWithoutAContextDeadline(t *testing.T) {
 	start := time.Now()
 
 	go func() {
-		client, err := adapter.createDirectSSHClient(context.Background(), server.Addr(), config)
+		client, err := dialDirectClient(context.Background(), server.Addr(), config)
 		results <- result{client, err, time.Since(start)}
 	}()
 
@@ -714,11 +742,10 @@ func TestSSHSessionOutlivesTheHandshakeTimeout(t *testing.T) {
 	)
 
 	server := startTestSSHServer(t, execHandler(testHostConfig(t), output))
-	adapter := &DirectorAdapter{log: &noOpLogger{}}
 	config := testClientConfig(t)
 	config.Timeout = timeout
 
-	client, err := adapter.createDirectSSHClient(context.Background(), server.Addr(), config)
+	client, err := DialDirect(context.Background(), server.Addr(), config)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -728,7 +755,7 @@ func TestSSHSessionOutlivesTheHandshakeTimeout(t *testing.T) {
 	// Run the command after the handshake deadline would have passed.
 	time.Sleep(2 * timeout)
 
-	got, err := adapter.executeSSHCommand(client, "echo", []string{"hello"})
+	got, err := runCommand(client, "echo hello")
 	if err != nil {
 		t.Fatalf("command after the handshake timeout: %v", err)
 	}
