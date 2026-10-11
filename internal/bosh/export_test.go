@@ -55,6 +55,17 @@ func SetSSHSetupSettle(director Director, grace, settle time.Duration) {
 	adapter.setupSettleTimeout = settle
 }
 
+// SetSSHSetupTimeout shortens an adapter's bound on the wait for an SSH
+// setup task.
+func SetSSHSetupTimeout(director Director, timeout time.Duration) {
+	adapter, ok := director.(*DirectorAdapter)
+	if !ok {
+		panic(fmt.Sprintf("SetSSHSetupTimeout needs a *DirectorAdapter, got %T", director))
+	}
+
+	adapter.setupTimeout = timeout
+}
+
 // RequestTimeoutCause exposes the cause a request timeout carries to package
 // bosh_test.
 func RequestTimeoutCause(timeout time.Duration, attempts int) error {

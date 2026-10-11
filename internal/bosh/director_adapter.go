@@ -58,6 +58,11 @@ const (
 
 	// sshCleanupTimeout bounds the director call that removes an SSH user.
 	sshCleanupTimeout = 30 * time.Second
+	// sshSetupTimeout bounds the wait for an SSH setup task and the read
+	// of its result, and nothing after it. A caller whose context never
+	// ends, as the async SSH command's does, still gets an answer, and a
+	// setup task still queued at the bound is cancelled.
+	sshSetupTimeout = 3 * time.Minute
 
 	// Default ports for BOSH services.
 	defaultBOSHDirectorPort = 25555
@@ -165,8 +170,11 @@ type DirectorAdapter struct {
 	// sshSetupSettleTimeout.
 	lostSetupGrace     time.Duration
 	setupSettleTimeout time.Duration
-	logger             boshlog.Logger
-	log                Logger // Application logger for Info/Debug logging
+	// setupTimeout bounds the wait for an SSH setup task. Zero means
+	// sshSetupTimeout.
+	setupTimeout time.Duration
+	logger       boshlog.Logger
+	log          Logger // Application logger for Info/Debug logging
 }
 
 // bind returns the bosh-cli director for one call.

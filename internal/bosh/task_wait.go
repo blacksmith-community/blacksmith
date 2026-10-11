@@ -141,16 +141,31 @@ func (d *DirectorAdapter) readOnlyTaskResult(ctx context.Context, operation, dep
 }
 
 // sshSetupResult waits for an SSH setup task and returns its result
-// output. A task that ended in any state but done returns a
-// TaskFailedError with the director's result text. A wait the context
-// ends cancels the task even at shutdown, because a setup creates a user.
+// output, within sshSetupTimeout of ctx. The bound covers this wait only,
+// never the session that follows. A task that ended in any state but done
+// returns a TaskFailedError with the director's result text. A wait the
+// context or the bound ends cancels the task even at shutdown, because a
+// setup creates a user.
 func (d *DirectorAdapter) sshSetupResult(ctx context.Context, operation, deployment string, taskID int) (string, error) {
-	task, err := d.waitThenCancel(ctx, operation, taskID, false)
+	bound := d.setupTimeout
+	if bound <= 0 {
+		bound = sshSetupTimeout
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+
+	task, err := d.waitThenCancel(waitCtx, operation, taskID, false)
 	if err != nil {
+		if ctx.Err() == nil && errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			d.log.Errorf("SSH setup task %d for deployment %s had not finished %s after Blacksmith began waiting, so Blacksmith stopped waiting and asked the director to cancel it",
+				taskID, deployment, bound)
+		}
+
 		return "", err
 	}
 
-	return d.finishedTaskResult(ctx, "SSH setup", operation, deployment, task)
+	return d.finishedTaskResult(waitCtx, "SSH setup", operation, deployment, task)
 }
 
 // finishedTaskResult reads the result output of a task that has reached a
