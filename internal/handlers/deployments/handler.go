@@ -388,7 +388,9 @@ func (h *Handler) ListErrands(writer http.ResponseWriter, req *http.Request, dep
 	}, nil)
 }
 
-// RunErrand runs a specific errand.
+// RunErrand runs a specific errand. A when_changed run that the director
+// skipped, because nothing changed since its last successful run, answers
+// 200 with skipped set and exit code 0.
 func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deploymentName string, errandName string) {
 	ctx := req.Context()
 
@@ -400,7 +402,13 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 	result, err := h.director.RunErrand(ctx, deploymentName, errandName, opts)
 	if err != nil {
 		logger.Error("Failed to run errand %s for deployment %s: %v", errandName, deploymentName, err)
-		writer.WriteHeader(http.StatusInternalServerError)
+
+		status := http.StatusInternalServerError
+		if errors.Is(err, bosh.ErrInvalidErrandInstance) {
+			status = http.StatusBadRequest
+		}
+
+		writer.WriteHeader(status)
 		response.HandleJSON(writer, nil, err)
 
 		return
@@ -414,6 +422,7 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 		"stderr":      result.Stderr,
 		"instance":    result.InstanceGroup,
 		"instance_id": result.InstanceID,
+		"skipped":     result.Skipped,
 	}, nil)
 }
 

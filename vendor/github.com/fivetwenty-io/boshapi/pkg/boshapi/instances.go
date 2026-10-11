@@ -2,22 +2,40 @@ package boshapi
 
 // Instance represents a BOSH deployment instance.
 type Instance struct {
-	AgentID            string    `json:"agent_id"`
-	CID                string    `json:"cid"`
-	Job                string    `json:"job"`
-	Index              int       `json:"index"`
-	ID                 string    `json:"id"`
-	AZ                 string    `json:"az"`
-	IPs                []string  `json:"ips"`
-	VMType             string    `json:"vm_type"`
-	VMCreatedAt        string    `json:"vm_created_at"`
-	DiskCIDs           []string  `json:"disk_cids"`
-	State              string    `json:"state"`
-	Bootstrap          bool      `json:"bootstrap"`
-	Ignore             bool      `json:"ignore"`
-	Processes          []Process `json:"processes,omitempty"`
-	Vitals             *Vitals   `json:"vitals,omitempty"`
-	ResurrectionPaused bool      `json:"resurrection_paused"`
+	AgentID     string   `json:"agent_id"`
+	CID         string   `json:"cid"`
+	Job         string   `json:"job"`
+	Index       int      `json:"index"`
+	ID          string   `json:"id"`
+	AZ          string   `json:"az"`
+	IPs         []string `json:"ips"`
+	VMType      string   `json:"vm_type"`
+	VMCreatedAt string   `json:"vm_created_at"`
+	DiskCIDs    []string `json:"disk_cids"`
+	State       string   `json:"state"`
+	Bootstrap   bool     `json:"bootstrap"`
+	Ignore      bool     `json:"ignore"`
+	// ExpectsVM is true when the director expects the instance to have a VM,
+	// which tells an instance that needs none from one whose VM is missing.
+	// Only GET /deployments/{deployment}/instances sends it, so only
+	// Instances().List sets it. It reads false everywhere else, including in
+	// an InstanceDetail, and false also means that the director did not send
+	// it.
+	ExpectsVM bool      `json:"expects_vm"`
+	Processes []Process `json:"processes,omitempty"`
+	Vitals    *Vitals   `json:"vitals,omitempty"`
+}
+
+// InstanceSummary is the short record that GET
+// /deployments/{deployment}/jobs/{job}/{index_or_id} answers with. Disks holds
+// the CIDs of the instance's persistent disks.
+type InstanceSummary struct {
+	Deployment string   `json:"deployment"`
+	Job        string   `json:"job"`
+	Index      int      `json:"index"`
+	ID         string   `json:"id"`
+	State      string   `json:"state"`
+	Disks      []string `json:"disks"`
 }
 
 // InstanceDetail represents detailed instance information (from format=full).
@@ -147,6 +165,13 @@ type RecreateInstanceOptions struct {
 
 // LogOptions represents options for fetching instance logs.
 type LogOptions struct {
-	Type    string   `json:"type,omitempty"`    // "job" or "agent"
-	Filters []string `json:"filters,omitempty"` // glob patterns
+	// Type is the kind of logs to fetch. The director also accepts "agent"
+	// and "system", and a comma-separated list of kinds. FetchLogs sends
+	// "job" when it is empty, or when the options are nil.
+	Type string `json:"type,omitempty"`
+	// Filters are glob patterns that select the log files to fetch. An entry
+	// must not hold whitespace or a comma, because the director splits the
+	// filters on both. FetchLogs returns ErrLogFilterInvalid for such an
+	// entry before it sends anything, and skips an empty one.
+	Filters []string `json:"filters,omitempty"`
 }

@@ -106,8 +106,8 @@ func TestGetDeploymentKeepsARoute404AsAnError(t *testing.T) {
 }
 
 // A 404 with another of the director's "not found" codes is not a missing
-// deployment either. Code 20000 is a missing director resource and 60000 is a
-// missing task, and a caller that deletes credentials for a missing deployment
+// deployment either. Code 20000 is a missing user and 10000 is a missing
+// task, and a caller that deletes credentials for a missing deployment
 // must not act on them.
 func TestGetDeploymentKeepsOtherNotFoundCodesAsErrors(t *testing.T) {
 	for _, code := range []int{boshtest.CodeDirectorNotFound, boshtest.CodeTaskNotFound} {

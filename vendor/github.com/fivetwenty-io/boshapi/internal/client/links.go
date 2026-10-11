@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/fivetwenty-io/boshapi/internal/http"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
@@ -57,6 +56,10 @@ func (c *linksClient) Create(ctx context.Context, req *boshapi.CreateLinkRequest
 }
 
 func (c *linksClient) Delete(ctx context.Context, linkID string) error {
+	if err := checkPathSegments("Links().Delete", "linkID", linkID); err != nil {
+		return err
+	}
+
 	path := "/links/" + url.PathEscape(linkID)
 
 	_, err := c.httpClient.Delete(ctx, path)
@@ -70,8 +73,9 @@ func (c *linksClient) Delete(ctx context.Context, linkID string) error {
 func (c *linksClient) GetAddress(ctx context.Context, opts *boshapi.LinkAddressOptions) (*boshapi.LinkAddress, error) {
 	query := url.Values{"link_id": {opts.LinkID}}
 
-	if len(opts.AZs) > 0 {
-		query.Set("azs", strings.Join(opts.AZs, ","))
+	// The director accepts azs only as an array, azs[]=z1&azs[]=z2.
+	for _, zone := range opts.AZs {
+		query.Add("azs[]", zone)
 	}
 
 	if opts.Status != "" {

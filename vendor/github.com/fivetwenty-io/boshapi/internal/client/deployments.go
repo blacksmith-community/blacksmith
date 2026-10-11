@@ -61,6 +61,10 @@ func (c *deploymentsClient) List(ctx context.Context, opts *boshapi.DeploymentLi
 }
 
 func (c *deploymentsClient) Get(ctx context.Context, name string) (*boshapi.DeploymentManifest, error) {
+	if err := checkPathSegments("Deployments().Get", "name", name); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(name)
 	resp, err := c.httpClient.Get(ctx, path, nil)
 	if err != nil {
@@ -72,6 +76,27 @@ func (c *deploymentsClient) Get(ctx context.Context, name string) (*boshapi.Depl
 	}
 
 	return &manifest, nil
+}
+
+func (c *deploymentsClient) CertificateExpiry(ctx context.Context, name string) ([]boshapi.DeploymentCertificateExpiry, error) {
+	if err := checkPathSegments("Deployments().CertificateExpiry", "name", name); err != nil {
+		return nil, err
+	}
+
+	path := "/deployments/" + url.PathEscape(name) + "/certificate_expiry"
+
+	resp, err := c.httpClient.Get(ctx, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("getting certificate expiry for deployment %s: %w", name, err)
+	}
+
+	var certs []boshapi.DeploymentCertificateExpiry
+
+	if err := json.Unmarshal(resp.Body, &certs); err != nil {
+		return nil, fmt.Errorf("parsing certificate expiry: %w", err)
+	}
+
+	return certs, nil
 }
 
 func (c *deploymentsClient) Deploy(ctx context.Context, manifest string, opts *boshapi.DeployOptions) (*boshapi.Task, error) {
@@ -99,6 +124,10 @@ func (c *deploymentsClient) Deploy(ctx context.Context, manifest string, opts *b
 }
 
 func (c *deploymentsClient) Delete(ctx context.Context, name string, opts *boshapi.DeleteDeploymentOptions) (*boshapi.Task, error) {
+	if err := checkPathSegments("Deployments().Delete", "name", name); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(name)
 	var query url.Values
 	if opts != nil && opts.Force {
@@ -117,19 +146,33 @@ func (c *deploymentsClient) Delete(ctx context.Context, name string, opts *bosha
 }
 
 func (c *deploymentsClient) Diff(ctx context.Context, name, manifest string, opts *boshapi.DiffOptions) (*boshapi.DeploymentDiff, error) {
-	path := "/deployments/" + url.PathEscape(name) + "/diff"
-	body := map[string]interface{}{manifestBodyKey: manifest}
-	if opts != nil {
-		body["redact"] = opts.Redact
+	if err := checkPathSegments("Deployments().Diff", "name", name); err != nil {
+		return nil, err
 	}
-	resp, err := c.httpClient.Post(ctx, path, body)
+
+	path := "/deployments/" + url.PathEscape(name) + "/diff"
+
+	// The director reads the raw manifest from the body of a text/yaml
+	// request.
+	query := diffQuery(opts, true, false)
+
+	resp, err := c.httpClient.PostYAMLDiff(ctx, path, manifest, query)
 	if err != nil {
 		return nil, fmt.Errorf("diffing deployment %s: %w", name, err)
 	}
-	var diff boshapi.DeploymentDiff
-	if err := json.Unmarshal(resp.Body, &diff); err != nil {
+	// The director reports a diff it cannot compute with a 200 whose body
+	// holds an error message, so the message is read here and never reaches
+	// the caller as part of a diff.
+	var answer struct {
+		boshapi.DeploymentDiff
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(resp.Body, &answer); err != nil {
 		return nil, fmt.Errorf("parsing deployment diff: %w", err)
 	}
+	if answer.Error != "" {
+		return nil, &boshapi.DiffError{Target: "deployment " + name, Message: answer.Error}
+	}
 
-	return &diff, nil
+	return &answer.DeploymentDiff, nil
 }

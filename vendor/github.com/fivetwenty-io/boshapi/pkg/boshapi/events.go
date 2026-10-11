@@ -1,6 +1,8 @@
 package boshapi
 
-import "net/url"
+import (
+	"net/url"
+)
 
 // Event represents a BOSH Director event.
 type Event struct {
@@ -20,7 +22,11 @@ type Event struct {
 
 // EventListOptions represents options for listing events.
 type EventListOptions struct {
-	BeforeID   string
+	BeforeID string
+	// AfterTime is a deprecated alias of After.
+	//
+	// Deprecated: use After. AfterTime is sent as after_time only when After
+	// is empty.
 	AfterTime  string
 	Before     string
 	After      string
@@ -51,6 +57,8 @@ func (o *EventListOptions) ToValues() url.Values {
 
 	if o.After != "" {
 		values.Set("after_time", o.After)
+	} else if o.AfterTime != "" {
+		values.Set("after_time", o.AfterTime)
 	}
 
 	if o.Deployment != "" {
@@ -84,16 +92,21 @@ func (o *EventListOptions) ToValues() url.Values {
 	return values
 }
 
-// CreateEventRequest represents a request to create a custom event.
+// CreateEventRequest represents a request to create a custom event. The
+// director requires Action, ObjectType, and ObjectName, and Events().Create
+// returns ErrEventFieldRequired before sending when any of them is empty. It
+// takes the user from the caller's token.
 type CreateEventRequest struct {
-	Timestamp      int64                  `json:"timestamp,omitempty"`
-	User           string                 `json:"user"`
+	// Timestamp is the time of the event in epoch seconds. It encodes as a
+	// string of digits, such as "1234567890", because the director reads the
+	// timestamp of a new event as a string and fails on a JSON number. A zero
+	// Timestamp is left out, so the director uses the time of the request.
+	Timestamp      int64                  `json:"timestamp,string,omitempty"`
 	Action         string                 `json:"action"`
 	ObjectType     string                 `json:"object_type"`
-	ObjectName     string                 `json:"object_name,omitempty"`
+	ObjectName     string                 `json:"object_name"`
 	DeploymentName string                 `json:"deployment,omitempty"`
 	Instance       string                 `json:"instance,omitempty"`
-	TaskID         string                 `json:"task,omitempty"`
 	Context        map[string]interface{} `json:"context,omitempty"`
 	Error          string                 `json:"error,omitempty"`
 }

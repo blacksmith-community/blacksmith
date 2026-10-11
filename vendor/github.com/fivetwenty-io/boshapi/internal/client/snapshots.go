@@ -21,6 +21,10 @@ func NewSnapshotsClient(httpClient *http.Client) boshapi.SnapshotsClient {
 }
 
 func (c *snapshotsClient) List(ctx context.Context, deployment string) ([]boshapi.Snapshot, error) {
+	if err := checkPathSegments("Snapshots().List", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/snapshots"
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
@@ -38,6 +42,10 @@ func (c *snapshotsClient) List(ctx context.Context, deployment string) ([]boshap
 }
 
 func (c *snapshotsClient) ListForInstance(ctx context.Context, deployment, job string, index int) ([]boshapi.Snapshot, error) {
+	if err := checkPathSegments("Snapshots().ListForInstance", "deployment", deployment, "job", job); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/jobs/" + url.PathEscape(job) + "/" + strconv.Itoa(index) + "/snapshots"
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
@@ -55,6 +63,10 @@ func (c *snapshotsClient) ListForInstance(ctx context.Context, deployment, job s
 }
 
 func (c *snapshotsClient) Create(ctx context.Context, deployment string) (*boshapi.Task, error) {
+	if err := checkPathSegments("Snapshots().Create", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/snapshots"
 
 	resp, err := c.httpClient.Post(ctx, path, nil)
@@ -71,6 +83,10 @@ func (c *snapshotsClient) Create(ctx context.Context, deployment string) (*bosha
 }
 
 func (c *snapshotsClient) CreateForInstance(ctx context.Context, deployment, job, indexOrID string) (*boshapi.Task, error) {
+	if err := checkPathSegments("Snapshots().CreateForInstance", "deployment", deployment, "job", job, "indexOrID", indexOrID); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/jobs/" + url.PathEscape(job) + "/" + url.PathEscape(indexOrID) + "/snapshots"
 
 	resp, err := c.httpClient.Post(ctx, path, nil)
@@ -87,6 +103,10 @@ func (c *snapshotsClient) CreateForInstance(ctx context.Context, deployment, job
 }
 
 func (c *snapshotsClient) DeleteAll(ctx context.Context, deployment string) (*boshapi.Task, error) {
+	if err := checkPathSegments("Snapshots().DeleteAll", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/snapshots"
 
 	resp, err := c.httpClient.Delete(ctx, path)
@@ -103,6 +123,10 @@ func (c *snapshotsClient) DeleteAll(ctx context.Context, deployment string) (*bo
 }
 
 func (c *snapshotsClient) Delete(ctx context.Context, deployment, snapshotCID string) (*boshapi.Task, error) {
+	if err := checkPathSegments("Snapshots().Delete", "deployment", deployment, "snapshotCID", snapshotCID); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/snapshots/" + url.PathEscape(snapshotCID)
 
 	resp, err := c.httpClient.Delete(ctx, path)

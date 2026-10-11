@@ -462,6 +462,9 @@ type ErrandResult struct {
 	Stderr          string `json:"stderr"`
 	LogsBlobstoreID string `json:"logs_blobstore_id"`
 	LogsSHA1        string `json:"logs_sha1"`
+	// Skipped is true for a when_changed run the director skipped,
+	// because nothing changed since the last successful run.
+	Skipped bool `json:"skipped"`
 }
 
 type Instance struct {

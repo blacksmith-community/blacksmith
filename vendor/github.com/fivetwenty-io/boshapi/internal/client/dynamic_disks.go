@@ -87,6 +87,10 @@ func (c *dynamicDisksClient) Attach(ctx context.Context, diskName string, req *b
 		return nil, boshapi.ErrInstanceIDRequired
 	}
 
+	if err := checkPathSegments("DynamicDisks().Attach", "diskName", diskName); err != nil {
+		return nil, err
+	}
+
 	path := "/dynamic_disks/" + url.PathEscape(diskName) + "/attach"
 
 	resp, err := c.httpClient.Post(ctx, path, req)
@@ -145,6 +149,10 @@ func (c *dynamicDisksClient) Detach(ctx context.Context, diskName string) (*bosh
 		return nil, boshapi.ErrDiskNameRequired
 	}
 
+	if err := checkPathSegments("DynamicDisks().Detach", "diskName", diskName); err != nil {
+		return nil, err
+	}
+
 	path := "/dynamic_disks/" + url.PathEscape(diskName) + "/detach"
 
 	resp, err := c.httpClient.Post(ctx, path, nil)
@@ -163,6 +171,10 @@ func (c *dynamicDisksClient) Detach(ctx context.Context, diskName string) (*bosh
 func (c *dynamicDisksClient) Delete(ctx context.Context, diskName string) (*boshapi.Task, error) {
 	if diskName == "" {
 		return nil, boshapi.ErrDiskNameRequired
+	}
+
+	if err := checkPathSegments("DynamicDisks().Delete", "diskName", diskName); err != nil {
+		return nil, err
 	}
 
 	path := "/dynamic_disks/" + url.PathEscape(diskName)

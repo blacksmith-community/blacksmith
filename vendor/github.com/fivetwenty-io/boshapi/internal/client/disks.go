@@ -35,6 +35,10 @@ func (c *disksClient) ListOrphanDisks(ctx context.Context) ([]boshapi.OrphanDisk
 }
 
 func (c *disksClient) DeleteOrphanDisk(ctx context.Context, diskCID string) (*boshapi.Task, error) {
+	if err := checkPathSegments("Disks().DeleteOrphanDisk", "diskCID", diskCID); err != nil {
+		return nil, err
+	}
+
 	path := "/orphan_disks/" + url.PathEscape(diskCID)
 
 	resp, err := c.httpClient.Delete(ctx, path)
@@ -51,7 +55,27 @@ func (c *disksClient) DeleteOrphanDisk(ctx context.Context, diskCID string) (*bo
 }
 
 func (c *disksClient) AttachDisk(ctx context.Context, opts *boshapi.AttachDiskOptions) (*boshapi.Task, error) {
-	resp, err := c.httpClient.Put(ctx, "/disks", opts)
+	if opts == nil || opts.DiskCID == "" || opts.Deployment == "" || opts.Job == "" || opts.InstanceID == "" {
+		return nil, fmt.Errorf("attaching disk: %w; nothing was sent. Pass the disk CID, the deployment, the job, "+
+			"and the instance ID", boshapi.ErrAttachDiskOptionsInvalid)
+	}
+
+	if err := checkPathSegments("Disks().AttachDisk", "disk CID", opts.DiskCID); err != nil {
+		return nil, err
+	}
+
+	path := "/disks/" + url.PathEscape(opts.DiskCID) + "/attachments"
+
+	query := url.Values{
+		"deployment":  {opts.Deployment},
+		"job":         {opts.Job},
+		"instance_id": {opts.InstanceID},
+	}
+	if opts.DiskProperties != "" {
+		query.Set("disk_properties", opts.DiskProperties)
+	}
+
+	resp, err := c.httpClient.PutWithQuery(ctx, path, nil, query)
 	if err != nil {
 		return nil, fmt.Errorf("attaching disk: %w", err)
 	}

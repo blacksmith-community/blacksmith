@@ -193,3 +193,17 @@ func (e *TaskStateError) Error() string {
 
 	return msg.String()
 }
+
+// CancelTasksRequest selects the tasks that POST /tasks/cancel cancels. Every
+// field narrows the selection, and an empty field does not filter. At least
+// one of States, Types, and Deployment must be set, because an empty request
+// would cancel every queued task of every deployment.
+type CancelTasksRequest struct {
+	// States lists the task states to cancel, each "queued" or "processing".
+	// Pass []string{"queued"} to select every queued task.
+	States []string `json:"states,omitempty"`
+	// Types lists the task types to cancel, such as "update_deployment".
+	Types []string `json:"types,omitempty"`
+	// Deployment limits the selection to the tasks of one deployment.
+	Deployment string `json:"deployment,omitempty"`
+}

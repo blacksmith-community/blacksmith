@@ -14,8 +14,8 @@ import (
 // X-Bosh-Context-Id header.
 const maxContextIDLength = 64
 
-// lostAnswerLookupTimeout bounds the lookup by context ID that a deploy or
-// a delete makes once its answer was lost.
+// lostAnswerLookupTimeout bounds the lookup by context ID that a deploy, a
+// delete, or an errand run makes once its answer was lost.
 const lostAnswerLookupTimeout = 30 * time.Second
 
 // allJobs is the job a job-state change targets to act on every instance
@@ -75,8 +75,8 @@ type mutation struct {
 	// what says what the request does, for a failure message.
 	what string
 	// lookup is true for a request whose task the director tags with the
-	// context ID, which are deploys and deletes, so a lost answer is
-	// looked up by that ID.
+	// context ID, which are deploys, deletes, and errand runs, so a lost
+	// answer is looked up by that ID.
 	lookup bool
 }
 
@@ -84,11 +84,12 @@ type mutation struct {
 // names, as soon as the director has accepted the request. An error that
 // may hide a request the director accepted becomes an OutcomeUnknownError,
 // even when the caller's context has ended, because the caller must not
-// resend such a request. A deploy or a delete first looks for its task by
-// the context ID, and returns that task when the director lists it. Other
-// mutations make no lookup, and their error has NoLookup set. Any other
-// error keeps the director's answer or the transport failure reachable
-// through errors.As, so a follower can see that no task started.
+// resend such a request. A deploy, a delete, or an errand run first looks
+// for its task by the context ID, and returns that task when the director
+// lists it. Other mutations make no lookup, and their error has NoLookup
+// set. Any other error keeps the director's answer or the transport
+// failure reachable through errors.As, so a follower can see that no task
+// started.
 func (d *DirectorAdapter) accepted(ctx context.Context, call mutation, task *boshapi.Task, err error) (*Task, error) {
 	if err == nil && task == nil {
 		err = ErrEmptyDirectorAnswer
@@ -111,16 +112,16 @@ func (d *DirectorAdapter) accepted(ctx context.Context, call mutation, task *bos
 	return &result, nil
 }
 
-// lostAnswer settles a mutation whose answer was lost. A deploy or a
-// delete looks for its task by the context ID it carried, on a context of
-// its own bounded by lostAnswerLookupTimeout, so the lookup runs even when
-// the caller's context has ended. The director's task for that ID is the
-// request's task, and it is returned with no error. When the director
-// lists none, or the lookup fails, the outcome stays unknown. A failed
-// lookup is logged, and the error says the task could not be sought, but
-// the lookup's own error never reaches the caller. Every other mutation
-// makes no lookup, because the
-// director may not tag its task with the ID.
+// lostAnswer settles a mutation whose answer was lost. A deploy, a delete,
+// or an errand run looks for its task by the context ID it carried, on a
+// context of its own bounded by lostAnswerLookupTimeout, so the lookup runs
+// even when the caller's context has ended. The director's task for that
+// ID is the request's task, and it is returned with no error. When the
+// director lists none, or the lookup fails, the outcome stays unknown. A
+// failed lookup is logged, and the error says the task could not be
+// sought, but the lookup's own error never reaches the caller. Every other
+// mutation makes no lookup, because the director may not tag its task with
+// the ID.
 func (d *DirectorAdapter) lostAnswer(ctx context.Context, call mutation, err error) (*Task, error) {
 	unknown := &OutcomeUnknownError{
 		Operation:  call.operation,

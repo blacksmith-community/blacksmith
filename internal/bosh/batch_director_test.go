@@ -1575,8 +1575,8 @@ func TestWatcherKeepsTheSlotWhenTheTaskRouteIs404(t *testing.T) {
 
 	answers := map[string]error{
 		"a route 404": &boshapi.APIError{StatusCode: 404, Method: "GET", Path: "/tasks/101", Description: "Endpoint '/tasks/101' not found."},
-		"a director-not-found answer": &boshapi.APIError{
-			StatusCode: 404, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeDirectorNotFound, Description: "Director not found",
+		"a user-not-found answer": &boshapi.APIError{
+			StatusCode: 404, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeUserNotFound, Description: "User not found",
 		},
 		"a deployment-not-found answer": &boshapi.APIError{
 			StatusCode: 404, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeDeploymentNotFound, Description: "Deployment not found",
@@ -2177,7 +2177,10 @@ func TestWatcherGivesUpOnRefusedReadsAfterTheGrace(t *testing.T) {
 
 	refusals := map[string]error{
 		"a 401": &boshapi.APIError{StatusCode: 401, Method: "GET", Path: "/tasks/101", Description: notAuthorized},
-		"a 403": &boshapi.APIError{StatusCode: 403, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeNotAuthorized},
+		"a 403": &boshapi.APIError{StatusCode: 403, Method: "GET", Path: "/tasks/101", Description: notAuthorized},
+		"a 401 for a missing scope": &boshapi.APIError{
+			StatusCode: 401, Method: "GET", Path: "/tasks/101", Code: boshapi.ErrorCodeUnauthorizedToAccessDeployment,
+		},
 	}
 
 	for name, refusal := range refusals {

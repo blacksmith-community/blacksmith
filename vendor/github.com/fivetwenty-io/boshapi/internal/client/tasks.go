@@ -105,6 +105,36 @@ func (c *tasksClient) Cancel(ctx context.Context, id int) error {
 	return nil
 }
 
+// CancelMatching asks the director to cancel every task that req selects. The
+// director serves it on POST /tasks/cancel with a JSON body and answers 204
+// without saying how many tasks matched. A nil req, or one with no States,
+// no Types, and no Deployment, returns ErrCancelSelectorRequired before
+// anything is sent, because the director reads an empty selector as every
+// queued task of every deployment. A caller who wants that passes
+// States: []string{"queued"}. The Content-Type stays JSON because the route
+// refuses a body of any other type. Any 3xx answer is
+// returned as a *boshapi.RedirectError, because only a 2xx confirms the
+// cancel, and any other failure comes back as the HTTP client's error.
+func (c *tasksClient) CancelMatching(ctx context.Context, req *boshapi.CancelTasksRequest) error {
+	if req == nil || (len(req.States) == 0 && len(req.Types) == 0 && req.Deployment == "") {
+		return fmt.Errorf("cancelling matching tasks: %w; nothing was sent. Name the states, the types, or the "+
+			"deployment to match, and pass States: []string{\"queued\"} to cancel every queued task",
+			boshapi.ErrCancelSelectorRequired)
+	}
+
+	_, err := c.httpClient.Do(ctx, &http.Request{
+		Method:         nethttp.MethodPost,
+		Path:           "/tasks/cancel",
+		Body:           req,
+		NoTaskRedirect: true,
+	})
+	if err != nil {
+		return fmt.Errorf("cancelling matching tasks: %w", err)
+	}
+
+	return nil
+}
+
 // invalidStateAnswer matches the whole body of the director's 400 answer to a
 // cancel of a task that is no longer queued or processing.
 var invalidStateAnswer = regexp.MustCompile(`^Cannot cancel task ([1-9][0-9]*): invalid state \(([a-z_]+)\)$`)

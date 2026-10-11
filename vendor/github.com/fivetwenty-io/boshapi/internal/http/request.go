@@ -1,7 +1,9 @@
 package http
 
 import (
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
@@ -9,11 +11,21 @@ import (
 
 // Request represents an HTTP request.
 type Request struct {
-	Method      string
-	Path        string
-	Query       map[string]string
-	Body        interface{}
-	RawBody     []byte
+	Method string
+	Path   string
+	// Query holds the query parameters. A key with several values is sent
+	// once for each value.
+	Query   url.Values
+	Body    interface{}
+	RawBody []byte
+	// Stream is a body that is read as it is sent, and StreamSize is its
+	// length in bytes. A stream cannot be replayed, so the request is sent
+	// at most once: it is never retried and a 401 does not resend it,
+	// though a 401 still replaces the rejected bearer token. Do
+	// reads it on a goroutine of its own and returns once nothing reads it
+	// any more, or once the context ends, as PostStream describes.
+	Stream      io.Reader
+	StreamSize  int64
 	ContentType string
 	Headers     map[string]string
 	// CreatesTask marks a GET that makes the director start a task. It is
@@ -26,8 +38,15 @@ type Request struct {
 	NoTaskRedirect bool
 	// NoAuth sends the request without credentials, such as the GET /info
 	// that reads how the director authenticates.
-	NoAuth  bool
-	isRetry bool
+	NoAuth bool
+	// KeepsDiffError marks a diff request. The director answers one it
+	// cannot compute with {"diff":[],"error":"..."}, whose text can run long
+	// and which the caller reads, so an APIError keeps up to
+	// maxDiffErrorDescription bytes of that body in place of the shorter cut
+	// every other route gets. Only the diff calls set it, because a path
+	// that merely ends in "/diff" may be a name the caller supplied.
+	KeepsDiffError bool
+	isRetry        bool
 }
 
 // Response represents an HTTP response.

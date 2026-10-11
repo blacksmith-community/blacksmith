@@ -20,6 +20,10 @@ func NewErrandsClient(httpClient *http.Client) boshapi.ErrandsClient {
 }
 
 func (c *errandsClient) List(ctx context.Context, deployment string) ([]boshapi.Errand, error) {
+	if err := checkPathSegments("Errands().List", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/errands"
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
@@ -37,6 +41,10 @@ func (c *errandsClient) List(ctx context.Context, deployment string) ([]boshapi.
 }
 
 func (c *errandsClient) Run(ctx context.Context, deployment, errandName string, opts *boshapi.RunErrandOptions) (*boshapi.Task, error) {
+	if err := checkPathSegments("Errands().Run", "deployment", deployment, "errandName", errandName); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/errands/" + url.PathEscape(errandName) + "/runs"
 
 	// The director raises a NoMethodError and answers 500 with an empty body

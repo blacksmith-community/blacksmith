@@ -47,7 +47,19 @@ func (f Features) Enabled(name string) bool {
 
 // CertificateExpiry represents a certificate expiry entry from the Director.
 type CertificateExpiry struct {
-	Path     string `json:"path"`
+	Path     string `json:"certificate_path"`
 	Expiry   string `json:"expiry"`
 	DaysLeft int    `json:"days_left"`
+}
+
+// DeploymentCertificateExpiry is one certificate variable of a deployment, as
+// GET /deployments/{name}/certificate_expiry lists it. Name is the variable's
+// name and ID its version ID in the config server. ExpiryDate is the
+// certificate's NotAfter time in UTC, in RFC 3339 form, and DaysLeft is the
+// whole days until then, which is negative once the certificate has expired.
+type DeploymentCertificateExpiry struct {
+	Name       string `json:"name"`
+	ID         string `json:"id"`
+	ExpiryDate string `json:"expiry_date"`
+	DaysLeft   int    `json:"days_left"`
 }

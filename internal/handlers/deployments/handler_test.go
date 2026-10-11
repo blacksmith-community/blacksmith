@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"blacksmith/internal/bosh"
@@ -345,5 +346,97 @@ func TestUpdateManifestReturnsErrorWhenInstanceNotFound(t *testing.T) {
 
 	if !director.updateDeploymentCalled {
 		t.Fatalf("expected UpdateDeployment to run even when vault lookup fails")
+	}
+}
+
+// errandDirector runs every errand with the result it holds.
+type errandDirector struct {
+	*testutil.MockBOSHDirector
+
+	result *bosh.ErrandResult
+	err    error
+}
+
+func (d *errandDirector) RunErrand(context.Context, string, string, bosh.ErrandOpts) (*bosh.ErrandResult, error) {
+	return d.result, d.err
+}
+
+// runErrandThroughHandler posts an errand run to the handler and returns
+// the decoded answer.
+func runErrandThroughHandler(t *testing.T, result *bosh.ErrandResult) map[string]interface{} {
+	t.Helper()
+
+	director := &errandDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), result: result}
+	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/valkey-1/errands/smoke-tests?when_changed=true", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	var body map[string]interface{}
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &body)
+	if err != nil {
+		t.Fatalf("decoding the answer %q: %v", recorder.Body.String(), err)
+	}
+
+	return body
+}
+
+// The handler blames the caller with 400 for an invalid errand instance
+// and keeps 500 for every other failure, both with a JSON error body.
+func TestErrandsHandlerAnswersForRunFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"invalid instance", fmt.Errorf("instance /abc: %w", bosh.ErrInvalidErrandInstance), http.StatusBadRequest},
+		{"other failure", errors.New("director unreachable"), http.StatusInternalServerError},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			director := &errandDirector{MockBOSHDirector: testutil.NewMockBOSHDirector(), err: test.err}
+			handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/valkey-1/errands/smoke-tests", nil)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			if recorder.Code != test.code {
+				t.Fatalf("expected status %d, got %d: %s", test.code, recorder.Code, recorder.Body.String())
+			}
+
+			if !strings.Contains(recorder.Body.String(), test.err.Error()) {
+				t.Errorf("expected the body to carry %q, got %s", test.err.Error(), recorder.Body.String())
+			}
+		})
+	}
+}
+
+// A when_changed run the director skipped succeeded, so the handler
+// answers 200 and says the run was skipped.
+func TestErrandsHandlerReportsASkippedRun(t *testing.T) {
+	t.Parallel()
+
+	body := runErrandThroughHandler(t, &bosh.ErrandResult{Skipped: true})
+
+	if skipped, ok := body["skipped"].(bool); !ok || !skipped {
+		t.Errorf("expected skipped to be true, got %v", body)
+	}
+
+	if code, ok := body["exit_code"].(float64); !ok || code != 0 {
+		t.Errorf("expected exit code 0, got %v", body)
 	}
 }

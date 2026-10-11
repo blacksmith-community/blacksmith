@@ -30,6 +30,10 @@ func (c *sshClient) Cleanup(ctx context.Context, deployment string, req *boshapi
 // run posts an SSH request to the director's SSH route and returns the task
 // the director started. The action names the operation in any error.
 func (c *sshClient) run(ctx context.Context, action, deployment string, req *boshapi.SSHRequest) (*boshapi.Task, error) {
+	if err := checkPathSegments("SSHClient().run", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/ssh"
 
 	resp, err := c.httpClient.Post(ctx, path, req)

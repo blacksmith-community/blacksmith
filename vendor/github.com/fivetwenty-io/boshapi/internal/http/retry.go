@@ -26,9 +26,11 @@ type requestState struct {
 	// mutation is true when a resend could repeat a side effect on the
 	// director: any method but GET and HEAD, and a GET that starts a task.
 	mutation bool
-	// noRetry is true when the caller asked for one attempt only.
+	// noRetry is true when the caller asked for one attempt only, or the
+	// body is a stream that cannot be replayed.
 	noRetry bool
-	// sent is set once the request headers were written on any attempt.
+	// sent is set once the request headers were handed to the connection
+	// on any attempt, which is before they are flushed.
 	sent atomic.Bool
 	// attempts counts the attempts made so far.
 	attempts atomic.Int32
@@ -52,11 +54,12 @@ func isMutation(req *Request) bool {
 }
 
 // withRequestState attaches a fresh requestState to ctx, along with an
-// httptrace hook that records when the request headers were written.
+// httptrace hook that records when the request headers were handed to the
+// connection.
 func withRequestState(ctx context.Context, req *Request) (context.Context, *requestState) {
 	state := &requestState{
 		mutation: isMutation(req),
-		noRetry:  boshapi.RetriesDisabled(ctx),
+		noRetry:  boshapi.RetriesDisabled(ctx) || req.Stream != nil,
 	}
 
 	ctx = context.WithValue(ctx, requestStateKey{}, state)
@@ -200,22 +203,27 @@ func newTransportError(httpReq *http.Request, req *Request, state *requestState,
 		err = &url.Error{Op: urlErrorOp(httpReq.Method), URL: httpReq.URL.Redacted(), Err: err}
 	}
 
+	var cutShort *bodyCutShortError
+
+	bodyCutShort := errors.As(err, &cutShort)
+
 	var lastAnswer *boshapi.APIError
 	if state.lastStatus != 0 {
 		lastAnswer = newAPIError(state.lastStatus, state.lastBody, req, sentWith(httpReq))
 	}
 
 	return &boshapi.TransportError{
-		Method:     req.Method,
-		Path:       req.Path,
-		ContextID:  httpReq.Header.Get(contextIDHeader),
-		Sent:       state.sent.Load(),
-		Timeout:    timedOut,
-		Mutation:   state.mutation,
-		Attempts:   int(state.attempts.Load()),
-		ContextErr: contextErr,
-		LastAnswer: lastAnswer,
-		Err:        err,
+		Method:       req.Method,
+		Path:         req.Path,
+		ContextID:    httpReq.Header.Get(contextIDHeader),
+		Sent:         state.sent.Load(),
+		BodyCutShort: bodyCutShort,
+		Timeout:      timedOut,
+		Mutation:     state.mutation,
+		Attempts:     int(state.attempts.Load()),
+		ContextErr:   contextErr,
+		LastAnswer:   lastAnswer,
+		Err:          err,
 	}
 }
 

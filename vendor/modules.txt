@@ -581,7 +581,7 @@ github.com/fatih/color
 # github.com/felixge/httpsnoop v1.0.4
 ## explicit; go 1.13
 github.com/felixge/httpsnoop
-# github.com/fivetwenty-io/boshapi v0.283.7
+# github.com/fivetwenty-io/boshapi v0.283.8
 ## explicit; go 1.27.1
 github.com/fivetwenty-io/boshapi/internal/auth
 github.com/fivetwenty-io/boshapi/internal/client

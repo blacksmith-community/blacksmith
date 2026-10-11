@@ -79,7 +79,7 @@ func (o *TaskListOptions) ToValues() url.Values {
 	}
 
 	if o.Limit > 0 {
-		values.Set("limit", strconv.Itoa(o.Limit))
+		values.Set(limitParam, strconv.Itoa(o.Limit))
 	}
 
 	if o.Verbose > 0 {

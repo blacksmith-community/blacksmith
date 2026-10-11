@@ -35,7 +35,25 @@ func (c *stemcellsClient) List(ctx context.Context) ([]boshapi.Stemcell, error) 
 }
 
 func (c *stemcellsClient) Upload(ctx context.Context, opts *boshapi.UploadStemcellOptions) (*boshapi.Task, error) {
-	resp, err := c.httpClient.Post(ctx, "/stemcells", opts)
+	if opts == nil || opts.URL == "" {
+		return nil, fmt.Errorf("uploading stemcell: %w; nothing was sent. Pass the URL of the tarball, or use "+
+			"UploadFile to send one from disk", boshapi.ErrUploadLocationRequired)
+	}
+
+	// The director reads fix from the query and location and sha1 from
+	// the JSON body.
+	body := map[string]string{"location": opts.URL}
+	query := url.Values{}
+
+	if opts.SHA1 != "" {
+		body["sha1"] = opts.SHA1
+	}
+
+	if opts.Fix {
+		query.Set("fix", "true")
+	}
+
+	resp, err := c.httpClient.PostWithQuery(ctx, "/stemcells", body, query)
 	if err != nil {
 		return nil, fmt.Errorf("uploading stemcell: %w", err)
 	}
@@ -48,7 +66,39 @@ func (c *stemcellsClient) Upload(ctx context.Context, opts *boshapi.UploadStemce
 	return task, nil
 }
 
+func (c *stemcellsClient) UploadFile(ctx context.Context, opts *boshapi.UploadStemcellFileOptions) (*boshapi.Task, error) {
+	if opts == nil || opts.Body == nil || opts.Size <= 0 {
+		return nil, fmt.Errorf("uploading stemcell file: %w; nothing was sent. Pass the tarball as Body "+
+			"and its length in bytes as Size", boshapi.ErrUploadFileInvalid)
+	}
+
+	// The director reads fix from the query. Its nginx takes the tarball as
+	// a raw body with this type and hands it on as a file, so there is no
+	// JSON body.
+	query := url.Values{}
+
+	if opts.Fix {
+		query.Set("fix", "true")
+	}
+
+	resp, err := c.httpClient.PostStream(ctx, "/stemcells", query, tarballContentType, opts.Body, opts.Size)
+	if err != nil {
+		return nil, fmt.Errorf("uploading stemcell file: %w", err)
+	}
+
+	task, err := resp.RequireTask()
+	if err != nil {
+		return nil, fmt.Errorf("parsing upload task: %w", err)
+	}
+
+	return task, nil
+}
+
 func (c *stemcellsClient) Delete(ctx context.Context, name, version string, opts *boshapi.DeleteStemcellOptions) (*boshapi.Task, error) {
+	if err := checkPathSegments("Stemcells().Delete", "name", name, "version", version); err != nil {
+		return nil, err
+	}
+
 	path := "/stemcells/" + url.PathEscape(name) + "/" + url.PathEscape(version)
 
 	query := url.Values{}

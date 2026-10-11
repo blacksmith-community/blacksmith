@@ -41,6 +41,10 @@ func (c *eventsClient) List(ctx context.Context, opts *boshapi.EventListOptions)
 }
 
 func (c *eventsClient) Get(ctx context.Context, id string) (*boshapi.Event, error) {
+	if err := checkPathSegments("Events().Get", "id", id); err != nil {
+		return nil, err
+	}
+
 	path := "/events/" + url.PathEscape(id)
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
@@ -58,6 +62,26 @@ func (c *eventsClient) Get(ctx context.Context, id string) (*boshapi.Event, erro
 }
 
 func (c *eventsClient) Create(ctx context.Context, req *boshapi.CreateEventRequest) error {
+	// The director refuses a missing field with a 400 and keeps an empty one,
+	// then drops it when it reads the event back, so an empty value is
+	// refused here.
+	var missing string
+
+	switch {
+	case req == nil:
+		missing = "the request"
+	case req.Action == "":
+		missing = "Action"
+	case req.ObjectType == "":
+		missing = "ObjectType"
+	case req.ObjectName == "":
+		missing = "ObjectName"
+	}
+
+	if missing != "" {
+		return fmt.Errorf("creating event: %w; nothing was sent. %s is empty", boshapi.ErrEventFieldRequired, missing)
+	}
+
 	_, err := c.httpClient.Post(ctx, "/events", req)
 	if err != nil {
 		return fmt.Errorf("creating event: %w", err)

@@ -71,6 +71,9 @@ const (
 	// TaskCancelRefused means the task had already ended when Blacksmith
 	// asked the director to cancel it, so there was nothing to cancel.
 	TaskCancelRefused
+	// TaskFinished means the task ended in state done, so its work ran, and
+	// the call stopped before it could read the task's result.
+	TaskFinished
 )
 
 // String names the outcome for logs.
@@ -86,6 +89,8 @@ func (o TaskOutcome) String() string {
 		return "cancel failed"
 	case TaskCancelRefused:
 		return "cancel refused"
+	case TaskFinished:
+		return "finished"
 	default:
 		return fmt.Sprintf("TaskOutcome(%d)", int(o))
 	}
@@ -118,7 +123,11 @@ func (e *DirectorCallError) Error() string {
 	// A call that follows a task waits for the task to finish, and the
 	// director answers each read of it along the way.
 	before := "before the director answered"
-	if e.TaskID > 0 {
+
+	switch {
+	case e.Task == TaskFinished:
+		before = fmt.Sprintf("before it read the result of BOSH task %d", e.TaskID)
+	case e.TaskID > 0:
 		before = fmt.Sprintf("before BOSH task %d finished", e.TaskID)
 	}
 
@@ -131,6 +140,13 @@ func (e *DirectorCallError) Error() string {
 		why = "its deadline passed " + before
 	default:
 		why = "its caller cancelled it " + before
+	}
+
+	// The director finished the task and answered every read of it, so the
+	// advice for a call that got no answer does not apply.
+	if e.Task == TaskFinished {
+		return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %sThe call's own error was: %v",
+			e.Operation, e.Director, why, e.taskSentence(), e.Err)
 	}
 
 	return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %s"+
@@ -249,6 +265,9 @@ func (e *DirectorCallError) taskSentence() string {
 
 		return fmt.Sprintf("BOSH task %d had already ended in state %s when Blacksmith asked the director to cancel it, so there was nothing to cancel. "+
 			"Its result is at /b/tasks/%d. ", taskID, e.TaskState, taskID)
+	case TaskFinished:
+		return fmt.Sprintf("BOSH task %d finished in state done, so the errand ran, but Blacksmith did not read its result. "+
+			"Do not run the errand again on the belief that nothing ran. Read the result at /b/tasks/%d. ", taskID, taskID)
 	case TaskCancelFailed:
 		if e.CancelErr != nil {
 			return fmt.Sprintf("Blacksmith tried to cancel BOSH task %d, and the cancel failed (%v), so the task may still be running. "+

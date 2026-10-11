@@ -350,6 +350,8 @@ github.com/fivetwenty-io/boshapi v0.283.6 h1:0vnJ/6npgSDFO+ENbqsSMhvLAfXdqeIeh7k
 github.com/fivetwenty-io/boshapi v0.283.6/go.mod h1:tmCwLWAKaw8lfn2n5ZdpTrg9eMHmbqZ1lTO6lM8JDlE=
 github.com/fivetwenty-io/boshapi v0.283.7 h1:s9FpKyFQ0YQIEv23m/hzEHF5zfqNSe1bgPJNT2JXx2o=
 github.com/fivetwenty-io/boshapi v0.283.7/go.mod h1:tmCwLWAKaw8lfn2n5ZdpTrg9eMHmbqZ1lTO6lM8JDlE=
+github.com/fivetwenty-io/boshapi v0.283.8 h1:okCEH0E95Y00E2BwkFUyZ/pswAuMUKz2S/u117eOmq4=
+github.com/fivetwenty-io/boshapi v0.283.8/go.mod h1:tmCwLWAKaw8lfn2n5ZdpTrg9eMHmbqZ1lTO6lM8JDlE=
 github.com/fivetwenty-io/capi/v3 v3.229.1 h1:+OuYZbKbcLH+YSqaXqASPlh/xSRF3Hl1hpkI8vBayLg=
 github.com/fivetwenty-io/capi/v3 v3.229.1/go.mod h1:v3BKqr6eMzYRAmpPJ3hS6AS2MYUHiwc+EKNH099yd1Q=
 github.com/fivetwenty-io/osbapi/v2 v2.0.3 h1:Nt6OrH7FPX54AdPILb+HRgX+rkQbV7Anc5NwHcBswSA=

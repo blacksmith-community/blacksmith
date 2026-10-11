@@ -11,11 +11,17 @@ type OrphanDisk struct {
 	OrphanedAt      string                 `json:"orphaned_at"`
 }
 
-// AttachDiskOptions represents options for attaching a disk.
+// AttachDiskOptions represents options for attaching a disk. The director
+// reads Deployment, Job, InstanceID, and DiskProperties as query parameters
+// and takes DiskCID from the request path. Disks().AttachDisk returns
+// ErrAttachDiskOptionsInvalid before sending when DiskCID, Deployment, Job, or
+// InstanceID is empty.
 type AttachDiskOptions struct {
-	Deployment     string                 `json:"deployment"`
-	Job            string                 `json:"job"`
-	InstanceID     string                 `json:"instance_id"`
-	DiskCID        string                 `json:"disk_cid"`
-	DiskProperties map[string]interface{} `json:"disk_properties,omitempty"`
+	Deployment string
+	Job        string
+	InstanceID string
+	DiskCID    string
+	// DiskProperties is passed through to the director as a string, such as
+	// "copy" as bosh-cli sends it. Empty means the director's default.
+	DiskProperties string
 }

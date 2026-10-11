@@ -18,7 +18,7 @@ import (
 // Director error codes the real director uses in its JSON error bodies.
 const (
 	CodeDirectorNotFound   = 20000
-	CodeTaskNotFound       = 60000
+	CodeTaskNotFound       = 10000
 	CodeDeploymentNotFound = 70000
 )
 

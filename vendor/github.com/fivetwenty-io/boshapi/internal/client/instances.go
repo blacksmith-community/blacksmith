@@ -3,8 +3,11 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	nethttp "net/http"
 	"net/url"
+	"strings"
 
 	"github.com/fivetwenty-io/boshapi/internal/http"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
@@ -48,7 +51,38 @@ func jobPathSegment(segment string) string {
 	return url.PathEscape(segment)
 }
 
+func (c *instancesClient) Get(ctx context.Context, deployment, job, indexOrID string) (*boshapi.InstanceSummary, error) {
+	if err := checkPathSegments("Instances().Get", "deployment", deployment, "job", job, "indexOrID", indexOrID); err != nil {
+		return nil, err
+	}
+
+	path := "/deployments/" + url.PathEscape(deployment) + "/jobs/" + url.PathEscape(job) + "/" + url.PathEscape(indexOrID)
+
+	resp, err := c.httpClient.Get(ctx, path, nil)
+	if err != nil {
+		var apiErr *boshapi.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == nethttp.StatusNotFound &&
+			apiErr.Code == boshapi.ErrorCodeInstanceNotFound {
+			return nil, &boshapi.InstanceNotFoundError{Deployment: deployment, Job: job, IndexOrID: indexOrID}
+		}
+
+		return nil, fmt.Errorf("getting instance %s/%s in %s: %w", job, indexOrID, deployment, err)
+	}
+
+	var instance boshapi.InstanceSummary
+
+	if err := json.Unmarshal(resp.Body, &instance); err != nil {
+		return nil, fmt.Errorf("parsing instance: %w", err)
+	}
+
+	return &instance, nil
+}
+
 func (c *instancesClient) List(ctx context.Context, deployment string) ([]boshapi.Instance, error) {
+	if err := checkPathSegments("Instances().List", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/instances"
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
@@ -66,6 +100,10 @@ func (c *instancesClient) List(ctx context.Context, deployment string) ([]boshap
 }
 
 func (c *instancesClient) ListDetailed(ctx context.Context, deployment string) (*boshapi.Task, error) {
+	if err := checkPathSegments("Instances().ListDetailed", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/instances"
 	query := url.Values{"format": {"full"}}
 
@@ -95,6 +133,10 @@ func (c *instancesClient) UpdateState(ctx context.Context, deployment, job, inde
 		query = opts.ToValues()
 	}
 
+	if err := checkPathSegments("Instances().UpdateState", "deployment", deployment, "job", job, "indexOrID", indexOrID); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/jobs/" + jobPathSegment(job) + "/" + jobPathSegment(indexOrID)
 
 	// State changes send options as query parameters with an empty YAML
@@ -121,6 +163,10 @@ func (c *instancesClient) UpdateJobState(ctx context.Context, deployment, job st
 
 	if opts != nil {
 		query = opts.ToValues()
+	}
+
+	if err := checkPathSegments("Instances().UpdateJobState", "deployment", deployment, "job", job); err != nil {
+		return nil, err
 	}
 
 	path := "/deployments/" + url.PathEscape(deployment) + "/jobs/" + jobPathSegment(job)
@@ -182,6 +228,10 @@ func (c *instancesClient) Recreate(ctx context.Context, deployment, job, indexOr
 // (/deployments/{d}/instance_groups/{ig}/{id}/actions/{action}) and parses
 // the task ID from the 302 redirect.
 func (c *instancesClient) postInstanceAction(ctx context.Context, deployment, instanceGroup, indexOrID, action string, query url.Values) (*boshapi.Task, error) {
+	if err := checkPathSegments("Instances().postInstanceAction", "deployment", deployment, "instanceGroup", instanceGroup, "indexOrID", indexOrID); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/instance_groups/" + url.PathEscape(instanceGroup) + "/" + url.PathEscape(indexOrID) + "/actions/" + url.PathEscape(action)
 
 	resp, err := c.httpClient.PostWithQuery(ctx, path, nil, query)
@@ -232,6 +282,10 @@ func (c *instancesClient) RecreateInstance(ctx context.Context, deployment, inst
 }
 
 func (c *instancesClient) Ignore(ctx context.Context, deployment, instanceGroup, indexOrID string, ignore bool) error {
+	if err := checkPathSegments("Instances().Ignore", "deployment", deployment, "instanceGroup", instanceGroup, "indexOrID", indexOrID); err != nil {
+		return err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/instance_groups/" + url.PathEscape(instanceGroup) + "/" + url.PathEscape(indexOrID) + "/ignore"
 
 	body := map[string]bool{"ignore": ignore}
@@ -245,13 +299,41 @@ func (c *instancesClient) Ignore(ctx context.Context, deployment, instanceGroup,
 }
 
 func (c *instancesClient) FetchLogs(ctx context.Context, deployment, job, indexOrID string, opts *boshapi.LogOptions) (*boshapi.Task, error) {
+	if err := checkPathSegments("Instances().FetchLogs", "deployment", deployment, "job", job, "indexOrID", indexOrID); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/jobs/" + jobPathSegment(job) + "/" + jobPathSegment(indexOrID) + "/logs"
 
-	query := url.Values{}
+	// The director passes a missing type on as an empty string, which the
+	// agent refuses as an invalid log type, so the default is sent here as
+	// bosh-cli does.
+	query := url.Values{"type": {"job"}}
 
 	if opts != nil {
+		for _, filter := range opts.Filters {
+			if strings.ContainsAny(filter, ", \t\r\n\f\v") {
+				return nil, fmt.Errorf("fetching logs for %s/%s/%s: %w; nothing was sent. The director splits "+
+					"filters on commas and whitespace, so %q would arrive as more than one filter",
+					deployment, job, indexOrID, boshapi.ErrLogFilterInvalid, filter)
+			}
+		}
+
 		if opts.Type != "" {
 			query.Set("type", opts.Type)
+		}
+
+		// The director splits filters on commas and whitespace.
+		var filters []string
+
+		for _, filter := range opts.Filters {
+			if filter != "" {
+				filters = append(filters, filter)
+			}
+		}
+
+		if len(filters) > 0 {
+			query.Set("filters", strings.Join(filters, ","))
 		}
 	}
 

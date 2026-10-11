@@ -20,31 +20,30 @@ const maxOutputExcerpt = 200
 // and Vitals when the agent did not answer. DeploymentName is not part of
 // every line, so callers that need it set it from the request they made.
 type VMDetails struct {
-	AgentID            string     `json:"agent_id"`
-	JobName            string     `json:"job_name"`
-	Index              *int       `json:"index"`
-	ID                 string     `json:"id"`
-	DeploymentName     string     `json:"deployment_name"`
-	ResourcePool       string     `json:"resource_pool"`
-	JobState           string     `json:"job_state"`
-	ProcessState       string     `json:"process_state"`
-	State              string     `json:"state"`
-	Bootstrap          bool       `json:"bootstrap"`
-	IPs                []string   `json:"ips"`
-	DNS                []string   `json:"dns"`
-	AZ                 string     `json:"az"`
-	VMType             string     `json:"vm_type"`
-	VMCID              string     `json:"vm_cid"`
-	DiskCID            string     `json:"disk_cid"`
-	DiskCIDs           []string   `json:"disk_cids"`
-	Ignore             bool       `json:"ignore"`
-	ResurrectionPaused bool       `json:"resurrection_paused"`
-	VMCreatedAt        string     `json:"vm_created_at"`
-	Active             *bool      `json:"active"`
-	Stemcell           VMStemcell `json:"stemcell"`
-	Processes          []Process  `json:"processes"`
-	Vitals             *VMVitals  `json:"vitals"`
-	CloudProperties    any        `json:"cloud_properties"`
+	AgentID         string     `json:"agent_id"`
+	JobName         string     `json:"job_name"`
+	Index           *int       `json:"index"`
+	ID              string     `json:"id"`
+	DeploymentName  string     `json:"deployment_name"`
+	ResourcePool    string     `json:"resource_pool"`
+	JobState        string     `json:"job_state"`
+	ProcessState    string     `json:"process_state"`
+	State           string     `json:"state"`
+	Bootstrap       bool       `json:"bootstrap"`
+	IPs             []string   `json:"ips"`
+	DNS             []string   `json:"dns"`
+	AZ              string     `json:"az"`
+	VMType          string     `json:"vm_type"`
+	VMCID           string     `json:"vm_cid"`
+	DiskCID         string     `json:"disk_cid"`
+	DiskCIDs        []string   `json:"disk_cids"`
+	Ignore          bool       `json:"ignore"`
+	VMCreatedAt     string     `json:"vm_created_at"`
+	Active          *bool      `json:"active"`
+	Stemcell        VMStemcell `json:"stemcell"`
+	Processes       []Process  `json:"processes"`
+	Vitals          *VMVitals  `json:"vitals"`
+	CloudProperties any        `json:"cloud_properties"`
 }
 
 // VMStemcell identifies the stemcell a VM was created from.

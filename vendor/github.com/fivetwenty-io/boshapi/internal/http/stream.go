@@ -36,7 +36,7 @@ func (c *Client) GetStream(ctx context.Context, path string, query url.Values) (
 	return c.doStream(ctx, &Request{
 		Method:  http.MethodGet,
 		Path:    path,
-		Query:   urlValuesToMap(query),
+		Query:   query,
 		Headers: map[string]string{"Accept": "*/*"},
 	})
 }
@@ -121,8 +121,10 @@ func (c *Client) streamFailure(
 	apiErr := newAPIError(response.StatusCode, response.Body, req, sent)
 
 	// A 401 to a request that carried a bearer token refreshes the token and
-	// sends the request once more, as Do does.
-	if response.StatusCode != http.StatusUnauthorized || sent.tokens == nil || req.isRetry {
+	// sends the request once more, as Do does. A 401 with code 600000 refuses
+	// a valid token that lacks a scope, which a new token cannot fix.
+	if response.StatusCode != http.StatusUnauthorized || sent.tokens == nil || req.isRetry ||
+		!boshapi.IsUnauthorized(apiErr) {
 		return nil, apiErr
 	}
 

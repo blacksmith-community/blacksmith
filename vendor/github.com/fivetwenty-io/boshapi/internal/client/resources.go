@@ -31,9 +31,9 @@ func (c *resourcesClient) Download(ctx context.Context, blobstoreID string) (io.
 	}
 
 	if blobstoreID == "." || blobstoreID == ".." {
-		return nil, fmt.Errorf("downloading blobstore resource %q: a path segment of dots is read as the current "+
-			"or the parent path, so GET /resources/%s would not reach a resource, and nothing was sent. "+
-			"Pass the blobstore ID that the director returned, which is never %q", blobstoreID, blobstoreID, blobstoreID)
+		return nil, fmt.Errorf("downloading blobstore resource %q: %w, so GET /resources/%s would not reach "+
+			"a resource (dots are read as the current or the parent path), and nothing was sent. Pass the blobstore ID that the director returned, which is never %q",
+			blobstoreID, boshapi.ErrPathSegmentInvalid, blobstoreID, blobstoreID)
 	}
 
 	body, err := c.httpClient.GetStream(ctx, "/resources/"+url.PathEscape(blobstoreID), nil)

@@ -45,9 +45,18 @@ type DeploymentDiff struct {
 	Diff    [][]interface{}        `json:"diff"`
 }
 
-// DiffOptions represents options for a diff request.
+// DiffOptions represents options for a diff request. The zero value redacts
+// secrets in the diff, since an unredacted diff can carry them into logs.
+// CloudConfigs().Diff ignores NoRedact because the director has no redact
+// option there.
 type DiffOptions struct {
-	Redact bool `json:"redact,omitempty"`
+	// NoRedact turns redaction off, so the diff shows secret values.
+	NoRedact bool
+
+	// Name is the name of the config to compare against. Only
+	// CloudConfigs().Diff and RuntimeConfigs().Diff read it, and an empty
+	// name means the config named default. The other diffs ignore it.
+	Name string
 }
 
 // DeploymentListOptions and its ToValues method are defined in query.go.

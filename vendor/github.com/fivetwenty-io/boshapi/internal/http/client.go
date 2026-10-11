@@ -264,7 +264,29 @@ func (c *Client) Do(ctx context.Context, req *Request) (*Response, error) {
 		return nil, err
 	}
 
+	var stream *uploadBody
+
+	if req.Stream != nil {
+		// The transport reads the caller's reader through a pipe that the
+		// context and finish can close under it, and the caller closes the
+		// reader itself. go-retryablehttp built the request without a body
+		// and gave it a GetBody that returns an empty one. net/http calls
+		// GetBody to send a request again after an HTTP/2 refused stream or
+		// GOAWAY, or after a reused HTTP/1.1 connection fails before it
+		// writes, so it must go, or the upload would go out a second time
+		// with no body.
+		stream = newUploadBody(reqCtx, req.Stream, req.StreamSize)
+		httpReq.Body = stream
+		httpReq.ContentLength = req.StreamSize
+		httpReq.GetBody = nil
+	}
+
 	response, err := c.executeRequest(httpReq, req, state, sent)
+
+	// Nothing reads the caller's reader once Do returns, unless the context
+	// ended while a Read on it was blocked.
+	stream.finish(reqCtx)
+
 	if err != nil {
 		return nil, err
 	}
@@ -278,18 +300,14 @@ func (c *Client) Do(ctx context.Context, req *Request) (*Response, error) {
 
 // Get performs a GET request.
 func (c *Client) Get(ctx context.Context, path string, query url.Values) (*Response, error) {
-	queryMap := urlValuesToMap(query)
-
-	return c.Do(ctx, &Request{Method: http.MethodGet, Path: path, Query: queryMap})
+	return c.Do(ctx, &Request{Method: http.MethodGet, Path: path, Query: query})
 }
 
 // GetStartingTask performs a GET that makes the director start a task, such
 // as a detailed VM list or a log fetch. Resending it could leave a duplicate
 // task, so it follows the mutation rule and is never resent blindly.
 func (c *Client) GetStartingTask(ctx context.Context, path string, query url.Values) (*Response, error) {
-	queryMap := urlValuesToMap(query)
-
-	return c.Do(ctx, &Request{Method: http.MethodGet, Path: path, Query: queryMap, CreatesTask: true})
+	return c.Do(ctx, &Request{Method: http.MethodGet, Path: path, Query: query, CreatesTask: true})
 }
 
 // Post performs a POST request with JSON body.
@@ -299,21 +317,37 @@ func (c *Client) Post(ctx context.Context, path string, body interface{}) (*Resp
 
 // PostWithQuery performs a POST with JSON body and query parameters.
 func (c *Client) PostWithQuery(ctx context.Context, path string, body interface{}, query url.Values) (*Response, error) {
-	queryMap := urlValuesToMap(query)
-
-	return c.Do(ctx, &Request{Method: http.MethodPost, Path: path, Body: body, Query: queryMap})
+	return c.Do(ctx, &Request{Method: http.MethodPost, Path: path, Body: body, Query: query})
 }
 
 // PostYAML performs a POST request with YAML body (Content-Type: text/yaml).
 func (c *Client) PostYAML(ctx context.Context, path string, yamlBody string, query url.Values) (*Response, error) {
-	queryMap := urlValuesToMap(query)
-
 	return c.Do(ctx, &Request{
 		Method:      http.MethodPost,
 		Path:        path,
 		RawBody:     []byte(yamlBody),
 		ContentType: "text/yaml",
-		Query:       queryMap,
+		Query:       query,
+	})
+}
+
+// PostDiff performs a POST with JSON body to a diff route, whose error
+// answers an APIError keeps up to maxDiffErrorDescription bytes of.
+func (c *Client) PostDiff(ctx context.Context, path string, body interface{}) (*Response, error) {
+	return c.Do(ctx, &Request{Method: http.MethodPost, Path: path, Body: body, KeepsDiffError: true})
+}
+
+// PostYAMLDiff performs a POST with YAML body (Content-Type: text/yaml) to a
+// diff route, whose error answers an APIError keeps up to
+// maxDiffErrorDescription bytes of.
+func (c *Client) PostYAMLDiff(ctx context.Context, path string, yamlBody string, query url.Values) (*Response, error) {
+	return c.Do(ctx, &Request{
+		Method:         http.MethodPost,
+		Path:           path,
+		RawBody:        []byte(yamlBody),
+		ContentType:    "text/yaml",
+		Query:          query,
+		KeepsDiffError: true,
 	})
 }
 
@@ -321,14 +355,12 @@ func (c *Client) PostYAML(ctx context.Context, path string, yamlBody string, que
 // and query parameters. An empty yamlBody sends a zero-length body, which
 // the director treats as "use the stored manifest" on state-change routes.
 func (c *Client) PutYAML(ctx context.Context, path string, yamlBody string, query url.Values) (*Response, error) {
-	queryMap := urlValuesToMap(query)
-
 	return c.Do(ctx, &Request{
 		Method:      http.MethodPut,
 		Path:        path,
 		RawBody:     []byte(yamlBody),
 		ContentType: "text/yaml",
-		Query:       queryMap,
+		Query:       query,
 	})
 }
 
@@ -339,9 +371,7 @@ func (c *Client) Put(ctx context.Context, path string, body interface{}) (*Respo
 
 // PutWithQuery performs a PUT request with query parameters.
 func (c *Client) PutWithQuery(ctx context.Context, path string, body interface{}, query url.Values) (*Response, error) {
-	queryMap := urlValuesToMap(query)
-
-	return c.Do(ctx, &Request{Method: http.MethodPut, Path: path, Body: body, Query: queryMap})
+	return c.Do(ctx, &Request{Method: http.MethodPut, Path: path, Body: body, Query: query})
 }
 
 // Delete performs a DELETE request.
@@ -351,19 +381,16 @@ func (c *Client) Delete(ctx context.Context, path string) (*Response, error) {
 
 // DeleteWithQuery performs a DELETE request with query parameters.
 func (c *Client) DeleteWithQuery(ctx context.Context, path string, query url.Values) (*Response, error) {
-	queryMap := urlValuesToMap(query)
-
-	return c.Do(ctx, &Request{Method: http.MethodDelete, Path: path, Query: queryMap})
+	return c.Do(ctx, &Request{Method: http.MethodDelete, Path: path, Query: query})
 }
 
 // GetWithRange performs a GET with Range header for task output streaming.
 func (c *Client) GetWithRange(ctx context.Context, path string, query url.Values, rangeStart, rangeEnd int64) (*Response, error) {
-	queryMap := urlValuesToMap(query)
 	headers := map[string]string{
 		"Range": fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd),
 	}
 
-	return c.Do(ctx, &Request{Method: http.MethodGet, Path: path, Query: queryMap, Headers: headers})
+	return c.Do(ctx, &Request{Method: http.MethodGet, Path: path, Query: query, Headers: headers})
 }
 
 // prepareBody marshals the request body.
@@ -478,7 +505,11 @@ func (c *Client) executeRequest(
 	}
 
 	retryClient := c.httpClient
-	if req.CreatesTask {
+
+	switch {
+	case req.Stream != nil:
+		retryClient = c.streamClient
+	case req.CreatesTask:
 		retryClient = c.taskClient
 	}
 
@@ -532,21 +563,36 @@ func (c *Client) handleResponse(ctx context.Context, response *Response, req *Re
 	}
 
 	if response.StatusCode == http.StatusUnauthorized && sent.tokens != nil && !req.isRetry {
-		return c.resendWithNewToken(ctx, response, req, sent)
+		rejected := newAPIError(response.StatusCode, response.Body, req, sent)
+
+		switch {
+		case !boshapi.IsUnauthorized(rejected):
+			// A 401 with code 600000 refuses a valid token that lacks a
+			// scope. A new token for the same client has the same scopes,
+			// so neither a refresh nor a resend can help.
+			return response, rejected
+		case req.Stream != nil:
+			return response, refreshAfterStreamRejected(ctx, rejected, sent)
+		}
+
+		return c.resendWithNewToken(ctx, response, rejected, req, sent)
 	}
 
 	return response, c.parseError(response, req, sent)
 }
 
-// resendWithNewToken answers a 401 to a request that carried a bearer token.
-// It asks the token manager to replace the token the director rejected, not
-// whatever token is cached now, and sends the request once more under the
-// same context, so the resend keeps its context ID and retry rules. A copy of
+// resendWithNewToken answers a 401 to a request that carried a bearer token,
+// which rejected describes. It asks the token manager to replace the token
+// the director rejected, not whatever token is cached now, and sends the
+// request once more under the same context, so the resend keeps its context
+// ID and retry rules. A copy of
 // the request keeps CreatesTask. A director rejects a request before acting
 // on it, so the resend cannot repeat a change. When the refresh fails, the
 // error carries both the 401 and the reason the refresh failed.
-func (c *Client) resendWithNewToken(ctx context.Context, response *Response, req *Request, sent sentAuth) (*Response, error) {
-	err := refreshRejectedToken(ctx, newAPIError(response.StatusCode, response.Body, req, sent), sent)
+func (c *Client) resendWithNewToken(
+	ctx context.Context, response *Response, rejected *boshapi.APIError, req *Request, sent sentAuth,
+) (*Response, error) {
+	err := refreshRejectedToken(ctx, rejected, sent)
 	if err != nil {
 		return response, err
 	}
@@ -588,6 +634,24 @@ func refreshRejectedToken(ctx context.Context, rejected *boshapi.APIError, sent 
 	return nil
 }
 
+// refreshAfterStreamRejected answers a 401 to a streamed request. The body
+// was read as it went out and cannot be read again, so the request is never
+// resent, but the token the director rejected is replaced, so that the
+// caller's next request carries a new one. A director checks the token only
+// after its nginx has taken the whole body, so without the refresh every
+// retry of the upload would send the whole body again with the same rejected
+// token until that token expired. The error always wraps the 401.
+func refreshAfterStreamRejected(ctx context.Context, rejected *boshapi.APIError, sent sentAuth) error {
+	_, err := sent.tokens.RefreshToken(ctx, sent.token)
+	if err != nil {
+		return fmt.Errorf("%w; the upload was not resent, because a streamed body cannot be read twice, "+
+			"and replacing the rejected token failed: %w", rejected, err)
+	}
+
+	return fmt.Errorf("%w; the upload was not resent, because a streamed body cannot be read twice, "+
+		"but the rejected token was replaced, so sending the upload again carries a new token", rejected)
+}
+
 // handleRedirect reads the task ID from the Location header of a 302 answer
 // to a request that is not safe to resend, which may be absolute or relative.
 // Only its path is used: the client always talks to the configured director
@@ -622,6 +686,9 @@ func (c *Client) handleRedirect(response *Response, req *Request) (*Response, er
 	}
 }
 
+// errContextID reports a context ID that the director would reject.
+var errContextID = errors.New("the context ID is not valid")
+
 // checkContextID refuses a context ID the director would reject, before any
 // request is sent. An ID holds printable ASCII only, from 0x20 to 0x7E, so a
 // control character cannot reach the header and the 64-character limit is
@@ -629,10 +696,10 @@ func (c *Client) handleRedirect(response *Response, req *Request) (*Response, er
 func checkContextID(contextID string, req *Request) error {
 	for offset := range len(contextID) {
 		if contextID[offset] < 0x20 || contextID[offset] > 0x7e {
-			return fmt.Errorf("the context ID %q for %s %s has a byte outside printable ASCII at offset %d, "+
+			return fmt.Errorf("%w: %q for %s %s has a byte outside printable ASCII at offset %d, "+
 				"and nothing was sent. The %s header takes only the characters from space to tilde. "+
 				"Use an ID such as a UUID in boshapi.WithContextID",
-				contextID, req.Method, req.Path, offset, contextIDHeader)
+				errContextID, contextID, req.Method, req.Path, offset, contextIDHeader)
 		}
 	}
 
@@ -640,9 +707,9 @@ func checkContextID(contextID string, req *Request) error {
 		return nil
 	}
 
-	return fmt.Errorf("the context ID %q for %s %s is %d characters long, but the BOSH director accepts at most %d "+
+	return fmt.Errorf("%w: %q for %s %s is %d characters long, but the BOSH director accepts at most %d "+
 		"in the %s header, and nothing was sent. Use a shorter ID, such as a UUID, in boshapi.WithContextID",
-		contextID, req.Method, req.Path, len(contextID), maxContextIDLength, contextIDHeader)
+		errContextID, contextID, req.Method, req.Path, len(contextID), maxContextIDLength, contextIDHeader)
 }
 
 // taskIDFromLocation returns the ID in a Location of the form
@@ -667,7 +734,7 @@ func taskIDFromLocation(location string) (int, bool) {
 }
 
 // buildURL constructs the full URL.
-func (c *Client) buildURL(path string, query map[string]string) (string, error) {
+func (c *Client) buildURL(path string, query url.Values) (string, error) {
 	parsedURL, err := url.Parse(c.baseURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse base URL: %w", err)
@@ -682,8 +749,8 @@ func (c *Client) buildURL(path string, query map[string]string) (string, error) 
 
 	if len(query) > 0 {
 		q := parsedURL.Query()
-		for k, v := range query {
-			q.Set(k, v)
+		for key, values := range query {
+			q[key] = append([]string(nil), values...)
 		}
 		parsedURL.RawQuery = q.Encode()
 	}
@@ -695,6 +762,12 @@ func (c *Client) buildURL(path string, query map[string]string) (string, error) 
 // keeps, so a director fronted by a proxy cannot flood an error message with
 // an HTML page.
 const maxErrorDescription = 1024
+
+// maxDiffErrorDescription is the most of a JSON error body that an APIError
+// keeps for a diff route. The director sends {"diff":[],"error":"..."} with
+// text built from the content it failed to diff, which can pass
+// maxErrorDescription, and the caller reads that text from the body.
+const maxDiffErrorDescription = 64 * 1024
 
 // truncationMarker ends a description that was cut to maxErrorDescription
 // bytes, so a reader can tell the page was longer.
@@ -735,8 +808,13 @@ func newAPIError(status int, respBody []byte, req *Request, sent sentAuth) *bosh
 	}
 
 	text := sent.hide(strings.TrimSpace(string(respBody)))
-	if len(text) > maxErrorDescription {
-		text = strings.ToValidUTF8(text[:maxErrorDescription], "") + truncationMarker
+	limit := maxErrorDescription
+	if req.KeepsDiffError && strings.HasPrefix(text, "{") {
+		limit = maxDiffErrorDescription
+	}
+
+	if len(text) > limit {
+		text = strings.ToValidUTF8(text[:limit], "") + truncationMarker
 	}
 
 	apiErr.Description = text
@@ -783,19 +861,4 @@ func (c *Client) logResponse(resp *Response, sent sentAuth) {
 	}
 
 	c.logger.Debug("HTTP Response", fields)
-}
-
-// urlValuesToMap converts url.Values to a simple map (takes first value per key).
-func urlValuesToMap(values url.Values) map[string]string {
-	if values == nil {
-		return nil
-	}
-	result := make(map[string]string, len(values))
-	for k, v := range values {
-		if len(v) > 0 {
-			result[k] = v[0]
-		}
-	}
-
-	return result
 }

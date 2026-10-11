@@ -141,7 +141,7 @@ func addCACert(pool *x509.CertPool, caCert string) error {
 	pemData := []byte(caCert)
 
 	if !strings.Contains(caCert, pemBlockPrefix) {
-		data, err := os.ReadFile(caCert)
+		data, err := os.ReadFile(caCert) // #nosec G304 -- the caller names its own CA file in Config.CACert
 		if err != nil {
 			// The cause alone: a PathError repeats the whole value.
 			var pathErr *fs.PathError

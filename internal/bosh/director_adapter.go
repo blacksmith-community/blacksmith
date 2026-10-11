@@ -36,6 +36,7 @@ var (
 	ErrDirectorInfoProviderNil = errors.New("director info provider is nil")
 	ErrFactoryConfigNil        = errors.New("factory config is nil")
 	ErrNoErrandResults         = errors.New("no errand results returned")
+	ErrInvalidErrandInstance   = errors.New("the errand instance is not a group or a group/ID")
 )
 
 // Constants for director adapter operations.
@@ -2177,52 +2178,141 @@ func (d *DirectorAdapter) ListErrands(ctx context.Context, deployment string) (_
 	return errands, nil
 }
 
-// RunErrand runs a specific errand for a deployment.
+// runErrandOperation is the operation an errand run's errors name.
+const runErrandOperation = "RunErrand"
+
+// RunErrand runs an errand on a deployment and waits for it to finish. The
+// run carries a context ID, and a lost answer is looked up by that ID once,
+// as a deploy's is, and never resent, because a second run of an errand
+// may not be safe. A task that is found is followed as usual. When the
+// caller's context ends during the wait, the errand's task is left running,
+// because an errand can change state. A task that ends in any state but
+// done returns a TaskFailedError with the director's result text. When the
+// task is done but its result cannot be read, because the caller's context
+// ended or the director refused, the error is a DirectorCallError with the
+// task's ID and TaskFinished, since the errand has run.
 func (d *DirectorAdapter) RunErrand(ctx context.Context, deployment, errand string, opts ErrandOpts) (_ *ErrandResult, err error) {
-	defer d.explainContext(ctx, "RunErrand", &err)
+	defer d.explainContext(ctx, runErrandOperation, &err)
 
-	director := d.bind(ctx)
-
-	d.log.Infof("Running errand %s for deployment: %s", errand, deployment)
-
-	dep, err := director.FindDeployment(deployment)
+	instances, err := errandInstances(opts.Instances)
 	if err != nil {
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
+		d.log.Errorf("Refused to run errand %s for deployment %s: %v", errand, deployment, err)
 
-		return nil, fmt.Errorf("failed to find deployment: %w", err)
+		return nil, err
 	}
 
-	// Convert instances to proper slugs if provided
-	instanceSlugs := make([]boshdirector.InstanceGroupOrInstanceSlug, 0, len(opts.Instances))
-	for _, instance := range opts.Instances {
-		instanceSlugs = append(instanceSlugs, boshdirector.NewInstanceGroupOrInstanceSlug(instance, ""))
-	}
-
-	results, err := dep.RunErrand(errand, opts.KeepAlive, opts.WhenChanged, instanceSlugs)
+	ctx, contextID, err := mutationContext(ctx, runErrandOperation)
 	if err != nil {
-		d.log.Errorf("Failed to run errand %s for deployment %s: %v", errand, deployment, err)
-
-		return nil, fmt.Errorf("failed to run errand: %w", err)
+		return nil, err
 	}
 
-	// Return the first result (most common case)
+	d.log.Infof("Running errand %s for deployment %s (context ID %s)", errand, deployment, contextID)
+
+	apiTask, err := d.api.Errands().Run(ctx, deployment, errand, &boshapi.RunErrandOptions{
+		KeepAlive:   opts.KeepAlive,
+		WhenChanged: opts.WhenChanged,
+		Instances:   instances,
+	})
+
+	task, err := d.accepted(ctx, mutation{
+		operation:  runErrandOperation,
+		deployment: deployment,
+		contextID:  contextID,
+		what:       "run errand " + errand + " on deployment " + deployment,
+		lookup:     true,
+	}, apiTask, err)
+	if err != nil {
+		return nil, err
+	}
+
+	finished, err := d.WaitForTask(ctx, task.ID)
+	if err != nil {
+		var callErr *DirectorCallError
+		if errors.As(err, &callErr) {
+			callErr.Operation = runErrandOperation
+		}
+
+		return nil, err
+	}
+
+	if finished.State != taskStateDone {
+		d.log.Errorf("Errand %s for deployment %s ended in state %s in BOSH task %d: %s", errand, deployment, finished.State, task.ID, finished.Result)
+
+		return nil, &TaskFailedError{
+			Operation:  runErrandOperation,
+			Director:   d.address,
+			Deployment: deployment,
+			TaskID:     task.ID,
+			State:      finished.State,
+			Result:     finished.Result,
+		}
+	}
+
+	results, err := d.errandResults(ctx, deployment, errand, task.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(results) == 0 {
-		return nil, ErrNoErrandResults
+		return d.noErrandResults(deployment, errand, opts, finished)
 	}
 
-	result := &ErrandResult{
-		InstanceGroup:   results[0].InstanceGroup,
-		InstanceID:      results[0].InstanceID,
-		ExitCode:        results[0].ExitCode,
-		Stdout:          results[0].Stdout,
-		Stderr:          results[0].Stderr,
-		LogsBlobstoreID: results[0].LogsBlobstoreID,
-		LogsSHA1:        results[0].LogsSHA1,
+	result := convertErrandResult(results[0])
+
+	d.log.Infof("Ran errand %s for deployment %s in BOSH task %d, exit code: %d", errand, deployment, task.ID, result.ExitCode)
+
+	return &result, nil
+}
+
+// errandInstances turns the instances an errand run names into the
+// director's form. Each entry is trimmed and split on its first slash, and
+// both halves are trimmed, so node/0 and node/<uuid> become a group and an
+// ID, and a bare name stays a group. An empty entry, such as a trailing
+// comma leaves, is dropped, because the director would read it as an
+// instance with no name. An entry with a slash but no group, such as "/" or
+// "/0", names nothing the director can match. It returns
+// ErrInvalidErrandInstance, because dropping it could run the errand on
+// instances the caller did not name.
+func errandInstances(instances []string) ([]boshapi.ErrandInstance, error) {
+	converted := make([]boshapi.ErrandInstance, 0, len(instances))
+
+	for _, instance := range instances {
+		entry := strings.TrimSpace(instance)
+		if entry == "" {
+			continue
+		}
+
+		group, id, _ := strings.Cut(entry, "/")
+
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return nil, fmt.Errorf("%w: %q has no instance group", ErrInvalidErrandInstance, instance)
+		}
+
+		converted = append(converted, boshapi.ErrandInstance{Group: group, ID: strings.TrimSpace(id)})
 	}
 
-	d.log.Infof("Successfully ran errand %s for deployment %s, exit code: %d", errand, deployment, result.ExitCode)
+	return converted, nil
+}
 
-	return result, nil
+// convertErrandResult converts one errand result. A missing or negative
+// exit code means the director reported none Blacksmith can use, so it
+// becomes -1, which never reads as a success.
+func convertErrandResult(result boshapi.ErrandResult) ErrandResult {
+	code := -1
+	if result.ExitCode != nil && *result.ExitCode >= 0 {
+		code = *result.ExitCode
+	}
+
+	return ErrandResult{
+		InstanceGroup:   result.Instance.Group,
+		InstanceID:      result.Instance.ID,
+		ExitCode:        code,
+		Stdout:          result.Stdout,
+		Stderr:          result.Stderr,
+		LogsBlobstoreID: result.Logs.BlobstoreID,
+		LogsSHA1:        result.Logs.SHA1,
+	}
 }
 
 // GetInstances lists a deployment's instances, including those without a
@@ -2523,7 +2613,9 @@ func (d *DirectorAdapter) parseVMCreatedAt(rowID, value string) time.Time {
 
 // convertVMInfo converts one row of a format=full VM listing. The job's
 // state comes from job_state, which the director writes, and never from
-// process_state, which it does not.
+// process_state, which it does not. The director sends no per-VM
+// resurrection state either, so ResurrectionPaused stays false here, and
+// the handlers fill it from the resurrection config.
 func (d *DirectorAdapter) convertVMInfo(details boshapi.VMDetails) VM {
 	index := detailsIndex(details.Index)
 
@@ -2543,11 +2635,10 @@ func (d *DirectorAdapter) convertVMInfo(details boshapi.VMDetails) VM {
 		Index:    index,
 		JobState: details.JobState,
 
-		State:              details.State,
-		Active:             details.Active,
-		Bootstrap:          details.Bootstrap,
-		Ignore:             details.Ignore,
-		ResurrectionPaused: details.ResurrectionPaused,
+		State:     details.State,
+		Active:    details.Active,
+		Bootstrap: details.Bootstrap,
+		Ignore:    details.Ignore,
 
 		IPs: details.IPs,
 		DNS: dns,
@@ -2566,6 +2657,68 @@ func (d *DirectorAdapter) convertVMInfo(details boshapi.VMDetails) VM {
 		Vitals:          convertVitals(details.Vitals),
 		Stemcell:        convertStemcell(details.Stemcell),
 	}
+}
+
+// finishedUnread explains a failed read of the result of a task that ended
+// in state done. The task ran its work, so the error carries its ID and
+// TaskFinished, whether the caller's context ended or the director refused
+// the read, and a caller never mistakes it for a call that started nothing.
+func (d *DirectorAdapter) finishedUnread(ctx context.Context, operation string, taskID int, err error) error {
+	callErr := &DirectorCallError{
+		Operation: operation,
+		Director:  d.address,
+		Cause:     &taskReadError{taskID: taskID, lastState: taskStateDone},
+		Err:       err,
+		TaskID:    taskID,
+		Task:      TaskFinished,
+	}
+
+	if ctx.Err() != nil {
+		callErr.Deadline, _ = ctx.Deadline()
+		callErr.Cause = ctx.Err()
+	}
+
+	return callErr
+}
+
+// errandResults reads and parses the result output of an errand's task.
+func (d *DirectorAdapter) errandResults(ctx context.Context, deployment, errand string, taskID int) ([]boshapi.ErrandResult, error) {
+	output, err := d.api.Tasks().GetOutput(ctx, taskID, &boshapi.TaskOutputOptions{Type: "result"})
+	if err != nil {
+		d.log.Errorf("Failed to read the result of BOSH task %d, which finished: %v", taskID, err)
+
+		return nil, d.finishedUnread(ctx, runErrandOperation, taskID, d.requestFailure(fmt.Sprintf("read the result of BOSH task %d", taskID), err))
+	}
+
+	results, err := boshapi.ParseErrandResults(output)
+	if err != nil {
+		d.log.Errorf("Failed to parse the results of errand %s for deployment %s from BOSH task %d: %v", errand, deployment, taskID, err)
+
+		return nil, &taskResultError{resource: "results of errand " + errand, deployment: deployment, director: d.address, taskID: taskID, err: err}
+	}
+
+	return results, nil
+}
+
+// noErrandResults answers an errand task that finished and wrote no
+// results. The director skips a when_changed run when the last run
+// succeeded and nothing has changed since, so that run succeeded and is
+// reported as skipped, and the director's result text goes to the log,
+// because a run that matched no instance looks the same. Any other run
+// with no results has nothing to report.
+func (d *DirectorAdapter) noErrandResults(deployment, errand string, opts ErrandOpts, task *Task) (*ErrandResult, error) {
+	if opts.WhenChanged {
+		d.log.Infof("The director skipped errand %s for deployment %s in BOSH task %d, which wrote no results for a when_changed run. "+
+			"It answers the same way when nothing changed since the last successful run as when no instance matched, so the director's result text is the only way to tell them apart: %q",
+			errand, deployment, task.ID, task.Result)
+
+		return &ErrandResult{Skipped: true}, nil
+	}
+
+	d.log.Errorf("Errand %s for deployment %s wrote no results in BOSH task %d: %s", errand, deployment, task.ID, task.Result)
+
+	return nil, fmt.Errorf("%w: errand %s for deployment %s finished in BOSH task %d with the result %q",
+		ErrNoErrandResults, errand, deployment, task.ID, task.Result)
 }
 
 // convertInstanceInfo converts one row of a format=full instance listing.

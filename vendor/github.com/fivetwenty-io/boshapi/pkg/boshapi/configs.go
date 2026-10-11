@@ -5,6 +5,14 @@ import (
 	"strconv"
 )
 
+// limitParam is the query parameter that caps how many records a list returns.
+const limitParam = "limit"
+
+// defaultConfigVersionLimit is the number of versions the cloud, runtime, and
+// CPI config lists return when the caller names none. It is the limit bosh-cli
+// sends for bosh cloud-config, so the newest version comes back.
+const defaultConfigVersionLimit = 1
+
 // ConfigEntry represents a BOSH config entry (cloud, runtime, cpi, or generic).
 type ConfigEntry struct {
 	ID        string `json:"id,omitempty"`
@@ -16,15 +24,13 @@ type ConfigEntry struct {
 	Current   bool   `json:"current,omitempty"`
 }
 
-// ConfigVersion represents a versioned config entry.
-type ConfigVersion struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-	Team      string `json:"team,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
-	Current   bool   `json:"current,omitempty"`
+// ConfigRevision is one stored version of a cloud, runtime, or CPI config as
+// the director lists it. The director sends only the config's content, as
+// Properties, and the time it was stored, so the config's ID, name, type, and
+// team are not available from these routes.
+type ConfigRevision struct {
+	Properties string `json:"properties"`
+	CreatedAt  string `json:"created_at"`
 }
 
 // ConfigListOptions represents options for listing configs.
@@ -59,7 +65,7 @@ func (o *ConfigListOptions) ToValues() url.Values {
 	values.Set("latest", strconv.FormatBool(o.Latest))
 
 	if o.Limit > 0 {
-		values.Set("limit", strconv.Itoa(o.Limit))
+		values.Set(limitParam, strconv.Itoa(o.Limit))
 	}
 
 	return values
@@ -93,24 +99,25 @@ type ConfigDiffRequest struct {
 
 // CloudConfigListOptions represents options for listing cloud configs.
 type CloudConfigListOptions struct {
-	Name   string
-	Latest bool
+	Name string
+	// Limit is the number of versions to return, newest first. Zero or a
+	// negative value sends 1, the limit bosh-cli sends, because the
+	// director rejects a list request that has none.
+	Limit int
 }
 
-// ToValues converts CloudConfigListOptions to url.Values.
+// ToValues converts CloudConfigListOptions to url.Values. It always sends a
+// limit, because the director answers 400 without one. A nil receiver behaves
+// like the zero value.
 func (o *CloudConfigListOptions) ToValues() url.Values {
 	if o == nil {
-		return nil
+		o = &CloudConfigListOptions{}
 	}
 
-	values := url.Values{}
+	values := url.Values{limitParam: {strconv.Itoa(max(o.Limit, defaultConfigVersionLimit))}}
 
 	if o.Name != "" {
 		values.Set("name", o.Name)
-	}
-
-	if o.Latest {
-		values.Set("latest", "true")
 	}
 
 	return values
@@ -118,62 +125,58 @@ func (o *CloudConfigListOptions) ToValues() url.Values {
 
 // RuntimeConfigListOptions represents options for listing runtime configs.
 type RuntimeConfigListOptions struct {
-	Name   string
-	Latest bool
+	Name string
+	// Limit is the number of versions to return, newest first. Zero or a
+	// negative value sends 1, the limit bosh-cli sends, because the
+	// director rejects a list request that has none.
+	Limit int
 }
 
-// ToValues converts RuntimeConfigListOptions to url.Values.
+// ToValues converts RuntimeConfigListOptions to url.Values. It always sends a
+// limit, because the director answers 400 without one. A nil receiver behaves
+// like the zero value.
 func (o *RuntimeConfigListOptions) ToValues() url.Values {
 	if o == nil {
-		return nil
+		o = &RuntimeConfigListOptions{}
 	}
 
-	values := url.Values{}
+	values := url.Values{limitParam: {strconv.Itoa(max(o.Limit, defaultConfigVersionLimit))}}
 
 	if o.Name != "" {
 		values.Set("name", o.Name)
-	}
-
-	if o.Latest {
-		values.Set("latest", "true")
 	}
 
 	return values
 }
 
-// CPIConfigListOptions represents options for listing CPI configs.
+// CPIConfigListOptions represents options for listing CPI configs. The
+// director reads only the limit.
 type CPIConfigListOptions struct {
-	Name   string
-	Latest bool
+	// Limit is the number of versions to return, newest first. Zero or a
+	// negative value sends 1, the limit bosh-cli sends, because the
+	// director rejects a list request that has none.
+	Limit int
 }
 
-// ToValues converts CPIConfigListOptions to url.Values.
+// ToValues converts CPIConfigListOptions to url.Values. It always sends a
+// limit, because the director answers 400 without one. A nil receiver behaves
+// like the zero value.
 func (o *CPIConfigListOptions) ToValues() url.Values {
 	if o == nil {
-		return nil
+		o = &CPIConfigListOptions{}
 	}
 
-	values := url.Values{}
-
-	if o.Name != "" {
-		values.Set("name", o.Name)
-	}
-
-	if o.Latest {
-		values.Set("latest", "true")
-	}
+	values := url.Values{limitParam: {strconv.Itoa(max(o.Limit, defaultConfigVersionLimit))}}
 
 	return values
 }
 
 // UpdateCloudConfigOptions represents options for updating cloud config.
 type UpdateCloudConfigOptions struct {
-	Name             string
-	ExpectedLatestID string
+	Name string
 }
 
 // UpdateRuntimeConfigOptions represents options for updating runtime config.
 type UpdateRuntimeConfigOptions struct {
-	Name             string
-	ExpectedLatestID string
+	Name string
 }

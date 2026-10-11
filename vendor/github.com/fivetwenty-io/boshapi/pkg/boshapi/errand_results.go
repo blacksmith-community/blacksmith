@@ -12,7 +12,10 @@ import (
 // output of an errand run. A run on several instances writes one result per
 // instance.
 type ErrandResult struct {
-	ExitCode   int            `json:"exit_code"`
+	// ExitCode is the exit code of the errand, or nil when the director
+	// reported none, which is the case for a missing exit_code key and for
+	// null. A nil code is not a success, so check for nil before reading it.
+	ExitCode   *int           `json:"exit_code"`
 	Stdout     string         `json:"stdout"`
 	Stderr     string         `json:"stderr"`
 	Logs       ErrandLogs     `json:"logs"`

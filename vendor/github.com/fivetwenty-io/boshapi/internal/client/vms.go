@@ -20,6 +20,10 @@ func NewVMsClient(httpClient *http.Client) boshapi.VMsClient {
 }
 
 func (c *vmsClient) List(ctx context.Context, deployment string) ([]boshapi.VM, error) {
+	if err := checkPathSegments("VMs().List", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/vms"
 
 	resp, err := c.httpClient.Get(ctx, path, nil)
@@ -37,6 +41,10 @@ func (c *vmsClient) List(ctx context.Context, deployment string) ([]boshapi.VM, 
 }
 
 func (c *vmsClient) ListDetailed(ctx context.Context, deployment string) (*boshapi.Task, error) {
+	if err := checkPathSegments("VMs().ListDetailed", "deployment", deployment); err != nil {
+		return nil, err
+	}
+
 	path := "/deployments/" + url.PathEscape(deployment) + "/vms"
 	query := url.Values{"format": {"full"}}
 
@@ -54,6 +62,10 @@ func (c *vmsClient) ListDetailed(ctx context.Context, deployment string) (*bosha
 }
 
 func (c *vmsClient) DeleteVM(ctx context.Context, vmCID string) (*boshapi.Task, error) {
+	if err := checkPathSegments("VMs().DeleteVM", "vmCID", vmCID); err != nil {
+		return nil, err
+	}
+
 	path := "/vms/" + url.PathEscape(vmCID)
 
 	resp, err := c.httpClient.Delete(ctx, path)
