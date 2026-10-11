@@ -713,11 +713,42 @@ func (b *Broker) readoptIndexed(ctx context.Context, operation readoptOperation,
 			if stepErr != nil && ctx.Err() == nil {
 				logger.Warning("Re-adoption could not settle the %s of instance %s yet: %s", operation.recorded.Action, operation.instanceID, stepErr)
 			}
+
+			if b.readoptTaskRecorded(ctx, operation.instanceID, current) {
+				continue
+			}
 		}
 
 		if !readoptWait(ctx) {
 			return false
 		}
+	}
+}
+
+// readoptTaskRecorded reports whether a check of a re-adopted operation
+// that held no task recorded one, as the recovery from the deployment's
+// events and the resolver of an unknown outcome do. The next check then
+// runs at once, and it follows the task, which counts it against the
+// director's limit without a wait of readoptRetryInterval.
+func (b *Broker) readoptTaskRecorded(ctx context.Context, instanceID string, checked recordedOperation) bool {
+	if checked.hasTask() || ctx.Err() != nil {
+		return false
+	}
+
+	latest, err := b.readoptCurrent(ctx, instanceID)
+	if err != nil {
+		return false
+	}
+
+	return latest.Action == checked.Action && latest.hasTask() && !readoptTerminal(latest.State)
+}
+
+// adoptReadoptedTask counts a task that re-adoption found against the
+// director's limit, when the director can adopt one. The director counts a
+// task it already follows only once.
+func (b *Broker) adoptReadoptedTask(taskID int) {
+	if adopting, ok := b.BOSH.(taskAdopter); ok {
+		adopting.Adopt(taskID)
 	}
 }
 
@@ -730,9 +761,9 @@ func (b *Broker) readoptIndexedStep(ctx context.Context, operation readoptOperat
 	case current.hasTask():
 		return b.settleReadoptedTask(ctx, operation, current, logger)
 	case current.Action == operationTypeProvision:
-		return b.recoverProvision(ctx, operation.instanceID, operation.deploymentName, logger)
+		return b.recoverProvision(ctx, operation.instanceID, operation.deploymentName, b.adoptReadoptedTask, logger)
 	default:
-		return b.recoverDeprovision(ctx, operation.instanceID, operation.deploymentName, logger)
+		return b.recoverDeprovision(ctx, operation.instanceID, operation.deploymentName, b.adoptReadoptedTask, logger)
 	}
 }
 
@@ -896,6 +927,10 @@ func (b *Broker) readoptUnindexed(ctx context.Context, operation readoptOperatio
 			if err != nil && ctx.Err() == nil {
 				logger.Warning("Re-adoption could not settle the %s of instance %s yet: %s", current.Action, operation.instanceID, err)
 			}
+
+			if b.readoptTaskRecorded(ctx, operation.instanceID, current) {
+				continue
+			}
 		case current.Action == operationTypeDeprovision:
 			return b.readoptUnindexedDelete(ctx, operation.instanceID, current, loaded, checks, logger)
 		default:
@@ -1053,9 +1088,7 @@ func (b *Broker) readoptDeploymentGone(ctx context.Context, instanceID, deployme
 // when it no longer has the task. Any other failed wait is tried again
 // every readoptRetryInterval until ctx ends.
 func (b *Broker) followReadoptedTask(ctx context.Context, taskID int, logger logger.Logger) (*bosh.Task, error) {
-	if adopting, ok := b.BOSH.(taskAdopter); ok {
-		adopting.Adopt(taskID)
-	}
+	b.adoptReadoptedTask(taskID)
 
 	for {
 		task, err := b.BOSH.WaitForTask(ctx, taskID)

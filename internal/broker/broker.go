@@ -3475,7 +3475,7 @@ func (b *Broker) provisionStatus(ctx context.Context, instanceID, deploymentName
 		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: recorded.Description}, nil
 	}
 
-	return b.recoverProvision(ctx, instanceID, deploymentName, logger)
+	return b.recoverProvision(ctx, instanceID, deploymentName, nil, logger)
 }
 
 // unknownOutcomeOfOtherOperation answers a poll for one operation over a
@@ -3496,8 +3496,10 @@ func unknownOutcomeOfOtherOperation(instanceID, polled string, recorded recorded
 // restarts between sending the deploy and recording its task. BOSH records
 // the deploy as a deployment-level "create" event, so that event names the
 // task the broker started. Once found, the task is recorded so later polls
-// use it directly.
-func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// use it directly. When found is not nil, it is handed each task the
+// recovery finds, the one an event names or one still running on the
+// deployment, before the task is read.
+func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentName string, found func(taskID int), logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionCreate, logger)
 	if err != nil {
 		return osbapi.LastOperationResponse{}, err
@@ -3505,12 +3507,17 @@ func (b *Broker) recoverProvision(ctx context.Context, instanceID, deploymentNam
 
 	if taskID > 0 {
 		logger.Info("Recovered create deployment task %d for instance %s from the events of deployment %s", taskID, instanceID, deploymentName)
+
+		if found != nil {
+			found(taskID)
+		}
+
 		b.recordTask(ctx, instanceID, operationTypeProvision, fmt.Sprintf("BOSH deployment in progress (task %d)", taskID), taskID, logger)
 
 		return b.handleProvisionTask(ctx, instanceID, deploymentName, taskID, logger)
 	}
 
-	return b.interruptedOperationStatus(ctx, instanceID, deploymentName, "Provisioning was interrupted before the deployment was handed to BOSH", logger)
+	return b.interruptedOperationStatus(ctx, instanceID, deploymentName, "Provisioning was interrupted before the deployment was handed to BOSH", found, logger)
 }
 
 // deprovisionStatus answers a deprovision poll from the deprovision the broker
@@ -3543,7 +3550,7 @@ func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentNa
 		return osbapi.LastOperationResponse{State: osbapi.StateInProgress, Description: recorded.Description}, nil
 	}
 
-	return b.recoverDeprovision(ctx, instanceID, deploymentName, logger)
+	return b.recoverDeprovision(ctx, instanceID, deploymentName, nil, logger)
 }
 
 // recoverDeprovision answers for a deprovision whose goroutine is gone without
@@ -3551,8 +3558,9 @@ func (b *Broker) deprovisionStatus(ctx context.Context, instanceID, deploymentNa
 // between sending the delete and recording its task. BOSH records the delete
 // as a deployment-level "delete" event, so that event names the task the
 // broker started. Without one, a deployment the director no longer has needs
-// nothing more deleted.
-func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentName string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// nothing more deleted. When found is not nil, it is handed each task the
+// recovery finds, as recoverProvision does.
+func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentName string, found func(taskID int), logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	taskID, err := b.findDeploymentEventTask(ctx, deploymentName, boshEventActionDelete, logger)
 	if err != nil {
 		return osbapi.LastOperationResponse{}, err
@@ -3560,6 +3568,11 @@ func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentN
 
 	if taskID > 0 {
 		logger.Info("Recovered delete deployment task %d for instance %s from the events of deployment %s", taskID, instanceID, deploymentName)
+
+		if found != nil {
+			found(taskID)
+		}
+
 		b.recordTask(ctx, instanceID, operationTypeDeprovision, fmt.Sprintf("BOSH deletion in progress (task %d)", taskID), taskID, logger)
 
 		return b.handleDeprovisionTask(ctx, instanceID, deploymentName, taskID, logger)
@@ -3578,14 +3591,15 @@ func (b *Broker) recoverDeprovision(ctx context.Context, instanceID, deploymentN
 		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to check whether deployment %s exists: %w", deploymentName, err)
 	}
 
-	return b.interruptedOperationStatus(ctx, instanceID, deploymentName, "Deprovisioning was interrupted before the deployment delete started; the deployment still exists, so the delete can be retried", logger)
+	return b.interruptedOperationStatus(ctx, instanceID, deploymentName, "Deprovisioning was interrupted before the deployment delete started; the deployment still exists, so the delete can be retried", found, logger)
 }
 
 // interruptedOperationStatus answers for an operation that no goroutine in
 // this process is running and that left no BOSH task behind. A task still
 // running on the deployment may yet be the one the broker started, so that
-// keeps the answer in progress; otherwise nothing will finish the operation.
-func (b *Broker) interruptedOperationStatus(ctx context.Context, instanceID, deploymentName, description string, logger logger.Logger) (osbapi.LastOperationResponse, error) {
+// keeps the answer in progress, and it is handed to found when found is not
+// nil; otherwise nothing will finish the operation.
+func (b *Broker) interruptedOperationStatus(ctx context.Context, instanceID, deploymentName, description string, found func(taskID int), logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	running, err := b.BOSH.FindRunningTaskForDeployment(ctx, deploymentName)
 	if err != nil {
 		logger.Error("could not determine whether deployment %s has a running BOSH task: %s", deploymentName, err)
@@ -3595,6 +3609,10 @@ func (b *Broker) interruptedOperationStatus(ctx context.Context, instanceID, dep
 
 	if running != nil {
 		logger.Debug("instance %s has no recorded task, but BOSH task %d (%s) is still %s", instanceID, running.ID, running.Description, running.State)
+
+		if found != nil && running.ID > 0 {
+			found(running.ID)
+		}
 
 		return osbapi.LastOperationResponse{State: osbapi.StateInProgress}, nil
 	}

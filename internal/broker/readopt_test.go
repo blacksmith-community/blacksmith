@@ -491,6 +491,76 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Eventually(indexed, 10*time.Second).Should(BeFalse())
 	})
 
+	It("boot re-adoption counts a create task found in the deployment's events against the pool at once", func() {
+		// No pass waits on the retry interval before the found task counts.
+		defer broker.SetReadoptIntervals(time.Hour)()
+
+		indexInstance(nil)
+		recordProvision(0)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment})
+		world.addEvents(deploymentEvents(boshEventCreate, deploymentName, createTaskID)...)
+
+		pool := newPool(1)
+		boot(pool)
+
+		created := createOther(pool)
+		Consistently(created, 300*time.Millisecond).ShouldNot(BeClosed(), "a pooled mutation must wait while the recovered create task runs")
+
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskDone, Description: outcomeCreateDeployment})
+
+		Eventually(created, 10*time.Second).Should(BeClosed())
+		Eventually(recordState, 10*time.Second).Should(Equal(internalVault.TaskStateSucceeded))
+	})
+
+	It("boot re-adoption counts a task running on the deployment with no event against the pool", func() {
+		indexInstance(nil)
+		recordProvision(0)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment})
+
+		specWorld := world
+		director.FindRunningTaskForDeploymentFn = func(string) (*bosh.Task, error) {
+			task, ok := specWorld.get(createTaskID)
+			if !ok || task.State != outcomeTaskProcessing {
+				return nil, nil //nolint:nilnil // no running task is a nil task without an error
+			}
+
+			return task, nil
+		}
+
+		pool := newPool(1)
+		brokerInstance := boot(pool)
+
+		created := createOther(pool)
+		Consistently(created, 300*time.Millisecond).ShouldNot(BeClosed(), "a pooled mutation must wait while the task on the deployment runs")
+
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskDone, Description: outcomeCreateDeployment})
+
+		Eventually(created, 10*time.Second).Should(BeClosed())
+		Eventually(recordState, 10*time.Second).Should(Equal("failed"))
+		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+	})
+
+	It("boot re-adoption counts the task the resolver finds by context ID against the pool at once", func() {
+		// No pass waits on the retry interval before the found task counts.
+		defer broker.SetReadoptIntervals(time.Hour)()
+
+		indexInstance(nil)
+		Expect(vaultClient.TrackOutcomeUnknown(ctx, instanceID, outcomeProvision, "The answer to the deploy was lost", contextID, time.Now().Add(-time.Minute))).To(Succeed())
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskProcessing, Description: outcomeCreateDeployment})
+		contextTasks.Store(contextID, createTaskID)
+
+		pool := newPool(1)
+		boot(pool)
+
+		created := createOther(pool)
+		Consistently(created, 300*time.Millisecond).ShouldNot(BeClosed(), "a pooled mutation must wait while the found create task runs")
+
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskDone, Description: outcomeCreateDeployment})
+
+		Eventually(created, 10*time.Second).Should(BeClosed())
+		Eventually(recordState, 10*time.Second).Should(Equal(internalVault.TaskStateSucceeded))
+	})
+
 	It("ReadoptInFlightOperations holds every claim when it returns", func() {
 		provisionID, deprovisionID, unknownID := instanceID+"-p", instanceID+"-d", instanceID+"-u"
 
