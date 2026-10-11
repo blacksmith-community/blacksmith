@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"blacksmith/internal/bosh"
@@ -110,7 +111,15 @@ const (
 
 // ReconcilerAdapter adapts the reconciler to work with the existing Blacksmith types.
 type ReconcilerAdapter struct {
-	manager   reconciler.Manager
+	// mu guards manager and stopped. No manager method runs while it is held.
+	mu      sync.Mutex
+	manager reconciler.Manager
+	// stopped is set by Stop so a Start still in flight does not start a manager
+	// that nothing would stop.
+	stopped bool
+	// newManager builds the manager Start runs. A nil value builds the real one.
+	newManager func() reconciler.Manager
+
 	broker    *broker.Broker
 	vault     *internalVault.Vault
 	bosh      bosh.Director
@@ -304,50 +313,174 @@ func parseDuration(s string) time.Duration {
 // Start starts the reconciler.
 func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 	if !r.config.Enabled {
-		r.logger.Info("Deployment reconciler is disabled")
+		r.log().Info("Deployment reconciler is disabled")
 
 		return nil
 	}
 
-	r.logger.Info("Initializing deployment reconciler")
+	r.log().Info("Initializing deployment reconciler")
 
 	// Wait for Vault to be ready before starting
 	if r.vault != nil {
-		r.logger.Info("Waiting for Vault to be ready before starting reconciler...")
+		r.log().Info("Waiting for Vault to be ready before starting reconciler...")
 
 		retries := 0
 
 		maxRetries := 30 // Wait up to 30 seconds
 		for retries < maxRetries {
 			if r.isVaultReady(ctx) {
-				r.logger.Info("Vault is ready")
+				r.log().Info("Vault is ready")
 
 				break
 			}
 
-			time.Sleep(1 * time.Second)
+			select {
+			case <-ctx.Done():
+				r.log().Info("Reconciler start cancelled while waiting for Vault")
+
+				return nil
+			case <-time.After(1 * time.Second):
+			}
 
 			retries++
 			if retries%5 == 0 {
-				r.logger.Debug("Still waiting for Vault to be ready... (%d/%d)", retries, maxRetries)
+				r.log().Debug("Still waiting for Vault to be ready... (%d/%d)", retries, maxRetries)
 			}
 		}
 
 		if retries >= maxRetries {
-			r.logger.Error("Vault not ready after %d seconds - reconciler will run with degraded functionality", maxRetries)
+			r.log().Error("Vault not ready after %d seconds - reconciler will run with degraded functionality", maxRetries)
 			// Continue anyway with degraded functionality
 		}
 	} else {
-		r.logger.Error("Vault is nil - reconciler will run with severely limited functionality")
+		r.log().Error("Vault is nil - reconciler will run with severely limited functionality")
 	}
 
 	// Load persisted settings from Vault (e.g., reconciler interval)
 	r.loadSettingsFromVault(ctx)
 
+	manager := r.buildManager()
+
+	r.mu.Lock()
+
+	if r.stopped || ctx.Err() != nil {
+		r.mu.Unlock()
+		r.log().Info("Deployment reconciler was stopped before it started")
+
+		return nil //nolint:nilerr // a start that shutdown cancelled is not a failure
+	}
+
+	r.manager = manager
+	r.mu.Unlock()
+
+	// Start the reconciler
+	err := manager.Start(ctx)
+	if err != nil {
+		r.log().Error("Failed to start reconciler: %s", err)
+
+		return fmt.Errorf("failed to start reconciler: %w", err)
+	}
+
+	r.log().Info("Deployment reconciler started successfully")
+
+	return nil
+}
+
+// Stop stops the reconciler.
+func (r *ReconcilerAdapter) Stop() error {
+	r.mu.Lock()
+	r.stopped = true
+	manager := r.manager
+	r.mu.Unlock()
+
+	if manager == nil {
+		return nil
+	}
+
+	r.log().Info("Stopping deployment reconciler")
+
+	err := manager.Stop()
+	if err != nil {
+		return fmt.Errorf("failed to stop reconciler: %w", err)
+	}
+
+	return nil
+}
+
+// GetStatus returns the reconciler status.
+func (r *ReconcilerAdapter) GetStatus() reconciler.Status {
+	manager := r.currentManager()
+	if manager == nil {
+		return reconciler.Status{Running: false}
+	}
+
+	return manager.GetStatus()
+}
+
+// ForceReconcile forces an immediate reconciliation.
+func (r *ReconcilerAdapter) ForceReconcile() error {
+	manager := r.currentManager()
+	if manager == nil {
+		return ErrReconcilerNotInitialized
+	}
+
+	err := manager.ForceReconcile()
+	if err != nil {
+		return fmt.Errorf("failed to force reconcile: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateInterval changes the reconciler interval at runtime and persists it to Vault.
+func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Duration) error {
+	manager := r.currentManager()
+	if manager != nil {
+		manager.UpdateInterval(interval)
+	}
+
+	r.config.Interval = interval
+
+	// Persist to Vault so it survives redeployment
+	if r.vault != nil {
+		err := r.vault.Put(ctx, "blacksmith/settings", map[string]interface{}{
+			"reconciler_interval": interval.String(),
+		})
+		if err != nil {
+			r.log().Error("Failed to persist reconciler interval to Vault: %s", err)
+			return fmt.Errorf("failed to persist interval: %w", err)
+		}
+	}
+
+	r.log().Info("Reconciler interval updated to %v and persisted to Vault", interval)
+
+	return nil
+}
+
+// GetInterval returns the current reconciler interval.
+func (r *ReconcilerAdapter) GetInterval() time.Duration {
+	return r.config.Interval
+}
+
+// log returns the adapter's logger, or the global one for a zero-value adapter.
+func (r *ReconcilerAdapter) log() logger.Logger {
+	if r.logger != nil {
+		return r.logger
+	}
+
+	return logger.Get().Named("reconciler")
+}
+
+// buildManager creates the reconciler manager Start runs.
+func (r *ReconcilerAdapter) buildManager() reconciler.Manager {
+	if r.newManager != nil {
+		return r.newManager()
+	}
+
 	// Create wrapped components
 	wrappedBroker := &brokerWrapper{broker: r.broker}
 	wrappedVault := &vaultWrapper{vault: r.vault}
-	wrappedLogger := &loggerWrapper{logger: r.logger}
+	wrappedLogger := &loggerWrapper{logger: r.log()}
 
 	// Create the reconciler manager with CF manager (as interface{})
 	manager := reconciler.NewReconcilerManager(
@@ -365,87 +498,15 @@ func (r *ReconcilerAdapter) Start(ctx context.Context) error {
 		manager.SetCredentialHooks(r.broker, r.broker)
 	}
 
-	r.manager = manager
-
-	// Start the reconciler
-	err := r.manager.Start(ctx)
-	if err != nil {
-		r.logger.Error("Failed to start reconciler: %s", err)
-
-		return fmt.Errorf("failed to start reconciler: %w", err)
-	}
-
-	r.logger.Info("Deployment reconciler started successfully")
-
-	return nil
+	return manager
 }
 
-// Stop stops the reconciler.
-func (r *ReconcilerAdapter) Stop() error {
-	if r.manager == nil {
-		return nil
-	}
+// currentManager returns the manager under the lock, or nil before Start set one.
+func (r *ReconcilerAdapter) currentManager() reconciler.Manager {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	r.logger.Info("Stopping deployment reconciler")
-
-	err := r.manager.Stop()
-	if err != nil {
-		return fmt.Errorf("failed to stop reconciler: %w", err)
-	}
-
-	return nil
-}
-
-// GetStatus returns the reconciler status.
-func (r *ReconcilerAdapter) GetStatus() reconciler.Status {
-	if r.manager == nil {
-		return reconciler.Status{Running: false}
-	}
-
-	return r.manager.GetStatus()
-}
-
-// ForceReconcile forces an immediate reconciliation.
-func (r *ReconcilerAdapter) ForceReconcile() error {
-	if r.manager == nil {
-		return ErrReconcilerNotInitialized
-	}
-
-	err := r.manager.ForceReconcile()
-	if err != nil {
-		return fmt.Errorf("failed to force reconcile: %w", err)
-	}
-
-	return nil
-}
-
-// UpdateInterval changes the reconciler interval at runtime and persists it to Vault.
-func (r *ReconcilerAdapter) UpdateInterval(ctx context.Context, interval time.Duration) error {
-	if r.manager != nil {
-		r.manager.UpdateInterval(interval)
-	}
-
-	r.config.Interval = interval
-
-	// Persist to Vault so it survives redeployment
-	if r.vault != nil {
-		err := r.vault.Put(ctx, "blacksmith/settings", map[string]interface{}{
-			"reconciler_interval": interval.String(),
-		})
-		if err != nil {
-			r.logger.Error("Failed to persist reconciler interval to Vault: %s", err)
-			return fmt.Errorf("failed to persist interval: %w", err)
-		}
-	}
-
-	r.logger.Info("Reconciler interval updated to %v and persisted to Vault", interval)
-
-	return nil
-}
-
-// GetInterval returns the current reconciler interval.
-func (r *ReconcilerAdapter) GetInterval() time.Duration {
-	return r.config.Interval
+	return r.manager
 }
 
 // loadSettingsFromVault loads persisted settings from Vault and applies them to config.
@@ -465,7 +526,7 @@ func (r *ReconcilerAdapter) loadSettingsFromVault(ctx context.Context) {
 		d, err := time.ParseDuration(intervalStr)
 		if err == nil && d >= 10*time.Second {
 			r.config.Interval = d
-			r.logger.Info("Loaded reconciler interval from Vault: %v", d)
+			r.log().Info("Loaded reconciler interval from Vault: %v", d)
 		}
 	}
 }
@@ -486,14 +547,14 @@ func (r *ReconcilerAdapter) isVaultReady(ctx context.Context) bool {
 	// Try a simple operation to verify Vault is responsive
 	health, err := client.Sys().HealthWithContext(ctx)
 	if err != nil {
-		r.logger.Debug("Vault health check failed: %s", err)
+		r.log().Debug("Vault health check failed: %s", err)
 
 		return false
 	}
 
 	// Check if Vault is initialized and unsealed
 	if !health.Initialized || health.Sealed {
-		r.logger.Debug("Vault not ready: initialized=%v, sealed=%v", health.Initialized, health.Sealed)
+		r.log().Debug("Vault not ready: initialized=%v, sealed=%v", health.Initialized, health.Sealed)
 
 		return false
 	}
