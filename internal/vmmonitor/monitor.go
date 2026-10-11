@@ -66,6 +66,10 @@ const (
 // status the monitor records for it.
 const statusDeleted = "deleted"
 
+// defaultCheckTimeout is the deadline of each check's VM listing when the
+// config sets none.
+const defaultCheckTimeout = 5 * time.Minute
+
 // Monitor handles scheduled VM monitoring for service instances.
 type Monitor struct {
 	vault        vmVault
@@ -75,6 +79,11 @@ type Monitor struct {
 
 	normalInterval time.Duration
 	failedInterval time.Duration
+
+	// checkTimeout is the deadline the monitor gives the VM listing of
+	// each check, so one listing whose BOSH task waits behind a busy
+	// director cannot hold a worker for longer.
+	checkTimeout time.Duration
 
 	services map[string]*ServiceMonitor
 
@@ -151,6 +160,8 @@ func New(vault *internalVault.Vault, boshDirector bosh.Director, claims Operatio
 
 	failedInterval := defaultFailedIntervalMinutes * time.Minute
 
+	checkTimeout := defaultCheckTimeout
+
 	// Access config fields through type assertion
 	type configGetter interface {
 		GetVMMonitoringNormalInterval() int
@@ -167,6 +178,18 @@ func New(vault *internalVault.Vault, boshDirector bosh.Director, claims Operatio
 		}
 	}
 
+	// The check deadline has its own interface, so a config that offers
+	// only the intervals still works and gets the default deadline.
+	type timeoutGetter interface {
+		GetVMMonitoringTimeout() int
+	}
+
+	if c, ok := cfg.(timeoutGetter); ok {
+		if timeout := c.GetVMMonitoringTimeout(); timeout > 0 {
+			checkTimeout = time.Duration(timeout) * time.Second
+		}
+	}
+
 	return &Monitor{
 		vault:          vault,
 		boshDirector:   boshDirector,
@@ -174,6 +197,7 @@ func New(vault *internalVault.Vault, boshDirector bosh.Director, claims Operatio
 		config:         cfg,
 		normalInterval: normalInterval,
 		failedInterval: failedInterval,
+		checkTimeout:   checkTimeout,
 		services:       make(map[string]*ServiceMonitor),
 		checking:       make(map[string]bool),
 		cancel:         nil, // Will be set in Start()
@@ -672,8 +696,15 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 	logger := logger.Get().Named("vm-monitor")
 	logger.Debug("Checking VMs for deployment %s (service %s)", svc.DeploymentName, svc.ServiceID)
 
-	// Fetch VM data from BOSH
-	vms, err := m.boshDirector.GetDeploymentVMs(ctx, svc.DeploymentName)
+	// The deadline bounds only the listing. When it passes, the director
+	// adapter cancels the listing's BOSH task, and the check below still
+	// confirms the deployment and stores the result on the service context,
+	// so an expired listing is recorded as a failed check.
+	listCtx, cancelList := context.WithTimeout(ctx, m.checkTimeout)
+	vms, err := m.boshDirector.GetDeploymentVMs(listCtx, svc.DeploymentName)
+
+	cancelList()
+
 	if err != nil {
 		m.handleCheckError(ctx, svc, err)
 

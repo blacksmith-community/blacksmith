@@ -482,3 +482,50 @@ func TestBOSHTaskWatchMaxRejectsANegativeValue(t *testing.T) {
 		t.Errorf("expected the error to name task_watch_max and the value -5, got %q", err.Error())
 	}
 }
+
+// vm_monitoring.timeout is the VM monitor's deadline for each check, in
+// seconds. It loads as written, and an absent or zero value loads as 300,
+// which is 5 minutes.
+func TestVMMonitoringTimeoutDefaultsToFiveMinutes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		setting string
+		want    int
+	}{
+		{name: "absent", setting: "", want: 300},
+		{name: "zero", setting: "vm_monitoring:\n  timeout: 0\n", want: 300},
+		{name: "set", setting: "vm_monitoring:\n  timeout: 45\n", want: 45},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.ReadConfig(writeBOSHConfig(t, testCase.setting))
+			if err != nil {
+				t.Fatalf("ReadConfig: %v", err)
+			}
+
+			if got := cfg.GetVMMonitoringTimeout(); got != testCase.want {
+				t.Errorf("GetVMMonitoringTimeout() = %d, want %d", got, testCase.want)
+			}
+		})
+	}
+}
+
+// A negative vm_monitoring.timeout is refused with a message that names the
+// setting and the value.
+func TestVMMonitoringTimeoutRejectsANegativeValue(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.ReadConfig(writeBOSHConfig(t, "vm_monitoring:\n  timeout: -5\n"))
+	if !errors.Is(err, config.ErrVMMonitoringTimeoutNegative) {
+		t.Fatalf("expected %v, got %v", config.ErrVMMonitoringTimeoutNegative, err)
+	}
+
+	if !strings.Contains(err.Error(), "vm_monitoring.timeout") || !strings.Contains(err.Error(), "-5") {
+		t.Errorf("expected the error to name vm_monitoring.timeout and the value -5, got %q", err.Error())
+	}
+}

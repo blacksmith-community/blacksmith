@@ -210,9 +210,10 @@ reconciler:
 # VM Monitoring Configuration
 vm_monitoring:
   enabled: true                       # Enable VM health monitoring
-  interval: "2m"                      # Monitoring interval
-  timeout: "30s"                      # Health check timeout
-  concurrent_checks: 5                # Maximum concurrent health checks
+  normal_interval: 3600               # Seconds between checks of a healthy deployment
+  failed_interval: 300                # Seconds between checks of an unhealthy deployment
+  timeout: 300                        # Deadline for each check's VM listing (seconds)
+  max_concurrent: 5                   # Maximum concurrent health checks
 
 # General Settings
 debug: false                          # Enable debug logging
@@ -480,9 +481,10 @@ reconciler:
 
 vm_monitoring:
   enabled: true
-  interval: "5m"
-  timeout: "60s"
-  concurrent_checks: 15
+  normal_interval: 300
+  failed_interval: 120
+  timeout: 300
+  max_concurrent: 15
 
 services:
   skip_tls_verify: []

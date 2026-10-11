@@ -123,7 +123,7 @@ vm_monitoring:
   normal_interval: 3600      # Check interval for healthy services (seconds)
   failed_interval: 300       # Check interval for failed services (seconds)
   max_retries: 3            # Maximum retry attempts before marking as failed
-  timeout: 30               # Health check timeout (seconds)
+  timeout: 300              # Deadline for each check's VM listing (seconds)
   max_concurrent: 5         # Maximum concurrent health checks
 ```
 
@@ -132,6 +132,7 @@ vm_monitoring:
 When not explicitly configured, the monitor uses these defaults:
 - **Normal Interval**: 1 hour (3600 seconds)
 - **Failed Interval**: 5 minutes (300 seconds)
+- **Check Deadline**: 5 minutes (300 seconds), from `timeout`, which bounds each check's VM listing
 - **Concurrency**: 3 concurrent health checks
 - **Retry Logic**: Exponential backoff for failed checks
 
@@ -152,7 +153,7 @@ vm_monitoring:
   normal_interval: 900     # 15 minutes for healthy services
   failed_interval: 120     # 2 minutes for failed services
   max_retries: 5
-  timeout: 60
+  timeout: 300             # Deadline for each check's VM listing (seconds)
   max_concurrent: 10
 ```
 

@@ -117,7 +117,7 @@ vm_monitoring:
   normal_interval: 3600 # Check healthy deployments every hour
   failed_interval: 300  # Check unhealthy deployments every 5 minutes
   max_retries: 3        # Maximum retry attempts
-  timeout: 30           # BOSH command timeout (seconds)
+  timeout: 300          # Deadline for each check's VM listing (seconds)
   max_concurrent: 3     # Maximum concurrent VM checks
 ```
 
@@ -144,9 +144,9 @@ Interval in seconds between VM health checks for deployments with failing or unh
 Maximum number of retry attempts for failed BOSH API calls before marking a service as having an error state.
 
 #### `timeout` (integer)
-**Default:** `30`
+**Default:** `300` (5 minutes)
 
-Timeout in seconds for individual BOSH CLI commands when fetching VM information.
+The deadline, in seconds, that each check gives its VM listing. The director lists a deployment's VMs through a BOSH task, and that task can wait behind other work in a busy director's queue. When the deadline passes, Blacksmith asks the director to cancel the task, records the check as failed, and checks the instance again after `failed_interval`. The deadline covers only the listing, so the check's result is still stored. A value of 0 means the default, and a negative value stops the broker from loading its configuration.
 
 #### `max_concurrent` (integer)
 **Default:** `3`
@@ -898,7 +898,7 @@ vm_monitoring:
   normal_interval: 3600
   failed_interval: 300
   max_retries: 3
-  timeout: 30
+  timeout: 300
   max_concurrent: 3
 
 reconciler:

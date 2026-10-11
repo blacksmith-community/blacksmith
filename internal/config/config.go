@@ -23,11 +23,18 @@ var (
 	ErrBOSHPasswordNotSet         = errors.New("BOSH password is not set")
 	ErrBOSHRequestTimeoutNegative = errors.New("bosh.request_timeout must not be negative")
 	ErrBOSHTaskWatchMaxNegative   = errors.New("bosh.task_watch_max must not be negative")
+	// ErrVMMonitoringTimeoutNegative is the error a negative
+	// vm_monitoring.timeout loads with.
+	ErrVMMonitoringTimeoutNegative = errors.New("vm_monitoring.timeout must not be negative")
 )
 
 // defaultBOSHTaskWatchMax is what a bosh.task_watch_max of 0 means, in
 // seconds, which is 6 hours.
 const defaultBOSHTaskWatchMax = 21600
+
+// defaultVMMonitoringTimeout is what a vm_monitoring.timeout of 0 means, in
+// seconds, which is 5 minutes.
+const defaultVMMonitoringTimeout = 300
 
 type Config struct {
 	Broker       BrokerConfig       `yaml:"broker"`
@@ -209,7 +216,7 @@ type VMMonitoringConfig struct {
 	NormalInterval int   `yaml:"normal_interval"` // Seconds between checks for healthy deployments
 	FailedInterval int   `yaml:"failed_interval"` // Seconds between checks for unhealthy deployments
 	MaxRetries     int   `yaml:"max_retries"`
-	Timeout        int   `yaml:"timeout"`
+	Timeout        int   `yaml:"timeout"` // The deadline for each check's VM listing (seconds); 0 means 300
 	MaxConcurrent  int   `yaml:"max_concurrent"`
 }
 
@@ -384,7 +391,12 @@ func ReadConfig(path string) (Config, error) {
 	}
 
 	setVaultDefaults(&config)
-	setVMMonitoringDefaults(&config)
+
+	err = setVMMonitoringDefaults(&config)
+	if err != nil {
+		return config, err
+	}
+
 	setReconcilerDefaults(&config)
 	setSSHDefaults(&config)
 	setCredHubDefaults(&config)
@@ -629,7 +641,14 @@ func setVaultDefaults(config *Config) {
 }
 
 // setVMMonitoringDefaults sets default values for VM monitoring configuration.
-func setVMMonitoringDefaults(config *Config) {
+//
+// vm_monitoring.timeout is the deadline the VM monitor gives the VM listing
+// of each check. A negative value fails to load, and 0 means the default.
+func setVMMonitoringDefaults(config *Config) error {
+	if config.VMMonitoring.Timeout < 0 {
+		return fmt.Errorf("%w: it is %d, and it must be a number of seconds, or 0 for the default of %d", ErrVMMonitoringTimeoutNegative, config.VMMonitoring.Timeout, defaultVMMonitoringTimeout)
+	}
+
 	if config.VMMonitoring.NormalInterval == 0 {
 		config.VMMonitoring.NormalInterval = 3600 // 1 hour
 	}
@@ -643,7 +662,7 @@ func setVMMonitoringDefaults(config *Config) {
 	}
 
 	if config.VMMonitoring.Timeout == 0 {
-		config.VMMonitoring.Timeout = 30
+		config.VMMonitoring.Timeout = defaultVMMonitoringTimeout
 	}
 
 	if config.VMMonitoring.MaxConcurrent == 0 {
@@ -654,6 +673,8 @@ func setVMMonitoringDefaults(config *Config) {
 		enabled := true
 		config.VMMonitoring.Enabled = &enabled
 	}
+
+	return nil
 }
 
 // setReconcilerDefaults sets default values for reconciler configuration.
@@ -842,6 +863,12 @@ func (c *Config) GetVMMonitoringNormalInterval() int {
 // GetVMMonitoringFailedInterval returns the failed interval for VM monitoring.
 func (c *Config) GetVMMonitoringFailedInterval() int {
 	return c.VMMonitoring.FailedInterval
+}
+
+// GetVMMonitoringTimeout returns the VM monitor's deadline for each check,
+// in seconds.
+func (c *Config) GetVMMonitoringTimeout() int {
+	return c.VMMonitoring.Timeout
 }
 
 // IsVMMonitoringEnabled returns whether VM monitoring is enabled.

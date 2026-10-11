@@ -17,9 +17,22 @@ func NewWithVault(vault vmVault, director bosh.Director, claims OperationClaims)
 		claims:         claims,
 		normalInterval: time.Hour,
 		failedInterval: 5 * time.Minute,
+		checkTimeout:   defaultCheckTimeout,
 		services:       make(map[string]*ServiceMonitor),
 		checking:       make(map[string]bool),
 	}
+}
+
+// UseVault replaces the vault a monitor reads and writes, so a test can
+// build the monitor with New and still script the index it reads.
+func (m *Monitor) UseVault(vault vmVault) {
+	m.vault = vault
+}
+
+// SetCheckTimeout sets the deadline the monitor gives the VM listing of
+// each check.
+func (m *Monitor) SetCheckTimeout(timeout time.Duration) {
+	m.checkTimeout = timeout
 }
 
 // ScanAllServices exposes the scan of the index that Start makes.
