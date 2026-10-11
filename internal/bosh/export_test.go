@@ -163,3 +163,46 @@ func TakeBatchSlotAtHead(batch *BatchDirector) {
 func AwaitTaskByContextIDWithClock(ctx context.Context, director Director, contextID string, since time.Time, clock BatchClock) (*Task, error) {
 	return awaitTaskByContextID(ctx, director, contextID, since, clock)
 }
+
+// AnswerLostRequest reports whether err is a DirectorCallError whose cause
+// is a lost answer to a request that starts a read-only task, and names
+// that request's method and path.
+func AnswerLostRequest(err error) (string, string, bool) {
+	var callErr *DirectorCallError
+	if !errors.As(err, &callErr) {
+		return "", "", false
+	}
+
+	var lost *answerLostError
+	if !errors.As(callErr.Cause, &lost) {
+		return "", "", false
+	}
+
+	return lost.Method, lost.Path, true
+}
+
+// ConvertVMInfo converts one row of a format=full VM listing, as
+// GetDeploymentVMs does.
+func ConvertVMInfo(details boshapi.VMDetails) VM {
+	return (&DirectorAdapter{log: &noOpLogger{}}).convertVMInfo(details)
+}
+
+// ExplainContext runs an adapter's explanation of a failed call on err, as
+// the deferred explanation of each director call does, and returns the
+// result.
+func ExplainContext(ctx context.Context, director Director, operation string, err error) error {
+	adapter, ok := director.(*DirectorAdapter)
+	if !ok {
+		panic(fmt.Sprintf("ExplainContext needs a *DirectorAdapter, got %T", director))
+	}
+
+	adapter.explainContext(ctx, operation, &err)
+
+	return err
+}
+
+// TaskResultUnreadable builds the error a listing returns when the result
+// of its finished task does not parse.
+func TaskResultUnreadable(resource, deployment string, taskID int, err error) error {
+	return &taskResultError{resource: resource, deployment: deployment, director: "https://127.0.0.1:25555", taskID: taskID, err: err}
+}

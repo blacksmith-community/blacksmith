@@ -50,11 +50,12 @@ type checkErrorCase struct {
 }
 
 // A failed VM listing never proves a deployment gone. A 404 can come from a
-// proxy in front of the director, and the director adapter wraps any 404 in
-// the deployment-not-found error. Before the monitor marks an instance
-// deleted, it asks the director for the deployment it monitors, and only the
-// director's deployment-not-found code, 70000, counts. Any other answer keeps
-// the instance, and the check is recorded as failed.
+// proxy in front of the director, and the monitor does not act on a listing
+// error even when it wraps the deployment-not-found error. Before the
+// monitor marks an instance deleted, it asks the director for the
+// deployment it monitors, and only the director's deployment-not-found
+// code, 70000, counts. Any other answer keeps the instance, and the check is
+// recorded as failed.
 func TestMonitorMarksAnInstanceDeletedOnlyWhenTheDirectorConfirmsIt(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +70,7 @@ func TestMonitorMarksAnInstanceDeletedOnlyWhenTheDirectorConfirmsIt(t *testing.T
 			confirm: live,
 		},
 		{
-			name: "a 404 the adapter wrapped as not found while the deployment is live",
+			name: "a listing error that wraps not found while the deployment is live",
 			vmsErr: func(deployment string) error {
 				return fmt.Errorf("%w: %s", bosh.ErrDeploymentNotFound, deployment)
 			},

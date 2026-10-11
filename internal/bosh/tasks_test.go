@@ -14,6 +14,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
 // testPollInterval keeps task waits in these tests short.
@@ -848,6 +849,34 @@ func TestLostCancelAnswerToAFinishedTaskIsNotResent(t *testing.T) {
 	}
 }
 
+// When a cancel's answer is lost and the read finds the task already
+// ended, the error carries the state it read as a *boshapi.TaskStateError,
+// as the director's own refusal does.
+func TestCancelAfterALostAnswerCarriesTheTaskState(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	server := lostCancelDirector(t, "done", nil)
+	director := newReadAdapter(t, server, nil)
+
+	err := director.CancelTask(t.Context(), 42)
+	if !errors.Is(err, bosh.ErrTaskCannotBeCancelled) {
+		t.Fatalf("expected ErrTaskCannotBeCancelled, got: %v", err)
+	}
+
+	var stateErr *boshapi.TaskStateError
+	if !errors.As(err, &stateErr) {
+		t.Fatalf("expected the error to carry a *boshapi.TaskStateError, got %T: %v", err, err)
+	}
+
+	if stateErr.TaskID != 42 || stateErr.State != "done" {
+		t.Errorf("expected task 42 in state done, got task %d in state %q", stateErr.TaskID, stateErr.State)
+	}
+
+	if strings.Contains(err.Error(), "HTTP 400") {
+		t.Errorf("the director never answered the cancel, so the error must not quote a 400: %v", err)
+	}
+}
+
 // When a cancel's answer is lost and the task reads cancelled, the cancel
 // landed, so it succeeds and no second cancel is sent.
 func TestLostCancelAnswerToACancelledTaskIsNotResent(t *testing.T) {
@@ -1213,6 +1242,7 @@ func TestDirectorCallErrorNamesTheTaskOutcome(t *testing.T) {
 		{outcome: bosh.TaskLeftRunning, want: "BOSH task 42 is still running; Blacksmith stopped waiting and did not cancel it"},
 		{outcome: bosh.TaskCancelRequested, want: "Blacksmith asked the director to cancel BOSH task 42"},
 		{outcome: bosh.TaskCancelFailed, want: "Blacksmith tried to cancel BOSH task 42, and the cancel failed"},
+		{outcome: bosh.TaskCancelRefused, want: "BOSH task 42 had already ended when Blacksmith asked the director to cancel it"},
 	}
 
 	for _, testCase := range tests {
@@ -1238,6 +1268,28 @@ func TestDirectorCallErrorNamesTheTaskOutcome(t *testing.T) {
 	plain := (&bosh.DirectorCallError{Operation: "GetInfo", Director: "https://127.0.0.1:25555", Cause: context.Canceled, Err: context.Canceled}).Error()
 	if strings.Contains(plain, "/b/tasks/") {
 		t.Errorf("a call with no task names no task path: %s", plain)
+	}
+}
+
+// The director cancels a queued task at once, but a task it has started
+// stops only at a checkpoint, so the message for a requested cancel says a
+// started task may run to its end.
+func TestCancelRequestedSaysAStartedTaskMayRunOn(t *testing.T) {
+	t.Parallel()
+
+	err := &bosh.DirectorCallError{
+		Operation: detailsVMListing,
+		Director:  "https://127.0.0.1:25555",
+		Cause:     context.Canceled,
+		Err:       context.Canceled,
+		TaskID:    42,
+		Task:      bosh.TaskCancelRequested,
+	}
+
+	want := "Blacksmith asked the director to cancel BOSH task 42, which stops the task if it had not started yet; " +
+		"a task the director had already started may run to its end. Check whether it ended at /b/tasks/42."
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("expected the error to say %q, got: %s", want, err.Error())
 	}
 }
 

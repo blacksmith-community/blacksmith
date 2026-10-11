@@ -19,6 +19,12 @@ const UnknownOutcomeGrace = 15 * time.Minute
 // director may or may not have acted on it.
 var ErrOutcomeUnknown = errors.New("the director's answer was lost, so the outcome of the request is unknown")
 
+// ErrBrokerShuttingDown is the cause the broker cancels its service context
+// with when it shuts down. A wait for a read-only director task that ends
+// with this cause sends the director no cancel, because such a task is
+// harmless and ends on its own.
+var ErrBrokerShuttingDown = errors.New("the broker is shutting down")
+
 // ErrInvalidContextID is the sentinel a mutation returns when its caller's
 // context ID is one the director would refuse. Nothing is sent.
 var ErrInvalidContextID = errors.New("the context ID is not one the BOSH director accepts")

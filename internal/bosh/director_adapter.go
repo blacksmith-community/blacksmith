@@ -393,50 +393,28 @@ func (d *DirectorAdapter) GetDeployment(ctx context.Context, name string) (_ *De
 	}, nil
 }
 
-// GetDeploymentVMs retrieves VMs for a deployment with full details (format=full).
+// GetDeploymentVMs lists a deployment's VMs with full details. The director
+// lists them in a read-only task, so the listing waits for that task as
+// waitOrCancel does and reads the task's result. Only the director's
+// deployment-not-found answer, code 70000, returns ErrDeploymentNotFound.
+// A plain 404 is a routing problem and stays an error that says so.
 func (d *DirectorAdapter) GetDeploymentVMs(ctx context.Context, deployment string) (_ []VM, err error) {
 	defer d.explainContext(ctx, "GetDeploymentVMs", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting VMs for deployment: %s", deployment)
-	d.log.Debugf("Finding deployment %s", deployment)
 
-	dep, err := director.FindDeployment(deployment)
+	details, err := d.listDetails(ctx, detailsListing{
+		operation: "GetDeploymentVMs",
+		resource:  "vms",
+		list:      d.api.VMs().ListDetailed,
+	}, deployment)
 	if err != nil {
-		// Check if it's a 404 error (deployment doesn't exist)
-		errStr := err.Error()
-		if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
-			d.log.Infof("Deployment %s not found in BOSH director (404)", deployment)
-
-			return nil, fmt.Errorf("%w: %s", ErrDeploymentNotFound, deployment)
-		}
-
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
-
-		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+		return nil, err
 	}
 
-	d.log.Debugf("Retrieving detailed VM information for deployment %s (format=full)", deployment)
-
-	vmInfos, err := dep.VMInfos()
-	if err != nil {
-		// Check if it's a 404 error (deployment doesn't exist or VMs not found)
-		errStr := err.Error()
-		if strings.Contains(errStr, "doesn't exist") || strings.Contains(errStr, "status code '404'") {
-			d.log.Infof("Deployment %s VMs not found in BOSH director (404)", deployment)
-
-			return nil, fmt.Errorf("%w: %s", ErrDeploymentNotFound, deployment)
-		}
-
-		d.log.Errorf("Failed to get VMs for deployment %s: %v", deployment, err)
-
-		return nil, fmt.Errorf("failed to get VMs for deployment %s: %w", deployment, err)
-	}
-
-	vms := make([]VM, len(vmInfos))
-	for index, vmInfo := range vmInfos {
-		vms[index] = d.convertVMInfo(vmInfo)
+	vms := make([]VM, len(details))
+	for index, vm := range details {
+		vms[index] = d.convertVMInfo(vm)
 	}
 
 	d.log.Infof("Successfully retrieved %d VMs for deployment %s", len(vms), deployment)
@@ -849,9 +827,12 @@ func (d *DirectorAdapter) CancelTask(ctx context.Context, taskID int) (err error
 	case isTerminalTaskState(task.State):
 		d.log.Infof("BOSH task %d ended in state %s before the cancel took effect", taskID, task.State)
 
-		return fmt.Errorf("%w: BOSH task %d on BOSH director %s ended in state %q before the cancel took effect, "+
-			"so there is nothing left to cancel. Check its result at /b/tasks/%d",
-			ErrTaskCannotBeCancelled, taskID, d.address, task.State, taskID)
+		return &cancelRefusedError{
+			message: fmt.Sprintf("%v: BOSH task %d on BOSH director %s ended in state %q before the cancel took effect, "+
+				"so there is nothing left to cancel. Check its result at /b/tasks/%d",
+				ErrTaskCannotBeCancelled, taskID, d.address, task.State, taskID),
+			state: &boshapi.TaskStateError{TaskID: taskID, State: task.State},
+		}
 	case task.State != taskStateQueued && task.State != taskStateProcessing:
 		// The director uses no other state, so the answer did not come from
 		// it as sent, and a second cancel would go to a task Blacksmith knows
@@ -883,6 +864,24 @@ func (d *DirectorAdapter) CancelTask(ctx context.Context, taskID int) (err error
 	}
 
 	return d.cancelFailure(taskID, err)
+}
+
+// cancelRefusedError is a cancel that found its task already ended after
+// the cancel's answer was lost. It matches ErrTaskCannotBeCancelled and
+// carries the state the read found as a *boshapi.TaskStateError, as the
+// director's own refusal does. Its message is its own, because the
+// director never answered the cancel.
+type cancelRefusedError struct {
+	message string
+	state   *boshapi.TaskStateError
+}
+
+func (e *cancelRefusedError) Error() string {
+	return e.message
+}
+
+func (e *cancelRefusedError) Unwrap() []error {
+	return []error{ErrTaskCannotBeCancelled, e.state}
 }
 
 // cancelFailure explains a cancel the director did not accept.
@@ -2517,129 +2516,177 @@ func (d *DirectorAdapter) sortConfigsByTypeAndName(configs []BoshConfig) {
 	})
 }
 
-func (d *DirectorAdapter) convertVMInfo(vmInfo boshdirector.VMInfo) VM {
-	// Parse VM creation time
-	var vmCreatedAt time.Time
-	if vmInfo.VMCreatedAtRaw != "" {
-		parsed, err := time.Parse(time.RFC3339, vmInfo.VMCreatedAtRaw)
-		if err == nil {
-			vmCreatedAt = parsed
-		}
+// detailsIndex is a row's index, or -1 when the director wrote a null
+// index, which it does for an instance with no VM.
+func detailsIndex(index *int) int {
+	if index == nil {
+		return -1
 	}
 
-	processes := d.convertProcesses(vmInfo.Processes)
-	vitals := d.convertVitals(vmInfo.Vitals)
-	stemcell := d.convertStemcell(vmInfo.Stemcell)
+	return *index
+}
 
-	// Log the state values for debugging
-	d.log.Debugf("VM %s/%d - ProcessState: %s, State: %s",
-		vmInfo.JobName, *vmInfo.Index, vmInfo.ProcessState, vmInfo.State)
+// parseVMCreatedAt parses a row's vm_created_at. An empty value, which is
+// what a null decodes as, gives the zero time, and so does a value that
+// does not parse, which is logged with the row's ID.
+func (d *DirectorAdapter) parseVMCreatedAt(rowID, value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		d.log.Debugf("The vm_created_at %q of %s does not parse as RFC 3339, so it is left empty: %v", value, rowID, err)
+
+		return time.Time{}
+	}
+
+	return parsed
+}
+
+// convertVMInfo converts one row of a format=full VM listing. The job's
+// state comes from job_state, which the director writes, and never from
+// process_state, which it does not.
+func (d *DirectorAdapter) convertVMInfo(details boshapi.VMDetails) VM {
+	index := detailsIndex(details.Index)
+
+	dns := details.DNS
+	if dns == nil {
+		dns = []string{}
+	}
+
+	d.log.Debugf("VM %s/%d - JobState: %s, State: %s", details.JobName, index, details.JobState, details.State)
 
 	return VM{
-		// Core VM identity
-		ID:      vmInfo.ID,
-		AgentID: vmInfo.AgentID,
-		CID:     vmInfo.VMID, // vm_cid from BOSH API
+		ID:      details.ID,
+		AgentID: details.AgentID,
+		CID:     details.VMCID,
 
-		// Job information
-		Job:      vmInfo.JobName,      // job_name from BOSH API
-		Index:    *vmInfo.Index,       // Dereference pointer
-		JobState: vmInfo.ProcessState, // job_state from BOSH API
+		Job:      details.JobName,
+		Index:    index,
+		JobState: details.JobState,
 
-		// VM state and properties
-		State:              vmInfo.State,
-		Active:             vmInfo.Active,
-		Bootstrap:          vmInfo.Bootstrap,
-		Ignore:             vmInfo.Ignore,
-		ResurrectionPaused: vmInfo.ResurrectionPaused,
+		State:              details.State,
+		Active:             details.Active,
+		Bootstrap:          details.Bootstrap,
+		Ignore:             details.Ignore,
+		ResurrectionPaused: details.ResurrectionPaused,
 
-		// Network and placement
-		IPs: vmInfo.IPs,
-		DNS: []string{}, // DNS not directly available in BOSH CLI
-		AZ:  vmInfo.AZ,
+		IPs: details.IPs,
+		DNS: dns,
+		AZ:  details.AZ,
 
-		// Resource allocation
-		VMType:       vmInfo.VMType,
-		ResourcePool: vmInfo.ResourcePool,
+		VMType:       details.VMType,
+		ResourcePool: details.ResourcePool,
 
-		// Disk information
-		DiskCID:  vmInfo.DiskID,
-		DiskCIDs: vmInfo.DiskIDs,
+		DiskCID:  details.DiskCID,
+		DiskCIDs: details.DiskCIDs,
 
-		// Timestamps
-		VMCreatedAt: vmCreatedAt,
+		VMCreatedAt: d.parseVMCreatedAt(details.ID, details.VMCreatedAt),
 
-		// Complex data structures
-		CloudProperties: vmInfo.CloudProperties,
-		Processes:       processes,
-		Vitals:          vitals,
-		Stemcell:        stemcell,
+		CloudProperties: details.CloudProperties,
+		Processes:       convertProcesses(details.Processes),
+		Vitals:          convertVitals(details.Vitals),
+		Stemcell:        convertStemcell(details.Stemcell),
 	}
 }
 
-func (d *DirectorAdapter) convertProcesses(processes []boshdirector.VMInfoProcess) []VMProcess {
+// nonNegative returns the address of value as a uint64, or nil when it is
+// negative, so a nonsense count never wraps to a huge one.
+func nonNegative(value int64) *uint64 {
+	if value < 0 {
+		return nil
+	}
+
+	converted := uint64(value)
+
+	return &converted
+}
+
+// convertProcesses converts a row's processes. A figure the agent did not
+// report stays nil, so it reads differently from a zero.
+func convertProcesses(processes []boshapi.Process) []VMProcess {
 	result := make([]VMProcess, len(processes))
-	for j, proc := range processes {
-		result[j] = VMProcess{
-			Name:  proc.Name,
-			State: proc.State,
-			CPU: VMVitalsCPU{
-				Total: proc.CPU.Total,
-				Sys:   proc.CPU.Sys,
-				User:  proc.CPU.User,
-				Wait:  proc.CPU.Wait,
-			},
-			Memory: VMVitalsMemory{
-				KB:      proc.Mem.KB,
-				Percent: proc.Mem.Percent,
-			},
-			Uptime: VMVitalsUptime{
-				Seconds: proc.Uptime.Seconds,
-			},
+
+	for index, process := range processes {
+		converted := VMProcess{
+			Name:  process.Name,
+			State: process.State,
 		}
+
+		if process.CPU != nil {
+			total := process.CPU.Total
+			converted.CPU = VMVitalsCPU{
+				Total: &total,
+				Sys:   process.CPU.Sys,
+				User:  process.CPU.User,
+				Wait:  process.CPU.Wait,
+			}
+		}
+
+		if process.Mem != nil {
+			percent := process.Mem.Percent
+			converted.Memory = VMVitalsMemory{
+				KB:      nonNegative(process.Mem.KB),
+				Percent: &percent,
+			}
+		}
+
+		if process.Uptime != nil {
+			converted.Uptime = VMVitalsUptime{Seconds: nonNegative(process.Uptime.Secs)}
+		}
+
+		result[index] = converted
 	}
 
 	return result
 }
 
-func (d *DirectorAdapter) convertVitals(vitals boshdirector.VMInfoVitals) VMVitals {
-	result := VMVitals{
-		CPU: VMVitalsCPU{
-			Sys:  vitals.CPU.Sys,
-			User: vitals.CPU.User,
-			Wait: vitals.CPU.Wait,
-		},
-		Memory: VMVitalsMemory{
-			KB:      parseStringToUint64(vitals.Mem.KB),
-			Percent: parseStringToFloat64(vitals.Mem.Percent),
-		},
-		Swap: VMVitalsMemory{
-			KB:      parseStringToUint64(vitals.Swap.KB),
-			Percent: parseStringToFloat64(vitals.Swap.Percent),
-		},
-		Load: vitals.Load,
-		Uptime: VMVitalsUptime{
-			Seconds: vitals.Uptime.Seconds,
-		},
+// convertVitals converts a row's vitals. The director writes null vitals for
+// an agent that did not answer, which gives empty vitals with an empty disk
+// map.
+func convertVitals(vitals *boshapi.VMVitals) VMVitals {
+	result := VMVitals{Disk: make(map[string]VMVitalsDisk)}
+
+	if vitals == nil {
+		return result
 	}
 
-	// Convert disk vitals
-	result.Disk = make(map[string]VMVitalsDisk)
-	for diskName, diskVitals := range vitals.Disk {
+	result.CPU = VMVitalsCPU{
+		Sys:  vitals.CPU.Sys,
+		User: vitals.CPU.User,
+		Wait: vitals.CPU.Wait,
+	}
+	result.Memory = VMVitalsMemory{
+		KB:      parseStringToUint64(vitals.Mem.KB),
+		Percent: parseStringToFloat64(vitals.Mem.Percent),
+	}
+	result.Swap = VMVitalsMemory{
+		KB:      parseStringToUint64(vitals.Swap.KB),
+		Percent: parseStringToFloat64(vitals.Swap.Percent),
+	}
+	result.Load = vitals.Load
+
+	if vitals.Uptime != nil {
+		result.Uptime = VMVitalsUptime{Seconds: nonNegative(vitals.Uptime.Secs)}
+	}
+
+	for diskName, disk := range vitals.Disk {
 		result.Disk[diskName] = VMVitalsDisk{
-			InodePercent: diskVitals.InodePercent,
-			Percent:      diskVitals.Percent,
+			InodePercent: disk.InodePercent,
+			Percent:      disk.Percent,
 		}
 	}
 
 	return result
 }
 
-func (d *DirectorAdapter) convertStemcell(stemcell boshdirector.VmInfoStemcell) VMStemcell {
+// convertStemcell converts the stemcell a row's VM runs.
+func convertStemcell(stemcell boshapi.VMStemcell) VMStemcell {
 	return VMStemcell{
 		Name:       stemcell.Name,
 		Version:    stemcell.Version,
-		ApiVersion: stemcell.ApiVersion,
+		ApiVersion: stemcell.APIVersion,
 	}
 }
 

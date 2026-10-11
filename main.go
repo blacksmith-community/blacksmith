@@ -987,7 +987,10 @@ func startBackgroundServices(cfg *config.Config, vault *internalVault.Vault, cfM
 	}
 }
 
-func startHTTPServerGoroutine(waitGroup *sync.WaitGroup, httpServer *http.Server, cancel context.CancelFunc, logger loggerPkg.Logger) {
+// startHTTPServerGoroutine serves HTTP until the server closes. A server
+// that fails shuts the broker down, so it ends the service context with
+// ErrBrokerShuttingDown, as a signal does.
+func startHTTPServerGoroutine(waitGroup *sync.WaitGroup, httpServer *http.Server, cancel context.CancelCauseFunc, logger loggerPkg.Logger) {
 	waitGroup.Add(1)
 
 	go func() {
@@ -998,12 +1001,14 @@ func startHTTPServerGoroutine(waitGroup *sync.WaitGroup, httpServer *http.Server
 		err := httpServer.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTP server failed: %s", err)
-			cancel()
+			cancel(fmt.Errorf("%w, because the HTTP server failed: %w", bosh.ErrBrokerShuttingDown, err))
 		}
 	}()
 }
 
-func startHTTPSServerGoroutine(waitGroup *sync.WaitGroup, httpsServer *http.Server, cancel context.CancelFunc, logger loggerPkg.Logger) {
+// startHTTPSServerGoroutine serves HTTPS until the server closes, and ends
+// the service context as startHTTPServerGoroutine does when it fails.
+func startHTTPSServerGoroutine(waitGroup *sync.WaitGroup, httpsServer *http.Server, cancel context.CancelCauseFunc, logger loggerPkg.Logger) {
 	if httpsServer == nil {
 		return
 	}
@@ -1018,7 +1023,7 @@ func startHTTPSServerGoroutine(waitGroup *sync.WaitGroup, httpsServer *http.Serv
 		err := httpsServer.ListenAndServeTLS("", "")
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("HTTPS server failed: %s", err)
-			cancel()
+			cancel(fmt.Errorf("%w, because the HTTPS server failed: %w", bosh.ErrBrokerShuttingDown, err))
 		}
 	}()
 }
@@ -1074,7 +1079,7 @@ func checkServicesWithoutDeployments(brokerInstance *broker.Broker, ctx context.
 // runServersAndMaintenance starts the HTTP and HTTPS servers and the
 // maintenance loop. It returns the wait group they run under and the
 // servers that started, which shutdown drains.
-func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, brokerInstance *broker.Broker, vault *internalVault.Vault, ctx context.Context, cancel context.CancelFunc, logger loggerPkg.Logger) (*sync.WaitGroup, []*http.Server) {
+func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, brokerInstance *broker.Broker, vault *internalVault.Vault, ctx context.Context, cancel context.CancelCauseFunc, logger loggerPkg.Logger) (*sync.WaitGroup, []*http.Server) {
 	httpServer := startHTTPServer(cfg, apiHandler, logger)
 
 	httpsServer, err := startHTTPSServer(cfg, apiHandler, logger)
@@ -1099,16 +1104,19 @@ func runServersAndMaintenance(cfg *config.Config, apiHandler *broker.API, broker
 	return &waitGroup, servers
 }
 
-func setupSignalHandlingAndContext() (context.Context, context.CancelFunc, chan os.Signal) {
+// setupSignalHandlingAndContext builds the service's root context. Every
+// request handler, background loop, and director call after boot descends
+// from it. It returns two ways to end it. The plain cancel, which the
+// deferred cleanup holds, ends it with no cause of its own, so
+// context.Cause reads context.Canceled. Shutdown and a failed server end it
+// with the cancel that takes a cause.
+func setupSignalHandlingAndContext() (context.Context, context.CancelFunc, context.CancelCauseFunc, chan os.Signal) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// This is the service's root context. Every request handler, background
-	// loop, and director call after boot descends from it, and cancel ends it
-	// at shutdown.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancelCause := context.WithCancelCause(context.Background())
 
-	return ctx, cancel, sigChan
+	return ctx, func() { cancelCause(nil) }, cancelCause, sigChan
 }
 
 func initializeCore(ctx context.Context, configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector, *bosh.BatchDirector) {
@@ -1308,7 +1316,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	logger.Info("blacksmith service broker v%s starting up...", buildInfo.Version)
 
-	ctx, cancel, sigChan := setupSignalHandlingAndContext()
+	ctx, cancel, cancelWithCause, sigChan := setupSignalHandlingAndContext()
 	defer cancel()
 
 	brokerInstance.ServiceContext = ctx
@@ -1327,13 +1335,13 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	sshService, apiHandler, upgradeHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
 
-	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancel, logger)
+	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancelWithCause, logger)
 
 	startCredHubProbe(ctx, config, brokerInstance, credhubClient, logger)
 
 	waitForShutdownSignal(sigChan, ctx, logger)
 
-	shutdown(shutdownDepsFor(servers, cancel, reconciler, vmMonitor, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger))
+	shutdown(shutdownDepsFor(servers, cancelWithCause, reconciler, vmMonitor, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger))
 	serverWaitGroup.Wait()
 
 	return nil
@@ -1505,7 +1513,7 @@ type backgroundWaiter interface {
 // shutdownDeps holds everything shutdown stops. A nil field is skipped.
 type shutdownDeps struct {
 	servers    []httpServer
-	cancel     context.CancelFunc
+	cancel     context.CancelCauseFunc
 	reconciler failingStopper
 	monitor    stopper
 	upgrades   stopper
@@ -1536,7 +1544,7 @@ func (deps shutdownDeps) steps() []shutdownStep {
 	}
 
 	if deps.cancel != nil {
-		steps = append(steps, shutdownStep{name: "cancel the service context", run: func(context.Context) { deps.cancel() }})
+		steps = append(steps, shutdownStep{name: "cancel the service context", run: func(context.Context) { deps.cancel(bosh.ErrBrokerShuttingDown) }})
 	}
 
 	if deps.reconciler != nil {
@@ -1603,7 +1611,7 @@ func (deps shutdownDeps) stopServers(ctx context.Context) {
 // built. A nil pointer inside an interface would not compare equal to nil,
 // so each part the broker does not have becomes a true nil, which shutdown
 // skips.
-func shutdownDepsFor(servers []*http.Server, cancel context.CancelFunc, reconciler *recovery.ReconcilerAdapter, vmMonitor *vmmonitor.Monitor,
+func shutdownDepsFor(servers []*http.Server, cancel context.CancelCauseFunc, reconciler *recovery.ReconcilerAdapter, vmMonitor *vmmonitor.Monitor,
 	upgradeHandler *upgradehandler.Handler, brokerInstance *broker.Broker, batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector,
 	logger loggerPkg.Logger) shutdownDeps {
 	deps := shutdownDeps{cancel: cancel, logger: logger}

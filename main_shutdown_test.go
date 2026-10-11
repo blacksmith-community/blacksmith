@@ -3,16 +3,19 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os/signal"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
 	"blacksmith/internal/broker"
 	internalCF "blacksmith/internal/cf"
@@ -138,7 +141,7 @@ func (f fakeBackground) WaitForBackground(context.Context) { f.log.ran("backgrou
 func fakeShutdownDeps(log *stepLog, logger loggerPkg.Logger) shutdownDeps {
 	return shutdownDeps{
 		servers:    []httpServer{fakeServer{log: log}},
-		cancel:     func() { log.ran("cancel") },
+		cancel:     func(error) { log.ran("cancel") },
 		reconciler: fakeFailingStopper{log: log},
 		monitor:    fakeStopper{log: log, name: "monitor"},
 		upgrades:   fakeStopper{log: log, name: "upgrades"},
@@ -169,6 +172,85 @@ func TestShutdownRunsItsStepsInOrder(t *testing.T) {
 	want := []string{"servers", "cancel", "reconciler", "monitor", "upgrades", "background", "batch", "pool"}
 	if got := log.order(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected the shutdown steps in the order %v, got %v", want, got)
+	}
+}
+
+// Shutdown cancels the service context with ErrBrokerShuttingDown, so a
+// wait for a read-only director task can tell a shutdown from a deadline
+// or a request's cancel. The plain cancel the deferred cleanup holds ends
+// the context with no cause of its own.
+//
+//nolint:paralleltest // the test reads the package's shutdown deadlines
+func TestShutdownCancelsTheServiceContextWithTheShutdownCause(t *testing.T) {
+	var causes []error
+
+	deps := fakeShutdownDeps(&stepLog{}, newShutdownLog())
+	deps.cancel = func(cause error) { causes = append(causes, cause) }
+
+	shutdown(deps)
+
+	if len(causes) != 1 || !errors.Is(causes[0], bosh.ErrBrokerShuttingDown) {
+		t.Fatalf("expected the service context to be cancelled once with ErrBrokerShuttingDown, got %v", causes)
+	}
+
+	ctx, cancel, cancelWithCause, sigChan := setupSignalHandlingAndContext()
+	defer signal.Stop(sigChan)
+	defer cancelWithCause(nil)
+
+	cancel()
+
+	cause := context.Cause(ctx)
+	if !errors.Is(cause, context.Canceled) || errors.Is(cause, bosh.ErrBrokerShuttingDown) {
+		t.Errorf("expected the plain cancel to leave context.Canceled as the cause, got %v", cause)
+	}
+
+	shutdownCtx, _, shutdownCancel, shutdownSigChan := setupSignalHandlingAndContext()
+	defer signal.Stop(shutdownSigChan)
+
+	shutdownCancel(bosh.ErrBrokerShuttingDown)
+
+	cause = context.Cause(shutdownCtx)
+	if !errors.Is(cause, bosh.ErrBrokerShuttingDown) {
+		t.Errorf("expected the cancel with a cause to set ErrBrokerShuttingDown, got %v", cause)
+	}
+}
+
+// A server that fails shuts the broker down, so it ends the service context
+// with ErrBrokerShuttingDown, as a signal does, and the cause keeps the
+// server's own error. The address names no port, so neither server ever
+// listens.
+func TestAFailedServerCancelsTheServiceContextWithTheShutdownCause(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		start func(*sync.WaitGroup, *http.Server, context.CancelCauseFunc, loggerPkg.Logger)
+	}{
+		{name: "HTTP", start: startHTTPServerGoroutine},
+		{name: "HTTPS", start: startHTTPSServerGoroutine},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+
+			var waitGroup sync.WaitGroup
+
+			testCase.start(&waitGroup, &http.Server{Addr: "127.0.0.1:-1", ReadHeaderTimeout: time.Second}, cancel, newShutdownLog())
+			waitGroup.Wait()
+
+			cause := context.Cause(ctx)
+			if !errors.Is(cause, bosh.ErrBrokerShuttingDown) {
+				t.Fatalf("expected the failed server to cancel the service context with ErrBrokerShuttingDown, got %v", cause)
+			}
+
+			if !strings.Contains(cause.Error(), "server failed") {
+				t.Errorf("expected the cause to say the server failed, got %v", cause)
+			}
+		})
 	}
 }
 
@@ -252,7 +334,7 @@ func TestShutdownWaitsForAnInFlightRequest(t *testing.T) {
 		t.Fatal("the request never reached the handler")
 	}
 
-	shutdown(shutdownDeps{servers: []httpServer{server}, cancel: func() {}, logger: newShutdownLog()})
+	shutdown(shutdownDeps{servers: []httpServer{server}, cancel: func(error) {}, logger: newShutdownLog()})
 
 	// The broker exits once shutdown returns, so the request has to be
 	// answered by then. The short grace covers only the client's read.
@@ -370,7 +452,7 @@ func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logge
 
 	apiHandler, upgradeHandler := createAPIHandler(cfg, brokerInstance, vault, boshDirector, batchDirector, cfManager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
 
-	_, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancelCause(context.Background())
 
 	return apiHandler, shutdownDepsFor(nil, cancel, nil, nil, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger)
 }

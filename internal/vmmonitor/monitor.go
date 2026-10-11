@@ -710,11 +710,13 @@ func (m *Monitor) checkService(ctx context.Context, svc *ServiceMonitor) {
 }
 
 // handleCheckError handles a failed VM listing for a service. The listing's
-// error never proves the deployment gone. A 404 can come from a proxy in
-// front of the director, and the director adapter wraps any 404 from the
-// listing in bosh.ErrDeploymentNotFound. So the instance is marked deleted
-// only when deploymentConfirmedGone says the director itself answered with
-// its deployment-not-found code, and tombstoneUnlessInFlight finds nothing
+// error never proves the deployment gone. The director adapter wraps only
+// the director's own deployment-not-found answer, its code 70000, in
+// bosh.ErrDeploymentNotFound, and a plain 404 reaches the monitor as an
+// error from the director's API, but the monitor does not act on the
+// listing alone. The instance is marked deleted only when
+// deploymentConfirmedGone says the director itself answered with its
+// deployment-not-found code, and tombstoneUnlessInFlight finds nothing
 // to show that the instance belongs to work in flight. Any other answer
 // keeps monitoring the instance. An instance kept because it is in flight is
 // held as a fresh provision is, healthy and provisioning with no failure
