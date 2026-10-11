@@ -734,17 +734,15 @@ func initializeShieldClient(cfg *config.Config, logger loggerPkg.Logger) shield.
 func initializeServices(cfg *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, logger loggerPkg.Logger) (*ssh.ServiceImpl, *rabbitmq.SSHService, *rabbitmq.MetadataService, *rabbitmq.ExecutorService, *rabbitmq.AuditService, *rabbitmq.PluginsMetadataService, *rabbitmq.PluginsExecutorService, *rabbitmq.PluginsAuditService, *websocket.SSHHandler) {
 	// Initialize SSH service
 	sshConfig := ssh.Config{
-		Timeout:               time.Duration(cfg.SSH.Timeout) * time.Second,
-		ConnectTimeout:        time.Duration(cfg.SSH.ConnectTimeout) * time.Second,
-		SessionInitTimeout:    time.Duration(cfg.SSH.SessionInitTimeout) * time.Second,
-		OutputReadTimeout:     time.Duration(cfg.SSH.OutputReadTimeout) * time.Second,
-		MaxConcurrent:         cfg.SSH.MaxConcurrent,
-		MaxOutputSize:         cfg.SSH.MaxOutputSize,
-		KeepAlive:             time.Duration(cfg.SSH.KeepAlive) * time.Second,
-		RetryAttempts:         cfg.SSH.RetryAttempts,
-		RetryDelay:            time.Duration(cfg.SSH.RetryDelay) * time.Second,
-		InsecureIgnoreHostKey: cfg.SSH.InsecureIgnoreHostKey,
-		KnownHostsFile:        cfg.SSH.KnownHostsFile,
+		Timeout:            time.Duration(cfg.SSH.Timeout) * time.Second,
+		ConnectTimeout:     time.Duration(cfg.SSH.ConnectTimeout) * time.Second,
+		SessionInitTimeout: time.Duration(cfg.SSH.SessionInitTimeout) * time.Second,
+		OutputReadTimeout:  time.Duration(cfg.SSH.OutputReadTimeout) * time.Second,
+		MaxConcurrent:      cfg.SSH.MaxConcurrent,
+		MaxOutputSize:      cfg.SSH.MaxOutputSize,
+		KeepAlive:          time.Duration(cfg.SSH.KeepAlive) * time.Second,
+		RetryAttempts:      cfg.SSH.RetryAttempts,
+		RetryDelay:         time.Duration(cfg.SSH.RetryDelay) * time.Second,
 	}
 
 	// Set default values if not configured
@@ -760,8 +758,6 @@ func initializeServices(cfg *config.Config, brokerInstance *broker.Broker, vault
 
 		sshService = nil
 	}
-
-	logSSHSecurity(cfg, sshConfig, logger)
 
 	// Create RabbitMQ services
 	rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService := createRabbitMQServices(sshService, vault, logger)
@@ -808,20 +804,6 @@ func setSSHServiceDefaults(sshConfig *ssh.Config) {
 
 	if sshConfig.RetryDelay == 0 {
 		sshConfig.RetryDelay = DefaultSSHRetryDelay
-	}
-
-	if sshConfig.KnownHostsFile == "" {
-		sshConfig.KnownHostsFile = "/home/vcap/.ssh/known_hosts"
-	}
-}
-
-// logSSHSecurity logs SSH security configuration.
-func logSSHSecurity(cfg *config.Config, sshConfig ssh.Config, logger loggerPkg.Logger) {
-	if cfg.SSH.InsecureIgnoreHostKey {
-		logger.Info("SSH security: Using insecure host key verification (not recommended for production)")
-	} else {
-		logger.Info("SSH security: Using known_hosts file at %s with auto-discovery", sshConfig.KnownHostsFile)
-		logger.Info("SSH host keys will be automatically added to known_hosts on first connection")
 	}
 }
 

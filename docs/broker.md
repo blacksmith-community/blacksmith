@@ -141,8 +141,6 @@ bosh:
     keep_alive: 10                    # SSH keep-alive interval (seconds)
     retry_attempts: 3                 # Connection retry attempts
     retry_delay: 5                    # Retry delay (seconds)
-    insecure_ignore_host_key: false   # Skip host key verification
-    known_hosts_file: "/home/vcap/.ssh/known_hosts"  # Known hosts file
 
     # WebSocket Configuration
     websocket:
@@ -367,7 +365,7 @@ forges:
 ### SSH Access Management
 
 **Security Features**:
-- Host key verification with known_hosts
+- Host keys checked against the keys the BOSH director reports
 - Configurable timeouts and limits
 - Connection pooling and rate limiting
 - WebSocket-based real-time access
@@ -540,7 +538,7 @@ web-root: "/opt/blacksmith/ui"
 - BOSH connection failures: Check network connectivity and credentials
 - Vault authentication errors: Verify token validity and permissions
 - Service limit exceeded: Review service quotas and usage
-- SSH connection failures: Verify known_hosts and network access
+- SSH connection failures: Check network access from the broker to the VM. A host key mismatch means the VM was recreated since the SSH setup, or something is intercepting the connection
 - Backup failures: Check Shield connectivity and storage availability
 
 **Debug Tools**:

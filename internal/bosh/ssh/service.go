@@ -79,17 +79,15 @@ type DirectorInterface interface {
 
 // Config holds configuration for the SSH service.
 type Config struct {
-	Timeout               time.Duration
-	ConnectTimeout        time.Duration
-	SessionInitTimeout    time.Duration // New: SSH session initialization timeout
-	OutputReadTimeout     time.Duration // New: Timeout for reading output
-	MaxConcurrent         int
-	MaxOutputSize         int
-	KeepAlive             time.Duration
-	RetryAttempts         int
-	RetryDelay            time.Duration
-	InsecureIgnoreHostKey bool   // Allow insecure host key verification for BOSH environments
-	KnownHostsFile        string // Path to known_hosts file for host key verification
+	Timeout            time.Duration
+	ConnectTimeout     time.Duration
+	SessionInitTimeout time.Duration // New: SSH session initialization timeout
+	OutputReadTimeout  time.Duration // New: Timeout for reading output
+	MaxConcurrent      int
+	MaxOutputSize      int
+	KeepAlive          time.Duration
+	RetryAttempts      int
+	RetryDelay         time.Duration
 }
 
 // Logger interface for logging.

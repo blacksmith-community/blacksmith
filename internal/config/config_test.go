@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -527,5 +528,41 @@ func TestVMMonitoringTimeoutRejectsANegativeValue(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "vm_monitoring.timeout") || !strings.Contains(err.Error(), "-5") {
 		t.Errorf("expected the error to name vm_monitoring.timeout and the value -5, got %q", err.Error())
+	}
+}
+
+// Blacksmith pins each VM's host key to the one the director reports, so
+// the insecure_ignore_host_key and known_hosts_file settings are gone. A
+// configuration file that still sets them, at the top level or under
+// bosh.ssh, loads as before, and nothing in it reads them.
+func TestConfigThatSetsTheRemovedSSHHostKeySettingsStillLoads(t *testing.T) {
+	t.Parallel()
+
+	const removed = "    insecure_ignore_host_key: true\n    known_hosts_file: /home/vcap/.ssh/known_hosts\n"
+
+	for name, setting := range map[string]string{
+		"top level": "ssh:\n  timeout: 45\n" + strings.ReplaceAll(removed, "    ", "  "),
+		"bosh.ssh":  "  ssh:\n    timeout: 45\n" + removed,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.ReadConfig(writeBOSHConfig(t, setting))
+			if err != nil {
+				t.Fatalf("ReadConfig of a file that sets the removed SSH host key settings: %v", err)
+			}
+
+			if cfg.SSH.Timeout != 45 {
+				t.Errorf("ssh timeout %d, want the 45 the file sets", cfg.SSH.Timeout)
+			}
+		})
+	}
+
+	sshConfig := reflect.TypeFor[config.SSHConfig]()
+	for field := range sshConfig.Fields() {
+		key, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+		if key == "insecure_ignore_host_key" || key == "known_hosts_file" {
+			t.Errorf("SSHConfig.%s still reads %s", field.Name, key)
+		}
 	}
 }

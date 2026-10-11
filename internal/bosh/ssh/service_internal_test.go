@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -277,7 +276,6 @@ func newTestService(t *testing.T, director DirectorInterface, port string) *Serv
 	service := NewSSHService(director, Config{
 		MaxConcurrent:      10,
 		SessionInitTimeout: 5 * time.Second,
-		KnownHostsFile:     filepath.Join(t.TempDir(), "known_hosts"),
 	}, nil)
 	service.port = port
 

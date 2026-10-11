@@ -517,8 +517,6 @@ ssh:
     max_output_size: 1048576         # Maximum output size in bytes (default: 1MB)
     retry_attempts: 3                # Number of retry attempts (default: 3)
     retry_delay: 5                   # Delay between retries in seconds (default: 5)
-    insecure_ignore_host_key: false  # Skip host key verification (default: false)
-    known_hosts_file: "/home/vcap/.ssh/known_hosts"  # Path to known_hosts file
 
 # Old location (deprecated but still supported)
 bosh:
@@ -578,15 +576,9 @@ Number of retry attempts for failed SSH operations.
 
 Delay between retry attempts in seconds.
 
-#### `insecure_ignore_host_key` (boolean)
-**Default:** `false`
+#### Host key verification
 
-Skip SSH host key verification. **Warning:** Only use in development environments as this reduces security.
-
-#### `known_hosts_file` (string)
-**Default:** `"/home/vcap/.ssh/known_hosts"`
-
-Path to SSH known_hosts file for host key verification.
+Host key verification has no settings. When Blacksmith sets up an SSH user on a VM, the BOSH director reports that VM's host key, and Blacksmith connects only if the VM presents that key. A VM that presents another key, or offers no key of the type the director reported, is refused before any login. The error names the deployment, the instance, and the fingerprint of the reported key, together with the fingerprint of the key the VM presented or the key types it offered. Earlier versions read two host key settings in this section. A configuration file that still sets them loads, and Blacksmith ignores them.
 
 ## SHIELD Configuration (`shield`)
 

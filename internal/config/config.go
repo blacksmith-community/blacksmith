@@ -334,20 +334,18 @@ type BOSHConfig struct {
 
 // SSHConfig holds SSH-related configuration.
 type SSHConfig struct {
-	Enabled               bool            `yaml:"enabled"`
-	UITerminalEnabled     bool            `yaml:"ui_terminal_enabled"`      // Enable/disable SSH terminal UI functionality
-	Timeout               int             `yaml:"timeout"`                  // Default timeout for SSH commands in seconds
-	ConnectTimeout        int             `yaml:"connect_timeout"`          // SSH connection timeout in seconds
-	SessionInitTimeout    int             `yaml:"session_init_timeout"`     // SSH session initialization timeout in seconds
-	OutputReadTimeout     int             `yaml:"output_read_timeout"`      // Timeout for reading output in seconds
-	MaxConcurrent         int             `yaml:"max_concurrent"`           // Maximum concurrent SSH sessions
-	MaxOutputSize         int             `yaml:"max_output_size"`          // Maximum output size in bytes
-	KeepAlive             int             `yaml:"keep_alive"`               // Keep-alive interval in seconds
-	RetryAttempts         int             `yaml:"retry_attempts"`           // Number of retry attempts for failed operations
-	RetryDelay            int             `yaml:"retry_delay"`              // Delay between retries in seconds
-	InsecureIgnoreHostKey bool            `yaml:"insecure_ignore_host_key"` // Skip host key verification (not recommended for production)
-	KnownHostsFile        string          `yaml:"known_hosts_file"`         // Path to SSH known_hosts file (auto-discovers hosts on first connection)
-	WebSocket             WebSocketConfig `yaml:"websocket"`                // WebSocket configuration
+	Enabled            bool            `yaml:"enabled"`
+	UITerminalEnabled  bool            `yaml:"ui_terminal_enabled"`  // Enable/disable SSH terminal UI functionality
+	Timeout            int             `yaml:"timeout"`              // Default timeout for SSH commands in seconds
+	ConnectTimeout     int             `yaml:"connect_timeout"`      // SSH connection timeout in seconds
+	SessionInitTimeout int             `yaml:"session_init_timeout"` // SSH session initialization timeout in seconds
+	OutputReadTimeout  int             `yaml:"output_read_timeout"`  // Timeout for reading output in seconds
+	MaxConcurrent      int             `yaml:"max_concurrent"`       // Maximum concurrent SSH sessions
+	MaxOutputSize      int             `yaml:"max_output_size"`      // Maximum output size in bytes
+	KeepAlive          int             `yaml:"keep_alive"`           // Keep-alive interval in seconds
+	RetryAttempts      int             `yaml:"retry_attempts"`       // Number of retry attempts for failed operations
+	RetryDelay         int             `yaml:"retry_delay"`          // Delay between retries in seconds
+	WebSocket          WebSocketConfig `yaml:"websocket"`            // WebSocket configuration
 }
 
 // WebSocketConfig holds WebSocket-specific configuration.
