@@ -147,6 +147,17 @@ type Manager struct {
 	// owned holds, under mu, each upgrade that is queued or being
 	// processed, so only one processor ever runs an upgrade.
 	owned map[string]bool
+
+	// lookups holds, under mu, how many loaded deploys saved without a
+	// task ID are still being looked up, by their context ID or by their
+	// deployment. No upgrade resumes while it is above zero, so a task a
+	// lookup finds is adopted into the batch limit before any resumed
+	// deploy can take a slot.
+	lookups int
+
+	// heldResumes holds, under mu, the loaded upgrades that resume once
+	// the last lookup ends.
+	heldResumes []*UpgradeTask
 }
 
 // taskSnapshot is a copy of an upgrade task taken under the manager's lock,
@@ -1473,9 +1484,10 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 // resumeIfReady moves on an upgrade that has no processor, deciding under
 // mu. A running upgrade, or a pending one that was queued but never
 // processed before a restart, that is not paused, has no instance
-// settling, and is not owned becomes owned and is queued. A cancelled
-// upgrade with no instance settling skips its pending instances. Anything
-// else waits for its settles, its resume, or its processor, and a manager
+// settling, and is not owned becomes owned and is queued, once no lookup
+// of a loaded deploy is still running. A cancelled upgrade with no
+// instance settling skips its pending instances. Anything else waits for
+// its settles, the lookups, its resume, or its processor, and a manager
 // that is stopping queues nothing. With no BOSH director, an upgrade that
 // would be queued stays as it is, because it has nothing to deploy with,
 // and the log says why.
@@ -1485,7 +1497,7 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	resumable := task.Status == TaskStatusRunning || task.Status == TaskStatusPending
 	status := task.Status
 
-	ready := settled && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
+	ready := settled && m.lookups == 0 && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
 	noDirector := ready && m.director == nil
 
 	queue := ready && !noDirector
@@ -1536,8 +1548,9 @@ func (m *Manager) enqueue(task *UpgradeTask) {
 
 // loadAndSettle loads the upgrade tasks saved in Vault, settles every
 // instance whose deploy was in flight when the broker stopped, and resumes
-// each upgrade that has nothing settling. Stop ends it, and it closes
-// loaded once the settles have started.
+// each upgrade that has nothing settling once every lookup of a deploy
+// saved without a task ID has ended. Stop ends it, and it closes loaded
+// once the settles have started.
 func (m *Manager) loadAndSettle() {
 	defer m.wg.Done()
 	defer close(m.loaded)
@@ -1672,7 +1685,9 @@ type loadedDeploy struct {
 // flight. Each upgrade's settling count holds how many of its instances
 // are settling, and each upgrade gets a cancel channel its settles share,
 // so a cancel reaches them. Every deploy with a task ID is adopted into the
-// director's limit before any settle starts.
+// director's limit before any settle starts. Every deploy without one is
+// counted as a lookup, and no upgrade resumes until each lookup has
+// adopted the task it found or found that none exists.
 func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
 	loadedAt := time.Now()
 	deploys := make([]loadedDeploy, 0, len(tasks))
@@ -1693,16 +1708,53 @@ func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
 		return
 	}
 
+	lookups := 0
+
 	for _, deploy := range deploys {
 		if deploy.taskID > 0 {
 			m.adoptTask(deploy.taskID)
+
+			continue
 		}
+
+		lookups++
+	}
+
+	if lookups > 0 {
+		m.mu.Lock()
+		m.lookups = lookups
+		m.heldResumes = tasks
+		m.mu.Unlock()
+
+		m.logger.Info("No upgrade resumes until the tasks of %d deploys that were in flight without a saved task ID are looked up", lookups)
 	}
 
 	for _, deploy := range deploys {
 		m.wg.Add(1)
 
 		go m.settleLoadedDeploy(deploy)
+	}
+}
+
+// endLookup counts the lookup of one loaded deploy as ended. Its caller
+// has already adopted the task the lookup found, if any. Once the last
+// lookup ends, each loaded upgrade that is ready resumes.
+func (m *Manager) endLookup() {
+	m.mu.Lock()
+
+	m.lookups--
+	if m.lookups > 0 {
+		m.mu.Unlock()
+
+		return
+	}
+
+	held := m.heldResumes
+	m.heldResumes = nil
+	m.mu.Unlock()
+
+	for _, task := range held {
+		m.resumeIfReady(task)
 	}
 }
 
@@ -1853,10 +1905,16 @@ func (m *Manager) settleByContextID(deploy loadedDeploy) {
 
 	found, err := awaitTaskByContextID(m.ctx, m.director, deploy.contextID, deploy.unknownSince)
 
-	switch {
-	case err == nil && found != nil && found.ID > 0:
+	taskFound := err == nil && found != nil && found.ID > 0
+	if taskFound {
 		m.logger.Info("Found BOSH task %d for the deploy of %s with context ID %s", found.ID, instance.DeploymentName, deploy.contextID)
 		m.adoptTask(found.ID)
+	}
+
+	m.endLookup()
+
+	switch {
+	case taskFound:
 		m.followDeployTask(m.ctx, task, instance, found.ID, deploy.cancelCh)
 	case err == nil:
 		m.settleOutcomeUnknown(task, instance, 0, "the lookup by context ID named no task")
@@ -1903,14 +1961,20 @@ func (m *Manager) settleWithoutIDs(deploy loadedDeploy) {
 
 		return running != nil, err //nolint:wrapcheck // readWithRetry logs it with what it read
 	})
+
+	taskRunning := answered && running != nil && running.ID > 0
+	if taskRunning {
+		m.adoptTask(running.ID)
+	}
+
+	m.endLookup()
+
 	if !answered {
 		return
 	}
 
-	if running != nil && running.ID > 0 {
+	if taskRunning {
 		m.logger.Info("BOSH task %d runs on deployment %s, so instance %s waits for it to end before it is deployed again", running.ID, instance.DeploymentName, instance.InstanceID)
-
-		m.adoptTask(running.ID)
 
 		_, err := m.director.WaitForTask(m.ctx, running.ID)
 		if err != nil && waitStopped(m.ctx, err) {

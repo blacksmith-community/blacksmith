@@ -508,6 +508,149 @@ func TestLoadAdoptsATaskFoundByItsContextID(t *testing.T) {
 	}
 }
 
+// lookupGate holds a lookup the load makes until the test lets it answer.
+type lookupGate struct {
+	asked  chan struct{}
+	answer chan struct{}
+	once   sync.Once
+}
+
+func newLookupGate() *lookupGate {
+	return &lookupGate{asked: make(chan struct{}), answer: make(chan struct{})}
+}
+
+// wait reports the lookup as asked, and waits until the test lets it
+// answer or ctx ends.
+func (g *lookupGate) wait(ctx context.Context) error {
+	g.once.Do(func() { close(g.asked) })
+
+	select {
+	case <-g.answer:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("the lookup ended unanswered: %w", ctx.Err())
+	}
+}
+
+// awaitAsked waits until the load has asked its lookup.
+func (g *lookupGate) awaitAsked(t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-g.asked:
+	case <-time.After(waitTimeout):
+		t.Fatal("the load never looked up the deploy that was in flight")
+	}
+}
+
+// gatedRunningDirector is a resumeDirector whose answer to what runs on a
+// deployment waits on its gate, and then names the adopted task.
+type gatedRunningDirector struct {
+	*resumeDirector
+
+	gate *lookupGate
+}
+
+func (d *gatedRunningDirector) FindRunningTaskForDeployment(ctx context.Context, deployment string) (*bosh.Task, error) {
+	err := d.gate.wait(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &bosh.Task{ID: adoptedTaskID, State: waitStateRunning, Deployment: deployment}, nil
+}
+
+// expectNoResumeAboveTheLimit checks that the other upgrade sends nothing
+// while the load's lookup is unanswered, nor while the task it found holds
+// the only batch slot, and that both upgrades complete once that task
+// ends.
+func expectNoResumeAboveTheLimit(t *testing.T, manager *Manager, director *resumeDirector, batch *bosh.BatchDirector, gate *lookupGate, otherTaskID string) {
+	t.Helper()
+
+	gate.awaitAsked(t)
+	time.Sleep(quietPeriod)
+
+	if count := director.deployCount(nextDeployment); count != 0 {
+		t.Fatalf("expected no resumed deploy while the load looks up a deploy that was in flight, got %d deploys of %s", count, nextDeployment)
+	}
+
+	close(gate.answer)
+	director.waitForWaitOn(t, adoptedTaskID)
+
+	if active, _, _ := batch.GetBatchPoolStats(); active != 1 {
+		t.Errorf("expected the task the lookup found to count against the batch, got %d active", active)
+	}
+
+	time.Sleep(quietPeriod)
+
+	if count := director.deployCount(nextDeployment); count != 0 {
+		t.Fatalf("expected the resumed upgrade to wait for the slot the found task holds, got %d deploys of %s", count, nextDeployment)
+	}
+
+	director.release(adoptedTaskID)
+
+	expectCompleted(t, manager, otherTaskID)
+	expectCompleted(t, manager, loadedTaskID)
+}
+
+//nolint:paralleltest // it replaces the package's lookup by context ID
+func TestNoUpgradeResumesWhileALoadedDeployIsLookedUpByContextID(t *testing.T) {
+	const otherTaskID = "other-upgrade"
+
+	gate := newLookupGate()
+
+	replaceAwait(t, func(ctx context.Context) (*bosh.Task, error) {
+		err := gate.wait(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return &bosh.Task{ID: adoptedTaskID, State: waitStateRunning, Deployment: adoptedDeployment}, nil
+	})
+
+	director := newResumeDirector()
+	director.holdAdopted()
+
+	// The batch director allows one deploy at a time.
+	batch := newTestBatchDirector(t, director)
+	vault := newWaitVault()
+
+	// The broker stopped while the first upgrade's deploy was in flight,
+	// with only its context ID saved, and between two instances of the
+	// second upgrade, which is ready to resume at once.
+	storeUpgrade(t, vault, storedUpgrade(loadedTaskID,
+		inFlight(adoptedDeployment, InstanceStatusInterrupted, 0, loadedContextID)))
+	storeUpgrade(t, vault, storedUpgrade(otherTaskID, pendingInstance("instance-2", nextDeployment)))
+
+	manager := loadManager(t, batch, vault)
+
+	expectNoResumeAboveTheLimit(t, manager, director, batch, gate, otherTaskID)
+}
+
+//nolint:paralleltest // the settle waits on a shared test director
+func TestNoUpgradeResumesWhileALoadedDeployIsLookedUpByDeployment(t *testing.T) {
+	const otherTaskID = "other-upgrade"
+
+	gate := newLookupGate()
+	director := newResumeDirector()
+	director.holdAdopted()
+
+	// The batch director allows one deploy at a time.
+	batch := newTestBatchDirector(t, &gatedRunningDirector{resumeDirector: director, gate: gate})
+	vault := newWaitVault()
+
+	// The broker stopped while the first upgrade's deploy was in flight,
+	// before either of its IDs was saved, and between two instances of
+	// the second upgrade, which is ready to resume at once.
+	storeUpgrade(t, vault, storedUpgrade(loadedTaskID,
+		inFlight(adoptedDeployment, InstanceStatusRunning, 0, "")))
+	storeUpgrade(t, vault, storedUpgrade(otherTaskID, pendingInstance("instance-2", nextDeployment)))
+
+	manager := loadManager(t, batch, vault)
+
+	expectNoResumeAboveTheLimit(t, manager, director, batch, gate, otherTaskID)
+}
+
 //nolint:paralleltest // it replaces the package's lookup by context ID
 func TestLoadReturnsAnUnsentDeployToPending(t *testing.T) {
 	since := replaceAwait(t, noTaskWithTheContextID)
