@@ -25,6 +25,17 @@ var (
 const (
 	vmStatusRunning = "running"
 
+	// vmStatusFailing is the job state of a VM whose job is failing.
+	vmStatusFailing = "failing"
+
+	// vmStatusUnresponsiveAgent is the job state the director writes for a
+	// VM whose agent does not answer.
+	vmStatusUnresponsiveAgent = "unresponsive agent"
+
+	// vmStatusUnresponsive is the short form of that state, kept for any
+	// caller that still writes it.
+	vmStatusUnresponsive = "unresponsive"
+
 	// vmStatusProvisioning is the VM status of an instance whose deployment
 	// the director says is gone, kept because it belongs to work in flight.
 	vmStatusProvisioning = "provisioning"
@@ -128,7 +139,7 @@ type ServiceMonitor struct {
 	NextCheck      time.Time
 	FailureCount   int
 	IsHealthy      bool
-	IsProvisioning bool // true until status is "running" or "failing", uses 5-min interval; a failed check leaves it alone
+	IsProvisioning bool // true until status is "running", "failing", or an unresponsive agent, uses 5-min interval; a failed check leaves it alone
 }
 
 // StemcellInfo contains basic stemcell information for a service instance.
@@ -275,7 +286,8 @@ func (m *Monitor) IsVMMonitor() bool {
 // it is and never rebuilds it from a plan ID, because a rebuilt name can name
 // a deployment the director does not have, and the instance would then be
 // taken for deleted. The service is added with IsProvisioning=true and will
-// be checked every 5 minutes until it reaches "running" or "failing" status.
+// be checked every 5 minutes until it reaches "running", "failing", or an
+// unresponsive agent.
 func (m *Monitor) AddService(ctx context.Context, instanceID, deploymentName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -816,17 +828,21 @@ func (m *Monitor) calculateOverallStatus(vms []bosh.VM) string {
 		runningPriority      = 6
 	)
 
+	// The director writes "unresponsive agent" for a VM whose agent does
+	// not answer. "unresponsive" is kept for any caller that still writes
+	// the short form.
 	statusPriority := map[string]int{
-		"failing":      failingPriority,
-		"unresponsive": unresponsivePriority,
-		"stopping":     stoppingPriority,
-		"starting":     startingPriority,
-		"stopped":      stoppedPriority,
-		"running":      runningPriority,
+		vmStatusFailing:           failingPriority,
+		vmStatusUnresponsiveAgent: unresponsivePriority,
+		vmStatusUnresponsive:      unresponsivePriority,
+		"stopping":                stoppingPriority,
+		"starting":                startingPriority,
+		"stopped":                 stoppedPriority,
+		vmStatusRunning:           runningPriority,
 	}
 
-	worstStatus := "running"
-	worstPriority := statusPriority["running"]
+	worstStatus := vmStatusRunning
+	worstPriority := statusPriority[vmStatusRunning]
 
 	for _, vm := range vms {
 		// Use JobState which represents the aggregate state of the job
@@ -851,7 +867,7 @@ func (m *Monitor) countHealthyVMs(vms []bosh.VM) int {
 		// This is what indicates if the job/service is "running" properly
 		logger.Debug("VM %s/%d - JobState: %s, State: %s", vm.Job, vm.Index, vm.JobState, vm.State)
 
-		if vm.JobState == "running" {
+		if vm.JobState == vmStatusRunning {
 			count++
 		}
 	}
@@ -976,17 +992,17 @@ func (m *Monitor) finishCheck(instanceID string) {
 // recordListing records a check whose VM listing succeeded in the
 // instance's state, under the monitor's lock, and returns when to check the
 // instance next and whether the check ended its provisioning. A provision
-// ends when the instance reaches "running" or "failing". Until then it is
-// checked at the failed interval with no failure counted. After that, any
-// status but "running" counts a failure and is checked at the failed
-// interval, and "running" clears the failures.
+// ends when the instance reaches "running", or a state that endsProvisioning
+// counts as a failure. Until then it is checked at the failed interval with
+// no failure counted. After that, any status but "running" counts a failure
+// and is checked at the failed interval, and "running" clears the failures.
 func (m *Monitor) recordListing(svc *ServiceMonitor, status string, checkedAt time.Time) (time.Time, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	provisioningDone := false
 
-	if svc.IsProvisioning && (status == vmStatusRunning || status == "failing") {
+	if svc.IsProvisioning && endsProvisioning(status) {
 		svc.IsProvisioning = false
 		provisioningDone = true
 	}
@@ -1010,6 +1026,20 @@ func (m *Monitor) recordListing(svc *ServiceMonitor, status string, checkedAt ti
 	svc.NextCheck = next
 
 	return next, provisioningDone
+}
+
+// endsProvisioning reports whether an overall status ends an instance's
+// provisioning. "running" ends it as a success. "failing" and an
+// unresponsive agent end it as a failure, because a VM in either state is
+// not on its way to running, and an agent that never answers would
+// otherwise hold the instance in provisioning with no failure counted.
+func endsProvisioning(status string) bool {
+	switch status {
+	case vmStatusRunning, vmStatusFailing, vmStatusUnresponsiveAgent, vmStatusUnresponsive:
+		return true
+	default:
+		return false
+	}
 }
 
 // recordKeep records a check that kept an instance after its VM listing

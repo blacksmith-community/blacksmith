@@ -35,6 +35,12 @@ func (m *Monitor) SetCheckTimeout(timeout time.Duration) {
 	m.checkTimeout = timeout
 }
 
+// OverallStatus exposes the overall status and the healthy count a check
+// derives from a deployment's VMs.
+func (m *Monitor) OverallStatus(vms []bosh.VM) (string, int) {
+	return m.calculateOverallStatus(vms), m.countHealthyVMs(vms)
+}
+
 // ScanAllServices exposes the scan of the index that Start makes.
 func (m *Monitor) ScanAllServices(ctx context.Context) error {
 	return m.scanAllServices(ctx)

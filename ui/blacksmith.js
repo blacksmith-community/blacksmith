@@ -968,7 +968,8 @@
       // State priority ordering
       const statePriority = {
         'running': 0, 'finished': 1, 'in_progress': 2, 'started': 2,
-        'stopped': 3, 'failing': 4, 'failed': 4, 'error': 5, 'unresponsive': 5
+        'stopped': 3, 'failing': 4, 'failed': 4, 'error': 5, 'unresponsive': 5,
+        'unresponsive agent': 5
       };
       return [...data].sort((a, b) => {
         const aState = (getNestedValue(a, key) || '').toLowerCase();
@@ -1416,7 +1417,7 @@
         let stateClass = '';
         if (vm.state === 'running') {
           stateClass = 'vm-state-running';
-        } else if (vm.state === 'failing' || vm.state === 'unresponsive') {
+        } else if (vm.state === 'failing' || vm.state === 'unresponsive' || vm.state === 'unresponsive agent') {
           stateClass = 'vm-state-error';
         } else if (vm.state === 'stopped') {
           stateClass = 'vm-state-stopped';
@@ -1425,7 +1426,7 @@
         let jobStateClass = '';
         if (vm.job_state === 'running') {
           jobStateClass = 'vm-state-running';
-        } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive') {
+        } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive' || vm.job_state === 'unresponsive agent') {
           jobStateClass = 'vm-state-error';
         } else if (vm.job_state === 'stopped') {
           jobStateClass = 'vm-state-stopped';
@@ -2089,8 +2090,11 @@
     const listHtml = instancesList.length === 0
       ? '<div class="no-data">No services have been provisioned yet.</div>'
       : instancesList.map(([id, details]) => {
+        // The director reports a silent agent as "unresponsive agent", which
+        // shares the unresponsive badge style.
+        const vmStatusClass = details.vm_status === 'unresponsive agent' ? 'unresponsive' : details.vm_status;
         const vmStatusHtml = details.vm_status ? `
-            <div class="vm-status-badge vm-status-${details.vm_status}" title="VM Status: ${details.vm_status}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}" onclick="selectInstance('${id}', 'vms')">
+            <div class="vm-status-badge vm-status-${vmStatusClass}" title="VM Status: ${details.vm_status}${details.vm_count ? ` (${details.vm_healthy || 0}/${details.vm_count} healthy)` : ''}" onclick="selectInstance('${id}', 'vms')">
               <span class="vm-status-icon"></span>
               <span class="vm-status-text">${details.vm_status}</span>
               ${details.vm_count ? `<span class="vm-count">${details.vm_healthy || 0}/${details.vm_count}</span>` : ''}
@@ -5703,7 +5707,7 @@
       let stateClass = '';
       if (vm.state === 'running') {
         stateClass = 'vm-state-running';
-      } else if (vm.state === 'failing' || vm.state === 'unresponsive') {
+      } else if (vm.state === 'failing' || vm.state === 'unresponsive' || vm.state === 'unresponsive agent') {
         stateClass = 'vm-state-error';
       } else if (vm.state === 'stopped') {
         stateClass = 'vm-state-stopped';
@@ -5713,7 +5717,7 @@
       let jobStateClass = '';
       if (vm.job_state === 'running') {
         jobStateClass = 'vm-state-running';
-      } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive') {
+      } else if (vm.job_state === 'failing' || vm.job_state === 'unresponsive' || vm.job_state === 'unresponsive agent') {
         jobStateClass = 'vm-state-error';
       } else if (vm.job_state === 'stopped') {
         jobStateClass = 'vm-state-stopped';
