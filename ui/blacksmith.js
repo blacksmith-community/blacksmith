@@ -5743,10 +5743,10 @@
       const sshButtonClass = isBlacksmith ? 'blacksmith-ssh' : 'service-instance-ssh';
       const deploymentType = isBlacksmith ? 'blacksmith' : 'service-instance';
 
-      // The SSH terminal reaches a VM by its index, so a VM the director
-      // lists without one gets a disabled button that says why.
+      // The director lists an instance without an index only when the
+      // instance has no VM, so its button is disabled and says why.
       const sshButtonAction = vm.index !== undefined && vm.index < 0
-        ? `disabled title="SSH needs an instance index, and the director lists ${instanceName} without one"`
+        ? `disabled title="SSH needs a VM, and ${instanceName} has none"`
         : `onclick="window.openTerminal('${deploymentType}', '${deploymentName}', '${instanceName}', event)"
                           title="SSH to ${instanceName}"`;
 

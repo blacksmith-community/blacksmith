@@ -33,7 +33,7 @@ var (
 	errManifestMissingInstanceGroups   = errors.New("manifest missing instance_groups")
 	errFirstInstanceGroupInvalidFormat = errors.New("first instance group has invalid format")
 	errFirstInstanceGroupMissingName   = errors.New("first instance group missing name field")
-	errIndexIsVMID                     = errors.New("is a VM ID, not an index. The SSH terminal reaches a VM by its numeric index, and the director lists this VM without one, so the terminal cannot open a shell on it")
+	errIndexHasNoVM                    = errors.New("names an instance that has no VM, so the SSH terminal has nothing to connect to")
 	errIndexNotNumeric                 = errors.New("is not an instance index. Give a whole number of 0 or more, or leave it out for index 0")
 
 	indexDigits = regexp.MustCompile(`^[0-9]+$`)
@@ -42,9 +42,10 @@ var (
 
 // instanceIndex reads the index query parameter, which is 0 when it is
 // absent. A value it cannot read is an error and never becomes 0,
-// because that opens a shell on a VM nobody asked for. A VM the
-// director lists without an index is named by its UUID, and the SSH
-// service reaches VMs only by index, so a UUID gets its own error.
+// because that opens a shell on a VM nobody asked for. The director
+// lists an instance without an index only when the instance has no VM,
+// and the dashboard then names it by its instance ID, so an ID gets an
+// error that says the instance has no VM.
 func instanceIndex(query url.Values) (int, error) {
 	value := strings.TrimSpace(query.Get("index"))
 	if value == "" {
@@ -52,7 +53,7 @@ func instanceIndex(query url.Values) (int, error) {
 	}
 
 	if vmIDPattern.MatchString(value) {
-		return 0, fmt.Errorf("index %q %w", value, errIndexIsVMID)
+		return 0, fmt.Errorf("index %q %w", value, errIndexHasNoVM)
 	}
 
 	if !indexDigits.MatchString(value) {

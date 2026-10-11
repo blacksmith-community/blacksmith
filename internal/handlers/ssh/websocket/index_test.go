@@ -111,7 +111,7 @@ func TestSSHStreamRefusesAnIndexItCannotRead(t *testing.T) {
 	t.Parallel()
 
 	for name, path := range terminalPaths() {
-		refusals := map[string]string{vmUUID: "is a VM ID, not an index"}
+		refusals := map[string]string{vmUUID: "names an instance that has no VM"}
 		for _, index := range []string{"abc", "-1", "+2", "1.5", "2abc", "0x1", "node/2", "-", "99999999999999999999"} {
 			refusals[index] = "is not an instance index"
 		}
@@ -140,6 +140,41 @@ func TestSSHStreamRefusesAnIndexItCannotRead(t *testing.T) {
 			if !strings.Contains(body.Error, want) || !strings.Contains(body.Error, index) {
 				t.Errorf("%s index %q: error %q does not name the index and say %q", name, index, body.Error, want)
 			}
+		}
+	}
+}
+
+// An index that is an instance ID names an instance the director lists
+// without an index, which is an instance that has no VM, so both
+// streams say that rather than talk about indexes.
+func TestSSHIndexThatIsAnIDSaysTheInstanceHasNoVM(t *testing.T) {
+	t.Parallel()
+
+	want := "index \"" + vmUUID + "\" names an instance that has no VM, so the SSH terminal has nothing to connect to"
+
+	for name, path := range terminalPaths() {
+		recorder, writer := openTerminal(t, path, vmUUID)
+		if recorder.opened {
+			t.Errorf("%s: opened a session on node/%d", name, recorder.index)
+
+			continue
+		}
+
+		if writer.Code != http.StatusBadRequest {
+			t.Errorf("%s: answered %d, want 400", name, writer.Code)
+		}
+
+		var body struct {
+			Error string `json:"error"`
+		}
+
+		err := json.Unmarshal(writer.Body.Bytes(), &body)
+		if err != nil {
+			t.Fatalf("%s: body %q: %v", name, writer.Body.String(), err)
+		}
+
+		if !strings.Contains(body.Error, want) {
+			t.Errorf("%s: error %q does not say %q", name, body.Error, want)
 		}
 	}
 }
