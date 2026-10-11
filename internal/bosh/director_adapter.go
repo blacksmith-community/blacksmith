@@ -157,8 +157,11 @@ type DirectorAdapter struct {
 	// sshconn.Port everywhere but in tests, which point it at a loopback
 	// server.
 	sshPort string
-	logger  boshlog.Logger
-	log     Logger // Application logger for Info/Debug logging
+	// ssh holds the store SSH setups record their users in, and the users
+	// whose setup or cleanup this process is running.
+	ssh    sshUsers
+	logger boshlog.Logger
+	log    Logger // Application logger for Info/Debug logging
 }
 
 // bind returns the bosh-cli director for one call.
@@ -2878,6 +2881,11 @@ func sshTarget(instance string, index int) (boshapi.SSHTarget, error) {
 // never stores the context ID on its task. The director's
 // deployment-not-found answer, code 70000, wraps ErrDeploymentNotFound,
 // and its refusal of the broker's client wraps ErrSSHNotPermitted.
+//
+// The user is recorded in the cleanup store before the setup is sent, and
+// a setup whose record cannot be written is never sent. A setup the
+// director refused created no user, so its record is cleared at once. Any
+// other failed setup keeps its record for the sweep.
 func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment string, target boshapi.SSHTarget) (*sshconn.Session, error) {
 	ctx, contextID, err := mutationContext(ctx, operation)
 	if err != nil {
@@ -2893,11 +2901,25 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 
 	instance := sshconn.TargetName(target)
 
+	err = d.recordSSHCleanup(ctx, sshconn.PendingCleanup{
+		User:           credentials.User,
+		Deployment:     deployment,
+		Target:         target,
+		SetupContextID: contextID,
+		CreatedAt:      time.Now().UTC(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	d.log.Infof("Setting up SSH user %s on %s of deployment %s (context ID %s)", credentials.User, instance, deployment, contextID)
 
 	sent, err := d.api.SSHClient().Setup(ctx, deployment,
 		sshconn.SetupRequest(deployment, target, credentials.User, credentials.PublicKey))
-	if err != nil {
+	if err != nil && !boshapi.IsOutcomeUnknown(err) {
+		// The director refused the setup, so it created no user.
+		d.dropSSHCleanup(ctx, credentials.User)
+
 		refused := d.sshSetupRefused(deployment, err)
 		if refused != nil {
 			return nil, refused
@@ -2911,36 +2933,51 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 		what:       fmt.Sprintf("set up SSH user %s on %s of deployment %s", credentials.User, instance, deployment),
 	}, sent, err)
 	if err != nil {
+		d.releaseSSHUser(credentials.User)
+
 		return nil, err
 	}
 
 	hosts, gateway, err := d.sshSetupHosts(ctx, operation, deployment, task.ID, credentials.User)
 	if err != nil {
+		d.releaseSSHUser(credentials.User)
+
 		return nil, err
 	}
 
 	d.log.Infof("BOSH task %d set up SSH user %s on %d host(s) of deployment %s", task.ID, credentials.User, len(hosts), deployment)
 
-	var (
-		cleanupOnce sync.Once
-		cleanupErr  error
-	)
-
-	return &sshconn.Session{
+	session := &sshconn.Session{
 		Deployment: deployment,
 		Target:     target,
 		User:       credentials.User,
 		Hosts:      hosts,
 		Gateway:    gateway,
 		Signer:     credentials.Signer,
-		Cleanup: func(cleanupCtx context.Context) error {
-			cleanupOnce.Do(func() {
-				cleanupErr = d.cleanUpSSH(cleanupCtx, deployment, target, credentials.User, contextID)
-			})
+	}
+	session.Cleanup = d.sessionCleanup(session, contextID)
 
-			return cleanupErr
-		},
-	}, nil
+	return session, nil
+}
+
+// sessionCleanup returns the session's Cleanup, which removes its user
+// once however often it is called, and returns that one cleanup's error
+// to every caller.
+func (d *DirectorAdapter) sessionCleanup(session *sshconn.Session, setupContextID string) func(context.Context) error {
+	var (
+		cleanupOnce sync.Once
+		cleanupErr  error
+	)
+
+	deployment, target, user := session.Deployment, session.Target, session.User
+
+	return func(cleanupCtx context.Context) error {
+		cleanupOnce.Do(func() {
+			cleanupErr = d.cleanUpSSH(cleanupCtx, deployment, target, user, setupContextID)
+		})
+
+		return cleanupErr
+	}
 }
 
 // sshSetupRefused explains the director's answers to an SSH setup that
@@ -2991,16 +3028,35 @@ func (d *DirectorAdapter) sshSetupHosts(ctx context.Context, operation, deployme
 }
 
 // cleanUpSSH removes the SSH user that setUpSSH created from the same
-// target, and waits for the cleanup task. It often runs after the
-// caller's context has ended, and a cancelled context must not leave the
-// user on the VM, so it keeps ctx's values but gets its own deadline of
-// sshCleanupTimeout. It sends a fresh context ID of its own. A cleanup
-// task that ends in any state but done, a wait the deadline cuts off, and
-// a lost answer are each logged at Error with the user and the context
-// IDs.
+// target, waits for the cleanup task, and settles the user's record. A
+// cleanup task that ends done, the director's answer that the deployment
+// is gone, and its answer that the target has no VM each clear the
+// record. Any other failure keeps it for the sweep and is logged at Error
+// with the user and the context IDs. The user leaves the live set when
+// the cleanup ends, so the sweep may then retry it.
+func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, target boshapi.SSHTarget, user, setupContextID string) error {
+	defer d.releaseSSHUser(user)
+
+	err := d.sendSSHCleanup(ctx, deployment, target, user, setupContextID, d.log.Errorf)
+	if sshCleanupSettled(err) {
+		d.clearSSHCleanup(ctx, d.sshCleanupStore(), user)
+	}
+
+	return err
+}
+
+// sendSSHCleanup sends the cleanup of user on target and waits for its
+// task. It often runs after the caller's context has ended, and a
+// cancelled context must not leave the user on the VM, so it keeps ctx's
+// values but gets its own deadline of sshCleanupTimeout. It sends a fresh
+// context ID of its own. A cleanup task that ends in any state but done,
+// and a wait the deadline cuts off, are reported through report with the
+// user and the context IDs. A lost answer is logged at Error by accepted.
 //
 //nolint:nonamedreturns // explainContext reads the named error, as in every other adapter method.
-func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, target boshapi.SSHTarget, user, setupContextID string) (err error) {
+func (d *DirectorAdapter) sendSSHCleanup(ctx context.Context, deployment string, target boshapi.SSHTarget, user, setupContextID string,
+	report func(format string, args ...interface{}),
+) (err error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sshCleanupTimeout)
 	defer cancel()
 
@@ -3027,7 +3083,7 @@ func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, tar
 
 	final, err := d.WaitForTask(ctx, task.ID)
 	if err != nil {
-		d.log.Errorf("Stopped waiting for BOSH task %d, which removes SSH user %s from %s of deployment %s "+
+		report("Stopped waiting for BOSH task %d, which removes SSH user %s from %s of deployment %s "+
 			"(context ID %s, setup context ID %s), so the user may remain on the VM: %v",
 			task.ID, user, instance, deployment, contextID, setupContextID, err)
 
@@ -3035,7 +3091,7 @@ func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, tar
 	}
 
 	if final.State != taskStateDone {
-		d.log.Errorf("BOSH task %d, which removes SSH user %s from %s of deployment %s (context ID %s, setup context ID %s), "+
+		report("BOSH task %d, which removes SSH user %s from %s of deployment %s (context ID %s, setup context ID %s), "+
 			"ended in state %s, so the user may remain on the VM: %s",
 			task.ID, user, instance, deployment, contextID, setupContextID, final.State, final.Result)
 

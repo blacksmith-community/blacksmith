@@ -590,6 +590,9 @@ func (l *recordingLogger) Debugf(format string, args ...interface{}) {
 func (l *recordingLogger) Errorf(format string, args ...interface{}) {
 	l.recordf("ERROR", format, args...)
 }
+func (l *recordingLogger) Warnf(format string, args ...interface{}) {
+	l.recordf("WARN", format, args...)
+}
 
 func (l *recordingLogger) recordf(level, format string, args ...interface{}) {
 	l.mu.Lock()

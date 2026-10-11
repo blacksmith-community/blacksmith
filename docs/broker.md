@@ -378,6 +378,16 @@ forges:
 - File transfer capabilities
 - Multi-session support
 
+**SSH User Cleanup**:
+
+Every SSH session and command runs as a throwaway user that the BOSH director creates on the VM and removes again when the session ends. Before the broker asks the director to create a user, it writes a record of that user to Vault at `secret/blacksmith/ssh-cleanups/<user>`. If the record cannot be written, the broker refuses the session and creates nothing. The record is cleared once the director confirms the user is gone, which happens when the cleanup task ends done, when the deployment no longer exists, or when the instance has no VM. A setup that the director refuses outright, for example because the deployment does not exist or the broker's client lacks permission, creates no user, so its record is cleared at once.
+
+A record that is still in Vault means the user may still be on the VM, because a restart, a lost answer, or a failed cleanup task got in the way. The broker sweeps these records once at boot and every 10 minutes after that, and sends a fresh cleanup for each one. The sweep skips a user whose session this broker still has open, and it skips every user on a deployment where an SSH setup is queued or running, so a cleanup never overtakes a setup. It asks the director about running setups again right before each cleanup it sends, because a setup can start while the sweep is busy with an earlier record. When a retried cleanup fails, the broker keeps the record, counts the attempt and stores the error in it, and logs a warning that names the user, the instance, the deployment, and the attempt.
+
+The sweep treats every record under that path as its own. Each broker must therefore have its own Vault mount. Two brokers that share a mount would remove each other's SSH users while their sessions were still open.
+
+A record that the broker reads but cannot use, because it does not decode, names a user other than the one in its path, or lacks a deployment or an instance to clean up, is left out of the sweep, and the sweep's error names its path. Remove such a record by hand once you have confirmed that its user is gone from the VM. When Vault cannot list the records or read one of them, the whole pass stops and sends no cleanups, and the next pass tries again.
+
 ### VM Health Monitoring
 
 **Monitoring Capabilities**:
@@ -571,7 +581,7 @@ web-root: "/opt/blacksmith/ui"
 - Configurable concurrency limits
 
 ### High Availability
-- Stateless broker design
-- External state storage (Vault)
+- External state storage (Vault), including the records of SSH users still to be removed
+- One Vault mount per broker, because the SSH cleanup sweep treats every record on its mount as its own
 - Graceful shutdown handling
 - Health check endpoints for load balancer integration

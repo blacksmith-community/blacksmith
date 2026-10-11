@@ -202,6 +202,33 @@ func (p *PooledDirector) SSHSession(ctx context.Context, deployment, instance st
 	return p.director.SSHSession(ctx, deployment, instance, index, options)
 }
 
+// SetSSHCleanupStore hands the wrapped director the store its SSH setups
+// record their users in. A director that keeps no records is told
+// nothing, and the pool logs that at Error.
+func (p *PooledDirector) SetSSHCleanupStore(store SSHCleanupStore) {
+	owner, ok := p.director.(sshCleanupOwner)
+	if !ok {
+		p.logger.Errorf("The pooled director's BOSH director (%T) keeps no SSH cleanup records, so a missed SSH cleanup is never retried", p.director)
+
+		return
+	}
+
+	owner.SetSSHCleanupStore(store)
+}
+
+// SweepSSHCleanups runs the wrapped director's sweep of its SSH cleanup
+// records. The sweep takes no pool slot, because each cleanup it sends
+// waits for its own task in the call. A director that keeps no records
+// returns ErrSSHCleanupsUnsupported.
+func (p *PooledDirector) SweepSSHCleanups(ctx context.Context) error {
+	owner, ok := p.director.(sshCleanupOwner)
+	if !ok {
+		return fmt.Errorf("%w: the pooled director wraps %T", ErrSSHCleanupsUnsupported, p.director)
+	}
+
+	return owner.SweepSSHCleanups(ctx) //nolint:wrapcheck // the wrapped director's own error
+}
+
 // EnableResurrection implements Director interface - no pooling (doesn't create a task).
 func (p *PooledDirector) EnableResurrection(ctx context.Context, deployment string, enabled bool) error {
 	return p.director.EnableResurrection(ctx, deployment, enabled)

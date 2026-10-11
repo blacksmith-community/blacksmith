@@ -33,6 +33,10 @@ const (
 // contextIDHeader carries the context ID a request was sent with.
 const contextIDHeader = "X-Bosh-Context-Id"
 
+// verboseAll is the task list verbosity at which the director lists SSH
+// tasks.
+const verboseAll = "2"
+
 // firstSSHTaskID is the ID of the first task the SSH director starts.
 const firstSSHTaskID = 100
 
@@ -114,7 +118,8 @@ type SSHCancel struct {
 // answer gives and stays there until the test moves it. A cancel ends a
 // queued task as cancelled at once, marks a processing task as cancelling,
 // which a started SSH job ignores, and is refused for a task that has
-// ended, all as the director does.
+// ended, all as the director does. Its task list, like the director's,
+// names an SSH task only at verbose 2.
 type SSHDirector struct {
 	*Director
 
@@ -348,6 +353,9 @@ func (d *SSHDirector) serveTaskList(writer http.ResponseWriter, request *http.Re
 	query := request.URL.Query()
 	deployment := query.Get("deployment")
 	contextID := query.Get("context_id")
+	// The director lists SSH tasks only at verbose 2. Its default
+	// verbosity of 1 lists a fixed set of task types, and ssh is not one.
+	listsSSH := query.Get("verbose") == verboseAll
 
 	var states []string
 	if state := query.Get("state"); state != "" {
@@ -379,6 +387,10 @@ func (d *SSHDirector) serveTaskList(writer http.ResponseWriter, request *http.Re
 		}
 
 		if len(states) > 0 && !slices.Contains(states, task.State) {
+			continue
+		}
+
+		if !listsSSH {
 			continue
 		}
 

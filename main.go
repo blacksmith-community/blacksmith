@@ -1291,6 +1291,74 @@ func readoptServiceOperations(ctx context.Context, brokerInstance *broker.Broker
 	return nil
 }
 
+// sshCleanupSweepInterval is how often the broker sweeps its SSH cleanup
+// records after the sweep at boot.
+const sshCleanupSweepInterval = 10 * time.Minute
+
+// sshCleanupSweeper sweeps the records of SSH users whose cleanup a
+// restart, a lost answer, or a failed task missed.
+type sshCleanupSweeper interface {
+	SweepSSHCleanups(ctx context.Context) error
+}
+
+// startSSHCleanupSweeps hands the director the Vault store its SSH setups
+// record their users in, and sweeps the records once now and then every
+// sshCleanupSweepInterval until the service context ends. It must run
+// before anything opens an SSH session, so every session's user gets a
+// record. With no director or no Vault, nothing is recorded or swept.
+func startSSHCleanupSweeps(ctx context.Context, boshDirector *bosh.PooledDirector, vault *internalVault.Vault, logger loggerPkg.Logger) {
+	if boshDirector == nil || vault == nil {
+		logger.Warn("No BOSH director or no Vault is configured, so SSH users are not recorded and a missed SSH cleanup is never retried")
+
+		return
+	}
+
+	boshDirector.SetSSHCleanupStore(vault)
+
+	go func() {
+		ticker := time.NewTicker(sshCleanupSweepInterval)
+		defer ticker.Stop()
+
+		runSSHCleanupSweeps(ctx, boshDirector, ticker.C, logger)
+	}()
+}
+
+// runSSHCleanupSweeps sweeps once at once and then once per tick, until
+// ctx ends. A sweep that fails or panics is logged, and the next tick
+// sweeps again.
+func runSSHCleanupSweeps(ctx context.Context, sweeper sshCleanupSweeper, ticks <-chan time.Time, logger loggerPkg.Logger) {
+	for {
+		sweepSSHCleanupsOnce(ctx, sweeper, logger)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+		}
+
+		// A tick and the end of ctx can arrive together, and select picks
+		// either, so a sweep never starts once ctx has ended.
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
+
+// sweepSSHCleanupsOnce runs one sweep and logs its failure or panic.
+func sweepSSHCleanupsOnce(ctx context.Context, sweeper sshCleanupSweeper, logger loggerPkg.Logger) {
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			logger.Error("The SSH cleanup sweep panicked, and the next sweep runs in %s: %v", sshCleanupSweepInterval, recovered)
+		}
+	}()
+
+	err := sweeper.SweepSSHCleanups(ctx)
+	if err != nil {
+		logger.Error("The SSH cleanup sweep did not finish, and the next sweep runs in %s: %v", sshCleanupSweepInterval, err)
+	}
+}
+
 // runService runs the main service logic.
 func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger) error {
 	// bootCtx is a root context. Nothing above runService carries one, and
@@ -1325,6 +1393,8 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	if err != nil {
 		return err
 	}
+
+	startSSHCleanupSweeps(ctx, boshDirector, vault, logger)
 
 	cfManager := initializeCFManager(config, logger)
 	reconciler := setupReconciler(config, brokerInstance, vault, boshDirector, cfManager, logger)

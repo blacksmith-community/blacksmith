@@ -330,6 +330,31 @@ func (vc *Client) DeleteSecret(ctx context.Context, path string) error {
 	return nil
 }
 
+// DestroySecret removes a secret so that no listing names it again. On KV
+// v2 it deletes the secret's metadata, which removes every version, where
+// DeleteSecret only marks the newest version deleted and leaves the key in
+// the listing. On KV v1 it is DeleteSecret. A secret that is already gone
+// is not an error.
+func (vc *Client) DestroySecret(ctx context.Context, path string) error {
+	if vc.KVVersion != "2" {
+		return vc.DeleteSecret(ctx, path)
+	}
+
+	loggerInstance := logger.Get().Named("vault destroy")
+	fullPath := "secret/metadata/" + path
+
+	_, err := vc.Logical().DeleteWithContext(ctx, fullPath)
+	if err != nil && !isNotFound(err) {
+		loggerInstance.Error("failed to destroy secret at %s: %s", fullPath, err)
+
+		return fmt.Errorf("failed to destroy vault secret: %w", err)
+	}
+
+	loggerInstance.Debug("secret destroyed at %s", fullPath)
+
+	return nil
+}
+
 // ListSecrets lists secrets at a given path.
 func (vc *Client) ListSecrets(ctx context.Context, path string) ([]string, error) {
 	loggerInstance := logger.Get().Named("vault list")
