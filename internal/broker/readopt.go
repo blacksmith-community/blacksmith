@@ -96,6 +96,11 @@ type readoptCandidate struct {
 	// metadata is <id>/metadata, read only for a deprovision without an
 	// index entry that carries a context ID.
 	metadata map[string]interface{}
+
+	// credentialsStored reports whether <id>/credentials exists. It is
+	// read only for an indexed provision in progress whose index entry
+	// has created_at.
+	credentialsStored bool
 }
 
 // readoptOperation is an operation the first phase of re-adoption claimed.
@@ -126,9 +131,9 @@ type readoptMigration struct {
 // error only when ctx ends first.
 //
 // A record that is finished but not marked so, a provision whose index
-// entry has created_at or a delete whose deleted_at is on record, is not
-// claimed. One goroutine marks each of them, with no director call. With
-// no director, nothing is re-adopted.
+// entry has created_at and whose credentials are stored, or a delete whose
+// deleted_at is on record, is not claimed. One goroutine marks each of
+// them, with no director call. With no director, nothing is re-adopted.
 func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	logger := logger.Get().Named("readopt")
 
@@ -152,6 +157,11 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 	}
 
 	err = readoptReadMetadata(ctx, store, candidates, logger)
+	if err != nil {
+		return err
+	}
+
+	err = readoptReadCredentials(ctx, store, candidates, logger)
 	if err != nil {
 		return err
 	}
@@ -361,6 +371,37 @@ func readoptReadMetadata(ctx context.Context, store readoptStore, candidates []*
 	})
 }
 
+// readoptReadCredentials checks whether <id>/credentials exists for each
+// indexed provision in progress whose index entry has created_at, as
+// readoptReadRecords reads the records.
+func readoptReadCredentials(ctx context.Context, store readoptStore, candidates []*readoptCandidate, logger logger.Logger) error {
+	var needed []*readoptCandidate
+
+	for _, candidate := range candidates {
+		if candidate.indexed && candidate.parsed && candidate.recorded.Action == operationTypeProvision &&
+			candidate.recorded.State == recordedStateInProgress && indexEntryCreated(candidate.entry) {
+			needed = append(needed, candidate)
+		}
+	}
+
+	return readoptInParallel(ctx, len(needed), func(index int) error {
+		candidate := needed[index]
+
+		return readoptRetryRead(ctx, candidate.instanceID+"/credentials", logger, func() error {
+			var credentials map[string]interface{}
+
+			exists, err := store.Get(ctx, candidate.instanceID+"/credentials", &credentials)
+			if err != nil {
+				return fmt.Errorf("failed to read %s/credentials: %w", candidate.instanceID, err)
+			}
+
+			candidate.credentialsStored = exists
+
+			return nil
+		})
+	})
+}
+
 // readoptInParallel runs read for each index below count, readoptReadWorkers
 // at a time, and returns once every read has returned. It returns an error
 // when ctx ends first.
@@ -463,7 +504,8 @@ func sortReadoptCandidates(candidates []*readoptCandidate, logger logger.Logger)
 				logger.Debug("Instance %s: its deprovision is finished", candidate.instanceID)
 
 				continue
-			case recorded.Action == operationTypeProvision && recorded.State == recordedStateInProgress && indexEntryCreated(candidate.entry):
+			case recorded.Action == operationTypeProvision && recorded.State == recordedStateInProgress &&
+				indexEntryCreated(candidate.entry) && candidate.credentialsStored:
 				migrations = append(migrations, readoptMigration{instanceID: candidate.instanceID, recorded: recorded, state: internalVault.TaskStateSucceeded})
 
 				continue
@@ -535,7 +577,10 @@ func finishedDeprovision(recorded recordedOperation) bool {
 }
 
 // indexEntryCreated reports whether an index entry has created_at, which
-// only a finished provision's completion steps write.
+// a provision's completion steps write once every other step has
+// succeeded. Code older than that wrote it before the steps, so the
+// first phase of re-adoption also asks for stored credentials before it
+// takes created_at as a finished provision.
 func indexEntryCreated(entry map[string]interface{}) bool {
 	created, _ := entry["created_at"].(string)
 
@@ -566,7 +611,7 @@ func (b *Broker) markFinishedRecords(migrations []readoptMigration, logger logge
 }
 
 // markProvisionSucceeded marks a provision whose index entry has
-// created_at as succeeded.
+// created_at and whose credentials are stored as succeeded.
 func (b *Broker) markProvisionSucceeded(ctx context.Context, migration readoptMigration, logger logger.Logger) {
 	unlock, err := b.lockSettle(ctx, migration.instanceID)
 	if err != nil {

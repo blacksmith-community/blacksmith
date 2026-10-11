@@ -611,19 +611,18 @@ func (b *Broker) Deprovision(
 	return osbapi.DeprovisionResponse{Operation: operationTypeDeprovision}, true, nil
 }
 
+// OnProvisionCompleted runs the completion steps of a provision whose
+// deploy task finished. It adds the instance to the vm-monitor, stores its
+// credentials, and schedules its backup, and only once every step has
+// succeeded does it write created_at, so created_at on an instance shows
+// that its completion steps finished. A step that fails returns its error
+// before created_at is written, and the steps run again on the next try.
 func (b *Broker) OnProvisionCompleted(
 	ctx context.Context,
 	logger logger.Logger,
 	instanceID string,
 ) error {
 	logger.Debug("provision task was successfully completed; scheduling backup in S.H.I.E.L.D. if required")
-
-	// Update instance with created_at timestamp
-	err := b.updateInstanceTimestamp(ctx, instanceID, logger)
-	if err != nil {
-		logger.Error("failed to update timestamps: %s", err)
-		// Continue anyway, this is non-fatal
-	}
 
 	// Get instance details and deployment info
 	details, deployment, err := b.getInstanceDetails(ctx, instanceID, logger)
@@ -662,6 +661,13 @@ func (b *Broker) OnProvisionCompleted(
 	}
 
 	logger.Debug("scheduling of S.H.I.E.L.D. backup for instance '%s' successfully completed", instanceID)
+
+	// Every completion step has succeeded, so created_at is written now.
+	err = b.updateInstanceTimestamp(ctx, instanceID, logger)
+	if err != nil {
+		logger.Error("failed to update timestamps: %s", err)
+		// Continue anyway, this is non-fatal
+	}
 
 	return nil
 }

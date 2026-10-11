@@ -124,6 +124,18 @@ func (s *failingReadoptStore) fail(call string) {
 	}
 }
 
+// errShieldDown is the answer of a SHIELD that cannot be reached.
+var errShieldDown = errors.New("shield answered 502 Bad Gateway")
+
+// failingShield is a SHIELD whose every schedule fails.
+type failingShield struct {
+	recordingShield
+}
+
+func (s *failingShield) CreateSchedule(string, string, string, string, interface{}) error {
+	return errShieldDown
+}
+
 // A broker that restarts finds the operations its previous run left in
 // flight in Vault, claims them before it serves a request, and settles
 // them as LastOperation would.
@@ -627,8 +639,9 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Expect(indexed()).To(BeTrue())
 	})
 
-	It("boot re-adoption settles an old provision that has created_at without calling the director", func() {
+	It("boot re-adoption settles an old provision that has created_at and stored credentials without calling the director", func() {
 		indexInstance(map[string]interface{}{createdAtKey: time.Now().Add(-24 * time.Hour).Format(time.RFC3339)})
+		Expect(vaultClient.Put(ctx, instanceID+"/"+credentialsKey, map[string]interface{}{credentialsHostKey: readoptVMAddress})).To(Succeed())
 		recordProvision(createTaskID)
 
 		brokerInstance := boot(director)
@@ -638,6 +651,75 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Expect(recorded().TaskID).To(Equal(createTaskID))
 		Expect(directorCalls()).To(BeZero())
 		Expect(monitor.Added()).To(BeEmpty())
+	})
+
+	It("boot re-adoption runs the completion steps of an old provision that has created_at and no stored credentials", func() {
+		indexInstance(map[string]interface{}{createdAtKey: time.Now().Add(-24 * time.Hour).Format(time.RFC3339)})
+		recordProvision(createTaskID)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskDone, Description: outcomeCreateDeployment})
+
+		brokerInstance := boot(director)
+		Expect(brokerInstance.ProvisionActive(instanceID)).To(BeTrue(), "a provision with no stored credentials must be re-adopted")
+
+		Eventually(recordState, 10*time.Second).Should(Equal(internalVault.TaskStateSucceeded))
+		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+
+		Expect(monitor.Added()).To(Equal([]string{instanceID}))
+		Expect(backups.Scheduled()).To(Equal([]string{instanceID}))
+
+		var stored map[string]interface{}
+
+		exists, err := vaultClient.Get(ctx, instanceID+"/"+credentialsKey, &stored)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(exists).To(BeTrue(), "the completion steps must store the credentials")
+	})
+
+	It("boot re-adoption runs the completion steps again after they failed before a restart", func() {
+		indexInstance(nil)
+		recordProvision(createTaskID)
+		world.set(&bosh.Task{ID: createTaskID, State: outcomeTaskDone, Description: outcomeCreateDeployment})
+
+		// The first run's backup schedule fails after the credentials are
+		// stored, and the broker then restarts.
+		first := newBroker(director)
+		first.Shield = &failingShield{}
+
+		_, err := first.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+			ServiceID: serviceID, PlanID: planID, Operation: outcomeProvision,
+		})
+		Expect(err).To(MatchError(broker.ErrProvisionTaskCompletedPostHookFailed))
+		Expect(recordState()).To(Equal("in_progress"))
+
+		idx, err := vaultClient.GetIndex(ctx, "db")
+		Expect(err).ToNot(HaveOccurred())
+
+		entry, err := idx.Lookup(instanceID)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(entry).ToNot(HaveKey(createdAtKey), "created_at must wait until every completion step has succeeded")
+
+		repeat := osbapi.ProvisionRequest{ServiceID: serviceID, PlanID: planID, OrganizationGUID: orgGUID, SpaceGUID: spaceGUID}
+
+		response, async, err := first.Provision(ctx, instanceID, repeat, true)
+		Expect(err).ToNot(HaveOccurred(), "a repeat must not answer 200 before the completion steps finish")
+		Expect(async).To(BeTrue())
+		Expect(response.Operation).To(Equal(outcomeProvision))
+
+		second := boot(director)
+
+		Eventually(recordState, 10*time.Second).Should(Equal(internalVault.TaskStateSucceeded))
+		Eventually(func() bool { return second.OperationClaimed(instanceID) }, 10*time.Second).Should(BeFalse())
+		Expect(backups.Scheduled()).To(Equal([]string{instanceID}), "the completion steps must run again after the restart")
+
+		idx, err = vaultClient.GetIndex(ctx, "db")
+		Expect(err).ToNot(HaveOccurred())
+
+		entry, err = idx.Lookup(instanceID)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(entry).To(HaveKey(createdAtKey))
+
+		_, _, err = second.Provision(ctx, instanceID, repeat, true)
+		Expect(err).To(MatchError(osbapi.ErrInstanceAlreadyProvisioned), "a repeat answers 200 once the completion steps have finished")
+		Expect(director.Calls(directorCreateDeployment)).To(BeEmpty())
 	})
 
 	It("boot re-adoption completes an old provision whose task was pruned once", func() {
