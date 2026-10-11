@@ -131,6 +131,13 @@ func (e *ExecutorImpl) setupSession(ctx context.Context, request *SSHRequest) (S
 	if err != nil {
 		e.logger.Errorf("Failed to start SSH session: %v", err)
 
+		// The director has already created the SSH user, and closing the
+		// session removes it.
+		closeErr := session.Close()
+		if closeErr != nil {
+			e.logger.Errorf("Failed to close SSH session after its start failed: %v", closeErr)
+		}
+
 		return nil, fmt.Errorf("failed to start SSH session: %w", err)
 	}
 

@@ -43,6 +43,9 @@ const (
 
 	// I/O buffer size.
 	ioBufferSize = 4096
+
+	// sshPort is the port that sshd listens on, on every BOSH VM.
+	sshPort = "22"
 )
 
 // Static error variables to satisfy err113.
@@ -65,6 +68,11 @@ type ServiceImpl struct {
 	sessionPool  map[string]SSHSession
 	sessionMutex sync.RWMutex
 	logger       Logger
+
+	// port is the port the terminal connects to on a VM and on a
+	// gateway. It is sshPort everywhere but in tests, which point it at
+	// a loopback server.
+	port string
 }
 
 // DirectorInterface defines the methods we need from the BOSH director.
@@ -107,6 +115,7 @@ func NewSSHService(director DirectorInterface, config Config, logger Logger) *Se
 		sessionPool:  make(map[string]SSHSession),
 		sessionMutex: sync.RWMutex{},
 		logger:       logger,
+		port:         sshPort,
 	}
 }
 
@@ -289,9 +298,22 @@ func (s *ServiceImpl) prepareSSHSessionOptions(request *SSHRequest) map[string]i
 	return options
 }
 
+// createSessionImpl builds the session for a director's SSH setup. The
+// director's cleanup is copied into the session here rather than in
+// Start, because the setup has already created the user on the VM, so a
+// session whose Start never runs, or fails, must still remove it when it
+// closes.
 func (s *ServiceImpl) createSessionImpl(request *SSHRequest, sessionInfo interface{}) *SessionImpl {
+	sessionID := fmt.Sprintf("%s-%s-%d-%d", request.Deployment, request.Instance, request.Index, time.Now().Unix())
+
+	cleanupFunc := directorCleanup(sessionInfo)
+	if cleanupFunc == nil {
+		s.logger.Errorf("The director's SSH setup for session %s carries no cleanup, so the SSH user it created on %s/%s/%d stays on the VM after the session closes",
+			sessionID, request.Deployment, request.Instance, request.Index)
+	}
+
 	return &SessionImpl{
-		id:            fmt.Sprintf("%s-%s-%d-%d", request.Deployment, request.Instance, request.Index, time.Now().Unix()),
+		id:            sessionID,
 		deployment:    request.Deployment,
 		instance:      request.Instance,
 		index:         request.Index,
@@ -306,13 +328,29 @@ func (s *ServiceImpl) createSessionImpl(request *SSHRequest, sessionInfo interfa
 		stdin:         nil,
 		stdout:        nil,
 		stderr:        nil,
-		cleanupFunc:   nil,
+		cleanupFunc:   cleanupFunc,
 		outputChan:    nil,
 		errorChan:     nil,
 		closeChan:     nil,
 		keepAliveDone: nil,
 		closeOnce:     sync.Once{},
 	}
+}
+
+// directorCleanup returns the cleanup that the director adapter puts in
+// its SSH session info, or nil when the info carries none.
+func directorCleanup(sessionInfo interface{}) func() error {
+	sessionMap, isMap := sessionInfo.(map[string]interface{})
+	if !isMap {
+		return nil
+	}
+
+	cleanupFunc, hasCleanup := sessionMap["cleanup_func"].(func() error)
+	if !hasCleanup {
+		return nil
+	}
+
+	return cleanupFunc
 }
 
 func (s *ServiceImpl) addSessionToPool(session *SessionImpl) {
@@ -452,7 +490,8 @@ type SessionImpl struct {
 	stdout     io.Reader
 	stderr     io.Reader
 
-	// Cleanup function from BOSH
+	// cleanupFunc removes the SSH user that the director's setup created.
+	// Close calls it once, after closing the connection.
 	cleanupFunc func() error
 
 	// Channel for output streaming
@@ -662,11 +701,13 @@ func (s *SessionImpl) Close() error {
 			}
 		}
 
-		// Call BOSH cleanup function
+		// Remove the SSH user that the director's setup created.
 		if s.cleanupFunc != nil {
 			err := s.cleanupFunc()
 			if err != nil {
-				s.logger.Errorf("Failed to cleanup BOSH SSH: %v", err)
+				s.logger.Errorf("Failed to remove the SSH user for session %s: %v", s.id, err)
+
+				closeErr = NewSSHError(SSHErrorCodeInternal, "Failed to remove the SSH user for session "+s.id, err)
 			}
 		}
 
@@ -760,20 +801,14 @@ func (s *SessionImpl) extractSessionDetails() (*sessionConnectionDetails, error)
 		}
 	}
 
-	// Store cleanup function
-	if cleanupFunc, ok := sessionMap["cleanup_func"].(func() error); ok {
-		details.cleanupFunc = cleanupFunc
-	}
-
 	return details, nil
 }
 
 // sessionConnectionDetails holds SSH connection details.
 type sessionConnectionDetails struct {
-	privateKey  string
-	host        *hostInfo
-	gateway     *gatewayInfo
-	cleanupFunc func() error
+	privateKey string
+	host       *hostInfo
+	gateway    *gatewayInfo
 }
 
 // hostInfo holds host connection details.
@@ -854,7 +889,7 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 	default:
 	}
 
-	gatewayAddr := details.gateway.host + ":22"
+	gatewayAddr := net.JoinHostPort(details.gateway.host, s.service.port)
 	gatewayConfig := &ssh.ClientConfig{
 		User: details.gateway.user,
 		Auth: []ssh.AuthMethod{
@@ -869,7 +904,7 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 		return NewSSHError(SSHErrorCodeConnection, "Failed to connect to gateway "+gatewayAddr, err)
 	}
 
-	targetAddr := details.host.address + ":22"
+	targetAddr := net.JoinHostPort(details.host.address, s.service.port)
 
 	conn, err := gatewayClient.Dial("tcp", targetAddr)
 	if err != nil {
@@ -899,7 +934,7 @@ func (s *SessionImpl) connectDirect(ctx context.Context, hostAddress string, con
 	default:
 	}
 
-	addr := hostAddress + ":22"
+	addr := net.JoinHostPort(hostAddress, s.service.port)
 
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
@@ -979,13 +1014,16 @@ func (s *SessionImpl) setupPipes() error {
 	return nil
 }
 
-// closeConnections closes SSH connections.
+// closeConnections closes the connection of a Start that failed, and
+// clears it, so the session's Close does not close it a second time.
 func (s *SessionImpl) closeConnections() {
 	if s.sshSession != nil {
 		err := s.sshSession.Close()
 		if err != nil {
 			s.logger.Errorf("Failed to close SSH session: %v", err)
 		}
+
+		s.sshSession = nil
 	}
 
 	if s.sshClient != nil {
@@ -993,6 +1031,8 @@ func (s *SessionImpl) closeConnections() {
 		if err != nil {
 			s.logger.Errorf("Failed to close SSH client: %v", err)
 		}
+
+		s.sshClient = nil
 	}
 }
 

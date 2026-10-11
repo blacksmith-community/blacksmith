@@ -1,0 +1,373 @@
+package ssh
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
+	"errors"
+	"io"
+	"net"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+)
+
+const testVMUser = "bosh_0123456789abcde"
+
+var (
+	errTestKeyRefused     = errors.New("test server refuses every key")
+	errTestCleanupRefused = errors.New("director refused the cleanup")
+)
+
+// testVMServer is an in-process SSH server on a random loopback port. It
+// stands in for a VM's sshd. Close stops the listener, closes every
+// connection, and waits for every goroutine it started.
+type testVMServer struct {
+	listener net.Listener
+	wg       sync.WaitGroup
+
+	mu    sync.Mutex
+	conns []net.Conn
+}
+
+func startTestVMServer(t *testing.T, handle func(conn net.Conn)) *testVMServer {
+	t.Helper()
+
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	server := &testVMServer{listener: listener}
+
+	server.wg.Add(1)
+
+	go func() {
+		defer server.wg.Done()
+
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+
+			server.mu.Lock()
+			server.conns = append(server.conns, conn)
+			server.mu.Unlock()
+
+			server.wg.Add(1)
+
+			go func() {
+				defer server.wg.Done()
+
+				handle(conn)
+			}()
+		}
+	}()
+
+	t.Cleanup(server.Close)
+
+	return server
+}
+
+func (s *testVMServer) Close() {
+	_ = s.listener.Close()
+
+	s.mu.Lock()
+	for _, conn := range s.conns {
+		_ = conn.Close()
+	}
+	s.mu.Unlock()
+
+	s.wg.Wait()
+}
+
+func (s *testVMServer) port(t *testing.T) string {
+	t.Helper()
+
+	_, port, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split %s: %v", s.listener.Addr(), err)
+	}
+
+	return port
+}
+
+// testKey is an ed25519 key with its PEM form, which is what the director
+// adapter hands the terminal.
+type testKey struct {
+	signer ssh.Signer
+	pem    string
+}
+
+func newTestKey(t *testing.T) testKey {
+	t.Helper()
+
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(private)
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+
+	block, err := ssh.MarshalPrivateKey(private, "")
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+
+	return testKey{signer: signer, pem: string(pem.EncodeToMemory(block))}
+}
+
+// vmServerConfig accepts only the user key it is given, or refuses every
+// key when accept is nil.
+func vmServerConfig(t *testing.T, accept ssh.PublicKey) *ssh.ServerConfig {
+	t.Helper()
+
+	config := &ssh.ServerConfig{
+		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			if accept != nil && bytes.Equal(key.Marshal(), accept.Marshal()) {
+				return &ssh.Permissions{}, nil
+			}
+
+			return nil, errTestKeyRefused
+		},
+	}
+	config.AddHostKey(newTestKey(t).signer)
+
+	return config
+}
+
+// shellHandler serves a VM that grants a PTY and a shell on every session
+// channel and keeps the channel open until the client closes it.
+func shellHandler(config *ssh.ServerConfig) func(net.Conn) {
+	return func(conn net.Conn) {
+		serverConn, channels, requests, err := ssh.NewServerConn(conn, config)
+		if err != nil {
+			return
+		}
+
+		defer func() { _ = serverConn.Close() }()
+
+		go ssh.DiscardRequests(requests)
+
+		for newChannel := range channels {
+			if newChannel.ChannelType() != "session" {
+				_ = newChannel.Reject(ssh.UnknownChannelType, "only session channels")
+
+				continue
+			}
+
+			channel, channelRequests, err := newChannel.Accept()
+			if err != nil {
+				return
+			}
+
+			go func() {
+				for request := range channelRequests {
+					switch request.Type {
+					case "pty-req", "shell", "window-change", "env":
+						_ = request.Reply(true, nil)
+					default:
+						_ = request.Reply(false, nil)
+					}
+				}
+			}()
+
+			go func() {
+				_, _ = io.Copy(io.Discard, channel)
+				_ = channel.Close()
+			}()
+		}
+	}
+}
+
+// silentHandler accepts the TCP connection and never speaks, so a client
+// handshake on it waits until something ends it.
+func silentHandler(conn net.Conn) {
+	_, _ = io.Copy(io.Discard, conn)
+}
+
+// cleanupDirector stands in for the director adapter. Every SSHSession
+// answer carries a cleanup that counts its calls.
+type cleanupDirector struct {
+	privateKey string
+	cleanupErr error
+	setups     atomic.Int32
+	cleanups   atomic.Int32
+}
+
+func (d *cleanupDirector) SSHCommand(context.Context, string, string, int, string, []string, map[string]interface{}) (string, error) {
+	return "", nil
+}
+
+func (d *cleanupDirector) SSHSession(_ context.Context, deployment, instance string, index int, _ map[string]interface{}) (interface{}, error) {
+	d.setups.Add(1)
+
+	return map[string]interface{}{
+		"deployment":  deployment,
+		"instance":    instance,
+		"index":       index,
+		"private_key": d.privateKey,
+		"hosts": []interface{}{
+			map[string]interface{}{"Host": "127.0.0.1", "Username": testVMUser},
+		},
+		"cleanup_func": func() error {
+			d.cleanups.Add(1)
+
+			return d.cleanupErr
+		},
+	}, nil
+}
+
+func newTestService(t *testing.T, director DirectorInterface, port string) *ServiceImpl {
+	t.Helper()
+
+	service := NewSSHService(director, Config{
+		MaxConcurrent:      10,
+		SessionInitTimeout: 5 * time.Second,
+		KnownHostsFile:     filepath.Join(t.TempDir(), "known_hosts"),
+	}, nil)
+	service.port = port
+
+	return service
+}
+
+func terminalRequest() *SSHRequest {
+	return &SSHRequest{Deployment: "redis-1", Instance: "redis", Index: 0}
+}
+
+// Every terminal session removes its user when it closes, whether it
+// never started, failed to start, or connected.
+func TestSessionCloseRunsTheDirectorCleanup(t *testing.T) {
+	t.Parallel()
+
+	key := newTestKey(t)
+
+	cases := map[string]struct {
+		start   bool
+		handler func(net.Conn)
+		wantErr bool
+	}{
+		"never started":         {start: false, handler: silentHandler},
+		"start failed":          {start: true, handler: shellHandler(vmServerConfig(t, nil)), wantErr: true},
+		"connected and started": {start: true, handler: shellHandler(vmServerConfig(t, key.signer.PublicKey()))},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			server := startTestVMServer(t, testCase.handler)
+			director := &cleanupDirector{privateKey: key.pem}
+			service := newTestService(t, director, server.port(t))
+
+			session, err := service.CreateSession(t.Context(), terminalRequest())
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+
+			if testCase.start {
+				err = session.Start()
+				if testCase.wantErr && err == nil {
+					t.Fatal("Start succeeded against a server that refuses the key")
+				}
+
+				if !testCase.wantErr && err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+			}
+
+			if got := director.cleanups.Load(); got != 0 {
+				t.Fatalf("%d cleanups before Close, want 0", got)
+			}
+
+			err = session.Close()
+			if err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			if got := director.cleanups.Load(); got != 1 {
+				t.Errorf("%d cleanups after Close, want 1", got)
+			}
+		})
+	}
+}
+
+// Closing a session twice removes its user once.
+func TestSessionCloseRunsTheCleanupOnce(t *testing.T) {
+	t.Parallel()
+
+	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	service := newTestService(t, director, sshPort)
+
+	session, err := service.CreateSession(t.Context(), terminalRequest())
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	for range 2 {
+		_ = session.Close()
+	}
+
+	err = service.Close()
+	if err != nil {
+		t.Fatalf("close service: %v", err)
+	}
+
+	if got := director.cleanups.Load(); got != 1 {
+		t.Errorf("%d cleanups after two closes and a service close, want 1", got)
+	}
+}
+
+// Close reports a cleanup that failed, because that user stays on the VM.
+func TestSessionCloseReportsAFailedCleanup(t *testing.T) {
+	t.Parallel()
+
+	director := &cleanupDirector{privateKey: newTestKey(t).pem, cleanupErr: errTestCleanupRefused}
+	service := newTestService(t, director, sshPort)
+
+	session, err := service.CreateSession(t.Context(), terminalRequest())
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	err = session.Close()
+	if !errors.Is(err, errTestCleanupRefused) {
+		t.Errorf("Close returned %v, want the cleanup's error", err)
+	}
+}
+
+// A session whose Start fails is closed by the executor, so its user is
+// removed rather than left behind.
+func TestExecutorClosesASessionWhoseStartFailed(t *testing.T) {
+	t.Parallel()
+
+	server := startTestVMServer(t, shellHandler(vmServerConfig(t, nil)))
+	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	service := newTestService(t, director, server.port(t))
+	executor := NewSSHExecutor(service, Config{Timeout: 5 * time.Second}, nil)
+
+	_, err := executor.ExecuteWithStream(t.Context(), &SSHRequest{
+		Deployment: "redis-1", Instance: "redis", Index: 0, Command: "true",
+	}, io.Discard)
+	if err == nil {
+		t.Fatal("ExecuteWithStream succeeded against a server that refuses the key")
+	}
+
+	if got := director.setups.Load(); got != 1 {
+		t.Fatalf("%d setups, want 1", got)
+	}
+
+	if got := director.cleanups.Load(); got != 1 {
+		t.Errorf("%d cleanups after a failed Start, want 1", got)
+	}
+}

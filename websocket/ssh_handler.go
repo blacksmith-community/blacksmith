@@ -302,27 +302,25 @@ func (h *SSHHandler) HandleWebSocket(ctx context.Context, writer http.ResponseWr
 	h.handleSession(sessionCtx, session)
 }
 
-// Close shuts down the handler and cleans up all sessions.
+// Close shuts down the handler and cleans up all sessions. The sessions
+// are taken under the handler's lock and closed after it is released,
+// because closing an SSH session waits for the director's cleanup.
 func (h *SSHHandler) Close() error {
 	h.logger.Infof("Closing WebSocket SSH handler")
 
 	h.sessionsMutex.Lock()
-	defer h.sessionsMutex.Unlock()
+	sessions := h.sessions
+	h.sessions = make(map[string]*SSHStreamSession)
 
-	for sessionID, session := range h.sessions {
-		h.logger.Debugf("Closing session: %s", sessionID)
-
-		if session.SSHSession != nil {
-			err := session.SSHSession.Close()
-			if err != nil {
-				h.logger.Errorf("Failed to close SSH session %s: %v", sessionID, err)
-			}
-		}
-
+	for _, session := range sessions {
 		session.Cancel()
 	}
+	h.sessionsMutex.Unlock()
 
-	h.sessions = make(map[string]*SSHStreamSession)
+	for sessionID, session := range sessions {
+		h.logger.Debugf("Closing session: %s", sessionID)
+		h.closeSSHOf(sessionID, session)
+	}
 
 	return nil
 }
@@ -333,6 +331,21 @@ func (h *SSHHandler) GetActiveSessions() int {
 	defer h.sessionsMutex.RUnlock()
 
 	return len(h.sessions)
+}
+
+// closeSSHOf closes the SSH session on a WebSocket session that the
+// handler has dropped, which removes its user from the VM. The caller
+// must not hold sessionsMutex.
+func (h *SSHHandler) closeSSHOf(sessionID string, session *SSHStreamSession) {
+	sshSession := session.SSHSession
+	if sshSession == nil {
+		return
+	}
+
+	err := sshSession.Close()
+	if err != nil {
+		h.logger.Errorf("Failed to close SSH session %s: %v", sessionID, err)
+	}
 }
 
 // handleSession manages a WebSocket SSH session.
@@ -740,12 +753,26 @@ func (h *SSHHandler) sessionCleanupLoop() {
 	}
 }
 
-// cleanupInactiveSessions removes sessions that have been inactive too long.
+// cleanupInactiveSessions removes sessions that have been inactive too
+// long. The stale sessions are taken under the handler's lock and their
+// SSH sessions are closed after it is released, because each close waits
+// for the director's cleanup, and the lock would stall every WebSocket
+// that opens or ends meanwhile.
 func (h *SSHHandler) cleanupInactiveSessions() {
+	stale := h.takeInactiveSessions(time.Now())
+
+	for sessionID, session := range stale {
+		h.closeSSHOf(sessionID, session)
+	}
+}
+
+// takeInactiveSessions drops the sessions idle longer than the session
+// timeout from the handler, cancels them, and returns them.
+func (h *SSHHandler) takeInactiveSessions(now time.Time) map[string]*SSHStreamSession {
 	h.sessionsMutex.Lock()
 	defer h.sessionsMutex.Unlock()
 
-	now := time.Now()
+	stale := make(map[string]*SSHStreamSession)
 
 	for sessionID, session := range h.sessions {
 		session.Mutex.RLock()
@@ -755,17 +782,14 @@ func (h *SSHHandler) cleanupInactiveSessions() {
 		if now.Sub(lastActivity) > h.config.SessionTimeout {
 			h.logger.Infof("Cleaning up inactive session: %s", sessionID)
 
-			if session.SSHSession != nil {
-				err := session.SSHSession.Close()
-				if err != nil {
-					h.logger.Errorf("Failed to close SSH session %s: %v", sessionID, err)
-				}
-			}
-
 			session.Cancel()
 			delete(h.sessions, sessionID)
+
+			stale[sessionID] = session
 		}
 	}
+
+	return stale
 }
 
 // handleInputMessage handles user input.
