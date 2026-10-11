@@ -1,10 +1,12 @@
 package boshtest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,6 +38,9 @@ const contextIDHeader = "X-Bosh-Context-Id"
 // verboseAll is the task list verbosity at which the director lists SSH
 // tasks.
 const verboseAll = "2"
+
+// internalErrorCode is the director's error code for an internal error.
+const internalErrorCode = 100
 
 // firstSSHTaskID is the ID of the first task the SSH director starts.
 const firstSSHTaskID = 100
@@ -88,6 +93,19 @@ type SSHAnswer struct {
 	// Output is the task's result output. Empty means one success entry
 	// for 127.0.0.1 for a setup, and nothing for a cleanup.
 	Output string
+	// FailReads is how many reads of the task, from the first, answer with
+	// the director's internal error in place of the task.
+	FailReads int
+	// OnRead, when set, runs as each read of the task arrives, before the
+	// read is answered, so a test can act once the client is waiting on
+	// the task.
+	OnRead func()
+	// OutputStatus, when not zero, answers each read of the task's result
+	// output with the director's JSON error body for that status.
+	OutputStatus int
+	// HoldOutput, when set, runs before each read of the task's result
+	// output is answered, with the read's request context.
+	HoldOutput func(context.Context)
 }
 
 // SSHTask is a task the SSH director started, or one a test listed.
@@ -103,6 +121,11 @@ type SSHTask struct {
 	// EndedAt is when the task reached a terminal state, zero while it
 	// runs.
 	EndedAt time.Time
+
+	failReads    int
+	onRead       func()
+	outputStatus int
+	holdOutput   func(context.Context)
 }
 
 // SSHCancel is one cancel the SSH director received.
@@ -125,12 +148,13 @@ type SSHDirector struct {
 
 	answer func(SSHCall) SSHAnswer
 
-	mu      sync.Mutex
-	nextID  int
-	calls   []SSHCall
-	tasks   map[int]*SSHTask
-	cancels []SSHCancel
-	reads   map[int]int
+	mu       sync.Mutex
+	nextID   int
+	calls    []SSHCall
+	tasks    map[int]*SSHTask
+	cancels  []SSHCancel
+	reads    map[int]int
+	listings []url.Values
 }
 
 // NewSSH starts an SSH director. answer decides how each SSH request is
@@ -240,6 +264,15 @@ func (d *SSHDirector) CallsOf(command string) []SSHCall {
 	return found
 }
 
+// Listings returns the query of every task list request so far, oldest
+// first.
+func (d *SSHDirector) Listings() []url.Values {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return append([]url.Values(nil), d.listings...)
+}
+
 // Cancels returns every cancel so far, oldest first.
 func (d *SSHDirector) Cancels() []SSHCancel {
 	d.mu.Lock()
@@ -257,7 +290,7 @@ func (d *SSHDirector) serve(writer http.ResponseWriter, request *http.Request) b
 	case request.Method == http.MethodGet && path == "/tasks":
 		d.serveTaskList(writer, request)
 	case request.Method == http.MethodGet && strings.HasPrefix(path, "/tasks/") && strings.HasSuffix(path, "/output"):
-		return d.serveOutput(writer, strings.TrimSuffix(strings.TrimPrefix(path, "/tasks/"), "/output"))
+		return d.serveOutput(writer, request, strings.TrimSuffix(strings.TrimPrefix(path, "/tasks/"), "/output"))
 	case request.Method == http.MethodGet && strings.HasPrefix(path, "/tasks/"):
 		return d.serveTask(writer, strings.TrimPrefix(path, "/tasks/"))
 	case request.Method == http.MethodDelete && strings.HasPrefix(path, "/task/"):
@@ -303,6 +336,11 @@ func (d *SSHDirector) serveSSH(writer http.ResponseWriter, request *http.Request
 		Result:      answer.Result,
 		Output:      answer.Output,
 		ContextID:   call.ContextID,
+
+		failReads:    answer.FailReads,
+		onRead:       answer.OnRead,
+		outputStatus: answer.OutputStatus,
+		holdOutput:   answer.HoldOutput,
 	}
 
 	if task.State == "" {
@@ -364,6 +402,8 @@ func (d *SSHDirector) serveTaskList(writer http.ResponseWriter, request *http.Re
 
 	d.mu.Lock()
 
+	d.listings = append(d.listings, query)
+
 	ids := make([]int, 0, len(d.tasks))
 	for id := range d.tasks {
 		ids = append(ids, id)
@@ -414,15 +454,31 @@ func (d *SSHDirector) serveTask(writer http.ResponseWriter, idText string) bool 
 
 	d.reads[task.ID]++
 	answer := taskJSON(task)
+	onRead := task.onRead
+
+	failed := task.failReads > 0
+	if failed {
+		task.failReads--
+	}
 
 	d.mu.Unlock()
+
+	if onRead != nil {
+		onRead()
+	}
+
+	if failed {
+		WriteError(writer, http.StatusInternalServerError, internalErrorCode, "The database is locked.")
+
+		return true
+	}
 
 	WriteJSON(writer, http.StatusOK, answer)
 
 	return true
 }
 
-func (d *SSHDirector) serveOutput(writer http.ResponseWriter, idText string) bool {
+func (d *SSHDirector) serveOutput(writer http.ResponseWriter, request *http.Request, idText string) bool {
 	d.mu.Lock()
 
 	task, found := d.lookup(idText)
@@ -432,9 +488,19 @@ func (d *SSHDirector) serveOutput(writer http.ResponseWriter, idText string) boo
 		return false
 	}
 
-	output := task.Output
+	output, status, hold := task.Output, task.outputStatus, task.holdOutput
 
 	d.mu.Unlock()
+
+	if hold != nil {
+		hold(request.Context())
+	}
+
+	if status != 0 {
+		WriteError(writer, status, internalErrorCode, "The task's result could not be read.")
+
+		return true
+	}
 
 	WriteText(writer, http.StatusOK, output)
 

@@ -59,13 +59,35 @@ type OutcomeUnknownError struct {
 	// task by its context ID and the lookup itself failed, so the message
 	// never says it found none.
 	LookupFailed bool
+	// SSHUser is the throwaway user an SSH setup created or may have
+	// created, and SSHInstance the instance it is on. Both are empty for
+	// every other request.
+	SSHUser     string
+	SSHInstance string
 	// Err is the error the request saw.
 	Err error
 }
 
 // Error says what Blacksmith did not do and where the operator can check
-// what the director did.
+// what the director did, and names the SSH user a lost setup may have
+// created.
 func (e *OutcomeUnknownError) Error() string {
+	return withSSHUser(e.message(), e.SSHUser, e.SSHInstance)
+}
+
+// Unwrap returns both the sentinel and the error the request saw, so
+// errors.Is(err, ErrOutcomeUnknown) holds and the request's own error stays
+// reachable.
+func (e *OutcomeUnknownError) Unwrap() []error {
+	if e.Err == nil {
+		return []error{ErrOutcomeUnknown}
+	}
+
+	return []error{ErrOutcomeUnknown, e.Err}
+}
+
+// message is the error's text before any SSH user is named.
+func (e *OutcomeUnknownError) message() string {
 	var msg strings.Builder
 
 	fmt.Fprintf(&msg, "%s on BOSH director %s got no answer", e.Operation, e.Director)
@@ -132,15 +154,4 @@ func (e *OutcomeUnknownError) Error() string {
 	}
 
 	return msg.String()
-}
-
-// Unwrap returns both the sentinel and the error the request saw, so
-// errors.Is(err, ErrOutcomeUnknown) holds and the request's own error stays
-// reachable.
-func (e *OutcomeUnknownError) Unwrap() []error {
-	if e.Err == nil {
-		return []error{ErrOutcomeUnknown}
-	}
-
-	return []error{ErrOutcomeUnknown, e.Err}
 }

@@ -10,9 +10,9 @@ import (
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
-// readOnlyCancelTimeout bounds the cancel waitOrCancel sends for a
-// read-only task once the caller's context has ended.
-const readOnlyCancelTimeout = 10 * time.Second
+// cancelTimeout bounds the cancel that waitThenCancel sends once a task's
+// wait has stopped, for a read-only task and for an SSH setup task alike.
+const cancelTimeout = 10 * time.Second
 
 // ErrTaskFailed is the sentinel a TaskFailedError wraps.
 var ErrTaskFailed = errors.New("the BOSH task did not finish successfully")
@@ -32,6 +32,11 @@ type TaskFailedError struct {
 	State string
 	// Result is the director's result text for the task.
 	Result string
+	// SSHUser is the throwaway user an SSH setup task may have created,
+	// and SSHInstance the instance it is on. Both are empty for every
+	// other task.
+	SSHUser     string
+	SSHInstance string
 }
 
 func (e *TaskFailedError) Error() string {
@@ -40,9 +45,11 @@ func (e *TaskFailedError) Error() string {
 		result = "the director gave no result text"
 	}
 
-	return fmt.Sprintf("%s for deployment %s on BOSH director %s failed, because BOSH task %d ended in state %s: %s. "+
+	message := fmt.Sprintf("%s for deployment %s on BOSH director %s failed, because BOSH task %d ended in state %s: %s. "+
 		"Check the task at /b/tasks/%d",
 		e.Operation, e.Deployment, e.Director, e.TaskID, e.State, result, e.TaskID)
+
+	return withSSHUser(message, e.SSHUser, e.SSHInstance)
 }
 
 // Unwrap returns ErrTaskFailed.
@@ -54,7 +61,7 @@ func (e *TaskFailedError) Unwrap() error {
 // task in whatever terminal state it reached. When the wait stops because
 // the caller's context ended, a read-only task is no longer worth running,
 // so waitOrCancel asks the director to cancel it, on a detached context
-// bounded by readOnlyCancelTimeout, and records what became of the cancel
+// bounded by cancelTimeout, and records what became of the cancel
 // in the DirectorCallError the wait returned. A shutdown is the exception.
 // When the context's cause is ErrBrokerShuttingDown, no cancel is sent,
 // because the task harms nothing and ends on its own, and the shutdown has
@@ -62,6 +69,14 @@ func (e *TaskFailedError) Unwrap() error {
 // the context was live sends no cancel either. In every case the error
 // names the given operation.
 func (d *DirectorAdapter) waitOrCancel(ctx context.Context, operation string, taskID int) (*Task, error) {
+	return d.waitThenCancel(ctx, operation, taskID, true)
+}
+
+// waitThenCancel is waitOrCancel for any task. With spareAtShutdown false,
+// the cancel is sent even when the context's cause is
+// ErrBrokerShuttingDown, for a task whose work must not run on unwatched,
+// such as an SSH setup, which creates a user.
+func (d *DirectorAdapter) waitThenCancel(ctx context.Context, operation string, taskID int, spareAtShutdown bool) (*Task, error) {
 	task, err := d.WaitForTask(ctx, taskID)
 	if err == nil {
 		return task, nil
@@ -78,13 +93,13 @@ func (d *DirectorAdapter) waitOrCancel(ctx context.Context, operation string, ta
 		return nil, callErr
 	}
 
-	if errors.Is(context.Cause(ctx), ErrBrokerShuttingDown) {
+	if spareAtShutdown && errors.Is(context.Cause(ctx), ErrBrokerShuttingDown) {
 		d.log.Infof("The broker is shutting down, so Blacksmith leaves read-only BOSH task %d to end on its own", taskID)
 
 		return nil, callErr
 	}
 
-	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readOnlyCancelTimeout)
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTimeout)
 	defer cancel()
 
 	cancelErr := d.CancelTask(cancelCtx, taskID)
@@ -104,7 +119,7 @@ func (d *DirectorAdapter) waitOrCancel(ctx context.Context, operation string, ta
 		callErr.Task = TaskCancelRefused
 		callErr.TaskState = stateErr.State
 	default:
-		d.log.Errorf("Failed to cancel read-only BOSH task %d after its wait stopped: %v", taskID, cancelErr)
+		d.log.Errorf("Failed to cancel BOSH task %d after its wait stopped: %v", taskID, cancelErr)
 
 		callErr.Task = TaskCancelFailed
 		callErr.CancelErr = cancelErr
@@ -127,9 +142,10 @@ func (d *DirectorAdapter) readOnlyTaskResult(ctx context.Context, operation, dep
 
 // sshSetupResult waits for an SSH setup task and returns its result
 // output. A task that ended in any state but done returns a
-// TaskFailedError with the director's result text.
+// TaskFailedError with the director's result text. A wait the context
+// ends cancels the task even at shutdown, because a setup creates a user.
 func (d *DirectorAdapter) sshSetupResult(ctx context.Context, operation, deployment string, taskID int) (string, error) {
-	task, err := d.waitOrCancel(ctx, operation, taskID)
+	task, err := d.waitThenCancel(ctx, operation, taskID, false)
 	if err != nil {
 		return "", err
 	}

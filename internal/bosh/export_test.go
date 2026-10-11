@@ -42,6 +42,19 @@ func SetSSHPort(director Director, port string) {
 	adapter.sshPort = port
 }
 
+// SetSSHSetupSettle shortens how long an adapter waits for a failed SSH
+// setup to end before its cleanup: grace for a setup whose answer was
+// lost to become a task, and settle for the setup task to end.
+func SetSSHSetupSettle(director Director, grace, settle time.Duration) {
+	adapter, ok := director.(*DirectorAdapter)
+	if !ok {
+		panic(fmt.Sprintf("SetSSHSetupSettle needs a *DirectorAdapter, got %T", director))
+	}
+
+	adapter.lostSetupGrace = grace
+	adapter.setupSettleTimeout = settle
+}
+
 // RequestTimeoutCause exposes the cause a request timeout carries to package
 // bosh_test.
 func RequestTimeoutCause(timeout time.Duration, attempts int) error {

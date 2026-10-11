@@ -59,12 +59,50 @@ type sshCleanupOwner interface {
 }
 
 // sshUsers holds the adapter's cleanup store and its live set, the users
-// whose setup or cleanup this process is running. The sweep leaves a live
-// user to the call that owns it.
+// whose setup, session, or cleanup this process is running, each with the
+// state it is in. The sweep leaves a live user to the call that owns it.
 type sshUsers struct {
 	mu    sync.Mutex
 	store SSHCleanupStore
-	live  map[string]struct{}
+	live  map[string]sshUserState
+}
+
+// sshUserState is what this process is doing with a live SSH user. A user
+// is setting up from the moment its record is written until its setup
+// task has ended done or the setup has failed. A failed setup settles
+// until its task has ended, because a cleanup sent sooner could run ahead
+// of a setup the director still completes.
+type sshUserState int
+
+const (
+	// sshUserSettingUp is a user whose setup is being sent or waited for.
+	sshUserSettingUp sshUserState = iota + 1
+	// sshUserInSession is a user whose setup ended done and whose session
+	// has not been cleaned up.
+	sshUserInSession
+	// sshUserSettling is a user whose setup failed and whose setup task
+	// may not have ended, so no cleanup may be sent yet.
+	sshUserSettling
+	// sshUserCleaningUp is a user whose cleanup is being sent or waited
+	// for, by its session, a settled failed setup, or the sweep.
+	sshUserCleaningUp
+)
+
+// String says what the state means, in the words the sweep's log uses for
+// a user it leaves alone.
+func (s sshUserState) String() string {
+	switch s {
+	case sshUserSettingUp:
+		return "whose SSH setup is running"
+	case sshUserInSession:
+		return "whose session is open"
+	case sshUserSettling:
+		return "whose failed setup task has not ended"
+	case sshUserCleaningUp:
+		return "whose cleanup is running"
+	default:
+		return fmt.Sprintf("in unknown state %d", int(s))
+	}
 }
 
 // SetSSHCleanupStore hands the adapter the store its SSH setups record
@@ -131,8 +169,9 @@ func (d *DirectorAdapter) SweepSSHCleanups(ctx context.Context) error {
 			return fmt.Errorf("the SSH cleanup sweep stopped before it handled every record: %w", context.Cause(ctx))
 		}
 
-		if !d.claimSSHUser(record.User) {
-			d.log.Debugf("The SSH cleanup sweep skips SSH user %s, whose setup or cleanup is running", record.User)
+		held, claimed := d.claimSSHUser(record.User, sshUserCleaningUp)
+		if !claimed {
+			d.log.Debugf("The SSH cleanup sweep skips SSH user %s, %s", record.User, held)
 
 			continue
 		}
@@ -260,13 +299,15 @@ func sshCleanupSettled(err error) bool {
 	return errors.As(err, &failed) && strings.HasPrefix(failed.Result, sshNoVMText)
 }
 
-// recordSSHCleanup claims the user and writes its record before a setup
-// is sent, within sshCleanupRecordTimeout of ctx. With no store set, it
-// only claims the user. A failed write
-// releases the user and returns an error wrapping
-// ErrSSHCleanupNotRecorded, and the setup must not be sent.
+// recordSSHCleanup claims the user as setting up and writes its record
+// before a setup is sent, within sshCleanupRecordTimeout of ctx. With no
+// store set, it only claims the user. A failed write releases the user
+// and returns an error wrapping ErrSSHCleanupNotRecorded, and the setup
+// must not be sent.
 func (d *DirectorAdapter) recordSSHCleanup(ctx context.Context, cleanup sshconn.PendingCleanup) error {
-	d.claimSSHUser(cleanup.User)
+	// NewCredentials makes a fresh user for every setup, so no other call
+	// can hold it.
+	d.claimSSHUser(cleanup.User, sshUserSettingUp)
 
 	store := d.sshCleanupStore()
 	if store == nil {
@@ -326,23 +367,37 @@ func (d *DirectorAdapter) sshCleanupStore() SSHCleanupStore { //nolint:ireturn /
 	return d.ssh.store
 }
 
-// claimSSHUser adds user to the live set, and reports false when it was
-// already there.
-func (d *DirectorAdapter) claimSSHUser(user string) bool {
+// claimSSHUser adds user to the live set in state, and reports true. When
+// user is already live, it leaves the user as it is, and returns the state
+// the user is in and false.
+func (d *DirectorAdapter) claimSSHUser(user string, state sshUserState) (sshUserState, bool) {
 	d.ssh.mu.Lock()
 	defer d.ssh.mu.Unlock()
 
 	if d.ssh.live == nil {
-		d.ssh.live = make(map[string]struct{})
+		d.ssh.live = make(map[string]sshUserState)
 	}
 
-	if _, live := d.ssh.live[user]; live {
-		return false
+	if held, live := d.ssh.live[user]; live {
+		return held, false
 	}
 
-	d.ssh.live[user] = struct{}{}
+	d.ssh.live[user] = state
 
-	return true
+	return state, true
+}
+
+// markSSHUser moves a user that the caller holds in the live set to
+// state.
+func (d *DirectorAdapter) markSSHUser(user string, state sshUserState) {
+	d.ssh.mu.Lock()
+	defer d.ssh.mu.Unlock()
+
+	if d.ssh.live == nil {
+		d.ssh.live = make(map[string]sshUserState)
+	}
+
+	d.ssh.live[user] = state
 }
 
 // releaseSSHUser removes user from the live set.

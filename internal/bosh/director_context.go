@@ -50,6 +50,11 @@ type DirectorCallError struct {
 	// TaskCancelFailed. The message prints it, and Unwrap does not return
 	// it, so errors.Is answers for the call's own cause.
 	CancelErr error
+	// SSHUser is the throwaway user an SSH setup created or may have
+	// created, and SSHInstance the instance it is on. Both are empty for
+	// every other call.
+	SSHUser     string
+	SSHInstance string
 }
 
 // TaskOutcome says what became of a director task when a call stopped
@@ -97,63 +102,7 @@ func (o TaskOutcome) String() string {
 }
 
 func (e *DirectorCallError) Error() string {
-	// A lost answer to a request that starts a read-only task is not a
-	// call that stopped waiting, so it gets its own message.
-	var lost *answerLostError
-	if errors.As(e.Cause, &lost) {
-		return fmt.Sprintf("BOSH director call %s to %s did not get a usable answer, because %s. "+
-			"The director may have started a read-only task whose ID Blacksmith never learned, so Blacksmith cannot cancel it, "+
-			"and such a task ends on its own. Blacksmith did not resend the request, and the caller can ask again. "+
-			"The request's own failure was: %s",
-			e.Operation, e.Director, lost.Error(), answerLostDetail(e.Err))
-	}
-
-	// A failed read is the director's own answer, which carries its own
-	// advice, so the advice for a call that got no answer does not apply.
-	var readFailed *taskReadError
-	if errors.As(e.Cause, &readFailed) {
-		return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %sThe failed read's error was: %v",
-			e.Operation, e.Director, readFailed.Error(), e.taskSentence(), e.Err)
-	}
-
-	var why string
-
-	var timeout *requestTimeoutError
-
-	// A call that follows a task waits for the task to finish, and the
-	// director answers each read of it along the way.
-	before := "before the director answered"
-
-	switch {
-	case e.Task == TaskFinished:
-		before = fmt.Sprintf("before it read the result of BOSH task %d", e.TaskID)
-	case e.TaskID > 0:
-		before = fmt.Sprintf("before BOSH task %d finished", e.TaskID)
-	}
-
-	switch {
-	case errors.As(e.Cause, &timeout):
-		why = e.Cause.Error()
-	case errors.Is(e.Cause, context.DeadlineExceeded) && !e.Deadline.IsZero():
-		why = "its deadline of " + e.Deadline.UTC().Format(time.RFC3339) + " passed " + before
-	case errors.Is(e.Cause, context.DeadlineExceeded):
-		why = "its deadline passed " + before
-	default:
-		why = "its caller cancelled it " + before
-	}
-
-	// The director finished the task and answered every read of it, so the
-	// advice for a call that got no answer does not apply.
-	if e.Task == TaskFinished {
-		return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %sThe call's own error was: %v",
-			e.Operation, e.Director, why, e.taskSentence(), e.Err)
-	}
-
-	return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %s"+
-		"The likely causes are a hung or overloaded director, or a network partition between the broker and the director. "+
-		"Check that the director answers bosh env, look at its running tasks with bosh tasks and at monit summary on the director, "+
-		"and check the network path from the broker to %s. The call's own error was: %v",
-		e.Operation, e.Director, why, e.taskSentence(), e.Director, e.Err)
+	return withSSHUser(e.message(), e.SSHUser, e.SSHInstance)
 }
 
 // answerLostDetail is the part of a lost answer's error that says what
@@ -242,6 +191,67 @@ func (e *DirectorCallError) Unwrap() []error {
 	}
 
 	return []error{e.Cause, e.Err}
+}
+
+// message is the error's text before any SSH user is named.
+func (e *DirectorCallError) message() string {
+	// A lost answer to a request that starts a read-only task is not a
+	// call that stopped waiting, so it gets its own message.
+	var lost *answerLostError
+	if errors.As(e.Cause, &lost) {
+		return fmt.Sprintf("BOSH director call %s to %s did not get a usable answer, because %s. "+
+			"The director may have started a read-only task whose ID Blacksmith never learned, so Blacksmith cannot cancel it, "+
+			"and such a task ends on its own. Blacksmith did not resend the request, and the caller can ask again. "+
+			"The request's own failure was: %s",
+			e.Operation, e.Director, lost.Error(), answerLostDetail(e.Err))
+	}
+
+	// A failed read is the director's own answer, which carries its own
+	// advice, so the advice for a call that got no answer does not apply.
+	var readFailed *taskReadError
+	if errors.As(e.Cause, &readFailed) {
+		return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %sThe failed read's error was: %v",
+			e.Operation, e.Director, readFailed.Error(), e.taskSentence(), e.Err)
+	}
+
+	var why string
+
+	var timeout *requestTimeoutError
+
+	// A call that follows a task waits for the task to finish, and the
+	// director answers each read of it along the way.
+	before := "before the director answered"
+
+	switch {
+	case e.Task == TaskFinished:
+		before = fmt.Sprintf("before it read the result of BOSH task %d", e.TaskID)
+	case e.TaskID > 0:
+		before = fmt.Sprintf("before BOSH task %d finished", e.TaskID)
+	}
+
+	switch {
+	case errors.As(e.Cause, &timeout):
+		why = e.Cause.Error()
+	case errors.Is(e.Cause, context.DeadlineExceeded) && !e.Deadline.IsZero():
+		why = "its deadline of " + e.Deadline.UTC().Format(time.RFC3339) + " passed " + before
+	case errors.Is(e.Cause, context.DeadlineExceeded):
+		why = "its deadline passed " + before
+	default:
+		why = "its caller cancelled it " + before
+	}
+
+	// The director finished the task and answered every read of it, so the
+	// advice for a call that got no answer does not apply.
+	if e.Task == TaskFinished {
+		return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %sThe call's own error was: %v",
+			e.Operation, e.Director, why, e.taskSentence(), e.Err)
+	}
+
+	return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %s"+
+		"The likely causes are a hung or overloaded director, or a network partition between the broker and the director. "+
+		"Check that the director answers bosh env, look at its running tasks with bosh tasks and at monit summary on the director, "+
+		"and check the network path from the broker to %s. The call's own error was: %v",
+		e.Operation, e.Director, why, e.taskSentence(), e.Director, e.Err)
 }
 
 // taskSentence says what became of the task the call followed, and where to

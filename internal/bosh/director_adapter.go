@@ -159,9 +159,14 @@ type DirectorAdapter struct {
 	sshPort string
 	// ssh holds the store SSH setups record their users in, and the users
 	// whose setup or cleanup this process is running.
-	ssh    sshUsers
-	logger boshlog.Logger
-	log    Logger // Application logger for Info/Debug logging
+	ssh sshUsers
+	// lostSetupGrace and setupSettleTimeout bound the wait for a failed
+	// SSH setup to end before its cleanup. Zero means lostSetupGrace and
+	// sshSetupSettleTimeout.
+	lostSetupGrace     time.Duration
+	setupSettleTimeout time.Duration
+	logger             boshlog.Logger
+	log                Logger // Application logger for Info/Debug logging
 }
 
 // bind returns the bosh-cli director for one call.
@@ -2884,8 +2889,9 @@ func sshTarget(instance string, index int) (boshapi.SSHTarget, error) {
 //
 // The user is recorded in the cleanup store before the setup is sent, and
 // a setup whose record cannot be written is never sent. A setup the
-// director refused created no user, so its record is cleared at once. Any
-// other failed setup keeps its record for the sweep.
+// director refused created no user, so its record is cleared at once.
+// Every other failure after the setup was sent returns at once, and the
+// user's cleanup follows in the background once the setup task has ended.
 func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment string, target boshapi.SSHTarget) (*sshconn.Session, error) {
 	ctx, contextID, err := mutationContext(ctx, operation)
 	if err != nil {
@@ -2899,53 +2905,31 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 		return nil, fmt.Errorf("failed to make the SSH credentials for deployment %s, so nothing was sent: %w", deployment, err)
 	}
 
-	instance := sshconn.TargetName(target)
-
-	err = d.recordSSHCleanup(ctx, sshconn.PendingCleanup{
+	pending := sshconn.PendingCleanup{
 		User:           credentials.User,
 		Deployment:     deployment,
 		Target:         target,
 		SetupContextID: contextID,
 		CreatedAt:      time.Now().UTC(),
-	})
+	}
+
+	err = d.recordSSHCleanup(ctx, pending)
 	if err != nil {
 		return nil, err
 	}
 
-	d.log.Infof("Setting up SSH user %s on %s of deployment %s (context ID %s)", credentials.User, instance, deployment, contextID)
-
-	sent, err := d.api.SSHClient().Setup(ctx, deployment,
-		sshconn.SetupRequest(deployment, target, credentials.User, credentials.PublicKey))
-	if err != nil && !boshapi.IsOutcomeUnknown(err) {
-		// The director refused the setup, so it created no user.
-		d.dropSSHCleanup(ctx, credentials.User)
-
-		refused := d.sshSetupRefused(deployment, err)
-		if refused != nil {
-			return nil, refused
-		}
-	}
-
-	task, err := d.accepted(ctx, mutation{
-		operation:  operation,
-		deployment: deployment,
-		contextID:  contextID,
-		what:       fmt.Sprintf("set up SSH user %s on %s of deployment %s", credentials.User, instance, deployment),
-	}, sent, err)
+	task, err := d.sendSSHSetup(ctx, operation, pending, credentials.PublicKey)
 	if err != nil {
-		d.releaseSSHUser(credentials.User)
-
 		return nil, err
 	}
 
 	hosts, gateway, err := d.sshSetupHosts(ctx, operation, deployment, task.ID, credentials.User)
 	if err != nil {
-		d.releaseSSHUser(credentials.User)
-
-		return nil, err
+		return nil, d.afterFailedSSHSetup(ctx, operation, pending, task.ID, err)
 	}
 
 	d.log.Infof("BOSH task %d set up SSH user %s on %d host(s) of deployment %s", task.ID, credentials.User, len(hosts), deployment)
+	d.markSSHUser(credentials.User, sshUserInSession)
 
 	session := &sshconn.Session{
 		Deployment: deployment,
@@ -2958,6 +2942,47 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 	session.Cleanup = d.sessionCleanup(session, contextID)
 
 	return session, nil
+}
+
+// sendSSHSetup sends the setup of the pending user and returns the task
+// the director started. A setup the director refused clears the user's
+// record. A setup whose answer was lost hands the user to
+// afterFailedSSHSetup, which removes it once no setup is running.
+func (d *DirectorAdapter) sendSSHSetup(ctx context.Context, operation string, pending sshconn.PendingCleanup, publicKey string) (*Task, error) {
+	deployment, user := pending.Deployment, pending.User
+	instance := sshconn.TargetName(pending.Target)
+
+	d.log.Infof("Setting up SSH user %s on %s of deployment %s (context ID %s)", user, instance, deployment, pending.SetupContextID)
+
+	sent, err := d.api.SSHClient().Setup(ctx, deployment,
+		sshconn.SetupRequest(deployment, pending.Target, user, publicKey))
+	if err != nil && !boshapi.IsOutcomeUnknown(err) {
+		// The director refused the setup, so it created no user.
+		d.dropSSHCleanup(ctx, user)
+
+		refused := d.sshSetupRefused(deployment, err)
+		if refused != nil {
+			return nil, refused
+		}
+	}
+
+	task, err := d.accepted(ctx, mutation{
+		operation:  operation,
+		deployment: deployment,
+		contextID:  pending.SetupContextID,
+		what:       fmt.Sprintf("set up SSH user %s on %s of deployment %s", user, instance, deployment),
+	}, sent, err)
+	if errors.As(err, new(*OutcomeUnknownError)) {
+		return nil, d.afterFailedSSHSetup(ctx, operation, pending, 0, err)
+	}
+
+	if err != nil {
+		d.releaseSSHUser(user)
+
+		return nil, err
+	}
+
+	return task, nil
 }
 
 // sessionCleanup returns the session's Cleanup, which removes its user
@@ -3035,6 +3060,7 @@ func (d *DirectorAdapter) sshSetupHosts(ctx context.Context, operation, deployme
 // with the user and the context IDs. The user leaves the live set when
 // the cleanup ends, so the sweep may then retry it.
 func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, target boshapi.SSHTarget, user, setupContextID string) error {
+	d.markSSHUser(user, sshUserCleaningUp)
 	defer d.releaseSSHUser(user)
 
 	err := d.sendSSHCleanup(ctx, deployment, target, user, setupContextID, d.log.Errorf)
