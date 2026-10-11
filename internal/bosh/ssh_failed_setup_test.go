@@ -197,6 +197,12 @@ func failedSetupPaths() []failedSetupPath {
 		{name: "the result reports a failed host", answer: func(context.CancelFunc) boshtest.SSHAnswer {
 			return boshtest.SSHAnswer{Output: failedHost}
 		}},
+		{name: "the result names no host key", answer: func(context.CancelFunc) boshtest.SSHAnswer {
+			return boshtest.SSHAnswer{Output: boshtest.SSHSetupOutput(boshtest.SSHSuccess(""))}
+		}},
+		{name: "the result's host key does not parse", answer: func(context.CancelFunc) boshtest.SSHAnswer {
+			return boshtest.SSHAnswer{Output: boshtest.SSHSetupOutput(boshtest.SSHSuccess("ssh-ed25519 not-base64"))}
+		}},
 		{name: "the answer to the setup is lost", answer: func(context.CancelFunc) boshtest.SSHAnswer {
 			return boshtest.SSHAnswer{Drop: true}
 		}},

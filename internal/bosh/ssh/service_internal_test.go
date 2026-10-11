@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,7 +20,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const testVMUser = "bosh_0123456789abcde"
+const (
+	testVMUser    = "bosh_0123456789abcde"
+	testVMAddress = "127.0.0.1"
+)
 
 var (
 	errTestKeyRefused     = errors.New("test server refuses every key")
@@ -122,10 +126,39 @@ func newTestKey(t *testing.T) testKey {
 	return testKey{signer: signer}
 }
 
-// vmServerConfig accepts only the user key it is given, or refuses every
-// key when accept is nil.
-func vmServerConfig(t *testing.T, accept ssh.PublicKey) *ssh.ServerConfig {
+// sharedVMHostKey is the host key the test VMs present unless a test
+// gives them others, and the one cleanupDirector reports.
+//
+//nolint:gochecknoglobals // one host key, made once, that the test VMs present
+var sharedVMHostKey = sync.OnceValues(func() (ssh.Signer, error) {
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // a test fixture
+	}
+
+	return ssh.NewSignerFromKey(private) //nolint:wrapcheck // a test fixture
+})
+
+func vmHostKey(t *testing.T) ssh.Signer {
 	t.Helper()
+
+	signer, err := sharedVMHostKey()
+	if err != nil {
+		t.Fatalf("generate the VM's host key: %v", err)
+	}
+
+	return signer
+}
+
+// vmServerConfig accepts only the user key it is given, or refuses every
+// key when accept is nil. It presents the host keys it is given, or the
+// shared one that cleanupDirector reports.
+func vmServerConfig(t *testing.T, accept ssh.PublicKey, hostKeys ...ssh.Signer) *ssh.ServerConfig {
+	t.Helper()
+
+	if len(hostKeys) == 0 {
+		hostKeys = []ssh.Signer{vmHostKey(t)}
+	}
 
 	config := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -136,7 +169,10 @@ func vmServerConfig(t *testing.T, accept ssh.PublicKey) *ssh.ServerConfig {
 			return nil, errTestKeyRefused
 		},
 	}
-	config.AddHostKey(newTestKey(t).signer)
+
+	for _, hostKey := range hostKeys {
+		config.AddHostKey(hostKey)
+	}
 
 	return config
 }
@@ -192,9 +228,11 @@ func silentHandler(conn net.Conn) {
 }
 
 // cleanupDirector stands in for the director adapter. Every SSHSession
-// answer is a *sshconn.Session whose cleanup counts its calls.
+// answer is a *sshconn.Session whose cleanup counts its calls. Its host
+// reports hostKey, or the shared VM host key when hostKey is nil.
 type cleanupDirector struct {
 	signer     ssh.Signer
+	hostKey    ssh.PublicKey
 	cleanupErr error
 	setups     atomic.Int32
 	cleanups   atomic.Int32
@@ -207,12 +245,24 @@ func (d *cleanupDirector) SSHCommand(context.Context, string, string, int, strin
 func (d *cleanupDirector) SSHSession(_ context.Context, deployment, instance string, index int, _ map[string]interface{}) (interface{}, error) {
 	d.setups.Add(1)
 
+	hostKey := d.hostKey
+	if hostKey == nil {
+		signer, err := sharedVMHostKey()
+		if err != nil {
+			return nil, err //nolint:wrapcheck // a test fixture
+		}
+
+		hostKey = signer.PublicKey()
+	}
+
 	return &sshconn.Session{
 		Deployment: deployment,
 		Target:     boshapi.SSHTarget{Job: instance, Indices: []int{index}},
 		User:       testVMUser,
-		Hosts:      []sshconn.Host{{Address: "127.0.0.1", Username: testVMUser}},
-		Signer:     d.signer,
+		Hosts: []sshconn.Host{{
+			Address: testVMAddress, Username: testVMUser, HostKey: hostKey, Job: instance, IndexOrID: strconv.Itoa(index),
+		}},
+		Signer: d.signer,
 		Cleanup: func(context.Context) error {
 			d.cleanups.Add(1)
 
@@ -580,7 +630,19 @@ func TestTerminalRefusesASessionItCannotUse(t *testing.T) {
 			info: func(cleanups *atomic.Int32) interface{} {
 				return &sshconn.Session{
 					User:    testVMUser,
+					Hosts:   []sshconn.Host{{Address: "127.0.0.1", Username: testVMUser, HostKey: signer.PublicKey()}},
+					Cleanup: countCleanup(cleanups),
+				}
+			},
+			want:     ErrUnusableSessionInfo,
+			cleanups: 1,
+		},
+		"no host key": {
+			info: func(cleanups *atomic.Int32) interface{} {
+				return &sshconn.Session{
+					User:    testVMUser,
 					Hosts:   []sshconn.Host{{Address: "127.0.0.1", Username: testVMUser}},
+					Signer:  signer,
 					Cleanup: countCleanup(cleanups),
 				}
 			},

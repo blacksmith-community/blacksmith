@@ -2,6 +2,8 @@ package boshtest
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // Task states the SSH director uses.
@@ -146,6 +150,10 @@ type SSHCancel struct {
 type SSHDirector struct {
 	*Director
 
+	// HostKey is the host key the default setup answer reports for its
+	// instance. A test VM that presents it passes the adapter's pin.
+	HostKey ssh.Signer
+
 	answer func(SSHCall) SSHAnswer
 
 	mu       sync.Mutex
@@ -163,11 +171,22 @@ type SSHDirector struct {
 func NewSSH(tb testing.TB, answer func(SSHCall) SSHAnswer, handler Handler) *SSHDirector {
 	tb.Helper()
 
+	_, hostPrivate, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		tb.Fatalf("boshtest: generate the SSH host key: %v", err)
+	}
+
+	hostKey, err := ssh.NewSignerFromKey(hostPrivate)
+	if err != nil {
+		tb.Fatalf("boshtest: make the SSH host signer: %v", err)
+	}
+
 	director := &SSHDirector{
-		answer: answer,
-		nextID: firstSSHTaskID,
-		tasks:  make(map[int]*SSHTask),
-		reads:  make(map[int]int),
+		HostKey: hostKey,
+		answer:  answer,
+		nextID:  firstSSHTaskID,
+		tasks:   make(map[int]*SSHTask),
+		reads:   make(map[int]int),
 	}
 
 	director.Director = New(tb, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -348,7 +367,7 @@ func (d *SSHDirector) serveSSH(writer http.ResponseWriter, request *http.Request
 	}
 
 	if task.Output == "" && call.Command == SSHSetup {
-		task.Output = defaultSetupOutput(call.Fields)
+		task.Output = defaultSetupOutput(call.Fields, AuthorizedKey(d.HostKey.PublicKey()))
 	}
 
 	call.TaskID = d.start(task)
@@ -588,9 +607,47 @@ func targetText(fields map[string]interface{}) string {
 	return string(target)
 }
 
+// SSHHostEntry is one entry of a setup task's result output, in the
+// director's field names.
+type SSHHostEntry struct {
+	Status        string      `json:"status"`
+	IP            string      `json:"ip"`
+	HostPublicKey string      `json:"host_public_key"`
+	Job           string      `json:"job"`
+	Index         interface{} `json:"index"`
+	ID            string      `json:"id"`
+	GatewayUser   string      `json:"gateway_user,omitempty"`
+	GatewayHost   string      `json:"gateway_host,omitempty"`
+}
+
+// DefaultSSHInstanceID is the instance ID the default setup answer gives.
+const DefaultSSHInstanceID = "00000000-0000-0000-0000-000000000001"
+
+// SSHSetupOutput renders a setup task's result output.
+func SSHSetupOutput(entries ...SSHHostEntry) string {
+	output, err := json.Marshal(entries)
+	if err != nil {
+		panic("boshtest: encoding an SSH setup output failed: " + err.Error())
+	}
+
+	return string(output)
+}
+
+// SSHSuccess is a success entry for 127.0.0.1 on redis/0 that reports
+// hostKey, in authorized-keys form.
+func SSHSuccess(hostKey string) SSHHostEntry {
+	return SSHHostEntry{Status: "success", IP: "127.0.0.1", HostPublicKey: hostKey, Job: "redis", Index: 0, ID: DefaultSSHInstanceID}
+}
+
+// AuthorizedKey renders a host key the way the director reports it, which
+// is the VM's ssh_host_rsa_key.pub with its comment.
+func AuthorizedKey(key ssh.PublicKey) string {
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))) + " root@vm"
+}
+
 // defaultSetupOutput is one success entry for 127.0.0.1 for the first
-// instance the target names.
-func defaultSetupOutput(fields map[string]interface{}) string {
+// instance the target names, reporting hostKey.
+func defaultSetupOutput(fields map[string]interface{}, hostKey string) string {
 	target, _ := fields["target"].(map[string]interface{})
 	job, _ := target["job"].(string)
 
@@ -610,17 +667,12 @@ func defaultSetupOutput(fields map[string]interface{}) string {
 		}
 	}
 
-	output, err := json.Marshal([]map[string]interface{}{{
-		"status":          "success",
-		"ip":              "127.0.0.1",
-		"host_public_key": "",
-		"job":             job,
-		"index":           index,
-		"id":              "00000000-0000-0000-0000-000000000001",
-	}})
-	if err != nil {
-		panic("boshtest: encoding the default SSH setup output failed: " + err.Error())
-	}
-
-	return string(output)
+	return SSHSetupOutput(SSHHostEntry{
+		Status:        "success",
+		IP:            "127.0.0.1",
+		HostPublicKey: hostKey,
+		Job:           job,
+		Index:         index,
+		ID:            DefaultSSHInstanceID,
+	})
 }

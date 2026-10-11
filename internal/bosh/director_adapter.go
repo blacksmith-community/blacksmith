@@ -3145,21 +3145,21 @@ func (d *DirectorAdapter) sendSSHCleanup(ctx context.Context, deployment string,
 }
 
 // createSSHClient connects to the session's first host as the session's
-// user, through the director's gateway when it names one.
+// user, through the director's gateway when it names one. The connection
+// to the host accepts only the host key the director reported for it.
 //
 //nolint:ireturn // A client reached through a gateway also owns the gateway, so callers get sshconn.Client.
 func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.Session) (sshconn.Client, error) {
 	host := session.Hosts[0]
 
-	// Create SSH client configuration with secure host key verification
-	config := &ssh.ClientConfig{
-		User: host.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(session.Signer),
-		},
-		HostKeyCallback: d.createSecureHostKeyCallback(host.Address),
-		Timeout:         httpClientTimeout,
+	config, err := sshconn.HostConfig(session.Deployment, host, session.Signer)
+	if err != nil {
+		d.log.Errorf("Refused to connect to %s of deployment %s: %v", host.Instance(), session.Deployment, err)
+
+		return nil, fmt.Errorf("failed to connect to host: %w", err)
 	}
+
+	config.Timeout = httpClientTimeout
 
 	targetAddr := net.JoinHostPort(host.Address, d.sshPort)
 
@@ -3169,7 +3169,7 @@ func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.
 			Auth: []ssh.AuthMethod{
 				ssh.PublicKeys(session.Signer),
 			},
-			HostKeyCallback: d.createSecureHostKeyCallback(session.Gateway.Host),
+			HostKeyCallback: d.logGatewayHostKey,
 			Timeout:         httpClientTimeout,
 		}
 
@@ -3187,12 +3187,23 @@ func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.
 
 	client, err := sshconn.DialDirect(ctx, targetAddr, config)
 	if err != nil {
-		d.log.Errorf("Failed to connect to %s: %v", targetAddr, err)
+		err = sshconn.ExplainHostKeyRefusal(err, session.Deployment, host, targetAddr)
+		d.log.Errorf("Failed to connect to %s of deployment %s at %s: %v", host.Instance(), session.Deployment, targetAddr, err)
 
 		return nil, fmt.Errorf("failed to connect to host: %w", err)
 	}
 
 	return client, nil
+}
+
+// logGatewayHostKey logs the gateway's host key and accepts it. The
+// director reports no key for its gateway, and the connection to the VM
+// through the gateway is pinned end to end, so the gateway cannot read
+// the session.
+func (d *DirectorAdapter) logGatewayHostKey(hostname string, _ net.Addr, key ssh.PublicKey) error {
+	d.log.Infof("SSH gateway %s presented host key %s", hostname, ssh.FingerprintSHA256(key))
+
+	return nil
 }
 
 // executeSSHCommand executes the command on the SSH client.
@@ -3356,25 +3367,6 @@ func (d *DirectorAdapter) isSpecificTeamTask(deploymentName, team string, taskID
 	d.log.Debugf("Task %d: specific filter '%s' check result: %v", taskID, team, includeTask)
 
 	return includeTask
-}
-
-// createSecureHostKeyCallback creates a host key callback that provides secure verification
-// This callback logs the host key fingerprint for auditing purposes and accepts the key
-// In a production environment, this should be enhanced to use known_hosts verification.
-func (d *DirectorAdapter) createSecureHostKeyCallback(_ string) ssh.HostKeyCallback {
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		// Calculate and log the key fingerprint for security auditing
-		fingerprint := ssh.FingerprintSHA256(key)
-		d.log.Infof("SSH connection to %s with host key fingerprint: %s", hostname, fingerprint)
-
-		// In a more secure implementation, you would:
-		// 1. Check against a known_hosts file
-		// 2. Prompt for user verification on first connection
-		// 3. Store accepted keys for future verification
-		// For now, we accept all keys but log them for auditing
-
-		return nil
-	}
 }
 
 // fixYAMLKeyCasing fixes common YAML key casing issues introduced by BOSH CLI library

@@ -118,7 +118,7 @@ func TestSSHClientDialEndsWithItsContext(t *testing.T) {
 			session := &sshconn.Session{
 				Deployment: sshDeployment,
 				User:       "bosh_0123456789abcde",
-				Hosts:      []sshconn.Host{{Address: loopbackHost, Username: "bosh_0123456789abcde"}},
+				Hosts:      []sshconn.Host{{Address: loopbackHost, Username: "bosh_0123456789abcde", HostKey: signer.PublicKey()}},
 				Signer:     signer,
 				Gateway:    gateway,
 			}

@@ -1,6 +1,7 @@
 package sshconn_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 
 	"blacksmith/internal/bosh/sshconn"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -16,20 +18,34 @@ const (
 	hostsTestJob  = "redis"
 	statusSuccess = "success"
 	firstHostIP   = "10.0.0.5"
-	firstHostID   = "abc"
-	secondHostID  = "def"
+	secondHostIP  = "10.0.0.6"
+	// hostsTestDeployment is the deployment the pinning tests name.
+	hostsTestDeployment = "redis-1"
+	firstHostID         = "abc"
+	secondHostID        = "def"
+	// firstHostInstance is the first host's instance name, job/id.
+	firstHostInstance = hostsTestJob + "/" + firstHostID
 )
 
 func intPointer(value int) *int { return &value }
 
+// authorizedKey renders a host key the way the director reports it, with
+// the comment the agent's .pub file carries.
+func authorizedKey(key ssh.PublicKey) string {
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))) + " root@vm"
+}
+
 // A result with one success entry per instance becomes one host per entry,
-// each logged in as the setup's user.
+// each logged in as the setup's user, with the host key the director
+// reported for it.
 func TestReadHostsReturnsEveryHost(t *testing.T) {
 	t.Parallel()
 
+	keys := hostKeys(t)
+
 	results := []boshapi.SSHResult{
-		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: "ssh-rsa AAAA", Job: hostsTestJob, Index: intPointer(0), ID: firstHostID},
-		{Status: statusSuccess, IP: "10.0.0.6", HostPublicKey: "ssh-rsa BBBB", Job: hostsTestJob, Index: intPointer(1), ID: secondHostID},
+		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: authorizedKey(keys.rsa.PublicKey()), Job: hostsTestJob, Index: intPointer(0), ID: firstHostID},
+		{Status: statusSuccess, IP: secondHostIP, HostPublicKey: authorizedKey(keys.ecdsa.PublicKey()), Job: hostsTestJob, Index: intPointer(1), ID: secondHostID},
 	}
 
 	hosts, gateway, err := sshconn.ReadHosts(results, hostsTestUser)
@@ -38,8 +54,8 @@ func TestReadHostsReturnsEveryHost(t *testing.T) {
 	}
 
 	want := []sshconn.Host{
-		{Address: firstHostIP, Username: hostsTestUser, HostKey: "ssh-rsa AAAA", Job: hostsTestJob, IndexOrID: firstHostID},
-		{Address: "10.0.0.6", Username: hostsTestUser, HostKey: "ssh-rsa BBBB", Job: hostsTestJob, IndexOrID: secondHostID},
+		{Address: firstHostIP, Username: hostsTestUser, HostKey: keys.rsa.PublicKey(), Job: hostsTestJob, IndexOrID: firstHostID},
+		{Address: secondHostIP, Username: hostsTestUser, HostKey: keys.ecdsa.PublicKey(), Job: hostsTestJob, IndexOrID: secondHostID},
 	}
 
 	if len(hosts) != len(want) {
@@ -47,8 +63,13 @@ func TestReadHostsReturnsEveryHost(t *testing.T) {
 	}
 
 	for index := range want {
-		if hosts[index] != want[index] {
-			t.Errorf("host %d is %+v, want %+v", index, hosts[index], want[index])
+		got, wanted := hosts[index], want[index]
+		if got.Address != wanted.Address || got.Username != wanted.Username || got.Job != wanted.Job || got.IndexOrID != wanted.IndexOrID {
+			t.Errorf("host %d is %+v, want %+v", index, got, wanted)
+		}
+
+		if got.HostKey == nil || !bytes.Equal(got.HostKey.Marshal(), wanted.HostKey.Marshal()) {
+			t.Errorf("host %d has host key %v, want the one the director reported", index, got.HostKey)
 		}
 	}
 
@@ -62,7 +83,7 @@ func TestReadHostsNamesAnInstanceWithoutAnIDByItsIndex(t *testing.T) {
 	t.Parallel()
 
 	hosts, _, err := sshconn.ReadHosts([]boshapi.SSHResult{
-		{Status: statusSuccess, IP: firstHostIP, Job: hostsTestJob, Index: intPointer(3)},
+		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: authorizedKey(hostKeys(t).ed25519.PublicKey()), Job: hostsTestJob, Index: intPointer(3)},
 	}, hostsTestUser)
 	if err != nil {
 		t.Fatalf("ReadHosts: %v", err)
@@ -78,7 +99,7 @@ func TestReadHostsKeepsTheGateway(t *testing.T) {
 	t.Parallel()
 
 	_, gateway, err := sshconn.ReadHosts([]boshapi.SSHResult{
-		{Status: statusSuccess, IP: firstHostIP, GatewayUser: "vcap", GatewayHost: "jumpbox.example.com"},
+		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: authorizedKey(hostKeys(t).ed25519.PublicKey()), GatewayUser: "vcap", GatewayHost: "jumpbox.example.com"},
 	}, hostsTestUser)
 	if err != nil {
 		t.Fatalf("ReadHosts: %v", err)
@@ -94,6 +115,8 @@ func TestReadHostsKeepsTheGateway(t *testing.T) {
 func TestReadHostsRefusesAResultItCannotUse(t *testing.T) {
 	t.Parallel()
 
+	hostKey := authorizedKey(hostKeys(t).ed25519.PublicKey())
+
 	cases := map[string]struct {
 		results []boshapi.SSHResult
 		want    error
@@ -106,16 +129,31 @@ func TestReadHostsRefusesAResultItCannotUse(t *testing.T) {
 		},
 		"failed entry": {
 			results: []boshapi.SSHResult{
-				{Status: statusSuccess, IP: firstHostIP, Job: hostsTestJob, Index: intPointer(0)},
+				{Status: statusSuccess, IP: firstHostIP, HostPublicKey: hostKey, Job: hostsTestJob, Index: intPointer(0)},
 				{Status: "error", Job: hostsTestJob, Index: intPointer(1), ID: secondHostID},
 			},
 			want: sshconn.ErrSetupFailed,
 			says: []string{"redis/def", `"error"`, hostsTestUser},
 		},
 		"entry without an address": {
-			results: []boshapi.SSHResult{{Status: statusSuccess, Job: hostsTestJob, Index: intPointer(0)}},
+			results: []boshapi.SSHResult{{Status: statusSuccess, HostPublicKey: hostKey, Job: hostsTestJob, Index: intPointer(0)}},
 			want:    sshconn.ErrSetupFailed,
 			says:    []string{"redis/0", "no IP address"},
+		},
+		"entry without a host key": {
+			results: []boshapi.SSHResult{
+				{Status: statusSuccess, IP: firstHostIP, HostPublicKey: hostKey, Job: hostsTestJob, Index: intPointer(0), ID: firstHostID},
+				{Status: statusSuccess, IP: secondHostIP, Job: hostsTestJob, Index: intPointer(1), ID: secondHostID},
+			},
+			want: sshconn.ErrHostKeyUnusable,
+			says: []string{"redis/def", "no host key", hostsTestUser},
+		},
+		"entry whose host key does not parse": {
+			results: []boshapi.SSHResult{
+				{Status: statusSuccess, IP: firstHostIP, HostPublicKey: "ssh-rsa not-base64", Job: hostsTestJob, Index: intPointer(0), ID: firstHostID},
+			},
+			want: sshconn.ErrHostKeyUnusable,
+			says: []string{firstHostInstance, "does not parse", hostsTestUser},
 		},
 	}
 
@@ -198,7 +236,7 @@ func TestTargetNameReadsAsTheInstance(t *testing.T) {
 		name   string
 	}{
 		"index":    {boshapi.SSHTarget{Job: hostsTestJob, Indices: []int{2}}, "redis/2"},
-		"id":       {boshapi.SSHTarget{Job: hostsTestJob, IDs: []string{firstHostID}}, "redis/abc"},
+		"id":       {boshapi.SSHTarget{Job: hostsTestJob, IDs: []string{firstHostID}}, firstHostInstance},
 		"group":    {boshapi.SSHTarget{Job: hostsTestJob}, hostsTestJob},
 		"two":      {boshapi.SSHTarget{Job: hostsTestJob, Indices: []int{0, 1}}, "redis/0,1"},
 		"anywhere": {boshapi.SSHTarget{}, "every instance"},

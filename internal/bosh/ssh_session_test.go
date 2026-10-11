@@ -3,8 +3,6 @@ package bosh_test
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -336,7 +334,7 @@ func TestSSHCommandRunsThroughBoshapi(t *testing.T) {
 		sent, err := sentKey(setups[0])
 
 		return err == nil && bytes.Equal(key.Marshal(), sent.Marshal())
-	})
+	}, server.HostKey)
 	bosh.SetSSHPort(director, vmServer.port)
 
 	var output string
@@ -567,9 +565,9 @@ func TestSSHRefusesATargetThatIsNotOneInstance(t *testing.T) {
 }
 
 // execServer is an in-process SSH server on a loopback port that stands
-// in for a VM's sshd. It accepts a login the accept function approves,
-// answers each exec request with "ran: <command>", and records each
-// login's user.
+// in for a VM's sshd. It presents every host key it is given, accepts a
+// login the accept function approves, answers each exec request with
+// "ran: <command>", and records each login's user.
 type execServer struct {
 	port string
 
@@ -586,17 +584,11 @@ func (s *execServer) logins() []string {
 
 var errExecServerRefused = errors.New("the test VM refuses the login")
 
-func startExecServer(t *testing.T, accept func(user string, key ssh.PublicKey) bool) *execServer {
+func startExecServer(t *testing.T, accept func(user string, key ssh.PublicKey) bool, hostKeys ...ssh.Signer) *execServer {
 	t.Helper()
 
-	_, hostPrivate, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("generate host key: %v", err)
-	}
-
-	hostSigner, err := ssh.NewSignerFromKey(hostPrivate)
-	if err != nil {
-		t.Fatalf("host signer: %v", err)
+	if len(hostKeys) == 0 {
+		t.Fatal("the test VM needs a host key")
 	}
 
 	server := &execServer{}
@@ -617,7 +609,9 @@ func startExecServer(t *testing.T, accept func(user string, key ssh.PublicKey) b
 			return &ssh.Permissions{}, nil
 		},
 	}
-	config.AddHostKey(hostSigner)
+	for _, hostKey := range hostKeys {
+		config.AddHostKey(hostKey)
+	}
 
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {

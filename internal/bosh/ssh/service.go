@@ -6,23 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"blacksmith/internal/bosh/sshconn"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // Constants for SSH service.
 const (
-	// File permissions.
-	dirPermissions  = 0700
-	filePermissions = 0600
-
 	// Terminal settings.
 	terminalBaudRate = 14400 // 14.4kbaud
 	terminalColumns  = 80
@@ -52,11 +45,10 @@ const (
 
 // Static error variables to satisfy err113.
 var (
-	ErrRequestCannotBeNil         = errors.New("request cannot be nil")
-	ErrDeploymentNameRequired     = errors.New("deployment name is required")
-	ErrInstanceNameRequired       = errors.New("instance name is required")
-	ErrInstanceIndexNonNegative   = errors.New("instance index must be non-negative")
-	ErrNoKnownHostsFileConfigured = errors.New("no known_hosts file configured")
+	ErrRequestCannotBeNil       = errors.New("request cannot be nil")
+	ErrDeploymentNameRequired   = errors.New("deployment name is required")
+	ErrInstanceNameRequired     = errors.New("instance name is required")
+	ErrInstanceIndexNonNegative = errors.New("instance index must be non-negative")
 	// ErrUnexpectedSessionInfo means the director's SSHSession answer is
 	// not a *sshconn.Session.
 	ErrUnexpectedSessionInfo = errors.New("the director's SSH session is not a *sshconn.Session")
@@ -371,14 +363,17 @@ func (s *ServiceImpl) createSessionImpl(ctx context.Context, request *SSHRequest
 	}, nil
 }
 
-// checkSessionInfo refuses a session that names no host to connect to or
-// has no key to log in with.
+// checkSessionInfo refuses a session that names no host to connect to,
+// has no host key to check the VM against, or has no key to log in with.
 func checkSessionInfo(info *sshconn.Session) error {
 	switch {
 	case len(info.Hosts) == 0:
 		return fmt.Errorf("%w: the SSH setup for user %s names no host", ErrUnusableSessionInfo, info.User)
 	case info.Hosts[0].Address == "":
 		return fmt.Errorf("%w: the SSH setup for user %s names a host with no address", ErrUnusableSessionInfo, info.User)
+	case info.Hosts[0].HostKey == nil:
+		return fmt.Errorf("%w: the SSH setup for user %s names a host with no host key to check it against",
+			ErrUnusableSessionInfo, info.User)
 	case info.Signer == nil:
 		return fmt.Errorf("%w: the SSH setup for user %s carries no key to log in with", ErrUnusableSessionInfo, info.User)
 	default:
@@ -440,96 +435,6 @@ func (s *ServiceImpl) validateRequest(request *SSHRequest) error {
 	return nil
 }
 
-// getHostKeyCallback returns the appropriate host key callback based on configuration.
-func (s *ServiceImpl) getHostKeyCallback() ssh.HostKeyCallback {
-	// If insecure mode is explicitly enabled, use it
-	if s.config.InsecureIgnoreHostKey {
-		s.logger.Infof("Using insecure host key verification (not recommended for production)")
-
-		return ssh.InsecureIgnoreHostKey() // #nosec G106 - Intentional insecure mode for BOSH environments
-	}
-
-	// Use secure mode with auto-discovery (default behavior)
-	return s.autoDiscoveryHostKeyCallback()
-}
-
-// autoDiscoveryHostKeyCallback creates a host key callback that automatically adds unknown hosts.
-func (s *ServiceImpl) autoDiscoveryHostKeyCallback() ssh.HostKeyCallback {
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		// First, try to verify against existing known_hosts
-		if s.config.KnownHostsFile != "" {
-			callback, err := knownhosts.New(s.config.KnownHostsFile)
-			if err == nil {
-				// If known_hosts file exists and loads successfully, try verification
-				err := callback(hostname, remote, key)
-				if err == nil {
-					// Host key is already known and valid
-					s.logger.Debugf("SSH host key verified for %s", hostname)
-
-					return nil
-				}
-
-				// Check if this is just an unknown host (not a key mismatch)
-				var keyErr *knownhosts.KeyError
-				if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
-					// This is an unknown host (no keys in Want slice)
-					s.logger.Infof("Unknown SSH host %s, adding to known_hosts", hostname)
-
-					return s.addHostToKnownHosts(hostname, key)
-				}
-
-				// This is a key mismatch - reject the connection
-				s.logger.Errorf("SSH host key mismatch for %s: %v", hostname, err)
-
-				return err
-			}
-			// If we can't load known_hosts, we'll add this host as the first entry
-			s.logger.Debugf("Could not load known_hosts file, will create with first host: %v", err)
-		}
-
-		// Add the host to known_hosts (this handles both new file creation and new host addition)
-		s.logger.Infof("Adding SSH host %s to known_hosts", hostname)
-
-		return s.addHostToKnownHosts(hostname, key)
-	}
-}
-
-// addHostToKnownHosts adds a host key to the known_hosts file.
-func (s *ServiceImpl) addHostToKnownHosts(hostname string, key ssh.PublicKey) error {
-	if s.config.KnownHostsFile == "" {
-		return ErrNoKnownHostsFileConfigured
-	}
-
-	// Ensure the directory exists
-	dir := filepath.Dir(s.config.KnownHostsFile)
-
-	err := os.MkdirAll(dir, dirPermissions)
-	if err != nil {
-		return fmt.Errorf("failed to create known_hosts directory %s: %w", dir, err)
-	}
-
-	// Open the known_hosts file for appending (create if it doesn't exist)
-	file, err := os.OpenFile(s.config.KnownHostsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, filePermissions)
-	if err != nil {
-		return fmt.Errorf("failed to open known_hosts file %s: %w", s.config.KnownHostsFile, err)
-	}
-
-	defer func() { _ = file.Close() }()
-
-	// Format the host key entry (hostname algorithm key)
-	keyLine := knownhosts.Line([]string{hostname}, key)
-
-	// Append to the file
-	_, err = file.WriteString(keyLine + "\n")
-	if err != nil {
-		return fmt.Errorf("failed to write to known_hosts file: %w", err)
-	}
-
-	s.logger.Debugf("Added SSH host key for %s to %s", hostname, s.config.KnownHostsFile)
-
-	return nil
-}
-
 // SessionImpl implements the SSHSession interface.
 type SessionImpl struct {
 	id         string
@@ -543,7 +448,7 @@ type SessionImpl struct {
 	statusMutex sync.RWMutex
 	logger      Logger
 	config      Config
-	service     *ServiceImpl // Reference to parent service for host key callback
+	service     *ServiceImpl // the service whose pool holds the session and whose port it dials
 
 	// SSH connection components
 	sshClient  *ssh.Client
@@ -921,11 +826,9 @@ func (s *SessionImpl) extractSessionDetails() (*sessionConnectionDetails, error)
 		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid session info", err)
 	}
 
-	host := s.info.Hosts[0]
-
 	details := &sessionConnectionDetails{
 		signer: s.info.Signer,
-		host:   &hostInfo{address: host.Address, username: host.Username},
+		host:   s.info.Hosts[0],
 	}
 
 	if s.info.Gateway.Host != "" {
@@ -941,14 +844,8 @@ func (s *SessionImpl) extractSessionDetails() (*sessionConnectionDetails, error)
 // sessionConnectionDetails holds SSH connection details.
 type sessionConnectionDetails struct {
 	signer  ssh.Signer
-	host    *hostInfo
+	host    sshconn.Host
 	gateway *gatewayInfo
-}
-
-// hostInfo holds host connection details.
-type hostInfo struct {
-	address  string
-	username string
 }
 
 // gatewayInfo holds gateway connection details.
@@ -957,24 +854,34 @@ type gatewayInfo struct {
 	user string
 }
 
-// establishSSHConnection establishes the SSH connection (direct or through gateway).
+// establishSSHConnection establishes the SSH connection, directly or
+// through the gateway. The connection to the VM accepts only the host key
+// the director reported for it.
 func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessionConnectionDetails) (*ssh.Client, error) {
 	signer := details.signer
 
-	config := &ssh.ClientConfig{
-		User: details.host.username,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: s.service.getHostKeyCallback(),
-		Timeout:         defaultConnectTimeout,
+	config, err := sshconn.HostConfig(s.deployment, details.host, signer)
+	if err != nil {
+		return nil, NewSSHError(SSHErrorCodeConnection, "Refused to connect to "+details.host.Instance(), err)
 	}
+
+	config.Timeout = defaultConnectTimeout
 
 	if details.gateway != nil {
 		return s.connectThroughGateway(ctx, details, config, signer)
 	}
 
-	return s.connectDirect(ctx, details.host.address, config)
+	return s.connectDirect(ctx, details.host, config)
+}
+
+// logGatewayHostKey logs the gateway's host key and accepts it. The
+// director reports no key for its gateway, and the connection to the VM
+// through the gateway is pinned end to end, so the gateway cannot read
+// the session.
+func (s *SessionImpl) logGatewayHostKey(hostname string, _ net.Addr, key ssh.PublicKey) error {
+	s.logger.Infof("SSH gateway %s presented host key %s for session %s", hostname, ssh.FingerprintSHA256(key), s.id)
+
+	return nil
 }
 
 // connectThroughGateway establishes connection through a gateway.
@@ -992,7 +899,7 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		HostKeyCallback: s.service.getHostKeyCallback(),
+		HostKeyCallback: s.logGatewayHostKey,
 		Timeout:         sshConnectionTimeout,
 	}
 
@@ -1001,7 +908,7 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to connect to gateway "+gatewayAddr, err)
 	}
 
-	targetAddr := net.JoinHostPort(details.host.address, s.service.port)
+	targetAddr := net.JoinHostPort(details.host.Address, s.service.port)
 
 	conn, err := gatewayClient.Dial("tcp", targetAddr)
 	if err != nil {
@@ -1022,13 +929,15 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 
 // connectDirect connects to the VM with the dial that the director
 // adapter shares, so the TCP connect and the SSH handshake both end with
-// ctx, the session's init timeout.
-func (s *SessionImpl) connectDirect(ctx context.Context, hostAddress string, config *ssh.ClientConfig) (*ssh.Client, error) {
-	addr := net.JoinHostPort(hostAddress, s.service.port)
+// ctx, the session's init timeout. A VM that offers no host key of the
+// reported type is refused as a host key mismatch.
+func (s *SessionImpl) connectDirect(ctx context.Context, host sshconn.Host, config *ssh.ClientConfig) (*ssh.Client, error) {
+	addr := net.JoinHostPort(host.Address, s.service.port)
 
 	client, err := sshconn.DialDirect(ctx, addr, config)
 	if err != nil {
-		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to connect to "+addr, err)
+		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to connect to "+addr,
+			sshconn.ExplainHostKeyRefusal(err, s.deployment, host, addr))
 	}
 
 	return client, nil

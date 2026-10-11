@@ -80,7 +80,7 @@ func TestSSHSetupDeadlineDoesNotBoundTheSession(t *testing.T) {
 			setups := server.CallsOf(boshtest.SSHSetup)
 
 			return len(setups) == 1 && user == setups[0].User()
-		})
+		}, server.HostKey)
 		bosh.SetSSHPort(director, vmServer.port)
 
 		var output string

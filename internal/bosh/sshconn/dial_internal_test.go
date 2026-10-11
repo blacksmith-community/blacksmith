@@ -92,25 +92,40 @@ func (s *testSSHServer) Close() {
 	s.wg.Wait()
 }
 
-func testHostConfig(t *testing.T) *ssh.ServerConfig {
-	t.Helper()
-
+// testHostSigner is the host key every in-process server here presents,
+// so every test client can pin it.
+//
+//nolint:gochecknoglobals // one host key, made once, that every test server presents
+var testHostSigner = sync.OnceValues(func() (ssh.Signer, error) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		t.Fatalf("generate host key: %v", err)
+		return nil, err //nolint:wrapcheck // a test fixture
 	}
 
-	signer, err := ssh.NewSignerFromKey(key)
+	return ssh.NewSignerFromKey(key) //nolint:wrapcheck // a test fixture
+})
+
+func hostSigner(t *testing.T) ssh.Signer {
+	t.Helper()
+
+	signer, err := testHostSigner()
 	if err != nil {
 		t.Fatalf("host signer: %v", err)
 	}
 
+	return signer
+}
+
+func testHostConfig(t *testing.T) *ssh.ServerConfig {
+	t.Helper()
+
 	config := &ssh.ServerConfig{NoClientAuth: true}
-	config.AddHostKey(signer)
+	config.AddHostKey(hostSigner(t))
 
 	return config
 }
 
+// testClientConfig logs in as vcap and pins the test servers' host key.
 func testClientConfig(t *testing.T) *ssh.ClientConfig {
 	t.Helper()
 
@@ -124,12 +139,10 @@ func testClientConfig(t *testing.T) *ssh.ClientConfig {
 		t.Fatalf("client signer: %v", err)
 	}
 
-	return &ssh.ClientConfig{
-		User:            "vcap",
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // in-process test servers
-		Timeout:         5 * time.Second,
-	}
+	config := PinnedConfig("vcap", signer, hostSigner(t).PublicKey())
+	config.Timeout = 5 * time.Second
+
+	return config
 }
 
 // silentHandler accepts the TCP connection and never writes a byte.
