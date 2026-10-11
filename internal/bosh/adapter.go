@@ -465,6 +465,10 @@ type ErrandResult struct {
 	// Skipped is true for a when_changed run the director skipped,
 	// because nothing changed since the last successful run.
 	Skipped bool `json:"skipped"`
+	// Results holds every instance's result, sorted by instance group and
+	// then by instance ID. The top-level fields copy the worst of them.
+	// The entries carry no nested results.
+	Results []ErrandResult `json:"results,omitempty"`
 }
 
 type Instance struct {

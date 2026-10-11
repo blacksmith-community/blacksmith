@@ -388,9 +388,11 @@ func (h *Handler) ListErrands(writer http.ResponseWriter, req *http.Request, dep
 	}, nil)
 }
 
-// RunErrand runs a specific errand. A when_changed run that the director
-// skipped, because nothing changed since its last successful run, answers
-// 200 with skipped set and exit code 0.
+// RunErrand runs a specific errand. The top-level exit code, output, and
+// instance are the worst instance's result, and results holds every
+// instance's result. A when_changed run that the director skipped, because
+// nothing changed since its last successful run, answers 200 with skipped
+// set, exit code 0, and no results.
 func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deploymentName string, errandName string) {
 	ctx := req.Context()
 
@@ -414,6 +416,17 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 		return
 	}
 
+	results := make([]map[string]interface{}, 0, len(result.Results))
+	for _, entry := range result.Results {
+		results = append(results, map[string]interface{}{
+			"instance":    entry.InstanceGroup,
+			"instance_id": entry.InstanceID,
+			"exit_code":   entry.ExitCode,
+			"stdout":      entry.Stdout,
+			"stderr":      entry.Stderr,
+		})
+	}
+
 	response.HandleJSON(writer, map[string]interface{}{
 		"deployment":  deploymentName,
 		"errand":      errandName,
@@ -423,6 +436,7 @@ func (h *Handler) RunErrand(writer http.ResponseWriter, req *http.Request, deplo
 		"instance":    result.InstanceGroup,
 		"instance_id": result.InstanceID,
 		"skipped":     result.Skipped,
+		"results":     results,
 	}, nil)
 }
 

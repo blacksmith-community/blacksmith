@@ -439,4 +439,79 @@ func TestErrandsHandlerReportsASkippedRun(t *testing.T) {
 	if code, ok := body["exit_code"].(float64); !ok || code != 0 {
 		t.Errorf("expected exit code 0, got %v", body)
 	}
+
+	// A skipped run has an empty results array, never null or a missing key.
+	if results, ok := body["results"].([]interface{}); !ok || len(results) != 0 {
+		t.Errorf("expected an empty results array, got %#v", body["results"])
+	}
+}
+
+// errandAnswer is one errand result in the errand handler's answer.
+type errandAnswer struct {
+	Instance   string `json:"instance"`
+	InstanceID string `json:"instance_id"`
+	ExitCode   int    `json:"exit_code"`
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+}
+
+// The instance group and IDs the every-result handler test reports.
+const (
+	errandGroup     = "node"
+	errandPassingID = "uuid-0"
+	errandFailingID = "uuid-1"
+)
+
+// The handler keeps the worst result in its top-level fields and adds
+// every instance's result in a results array.
+func TestErrandsHandlerAddsEveryResult(t *testing.T) {
+	t.Parallel()
+
+	passing := errandAnswer{Instance: errandGroup, InstanceID: errandPassingID, ExitCode: 0, Stdout: "ok"}
+	failing := errandAnswer{Instance: errandGroup, InstanceID: errandFailingID, ExitCode: 1, Stdout: "failed", Stderr: "boom"}
+
+	asResult := func(answer errandAnswer) bosh.ErrandResult {
+		return bosh.ErrandResult{
+			InstanceGroup: answer.Instance, InstanceID: answer.InstanceID,
+			ExitCode: answer.ExitCode, Stdout: answer.Stdout, Stderr: answer.Stderr,
+		}
+	}
+
+	worst := asResult(failing)
+	worst.Results = []bosh.ErrandResult{asResult(passing), asResult(failing)}
+
+	encoded, err := json.Marshal(runErrandThroughHandler(t, &worst))
+	if err != nil {
+		t.Fatalf("encoding the answer: %v", err)
+	}
+
+	var answer struct {
+		errandAnswer
+
+		Results []errandAnswer `json:"results"`
+	}
+
+	var keys struct {
+		Results []map[string]interface{} `json:"results"`
+	}
+
+	err = errors.Join(json.Unmarshal(encoded, &answer), json.Unmarshal(encoded, &keys))
+	if err != nil {
+		t.Fatalf("decoding the answer %s: %v", encoded, err)
+	}
+
+	if answer.errandAnswer != failing {
+		t.Errorf("expected the top level to be the failing result %+v, got %+v", failing, answer.errandAnswer)
+	}
+
+	want := []errandAnswer{passing, failing}
+	if len(answer.Results) != len(want) || len(keys.Results) != len(want) {
+		t.Fatalf("expected %d results, got %s", len(want), encoded)
+	}
+
+	for index, entry := range answer.Results {
+		if entry != want[index] || len(keys.Results[index]) != 5 {
+			t.Errorf("result %d is %v, want %+v and no other keys", index, keys.Results[index], want[index])
+		}
+	}
 }

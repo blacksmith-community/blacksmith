@@ -715,8 +715,8 @@ func TestRunErrandReportsASkippedRunWithResultText(t *testing.T) {
 		t.Fatalf("expected a skipped run to succeed, got: %v", err)
 	}
 
-	if result == nil || !result.Skipped || result.ExitCode != 0 {
-		t.Errorf("expected a skipped result with exit code 0, got %+v", result)
+	if result == nil || !result.Skipped || result.ExitCode != 0 || len(result.Results) != 0 {
+		t.Errorf("expected a skipped result with exit code 0 and no results, got %+v", result)
 	}
 
 	if logs.count("INFO", "skipped errand "+errandName, resultText) != 1 {
@@ -743,5 +743,166 @@ func TestRunErrandWithNoResultsNamesTheTask(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("expected the error to mention %q, got: %v", want, err)
 		}
+	}
+}
+
+// checkErrandInstance checks that result came from group/instanceID with
+// the exit code want.
+func checkErrandInstance(t *testing.T, what string, result bosh.ErrandResult, group, instanceID string, want int) {
+	t.Helper()
+
+	if result.InstanceGroup != group || result.InstanceID != instanceID || result.ExitCode != want {
+		t.Errorf("%s is %s/%s with exit code %d, want %s/%s with exit code %d",
+			what, result.InstanceGroup, result.InstanceID, result.ExitCode, group, instanceID, want)
+	}
+}
+
+// runErrandWithOutput runs the test errand against a director whose errand
+// task writes output, and fails the test on an error.
+func runErrandWithOutput(t *testing.T, output string) *bosh.ErrandResult {
+	t.Helper()
+
+	server := newErrandDirector(t, errandConfig{output: output})
+	director := newTaskAdapter(t, server.Director)
+
+	result, err := runErrand(t, t.Context(), director, bosh.ErrandOpts{})
+	if err != nil {
+		t.Fatalf("expected the errand to run, got: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected a result")
+	}
+
+	return result
+}
+
+// A run on several instances reports every result, sorted by instance
+// group and then by instance ID, and its top level is the worst result,
+// whatever order the instances finished in.
+func TestRunErrandReportsTheWorstResultAndEveryResult(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	output := strings.Join([]string{
+		errandRow("worker", "uuid-b", exitCode(0), "worker ok"),
+		errandRow(errandGroup, "uuid-2", exitCode(1), "node failed"),
+		errandRow(errandGroup, "uuid-1", exitCode(0), "node ok"),
+		errandRow("api", "uuid-z", exitCode(0), "api ok"),
+	}, "\n")
+
+	result := runErrandWithOutput(t, output)
+
+	checkErrandInstance(t, "the top level", *result, errandGroup, "uuid-2", 1)
+
+	if result.Stdout != "node failed" || result.LogsBlobstoreID != "blob-uuid-2" {
+		t.Errorf("expected the top level to carry the failing instance's output and logs, got %+v", result)
+	}
+
+	want := []struct {
+		group, id string
+		code      int
+	}{{"api", "uuid-z", 0}, {errandGroup, "uuid-1", 0}, {errandGroup, "uuid-2", 1}, {"worker", "uuid-b", 0}}
+
+	if len(result.Results) != len(want) {
+		t.Fatalf("expected %d results, got %+v", len(want), result.Results)
+	}
+
+	for index, entry := range result.Results {
+		checkErrandInstance(t, "result "+strconv.Itoa(index), entry, want[index].group, want[index].id, want[index].code)
+
+		if entry.Results != nil {
+			t.Errorf("result %d carries nested results: %+v", index, entry.Results)
+		}
+	}
+}
+
+// A result with no usable exit code, because the key is missing, null, or
+// negative, ranks above any failure, because Blacksmith cannot tell whether
+// the errand succeeded. Its exit code is reported as -1.
+func TestRunErrandCountsAMissingExitCodeAsTheWorst(t *testing.T) {
+	unusable := map[string]string{
+		"a missing exit code":  errandRow(errandGroup, "uuid-2", nil, "no code"),
+		"a null exit code":     `{"exit_code":null,"stdout":"no code","stderr":"","errand_name":"smoke-tests","instance":{"group":"node","id":"uuid-2"}}`,
+		"a negative exit code": errandRow(errandGroup, "uuid-2", exitCode(-5), "no code"),
+	}
+
+	for name, row := range unusable {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			output := strings.Join([]string{
+				errandRow(errandGroup, "uuid-0", exitCode(0), "ok"),
+				errandRow(errandGroup, "uuid-1", exitCode(137), "killed"),
+				row,
+			}, "\n")
+
+			result := runErrandWithOutput(t, output)
+
+			checkErrandInstance(t, "the top level", *result, errandGroup, "uuid-2", -1)
+
+			if len(result.Results) != 3 {
+				t.Fatalf("expected 3 results, got %+v", result.Results)
+			}
+
+			checkErrandInstance(t, "the unusable result", result.Results[2], errandGroup, "uuid-2", -1)
+		})
+	}
+}
+
+// Between results of the same rank, the first in sorted order wins, so the
+// choice never depends on the order in which the instances finished.
+func TestRunErrandBreaksTiesByInstance(t *testing.T) {
+	ties := map[string]struct {
+		rows      []string
+		group, id string
+	}{
+		"within a group": {
+			rows:  []string{errandRow(errandGroup, "uuid-b", exitCode(2), "b"), errandRow(errandGroup, "uuid-a", exitCode(2), "a")},
+			group: errandGroup, id: "uuid-a",
+		},
+		"across groups": {
+			rows:  []string{errandRow("worker", "uuid-a", exitCode(2), "w"), errandRow(errandGroup, "uuid-z", exitCode(2), "n")},
+			group: errandGroup, id: "uuid-z",
+		},
+	}
+
+	for name, tie := range ties {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			result := runErrandWithOutput(t, strings.Join(tie.rows, "\n"))
+
+			checkErrandInstance(t, "the top level", *result, tie.group, tie.id, 2)
+		})
+	}
+}
+
+// Of two failures, the one with the higher exit code is the top level,
+// whichever sorts first, so a code above 128, which the director gives a
+// cancelled errand, outranks an ordinary failure.
+func TestRunErrandRanksAHigherExitCodeAboveALowerOne(t *testing.T) {
+	cases := map[string]struct {
+		first, second int
+		wantID        string
+		want          int
+	}{
+		"a cancelled errand after a failure":  {first: 1, second: 137, wantID: "uuid-b", want: 137},
+		"a cancelled errand before a failure": {first: 137, second: 1, wantID: "uuid-a", want: 137},
+		"a higher failure after a lower one":  {first: 2, second: 3, wantID: "uuid-b", want: 3},
+		"a higher failure before a lower one": {first: 3, second: 2, wantID: "uuid-a", want: 3},
+		"a failure after a success":           {first: 0, second: 4, wantID: "uuid-b", want: 4},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+			result := runErrandWithOutput(t, strings.Join([]string{
+				errandRow(errandGroup, "uuid-b", exitCode(tc.second), "second"),
+				errandRow(errandGroup, "uuid-a", exitCode(tc.first), "first"),
+			}, "\n"))
+
+			checkErrandInstance(t, "the top level", *result, errandGroup, tc.wantID, tc.want)
+		})
 	}
 }

@@ -2257,11 +2257,12 @@ func (d *DirectorAdapter) RunErrand(ctx context.Context, deployment, errand stri
 		return d.noErrandResults(deployment, errand, opts, finished)
 	}
 
-	result := convertErrandResult(results[0])
+	result := worstErrandResult(results)
 
-	d.log.Infof("Ran errand %s for deployment %s in BOSH task %d, exit code: %d", errand, deployment, task.ID, result.ExitCode)
+	d.log.Infof("Ran errand %s for deployment %s in BOSH task %d on %d instances, worst exit code: %d (%s/%s)",
+		errand, deployment, task.ID, len(result.Results), result.ExitCode, result.InstanceGroup, result.InstanceID)
 
-	return &result, nil
+	return result, nil
 }
 
 // errandInstances turns the instances an errand run names into the
@@ -2293,6 +2294,55 @@ func errandInstances(instances []string) ([]boshapi.ErrandInstance, error) {
 	}
 
 	return converted, nil
+}
+
+// worstErrandResult converts every errand result, sorts them by instance
+// group and then by instance ID, and returns the worst of them with every
+// result in Results. A result with no usable exit code ranks worst,
+// because Blacksmith cannot tell whether the errand succeeded. A failure
+// ranks next, and a higher exit code ranks above a lower one, so a code
+// above 128, which the director gives a cancelled errand, outranks an
+// ordinary failure. A success ranks last. Between results of the same
+// rank, the first in sorted order wins, so the choice never depends on the
+// order in which the instances finished.
+func worstErrandResult(results []boshapi.ErrandResult) *ErrandResult {
+	converted := make([]ErrandResult, len(results))
+	for index, result := range results {
+		converted[index] = convertErrandResult(result)
+	}
+
+	sort.SliceStable(converted, func(i, j int) bool {
+		if converted[i].InstanceGroup != converted[j].InstanceGroup {
+			return converted[i].InstanceGroup < converted[j].InstanceGroup
+		}
+
+		return converted[i].InstanceID < converted[j].InstanceID
+	})
+
+	worst := converted[0]
+	for _, result := range converted[1:] {
+		if errandOutranks(result.ExitCode, worst.ExitCode) {
+			worst = result
+		}
+	}
+
+	worst.Results = converted
+
+	return &worst
+}
+
+// errandOutranks reports whether an errand exit code is strictly worse than
+// another. Codes are as convertErrandResult gives them, so -1 stands for
+// no usable code.
+func errandOutranks(code, other int) bool {
+	switch {
+	case other < 0:
+		return false
+	case code < 0:
+		return true
+	default:
+		return code > other
+	}
 }
 
 // convertErrandResult converts one errand result. A missing or negative
