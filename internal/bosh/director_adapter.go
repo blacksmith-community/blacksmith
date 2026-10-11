@@ -2225,51 +2225,28 @@ func (d *DirectorAdapter) RunErrand(ctx context.Context, deployment, errand stri
 	return result, nil
 }
 
-// GetInstances returns instances for a deployment.
+// GetInstances lists a deployment's instances, including those without a
+// VM. It sends the format=full listing, waits for the read-only task the
+// director starts, and reads the task's result, as GetDeploymentVMs does,
+// so it shares that listing's handling of a missing deployment, a lost
+// answer, a failed task, and a context that ends during the wait.
 func (d *DirectorAdapter) GetInstances(ctx context.Context, deployment string) (_ []Instance, err error) {
 	defer d.explainContext(ctx, "GetInstances", &err)
 
-	director := d.bind(ctx)
-
 	d.log.Infof("Getting instances for deployment: %s", deployment)
 
-	dep, err := director.FindDeployment(deployment)
+	details, err := d.listDetails(ctx, detailsListing{
+		operation: "GetInstances",
+		resource:  "instances",
+		list:      d.api.Instances().ListDetailed,
+	}, deployment)
 	if err != nil {
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
-
-		return nil, fmt.Errorf("failed to find deployment: %w", err)
+		return nil, err
 	}
 
-	// Get VM info which includes instance information
-	vmInfos, err := dep.InstanceInfos()
-	if err != nil {
-		d.log.Errorf("Failed to get instance info for deployment %s: %v", deployment, err)
-
-		return nil, fmt.Errorf("failed to get instance info: %w", err)
-	}
-
-	// Convert to our Instance format
-	instances := make([]Instance, len(vmInfos))
-	for idx, vmInfo := range vmInfos {
-		index := "0"
-		if vmInfo.Index != nil {
-			index = strconv.Itoa(*vmInfo.Index)
-		}
-
-		instances[idx] = Instance{
-			ID:           vmInfo.AgentID,
-			Group:        vmInfo.JobName,
-			Index:        index,
-			State:        vmInfo.State,
-			ProcessState: vmInfo.ProcessState,
-			IPs:          vmInfo.IPs,
-			AZ:           vmInfo.AZ,
-			VMType:       vmInfo.VMType,
-			ResourcePool: vmInfo.ResourcePool,
-			Bootstrap:    vmInfo.Bootstrap,
-			Ignore:       vmInfo.Ignore,
-			VMCreatedAt:  vmInfo.VMCreatedAt,
-		}
+	instances := make([]Instance, len(details))
+	for index, instance := range details {
+		instances[index] = d.convertInstanceInfo(instance)
 	}
 
 	d.log.Infof("Found %d instances for deployment %s", len(instances), deployment)
@@ -2588,6 +2565,27 @@ func (d *DirectorAdapter) convertVMInfo(details boshapi.VMDetails) VM {
 		Processes:       convertProcesses(details.Processes),
 		Vitals:          convertVitals(details.Vitals),
 		Stemcell:        convertStemcell(details.Stemcell),
+	}
+}
+
+// convertInstanceInfo converts one row of a format=full instance listing.
+// The instance is identified by its UUID, because an instance without a VM
+// has no agent, and a null index becomes "-1", as it does for a VM. The
+// process state comes from job_state, the key the director writes.
+func (d *DirectorAdapter) convertInstanceInfo(details boshapi.VMDetails) Instance {
+	return Instance{
+		ID:           details.ID,
+		Group:        details.JobName,
+		Index:        strconv.Itoa(detailsIndex(details.Index)),
+		State:        details.State,
+		ProcessState: details.JobState,
+		IPs:          details.IPs,
+		AZ:           details.AZ,
+		VMType:       details.VMType,
+		ResourcePool: details.ResourcePool,
+		Bootstrap:    details.Bootstrap,
+		Ignore:       details.Ignore,
+		VMCreatedAt:  d.parseVMCreatedAt(details.ID, details.VMCreatedAt),
 	}
 }
 
