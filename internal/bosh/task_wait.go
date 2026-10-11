@@ -122,24 +122,44 @@ func (d *DirectorAdapter) readOnlyTaskResult(ctx context.Context, operation, dep
 		return "", err
 	}
 
+	return d.finishedTaskResult(ctx, "Read-only", operation, deployment, task)
+}
+
+// sshSetupResult waits for an SSH setup task and returns its result
+// output. A task that ended in any state but done returns a
+// TaskFailedError with the director's result text.
+func (d *DirectorAdapter) sshSetupResult(ctx context.Context, operation, deployment string, taskID int) (string, error) {
+	task, err := d.waitOrCancel(ctx, operation, taskID)
+	if err != nil {
+		return "", err
+	}
+
+	return d.finishedTaskResult(ctx, "SSH setup", operation, deployment, task)
+}
+
+// finishedTaskResult reads the result output of a task that has reached a
+// terminal state. A task that ended in any state but done returns a
+// TaskFailedError with the director's result text. kind names the task in
+// the log.
+func (d *DirectorAdapter) finishedTaskResult(ctx context.Context, kind, operation, deployment string, task *Task) (string, error) {
 	if task.State != taskStateDone {
-		d.log.Errorf("Read-only BOSH task %d for deployment %s ended in state %s: %s", taskID, deployment, task.State, task.Result)
+		d.log.Errorf("%s BOSH task %d for deployment %s ended in state %s: %s", kind, task.ID, deployment, task.State, task.Result)
 
 		return "", &TaskFailedError{
 			Operation:  operation,
 			Director:   d.address,
 			Deployment: deployment,
-			TaskID:     taskID,
+			TaskID:     task.ID,
 			State:      task.State,
 			Result:     task.Result,
 		}
 	}
 
-	output, err := d.api.Tasks().GetOutput(ctx, taskID, &boshapi.TaskOutputOptions{Type: "result"})
+	output, err := d.api.Tasks().GetOutput(ctx, task.ID, &boshapi.TaskOutputOptions{Type: taskOutputResult})
 	if err != nil {
-		d.log.Errorf("Failed to read the result of BOSH task %d: %v", taskID, err)
+		d.log.Errorf("Failed to read the result of BOSH task %d: %v", task.ID, err)
 
-		return "", d.requestFailure(fmt.Sprintf("read the result of BOSH task %d", taskID), err)
+		return "", d.requestFailure(fmt.Sprintf("read the result of BOSH task %d", task.ID), err)
 	}
 
 	return output, nil

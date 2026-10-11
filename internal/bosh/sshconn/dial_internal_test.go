@@ -521,26 +521,6 @@ func TestGatewayedClientCloseClosesBothAndIsRepeatable(t *testing.T) {
 	})
 }
 
-func TestSSHAddress(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		host string
-		want string
-	}{
-		{"10.0.0.5", "10.0.0.5:22"},
-		{"vm.example.internal", "vm.example.internal:22"},
-		{"fd00::5", "[fd00::5]:22"},
-		{"2001:db8:0:1::10", "[2001:db8:0:1::10]:22"},
-	}
-
-	for _, test := range tests {
-		if got := Address(test.host); got != test.want {
-			t.Errorf("Address(%q) = %q, want %q", test.host, got, test.want)
-		}
-	}
-}
-
 // scriptedConn is a net.Conn for driving handshakeSSH directly. When readErr
 // is set the connection fails every read and swallows every write, as a peer
 // that resets the connection would. onClose runs inside the first Close.

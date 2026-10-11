@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -23,9 +24,9 @@ import (
 	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
 	boshuaa "github.com/cloudfoundry/bosh-cli/v7/uaa"
 	boshlog "github.com/cloudfoundry/bosh-utils/logger"
-	boshuuid "github.com/cloudfoundry/bosh-utils/uuid"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/geofffranks/spruce"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
 )
@@ -84,7 +85,6 @@ var (
 	ErrTaskCannotBeCancelled          = errors.New("task is in invalid state and cannot be cancelled")
 	ErrNoCloudConfigFound             = errors.New("no cloud config found")
 	ErrInvalidConfigIDFormat          = errors.New("invalid config ID format")
-	ErrNoHostsAvailableSSH            = errors.New("no hosts available for SSH connection")
 	ErrResurrectionConfigUpdateFailed = errors.New("failed to update resurrection config for deployment")
 	ErrResurrectionConfigDeleteFailed = errors.New("failed to delete resurrection config for deployment")
 	ErrResurrectionConfigNotFound     = errors.New("resurrection config for deployment not found or already deleted")
@@ -153,8 +153,12 @@ type DirectorAdapter struct {
 	// taskPollInterval is how often WaitForTask reads a task. Zero means
 	// boshapi's default of 2 seconds.
 	taskPollInterval time.Duration
-	logger           boshlog.Logger
-	log              Logger // Application logger for Info/Debug logging
+	// sshPort is the port SSHCommand connects to on a VM. It is
+	// sshconn.Port everywhere but in tests, which point it at a loopback
+	// server.
+	sshPort string
+	logger  boshlog.Logger
+	log     Logger // Application logger for Info/Debug logging
 }
 
 // bind returns the bosh-cli director for one call.
@@ -233,6 +237,7 @@ func NewDirectorAdapter(config Config) (Director, error) {
 		api:            api,
 		address:        config.Address,
 		requestTimeout: config.RequestTimeout,
+		sshPort:        sshconn.Port,
 		logger:         logger,
 		log:            appLogger,
 	}, nil
@@ -503,6 +508,9 @@ const runningTaskStates = "processing,cancelling,queued"
 // taskVerboseAll is the task list verbosity at which the director lists
 // every task, orphan cleanup tasks included.
 const taskVerboseAll = 2
+
+// taskOutputResult is the task output that holds a task's result.
+const taskOutputResult = "result"
 
 // Task states the director reports.
 const (
@@ -1950,22 +1958,30 @@ func extractLogsFromTarGz(data io.Reader) (string, error) {
 	return result.String(), nil
 }
 
-// SSHCommand executes a one-off command on a BOSH VM via SSH.
+// SSHCommand runs a one-off command on one instance over SSH. It sets up a
+// throwaway user through the director, runs the command as that user, and
+// removes the user before it returns.
 func (d *DirectorAdapter) SSHCommand(ctx context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (_ string, err error) {
 	defer d.explainContext(ctx, "SSHCommand", &err)
+
+	target, err := sshTarget(instance, index)
+	if err != nil {
+		return "", err
+	}
 
 	d.log.Infof("Executing SSH command on deployment %s, instance %s/%d", deployment, instance, index)
 	d.log.Debugf("Command: %s, Args: %v", command, args)
 
-	// Set up SSH infrastructure
-	sshResult, privateKey, cleanup, err := d.setupSSHSession(ctx, deployment, instance, index)
+	session, err := d.setUpSSH(ctx, "SSHCommand", deployment, target)
 	if err != nil {
 		return "", err
 	}
-	defer cleanup()
 
-	// Create SSH client and execute command
-	client, err := d.createSSHClient(ctx, sshResult, privateKey)
+	// cleanUpSSH logs every way the removal can fail, with the user and
+	// the task, and the command's own result is what the caller asked for.
+	defer func() { _ = session.Cleanup(ctx) }()
+
+	client, err := d.createSSHClient(ctx, session)
 	if err != nil {
 		return "", err
 	}
@@ -1980,73 +1996,26 @@ func (d *DirectorAdapter) SSHCommand(ctx context.Context, deployment, instance s
 	return d.executeSSHCommand(client, command, args)
 }
 
-// SSHSession creates an interactive SSH session for streaming.
+// SSHSession sets up a throwaway SSH user on one instance for an
+// interactive terminal. The answer is always a *sshconn.Session, whose
+// Cleanup removes the user. The return type stays interface{} because the
+// Director interface and its wrappers share this signature.
 func (d *DirectorAdapter) SSHSession(ctx context.Context, deployment, instance string, index int, options map[string]interface{}) (_ interface{}, err error) {
 	defer d.explainContext(ctx, "SSHSession", &err)
 
-	director := d.bind(ctx)
+	target, err := sshTarget(instance, index)
+	if err != nil {
+		return nil, err
+	}
 
 	d.log.Infof("Creating SSH session for deployment %s, instance %s/%d", deployment, instance, index)
 
-	// Find the deployment
-	boshDeployment, err := director.FindDeployment(deployment)
+	session, err := d.setUpSSH(ctx, "SSHSession", deployment, target)
 	if err != nil {
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
-
-		return nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+		return nil, err
 	}
 
-	// Create SSH options
-	sshOpts, privateKey, err := boshdirector.NewSSHOpts(boshuuid.NewGenerator())
-	if err != nil {
-		d.log.Errorf("Failed to create SSH options: %v", err)
-
-		return nil, fmt.Errorf("failed to create SSH options: %w", err)
-	}
-
-	// Create slug for targeting the specific instance
-	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(instance, strconv.Itoa(index))
-
-	// Set up SSH session
-	d.log.Debugf("Setting up SSH session")
-
-	sshResult, err := boshDeployment.SetUpSSH(slug, sshOpts)
-	if err != nil {
-		d.log.Errorf("Failed to set up SSH: %v", err)
-
-		return nil, fmt.Errorf("failed to set up SSH: %w", err)
-	}
-
-	d.log.Infof("SSH session created successfully for %d hosts", len(sshResult.Hosts))
-
-	// Convert hosts to interface slice for proper type assertion in SessionImpl
-	hosts := make([]interface{}, len(sshResult.Hosts))
-	for i, host := range sshResult.Hosts {
-		hosts[i] = map[string]interface{}{
-			"Host":          host.Host,
-			"HostPublicKey": host.HostPublicKey,
-			"Username":      host.Username,
-			"Job":           host.Job,
-			"IndexOrID":     host.IndexOrID,
-		}
-	}
-
-	// Return SSH session information
-	sessionInfo := map[string]interface{}{
-		"deployment":   deployment,
-		"instance":     instance,
-		"index":        index,
-		"hosts":        hosts,
-		"gateway_host": sshResult.GatewayHost,
-		"gateway_user": sshResult.GatewayUsername,
-		"private_key":  privateKey,
-		"ssh_opts":     sshOpts,
-		"cleanup_func": func() error {
-			return d.cleanUpSSH(ctx, deployment, slug, sshOpts)
-		},
-	}
-
-	return sessionInfo, nil
+	return session, nil
 }
 
 // EnableResurrection toggles resurrection for a deployment using resurrection config.
@@ -2732,7 +2701,7 @@ func (d *DirectorAdapter) finishedUnread(ctx context.Context, operation string, 
 
 // errandResults reads and parses the result output of an errand's task.
 func (d *DirectorAdapter) errandResults(ctx context.Context, deployment, errand string, taskID int) ([]boshapi.ErrandResult, error) {
-	output, err := d.api.Tasks().GetOutput(ctx, taskID, &boshapi.TaskOutputOptions{Type: "result"})
+	output, err := d.api.Tasks().GetOutput(ctx, taskID, &boshapi.TaskOutputOptions{Type: taskOutputResult})
 	if err != nil {
 		d.log.Errorf("Failed to read the result of BOSH task %d, which finished: %v", taskID, err)
 
@@ -2890,118 +2859,231 @@ func convertStemcell(stemcell boshapi.VMStemcell) VMStemcell {
 	}
 }
 
-// setupSSHSession sets up the SSH session and returns cleanup function.
-func (d *DirectorAdapter) setupSSHSession(ctx context.Context, deployment, instance string, index int) (*boshdirector.SSHResult, string, func(), error) {
-	// Find the deployment
-	boshDeployment, err := d.bind(ctx).FindDeployment(deployment)
+// sshTarget names one instance by its group and index, which is the only
+// target SSHCommand and SSHSession take. An empty group would select every
+// instance in the deployment, so it is refused before anything is sent.
+func sshTarget(instance string, index int) (boshapi.SSHTarget, error) {
+	if instance == "" || index < 0 {
+		return boshapi.SSHTarget{}, fmt.Errorf("%w: got group %q and index %d, so nothing was sent",
+			ErrSSHTargetInvalid, instance, index)
+	}
+
+	return boshapi.SSHTarget{Job: instance, Indices: []int{index}}, nil
+}
+
+// setUpSSH asks the director to create a throwaway user with a fresh
+// ed25519 key on the target's instances, waits for the setup task, and
+// returns the session that connects as that user. The request goes
+// through accepted() without a lookup, because the director's SSH route
+// never stores the context ID on its task. The director's
+// deployment-not-found answer, code 70000, wraps ErrDeploymentNotFound,
+// and its refusal of the broker's client wraps ErrSSHNotPermitted.
+func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment string, target boshapi.SSHTarget) (*sshconn.Session, error) {
+	ctx, contextID, err := mutationContext(ctx, operation)
 	if err != nil {
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
-
-		return nil, "", nil, fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+		return nil, err
 	}
 
-	// Create SSH options
-	sshOpts, privateKey, err := boshdirector.NewSSHOpts(boshuuid.NewGenerator())
+	credentials, err := sshconn.NewCredentials()
 	if err != nil {
-		d.log.Errorf("Failed to create SSH options: %v", err)
+		d.log.Errorf("Failed to make the SSH credentials for deployment %s: %v", deployment, err)
 
-		return nil, "", nil, fmt.Errorf("failed to create SSH options: %w", err)
+		return nil, fmt.Errorf("failed to make the SSH credentials for deployment %s, so nothing was sent: %w", deployment, err)
 	}
 
-	// Create slug for targeting the specific instance
-	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(instance, strconv.Itoa(index))
+	instance := sshconn.TargetName(target)
 
-	// Set up SSH session
-	d.log.Debugf("Setting up SSH session")
+	d.log.Infof("Setting up SSH user %s on %s of deployment %s (context ID %s)", credentials.User, instance, deployment, contextID)
 
-	sshResult, err := boshDeployment.SetUpSSH(slug, sshOpts)
+	sent, err := d.api.SSHClient().Setup(ctx, deployment,
+		sshconn.SetupRequest(deployment, target, credentials.User, credentials.PublicKey))
 	if err != nil {
-		d.log.Errorf("Failed to set up SSH: %v", err)
-
-		return nil, "", nil, fmt.Errorf("failed to set up SSH: %w", err)
-	}
-
-	// Check if we got hosts
-	if len(sshResult.Hosts) == 0 {
-		d.log.Errorf("No hosts returned from SSH setup")
-
-		return nil, "", nil, ErrNoHostsAvailableSSH
-	}
-
-	d.log.Infof("SSH session established successfully for %d hosts", len(sshResult.Hosts))
-
-	cleanup := func() {
-		d.log.Debugf("Cleaning up SSH session")
-
-		cleanupErr := d.cleanUpSSH(ctx, deployment, slug, sshOpts)
-		if cleanupErr != nil {
-			d.log.Errorf("Failed to clean up SSH: %v", cleanupErr)
+		refused := d.sshSetupRefused(deployment, err)
+		if refused != nil {
+			return nil, refused
 		}
 	}
 
-	return &sshResult, privateKey, cleanup, nil
+	task, err := d.accepted(ctx, mutation{
+		operation:  operation,
+		deployment: deployment,
+		contextID:  contextID,
+		what:       fmt.Sprintf("set up SSH user %s on %s of deployment %s", credentials.User, instance, deployment),
+	}, sent, err)
+	if err != nil {
+		return nil, err
+	}
+
+	hosts, gateway, err := d.sshSetupHosts(ctx, operation, deployment, task.ID, credentials.User)
+	if err != nil {
+		return nil, err
+	}
+
+	d.log.Infof("BOSH task %d set up SSH user %s on %d host(s) of deployment %s", task.ID, credentials.User, len(hosts), deployment)
+
+	var (
+		cleanupOnce sync.Once
+		cleanupErr  error
+	)
+
+	return &sshconn.Session{
+		Deployment: deployment,
+		Target:     target,
+		User:       credentials.User,
+		Hosts:      hosts,
+		Gateway:    gateway,
+		Signer:     credentials.Signer,
+		Cleanup: func(cleanupCtx context.Context) error {
+			cleanupOnce.Do(func() {
+				cleanupErr = d.cleanUpSSH(cleanupCtx, deployment, target, credentials.User, contextID)
+			})
+
+			return cleanupErr
+		},
+	}, nil
 }
 
-// cleanUpSSH removes the SSH user that SetUpSSH added. It often runs after
-// the caller's context has ended, and a cancelled context must not leave the
-// user on the VM, so it keeps ctx's values but gets its own deadline and a
-// director bound to that deadline.
-func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, slug boshdirector.AllOrInstanceGroupOrInstanceSlug, sshOpts boshdirector.SSHOpts) (err error) {
+// sshSetupRefused explains the director's answers to an SSH setup that
+// mean it will never succeed as sent, and returns nil for any other error.
+func (d *DirectorAdapter) sshSetupRefused(deployment string, err error) error {
+	var apiErr *boshapi.APIError
+
+	switch {
+	case errors.As(err, &apiErr) && apiErr.Code == boshapi.ErrorCodeDeploymentNotFound:
+		d.log.Infof("The director has no deployment %s to set up SSH on", deployment)
+
+		return fmt.Errorf("%w: %s: %w", ErrDeploymentNotFound, deployment, err)
+	case boshapi.IsForbidden(err):
+		d.log.Errorf("The director refused to set up SSH on deployment %s for the broker's client: %v", deployment, err)
+
+		return fmt.Errorf("%w on deployment %s on BOSH director %s, because the director refused the request (%w). "+
+			"Give the broker's UAA client the bosh.admin authority, or a team admin authority that covers the deployment",
+			ErrSSHNotPermitted, deployment, d.address, err)
+	default:
+		return nil
+	}
+}
+
+// sshSetupHosts waits for the setup task and reads the hosts from its
+// result.
+func (d *DirectorAdapter) sshSetupHosts(ctx context.Context, operation, deployment string, taskID int, user string) ([]sshconn.Host, sshconn.Gateway, error) {
+	output, err := d.sshSetupResult(ctx, operation, deployment, taskID)
+	if err != nil {
+		return nil, sshconn.Gateway{}, err
+	}
+
+	results, err := boshapi.ParseSSHResults(output)
+	if err != nil {
+		d.log.Errorf("Failed to parse the result of SSH setup task %d for user %s: %v", taskID, user, err)
+
+		return nil, sshconn.Gateway{}, &taskResultError{resource: "SSH hosts", deployment: deployment, director: d.address, taskID: taskID, err: err}
+	}
+
+	hosts, gateway, err := sshconn.ReadHosts(results, user)
+	if err != nil {
+		d.log.Errorf("SSH setup task %d for deployment %s returned hosts Blacksmith cannot use: %v", taskID, deployment, err)
+
+		return nil, sshconn.Gateway{}, fmt.Errorf("SSH setup for deployment %s in BOSH task %d on BOSH director %s: %w",
+			deployment, taskID, d.address, err)
+	}
+
+	return hosts, gateway, nil
+}
+
+// cleanUpSSH removes the SSH user that setUpSSH created from the same
+// target, and waits for the cleanup task. It often runs after the
+// caller's context has ended, and a cancelled context must not leave the
+// user on the VM, so it keeps ctx's values but gets its own deadline of
+// sshCleanupTimeout. It sends a fresh context ID of its own. A cleanup
+// task that ends in any state but done, a wait the deadline cuts off, and
+// a lost answer are each logged at Error with the user and the context
+// IDs.
+//
+//nolint:nonamedreturns // explainContext reads the named error, as in every other adapter method.
+func (d *DirectorAdapter) cleanUpSSH(ctx context.Context, deployment string, target boshapi.SSHTarget, user, setupContextID string) (err error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sshCleanupTimeout)
 	defer cancel()
 
 	defer d.explainContext(ctx, "CleanUpSSH", &err)
 
-	boshDeployment, err := d.bind(ctx).FindDeployment(deployment)
+	contextID := uuid.NewString()
+	ctx = boshapi.WithContextID(ctx, contextID)
+	instance := sshconn.TargetName(target)
+
+	d.log.Infof("Removing SSH user %s from %s of deployment %s (context ID %s, setup context ID %s)",
+		user, instance, deployment, contextID, setupContextID)
+
+	sent, err := d.api.SSHClient().Cleanup(ctx, deployment, sshconn.CleanupRequest(deployment, target, user))
+
+	task, err := d.accepted(ctx, mutation{
+		operation:  "CleanUpSSH",
+		deployment: deployment,
+		contextID:  contextID,
+		what:       fmt.Sprintf("remove SSH user %s from %s of deployment %s", user, instance, deployment),
+	}, sent, err)
 	if err != nil {
-		return fmt.Errorf("failed to find deployment %s for SSH cleanup: %w", deployment, err)
+		return err
 	}
 
-	err = boshDeployment.CleanUpSSH(slug, sshOpts)
+	final, err := d.WaitForTask(ctx, task.ID)
 	if err != nil {
-		return fmt.Errorf("failed to clean up SSH on deployment %s: %w", deployment, err)
+		d.log.Errorf("Stopped waiting for BOSH task %d, which removes SSH user %s from %s of deployment %s "+
+			"(context ID %s, setup context ID %s), so the user may remain on the VM: %v",
+			task.ID, user, instance, deployment, contextID, setupContextID, err)
+
+		return err
 	}
+
+	if final.State != taskStateDone {
+		d.log.Errorf("BOSH task %d, which removes SSH user %s from %s of deployment %s (context ID %s, setup context ID %s), "+
+			"ended in state %s, so the user may remain on the VM: %s",
+			task.ID, user, instance, deployment, contextID, setupContextID, final.State, final.Result)
+
+		return &TaskFailedError{
+			Operation:  "CleanUpSSH",
+			Director:   d.address,
+			Deployment: deployment,
+			TaskID:     task.ID,
+			State:      final.State,
+			Result:     final.Result,
+		}
+	}
+
+	d.log.Infof("BOSH task %d removed SSH user %s from %s of deployment %s", task.ID, user, instance, deployment)
 
 	return nil
 }
 
-// createSSHClient creates an SSH client using the SSH result.
+// createSSHClient connects to the session's first host as the session's
+// user, through the director's gateway when it names one.
 //
 //nolint:ireturn // A client reached through a gateway also owns the gateway, so callers get sshconn.Client.
-func (d *DirectorAdapter) createSSHClient(ctx context.Context, sshResult *boshdirector.SSHResult, privateKey string) (sshconn.Client, error) {
-	// Parse the private key
-	signer, err := ssh.ParsePrivateKey([]byte(privateKey))
-	if err != nil {
-		d.log.Errorf("Failed to parse private key: %v", err)
-
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	host := sshResult.Hosts[0]
+func (d *DirectorAdapter) createSSHClient(ctx context.Context, session *sshconn.Session) (sshconn.Client, error) {
+	host := session.Hosts[0]
 
 	// Create SSH client configuration with secure host key verification
 	config := &ssh.ClientConfig{
 		User: host.Username,
 		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
+			ssh.PublicKeys(session.Signer),
 		},
-		HostKeyCallback: d.createSecureHostKeyCallback(host.Host),
+		HostKeyCallback: d.createSecureHostKeyCallback(host.Address),
 		Timeout:         httpClientTimeout,
 	}
 
-	targetAddr := sshconn.Address(host.Host)
+	targetAddr := net.JoinHostPort(host.Address, d.sshPort)
 
-	if sshResult.GatewayHost != "" {
+	if session.Gateway.Host != "" {
 		gatewayConfig := &ssh.ClientConfig{
-			User: sshResult.GatewayUsername,
+			User: session.Gateway.User,
 			Auth: []ssh.AuthMethod{
-				ssh.PublicKeys(signer),
+				ssh.PublicKeys(session.Signer),
 			},
-			HostKeyCallback: d.createSecureHostKeyCallback(sshResult.GatewayHost),
+			HostKeyCallback: d.createSecureHostKeyCallback(session.Gateway.Host),
 			Timeout:         httpClientTimeout,
 		}
 
-		gatewayAddr := sshconn.Address(sshResult.GatewayHost)
+		gatewayAddr := net.JoinHostPort(session.Gateway.Host, d.sshPort)
 
 		client, err := sshconn.DialGateway(ctx, gatewayAddr, targetAddr, gatewayConfig, config)
 		if err != nil {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/pem"
 	"errors"
 	"io"
 	"net"
@@ -15,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"blacksmith/internal/bosh/sshconn"
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -99,11 +100,10 @@ func (s *testVMServer) port(t *testing.T) string {
 	return port
 }
 
-// testKey is an ed25519 key with its PEM form, which is what the director
-// adapter hands the terminal.
+// testKey is an ed25519 key, as the director adapter hands the terminal
+// in its session.
 type testKey struct {
 	signer ssh.Signer
-	pem    string
 }
 
 func newTestKey(t *testing.T) testKey {
@@ -119,12 +119,7 @@ func newTestKey(t *testing.T) testKey {
 		t.Fatalf("signer: %v", err)
 	}
 
-	block, err := ssh.MarshalPrivateKey(private, "")
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-
-	return testKey{signer: signer, pem: string(pem.EncodeToMemory(block))}
+	return testKey{signer: signer}
 }
 
 // vmServerConfig accepts only the user key it is given, or refuses every
@@ -197,9 +192,9 @@ func silentHandler(conn net.Conn) {
 }
 
 // cleanupDirector stands in for the director adapter. Every SSHSession
-// answer carries a cleanup that counts its calls.
+// answer is a *sshconn.Session whose cleanup counts its calls.
 type cleanupDirector struct {
-	privateKey string
+	signer     ssh.Signer
 	cleanupErr error
 	setups     atomic.Int32
 	cleanups   atomic.Int32
@@ -212,15 +207,13 @@ func (d *cleanupDirector) SSHCommand(context.Context, string, string, int, strin
 func (d *cleanupDirector) SSHSession(_ context.Context, deployment, instance string, index int, _ map[string]interface{}) (interface{}, error) {
 	d.setups.Add(1)
 
-	return map[string]interface{}{
-		"deployment":  deployment,
-		"instance":    instance,
-		"index":       index,
-		"private_key": d.privateKey,
-		"hosts": []interface{}{
-			map[string]interface{}{"Host": "127.0.0.1", "Username": testVMUser},
-		},
-		"cleanup_func": func() error {
+	return &sshconn.Session{
+		Deployment: deployment,
+		Target:     boshapi.SSHTarget{Job: instance, Indices: []int{index}},
+		User:       testVMUser,
+		Hosts:      []sshconn.Host{{Address: "127.0.0.1", Username: testVMUser}},
+		Signer:     d.signer,
+		Cleanup: func(context.Context) error {
 			d.cleanups.Add(1)
 
 			return d.cleanupErr
@@ -267,7 +260,7 @@ func TestSessionCloseRunsTheDirectorCleanup(t *testing.T) {
 			t.Parallel()
 
 			server := startTestVMServer(t, testCase.handler)
-			director := &cleanupDirector{privateKey: key.pem}
+			director := &cleanupDirector{signer: key.signer}
 			service := newTestService(t, director, server.port(t))
 
 			session, err := service.CreateSession(t.Context(), terminalRequest())
@@ -306,7 +299,7 @@ func TestSessionCloseRunsTheDirectorCleanup(t *testing.T) {
 func TestSessionCloseRunsTheCleanupOnce(t *testing.T) {
 	t.Parallel()
 
-	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	director := &cleanupDirector{signer: newTestKey(t).signer}
 	service := newTestService(t, director, sshPort)
 
 	session, err := service.CreateSession(t.Context(), terminalRequest())
@@ -332,7 +325,7 @@ func TestSessionCloseRunsTheCleanupOnce(t *testing.T) {
 func TestSessionCloseReportsAFailedCleanup(t *testing.T) {
 	t.Parallel()
 
-	director := &cleanupDirector{privateKey: newTestKey(t).pem, cleanupErr: errTestCleanupRefused}
+	director := &cleanupDirector{signer: newTestKey(t).signer, cleanupErr: errTestCleanupRefused}
 	service := newTestService(t, director, sshPort)
 
 	session, err := service.CreateSession(t.Context(), terminalRequest())
@@ -352,7 +345,7 @@ func TestExecutorClosesASessionWhoseStartFailed(t *testing.T) {
 	t.Parallel()
 
 	server := startTestVMServer(t, shellHandler(vmServerConfig(t, nil)))
-	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	director := &cleanupDirector{signer: newTestKey(t).signer}
 	service := newTestService(t, director, server.port(t))
 	executor := NewSSHExecutor(service, Config{Timeout: 5 * time.Second}, nil)
 
@@ -389,7 +382,7 @@ func (s *ServiceImpl) poolIDs() []string {
 func TestElevenSessionsInSequenceAllOpen(t *testing.T) {
 	t.Parallel()
 
-	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	director := &cleanupDirector{signer: newTestKey(t).signer}
 	service := newTestService(t, director, sshPort)
 
 	for index := range 11 {
@@ -421,7 +414,7 @@ func TestElevenSessionsInSequenceAllOpen(t *testing.T) {
 func TestServiceCloseWithOpenSessionsReturns(t *testing.T) {
 	t.Parallel()
 
-	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	director := &cleanupDirector{signer: newTestKey(t).signer}
 	service := newTestService(t, director, sshPort)
 
 	for range 3 {
@@ -458,7 +451,7 @@ func TestServiceCloseWithOpenSessionsReturns(t *testing.T) {
 func TestTwoSessionsOnOneInstanceGetDistinctIDs(t *testing.T) {
 	t.Parallel()
 
-	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	director := &cleanupDirector{signer: newTestKey(t).signer}
 	service := newTestService(t, director, sshPort)
 
 	for range 2 {
@@ -493,7 +486,7 @@ func TestTerminalSessionDialEndsWithItsContext(t *testing.T) {
 	)
 
 	server := startTestVMServer(t, silentHandler)
-	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	director := &cleanupDirector{signer: newTestKey(t).signer}
 	service := newTestService(t, director, server.port(t))
 	service.config.SessionInitTimeout = initTimeout
 
@@ -540,5 +533,90 @@ func TestTerminalSessionDialEndsWithItsContext(t *testing.T) {
 
 	if got := director.cleanups.Load(); got != 1 {
 		t.Errorf("%d cleanups after Close, want 1", got)
+	}
+}
+
+// fixedDirector answers every SSHSession with the same value.
+type fixedDirector struct {
+	info interface{}
+}
+
+func (d *fixedDirector) SSHCommand(context.Context, string, string, int, string, []string, map[string]interface{}) (string, error) {
+	return "", nil
+}
+
+func (d *fixedDirector) SSHSession(context.Context, string, string, int, map[string]interface{}) (interface{}, error) {
+	return d.info, nil
+}
+
+// The terminal refuses a director answer it cannot connect with. A setup
+// that created a user still has that user removed.
+func TestTerminalRefusesASessionItCannotUse(t *testing.T) {
+	t.Parallel()
+
+	signer := newTestKey(t).signer
+
+	cases := map[string]struct {
+		info     func(cleanups *atomic.Int32) interface{}
+		want     error
+		cleanups int32
+	}{
+		"not a session": {
+			info: func(*atomic.Int32) interface{} { return map[string]interface{}{"private_key": "x"} },
+			want: ErrUnexpectedSessionInfo,
+		},
+		"nil session": {
+			info: func(*atomic.Int32) interface{} { return (*sshconn.Session)(nil) },
+			want: ErrUnexpectedSessionInfo,
+		},
+		"no host": {
+			info: func(cleanups *atomic.Int32) interface{} {
+				return &sshconn.Session{User: testVMUser, Signer: signer, Cleanup: countCleanup(cleanups)}
+			},
+			want:     ErrUnusableSessionInfo,
+			cleanups: 1,
+		},
+		"no key": {
+			info: func(cleanups *atomic.Int32) interface{} {
+				return &sshconn.Session{
+					User:    testVMUser,
+					Hosts:   []sshconn.Host{{Address: "127.0.0.1", Username: testVMUser}},
+					Cleanup: countCleanup(cleanups),
+				}
+			},
+			want:     ErrUnusableSessionInfo,
+			cleanups: 1,
+		},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			var cleanups atomic.Int32
+
+			service := newTestService(t, &fixedDirector{info: testCase.info(&cleanups)}, sshPort)
+
+			session, err := service.CreateSession(t.Context(), terminalRequest())
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("CreateSession returned %v and %v, want an error that wraps %v", session, err, testCase.want)
+			}
+
+			if got := cleanups.Load(); got != testCase.cleanups {
+				t.Errorf("%d cleanups, want %d", got, testCase.cleanups)
+			}
+
+			if pooled := service.poolIDs(); len(pooled) != 0 {
+				t.Errorf("the pool holds %v after a refused session", pooled)
+			}
+		})
+	}
+}
+
+func countCleanup(cleanups *atomic.Int32) func(context.Context) error {
+	return func(context.Context) error {
+		cleanups.Add(1)
+
+		return nil
 	}
 }

@@ -29,6 +29,14 @@ var ErrBrokerShuttingDown = errors.New("the broker is shutting down")
 // context ID is one the director would refuse. Nothing is sent.
 var ErrInvalidContextID = errors.New("the context ID is not one the BOSH director accepts")
 
+// ErrSSHNotPermitted is the sentinel an SSH setup returns when the director
+// refuses the broker's client for the deployment.
+var ErrSSHNotPermitted = errors.New("the broker's BOSH director client lacks the permission to set up SSH")
+
+// ErrSSHTargetInvalid is the sentinel an SSH call returns when its target
+// is not one instance. Nothing is sent.
+var ErrSSHTargetInvalid = errors.New("an SSH target must name one instance by its group and a non-negative index")
+
 // OutcomeUnknownError is the error a mutation returns when the director may
 // have accepted it and its answer never came back. Blacksmith never resends
 // such a request on its own, because a second copy could act twice.

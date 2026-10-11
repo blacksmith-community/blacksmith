@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"blacksmith/internal/bosh/sshconn"
 	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
@@ -28,6 +29,17 @@ func WithAPI(director Director, api boshapi.Client) {
 // SetTaskPollInterval sets how often an adapter checks a task it waits for.
 func SetTaskPollInterval(director Director, interval time.Duration) {
 	director.(*DirectorAdapter).taskPollInterval = interval
+}
+
+// SetSSHPort points an adapter's SSH connections at port, such as a
+// loopback test server's.
+func SetSSHPort(director Director, port string) {
+	adapter, ok := director.(*DirectorAdapter)
+	if !ok {
+		panic(fmt.Sprintf("SetSSHPort needs a *DirectorAdapter, got %T", director))
+	}
+
+	adapter.sshPort = port
 }
 
 // RequestTimeoutCause exposes the cause a request timeout carries to package
@@ -205,4 +217,17 @@ func ExplainContext(ctx context.Context, director Director, operation string, er
 // of its finished task does not parse.
 func TaskResultUnreadable(resource, deployment string, taskID int, err error) error {
 	return &taskResultError{resource: resource, deployment: deployment, director: "https://127.0.0.1:25555", taskID: taskID, err: err}
+}
+
+// DialSSHSession connects to a session's first host the way SSHCommand
+// does, through the gateway when the session names one.
+//
+//nolint:ireturn // The adapter's dial returns sshconn.Client, which owns any gateway.
+func DialSSHSession(ctx context.Context, director Director, session *sshconn.Session) (sshconn.Client, error) {
+	adapter, ok := director.(*DirectorAdapter)
+	if !ok {
+		panic(fmt.Sprintf("DialSSHSession needs a *DirectorAdapter, got %T", director))
+	}
+
+	return adapter.createSSHClient(ctx, session)
 }

@@ -52,15 +52,17 @@ const (
 
 // Static error variables to satisfy err113.
 var (
-	ErrRequestCannotBeNil           = errors.New("request cannot be nil")
-	ErrDeploymentNameRequired       = errors.New("deployment name is required")
-	ErrInstanceNameRequired         = errors.New("instance name is required")
-	ErrInstanceIndexNonNegative     = errors.New("instance index must be non-negative")
-	ErrNoKnownHostsFileConfigured   = errors.New("no known_hosts file configured")
-	ErrUnexpectedTypeForHost        = errors.New("unexpected type for host")
-	ErrUnexpectedTypeForHostAddress = errors.New("unexpected type for host address")
-	ErrUnexpectedTypeForUsername    = errors.New("unexpected type for username")
-	ErrGatewayUserMustBeString      = errors.New("gateway_user must be a string")
+	ErrRequestCannotBeNil         = errors.New("request cannot be nil")
+	ErrDeploymentNameRequired     = errors.New("deployment name is required")
+	ErrInstanceNameRequired       = errors.New("instance name is required")
+	ErrInstanceIndexNonNegative   = errors.New("instance index must be non-negative")
+	ErrNoKnownHostsFileConfigured = errors.New("no known_hosts file configured")
+	// ErrUnexpectedSessionInfo means the director's SSHSession answer is
+	// not a *sshconn.Session.
+	ErrUnexpectedSessionInfo = errors.New("the director's SSH session is not a *sshconn.Session")
+	// ErrUnusableSessionInfo means the director's SSH session has no host
+	// or no key to connect with.
+	ErrUnusableSessionInfo = errors.New("the director's SSH session cannot be connected to")
 )
 
 // ServiceImpl implements the SSHService interface.
@@ -206,7 +208,13 @@ func (s *ServiceImpl) CreateSession(ctx context.Context, request *SSHRequest) (S
 		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to create SSH session", err)
 	}
 
-	session := s.createSessionImpl(request, sessionInfo)
+	session, err := s.createSessionImpl(ctx, request, sessionInfo)
+	if err != nil {
+		s.logger.Errorf("Failed to create SSH session: %v", err)
+
+		return nil, NewSSHError(SSHErrorCodeInternal, "Failed to create SSH session", err)
+	}
+
 	s.addSessionToPool(session)
 
 	s.logger.Infof("SSH session created successfully: %s", session.id)
@@ -306,16 +314,36 @@ func (s *ServiceImpl) prepareSSHSessionOptions(request *SSHRequest) map[string]i
 // director's cleanup is copied into the session here rather than in
 // Start, because the setup has already created the user on the VM, so a
 // session whose Start never runs, or fails, must still remove it when it
-// closes.
-func (s *ServiceImpl) createSessionImpl(request *SSHRequest, sessionInfo interface{}) *SessionImpl {
+// closes. Anything but a *sshconn.Session with a host and a signer is
+// refused, and a session that carries a cleanup still runs it, so its
+// user is removed.
+func (s *ServiceImpl) createSessionImpl(ctx context.Context, request *SSHRequest, sessionInfo interface{}) (*SessionImpl, error) {
+	info, ok := sessionInfo.(*sshconn.Session)
+	if !ok || info == nil {
+		return nil, fmt.Errorf("%w: got %T", ErrUnexpectedSessionInfo, sessionInfo)
+	}
+
+	err := checkSessionInfo(info)
+	if err != nil {
+		s.removeUnusableUser(ctx, request, info)
+
+		return nil, err
+	}
+
 	// A random ID keeps two sessions on one instance apart in the pool,
 	// however close together they start.
 	sessionID := uuid.NewString()
 
-	cleanupFunc := directorCleanup(sessionInfo)
-	if cleanupFunc == nil {
-		s.logger.Errorf("The director's SSH setup for session %s carries no cleanup, so the SSH user it created on %s/%s/%d stays on the VM after the session closes",
-			sessionID, request.Deployment, request.Instance, request.Index)
+	var cleanupFunc func() error
+
+	if info.Cleanup == nil {
+		s.logger.Errorf("The director's SSH setup for session %s carries no cleanup, so the SSH user %s it created on %s/%s/%d stays on the VM after the session closes",
+			sessionID, info.User, request.Deployment, request.Instance, request.Index)
+	} else {
+		// The session closes long after the request that opened it, so
+		// the cleanup keeps the request's values but not its cancel.
+		cleanupCtx := context.WithoutCancel(ctx)
+		cleanupFunc = func() error { return info.Cleanup(cleanupCtx) }
 	}
 
 	return &SessionImpl{
@@ -323,7 +351,7 @@ func (s *ServiceImpl) createSessionImpl(request *SSHRequest, sessionInfo interfa
 		deployment:    request.Deployment,
 		instance:      request.Instance,
 		index:         request.Index,
-		sessionInfo:   sessionInfo,
+		info:          info,
 		status:        SessionStatusCreated,
 		statusMutex:   sync.RWMutex{},
 		logger:        s.logger,
@@ -340,23 +368,41 @@ func (s *ServiceImpl) createSessionImpl(request *SSHRequest, sessionInfo interfa
 		closeChan:     nil,
 		keepAliveDone: nil,
 		closeOnce:     sync.Once{},
+	}, nil
+}
+
+// checkSessionInfo refuses a session that names no host to connect to or
+// has no key to log in with.
+func checkSessionInfo(info *sshconn.Session) error {
+	switch {
+	case len(info.Hosts) == 0:
+		return fmt.Errorf("%w: the SSH setup for user %s names no host", ErrUnusableSessionInfo, info.User)
+	case info.Hosts[0].Address == "":
+		return fmt.Errorf("%w: the SSH setup for user %s names a host with no address", ErrUnusableSessionInfo, info.User)
+	case info.Signer == nil:
+		return fmt.Errorf("%w: the SSH setup for user %s carries no key to log in with", ErrUnusableSessionInfo, info.User)
+	default:
+		return nil
 	}
 }
 
-// directorCleanup returns the cleanup that the director adapter puts in
-// its SSH session info, or nil when the info carries none.
-func directorCleanup(sessionInfo interface{}) func() error {
-	sessionMap, isMap := sessionInfo.(map[string]interface{})
-	if !isMap {
-		return nil
+// removeUnusableUser runs the cleanup of a session the service refused,
+// because the director's setup created its user all the same. The
+// cleanup outlives ctx, because the adapter runs it on a context of its
+// own.
+func (s *ServiceImpl) removeUnusableUser(ctx context.Context, request *SSHRequest, info *sshconn.Session) {
+	if info.Cleanup == nil {
+		s.logger.Errorf("The director's unusable SSH setup for %s/%s/%d carries no cleanup, so its SSH user %s stays on the VM",
+			request.Deployment, request.Instance, request.Index, info.User)
+
+		return
 	}
 
-	cleanupFunc, hasCleanup := sessionMap["cleanup_func"].(func() error)
-	if !hasCleanup {
-		return nil
+	err := info.Cleanup(ctx)
+	if err != nil {
+		s.logger.Errorf("Failed to remove SSH user %s after refusing its setup for %s/%s/%d: %v",
+			info.User, request.Deployment, request.Instance, request.Index, err)
 	}
-
-	return cleanupFunc
 }
 
 func (s *ServiceImpl) addSessionToPool(session *SessionImpl) {
@@ -486,11 +532,13 @@ func (s *ServiceImpl) addHostToKnownHosts(hostname string, key ssh.PublicKey) er
 
 // SessionImpl implements the SSHSession interface.
 type SessionImpl struct {
-	id          string
-	deployment  string
-	instance    string
-	index       int
-	sessionInfo interface{}
+	id         string
+	deployment string
+	instance   string
+	index      int
+	// info is the director's SSH setup, which names the host, the user,
+	// and the key.
+	info        *sshconn.Session
 	status      SessionStatus
 	statusMutex sync.RWMutex
 	logger      Logger
@@ -861,50 +909,29 @@ func (s *SessionImpl) handlePanicAndSetErrorStatus() {
 	}
 }
 
-// extractSessionDetails extracts and validates session connection details.
+// extractSessionDetails reads the connection details from the director's
+// SSH setup, which createSessionImpl has already checked.
 func (s *SessionImpl) extractSessionDetails() (*sessionConnectionDetails, error) {
-	if s.sessionInfo == nil {
+	if s.info == nil {
 		return nil, NewSSHError(SSHErrorCodeInternal, "No session info available", nil)
 	}
 
-	sessionMap, ok := s.sessionInfo.(map[string]interface{})
-	if !ok {
-		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid session info format", nil)
-	}
-
-	details := &sessionConnectionDetails{}
-
-	// Extract private key
-	privateKey, exists := sessionMap["private_key"].(string)
-	if !exists {
-		return nil, NewSSHError(SSHErrorCodeInternal, "Private key not found in session info", nil)
-	}
-
-	details.privateKey = privateKey
-
-	// Extract and validate hosts
-	hosts, exists := sessionMap["hosts"].([]interface{})
-	if !exists || len(hosts) == 0 {
-		return nil, NewSSHError(SSHErrorCodeInternal, "No hosts available for SSH connection", nil)
-	}
-
-	hostInfo, err := s.extractHostInfo(hosts[0])
+	err := checkSessionInfo(s.info)
 	if err != nil {
-		return nil, err
+		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid session info", err)
 	}
 
-	details.host = hostInfo
+	host := s.info.Hosts[0]
 
-	// Extract gateway information if present
-	if gatewayHost, hasGateway := sessionMap["gateway_host"].(string); hasGateway && gatewayHost != "" {
-		gatewayUser, ok := sessionMap["gateway_user"].(string)
-		if !ok {
-			return nil, ErrGatewayUserMustBeString
-		}
+	details := &sessionConnectionDetails{
+		signer: s.info.Signer,
+		host:   &hostInfo{address: host.Address, username: host.Username},
+	}
 
+	if s.info.Gateway.Host != "" {
 		details.gateway = &gatewayInfo{
-			host: gatewayHost,
-			user: gatewayUser,
+			host: s.info.Gateway.Host,
+			user: s.info.Gateway.User,
 		}
 	}
 
@@ -913,9 +940,9 @@ func (s *SessionImpl) extractSessionDetails() (*sessionConnectionDetails, error)
 
 // sessionConnectionDetails holds SSH connection details.
 type sessionConnectionDetails struct {
-	privateKey string
-	host       *hostInfo
-	gateway    *gatewayInfo
+	signer  ssh.Signer
+	host    *hostInfo
+	gateway *gatewayInfo
 }
 
 // hostInfo holds host connection details.
@@ -930,46 +957,9 @@ type gatewayInfo struct {
 	user string
 }
 
-// extractHostInfo extracts host information from the hosts array.
-func (s *SessionImpl) extractHostInfo(hostData interface{}) (*hostInfo, error) {
-	hostMap, isValid := hostData.(map[string]interface{})
-	if !isValid {
-		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid host type", fmt.Errorf("%w: %T", ErrUnexpectedTypeForHost, hostData))
-	}
-
-	hostAddressRaw, exists := hostMap["Host"]
-	if !exists {
-		return nil, NewSSHError(SSHErrorCodeInternal, "Host address not found", nil)
-	}
-
-	hostAddress, exists := hostAddressRaw.(string)
-	if !exists {
-		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid host address type", fmt.Errorf("%w: %T", ErrUnexpectedTypeForHostAddress, hostAddressRaw))
-	}
-
-	usernameRaw, exists := hostMap["Username"]
-	if !exists {
-		return nil, NewSSHError(SSHErrorCodeInternal, "Username not found", nil)
-	}
-
-	username, exists := usernameRaw.(string)
-	if !exists {
-		return nil, NewSSHError(SSHErrorCodeInternal, "Invalid username type", fmt.Errorf("%w: %T", ErrUnexpectedTypeForUsername, usernameRaw))
-	}
-
-	return &hostInfo{
-		address:  hostAddress,
-		username: username,
-	}, nil
-}
-
 // establishSSHConnection establishes the SSH connection (direct or through gateway).
 func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessionConnectionDetails) (*ssh.Client, error) {
-	// Parse the private key
-	signer, err := ssh.ParsePrivateKey([]byte(details.privateKey))
-	if err != nil {
-		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to parse private key", err)
-	}
+	signer := details.signer
 
 	config := &ssh.ClientConfig{
 		User: details.host.username,

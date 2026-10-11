@@ -19,7 +19,7 @@ const lifecycleWait = 5 * time.Second
 
 // newKeyedDirector returns a director whose sessions log in with key.
 func newKeyedDirector(key testKey) *cleanupDirector {
-	return &cleanupDirector{privateKey: key.pem}
+	return &cleanupDirector{signer: key.signer}
 }
 
 // recordingLogger keeps every line logged at Error.

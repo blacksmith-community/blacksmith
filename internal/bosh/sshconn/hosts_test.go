@@ -1,0 +1,210 @@
+package sshconn_test
+
+import (
+	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
+	"testing"
+
+	"blacksmith/internal/bosh/sshconn"
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
+)
+
+const (
+	hostsTestUser = "bosh_0123456789abcde"
+	hostsTestJob  = "redis"
+	statusSuccess = "success"
+	firstHostIP   = "10.0.0.5"
+	firstHostID   = "abc"
+	secondHostID  = "def"
+)
+
+func intPointer(value int) *int { return &value }
+
+// A result with one success entry per instance becomes one host per entry,
+// each logged in as the setup's user.
+func TestReadHostsReturnsEveryHost(t *testing.T) {
+	t.Parallel()
+
+	results := []boshapi.SSHResult{
+		{Status: statusSuccess, IP: firstHostIP, HostPublicKey: "ssh-rsa AAAA", Job: hostsTestJob, Index: intPointer(0), ID: firstHostID},
+		{Status: statusSuccess, IP: "10.0.0.6", HostPublicKey: "ssh-rsa BBBB", Job: hostsTestJob, Index: intPointer(1), ID: secondHostID},
+	}
+
+	hosts, gateway, err := sshconn.ReadHosts(results, hostsTestUser)
+	if err != nil {
+		t.Fatalf("ReadHosts: %v", err)
+	}
+
+	want := []sshconn.Host{
+		{Address: firstHostIP, Username: hostsTestUser, HostKey: "ssh-rsa AAAA", Job: hostsTestJob, IndexOrID: firstHostID},
+		{Address: "10.0.0.6", Username: hostsTestUser, HostKey: "ssh-rsa BBBB", Job: hostsTestJob, IndexOrID: secondHostID},
+	}
+
+	if len(hosts) != len(want) {
+		t.Fatalf("got %d hosts, want %d: %+v", len(hosts), len(want), hosts)
+	}
+
+	for index := range want {
+		if hosts[index] != want[index] {
+			t.Errorf("host %d is %+v, want %+v", index, hosts[index], want[index])
+		}
+	}
+
+	if gateway != (sshconn.Gateway{}) {
+		t.Errorf("gateway %+v, want none", gateway)
+	}
+}
+
+// An instance with no ID is named by its index.
+func TestReadHostsNamesAnInstanceWithoutAnIDByItsIndex(t *testing.T) {
+	t.Parallel()
+
+	hosts, _, err := sshconn.ReadHosts([]boshapi.SSHResult{
+		{Status: statusSuccess, IP: firstHostIP, Job: hostsTestJob, Index: intPointer(3)},
+	}, hostsTestUser)
+	if err != nil {
+		t.Fatalf("ReadHosts: %v", err)
+	}
+
+	if hosts[0].IndexOrID != "3" {
+		t.Errorf("IndexOrID %q, want %q", hosts[0].IndexOrID, "3")
+	}
+}
+
+// The gateway is the one the first entry names, as bosh-cli reads it.
+func TestReadHostsKeepsTheGateway(t *testing.T) {
+	t.Parallel()
+
+	_, gateway, err := sshconn.ReadHosts([]boshapi.SSHResult{
+		{Status: statusSuccess, IP: firstHostIP, GatewayUser: "vcap", GatewayHost: "jumpbox.example.com"},
+	}, hostsTestUser)
+	if err != nil {
+		t.Fatalf("ReadHosts: %v", err)
+	}
+
+	if gateway != (sshconn.Gateway{User: "vcap", Host: "jumpbox.example.com"}) {
+		t.Errorf("gateway %+v, want vcap@jumpbox.example.com", gateway)
+	}
+}
+
+// A result Blacksmith cannot connect with is refused, and the error says
+// why.
+func TestReadHostsRefusesAResultItCannotUse(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		results []boshapi.SSHResult
+		want    error
+		says    []string
+	}{
+		"empty": {
+			results: []boshapi.SSHResult{},
+			want:    sshconn.ErrNoHosts,
+			says:    []string{hostsTestUser},
+		},
+		"failed entry": {
+			results: []boshapi.SSHResult{
+				{Status: statusSuccess, IP: firstHostIP, Job: hostsTestJob, Index: intPointer(0)},
+				{Status: "error", Job: hostsTestJob, Index: intPointer(1), ID: secondHostID},
+			},
+			want: sshconn.ErrSetupFailed,
+			says: []string{"redis/def", `"error"`, hostsTestUser},
+		},
+		"entry without an address": {
+			results: []boshapi.SSHResult{{Status: statusSuccess, Job: hostsTestJob, Index: intPointer(0)}},
+			want:    sshconn.ErrSetupFailed,
+			says:    []string{"redis/0", "no IP address"},
+		},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			hosts, _, err := sshconn.ReadHosts(testCase.results, hostsTestUser)
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("got hosts %+v and error %v, want an error that wraps %v", hosts, err, testCase.want)
+			}
+
+			for _, part := range testCase.says {
+				if !strings.Contains(err.Error(), part) {
+					t.Errorf("error %q does not say %q", err, part)
+				}
+			}
+		})
+	}
+}
+
+// Setup sends the command, the deployment, the single-instance target, and
+// the user with its key, in the director's field names.
+func TestSetupRequestIsTheDirectorsBody(t *testing.T) {
+	t.Parallel()
+
+	target := boshapi.SSHTarget{Job: hostsTestJob, Indices: []int{2}}
+
+	body, err := json.Marshal(sshconn.SetupRequest("redis-1", target, hostsTestUser, "ssh-ed25519 AAAA"))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	want := `{"command":"setup","deployment_name":"redis-1","target":{"job":"redis","indexes":[2],"ids":[]},` +
+		`"params":{"user":"bosh_0123456789abcde","public_key":"ssh-ed25519 AAAA"}}`
+	if string(body) != want {
+		t.Errorf("body\n%s\nwant\n%s", body, want)
+	}
+}
+
+// Cleanup sends the same target and a pattern that matches the user alone.
+func TestCleanupRequestMatchesOnlyItsUser(t *testing.T) {
+	t.Parallel()
+
+	target := boshapi.SSHTarget{Job: hostsTestJob, Indices: []int{2}}
+
+	request := sshconn.CleanupRequest("redis-1", target, hostsTestUser)
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	want := `{"command":"cleanup","deployment_name":"redis-1","target":{"job":"redis","indexes":[2],"ids":[]},` +
+		`"params":{"user_regex":"^bosh_0123456789abcde$"}}`
+	if string(body) != want {
+		t.Errorf("body\n%s\nwant\n%s", body, want)
+	}
+
+	pattern := regexp.MustCompile(request.Params.UserRegex)
+
+	for user, want := range map[string]bool{
+		hostsTestUser:         true,
+		hostsTestUser + "f":   false,
+		"x" + hostsTestUser:   false,
+		"bosh_0123456789abcd": false,
+	} {
+		if got := pattern.MatchString(user); got != want {
+			t.Errorf("pattern %q matches %q: %v, want %v", request.Params.UserRegex, user, got, want)
+		}
+	}
+}
+
+// A target reads the way an operator names an instance.
+func TestTargetNameReadsAsTheInstance(t *testing.T) {
+	t.Parallel()
+
+	for target, want := range map[string]struct {
+		target boshapi.SSHTarget
+		name   string
+	}{
+		"index":    {boshapi.SSHTarget{Job: hostsTestJob, Indices: []int{2}}, "redis/2"},
+		"id":       {boshapi.SSHTarget{Job: hostsTestJob, IDs: []string{firstHostID}}, "redis/abc"},
+		"group":    {boshapi.SSHTarget{Job: hostsTestJob}, hostsTestJob},
+		"two":      {boshapi.SSHTarget{Job: hostsTestJob, Indices: []int{0, 1}}, "redis/0,1"},
+		"anywhere": {boshapi.SSHTarget{}, "every instance"},
+	} {
+		if got := sshconn.TargetName(want.target); got != want.name {
+			t.Errorf("%s: TargetName %q, want %q", target, got, want.name)
+		}
+	}
+}

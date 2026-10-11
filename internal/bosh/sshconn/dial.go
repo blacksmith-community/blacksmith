@@ -14,19 +14,14 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// sshPort is the port that sshd listens on, on every BOSH VM.
-const sshPort = "22"
+// Port is the port that sshd listens on, on every BOSH VM.
+const Port = "22"
 
 // Client is the part of an SSH client that running a command needs. A
 // client reached through a gateway also owns the gateway connection.
 type Client interface {
 	NewSession() (*ssh.Session, error)
 	Close() error
-}
-
-// Address returns the SSH address of host, bracketing an IPv6 literal.
-func Address(host string) string {
-	return net.JoinHostPort(host, sshPort)
 }
 
 // DialDirect connects to addr and runs the SSH handshake. The TCP
