@@ -3499,11 +3499,16 @@ func camelToSnake(str string) string {
 // Ensure DirectorAdapter implements Director interface.
 var _ Director = (*DirectorAdapter)(nil)
 
-// getConfigEntry reads one config version by ID. A missing ID maps to
+// getConfigEntry reads one config version by ID. A missing ID, or one that
+// is not a decimal integer and so can never name a config, maps to
 // ErrConfigNotFound.
 func (d *DirectorAdapter) getConfigEntry(ctx context.Context, what, id string) (*boshapi.ConfigEntry, error) {
 	entry, err := d.api.Configs().Get(ctx, id)
 	if err != nil {
+		if errors.Is(err, boshapi.ErrConfigIDInvalid) {
+			return nil, fmt.Errorf("%w: %q is not a decimal integer: %w", ErrConfigNotFound, id, err)
+		}
+
 		var missing *boshapi.ConfigNotFoundError
 		if errors.As(err, &missing) {
 			return nil, fmt.Errorf("%w: %w", ErrConfigNotFound, err)

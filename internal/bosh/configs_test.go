@@ -1206,3 +1206,53 @@ func TestGetConfigsSendsNoLimit(t *testing.T) {
 		t.Errorf("expected no limit in the query, got %v", query)
 	}
 }
+
+// An ID that is not a decimal integer can never name a config, so it reads
+// as not found and no request is sent for it.
+func TestNonNumericConfigIDIsNotFound(t *testing.T) {
+	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+
+	var requests int
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path == "/configs/7" {
+			boshtest.WriteJSON(writer, http.StatusOK, configEntry("7", typeCloud, "default"))
+
+			return true
+		}
+
+		if strings.HasPrefix(request.URL.Path, "/configs") {
+			requests++
+		}
+
+		return false
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	reads := map[string]func() error{
+		"ComputeConfigDiff from": func() error {
+			_, err := director.ComputeConfigDiff(t.Context(), "abc", "7")
+
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
+		},
+		"ComputeConfigDiff to": func() error {
+			_, err := director.ComputeConfigDiff(t.Context(), "7", "abc")
+
+			return err //nolint:wrapcheck // the test asserts on the adapter's own error
+		},
+	}
+
+	for name, read := range reads {
+		err := read()
+		if !errors.Is(err, bosh.ErrConfigNotFound) {
+			t.Errorf("%s: expected ErrConfigNotFound, got: %v", name, err)
+		} else if !strings.Contains(err.Error(), "abc") {
+			t.Errorf("%s: expected the ID in the message, got: %v", name, err)
+		}
+	}
+
+	if requests != 0 {
+		t.Errorf("expected no config request to reach the server, got %d", requests)
+	}
+}
