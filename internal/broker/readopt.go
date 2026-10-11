@@ -794,9 +794,10 @@ func (b *Broker) settleReadoptedTask(ctx context.Context, operation readoptOpera
 
 // completePrunedProvision settles a provision whose create task the
 // director no longer has. A task still running on the deployment is
-// followed first. When the deployment exists and nothing runs on it, the
-// provision's completion steps run once and it is recorded as succeeded.
-// A deployment that is missing leaves the provision in progress.
+// followed first. When the deployment is missing and nothing runs on it,
+// nothing will create it, so the answer is failed, and re-adoption records
+// it. When the deployment exists and nothing runs on it, the provision's
+// completion steps run once and it is recorded as succeeded.
 func (b *Broker) completePrunedProvision(ctx context.Context, operation readoptOperation, current recordedOperation, logger logger.Logger) (osbapi.LastOperationResponse, error) {
 	deploymentName := operation.deploymentName
 	inProgress := osbapi.LastOperationResponse{
@@ -805,13 +806,9 @@ func (b *Broker) completePrunedProvision(ctx context.Context, operation readoptO
 	}
 
 	_, err := b.BOSH.GetDeployment(ctx, deploymentName)
-	if errors.Is(err, bosh.ErrDeploymentNotFound) {
-		logger.Warning("Instance %s: the director no longer has BOSH task %d of its provision, and deployment %s does not exist", operation.instanceID, current.TaskID, deploymentName)
+	deploymentMissing := errors.Is(err, bosh.ErrDeploymentNotFound)
 
-		return inProgress, nil
-	}
-
-	if err != nil {
+	if err != nil && !deploymentMissing {
 		return osbapi.LastOperationResponse{}, fmt.Errorf("failed to check whether deployment %s exists: %w", deploymentName, err)
 	}
 
@@ -826,6 +823,15 @@ func (b *Broker) completePrunedProvision(ctx context.Context, operation readoptO
 		_, _ = b.followReadoptedTask(ctx, running.ID, logger)
 
 		return inProgress, nil
+	}
+
+	if deploymentMissing {
+		logger.Warning("Instance %s: the director no longer has BOSH task %d of its provision, and deployment %s does not exist", operation.instanceID, current.TaskID, deploymentName)
+
+		return osbapi.LastOperationResponse{
+			State:       osbapi.StateFailed,
+			Description: fmt.Sprintf("BOSH deployment task %d is no longer known to the director, and deployment %s does not exist", current.TaskID, deploymentName),
+		}, nil
 	}
 
 	unlock, err := b.lockSettle(ctx, operation.instanceID)

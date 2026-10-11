@@ -812,6 +812,39 @@ var _ = Describe("Re-adopting service operations at boot", func() {
 		Expect(monitor.Added()).To(HaveLen(1), "the completion steps must run once")
 	})
 
+	It("boot re-adoption fails an old provision whose task was pruned and whose deployment is gone", func() {
+		indexInstance(nil)
+		recordProvision(createTaskID)
+		world.markDeploymentDeleted()
+
+		brokerInstance := boot(director)
+
+		Eventually(recordState, 2*time.Second).Should(Equal("failed"), "the provision must fail at once, not wait for the time limit")
+		Eventually(func() bool { return brokerInstance.OperationClaimed(instanceID) }, 2*time.Second).Should(BeFalse())
+		Expect(monitor.Added()).To(BeEmpty())
+		Expect(backups.Scheduled()).To(BeEmpty())
+
+		response, err := brokerInstance.LastOperation(ctx, instanceID, osbapi.LastOperationRequest{
+			ServiceID: serviceID, PlanID: planID, Operation: outcomeProvision,
+		})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(response.State).To(Equal(osbapi.StateFailed))
+
+		_, _, err = brokerInstance.Deprovision(ctx, instanceID, osbapi.DeprovisionRequest{ServiceID: serviceID, PlanID: planID}, true)
+		Expect(err).ToNot(HaveOccurred(), "a deprovision must clean up the failed provision")
+
+		Eventually(func() bool {
+			idx, err := vaultClient.GetIndex(ctx, "db")
+			if err != nil {
+				return true
+			}
+
+			_, err = idx.Lookup(instanceID)
+
+			return err == nil
+		}, 10*time.Second).Should(BeFalse(), "the deprovision must remove the index entry")
+	})
+
 	It("boot re-adoption records the failure of an old provision whose task ended in error", func() {
 		indexInstance(nil)
 		recordProvision(createTaskID)
