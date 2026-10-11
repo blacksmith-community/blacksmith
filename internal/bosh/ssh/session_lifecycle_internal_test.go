@@ -8,9 +8,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// lifecycleWait bounds each wait in these tests. A session that behaves
+// gets there long before it.
+const lifecycleWait = 5 * time.Second
 
 // newKeyedDirector returns a director whose sessions log in with key.
 func newKeyedDirector(key testKey) *cleanupDirector {
@@ -111,5 +116,127 @@ func TestCloseAfterAFailedStartLogsNoCloseErrors(t *testing.T) {
 
 	if got := director.cleanups.Load(); got != 1 {
 		t.Errorf("%d cleanups after Close, want 1", got)
+	}
+}
+
+// A cleanup that panics still leaves the session out of the pool and
+// closed, so it never holds a session slot until the broker restarts.
+func TestSessionLeavesThePoolWhenItsCleanupPanics(t *testing.T) {
+	t.Parallel()
+
+	service := newTestService(t, newKeyedDirector(newTestKey(t)), sshPort)
+
+	session, err := service.CreateSession(t.Context(), terminalRequest())
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	impl, ok := session.(*SessionImpl)
+	if !ok {
+		t.Fatalf("CreateSession returned %T, want *SessionImpl", session)
+	}
+
+	impl.cleanupFunc = func() error { panic("cleanup panicked") }
+
+	recovered := make(chan interface{}, 1)
+
+	func() {
+		defer func() { recovered <- recover() }()
+
+		_ = session.Close()
+	}()
+
+	if <-recovered == nil {
+		t.Fatal("Close did not pass on the cleanup's panic")
+	}
+
+	if pooled := service.poolIDs(); len(pooled) != 0 {
+		t.Errorf("the pool holds %v after a close whose cleanup panicked", pooled)
+	}
+
+	if status := session.Status(); status != SessionStatusClosed {
+		t.Errorf("status %s after a close whose cleanup panicked, want %s", status, SessionStatusClosed)
+	}
+}
+
+// gatedHandler reports each connection on accepted, holds it before the
+// handshake until release is closed, serves it with handle, and reports
+// on served once handle returns, which is when the client has closed it.
+func gatedHandler(accepted, served chan<- struct{}, release <-chan struct{}, handle func(net.Conn)) func(net.Conn) {
+	return func(conn net.Conn) {
+		accepted <- struct{}{}
+
+		<-release
+
+		handle(conn)
+
+		served <- struct{}{}
+	}
+}
+
+// A close that lands while Start runs, as the service's close does at
+// shutdown, wins. Start returns an error, the session stays closed, the
+// cleanup runs once, and the connection that Start opened is closed
+// rather than left open.
+func TestCloseWhileStartRunsEndsTheStart(t *testing.T) {
+	t.Parallel()
+
+	key := newTestKey(t)
+	accepted := make(chan struct{}, 1)
+	served := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := startTestVMServer(t, gatedHandler(accepted, served, release, shellHandler(vmServerConfig(t, key.signer.PublicKey()))))
+
+	var releaseOnce sync.Once
+
+	releaseServer := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseServer)
+
+	director := newKeyedDirector(key)
+	service := newTestService(t, director, server.port(t))
+
+	session, err := service.CreateSession(t.Context(), terminalRequest())
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	started := make(chan error, 1)
+
+	go func() { started <- session.Start() }()
+
+	select {
+	case <-accepted:
+	case <-time.After(lifecycleWait):
+		t.Fatal("Start never reached the VM")
+	}
+
+	err = service.Close()
+	if err != nil {
+		t.Fatalf("service close: %v", err)
+	}
+
+	releaseServer()
+
+	select {
+	case err := <-started:
+		if err == nil {
+			t.Fatal("Start succeeded after its session was closed")
+		}
+	case <-time.After(lifecycleWait):
+		t.Fatal("Start had not returned after its session was closed")
+	}
+
+	if status := session.Status(); status != SessionStatusClosed {
+		t.Errorf("status %s after Start lost the race with Close, want %s", status, SessionStatusClosed)
+	}
+
+	if got := director.cleanups.Load(); got != 1 {
+		t.Errorf("%d cleanups, want 1", got)
+	}
+
+	select {
+	case <-served:
+	case <-time.After(lifecycleWait):
+		t.Error("the connection that Start opened was left open")
 	}
 }

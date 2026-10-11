@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -212,25 +213,27 @@ func (s *ServiceImpl) CreateSession(ctx context.Context, request *SSHRequest) (S
 	return session, nil
 }
 
-// Close closes the SSH service and cleanup resources.
+// Close closes every open session, which removes each session's user,
+// and empties the pool. The pool is taken under the lock and the
+// sessions are closed after it is released, because each session's
+// Close removes it from the pool under the same lock.
 func (s *ServiceImpl) Close() error {
 	s.logger.Infof("Closing SSH service")
 
 	s.sessionMutex.Lock()
-	defer s.sessionMutex.Unlock()
+	sessions := s.sessionPool
+	s.sessionPool = make(map[string]SSHSession)
+	s.sessionMutex.Unlock()
 
 	var errs []error
 
-	for id, session := range s.sessionPool {
+	for id, session := range sessions {
 		err := session.Close()
 		if err != nil {
 			s.logger.Errorf("Failed to close session %s: %v", id, err)
 			errs = append(errs, err)
 		}
 	}
-
-	// Clear session pool
-	s.sessionPool = make(map[string]SSHSession)
 
 	if len(errs) > 0 {
 		return NewSSHError(SSHErrorCodeInternal, "Failed to close some sessions", errs[0])
@@ -304,7 +307,9 @@ func (s *ServiceImpl) prepareSSHSessionOptions(request *SSHRequest) map[string]i
 // session whose Start never runs, or fails, must still remove it when it
 // closes.
 func (s *ServiceImpl) createSessionImpl(request *SSHRequest, sessionInfo interface{}) *SessionImpl {
-	sessionID := fmt.Sprintf("%s-%s-%d-%d", request.Deployment, request.Instance, request.Index, time.Now().Unix())
+	// A random ID keeps two sessions on one instance apart in the pool,
+	// however close together they start.
+	sessionID := uuid.NewString()
 
 	cleanupFunc := directorCleanup(sessionInfo)
 	if cleanupFunc == nil {
@@ -356,6 +361,14 @@ func directorCleanup(sessionInfo interface{}) func() error {
 func (s *ServiceImpl) addSessionToPool(session *SessionImpl) {
 	s.sessionMutex.Lock()
 	s.sessionPool[session.id] = session
+	s.sessionMutex.Unlock()
+}
+
+// removeSessionFromPool drops a closed session, so the session limit
+// counts only open sessions.
+func (s *ServiceImpl) removeSessionFromPool(id string) {
+	s.sessionMutex.Lock()
+	delete(s.sessionPool, id)
 	s.sessionMutex.Unlock()
 }
 
@@ -504,9 +517,19 @@ type SessionImpl struct {
 
 	// Ensure Close is only called once
 	closeOnce sync.Once
+
+	// connMutex guards closed and cancelStart, and the connection fields
+	// above while Start publishes them and Close takes them. Start builds
+	// its connection in locals and publishes it only when Close has not
+	// run, so a Close that lands while Start runs never misses it.
+	connMutex   sync.Mutex
+	closed      bool
+	cancelStart context.CancelFunc
 }
 
-// Start starts the SSH session.
+// Start connects to the VM and starts a shell. A Close while Start runs
+// cancels it, and Start then closes whatever it opened rather than
+// publishing it, so the connection never outlives the session.
 func (s *SessionImpl) Start() error {
 	s.logger.Infof("Starting SSH session: %s", s.id)
 
@@ -514,7 +537,9 @@ func (s *SessionImpl) Start() error {
 	ctx, cancel := s.createTimeoutContext()
 	defer cancel()
 
-	s.setStatus(SessionStatusConnecting)
+	if !s.beginStart(cancel) {
+		return NewSSHError(SSHErrorCodeConnection, "SSH session "+s.id+" was closed before it started", nil)
+	}
 
 	// Set error status on failure
 	defer s.handlePanicAndSetErrorStatus()
@@ -522,33 +547,33 @@ func (s *SessionImpl) Start() error {
 	// Extract and validate session information
 	sessionDetails, err := s.extractSessionDetails()
 	if err != nil {
-		s.setStatus(SessionStatusError)
+		s.failStart()
 
 		return err
 	}
 
-	// Establish SSH connection
-	err = s.establishSSHConnection(ctx, sessionDetails)
+	client, err := s.establishSSHConnection(ctx, sessionDetails)
 	if err != nil {
-		s.setStatus(SessionStatusError)
+		s.failStart()
 
 		return err
 	}
 
-	// Set up SSH session components
-	err = s.setupSSHSession()
+	shell, err := s.setupSSHSession(client)
 	if err != nil {
-		s.closeConnections()
-		s.setStatus(SessionStatusError)
+		s.discardConnection(nil, client)
+		s.failStart()
 
 		return err
 	}
 
-	// Initialize session channels and start background processes
-	s.initializeSessionChannels()
-	s.startBackgroundProcesses()
+	if !s.publishConnection(client, shell) {
+		s.discardConnection(shell, client)
+		s.failStart()
 
-	s.setStatus(SessionStatusConnected)
+		return NewSSHError(SSHErrorCodeConnection, "SSH session "+s.id+" was closed while it started", nil)
+	}
+
 	s.logger.Infof("SSH session started successfully: %s", s.id)
 
 	return nil
@@ -672,33 +697,33 @@ func (s *SessionImpl) Close() error {
 	s.closeOnce.Do(func() {
 		s.logger.Infof("Closing SSH session: %s", s.id)
 
-		s.statusMutex.Lock()
-		s.status = SessionStatusClosing
-		s.statusMutex.Unlock()
+		// The session leaves the pool before anything that can block or
+		// fail, and ends closed even when its cleanup panics, because
+		// closeOnce counts a panicking close as done and no later Close
+		// would prune it.
+		if s.service != nil {
+			s.service.removeSessionFromPool(s.id)
+		}
+
+		defer s.setStatus(SessionStatusClosed)
+
+		conn := s.takeConnection()
 
 		// Signal output readers and keepalive to stop
-		if s.closeChan != nil {
-			close(s.closeChan)
+		if conn.closeChan != nil {
+			close(conn.closeChan)
 		}
 
-		if s.keepAliveDone != nil {
-			close(s.keepAliveDone)
+		if conn.keepAliveDone != nil {
+			close(conn.keepAliveDone)
 		}
 
-		// Close SSH session
-		if s.sshSession != nil {
-			err := s.sshSession.Close()
-			if err != nil {
-				s.logger.Errorf("Failed to close SSH session: %v", err)
-			}
+		if conn.session != nil {
+			s.closeQuietly("SSH session", conn.session)
 		}
 
-		// Close SSH client
-		if s.sshClient != nil {
-			err := s.sshClient.Close()
-			if err != nil {
-				s.logger.Errorf("Failed to close SSH client: %v", err)
-			}
+		if conn.client != nil {
+			s.closeQuietly("SSH client", conn.client)
 		}
 
 		// Remove the SSH user that the director's setup created.
@@ -710,10 +735,6 @@ func (s *SessionImpl) Close() error {
 				closeErr = NewSSHError(SSHErrorCodeInternal, "Failed to remove the SSH user for session "+s.id, err)
 			}
 		}
-
-		s.statusMutex.Lock()
-		s.status = SessionStatusClosed
-		s.statusMutex.Unlock()
 
 		s.logger.Infof("SSH session closed: %s", s.id)
 	})
@@ -727,6 +748,91 @@ func (s *SessionImpl) Status() SessionStatus {
 	defer s.statusMutex.RUnlock()
 
 	return s.status
+}
+
+// beginStart marks the session connecting and keeps the cancel of the
+// Start's context, so a Close can end the Start. It returns false when the
+// session has already closed.
+func (s *SessionImpl) beginStart(cancel context.CancelFunc) bool {
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+
+	if s.closed {
+		return false
+	}
+
+	s.cancelStart = cancel
+	s.setStatus(SessionStatusConnecting)
+
+	return true
+}
+
+// publishConnection makes a started connection the session's own and
+// starts reading its output. When Close has already run, it publishes
+// nothing and returns false, and the caller closes the connection.
+func (s *SessionImpl) publishConnection(client *ssh.Client, shell *shellConn) bool {
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+
+	if s.closed {
+		return false
+	}
+
+	s.sshClient = client
+	s.sshSession = shell.session
+	s.stdin = shell.stdin
+	s.stdout = shell.stdout
+	s.stderr = shell.stderr
+
+	s.initializeSessionChannels()
+	s.startBackgroundProcesses()
+	s.setStatus(SessionStatusConnected)
+
+	return true
+}
+
+// failStart marks a failed Start, unless a Close has already marked the
+// session closing or closed.
+func (s *SessionImpl) failStart() {
+	s.statusMutex.Lock()
+	defer s.statusMutex.Unlock()
+
+	if s.status == SessionStatusClosing || s.status == SessionStatusClosed {
+		return
+	}
+
+	s.status = SessionStatusError
+}
+
+// openConnection is the part of a session's connection that Close
+// closes.
+type openConnection struct {
+	client        *ssh.Client
+	session       *ssh.Session
+	closeChan     chan struct{}
+	keepAliveDone chan struct{}
+}
+
+// takeConnection marks the session closing, ends a Start that is still
+// running, and returns the connection that Start published, if any.
+func (s *SessionImpl) takeConnection() openConnection {
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+
+	s.closed = true
+
+	if s.cancelStart != nil {
+		s.cancelStart()
+	}
+
+	s.setStatus(SessionStatusClosing)
+
+	return openConnection{
+		client:        s.sshClient,
+		session:       s.sshSession,
+		closeChan:     s.closeChan,
+		keepAliveDone: s.keepAliveDone,
+	}
 }
 
 // createTimeoutContext creates a timeout context for session initialization.
@@ -749,7 +855,7 @@ func (s *SessionImpl) setStatus(status SessionStatus) {
 // handlePanicAndSetErrorStatus handles panics and sets error status.
 func (s *SessionImpl) handlePanicAndSetErrorStatus() {
 	if r := recover(); r != nil {
-		s.setStatus(SessionStatusError)
+		s.failStart()
 		panic(r)
 	}
 }
@@ -857,11 +963,11 @@ func (s *SessionImpl) extractHostInfo(hostData interface{}) (*hostInfo, error) {
 }
 
 // establishSSHConnection establishes the SSH connection (direct or through gateway).
-func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessionConnectionDetails) error {
+func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessionConnectionDetails) (*ssh.Client, error) {
 	// Parse the private key
 	signer, err := ssh.ParsePrivateKey([]byte(details.privateKey))
 	if err != nil {
-		return NewSSHError(SSHErrorCodeConnection, "Failed to parse private key", err)
+		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to parse private key", err)
 	}
 
 	config := &ssh.ClientConfig{
@@ -881,11 +987,11 @@ func (s *SessionImpl) establishSSHConnection(ctx context.Context, details *sessi
 }
 
 // connectThroughGateway establishes connection through a gateway.
-func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessionConnectionDetails, config *ssh.ClientConfig, signer ssh.Signer) error {
+func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessionConnectionDetails, config *ssh.ClientConfig, signer ssh.Signer) (*ssh.Client, error) {
 	// Check timeout
 	select {
 	case <-ctx.Done():
-		return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
+		return nil, NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
 	default:
 	}
 
@@ -901,7 +1007,7 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 
 	gatewayClient, err := ssh.Dial("tcp", gatewayAddr, gatewayConfig)
 	if err != nil {
-		return NewSSHError(SSHErrorCodeConnection, "Failed to connect to gateway "+gatewayAddr, err)
+		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to connect to gateway "+gatewayAddr, err)
 	}
 
 	targetAddr := net.JoinHostPort(details.host.address, s.service.port)
@@ -910,27 +1016,25 @@ func (s *SessionImpl) connectThroughGateway(ctx context.Context, details *sessio
 	if err != nil {
 		_ = gatewayClient.Close()
 
-		return NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to target host %s through gateway", targetAddr), err)
+		return nil, NewSSHError(SSHErrorCodeConnection, fmt.Sprintf("Failed to connect to target host %s through gateway", targetAddr), err)
 	}
 
 	nconn, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, config)
 	if err != nil {
 		_ = gatewayClient.Close()
 
-		return NewSSHError(SSHErrorCodeConnection, "Failed to establish SSH connection through gateway", err)
+		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to establish SSH connection through gateway", err)
 	}
 
-	s.sshClient = ssh.NewClient(nconn, chans, reqs)
-
-	return nil
+	return ssh.NewClient(nconn, chans, reqs), nil
 }
 
 // connectDirect establishes a direct SSH connection.
-func (s *SessionImpl) connectDirect(ctx context.Context, hostAddress string, config *ssh.ClientConfig) error {
+func (s *SessionImpl) connectDirect(ctx context.Context, hostAddress string, config *ssh.ClientConfig) (*ssh.Client, error) {
 	// Check timeout
 	select {
 	case <-ctx.Done():
-		return NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
+		return nil, NewSSHError(SSHErrorCodeConnection, "SSH session initialization timeout", ctx.Err())
 	default:
 	}
 
@@ -938,37 +1042,54 @@ func (s *SessionImpl) connectDirect(ctx context.Context, hostAddress string, con
 
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		return NewSSHError(SSHErrorCodeConnection, "Failed to connect to "+addr, err)
+		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to connect to "+addr, err)
 	}
 
-	s.sshClient = client
-
-	return nil
+	return client, nil
 }
 
-// setupSSHSession sets up the SSH session with PTY and pipes.
-func (s *SessionImpl) setupSSHSession() error {
-	session, err := s.sshClient.NewSession()
+// shellConn is the SSH session of a terminal's shell, with its pipes.
+type shellConn struct {
+	session *ssh.Session
+	stdin   io.WriteCloser
+	stdout  io.Reader
+	stderr  io.Reader
+}
+
+// setupSSHSession opens a session on client and starts a shell in it with
+// a PTY and pipes. When a later step fails, the session it opened is
+// closed again.
+func (s *SessionImpl) setupSSHSession(client *ssh.Client) (*shellConn, error) {
+	session, err := client.NewSession()
 	if err != nil {
-		return NewSSHError(SSHErrorCodeConnection, "Failed to create SSH session", err)
+		return nil, NewSSHError(SSHErrorCodeConnection, "Failed to create SSH session", err)
 	}
 
-	s.sshSession = session
+	shell := &shellConn{session: session}
 
-	// Set up PTY
-	err = s.setupPTY()
+	err = startShell(shell)
+	if err != nil {
+		s.closeQuietly("SSH session", session)
+
+		return nil, err
+	}
+
+	return shell, nil
+}
+
+// startShell requests the PTY, takes the pipes, and starts the shell.
+func startShell(shell *shellConn) error {
+	err := setupPTY(shell.session)
 	if err != nil {
 		return err
 	}
 
-	// Set up pipes
-	err = s.setupPipes()
+	err = setupPipes(shell)
 	if err != nil {
 		return err
 	}
 
-	// Start shell
-	err = session.Shell()
+	err = shell.session.Shell()
 	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to start shell", err)
 	}
@@ -977,14 +1098,14 @@ func (s *SessionImpl) setupSSHSession() error {
 }
 
 // setupPTY sets up the pseudo-terminal.
-func (s *SessionImpl) setupPTY() error {
+func setupPTY(session *ssh.Session) error {
 	modes := ssh.TerminalModes{
 		ssh.ECHO:          1,
 		ssh.TTY_OP_ISPEED: terminalBaudRate,
 		ssh.TTY_OP_OSPEED: terminalBaudRate,
 	}
 
-	err := s.sshSession.RequestPty("xterm-256color", terminalColumns, terminalRows, modes)
+	err := session.RequestPty("xterm-256color", terminalColumns, terminalRows, modes)
 	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to request PTY", err)
 	}
@@ -993,20 +1114,20 @@ func (s *SessionImpl) setupPTY() error {
 }
 
 // setupPipes sets up stdin, stdout, and stderr pipes.
-func (s *SessionImpl) setupPipes() error {
+func setupPipes(shell *shellConn) error {
 	var err error
 
-	s.stdin, err = s.sshSession.StdinPipe()
+	shell.stdin, err = shell.session.StdinPipe()
 	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdin pipe", err)
 	}
 
-	s.stdout, err = s.sshSession.StdoutPipe()
+	shell.stdout, err = shell.session.StdoutPipe()
 	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to create stdout pipe", err)
 	}
 
-	s.stderr, err = s.sshSession.StderrPipe()
+	shell.stderr, err = shell.session.StderrPipe()
 	if err != nil {
 		return NewSSHError(SSHErrorCodeConnection, "Failed to create stderr pipe", err)
 	}
@@ -1014,26 +1135,26 @@ func (s *SessionImpl) setupPipes() error {
 	return nil
 }
 
-// closeConnections closes the connection of a Start that failed, and
-// clears it, so the session's Close does not close it a second time.
-func (s *SessionImpl) closeConnections() {
-	if s.sshSession != nil {
-		err := s.sshSession.Close()
-		if err != nil {
-			s.logger.Errorf("Failed to close SSH session: %v", err)
-		}
-
-		s.sshSession = nil
+// discardConnection closes a connection that Start opened and never
+// published.
+func (s *SessionImpl) discardConnection(shell *shellConn, client *ssh.Client) {
+	if shell != nil {
+		s.closeQuietly("SSH session", shell.session)
 	}
 
-	if s.sshClient != nil {
-		err := s.sshClient.Close()
-		if err != nil {
-			s.logger.Errorf("Failed to close SSH client: %v", err)
-		}
+	s.closeQuietly("SSH client", client)
+}
 
-		s.sshClient = nil
+// closeQuietly closes part of a connection and logs a failure, except
+// io.EOF and net.ErrClosed, which mean the VM or the init timeout closed
+// it first.
+func (s *SessionImpl) closeQuietly(what string, closer io.Closer) {
+	err := closer.Close()
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return
 	}
+
+	s.logger.Errorf("Failed to close %s for session %s: %v", what, s.id, err)
 }
 
 // initializeSessionChannels initializes communication channels.

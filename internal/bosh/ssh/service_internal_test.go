@@ -371,3 +371,113 @@ func TestExecutorClosesASessionWhoseStartFailed(t *testing.T) {
 		t.Errorf("%d cleanups after a failed Start, want 1", got)
 	}
 }
+
+func (s *ServiceImpl) poolIDs() []string {
+	s.sessionMutex.RLock()
+	defer s.sessionMutex.RUnlock()
+
+	ids := make([]string, 0, len(s.sessionPool))
+	for id := range s.sessionPool {
+		ids = append(ids, id)
+	}
+
+	return ids
+}
+
+// A closed session leaves the pool, so the limit counts open sessions
+// rather than every session since boot.
+func TestElevenSessionsInSequenceAllOpen(t *testing.T) {
+	t.Parallel()
+
+	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	service := newTestService(t, director, sshPort)
+
+	for index := range 11 {
+		request := terminalRequest()
+		request.Index = index
+
+		session, err := service.CreateSession(t.Context(), request)
+		if err != nil {
+			t.Fatalf("session %d of 11: %v", index+1, err)
+		}
+
+		err = session.Close()
+		if err != nil {
+			t.Fatalf("close session %d: %v", index+1, err)
+		}
+	}
+
+	if ids := service.poolIDs(); len(ids) != 0 {
+		t.Errorf("pool holds %v after every session closed, want it empty", ids)
+	}
+
+	if got := director.cleanups.Load(); got != 11 {
+		t.Errorf("%d cleanups, want 11", got)
+	}
+}
+
+// The service's close closes every open session, and each session's own
+// removal from the pool must not deadlock with it.
+func TestServiceCloseWithOpenSessionsReturns(t *testing.T) {
+	t.Parallel()
+
+	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	service := newTestService(t, director, sshPort)
+
+	for range 3 {
+		_, err := service.CreateSession(t.Context(), terminalRequest())
+		if err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+	}
+
+	closed := make(chan error, 1)
+
+	go func() { closed <- service.Close() }()
+
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("close service: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the service's close did not return within 2s")
+	}
+
+	if got := director.cleanups.Load(); got != 3 {
+		t.Errorf("%d cleanups, want 3", got)
+	}
+
+	if ids := service.poolIDs(); len(ids) != 0 {
+		t.Errorf("pool holds %v after the service closed, want it empty", ids)
+	}
+}
+
+// Two sessions on one instance in the same second are two pool entries,
+// so the service's close reaches both.
+func TestTwoSessionsOnOneInstanceGetDistinctIDs(t *testing.T) {
+	t.Parallel()
+
+	director := &cleanupDirector{privateKey: newTestKey(t).pem}
+	service := newTestService(t, director, sshPort)
+
+	for range 2 {
+		_, err := service.CreateSession(t.Context(), terminalRequest())
+		if err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+	}
+
+	if ids := service.poolIDs(); len(ids) != 2 {
+		t.Fatalf("pool holds %v after two sessions on one instance, want two entries", ids)
+	}
+
+	err := service.Close()
+	if err != nil {
+		t.Fatalf("close service: %v", err)
+	}
+
+	if got := director.cleanups.Load(); got != 2 {
+		t.Errorf("%d cleanups after the service closed, want 2", got)
+	}
+}
