@@ -64,9 +64,11 @@ const (
 
 	// Application defaults. Shutdown gets one deadline for all its steps,
 	// and the HTTP servers get a shorter one inside it to drain requests in
-	// flight.
+	// flight. Sending the SSH cleanups gets its own shorter one, so the
+	// steps after it keep most of the deadline.
 	DefaultShutdownTimeout       = 15 * time.Second
 	DefaultServerShutdownTimeout = 5 * time.Second
+	sshShutdownBudget            = 5 * time.Second
 	DefaultMinArgsRequired       = 3
 
 	// Vault defaults.
@@ -1557,6 +1559,12 @@ type failingStopper interface {
 	Stop() error
 }
 
+// sshShutdowner is the director's SSH shutdown, which stops new SSH setups
+// and sends the cleanup of every open session within ctx.
+type sshShutdowner interface {
+	ShutdownSSH(ctx context.Context)
+}
+
 // backgroundWaiter is the broker's wait for its background goroutines.
 type backgroundWaiter interface {
 	WaitForBackground(ctx context.Context)
@@ -1565,6 +1573,7 @@ type backgroundWaiter interface {
 // shutdownDeps holds everything shutdown stops. A nil field is skipped.
 type shutdownDeps struct {
 	servers    []httpServer
+	ssh        sshShutdowner
 	cancel     context.CancelCauseFunc
 	reconciler failingStopper
 	monitor    stopper
@@ -1582,17 +1591,24 @@ type shutdownStep struct {
 }
 
 // steps returns the steps shutdown runs, in order. The servers stop first,
-// so no request starts once the service context ends. The service context
-// is cancelled next, which ends the async provisions and deprovisions and
-// their monitors. The reconciler and the VM monitor stop then, so neither
-// calls a director once the directors stop. The upgrade manager stops
-// before the broker's wait, and the directors stop last, after everything
-// that uses them.
+// so no request starts once the service context ends. The SSH cleanups go
+// out next, under sshShutdownBudget, so no new session opens, not even from
+// a setup still in flight, and each open session's cleanup is sent before
+// the later steps use up the deadline and the process exits. The service
+// context is cancelled next, which ends the async provisions and
+// deprovisions and their monitors. The reconciler and the VM monitor stop
+// then, so neither calls a director once the directors stop. The upgrade
+// manager stops before the broker's wait, and the directors stop last,
+// after everything that uses them.
 func (deps shutdownDeps) steps() []shutdownStep {
 	var steps []shutdownStep
 
 	if len(deps.servers) > 0 {
 		steps = append(steps, shutdownStep{name: "stop the HTTP servers", run: deps.stopServers})
+	}
+
+	if deps.ssh != nil {
+		steps = append(steps, shutdownStep{name: "send the SSH cleanups", run: deps.sendSSHCleanups})
 	}
 
 	if deps.cancel != nil {
@@ -1632,6 +1648,16 @@ func (deps shutdownDeps) stopReconciler(context.Context) {
 	if err != nil {
 		deps.logger.Error("Error stopping reconciler: %s", err)
 	}
+}
+
+// sendSSHCleanups stops new SSH setups and sends the cleanup of every open
+// session, within sshShutdownBudget or the shutdown's deadline, whichever
+// ends first.
+func (deps shutdownDeps) sendSSHCleanups(ctx context.Context) {
+	sshCtx, cancel := context.WithTimeout(ctx, sshShutdownBudget)
+	defer cancel()
+
+	deps.ssh.ShutdownSSH(sshCtx)
 }
 
 // stopServers drains every server at once, so none accepts a new request
@@ -1696,6 +1722,7 @@ func shutdownDepsFor(servers []*http.Server, cancel context.CancelCauseFunc, rec
 
 	if boshDirector != nil {
 		deps.pool = boshDirector
+		deps.ssh = boshDirector
 	}
 
 	return deps

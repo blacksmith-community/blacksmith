@@ -254,3 +254,14 @@ func DialSSHSession(ctx context.Context, director Director, session *sshconn.Ses
 
 	return adapter.createSSHClient(ctx, session)
 }
+
+// SetLateSSHCleanupTimeout shortens an adapter's bound on the send of the
+// cleanup of a setup that ended done after the SSH shutdown began.
+func SetLateSSHCleanupTimeout(director Director, timeout time.Duration) {
+	adapter, ok := director.(*DirectorAdapter)
+	if !ok {
+		panic(fmt.Sprintf("SetLateSSHCleanupTimeout needs a *DirectorAdapter, got %T", director))
+	}
+
+	adapter.lateCleanupTimeout = timeout
+}

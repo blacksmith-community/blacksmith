@@ -43,6 +43,7 @@ const (
 //nolint:gochecknoglobals // a fixed list the tests read
 var shutdownStepNames = []string{
 	"stop the HTTP servers",
+	"send the SSH cleanups",
 	"cancel the service context",
 	"stop the reconciler",
 	"stop the VM monitor",
@@ -132,6 +133,11 @@ func (f fakeFailingStopper) Stop() error {
 	return nil
 }
 
+// sshShutdownFunc is an SSH shutdown made of a function.
+type sshShutdownFunc func(ctx context.Context)
+
+func (f sshShutdownFunc) ShutdownSSH(ctx context.Context) { f(ctx) }
+
 type fakeBackground struct{ log *stepLog }
 
 func (f fakeBackground) WaitForBackground(context.Context) { f.log.ran("background") }
@@ -141,6 +147,7 @@ func (f fakeBackground) WaitForBackground(context.Context) { f.log.ran("backgrou
 func fakeShutdownDeps(log *stepLog, logger loggerPkg.Logger) shutdownDeps {
 	return shutdownDeps{
 		servers:    []httpServer{fakeServer{log: log}},
+		ssh:        sshShutdownFunc(func(context.Context) { log.ran("ssh") }),
 		cancel:     func(error) { log.ran("cancel") },
 		reconciler: fakeFailingStopper{log: log},
 		monitor:    fakeStopper{log: log, name: "monitor"},
@@ -169,9 +176,64 @@ func TestShutdownRunsItsStepsInOrder(t *testing.T) {
 
 	shutdown(fakeShutdownDeps(log, newShutdownLog()))
 
-	want := []string{"servers", "cancel", "reconciler", "monitor", "upgrades", "background", "batch", "pool"}
+	want := []string{"servers", "ssh", "cancel", "reconciler", "monitor", "upgrades", "background", "batch", "pool"}
 	if got := log.order(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected the shutdown steps in the order %v, got %v", want, got)
+	}
+}
+
+// Shutdown sends the SSH cleanups right after the servers stop, so no
+// request can open a session after them, and before anything else stops,
+// so the director is still there to take them. The step gets its own
+// budget out of the shutdown's deadline. The pooled director is what
+// shutdown hands the step to.
+//
+//nolint:paralleltest // the test reads the package's shutdown deadlines
+func TestShutdownSendsTheSSHCleanupsRightAfterTheServers(t *testing.T) {
+	log := &stepLog{}
+
+	var (
+		deadline    time.Time
+		hasDeadline bool
+	)
+
+	deps := fakeShutdownDeps(log, newShutdownLog())
+	deps.ssh = sshShutdownFunc(func(ctx context.Context) {
+		deadline, hasDeadline = ctx.Deadline()
+
+		log.ran("ssh")
+	})
+
+	began := time.Now()
+
+	shutdown(deps)
+
+	ended := time.Now()
+
+	if got := log.order(); len(got) < 3 || got[0] != "servers" || got[1] != "ssh" || got[2] != "cancel" {
+		t.Fatalf("expected the SSH cleanups right after the servers and before the service context is cancelled, got %v", got)
+	}
+
+	if !hasDeadline {
+		t.Fatal("the SSH cleanups ran with no deadline")
+	}
+
+	// The step sets its deadline between began and ended, so the deadline
+	// lies within that window shifted by the budget.
+	if deadline.Before(began.Add(sshShutdownBudget)) || deadline.After(ended.Add(sshShutdownBudget)) {
+		t.Errorf("the SSH cleanups got a deadline %v after the shutdown began, want their budget of %v",
+			deadline.Sub(began), sshShutdownBudget)
+	}
+
+	pool := bosh.NewPooledDirector(nil, 1, time.Second, nil)
+
+	wired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, pool, newShutdownLog())
+	if wired.ssh != pool {
+		t.Errorf("expected shutdown to send the SSH cleanups through the pooled director, got %#v", wired.ssh)
+	}
+
+	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.ssh != nil {
+		t.Errorf("expected no SSH cleanups without a director, got %#v", unwired.ssh)
 	}
 }
 
@@ -532,8 +594,8 @@ func TestBootAndShutdownWithoutABOSHDirector(t *testing.T) {
 		t.Fatalf("expected the API to have no BOSH director, got %s", recorder.Body.String())
 	}
 
-	if deps.batch != nil || deps.pool != nil {
-		t.Fatalf("expected no director to stop, got batch %#v and pool %#v", deps.batch, deps.pool)
+	if deps.batch != nil || deps.pool != nil || deps.ssh != nil {
+		t.Fatalf("expected no director to stop, got batch %#v, pool %#v, and SSH %#v", deps.batch, deps.pool, deps.ssh)
 	}
 
 	shutdown(deps)

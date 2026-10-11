@@ -110,6 +110,11 @@ type SSHAnswer struct {
 	// HoldOutput, when set, runs before each read of the task's result
 	// output is answered, with the read's request context.
 	HoldOutput func(context.Context)
+	// Hold, when set, runs before the SSH request itself is answered,
+	// with the request's context, so a test can hold the answer and see
+	// when the client gives up on it. The request is recorded and its
+	// task started only once Hold returns.
+	Hold func(context.Context)
 }
 
 // SSHTask is a task the SSH director started, or one a test listed.
@@ -338,6 +343,10 @@ func (d *SSHDirector) serveSSH(writer http.ResponseWriter, request *http.Request
 	var answer SSHAnswer
 	if d.answer != nil {
 		answer = d.answer(call)
+	}
+
+	if answer.Hold != nil {
+		answer.Hold(request.Context())
 	}
 
 	if answer.Status != 0 {

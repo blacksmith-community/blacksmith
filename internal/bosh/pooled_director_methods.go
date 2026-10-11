@@ -229,6 +229,22 @@ func (p *PooledDirector) SweepSSHCleanups(ctx context.Context) error {
 	return owner.SweepSSHCleanups(ctx) //nolint:wrapcheck // the wrapped director's own error
 }
 
+// ShutdownSSH hands the shutdown of SSH to the wrapped director, which
+// sends the cleanup of every open session within ctx. It takes no pool
+// slot, because the pool may be full while the broker stops. A director
+// that cannot do this is told nothing, and the pool logs that at Error.
+func (p *PooledDirector) ShutdownSSH(ctx context.Context) {
+	owner, ok := p.director.(sshShutdowner)
+	if !ok {
+		p.logger.Errorf("The pooled director's BOSH director (%T) cannot send its SSH cleanups at shutdown, so the user of each open session is left to its record",
+			p.director)
+
+		return
+	}
+
+	owner.ShutdownSSH(ctx)
+}
+
 // EnableResurrection implements Director interface - no pooling (doesn't create a task).
 func (p *PooledDirector) EnableResurrection(ctx context.Context, deployment string, enabled bool) error {
 	return p.director.EnableResurrection(ctx, deployment, enabled)

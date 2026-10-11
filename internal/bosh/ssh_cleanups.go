@@ -61,10 +61,19 @@ type sshCleanupOwner interface {
 // sshUsers holds the adapter's cleanup store and its live set, the users
 // whose setup, session, or cleanup this process is running, each with the
 // state it is in. The sweep leaves a live user to the call that owns it.
+// sessions holds the cleanup of each open session, which the session and
+// ShutdownSSH share, and closed is the gate ShutdownSSH closes. Once it is
+// closed, no new setup claims a user, no setup in flight opens a session,
+// and no sweep claims a user. A setup that claimed its user earlier checks
+// the gate again after its record is written, just before it is sent, and
+// sends nothing when the gate has closed by then. One that passed that
+// check just before the gate closed may still be sent.
 type sshUsers struct {
-	mu    sync.Mutex
-	store SSHCleanupStore
-	live  map[string]sshUserState
+	mu       sync.Mutex
+	store    SSHCleanupStore
+	live     map[string]sshUserState
+	sessions map[string]*sshSessionCleanup
+	closed   bool
 }
 
 // sshUserState is what this process is doing with a live SSH user. A user
@@ -131,7 +140,10 @@ func (d *DirectorAdapter) SetSSHCleanupStore(store SSHCleanupStore) {
 // before that record's cleanup. Each earlier cleanup can take up to
 // sshCleanupTimeout, so an answer kept from earlier in the pass could miss
 // a setup that the director started since, such as one whose answer was
-// lost and whose settle gave up.
+// lost and whose settle gave up. Once ShutdownSSH has closed the gate, the
+// sweep claims no further user and returns an error that wraps
+// ErrBrokerShuttingDown, so it sends no second cleanup for a user whose
+// cleanup the shutdown sent.
 //
 // Each broker owns its own Vault mount, so every record in the store is
 // this broker's, and the live set is the only ownership check the sweep
@@ -169,7 +181,11 @@ func (d *DirectorAdapter) SweepSSHCleanups(ctx context.Context) error {
 			return fmt.Errorf("the SSH cleanup sweep stopped before it handled every record: %w", context.Cause(ctx))
 		}
 
-		held, claimed := d.claimSSHUser(record.User, sshUserCleaningUp)
+		held, claimed, err := d.claimSSHUser(record.User, sshUserCleaningUp)
+		if err != nil {
+			return fmt.Errorf("the SSH cleanup sweep stopped before it handled every record: %w", err)
+		}
+
 		if !claimed {
 			d.log.Debugf("The SSH cleanup sweep skips SSH user %s, %s", record.User, held)
 
@@ -301,13 +317,19 @@ func sshCleanupSettled(err error) bool {
 
 // recordSSHCleanup claims the user as setting up and writes its record
 // before a setup is sent, within sshCleanupRecordTimeout of ctx. With no
-// store set, it only claims the user. A failed write releases the user
-// and returns an error wrapping ErrSSHCleanupNotRecorded, and the setup
-// must not be sent.
+// store set, it only claims the user. Once ShutdownSSH has closed the
+// gate, it claims nothing and returns an error wrapping
+// ErrBrokerShuttingDown. A failed write releases the user and returns an
+// error wrapping ErrSSHCleanupNotRecorded. On either error the setup must
+// not be sent.
 func (d *DirectorAdapter) recordSSHCleanup(ctx context.Context, cleanup sshconn.PendingCleanup) error {
-	// NewCredentials makes a fresh user for every setup, so no other call
-	// can hold it.
-	d.claimSSHUser(cleanup.User, sshUserSettingUp)
+	err := d.claimSSHSetup(cleanup)
+	if err != nil {
+		d.log.Infof("Refused to set up SSH user %s on %s of deployment %s, because the broker is shutting down",
+			cleanup.User, sshconn.TargetName(cleanup.Target), cleanup.Deployment)
+
+		return err
+	}
 
 	store := d.sshCleanupStore()
 	if store == nil {
@@ -319,7 +341,7 @@ func (d *DirectorAdapter) recordSSHCleanup(ctx context.Context, cleanup sshconn.
 	recordCtx, cancel := context.WithTimeout(ctx, sshCleanupRecordTimeout)
 	defer cancel()
 
-	err := store.RecordSSHCleanup(recordCtx, cleanup)
+	err = store.RecordSSHCleanup(recordCtx, cleanup)
 	if err != nil {
 		d.releaseSSHUser(cleanup.User)
 
@@ -369,22 +391,29 @@ func (d *DirectorAdapter) sshCleanupStore() SSHCleanupStore { //nolint:ireturn /
 
 // claimSSHUser adds user to the live set in state, and reports true. When
 // user is already live, it leaves the user as it is, and returns the state
-// the user is in and false.
-func (d *DirectorAdapter) claimSSHUser(user string, state sshUserState) (sshUserState, bool) {
+// the user is in and false. Once ShutdownSSH has closed the gate, it
+// claims nothing and returns an error that wraps ErrBrokerShuttingDown,
+// because the shutdown releases each user whose cleanup it sent, and a
+// sweep that claimed one then would send a second cleanup.
+func (d *DirectorAdapter) claimSSHUser(user string, state sshUserState) (sshUserState, bool, error) {
 	d.ssh.mu.Lock()
 	defer d.ssh.mu.Unlock()
+
+	if d.ssh.closed {
+		return 0, false, fmt.Errorf("%w: SSH user %s was not claimed", ErrBrokerShuttingDown, user)
+	}
 
 	if d.ssh.live == nil {
 		d.ssh.live = make(map[string]sshUserState)
 	}
 
 	if held, live := d.ssh.live[user]; live {
-		return held, false
+		return held, false, nil
 	}
 
 	d.ssh.live[user] = state
 
-	return state, true
+	return state, true, nil
 }
 
 // markSSHUser moves a user that the caller holds in the live set to

@@ -16,7 +16,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -162,8 +161,9 @@ type DirectorAdapter struct {
 	// sshconn.Port everywhere but in tests, which point it at a loopback
 	// server.
 	sshPort string
-	// ssh holds the store SSH setups record their users in, and the users
-	// whose setup or cleanup this process is running.
+	// ssh holds the store SSH setups record their users in, the users
+	// whose setup, session, or cleanup this process is running, and the
+	// shutdown gate that SSH setups check before they are sent.
 	ssh sshUsers
 	// lostSetupGrace and setupSettleTimeout bound the wait for a failed
 	// SSH setup to end before its cleanup. Zero means lostSetupGrace and
@@ -173,8 +173,12 @@ type DirectorAdapter struct {
 	// setupTimeout bounds the wait for an SSH setup task. Zero means
 	// sshSetupTimeout.
 	setupTimeout time.Duration
-	logger       boshlog.Logger
-	log          Logger // Application logger for Info/Debug logging
+	// lateCleanupTimeout bounds the send of the cleanup of a setup that
+	// ended done after ShutdownSSH closed the gate. Zero means
+	// lateSSHCleanupTimeout.
+	lateCleanupTimeout time.Duration
+	logger             boshlog.Logger
+	log                Logger // Application logger for Info/Debug logging
 }
 
 // bind returns the bosh-cli director for one call.
@@ -2896,10 +2900,16 @@ func sshTarget(instance string, index int) (boshapi.SSHTarget, error) {
 // and its refusal of the broker's client wraps ErrSSHNotPermitted.
 //
 // The user is recorded in the cleanup store before the setup is sent, and
-// a setup whose record cannot be written is never sent. A setup the
-// director refused created no user, so its record is cleared at once.
-// Every other failure after the setup was sent returns at once, and the
-// user's cleanup follows in the background once the setup task has ended.
+// a setup whose record cannot be written is never sent. Once ShutdownSSH
+// has begun, a setup that has not claimed its user is not sent, and
+// neither is one that finds the gate closed when it checks again after
+// its record is written. That record is cleared, and the error wraps
+// ErrBrokerShuttingDown. A setup that ends done after the shutdown began
+// opens no session, sends the user's cleanup, and returns an error that
+// wraps it too. A setup the director refused created no user, so its
+// record is cleared at once. Every other failure after the setup was sent
+// returns at once, and the user's cleanup follows in the background once
+// the setup task has ended.
 func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment string, target boshapi.SSHTarget) (*sshconn.Session, error) {
 	ctx, contextID, err := mutationContext(ctx, operation)
 	if err != nil {
@@ -2937,7 +2947,6 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 	}
 
 	d.log.Infof("BOSH task %d set up SSH user %s on %d host(s) of deployment %s", task.ID, credentials.User, len(hosts), deployment)
-	d.markSSHUser(credentials.User, sshUserInSession)
 
 	session := &sshconn.Session{
 		Deployment: deployment,
@@ -2946,18 +2955,28 @@ func (d *DirectorAdapter) setUpSSH(ctx context.Context, operation, deployment st
 		Hosts:      hosts,
 		Signer:     credentials.Signer,
 	}
-	session.Cleanup = d.sessionCleanup(session, contextID)
+
+	session.Cleanup, err = d.openSSHSessionCleanup(ctx, session, task.ID, contextID)
+	if err != nil {
+		return nil, err
+	}
 
 	return session, nil
 }
 
 // sendSSHSetup sends the setup of the pending user and returns the task
-// the director started. A setup the director refused clears the user's
-// record. A setup whose answer was lost hands the user to
-// afterFailedSSHSetup, which removes it once no setup is running.
+// the director started. It first checks the shutdown gate, and sends
+// nothing once ShutdownSSH has closed it. A setup the director refused
+// clears the user's record. A setup whose answer was lost hands the user
+// to afterFailedSSHSetup, which removes it once no setup is running.
 func (d *DirectorAdapter) sendSSHSetup(ctx context.Context, operation string, pending sshconn.PendingCleanup, publicKey string) (*Task, error) {
 	deployment, user := pending.Deployment, pending.User
 	instance := sshconn.TargetName(pending.Target)
+
+	err := d.checkSSHSetupGate(ctx, pending)
+	if err != nil {
+		return nil, err
+	}
 
 	d.log.Infof("Setting up SSH user %s on %s of deployment %s (context ID %s)", user, instance, deployment, pending.SetupContextID)
 
@@ -2990,26 +3009,6 @@ func (d *DirectorAdapter) sendSSHSetup(ctx context.Context, operation string, pe
 	}
 
 	return task, nil
-}
-
-// sessionCleanup returns the session's Cleanup, which removes its user
-// once however often it is called, and returns that one cleanup's error
-// to every caller.
-func (d *DirectorAdapter) sessionCleanup(session *sshconn.Session, setupContextID string) func(context.Context) error {
-	var (
-		cleanupOnce sync.Once
-		cleanupErr  error
-	)
-
-	deployment, target, user := session.Deployment, session.Target, session.User
-
-	return func(cleanupCtx context.Context) error {
-		cleanupOnce.Do(func() {
-			cleanupErr = d.cleanUpSSH(cleanupCtx, deployment, target, user, setupContextID)
-		})
-
-		return cleanupErr
-	}
 }
 
 // sshSetupRefused explains the director's answers to an SSH setup that
@@ -3096,21 +3095,9 @@ func (d *DirectorAdapter) sendSSHCleanup(ctx context.Context, deployment string,
 
 	defer d.explainContext(ctx, "CleanUpSSH", &err)
 
-	contextID := uuid.NewString()
-	ctx = boshapi.WithContextID(ctx, contextID)
 	instance := sshconn.TargetName(target)
 
-	d.log.Infof("Removing SSH user %s from %s of deployment %s (context ID %s, setup context ID %s)",
-		user, instance, deployment, contextID, setupContextID)
-
-	sent, err := d.api.SSHClient().Cleanup(ctx, deployment, sshconn.CleanupRequest(deployment, target, user))
-
-	task, err := d.accepted(ctx, mutation{
-		operation:  "CleanUpSSH",
-		deployment: deployment,
-		contextID:  contextID,
-		what:       fmt.Sprintf("remove SSH user %s from %s of deployment %s", user, instance, deployment),
-	}, sent, err)
+	task, contextID, err := d.requestSSHCleanup(ctx, deployment, target, user, setupContextID)
 	if err != nil {
 		return err
 	}
@@ -3142,6 +3129,30 @@ func (d *DirectorAdapter) sendSSHCleanup(ctx context.Context, deployment string,
 	d.log.Infof("BOSH task %d removed SSH user %s from %s of deployment %s", task.ID, user, instance, deployment)
 
 	return nil
+}
+
+// requestSSHCleanup sends the cleanup of user on target with a fresh
+// context ID of its own, and returns the task the director started and
+// that context ID. It does not wait for the task. A lost answer is logged
+// at Error by accepted.
+func (d *DirectorAdapter) requestSSHCleanup(ctx context.Context, deployment string, target boshapi.SSHTarget, user, setupContextID string) (*Task, string, error) {
+	contextID := uuid.NewString()
+	ctx = boshapi.WithContextID(ctx, contextID)
+	instance := sshconn.TargetName(target)
+
+	d.log.Infof("Removing SSH user %s from %s of deployment %s (context ID %s, setup context ID %s)",
+		user, instance, deployment, contextID, setupContextID)
+
+	sent, err := d.api.SSHClient().Cleanup(ctx, deployment, sshconn.CleanupRequest(deployment, target, user))
+
+	task, err := d.accepted(ctx, mutation{
+		operation:  "CleanUpSSH",
+		deployment: deployment,
+		contextID:  contextID,
+		what:       fmt.Sprintf("remove SSH user %s from %s of deployment %s", user, instance, deployment),
+	}, sent, err)
+
+	return task, contextID, err
 }
 
 // createSSHClient connects to the session's first host as the session's

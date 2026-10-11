@@ -39,12 +39,13 @@ const (
 var userInError = regexp.MustCompile(`bosh_[0-9a-f]{15}`)
 
 // cleanupStore is the broker's Vault store against an in-process Vault,
-// with a way to make its writes fail.
+// with a way to make its writes fail and a way to hold them.
 type cleanupStore struct {
 	*vault.Vault
 
-	mu        sync.Mutex
-	recordErr error
+	mu         sync.Mutex
+	recordErr  error
+	recordHold func(context.Context, sshconn.PendingCleanup)
 }
 
 func newCleanupStore(t *testing.T) *cleanupStore {
@@ -58,12 +59,16 @@ func newCleanupStore(t *testing.T) *cleanupStore {
 	return &cleanupStore{Vault: vault.New(server.Addr, server.RootToken, true)}
 }
 
-// RecordSSHCleanup fails with the error failRecords set, and otherwise
-// writes the record to Vault.
+// RecordSSHCleanup runs the hold holdRecords set, then fails with the
+// error failRecords set, and otherwise writes the record to Vault.
 func (s *cleanupStore) RecordSSHCleanup(ctx context.Context, cleanup sshconn.PendingCleanup) error {
 	s.mu.Lock()
-	err := s.recordErr
+	err, hold := s.recordErr, s.recordHold
 	s.mu.Unlock()
+
+	if hold != nil {
+		hold(ctx, cleanup)
+	}
 
 	if err != nil {
 		return err
@@ -77,6 +82,15 @@ func (s *cleanupStore) failRecords(err error) {
 	defer s.mu.Unlock()
 
 	s.recordErr = err
+}
+
+// holdRecords makes each record write run hold first, with the write's
+// context and the record.
+func (s *cleanupStore) holdRecords(hold func(context.Context, sshconn.PendingCleanup)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.recordHold = hold
 }
 
 // records lists every record, and fails the test when the listing fails.

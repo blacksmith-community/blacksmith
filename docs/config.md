@@ -584,6 +584,10 @@ Host key verification has no settings. When Blacksmith sets up an SSH user on a 
 
 Blacksmith connects to each VM directly, so the broker needs a network path to port 22 on the service VMs. When the BOSH director's `default_ssh_options` name a gateway, Blacksmith refuses the SSH setup and removes the user it created, because the gateway would refuse the throwaway key Blacksmith logs in with. The error names the gateway.
 
+#### SSH users at shutdown
+
+When the broker shuts down, it stops opening SSH sessions once its HTTP servers stop. A setup that starts after that point fails with an error saying the broker is shutting down. A setup that was already running opens no session either, and when it finishes, the broker asks the director to remove its user and reports the same error. The broker then asks the director to remove the user of every open session, sending all of these requests at once and allowing them five seconds in total. It does not wait for the removal tasks to finish. Each SSH user keeps its record in Vault until a removal is seen to finish, so the cleanup sweep at the next start removes any user that a shutdown missed, including users whose setup was still running when the broker stopped.
+
 ## SHIELD Configuration (`shield`)
 
 The `shield` section configures optional integration with SHIELD for backup and restore functionality.
