@@ -27,6 +27,7 @@ var (
 	ErrUnknownControlAction           = errors.New("unknown control action")
 	ErrSSHSessionNotStarted           = errors.New("SSH session not started")
 	ErrResizeMessageMissingDimensions = errors.New("resize message missing width or height")
+	ErrSSHSessionAlreadyRunning       = errors.New("an SSH session is already running on this WebSocket, so the start is refused. Open a new terminal for another session")
 )
 
 // SSHHandler manages WebSocket connections for SSH streaming.
@@ -65,11 +66,38 @@ type SSHStreamSession struct {
 	Instance     string
 	Index        int
 	Conn         WSConn
-	SSHSession   ssh.SSHSession
 	Cancel       context.CancelFunc
 	LastActivity time.Time
 	Mutex        sync.RWMutex
 	Logger       Logger
+
+	// sshSession is the SSH session that a start opened on this
+	// WebSocket. It is set once, after the session's Start succeeds and
+	// before its output streams, through setSSH, and is read through
+	// currentSSH. It is unexported so nothing reaches it without sshMutex.
+	sshSession ssh.SSHSession
+
+	// sshMutex guards sshSession, which the handler's close and its
+	// inactive-session sweep read from other goroutines.
+	sshMutex sync.RWMutex
+}
+
+// currentSSH returns the SSH session on this WebSocket, or nil when no
+// start has succeeded.
+//
+//nolint:ireturn // The SSH service hands out sessions as ssh.SSHSession.
+func (s *SSHStreamSession) currentSSH() ssh.SSHSession {
+	s.sshMutex.RLock()
+	defer s.sshMutex.RUnlock()
+
+	return s.sshSession
+}
+
+func (s *SSHStreamSession) setSSH(session ssh.SSHSession) {
+	s.sshMutex.Lock()
+	defer s.sshMutex.Unlock()
+
+	s.sshSession = session
 }
 
 // WSConn abstracts WebSocket operations used by SSH handler.
@@ -288,8 +316,8 @@ func (h *SSHHandler) HandleWebSocket(ctx context.Context, writer http.ResponseWr
 		delete(h.sessions, sessionID)
 		h.sessionsMutex.Unlock()
 
-		if session.SSHSession != nil {
-			err := session.SSHSession.Close()
+		if sshSession := session.currentSSH(); sshSession != nil {
+			err := sshSession.Close()
 			if err != nil {
 				h.logger.Errorf("Failed to close SSH session: %v", err)
 			}
@@ -337,7 +365,7 @@ func (h *SSHHandler) GetActiveSessions() int {
 // handler has dropped, which removes its user from the VM. The caller
 // must not hold sessionsMutex.
 func (h *SSHHandler) closeSSHOf(sessionID string, session *SSHStreamSession) {
-	sshSession := session.SSHSession
+	sshSession := session.currentSSH()
 	if sshSession == nil {
 		return
 	}
@@ -448,8 +476,19 @@ func (h *SSHHandler) handleControlMessage(ctx context.Context, session *SSHStrea
 	}
 }
 
-// startSSHSession initiates the SSH session.
+// startSSHSession opens the SSH session for a WebSocket. A WebSocket
+// carries one SSH session, so a start while one is running is refused
+// rather than replacing it, which would leave the first session's user
+// on the VM. A session whose Start fails is closed at once, which removes
+// its user, and is never kept, so a later start may try again. Messages
+// are handled one at a time, so starts never overlap.
 func (h *SSHHandler) startSSHSession(ctx context.Context, session *SSHStreamSession, msg WSMessage) error {
+	if session.currentSSH() != nil {
+		h.logger.Errorf("Refusing a second SSH start on WebSocket session %s", session.ID)
+
+		return ErrSSHSessionAlreadyRunning
+	}
+
 	h.logger.Infof("Starting SSH session for WebSocket: %s", session.ID)
 
 	// Create SSH request
@@ -489,15 +528,30 @@ func (h *SSHHandler) startSSHSession(ctx context.Context, session *SSHStreamSess
 		return fmt.Errorf("failed to create SSH session: %w", err)
 	}
 
-	session.SSHSession = sshSession
-
-	// Start SSH session
 	err = sshSession.Start()
 	if err != nil {
+		h.closeUnusedSSH(session, sshSession, "its start failed")
+
 		return fmt.Errorf("failed to start SSH session: %w", err)
 	}
 
-	// Start output streaming
+	// The WebSocket may have ended while Start ran. When the inactive
+	// sweep or the handler's close ended it, they have already dropped it
+	// and found no SSH session to close, so this one is closed here
+	// rather than reported as connected. HandleWebSocket's deferred close
+	// is the backstop for every other case, including a sweep that runs
+	// between this check and setSSH, and the session runs its cleanup
+	// only once however many closes reach it.
+	if ctx.Err() != nil {
+		h.closeUnusedSSH(session, sshSession, "the WebSocket session ended while it started")
+
+		return fmt.Errorf("WebSocket session %s ended while its SSH session started: %w", session.ID, context.Cause(ctx))
+	}
+
+	// The session is set before its output streams, so streamOutput never
+	// sees the field change.
+	session.setSSH(sshSession)
+
 	go h.streamOutput(ctx, session)
 
 	// Send session started confirmation
@@ -513,9 +567,19 @@ func (h *SSHHandler) startSSHSession(ctx context.Context, session *SSHStreamSess
 	return h.sendMessage(session, statusMsg)
 }
 
+// closeUnusedSSH closes an SSH session that never joined its WebSocket,
+// which removes its user from the VM.
+func (h *SSHHandler) closeUnusedSSH(session *SSHStreamSession, sshSession ssh.SSHSession, reason string) {
+	err := sshSession.Close()
+	if err != nil {
+		h.logger.Errorf("Failed to close the SSH session for WebSocket session %s after %s: %v", session.ID, reason, err)
+	}
+}
+
 // resizeSession handles terminal resize.
 func (h *SSHHandler) resizeSession(session *SSHStreamSession, msg WSMessage) error {
-	if session.SSHSession == nil {
+	sshSession := session.currentSSH()
+	if sshSession == nil {
 		return ErrSSHSessionNotStarted
 	}
 
@@ -526,7 +590,7 @@ func (h *SSHHandler) resizeSession(session *SSHStreamSession, msg WSMessage) err
 		return ErrResizeMessageMissingDimensions
 	}
 
-	err := session.SSHSession.SetWindowSize(int(width), int(height))
+	err := sshSession.SetWindowSize(int(width), int(height))
 	if err != nil {
 		return fmt.Errorf("failed to set SSH session window size: %w", err)
 	}
@@ -594,8 +658,10 @@ func (h *SSHHandler) processStreamingLoop(session *SSHStreamSession, state *Stre
 		return false
 	}
 
-	output, err := session.SSHSession.ReadOutput()
-	if !h.handleSSHReadError(err, session, state) {
+	sshSession := session.currentSSH()
+
+	output, err := sshSession.ReadOutput()
+	if !h.handleSSHReadError(err, session, sshSession, state) {
 		return false
 	}
 
@@ -612,7 +678,7 @@ func (h *SSHHandler) processStreamingLoop(session *SSHStreamSession, state *Stre
 
 // ensureSSHSessionReady ensures SSH session is ready or handles retry logic.
 func (h *SSHHandler) ensureSSHSessionReady(session *SSHStreamSession, state *StreamOutputState) bool {
-	if session.SSHSession != nil {
+	if session.currentSSH() != nil {
 		if state.RetryCount > 0 {
 			h.logger.Debugf("SSH session available for session %s after %d retries", session.ID, state.RetryCount)
 			state.RetryCount = 0
@@ -636,12 +702,12 @@ func (h *SSHHandler) ensureSSHSessionReady(session *SSHStreamSession, state *Str
 }
 
 // handleSSHReadError handles errors from reading SSH output.
-func (h *SSHHandler) handleSSHReadError(err error, session *SSHStreamSession, state *StreamOutputState) bool {
+func (h *SSHHandler) handleSSHReadError(err error, session *SSHStreamSession, sshSession ssh.SSHSession, state *StreamOutputState) bool {
 	if err == nil {
 		return true
 	}
 
-	sessionStatus := session.SSHSession.Status()
+	sessionStatus := sshSession.Status()
 	duration := time.Since(state.LastActivityTime)
 
 	// Check if error is due to session state transition
@@ -794,7 +860,8 @@ func (h *SSHHandler) takeInactiveSessions(now time.Time) map[string]*SSHStreamSe
 
 // handleInputMessage handles user input.
 func (h *SSHHandler) handleInputMessage(session *SSHStreamSession, msg WSMessage) error {
-	if session.SSHSession == nil {
+	sshSession := session.currentSSH()
+	if sshSession == nil {
 		// Don't log this as an error since it's expected during initialization
 		h.logger.Debugf("Received input for session %s before SSH session is ready, ignoring", session.ID)
 
@@ -802,7 +869,7 @@ func (h *SSHHandler) handleInputMessage(session *SSHStreamSession, msg WSMessage
 	}
 
 	// Send input to SSH session
-	err := session.SSHSession.SendInput([]byte(msg.Data))
+	err := sshSession.SendInput([]byte(msg.Data))
 	if err != nil {
 		return fmt.Errorf("failed to send input to SSH session: %w", err)
 	}

@@ -51,7 +51,7 @@ func addStaleSession(handler *SSHHandler, sshSession ssh.SSHSession) context.Con
 		Cancel:       cancel,
 		LastActivity: time.Now().Add(-2 * handler.config.SessionTimeout),
 		Logger:       handler.logger,
-		SSHSession:   sshSession,
+		sshSession:   sshSession,
 	}
 
 	handler.sessionsMutex.Lock()
