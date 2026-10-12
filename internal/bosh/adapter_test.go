@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/boshtest"
 )
 
 func TestFactoryCreation(t *testing.T) {
@@ -21,14 +22,13 @@ func TestFactoryNew(t *testing.T) {
 	t.Parallel()
 
 	factory := bosh.NewDefaultFactory()
+	server := boshtest.New(t, nil)
 
-	// Building the adapter sends nothing, so the address need not answer.
 	config := bosh.Config{
-		Address:           "https://10.0.0.1:25555",
-		Username:          "admin",
-		Password:          "password",
-		SkipSSLValidation: true,
-		CACert:            newPrivateCA(t).PEM,
+		Address:  server.URL,
+		Username: basicAuthCredential,
+		Password: basicAuthCredential,
+		CACert:   server.CACert,
 	}
 
 	director, err := factory.New(config)

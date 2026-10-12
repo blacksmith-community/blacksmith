@@ -563,6 +563,30 @@ func TestVMMonitoringTimeoutRejectsANegativeValue(t *testing.T) {
 	}
 }
 
+// Blacksmith always verifies the director's TLS certificate against
+// bosh.cacert, so bosh.skip_ssl_validation is gone. A configuration file
+// that still sets it loads as before, and nothing in it reads the setting.
+func TestConfigThatSetsTheRemovedBOSHSkipValidationStillLoads(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.ReadConfig(writeBOSHConfig(t, "  skip_ssl_validation: true\n  request_timeout: 45\n"))
+	if err != nil {
+		t.Fatalf("ReadConfig of a file that sets the removed bosh.skip_ssl_validation: %v", err)
+	}
+
+	if cfg.BOSH.RequestTimeout != 45 {
+		t.Errorf("bosh request_timeout %d, want the 45 the file sets", cfg.BOSH.RequestTimeout)
+	}
+
+	boshConfig := reflect.TypeFor[config.BOSHConfig]()
+	for field := range boshConfig.Fields() {
+		key, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+		if key == "skip_ssl_validation" {
+			t.Errorf("BOSHConfig.%s still reads %s", field.Name, key)
+		}
+	}
+}
+
 // Blacksmith pins each VM's host key to the one the director reports, so
 // the insecure_ignore_host_key and known_hosts_file settings are gone. A
 // configuration file that still sets them, at the top level or under

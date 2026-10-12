@@ -427,14 +427,13 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDi
 
 	boshDirector, batchDirector, err := bosh.CreatePooledAndBatchDirectors(
 		bosh.Config{
-			Address:           cfg.BOSH.Address,
-			Username:          cfg.BOSH.Username,
-			Password:          cfg.BOSH.Password,
-			CACert:            cfg.BOSH.CACert,
-			SkipSSLValidation: cfg.BOSH.SkipSslValidation,
-			AllowHTTP:         cfg.BOSH.AllowHTTP,
-			RequestTimeout:    time.Duration(cfg.BOSH.RequestTimeout) * time.Second,
-			Logger:            boshLogger,
+			Address:        cfg.BOSH.Address,
+			Username:       cfg.BOSH.Username,
+			Password:       cfg.BOSH.Password,
+			CACert:         cfg.BOSH.CACert,
+			AllowHTTP:      cfg.BOSH.AllowHTTP,
+			RequestTimeout: time.Duration(cfg.BOSH.RequestTimeout) * time.Second,
+			Logger:         boshLogger,
 		},
 		time.Duration(cfg.BOSH.TaskWatchMax)*time.Second,
 		cfg.BOSH.MaxConnections,

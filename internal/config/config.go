@@ -317,7 +317,6 @@ type BOSHConfig struct {
 	Address             string       `yaml:"address"`
 	Username            string       `yaml:"username"`
 	Password            string       `yaml:"password"`
-	SkipSslValidation   bool         `yaml:"skip_ssl_validation"`
 	CACert              string       `yaml:"cacert"`
 	AllowHTTP           bool         `yaml:"allow_http"` // Allow an http:// bosh.address, which sends the director's credentials unencrypted
 	Stemcells           []Uploadable `yaml:"stemcells"`

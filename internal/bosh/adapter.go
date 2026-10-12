@@ -362,10 +362,9 @@ type TaskEventError struct {
 // Config represents the configuration for creating a Director.
 type Config struct {
 	// Connection details
-	Address           string
-	Username          string
-	Password          string
-	SkipSSLValidation bool
+	Address  string
+	Username string
+	Password string
 
 	// CACert is the PEM text of the CA that signed the director's
 	// certificate, and UAA's when the director uses UAA.
