@@ -264,14 +264,8 @@ version: ## Display the current version
 
 ##@ Deployment
 
-.PHONY: deploy-ui
-deploy-ui: ## Deploy UI files to BOSH instance (use DEPLOYMENT=name INSTANCE=group/id)
-	@echo "$(GREEN)Deploying UI files to BOSH...$(RESET)"
-	@./deploy-ui-quick.sh $(DEPLOYMENT) $(INSTANCE)
-	@echo "$(GREEN)✓ UI deployed$(RESET)"
-
 .PHONY: deploy-all
-deploy-all: linux deploy-ui ## Build and deploy both binary and UI to BOSH
+deploy-all: linux ## Build and push the dev binary to BOSH (use DEPLOYMENT=name INSTANCE=group/id)
 	@echo "$(GREEN)Deploying blacksmith binary...$(RESET)"
 	@go run ./hack/devpush -d $(DEPLOYMENT) -i $(INSTANCE) -binary $(BINARY_NAME)-linux-amd64
 	@echo "$(GREEN)✓ Full deployment complete$(RESET)"
