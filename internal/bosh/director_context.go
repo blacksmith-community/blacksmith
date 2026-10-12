@@ -248,10 +248,11 @@ func (e *DirectorCallError) message() string {
 	}
 
 	return fmt.Sprintf("BOSH director call %s to %s stopped because %s. %s"+
-		"The likely causes are a hung or overloaded director, or a network partition between the broker and the director. "+
-		"Check that the director answers bosh env, look at its running tasks with bosh tasks and at monit summary on the director, "+
-		"and check the network path from the broker to %s. The call's own error was: %v",
-		e.Operation, e.Director, why, e.taskSentence(), e.Director, e.Err)
+		"The likely causes are a director that is overloaded or restarting, or a network path that drops traffic. "+
+		"Check that the director answers GET %s/info, look at its running tasks through Blacksmith's /b/tasks endpoint, "+
+		"check monit summary on the director VM, and check the network path from the broker to %s. "+
+		"The call's own error was: %v",
+		e.Operation, e.Director, why, e.taskSentence(), e.Director, e.Director, e.Err)
 }
 
 // taskSentence says what became of the task the call followed, and where to

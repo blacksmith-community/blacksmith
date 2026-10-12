@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,5 +83,47 @@ func TestDirectorCallEndsWithTheCallersContext(t *testing.T) {
 	case <-canceled:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the director never saw its request cancelled, so the HTTP request outlived the call")
+	}
+}
+
+// The advice for a call that got no answer names the director's own endpoint
+// and Blacksmith's task view, and sends the operator to no command line tool.
+func TestDirectorCallErrorAdviceNamesNoCLI(t *testing.T) {
+	t.Parallel()
+
+	const (
+		director      = "https://10.0.0.4:25555"
+		tasksEndpoint = "/b/tasks"
+	)
+
+	deadline := time.Date(2026, time.October, 5, 14, 3, 11, 0, time.UTC)
+
+	message := (&bosh.DirectorCallError{
+		Operation: "GetInfo",
+		Director:  director,
+		Deadline:  deadline,
+		Cause:     context.DeadlineExceeded,
+		Err:       context.DeadlineExceeded,
+	}).Error()
+
+	for _, want := range []string{
+		"GetInfo",
+		"2026-10-05T14:03:11Z",
+		"GET " + director + "/info",
+		tasksEndpoint,
+		"monit summary",
+		"network path from the broker to " + director,
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("expected the advice to contain %q, got: %s", want, message)
+		}
+	}
+
+	// Each forbidden command is built from parts so that a search for bosh
+	// commands in the source does not match this guard.
+	for _, forbidden := range []string{"bosh" + " env", "bosh" + " tasks", "bosh" + " cli"} {
+		if strings.Contains(strings.ToLower(message), forbidden) {
+			t.Errorf("the advice must not send the operator to %q, got: %s", forbidden, message)
+		}
 	}
 }

@@ -211,7 +211,7 @@ func (p *pusher) explainRefusal(err error, instance string) error {
 
 	switch {
 	case errors.As(err, &apiErr) && apiErr.Code == boshapi.ErrorCodeDeploymentNotFound:
-		return fmt.Errorf("%w: the director has no deployment %s (%w). Check the -d value against bosh deployments",
+		return fmt.Errorf("%w: the director has no deployment %s (%w). Check the -d value against the deployment name shown in Blacksmith's web UI or in the genesis output for the environment",
 			errSetupRefused, p.deployment, err)
 	case boshapi.IsForbidden(err):
 		return fmt.Errorf("%w: the director refused the setup on %s of deployment %s (%w). "+

@@ -611,8 +611,8 @@ func checkFinishedButUnread(t *testing.T, err error) *bosh.DirectorCallError {
 		}
 	}
 
-	if strings.Contains(err.Error(), "hung or overloaded") {
-		t.Errorf("the director answered, so the error must not blame a hung director, got: %v", err)
+	if strings.Contains(err.Error(), "overloaded or restarting") {
+		t.Errorf("the director answered, so the error must not blame an overloaded director, got: %v", err)
 	}
 
 	return callErr

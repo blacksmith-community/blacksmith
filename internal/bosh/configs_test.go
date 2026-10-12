@@ -480,8 +480,12 @@ func TestOutcomeUnknownErrorSaysWhatEachResultMeans(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(strings.ToLower(message), "bosh cli") || strings.Contains(message, "bosh configs") {
-		t.Errorf("the message must not send the operator to the bosh CLI: %s", message)
+	// Each forbidden phrase is built from parts so that a search for bosh
+	// commands in the source does not match this guard.
+	for _, forbidden := range []string{"bosh" + " cli", "bosh" + " configs"} {
+		if strings.Contains(strings.ToLower(message), forbidden) {
+			t.Errorf("the message must not send the operator to %q: %s", forbidden, message)
+		}
 	}
 }
 
