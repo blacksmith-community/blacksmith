@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"blacksmith/internal/bosh"
+	"blacksmith/internal/config"
 	"blacksmith/internal/handlers/services"
 	"blacksmith/internal/interfaces"
 	"blacksmith/pkg/logger"
@@ -350,4 +353,176 @@ func TestInstanceLogsReportAFailedInstanceListing(t *testing.T) {
 	}
 }
 
-var errListingFailed = errors.New("the director could not list the instances")
+var (
+	errListingFailed          = errors.New("the director could not list the instances")
+	errHeldTaskNeverCancelled = errors.New("the held task was never cancelled")
+)
+
+// logsConfig is the one setting of the broker the logs endpoint reads. Every
+// other method panics on the nil embedded Config, so a test sees a read it
+// did not script.
+type logsConfig struct {
+	interfaces.Config
+
+	broker config.BrokerConfig
+}
+
+func (c *logsConfig) GetBrokerConfig() config.BrokerConfig {
+	return c.broker
+}
+
+// writeTimeoutConfig is a broker config that sets the write timeout to the
+// given number of seconds.
+func writeTimeoutConfig(seconds int) *logsConfig {
+	return &logsConfig{broker: config.BrokerConfig{WriteTimeout: seconds}}
+}
+
+// holdNodeB is a log fetch that answers at once for every instance but
+// id-node-b, whose task stays open until the request's context ends. It
+// records the deadline of that context in heldDeadline. The wait is bounded
+// by writeTimeout and a second more, so a request with no deadline fails the
+// test and does not hang it.
+func holdNodeB(writeTimeout time.Duration, heldDeadline *time.Time) func(context.Context, string, string, string, *bosh.LogBudget) (*bosh.LogBundle, error) {
+	return func(ctx context.Context, _, job, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
+		if instanceID != logsNodeBID {
+			return &bosh.LogBundle{Files: map[string]string{logsNodeLog: "from " + job + "/" + instanceID}}, nil
+		}
+
+		*heldDeadline, _ = ctx.Deadline()
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("the director call ended: %w", ctx.Err())
+		case <-time.After(writeTimeout + time.Second):
+			return nil, errHeldTaskNeverCancelled
+		}
+	}
+}
+
+// The server cuts a response off at its write timeout, so a request that
+// fetches logs stops before then. The current fetch is cancelled through its
+// context, and its error gives the reason the request stopped followed by
+// what the director call said. The instances after it are not fetched, and
+// the response holds what the request got along with an error for each
+// instance it skipped. A row with no instance ID still says why it was not
+// fetched, rather than that the request ran out of time.
+func TestInstanceLogsStopBeforeTheWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	const (
+		writeTimeout = 4 // seconds, so the request stops after 2
+		cause        = "the request ran out of time, because the write timeout of 4 seconds is near"
+		noIDKey      = "node/"
+	)
+
+	director := testutil.NewScriptedBOSHDirector()
+	director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) {
+		return append(logsVMs(), bosh.VM{Job: logsNodeJob, Index: 3}), nil
+	}
+
+	var heldDeadline time.Time
+
+	director.FetchLogsFn = holdNodeB(writeTimeout*time.Second, &heldDeadline)
+
+	handler := services.NewHandler(services.Dependencies{
+		Logger:   logger.Get().Named("test"),
+		Config:   &logsConfig{broker: config.BrokerConfig{WriteTimeout: writeTimeout}},
+		Vault:    newLogsVault(""),
+		Director: director,
+	})
+
+	started := time.Now()
+	body := requestLogs(t, handler)
+	elapsed := time.Since(started)
+
+	if elapsed >= writeTimeout*time.Second {
+		t.Errorf("the request took %v, want it to stop before the %d second write timeout", elapsed, writeTimeout)
+	}
+
+	if heldDeadline.IsZero() || heldDeadline.Sub(started) >= writeTimeout*time.Second {
+		t.Errorf("the held fetch had a deadline %v after the start, want one under the write timeout", heldDeadline.Sub(started))
+	}
+
+	// The third instance is never asked for.
+	want := []string{"node/id-node-a", "node/id-node-b"}
+	if got := director.Calls("FetchLogs"); !slices.Equal(got, want) {
+		t.Fatalf("logs were fetched for %v, want %v", got, want)
+	}
+
+	logs, ok := body["logs"].(map[string]interface{})
+	if !ok || len(logs) != 4 {
+		t.Fatalf("logs = %v, want an entry for each of the 4 rows", body["logs"])
+	}
+
+	if files, _ := logs["node/id-node-a"].(map[string]interface{}); files["node/node.log"] != "from node/id-node-a" {
+		t.Errorf("logs of the first instance = %v, want the files it fetched", logs["node/id-node-a"])
+	}
+
+	wantErrors := map[string]string{
+		logsNodeB: "Failed to fetch logs: " + cause + ": the director call ended: context deadline exceeded",
+		logsProxy: "Failed to fetch logs: " + cause,
+		noIDKey:   "Logs were not fetched, because the director listed this instance without a job name or an instance ID",
+	}
+
+	for key, want := range wantErrors {
+		entry, _ := logs[key].(map[string]interface{})
+		if message, _ := entry["error"].(string); message != want {
+			t.Errorf("logs[%q] error = %q, want %q", key, message, want)
+		}
+	}
+}
+
+// The deadline is the write timeout less 10 seconds, or half the write
+// timeout when that is later, so a short write timeout still leaves the
+// request time to fetch. The write timeout is 120 seconds when the broker
+// does not set one, as the server does.
+func TestInstanceLogsDeadlineFollowsTheWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config interfaces.Config
+		want   time.Duration
+	}{
+		{name: "no config", config: nil, want: 110 * time.Second},
+		{name: "no write timeout set", config: &logsConfig{}, want: 110 * time.Second},
+		{name: "a set write timeout", config: &logsConfig{broker: config.BrokerConfig{WriteTimeout: 300}}, want: 290 * time.Second},
+		{name: "a write timeout under 10 seconds", config: &logsConfig{broker: config.BrokerConfig{WriteTimeout: 6}}, want: 3 * time.Second},
+		{name: "a write timeout of 10 seconds", config: writeTimeoutConfig(10), want: 5 * time.Second},
+		{name: "a write timeout of 11 seconds", config: writeTimeoutConfig(11), want: 5500 * time.Millisecond},
+		{name: "a write timeout of 14 seconds", config: writeTimeoutConfig(14), want: 7 * time.Second},
+		{name: "a write timeout of 15 seconds", config: writeTimeoutConfig(15), want: 7500 * time.Millisecond},
+		{name: "a write timeout of 120 seconds", config: writeTimeoutConfig(120), want: 110 * time.Second},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var deadline time.Time
+
+			director := testutil.NewScriptedBOSHDirector()
+			director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) { return logsVMs(), nil }
+			director.FetchLogsFn = func(ctx context.Context, _, job, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
+				deadline, _ = ctx.Deadline()
+
+				return &bosh.LogBundle{Files: map[string]string{"node/node.log": "from " + job + "/" + instanceID}}, nil
+			}
+
+			handler := services.NewHandler(services.Dependencies{
+				Logger: logger.Get().Named("test"), Config: test.config, Vault: newLogsVault(""), Director: director,
+			})
+
+			started := time.Now()
+			_ = requestLogs(t, handler)
+
+			if deadline.IsZero() {
+				t.Fatal("the fetch had no deadline")
+			}
+
+			if got := deadline.Sub(started); got < test.want-time.Second || got > test.want+time.Second {
+				t.Errorf("the fetch deadline was %v after the start, want about %v", got, test.want)
+			}
+		})
+	}
+}

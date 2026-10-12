@@ -56,6 +56,8 @@ type logsConfig struct {
 	output string
 	// bundle answers the download. Nil answers the director's 404.
 	bundle func(http.ResponseWriter, *http.Request)
+	// cancel answers a cancel of the task. Nil answers 204.
+	cancel func(http.ResponseWriter, *http.Request)
 }
 
 // logsDirector is a test director that starts a log fetch as a task and
@@ -107,6 +109,13 @@ func newLogsDirector(t *testing.T, cfg logsConfig) *logsDirector {
 			cfg.bundle(writer, request)
 		case request.Method == http.MethodDelete && request.URL.Path == detailsCancelPath:
 			director.cancels.Add(1)
+
+			if cfg.cancel != nil {
+				cfg.cancel(writer, request)
+
+				return true
+			}
+
 			writer.WriteHeader(http.StatusNoContent)
 		default:
 			return false
@@ -1342,4 +1351,97 @@ func TestFetchLogsExplainsAStartWithNoTask(t *testing.T) {
 	if !strings.Contains(err.Error(), server.URL) {
 		t.Errorf("expected the error to name the director, got: %v", err)
 	}
+}
+
+// hangUntil holds a request open until release closes or the client goes
+// away, as a director that never answers does.
+func hangUntil(release <-chan struct{}) func(http.ResponseWriter, *http.Request) {
+	return func(_ http.ResponseWriter, request *http.Request) {
+		select {
+		case <-request.Context().Done():
+		case <-release:
+		}
+	}
+}
+
+// checkCancelBound runs call under a context with a deadline of one second,
+// against a director whose task stays queued and whose cancel hangs, and
+// checks that call returns within the deadline, the 3 second bound on the
+// cancel, and one second of slack for the poll and a loaded test run. The
+// error says the cancel failed.
+func checkCancelBound(t *testing.T, operation string, call func(ctx context.Context) error) {
+	t.Helper()
+
+	const (
+		deadline    = 1 * time.Second
+		cancelBound = 3 * time.Second
+		slack       = 1 * time.Second
+	)
+
+	ctx, cancel := context.WithTimeout(t.Context(), deadline)
+	defer cancel()
+
+	started := time.Now()
+	err := callWithin(t, 30*time.Second, func() error { return call(ctx) })
+	elapsed := time.Since(started)
+
+	if limit := deadline + cancelBound + slack; elapsed > limit {
+		t.Errorf("the call returned %v after it started, want no more than %v: its deadline, the cancel bound, and slack", elapsed, limit)
+	}
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected an error that wraps context.DeadlineExceeded, got: %v", err)
+	}
+
+	_ = checkCallError(t, err, operation, bosh.TaskCancelFailed)
+}
+
+// A read-only task that runs under a request's deadline is cancelled once
+// the deadline passes, and the cancel is bounded to 3 seconds, so a
+// director that never answers the cancel cannot hold the request through
+// the margin it keeps to write its response.
+func TestFetchLogsBoundsTheCancelAfterTheDeadline(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+
+	server := newLogsDirector(t, logsConfig{
+		state:  func(int32, int32) (string, string) { return taskQueued, "" },
+		cancel: hangUntil(release),
+	})
+	t.Cleanup(func() { close(release) })
+
+	director := newTaskAdapter(t, server.Director)
+
+	checkCancelBound(t, logsOperation, func(ctx context.Context) error {
+		_, err := director.FetchLogs(ctx, detailsDeployment, logsJob, logsInstance, nil)
+
+		return err //nolint:wrapcheck // the test asserts on the adapter's own error
+	})
+
+	if deletes := requestsTo(server.Director, http.MethodDelete, detailsCancelPath); len(deletes) != 1 {
+		t.Errorf("expected exactly one DELETE %s, got %d", detailsCancelPath, len(deletes))
+	}
+}
+
+// The VM listing the logs endpoint makes runs under the same deadline, so
+// its cancel has the same bound.
+func TestGetDeploymentVMsBoundsTheCancelAfterTheDeadline(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+
+	server := newDetailsDirector(t, detailsConfig{
+		state: func(int32, int32) (string, string) { return taskQueued, "" },
+		cancel: func(http.ResponseWriter) {
+			<-release
+		},
+	})
+	t.Cleanup(func() { close(release) })
+
+	director := newTaskAdapter(t, server.Director)
+
+	checkCancelBound(t, detailsVMListing, func(ctx context.Context) error {
+		return vmListing().call(ctx, director)
+	})
 }

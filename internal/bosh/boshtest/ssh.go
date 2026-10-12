@@ -159,6 +159,12 @@ type SSHDirector struct {
 	// instance. A test VM that presents it passes the adapter's pin.
 	HostKey ssh.Signer
 
+	// CancelDelay holds each cancel request for this long before the
+	// director handles it, as a director that is slow to answer does. A
+	// cancel whose client gives up first is dropped without being handled.
+	// A test sets it before the first request and leaves it alone after.
+	CancelDelay time.Duration
+
 	answer func(SSHCall) SSHAnswer
 
 	mu       sync.Mutex
@@ -318,7 +324,7 @@ func (d *SSHDirector) serve(writer http.ResponseWriter, request *http.Request) b
 	case request.Method == http.MethodGet && strings.HasPrefix(path, "/tasks/"):
 		return d.serveTask(writer, strings.TrimPrefix(path, "/tasks/"))
 	case request.Method == http.MethodDelete && strings.HasPrefix(path, "/task/"):
-		return d.serveCancel(writer, strings.TrimPrefix(path, "/task/"))
+		return d.serveCancel(writer, request, strings.TrimPrefix(path, "/task/"))
 	default:
 		return false
 	}
@@ -535,7 +541,18 @@ func (d *SSHDirector) serveOutput(writer http.ResponseWriter, request *http.Requ
 	return true
 }
 
-func (d *SSHDirector) serveCancel(writer http.ResponseWriter, idText string) bool {
+func (d *SSHDirector) serveCancel(writer http.ResponseWriter, request *http.Request, idText string) bool {
+	if d.CancelDelay > 0 {
+		timer := time.NewTimer(d.CancelDelay)
+		defer timer.Stop()
+
+		select {
+		case <-timer.C:
+		case <-request.Context().Done():
+			return true
+		}
+	}
+
 	d.mu.Lock()
 
 	task, found := d.lookup(idText)

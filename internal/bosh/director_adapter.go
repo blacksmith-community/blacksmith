@@ -424,10 +424,14 @@ func (d *DirectorAdapter) GetDeploymentVMs(ctx context.Context, deployment strin
 
 	d.log.Infof("Getting VMs for deployment: %s", deployment)
 
+	// The logs endpoint lists VMs under the deadline it keeps before the
+	// write timeout, so the cancel of the listing's task gets the shorter
+	// bound.
 	details, err := d.listDetails(ctx, detailsListing{
-		operation: "GetDeploymentVMs",
-		resource:  "vms",
-		list:      d.api.VMs().ListDetailed,
+		operation:   "GetDeploymentVMs",
+		resource:    "vms",
+		list:        d.api.VMs().ListDetailed,
+		cancelBound: deadlineCancelTimeout,
 	}, deployment)
 	if err != nil {
 		return nil, err
@@ -1888,7 +1892,9 @@ func (d *DirectorAdapter) FetchLogs(ctx context.Context, deployment, jobName, in
 
 	d.log.Debugf("The director fetches the logs of %s/%s in deployment %s in BOSH task %d", jobName, instanceID, deployment, task.ID)
 
-	finished, err := d.waitOrCancel(ctx, fetchLogsOperation, task.ID)
+	// A log fetch runs under the logs endpoint's deadline, so the cancel of
+	// its task gets the shorter bound.
+	finished, err := d.waitOrCancel(ctx, fetchLogsOperation, task.ID, deadlineCancelTimeout)
 	if err != nil {
 		return nil, err
 	}

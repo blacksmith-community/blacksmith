@@ -27,6 +27,19 @@ import (
 
 // Constants for services handler.
 const (
+	// defaultLogWriteTimeout is the server's write timeout when the broker
+	// sets none, which main.go also uses.
+	defaultLogWriteTimeout = 120 * time.Second
+
+	// logDeadlineMargin is how long before the write timeout a logs request
+	// stops fetching, which leaves time to write the response.
+	logDeadlineMargin = 10 * time.Second
+
+	// shortLogTimeoutDivisor divides the write timeout to give the least
+	// time a logs request may run, for a write timeout too short to leave
+	// much once logDeadlineMargin is taken off it.
+	shortLogTimeoutDivisor = 2
+
 	// Test task ID for services operations.
 	testTaskIDServices = 3000
 
@@ -52,6 +65,7 @@ var (
 	errCertificateIsRequired            = errors.New("certificate is required")
 	errCertificateIDRequired            = errors.New("certificate id is required")
 	errInstanceNotFound                 = errors.New("service instance not found")
+	errLogRequestOutOfTime              = errors.New("the request ran out of time")
 	errSSHServiceUnavailable            = errors.New("ssh service not configured")
 	errManifestNotFoundForInstance      = errors.New("manifest not found for instance")
 	errManifestMissingInstanceGroups    = errors.New("manifest missing instance_groups")
@@ -506,7 +520,10 @@ func (h *Handler) GetInstanceLogs(writer http.ResponseWriter, req *http.Request,
 		return
 	}
 
-	ctx := req.Context()
+	// The server cuts a response off at its write timeout, so the request
+	// stops its fetches before then and answers with what it has.
+	ctx, cancel := h.logRequestContext(req.Context())
+	defer cancel()
 
 	deploymentName, err := h.getDeploymentNameForLogs(writer, ctx, logger, instanceID)
 	if err != nil {
@@ -1438,6 +1455,24 @@ func (h *Handler) getDeploymentNameForLogs(writer http.ResponseWriter, ctx conte
 	return inst.DeploymentName, nil
 }
 
+// logRequestContext bounds a logs request to the server's write timeout
+// less logDeadlineMargin, or to half the write timeout when that is longer,
+// and says why the context ended when it does. Half the write timeout is
+// longer for a write timeout under 20 seconds, where taking off the whole
+// margin would leave the request little or no time to fetch.
+func (h *Handler) logRequestContext(parent context.Context) (context.Context, context.CancelFunc) {
+	writeTimeout := defaultLogWriteTimeout
+	if h.config != nil && h.config.GetBrokerConfig().WriteTimeout > 0 {
+		writeTimeout = time.Duration(h.config.GetBrokerConfig().WriteTimeout) * time.Second
+	}
+
+	limit := max(writeTimeout-logDeadlineMargin, writeTimeout/shortLogTimeoutDivisor)
+
+	cause := fmt.Errorf("%w, because the write timeout of %d seconds is near", errLogRequestOutOfTime, int(writeTimeout/time.Second))
+
+	return context.WithTimeoutCause(parent, limit, cause)
+}
+
 // logTargets picks the rows of a VM listing whose logs a request fetches,
 // in order of job, index, and ID, and says for each other key why it has no
 // logs. Logs are fetched by job name and instance ID, so a row that lacks
@@ -1504,11 +1539,28 @@ func (h *Handler) fetchLogsForInstances(ctx context.Context, logger interfaces.L
 	for _, instance := range targets {
 		logKey := instance.Job + "/" + instance.ID
 
+		// Once the request's context has ended, no fetch can run, so each
+		// instance left says why it has no logs.
+		if ctx.Err() != nil {
+			allLogs[logKey] = map[string]interface{}{
+				"error": fmt.Sprintf("Failed to fetch logs: %s", context.Cause(ctx)),
+			}
+
+			continue
+		}
+
 		logger.Debug("Fetching logs for instance %s", logKey)
 
 		bundle, err := h.director.FetchLogs(ctx, deploymentName, instance.Job, instance.ID, budget)
 		if err != nil {
 			logger.Error("Failed to fetch logs for %s: %v", logKey, err)
+
+			// The reason the request stopped comes first, so a reader sees
+			// it before what the director call said about ending.
+			if ctx.Err() != nil {
+				err = fmt.Errorf("%w: %w", context.Cause(ctx), err)
+			}
+
 			allLogs[logKey] = map[string]interface{}{
 				"error": fmt.Sprintf("Failed to fetch logs: %s", err),
 			}

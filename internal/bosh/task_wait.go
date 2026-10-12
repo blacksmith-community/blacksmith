@@ -11,8 +11,16 @@ import (
 )
 
 // cancelTimeout bounds the cancel that waitThenCancel sends once a task's
-// wait has stopped, for a read-only task and for an SSH setup task alike.
+// wait has stopped, for a read-only task and for an SSH setup task alike,
+// unless the caller gives a bound of its own.
 const cancelTimeout = 10 * time.Second
+
+// deadlineCancelTimeout bounds the cancel of a read-only task whose wait
+// runs under a request's deadline, as a log fetch and a VM listing for the
+// logs endpoint do. That deadline falls 10 seconds before the server's
+// write timeout, so the cancel must leave most of those seconds for writing
+// the response.
+const deadlineCancelTimeout = 3 * time.Second
 
 // ErrTaskFailed is the sentinel a TaskFailedError wraps.
 var ErrTaskFailed = errors.New("the BOSH task did not finish successfully")
@@ -61,22 +69,23 @@ func (e *TaskFailedError) Unwrap() error {
 // task in whatever terminal state it reached. When the wait stops because
 // the caller's context ended, a read-only task is no longer worth running,
 // so waitOrCancel asks the director to cancel it, on a detached context
-// bounded by cancelTimeout, and records what became of the cancel
-// in the DirectorCallError the wait returned. A shutdown is the exception.
+// bounded by bound, and records what became of the cancel in the
+// DirectorCallError the wait returned. A caller with no deadline of its own
+// passes cancelTimeout. A shutdown is the exception.
 // When the context's cause is ErrBrokerShuttingDown, no cancel is sent,
 // because the task harms nothing and ends on its own, and the shutdown has
 // no time to spare. A wait that stopped on a failed read of the task while
 // the context was live sends no cancel either. In every case the error
 // names the given operation.
-func (d *DirectorAdapter) waitOrCancel(ctx context.Context, operation string, taskID int) (*Task, error) {
-	return d.waitThenCancel(ctx, operation, taskID, true)
+func (d *DirectorAdapter) waitOrCancel(ctx context.Context, operation string, taskID int, bound time.Duration) (*Task, error) {
+	return d.waitThenCancel(ctx, operation, taskID, true, bound)
 }
 
 // waitThenCancel is waitOrCancel for any task. With spareAtShutdown false,
-// the cancel is sent even when the context's cause is
-// ErrBrokerShuttingDown, for a task whose work must not run on unwatched,
-// such as an SSH setup, which creates a user.
-func (d *DirectorAdapter) waitThenCancel(ctx context.Context, operation string, taskID int, spareAtShutdown bool) (*Task, error) {
+// the cancel is sent even when the context's cause is ErrBrokerShuttingDown,
+// for a task whose work must not run on unwatched, such as an SSH setup,
+// which creates a user.
+func (d *DirectorAdapter) waitThenCancel(ctx context.Context, operation string, taskID int, spareAtShutdown bool, bound time.Duration) (*Task, error) {
 	task, err := d.WaitForTask(ctx, taskID)
 	if err == nil {
 		return task, nil
@@ -99,7 +108,7 @@ func (d *DirectorAdapter) waitThenCancel(ctx context.Context, operation string, 
 		return nil, callErr
 	}
 
-	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancelTimeout)
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
 	defer cancel()
 
 	cancelErr := d.CancelTask(cancelCtx, taskID)
@@ -128,11 +137,12 @@ func (d *DirectorAdapter) waitThenCancel(ctx context.Context, operation string, 
 	return nil, callErr
 }
 
-// readOnlyTaskResult waits for the read-only task, as waitOrCancel does, and
-// returns its result output. A task that ended in any state but done
-// returns a TaskFailedError with the director's result text.
-func (d *DirectorAdapter) readOnlyTaskResult(ctx context.Context, operation, deployment string, taskID int) (string, error) {
-	task, err := d.waitOrCancel(ctx, operation, taskID)
+// readOnlyTaskResult waits for the read-only task, as waitOrCancel does
+// with the cancel bounded by bound, and returns its result output. A
+// task that ended in any state but done returns a TaskFailedError with the
+// director's result text.
+func (d *DirectorAdapter) readOnlyTaskResult(ctx context.Context, operation, deployment string, taskID int, bound time.Duration) (string, error) {
+	task, err := d.waitOrCancel(ctx, operation, taskID, bound)
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +165,7 @@ func (d *DirectorAdapter) sshSetupResult(ctx context.Context, operation, deploym
 	waitCtx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 
-	task, err := d.waitThenCancel(waitCtx, operation, taskID, false)
+	task, err := d.waitThenCancel(waitCtx, operation, taskID, false, cancelTimeout)
 	if err != nil {
 		if ctx.Err() == nil && errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 			d.log.Errorf("SSH setup task %d for deployment %s had not finished %s after Blacksmith began waiting, so Blacksmith stopped waiting and asked the director to cancel it",
@@ -213,6 +223,9 @@ type detailsListing struct {
 	resource string
 	// list sends the listing request and returns the task it started.
 	list func(ctx context.Context, deployment string) (*boshapi.Task, error)
+	// cancelBound bounds the cancel of the listing's task once its context
+	// ends. Zero means cancelTimeout.
+	cancelBound time.Duration
 }
 
 // listDetails runs a details listing for deployment, waits for its task,
@@ -240,7 +253,12 @@ func (d *DirectorAdapter) listDetails(ctx context.Context, listing detailsListin
 
 	d.log.Debugf("The director lists the %s of deployment %s in BOSH task %d", listing.resource, deployment, task.ID)
 
-	output, err := d.readOnlyTaskResult(ctx, listing.operation, deployment, task.ID)
+	bound := listing.cancelBound
+	if bound <= 0 {
+		bound = cancelTimeout
+	}
+
+	output, err := d.readOnlyTaskResult(ctx, listing.operation, deployment, task.ID, bound)
 	if err != nil {
 		return nil, err
 	}
