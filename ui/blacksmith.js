@@ -5548,6 +5548,11 @@
     };
   };
 
+  // The level names blacksmith.css styles. A level from a log line is matched
+  // against these, and anything else gets one fixed class, so a level never
+  // becomes part of a class attribute as it was written.
+  const STYLED_LOG_LEVELS = ['error', 'warning', 'warn', 'info', 'debug'];
+
   const renderLogRow = (logEntry, columns = null) => {
     // Default to showing all columns if no column config provided (backward compatibility)
     const activeColumns = columns || {
@@ -5556,7 +5561,11 @@
       component: true,
       message: true
     };
-    const levelClass = `log-level-${logEntry.level.toLowerCase()}`;
+    // Every field below comes from a log line, which a director supplies, so
+    // each one is escaped where it is written into the row.
+    const level = String(logEntry.level ?? '');
+    const levelName = level.toLowerCase();
+    const levelClass = STYLED_LOG_LEVELS.includes(levelName) ? `log-level-${levelName}` : 'log-level-other';
     const formattedMessage = formatLogMessage(logEntry.message);
 
     // Handle different timestamp formats
@@ -5579,15 +5588,15 @@
     const cells = [];
 
     if (activeColumns.timestamp) {
-      cells.push(`<td class="log-timestamp">${displayTimestamp}</td>`);
+      cells.push(`<td class="log-timestamp">${escapeHtml(String(displayTimestamp))}</td>`);
     }
 
     if (activeColumns.level) {
-      cells.push(`<td class="log-level"><span class="level-badge ${levelClass}">${logEntry.level}</span></td>`);
+      cells.push(`<td class="log-level"><span class="level-badge ${levelClass}">${escapeHtml(level)}</span></td>`);
     }
 
     if (activeColumns.component) {
-      const displayComponent = logEntry.component || '';
+      const displayComponent = escapeHtml(String(logEntry.component ?? ''));
       cells.push(`<td class="log-component">${displayComponent}</td>`);
     }
 
