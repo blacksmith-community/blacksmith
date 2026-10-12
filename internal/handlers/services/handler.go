@@ -35,6 +35,11 @@ const (
 	// stops fetching, which leaves time to write the response.
 	logDeadlineMargin = 10 * time.Second
 
+	// maxReportedSkippedFiles is the most skipped file paths one response
+	// lists, whatever the number of instances, and the most cut file paths
+	// as well. The counts stay exact.
+	maxReportedSkippedFiles = 1000
+
 	// shortLogTimeoutDivisor divides the write timeout to give the least
 	// time a logs request may run, for a write timeout too short to leave
 	// much once logDeadlineMargin is taken off it.
@@ -66,6 +71,7 @@ var (
 	errCertificateIDRequired            = errors.New("certificate id is required")
 	errInstanceNotFound                 = errors.New("service instance not found")
 	errLogRequestOutOfTime              = errors.New("the request ran out of time")
+	errNoLogBundle                      = errors.New("the director returned no log bundle")
 	errSSHServiceUnavailable            = errors.New("ssh service not configured")
 	errManifestNotFoundForInstance      = errors.New("manifest not found for instance")
 	errManifestMissingInstanceGroups    = errors.New("manifest missing instance_groups")
@@ -546,13 +552,21 @@ func (h *Handler) GetInstanceLogs(writer http.ResponseWriter, req *http.Request,
 
 	// One budget covers every instance of the request, so the logs the
 	// response holds stay under one limit.
-	allLogs := h.fetchLogsForInstances(ctx, logger, deploymentName, vms, bosh.NewLogBudget())
+	allLogs, skips := h.fetchLogsForInstances(ctx, logger, deploymentName, vms, bosh.NewLogBudget())
 
-	response.HandleJSON(writer, map[string]interface{}{
+	result := map[string]interface{}{
 		"deployment": deploymentName,
 		"logs":       allLogs,
 		"error":      nil,
-	}, nil)
+	}
+
+	// A response that left out files says so, so a reader knows the logs
+	// are not all of what the instances held.
+	if truncated := skips.report(); truncated != nil {
+		result["truncated"] = truncated
+	}
+
+	response.HandleJSON(writer, result, nil)
 }
 
 // getDeploymentNameForLogs retrieves deployment name for log fetching.
@@ -1473,6 +1487,80 @@ func (h *Handler) logRequestContext(parent context.Context) (context.Context, co
 	return context.WithTimeoutCause(parent, limit, cause)
 }
 
+// logSkips is what the bundles of one request left out or cut.
+type logSkips struct {
+	// files lists the skipped files, up to maxReportedSkippedFiles of them.
+	files []map[string]string
+	// count is how many files were skipped in all.
+	count int
+	// cutFiles lists the files kept only in part, up to
+	// maxReportedSkippedFiles of them.
+	cutFiles []map[string]string
+	// cutCount is how many files were kept only in part.
+	cutCount int
+	// stoppedEarly lists the instances whose bundle passed the read limit.
+	stoppedEarly []string
+}
+
+// add records what bundle left out of the logs of instance and which of
+// its files it cut.
+func (l *logSkips) add(instance string, bundle *bosh.LogBundle) {
+	l.count += bundle.SkippedCount
+	l.files = appendLogPaths(l.files, instance, bundle.Skipped)
+
+	l.cutCount += bundle.CutCount
+	l.cutFiles = appendLogPaths(l.cutFiles, instance, bundle.Cut)
+
+	if bundle.StoppedEarly {
+		l.stoppedEarly = append(l.stoppedEarly, instance)
+	}
+}
+
+// appendLogPaths adds the paths of instance to listed as instance and path
+// pairs, until listed holds maxReportedSkippedFiles of them.
+func appendLogPaths(listed []map[string]string, instance string, paths []string) []map[string]string {
+	for _, path := range paths {
+		if len(listed) >= maxReportedSkippedFiles {
+			break
+		}
+
+		listed = append(listed, map[string]string{"instance": instance, "path": path})
+	}
+
+	return listed
+}
+
+// report is the response's truncated object, or nil when nothing was
+// skipped or cut. Each list is empty rather than null when it has nothing.
+func (l *logSkips) report() map[string]interface{} {
+	if l.count == 0 && len(l.files) == 0 && l.cutCount == 0 && len(l.cutFiles) == 0 && len(l.stoppedEarly) == 0 {
+		return nil
+	}
+
+	stoppedEarly := l.stoppedEarly
+	if stoppedEarly == nil {
+		stoppedEarly = []string{}
+	}
+
+	return map[string]interface{}{
+		"skipped_files": nonNilLogPaths(l.files),
+		"skipped_count": l.count,
+		"cut_files":     nonNilLogPaths(l.cutFiles),
+		"cut_count":     l.cutCount,
+		"stopped_early": stoppedEarly,
+	}
+}
+
+// nonNilLogPaths is listed, or an empty list when listed is nil, so the
+// response holds [] and not null.
+func nonNilLogPaths(listed []map[string]string) []map[string]string {
+	if listed == nil {
+		return []map[string]string{}
+	}
+
+	return listed
+}
+
 // logTargets picks the rows of a VM listing whose logs a request fetches,
 // in order of job, index, and ID, and says for each other key why it has no
 // logs. Logs are fetched by job name and instance ID, so a row that lacks
@@ -1518,13 +1606,14 @@ func logTargets(vms []bosh.VM) ([]bosh.VM, map[string]string) {
 }
 
 // fetchLogsForInstances fetches the logs of every instance logTargets picks
-// from vms, keyed by <job>/<instance ID>. Each row it does not fetch has an
-// error under its key that says why. It fetches the instances one after
-// another, in order of job, index, and ID, because the budget is not safe
-// for concurrent use and so that a request that runs out of budget skips
-// the same instances each time.
-func (h *Handler) fetchLogsForInstances(ctx context.Context, logger interfaces.Logger, deploymentName string, vms []bosh.VM, budget *bosh.LogBudget) map[string]interface{} {
+// from vms, keyed by <job>/<instance ID>, and gathers what their bundles
+// left out. Each row it does not fetch has an error under its key that says
+// why. It fetches the instances one after another, in order of job, index,
+// and ID, because the budget is not safe for concurrent use and so that a
+// request that runs out of budget skips the same instances each time.
+func (h *Handler) fetchLogsForInstances(ctx context.Context, logger interfaces.Logger, deploymentName string, vms []bosh.VM, budget *bosh.LogBudget) (map[string]interface{}, *logSkips) {
 	allLogs := make(map[string]interface{})
+	skips := &logSkips{}
 
 	targets, unfetched := logTargets(vms)
 
@@ -1552,6 +1641,10 @@ func (h *Handler) fetchLogsForInstances(ctx context.Context, logger interfaces.L
 		logger.Debug("Fetching logs for instance %s", logKey)
 
 		bundle, err := h.director.FetchLogs(ctx, deploymentName, instance.Job, instance.ID, budget)
+		if err == nil && bundle == nil {
+			err = errNoLogBundle
+		}
+
 		if err != nil {
 			logger.Error("Failed to fetch logs for %s: %v", logKey, err)
 
@@ -1569,9 +1662,11 @@ func (h *Handler) fetchLogsForInstances(ctx context.Context, logger interfaces.L
 		}
 
 		allLogs[logKey] = bundle.Files
+
+		skips.add(logKey, bundle)
 	}
 
-	return allLogs
+	return allLogs, skips
 }
 
 func (h *Handler) getDeploymentNameForManifest(writer http.ResponseWriter, ctx context.Context, logger interfaces.Logger, instanceID string) (string, error) {

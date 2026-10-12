@@ -3854,7 +3854,7 @@
         const text = await response.text();
         try {
           const responseData = JSON.parse(text);
-          return formatInstanceLogs(responseData.logs || responseData);
+          return formatInstanceLogs(responseData.logs || responseData, responseData.truncated);
         } catch (e) {
           // If not JSON, display as plain text
           return `<pre>${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
@@ -4054,7 +4054,54 @@
     `;
   };
 
-  const formatInstanceLogs = (logsData) => {
+  // Builds the notice shown above the instance logs when the response left
+  // files out or kept only part of them. Instance names and file paths come
+  // from the director's log bundle, so they are escaped.
+  const formatTruncatedNotice = (truncated) => {
+    if (!truncated) return '';
+
+    const listOf = (value) => (Array.isArray(value) ? value : []);
+    const skippedFiles = listOf(truncated.skipped_files);
+    const cutFiles = listOf(truncated.cut_files);
+    const stoppedEarly = listOf(truncated.stopped_early);
+    const skippedCount = Number(truncated.skipped_count) || skippedFiles.length;
+    const cutCount = Number(truncated.cut_count) || cutFiles.length;
+
+    if (skippedCount === 0 && cutCount === 0 && stoppedEarly.length === 0) return '';
+
+    // Lists the files the response names, and says how many more it counted
+    // than it lists.
+    const fileList = (files, count) => {
+      const items = files.map(file =>
+        `<li>${escapeHtml(String(file.instance))}: ${escapeHtml(String(file.path))}</li>`).join('');
+      const unlisted = count - files.length;
+      const more = unlisted > 0 ? `<li>and ${unlisted} more</li>` : '';
+      return `<ul class="instance-logs-notice-files">${items}${more}</ul>`;
+    };
+
+    const parts = [];
+
+    if (skippedCount > 0) {
+      parts.push(`
+        <p>${skippedCount} log ${skippedCount === 1 ? 'file was' : 'files were'} left out because of the size and count limits on log bundles.</p>
+        ${fileList(skippedFiles, skippedCount)}`);
+    }
+
+    if (cutCount > 0) {
+      parts.push(`
+        <p>${cutCount} log ${cutCount === 1 ? 'file was' : 'files were'} larger than 10 MiB, so only the first 10 MiB of ${cutCount === 1 ? 'it is' : 'each is'} shown.</p>
+        ${fileList(cutFiles, cutCount)}`);
+    }
+
+    if (stoppedEarly.length > 0) {
+      const names = stoppedEarly.map(name => escapeHtml(String(name))).join(', ');
+      parts.push(`<p>The log bundle was cut short for ${names}, so later files in it were not read.</p>`);
+    }
+
+    return `<div class="instance-logs-notice" role="status">${parts.join('')}</div>`;
+  };
+
+  const formatInstanceLogs = (logsData, truncated) => {
     if (!logsData || Object.keys(logsData).length === 0) {
       return '<div class="no-data">No logs available</div>';
     }
@@ -4082,6 +4129,7 @@
 
     return `
       <div class="instance-logs-wrapper">
+        ${formatTruncatedNotice(truncated)}
         <div class="instance-log-job-tabs">
           ${jobTabs}
         </div>

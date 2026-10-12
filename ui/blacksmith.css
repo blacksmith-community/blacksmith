@@ -453,6 +453,26 @@ table tbody {
   height: 100%;
 }
 
+.instance-logs-notice {
+  padding: 10px 16px;
+  border: 1px solid var(--text-warning);
+  border-left-width: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.instance-logs-notice p {
+  margin: 0 0 4px;
+}
+
+.instance-logs-notice-files {
+  margin: 0;
+  padding-left: 20px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
 .instance-log-job-tabs {
   display: flex;
   gap: 0;

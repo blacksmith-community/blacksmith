@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -34,6 +35,10 @@ const (
 	logsNodeB   = "node/id-node-b"
 	logsProxy   = "proxy/id-proxy-1"
 	logsNodeLog = "node/node.log"
+
+	// A proxy log, and a node log large enough to be cut.
+	logsProxyLog  = "proxy/proxy.log"
+	logsStdoutLog = "node/stdout.log"
 
 	// The job and instance IDs of the two node instances.
 	logsNodeJob = "node"
@@ -134,7 +139,7 @@ func (r *budgetRecorder) fetch(_ context.Context, _, job, instanceID string, bud
 		budget.Remaining -= r.take
 	}
 
-	return &bosh.LogBundle{Files: map[string]string{"node/node.log": "from " + job + "/" + instanceID}}, nil
+	return &bosh.LogBundle{Files: map[string]string{logsNodeLog: "from " + job + "/" + instanceID}}, nil
 }
 
 // One request fetches the logs of every instance, so the instances share one
@@ -217,7 +222,7 @@ func TestInstanceLogsFetchesEachInstanceByID(t *testing.T) {
 	}
 
 	// The instances are fetched in a fixed order, by job and then index.
-	want := []string{"node/id-node-a", "node/id-node-b", "proxy/id-proxy-1"}
+	want := []string{logsNodeA, logsNodeB, logsProxy}
 
 	if got := director.Calls("FetchLogs"); !slices.Equal(got, want) {
 		t.Fatalf("logs were fetched for %v, want %v", got, want)
@@ -230,7 +235,7 @@ func TestInstanceLogsFetchesEachInstanceByID(t *testing.T) {
 
 	for _, key := range want {
 		files, ok := logs[key].(map[string]interface{})
-		if !ok || files["node/node.log"] != "from "+key {
+		if !ok || files[logsNodeLog] != "from "+key {
 			t.Errorf("logs[%q] = %v, want the files fetched for it", key, logs[key])
 		}
 	}
@@ -444,7 +449,7 @@ func TestInstanceLogsStopBeforeTheWriteTimeout(t *testing.T) {
 	}
 
 	// The third instance is never asked for.
-	want := []string{"node/id-node-a", "node/id-node-b"}
+	want := []string{logsNodeA, logsNodeB}
 	if got := director.Calls("FetchLogs"); !slices.Equal(got, want) {
 		t.Fatalf("logs were fetched for %v, want %v", got, want)
 	}
@@ -454,8 +459,8 @@ func TestInstanceLogsStopBeforeTheWriteTimeout(t *testing.T) {
 		t.Fatalf("logs = %v, want an entry for each of the 4 rows", body["logs"])
 	}
 
-	if files, _ := logs["node/id-node-a"].(map[string]interface{}); files["node/node.log"] != "from node/id-node-a" {
-		t.Errorf("logs of the first instance = %v, want the files it fetched", logs["node/id-node-a"])
+	if files, _ := logs[logsNodeA].(map[string]interface{}); files[logsNodeLog] != "from node/id-node-a" {
+		t.Errorf("logs of the first instance = %v, want the files it fetched", logs[logsNodeA])
 	}
 
 	wantErrors := map[string]string{
@@ -506,7 +511,7 @@ func TestInstanceLogsDeadlineFollowsTheWriteTimeout(t *testing.T) {
 			director.FetchLogsFn = func(ctx context.Context, _, job, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
 				deadline, _ = ctx.Deadline()
 
-				return &bosh.LogBundle{Files: map[string]string{"node/node.log": "from " + job + "/" + instanceID}}, nil
+				return &bosh.LogBundle{Files: map[string]string{logsNodeLog: "from " + job + "/" + instanceID}}, nil
 			}
 
 			handler := services.NewHandler(services.Dependencies{
@@ -522,6 +527,205 @@ func TestInstanceLogsDeadlineFollowsTheWriteTimeout(t *testing.T) {
 
 			if got := deadline.Sub(started); got < test.want-time.Second || got > test.want+time.Second {
 				t.Errorf("the fetch deadline was %v after the start, want about %v", got, test.want)
+			}
+		})
+	}
+}
+
+// listedPath is a file the truncated object lists, as it reads once decoded.
+func listedPath(instance, path string) map[string]interface{} {
+	return map[string]interface{}{"instance": instance, "path": path}
+}
+
+// scriptedBundles makes a scripted director answer each instance's log fetch
+// with the bundle in bundles, keyed by <job>/<instance ID>.
+func scriptedBundles(bundles map[string]*bosh.LogBundle) *testutil.ScriptedBOSHDirector {
+	director := testutil.NewScriptedBOSHDirector()
+	director.GetDeploymentVMsFn = func(string) ([]bosh.VM, error) { return logsVMs(), nil }
+	director.FetchLogsFn = func(_ context.Context, _, job, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
+		return bundles[job+"/"+instanceID], nil
+	}
+
+	return director
+}
+
+// A response that left out log files says which ones and how many, so a
+// reader knows the logs are not the whole of what the instances held.
+func TestInstanceLogsReportTheSkippedFiles(t *testing.T) {
+	t.Parallel()
+
+	director := scriptedBundles(map[string]*bosh.LogBundle{
+		logsNodeA: {
+			Files:        map[string]string{logsNodeLog: "a"},
+			Skipped:      []string{"node/big.log", "node/bigger.log"},
+			SkippedCount: 3,
+		},
+		logsNodeB: {Files: map[string]string{logsNodeLog: "b"}, StoppedEarly: true},
+		logsProxy: {Files: map[string]string{logsProxyLog: "p"}},
+	})
+
+	handler := services.NewHandler(services.Dependencies{Logger: logger.Get().Named("test"), Vault: newLogsVault(""), Director: director})
+
+	body := requestLogs(t, handler)
+
+	truncated, isObject := body["truncated"].(map[string]interface{})
+	if !isObject {
+		t.Fatalf("truncated = %v, want an object that says what was skipped", body["truncated"])
+	}
+
+	wantFiles := []interface{}{
+		listedPath(logsNodeA, "node/big.log"),
+		listedPath(logsNodeA, "node/bigger.log"),
+	}
+	if !reflect.DeepEqual(truncated["skipped_files"], wantFiles) {
+		t.Errorf("skipped_files = %v, want %v", truncated["skipped_files"], wantFiles)
+	}
+
+	// The count is exact, though the list holds two of the three.
+	if truncated["skipped_count"] != float64(3) {
+		t.Errorf("skipped_count = %v, want 3", truncated["skipped_count"])
+	}
+
+	if want := []interface{}{logsNodeB}; !reflect.DeepEqual(truncated["stopped_early"], want) {
+		t.Errorf("stopped_early = %v, want %v", truncated["stopped_early"], want)
+	}
+
+	if !reflect.DeepEqual(truncated["cut_files"], []interface{}{}) || truncated["cut_count"] != float64(0) {
+		t.Errorf("cut_files = %v and cut_count = %v, want no cut files", truncated["cut_files"], truncated["cut_count"])
+	}
+
+	logs, ok := body["logs"].(map[string]interface{})
+	if !ok || len(logs) != 3 {
+		t.Errorf("logs = %v, want the files of all 3 instances", body["logs"])
+	}
+}
+
+// A file larger than the per-file limit keeps only its first 10 MiB, so the
+// response says which files were cut and how many, even when no file was
+// left out.
+func TestInstanceLogsReportTheCutFiles(t *testing.T) {
+	t.Parallel()
+
+	director := scriptedBundles(map[string]*bosh.LogBundle{
+		logsNodeA: {Files: map[string]string{logsStdoutLog: "head"}, Cut: []string{logsStdoutLog}, CutCount: 1},
+		logsNodeB: {Files: map[string]string{logsNodeLog: "b"}},
+		logsProxy: {Files: map[string]string{logsProxyLog: "p"}, Cut: []string{logsProxyLog}, CutCount: 1},
+	})
+
+	handler := services.NewHandler(services.Dependencies{Logger: logger.Get().Named("test"), Vault: newLogsVault(""), Director: director})
+
+	truncated, isObject := requestLogs(t, handler)["truncated"].(map[string]interface{})
+	if !isObject {
+		t.Fatal("the response has no truncated object, want one that says which files were cut")
+	}
+
+	want := map[string]interface{}{
+		"cut_files": []interface{}{
+			listedPath(logsNodeA, logsStdoutLog),
+			listedPath(logsProxy, logsProxyLog),
+		},
+		"cut_count":     float64(2),
+		"skipped_files": []interface{}{},
+		"skipped_count": float64(0),
+		"stopped_early": []interface{}{},
+	}
+	if !reflect.DeepEqual(truncated, want) {
+		t.Errorf("truncated = %v, want %v", truncated, want)
+	}
+}
+
+// A director that answers a fetch with no bundle and no error leaves that
+// instance with an error, and the request goes on to the other instances.
+func TestInstanceLogsReportAnInstanceWithNoBundle(t *testing.T) {
+	t.Parallel()
+
+	director := scriptedBundles(map[string]*bosh.LogBundle{
+		logsNodeA: {Files: map[string]string{logsNodeLog: "a"}},
+		logsProxy: {Files: map[string]string{logsProxyLog: "p"}},
+	})
+
+	handler := services.NewHandler(services.Dependencies{Logger: logger.Get().Named("test"), Vault: newLogsVault(""), Director: director})
+
+	body := requestLogs(t, handler)
+
+	if got, want := director.Calls("FetchLogs"), []string{logsNodeA, logsNodeB, logsProxy}; !slices.Equal(got, want) {
+		t.Errorf("logs were fetched for %v, want %v", got, want)
+	}
+
+	logs, _ := body["logs"].(map[string]interface{})
+	want := map[string]interface{}{
+		logsNodeA: map[string]interface{}{logsNodeLog: "a"},
+		logsNodeB: map[string]interface{}{"error": "Failed to fetch logs: the director returned no log bundle"},
+		logsProxy: map[string]interface{}{logsProxyLog: "p"},
+	}
+
+	if !reflect.DeepEqual(logs, want) {
+		t.Errorf("logs = %v, want %v", logs, want)
+	}
+}
+
+// A response that left nothing out has no truncated object.
+func TestInstanceLogsOmitTruncatedWhenNothingWasSkipped(t *testing.T) {
+	t.Parallel()
+
+	director := scriptedBundles(map[string]*bosh.LogBundle{
+		logsNodeA: {Files: map[string]string{logsNodeLog: "a"}},
+		logsNodeB: {Files: map[string]string{}},
+		logsProxy: {Files: map[string]string{logsProxyLog: "p"}},
+	})
+
+	handler := services.NewHandler(services.Dependencies{Logger: logger.Get().Named("test"), Vault: newLogsVault(""), Director: director})
+
+	body := requestLogs(t, handler)
+	if _, found := body["truncated"]; found {
+		t.Errorf("truncated = %v, want no truncated object when nothing was skipped", body["truncated"])
+	}
+}
+
+// Every bundle lists up to 1000 skipped paths and 1000 cut paths, and a
+// request fetches many bundles, so the response caps each list it holds at
+// 1000 as well. The counts stay exact.
+func TestInstanceLogsCapTheFileLists(t *testing.T) {
+	t.Parallel()
+
+	paths := make([]string, 600)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("node/%d.log", index)
+	}
+
+	tests := []struct {
+		kind   string
+		bundle func(count int) *bosh.LogBundle
+	}{
+		{kind: "skipped", bundle: func(count int) *bosh.LogBundle {
+			return &bosh.LogBundle{Files: map[string]string{}, Skipped: paths, SkippedCount: count}
+		}},
+		{kind: "cut", bundle: func(count int) *bosh.LogBundle {
+			return &bosh.LogBundle{Files: map[string]string{}, Cut: paths, CutCount: count}
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.kind, func(t *testing.T) {
+			t.Parallel()
+
+			director := scriptedBundles(map[string]*bosh.LogBundle{
+				logsNodeA: test.bundle(600),
+				logsNodeB: test.bundle(700),
+				logsProxy: test.bundle(600),
+			})
+
+			handler := services.NewHandler(services.Dependencies{Logger: logger.Get().Named("test"), Vault: newLogsVault(""), Director: director})
+
+			truncated, _ := requestLogs(t, handler)["truncated"].(map[string]interface{})
+
+			listed, _ := truncated[test.kind+"_files"].([]interface{})
+			if len(listed) != 1000 {
+				t.Errorf("%s_files holds %d paths, want 1000", test.kind, len(listed))
+			}
+
+			if truncated[test.kind+"_count"] != float64(1900) {
+				t.Errorf("%s_count = %v, want 1900", test.kind, truncated[test.kind+"_count"])
 			}
 		})
 	}
