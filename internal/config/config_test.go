@@ -438,6 +438,38 @@ func writeBOSHConfig(t *testing.T, setting string) string {
 	return path
 }
 
+// bosh.allow_http loads as written, and it is false when the file does not
+// set it, so an http:// director address is refused unless an operator
+// allows it.
+func TestBOSHAllowHTTPLoadsAndDefaultsToFalse(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		setting string
+		want    bool
+	}{
+		{name: "set to true", setting: "  allow_http: true\n", want: true},
+		{name: "set to false", setting: "  allow_http: false\n", want: false},
+		{name: "not set", setting: "", want: false},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.ReadConfig(writeBOSHConfig(t, testCase.setting))
+			if err != nil {
+				t.Fatalf("ReadConfig: %v", err)
+			}
+
+			if cfg.BOSH.AllowHTTP != testCase.want {
+				t.Errorf("bosh.allow_http loaded as %v, want %v", cfg.BOSH.AllowHTTP, testCase.want)
+			}
+		})
+	}
+}
+
 // bosh.task_watch_max is a number of seconds. It loads as written, and an
 // absent or zero value loads as 21600, which is 6 hours.
 func TestBOSHTaskWatchMaxDefaultsToSixHours(t *testing.T) {

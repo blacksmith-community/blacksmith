@@ -200,6 +200,8 @@ releases: []`,
 func TestDirectorAdapterCreation(t *testing.T) {
 	t.Parallel()
 
+	caCert := newPrivateCA(t).PEM
+
 	tests := []struct {
 		name      string
 		config    Config
@@ -211,6 +213,7 @@ func TestDirectorAdapterCreation(t *testing.T) {
 				Address:  "https://10.0.0.1:25555",
 				Username: "admin",
 				Password: "password",
+				CACert:   caCert,
 				Logger:   &testLogger{t: t},
 			},
 			wantError: false, // Creation succeeds (lazy connection)
@@ -221,6 +224,7 @@ func TestDirectorAdapterCreation(t *testing.T) {
 				Address:  "https://10.0.0.1:25555",
 				Username: "admin",
 				Password: "password",
+				CACert:   caCert,
 			},
 			wantError: false, // Creation succeeds (lazy connection)
 		},

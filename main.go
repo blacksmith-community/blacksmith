@@ -406,36 +406,54 @@ func storePlansToVault(vault *internalVault.Vault, cfg *config.Config) {
 	// Don't fail startup if plan storage fails
 }
 
-// initializeBOSH creates and configures BOSH directors (pooled and batch).
-func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDirector, *bosh.BatchDirector) {
-	// Use logger for BOSH operations
+// initializeBOSH creates the pooled director for general operations and the
+// batch director for batch upgrades. It sends no request to the director.
+//
+// A bosh block that sets none of the address, the username, the password,
+// and the CA gives no directors and no error, and the broker boots without
+// BOSH. config.ReadConfig refuses a file without the address, the username,
+// or the password, so only a config built in code reaches that case. Any
+// other bosh block the directors cannot be built from is returned as an
+// error, so the broker stops rather than serving with a director it cannot
+// reach or verify. A director that does not answer is not an error here.
+func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDirector, *bosh.BatchDirector, error) {
+	if cfg.BOSH.Address == "" && cfg.BOSH.Username == "" && cfg.BOSH.Password == "" && cfg.BOSH.CACert == "" {
+		logger.Warn("The bosh block sets no director, so Blacksmith runs without BOSH and deployment operations will fail")
+
+		return nil, nil, nil
+	}
+
 	boshLogger := loggerPkg.Get().Named("bosh")
 
-	// Create both pooled director (for general operations) and batch director (for batch upgrades)
 	boshDirector, batchDirector, err := bosh.CreatePooledAndBatchDirectors(
-		cfg.BOSH.Address,
-		cfg.BOSH.Username,
-		cfg.BOSH.Password,
-		cfg.BOSH.CACert,
-		cfg.BOSH.SkipSslValidation,
-		time.Duration(cfg.BOSH.RequestTimeout)*time.Second,
+		bosh.Config{
+			Address:           cfg.BOSH.Address,
+			Username:          cfg.BOSH.Username,
+			Password:          cfg.BOSH.Password,
+			CACert:            cfg.BOSH.CACert,
+			SkipSSLValidation: cfg.BOSH.SkipSslValidation,
+			AllowHTTP:         cfg.BOSH.AllowHTTP,
+			RequestTimeout:    time.Duration(cfg.BOSH.RequestTimeout) * time.Second,
+			Logger:            boshLogger,
+		},
 		time.Duration(cfg.BOSH.TaskWatchMax)*time.Second,
 		cfg.BOSH.MaxConnections,
 		cfg.BOSH.MaxBatchConnections,
 		time.Duration(cfg.BOSH.ConnectionTimeout)*time.Second,
-		boshLogger,
 	)
 	if err != nil {
-		logger.Error("Failed to set up the BOSH director client: %s", err)
-		logger.Error("Continuing with degraded BOSH functionality - deployment operations may not work")
+		return nil, nil, fmt.Errorf("blacksmith cannot set up the BOSH director client from the bosh block of its configuration: %w", err)
+	}
 
-		return nil, nil
+	if cfg.BOSH.AllowHTTP && bosh.UsesPlainHTTP(cfg.BOSH.Address) {
+		logger.Warn("bosh.allow_http is true and bosh.address is %s, so the director's credentials and every request to it "+
+			"go over plain HTTP, unencrypted. Use the director's https:// URL unless the network path to it is trusted", cfg.BOSH.Address)
 	}
 
 	logger.Info("BOSH director initialized with connection pooling (general: %d, batch: %d, timeout: %ds)",
 		cfg.BOSH.MaxConnections, cfg.BOSH.MaxBatchConnections, cfg.BOSH.ConnectionTimeout)
 
-	return boshDirector, batchDirector
+	return boshDirector, batchDirector, nil
 }
 
 // updateBOSHCloudConfig writes the broker's cloud config to the director as
@@ -1090,13 +1108,24 @@ func setupSignalHandlingAndContext() (context.Context, context.CancelFunc, conte
 	return ctx, func() { cancelCause(nil) }, cancelCause, sigChan
 }
 
-func initializeCore(ctx context.Context, configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector, *bosh.BatchDirector) {
+// initializeCore loads the configuration and sets up the BOSH directors and
+// Vault. It returns the error of a bosh block the directors cannot be built
+// from, and the caller stops the boot. The directors are built before Vault
+// is contacted, because building them sends no request, so a refused bosh
+// block stops the boot at once rather than after the wait for Vault.
+func initializeCore(ctx context.Context, configPath string, logger loggerPkg.Logger) (*config.Config, *internalVault.Vault, *bosh.PooledDirector, *bosh.BatchDirector, error) {
 	config := initializeConfig(configPath, logger)
+
+	boshDirector, batchDirector, err := initializeBOSH(config, logger) //nolint:contextcheck // building the directors sends no request, and each call later takes its caller's context
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
 	vault := initializeVault(config, logger)
-	boshDirector, batchDirector := initializeBOSH(config, logger)
+
 	setupBOSHResources(ctx, config, boshDirector, logger)
 
-	return config, vault, boshDirector, batchDirector
+	return config, vault, boshDirector, batchDirector, nil
 }
 
 func setupBOSHResources(ctx context.Context, config *config.Config, boshDirector bosh.Director, logger loggerPkg.Logger) {
@@ -1340,7 +1369,10 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	bootCtx, stopBoot := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopBoot()
 
-	config, vault, boshDirector, batchDirector := initializeCore(bootCtx, configPath, logger)
+	config, vault, boshDirector, batchDirector, err := initializeCore(bootCtx, configPath, logger)
+	if err != nil {
+		return err
+	}
 
 	brokerInstance, credhubClient, err := setupBrokerAndUI(bootCtx, config, vault, boshDirector, logger)
 	if err != nil {

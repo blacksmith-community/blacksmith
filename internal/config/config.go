@@ -319,6 +319,7 @@ type BOSHConfig struct {
 	Password            string       `yaml:"password"`
 	SkipSslValidation   bool         `yaml:"skip_ssl_validation"`
 	CACert              string       `yaml:"cacert"`
+	AllowHTTP           bool         `yaml:"allow_http"` // Allow an http:// bosh.address, which sends the director's credentials unencrypted
 	Stemcells           []Uploadable `yaml:"stemcells"`
 	Releases            []Uploadable `yaml:"releases"`
 	CCPath              string       `yaml:"cloud-config"` // TODO: CCPath vs CloudConfig & yaml???
@@ -826,7 +827,9 @@ func (c *Config) GetVaultCACert() string {
 	return c.Vault.CACert
 }
 
-// GetBOSHCACert returns the path to the BOSH CA certificate.
+// GetBOSHCACert returns bosh.cacert, the PEM text of the CA that signs the
+// BOSH director's and UAA's certificates. It holds the certificate itself,
+// not a path to one.
 func (c *Config) GetBOSHCACert() string {
 	return c.BOSH.CACert
 }

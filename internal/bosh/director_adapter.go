@@ -165,6 +165,12 @@ type DirectorAdapter struct {
 // is read from the director's GET /info on the first call, under that call's
 // context, so a director that uses UAA and one that uses HTTP Basic both
 // work with bosh.username and bosh.password.
+//
+// It refuses missing credentials, then an empty address, then an http://
+// address that config.AllowHTTP does not allow, then an empty CA, and then a
+// CA that holds no PEM certificate, and each error names the bosh setting
+// at fault. A director that does not answer is not refused
+// here, and the first call explains that failure.
 func NewDirectorAdapter(config Config) (Director, error) {
 	// Use the provided logger or create a no-op logger
 	var appLogger Logger
@@ -183,6 +189,13 @@ func NewDirectorAdapter(config Config) (Director, error) {
 	auth, err := resolveDirectorAuth(config)
 	if err != nil {
 		appLogger.Errorf("Failed to resolve director credentials: %v", err)
+
+		return nil, err
+	}
+
+	err = validateDirectorSettings(config)
+	if err != nil {
+		appLogger.Errorf("Refused the director settings: %v", err)
 
 		return nil, err
 	}

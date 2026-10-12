@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -103,6 +104,18 @@ func (ca *privateCA) serve(t *testing.T, serial int64, handler http.Handler) *ht
 	return server
 }
 
+// The bosh block settings an adapter error names.
+const (
+	addressSetting = "bosh.address"
+	caSetting      = "bosh.cacert (the release's bosh.ca_cert)"
+	// allowHTTPSetting is how the plain HTTP refusal names the override.
+	allowHTTPSetting = "bosh.allow_http (the release's bosh.allow_http)"
+)
+
+// loopbackDirector is a director address on the loopback that nothing
+// serves. A test that only builds an adapter sends it nothing.
+const loopbackDirector = "https://127.0.0.1:1"
+
 // The routes a test director and a test UAA answer.
 const (
 	infoRoute  = "/info"
@@ -128,10 +141,20 @@ func directorInfo(writer http.ResponseWriter, userAuth map[string]interface{}) {
 	})
 }
 
+// authTypeField is the field of a director's user_authentication that
+// names how it authenticates.
+const authTypeField = "type"
+
 // uaaAuthentication is the user_authentication of a director that sends its
 // clients to the UAA at url.
 func uaaAuthentication(url string) map[string]interface{} {
-	return map[string]interface{}{"type": bosh.AuthTypeUAA, "options": map[string]string{"url": url}}
+	return map[string]interface{}{authTypeField: bosh.AuthTypeUAA, "options": map[string]string{"url": url}}
+}
+
+// basicAuthentication is the user_authentication of a director that takes
+// HTTP Basic credentials.
+func basicAuthentication() map[string]interface{} {
+	return map[string]interface{}{authTypeField: "basic"}
 }
 
 // uaaError is a UAA's JSON answer to a token request it refused.
@@ -377,5 +400,238 @@ func TestAuthDiscoveryFailureIsExplained(t *testing.T) {
 
 	if requests := server.APIRequests(); len(requests) != 0 {
 		t.Errorf("an unauthenticated call reached the director: %+v", requests)
+	}
+}
+
+// Each bosh block setting the adapter cannot work without is refused when
+// the adapter is built, with an error that names the setting, so the broker
+// never boots against a director it cannot reach or cannot verify.
+func TestNewDirectorAdapterNamesTheBadSetting(t *testing.T) {
+	t.Parallel()
+
+	server := boshtest.New(t, nil)
+
+	// The subtests run after this function returns, and cleanups run after
+	// the subtests.
+	t.Cleanup(func() {
+		if requests := server.Requests(); len(requests) != 0 {
+			t.Errorf("a refused configuration reached the director: %+v", requests)
+		}
+	})
+
+	tests := []struct {
+		name    string
+		mutate  func(*bosh.Config)
+		want    error
+		setting string
+	}{
+		{name: "an empty address", mutate: func(config *bosh.Config) { config.Address = "" },
+			want: bosh.ErrDirectorAddressMissing, setting: addressSetting},
+		{name: "a blank address", mutate: func(config *bosh.Config) { config.Address = "  \n" },
+			want: bosh.ErrDirectorAddressMissing, setting: addressSetting},
+		{name: "an empty CA", mutate: func(config *bosh.Config) { config.CACert = "" },
+			want: bosh.ErrDirectorCACertMissing, setting: caSetting},
+		{name: "a blank CA", mutate: func(config *bosh.Config) { config.CACert = " \n\t" },
+			want: bosh.ErrDirectorCACertMissing, setting: caSetting},
+		{name: "a CA with no PEM block", mutate: func(config *bosh.Config) { config.CACert = "/var/vcap/jobs/blacksmith/config/bosh.ca" },
+			want: bosh.ErrDirectorCACertInvalid, setting: caSetting},
+		{name: "a PEM block that is not a certificate", mutate: func(config *bosh.Config) {
+			config.CACert = "-----BEGIN CERTIFICATE-----\nbm90IGEgY2VydGlmaWNhdGU=\n-----END CERTIFICATE-----\n"
+		}, want: bosh.ErrDirectorCACertInvalid, setting: caSetting},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			config := bosh.Config{Address: server.URL, Username: basicAuthCredential, Password: basicAuthCredential, CACert: server.CACert}
+			testCase.mutate(&config)
+
+			director, err := bosh.NewDirectorAdapter(config)
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("expected %v, got director %v and error %v", testCase.want, director, err)
+			}
+
+			if !strings.Contains(err.Error(), testCase.setting) {
+				t.Errorf("expected the error to name %s, got: %s", testCase.setting, err.Error())
+			}
+		})
+	}
+}
+
+// When several settings are wrong, the adapter reports the first of them in
+// a fixed order: the credentials, then an empty address, then an http://
+// address that is not allowed, then an empty CA, and then a CA that does
+// not parse. Each row breaks the setting it expects
+// to hear about and every setting checked after it, so a reordered check
+// reports a different error.
+func TestNewDirectorAdapterChecksTheSettingsInOrder(t *testing.T) {
+	t.Parallel()
+
+	const (
+		address      = loopbackDirector
+		plainAddress = "http://127.0.0.1:1"
+		unparsedPEM  = "this is not a certificate"
+	)
+
+	tests := []struct {
+		name   string
+		config bosh.Config
+		want   error
+	}{
+		{name: "the credentials before an empty address", config: bosh.Config{},
+			want: bosh.ErrDirectorCredentialsMissing},
+		{name: "the credentials before a CA that does not parse",
+			config: bosh.Config{Address: address, CACert: unparsedPEM},
+			want:   bosh.ErrDirectorCredentialsMissing},
+		{name: "the credentials before an http address",
+			config: bosh.Config{Address: plainAddress, CACert: unparsedPEM},
+			want:   bosh.ErrDirectorCredentialsMissing},
+		{name: "an empty address before an empty CA",
+			config: bosh.Config{Username: basicAuthCredential, Password: basicAuthCredential},
+			want:   bosh.ErrDirectorAddressMissing},
+		{name: "an empty address before a CA that does not parse",
+			config: bosh.Config{Username: basicAuthCredential, Password: basicAuthCredential, CACert: unparsedPEM},
+			want:   bosh.ErrDirectorAddressMissing},
+		{name: "an http address before an empty CA",
+			config: bosh.Config{Address: plainAddress, Username: basicAuthCredential, Password: basicAuthCredential},
+			want:   bosh.ErrDirectorPlainHTTP},
+		{name: "an http address before a CA that does not parse",
+			config: bosh.Config{Address: plainAddress, Username: basicAuthCredential, Password: basicAuthCredential, CACert: unparsedPEM},
+			want:   bosh.ErrDirectorPlainHTTP},
+		{name: "an empty CA before a CA that does not parse",
+			config: bosh.Config{Address: address, Username: basicAuthCredential, Password: basicAuthCredential},
+			want:   bosh.ErrDirectorCACertMissing},
+		{name: "a CA that does not parse",
+			config: bosh.Config{Address: address, Username: basicAuthCredential, Password: basicAuthCredential, CACert: unparsedPEM},
+			want:   bosh.ErrDirectorCACertInvalid},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			director, err := bosh.NewDirectorAdapter(testCase.config)
+			if !errors.Is(err, testCase.want) {
+				t.Fatalf("expected %v, got director %v and error %v", testCase.want, director, err)
+			}
+		})
+	}
+}
+
+// An http:// bosh.address is refused unless bosh.allow_http is set, because
+// the director's credentials would cross the network unencrypted. The error
+// names the address and the override, and the CA is still required.
+func TestPlainHTTPAddressIsRefusedUnlessAllowed(t *testing.T) {
+	t.Parallel()
+
+	authority := newPrivateCA(t)
+
+	for _, address := range []string{"http://127.0.0.1:1", "HTTP://127.0.0.1:1", " http://127.0.0.1:1\n"} {
+		t.Run(strconv.Quote(address), func(t *testing.T) {
+			t.Parallel()
+
+			director, err := bosh.NewDirectorAdapter(bosh.Config{
+				Address: address, Username: basicAuthCredential, Password: basicAuthCredential, CACert: authority.PEM,
+			})
+			if !errors.Is(err, bosh.ErrDirectorPlainHTTP) {
+				t.Fatalf("expected %v, got director %v and error %v", bosh.ErrDirectorPlainHTTP, director, err)
+			}
+
+			for _, want := range []string{addressSetting, allowHTTPSetting} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("expected the error to name %s, got: %s", want, err.Error())
+				}
+			}
+		})
+	}
+
+	_, err := bosh.NewDirectorAdapter(bosh.Config{
+		Address: "http://127.0.0.1:1", Username: basicAuthCredential, Password: basicAuthCredential, AllowHTTP: true,
+	})
+	if !errors.Is(err, bosh.ErrDirectorCACertMissing) {
+		t.Errorf("expected an allowed http address to still need a CA, got: %v", err)
+	}
+}
+
+// With bosh.allow_http set, an adapter calls a director at an http://
+// address, and the director gets bosh.username and bosh.password.
+func TestAllowedPlainHTTPDirectorIsCalled(t *testing.T) {
+	t.Parallel()
+
+	var got atomic.Pointer[string]
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case infoRoute:
+			directorInfo(writer, basicAuthentication())
+		case deploymentsRoute:
+			header := request.Header.Get("Authorization")
+			got.Store(&header)
+			boshtest.WriteJSON(writer, http.StatusOK, []map[string]interface{}{})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	if !strings.HasPrefix(server.URL, "http://") {
+		t.Fatalf("the test director is at %s, want an http:// address", server.URL)
+	}
+
+	director, err := bosh.NewDirectorAdapter(bosh.Config{
+		Address:   server.URL,
+		Username:  basicAuthCredential,
+		Password:  basicAuthCredential,
+		CACert:    newPrivateCA(t).PEM,
+		AllowHTTP: true,
+	})
+	if err != nil {
+		t.Fatalf("NewDirectorAdapter: %v", err)
+	}
+
+	_, err = director.GetDeployments(t.Context())
+	if err != nil {
+		t.Fatalf("GetDeployments: %v", err)
+	}
+
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte(basicAuthCredential+":"+basicAuthCredential))
+	if header := got.Load(); header == nil || *header != want {
+		t.Fatalf("the director got Authorization %v, want HTTP Basic with bosh.username and bosh.password", header)
+	}
+}
+
+// bosh.allow_http changes nothing for an address that does not use plain
+// HTTP. An https:// address, one with no scheme, and one that does not
+// parse as a URL give the same result with the setting on and off.
+func TestAllowHTTPChangesNothingForOtherAddresses(t *testing.T) {
+	t.Parallel()
+
+	authority := newPrivateCA(t)
+
+	for _, address := range []string{loopbackDirector, "127.0.0.1:25555", "10.0.0.6", "https://[::1"} {
+		t.Run(strconv.Quote(address), func(t *testing.T) {
+			t.Parallel()
+
+			if bosh.UsesPlainHTTP(address) {
+				t.Fatalf("UsesPlainHTTP(%q) is true, want false", address)
+			}
+
+			config := bosh.Config{Address: address, Username: basicAuthCredential, Password: basicAuthCredential, CACert: authority.PEM}
+
+			_, refused := bosh.NewDirectorAdapter(config)
+
+			config.AllowHTTP = true
+
+			_, allowed := bosh.NewDirectorAdapter(config)
+
+			if errors.Is(refused, bosh.ErrDirectorPlainHTTP) {
+				t.Fatalf("an address that is not http:// was refused as plain HTTP: %v", refused)
+			}
+
+			if fmt.Sprint(refused) != fmt.Sprint(allowed) {
+				t.Errorf("bosh.allow_http changed the result for %q from %v to %v", address, refused, allowed)
+			}
+		})
 	}
 }

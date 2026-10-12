@@ -28,6 +28,7 @@ func TestFactoryNew(t *testing.T) {
 		Username:          "admin",
 		Password:          "password",
 		SkipSSLValidation: true,
+		CACert:            newPrivateCA(t).PEM,
 	}
 
 	director, err := factory.New(config)

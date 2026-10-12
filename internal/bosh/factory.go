@@ -54,35 +54,17 @@ func (f *Factory) New(config Config) (*DirectorAdapter, error) {
 	return adapter, nil
 }
 
-// CreateDirectorWithLogger creates a Director that logs to logger. A
-// zero requestTimeout means the default of 60 seconds.
-func CreateDirectorWithLogger(address, username, password, caCert string, skipSSL bool, requestTimeout time.Duration, logger Logger) (*DirectorAdapter, error) {
-	factory := NewDefaultFactory()
-
-	config := Config{
-		Address:           address,
-		Username:          username,
-		Password:          password,
-		CACert:            caCert,
-		SkipSSLValidation: skipSSL,
-		MaxRetries:        0,
-		RequestTimeout:    requestTimeout,
-		Logger:            logger,
-	}
-
-	return factory.New(config)
-}
-
-// CreatePooledDirector creates a Director with connection pooling.
-func CreatePooledDirector(address, username, password, caCert string, skipSSL bool, requestTimeout time.Duration, maxConnections int, timeout time.Duration, logger Logger) (*PooledDirector, error) {
-	// Create base director
-	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, requestTimeout, logger)
+// CreatePooledDirector creates a Director with connection pooling. The
+// base director comes from Factory.New, so a zero config.MaxRetries or
+// config.RequestTimeout takes the factory's default, and the pool logs to
+// config.Logger.
+func CreatePooledDirector(config Config, maxConnections int, timeout time.Duration) (*PooledDirector, error) {
+	baseDirector, err := NewDefaultFactory().New(config)
 	if err != nil {
 		return nil, err
 	}
 
-	// Wrap with pooling
-	return NewPooledDirector(baseDirector, maxConnections, timeout, logger), nil
+	return NewPooledDirector(baseDirector, maxConnections, timeout, config.Logger), nil
 }
 
 // CreatePooledAndBatchDirectors creates both a PooledDirector for general use
@@ -91,13 +73,17 @@ func CreatePooledDirector(address, username, password, caCert string, skipSSL bo
 // start until the tasks end, and their owner calls their Stop to end those
 // watchers. taskWatchMax sets both followers' watch limit, which is how
 // long a lost job-state answer holds its slot and how long a task is
-// followed while its reads fail. Zero means the default of 6 hours.
-func CreatePooledAndBatchDirectors(address, username, password, caCert string, skipSSL bool, requestTimeout, taskWatchMax time.Duration, maxConnections, maxBatchJobs int, timeout time.Duration, logger Logger) (*PooledDirector, *BatchDirector, error) {
+// followed while its reads fail. Zero means the default of 6 hours. The
+// base director comes from Factory.New, as for CreatePooledDirector, and
+// both wrappers log to config.Logger.
+func CreatePooledAndBatchDirectors(config Config, taskWatchMax time.Duration, maxConnections, maxBatchJobs int, timeout time.Duration) (*PooledDirector, *BatchDirector, error) {
 	// Create base director (shared between both)
-	baseDirector, err := CreateDirectorWithLogger(address, username, password, caCert, skipSSL, requestTimeout, logger)
+	baseDirector, err := NewDefaultFactory().New(config)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	logger := config.Logger
 
 	// Create pooled director for general operations
 	pooledDirector := NewPooledDirector(baseDirector, maxConnections, timeout, logger)

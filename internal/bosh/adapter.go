@@ -371,6 +371,12 @@ type Config struct {
 	// certificate, and UAA's when the director uses UAA.
 	CACert string
 
+	// AllowHTTP lets Address use plain http://. It is the bosh.allow_http
+	// setting, and it is false unless an operator sets it. Without it an
+	// http:// address is refused, because the director's credentials would
+	// cross the network unencrypted.
+	AllowHTTP bool
+
 	// MaxRetries is how many times a request that is safe to resend is
 	// sent again. Zero means one attempt and no retries, and Factory.New
 	// sets it to 3 when it is zero.

@@ -586,7 +586,7 @@ func TestMissingCredentialsAreReportedBeforeAnyNetworkSetup(t *testing.T) {
 // factory does not invent a figure of its own, so the default cannot live in
 // two places and the factory cannot lose it unnoticed.
 func TestRequestTimeoutDefaultsToSixtySeconds(t *testing.T) {
-	base := bosh.Config{Address: "https://127.0.0.1:1", Username: basicAuthCredential, Password: basicAuthCredential}
+	base := bosh.Config{Address: "https://127.0.0.1:1", Username: basicAuthCredential, Password: basicAuthCredential, CACert: newPrivateCA(t).PEM}
 
 	withTimeout := base
 	withTimeout.RequestTimeout = 90 * time.Second

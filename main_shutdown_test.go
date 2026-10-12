@@ -500,7 +500,10 @@ func startShutdownVault(t *testing.T) *internalVault.Vault {
 func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logger loggerPkg.Logger) (*broker.API, shutdownDeps) {
 	t.Helper()
 
-	boshDirector, batchDirector := initializeBOSH(cfg, logger)
+	boshDirector, batchDirector, err := initializeBOSH(cfg, logger)
+	if err != nil {
+		t.Fatalf("booting the BOSH layer: %v", err)
+	}
 
 	brokerInstance := &broker.Broker{Vault: vault, Config: cfg}
 

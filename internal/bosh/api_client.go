@@ -2,9 +2,11 @@ package bosh
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -20,10 +22,29 @@ var (
 	// are configured, so the director client would have nothing to
 	// authenticate with.
 	ErrDirectorCredentialsMissing = errors.New("no BOSH director credentials are configured")
+	// ErrDirectorAddressMissing is returned when bosh.address is empty, so
+	// there is no director to call.
+	ErrDirectorAddressMissing = errors.New("no BOSH director address is configured")
+	// ErrDirectorPlainHTTP is returned when bosh.address uses http:// and
+	// bosh.allow_http is not set, so the director's credentials would cross
+	// the network unencrypted.
+	ErrDirectorPlainHTTP = errors.New("the BOSH director address uses plain HTTP")
+	// ErrDirectorCACertMissing is returned when bosh.cacert is empty. The
+	// client always verifies the director's and UAA's TLS certificates, so it
+	// cannot work without the CA that signed them.
+	ErrDirectorCACertMissing = errors.New("no BOSH director CA certificate is configured")
+	// ErrDirectorCACertInvalid is returned when bosh.cacert holds no PEM
+	// certificate that parses.
+	ErrDirectorCACertInvalid = errors.New("the BOSH director CA certificate is not a usable PEM certificate")
 	// ErrEmptyDirectorAnswer is returned when the director answered a read with
 	// a success status and the client handed back no data for it.
 	ErrEmptyDirectorAnswer = errors.New("the BOSH director answered with no data")
 )
+
+// caCertSetting names the CA setting the way an operator finds it. The
+// broker's configuration calls it bosh.cacert, and the BOSH release that
+// renders that configuration calls the same property bosh.ca_cert.
+const caCertSetting = "bosh.cacert (the release's bosh.ca_cert)"
 
 // directorAuth is how the boshapi client authenticates to the director.
 type directorAuth struct {
@@ -63,6 +84,48 @@ func forDirector(address string) string {
 	return " for the director at " + address
 }
 
+// UsesPlainHTTP reports whether address is a URL whose scheme is http, in
+// any letter case. An https address, an address with no scheme, and one
+// that does not parse as a URL do not use plain HTTP.
+func UsesPlainHTTP(address string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(address))
+
+	return err == nil && strings.EqualFold(parsed.Scheme, "http")
+}
+
+// validateDirectorSettings refuses a configuration the client cannot reach
+// or verify the director with, and names the bosh setting at fault. It
+// checks the address, then that an http:// address is allowed, then that a
+// CA is set, and then that the CA holds a certificate, and it sends no
+// request. The CA is required whatever the address's scheme.
+func validateDirectorSettings(config Config) error {
+	if strings.TrimSpace(config.Address) == "" {
+		return fmt.Errorf("%w. Set bosh.address to the director's URL, such as https://10.0.0.6:25555, "+
+			"and check that the bosh block of the configuration file is not empty or indented wrongly", ErrDirectorAddressMissing)
+	}
+
+	if UsesPlainHTTP(config.Address) && !config.AllowHTTP {
+		return fmt.Errorf("%w: bosh.address is %s, so the director's credentials and every request to it would cross the network unencrypted. "+
+			"The address may have been copied from an http:// URL by mistake. Set bosh.address to the director's https:// URL, "+
+			"or, only if the network path to the director is trusted, set bosh.allow_http (the release's bosh.allow_http) to true to allow plain HTTP",
+			ErrDirectorPlainHTTP, config.Address)
+	}
+
+	if strings.TrimSpace(config.CACert) == "" {
+		return fmt.Errorf("%w for the director at %s. Blacksmith always verifies the director's and UAA's TLS certificates, "+
+			"so set %s to the PEM certificate of the CA that signed them", ErrDirectorCACertMissing, config.Address, caCertSetting)
+	}
+
+	if !x509.NewCertPool().AppendCertsFromPEM([]byte(config.CACert)) {
+		return fmt.Errorf("%w: %s for the director at %s holds no certificate that parses. "+
+			"It may be truncated, may have lost its line breaks, or may be a file path rather than the certificate itself. "+
+			"Check that the setting holds the whole PEM block, from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----",
+			ErrDirectorCACertInvalid, caCertSetting, config.Address)
+	}
+
+	return nil
+}
+
 // newAPIClient builds the boshapi client the adapter reads and writes the
 // director through. It sends no request. The client authenticates with the
 // credentials Blacksmith was configured with, and it asks the director how
@@ -86,6 +149,12 @@ func newAPIClient(config Config, auth directorAuth, log Logger) (boshapi.Client,
 		RetryMax:     config.MaxRetries,
 		Logger:       apiLogger{log: log},
 	})
+	if errors.Is(err, boshapi.ErrInvalidCACert) {
+		return nil, fmt.Errorf("%w: boshapi could not use %s for the director at %s. "+
+			"Check that the setting is the PEM certificate of the CA that signed the director's and UAA's certificates: %w",
+			ErrDirectorCACertInvalid, caCertSetting, config.Address, err)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the boshapi client for the director at %s: %w", config.Address, err)
 	}

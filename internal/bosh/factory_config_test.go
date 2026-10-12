@@ -65,9 +65,14 @@ func TestFactoryPassesTaskWatchMaxToBothFollowers(t *testing.T) {
 	for _, test := range cases {
 		cfg := writeFactoryConfig(t, server.URL, test.setting)
 
-		pool, batch, err := CreatePooledAndBatchDirectors(cfg.BOSH.Address, cfg.BOSH.Username, cfg.BOSH.Password, caPEM, false,
-			time.Duration(cfg.BOSH.RequestTimeout)*time.Second, time.Duration(cfg.BOSH.TaskWatchMax)*time.Second,
-			cfg.BOSH.MaxConnections, cfg.BOSH.MaxBatchConnections, time.Duration(cfg.BOSH.ConnectionTimeout)*time.Second, nil)
+		pool, batch, err := CreatePooledAndBatchDirectors(Config{
+			Address:        cfg.BOSH.Address,
+			Username:       cfg.BOSH.Username,
+			Password:       cfg.BOSH.Password,
+			CACert:         caPEM,
+			RequestTimeout: time.Duration(cfg.BOSH.RequestTimeout) * time.Second,
+		}, time.Duration(cfg.BOSH.TaskWatchMax)*time.Second,
+			cfg.BOSH.MaxConnections, cfg.BOSH.MaxBatchConnections, time.Duration(cfg.BOSH.ConnectionTimeout)*time.Second)
 		if err != nil {
 			t.Fatalf("%s: CreatePooledAndBatchDirectors: %v", test.name, err)
 		}
@@ -108,8 +113,12 @@ func TestFactoryRetriesThreeTimesByDefault(t *testing.T) {
 		return true
 	})
 
-	pool, batch, err := CreatePooledAndBatchDirectors(server.URL, basicAuthCredential, basicAuthCredential, server.CACert, false,
-		0, 0, 1, 1, time.Minute, nil)
+	pool, batch, err := CreatePooledAndBatchDirectors(Config{
+		Address:  server.URL,
+		Username: basicAuthCredential,
+		Password: basicAuthCredential,
+		CACert:   server.CACert,
+	}, 0, 1, 1, time.Minute)
 	if err != nil {
 		t.Fatalf("CreatePooledAndBatchDirectors: %v", err)
 	}
