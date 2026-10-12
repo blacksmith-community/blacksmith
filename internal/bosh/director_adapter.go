@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"blacksmith/internal/bosh/sshconn"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
@@ -1176,14 +1175,11 @@ func (d *DirectorAdapter) GetConfigByID(ctx context.Context, configID string) (_
 		return nil, err
 	}
 
-	// Fix YAML key casing issues that may be introduced by BOSH CLI library
-	fixedContent := fixYAMLKeyCasing(config.Content)
-
 	// Convert to our BoshConfigDetail type
 	summary := convertConfigEntry(*config)
 	result := &BoshConfigDetail{
 		BoshConfig: summary,
-		Content:    fixedContent,
+		Content:    config.Content,
 		Metadata: map[string]interface{}{
 			"id":         config.ID,
 			"name":       config.Name,
@@ -3057,142 +3053,6 @@ func (d *DirectorAdapter) isSpecificTeamTask(deploymentName, team string, taskID
 	d.log.Debugf("Task %d: specific filter '%s' check result: %v", taskID, team, includeTask)
 
 	return includeTask
-}
-
-// fixYAMLKeyCasing fixes common YAML key casing issues introduced by BOSH CLI library
-// when YAML content is processed through Go structs without proper yaml tags.
-func fixYAMLKeyCasing(yamlContent string) string {
-	if yamlContent == "" {
-		return yamlContent
-	}
-
-	// Parse YAML into generic map to preserve structure
-	var data map[string]interface{}
-
-	err := yaml.Unmarshal([]byte(yamlContent), &data)
-	if err != nil {
-		// If we can't parse it, return as-is
-		return yamlContent
-	}
-
-	// Recursively fix key casing in the data structure
-	fixedData := fixMapKeyCasing(data)
-
-	// Marshal back to YAML with proper key casing
-	fixedBytes, err := yaml.Marshal(fixedData)
-	if err != nil {
-		// If marshaling fails, return original content
-		return yamlContent
-	}
-
-	return string(fixedBytes)
-}
-
-// fixMapKeyCasing recursively fixes key casing in maps.
-func fixMapKeyCasing(data interface{}) interface{} {
-	switch value := data.(type) {
-	case map[string]interface{}:
-		fixed := make(map[string]interface{})
-
-		for key, val := range value {
-			// Fix common BOSH config key casing issues
-			fixedKey := fixBOSHConfigKey(key)
-			fixed[fixedKey] = fixMapKeyCasing(val)
-		}
-
-		return fixed
-	case map[interface{}]interface{}:
-		// Handle yaml.v2's tendency to use interface{} keys
-		fixed := make(map[string]interface{})
-		for key, mapValue := range value {
-			if strKey, ok := key.(string); ok {
-				fixedKey := fixBOSHConfigKey(strKey)
-				fixed[fixedKey] = fixMapKeyCasing(mapValue)
-			} else {
-				// Keep non-string keys as-is but fix values
-				fixed[fmt.Sprintf("%v", key)] = fixMapKeyCasing(mapValue)
-			}
-		}
-
-		return fixed
-	case []interface{}:
-		fixed := make([]interface{}, len(value))
-		for arrayIndex, item := range value {
-			fixed[arrayIndex] = fixMapKeyCasing(item)
-		}
-
-		return fixed
-	default:
-		// For primitive values, return as-is
-		return value
-	}
-}
-
-// getBOSHConfigKeyMappings returns the mapping of camelCase to snake_case keys.
-func getBOSHConfigKeyMappings() map[string]string {
-	return map[string]string{
-		// Cloud config keys
-		"AvailabilityZones": "availability_zones", "CloudProperties": "cloud_properties",
-		"VmTypes": "vm_types", "VmExtensions": "vm_extensions", "DiskTypes": "disk_types",
-		"Networks": "networks", "Compilation": "compilation", "AzName": "az_name",
-		"InstanceType": "instance_type", "EphemeralDisk": "ephemeral_disk",
-		"RawInstanceStorage": "raw_instance_storage",
-
-		// Runtime config keys
-		"Releases": "releases", "Addons": "addons", "Tags": "tags", "Properties": "properties",
-		"Jobs": "jobs", "Include": "include", "Exclude": "exclude", "Deployments": "deployments",
-		"Stemcell": "stemcell", "InstanceGroups": "instance_groups",
-
-		// CPI config keys
-		"Cpis": "cpis", "MigratedFrom": "migrated_from",
-
-		// Network keys
-		"Type": "type", "Subnets": "subnets", "Range": "range", "Gateway": "gateway",
-		"Reserved": "reserved", "Static": "static", "Dns": "dns", "AzNames": "az_names",
-
-		// Generic common keys
-		"Name": "name", "Version": "version", "Url": "url", "Sha1": "sha1",
-		"Stemcells": "stemcells", "Os": "os", "UpdatePolicy": "update_policy",
-		"VmType": "vm_type", "PersistentDisk": "persistent_disk",
-		"PersistentDiskType": "persistent_disk_type", "Instances": "instances",
-		"Lifecycle": "lifecycle", "Migrated": "migrated", "Env": "env", "Update": "update",
-		"Canaries": "canaries", "MaxInFlight": "max_in_flight",
-		"CanaryWatchTime": "canary_watch_time", "UpdateWatchTime": "update_watch_time",
-		"Serial": "serial", "VmStrategy": "vm_strategy", "Team": "team", "Variables": "variables",
-	}
-}
-
-// fixBOSHConfigKey fixes individual key casing based on common BOSH config patterns.
-func fixBOSHConfigKey(key string) string {
-	if fixed, exists := getBOSHConfigKeyMappings()[key]; exists {
-		return fixed
-	}
-
-	return camelToSnake(key)
-}
-
-// camelToSnake converts CamelCase to snake_case.
-func camelToSnake(str string) string {
-	if str == "" {
-		return str
-	}
-
-	// If string is already in snake_case, return as-is
-	if !strings.ContainsAny(str, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-		return str
-	}
-
-	var result strings.Builder
-
-	for i, r := range str {
-		if i > 0 && 'A' <= r && r <= 'Z' {
-			result.WriteRune('_')
-		}
-
-		result.WriteRune(unicode.ToLower(r))
-	}
-
-	return result.String()
 }
 
 // Ensure DirectorAdapter implements Director interface.

@@ -520,6 +520,52 @@ func TestOutcomeUnknownErrorNamesTheContextID(t *testing.T) {
 	}
 }
 
+// A config read by ID returns the content exactly as the director stores
+// it. Its comments, its key order, and a capitalised key under a job's
+// properties, which the job may read by that name, all survive.
+func TestGetConfigByIDReturnsTheContentAsStored(t *testing.T) {
+	t.Parallel()
+
+	const stored = `# The runtime config the broker's forges add to every deployment.
+releases:
+- name: os-conf
+  version: 22.2.1
+addons:
+- name: tagger
+  jobs:
+  - name: tags
+    release: os-conf
+    properties:
+      Tags:
+        Owner: blacksmith # who to ask about the VM
+      AvailabilityZones: [z1]
+`
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != "/configs/12" {
+			return false
+		}
+
+		entry := configEntry("12", "runtime", "default")
+		entry["content"] = stored
+
+		boshtest.WriteJSON(writer, http.StatusOK, entry)
+
+		return true
+	})
+
+	director := newReadAdapter(t, server, nil)
+
+	detail, err := director.GetConfigByID(t.Context(), "12")
+	if err != nil {
+		t.Fatalf("GetConfigByID failed: %v", err)
+	}
+
+	if detail.Content != stored {
+		t.Errorf("expected the content as the director stores it\n%s\ngot\n%s", stored, detail.Content)
+	}
+}
+
 // A config read by ID goes to GET /configs/<id>, which answers one object, and
 // the director's team lands in BoshConfig.Team.
 func TestGetConfigByIDReadsTheConfigPathAndDecodesTheTeam(t *testing.T) {
