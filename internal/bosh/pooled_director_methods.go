@@ -188,8 +188,8 @@ func (p *PooledDirector) Cleanup(ctx context.Context, removeAll bool) (*Task, er
 }
 
 // FetchLogs implements Director interface - no pooling for read operations.
-func (p *PooledDirector) FetchLogs(ctx context.Context, deployment string, jobName string, jobIndex string) (string, error) {
-	return p.director.FetchLogs(ctx, deployment, jobName, jobIndex)
+func (p *PooledDirector) FetchLogs(ctx context.Context, deployment string, jobName string, instanceID string, budget *LogBudget) (*LogBundle, error) {
+	return p.director.FetchLogs(ctx, deployment, jobName, instanceID, budget) //nolint:wrapcheck // the wrapped director's own error
 }
 
 // SSHCommand implements Director interface - no pooling for read operations.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"blacksmith/internal/bosh/sshconn"
@@ -264,4 +265,10 @@ func SetLateSSHCleanupTimeout(director Director, timeout time.Duration) {
 	}
 
 	adapter.lateCleanupTimeout = timeout
+}
+
+// ExtractLogsFromTarGz exposes extractLogsFromTarGz to package bosh_test,
+// so a test can stream a large bundle without a director.
+func ExtractLogsFromTarGz(data io.Reader, budget *LogBudget) (*LogBundle, error) {
+	return extractLogsFromTarGz(data, budget)
 }

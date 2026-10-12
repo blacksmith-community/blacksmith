@@ -27,6 +27,7 @@ type ScriptedBOSHDirector struct {
 	GetReleasesFn                  func() ([]bosh.Release, error)
 	FindRunningTaskForDeploymentFn func(deployment string) (*bosh.Task, error)
 	FindTaskByContextIDFn          func(contextID string) (*bosh.Task, error)
+	FetchLogsFn                    func(ctx context.Context, deployment, job, instanceID string, budget *bosh.LogBudget) (*bosh.LogBundle, error)
 
 	mu    sync.Mutex
 	calls map[string][]string
@@ -198,6 +199,18 @@ func (s *ScriptedBOSHDirector) FindTaskByContextID(ctx context.Context, contextI
 	}
 
 	return s.IntegrationMockBOSH.FindTaskByContextID(ctx, contextID)
+}
+
+// FetchLogs runs FetchLogsFn when set. It records the job and instance ID as
+// "<job>/<instanceID>".
+func (s *ScriptedBOSHDirector) FetchLogs(ctx context.Context, deployment, job, instanceID string, budget *bosh.LogBudget) (*bosh.LogBundle, error) {
+	s.record("FetchLogs", job+"/"+instanceID)
+
+	if s.FetchLogsFn != nil {
+		return s.FetchLogsFn(ctx, deployment, job, instanceID, budget)
+	}
+
+	return s.IntegrationMockBOSH.FetchLogs(ctx, deployment, job, instanceID, budget)
 }
 
 func (s *ScriptedBOSHDirector) record(method, arg string) {

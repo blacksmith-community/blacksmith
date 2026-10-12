@@ -2,7 +2,6 @@ package bosh
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -12,7 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,9 +46,6 @@ const (
 	configPriorityCPI          = 2
 	configPriorityResurrection = 3
 	configPriorityRuntime      = 4
-
-	// File size limits.
-	maxLogFileSize = 10 * 1024 * 1024 // 10MB limit per file
 
 	// HTTP client timeouts.
 	httpClientTimeout    = 30 * time.Second
@@ -1857,125 +1853,224 @@ func parseStringToFloat64(s string) *float64 {
 	return nil
 }
 
-// FetchLogs fetches logs from a specific job in a deployment.
-func (d *DirectorAdapter) FetchLogs(ctx context.Context, deployment string, jobName string, jobIndex string) (_ string, err error) {
-	defer d.explainContext(ctx, "FetchLogs", &err)
+// fetchLogsOperation is the operation a log fetch's errors name.
+const fetchLogsOperation = "FetchLogs"
 
-	director := d.bind(ctx)
+// FetchLogs fetches the job logs of one instance of a deployment. It starts
+// the director's fetch_logs task, waits for it, and streams the log bundle
+// the task produced from the director's blobstore, keeping only the regular
+// log files in it. A context that ends cancels the task and stops the
+// download. budget is what the caller's request may still keep, and every
+// byte a file keeps comes off it; a nil budget leaves the limit on each file
+// as the only one. The director prunes the bundles in its blobstore itself,
+// so Blacksmith deletes nothing.
+//
+//nolint:nonamedreturns // explainContext reads the named error, as in every other adapter method.
+func (d *DirectorAdapter) FetchLogs(ctx context.Context, deployment, jobName, instanceID string, budget *LogBudget) (_ *LogBundle, err error) {
+	defer d.explainContext(ctx, fetchLogsOperation, &err)
 
-	d.log.Infof("Fetching logs for deployment: %s, job: %s/%s", deployment, jobName, jobIndex)
-	d.log.Debugf("Finding deployment %s", deployment)
+	d.log.Infof("Fetching logs for deployment: %s, job: %s/%s", deployment, jobName, instanceID)
 
-	dep, err := director.FindDeployment(deployment)
-	if err != nil {
-		d.log.Errorf("Failed to find deployment %s: %v", deployment, err)
-
-		return "", fmt.Errorf("failed to find deployment %s: %w", deployment, err)
+	task, err := d.api.Instances().FetchLogs(ctx, deployment, jobName, instanceID, &boshapi.LogOptions{Type: "job"})
+	if err == nil && task == nil {
+		err = ErrEmptyDirectorAnswer
 	}
 
-	// Create the slug for the specific job instance
-	slug := boshdirector.NewAllOrInstanceGroupOrInstanceSlug(jobName, jobIndex)
-
-	// Fetch logs (empty filters means all logs, "job" means only job logs)
-	logsResult, err := dep.FetchLogs(slug, []string{}, "job")
 	if err != nil {
-		d.log.Errorf("Failed to fetch logs for %s/%s in deployment %s: %v", jobName, jobIndex, deployment, err)
-
-		return "", fmt.Errorf("failed to fetch logs: %w", err)
+		return nil, d.startFailure(ctx, taskStart{
+			operation:  fetchLogsOperation,
+			deployment: deployment,
+			method:     http.MethodGet,
+			path:       "/deployments/" + deployment + "/jobs/" + jobName + "/" + instanceID + "/logs?type=job",
+			what:       fmt.Sprintf("fetch the logs of %s/%s in deployment %s", jobName, instanceID, deployment),
+		}, err)
 	}
 
-	d.log.Infof("Successfully fetched logs for %s/%s (blobstore ID: %s)", jobName, jobIndex, logsResult.BlobstoreID)
+	d.log.Debugf("The director fetches the logs of %s/%s in deployment %s in BOSH task %d", jobName, instanceID, deployment, task.ID)
 
-	// Download the logs from blobstore
-	var logBuffer bytes.Buffer
-
-	err = director.DownloadResourceUnchecked(logsResult.BlobstoreID, &logBuffer)
+	finished, err := d.waitOrCancel(ctx, fetchLogsOperation, task.ID)
 	if err != nil {
-		d.log.Errorf("Failed to download logs from blobstore %s: %v", logsResult.BlobstoreID, err)
-
-		return "", fmt.Errorf("failed to download logs: %w", err)
+		return nil, err
 	}
 
-	d.log.Debugf("Downloaded log archive, size: %d bytes", logBuffer.Len())
-
-	// Extract the tar.gz archive
-	logs, err := extractLogsFromTarGz(&logBuffer)
-	if err != nil {
-		d.log.Errorf("Failed to extract logs from archive: %v", err)
-
-		return "", fmt.Errorf("failed to extract logs: %w", err)
+	if finished.State != taskStateDone {
+		return nil, d.taskFailed("Log fetch", fetchLogsOperation, deployment, finished)
 	}
 
-	return logs, nil
+	// The blobstore ID is the result field of the task record. The task's
+	// result output is a different thing, and it is never read here.
+	blobID := strings.TrimSpace(finished.Result)
+	if blobID == "" {
+		d.log.Errorf("BOSH task %d for the logs of %s/%s in deployment %s finished in state done with no blobstore ID",
+			finished.ID, jobName, instanceID, deployment)
+
+		return nil, &noLogBlobError{director: d.address, deployment: deployment, job: jobName, instance: instanceID, taskID: finished.ID}
+	}
+
+	d.log.Infof("Fetched the logs of %s/%s in deployment %s (blobstore ID: %s)", jobName, instanceID, deployment, blobID)
+
+	body, err := d.api.Resources().Download(ctx, blobID)
+	if err != nil {
+		d.log.Errorf("Failed to download logs from blobstore %s: %v", blobID, err)
+
+		return nil, d.requestFailure(fmt.Sprintf("download the log bundle %s of BOSH task %d", blobID, finished.ID), err)
+	}
+
+	defer func() { _ = body.Close() }()
+
+	bundle, err := extractLogsFromTarGz(body, budget)
+	if err != nil {
+		d.log.Errorf("Failed to extract logs from archive %s: %v", blobID, err)
+
+		return nil, fmt.Errorf("failed to extract the log bundle %s of BOSH task %d from BOSH director %s: %w", blobID, finished.ID, d.address, err)
+	}
+
+	d.log.Debugf("Read the log bundle %s: %d files kept, %d skipped, stopped early: %t",
+		blobID, len(bundle.Files), bundle.SkippedCount, bundle.StoppedEarly)
+
+	return bundle, nil
 }
 
-// extractLogsFromTarGz extracts log files from a tar.gz archive.
-func extractLogsFromTarGz(data io.Reader) (string, error) {
-	// Create gzip reader
+// extractLogsFromTarGz reads a gzipped tar of log files from data as it
+// streams. Nothing in the archive is written to disk. It keeps only regular
+// files whose name ends in .log or holds /log/, and of those at most
+// maxLogFileSize bytes of each, the first ones, and it records each file it
+// cut. It reads at most maxLogReadBytes of the decompressed tar, and a
+// bundle that holds more is marked as stopped early. A name that is not
+// UTF-8 is made valid, and a name longer than maxLogNameBytes is cut and
+// marked. A log file that would overrun budget, that no longer fits in
+// maxLogFiles, or whose name repeats an earlier file's is skipped and
+// listed. The budget is charged for the files the bundle returns, and a
+// read that fails returns no bundle and charges nothing.
+func extractLogsFromTarGz(data io.Reader, budget *LogBudget) (*LogBundle, error) {
 	gzReader, err := gzip.NewReader(data)
 	if err != nil {
-		return "", fmt.Errorf("failed to create gzip reader: %w", err)
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
 	defer func() { _ = gzReader.Close() }()
 
-	// Create tar reader
-	tarReader := tar.NewReader(gzReader)
+	tarReader := tar.NewReader(&logReadLimiter{reader: gzReader, remaining: maxLogReadBytes})
+	extraction := &logExtraction{bundle: &LogBundle{Files: make(map[string]string)}, budget: budget}
 
-	logContents := make(map[string]string)
-
-	// Read through the tar archive
 	for {
 		header, err := tarReader.Next()
-		if err == io.EOF {
-			break
+		if errors.Is(err, io.EOF) {
+			return extraction.finish(), nil
+		}
+
+		if errors.Is(err, errLogReadLimit) {
+			extraction.bundle.StoppedEarly = true
+
+			return extraction.finish(), nil
 		}
 
 		if err != nil {
-			return "", fmt.Errorf("failed to read tar archive: %w", err)
+			return nil, fmt.Errorf("failed to read tar archive: %w", err)
 		}
 
-		// Skip directories
-		if header.Typeflag == tar.TypeDir {
+		name, isLog := logFileName(header)
+		if !isLog || !extraction.admit(name, header.Size) {
 			continue
 		}
 
-		// Only process .log files or files in log directories
-		if strings.HasSuffix(header.Name, ".log") || strings.Contains(header.Name, "/log/") {
-			// Read file contents
-			var buf bytes.Buffer
-			// Limit read size to prevent memory issues
-			limitReader := io.LimitReader(tarReader, maxLogFileSize) // 10MB limit per file
+		// Limit the read size to prevent memory issues.
+		content, err := io.ReadAll(io.LimitReader(tarReader, min(header.Size, maxLogFileSize)))
+		if errors.Is(err, errLogReadLimit) {
+			extraction.bundle.skip(name)
+			extraction.bundle.StoppedEarly = true
 
-			_, err := io.Copy(&buf, limitReader)
-			if err != nil {
-				return "", fmt.Errorf("failed to read file %s: %w", header.Name, err)
-			}
-
-			// Store with cleaned path as key
-			cleanPath := filepath.Clean(header.Name)
-			logContents[cleanPath] = buf.String()
-		}
-	}
-
-	// Format the logs for display
-	if len(logContents) == 0 {
-		return "No log files found in archive", nil
-	}
-
-	var result strings.Builder
-	for path, content := range logContents {
-		result.WriteString(fmt.Sprintf("=== %s ===\n", path))
-		result.WriteString(content)
-
-		if !strings.HasSuffix(content, "\n") {
-			result.WriteString("\n")
+			return extraction.finish(), nil
 		}
 
-		result.WriteString("\n")
+		if err != nil {
+			return nil, fmt.Errorf("failed to read file %s: %w", name, err)
+		}
+
+		extraction.keep(name, string(content), header.Size > maxLogFileSize)
+	}
+}
+
+// logFileName returns the name a tar entry is kept under, and whether the
+// entry is a log file at all: a regular file whose name ends in .log or
+// holds /log/. Links, devices, FIFOs, and directories carry no file content.
+// The name is cleaned, made valid UTF-8, and cut to maxLogNameBytes.
+func logFileName(header *tar.Header) (string, bool) {
+	if header.Typeflag != tar.TypeReg {
+		return "", false
 	}
 
-	return result.String(), nil
+	if !strings.HasSuffix(header.Name, ".log") && !strings.Contains(header.Name, "/log/") {
+		return "", false
+	}
+
+	cleaned := path.Clean(header.Name)
+	if cleaned == "." || cleaned == "/" {
+		return "", false
+	}
+
+	// encoding/json writes each byte that is not UTF-8 as U+FFFD, so two
+	// names that differ only there would be one key in the response. Made
+	// valid here, they meet as a repeated name.
+	return cutLogName(strings.ToValidUTF8(cleaned, "\uFFFD")), true
+}
+
+// logExtraction is one bundle as it is read. spent is what the files kept so
+// far take of budget, which is charged only once the bundle is read.
+type logExtraction struct {
+	bundle *LogBundle
+	budget *LogBudget
+	spent  int64
+}
+
+// admit says whether a log file of the given size may be read, and records
+// the file as skipped when it may not. A file is weighed at the size it
+// keeps, which is no more than maxLogFileSize, and as it would take no more
+// than one byte of JSON for each byte, which keep then checks.
+func (e *logExtraction) admit(name string, size int64) bool {
+	_, repeated := e.bundle.Files[name]
+
+	switch {
+	case repeated, len(e.bundle.Files) >= maxLogFiles:
+		e.bundle.skip(name)
+
+		return false
+	case e.budget != nil && min(size, maxLogFileSize) > e.budget.Remaining-e.spent:
+		e.bundle.skip(name)
+
+		return false
+	default:
+		return true
+	}
+}
+
+// keep adds a file that was read to the bundle, unless its size as JSON
+// would overrun budget, and then it is skipped and listed. cut says the file
+// was larger than what was read.
+func (e *logExtraction) keep(name, content string, cut bool) {
+	charge := logFileCharge(name, content)
+
+	if e.budget != nil && charge > e.budget.Remaining-e.spent {
+		e.bundle.skip(name)
+
+		return
+	}
+
+	e.spent += charge
+	e.bundle.Files[name] = content
+
+	if cut {
+		e.bundle.cut(name)
+	}
+}
+
+// finish charges budget for the files the bundle kept and returns it.
+func (e *logExtraction) finish() *LogBundle {
+	if e.budget != nil {
+		e.budget.Remaining -= e.spent
+	}
+
+	return e.bundle
 }
 
 // SSHCommand runs a one-off command on one instance over SSH. It sets up a

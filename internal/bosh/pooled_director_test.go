@@ -326,14 +326,14 @@ func (m *MockDirector) Cleanup(_ context.Context, removeAll bool) (*bosh.Task, e
 	return finishedMockTask(5, ""), nil
 }
 
-func (m *MockDirector) FetchLogs(_ context.Context, deployment string, jobName string, jobIndex string) (string, error) {
+func (m *MockDirector) FetchLogs(_ context.Context, deployment string, jobName string, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
 	m.incrementCallCount()
 
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
 
-	return "/tmp/logs.tar.gz", nil
+	return &bosh.LogBundle{Files: map[string]string{"logs.log": "/tmp/logs.tar.gz"}}, nil
 }
 
 func (m *MockDirector) SSHCommand(_ context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {
@@ -1034,7 +1034,7 @@ func getSSHAndOtherTests(pooled *bosh.PooledDirector) []struct {
 			return nil
 		}},
 		{"FetchLogs", func() error {
-			_, err := pooled.FetchLogs(context.Background(), "test", "job", "0")
+			_, err := pooled.FetchLogs(context.Background(), "test", "job", "0", nil)
 			if err != nil {
 				return fmt.Errorf("FetchLogs failed: %w", err)
 			}

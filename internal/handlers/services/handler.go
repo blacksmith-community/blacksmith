@@ -491,47 +491,6 @@ func (h *Handler) GetInstanceVMs(writer http.ResponseWriter, req *http.Request, 
 
 // cacheVMData caches VM data in vault.
 
-// parseLogContent parses logs and extracts individual files if structured.
-func parseLogContent(logs string) map[string]string {
-	logFiles := make(map[string]string)
-
-	if !strings.Contains(logs, "===") {
-		// Unstructured logs - just use raw content
-		logFiles["raw"] = logs
-
-		return logFiles
-	}
-
-	// Parse structured logs
-	lines := strings.Split(logs, "\n")
-
-	var (
-		currentFile    string
-		currentContent strings.Builder
-	)
-
-	for _, line := range lines {
-		if strings.HasPrefix(line, "===") && strings.HasSuffix(line, "===") {
-			// Save previous file if exists
-			if currentFile != "" {
-				logFiles[currentFile] = currentContent.String()
-				currentContent.Reset()
-			}
-			// Extract new file name
-			currentFile = strings.TrimSpace(strings.Trim(line, "="))
-		} else {
-			currentContent.WriteString(line + "\n")
-		}
-	}
-
-	// Save last file
-	if currentFile != "" {
-		logFiles[currentFile] = currentContent.String()
-	}
-
-	return logFiles
-}
-
 // GetInstanceLogs returns logs for a service instance.
 func (h *Handler) GetInstanceLogs(writer http.ResponseWriter, req *http.Request, instanceID string) {
 	logger := h.logger.Named("service-instance-logs")
@@ -559,7 +518,9 @@ func (h *Handler) GetInstanceLogs(writer http.ResponseWriter, req *http.Request,
 		return
 	}
 
-	allLogs := h.fetchLogsForInstanceGroups(ctx, logger, deploymentName, instanceGroups)
+	// One budget covers every instance of the request, so the logs the
+	// response holds stay under one limit.
+	allLogs := h.fetchLogsForInstanceGroups(ctx, logger, deploymentName, instanceGroups, bosh.NewLogBudget())
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
@@ -1519,7 +1480,7 @@ func (h *Handler) getInstanceGroupsFromManifest(writer http.ResponseWriter, ctx 
 	return instanceGroups, nil
 }
 
-func (h *Handler) fetchLogsForInstanceGroups(ctx context.Context, logger interfaces.Logger, deploymentName string, instanceGroups []interface{}) map[string]interface{} {
+func (h *Handler) fetchLogsForInstanceGroups(ctx context.Context, logger interfaces.Logger, deploymentName string, instanceGroups []interface{}, budget *bosh.LogBudget) map[string]interface{} {
 	allLogs := make(map[string]interface{})
 
 	logger.Debug("Found %d instance groups in manifest", len(instanceGroups))
@@ -1544,7 +1505,7 @@ func (h *Handler) fetchLogsForInstanceGroups(ctx context.Context, logger interfa
 		instances := h.getInstanceCount(group)
 		logger.Debug("Job %s has %d instances", jobName, instances)
 
-		h.fetchLogsForJob(ctx, logger, allLogs, deploymentName, jobName, instances)
+		h.fetchLogsForJob(ctx, logger, allLogs, deploymentName, jobName, instances, budget)
 	}
 
 	return allLogs
@@ -1563,21 +1524,23 @@ func (h *Handler) getInstanceCount(group map[string]interface{}) int {
 	return instances
 }
 
-func (h *Handler) fetchLogsForJob(ctx context.Context, logger interfaces.Logger, allLogs map[string]interface{}, deploymentName, jobName string, instances int) {
+// fetchLogsForJob fetches the logs of the first instances indexes of a job,
+// one after another, because the budget is not safe for concurrent use.
+func (h *Handler) fetchLogsForJob(ctx context.Context, logger interfaces.Logger, allLogs map[string]interface{}, deploymentName, jobName string, instances int, budget *bosh.LogBudget) {
 	for i := range instances {
 		jobIndex := strconv.Itoa(i)
 		logKey := fmt.Sprintf("%s/%s", jobName, jobIndex)
 
 		logger.Debug("Fetching logs for job %s/%s", jobName, jobIndex)
 
-		logs, err := h.director.FetchLogs(ctx, deploymentName, jobName, jobIndex)
+		bundle, err := h.director.FetchLogs(ctx, deploymentName, jobName, jobIndex, budget)
 		if err != nil {
 			logger.Error("Failed to fetch logs for %s/%s: %v", jobName, jobIndex, err)
 			allLogs[logKey] = map[string]interface{}{
 				"error": fmt.Sprintf("Failed to fetch logs: %s", err),
 			}
 		} else {
-			allLogs[logKey] = parseLogContent(logs)
+			allLogs[logKey] = bundle.Files
 		}
 	}
 }

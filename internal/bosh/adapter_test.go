@@ -145,8 +145,8 @@ func (m *mockDirector) GetTaskEvents(_ context.Context, id int) ([]bosh.TaskEven
 func (m *mockDirector) GetEvents(_ context.Context, deployment string) ([]bosh.Event, error) {
 	return nil, ErrMockNotImplemented
 }
-func (m *mockDirector) FetchLogs(_ context.Context, deployment string, jobName string, jobIndex string) (string, error) {
-	return "", ErrMockNotImplemented
+func (m *mockDirector) FetchLogs(_ context.Context, deployment string, jobName string, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
+	return nil, ErrMockNotImplemented
 }
 func (m *mockDirector) UpdateCloudConfig(_ context.Context, config string) error {
 	return ErrMockNotImplemented

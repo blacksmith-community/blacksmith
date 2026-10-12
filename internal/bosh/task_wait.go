@@ -174,16 +174,7 @@ func (d *DirectorAdapter) sshSetupResult(ctx context.Context, operation, deploym
 // the log.
 func (d *DirectorAdapter) finishedTaskResult(ctx context.Context, kind, operation, deployment string, task *Task) (string, error) {
 	if task.State != taskStateDone {
-		d.log.Errorf("%s BOSH task %d for deployment %s ended in state %s: %s", kind, task.ID, deployment, task.State, task.Result)
-
-		return "", &TaskFailedError{
-			Operation:  operation,
-			Director:   d.address,
-			Deployment: deployment,
-			TaskID:     task.ID,
-			State:      task.State,
-			Result:     task.Result,
-		}
+		return "", d.taskFailed(kind, operation, deployment, task)
 	}
 
 	output, err := d.api.Tasks().GetOutput(ctx, task.ID, &boshapi.TaskOutputOptions{Type: taskOutputResult})
@@ -194,6 +185,22 @@ func (d *DirectorAdapter) finishedTaskResult(ctx context.Context, kind, operatio
 	}
 
 	return output, nil
+}
+
+// taskFailed logs a read-only or SSH setup task that ended in any state but
+// done, and returns the TaskFailedError that carries the director's result
+// text. kind names the task in the log.
+func (d *DirectorAdapter) taskFailed(kind, operation, deployment string, task *Task) error {
+	d.log.Errorf("%s BOSH task %d for deployment %s ended in state %s: %s", kind, task.ID, deployment, task.State, task.Result)
+
+	return &TaskFailedError{
+		Operation:  operation,
+		Director:   d.address,
+		Deployment: deployment,
+		TaskID:     task.ID,
+		State:      task.State,
+		Result:     task.Result,
+	}
 }
 
 // detailsListing names a listing that starts a read-only director task, as
@@ -222,7 +229,13 @@ func (d *DirectorAdapter) listDetails(ctx context.Context, listing detailsListin
 	}
 
 	if err != nil {
-		return nil, d.detailsListingFailure(ctx, listing, deployment, err)
+		return nil, d.startFailure(ctx, taskStart{
+			operation:  listing.operation,
+			deployment: deployment,
+			method:     http.MethodGet,
+			path:       "/deployments/" + deployment + "/" + listing.resource + "?format=full",
+			what:       fmt.Sprintf("list the %s of deployment %s", listing.resource, deployment),
+		}, err)
 	}
 
 	d.log.Debugf("The director lists the %s of deployment %s in BOSH task %d", listing.resource, deployment, task.ID)
@@ -261,24 +274,38 @@ func (e *taskResultError) Unwrap() error {
 	return e.err
 }
 
-// detailsListingFailure explains a details listing the director did not
-// accept, or whose answer was lost.
-func (d *DirectorAdapter) detailsListingFailure(ctx context.Context, listing detailsListing, deployment string, err error) error {
+// taskStart names a request that starts a read-only director task.
+type taskStart struct {
+	// operation is the Director method that sends the request.
+	operation string
+	// deployment is the deployment the request is for.
+	deployment string
+	// method and path are the request's HTTP method, and its path and
+	// query, as a lost answer's error names them.
+	method string
+	path   string
+	// what finishes "failed to", as in "list the vms of deployment x".
+	what string
+}
+
+// startFailure explains a request that was meant to start a read-only task
+// and did not, because the director did not accept it or its answer was
+// lost. Only the director's deployment-not-found answer, code 70000, maps to
+// ErrDeploymentNotFound, and it keeps the director's answer. A lost answer
+// gets an answerLostError cause for the request and is never resent.
+func (d *DirectorAdapter) startFailure(ctx context.Context, start taskStart, err error) error {
 	var apiErr *boshapi.APIError
 	if errors.As(err, &apiErr) && apiErr.Code == boshapi.ErrorCodeDeploymentNotFound {
-		d.log.Infof("Deployment %s not found in BOSH director", deployment)
+		d.log.Infof("Deployment %s not found in BOSH director", start.deployment)
 
-		return fmt.Errorf("%w: %s: %w", ErrDeploymentNotFound, deployment, err)
+		return fmt.Errorf("%w: %s: %w", ErrDeploymentNotFound, start.deployment, err)
 	}
 
 	if boshapi.IsOutcomeUnknown(err) && ctx.Err() == nil {
-		d.log.Errorf("The answer to the listing of the %s of deployment %s was lost, so the director may have started a read-only task Blacksmith cannot follow: %v",
-			listing.resource, deployment, err)
+		d.log.Errorf("The answer to %s %s was lost, so the director may have started a read-only task Blacksmith cannot follow: %v",
+			start.method, start.path, err)
 
-		lost := &answerLostError{
-			Method: http.MethodGet,
-			Path:   "/deployments/" + deployment + "/" + listing.resource + "?format=full",
-		}
+		lost := &answerLostError{Method: start.method, Path: start.path}
 
 		var transport *boshapi.TransportError
 		if errors.As(err, &transport) && transport.Timeout {
@@ -286,14 +313,14 @@ func (d *DirectorAdapter) detailsListingFailure(ctx context.Context, listing det
 		}
 
 		return &DirectorCallError{
-			Operation: listing.operation,
+			Operation: start.operation,
 			Director:  d.address,
 			Cause:     lost,
 			Err:       err,
 		}
 	}
 
-	d.log.Errorf("Failed to list the %s of deployment %s: %v", listing.resource, deployment, err)
+	d.log.Errorf("Failed to %s: %v", start.what, err)
 
-	return d.requestFailure(fmt.Sprintf("list the %s of deployment %s", listing.resource, deployment), err)
+	return d.requestFailure(start.what, err)
 }

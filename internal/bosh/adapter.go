@@ -45,7 +45,7 @@ type Director interface {
 	GetEvents(ctx context.Context, deployment string) ([]Event, error)
 
 	// Log operations
-	FetchLogs(ctx context.Context, deployment string, jobName string, jobIndex string) (string, error)
+	FetchLogs(ctx context.Context, deployment string, jobName string, instanceID string, budget *LogBudget) (*LogBundle, error)
 
 	// Config operations
 	// UpdateCloudConfig writes the content as the cloud config named

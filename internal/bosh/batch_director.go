@@ -437,8 +437,8 @@ func (b *BatchDirector) Cleanup(ctx context.Context, removeAll bool) (*Task, err
 	return b.director.Cleanup(ctx, removeAll)
 }
 
-func (b *BatchDirector) FetchLogs(ctx context.Context, deployment, jobName, jobIndex string) (string, error) {
-	return b.director.FetchLogs(ctx, deployment, jobName, jobIndex)
+func (b *BatchDirector) FetchLogs(ctx context.Context, deployment, jobName, instanceID string, budget *LogBudget) (*LogBundle, error) {
+	return b.director.FetchLogs(ctx, deployment, jobName, instanceID, budget) //nolint:wrapcheck // the wrapped director's own error
 }
 
 func (b *BatchDirector) SSHCommand(ctx context.Context, deployment, instance string, index int, command string, args []string, options map[string]interface{}) (string, error) {

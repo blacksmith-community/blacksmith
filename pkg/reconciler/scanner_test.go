@@ -109,8 +109,8 @@ func (d *mockDirector) GetEvents(_ context.Context, deployment string) ([]bosh.E
 	return nil, ErrScannerNotImplemented
 }
 
-func (d *mockDirector) FetchLogs(_ context.Context, deployment string, jobName string, jobIndex string) (string, error) {
-	return "", ErrScannerNotImplemented
+func (d *mockDirector) FetchLogs(_ context.Context, deployment string, jobName string, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
+	return nil, ErrScannerNotImplemented
 }
 
 func (d *mockDirector) UpdateCloudConfig(_ context.Context, config string) error {

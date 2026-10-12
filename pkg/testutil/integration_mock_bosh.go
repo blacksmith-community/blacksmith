@@ -129,8 +129,8 @@ func (imb *IntegrationMockBOSH) GetTaskEvents(_ context.Context, taskID int) ([]
 }
 
 // FetchLogs implements the BOSH Director interface.
-func (imb *IntegrationMockBOSH) FetchLogs(_ context.Context, deployment, job, index string) (string, error) {
-	return "", nil
+func (imb *IntegrationMockBOSH) FetchLogs(_ context.Context, deployment, job, instanceID string, _ *bosh.LogBudget) (*bosh.LogBundle, error) {
+	return &bosh.LogBundle{Files: map[string]string{}}, nil
 }
 
 // UpdateCloudConfig implements the BOSH Director interface.
