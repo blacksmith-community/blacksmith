@@ -183,11 +183,7 @@ func acceptDelete(writer http.ResponseWriter, _ *http.Request) {
 // 70000 on the last attempt is a deletion once the director's read of the
 // deployment agrees, and a route 404 is never resent. Each case runs
 // through the real director adapter against a TLS test director.
-//
-//nolint:paralleltest // t.Setenv cannot be used with t.Parallel
 func TestRetryDeleteThroughTheRealAdapter(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	vault, err := testutil.NewVaultDevServer(t)
 	if err != nil {
 		t.Fatalf("failed to start Vault: %v", err)

@@ -198,11 +198,7 @@ var _ = Describe("Director tasks recorded on acceptance", func() {
 // the deploy's answer is lost, the unknown outcome keeps that ID. A plain
 // test, because the director is a TLS test server driven through the real
 // director adapter.
-//
-//nolint:paralleltest // t.Setenv cannot be used with t.Parallel
 func TestProvisionSendsTheContextIDItRecordedAndKeepsItWhenTheAnswerIsLost(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	vault, err := testutil.NewVaultDevServer(t)
 	if err != nil {
 		t.Fatalf("failed to start Vault: %v", err)

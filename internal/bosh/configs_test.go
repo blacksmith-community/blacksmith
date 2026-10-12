@@ -77,8 +77,6 @@ func configsQuery(t *testing.T, server *boshtest.Director) url.Values {
 // A config the director does not hold comes back as an empty list, and that
 // is the normal "no such config" answer, not a failure.
 func TestGetConfigMapsAnEmptyListToNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
@@ -105,8 +103,6 @@ func TestGetConfigMapsAnEmptyListToNotFound(t *testing.T) {
 // A failure that is not an empty list keeps the failure, and never reads as a
 // missing config, whatever words the error holds.
 func TestGetConfigKeepsADirectorFailureAsAnError(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != configsPath {
 			return false
@@ -132,8 +128,6 @@ func TestGetConfigKeepsADirectorFailureAsAnError(t *testing.T) {
 // The main list shows the latest version of every config, each marked active
 // with a * on its ID, and the director is asked once for all of them.
 func TestGetConfigsMarksTheLatestVersionsActive(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
@@ -179,8 +173,6 @@ func TestGetConfigsMarksTheLatestVersionsActive(t *testing.T) {
 // The version history asks for every version, not only the latest, and caps
 // them at the limit.
 func TestGetConfigVersionsSendsLatestFalseAndLimit(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
@@ -214,8 +206,6 @@ func TestGetConfigVersionsSendsLatestFalseAndLimit(t *testing.T) {
 // Resurrection is a config of type resurrection, one per deployment, and the
 // director gets it as a POST /configs.
 func TestEnableResurrectionCreatesAResurrectionConfig(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var body map[string]string
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -255,8 +245,6 @@ func TestEnableResurrectionCreatesAResurrectionConfig(t *testing.T) {
 // default cloud config instead of having it replaced. Nothing goes to the
 // default cloud config route.
 func TestUpdateCloudConfigCreatesTheNamedConfig(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var body map[string]string
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -296,8 +284,6 @@ func TestUpdateCloudConfigCreatesTheNamedConfig(t *testing.T) {
 
 // A failed write names the director and keeps the director's description.
 func TestUpdateCloudConfigKeepsTheDirectorFailure(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != configsPath {
 			return false
@@ -325,12 +311,8 @@ func TestUpdateCloudConfigKeepsTheDirectorFailure(t *testing.T) {
 // Deleting a resurrection config sends the type and name, and a config that
 // was not there reads as ErrResurrectionConfigNotFound.
 func TestDeleteResurrectionConfigSendsTypeAndName(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	for name, status := range map[string]int{"deleted": http.StatusNoContent, "absent": http.StatusNotFound} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				if request.Method != http.MethodDelete || request.URL.Path != configsPath {
 					return false
@@ -384,8 +366,6 @@ func TestLostConfigWriteAnswerIsOutcomeUnknown(t *testing.T) {
 
 	for name, write := range writes {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				if request.URL.Path != configsPath {
 					return false
@@ -543,8 +523,6 @@ func TestOutcomeUnknownErrorNamesTheContextID(t *testing.T) {
 // A config read by ID goes to GET /configs/<id>, which answers one object, and
 // the director's team lands in BoshConfig.Team.
 func TestGetConfigByIDReadsTheConfigPathAndDecodesTheTeam(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/configs/7" {
 			return false
@@ -610,8 +588,6 @@ func TestConfigReadsByIDMapAMissingIDToNotFound(t *testing.T) {
 
 	for name, read := range reads {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				switch request.URL.Path {
 				case "/configs/7":
@@ -821,8 +797,6 @@ func TestConfigErrorsNameTheFailureOnce(t *testing.T) {
 
 	for name, entry := range calls {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				if !strings.HasPrefix(request.URL.Path, configsPath) {
 					return false
@@ -848,8 +822,6 @@ func TestConfigErrorsNameTheFailureOnce(t *testing.T) {
 // A missing ID keeps the director's own 404 text in the chain, so the log
 // line shows which route and ID the director refused.
 func TestMissingConfigIDKeepsTheDirectorsAnswer(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/configs/99" {
 			return false
@@ -922,8 +894,6 @@ func TestConfigWriteRejectionIsNotAnUnknownOutcome(t *testing.T) {
 	for writeName, write := range configWrites() {
 		for _, answer := range statuses {
 			t.Run(writeName+"/"+strconv.Itoa(answer.status), func(t *testing.T) {
-				t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 				server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 					if request.URL.Path != configsPath {
 						return false
@@ -963,8 +933,6 @@ func TestConfigWriteRejectionIsNotAnUnknownOutcome(t *testing.T) {
 
 // Only a 404 says the resurrection config was not there.
 func TestDeleteResurrectionConfigMapsOnlyA404ToNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != configsPath {
 			return false
@@ -988,8 +956,6 @@ func TestDeleteResurrectionConfigMapsOnlyA404ToNotFound(t *testing.T) {
 func TestConfigWriteWithAnEndedContextIsNotAnUnknownOutcome(t *testing.T) {
 	for writeName, write := range configWrites() {
 		t.Run(writeName, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
@@ -1044,8 +1010,6 @@ func TestConfigReadsByIDKeepAFailureThatIsNotA404(t *testing.T) {
 	for readName, read := range reads {
 		for _, status := range []int{http.StatusInternalServerError, http.StatusForbidden} {
 			t.Run(readName+"/"+strconv.Itoa(status), func(t *testing.T) {
-				t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 				server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 					if !strings.HasPrefix(request.URL.Path, "/configs/") {
 						return false
@@ -1068,8 +1032,6 @@ func TestConfigReadsByIDKeepAFailureThatIsNotA404(t *testing.T) {
 // The cloud config is the latest version of the one config of type cloud, so
 // the director is asked for exactly that, and the content comes back as sent.
 func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
@@ -1111,8 +1073,6 @@ func TestGetCloudConfigAsksForTheLatestVersionOnly(t *testing.T) {
 // the read asks for the latest version of type cloud with no limit, and keeps
 // the default config, which the director names default.
 func TestListCloudConfigsSendsTypeCloudAndLatest(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
@@ -1154,8 +1114,6 @@ func TestListCloudConfigsSendsTypeCloudAndLatest(t *testing.T) {
 
 // A failed read keeps the director's address, status, and description.
 func TestListCloudConfigsKeepsTheDirectorFailure(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != configsPath {
 			return false
@@ -1183,8 +1141,6 @@ func TestListCloudConfigsKeepsTheDirectorFailure(t *testing.T) {
 // The main list reads every config in one call, so it sends no limit that
 // would cut the list short before the type filter runs.
 func TestGetConfigsSendsNoLimit(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != configsPath {
 			return false
@@ -1210,8 +1166,6 @@ func TestGetConfigsSendsNoLimit(t *testing.T) {
 // An ID that is not a decimal integer can never name a config, so it reads
 // as not found and no request is sent for it.
 func TestNonNumericConfigIDIsNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var requests int
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {

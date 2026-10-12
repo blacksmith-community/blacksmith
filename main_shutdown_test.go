@@ -500,9 +500,6 @@ func startShutdownVault(t *testing.T) *internalVault.Vault {
 func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logger loggerPkg.Logger) (*broker.API, shutdownDeps) {
 	t.Helper()
 
-	t.Setenv("BOSH_CLIENT", "")
-	t.Setenv("BOSH_CLIENT_SECRET", "")
-
 	boshDirector, batchDirector := initializeBOSH(cfg, logger)
 
 	brokerInstance := &broker.Broker{Vault: vault, Config: cfg}
@@ -519,7 +516,7 @@ func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logge
 	return apiHandler, shutdownDepsFor(nil, cancel, nil, nil, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger)
 }
 
-//nolint:paralleltest // the boot path sets the BOSH client environment
+//nolint:paralleltest // the test reads the package's shutdown deadlines
 func TestShutdownStopsTheUpgradeManagerWiredAtBoot(t *testing.T) {
 	director, polled := heldDeployDirector(t)
 	vault := startShutdownVault(t)
@@ -561,7 +558,7 @@ func TestShutdownStopsTheUpgradeManagerWiredAtBoot(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // the boot path sets the BOSH client environment
+//nolint:paralleltest // the test reads the package's shutdown deadlines
 func TestBootAndShutdownWithoutABOSHDirector(t *testing.T) {
 	vault := startShutdownVault(t)
 	logger := newShutdownLog()

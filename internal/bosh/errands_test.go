@@ -204,8 +204,6 @@ func runErrand(t *testing.T, ctx context.Context, director bosh.Director, opts b
 // a bare group stays a group, and an empty entry, such as the one a
 // trailing comma leaves, is not sent.
 func TestRunErrandSendsTheContextIDAndTheDirectorsBody(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{output: errandRow(errandGroup, "uuid-0", exitCode(0), "all good")})
 	director := newTaskAdapter(t, server.Director)
 
@@ -260,8 +258,6 @@ func TestRunErrandSendsTheContextIDAndTheDirectorsBody(t *testing.T) {
 // "node / 0" reaches the director as the group node and the ID 0, and a
 // group with a trailing slash stays a bare group.
 func TestRunErrandTrimsBothHalvesOfAnInstance(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{output: errandRow(errandGroup, "uuid-0", exitCode(0), "ok")})
 	director := newTaskAdapter(t, server.Director)
 
@@ -307,8 +303,6 @@ func TestRunErrandTrimsBothHalvesOfAnInstance(t *testing.T) {
 func TestRunErrandRefusesAnInstanceWithNoGroup(t *testing.T) {
 	for _, instance := range []string{"/", "/0", "/9f3c1b2a-0000-4000-8000-000000000001", " / ", "  /0"} {
 		t.Run(instance, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := newErrandDirector(t, errandConfig{})
 			director := newTaskAdapter(t, server.Director)
 
@@ -335,8 +329,6 @@ func TestRunErrandRefusesAnInstanceWithNoGroup(t *testing.T) {
 // An errand can change state, so a run whose caller's context ends leaves
 // the errand's task running and sends no cancel.
 func TestRunErrandLeavesTheTaskRunningWhenTheContextEnds(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{state: func(int, int32) (string, string) {
 		return batchTaskProcessing, ""
 	}})
@@ -368,8 +360,6 @@ func TestRunErrandLeavesTheTaskRunningWhenTheContextEnds(t *testing.T) {
 func TestRunErrandFailsWhenTheTaskEndsInError(t *testing.T) {
 	for _, state := range []string{batchTaskError, taskCancelled, taskTimedOut} {
 		t.Run(state, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			result := "the errand task ended " + state
 			server := newErrandDirector(t, errandConfig{state: func(int, int32) (string, string) {
 				return state, result
@@ -447,8 +437,6 @@ func checkLostRun(t *testing.T, err error) *bosh.OutcomeUnknownError {
 // An errand run whose answer was lost is found by its context ID, followed
 // to its end, and its result returned. It is never sent again.
 func TestRunErrandFindsTheTaskByContextIDAfterALostAnswer(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{
 		run:    func(writer http.ResponseWriter, _ *http.Request) { boshtest.DropAnswer(writer) },
 		list:   listsTheErrandTask,
@@ -476,8 +464,6 @@ func TestRunErrandFindsTheTaskByContextIDAfterALostAnswer(t *testing.T) {
 // not list, is an unknown outcome with the context ID. It is sent once,
 // because a second run of an errand may not be safe.
 func TestRunErrandWithALostAnswerAndNoTaskIsOutcomeUnknown(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{
 		run: func(writer http.ResponseWriter, _ *http.Request) { boshtest.DropAnswer(writer) },
 	})
@@ -503,8 +489,6 @@ func TestRunErrandWithALostAnswerAndNoTaskIsOutcomeUnknown(t *testing.T) {
 // An errand run whose answer was lost, and whose lookup failed, is an
 // unknown outcome that says the lookup failed.
 func TestRunErrandWithALostAnswerAndAFailedLookupIsOutcomeUnknown(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{
 		run:  func(writer http.ResponseWriter, _ *http.Request) { boshtest.DropAnswer(writer) },
 		list: failsEveryList,
@@ -536,8 +520,6 @@ func endsTheContextThenDropsTheAnswer(cancel context.CancelFunc) func(http.Respo
 // the lookup on the caller's context it would fail, and the error would say
 // so.
 func TestRunErrandLooksUpALostAnswerAfterItsContextEnds(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	ctx, cancel := context.WithCancel(boshapi.WithContextID(t.Context(), contextID))
 	defer cancel()
 
@@ -563,8 +545,6 @@ func TestRunErrandLooksUpALostAnswerAfterItsContextEnds(t *testing.T) {
 // left running, and the error names it, so the caller can follow it and
 // never runs the errand again.
 func TestRunErrandNamesAFoundTaskWhenItsContextEnded(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	ctx, cancel := context.WithCancel(boshapi.WithContextID(t.Context(), contextID))
 	defer cancel()
 
@@ -595,8 +575,6 @@ func TestRunErrandNamesAFoundTaskWhenItsContextEnded(t *testing.T) {
 // last successful run, and writes no results. That run succeeded, so it is
 // reported as skipped with exit code 0.
 func TestRunErrandReportsASkippedWhenChangedRun(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{})
 	director := newTaskAdapter(t, server.Director)
 
@@ -644,8 +622,6 @@ func checkFinishedButUnread(t *testing.T, err error) *bosh.DirectorCallError {
 // read, the errand has already run. The error names the task and says it
 // finished, so a caller does not run the errand again believing nothing ran.
 func TestRunErrandNamesAFinishedTaskWhenItsContextEndsReadingTheResult(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
@@ -674,8 +650,6 @@ func TestRunErrandNamesAFinishedTaskWhenItsContextEndsReadingTheResult(t *testin
 // When the director refuses the read of a finished errand's result, the
 // errand has run as well, so the error names the task in the same way.
 func TestRunErrandNamesAFinishedTaskWhenTheResultCannotBeRead(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{readOutput: func(writer http.ResponseWriter, _ *http.Request) {
 		boshtest.WriteText(writer, http.StatusBadRequest, "the result is gone")
 	}})
@@ -698,8 +672,6 @@ func TestRunErrandNamesAFinishedTaskWhenTheResultCannotBeRead(t *testing.T) {
 // answer for a skip as for a filter that matched no instance, and Blacksmith
 // cannot tell them apart. The result text is logged, so an operator can.
 func TestRunErrandReportsASkippedRunWithResultText(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	const resultText = "no instances to run on"
 
 	server := newErrandDirector(t, errandConfig{state: func(int, int32) (string, string) {
@@ -727,8 +699,6 @@ func TestRunErrandReportsASkippedRunWithResultText(t *testing.T) {
 // A run that was not when_changed and wrote no results has nothing to
 // report, and the error names the task.
 func TestRunErrandWithNoResultsNamesTheTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newErrandDirector(t, errandConfig{state: func(int, int32) (string, string) {
 		return batchTaskDone, "no instances to run on"
 	}})
@@ -781,8 +751,6 @@ func runErrandWithOutput(t *testing.T, output string) *bosh.ErrandResult {
 // group and then by instance ID, and its top level is the worst result,
 // whatever order the instances finished in.
 func TestRunErrandReportsTheWorstResultAndEveryResult(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	output := strings.Join([]string{
 		errandRow("worker", "uuid-b", exitCode(0), "worker ok"),
 		errandRow(errandGroup, "uuid-2", exitCode(1), "node failed"),
@@ -828,8 +796,6 @@ func TestRunErrandCountsAMissingExitCodeAsTheWorst(t *testing.T) {
 
 	for name, row := range unusable {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			output := strings.Join([]string{
 				errandRow(errandGroup, "uuid-0", exitCode(0), "ok"),
 				errandRow(errandGroup, "uuid-1", exitCode(137), "killed"),
@@ -868,8 +834,6 @@ func TestRunErrandBreaksTiesByInstance(t *testing.T) {
 
 	for name, tie := range ties {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			result := runErrandWithOutput(t, strings.Join(tie.rows, "\n"))
 
 			checkErrandInstance(t, "the top level", *result, tie.group, tie.id, 2)
@@ -895,8 +859,6 @@ func TestRunErrandRanksAHigherExitCodeAboveALowerOne(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			result := runErrandWithOutput(t, strings.Join([]string{
 				errandRow(errandGroup, "uuid-b", exitCode(tc.second), "second"),
 				errandRow(errandGroup, "uuid-a", exitCode(tc.first), "first"),

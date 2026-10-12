@@ -576,7 +576,9 @@ func setBOSHDefaults(config *Config) error {
 	return nil
 }
 
-// setEnvironmentVariables sets required environment variables.
+// setEnvironmentVariables exports the settings that forge init scripts and
+// internal/manifest read from the environment. The director's address,
+// credentials, and CA stay out of it, so no child process inherits them.
 func setEnvironmentVariables(config *Config) error {
 	err := os.Setenv("BOSH_NETWORK", config.BOSH.Network)
 	if err != nil {
@@ -586,30 +588,6 @@ func setEnvironmentVariables(config *Config) error {
 	err = os.Setenv("VAULT_ADDR", config.Vault.Address)
 	if err != nil {
 		return fmt.Errorf("failed to set VAULT_ADDR environment variable: %w", err)
-	}
-
-	// Set BOSH environment variables for CLI tools
-	err = os.Setenv("BOSH_ENVIRONMENT", config.BOSH.Address)
-	if err != nil {
-		return fmt.Errorf("failed to set BOSH_ENVIRONMENT environment variable: %w", err)
-	}
-
-	err = os.Setenv("BOSH_CLIENT", config.BOSH.Username)
-	if err != nil {
-		return fmt.Errorf("failed to set BOSH_CLIENT environment variable: %w", err)
-	}
-
-	err = os.Setenv("BOSH_CLIENT_SECRET", config.BOSH.Password)
-	if err != nil {
-		return fmt.Errorf("failed to set BOSH_CLIENT_SECRET environment variable: %w", err)
-	}
-
-	// Set BOSH CA certificate if provided
-	if config.BOSH.CACert != "" {
-		err = os.Setenv("BOSH_CA_CERT", config.BOSH.CACert)
-		if err != nil {
-			return fmt.Errorf("failed to set BOSH_CA_CERT environment variable: %w", err)
-		}
 	}
 
 	// Set Vault token if provided

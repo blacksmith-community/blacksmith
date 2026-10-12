@@ -10,29 +10,19 @@ import (
 
 func TestFactoryCreation(t *testing.T) {
 	t.Parallel()
-	// Test default factory (now always uses BOSH CLI)
-	factory := bosh.NewDefaultFactory()
-	if factory == nil {
-		t.Fatal("Expected factory to be created")
-	}
 
-	// Test explicit factory creation
-	factory = bosh.NewFactory()
+	factory := bosh.NewDefaultFactory()
 	if factory == nil {
 		t.Fatal("Expected factory to be created")
 	}
 }
 
 func TestFactoryNew(t *testing.T) {
-	// Set test mode to skip network calls
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+	t.Parallel()
 
-	factory := bosh.NewFactory()
-	if factory == nil {
-		t.Fatal("Expected factory to be created")
-	}
+	factory := bosh.NewDefaultFactory()
 
-	// Try to create a director with dummy config
+	// Building the adapter sends nothing, so the address need not answer.
 	config := bosh.Config{
 		Address:           "https://10.0.0.1:25555",
 		Username:          "admin",
@@ -47,30 +37,6 @@ func TestFactoryNew(t *testing.T) {
 
 	if director == nil {
 		t.Error("Expected director to be created")
-	}
-}
-
-func TestCreateDirectorFromLegacyConfig(t *testing.T) {
-	// Set test mode to skip network calls
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	// This test verifies the function exists and creates a director
-	// The BOSH CLI director doesn't connect until first use
-	director, err := bosh.CreateDirectorFromLegacyConfig(
-		"https://invalid.bosh.local",
-		"admin",
-		"password",
-		true,
-	)
-
-	// The director should be created successfully
-	// Connection errors will occur when trying to use it
-	if err != nil {
-		t.Fatalf("Unexpected error creating director: %v", err)
-	}
-
-	if director == nil {
-		t.Fatal("Expected director to be created")
 	}
 }
 

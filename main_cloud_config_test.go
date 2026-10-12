@@ -127,8 +127,6 @@ func requireContains(t *testing.T, text string, wants ...string) {
 }
 
 func TestBootCloudConfigWritesWhenNothingOverlaps(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	boot, director, cfg := newBootDirector(t, false,
 		cloudEntry("default", "azs:\n- name: z9\nvm_types:\n- name: big\nnetworks:\n- name: n\n"))
 	logger := newRecordingLogger()
@@ -153,12 +151,8 @@ func TestBootCloudConfigWritesWhenNothingOverlaps(t *testing.T) {
 }
 
 func TestBootCloudConfigSkipsEmptyContent(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	for _, content := range []string{"", "---", "{}", "--- {}", "[]", "--- []", "~", "\t", " \n\t\n", "# only a comment\n"} {
 		t.Run(fmt.Sprintf("content %q", content), func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			boot, director, cfg := newBootDirector(t, false)
 			cfg.BOSH.CloudConfig = content
 			logger := newRecordingLogger()
@@ -181,8 +175,6 @@ func TestBootCloudConfigSkipsEmptyContent(t *testing.T) {
 }
 
 func TestBootCloudConfigRejectsUnparseableContent(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	boot, director, cfg := newBootDirector(t, false)
 	cfg.BOSH.CloudConfig = "azs: [unclosed"
 	logger := newRecordingLogger()
@@ -198,8 +190,6 @@ func TestBootCloudConfigRejectsUnparseableContent(t *testing.T) {
 }
 
 func TestBootCloudConfigSkipsWhenTheDefaultHoldsTheSameContent(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	same := "compilation: {workers: 2}\nvm_types: [ {name: small} ]\nazs:\n    - {name: z1}\n"
 	boot, director, cfg := newBootDirector(t, false, cloudEntry("default", same))
 	logger := newRecordingLogger()
@@ -214,12 +204,8 @@ func TestBootCloudConfigSkipsWhenTheDefaultHoldsTheSameContent(t *testing.T) {
 }
 
 func TestBootCloudConfigRefusesOverlappingNames(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	for _, key := range []string{"azs", "vm_types", "disk_types", "networks", "vm_extensions"} {
 		t.Run(key, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			other := key + ":\n- name: shared\n- name: theirs\n"
 			boot, director, cfg := newBootDirector(t, false, cloudEntry("kit", other))
 			cfg.BOSH.CloudConfig = key + ":\n- name: shared\n- name: mine\n"
@@ -239,8 +225,6 @@ func TestBootCloudConfigRefusesOverlappingNames(t *testing.T) {
 }
 
 func TestBootCloudConfigRefusesASecondCompilationBlock(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	boot, director, cfg := newBootDirector(t, false,
 		cloudEntry("default", "compilation: {workers: 5}\nazs: [{name: z9}]\n"))
 	logger := newRecordingLogger()
@@ -255,8 +239,6 @@ func TestBootCloudConfigRefusesASecondCompilationBlock(t *testing.T) {
 }
 
 func TestBootCloudConfigSkipsWhenTheConfigsCannotBeRead(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	boot, director, cfg := newBootDirector(t, true)
 	logger := newRecordingLogger()
 
@@ -271,8 +253,6 @@ func TestBootCloudConfigSkipsWhenTheConfigsCannotBeRead(t *testing.T) {
 }
 
 func TestBootCloudConfigFailedWriteIsNotFatalAndNamesTheDirector(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/configs" {
 			return false
@@ -306,12 +286,8 @@ func TestBootCloudConfigFailedWriteIsNotFatalAndNamesTheDirector(t *testing.T) {
 // the broker cannot show that a write is safe, so it writes nothing and says
 // why.
 func TestBootCloudConfigSkipsWhenADirectorConfigIsUnreadable(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	for name, odd := range map[string]string{"unparseable": "azs: [unclosed", "not a map": "- a\n- b\n"} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			boot, director, cfg := newBootDirector(t, false, cloudEntry("odd", odd))
 			logger := newRecordingLogger()
 

@@ -51,9 +51,6 @@ cloud.google.com/go/longrunning/autogen/longrunningpb
 cloud.google.com/go/monitoring/apiv3
 cloud.google.com/go/monitoring/apiv3/v2/monitoringpb
 cloud.google.com/go/monitoring/internal
-# code.cloudfoundry.org/tlsconfig v0.31.0
-## explicit; go 1.23.0
-code.cloudfoundry.org/tlsconfig
 # dario.cat/mergo v1.0.2
 ## explicit; go 1.13
 dario.cat/mergo
@@ -420,9 +417,6 @@ github.com/beorn7/perks/quantile
 # github.com/bgentry/speakeasy v0.2.0
 ## explicit
 github.com/bgentry/speakeasy
-# github.com/bmatcuk/doublestar v1.3.4
-## explicit; go 1.12
-github.com/bmatcuk/doublestar
 # github.com/boltdb/bolt v1.3.1
 ## explicit
 github.com/boltdb/bolt
@@ -437,9 +431,6 @@ github.com/cenkalti/backoff/v4
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/charlievieth/fs v0.0.3
-## explicit; go 1.18
-github.com/charlievieth/fs
 # github.com/circonus-labs/circonus-gometrics v2.3.1+incompatible
 ## explicit
 github.com/circonus-labs/circonus-gometrics
@@ -466,28 +457,6 @@ github.com/cloudflare/circl/sign/ed448
 # github.com/cloudfoundry-community/vaultkv v0.7.0
 ## explicit; go 1.15
 github.com/cloudfoundry-community/vaultkv
-# github.com/cloudfoundry/bosh-cli/v7 v7.9.8
-## explicit; go 1.23.0
-github.com/cloudfoundry/bosh-cli/v7/common/util
-github.com/cloudfoundry/bosh-cli/v7/director
-github.com/cloudfoundry/bosh-cli/v7/io
-github.com/cloudfoundry/bosh-cli/v7/uaa
-# github.com/cloudfoundry/bosh-utils v0.0.552
-## explicit; go 1.23.0
-github.com/cloudfoundry/bosh-utils/crypto
-github.com/cloudfoundry/bosh-utils/errors
-github.com/cloudfoundry/bosh-utils/httpclient
-github.com/cloudfoundry/bosh-utils/logger
-github.com/cloudfoundry/bosh-utils/property
-github.com/cloudfoundry/bosh-utils/retrystrategy
-github.com/cloudfoundry/bosh-utils/system
-github.com/cloudfoundry/bosh-utils/uuid
-# github.com/cloudfoundry/go-socks5 v0.0.0-20250423223041-4ad5fea42851
-## explicit; go 1.21.0
-github.com/cloudfoundry/go-socks5
-# github.com/cloudfoundry/socks5-proxy v0.2.156
-## explicit; go 1.23.0
-github.com/cloudfoundry/socks5-proxy
 # github.com/containerd/errdefs v1.0.0
 ## explicit; go 1.20
 github.com/containerd/errdefs
@@ -504,9 +473,6 @@ github.com/coreos/go-systemd/journal
 # github.com/coreos/pkg v0.0.0-20220810130054-c7d1c02cb6cf
 ## explicit
 github.com/coreos/pkg/capnslog
-# github.com/cppforlife/go-semi-semantic v0.0.0-20160921010311-576b6af77ae4
-## explicit
-github.com/cppforlife/go-semi-semantic/version
 # github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 ## explicit
 github.com/davecgh/go-spew/spew
@@ -1205,9 +1171,6 @@ github.com/joyent/triton-go/authentication
 github.com/joyent/triton-go/client
 github.com/joyent/triton-go/compute
 github.com/joyent/triton-go/errors
-# github.com/jpillora/backoff v1.0.0
-## explicit; go 1.13
-github.com/jpillora/backoff
 # github.com/json-iterator/go v1.1.12
 ## explicit; go 1.12
 github.com/json-iterator/go
@@ -1309,9 +1272,6 @@ github.com/munnerz/goautoneg
 # github.com/nicolai86/scaleway-sdk v1.10.2-0.20180628010248-798f60e20bb2
 ## explicit
 github.com/nicolai86/scaleway-sdk
-# github.com/nu7hatch/gouuid v0.0.0-20131221200532-179d4d0c4d8d
-## explicit
-github.com/nu7hatch/gouuid
 # github.com/nxadm/tail v1.4.11
 ## explicit; go 1.13
 github.com/nxadm/tail
@@ -1399,9 +1359,6 @@ github.com/pierrec/lz4/internal/xxh32
 # github.com/pires/go-proxyproto v0.8.0
 ## explicit; go 1.18
 github.com/pires/go-proxyproto
-# github.com/pivotal-cf/paraphernalia v0.0.0-20180203224945-a64ae2051c20
-## explicit
-github.com/pivotal-cf/paraphernalia/secure/tlsconfig
 # github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 ## explicit; go 1.14
 github.com/pkg/browser
@@ -1685,7 +1642,6 @@ golang.org/x/crypto/sha3
 golang.org/x/crypto/ssh
 golang.org/x/crypto/ssh/agent
 golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
-golang.org/x/crypto/ssh/knownhosts
 # golang.org/x/exp v0.0.0-20251002181428-27f1f14c8bb9
 ## explicit; go 1.24.0
 golang.org/x/exp/constraints

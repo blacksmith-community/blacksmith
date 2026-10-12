@@ -48,7 +48,6 @@ func instanceListing() listingCall {
 // as the task's result.
 func listInstances(t *testing.T, output string) []bosh.Instance {
 	t.Helper()
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := newDetailsDirector(t, detailsConfig{kind: instancesKind, output: output})
 	director := newTaskAdapter(t, server.Director)
@@ -80,8 +79,6 @@ func listInstances(t *testing.T, output string) []bosh.Instance {
 // An instance without a VM has no agent and a null index. It is listed with
 // its instance UUID and index -1, the index a VM without one gets, rather
 // than an empty ID and index 0, which names a real instance.
-//
-//nolint:paralleltest // listInstances sets BLACKSMITH_TEST_MODE with t.Setenv
 func TestGetInstancesMapsAVMLessRow(t *testing.T) {
 	instance := listInstances(t, vmLessInstanceRow+"\n")[0]
 
@@ -101,8 +98,6 @@ func TestGetInstancesMapsAVMLessRow(t *testing.T) {
 // An instance is identified by its UUID, the row's id key, and not by its
 // agent's ID. Its process state comes from job_state, the key the director
 // writes.
-//
-//nolint:paralleltest // listInstances sets BLACKSMITH_TEST_MODE with t.Setenv
 func TestGetInstancesUsesTheInstanceUUIDAndTheJobState(t *testing.T) {
 	instance := listInstances(t, instanceRow+"\n")[0]
 
@@ -126,8 +121,6 @@ func TestGetInstancesUsesTheInstanceUUIDAndTheJobState(t *testing.T) {
 
 // The VM creation time is parsed, and a value that does not parse leaves
 // the zero time without failing the listing.
-//
-//nolint:paralleltest // listInstances sets BLACKSMITH_TEST_MODE with t.Setenv
 func TestGetInstancesParsesTheVMCreationTime(t *testing.T) {
 	t.Run("a valid time", func(t *testing.T) {
 		instance := listInstances(t, instanceRow+"\n")[0]
@@ -152,8 +145,6 @@ func TestGetInstancesParsesTheVMCreationTime(t *testing.T) {
 // The director's deployment-not-found answer, code 70000, gives
 // ErrDeploymentNotFound and keeps the director's own answer.
 func TestGetInstancesMapsCode70000ToErrDeploymentNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{kind: instancesKind, list: func(writer http.ResponseWriter, _ *http.Request) {
 		boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment 'valkey-1' doesn't exist")
 	}})
@@ -173,8 +164,6 @@ func TestGetInstancesMapsCode70000ToErrDeploymentNotFound(t *testing.T) {
 // An instance details task that ends in any state but done fails the
 // listing with a TaskFailedError that names the task.
 func TestGetInstancesFailsWhenTheTaskEndsInError(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{kind: instancesKind, state: func(int32, int32) (string, string) {
 		return batchTaskError, instanceFailed
 	}})
@@ -195,16 +184,12 @@ func TestGetInstancesFailsWhenTheTaskEndsInError(t *testing.T) {
 
 // The instance listing cancels its director task when the caller's context
 // ends, as the VM listing does.
-//
-//nolint:paralleltest // the shared runner sets BLACKSMITH_TEST_MODE with t.Setenv
 func TestInstanceDetailsCancelsTheDirectorTaskWhenTheContextEnds(t *testing.T) {
 	runCancelsTheTaskWhenTheContextEnds(t, instanceListing())
 }
 
 // A lost answer to the instance listing is not resent and does not read as
 // an unknown outcome, as for the VM listing.
-//
-//nolint:paralleltest // the shared runner sets BLACKSMITH_TEST_MODE with t.Setenv
 func TestInstanceDetailsLostAnswerIsNotOutcomeUnknown(t *testing.T) {
 	runLostAnswerIsNotOutcomeUnknown(t, instanceListing())
 }

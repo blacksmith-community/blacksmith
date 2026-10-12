@@ -75,8 +75,6 @@ func checkGatewayRefusal(t *testing.T, err error) {
 // the user the setup created is removed once.
 func TestSSHRefusesAResultThatNamesAGateway(t *testing.T) {
 	t.Run("SSHCommand", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 		server, director, store, _ := newFailedSetupAdapter(t, gatewayAnswer(gatewayUser, loopbackHost))
 		gateway := startSilentSSHServer(t)
 		bosh.SetSSHPort(director, gateway.port)
@@ -104,8 +102,6 @@ func TestSSHRefusesAResultThatNamesAGateway(t *testing.T) {
 	})
 
 	t.Run("terminal session", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 		server, director, store, _ := newFailedSetupAdapter(t, gatewayAnswer(gatewayUser, loopbackHost))
 		gateway := startSilentSSHServer(t)
 		bosh.SetSSHPort(director, gateway.port)
@@ -140,8 +136,6 @@ func TestSSHRefusesAResultThatNamesAGateway(t *testing.T) {
 // A result that names a gateway user but no gateway host names no
 // gateway, so SSHCommand connects to the VM directly.
 func TestSSHIgnoresAGatewayUserWithoutAHost(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var hostKey string
 
 	server, director, _ := newSSHAdapter(t, func(call boshtest.SSHCall) boshtest.SSHAnswer {

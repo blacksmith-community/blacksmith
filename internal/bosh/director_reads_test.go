@@ -2,13 +2,11 @@ package bosh_test
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,8 +43,6 @@ func newReadAdapter(t *testing.T, server *boshtest.Director, mutate func(*bosh.C
 // answer that means a deployment does not exist. The error keeps the
 // director's own answer so a caller can still see its description.
 func TestGetDeploymentMapsCode70000ToErrDeploymentNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/deployments/gone" {
 			return false
@@ -74,8 +70,6 @@ func TestGetDeploymentMapsCode70000ToErrDeploymentNotFound(t *testing.T) {
 // proxy in front of the director. It must never read as a missing deployment,
 // because callers delete credentials and index entries for a missing one.
 func TestGetDeploymentKeepsARoute404AsAnError(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/deployments/behind-proxy" {
 			return false
@@ -112,8 +106,6 @@ func TestGetDeploymentKeepsARoute404AsAnError(t *testing.T) {
 func TestGetDeploymentKeepsOtherNotFoundCodesAsErrors(t *testing.T) {
 	for _, code := range []int{boshtest.CodeDirectorNotFound, boshtest.CodeTaskNotFound} {
 		t.Run(strconv.Itoa(code), func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				if request.URL.Path != "/deployments/other" {
 					return false
@@ -164,8 +156,6 @@ func TestRequestTimeoutIsExplained(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			release := make(chan struct{})
 
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -218,8 +208,6 @@ func TestRequestTimeoutIsExplained(t *testing.T) {
 // and teams, so listing deployments takes one request and none per
 // deployment.
 func TestGetDeploymentsReadsReleasesFromTheList(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/deployments" {
 			return false
@@ -290,8 +278,6 @@ func TestGetDeploymentsReadsReleasesFromTheList(t *testing.T) {
 // Releases keep every version the director holds, and listing them takes one
 // request, with no extra call to /info.
 func TestGetReleasesReadsEveryVersionInOneRequest(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/releases" {
 			return false
@@ -337,8 +323,6 @@ func TestGetReleasesReadsEveryVersionInOneRequest(t *testing.T) {
 
 // Stemcells carry the deployments that use them, as names.
 func TestGetStemcellsMapsDeploymentsToNames(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/stemcells" {
 			return false
@@ -375,8 +359,6 @@ func TestGetStemcellsMapsDeploymentsToNames(t *testing.T) {
 // Events are filtered to the deployment by the director, and their times are
 // UTC.
 func TestGetEventsFiltersByDeploymentAndMapsFields(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/events" {
 			return false
@@ -419,8 +401,6 @@ func TestGetEventsFiltersByDeploymentAndMapsFields(t *testing.T) {
 
 // Errands are listed with the one request the director serves for them.
 func TestListErrandsReadsTheDeploymentsErrands(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/deployments/redis-1/errands" {
 			return false
@@ -452,8 +432,6 @@ func TestListErrandsReadsTheDeploymentsErrands(t *testing.T) {
 // as {"status": bool, "extras": {...}}, and GetInfo maps each feature name to
 // its status.
 func TestGetInfoNeedsNoCredentials(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var server *boshtest.Director
 
 	server = boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -515,8 +493,6 @@ func TestReadFailuresNameTheDirectorAndWhatToCheck(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				if request.URL.Path != "/deployments" {
 					return false
@@ -546,8 +522,6 @@ func TestReadFailuresNameTheDirectorAndWhatToCheck(t *testing.T) {
 // Without credentials the adapter has nothing to authenticate with, and it
 // says so when it is built, not at the first request.
 func TestNewDirectorAdapterRequiresCredentials(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	_, err := bosh.NewDirectorAdapter(bosh.Config{Address: "https://127.0.0.1:1"})
 	if !errors.Is(err, bosh.ErrDirectorCredentialsMissing) {
 		t.Fatalf("expected ErrDirectorCredentialsMissing, got: %v", err)
@@ -558,120 +532,52 @@ func TestNewDirectorAdapterRequiresCredentials(t *testing.T) {
 	}
 }
 
+// A username or password made only of whitespace is as missing as an empty
+// one, and with no address the error still reads as a sentence rather than
+// naming a director at an empty address.
+func TestBlankCredentialsAreReportedAsMissing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config bosh.Config
+		wants  []string
+	}{
+		{name: "a blank username", config: bosh.Config{Address: "https://127.0.0.1:1", Username: " \t", Password: basicAuthCredential},
+			wants: []string{"for the director at https://127.0.0.1:1.", "bosh.username"}},
+		{name: "a blank password", config: bosh.Config{Address: "https://127.0.0.1:1", Username: basicAuthCredential, Password: "\n"},
+			wants: []string{"for the director at https://127.0.0.1:1.", "bosh.password"}},
+		{name: "no address", config: bosh.Config{},
+			wants: []string{"no BOSH director credentials are configured. Set bosh.username and bosh.password"}},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := bosh.NewDirectorAdapter(testCase.config)
+			if !errors.Is(err, bosh.ErrDirectorCredentialsMissing) {
+				t.Fatalf("expected ErrDirectorCredentialsMissing, got: %v", err)
+			}
+
+			for _, want := range testCase.wants {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("expected the error to contain %q, got: %s", want, err.Error())
+				}
+			}
+		})
+	}
+}
+
 // An adapter with no credentials reports that before it does any network
 // setup, so it never reaches for the director first. The CA below cannot be
 // parsed, so any setup that runs before the credentials check would fail with
 // its own error instead of ErrDirectorCredentialsMissing. The address is the
 // loopback, so nothing here could reach a real director anyway.
 func TestMissingCredentialsAreReportedBeforeAnyNetworkSetup(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	_, err := bosh.NewDirectorAdapter(bosh.Config{Address: "https://127.0.0.1:1", CACert: "this is not a certificate"})
 	if !errors.Is(err, bosh.ErrDirectorCredentialsMissing) {
 		t.Fatalf("expected ErrDirectorCredentialsMissing before any network setup, got: %v", err)
-	}
-}
-
-// With no bosh.username and bosh.password, an adapter built with a UAA
-// configuration reads through that UAA's client, and it takes the token from
-// the UAA's own URL, not from the one the director's /info names.
-func TestUAAFallbackTakesTheTokenFromTheConfiguredUAA(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	var tokenAuth, directorAuth atomic.Pointer[string]
-
-	uaa := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.URL.Path != "/oauth/token" {
-			return false
-		}
-
-		header := request.Header.Get("Authorization")
-		tokenAuth.Store(&header)
-
-		boshtest.WriteJSON(writer, http.StatusOK, map[string]interface{}{"access_token": "uaa-token", "token_type": "bearer", "expires_in": 3600})
-
-		return true
-	})
-
-	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.URL.Path == "/info" {
-			// The director names a UAA that is not the configured one. The
-			// configured UAA must win, and this one answers nothing.
-			boshtest.WriteJSON(writer, http.StatusOK, map[string]interface{}{
-				"name": "lab-bosh", "uuid": "u-1", "version": "282.0.0", "user": nil, "cpi": "pve",
-				"user_authentication": map[string]interface{}{"type": "uaa", "options": map[string]string{"url": "https://127.0.0.1:1"}},
-			})
-
-			return true
-		}
-
-		if request.URL.Path != "/deployments" {
-			return false
-		}
-
-		header := request.Header.Get("Authorization")
-		directorAuth.Store(&header)
-
-		boshtest.WriteJSON(writer, http.StatusOK, []map[string]interface{}{})
-
-		return true
-	})
-
-	director := newReadAdapter(t, server, func(config *bosh.Config) {
-		config.Username, config.Password = "", ""
-		config.UAA = &bosh.UAAConfig{URL: uaa.URL + "/", ClientID: "uaa-client", ClientSecret: "uaa-secret"}
-	})
-
-	_, err := director.GetDeployments(t.Context())
-	if err != nil {
-		t.Fatalf("GetDeployments: %v", err)
-	}
-
-	wantToken := "Basic " + base64.StdEncoding.EncodeToString([]byte("uaa-client:uaa-secret"))
-
-	if got := tokenAuth.Load(); got == nil || *got != wantToken {
-		t.Errorf("the configured UAA should get a token request from the UAA client, got %v", got)
-	}
-
-	if got := directorAuth.Load(); got == nil || *got != "Bearer uaa-token" {
-		t.Errorf("the director should get the UAA's token, got %v", got)
-	}
-}
-
-// When the UAA configuration gives no URL, the adapter asks the director how
-// it authenticates, and uses the UAA client's ID and secret for it.
-func TestUAAFallbackWithoutAURLAsksTheDirector(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	var directorAuth atomic.Pointer[string]
-
-	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
-		if request.URL.Path != "/deployments" {
-			return false
-		}
-
-		header := request.Header.Get("Authorization")
-		directorAuth.Store(&header)
-
-		boshtest.WriteJSON(writer, http.StatusOK, []map[string]interface{}{})
-
-		return true
-	})
-
-	director := newReadAdapter(t, server, func(config *bosh.Config) {
-		config.Username, config.Password = "", ""
-		config.UAA = &bosh.UAAConfig{ClientID: "uaa-client", ClientSecret: "uaa-secret"}
-	})
-
-	_, err := director.GetDeployments(t.Context())
-	if err != nil {
-		t.Fatalf("GetDeployments: %v", err)
-	}
-
-	wantBasic := "Basic " + base64.StdEncoding.EncodeToString([]byte("uaa-client:uaa-secret"))
-
-	if got := directorAuth.Load(); got == nil || *got != wantBasic {
-		t.Errorf("the director takes HTTP Basic, so it should get the UAA client's ID and secret, got %v", got)
 	}
 }
 
@@ -680,8 +586,6 @@ func TestUAAFallbackWithoutAURLAsksTheDirector(t *testing.T) {
 // factory does not invent a figure of its own, so the default cannot live in
 // two places and the factory cannot lose it unnoticed.
 func TestRequestTimeoutDefaultsToSixtySeconds(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	base := bosh.Config{Address: "https://127.0.0.1:1", Username: basicAuthCredential, Password: basicAuthCredential}
 
 	withTimeout := base
@@ -692,12 +596,12 @@ func TestRequestTimeoutDefaultsToSixtySeconds(t *testing.T) {
 		t.Fatalf("NewDirectorAdapter: %v", err)
 	}
 
-	factoryDefault, err := bosh.NewFactory().New(base)
+	factoryDefault, err := bosh.NewDefaultFactory().New(base)
 	if err != nil {
 		t.Fatalf("Factory.New: %v", err)
 	}
 
-	factorySet, err := bosh.NewFactory().New(withTimeout)
+	factorySet, err := bosh.NewDefaultFactory().New(withTimeout)
 	if err != nil {
 		t.Fatalf("Factory.New: %v", err)
 	}
@@ -756,8 +660,6 @@ func (nilDeployments) Get(context.Context, string) (*boshapi.DeploymentManifest,
 // A nil answer from the client must come back as an error that names the
 // director, not as a nil dereference.
 func TestNilClientAnswersBecomeErrors(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, nil)
 	director := newReadAdapter(t, server, nil)
 

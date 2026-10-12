@@ -6,37 +6,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "blacksmith/internal/bosh"
+	"blacksmith/internal/bosh/boshtest"
 	"blacksmith/internal/config"
 )
-
-// TestCreateBasicFactoryConfigCarriesCACert verifies the configured CA reaches
-// the director HTTP client, not only the UAA client.
-func TestCreateBasicFactoryConfigCarriesCACert(t *testing.T) {
-	t.Parallel()
-
-	const caCert = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
-
-	factoryConfig := CreateBasicFactoryConfig(Config{
-		Address: "https://10.0.0.5:25555",
-		CACert:  caCert,
-	})
-
-	if factoryConfig.Host != "10.0.0.5" {
-		t.Fatalf("host = %q, want 10.0.0.5", factoryConfig.Host)
-	}
-
-	if factoryConfig.Port != 25555 {
-		t.Fatalf("port = %d, want 25555", factoryConfig.Port)
-	}
-
-	if factoryConfig.CACert != caCert {
-		t.Fatalf("CACert not carried into FactoryConfig: %q", factoryConfig.CACert)
-	}
-}
 
 // pemCertificate is the PEM block type of a certificate.
 const pemCertificate = "CERTIFICATE"
@@ -66,11 +43,8 @@ func writeFactoryConfig(t *testing.T, director, setting string) config.Config {
 
 // The factory hands bosh.task_watch_max to the pooled director and to the
 // batch director, so both followers hold a lost answer and read a silent
-// task for the configured time. Building them in test mode, which skips
-// the UAA detection, sends no request.
+// task for the configured time. Building them sends no request.
 func TestFactoryPassesTaskWatchMaxToBothFollowers(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		t.Errorf("building the directors sent %s %s", request.Method, request.URL.Path)
 		writer.WriteHeader(http.StatusInternalServerError)
@@ -108,5 +82,47 @@ func TestFactoryPassesTaskWatchMaxToBothFollowers(t *testing.T) {
 		if got := BatchWatchMaxOf(batch); got != test.want {
 			t.Errorf("%s: the batch director's follower uses %v, want %v", test.name, got, test.want)
 		}
+	}
+}
+
+// The factory keeps the director client's retries on. A read the director
+// answers with 503 is sent four times, the first attempt and three retries,
+// before the caller gets the answer. boshapi takes a RetryMax of zero as one
+// attempt, so the factory's default of three is what keeps the retries.
+func TestFactoryRetriesThreeTimesByDefault(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method != http.MethodGet || request.URL.Path != deploymentsRoute {
+			return false
+		}
+
+		attempts.Add(1)
+
+		// Retry-After: 0 holds the backoff between attempts to nothing.
+		writer.Header().Set("Retry-After", "0")
+		boshtest.WriteError(writer, http.StatusServiceUnavailable, 100, "the director is busy")
+
+		return true
+	})
+
+	pool, batch, err := CreatePooledAndBatchDirectors(server.URL, basicAuthCredential, basicAuthCredential, server.CACert, false,
+		0, 0, 1, 1, time.Minute, nil)
+	if err != nil {
+		t.Fatalf("CreatePooledAndBatchDirectors: %v", err)
+	}
+
+	t.Cleanup(pool.Stop)
+	t.Cleanup(batch.Stop)
+
+	_, err = pool.GetDeployments(t.Context())
+	if err == nil {
+		t.Fatal("expected the 503 to reach the caller once the retries ran out")
+	}
+
+	if got := attempts.Load(); got != 4 {
+		t.Fatalf("the director got %d attempts at GET /deployments, want 4: the first and three retries", got)
 	}
 }

@@ -227,8 +227,6 @@ func checkCallError(t *testing.T, err error, operation string, want bosh.TaskOut
 func TestGetDeploymentVMsFailsWhenTheTaskEndsInError(t *testing.T) {
 	for _, state := range []string{batchTaskError, taskCancelled, taskTimedOut} {
 		t.Run(state, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := newDetailsDirector(t, detailsConfig{state: func(int32, int32) (string, string) {
 				return state, "the vm-stats task ended " + state
 			}})
@@ -267,8 +265,6 @@ func TestGetDeploymentVMsFailsWhenTheTaskEndsInError(t *testing.T) {
 // ErrDeploymentNotFound and keeps the director's own answer. The listing
 // sends no other request first.
 func TestGetDeploymentVMsKeepsTheDirectorsNotFoundAnswer(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{list: func(writer http.ResponseWriter, _ *http.Request) {
 		boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment 'valkey-1' doesn't exist")
 	}})
@@ -297,8 +293,6 @@ func TestGetDeploymentVMsKeepsTheDirectorsNotFoundAnswer(t *testing.T) {
 // A plain 404 is a route the director does not serve, never a missing
 // deployment.
 func TestGetDeploymentVMsDoesNotTreatARoute404AsAMissingDeployment(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{list: func(writer http.ResponseWriter, request *http.Request) {
 		boshtest.WriteRouteNotFound(writer, request)
 	}})
@@ -322,8 +316,6 @@ func TestGetDeploymentVMsDoesNotTreatARoute404AsAMissingDeployment(t *testing.T)
 // The director writes a null index and null vitals for a VM it cannot read,
 // and the listing still converts it, with index -1 and empty vitals.
 func TestGetDeploymentVMsAcceptsAVMWithoutAnIndex(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	row := `{"agent_id":"agent-0","job_name":"node","index":null,"id":"uuid-0","job_state":"unresponsive agent",` +
 		`"state":"started","ips":["10.0.0.5"],"vm_cid":"vm-0","vm_created_at":null,"vitals":null,"processes":[],` +
 		`"stemcell":{"name":"","version":"","api_version":0}}`
@@ -372,15 +364,12 @@ func TestGetDeploymentVMsAcceptsAVMWithoutAnIndex(t *testing.T) {
 
 // A plain cancel of the caller's context ends the wait, and Blacksmith asks
 // the director to cancel the read-only task, so a queued task never runs.
-//
-//nolint:paralleltest // the shared runner sets BLACKSMITH_TEST_MODE with t.Setenv
 func TestVMDetailsCancelsTheDirectorTaskWhenTheContextEnds(t *testing.T) {
 	runCancelsTheTaskWhenTheContextEnds(t, vmListing())
 }
 
 func runCancelsTheTaskWhenTheContextEnds(t *testing.T, listing listingCall) {
 	t.Helper()
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := newDetailsDirector(t, detailsConfig{kind: listing.kind, state: queuedUntilCancelled})
 	director := newTaskAdapter(t, server.Director)
@@ -416,8 +405,6 @@ func runCancelsTheTaskWhenTheContextEnds(t *testing.T, listing listingCall) {
 // wait that ends with that cause sends no cancel, because a read-only task
 // harms nothing and ends on its own.
 func TestWaitOrCancelSendsNoCancelWhenTheBrokerIsShuttingDown(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{state: queuedUntilCancelled})
 	director := newTaskAdapter(t, server.Director)
 
@@ -449,8 +436,6 @@ func TestWaitOrCancelSendsNoCancelWhenTheBrokerIsShuttingDown(t *testing.T) {
 // A check's deadline is not a shutdown, so the wait still cancels the
 // queued task when the deadline passes.
 func TestWaitOrCancelStillCancelsWhenACheckDeadlinePasses(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{state: queuedUntilCancelled})
 	director := newTaskAdapter(t, server.Director)
 
@@ -490,8 +475,6 @@ func TestVMDetailsReportsATaskThatEndedBeforeTheCancel(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.state, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := newDetailsDirector(t, detailsConfig{
 				state: func(int32, int32) (string, string) { return taskQueued, "" },
 				cancel: func(writer http.ResponseWriter) {
@@ -529,8 +512,6 @@ func TestVMDetailsReportsATaskThatEndedBeforeTheCancel(t *testing.T) {
 // A cancel that fails is reported with its own error, and errors.Is still
 // answers for the wait's cause, not the cancel's.
 func TestVMDetailsReportsAFailedCancel(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{
 		state: func(int32, int32) (string, string) { return taskQueued, "" },
 		cancel: func(writer http.ResponseWriter) {
@@ -571,8 +552,6 @@ func TestVMDetailsReportsAFailedCancel(t *testing.T) {
 // A read of the task that fails while the caller's context is live leaves
 // the task running, and sends no cancel.
 func TestVMDetailsLeavesTheTaskRunningWhenAReadFails(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{
 		state: func(int32, int32) (string, string) { return "processing", "" },
 		read: func(writer http.ResponseWriter, poll int32) bool {
@@ -604,15 +583,12 @@ func TestVMDetailsLeavesTheTaskRunningWhenAReadFails(t *testing.T) {
 // Blacksmith or to boshapi. The director may have started a read-only task,
 // which ends on its own, and the caller can ask again. The request is never
 // resent.
-//
-//nolint:paralleltest // the shared runner sets BLACKSMITH_TEST_MODE with t.Setenv
 func TestVMDetailsLostAnswerIsNotOutcomeUnknown(t *testing.T) {
 	runLostAnswerIsNotOutcomeUnknown(t, vmListing())
 }
 
 func runLostAnswerIsNotOutcomeUnknown(t *testing.T, listing listingCall) {
 	t.Helper()
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	server := newDetailsDirector(t, detailsConfig{kind: listing.kind, list: func(writer http.ResponseWriter, _ *http.Request) {
 		boshtest.DropAnswer(writer)
@@ -657,8 +633,6 @@ func runLostAnswerIsNotOutcomeUnknown(t *testing.T, listing listingCall) {
 // answer, and its error names the setting that bounded it. The caller's own
 // context is still live, so the error does not read as its deadline.
 func TestVMDetailsLostAnswerNamesTheRequestTimeout(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	release := make(chan struct{})
 
 	server := newDetailsDirector(t, detailsConfig{list: func(_ http.ResponseWriter, request *http.Request) {
@@ -722,8 +696,6 @@ func TestVMDetailsLostAnswerGivesNoAdviceToLookForATask(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := newDetailsDirector(t, detailsConfig{list: testCase.answer})
 			director := newTaskAdapter(t, server.Director)
 
@@ -859,8 +831,6 @@ var errResultUnparsable = errors.New("unexpected end of JSON input")
 // does not turn the task's failure, or a result that does not parse, into
 // a call that stopped before the director answered.
 func TestAFinishedTaskIsNotExplainedAsAStoppedCall(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{})
 	director := newTaskAdapter(t, server.Director)
 

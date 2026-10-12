@@ -38,9 +38,6 @@ func (r *recordingBoshLogger) output() string {
 
 // GetConfig is generic, so what it logs must never include a config body.
 func TestGetConfigNeverLogsTheConfigBody(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.URL.Path != "/configs" {
 			return false

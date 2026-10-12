@@ -63,8 +63,6 @@ func requestsTo(server *boshtest.Director, method, path string) []boshtest.Reque
 // never cancels a task just because it stopped waiting for it, and the error
 // says so and names the task.
 func TestWaitForTaskLeavesTheTaskRunningWhenTheContextEnds(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks/42" {
 			return false
@@ -124,8 +122,6 @@ func TestWaitForTaskLeavesTheTaskRunningWhenTheContextEnds(t *testing.T) {
 // The task is left running, and the error says so, names the task, and
 // points at /b/tasks/N, so a caller can follow the task again.
 func TestWaitForTaskThatCannotReadTheTaskLeavesItRunning(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var polls atomic.Int32
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -200,8 +196,6 @@ func TestWaitForTaskThatCannotReadTheTaskLeavesItRunning(t *testing.T) {
 func TestWaitForTaskReturnsFailedTasksWithoutError(t *testing.T) {
 	for _, state := range []string{"done", "error", "cancelled", "timeout"} {
 		t.Run(state, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			var polls atomic.Int32
 
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -358,8 +352,6 @@ func TestBatchWaitEndsWithTheCallersContext(t *testing.T) {
 // The director filters a deployment's tasks by state itself, so Blacksmith
 // asks for the running states rather than scanning recent tasks.
 func TestFindRunningTaskForDeploymentFiltersByState(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -411,8 +403,6 @@ func TestFindRunningTaskForDeploymentFiltersByState(t *testing.T) {
 // in the answer, from a director or proxy that ignored the state filter,
 // does not count as running.
 func TestFindRunningTaskForDeploymentReturnsNilWhenNoneRuns(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -436,8 +426,6 @@ func TestFindRunningTaskForDeploymentReturnsNilWhenNoneRuns(t *testing.T) {
 // A finished task, from a director or proxy that ignored the state filter,
 // is left out.
 func TestFindRunningTasksForDeploymentListsEveryRunningTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -479,8 +467,6 @@ func TestFindRunningTasksForDeploymentListsEveryRunningTask(t *testing.T) {
 
 // When no task runs, the list is empty with no error.
 func TestFindRunningTasksForDeploymentIsEmptyWhenNoneRuns(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -515,8 +501,6 @@ func contextTask(id int, state, contextID string) map[string]interface{} {
 // its tasks newest first, and the list here does too, apart from task 42
 // at its head, so neither the first match nor the last one is the newest.
 func TestFindTaskByContextIDSendsVerbose2WithoutADeployment(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	const contextID = "5f0c8a52-3c1e-4f43-9a8e-2f4b1d6c7e90"
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -572,8 +556,6 @@ func TestFindTaskByContextIDSendsVerbose2WithoutADeployment(t *testing.T) {
 // carries another ID, from a director or proxy that ignored the filter, is
 // not a match.
 func TestFindTaskByContextIDReturnsNilWhenNoneMatches(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -596,8 +578,6 @@ func TestFindTaskByContextIDReturnsNilWhenNoneMatches(t *testing.T) {
 // task on the director would be taken for the one the broker sent, so it is
 // refused before anything is sent.
 func TestFindTaskByContextIDRefusesAnEmptyID(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -622,8 +602,6 @@ func TestFindTaskByContextIDRefusesAnEmptyID(t *testing.T) {
 
 // A failed lookup is an error, never an answer that no task has the ID.
 func TestFindTaskByContextIDReturnsTheDirectorsError(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -646,8 +624,6 @@ func TestFindTaskByContextIDReturnsTheDirectorsError(t *testing.T) {
 // singular route. It has no DELETE /tasks/N, and a cancel needs no read of
 // the task first.
 func TestCancelTaskUsesTheDirectorsRoute(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodDelete || request.URL.Path != "/task/42" {
 			return false
@@ -675,8 +651,6 @@ func TestCancelTaskUsesTheDirectorsRoute(t *testing.T) {
 // 400. The tasks handler answers 409 for it, so the error must match
 // ErrTaskCannotBeCancelled.
 func TestCancelOfAFinishedTaskMapsToCannotBeCancelled(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodDelete || request.URL.Path != "/task/42" {
 			return false
@@ -709,8 +683,6 @@ func TestCancelOfAFinishedTaskMapsToCannotBeCancelled(t *testing.T) {
 // When a cancel's answer is lost, the director may have taken it. Blacksmith
 // reads the task, and a task already cancelling needs no second cancel.
 func TestLostCancelAnswerIsCheckedByReadingTheTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		switch {
 		case request.Method == http.MethodDelete && request.URL.Path == "/task/42":
@@ -743,8 +715,6 @@ func TestLostCancelAnswerIsCheckedByReadingTheTask(t *testing.T) {
 // When a cancel's answer is lost and the task still runs, the cancel never
 // landed, so Blacksmith sends it once more.
 func TestLostCancelAnswerIsResentWhileTheTaskRuns(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var cancels atomic.Int32
 
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -826,8 +796,6 @@ func lostCancelDirector(t *testing.T, state string, second func(http.ResponseWri
 func TestLostCancelAnswerToAFinishedTaskIsNotResent(t *testing.T) {
 	for _, state := range []string{"done", "error", "timeout"} {
 		t.Run(state, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := lostCancelDirector(t, state, nil)
 			director := newReadAdapter(t, server, nil)
 
@@ -853,8 +821,6 @@ func TestLostCancelAnswerToAFinishedTaskIsNotResent(t *testing.T) {
 // ended, the error carries the state it read as a *boshapi.TaskStateError,
 // as the director's own refusal does.
 func TestCancelAfterALostAnswerCarriesTheTaskState(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := lostCancelDirector(t, "done", nil)
 	director := newReadAdapter(t, server, nil)
 
@@ -880,8 +846,6 @@ func TestCancelAfterALostAnswerCarriesTheTaskState(t *testing.T) {
 // When a cancel's answer is lost and the task reads cancelled, the cancel
 // landed, so it succeeds and no second cancel is sent.
 func TestLostCancelAnswerToACancelledTaskIsNotResent(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := lostCancelDirector(t, "cancelled", nil)
 	director := newReadAdapter(t, server, nil)
 
@@ -900,8 +864,6 @@ func TestLostCancelAnswerToACancelledTaskIsNotResent(t *testing.T) {
 func TestSecondCancelThatFindsTheCancelLandedSucceeds(t *testing.T) {
 	for _, state := range []string{"cancelling", "cancelled"} {
 		t.Run(state, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := lostCancelDirector(t, "processing", func(writer http.ResponseWriter) {
 				boshtest.WriteText(writer, http.StatusBadRequest, "Cannot cancel task 42: invalid state ("+state+")")
 			})
@@ -924,8 +886,6 @@ func TestSecondCancelThatFindsTheCancelLandedSucceeds(t *testing.T) {
 func TestLostCancelAnswerIsNotResentToATaskInAnUnknownState(t *testing.T) {
 	for _, state := range []string{"", "paused"} {
 		t.Run("state "+strconv.Quote(state), func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := lostCancelDirector(t, state, func(writer http.ResponseWriter) {
 				writer.WriteHeader(http.StatusNoContent)
 			})
@@ -956,8 +916,6 @@ func TestLostCancelAnswerIsNotResentToATaskInAnUnknownState(t *testing.T) {
 // Current mode asks the director for the running states. The director has no
 // task type filter, so no type parameter is sent.
 func TestGetTasksCurrentModeSendsTheRunningStates(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -1005,8 +963,6 @@ func TestGetTasksCurrentModeSendsTheRunningStates(t *testing.T) {
 // Recent mode asks for twice the limit, so the state and team filters that
 // run in Blacksmith still have enough tasks to fill the page.
 func TestGetTasksRecentModeSendsALimit(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -1049,8 +1005,6 @@ func TestGetTasksRecentModeSendsALimit(t *testing.T) {
 // All mode merges the running tasks with the recent ones, newest first, with
 // each task once.
 func TestGetAllTasksMergesRunningAndRecentTasks(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks" {
 			return false
@@ -1088,8 +1042,6 @@ func TestGetAllTasksMergesRunningAndRecentTasks(t *testing.T) {
 
 // A task read carries the director's own fields and times.
 func TestGetTaskMapsTheDirectorsFields(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks/42" {
 			return false
@@ -1134,8 +1086,6 @@ func TestGetTaskMapsTheDirectorsFields(t *testing.T) {
 // A missing task keeps the director's answer, so a caller can tell a task the
 // director has no record of from a failed request.
 func TestGetTaskOfAMissingTaskKeepsTheDirectorsAnswer(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks/404" {
 			return false
@@ -1175,8 +1125,6 @@ func TestGetTaskOutputMapsTheOutputType(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run("type="+testCase.asked, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 				if request.Method != http.MethodGet || request.URL.Path != "/tasks/42/output" {
 					return false
@@ -1204,8 +1152,6 @@ func TestGetTaskOutputMapsTheOutputType(t *testing.T) {
 // Task events come from the event output, one JSON object a line, and lines
 // that are not events are skipped.
 func TestGetTaskEventsParsesTheEventOutput(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		if request.Method != http.MethodGet || request.URL.Path != "/tasks/42/output" || request.URL.Query().Get("type") != "event" {
 			return false

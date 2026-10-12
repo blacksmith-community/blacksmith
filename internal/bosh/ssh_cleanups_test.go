@@ -170,8 +170,6 @@ func sweep(t *testing.T, pool *bosh.PooledDirector) error {
 // The record is in Vault before the director hears of the setup, so a
 // restart at any point after the setup is sent still finds the user.
 func TestSSHSetupRecordsTheCleanupBeforeSending(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var (
 		guard  sync.Mutex
 		stored *sshconn.PendingCleanup
@@ -221,8 +219,6 @@ func TestSSHSetupRecordsTheCleanupBeforeSending(t *testing.T) {
 // A setup whose record cannot be written is never sent, and the error
 // names the user and says why nothing was set up.
 func TestSSHSetupIsRefusedWhenTheRecordFails(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	sealed := errors.New("vault is sealed") //nolint:err113 // a test's own failure
 
 	server, pool, store, _ := newSweepAdapter(t, nil)
@@ -261,8 +257,6 @@ func TestSSHCleanupClearsTheRecordOnlyWhenItsTaskIsDone(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			_, pool, store, _ := newSweepAdapter(t, func(call boshtest.SSHCall) boshtest.SSHAnswer {
 				if call.Command == boshtest.SSHCleanup {
 					return boshtest.SSHAnswer{State: test.state, Result: "the agent on redis/0 did not answer"}
@@ -285,8 +279,6 @@ func TestSSHCleanupClearsTheRecordOnlyWhenItsTaskIsDone(t *testing.T) {
 // A record a previous run left is swept with one cleanup for its own user
 // and target, and cleared once that cleanup ends done.
 func TestSSHSweepRetriesALeftoverRecord(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, pool, store, _ := newSweepAdapter(t, nil)
 	store.leave(t)
 
@@ -318,8 +310,6 @@ func TestSSHSweepRetriesALeftoverRecord(t *testing.T) {
 // A user whose setup or cleanup this broker is still running is left to
 // that call.
 func TestSSHSweepSkipsALiveUser(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, pool, store, _ := newSweepAdapter(t, nil)
 	session := mustOpenSSHSession(t, pool)
 
@@ -341,8 +331,6 @@ func TestSSHSweepSkipsALiveUser(t *testing.T) {
 // sends no cleanup there, so a cleanup never runs ahead of a setup. The
 // next pass after the setup ends sends it.
 func TestSSHSweepWaitsWhileASetupRuns(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, pool, store, logger := newSweepAdapter(t, nil)
 	store.leave(t)
 
@@ -382,8 +370,6 @@ func TestSSHSweepWaitsWhileASetupRuns(t *testing.T) {
 // The director's deployment-not-found answer clears the record, because
 // the user went with the deployment.
 func TestSSHSweepClearsARecordWhoseDeploymentIsGone(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, pool, store, _ := newSweepAdapter(t, func(call boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{Status: http.StatusNotFound, Code: boshapi.ErrorCodeDeploymentNotFound, Description: deploymentGone}
 	})
@@ -404,8 +390,6 @@ func TestSSHSweepClearsARecordWhoseDeploymentIsGone(t *testing.T) {
 // A cleanup that fails because the instance has no VM clears the record,
 // because the VM's users lived on a root disk that a recreate replaced.
 func TestSSHSweepClearsARecordWhoseVMIsGone(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, pool, store, _ := newSweepAdapter(t, func(call boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{
 			State:  boshtest.TaskError,
@@ -429,8 +413,6 @@ func TestSSHSweepClearsARecordWhoseVMIsGone(t *testing.T) {
 // Any other failure keeps the record, counts the attempt, stores the
 // error, and logs a warning that names the attempt.
 func TestSSHSweepKeepsAFailedRecordAndCountsTheAttempt(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	const agentDown = "Timed out sending 'ssh' to instance: 'redis/2'"
 
 	_, pool, store, logger := newSweepAdapter(t, func(call boshtest.SSHCall) boshtest.SSHAnswer {
@@ -488,8 +470,6 @@ func TestSSHSetupTheDirectorRefusedLeavesNoRecord(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, pool, store, _ := newSweepAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer { return test.answer })
 
 			err := callWithin(t, sshCallLimit, func() error {
@@ -514,8 +494,6 @@ func TestSSHSetupTheDirectorRefusedLeavesNoRecord(t *testing.T) {
 // cleanup ends, so the next sweep in the same process sends the cleanup
 // again and clears the record once it ends done.
 func TestSSHSweepRetriesASessionCleanupThatFailed(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var cleanups atomic.Int32
 
 	server, pool, store, _ := newSweepAdapter(t, func(call boshtest.SSHCall) boshtest.SSHAnswer {
@@ -556,8 +534,6 @@ func TestSSHSweepRetriesASessionCleanupThatFailed(t *testing.T) {
 // while an earlier cleanup on the deployment is in flight holds back the
 // cleanups that follow, and the next pass after it ends sends them.
 func TestSSHSweepLooksForASetupBeforeEachCleanup(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var (
 		guard    sync.Mutex
 		director *boshtest.SSHDirector

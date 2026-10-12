@@ -8,15 +8,9 @@ import (
 	"time"
 
 	"blacksmith/internal/bosh/sshconn"
-	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"golang.org/x/crypto/ssh"
 )
-
-// CreateBasicFactoryConfig exposes createBasicFactoryConfig to package bosh_test.
-func CreateBasicFactoryConfig(config Config) *boshdirector.FactoryConfig {
-	return createBasicFactoryConfig(config)
-}
 
 // RequestTimeoutOf reports the request timeout an adapter runs with.
 func RequestTimeoutOf(director Director) time.Duration {

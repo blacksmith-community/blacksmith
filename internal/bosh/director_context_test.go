@@ -16,8 +16,6 @@ import (
 // caller past the caller's deadline, and the request itself must be
 // cancelled rather than left open on the wire.
 func TestDirectorCallEndsWithTheCallersContext(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	arrived := make(chan struct{}, 1)
 	canceled := make(chan struct{}, 1)
 	release := make(chan struct{})

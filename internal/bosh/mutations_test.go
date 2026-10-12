@@ -252,8 +252,6 @@ func checkRedirectTask(t *testing.T, task *bosh.Task, err error) {
 // A deploy returns the task the director's redirect names, as soon as the
 // director accepts it, and sends the manifest as it is.
 func TestCreateDeploymentReturnsTheRedirectTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -275,8 +273,6 @@ func TestCreateDeploymentReturnsTheRedirectTask(t *testing.T) {
 // A newer task that runs on the deployment is never taken for the deploy
 // task, because the redirect names the deploy task itself.
 func TestCreateDeploymentReturnsTheRedirectTaskNotTheNewestRunningTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	running := directorTask(redirectTaskID+50, batchTaskProcessing)
 	running["deployment"] = deploymentName
 
@@ -294,8 +290,6 @@ func TestCreateDeploymentReturnsTheRedirectTaskNotTheNewestRunningTask(t *testin
 }
 
 func TestUpdateDeploymentReturnsTheRedirectTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -315,8 +309,6 @@ func TestUpdateDeploymentReturnsTheRedirectTask(t *testing.T) {
 }
 
 func TestDeleteDeploymentSendsNoForceAndReturnsTheRedirectTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -355,8 +347,6 @@ func TestUploadsSendTheURLAndSHA1AndReturnTheRedirectTask(t *testing.T) {
 
 	for name, upload := range uploads {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 				redirectToTask(writer)
 			})
@@ -389,8 +379,6 @@ func TestUploadsSendTheURLAndSHA1AndReturnTheRedirectTask(t *testing.T) {
 }
 
 func TestCleanupSendsRemoveAllAndReturnsTheRedirectTask(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -421,8 +409,6 @@ func TestCleanupSendsRemoveAllAndReturnsTheRedirectTask(t *testing.T) {
 }
 
 func TestRestartSendsTheLiteralWildcardJobWithCanaries(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -446,8 +432,6 @@ func TestRestartSendsTheLiteralWildcardJobWithCanaries(t *testing.T) {
 }
 
 func TestHardStopSendsTheDetachedState(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -506,8 +490,6 @@ func TestJobStateOptionsMapAcross(t *testing.T) {
 
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 				redirectToTask(writer)
 			})
@@ -535,8 +517,6 @@ func TestJobStateOptionsMapAcross(t *testing.T) {
 }
 
 func TestCreateDeploymentUsesTheCallersContextID(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -553,8 +533,6 @@ func TestCreateDeploymentUsesTheCallersContextID(t *testing.T) {
 // A caller that brings no context ID gets a fresh UUID on the request, and
 // a lost answer names the ID that was sent.
 func TestCreateDeploymentGeneratesAContextIDWhenTheCallerSetsNone(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -603,8 +581,6 @@ func TestMutationRefusesAnInvalidCallersContextID(t *testing.T) {
 	for idName, id := range ids {
 		for callName, call := range allMutationCalls() {
 			t.Run(idName+"/"+callName, func(t *testing.T) {
-				t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 				server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 					redirectToTask(writer)
 				})
@@ -658,8 +634,6 @@ func TestDeployAndDeleteLostAnswersAreOutcomeUnknown(t *testing.T) {
 
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 				boshtest.DropAnswer(writer)
 			})
@@ -702,7 +676,6 @@ func cancelOnArrival(cancel context.CancelFunc) func(http.ResponseWriter, *http.
 // outcome behind the context's own explanation.
 func checkCancelledLostAnswer(t *testing.T, call mutationCall) {
 	t.Helper()
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
 
 	ctx, cancel := context.WithCancel(boshapi.WithContextID(t.Context(), contextID))
 	defer cancel()
@@ -721,12 +694,10 @@ func checkCancelledLostAnswer(t *testing.T, call mutationCall) {
 	log.only(t)
 }
 
-//nolint:paralleltest // t.Setenv cannot be used with t.Parallel
 func TestDeployWithACancelledCallerContextStillReturnsOutcomeUnknown(t *testing.T) {
 	checkCancelledLostAnswer(t, createCall())
 }
 
-//nolint:paralleltest // t.Setenv cannot be used with t.Parallel
 func TestDeleteWithACancelledCallerContextStillReturnsOutcomeUnknown(t *testing.T) {
 	checkCancelledLostAnswer(t, deleteCall())
 }
@@ -742,8 +713,6 @@ func TestJobStateUploadAndCleanupLostAnswersMakeNoLookup(t *testing.T) {
 
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 				boshtest.DropAnswer(writer)
 			})
@@ -786,8 +755,6 @@ func TestJobStateUploadAndCleanupLostAnswersMakeNoLookup(t *testing.T) {
 }
 
 func TestDeleteDeploymentMapsCode70000ToNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment 'dep-1' doesn't exist")
 	})
@@ -805,8 +772,6 @@ func TestDeleteDeploymentMapsCode70000ToNotFound(t *testing.T) {
 }
 
 func TestDeleteDeploymentRoute404IsARouteNotFoundError(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, request *http.Request) {
 		boshtest.WriteRouteNotFound(writer, request)
 	})
@@ -825,8 +790,6 @@ func TestDeleteDeploymentRoute404IsARouteNotFoundError(t *testing.T) {
 // A delete the director answers with code 70000 started no task, so the
 // pool frees its slot at once for the next mutation.
 func TestPooledSlotIsReleasedAtOnceWhenTheDeleteIsNotFound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodDelete {
 			boshtest.WriteError(writer, http.StatusNotFound, boshtest.CodeDeploymentNotFound, "Deployment 'dep-1' doesn't exist")
@@ -870,8 +833,6 @@ func newRealAdapterBatch(t *testing.T, server *boshtest.Director) (*bosh.BatchDi
 // The director's rejection of a deploy started no task, so the batch slot
 // frees at once and the next deploy gets it.
 func TestBatchSlotIsReleasedWhenTheRealAdapterGetsARejection(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var rejected sync.Once
 
 	server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
@@ -914,8 +875,6 @@ func TestBatchSlotIsReleasedWhenTheRealAdapterGetsARejection(t *testing.T) {
 // A deploy that never reached the director started no task, so the batch
 // slot frees at once.
 func TestBatchSlotIsReleasedWhenTheRealAdapterGetsAnUnsentRequest(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 		redirectToTask(writer)
 	})
@@ -971,10 +930,11 @@ func resetConnection(writer http.ResponseWriter) {
 	_ = raw.Close()
 }
 
-// newResettingUAAAdapter returns a real adapter over the test director
-// that takes its token from a UAA whose token request ends in a
-// connection reset, and the UAA.
-func newResettingUAAAdapter(t *testing.T, server *boshtest.Director) (bosh.Director, *boshtest.Director) {
+// newResettingUAAAdapter returns a real adapter over a test director whose
+// GET /info names a UAA, and that UAA ends every token request in a
+// connection reset. It also returns the director, the log of every other
+// request the director got, and the UAA.
+func newResettingUAAAdapter(t *testing.T) (bosh.Director, *boshtest.Director, *mutationLog, *boshtest.Director) {
 	t.Helper()
 
 	uaa := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
@@ -987,16 +947,30 @@ func newResettingUAAAdapter(t *testing.T, server *boshtest.Director) (bosh.Direc
 		return true
 	})
 
-	director := newReadAdapter(t, server, func(config *bosh.Config) {
-		config.Username, config.Password = "", ""
-		config.UAA = &bosh.UAAConfig{URL: uaa.URL, ClientID: "uaa-client", ClientSecret: "uaa-secret"}
+	log := &mutationLog{}
+
+	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.Method == http.MethodGet && request.URL.Path == infoRoute {
+			directorInfo(writer, uaaAuthentication(uaa.URL))
+
+			return true
+		}
+
+		log.add(request)
+		redirectToTask(writer)
+
+		return true
 	})
 
-	return director, uaa
+	director := newReadAdapter(t, server, func(config *bosh.Config) {
+		config.Username, config.Password = "uaa-client", "uaa-secret"
+	})
+
+	return director, server, log, uaa
 }
 
 // expectNeverAuthenticated checks that err is the failed UAA token request
-// and that the UAA, and nothing else, was asked.
+// and that the director was asked only how it authenticates.
 func expectNeverAuthenticated(t *testing.T, err error, uaa, server *boshtest.Director, log *mutationLog) {
 	t.Helper()
 
@@ -1013,20 +987,15 @@ func expectNeverAuthenticated(t *testing.T, err error, uaa, server *boshtest.Dir
 		t.Fatalf("expected nothing to reach the director, got %+v", sent)
 	}
 
-	if requests := server.Requests(); len(requests) != 0 {
-		t.Fatalf("expected no request to reach the director, got %+v", requests)
+	if requests := server.APIRequests(); len(requests) != 0 {
+		t.Fatalf("expected no request but GET /info to reach the director, got %+v", requests)
 	}
 }
 
 // A deploy whose UAA token request failed was never sent, so the pool frees
 // its slot as soon as the call returns and follows nothing.
 func TestPooledAuthErrorFreesTheSlotAtOnce(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
-		redirectToTask(writer)
-	})
-	director, uaa := newResettingUAAAdapter(t, server)
+	director, server, log, uaa := newResettingUAAAdapter(t)
 	pool, _, logger := newTestPool(t, director, 1)
 
 	_, err := pool.CreateDeployment(t.Context(), mutationManifest)
@@ -1048,12 +1017,7 @@ func TestPooledAuthErrorFreesTheSlotAtOnce(t *testing.T) {
 // A deploy whose UAA token request failed was never sent, so the batch
 // director frees its slot as soon as the call returns and follows nothing.
 func TestBatchAuthErrorFreesTheSlotAtOnce(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	server, log := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
-		redirectToTask(writer)
-	})
-	director, uaa := newResettingUAAAdapter(t, server)
+	director, server, log, uaa := newResettingUAAAdapter(t)
 	logger := &recordingLogger{}
 	batch := bosh.NewBatchDirector(director, 1, time.Minute, logger)
 	bosh.SetBatchClock(batch, newFakeBatchClock())
@@ -1081,8 +1045,6 @@ func TestBatchAuthErrorFreesTheSlotAtOnce(t *testing.T) {
 func TestBatchSlotIsKeptWhenTheRealAdapterGetsA502Or504OnTheDeploy(t *testing.T) {
 	for _, status := range []int{http.StatusBadGateway, http.StatusGatewayTimeout} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, _ := newMutationDirector(t, nil, func(writer http.ResponseWriter, _ *http.Request) {
 				boshtest.WriteText(writer, status, "gateway error")
 			})
@@ -1261,8 +1223,6 @@ func checkFoundTask(t *testing.T, director *lostAnswerDirector, task *bosh.Task,
 // A deploy whose answer was lost is found by its context ID, so the caller
 // gets the deploy's task and never learns the answer was lost.
 func TestCreateDeploymentFindsTheTaskByContextIDAfterALostAnswer(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	call := createCall()
 	director := newLostAnswerDirector(t, listsTheTask(call))
 	adapter, logs := newLoggedAdapter(t, director.server, nil)
@@ -1285,8 +1245,6 @@ func TestCreateDeploymentFindsTheTaskByContextIDAfterALostAnswer(t *testing.T) {
 
 // A delete whose answer was lost is found by its context ID the same way.
 func TestDeleteDeploymentFindsTheTaskByContextIDAfterALostAnswer(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	call := deleteCall()
 	director := newLostAnswerDirector(t, listsTheTask(call))
 	adapter, logs := newLoggedAdapter(t, director.server, nil)
@@ -1318,8 +1276,6 @@ func TestCreateDeploymentIsNeverResentAfterALostAnswer(t *testing.T) {
 
 	for name, lookup := range lookups {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			director := newLostAnswerDirector(t, lookup)
 			adapter, _ := newLoggedAdapter(t, director.server, func(config *bosh.Config) { config.MaxRetries = 3 })
 
@@ -1340,8 +1296,6 @@ func TestCreateDeploymentIsNeverResentAfterALostAnswer(t *testing.T) {
 // that names the deployment and the context ID, and says Blacksmith looked
 // for the task.
 func TestCreateDeploymentLostAnswerReturnsOutcomeUnknownWithDeploymentAndContextID(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	call := createCall()
 	director := newLostAnswerDirector(t, listsNothing)
 	adapter, _ := newLoggedAdapter(t, director.server, nil)
@@ -1376,8 +1330,6 @@ func TestLostAnswerLookupFailureStillReturnsOutcomeUnknown(t *testing.T) {
 
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			director := newLostAnswerDirector(t, failsEveryList)
 			adapter, logs := newLoggedAdapter(t, director.server, nil)
 
@@ -1415,8 +1367,6 @@ func TestFailedLookupSaysTheTaskCouldNotBeSought(t *testing.T) {
 
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			director := newLostAnswerDirector(t, failsEveryList)
 			adapter, _ := newLoggedAdapter(t, director.server, nil)
 
@@ -1451,8 +1401,6 @@ func TestLostAnswerLookupRunsAfterTheCallersContextEnds(t *testing.T) {
 
 	for name, lookup := range lookups {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			ctx, cancel := context.WithCancel(boshapi.WithContextID(t.Context(), contextID))
 			defer cancel()
 
@@ -1505,8 +1453,6 @@ func TestLostAnswerLookupRunsAfterTheCallersContextEnds(t *testing.T) {
 // task by the context ID later, follows it to the end, and then frees the
 // slot.
 func TestBatchDirectorFollowsALostDeployAnswerThroughTheRealAdapter(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var (
 		mu       sync.Mutex
 		listed   bool

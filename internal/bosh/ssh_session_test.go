@@ -144,8 +144,6 @@ func TestSSHSetupSendsTheDirectorsBody(t *testing.T) {
 
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, director, _ := newSSHAdapter(t, nil)
 
 			err := callWithin(t, sshCallLimit, func() error {
@@ -202,8 +200,6 @@ var agentUser = regexp.MustCompile(`^bosh_[0-9a-f]{15}$`)
 // user, carries a context ID of its own, and is sent once however often
 // it is called.
 func TestSSHCleanupSendsTheAnchoredUserRegex(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, _ := newSSHAdapter(t, nil)
 	session := mustOpenSSHSession(t, director)
 
@@ -257,8 +253,6 @@ func TestSSHSetupRefusesAnEmptyOrFailedResult(t *testing.T) {
 
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			_, director, _ := newSSHAdapter(t, func(call boshtest.SSHCall) boshtest.SSHAnswer {
 				if call.Command == boshtest.SSHSetup {
 					return boshtest.SSHAnswer{Output: testCase.output}
@@ -282,8 +276,6 @@ func TestSSHSetupRefusesAnEmptyOrFailedResult(t *testing.T) {
 // SSHSession hands back a typed session that carries the host, the user,
 // the target, the key the setup sent, and a cleanup.
 func TestSSHSessionReturnsTheTypedSession(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, _ := newSSHAdapter(t, nil)
 	session := mustOpenSSHSession(t, director)
 
@@ -321,8 +313,6 @@ func TestSSHSessionReturnsTheTypedSession(t *testing.T) {
 // SSHCommand sets up the user through boshapi, logs in with the key the
 // setup sent, runs the command, and removes the user once.
 func TestSSHCommandRunsThroughBoshapi(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, _ := newSSHAdapter(t, nil)
 
 	vmServer := startExecServer(t, func(user string, key ssh.PublicKey) bool {
@@ -371,12 +361,10 @@ func TestSSHCommandRunsThroughBoshapi(t *testing.T) {
 // target, and both context IDs.
 func TestSSHCleanupWaitsForItsTaskAndLogsAFailure(t *testing.T) {
 	t.Run("waits for its task", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
 		testSSHCleanupWaitsForItsTask(t)
 	})
 
 	t.Run("logs a failed task", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
 		testSSHCleanupLogsAFailedTask(t)
 	})
 }
@@ -458,8 +446,6 @@ func testSSHCleanupLogsAFailedTask(t *testing.T) {
 // not that answer.
 func TestSSHSetupKeepsTheDirectorsNotFoundAnswer(t *testing.T) {
 	t.Run("code 70000", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 		_, director, _ := newSSHAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 			return boshtest.SSHAnswer{Status: http.StatusNotFound, Code: boshtest.CodeDeploymentNotFound, Description: "Deployment 'redis-1' doesn't exist"}
 		})
@@ -480,8 +466,6 @@ func TestSSHSetupKeepsTheDirectorsNotFoundAnswer(t *testing.T) {
 	})
 
 	t.Run("route 404", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 		server := boshtest.New(t, nil)
 		director := newTaskAdapter(t, server)
 
@@ -504,8 +488,6 @@ func TestSSHSetupKeepsTheDirectorsNotFoundAnswer(t *testing.T) {
 // 401 and code 600000, is asked once, and the error says the client lacks
 // the permission to set up SSH there.
 func TestSSHSetupNamesAMissingPermission(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, _ := newSSHAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{
 			Status:      http.StatusUnauthorized,
@@ -537,8 +519,6 @@ func TestSSHSetupNamesAMissingPermission(t *testing.T) {
 // A target that is not one instance is refused before anything is sent,
 // because an empty group selects every instance in the deployment.
 func TestSSHRefusesATargetThatIsNotOneInstance(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, _ := newSSHAdapter(t, nil)
 
 	for name, target := range map[string]struct {

@@ -218,8 +218,6 @@ func failedSetupPaths() []failedSetupPath {
 func TestSSHSetupCleansUpOnEveryFailurePath(t *testing.T) {
 	for _, path := range failedSetupPaths() {
 		t.Run(path.name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
@@ -242,8 +240,6 @@ func TestSSHSetupCleansUpOnEveryFailurePath(t *testing.T) {
 // A setup the director has started runs to its end even after a cancel,
 // so the cleanup waits until the cancelled setup task has ended.
 func TestSSHCleanupWaitsForACancelledSetupToEnd(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{State: boshtest.TaskProcessing}
 	})
@@ -277,8 +273,6 @@ func TestSSHCleanupWaitsForACancelledSetupToEnd(t *testing.T) {
 // cleanup waits until no SSH setup is running on the deployment, and the
 // caller's error names the context ID and the user.
 func TestSSHCleanupAfterALostAnswerWaitsForTheSetupToLeave(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{Drop: true, State: boshtest.TaskProcessing}
 	})
@@ -319,8 +313,6 @@ func TestSSHCleanupAfterALostAnswerWaitsForTheSetupToLeave(t *testing.T) {
 // A setup task that never ends within the settle bound gets no cleanup.
 // Its record stays for the sweep, and the log says so.
 func TestSSHSetupThatNeverSettlesIsLeftToItsRecord(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, logger := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{State: boshtest.TaskProcessing}
 	})
@@ -356,8 +348,6 @@ func TestSSHSetupThatNeverSettlesIsLeftToItsRecord(t *testing.T) {
 // A shutdown spares a read-only task, but a setup task creates a user, so
 // its wait still cancels it.
 func TestSSHSetupWaitCancelsEvenWhenTheBrokerIsShuttingDown(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{State: boshtest.TaskQueued}
 	})
@@ -388,8 +378,6 @@ func TestSSHSetupWaitCancelsEvenWhenTheBrokerIsShuttingDown(t *testing.T) {
 // The caller gets the setup's error at once, while the cleanup is still
 // waiting on the director.
 func TestSSHSetupFailureReturnsBeforeTheCleanup(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	release := make(chan struct{})
 	released := false
 
@@ -439,8 +427,6 @@ func TestSSHSetupFailureReturnsBeforeTheCleanup(t *testing.T) {
 // set, so once its task ends the next sweep in the same process removes
 // the user and clears the record.
 func TestSSHSweepRemovesAUserWhoseSetupNeverSettled(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, logger := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{State: boshtest.TaskProcessing}
 	})
@@ -471,8 +457,6 @@ func TestSSHSweepRemovesAUserWhoseSetupNeverSettled(t *testing.T) {
 // A setup task that ends in error is the commonest failure, and its error
 // names the user and the instance as every other failed setup's does.
 func TestSSHSetupTaskFailureNamesTheUser(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{State: boshtest.TaskError, Result: agentTimedOut}
 	})
@@ -497,22 +481,18 @@ func TestSSHSetupTaskFailureNamesTheUser(t *testing.T) {
 // known for as long as it is live.
 func TestSSHSweepSaysWhyItLeavesAHeldUser(t *testing.T) {
 	t.Run("a setup that is still running", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
 		checkSweepSkipsASettingUpUser(t)
 	})
 
 	t.Run("an open session", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
 		checkSweepSkipsASessionUser(t)
 	})
 
 	t.Run("a failed setup whose task has not ended", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
 		checkSweepSkipsASettlingUser(t)
 	})
 
 	t.Run("a cleanup that is still running", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
 		checkSweepSkipsACleaningUpUser(t)
 	})
 }

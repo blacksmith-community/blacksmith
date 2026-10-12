@@ -104,8 +104,6 @@ func TestSSHAcceptsTheDirectorsHostKey(t *testing.T) {
 
 	for name, reported := range map[string]ssh.Signer{"rsa": keys[0], "ecdsa": keys[1], "ed25519": keys[2]} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, director, _ := newSSHAdapter(t, reportHostKey(boshtest.AuthorizedKey(reported.PublicKey())))
 			vmServer := startExecServer(t, acceptEveryLogin, keys...)
 			bosh.SetSSHPort(director, vmServer.port)
@@ -136,8 +134,6 @@ func TestSSHAcceptsTheDirectorsHostKey(t *testing.T) {
 // before any login, and the user is still removed. The error names the
 // deployment, the instance, the host, and both fingerprints.
 func TestSSHRefusesAHostKeyThatDoesNotMatchTheDirector(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, _ := newSSHAdapter(t, nil)
 	recreated := newEd25519Signer(t)
 	vmServer := startExecServer(t, acceptEveryLogin, recreated)
@@ -180,8 +176,6 @@ func TestSSHRefusesAHostKeyThatDoesNotMatchTheDirector(t *testing.T) {
 // the instance, the host, and the reported key's fingerprint, and the
 // user is still removed.
 func TestSSHRefusesAVMThatOffersNoKeyOfTheReportedType(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	keys := vmHostKeys(t)
 	server, director, _ := newSSHAdapter(t, reportHostKey(boshtest.AuthorizedKey(keys[0].PublicKey())))
 	vmServer := startExecServer(t, acceptEveryLogin, keys[1], keys[2])
@@ -230,8 +224,6 @@ func TestSSHRefusesAMissingOrUnparseableHostKey(t *testing.T) {
 		"unparseable": {hostKey: "ssh-rsa not-base64", says: "does not parse"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			server, director, store, _ := newFailedSetupAdapter(t, reportHostKey(testCase.hostKey))
 
 			err := failSetup(t, t.Context(), director)

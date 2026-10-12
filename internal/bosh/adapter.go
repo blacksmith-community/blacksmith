@@ -2,12 +2,11 @@ package bosh
 
 import (
 	"context"
-	"io"
 	"time"
 )
 
-// Director defines the interface for BOSH operations
-// This provides a clean abstraction over the BOSH CLI director client.
+// Director defines the BOSH operations Blacksmith uses. DirectorAdapter
+// implements it over the boshapi client.
 type Director interface {
 	// Director operations
 	GetInfo(ctx context.Context) (*Info, error)
@@ -360,20 +359,6 @@ type TaskEventError struct {
 	Message string `json:"message"`
 }
 
-// EventLogger provides event logging capabilities.
-type EventLogger interface {
-	io.Writer
-	Stage(stage string)
-	BeginLinef(pattern string, args ...interface{})
-	EndLinef(pattern string, args ...interface{})
-	Errorf(pattern string, args ...interface{})
-}
-
-// DirectorFactory creates Director instances.
-type DirectorFactory interface {
-	New(config Config) (Director, error)
-}
-
 // Config represents the configuration for creating a Director.
 type Config struct {
 	// Connection details
@@ -382,19 +367,14 @@ type Config struct {
 	Password          string
 	SkipSSLValidation bool
 
-	// UAA authentication (for bosh-cli)
-	UAA *UAAConfig
+	// CACert is the PEM text of the CA that signed the director's
+	// certificate, and UAA's when the director uses UAA.
+	CACert string
 
-	// Certificate authentication
-	CACert     string
-	ClientCert string
-	ClientKey  string
-
-	// Connection options
-	Timeout        time.Duration
-	ConnectTimeout time.Duration
-	MaxRetries     int
-	RetryInterval  time.Duration
+	// MaxRetries is how many times a request that is safe to resend is
+	// sent again. Zero means one attempt and no retries, and Factory.New
+	// sets it to 3 when it is zero.
+	MaxRetries int
 
 	// RequestTimeout bounds one HTTP request to the director, and the wait
 	// for the director to start answering it. Zero means 60 seconds. It is
@@ -402,17 +382,7 @@ type Config struct {
 	RequestTimeout time.Duration
 
 	// Logging
-	EventLogger EventLogger // For event logging (legacy)
-	Logger      Logger      // For Info/Debug/Error logging
-}
-
-// UAAConfig represents UAA authentication configuration.
-type UAAConfig struct {
-	URL               string
-	ClientID          string
-	ClientSecret      string
-	SkipSSLValidation bool
-	CACert            string
+	Logger Logger // For Info/Debug/Error logging
 }
 
 // Operation options structures. A job-state change always converges, and

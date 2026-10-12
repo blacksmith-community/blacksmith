@@ -196,65 +196,9 @@ releases: []`,
 	}
 }
 
-// TestBuildFactoryConfig tests the factory config building.
-func TestBuildFactoryConfig(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv
-	// Set test mode to skip network calls
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
-	tests := []struct {
-		name    string
-		address string
-	}{
-		{
-			name:    "https address with port",
-			address: "https://192.168.1.1:25555",
-		},
-		{
-			name:    "https address without port",
-			address: "https://192.168.1.1",
-		},
-		{
-			name:    "http address",
-			address: "http://192.168.1.1:25555",
-		},
-		{
-			name:    "plain address",
-			address: "192.168.1.1:25555",
-		},
-	}
-
-	for _, tt := range tests { //nolint:paralleltest // Cannot use t.Parallel() when parent test uses t.Setenv
-		t.Run(tt.name, func(t *testing.T) {
-			// Cannot use t.Parallel() when parent test uses t.Setenv
-			config := Config{
-				Address:  tt.address,
-				Username: "admin",
-				Password: "password",
-			}
-
-			// We can't easily test buildFactoryConfig directly as it's private
-			// But we can test through NewDirectorAdapter
-			// The bosh-cli director doesn't connect until first use
-			director, err := NewDirectorAdapter(config)
-
-			// The creation should succeed (lazy connection)
-			if err != nil {
-				t.Errorf("Unexpected error creating director: %v", err)
-			}
-
-			if director == nil {
-				t.Errorf("Expected director to be created")
-			}
-		})
-	}
-}
-
 // TestDirectorAdapterCreation tests creating a DirectorAdapter with various configs.
 func TestDirectorAdapterCreation(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv
-	// Set test mode to skip network calls
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+	t.Parallel()
 
 	tests := []struct {
 		name      string
@@ -282,10 +226,10 @@ func TestDirectorAdapterCreation(t *testing.T) {
 		},
 	}
 
-	//nolint:paralleltest // Cannot use t.Parallel() when parent test uses t.Setenv
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			// Cannot use t.Parallel() when parent test uses t.Setenv
+			t.Parallel()
+
 			_, err := NewDirectorAdapter(testCase.config)
 			if (err != nil) != testCase.wantError {
 				t.Errorf("NewDirectorAdapter() error = %v, wantError %v", err, testCase.wantError)
@@ -421,8 +365,7 @@ func TestGetConfigsReturnsOnlyActive(t *testing.T) {
 // GetInfo carries the director's UAA URL when /info says the director uses
 // UAA, and leaves it empty for any other authentication type.
 func TestGetInfoReturnsUAAURL(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
+	t.Parallel()
 
 	tests := []struct {
 		name string
@@ -434,8 +377,10 @@ func TestGetInfoReturnsUAAURL(t *testing.T) {
 		{name: "uaa without url", auth: `{"type":"uaa","options":{}}`, want: ""},
 	}
 
-	for _, testCase := range tests { //nolint:paralleltest // Cannot use t.Parallel() when parent test uses t.Setenv
+	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
 			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if request.URL.Path != "/info" {
 					writer.WriteHeader(http.StatusNotFound)

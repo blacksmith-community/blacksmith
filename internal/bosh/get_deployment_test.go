@@ -15,9 +15,6 @@ const basicAuthCredential = "admin"
 // deploy is still running, and 404 for a deployment that does not exist. Only
 // the latter may be reported as ErrDeploymentNotFound.
 func TestGetDeploymentDistinguishesEmptyManifestFromMissing(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := boshtest.New(t, func(writer http.ResponseWriter, request *http.Request) bool {
 		switch request.URL.Path {
 		case "/deployments/in-flight":

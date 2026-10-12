@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -19,9 +18,6 @@ import (
 	"unicode"
 
 	"blacksmith/internal/bosh/sshconn"
-	boshdirector "github.com/cloudfoundry/bosh-cli/v7/director"
-	boshuaa "github.com/cloudfoundry/bosh-cli/v7/uaa"
-	boshlog "github.com/cloudfoundry/bosh-utils/logger"
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/geofffranks/spruce"
 	"github.com/google/uuid"
@@ -31,10 +27,8 @@ import (
 
 // Error definitions.
 var (
-	ErrDirectorInfoProviderNil = errors.New("director info provider is nil")
-	ErrFactoryConfigNil        = errors.New("factory config is nil")
-	ErrNoErrandResults         = errors.New("no errand results returned")
-	ErrInvalidErrandInstance   = errors.New("the errand instance is not a group or a group/ID")
+	ErrNoErrandResults       = errors.New("no errand results returned")
+	ErrInvalidErrandInstance = errors.New("the errand instance is not a group or a group/ID")
 )
 
 // Constants for director adapter operations.
@@ -59,10 +53,9 @@ const (
 	// setup task still queued at the bound is cancelled.
 	sshSetupTimeout = 3 * time.Minute
 
-	// Default ports for BOSH services.
-	defaultBOSHDirectorPort = 25555
-	AuthTypeUAA             = "uaa"
-	authTypeUAA             = AuthTypeUAA // Deprecated: use AuthTypeUAA
+	// AuthTypeUAA is the user_authentication type of a director that uses
+	// UAA.
+	AuthTypeUAA = "uaa"
 	// Default config limit.
 	defaultConfigLimit = 100
 )
@@ -88,12 +81,6 @@ var (
 	ErrResurrectionConfigUpdateFailed = errors.New("failed to update resurrection config for deployment")
 	ErrResurrectionConfigDeleteFailed = errors.New("failed to delete resurrection config for deployment")
 	ErrResurrectionConfigNotFound     = errors.New("resurrection config for deployment not found or already deleted")
-	ErrUAAAutoDetectionNotApplicable  = errors.New("UAA auto-detection not applicable")
-	ErrUAAURLNotFound                 = errors.New("UAA URL not found in auth options")
-	ErrDirectorNotUsingUAA            = errors.New("director does not use UAA authentication")
-	ErrUAAURLNotString                = errors.New("UAA URL in director info is not a string")
-	ErrUAAURLNotFoundInInfo           = errors.New("UAA URL not found in director info")
-	ErrUAAClientCredentialsMissing    = errors.New("missing UAA client credentials")
 )
 
 // GetConfig retrieves a configuration by type and name from BOSH director.
@@ -140,13 +127,10 @@ func (da *DirectorAdapter) GetConfig(ctx context.Context, configType, configName
 	return configData, nil
 }
 
-// DirectorAdapter implements the Director interface. The methods that have
-// moved off bosh-cli call the boshapi client, and the rest still go through
-// the bosh-cli director.
+// DirectorAdapter implements the Director interface. Every method calls the
+// director through the boshapi client.
 type DirectorAdapter struct {
-	director boshdirector.Director
-	// api is the boshapi client the methods that have moved off bosh-cli
-	// call.
+	// api is the boshapi client every method calls the director through.
 	api            boshapi.Client
 	address        string        // director address, for errors
 	requestTimeout time.Duration // the bosh.request_timeout in force, for errors
@@ -173,16 +157,14 @@ type DirectorAdapter struct {
 	// ended done after ShutdownSSH closed the gate. Zero means
 	// lateSSHCleanupTimeout.
 	lateCleanupTimeout time.Duration
-	logger             boshlog.Logger
 	log                Logger // Application logger for Info/Debug logging
 }
 
-// bind returns the bosh-cli director for one call.
-func (d *DirectorAdapter) bind(ctx context.Context) boshdirector.Director {
-	return d.director
-}
-
-// NewDirectorAdapter creates a new bosh-cli based Director.
+// NewDirectorAdapter creates a Director that calls the director at
+// config.Address through boshapi. It sends no request. How to authenticate
+// is read from the director's GET /info on the first call, under that call's
+// context, so a director that uses UAA and one that uses HTTP Basic both
+// work with bosh.username and bosh.password.
 func NewDirectorAdapter(config Config) (Director, error) {
 	// Use the provided logger or create a no-op logger
 	var appLogger Logger
@@ -205,38 +187,6 @@ func NewDirectorAdapter(config Config) (Director, error) {
 		return nil, err
 	}
 
-	logger := boshlog.NewLogger(boshlog.LevelError)
-
-	// Create factory config
-	appLogger.Debugf("Building factory configuration")
-
-	factoryConfig, err := buildFactoryConfig(config, logger)
-	if err != nil {
-		appLogger.Errorf("Failed to build factory config: %v", err)
-
-		return nil, fmt.Errorf("failed to build factory config: %w", err)
-	}
-
-	// Create director factory
-	appLogger.Debugf("Creating director factory")
-
-	factory := boshdirector.NewFactory(logger)
-
-	// Create task reporter and file reporter
-	// Use the built-in no-op reporters from the director package
-	taskReporter := boshdirector.NoopTaskReporter{}
-	fileReporter := boshdirector.NoopFileReporter{}
-
-	// Create director with authentication
-	appLogger.Debugf("Creating director client")
-
-	director, err := factory.New(*factoryConfig, taskReporter, fileReporter)
-	if err != nil {
-		appLogger.Errorf("Failed to create director: %v", err)
-
-		return nil, fmt.Errorf("failed to create director: %w", err)
-	}
-
 	appLogger.Debugf("Creating boshapi client")
 
 	api, err := newAPIClient(config, auth, appLogger)
@@ -249,12 +199,10 @@ func NewDirectorAdapter(config Config) (Director, error) {
 	appLogger.Infof("Successfully created BOSH director adapter")
 
 	return &DirectorAdapter{
-		director:       director,
 		api:            api,
 		address:        config.Address,
 		requestTimeout: config.RequestTimeout,
 		sshPort:        sshconn.Port,
-		logger:         logger,
 		log:            appLogger,
 	}, nil
 }
@@ -296,7 +244,7 @@ func (d *DirectorAdapter) GetInfo(ctx context.Context) (_ *Info, err error) {
 	d.log.Debugf("Director info retrieved - Name: %s, UUID: %s, Version: %s", info.Name, info.UUID, info.Version)
 
 	// The director reports each feature as {"status": bool, "extras": {...}}.
-	// Features maps each feature name to its status, as bosh-cli does.
+	// Features maps each feature name to its status.
 	features := make(map[string]bool, len(info.Features))
 	for name, feature := range info.Features {
 		features[name] = feature.Status
@@ -1463,355 +1411,6 @@ func convertConfigEntry(config boshapi.ConfigEntry) BoshConfig {
 	}
 }
 
-// Helper functions
-
-func buildFactoryConfig(config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
-	factoryConfig := createBasicFactoryConfig(config)
-
-	// Skip auto-detection if we're in a test environment
-	if os.Getenv("BLACKSMITH_TEST_MODE") == "true" {
-		return setupTestModeAuth(factoryConfig, config, logger)
-	}
-
-	// Try UAA authentication first if possible
-	uaaConfig, err := attemptUAAAutoDetection(config, logger, factoryConfig)
-	if err == nil && uaaConfig != nil {
-		return uaaConfig, nil
-	}
-
-	// Fall back to basic auth or explicit UAA config
-	return setupFallbackAuth(factoryConfig, config, logger)
-}
-
-// createBasicFactoryConfig creates the basic factory config with host and port parsing.
-func createBasicFactoryConfig(config Config) *boshdirector.FactoryConfig {
-	host, port := parseHostAndPort(config.Address, defaultBOSHDirectorPort)
-
-	// The CA must reach the director HTTP client itself, not only the UAA
-	// client, or every director call is verified against the system roots.
-	return &boshdirector.FactoryConfig{
-		Host:   host,
-		Port:   port,
-		CACert: config.CACert,
-	}
-}
-
-// parseHostAndPort extracts host and port from an address string.
-func parseHostAndPort(address string, defaultPort int) (string, int) {
-	host := address
-	port := defaultPort
-
-	// Remove https:// or http:// prefix if present
-	if strings.HasPrefix(host, "https://") {
-		host = strings.TrimPrefix(host, "https://")
-	} else if strings.HasPrefix(host, "http://") {
-		host = strings.TrimPrefix(host, "http://")
-	}
-
-	// Extract port if specified
-	if strings.Contains(host, ":") {
-		parts := strings.Split(host, ":")
-
-		host = parts[0]
-		if len(parts) > 1 {
-			p, err := strconv.Atoi(parts[1])
-			if err == nil {
-				port = p
-			}
-		}
-	}
-
-	return host, port
-}
-
-// setupTestModeAuth configures authentication for test mode.
-func setupTestModeAuth(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
-	if config.Username != "" && config.Password != "" {
-		err := setEnvCredentials(config.Username, config.Password, logger)
-		if err != nil {
-			return nil, err
-		}
-
-		factoryConfig.Client = config.Username
-		factoryConfig.ClientSecret = config.Password
-	}
-
-	return factoryConfig, nil
-}
-
-// setEnvCredentials sets BOSH environment variables.
-func setEnvCredentials(username, password string, logger boshlog.Logger) error {
-	err := os.Setenv("BOSH_CLIENT", username)
-	if err != nil {
-		logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT environment variable: %s", err)
-
-		return fmt.Errorf("failed to set BOSH_CLIENT environment variable: %w", err)
-	}
-
-	err = os.Setenv("BOSH_CLIENT_SECRET", password)
-	if err != nil {
-		logger.Error("buildFactoryConfig", "failed to set BOSH_CLIENT_SECRET environment variable: %s", err)
-
-		return fmt.Errorf("failed to set BOSH_CLIENT_SECRET environment variable: %w", err)
-	}
-
-	return nil
-}
-
-// attemptUAAAutoDetection tries to auto-detect UAA configuration.
-func attemptUAAAutoDetection(config Config, logger boshlog.Logger, factoryConfig *boshdirector.FactoryConfig) (*boshdirector.FactoryConfig, error) {
-	tempFactory := boshdirector.NewFactory(logger)
-
-	tempDirector, err := tempFactory.New(*factoryConfig, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary BOSH director: %w", err)
-	}
-
-	info, err := tempDirector.Info()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get director info: %w", err)
-	}
-
-	if config.Logger != nil {
-		config.Logger.Debugf("Detected director auth type: %s", info.Auth.Type)
-	}
-
-	// If director uses UAA and we have credentials, set up UAA client auth
-	if info.Auth.Type == authTypeUAA && config.Username != "" && config.Password != "" {
-		cachedInfoProvider := &staticDirectorInfoProvider{info: info}
-
-		return setupUAAAuth(config, cachedInfoProvider, factoryConfig)
-	}
-
-	return nil, ErrUAAAutoDetectionNotApplicable
-}
-
-// setupUAAAuth configures UAA authentication.
-type directorInfoProvider interface {
-	Info() (boshdirector.Info, error)
-}
-
-type staticDirectorInfoProvider struct {
-	info boshdirector.Info
-}
-
-func (s *staticDirectorInfoProvider) Info() (boshdirector.Info, error) {
-	return s.info, nil
-}
-
-// setupUAAAuth configures UAA authentication.
-func setupUAAAuth(config Config, director directorInfoProvider, factoryConfig *boshdirector.FactoryConfig) (*boshdirector.FactoryConfig, error) {
-	err := validateUAASetupParams(director, factoryConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	uaaURL, clientID, clientSecret, caCert, err := resolveUAACredentials(config, director)
-	if err != nil {
-		return nil, err
-	}
-
-	uaaConfig, err := buildUAAConfig(uaaURL, clientID, clientSecret, caCert)
-	if err != nil {
-		return nil, err
-	}
-
-	uaaClient, err := createUAAClientFromConfig(uaaConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaaClient).TokenFunc
-
-	return factoryConfig, nil
-}
-
-func validateUAASetupParams(director directorInfoProvider, factoryConfig *boshdirector.FactoryConfig) error {
-	if director == nil {
-		return ErrDirectorInfoProviderNil
-	}
-
-	if factoryConfig == nil {
-		return ErrFactoryConfigNil
-	}
-
-	return nil
-}
-
-func resolveUAACredentials(config Config, director directorInfoProvider) (string, string, string, string, error) {
-	var uaaURL, clientID, clientSecret, caCert string
-
-	var err error
-
-	if config.UAA != nil {
-		uaaURL = config.UAA.URL
-		clientID = config.UAA.ClientID
-		clientSecret = config.UAA.ClientSecret
-		caCert = config.UAA.CACert
-	}
-
-	if uaaURL == "" {
-		uaaURL, err = getUAAURLFromDirector(director)
-		if err != nil {
-			return "", "", "", "", err
-		}
-	}
-
-	if clientID == "" {
-		clientID = config.Username
-	}
-
-	if clientSecret == "" {
-		clientSecret = config.Password
-	}
-
-	if clientID == "" || clientSecret == "" {
-		return "", "", "", "", ErrUAAClientCredentialsMissing
-	}
-
-	if caCert == "" {
-		caCert = config.CACert
-	}
-
-	return uaaURL, clientID, clientSecret, caCert, nil
-}
-
-func getUAAURLFromDirector(director directorInfoProvider) (string, error) {
-	info, err := director.Info()
-	if err != nil {
-		return "", fmt.Errorf("error getting director info: %w", err)
-	}
-
-	if info.Auth.Type != authTypeUAA {
-		return "", ErrDirectorNotUsingUAA
-	}
-
-	urlInterface, found := info.Auth.Options["url"]
-	if !found {
-		return "", ErrUAAURLNotFoundInInfo
-	}
-
-	urlStr, ok := urlInterface.(string)
-	if !ok {
-		return "", ErrUAAURLNotString
-	}
-
-	return urlStr, nil
-}
-
-func buildUAAConfig(uaaURL, clientID, clientSecret, caCert string) (boshuaa.Config, error) {
-	normalizedURL := ensureHTTPScheme(uaaURL)
-
-	uaaConfig, err := boshuaa.NewConfigFromURL(normalizedURL)
-	if err != nil {
-		return boshuaa.Config{}, fmt.Errorf("invalid UAA URL: %w", err)
-	}
-
-	uaaConfig.Client = clientID
-
-	uaaConfig.ClientSecret = clientSecret
-	if caCert != "" {
-		uaaConfig.CACert = caCert
-	}
-
-	return uaaConfig, nil
-}
-
-func createUAAClientFromConfig(uaaConfig boshuaa.Config) (boshuaa.UAA, error) {
-	uaaFactory := boshuaa.NewFactory(boshlog.NewLogger(boshlog.LevelError))
-
-	uaaClient, err := uaaFactory.New(uaaConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create UAA client: %w", err)
-	}
-
-	return uaaClient, nil
-}
-
-func ensureHTTPScheme(rawURL string) string {
-	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
-		return rawURL
-	}
-
-	return "https://" + rawURL
-}
-
-// createUAAClient creates a new UAA client.
-func createUAAClient(host string, port int, clientID, clientSecret, caCert string, logger boshlog.Logger) (boshuaa.UAA, error) {
-	uaaConfig := boshuaa.Config{
-		Host:         host,
-		Port:         port,
-		Client:       clientID,
-		ClientSecret: clientSecret,
-		CACert:       caCert,
-	}
-
-	uaaFactory := boshuaa.NewFactory(logger)
-
-	uaa, err := uaaFactory.New(uaaConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create UAA client: %w", err)
-	}
-
-	return uaa, nil
-}
-
-// setupFallbackAuth configures fallback authentication (basic auth or explicit UAA).
-func setupFallbackAuth(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
-	if config.UAA == nil {
-		return setupBasicAuth(factoryConfig, config, logger)
-	}
-
-	return setupExplicitUAA(factoryConfig, config, logger)
-}
-
-// setupBasicAuth configures basic authentication.
-func setupBasicAuth(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
-	if config.Username != "" && config.Password != "" {
-		err := setEnvCredentials(config.Username, config.Password, logger)
-		if err != nil {
-			return nil, err
-		}
-
-		if config.Logger != nil {
-			config.Logger.Debugf("Setting up basic auth with username: %s", config.Username)
-			config.Logger.Debugf("Set BOSH_CLIENT env var to: %s", config.Username)
-		}
-
-		factoryConfig.Client = config.Username
-		factoryConfig.ClientSecret = config.Password
-	} else {
-		// Check if env vars are already set
-		envClient := os.Getenv("BOSH_CLIENT")
-		envSecret := os.Getenv("BOSH_CLIENT_SECRET")
-
-		if envClient != "" && envSecret != "" {
-			if config.Logger != nil {
-				config.Logger.Debugf("Using BOSH_CLIENT from environment: %s", envClient)
-			}
-
-			factoryConfig.Client = envClient
-			factoryConfig.ClientSecret = envSecret
-		} else if config.Logger != nil {
-			config.Logger.Errorf("No authentication credentials provided (neither config nor env vars)")
-		}
-	}
-
-	return factoryConfig, nil
-}
-
-// setupExplicitUAA configures explicit UAA authentication.
-func setupExplicitUAA(factoryConfig *boshdirector.FactoryConfig, config Config, logger boshlog.Logger) (*boshdirector.FactoryConfig, error) {
-	uaa, err := createUAAClient(config.UAA.URL, 0, config.UAA.ClientID, config.UAA.ClientSecret, config.UAA.CACert, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create UAA client: %w", err)
-	}
-
-	factoryConfig.TokenFunc = boshuaa.NewClientTokenSession(uaa).TokenFunc
-
-	return factoryConfig, nil
-}
-
 func ExtractDeploymentName(manifest string) string {
 	// Simple extraction - look for "name:" at the beginning of a line
 	lines := strings.Split(manifest, "\n")
@@ -2210,7 +1809,7 @@ func (da *DirectorAdapter) DeleteResurrectionConfig(ctx context.Context, deploym
 	err = da.api.Configs().DeleteByTypeAndName(ctx, "resurrection", configName)
 	if err != nil {
 		// The director answers a delete of a config it does not hold with a
-		// 404, as it did for the bosh CLI.
+		// 404.
 		var apiErr *boshapi.APIError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			da.log.Errorf("Resurrection config %s did not exist or was already deleted", configName)

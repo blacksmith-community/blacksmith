@@ -808,11 +808,7 @@ var _ = Describe("A poll for an instance the index does not have", func() {
 // other director answer leaves the instance's existence unknown, so the
 // delete fails and the platform retries it. A plain test, because the
 // director is a TLS test server driven through the real director adapter.
-//
-//nolint:paralleltest // t.Setenv cannot be used with t.Parallel
 func TestDeleteOfUnknownInstance(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	vault, err := testutil.NewVaultDevServer(t)
 	if err != nil {
 		t.Fatalf("failed to start Vault: %v", err)

@@ -29,63 +29,58 @@ var (
 type directorAuth struct {
 	clientID     string
 	clientSecret string
-	// tokenURL is UAA's token endpoint when the configuration names a UAA
-	// outright. It is empty when the director is asked which UAA, or whether
-	// UAA at all, to use.
-	tokenURL string
 }
 
 // resolveDirectorAuth picks the credentials the boshapi client uses, and it
 // refuses when there are none. It does no network setup, so a caller checks
 // the credentials before it builds anything that dials the director.
 //
-// The credentials are bosh.username and bosh.password. When both are empty
-// and the configuration carries a UAA, that UAA's client ID and secret are
-// used instead, and its URL, when it has one, is where the token comes from.
-// boshapi trusts one CA for both the director and the token endpoint, so
-// UAA.CACert has no equivalent and is not used here.
+// The credentials are bosh.username and bosh.password. To a director that
+// uses UAA they are the UAA client ID and secret, and to one that uses HTTP
+// Basic they are the user name and password. A value made only of
+// whitespace counts as missing, as it does for the address and the CA. The
+// credentials are passed on as they were configured.
 func resolveDirectorAuth(config Config) (directorAuth, error) {
 	auth := directorAuth{clientID: config.Username, clientSecret: config.Password}
 
-	if auth.clientID == "" && auth.clientSecret == "" && config.UAA != nil {
-		auth.clientID, auth.clientSecret = config.UAA.ClientID, config.UAA.ClientSecret
-
-		if config.UAA.URL != "" {
-			auth.tokenURL = strings.TrimSuffix(config.UAA.URL, "/") + "/oauth/token"
-		}
-	}
-
-	if auth.clientID == "" || auth.clientSecret == "" {
-		return directorAuth{}, fmt.Errorf("%w for the director at %s. Set bosh.username and bosh.password, which are the director's UAA client ID and secret",
-			ErrDirectorCredentialsMissing, config.Address)
+	if strings.TrimSpace(auth.clientID) == "" || strings.TrimSpace(auth.clientSecret) == "" {
+		return directorAuth{}, fmt.Errorf("%w%s. Set bosh.username and bosh.password to the director's UAA client ID and secret, "+
+			"or to its user name and password when it uses HTTP Basic, and check that neither is empty or only whitespace",
+			ErrDirectorCredentialsMissing, forDirector(config.Address))
 	}
 
 	return auth, nil
 }
 
+// forDirector names the director at address for an error message, or
+// returns nothing when no address is configured, so a message never reads
+// "for the director at ." with the address missing.
+func forDirector(address string) string {
+	if strings.TrimSpace(address) == "" {
+		return ""
+	}
+
+	return " for the director at " + address
+}
+
 // newAPIClient builds the boshapi client the adapter reads and writes the
 // director through. It sends no request. The client authenticates with the
-// credentials Blacksmith was configured with. Unless the configuration names
-// UAA's token endpoint, it asks the director how at the first authenticated
-// request, so a director that uses UAA and one that uses HTTP Basic both
-// work. It never skips TLS verification: the director's CA is mandatory.
+// credentials Blacksmith was configured with, and it asks the director how
+// at the first authenticated request, so a director that uses UAA and one
+// that uses HTTP Basic both work. A director that uses UAA must name it in
+// its GET /info, and the token comes from there. The client never skips TLS
+// verification, and it trusts config.CACert for the director and for UAA.
 //
 // config.RequestTimeout bounds each attempt. Factory.New sets it to 60
 // seconds when it is zero, which is the one place that default lives. An
 // adapter built without the factory leaves it zero, and boshapi then applies
 // its own default.
 func newAPIClient(config Config, auth directorAuth, log Logger) (boshapi.Client, error) {
-	mode := boshapi.AuthDiscover
-	if auth.tokenURL != "" {
-		mode = boshapi.AuthFromConfig
-	}
-
 	client, err := boshclient.New(context.Background(), &boshapi.Config{
 		DirectorURL:  config.Address,
 		ClientID:     auth.clientID,
 		ClientSecret: auth.clientSecret,
-		TokenURL:     auth.tokenURL,
-		Auth:         mode,
+		Auth:         boshapi.AuthDiscover,
 		CACert:       config.CACert,
 		HTTPTimeout:  config.RequestTimeout,
 		RetryMax:     config.MaxRetries,

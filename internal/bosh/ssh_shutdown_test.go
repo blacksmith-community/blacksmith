@@ -100,8 +100,6 @@ func newShutdownAdapter(t *testing.T, cleanup func(boshtest.SSHCall) boshtest.SS
 // The records stay, because no cleanup was seen to end, and the next sweep
 // settles them. The pool hands the shutdown to its director.
 func TestShutdownSendsEverySSHCleanupWithinItsBudget(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	var arrived atomic.Int32
 
 	release := make(chan struct{})
@@ -167,8 +165,6 @@ func TestShutdownSendsEverySSHCleanupWithinItsBudget(t *testing.T) {
 // budget, never reads a cleanup task, and leaves every record for the
 // sweep.
 func TestShutdownReturnsOnceEveryCleanupIsSent(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	const budget = 4 * time.Second
 
 	server, director, store := newShutdownAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
@@ -206,8 +202,6 @@ func TestShutdownReturnsOnceEveryCleanupIsSent(t *testing.T) {
 // cleanup without waiting for the task, keeps the record for the sweep,
 // and fails with an error that wraps ErrBrokerShuttingDown.
 func TestASetupThatEndsAfterShutdownBeganOpensNoSession(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	// The setup and the cleanup both start processing. The setup ends when
 	// the test says, and the cleanup never does.
 	server, director, store := newLateSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
@@ -342,13 +336,11 @@ func assertLateSetupRefused(t *testing.T, server *boshtest.SSHDirector, store *c
 // Once the shutdown begins, a setup sends nothing, writes no record, and
 // says the broker is shutting down.
 func TestSSHSetupIsRefusedOnceShutdownBegins(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store := newShutdownAdapter(t, nil)
 
 	shutdownSSH(t, director)
 
-	//nolint:paralleltest // the subtests share the closed adapter, and the parent uses t.Setenv
+	//nolint:paralleltest // the subtests share the closed adapter
 	for name, call := range map[string]func() error{
 		"SSHSession": func() error {
 			_, err := openSSHSession(t.Context(), director)
@@ -381,8 +373,6 @@ func TestSSHSetupIsRefusedOnceShutdownBegins(t *testing.T) {
 // A session whose cleanup the shutdown sent sends no second one when it
 // closes, as the terminal's sessions do when the SSH service closes.
 func TestSessionCloseAfterShutdownSendsNoSecondCleanup(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, _ := newShutdownAdapter(t, nil)
 
 	session := mustOpenSSHSession(t, director)
@@ -411,8 +401,6 @@ const firstSweptUser = "bosh_000000000000000"
 // shutdown just sent. The director holds the sweep on its first record
 // while the shutdown runs.
 func TestASweepUnderWayStopsOnceShutdownBegins(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	held := make(chan struct{})
 	release := make(chan struct{})
 
@@ -488,8 +476,6 @@ const lateCleanupTestBound = time.Second
 // that goes away nor a director that never answers decides how long the
 // cleanup is sent for.
 func TestALateSetupSendsItsCleanupWithinItsOwnBound(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	callerCtx, cancelCaller := context.WithCancel(t.Context())
 	defer cancelCaller()
 
@@ -566,8 +552,6 @@ func TestALateSetupSendsItsCleanupWithinItsOwnBound(t *testing.T) {
 // gets the setup, the record is cleared, the user is released, and the
 // setup fails with an error that wraps ErrBrokerShuttingDown.
 func TestASetupRecordedAsShutdownBeginsIsNotSent(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, logger := newFailedSetupAdapter(t, nil)
 
 	writing := make(chan string, 1)

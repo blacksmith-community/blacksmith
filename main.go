@@ -408,19 +408,6 @@ func storePlansToVault(vault *internalVault.Vault, cfg *config.Config) {
 
 // initializeBOSH creates and configures BOSH directors (pooled and batch).
 func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDirector, *bosh.BatchDirector) {
-	// Set BOSH environment variables for CLI compatibility
-	err := os.Setenv("BOSH_CLIENT", cfg.BOSH.Username)
-	if err != nil {
-		logger.Error("Failed to set BOSH_CLIENT env var: %s", err)
-	}
-
-	err = os.Setenv("BOSH_CLIENT_SECRET", cfg.BOSH.Password)
-	if err != nil {
-		logger.Error("Failed to set BOSH_CLIENT_SECRET env var: %s", err)
-	}
-
-	logger.Debug("Set BOSH_CLIENT to: %s", cfg.BOSH.Username)
-
 	// Use logger for BOSH operations
 	boshLogger := loggerPkg.Get().Named("bosh")
 
@@ -439,7 +426,7 @@ func initializeBOSH(cfg *config.Config, logger loggerPkg.Logger) (*bosh.PooledDi
 		boshLogger,
 	)
 	if err != nil {
-		logger.Error("Failed to authenticate to BOSH: %s", err)
+		logger.Error("Failed to set up the BOSH director client: %s", err)
 		logger.Error("Continuing with degraded BOSH functionality - deployment operations may not work")
 
 		return nil, nil

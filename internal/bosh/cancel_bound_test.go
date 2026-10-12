@@ -21,8 +21,6 @@ const slowCancelAnswer = 4 * time.Second
 // director that takes about 4 seconds to answer it still gets the cancel,
 // and the error says the cancel landed.
 func TestSSHSetupCancelKeepsTenSecondsForASlowDirector(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{State: boshtest.TaskQueued}
 	})
@@ -60,8 +58,6 @@ func TestSSHSetupCancelKeepsTenSecondsForASlowDirector(t *testing.T) {
 // its own, so the cancel of its task keeps the 10 second bound, and a
 // director that takes about 4 seconds to answer it still gets the cancel.
 func TestGetInstancesCancelKeepsTenSecondsForASlowDirector(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server := newDetailsDirector(t, detailsConfig{
 		kind:  instancesKind,
 		state: queuedUntilCancelled,

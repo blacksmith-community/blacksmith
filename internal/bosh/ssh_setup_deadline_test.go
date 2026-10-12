@@ -18,8 +18,6 @@ const testSetupTimeout = 100 * time.Millisecond
 // as the async command's does, is cancelled at the setup bound, and its
 // user is removed once the task is cancelled.
 func TestSSHSetupWaitEndsAtItsDeadline(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	server, director, store, _ := newFailedSetupAdapter(t, func(boshtest.SSHCall) boshtest.SSHAnswer {
 		return boshtest.SSHAnswer{State: boshtest.TaskQueued}
 	})
@@ -47,8 +45,6 @@ func TestSSHSetupDeadlineDoesNotBoundTheSession(t *testing.T) {
 	const bound = 50 * time.Millisecond
 
 	t.Run("a session", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 		server, director, _ := newSSHAdapter(t, nil)
 		bosh.SetSSHSetupTimeout(director, bound)
 
@@ -69,8 +65,6 @@ func TestSSHSetupDeadlineDoesNotBoundTheSession(t *testing.T) {
 	})
 
 	t.Run("a command", func(t *testing.T) {
-		t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 		server, director, _ := newSSHAdapter(t, nil)
 		bosh.SetSSHSetupTimeout(director, bound)
 

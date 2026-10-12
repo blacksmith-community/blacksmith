@@ -814,8 +814,6 @@ func TestCleanerReleasesTheInFlightKeyWhenTheDirectorHangs(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 			release := make(chan struct{})
 
 			var infoCount atomic.Int32

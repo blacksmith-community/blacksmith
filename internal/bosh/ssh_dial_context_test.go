@@ -90,8 +90,6 @@ func startSilentSSHServer(t *testing.T) *silentSSHServer {
 // connection and never speaks lets the dial go at the caller's deadline
 // rather than holding SSHCommand.
 func TestSSHClientDialEndsWithItsContext(t *testing.T) {
-	t.Setenv("BLACKSMITH_TEST_MODE", "true")
-
 	const deadline = 300 * time.Millisecond
 
 	_, private, err := ed25519.GenerateKey(rand.Reader)
