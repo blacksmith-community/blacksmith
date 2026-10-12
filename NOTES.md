@@ -40,7 +40,7 @@ service.
 
 In a plan-upgrade scenario, the broker re-generates the manifest
 using the UUID and Vault'd secrets of the existing deployment, and
-then performs a `bosh deploy` against the director.  BOSH will
+then deploys it to the director through the director's API.  BOSH will
 properly migrate the persistent disks from old plan disks to new
 plan disks, and deploy the data + code to a new deployment.
 

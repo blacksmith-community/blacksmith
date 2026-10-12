@@ -664,14 +664,19 @@ cf service-instances
 
 ### BOSH Deployment Scanning Issues
 
-Verify BOSH Director connectivity:
+Verify BOSH Director connectivity and authentication. In the examples below, `BROKER_USER` and `BROKER_PASS` hold the broker's basic-auth credentials. A list of tasks means the director answered and accepted Blacksmith's credentials, and an error names the director URL and the HTTP status:
 ```bash
-bosh deployments
+curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/tasks | jq .
 ```
 
-Check BOSH authentication:
+For the Genesis kit, run the same request through Genesis:
 ```bash
-bosh env
+genesis do <env> -- curl /b/tasks
+```
+
+Read the event output of a task from the `/b/tasks` list, using its task ID:
+```bash
+curl -s -u "$BROKER_USER:$BROKER_PASS" "https://blacksmith.example.com/b/tasks/<task-id>/output?type=event"
 ```
 
 ### Matching and Cross-Reference Failures
@@ -680,9 +685,14 @@ Check deployment naming conventions:
 - Should follow `{serviceID}-{planID}-{instanceID}` pattern
 - Instance ID should be a valid UUID matching CF service instance GUID
 
-Verify manifest metadata in BOSH deployments:
+Verify manifest metadata in BOSH deployments. First prove the deployment exists, because the instances route returns an error for a deployment the director does not know:
 ```bash
-bosh -d <deployment-name> manifest | grep -A5 -B5 blacksmith
+curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/deployments/<deployment-name>/instances
+```
+
+The manifest route returns a placeholder manifest with HTTP 200 for a deployment the director does not know, so the manifest check alone cannot prove the deployment exists. Once the instances call has succeeded, read the manifest text from the response:
+```bash
+curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/deployments/<deployment-name>/manifest | jq -r .text | grep -A5 -B5 blacksmith
 ```
 
 Enable verbose logging to see matching decisions:

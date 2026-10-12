@@ -15,7 +15,7 @@ import (
 	"blacksmith/internal/config"
 )
 
-// boshEnvironment returns the BOSH CLI variables the broker no longer
+// boshEnvironment returns the director connection variables the broker no longer
 // exports, because nothing in it reads them.
 func boshEnvironment() []string {
 	return []string{"BOSH_ENVIRONMENT", "BOSH_CLIENT", "BOSH_CLIENT_SECRET", "BOSH_CA_CERT"}

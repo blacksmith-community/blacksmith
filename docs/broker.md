@@ -124,8 +124,10 @@ bosh:
   address: "https://bosh.domain:25555"  # BOSH director URL
   username: "admin"                     # BOSH authentication username
   password: "secret"                    # BOSH authentication password
-  skip_ssl_validation: false            # Skip SSL verification
-  cacert: "/path/to/ca.pem"            # CA certificate
+  cacert: |                             # PEM text of the director's CA certificate
+    -----BEGIN CERTIFICATE-----
+    MIIB...
+    -----END CERTIFICATE-----
   network: "default"                    # Default network for deployments
   max_connections: 10                   # Connection pool size
   connection_timeout: 300               # Connection timeout (seconds)
@@ -460,7 +462,10 @@ bosh:
   address: "https://bosh.domain.com:25555"
   username: "blacksmith"
   password: "bosh-password"
-  cacert: "/etc/ssl/bosh-ca.pem"
+  cacert: |
+    -----BEGIN CERTIFICATE-----
+    MIIB...
+    -----END CERTIFICATE-----
   network: "services"
   max_connections: 20
   connection_timeout: 600

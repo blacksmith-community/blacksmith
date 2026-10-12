@@ -198,7 +198,7 @@ func (s *scriptedTasks) nextDeleteAttempt() int {
 
 // LastOperation used to answer from whichever task was newest in the
 // deployment's BOSH events and treated anything that was not a delete as a
-// provision. A finished `bosh ssh` task therefore finished deprovisions and
+// provision. A finished SSH task therefore finished deprovisions and
 // provisions alike, and ran the provision completion hook on the way. These
 // specs replay that lab sequence and pin the answer to the operation the
 // broker accepted and the task it started.
@@ -306,7 +306,7 @@ var _ = Describe("LastOperation", func() {
 		deploymentName = planID + "-" + instanceID
 
 		// The deployment's events look like the lab's: the create deployment
-		// task, then a finished `bosh ssh` task run by hand, which is newest.
+		// task, then a finished SSH task run by hand, which is newest.
 		world = &scriptedTasks{tasks: map[int]*bosh.Task{
 			createTaskID: {ID: createTaskID, State: "done", Description: "create deployment"},
 			sshTaskID:    {ID: sshTaskID, State: "done", Description: sshDescription},
@@ -397,9 +397,9 @@ var _ = Describe("LastOperation", func() {
 			releaseDelete = make(chan struct{})
 			specWorld, release, name := world, releaseDelete, deploymentName
 			director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
-				// BOSH records the delete event when the task starts, but
-				// bosh-cli waits for the task to finish before it returns,
-				// so the broker learns the task ID only at the end.
+				// BOSH records the delete event when the task starts, but the
+				// scripted director holds its answer until the spec releases
+				// it, so the broker has not yet learned the task ID.
 				specWorld.addEvents(deploymentEvents(boshEventDelete, name, deleteTaskID)...)
 
 				select {
@@ -728,7 +728,7 @@ var _ = Describe("LastOperation", func() {
 		})
 
 		It("records the create task the director's answer names even when a newer task runs on the deployment", func() {
-			// The deployment's newest task is a `bosh ssh` task someone ran
+			// The deployment's newest task is an SSH task someone ran
 			// by hand, and the deploy's answer names the deploy task.
 			provisionAndWait(func(string) (*bosh.Task, error) {
 				return &bosh.Task{ID: createTaskID, State: "queued"}, nil
@@ -827,7 +827,7 @@ var _ = Describe("LastOperation", func() {
 		})
 
 		It("finds the create deployment task from the deployment's events when the broker lost track of it", func() {
-			// The broker restarted while bosh-cli waited on the create task,
+			// The broker restarted before it recorded the create task's ID,
 			// so the task ID was never recorded.
 			Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
 				ID: instanceID, ServiceID: serviceID, PlanID: planID, DeploymentName: deploymentName,
@@ -866,7 +866,7 @@ var _ = Describe("LastOperation", func() {
 
 	Context("for a deprovision the broker lost track of", func() {
 		BeforeEach(func() {
-			// The broker restarted while bosh-cli waited on the delete task.
+			// The broker restarted before it recorded the delete task's ID.
 			Expect(vaultClient.Index(ctx, instanceID, vaultPkg.Instance{
 				ID: instanceID, ServiceID: serviceID, PlanID: planID, DeploymentName: deploymentName,
 			})).To(Succeed())

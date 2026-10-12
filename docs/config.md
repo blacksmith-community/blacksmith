@@ -379,8 +379,11 @@ bosh:
   address: "https://bosh.example.com:25555"             # Required
   username: "admin"                                     # Required
   password: "admin-password"                            # Required
-  skip_ssl_validation: false                            # Optional
-  cacert: "/var/vcap/jobs/blacksmith/config/tls/ca.pem" # Optional
+  cacert: |                                             # Required (PEM text)
+    -----BEGIN CERTIFICATE-----
+    MIIB...
+    -----END CERTIFICATE-----
+  allow_http: false                                     # Optional (default false)
   cloud-config: "/var/vcap/jobs/blacksmith/config/cloud-config.yml"  # Optional
   network: "blacksmith"                                 # Optional
   max_connections: 4                                    # Optional (connection pool size)
@@ -420,17 +423,17 @@ Username for BOSH director authentication.
 
 Password for BOSH director authentication.
 
+#### `cacert` (string)
+**Required**
+
+PEM text of the CA certificate that signed the BOSH director's certificate. This is the certificate itself, not the path to a file. Blacksmith always verifies the director's certificate against it, and the same CA must also sign UAA's certificate, because the client trusts this one CA for both. A missing value, or one that holds no certificate that parses, stops the broker from booting.
+
 ### Optional Fields
 
-#### `skip_ssl_validation` (boolean)
+#### `allow_http` (boolean)
 **Default:** `false`
 
-Skip SSL certificate validation when connecting to BOSH director. Should only be used in development environments.
-
-#### `cacert` (string)
-**Default:** `""`
-
-Path to CA certificate file for validating the BOSH director's SSL certificate.
+Allows `bosh.address` to use plain `http://`. With the default, an `http://` address stops the broker from booting, because the director's credentials and every request to it would cross the network unencrypted. When this is `true`, the broker boots and logs a warning that it talks to the director over plain HTTP. The CA in `cacert` is still required. An `https://` address, or one with no scheme, is not affected by this setting. The BOSH release sets it through the `bosh.allow_http` property.
 
 #### `cloud-config` (string)
 **Default:** `""`
@@ -755,8 +758,8 @@ Blacksmith sets the following environment variables based on configuration:
 
 - `BOSH_NETWORK`: Set to the value of `bosh.network`
 - `VAULT_ADDR`: Set to the value of `vault.address`
-- `BOSH_CLIENT`: Set to the value of `bosh.username`
-- `BOSH_CLIENT_SECRET`: Set to the value of `bosh.password`
+
+Blacksmith talks to the director through its own API client, which reads `bosh.address`, `bosh.username`, `bosh.password`, and `bosh.cacert` from the configuration, so it exports no `BOSH_ENVIRONMENT`, `BOSH_CLIENT`, `BOSH_CLIENT_SECRET`, or `BOSH_CA_CERT`.
 
 ## Reconciler Configuration (`reconciler`)
 
@@ -955,7 +958,10 @@ bosh:
   address: "https://bosh.example.com:25555"
   username: "blacksmith"
   password: "bosh-password"
-  skip_ssl_validation: false
+  cacert: |
+    -----BEGIN CERTIFICATE-----
+    MIIB...
+    -----END CERTIFICATE-----
   network: "services"
   max_connections: 4
   connection_timeout: 300

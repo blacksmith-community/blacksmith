@@ -502,12 +502,19 @@ vault kv get secret/db
 ```
 
 #### BOSH Director Queries
-```bash
-# Manual VM status check
-bosh -d {deployment-name} vms --vitals
 
-# Check VM processes
-bosh -d {deployment-name} vms --ps
+In these examples, `BROKER_USER` and `BROKER_PASS` hold the broker's basic-auth credentials.
+
+```bash
+# Manual VM status check, with the vitals and the processes the director
+# reports for each VM
+curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/deployments/{deployment-name}/vms
+
+# Check the instances of the deployment
+curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/deployments/{deployment-name}/instances
+
+# Check the latest VM monitor status
+curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/bosh/vm-monitor
 ```
 
 ## Performance Considerations

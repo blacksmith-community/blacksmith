@@ -292,8 +292,9 @@ curl -X POST http://blacksmith/internal/reconciler/reconcile
 # View instance in Vault
 vault read secret/blacksmith/instances/{instance-id}
 
-# Check BOSH deployment
-bosh -d {plan-id}-{instance-id} deployment
+# Check the BOSH deployment through Blacksmith's API, with the broker's
+# basic-auth credentials in BROKER_USER and BROKER_PASS
+curl -s -u "$BROKER_USER:$BROKER_PASS" http://blacksmith/b/deployments/{plan-id}-{instance-id}/instances
 ```
 
 ## Future Enhancements
