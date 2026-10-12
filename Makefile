@@ -271,12 +271,21 @@ deploy-ui: ## Deploy UI files to BOSH instance (use DEPLOYMENT=name INSTANCE=gro
 	@echo "$(GREEN)✓ UI deployed$(RESET)"
 
 .PHONY: deploy-all
-deploy-all: build deploy-ui ## Build and deploy both binary and UI to BOSH
+deploy-all: linux deploy-ui ## Build and deploy both binary and UI to BOSH
 	@echo "$(GREEN)Deploying blacksmith binary...$(RESET)"
-	@bosh -d $(DEPLOYMENT) scp blacksmith $(INSTANCE):/tmp/blacksmith
-	@bosh -d $(DEPLOYMENT) ssh $(INSTANCE) -c "sudo cp /tmp/blacksmith /var/vcap/packages/blacksmith/bin/blacksmith && sudo chown vcap:vcap /var/vcap/packages/blacksmith/bin/blacksmith && sudo chmod +x /var/vcap/packages/blacksmith/bin/blacksmith"
-	@bosh -d $(DEPLOYMENT) ssh $(INSTANCE) -c "sudo /var/vcap/bosh/bin/monit restart blacksmith"
+	@go run ./hack/devpush -d $(DEPLOYMENT) -i $(INSTANCE) -binary $(BINARY_NAME)-linux-amd64
 	@echo "$(GREEN)✓ Full deployment complete$(RESET)"
+
+# deploy-all pushes to one instance, so it stops while the Makefile is read,
+# before it builds anything, when the deployment or the instance is missing.
+ifneq ($(filter deploy-all,$(MAKECMDGOALS)),)
+ifeq ($(strip $(DEPLOYMENT)),)
+$(error deploy-all needs DEPLOYMENT=<deployment>, the BOSH deployment that holds the broker)
+endif
+ifeq ($(strip $(INSTANCE)),)
+$(error deploy-all needs INSTANCE=<group>/<instance ID>, such as blacksmith/5d1b8f5c-2c43-4a4e-9a57-2f8a3e0d6c11)
+endif
+endif
 
 ##@ Dependencies
 
