@@ -698,7 +698,7 @@
 
     const filterTable = () => {
       const filter = searchInput.value.toLowerCase();
-      const table = document.querySelector(`.${tableId}`);
+      const table = document.querySelector(`.${CSS.escape(tableId)}`);
       if (!table) return;
 
       const rows = table.querySelectorAll('tbody tr');
@@ -1021,7 +1021,7 @@
 
   // Update sort indicators after re-render
   const updateSortIndicators = (tableClass, sortState) => {
-    const table = document.querySelector(`.${tableClass}`);
+    const table = document.querySelector(`.${CSS.escape(tableClass)}`);
     if (!table) return;
 
     const indicators = table.querySelectorAll('.sort-icon');
@@ -1154,7 +1154,7 @@
 
   // Filter table rows
   const filterTableRows = (tableClass, filterText) => {
-    const table = document.querySelector(`.${tableClass}`);
+    const table = document.querySelector(`.${CSS.escape(tableClass)}`);
     if (!table) return;
 
     const tbody = table.querySelector('tbody');
@@ -1201,7 +1201,7 @@
 
   // Update filtered count display
   const updateFilteredCount = (tableClass, visible, total) => {
-    const container = document.querySelector(`.${tableClass}`).closest('.logs-container, .log-table-container');
+    const container = document.querySelector(`.${CSS.escape(tableClass)}`).closest('.logs-container, .log-table-container');
     if (!container) return;
 
     let countDisplay = container.querySelector('.filter-count');
@@ -1255,7 +1255,7 @@
 
   // Initialize sorting on a table
   const initializeSorting = (tableClass) => {
-    const table = document.querySelector(`.${tableClass}`);
+    const table = document.querySelector(`.${CSS.escape(tableClass)}`);
     if (!table) return;
 
     // Clean up existing listeners for this table
@@ -1355,9 +1355,14 @@
     // For instance logs tables, the data key is stored with the job name
     let dataKey = dataKeyMap[tableClass];
     if (tableClass.startsWith('instance-logs-table-')) {
-      // Extract job name from the table class (e.g., 'instance-logs-table-redis-0' -> 'redis/0')
-      const jobPart = tableClass.replace('instance-logs-table-', '').replace(/-/g, '/');
-      dataKey = `instance-logs-${jobPart}`;
+      // The table keeps its job key, which is <job>/<instance ID>, in data-job.
+      // The class only has the key with its slashes turned into dashes, which
+      // cannot be turned back once an instance ID holds dashes of its own.
+      const table = document.querySelector(`.${CSS.escape(tableClass)}`);
+      const jobKey = table && table.dataset.job
+        ? table.dataset.job
+        : tableClass.replace('instance-logs-table-', '').replace(/-/g, '/');
+      dataKey = `instance-logs-${jobKey}`;
     }
 
     const originalData = tableOriginalData.get(dataKey);
@@ -1375,7 +1380,7 @@
 
   // Update table body with sorted data
   const updateTableBody = (tableClass, data) => {
-    const table = document.querySelector(`.${tableClass}`);
+    const table = document.querySelector(`.${CSS.escape(tableClass)}`);
     if (!table) return;
 
     const tbody = table.querySelector('tbody');
@@ -1593,7 +1598,7 @@
 
   // Initialize filtering on log tables
   const initializeFiltering = (tableClass) => {
-    const table = document.querySelector(`.${tableClass}`);
+    const table = document.querySelector(`.${CSS.escape(tableClass)}`);
     if (!table) return;
 
     const container = table.closest('.logs-container, .log-table-container');
@@ -4061,12 +4066,14 @@
     const jobsList = Object.keys(logsData);
     const firstJob = jobsList[0];
 
-    // Generate job tabs
+    // Generate job tabs. A job key is <job>/<instance ID>, both from the
+    // director, so it is escaped and kept in data-job, where the one
+    // listener for the logs view reads it, and never placed in a script.
     const jobTabs = jobsList.map((job, index) => `
       <button class="instance-log-job-tab ${index === 0 ? 'active' : ''}"
-              data-job="${job}"
-              onclick="window.selectInstanceJob('${job}')">
-        ${job}
+              data-job="${escapeAttribute(job)}"
+              data-instance-log="select-job">
+        ${escapeHtml(job)}
       </button>
     `).join('');
 
@@ -4092,7 +4099,7 @@
     }
 
     if (jobData.error) {
-      return `<div class="error">${jobData.error}</div>`;
+      return `<div class="error">${escapeHtml(String(jobData.error))}</div>`;
     }
 
     const files = jobData;
@@ -4167,29 +4174,35 @@
     const tableKey = `instance-logs-${jobKey}`;
     tableOriginalData.set(tableKey, parsedLogs);
 
+    // The job key comes from the director, so every attribute that holds it
+    // gets it escaped, and the controls find it in data-job.
+    const jobAttribute = escapeAttribute(jobKey);
+    const domKey = escapeAttribute(instanceLogDomKey(jobKey));
+
     return `
       <div class="job-logs-container">
-        <div class="logs-table-container" id="log-display-${jobKey.replace(/\//g, '-')}">
-          <table class="instance-logs-table instance-logs-table-${jobKey.replace(/\//g, '-')}" data-job="${jobKey}">
+        <div class="logs-table-container" id="log-display-${domKey}">
+          <table class="instance-logs-table instance-logs-table-${domKey}" data-job="${jobAttribute}">
             <thead>
               <tr class="table-controls-row">
                 <th colspan="3" class="table-controls-header">
                   <div class="table-controls-container">
                     <div class="search-filter-container">
-                      ${createSearchFilter(`instance-logs-table-${jobKey.replace(/\//g, '-')}`, 'Search logs...')}
+                      ${createSearchFilter(`instance-logs-table-${domKey}`, 'Search logs...')}
                     </div>
                     <div class="log-file-selector">
-                      <select id="log-select-${jobKey.replace(/\//g, '-')}"
+                      <select id="log-select-${domKey}"
                               class="log-file-dropdown"
-                              onchange="window.selectLogFileForJob('${jobKey}', this.value)">
+                              data-job="${jobAttribute}"
+                              data-instance-log="select-file">
                         ${fileOptions}
                       </select>
                     </div>
-                    <button class="copy-btn-logs" onclick="window.copyInstanceLogs('${jobKey}', event)"
+                    <button class="copy-btn-logs" data-job="${jobAttribute}" data-instance-log="copy"
                             title="Copy filtered table rows">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
-                    <button class="refresh-btn-logs" onclick="window.refreshInstanceLogs('${jobKey}', event)"
+                    <button class="refresh-btn-logs" data-job="${jobAttribute}" data-instance-log="refresh"
                             title="Refresh logs">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Refresh"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
@@ -4219,6 +4232,57 @@
     return div.innerHTML;
   };
 
+  // Escapes text for a quoted HTML attribute. escapeHtml leaves quotes as
+  // they are, so its output could end the attribute.
+  const escapeAttribute = (text) => String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // The part of an instance logs table's id and class that comes from its job
+  // key. A slash becomes a dash, and white space becomes an underscore because
+  // a space in a class attribute would split it into two classes. The key is
+  // escaped for the attribute where the markup is built and with CSS.escape
+  // where a selector looks it up, and every caller gets it from here.
+  const instanceLogDomKey = (jobKey) => String(jobKey).replace(/\//g, '-').replace(/\s/g, '_');
+
+  // One listener serves every control of the instance logs view. Each
+  // control holds its job key in data-job, so the key, which comes from the
+  // director, never becomes part of a script. The copy and refresh handlers
+  // read the button from the event's currentTarget, so they get the control.
+  const handleInstanceLogControl = (event) => {
+    const control = event.target instanceof Element ? event.target.closest('[data-instance-log]') : null;
+    if (!control) return;
+
+    const job = control.dataset.job;
+    const action = control.dataset.instanceLog;
+    if (job === undefined) return;
+
+    if (event.type === 'change') {
+      if (action === 'select-file') window.selectLogFileForJob(job, control.value);
+      return;
+    }
+
+    switch (action) {
+      case 'select-job':
+        window.selectInstanceJob(job);
+        break;
+      case 'copy':
+        window.copyInstanceLogs(job, { currentTarget: control });
+        break;
+      case 'refresh':
+        window.refreshInstanceLogs(job, { currentTarget: control });
+        break;
+      default:
+        break;
+    }
+  };
+
+  document.addEventListener('click', handleInstanceLogControl);
+  document.addEventListener('change', handleInstanceLogControl);
+
   // Handler for job tab selection
   window.selectInstanceJob = (job) => {
     const logsData = window.instanceLogsData;
@@ -4228,7 +4292,8 @@
     document.querySelectorAll('.instance-log-job-tab').forEach(tab => {
       tab.classList.remove('active');
     });
-    document.querySelector(`.instance-log-job-tab[data-job="${job}"]`).classList.add('active');
+    const selectedTab = document.querySelector(`.instance-log-job-tab[data-job="${CSS.escape(job)}"]`);
+    if (selectedTab) selectedTab.classList.add('active');
 
     // Update content area
     const contentArea = document.getElementById('instance-logs-content');
@@ -4236,7 +4301,7 @@
       contentArea.innerHTML = formatJobLogContent(job, logsData[job]);
       // Re-initialize sorting and filtering for the new job table
       setTimeout(() => {
-        const tableClass = `instance-logs-table-${job.replace(/\//g, '-')}`;
+        const tableClass = `instance-logs-table-${instanceLogDomKey(job)}`;
         initializeSorting(tableClass);
         attachSearchFilter(tableClass);
       }, 100);
@@ -4267,12 +4332,12 @@
     window.instanceLogOriginalText[job] = logContent;
 
     // Update table body
-    const tableEl = document.querySelector(`#log-display-${job.replace(/\//g, '-')} tbody`);
+    const tableEl = document.querySelector(`#${CSS.escape(`log-display-${instanceLogDomKey(job)}`)} tbody`);
     if (tableEl) {
       tableEl.innerHTML = parsedLogs.map(row => renderLogRow(row, { timestamp: true, level: true, component: false, message: true })).join('');
 
       // Re-initialize sorting and filtering
-      const tableClass = `instance-logs-table-${job.replace(/\//g, '-')}`;
+      const tableClass = `instance-logs-table-${instanceLogDomKey(job)}`;
       initializeSorting(tableClass);
       attachSearchFilter(tableClass);
     }
@@ -10780,7 +10845,7 @@
               const logsData = window.instanceLogsData;
               if (logsData) {
                 Object.keys(logsData).forEach(job => {
-                  const tableClass = `instance-logs-table-${job.replace(/\//g, '-')}`;
+                  const tableClass = `instance-logs-table-${instanceLogDomKey(job)}`;
                   initializeSorting(tableClass);
                   attachSearchFilter(tableClass);
                 });

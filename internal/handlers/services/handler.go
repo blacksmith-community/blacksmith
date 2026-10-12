@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -62,8 +64,6 @@ var (
 	errFilePathRequired                 = errors.New("filePath is required")
 	errInvalidFilePath                  = errors.New("invalid file path")
 	errCertificateNotFound              = errors.New("certificate not found")
-	errManifestNotFound                 = errors.New("manifest not found")
-	errInstanceGroupsNotFound           = errors.New("instance_groups not found")
 	errFailedToReadCertificateFile      = errors.New("failed to read certificate file")
 )
 
@@ -513,14 +513,23 @@ func (h *Handler) GetInstanceLogs(writer http.ResponseWriter, req *http.Request,
 		return
 	}
 
-	instanceGroups, err := h.getInstanceGroupsFromManifest(writer, ctx, logger, instanceID)
+	// The director knows which instances the deployment has now. The
+	// manifest only says how many it asked for, and its count no longer
+	// matches the instances after a scale-down or a recreate.
+	vms, err := h.director.GetDeploymentVMs(ctx, deploymentName)
 	if err != nil {
+		logger.Error("Unable to list the instances of deployment %s: %v", deploymentName, err)
+		response.HandleJSON(writer, map[string]interface{}{
+			"logs":  "",
+			"error": fmt.Sprintf("unable to list instances: %s", err),
+		}, nil)
+
 		return
 	}
 
 	// One budget covers every instance of the request, so the logs the
 	// response holds stay under one limit.
-	allLogs := h.fetchLogsForInstanceGroups(ctx, logger, deploymentName, instanceGroups, bosh.NewLogBudget())
+	allLogs := h.fetchLogsForInstances(ctx, logger, deploymentName, vms, bosh.NewLogBudget())
 
 	response.HandleJSON(writer, map[string]interface{}{
 		"deployment": deploymentName,
@@ -530,14 +539,6 @@ func (h *Handler) GetInstanceLogs(writer http.ResponseWriter, req *http.Request,
 }
 
 // getDeploymentNameForLogs retrieves deployment name for log fetching.
-
-// getInstanceGroupsFromManifest extracts instance groups from manifest.
-
-// fetchLogsForInstanceGroups fetches logs for all instance groups.
-
-// getInstanceCount extracts instance count from group.
-
-// fetchLogsForJob fetches logs for a specific job.
 
 // GetInstanceEvents returns events for a service instance.
 func (h *Handler) GetInstanceEvents(writer http.ResponseWriter, req *http.Request, instanceID string) {
@@ -1437,112 +1438,88 @@ func (h *Handler) getDeploymentNameForLogs(writer http.ResponseWriter, ctx conte
 	return inst.DeploymentName, nil
 }
 
-func (h *Handler) getInstanceGroupsFromManifest(writer http.ResponseWriter, ctx context.Context, logger interfaces.Logger, instanceID string) ([]interface{}, error) {
-	var manifestData struct {
-		Manifest string `json:"manifest"`
+// logTargets picks the rows of a VM listing whose logs a request fetches,
+// in order of job, index, and ID, and says for each other key why it has no
+// logs. Logs are fetched by job name and instance ID, so a row that lacks
+// either is not fetched. A deploy that creates a VM before it deletes the
+// old one lists the old one as inactive under the same instance ID, so an
+// inactive row is not fetched, and an instance the director lists only with
+// inactive VMs says so. Each <job>/<instance ID> is fetched once.
+func logTargets(vms []bosh.VM) ([]bosh.VM, map[string]string) {
+	ordered := slices.Clone(vms)
+	slices.SortStableFunc(ordered, func(left, right bosh.VM) int {
+		return cmp.Or(
+			cmp.Compare(left.Job, right.Job),
+			cmp.Compare(left.Index, right.Index),
+			cmp.Compare(left.ID, right.ID),
+		)
+	})
+
+	targets := make([]bosh.VM, 0, len(ordered))
+	fetched := make(map[string]bool, len(ordered))
+	unfetched := make(map[string]string)
+
+	for _, instance := range ordered {
+		logKey := instance.Job + "/" + instance.ID
+
+		switch {
+		case instance.Job == "" || instance.ID == "":
+			unfetched[logKey] = "Logs were not fetched, because the director listed this instance without a job name or an instance ID"
+		case instance.Active != nil && !*instance.Active:
+			unfetched[logKey] = "Logs were not fetched, because the director lists only an inactive VM for this instance"
+		case !fetched[logKey]:
+			fetched[logKey] = true
+
+			targets = append(targets, instance)
+		}
 	}
 
-	exists, err := h.vault.Get(ctx, instanceID+"/manifest", &manifestData)
-	if err != nil || !exists {
-		logger.Error("Unable to find manifest for instance %s: %v", instanceID, err)
-		response.HandleJSON(writer, map[string]interface{}{
-			"logs":  "",
-			"error": "unable to find manifest",
-		}, nil)
-
-		return nil, errManifestNotFound
+	// An inactive row beside an active one leaves nothing unexplained.
+	for logKey := range fetched {
+		delete(unfetched, logKey)
 	}
 
-	var manifest map[string]interface{}
-
-	err = yaml.Unmarshal([]byte(manifestData.Manifest), &manifest)
-	if err != nil {
-		logger.Error("Unable to parse manifest: %v", err)
-		response.HandleJSON(writer, map[string]interface{}{
-			"logs":  "",
-			"error": "unable to parse manifest",
-		}, nil)
-
-		return nil, fmt.Errorf("failed to parse manifest YAML: %w", err)
-	}
-
-	instanceGroups, ok := manifest["instance_groups"].([]interface{})
-	if !ok {
-		logger.Error("Unable to find instance_groups in manifest")
-		response.HandleJSON(writer, map[string]interface{}{
-			"logs":  "",
-			"error": "unable to find instance groups",
-		}, nil)
-
-		return nil, errInstanceGroupsNotFound
-	}
-
-	return instanceGroups, nil
+	return targets, unfetched
 }
 
-func (h *Handler) fetchLogsForInstanceGroups(ctx context.Context, logger interfaces.Logger, deploymentName string, instanceGroups []interface{}, budget *bosh.LogBudget) map[string]interface{} {
+// fetchLogsForInstances fetches the logs of every instance logTargets picks
+// from vms, keyed by <job>/<instance ID>. Each row it does not fetch has an
+// error under its key that says why. It fetches the instances one after
+// another, in order of job, index, and ID, because the budget is not safe
+// for concurrent use and so that a request that runs out of budget skips
+// the same instances each time.
+func (h *Handler) fetchLogsForInstances(ctx context.Context, logger interfaces.Logger, deploymentName string, vms []bosh.VM, budget *bosh.LogBudget) map[string]interface{} {
 	allLogs := make(map[string]interface{})
 
-	logger.Debug("Found %d instance groups in manifest", len(instanceGroups))
+	targets, unfetched := logTargets(vms)
 
-	for idx, ig := range instanceGroups {
-		group, found := ig.(map[string]interface{})
-		if !found {
-			logger.Debug("Instance group %d is not map[string]interface{}, skipping (type: %T)", idx, ig)
+	logger.Debug("Found %d instances to fetch logs for in deployment %s, of %d rows listed", len(targets), deploymentName, len(vms))
 
-			continue
-		}
+	for logKey, reason := range unfetched {
+		logger.Info("Not fetching the logs of %q in deployment %s: %s", logKey, deploymentName, reason)
 
-		jobName, ok := group["name"].(string)
-		if !ok {
-			logger.Debug("Instance group %d has no 'name' field or wrong type, skipping", idx)
-
-			continue
-		}
-
-		logger.Debug("Found job: %s", jobName)
-
-		instances := h.getInstanceCount(group)
-		logger.Debug("Job %s has %d instances", jobName, instances)
-
-		h.fetchLogsForJob(ctx, logger, allLogs, deploymentName, jobName, instances, budget)
+		allLogs[logKey] = map[string]interface{}{"error": reason}
 	}
 
-	return allLogs
-}
+	for _, instance := range targets {
+		logKey := instance.Job + "/" + instance.ID
 
-func (h *Handler) getInstanceCount(group map[string]interface{}) int {
-	instances := 1
+		logger.Debug("Fetching logs for instance %s", logKey)
 
-	switch v := group["instances"].(type) {
-	case int:
-		instances = v
-	case float64:
-		instances = int(v)
-	}
-
-	return instances
-}
-
-// fetchLogsForJob fetches the logs of the first instances indexes of a job,
-// one after another, because the budget is not safe for concurrent use.
-func (h *Handler) fetchLogsForJob(ctx context.Context, logger interfaces.Logger, allLogs map[string]interface{}, deploymentName, jobName string, instances int, budget *bosh.LogBudget) {
-	for i := range instances {
-		jobIndex := strconv.Itoa(i)
-		logKey := fmt.Sprintf("%s/%s", jobName, jobIndex)
-
-		logger.Debug("Fetching logs for job %s/%s", jobName, jobIndex)
-
-		bundle, err := h.director.FetchLogs(ctx, deploymentName, jobName, jobIndex, budget)
+		bundle, err := h.director.FetchLogs(ctx, deploymentName, instance.Job, instance.ID, budget)
 		if err != nil {
-			logger.Error("Failed to fetch logs for %s/%s: %v", jobName, jobIndex, err)
+			logger.Error("Failed to fetch logs for %s: %v", logKey, err)
 			allLogs[logKey] = map[string]interface{}{
 				"error": fmt.Sprintf("Failed to fetch logs: %s", err),
 			}
-		} else {
-			allLogs[logKey] = bundle.Files
+
+			continue
 		}
+
+		allLogs[logKey] = bundle.Files
 	}
+
+	return allLogs
 }
 
 func (h *Handler) getDeploymentNameForManifest(writer http.ResponseWriter, ctx context.Context, logger interfaces.Logger, instanceID string) (string, error) {
