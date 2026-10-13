@@ -8,6 +8,7 @@ package amqp091
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +22,21 @@ const (
 	ExchangeFanout  = "fanout"
 	ExchangeTopic   = "topic"
 	ExchangeHeaders = "headers"
+)
+
+// MIME types constants
+const (
+	MimeTextPlain                  = "text/plain"
+	MimeApplicationJSON            = "application/json"
+	MimeApplicationOctetStream     = "application/octet-stream"
+	MimeApplicationXML             = "application/xml"
+	MimeTextXML                    = "text/xml"
+	MimeApplicationProtobuf        = "application/protobuf"
+	MimeApplicationXProtobuf       = "application/x-protobuf"
+	MimeApplicationMsgPack         = "application/msgpack"
+	MimeApplicationAvro            = "application/avro"
+	MimeApplicationCloudEventsJSON = "application/cloudevents+json"
+	MimeApplicationFormURLEncoded  = "application/x-www-form-urlencoded"
 )
 
 var (
@@ -52,6 +68,10 @@ var (
 	// server, indicating an unsupported protocol or unsupported frame type.
 	ErrFrame = &Error{Code: FrameError, Reason: "frame could not be parsed"}
 
+	// ErrFrameTooLarge is returned when the server sends a frame whose
+	// declared size exceeds the frame_max negotiated during connection.tune.
+	ErrFrameTooLarge = &Error{Code: FrameError, Reason: "frame size exceeds negotiated frame_max"}
+
 	// ErrCommandInvalid is returned when the server sends an unexpected response
 	// to this requested message type. This indicates a bug in this client.
 	ErrCommandInvalid = &Error{Code: CommandInvalid, Reason: "unexpected command received"}
@@ -69,6 +89,8 @@ var (
 var (
 	errInvalidTypeAssertion = &Error{Code: InternalError, Reason: "type assertion unsuccessful", Server: false, Recover: true}
 )
+
+var _ error = (*Error)(nil)
 
 // Error captures the code and reason a channel or connection has been closed
 // by the server.
@@ -88,8 +110,52 @@ func newError(code uint16, text string) *Error {
 	}
 }
 
-func (e Error) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("Exception (%d) Reason: %q", e.Code, e.Reason)
+}
+
+// Recoverable returns true if the error can be recovered by retrying later or with different parameters.
+// Returns the value of the Recover field.
+func (e *Error) Recoverable() bool {
+	return e.Recover
+}
+
+// Temporary returns true if the error can be recovered by retrying later with the same parameters.
+//
+// The following are the codes which might be resolved by retry without external
+// action, according to the AMQP 0.91 spec
+// (https://www.rabbitmq.com/amqp-0-9-1-reference.html#constants). The quotations
+// are from that page.
+//
+// ContentTooLarge (311)
+// "The client attempted to transfer content larger than the server could
+// accept at the present time. The client may retry at a later time."
+//
+// ConnectionForced (320)
+// "An operator intervened to close the connection for some reason. The
+// client may retry at some later date."
+func (e *Error) Temporary() bool {
+	// amqp.Error has a Recover field which sounds like it should mean "retryable".
+	// But it actually means "can be recovered by retrying later or with different
+	// parameters," which is not what we want. The error codes for which Recover is
+	// true, defined in the isSoftExceptionCode function, including things
+	// like NotFound and AccessRefused, which require outside action.
+	switch e.Code {
+	case ContentTooLarge:
+		return true
+
+	case ConnectionForced:
+		return true
+
+	default:
+		return false
+	}
+}
+
+// GoString returns a longer description of the error than .Error() including all fields.
+func (e *Error) GoString() string {
+	return fmt.Sprintf("Exception=%d, Reason=%q, Recover=%v, Server=%v",
+		e.Code, e.Reason, e.Recover, e.Server)
 }
 
 // Used by header frames to capture routing and header information
@@ -100,7 +166,7 @@ type properties struct {
 	DeliveryMode    uint8     // queue implementation use - Transient (1) or Persistent (2)
 	Priority        uint8     // queue implementation use - 0 to 9
 	CorrelationId   string    // application use - correlation identifier
-	ReplyTo         string    // application use - address to to reply to (ex: RPC)
+	ReplyTo         string    // application use - address to reply to (ex: RPC)
 	Expiration      string    // implementation use - message expiration spec
 	MessageId       string    // application use - message identifier
 	Timestamp       time.Time // application use - message timestamp
@@ -144,6 +210,19 @@ const (
 	flagReserved1       = 0x0004
 )
 
+// Expiration. These constants can be used to set a messages expiration TTL.
+// They should be viewed as a clarification of the expiration functionality in
+// messages and their usage is not enforced by this pkg.
+//
+// The server requires a string value that is interpreted by the server as
+// milliseconds. If no value is set, which translates to the nil value of
+// string, the message will never expire by itself. This does not influence queue
+// configured TTL configurations.
+const (
+	NeverExpire       string = ""  // empty value means never expire
+	ImmediatelyExpire string = "0" // 0 means immediately expire
+)
+
 // Queue captures the current server state of the queue on the server returned
 // from Channel.QueueDeclare or Channel.QueueInspect.
 type Queue struct {
@@ -162,18 +241,25 @@ type Publishing struct {
 	Headers Table
 
 	// Properties
-	ContentType     string    // MIME content type
-	ContentEncoding string    // MIME content encoding
-	DeliveryMode    uint8     // Transient (0 or 1) or Persistent (2)
-	Priority        uint8     // 0 to 9
-	CorrelationId   string    // correlation identifier
-	ReplyTo         string    // address to to reply to (ex: RPC)
-	Expiration      string    // message expiration spec
-	MessageId       string    // message identifier
-	Timestamp       time.Time // message timestamp
-	Type            string    // message type name
-	UserId          string    // creating user id - ex: "guest"
-	AppId           string    // creating application id
+	ContentType     string // MIME content type
+	ContentEncoding string // MIME content encoding
+	DeliveryMode    uint8  // Transient (0 or 1) or Persistent (2)
+	Priority        uint8  // 0 to 9
+	CorrelationId   string // correlation identifier
+	ReplyTo         string // address to reply to (ex: RPC)
+	// Expiration represents the message TTL in milliseconds. A value of "0"
+	// indicates that the message will immediately expire if the message arrives
+	// at its destination and the message is not directly handled by a consumer
+	// that currently has the capacity to do so. If you wish the message to
+	// not expire on its own, set this value to any ttl value, empty string or
+	// use the corresponding constants NeverExpire and ImmediatelyExpire. This
+	// does not influence queue configured TTL values.
+	Expiration string
+	MessageId  string    // message identifier
+	Timestamp  time.Time // message timestamp
+	Type       string    // message type name
+	UserId     string    // creating user id - ex: "guest"
+	AppId      string    // creating application id
 
 	// The application specific payload of the message
 	Body []byte
@@ -306,13 +392,15 @@ const (
 //	int16
 //	int32
 //	int64
+//	uint16
+//	uint32
 //	nil
 //	string
 //	time.Time
 //	amqp.Decimal
 //	amqp.Table
 //	[]byte
-//	[]interface{} - containing above types
+//	[]any - containing above types
 //
 // Functions taking a table will immediately fail when the table contains a
 // value of an unsupported type.
@@ -323,14 +411,14 @@ const (
 // Use a type assertion when reading values from a table for type conversion.
 //
 // RabbitMQ expects int32 for integer values.
-type Table map[string]interface{}
+type Table map[string]any
 
-func validateField(f interface{}) error {
+func validateField(f any) error {
 	switch fv := f.(type) {
-	case nil, bool, byte, int8, int, int16, int32, int64, float32, float64, string, []byte, Decimal, time.Time:
+	case nil, bool, byte, int8, int, int16, int32, int64, uint16, uint32, float32, float64, string, []byte, Decimal, time.Time:
 		return nil
 
-	case []interface{}:
+	case []any:
 		for _, v := range fv {
 			if err := validateField(v); err != nil {
 				return fmt.Errorf("in array %s", err)
@@ -419,6 +507,12 @@ func updateChannel(f frame, channel *Channel) {
 
 type reader struct {
 	r io.Reader
+
+	// maxFrameSize, when non-nil, points at the connection's negotiated
+	// frame_max (total frame length, including header and frame-end byte).
+	// A nil pointer or a stored value of 0 means no limit is enforced,
+	// matching the pre-negotiation and explicitly-unlimited cases.
+	maxFrameSize *atomic.Uint32
 }
 
 type writer struct {
@@ -533,3 +627,16 @@ type bodyFrame struct {
 }
 
 func (f *bodyFrame) channel() uint16 { return f.ChannelId }
+
+type heartbeatDuration struct {
+	value    time.Duration
+	hasValue bool
+}
+
+func newHeartbeatDurationFromSeconds(s int) heartbeatDuration {
+	v := time.Duration(s) * time.Second
+	return heartbeatDuration{
+		value:    v,
+		hasValue: true,
+	}
+}

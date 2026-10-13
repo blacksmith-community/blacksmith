@@ -1,5 +1,190 @@
 # Changelog
 
+## [v1.13.0](https://github.com/rabbitmq/amqp091-go/tree/v1.13.0) (2026-07-21)
+
+[Full Changelog](https://github.com/rabbitmq/amqp091-go/compare/v1.12.0...v1.13.0)
+
+**Implemented enhancements:**
+
+- feat: skip-and-continue topology recovery with per-entity error surfacing [\#365](https://github.com/rabbitmq/amqp091-go/pull/365) ([suchitd](https://github.com/suchitd))
+- Make TopologyRecoveryAllEnabled the default topology recovery mode [\#362](https://github.com/rabbitmq/amqp091-go/pull/362) ([suchitd](https://github.com/suchitd))
+- feature: implement automatic topology recovery [\#357](https://github.com/rabbitmq/amqp091-go/pull/357) ([suchitd](https://github.com/suchitd))
+
+**Fixed bugs:**
+
+- Evict auto-delete queues and exchanges from topology store to prevent stale resurrection during recovery [\#368](https://github.com/rabbitmq/amqp091-go/issues/368)
+- Data race in Connection.shutdown between buffered listener send goroutine and close\(listener\) [\#360](https://github.com/rabbitmq/amqp091-go/issues/360)
+- fix: reject frames exceeding negotiated frame\_max before allocation [\#369](https://github.com/rabbitmq/amqp091-go/pull/369) ([suchitd](https://github.com/suchitd))
+- fix: prevent recursive channel recovery during connection reconnection [\#367](https://github.com/rabbitmq/amqp091-go/pull/367) ([suchitd](https://github.com/suchitd))
+- fix: eliminate multiple data races in Channel and Connection operations [\#366](https://github.com/rabbitmq/amqp091-go/pull/366) ([suchitd](https://github.com/suchitd))
+- fix: forget auto-delete topology on last consumer/binding removal [\#363](https://github.com/rabbitmq/amqp091-go/pull/363) ([suchitd](https://github.com/suchitd))
+- fix: explicitly enforce TLS 1.2 minimum version in tlsConfigFromURI [\#355](https://github.com/rabbitmq/amqp091-go/pull/355) ([suchitd](https://github.com/suchitd))
+- fix: return error when shortstr exceeds 255 bytes [\#354](https://github.com/rabbitmq/amqp091-go/pull/354) ([suchitd](https://github.com/suchitd))
+- fix: enforce AMQP minimum frame size during negotiation [\#353](https://github.com/rabbitmq/amqp091-go/pull/353) ([suchitd](https://github.com/suchitd))
+- fix: URL-encode TLS file paths in URI.String\(\) query string [\#352](https://github.com/rabbitmq/amqp091-go/pull/352) ([suchitd](https://github.com/suchitd))
+- Reject negative prefetch values in Qos [\#351](https://github.com/rabbitmq/amqp091-go/pull/351) ([suchitd](https://github.com/suchitd))
+- fix: redact and zero out plaintext SASL credentials after handshake [\#350](https://github.com/rabbitmq/amqp091-go/pull/350) ([suchitd](https://github.com/suchitd))
+- Avoid notifications blocking reader. [\#349](https://github.com/rabbitmq/amqp091-go/pull/349) ([MirahImage](https://github.com/MirahImage))
+- Return error when longstring too long. [\#347](https://github.com/rabbitmq/amqp091-go/pull/347) ([MirahImage](https://github.com/MirahImage))
+- Cap body pre-allocation to FrameMax. [\#346](https://github.com/rabbitmq/amqp091-go/pull/346) ([MirahImage](https://github.com/MirahImage))
+- Safely handle negative x- field length. [\#344](https://github.com/rabbitmq/amqp091-go/pull/344) ([MirahImage](https://github.com/MirahImage))
+
+**Merged pull requests:**
+
+- chore\(deps\): bump actions/setup-go from 6 to 7 in the github-actions group [\#370](https://github.com/rabbitmq/amqp091-go/pull/370) ([dependabot[bot]](https://github.com/apps/dependabot))
+- docs: update CLAUDE.md to document automatic recovery and new notify methods [\#359](https://github.com/rabbitmq/amqp091-go/pull/359) ([suchitd](https://github.com/suchitd))
+- chore\(deps\): bump actions/cache from 5 to 6 in the github-actions group [\#358](https://github.com/rabbitmq/amqp091-go/pull/358) ([dependabot[bot]](https://github.com/apps/dependabot))
+- chore\(deps\): bump actions/checkout from 6 to 7 in the github-actions group [\#356](https://github.com/rabbitmq/amqp091-go/pull/356) ([dependabot[bot]](https://github.com/apps/dependabot))
+
+## [v1.12.0](https://github.com/rabbitmq/amqp091-go/tree/v1.12.0) (2026-06-16)
+
+[Full Changelog](https://github.com/rabbitmq/amqp091-go/compare/v1.11.0...v1.12.0)
+
+**Implemented enhancements:**
+
+- Feature: implement automatic connection and channel recovery with state change notifications [\#339](https://github.com/rabbitmq/amqp091-go/pull/339) ([suchitd](https://github.com/suchitd))
+- Add integration test for publish with immediate flag [\#338](https://github.com/rabbitmq/amqp091-go/pull/338) ([suchitd](https://github.com/suchitd))
+- Add integration tests for QueueUnbind and QueuePurge [\#337](https://github.com/rabbitmq/amqp091-go/pull/337) ([suchitd](https://github.com/suchitd))
+- Add integration test for exchange-to-exchange binding and unbinding [\#336](https://github.com/rabbitmq/amqp091-go/pull/336) ([suchitd](https://github.com/suchitd))
+
+**Fixed bugs:**
+
+- Fix Client example to work with RabbitMQ 4.3 [\#341](https://github.com/rabbitmq/amqp091-go/pull/341) ([suchitd](https://github.com/suchitd))
+- Update CONTRIBUTING.md and .gitignore files [\#335](https://github.com/rabbitmq/amqp091-go/pull/335) ([suchitd](https://github.com/suchitd))
+- Fix inconsistencies in the Makefile [\#334](https://github.com/rabbitmq/amqp091-go/pull/334) ([suchitd](https://github.com/suchitd))
+- Fix integration tests for RabbitMQ 4.3 [\#331](https://github.com/rabbitmq/amqp091-go/pull/331) ([suchitd](https://github.com/suchitd))
+
+**Closed issues:**
+
+- PublishWithContext does not respect context cancellation [\#329](https://github.com/rabbitmq/amqp091-go/issues/329)
+
+**Merged pull requests:**
+
+- doc: remove auto-reconnect from non-goals in README [\#343](https://github.com/rabbitmq/amqp091-go/pull/343) ([suchitd](https://github.com/suchitd))
+- Add CLAUDE.md to repo [\#342](https://github.com/rabbitmq/amqp091-go/pull/342) ([Zerpet](https://github.com/Zerpet))
+- Bump CI windows workflow RabbitMQ and Erlang versions [\#333](https://github.com/rabbitmq/amqp091-go/pull/333) ([suchitd](https://github.com/suchitd))
+- Add pull request template [\#332](https://github.com/rabbitmq/amqp091-go/pull/332) ([suchitd](https://github.com/suchitd))
+
+## [v1.11.0](https://github.com/rabbitmq/amqp091-go/tree/v1.11.0) (2026-04-21)
+
+[Full Changelog](https://github.com/rabbitmq/amqp091-go/compare/v1.10.0...v1.11.0)
+
+**Implemented enhancements:**
+
+- add better debug information on DialConfig [\#245](https://github.com/rabbitmq/amqp091-go/issues/245)
+
+**Fixed bugs:**
+
+- Channel error when acking via go-routines [\#296](https://github.com/rabbitmq/amqp091-go/issues/296)
+
+**Closed issues:**
+
+- PR \#318 exposes a pre-existing race in `Connection.Close()`. [\#327](https://github.com/rabbitmq/amqp091-go/issues/327)
+- Entire header frame isn't always read [\#309](https://github.com/rabbitmq/amqp091-go/issues/309)
+- Incomplete support of 0-9-1 field type values [\#302](https://github.com/rabbitmq/amqp091-go/issues/302)
+- Redelivered Flag Not Exposed [\#301](https://github.com/rabbitmq/amqp091-go/issues/301)
+- consume input basicConsumeOk but response queueBindOk [\#291](https://github.com/rabbitmq/amqp091-go/issues/291)
+- Channel is closed after Channel.ExchangeDeclarePassive fails [\#290](https://github.com/rabbitmq/amqp091-go/issues/290)
+- Incomplete example in \(\*Channel\).QueueBind documentation [\#279](https://github.com/rabbitmq/amqp091-go/issues/279)
+- QueueDeclarePassive does not report queue type mismatch [\#273](https://github.com/rabbitmq/amqp091-go/issues/273)
+- Release 1.10.0 [\#261](https://github.com/rabbitmq/amqp091-go/issues/261)
+- Update minimum Go version to 1.18 [\#146](https://github.com/rabbitmq/amqp091-go/issues/146)
+
+**Merged pull requests:**
+
+-  fix: respect context cancellation on publishing with context operations [\#330](https://github.com/rabbitmq/amqp091-go/pull/330) ([NawafSwe](https://github.com/NawafSwe))
+- Eliminate race condition in Connection.Close\(\) and related methods [\#328](https://github.com/rabbitmq/amqp091-go/pull/328) ([Zerpet](https://github.com/Zerpet))
+- Bump the github-actions group with 4 updates [\#326](https://github.com/rabbitmq/amqp091-go/pull/326) ([dependabot[bot]](https://github.com/apps/dependabot))
+- Bump github/codeql-action from 3 to 4 [\#321](https://github.com/rabbitmq/amqp091-go/pull/321) ([dependabot[bot]](https://github.com/apps/dependabot))
+- Fix incomplete routing diagram in QueueBind doc comment [\#320](https://github.com/rabbitmq/amqp091-go/pull/320) ([Copilot](https://github.com/apps/copilot-swe-agent))
+- Use RabbitMQ 4 in Makefile [\#319](https://github.com/rabbitmq/amqp091-go/pull/319) ([Zerpet](https://github.com/Zerpet))
+- refactor: simplify with atomic types [\#318](https://github.com/rabbitmq/amqp091-go/pull/318) ([alexandear](https://github.com/alexandear))
+- Add support for unsigned type values [\#317](https://github.com/rabbitmq/amqp091-go/pull/317) ([Zerpet](https://github.com/Zerpet))
+- fix: modernize lint issues [\#315](https://github.com/rabbitmq/amqp091-go/pull/315) ([alexandear](https://github.com/alexandear))
+- Fix `parseHeaderFrame` to consume entire frame payload [\#314](https://github.com/rabbitmq/amqp091-go/pull/314) ([lukebakken](https://github.com/lukebakken))
+- docs: update link to RabbitMQ tutorials [\#313](https://github.com/rabbitmq/amqp091-go/pull/313) ([alexandear](https://github.com/alexandear))
+- fix: typos in comments and tests [\#312](https://github.com/rabbitmq/amqp091-go/pull/312) ([alexandear](https://github.com/alexandear))
+- feat: add MIME types constants for  content types [\#308](https://github.com/rabbitmq/amqp091-go/pull/308) ([YlanzinhoY](https://github.com/YlanzinhoY))
+- Fix linter error after migrating config to v2 [\#306](https://github.com/rabbitmq/amqp091-go/pull/306) ([Zerpet](https://github.com/Zerpet))
+- Investigate GH-296 [\#297](https://github.com/rabbitmq/amqp091-go/pull/297) ([lukebakken](https://github.com/lukebakken))
+- Return existing error instead of creating new for the same purpose [\#295](https://github.com/rabbitmq/amqp091-go/pull/295) ([pingvincible](https://github.com/pingvincible))
+- Add warning about concurrency with Channels [\#294](https://github.com/rabbitmq/amqp091-go/pull/294) ([Zerpet](https://github.com/Zerpet))
+- Expose delivery not initialised error [\#293](https://github.com/rabbitmq/amqp091-go/pull/293) ([Zerpet](https://github.com/Zerpet))
+- fix: unify receiver methods to avoid conflicts between value and pointer types [\#292](https://github.com/rabbitmq/amqp091-go/pull/292) ([Raisul191491](https://github.com/Raisul191491))
+- Fixing simple errors [\#280](https://github.com/rabbitmq/amqp091-go/pull/280) ([korolev-d-l](https://github.com/korolev-d-l))
+- Add test that demonstrates the issue [\#274](https://github.com/rabbitmq/amqp091-go/pull/274) ([lukebakken](https://github.com/lukebakken))
+- chore: doc typo [\#269](https://github.com/rabbitmq/amqp091-go/pull/269) ([AndrewWinterman](https://github.com/AndrewWinterman))
+- Small fixes and refactors [\#266](https://github.com/rabbitmq/amqp091-go/pull/266) ([peczenyj](https://github.com/peczenyj))
+- add methods Temporary and Recoverable to amqp.Error [\#265](https://github.com/rabbitmq/amqp091-go/pull/265) ([peczenyj](https://github.com/peczenyj))
+
+## [v1.10.0](https://github.com/rabbitmq/amqp091-go/tree/v1.10.0) (2024-05-08)
+
+[Full Changelog](https://github.com/rabbitmq/amqp091-go/compare/v1.9.0...v1.10.0)
+
+**Implemented enhancements:**
+
+- Undeprecate non-context publish functions [\#259](https://github.com/rabbitmq/amqp091-go/pull/259) ([Zerpet](https://github.com/Zerpet))
+- Update Go directive [\#257](https://github.com/rabbitmq/amqp091-go/pull/257) ([Zerpet](https://github.com/Zerpet))
+
+**Fixed bugs:**
+
+- republishing on reconnect bug in the example [\#249](https://github.com/rabbitmq/amqp091-go/issues/249)
+- Channel Notify Close not receive event when connection is closed by RMQ server. [\#241](https://github.com/rabbitmq/amqp091-go/issues/241)
+- Inconsistent documentation [\#231](https://github.com/rabbitmq/amqp091-go/issues/231)
+- Data race in the client example [\#72](https://github.com/rabbitmq/amqp091-go/issues/72)
+- Fix string function of URI [\#258](https://github.com/rabbitmq/amqp091-go/pull/258) ([Zerpet](https://github.com/Zerpet))
+
+**Closed issues:**
+
+- Documentation needed \(`PublishWithContext` does not use context\) [\#195](https://github.com/rabbitmq/amqp091-go/issues/195)
+- concurrent dispatch data race [\#226](https://github.com/rabbitmq/amqp091-go/issues/226)
+
+**Merged pull requests:**
+
+- Fix data race in example [\#260](https://github.com/rabbitmq/amqp091-go/pull/260) ([Zerpet](https://github.com/Zerpet))
+- Address CodeQL warning [\#252](https://github.com/rabbitmq/amqp091-go/pull/252) ([lukebakken](https://github.com/lukebakken))
+- Add support for additional AMQP URI query parameters [\#251](https://github.com/rabbitmq/amqp091-go/pull/251) ([vilius-g](https://github.com/vilius-g))
+- Example fix [\#250](https://github.com/rabbitmq/amqp091-go/pull/250) ([Boris-Plato](https://github.com/Boris-Plato))
+- Increasing the code coverage [\#248](https://github.com/rabbitmq/amqp091-go/pull/248) ([edercarloscosta](https://github.com/edercarloscosta))
+- Use correct mutex to guard confirms.published [\#240](https://github.com/rabbitmq/amqp091-go/pull/240) ([hjr265](https://github.com/hjr265))
+- Documenting Publishing.Expiration usage [\#232](https://github.com/rabbitmq/amqp091-go/pull/232) ([niksteff](https://github.com/niksteff))
+- fix comment typo in example\_client\_test.go [\#228](https://github.com/rabbitmq/amqp091-go/pull/228) ([wisaTong](https://github.com/wisaTong))
+- Bump go.uber.org/goleak from 1.2.1 to 1.3.0 [\#227](https://github.com/rabbitmq/amqp091-go/pull/227) ([dependabot[bot]](https://github.com/apps/dependabot))
+
+## [v1.9.0](https://github.com/rabbitmq/amqp091-go/tree/v1.9.0) (2023-10-02)
+
+[Full Changelog](https://github.com/rabbitmq/amqp091-go/compare/v1.8.1...v1.9.0)
+
+**Implemented enhancements:**
+
+- Use of buffered delivery channels when prefetch\_count is not null [\#200](https://github.com/rabbitmq/amqp091-go/issues/200)
+
+**Fixed bugs:**
+
+- connection block when write connection reset by peer [\#222](https://github.com/rabbitmq/amqp091-go/issues/222)
+- Test failure on 32bit architectures [\#202](https://github.com/rabbitmq/amqp091-go/issues/202)
+
+**Closed issues:**
+
+- Add a constant to set consumer timeout as queue argument [\#201](https://github.com/rabbitmq/amqp091-go/issues/201)
+- Add a constant for CQ version [\#199](https://github.com/rabbitmq/amqp091-go/issues/199)
+- Examples may need to be updated after \#140 [\#153](https://github.com/rabbitmq/amqp091-go/issues/153)
+
+**Merged pull requests:**
+
+- Update spec091.go [\#224](https://github.com/rabbitmq/amqp091-go/pull/224) ([pinkfish](https://github.com/pinkfish))
+- Closes 222 [\#223](https://github.com/rabbitmq/amqp091-go/pull/223) ([yywing](https://github.com/yywing))
+- Update write.go [\#221](https://github.com/rabbitmq/amqp091-go/pull/221) ([pinkfish](https://github.com/pinkfish))
+- Bump versions [\#219](https://github.com/rabbitmq/amqp091-go/pull/219) ([lukebakken](https://github.com/lukebakken))
+- remove extra word 'accept' from ExchangeDeclare description [\#217](https://github.com/rabbitmq/amqp091-go/pull/217) ([a-sabzian](https://github.com/a-sabzian))
+- Misc Windows CI updates [\#216](https://github.com/rabbitmq/amqp091-go/pull/216) ([lukebakken](https://github.com/lukebakken))
+- Stop using deprecated Publish function [\#207](https://github.com/rabbitmq/amqp091-go/pull/207) ([Zerpet](https://github.com/Zerpet))
+- Constant for consumer timeout queue argument [\#206](https://github.com/rabbitmq/amqp091-go/pull/206) ([Zerpet](https://github.com/Zerpet))
+- Add a constant for CQ v2 queue argument [\#205](https://github.com/rabbitmq/amqp091-go/pull/205) ([Zerpet](https://github.com/Zerpet))
+- Fix example for 32-bit compatibility [\#204](https://github.com/rabbitmq/amqp091-go/pull/204) ([Zerpet](https://github.com/Zerpet))
+- Fix to increase timeout milliseconds since it's too tight [\#203](https://github.com/rabbitmq/amqp091-go/pull/203) ([t2y](https://github.com/t2y))
+- Add Channel.ConsumeWithContext to be able to cancel delivering [\#192](https://github.com/rabbitmq/amqp091-go/pull/192) ([t2y](https://github.com/t2y))
+
 ## [v1.8.1](https://github.com/rabbitmq/amqp091-go/tree/v1.8.1) (2023-05-04)
 
 [Full Changelog](https://github.com/rabbitmq/amqp091-go/compare/v1.8.0...v1.8.1)

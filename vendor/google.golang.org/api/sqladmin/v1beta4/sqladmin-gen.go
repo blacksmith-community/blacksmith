@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC.
+// Copyright 2026 Google LLC.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -524,6 +524,7 @@ type Backup struct {
 	//   "MYSQL_8_0_46" - The database major version is MySQL 8.0 and the minor
 	// version is 46.
 	//   "MYSQL_8_4" - The database version is MySQL 8.4.
+	//   "MYSQL_9_7" - The database version is MySQL 9.7.
 	//   "SQLSERVER_2017_STANDARD" - The database version is SQL Server 2017
 	// Standard.
 	//   "SQLSERVER_2017_ENTERPRISE" - The database version is SQL Server 2017
@@ -540,8 +541,7 @@ type Backup struct {
 	//   "POSTGRES_15" - The database version is PostgreSQL 15.
 	//   "POSTGRES_16" - The database version is PostgreSQL 16.
 	//   "POSTGRES_17" - The database version is PostgreSQL 17.
-	//   "POSTGRES_18" - The database version is AGBALA. The database version is
-	// PostgreSQL 18.
+	//   "POSTGRES_18" - The database version is PostgreSQL 18.
 	//   "SQLSERVER_2019_STANDARD" - The database version is SQL Server 2019
 	// Standard.
 	//   "SQLSERVER_2019_ENTERPRISE" - The database version is SQL Server 2019
@@ -867,6 +867,7 @@ type BackupRun struct {
 	//   "MYSQL_8_0_46" - The database major version is MySQL 8.0 and the minor
 	// version is 46.
 	//   "MYSQL_8_4" - The database version is MySQL 8.4.
+	//   "MYSQL_9_7" - The database version is MySQL 9.7.
 	//   "SQLSERVER_2017_STANDARD" - The database version is SQL Server 2017
 	// Standard.
 	//   "SQLSERVER_2017_ENTERPRISE" - The database version is SQL Server 2017
@@ -883,8 +884,7 @@ type BackupRun struct {
 	//   "POSTGRES_15" - The database version is PostgreSQL 15.
 	//   "POSTGRES_16" - The database version is PostgreSQL 16.
 	//   "POSTGRES_17" - The database version is PostgreSQL 17.
-	//   "POSTGRES_18" - The database version is AGBALA. The database version is
-	// PostgreSQL 18.
+	//   "POSTGRES_18" - The database version is PostgreSQL 18.
 	//   "SQLSERVER_2019_STANDARD" - The database version is SQL Server 2019
 	// Standard.
 	//   "SQLSERVER_2019_ENTERPRISE" - The database version is SQL Server 2019
@@ -1236,6 +1236,7 @@ type ConnectSettings struct {
 	//   "MYSQL_8_0_46" - The database major version is MySQL 8.0 and the minor
 	// version is 46.
 	//   "MYSQL_8_4" - The database version is MySQL 8.4.
+	//   "MYSQL_9_7" - The database version is MySQL 9.7.
 	//   "SQLSERVER_2017_STANDARD" - The database version is SQL Server 2017
 	// Standard.
 	//   "SQLSERVER_2017_ENTERPRISE" - The database version is SQL Server 2017
@@ -1252,8 +1253,7 @@ type ConnectSettings struct {
 	//   "POSTGRES_15" - The database version is PostgreSQL 15.
 	//   "POSTGRES_16" - The database version is PostgreSQL 16.
 	//   "POSTGRES_17" - The database version is PostgreSQL 17.
-	//   "POSTGRES_18" - The database version is AGBALA. The database version is
-	// PostgreSQL 18.
+	//   "POSTGRES_18" - The database version is PostgreSQL 18.
 	//   "SQLSERVER_2019_STANDARD" - The database version is SQL Server 2019
 	// Standard.
 	//   "SQLSERVER_2019_ENTERPRISE" - The database version is SQL Server 2019
@@ -1568,6 +1568,7 @@ type DatabaseInstance struct {
 	//   "MYSQL_8_0_46" - The database major version is MySQL 8.0 and the minor
 	// version is 46.
 	//   "MYSQL_8_4" - The database version is MySQL 8.4.
+	//   "MYSQL_9_7" - The database version is MySQL 9.7.
 	//   "SQLSERVER_2017_STANDARD" - The database version is SQL Server 2017
 	// Standard.
 	//   "SQLSERVER_2017_ENTERPRISE" - The database version is SQL Server 2017
@@ -1584,8 +1585,7 @@ type DatabaseInstance struct {
 	//   "POSTGRES_15" - The database version is PostgreSQL 15.
 	//   "POSTGRES_16" - The database version is PostgreSQL 16.
 	//   "POSTGRES_17" - The database version is PostgreSQL 17.
-	//   "POSTGRES_18" - The database version is AGBALA. The database version is
-	// PostgreSQL 18.
+	//   "POSTGRES_18" - The database version is PostgreSQL 18.
 	//   "SQLSERVER_2019_STANDARD" - The database version is SQL Server 2019
 	// Standard.
 	//   "SQLSERVER_2019_ENTERPRISE" - The database version is SQL Server 2019
@@ -1747,7 +1747,7 @@ type DatabaseInstance struct {
 	//   "SQL_SUSPENSION_REASON_UNSPECIFIED" - This is an unknown suspension
 	// reason.
 	//   "BILLING_ISSUE" - The instance is suspended due to billing issues (for
-	// example:, GCP account issue)
+	// example:, account issue)
 	//   "LEGAL_ISSUE" - The instance is suspended due to illegal content (for
 	// example:, child pornography, copyrighted material, etc.).
 	//   "OPERATIONAL_ISSUE" - The instance is causing operational issues (for
@@ -2074,11 +2074,24 @@ type DnsNameMapping struct {
 	// DnsScope: Output only. The scope that the DNS name applies to.
 	//
 	// Possible values:
-	//   "DNS_SCOPE_UNSPECIFIED" - Unknown DNS scope.
-	//   "INSTANCE" - Indicates a instance-level DNS name.
+	//   "DNS_SCOPE_UNSPECIFIED" - DNS scope not set. This value should not be
+	// used.
+	//   "INSTANCE" - Indicates an instance-level DNS name.
+	//   "CLUSTER" - Indicates a cluster-level DNS name.
 	DnsScope string `json:"dnsScope,omitempty"`
-	// Name: The DNS name.
+	// Name: Output only. The DNS name.
 	Name string `json:"name,omitempty"`
+	// RecordManager: Output only. The manager for this DNS record.
+	//
+	// Possible values:
+	//   "RECORD_MANAGER_UNSPECIFIED" - Record manager not set. This value should
+	// not be used.
+	//   "CUSTOMER" - The record may be managed by the customer. It is not
+	// automatically managed by Cloud SQL automation.
+	//   "CLOUD_SQL_AUTOMATION" - The record is managed by Cloud SQL, which will
+	// create, update, and delete the DNS records for the zone automatically when
+	// the Cloud SQL database instance is created or updated.
+	RecordManager string `json:"recordManager,omitempty"`
 	// ForceSendFields is a list of field names (e.g. "ConnectionType") to
 	// unconditionally include in API requests. By default, fields with empty or
 	// default values are omitted from API requests. See
@@ -2108,6 +2121,10 @@ type Empty struct {
 
 // ExecuteSqlPayload: The request payload used to execute SQL statements.
 type ExecuteSqlPayload struct {
+	// Application: Optional. Specifies the name of the application that is making
+	// the request. This field is used for telemetry. Only alphanumeric characters,
+	// dashes, and underscores are allowed. The maximum length is 32 characters.
+	Application string `json:"application,omitempty"`
 	// AutoIamAuthn: Optional. When set to true, the API caller identity associated
 	// with the request is used for database authentication. The API caller must be
 	// an IAM user in the database.
@@ -2116,15 +2133,17 @@ type ExecuteSqlPayload struct {
 	// executed.
 	Database string `json:"database,omitempty"`
 	// PartialResultMode: Optional. Controls how the API should respond when the
-	// SQL execution result exceeds 10 MB. The default mode is to throw an error.
+	// SQL execution result is incomplete due to the size limit or another error.
+	// The default mode is to throw an error.
 	//
 	// Possible values:
 	//   "PARTIAL_RESULT_MODE_UNSPECIFIED" - Unspecified mode, effectively the same
 	// as `FAIL_PARTIAL_RESULT`.
-	//   "FAIL_PARTIAL_RESULT" - Throw an error if the result exceeds 10 MB. Don't
-	// return the result.
+	//   "FAIL_PARTIAL_RESULT" - Throw an error if the result exceeds 10 MB or if
+	// only a partial result can be retrieved. Don't return the result.
 	//   "ALLOW_PARTIAL_RESULT" - Return a truncated result and set
-	// `partial_result` to true if the result exceeds 10 MB. Don't throw an error.
+	// `partial_result` to true if the result exceeds 10 MB or if only a partial
+	// result can be retrieved due to error. Don't throw an error.
 	PartialResultMode string `json:"partialResultMode,omitempty"`
 	// RowLimit: Optional. The maximum number of rows returned per SQL statement.
 	RowLimit int64 `json:"rowLimit,omitempty,string"`
@@ -2135,13 +2154,13 @@ type ExecuteSqlPayload struct {
 	// database. When `auto_iam_authn` is set to true, this field is ignored and
 	// the API caller's IAM user is used.
 	User string `json:"user,omitempty"`
-	// ForceSendFields is a list of field names (e.g. "AutoIamAuthn") to
+	// ForceSendFields is a list of field names (e.g. "Application") to
 	// unconditionally include in API requests. By default, fields with empty or
 	// default values are omitted from API requests. See
 	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
 	// details.
 	ForceSendFields []string `json:"-"`
-	// NullFields is a list of field names (e.g. "AutoIamAuthn") to include in API
+	// NullFields is a list of field names (e.g. "Application") to include in API
 	// requests with the JSON null value. By default, fields with empty values are
 	// omitted from API requests. See
 	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
@@ -2568,6 +2587,7 @@ type Flag struct {
 	//   "MYSQL_8_0_46" - The database major version is MySQL 8.0 and the minor
 	// version is 46.
 	//   "MYSQL_8_4" - The database version is MySQL 8.4.
+	//   "MYSQL_9_7" - The database version is MySQL 9.7.
 	//   "SQLSERVER_2017_STANDARD" - The database version is SQL Server 2017
 	// Standard.
 	//   "SQLSERVER_2017_ENTERPRISE" - The database version is SQL Server 2017
@@ -2584,8 +2604,7 @@ type Flag struct {
 	//   "POSTGRES_15" - The database version is PostgreSQL 15.
 	//   "POSTGRES_16" - The database version is PostgreSQL 16.
 	//   "POSTGRES_17" - The database version is PostgreSQL 17.
-	//   "POSTGRES_18" - The database version is AGBALA. The database version is
-	// PostgreSQL 18.
+	//   "POSTGRES_18" - The database version is PostgreSQL 18.
 	//   "SQLSERVER_2019_STANDARD" - The database version is SQL Server 2019
 	// Standard.
 	//   "SQLSERVER_2019_ENTERPRISE" - The database version is SQL Server 2019
@@ -2848,7 +2867,7 @@ type ImportContextBakImportOptions struct {
 	BakType           string                                          `json:"bakType,omitempty"`
 	EncryptionOptions *ImportContextBakImportOptionsEncryptionOptions `json:"encryptionOptions,omitempty"`
 	// NoRecovery: Whether or not the backup importing will restore database with
-	// NORECOVERY option Applies only to Cloud SQL for SQL Server.
+	// NORECOVERY option. Applies only to Cloud SQL for SQL Server.
 	NoRecovery bool `json:"noRecovery,omitempty"`
 	// RecoveryOnly: Whether or not the backup importing request will just bring
 	// database online without downloading Bak content only one of "no_recovery"
@@ -3044,6 +3063,9 @@ func (s ImportContextTdeImportOptions) MarshalJSON() ([]byte, error) {
 // InsightsConfig: Insights configuration. This specifies when Cloud SQL
 // Insights feature is enabled and optional configuration.
 type InsightsConfig struct {
+	// EnhancedQueryInsightsEnabled: Optional. Whether enhanced query insights
+	// feature is enabled.
+	EnhancedQueryInsightsEnabled bool `json:"enhancedQueryInsightsEnabled,omitempty"`
 	// QueryInsightsEnabled: Whether Query Insights feature is enabled.
 	QueryInsightsEnabled bool `json:"queryInsightsEnabled,omitempty"`
 	// QueryPlansPerMinute: Number of query execution plans captured by Insights
@@ -3060,15 +3082,15 @@ type InsightsConfig struct {
 	// RecordClientAddress: Whether Query Insights will record client address when
 	// enabled.
 	RecordClientAddress bool `json:"recordClientAddress,omitempty"`
-	// ForceSendFields is a list of field names (e.g. "QueryInsightsEnabled") to
-	// unconditionally include in API requests. By default, fields with empty or
-	// default values are omitted from API requests. See
-	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
-	// details.
+	// ForceSendFields is a list of field names (e.g.
+	// "EnhancedQueryInsightsEnabled") to unconditionally include in API requests.
+	// By default, fields with empty or default values are omitted from API
+	// requests. See https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields
+	// for more details.
 	ForceSendFields []string `json:"-"`
-	// NullFields is a list of field names (e.g. "QueryInsightsEnabled") to include
-	// in API requests with the JSON null value. By default, fields with empty
-	// values are omitted from API requests. See
+	// NullFields is a list of field names (e.g. "EnhancedQueryInsightsEnabled") to
+	// include in API requests with the JSON null value. By default, fields with
+	// empty values are omitted from API requests. See
 	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
 	NullFields []string `json:"-"`
 }
@@ -3266,6 +3288,37 @@ func (s InstancesImportRequest) MarshalJSON() ([]byte, error) {
 	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
 }
 
+// InstancesListEntraIdCertificatesResponse: Instances ListEntraIdCertificates
+// response.
+type InstancesListEntraIdCertificatesResponse struct {
+	// ActiveVersion: The `sha1_fingerprint` of the active certificate from
+	// `certs`.
+	ActiveVersion string `json:"activeVersion,omitempty"`
+	// Certs: List of Entra ID certificates for the instance.
+	Certs []*SslCert `json:"certs,omitempty"`
+	// Kind: This is always `sql#instancesListEntraIdCertificates`.
+	Kind string `json:"kind,omitempty"`
+
+	// ServerResponse contains the HTTP response code and headers from the server.
+	googleapi.ServerResponse `json:"-"`
+	// ForceSendFields is a list of field names (e.g. "ActiveVersion") to
+	// unconditionally include in API requests. By default, fields with empty or
+	// default values are omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
+	// details.
+	ForceSendFields []string `json:"-"`
+	// NullFields is a list of field names (e.g. "ActiveVersion") to include in API
+	// requests with the JSON null value. By default, fields with empty values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
+	NullFields []string `json:"-"`
+}
+
+func (s InstancesListEntraIdCertificatesResponse) MarshalJSON() ([]byte, error) {
+	type NoMethod InstancesListEntraIdCertificatesResponse
+	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
+}
+
 // InstancesListResponse: Database instances list response.
 type InstancesListResponse struct {
 	// Items: List of database instance resources.
@@ -3452,6 +3505,31 @@ func (s InstancesRestoreBackupRequest) MarshalJSON() ([]byte, error) {
 	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
 }
 
+// InstancesRotateEntraIdCertificateRequest: Rotate Entra ID Certificate
+// request.
+type InstancesRotateEntraIdCertificateRequest struct {
+	// RotateEntraIdCertificateContext: Optional. Contains details about the rotate
+	// Entra ID certificate operation.
+	RotateEntraIdCertificateContext *RotateEntraIdCertificateContext `json:"rotateEntraIdCertificateContext,omitempty"`
+	// ForceSendFields is a list of field names (e.g.
+	// "RotateEntraIdCertificateContext") to unconditionally include in API
+	// requests. By default, fields with empty or default values are omitted from
+	// API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
+	// details.
+	ForceSendFields []string `json:"-"`
+	// NullFields is a list of field names (e.g. "RotateEntraIdCertificateContext")
+	// to include in API requests with the JSON null value. By default, fields with
+	// empty values are omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
+	NullFields []string `json:"-"`
+}
+
+func (s InstancesRotateEntraIdCertificateRequest) MarshalJSON() ([]byte, error) {
+	type NoMethod InstancesRotateEntraIdCertificateRequest
+	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
+}
+
 // InstancesRotateServerCaRequest: Rotate Server CA request.
 type InstancesRotateServerCaRequest struct {
 	// RotateServerCaContext: Contains details about the rotate server CA
@@ -3603,6 +3681,25 @@ type IpConfiguration struct {
 	// instance with `CUSTOMER_MANAGED_CAS_CA` as the `server_ca_mode`. Format:
 	// projects/{PROJECT}/locations/{REGION}/caPools/{CA_POOL_ID}
 	ServerCaPool string `json:"serverCaPool,omitempty"`
+	// ServerCertificateRotationMode: Optional. Controls the automatic server
+	// certificate rotation feature. This feature is disabled by default. When
+	// enabled, the server certificate will be automatically rotated during Cloud
+	// SQL scheduled maintenance or self-service maintenance updates up to six
+	// months before it expires. This setting can only be set if server_ca_mode is
+	// either GOOGLE_MANAGED_CAS_CA or CUSTOMER_MANAGED_CAS_CA.
+	//
+	// Possible values:
+	//   "SERVER_CERTIFICATE_ROTATION_MODE_UNSPECIFIED" - Unspecified: no automatic
+	// server certificate rotation.
+	//   "NO_AUTOMATIC_ROTATION" - No automatic server certificate rotation. The
+	// user must [manage server certificate
+	// rotation](/sql/docs/mysql/manage-ssl-instance#rotate-server-certificate-cas)
+	// on their side.
+	//   "AUTOMATIC_ROTATION_DURING_MAINTENANCE" - Automatic server certificate
+	// rotation during Cloud SQL scheduled maintenance or self-service maintenance
+	// updates. Requires `server_ca_mode` to be `GOOGLE_MANAGED_CAS_CA` or
+	// `CUSTOMER_MANAGED_CAS_CA`.
+	ServerCertificateRotationMode string `json:"serverCertificateRotationMode,omitempty"`
 	// SslMode: Specify how SSL/TLS is enforced in database connections. If you
 	// must use the `require_ssl` flag for backward compatibility, then only the
 	// following value pairs are valid: For PostgreSQL and MySQL: *
@@ -4056,7 +4153,8 @@ type Operation struct {
 	//   "CREATE_REPLICA" - Creates a Cloud SQL replica instance.
 	//   "CREATE_USER" - Creates a new user in a Cloud SQL instance.
 	//   "DELETE_USER" - Deletes a user from a Cloud SQL instance.
-	//   "UPDATE_USER" - Updates an existing user in a Cloud SQL instance.
+	//   "UPDATE_USER" - Updates an existing user in a Cloud SQL instance. If a
+	// user with the specified username doesn't exist, a new user is created.
 	//   "CREATE_DATABASE" - Creates a database in the Cloud SQL instance.
 	//   "DELETE_DATABASE" - Deletes a database in the Cloud SQL instance.
 	//   "UPDATE_DATABASE" - Updates a database in the Cloud SQL instance.
@@ -4311,7 +4409,9 @@ func (s PasswordStatus) MarshalJSON() ([]byte, error) {
 }
 
 // PasswordValidationPolicy: Database instance local user password validation
-// policy
+// policy. This message defines the password policy for local database users.
+// When enabled, it enforces constraints on password complexity, length, and
+// reuse. Keep this policy enabled to help prevent unauthorized access.
 type PasswordValidationPolicy struct {
 	// Complexity: The complexity of the password.
 	//
@@ -4325,7 +4425,10 @@ type PasswordValidationPolicy struct {
 	DisallowCompromisedCredentials bool `json:"disallowCompromisedCredentials,omitempty"`
 	// DisallowUsernameSubstring: Disallow username as a part of the password.
 	DisallowUsernameSubstring bool `json:"disallowUsernameSubstring,omitempty"`
-	// EnablePasswordPolicy: Whether the password policy is enabled or not.
+	// EnablePasswordPolicy: Whether to enable the password policy or not. When
+	// enabled, passwords must meet complexity requirements. Keep this policy
+	// enabled to help prevent unauthorized access. Disabling this policy allows
+	// weak passwords.
 	EnablePasswordPolicy bool `json:"enablePasswordPolicy,omitempty"`
 	// MinLength: Minimum number of characters allowed.
 	MinLength int64 `json:"minLength,omitempty"`
@@ -4374,8 +4477,45 @@ func (s PerformDiskShrinkContext) MarshalJSON() ([]byte, error) {
 	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
 }
 
+// PerformanceCaptureConfig: Performance Capture configuration.
+type PerformanceCaptureConfig struct {
+	// Enabled: Optional. Enable or disable the Performance Capture.
+	Enabled bool `json:"enabled,omitempty"`
+	// ProbeThreshold: Optional. The minimum number of consecutive readings above
+	// threshold that triggers instance state capture.
+	ProbeThreshold int64 `json:"probeThreshold,omitempty"`
+	// ProbingIntervalSeconds: Optional. The time interval in seconds between any
+	// two probes.
+	ProbingIntervalSeconds int64 `json:"probingIntervalSeconds,omitempty"`
+	// RunningThreadsThreshold: Optional. The minimum number of server threads
+	// running to trigger the capture on primary.
+	RunningThreadsThreshold int64 `json:"runningThreadsThreshold,omitempty"`
+	// SecondsBehindSourceThreshold: Optional. The minimum number of seconds
+	// replica must be lagging behind primary to trigger capture on replica.
+	SecondsBehindSourceThreshold int64 `json:"secondsBehindSourceThreshold,omitempty"`
+	// TransactionDurationThreshold: Optional. The amount of time in seconds that a
+	// transaction needs to have been open before the watcher starts recording it.
+	TransactionDurationThreshold int64 `json:"transactionDurationThreshold,omitempty"`
+	// ForceSendFields is a list of field names (e.g. "Enabled") to unconditionally
+	// include in API requests. By default, fields with empty or default values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
+	// details.
+	ForceSendFields []string `json:"-"`
+	// NullFields is a list of field names (e.g. "Enabled") to include in API
+	// requests with the JSON null value. By default, fields with empty values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
+	NullFields []string `json:"-"`
+}
+
+func (s PerformanceCaptureConfig) MarshalJSON() ([]byte, error) {
+	type NoMethod PerformanceCaptureConfig
+	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
+}
+
 // PointInTimeRestoreContext: Context to perform a point-in-time restore of an
-// instance managed by Google Cloud Backup and Disaster Recovery.
+// instance managed by Backup and Disaster Recovery (DR) Service.
 type PointInTimeRestoreContext struct {
 	// AllocatedIpRange: Optional. The name of the allocated IP range for the
 	// internal IP Cloud SQL instance. For example:
@@ -4385,7 +4525,7 @@ type PointInTimeRestoreContext struct {
 	// Specifically, the name must be 1-63 characters long and match the regular
 	// expression a-z ([-a-z0-9]*[a-z0-9])?. Reserved for future use.
 	AllocatedIpRange string `json:"allocatedIpRange,omitempty"`
-	// Datasource: The Google Cloud Backup and Disaster Recovery Datasource URI.
+	// Datasource: The Backup and Disaster Recovery (DR) Service Datasource URI.
 	// Format:
 	// projects/{project}/locations/{region}/backupVaults/{backupvault}/dataSources/
 	// {datasource}.
@@ -4440,6 +4580,13 @@ type PoolNodeConfig struct {
 	// Name: Output only. The name of the read pool node, to be used for retrieving
 	// metrics and logs.
 	Name string `json:"name,omitempty"`
+	// PscAutoConnections: Output only. The list of settings for requested
+	// automatically-setup Private Service Connect (PSC) consumer endpoints that
+	// can be used to connect to this read pool node.
+	PscAutoConnections []*PscAutoConnectionConfig `json:"pscAutoConnections,omitempty"`
+	// PscServiceAttachmentLink: Output only. The Private Service Connect (PSC)
+	// service attachment of the read pool node.
+	PscServiceAttachmentLink string `json:"pscServiceAttachmentLink,omitempty"`
 	// State: Output only. The current state of the read pool node.
 	//
 	// Possible values:
@@ -4532,6 +4679,7 @@ type PreCheckMajorVersionUpgradeContext struct {
 	//   "MYSQL_8_0_46" - The database major version is MySQL 8.0 and the minor
 	// version is 46.
 	//   "MYSQL_8_4" - The database version is MySQL 8.4.
+	//   "MYSQL_9_7" - The database version is MySQL 9.7.
 	//   "SQLSERVER_2017_STANDARD" - The database version is SQL Server 2017
 	// Standard.
 	//   "SQLSERVER_2017_ENTERPRISE" - The database version is SQL Server 2017
@@ -4548,8 +4696,7 @@ type PreCheckMajorVersionUpgradeContext struct {
 	//   "POSTGRES_15" - The database version is PostgreSQL 15.
 	//   "POSTGRES_16" - The database version is PostgreSQL 16.
 	//   "POSTGRES_17" - The database version is PostgreSQL 17.
-	//   "POSTGRES_18" - The database version is AGBALA. The database version is
-	// PostgreSQL 18.
+	//   "POSTGRES_18" - The database version is PostgreSQL 18.
 	//   "SQLSERVER_2019_STANDARD" - The database version is SQL Server 2019
 	// Standard.
 	//   "SQLSERVER_2019_ENTERPRISE" - The database version is SQL Server 2019
@@ -4702,10 +4849,12 @@ type QueryResult struct {
 	// Message: Message related to the SQL execution result.
 	Message string `json:"message,omitempty"`
 	// PartialResult: Set to true if the SQL execution's result is truncated due to
-	// size limits.
+	// size limits or an error retrieving results.
 	PartialResult bool `json:"partialResult,omitempty"`
 	// Rows: Rows returned by the SQL statement.
 	Rows []*Row `json:"rows,omitempty"`
+	// Status: If results were truncated due to an error, details of that error.
+	Status *Status `json:"status,omitempty"`
 	// ForceSendFields is a list of field names (e.g. "Columns") to unconditionally
 	// include in API requests. By default, fields with empty or default values are
 	// omitted from API requests. See
@@ -4905,6 +5054,33 @@ func (s RestoreBackupContext) MarshalJSON() ([]byte, error) {
 	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
 }
 
+// RotateEntraIdCertificateContext: Instance rotate Entra ID certificate
+// context.
+type RotateEntraIdCertificateContext struct {
+	// Kind: Optional. This is always `sql#rotateEntraIdCertificateContext`.
+	Kind string `json:"kind,omitempty"`
+	// NextVersion: Optional. The fingerprint of the next version to be rotated to.
+	// If left unspecified, will be rotated to the most recently added Entra ID
+	// certificate version.
+	NextVersion string `json:"nextVersion,omitempty"`
+	// ForceSendFields is a list of field names (e.g. "Kind") to unconditionally
+	// include in API requests. By default, fields with empty or default values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
+	// details.
+	ForceSendFields []string `json:"-"`
+	// NullFields is a list of field names (e.g. "Kind") to include in API requests
+	// with the JSON null value. By default, fields with empty values are omitted
+	// from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
+	NullFields []string `json:"-"`
+}
+
+func (s RotateEntraIdCertificateContext) MarshalJSON() ([]byte, error) {
+	type NoMethod RotateEntraIdCertificateContext
+	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
+}
+
 // RotateServerCaContext: Instance rotate server CA context.
 type RotateServerCaContext struct {
 	// Kind: This is always `sql#rotateServerCaContext`.
@@ -5024,6 +5200,10 @@ type Settings struct {
 	// AuthorizedGaeApplications: The App Engine app IDs that can access this
 	// instance. (Deprecated) Applied to First Generation instances only.
 	AuthorizedGaeApplications []string `json:"authorizedGaeApplications,omitempty"`
+	// AutoUpgradeEnabled: Optional. Cloud SQL for MySQL auto-upgrade
+	// configuration. When this parameter is set to true, auto-upgrade is enabled
+	// for MySQL 8.0 minor versions. The MySQL version must be 8.0.35 or higher.
+	AutoUpgradeEnabled bool `json:"autoUpgradeEnabled,omitempty"`
 	// AvailabilityType: Availability type. Potential values: * `ZONAL`: The
 	// instance serves data from only one zone. Outages in that zone affect data
 	// accessibility. * `REGIONAL`: The instance can serve data from more than one
@@ -5065,6 +5245,18 @@ type Settings struct {
 	// instances. Indicates whether database flags for crash-safe replication are
 	// enabled. This property was only applicable to First Generation instances.
 	CrashSafeReplicationEnabled bool `json:"crashSafeReplicationEnabled,omitempty"`
+	// DataApiAccess: This parameter controls whether to allow using ExecuteSql API
+	// to connect to the instance. Not allowed by default.
+	//
+	// Possible values:
+	//   "DATA_API_ACCESS_UNSPECIFIED" - Unspecified, effectively the same as
+	// `DISALLOW_DATA_API`.
+	//   "DISALLOW_DATA_API" - Disallow using ExecuteSql API to connect to the
+	// instance.
+	//   "ALLOW_DATA_API" - Allow using ExecuteSql API to connect to the instance.
+	// For private IP instances, this allows authorized users to access the
+	// instance from the public internet using ExecuteSql API.
+	DataApiAccess string `json:"dataApiAccess,omitempty"`
 	// DataCacheConfig: Configuration for data cache.
 	DataCacheConfig *DataCacheConfig `json:"dataCacheConfig,omitempty"`
 	// DataDiskProvisionedIops: Optional. Provisioned number of I/O operations per
@@ -5116,6 +5308,9 @@ type Settings struct {
 	// predictions and insights to the AI. The default value is false. This applies
 	// only to Cloud SQL for MySQL and Cloud SQL for PostgreSQL instances.
 	EnableGoogleMlIntegration bool `json:"enableGoogleMlIntegration,omitempty"`
+	// EntraidConfig: Optional. The Microsoft Entra ID configuration for the SQL
+	// Server instance.
+	EntraidConfig *SqlServerEntraIdConfig `json:"entraidConfig,omitempty"`
 	// FinalBackupConfig: Optional. The final backup configuration for the
 	// instance.
 	FinalBackupConfig *FinalBackupConfig `json:"finalBackupConfig,omitempty"`
@@ -5139,6 +5334,9 @@ type Settings struct {
 	// PasswordValidationPolicy: The local user password validation policy of the
 	// instance.
 	PasswordValidationPolicy *PasswordValidationPolicy `json:"passwordValidationPolicy,omitempty"`
+	// PerformanceCaptureConfig: Optional. Configuration for Performance Capture,
+	// provides diagnostic metrics during high load situations.
+	PerformanceCaptureConfig *PerformanceCaptureConfig `json:"performanceCaptureConfig,omitempty"`
 	// PricingPlan: The pricing plan for this instance. This can be either
 	// `PER_USE` or `PACKAGE`. Only `PER_USE` is supported for Second Generation
 	// instances.
@@ -5234,7 +5432,10 @@ type SqlActiveDirectoryConfig struct {
 	//   "ACTIVE_DIRECTORY_MODE_UNSPECIFIED" - Unspecified mode.
 	//   "MANAGED_ACTIVE_DIRECTORY" - Managed Active Directory mode. This is the
 	// fallback option to maintain backward compatibility.
-	//   "SELF_MANAGED_ACTIVE_DIRECTORY" - Self-managed Active Directory mode.
+	//   "SELF_MANAGED_ACTIVE_DIRECTORY" - Deprecated: Use
+	// CUSTOMER_MANAGED_ACTIVE_DIRECTORY instead.
+	//   "CUSTOMER_MANAGED_ACTIVE_DIRECTORY" - Customer-managed Active Directory
+	// mode.
 	Mode string `json:"mode,omitempty"`
 	// OrganizationalUnit: Optional. The organizational unit distinguished name.
 	// This is the full hierarchical path to the organizational unit.
@@ -5452,6 +5653,8 @@ type SqlInstancesExecuteSqlResponse struct {
 	Metadata *Metadata `json:"metadata,omitempty"`
 	// Results: The list of results after executing all the SQL statements.
 	Results []*QueryResult `json:"results,omitempty"`
+	// Status: Contains the error from the database if the SQL execution failed.
+	Status *Status `json:"status,omitempty"`
 
 	// ServerResponse contains the HTTP response code and headers from the server.
 	googleapi.ServerResponse `json:"-"`
@@ -5858,6 +6061,32 @@ func (s SqlServerDatabaseDetails) MarshalJSON() ([]byte, error) {
 	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
 }
 
+// SqlServerEntraIdConfig: SQL Server Entra ID configuration.
+type SqlServerEntraIdConfig struct {
+	// ApplicationId: Optional. The application ID for the Entra ID configuration.
+	ApplicationId string `json:"applicationId,omitempty"`
+	// Kind: Output only. This is always sql#sqlServerEntraIdConfig
+	Kind string `json:"kind,omitempty"`
+	// TenantId: Optional. The tenant ID for the Entra ID configuration.
+	TenantId string `json:"tenantId,omitempty"`
+	// ForceSendFields is a list of field names (e.g. "ApplicationId") to
+	// unconditionally include in API requests. By default, fields with empty or
+	// default values are omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
+	// details.
+	ForceSendFields []string `json:"-"`
+	// NullFields is a list of field names (e.g. "ApplicationId") to include in API
+	// requests with the JSON null value. By default, fields with empty values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
+	NullFields []string `json:"-"`
+}
+
+func (s SqlServerEntraIdConfig) MarshalJSON() ([]byte, error) {
+	type NoMethod SqlServerEntraIdConfig
+	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
+}
+
 // SqlServerUserDetails: Represents a Sql Server user on the Cloud SQL
 // instance.
 type SqlServerUserDetails struct {
@@ -6100,6 +6329,40 @@ func (s SslCertsListResponse) MarshalJSON() ([]byte, error) {
 	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
 }
 
+// Status: The `Status` type defines a logical error model that is suitable for
+// different programming environments, including REST APIs and RPC APIs. It is
+// used by gRPC (https://github.com/grpc). Each `Status` message contains three
+// pieces of data: error code, error message, and error details. You can find
+// out more about this error model and how to work with it in the API Design
+// Guide (https://cloud.google.com/apis/design/errors).
+type Status struct {
+	// Code: The status code, which should be an enum value of google.rpc.Code.
+	Code int64 `json:"code,omitempty"`
+	// Details: A list of messages that carry the error details. There is a common
+	// set of message types for APIs to use.
+	Details []googleapi.RawMessage `json:"details,omitempty"`
+	// Message: A developer-facing error message, which should be in English. Any
+	// user-facing error message should be localized and sent in the
+	// google.rpc.Status.details field, or localized by the client.
+	Message string `json:"message,omitempty"`
+	// ForceSendFields is a list of field names (e.g. "Code") to unconditionally
+	// include in API requests. By default, fields with empty or default values are
+	// omitted from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
+	// details.
+	ForceSendFields []string `json:"-"`
+	// NullFields is a list of field names (e.g. "Code") to include in API requests
+	// with the JSON null value. By default, fields with empty values are omitted
+	// from API requests. See
+	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
+	NullFields []string `json:"-"`
+}
+
+func (s Status) MarshalJSON() ([]byte, error) {
+	type NoMethod Status
+	return gensupport.MarshalJSON(NoMethod(s), s.ForceSendFields, s.NullFields)
+}
+
 // SyncFlags: Initial sync flags for certain Cloud SQL APIs. Currently used for
 // the MySQL external server initial dump.
 type SyncFlags struct {
@@ -6249,6 +6512,8 @@ func (s TruncateLogContext) MarshalJSON() ([]byte, error) {
 
 // User: A Cloud SQL user resource.
 type User struct {
+	// DatabaseRoles: Optional. Role memberships of the user
+	DatabaseRoles []string `json:"databaseRoles,omitempty"`
 	// DualPasswordType: Dual password status for the user.
 	//
 	// Possible values:
@@ -6267,6 +6532,9 @@ type User struct {
 	// after insertion. For a MySQL instance, it's required; for a PostgreSQL or
 	// SQL Server instance, it's optional.
 	Host string `json:"host,omitempty"`
+	// IamEmail: Optional. The full email for an IAM user. For normal database
+	// users, this will not be filled. Only applicable to MySQL database users.
+	IamEmail string `json:"iamEmail,omitempty"`
 	// IamStatus: Indicates if a group is active or inactive for IAM database
 	// authentication.
 	//
@@ -6310,19 +6578,20 @@ type User struct {
 	// Cloud IAM group.
 	//   "CLOUD_IAM_GROUP_SERVICE_ACCOUNT" - Read-only. Login for a service account
 	// that belongs to the Cloud IAM group.
+	//   "ENTRAID_USER" - Microsoft Entra ID user.
 	Type string `json:"type,omitempty"`
 
 	// ServerResponse contains the HTTP response code and headers from the server.
 	googleapi.ServerResponse `json:"-"`
-	// ForceSendFields is a list of field names (e.g. "DualPasswordType") to
+	// ForceSendFields is a list of field names (e.g. "DatabaseRoles") to
 	// unconditionally include in API requests. By default, fields with empty or
 	// default values are omitted from API requests. See
 	// https://pkg.go.dev/google.golang.org/api#hdr-ForceSendFields for more
 	// details.
 	ForceSendFields []string `json:"-"`
-	// NullFields is a list of field names (e.g. "DualPasswordType") to include in
-	// API requests with the JSON null value. By default, fields with empty values
-	// are omitted from API requests. See
+	// NullFields is a list of field names (e.g. "DatabaseRoles") to include in API
+	// requests with the JSON null value. By default, fields with empty values are
+	// omitted from API requests. See
 	// https://pkg.go.dev/google.golang.org/api#hdr-NullFields for more details.
 	NullFields []string `json:"-"`
 }
@@ -8517,6 +8786,124 @@ func (c *FlagsListCall) Do(opts ...googleapi.CallOption) (*FlagsListResponse, er
 	return ret, nil
 }
 
+type InstancesListEntraIdCertificatesCall struct {
+	s            *Service
+	project      string
+	instance     string
+	urlParams_   gensupport.URLParams
+	ifNoneMatch_ string
+	ctx_         context.Context
+	header_      http.Header
+}
+
+// ListEntraIdCertificates: Lists all versions of EntraID certificates for the
+// specified instance. There can be up to three sets of certificates listed:
+// the certificate that is currently in use, a future that has been added but
+// not yet used to sign a certificate, and a certificate that has been rotated
+// out.
+//
+// - instance: Cloud SQL instance ID. This does not include the project ID.
+// - project: Project ID of the project that contains the instance.
+func (r *InstancesService) ListEntraIdCertificates(project string, instance string) *InstancesListEntraIdCertificatesCall {
+	c := &InstancesListEntraIdCertificatesCall{s: r.s, urlParams_: make(gensupport.URLParams)}
+	c.project = project
+	c.instance = instance
+	return c
+}
+
+// Fields allows partial responses to be retrieved. See
+// https://developers.google.com/gdata/docs/2.0/basics#PartialResponse for more
+// details.
+func (c *InstancesListEntraIdCertificatesCall) Fields(s ...googleapi.Field) *InstancesListEntraIdCertificatesCall {
+	c.urlParams_.Set("fields", googleapi.CombineFields(s))
+	return c
+}
+
+// IfNoneMatch sets an optional parameter which makes the operation fail if the
+// object's ETag matches the given value. This is useful for getting updates
+// only after the object has changed since the last request.
+func (c *InstancesListEntraIdCertificatesCall) IfNoneMatch(entityTag string) *InstancesListEntraIdCertificatesCall {
+	c.ifNoneMatch_ = entityTag
+	return c
+}
+
+// Context sets the context to be used in this call's Do method.
+func (c *InstancesListEntraIdCertificatesCall) Context(ctx context.Context) *InstancesListEntraIdCertificatesCall {
+	c.ctx_ = ctx
+	return c
+}
+
+// Header returns a http.Header that can be modified by the caller to add
+// headers to the request.
+func (c *InstancesListEntraIdCertificatesCall) Header() http.Header {
+	if c.header_ == nil {
+		c.header_ = make(http.Header)
+	}
+	return c.header_
+}
+
+func (c *InstancesListEntraIdCertificatesCall) doRequest(alt string) (*http.Response, error) {
+	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	if c.ifNoneMatch_ != "" {
+		reqHeaders.Set("If-None-Match", c.ifNoneMatch_)
+	}
+	c.urlParams_.Set("alt", alt)
+	c.urlParams_.Set("prettyPrint", "false")
+	urls := googleapi.ResolveRelative(c.s.BasePath, "sql/v1beta4/projects/{project}/instances/{instance}/listEntraIdCertificates")
+	urls += "?" + c.urlParams_.Encode()
+	req, err := http.NewRequest("GET", urls, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header = reqHeaders
+	googleapi.Expand(req.URL, map[string]string{
+		"project":  c.project,
+		"instance": c.instance,
+	})
+	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "sql.instances.ListEntraIdCertificates", "request", internallog.HTTPRequest(req, nil))
+	return gensupport.SendRequest(c.ctx_, c.s.client, req)
+}
+
+// Do executes the "sql.instances.ListEntraIdCertificates" call.
+// Any non-2xx status code is an error. Response headers are in either
+// *InstancesListEntraIdCertificatesResponse.ServerResponse.Header or (if a
+// response was returned at all) in error.(*googleapi.Error).Header. Use
+// googleapi.IsNotModified to check whether the returned error was because
+// http.StatusNotModified was returned.
+func (c *InstancesListEntraIdCertificatesCall) Do(opts ...googleapi.CallOption) (*InstancesListEntraIdCertificatesResponse, error) {
+	gensupport.SetOptions(c.urlParams_, opts...)
+	res, err := c.doRequest("json")
+	if res != nil && res.StatusCode == http.StatusNotModified {
+		if res.Body != nil {
+			res.Body.Close()
+		}
+		return nil, gensupport.WrapError(&googleapi.Error{
+			Code:   res.StatusCode,
+			Header: res.Header,
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer googleapi.CloseBody(res)
+	if err := googleapi.CheckResponse(res); err != nil {
+		return nil, gensupport.WrapError(err)
+	}
+	ret := &InstancesListEntraIdCertificatesResponse{
+		ServerResponse: googleapi.ServerResponse{
+			Header:         res.Header,
+			HTTPStatusCode: res.StatusCode,
+		},
+	}
+	target := &ret
+	b, err := gensupport.DecodeResponseBytes(target, res)
+	if err != nil {
+		return nil, err
+	}
+	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "sql.instances.ListEntraIdCertificates", "response", internallog.HTTPResponse(res, b))
+	return ret, nil
+}
+
 type InstancesListServerCertificatesCall struct {
 	s            *Service
 	project      string
@@ -8633,6 +9020,114 @@ func (c *InstancesListServerCertificatesCall) Do(opts ...googleapi.CallOption) (
 		return nil, err
 	}
 	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "sql.instances.ListServerCertificates", "response", internallog.HTTPResponse(res, b))
+	return ret, nil
+}
+
+type InstancesRotateEntraIdCertificateCall struct {
+	s                                        *Service
+	project                                  string
+	instance                                 string
+	instancesrotateentraidcertificaterequest *InstancesRotateEntraIdCertificateRequest
+	urlParams_                               gensupport.URLParams
+	ctx_                                     context.Context
+	header_                                  http.Header
+}
+
+// RotateEntraIdCertificate: Rotates the Entra Id certificate version to one
+// previously added with the addEntraIdCertificate method.
+//
+// - instance: Cloud SQL instance ID. This does not include the project ID.
+// - project: Project ID of the project that contains the instance.
+func (r *InstancesService) RotateEntraIdCertificate(project string, instance string, instancesrotateentraidcertificaterequest *InstancesRotateEntraIdCertificateRequest) *InstancesRotateEntraIdCertificateCall {
+	c := &InstancesRotateEntraIdCertificateCall{s: r.s, urlParams_: make(gensupport.URLParams)}
+	c.project = project
+	c.instance = instance
+	c.instancesrotateentraidcertificaterequest = instancesrotateentraidcertificaterequest
+	return c
+}
+
+// Fields allows partial responses to be retrieved. See
+// https://developers.google.com/gdata/docs/2.0/basics#PartialResponse for more
+// details.
+func (c *InstancesRotateEntraIdCertificateCall) Fields(s ...googleapi.Field) *InstancesRotateEntraIdCertificateCall {
+	c.urlParams_.Set("fields", googleapi.CombineFields(s))
+	return c
+}
+
+// Context sets the context to be used in this call's Do method.
+func (c *InstancesRotateEntraIdCertificateCall) Context(ctx context.Context) *InstancesRotateEntraIdCertificateCall {
+	c.ctx_ = ctx
+	return c
+}
+
+// Header returns a http.Header that can be modified by the caller to add
+// headers to the request.
+func (c *InstancesRotateEntraIdCertificateCall) Header() http.Header {
+	if c.header_ == nil {
+		c.header_ = make(http.Header)
+	}
+	return c.header_
+}
+
+func (c *InstancesRotateEntraIdCertificateCall) doRequest(alt string) (*http.Response, error) {
+	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "application/json", c.header_)
+	body, err := googleapi.WithoutDataWrapper.JSONBuffer(c.instancesrotateentraidcertificaterequest)
+	if err != nil {
+		return nil, err
+	}
+	c.urlParams_.Set("alt", alt)
+	c.urlParams_.Set("prettyPrint", "false")
+	urls := googleapi.ResolveRelative(c.s.BasePath, "sql/v1beta4/projects/{project}/instances/{instance}/rotateEntraIdCertificate")
+	urls += "?" + c.urlParams_.Encode()
+	req, err := http.NewRequest("POST", urls, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header = reqHeaders
+	googleapi.Expand(req.URL, map[string]string{
+		"project":  c.project,
+		"instance": c.instance,
+	})
+	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "sql.instances.RotateEntraIdCertificate", "request", internallog.HTTPRequest(req, body.Bytes()))
+	return gensupport.SendRequest(c.ctx_, c.s.client, req)
+}
+
+// Do executes the "sql.instances.RotateEntraIdCertificate" call.
+// Any non-2xx status code is an error. Response headers are in either
+// *Operation.ServerResponse.Header or (if a response was returned at all) in
+// error.(*googleapi.Error).Header. Use googleapi.IsNotModified to check
+// whether the returned error was because http.StatusNotModified was returned.
+func (c *InstancesRotateEntraIdCertificateCall) Do(opts ...googleapi.CallOption) (*Operation, error) {
+	gensupport.SetOptions(c.urlParams_, opts...)
+	res, err := c.doRequest("json")
+	if res != nil && res.StatusCode == http.StatusNotModified {
+		if res.Body != nil {
+			res.Body.Close()
+		}
+		return nil, gensupport.WrapError(&googleapi.Error{
+			Code:   res.StatusCode,
+			Header: res.Header,
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer googleapi.CloseBody(res)
+	if err := googleapi.CheckResponse(res); err != nil {
+		return nil, gensupport.WrapError(err)
+	}
+	ret := &Operation{
+		ServerResponse: googleapi.ServerResponse{
+			Header:         res.Header,
+			HTTPStatusCode: res.StatusCode,
+		},
+	}
+	target := &ret
+	b, err := gensupport.DecodeResponseBytes(target, res)
+	if err != nil {
+		return nil, err
+	}
+	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "sql.instances.RotateEntraIdCertificate", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -8856,6 +9351,109 @@ func (c *InstancesAcquireSsrsLeaseCall) Do(opts ...googleapi.CallOption) (*SqlIn
 		return nil, err
 	}
 	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "sql.instances.acquireSsrsLease", "response", internallog.HTTPResponse(res, b))
+	return ret, nil
+}
+
+type InstancesAddEntraIdCertificateCall struct {
+	s          *Service
+	project    string
+	instance   string
+	urlParams_ gensupport.URLParams
+	ctx_       context.Context
+	header_    http.Header
+}
+
+// AddEntraIdCertificate: Adds a new Entra ID certificate for the specified
+// instance. If an Entra ID certificate was previously added but never used in
+// a certificate rotation, this operation replaces that version.
+//
+// - instance: Cloud SQL instance ID. This does not include the project ID.
+// - project: Project ID of the project that contains the instance.
+func (r *InstancesService) AddEntraIdCertificate(project string, instance string) *InstancesAddEntraIdCertificateCall {
+	c := &InstancesAddEntraIdCertificateCall{s: r.s, urlParams_: make(gensupport.URLParams)}
+	c.project = project
+	c.instance = instance
+	return c
+}
+
+// Fields allows partial responses to be retrieved. See
+// https://developers.google.com/gdata/docs/2.0/basics#PartialResponse for more
+// details.
+func (c *InstancesAddEntraIdCertificateCall) Fields(s ...googleapi.Field) *InstancesAddEntraIdCertificateCall {
+	c.urlParams_.Set("fields", googleapi.CombineFields(s))
+	return c
+}
+
+// Context sets the context to be used in this call's Do method.
+func (c *InstancesAddEntraIdCertificateCall) Context(ctx context.Context) *InstancesAddEntraIdCertificateCall {
+	c.ctx_ = ctx
+	return c
+}
+
+// Header returns a http.Header that can be modified by the caller to add
+// headers to the request.
+func (c *InstancesAddEntraIdCertificateCall) Header() http.Header {
+	if c.header_ == nil {
+		c.header_ = make(http.Header)
+	}
+	return c.header_
+}
+
+func (c *InstancesAddEntraIdCertificateCall) doRequest(alt string) (*http.Response, error) {
+	reqHeaders := gensupport.SetHeaders(c.s.userAgent(), "", c.header_)
+	c.urlParams_.Set("alt", alt)
+	c.urlParams_.Set("prettyPrint", "false")
+	urls := googleapi.ResolveRelative(c.s.BasePath, "sql/v1beta4/projects/{project}/instances/{instance}/addEntraIdCertificate")
+	urls += "?" + c.urlParams_.Encode()
+	req, err := http.NewRequest("POST", urls, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header = reqHeaders
+	googleapi.Expand(req.URL, map[string]string{
+		"project":  c.project,
+		"instance": c.instance,
+	})
+	c.s.logger.DebugContext(c.ctx_, "api request", "serviceName", apiName, "rpcName", "sql.instances.addEntraIdCertificate", "request", internallog.HTTPRequest(req, nil))
+	return gensupport.SendRequest(c.ctx_, c.s.client, req)
+}
+
+// Do executes the "sql.instances.addEntraIdCertificate" call.
+// Any non-2xx status code is an error. Response headers are in either
+// *Operation.ServerResponse.Header or (if a response was returned at all) in
+// error.(*googleapi.Error).Header. Use googleapi.IsNotModified to check
+// whether the returned error was because http.StatusNotModified was returned.
+func (c *InstancesAddEntraIdCertificateCall) Do(opts ...googleapi.CallOption) (*Operation, error) {
+	gensupport.SetOptions(c.urlParams_, opts...)
+	res, err := c.doRequest("json")
+	if res != nil && res.StatusCode == http.StatusNotModified {
+		if res.Body != nil {
+			res.Body.Close()
+		}
+		return nil, gensupport.WrapError(&googleapi.Error{
+			Code:   res.StatusCode,
+			Header: res.Header,
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer googleapi.CloseBody(res)
+	if err := googleapi.CheckResponse(res); err != nil {
+		return nil, gensupport.WrapError(err)
+	}
+	ret := &Operation{
+		ServerResponse: googleapi.ServerResponse{
+			Header:         res.Header,
+			HTTPStatusCode: res.StatusCode,
+		},
+	}
+	target := &ret
+	b, err := gensupport.DecodeResponseBytes(target, res)
+	if err != nil {
+		return nil, err
+	}
+	c.s.logger.DebugContext(c.ctx_, "api response", "serviceName", apiName, "rpcName", "sql.instances.addEntraIdCertificate", "response", internallog.HTTPResponse(res, b))
 	return ret, nil
 }
 
@@ -14369,6 +14967,14 @@ func (r *UsersService) Update(project string, instance string, user *User) *User
 	return c
 }
 
+// DatabaseRoles sets the optional parameter "databaseRoles": List of database
+// roles to grant to the user. body.database_roles will be ignored for update
+// request.
+func (c *UsersUpdateCall) DatabaseRoles(databaseRoles ...string) *UsersUpdateCall {
+	c.urlParams_.SetMulti("databaseRoles", append([]string{}, databaseRoles...))
+	return c
+}
+
 // Host sets the optional parameter "host": Host of the user in the instance.
 func (c *UsersUpdateCall) Host(host string) *UsersUpdateCall {
 	c.urlParams_.Set("host", host)
@@ -14378,6 +14984,13 @@ func (c *UsersUpdateCall) Host(host string) *UsersUpdateCall {
 // Name sets the optional parameter "name": Name of the user in the instance.
 func (c *UsersUpdateCall) Name(name string) *UsersUpdateCall {
 	c.urlParams_.Set("name", name)
+	return c
+}
+
+// RevokeExistingRoles sets the optional parameter "revokeExistingRoles":
+// revoke the existing roles granted to the user.
+func (c *UsersUpdateCall) RevokeExistingRoles(revokeExistingRoles bool) *UsersUpdateCall {
+	c.urlParams_.Set("revokeExistingRoles", fmt.Sprint(revokeExistingRoles))
 	return c
 }
 
