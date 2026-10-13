@@ -25,6 +25,7 @@ var (
 	// director can't be asked for the task of a lost answer, or because the
 	// deployment of a lost job-state answer was not seen idle within the
 	// watch limit.
+	//lint:ignore ST1005 Blacksmith is a proper noun
 	ErrWatchAbandoned = errors.New("Blacksmith stopped following the BOSH task and released its slot") //nolint:staticcheck // Blacksmith is a proper noun
 	// ErrNoTaskWithContextID is reported to the waiters of a watcher whose
 	// deploy lost its answer, when the director showed that no task has its
