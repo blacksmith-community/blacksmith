@@ -34,6 +34,19 @@ jobs:
       - name: Staticcheck
         run: make staticcheck
 
+      - name: Install OpenBao
+        env:
+          OPENBAO_VERSION: 2.7.0
+          OPENBAO_SHA256: c3ab5de9e778223445487ccbfb16c291bf491642b688f3a3df5aeba23d9b3667
+        run: |
+          archive="openbao_${OPENBAO_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "${archive}" "https://github.com/openbao/openbao/releases/download/v${OPENBAO_VERSION}/${archive}"
+          echo "${OPENBAO_SHA256}  ${archive}" | sha256sum --check --strict -
+          tar -xzf "${archive}" bao
+          sudo install -m 0755 bao /usr/local/bin/bao
+          rm -f "${archive}" bao
+          bao version
+
       - name: Test
         run: make test
 
