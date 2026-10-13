@@ -22,6 +22,7 @@ import (
 // Test error definitions.
 var (
 	errTestDataMustBeMapStringInterface = errors.New("data must be map[string]interface{}")
+	errTestDirectorUnreachable          = errors.New("director unreachable")
 )
 
 type testVaultAdapter struct {
@@ -513,5 +514,300 @@ func TestErrandsHandlerAddsEveryResult(t *testing.T) {
 		if entry != want[index] || len(keys.Results[index]) != 5 {
 			t.Errorf("result %d is %v, want %+v and no other keys", index, keys.Results[index], want[index])
 		}
+	}
+}
+
+// manifestDirector answers GetDeployment with the detail and error it
+// holds, and records any deploy that reaches it.
+type manifestDirector struct {
+	*testutil.MockBOSHDirector
+
+	detail *bosh.DeploymentDetail
+	err    error
+
+	deployCalled bool
+}
+
+func (d *manifestDirector) GetDeployment(context.Context, string) (*bosh.DeploymentDetail, error) {
+	return d.detail, d.err
+}
+
+func (d *manifestDirector) UpdateDeployment(context.Context, string, string) (*bosh.Task, error) {
+	d.deployCalled = true
+
+	return &bosh.Task{ID: 1}, nil
+}
+
+// manifestDeployment is the deployment the manifest tests read and update.
+const manifestDeployment = "valkey-1"
+
+// manifestRoutes are the two routes that read a deployment's manifest.
+func manifestRoutes() []string {
+	return []string{"manifest", "manifest-details"}
+}
+
+// placeholderMarkers are strings from the stand-in manifest the routes
+// once answered with when the director could not give the real one.
+func placeholderMarkers() []string {
+	return []string{
+		"placeholder-director-uuid",
+		"blacksmith_admin_password",
+		"bosh-warden-boshlite",
+		"instance_groups",
+	}
+}
+
+// getManifestThroughHandler reads one manifest route for the test
+// deployment and
+// returns the answer.
+func getManifestThroughHandler(t *testing.T, director *manifestDirector, route string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/b/deployments/"+manifestDeployment+"/"+route, nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	return recorder
+}
+
+// assertManifestError checks an error answer from a manifest route. It
+// carries the wanted status, the handler's JSON error shape, an error
+// that names the deployment and the failure, and no stand-in manifest.
+func assertManifestError(t *testing.T, recorder *httptest.ResponseRecorder, wantCode int, wantText string) {
+	t.Helper()
+
+	if recorder.Code != wantCode {
+		t.Fatalf("expected status %d, got %d: %s", wantCode, recorder.Code, recorder.Body.String())
+	}
+
+	for _, marker := range placeholderMarkers() {
+		if strings.Contains(recorder.Body.String(), marker) {
+			t.Errorf("the answer carries the stand-in manifest's %q: %s", marker, recorder.Body.String())
+		}
+	}
+
+	var body struct {
+		Success *bool  `json:"success"`
+		Error   string `json:"error"`
+		Text    string `json:"text"`
+	}
+
+	err := json.Unmarshal(recorder.Body.Bytes(), &body)
+	if err != nil {
+		t.Fatalf("decoding the answer %q: %v", recorder.Body.String(), err)
+	}
+
+	if body.Success == nil || *body.Success {
+		t.Errorf("expected success to be false, got %s", recorder.Body.String())
+	}
+
+	if body.Text != "" {
+		t.Errorf("expected no manifest text, got %q", body.Text)
+	}
+
+	for _, want := range []string{manifestDeployment, wantText} {
+		if !strings.Contains(body.Error, want) {
+			t.Errorf("expected the error to carry %q, got %q", want, body.Error)
+		}
+	}
+}
+
+// A deployment the director does not know gets 404 and an error, never a
+// stand-in manifest that a caller could deploy over the real one.
+func TestManifestRoutesAnswer404ForAnUnknownDeployment(t *testing.T) {
+	t.Parallel()
+
+	for _, route := range manifestRoutes() {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+
+			director := &manifestDirector{
+				MockBOSHDirector: testutil.NewMockBOSHDirector(),
+				err:              fmt.Errorf("%w: %s: director code 70000", bosh.ErrDeploymentNotFound, manifestDeployment),
+			}
+
+			recorder := getManifestThroughHandler(t, director, route)
+
+			assertManifestError(t, recorder, http.StatusNotFound, "deployment not found")
+		})
+	}
+}
+
+// Any other director failure gets the 500 the sibling routes answer with,
+// and an error, never a stand-in manifest.
+func TestManifestRoutesAnswer500WhenTheDirectorFails(t *testing.T) {
+	t.Parallel()
+
+	for _, route := range manifestRoutes() {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+
+			director := &manifestDirector{
+				MockBOSHDirector: testutil.NewMockBOSHDirector(),
+				err:              errTestDirectorUnreachable,
+			}
+
+			recorder := getManifestThroughHandler(t, director, route)
+
+			assertManifestError(t, recorder, http.StatusInternalServerError, errTestDirectorUnreachable.Error())
+		})
+	}
+}
+
+// A manifest the director returns comes back as its text and its parsed
+// form.
+func TestManifestRoutesReturnTheDirectorsManifest(t *testing.T) {
+	t.Parallel()
+
+	manifest := "name: " + manifestDeployment + "\ninstance_groups:\n- name: node\n  instances: 3\n"
+
+	for _, route := range manifestRoutes() {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+
+			director := &manifestDirector{
+				MockBOSHDirector: testutil.NewMockBOSHDirector(),
+				detail:           &bosh.DeploymentDetail{Name: manifestDeployment, Manifest: manifest},
+			}
+
+			recorder := getManifestThroughHandler(t, director, route)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+			}
+
+			var body struct {
+				Text   string                 `json:"text"`
+				Parsed map[string]interface{} `json:"parsed"`
+			}
+
+			err := json.Unmarshal(recorder.Body.Bytes(), &body)
+			if err != nil {
+				t.Fatalf("decoding the answer %q: %v", recorder.Body.String(), err)
+			}
+
+			if body.Text != manifest {
+				t.Errorf("expected the director's manifest text %q, got %q", manifest, body.Text)
+			}
+
+			if body.Parsed["name"] != manifestDeployment {
+				t.Errorf("expected the parsed manifest to name %s, got %v", manifestDeployment, body.Parsed)
+			}
+
+			groups, ok := body.Parsed["instance_groups"].([]interface{})
+			if !ok || len(groups) != 1 {
+				t.Errorf("expected one parsed instance group, got %v", body.Parsed["instance_groups"])
+			}
+		})
+	}
+}
+
+// A deployment whose first deploy is still running has no manifest yet.
+// The routes say so with empty text, never with a stand-in manifest.
+func TestManifestRoutesReturnNoManifestForADeployInFlight(t *testing.T) {
+	t.Parallel()
+
+	for _, route := range manifestRoutes() {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+
+			director := &manifestDirector{
+				MockBOSHDirector: testutil.NewMockBOSHDirector(),
+				detail:           &bosh.DeploymentDetail{Name: manifestDeployment},
+			}
+
+			recorder := getManifestThroughHandler(t, director, route)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+			}
+
+			for _, marker := range placeholderMarkers() {
+				if strings.Contains(recorder.Body.String(), marker) {
+					t.Errorf("the answer carries the stand-in manifest's %q: %s", marker, recorder.Body.String())
+				}
+			}
+
+			var body struct {
+				Text string `json:"text"`
+			}
+
+			err := json.Unmarshal(recorder.Body.Bytes(), &body)
+			if err != nil {
+				t.Fatalf("decoding the answer %q: %v", recorder.Body.String(), err)
+			}
+
+			if body.Text != "" {
+				t.Errorf("expected empty manifest text, got %q", body.Text)
+			}
+		})
+	}
+}
+
+// An update body that is not a mapping with at least one key is refused
+// with 400 and an error that names the deployment, and no deploy reaches
+// the director. Each of these bodies once became the manifest "{}" or an
+// error that did not say which deployment it was for.
+func TestUpdateManifestRefusesABodyThatIsNotAMapping(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{"empty", ""},
+		{"whitespace", " \n\t "},
+		{"null", "null"},
+		{"empty mapping", "{}"},
+		{"empty mapping with whitespace", " { } "},
+		{"yaml null", "~"},
+		{"string", `"name: valkey-1"`},
+		{"number", "42"},
+		{"boolean", "true"},
+		{"empty list", "[]"},
+		{"list of mappings", `[{"name": "valkey-1"}]`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			director := &manifestDirector{MockBOSHDirector: testutil.NewMockBOSHDirector()}
+			handler := deployments.NewHandler(deployments.Dependencies{Logger: logger.NewNoOpLogger(), Director: director})
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/b/deployments/"+manifestDeployment+"/manifest", strings.NewReader(test.payload))
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, req)
+
+			if director.deployCalled {
+				t.Errorf("expected no deploy to reach the director for body %q", test.payload)
+			}
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected status 400 for body %q, got %d: %s", test.payload, recorder.Code, recorder.Body.String())
+			}
+
+			var body struct {
+				Success *bool  `json:"success"`
+				Error   string `json:"error"`
+			}
+
+			err := json.Unmarshal(recorder.Body.Bytes(), &body)
+			if err != nil {
+				t.Fatalf("decoding the answer %q: %v", recorder.Body.String(), err)
+			}
+
+			if body.Success == nil || *body.Success {
+				t.Errorf("expected success to be false, got %s", recorder.Body.String())
+			}
+
+			if !strings.Contains(body.Error, manifestDeployment) {
+				t.Errorf("expected the error to name %s, got %q", manifestDeployment, body.Error)
+			}
+		})
 	}
 }

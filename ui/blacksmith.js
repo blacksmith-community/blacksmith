@@ -3733,12 +3733,27 @@
         return formatVMs(vms);
 
       } else if (type === 'manifest') {
-        // Fetch manifest details for blacksmith deployment
+        // Fetch manifest details for blacksmith deployment. A failed read
+        // shows the broker's error and no manifest, so nothing the page
+        // shows or copies is a manifest the director did not return.
         const response = await fetch(`/b/deployments/${deploymentName}/manifest`, { cache: 'no-cache' });
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          let reason = `HTTP ${response.status}: ${response.statusText}`;
+          try {
+            const body = await response.json();
+            if (body && body.error) {
+              reason = `HTTP ${response.status}: ${body.error}`;
+            }
+          } catch (parseError) {
+            // The body was not JSON, so the status line is all we have.
+          }
+          return `<div class="error">Failed to load the manifest of deployment ${escapeHtml(deploymentName)}: ${escapeHtml(reason)}</div>`;
         }
         const manifestData = await response.json();
+
+        if (manifestData && manifestData.text === '') {
+          return `<div class="no-data">Deployment ${escapeHtml(deploymentName)} has no manifest yet, because its first deploy has not finished.</div>`;
+        }
 
         return formatManifestDetails(manifestData, `blacksmith-${deploymentName}`);
 
@@ -3775,9 +3790,9 @@
         return formatConfigs(configs);
       }
 
-      return `<div class="error">Unknown tab type: ${type}</div>`;
+      return `<div class="error">Unknown tab type: ${escapeHtml(type)}</div>`;
     } catch (error) {
-      return `<div class="error">Failed to load ${type}: ${error.message}</div>`;
+      return `<div class="error">Failed to load ${escapeHtml(type)}: ${escapeHtml(error.message)}</div>`;
     }
   };
 

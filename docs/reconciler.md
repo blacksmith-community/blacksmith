@@ -685,15 +685,12 @@ Check deployment naming conventions:
 - Should follow `{serviceID}-{planID}-{instanceID}` pattern
 - Instance ID should be a valid UUID matching CF service instance GUID
 
-Verify manifest metadata in BOSH deployments. First prove the deployment exists, because the instances route returns an error for a deployment the director does not know:
+Verify manifest metadata in BOSH deployments by reading the manifest text from the manifest route. The route answers HTTP 404 for a deployment the director does not know and HTTP 500 when the director call fails, and both answers carry the reason in their `error` field. With `-f`, curl prints nothing and exits non-zero on either answer, so a manifest in the output proves the deployment exists:
 ```bash
-curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/deployments/<deployment-name>/instances
+curl -sf -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/deployments/<deployment-name>/manifest | jq -r .text | grep -A5 -B5 blacksmith
 ```
 
-The manifest route returns a placeholder manifest with HTTP 200 for a deployment the director does not know, so the manifest check alone cannot prove the deployment exists. Once the instances call has succeeded, read the manifest text from the response:
-```bash
-curl -s -u "$BROKER_USER:$BROKER_PASS" https://blacksmith.example.com/b/deployments/<deployment-name>/manifest | jq -r .text | grep -A5 -B5 blacksmith
-```
+An empty `text` means the deployment exists but its first deploy has not finished, so the director has no manifest for it yet.
 
 Enable verbose logging to see matching decisions:
 ```bash

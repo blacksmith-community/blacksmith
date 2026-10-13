@@ -29,10 +29,13 @@ const (
 // Error variables for err113 compliance.
 var (
 	errInvalidManifest                    = errors.New("invalid manifest")
+	errEmptyManifest                      = errors.New("the manifest must be a mapping with at least one key")
 	errDeploymentNotFound                 = errors.New("deployment not found")
 	errVaultNotConfigured                 = errors.New("vault not configured")
 	errServiceIndexNotFoundInVault        = errors.New("service index not found in vault")
 	errDeploymentNotAssociatedWithSvcInst = errors.New("deployment not associated with any service instance")
+	errDirectorNotConfigured              = errors.New("no director is configured")
+	errDirectorReturnedNoDeployment       = errors.New("the director returned no deployment")
 )
 
 // Handler handles deployment-related endpoints.
@@ -184,22 +187,18 @@ func (h *Handler) DeleteDeployment(writer http.ResponseWriter, req *http.Request
 
 // GetManifest returns the manifest for a deployment.
 func (h *Handler) GetManifest(writer http.ResponseWriter, req *http.Request, deploymentName string) {
-	ctx := req.Context()
-
 	logger := h.logger.Named("deployment-manifest")
 	logger.Debug("Getting manifest for deployment: %s", deploymentName)
 
-	response.HandleJSON(writer, h.buildManifestPayload(ctx, deploymentName), nil)
+	h.writeManifest(req.Context(), writer, logger, deploymentName)
 }
 
 // GetManifestDetails returns a structured manifest payload suitable for UI consumption.
 func (h *Handler) GetManifestDetails(writer http.ResponseWriter, req *http.Request, deploymentName string) {
-	ctx := req.Context()
-
 	logger := h.logger.Named("deployment-manifest-details")
 	logger.Debug("Getting manifest details for deployment: %s", deploymentName)
 
-	response.HandleJSON(writer, h.buildManifestPayload(ctx, deploymentName), nil)
+	h.writeManifest(req.Context(), writer, logger, deploymentName)
 }
 
 // UpdateManifest updates the manifest for a deployment.
@@ -209,12 +208,21 @@ func (h *Handler) UpdateManifest(writer http.ResponseWriter, req *http.Request, 
 	logger := h.logger.Named("deployment-manifest-update")
 	logger.Info("Updating manifest for deployment: %s", deploymentName)
 
+	// Only a mapping with at least one key is a manifest. A body of null
+	// or {} decodes to an empty map, which would marshal to the manifest
+	// "{}" and deploy it over the real one, so it is refused like a body
+	// that is empty or is not a mapping at all.
 	var manifest map[string]interface{}
 
 	err := json.NewDecoder(req.Body).Decode(&manifest)
+	if err == nil && len(manifest) == 0 {
+		err = errEmptyManifest
+	}
+
 	if err != nil {
-		writer.WriteHeader(http.StatusBadRequest)
-		response.HandleJSON(writer, nil, fmt.Errorf("%w: %w", errInvalidManifest, err))
+		logger.Error("Refusing the manifest update for deployment %s: %v", deploymentName, err)
+		response.WriteError(writer, http.StatusBadRequest,
+			fmt.Sprintf("%v for deployment %s: %v", errInvalidManifest, deploymentName, err))
 
 		return
 	}
@@ -560,67 +568,61 @@ func (h *Handler) StartDeployment(writer http.ResponseWriter, req *http.Request,
 	response.HandleJSON(writer, result, nil)
 }
 
-func (h *Handler) buildManifestPayload(ctx context.Context, deploymentName string) map[string]interface{} {
-	// Try to fetch the actual manifest from BOSH director
-	if h.director != nil {
-		deployment, err := h.director.GetDeployment(ctx, deploymentName)
-		if err == nil && deployment.Manifest != "" {
-			// Parse the YAML manifest into a structured format
-			var parsed map[string]interface{}
+// writeManifest answers with the deployment's manifest as the director
+// holds it, as its text and its parsed form. It never stands a made-up
+// manifest in for one the director could not give, because a caller can
+// post what it reads here back as the deployment's manifest. A deployment
+// the director does not know gets 404, and any other failure gets 500, the
+// status the sibling routes give a director failure.
+func (h *Handler) writeManifest(ctx context.Context, writer http.ResponseWriter, logger interfaces.Logger, deploymentName string) {
+	payload, err := h.readManifest(ctx, deploymentName)
+	if err != nil {
+		logger.Error("Failed to read the manifest of deployment %s: %v", deploymentName, err)
 
-			parseErr := yaml.Unmarshal([]byte(deployment.Manifest), &parsed)
-			if parseErr == nil {
-				return map[string]interface{}{
-					"text":   deployment.Manifest,
-					"parsed": parsed,
-				}
-			}
-			// If parsing fails, return text only with empty parsed section
-			return map[string]interface{}{
-				"text":   deployment.Manifest,
-				"parsed": map[string]interface{}{},
-			}
+		status := http.StatusInternalServerError
+		if errors.Is(err, bosh.ErrDeploymentNotFound) {
+			status = http.StatusNotFound
+		}
+
+		response.WriteError(writer, status, fmt.Sprintf("reading the manifest of deployment %s: %v", deploymentName, err))
+
+		return
+	}
+
+	response.HandleJSON(writer, payload, nil)
+}
+
+// readManifest reads the deployment's manifest from the director. A
+// deployment whose first deploy is still running has no manifest yet, so
+// its text is empty. A manifest that does not parse as a YAML map keeps
+// its text with an empty parsed form.
+func (h *Handler) readManifest(ctx context.Context, deploymentName string) (map[string]interface{}, error) {
+	if h.director == nil {
+		return nil, errDirectorNotConfigured
+	}
+
+	deployment, err := h.director.GetDeployment(ctx, deploymentName)
+	if err != nil {
+		return nil, fmt.Errorf("getting the deployment from the director: %w", err)
+	}
+
+	if deployment == nil {
+		return nil, errDirectorReturnedNoDeployment
+	}
+
+	parsed := map[string]interface{}{}
+
+	if deployment.Manifest != "" {
+		parseErr := yaml.Unmarshal([]byte(deployment.Manifest), &parsed)
+		if parseErr != nil || parsed == nil {
+			parsed = map[string]interface{}{}
 		}
 	}
 
-	// Fallback to mock data if BOSH director is unavailable or deployment not found
-	manifestText := fmt.Sprintf("name: %s\nreleases:\n- name: blacksmith\n  version: latest\ninstance_groups:\n- name: blacksmith\n  instances: 1\n  vm_type: default\n", deploymentName)
-
-	parsed := map[string]interface{}{
-		"name":          deploymentName,
-		"director_uuid": "placeholder-director-uuid",
-		"releases": []map[string]string{
-			{"name": "blacksmith", "version": "latest"},
-		},
-		"stemcells": []map[string]string{
-			{"name": "bosh-warden-boshlite-ubuntu-jammy-go_agent", "version": "1.1", "os": "ubuntu-jammy"},
-		},
-		"instance_groups": []map[string]interface{}{
-			{
-				"name":      "blacksmith",
-				"instances": 1,
-				"vm_type":   "default",
-				"azs":       []string{"z1"},
-			},
-		},
-		"features": map[string]bool{
-			"use_dns_addresses": true,
-		},
-		"update": map[string]interface{}{
-			"canaries":          1,
-			"max_in_flight":     1,
-			"canary_watch_time": "1000-30000",
-			"update_watch_time": "1000-30000",
-		},
-		"variables": []map[string]string{
-			{"name": "blacksmith_admin_password", "type": "password"},
-		},
-	}
-
 	return map[string]interface{}{
-		"text":   manifestText,
+		"text":   deployment.Manifest,
 		"parsed": parsed,
-	}
+	}, nil
 }
 
 // processResurrectionConfig extracts the resurrection state from the config.
