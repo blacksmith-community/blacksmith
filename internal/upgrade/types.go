@@ -81,18 +81,24 @@ type InstanceUpgrade struct {
 	// UnknownSince is when the deploy's answer was lost, and is nil while
 	// no answer has been lost.
 	UnknownSince *time.Time `json:"unknown_since,omitempty"`
-	Error        string     `json:"error,omitempty"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	// AppliedReleases holds the release targets the instance's deploy
+	// applied, which are those its manifest held.
+	AppliedReleases []ReleaseTarget `json:"applied_releases,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	StartedAt       *time.Time      `json:"started_at,omitempty"`
+	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
 }
 
 // UpgradeTask represents a batch upgrade task.
 type UpgradeTask struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name,omitempty"`
-	Status         TaskStatus        `json:"status"`
-	Paused         bool              `json:"paused"`
-	TargetStemcell StemcellTarget    `json:"target_stemcell"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name,omitempty"`
+	Status         TaskStatus     `json:"status"`
+	Paused         bool           `json:"paused"`
+	TargetStemcell StemcellTarget `json:"target_stemcell"`
+	// TargetReleases holds the releases to upgrade, and is empty when the
+	// upgrade keeps each instance's releases.
+	TargetReleases []ReleaseTarget   `json:"target_releases,omitempty"`
 	Instances      []InstanceUpgrade `json:"instances"`
 	TotalCount     int               `json:"total_count"`
 	CompletedCount int               `json:"completed_count"`
@@ -111,6 +117,12 @@ type UpgradeTask struct {
 type StemcellTarget struct {
 	OS      string `json:"os"`
 	Version string `json:"version"`
+}
+
+// IsSet reports whether the target names a stemcell. An upgrade of
+// releases alone leaves its stemcell target empty.
+func (s StemcellTarget) IsSet() bool {
+	return s.OS != "" && s.Version != ""
 }
 
 // ReleaseTarget names a BOSH release and the version to upgrade it to. The

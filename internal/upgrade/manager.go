@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -467,12 +469,17 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 
 	m.logger.Debug("Got deployment %s, manifest size: %d bytes", instance.DeploymentName, len(deployment.Manifest))
 
-	// Merge stemcell overlay
-	m.logger.Debug("Merging stemcell overlay for %s: %s/%s",
-		instance.DeploymentName, task.TargetStemcell.OS, task.TargetStemcell.Version)
+	newManifest := deployment.Manifest
 
-	newManifest, err := MergeStemcellOverlay(deployment.Manifest,
-		task.TargetStemcell.OS, task.TargetStemcell.Version)
+	// An upgrade of releases alone keeps the instance's stemcell.
+	if task.TargetStemcell.IsSet() {
+		m.logger.Debug("Merging stemcell overlay for %s: %s/%s",
+			instance.DeploymentName, task.TargetStemcell.OS, task.TargetStemcell.Version)
+
+		newManifest, err = MergeStemcellOverlay(newManifest,
+			task.TargetStemcell.OS, task.TargetStemcell.Version)
+	}
+
 	if err != nil && stoppedBeforeTheDeploy(ctx, err) {
 		m.returnToPending(persistCtx, task, instance, err)
 
@@ -480,18 +487,28 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 	}
 
 	if err != nil {
-		m.mu.Lock()
-		instance.Status = InstanceStatusFailed
-		instance.Error = fmt.Sprintf("failed to merge stemcell overlay: %v", err)
-		task.FailedCount++
-		m.mu.Unlock()
-		m.logger.Error("Failed to merge stemcell overlay for %s: %v", instance.DeploymentName, err)
-		m.persistTask(persistCtx, task) //nolint:errcheck
+		m.failInstance(persistCtx, task, instance, fmt.Sprintf("failed to merge stemcell overlay: %v", err))
+
 		return
 	}
 
-	m.logger.Debug("Stemcell overlay merged successfully for %s, new manifest size: %d bytes",
-		instance.DeploymentName, len(newManifest))
+	newManifest, applied, err := MergeReleaseOverlay(newManifest, task.TargetReleases)
+	if err != nil {
+		m.failInstance(persistCtx, task, instance, fmt.Sprintf("failed to merge release overlay: %v", err))
+
+		return
+	}
+
+	// An upgrade of releases alone has nothing to deploy to an instance
+	// whose manifest holds none of them.
+	if !task.TargetStemcell.IsSet() && len(applied) == 0 {
+		m.skipWithoutTargets(persistCtx, task, instance)
+
+		return
+	}
+
+	m.logger.Debug("Overlays merged for %s (%d of %d release targets applied), new manifest size: %d bytes",
+		instance.DeploymentName, len(applied), len(task.TargetReleases), len(newManifest))
 
 	// The context ID is saved before the deploy is sent, so a broker that
 	// stops while the deploy is in flight leaves it on record, and the
@@ -500,6 +517,7 @@ func (m *Manager) upgradeInstance(ctx context.Context, task *UpgradeTask, instan
 
 	m.mu.Lock()
 	instance.ContextID = contextID
+	instance.AppliedReleases = applied
 	m.mu.Unlock()
 
 	err = m.persistTask(persistCtx, task)
@@ -2055,10 +2073,12 @@ func (m *Manager) snapshotLocked(task *UpgradeTask) taskSnapshot {
 	return taskSnapshot{task: copyTask(task), seq: m.snapshotSeq.Add(1)}
 }
 
-// copyTask returns a deep copy of the task, its instances, and every time
-// they point at.
+// copyTask returns a deep copy of the task, its release targets, its
+// instances with the releases each applied, and every time they point
+// at.
 func copyTask(task *UpgradeTask) *UpgradeTask {
 	copied := *task
+	copied.TargetReleases = slices.Clone(task.TargetReleases)
 	copied.StartedAt = copyTime(task.StartedAt)
 	copied.CompletedAt = copyTime(task.CompletedAt)
 
@@ -2067,6 +2087,7 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 
 		for i, instance := range task.Instances {
 			instance.UnknownSince = copyTime(instance.UnknownSince)
+			instance.AppliedReleases = slices.Clone(instance.AppliedReleases)
 			instance.StartedAt = copyTime(instance.StartedAt)
 			instance.CompletedAt = copyTime(instance.CompletedAt)
 			copied.Instances[i] = instance
@@ -2254,4 +2275,47 @@ func (m *Manager) interruptLostAnswer(ctx context.Context, task *UpgradeTask, in
 	}
 
 	m.interruptAtShutdown(ctx, task, instance, message)
+}
+
+// failInstance marks an instance failed before its deploy was sent, with
+// the message given, and saves the upgrade.
+func (m *Manager) failInstance(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, message string) {
+	m.mu.Lock()
+	instance.Status = InstanceStatusFailed
+	instance.Error = message
+	task.FailedCount++
+	m.mu.Unlock()
+
+	m.logger.Error("Instance %s of %s: %s", instance.InstanceID, instance.DeploymentName, message)
+
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist the failed instance %s of task %s: %v", instance.InstanceID, task.ID, err)
+	}
+}
+
+// skipWithoutTargets marks an instance of an upgrade of releases alone
+// skipped, because its deployment's manifest holds none of the releases,
+// so no deploy is sent.
+func (m *Manager) skipWithoutTargets(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade) {
+	targets := make([]string, len(task.TargetReleases))
+	for i, target := range task.TargetReleases {
+		targets[i] = target.Name + "/" + target.Version
+	}
+
+	m.mu.Lock()
+	completedAt := time.Now()
+	instance.CompletedAt = &completedAt
+	instance.Status = InstanceStatusSkipped
+	instance.Error = fmt.Sprintf("skipped, because the manifest of %s holds none of the target releases (%s)",
+		instance.DeploymentName, strings.Join(targets, ", "))
+	task.SkippedCount++
+	m.mu.Unlock()
+
+	m.logger.Info("Instance %s: %s", instance.InstanceID, instance.Error)
+
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist the skipped instance %s of task %s: %v", instance.InstanceID, task.ID, err)
+	}
 }
