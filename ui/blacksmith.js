@@ -2195,7 +2195,8 @@
   };
 
   // Render the upgrade tab filters
-  const renderUpgradeFilters = () => {
+  // Left "Services" panel: filters + selection controls.
+  const renderUpgradeServices = () => {
     return `
       <div class="filter-row">
         <label for="upgrade-service-filter">Service:</label>
@@ -2210,18 +2211,6 @@
         </select>
       </div>
       <div class="filter-row">
-        <label for="upgrade-stemcell-floor">Min Stemcell:</label>
-        <select id="upgrade-stemcell-floor">
-          <option value="">No minimum</option>
-        </select>
-      </div>
-      <div class="filter-row">
-        <label for="upgrade-stemcell-filter">Target Stemcell:</label>
-        <select id="upgrade-stemcell-filter">
-          <option value="">Select Stemcell...</option>
-        </select>
-      </div>
-      <div class="filter-row">
         <label for="upgrade-max-batch-jobs">Max Parallel Jobs:</label>
         <input type="number" id="upgrade-max-batch-jobs" min="0" placeholder="Default" title="Maximum number of batch jobs that can run in parallel. Leave empty or 0 for the configured default.">
         <button id="upgrade-save-settings" class="btn-secondary btn-sm">Save</button>
@@ -2229,7 +2218,6 @@
       <div class="upgrade-actions">
         <button id="upgrade-select-all" class="btn-secondary">Select All</button>
         <button id="upgrade-deselect-all" class="btn-secondary">Deselect All</button>
-        <button id="upgrade-start" class="btn-primary" disabled>Upgrade Selected (0)</button>
       </div>
       <div class="upgrade-range-selection">
         <label>Select Range:</label>
@@ -2243,8 +2231,88 @@
     `;
   };
 
+  // Middle "Targets" panel: two stacked groups (Stemcell, Releases), each with a Target
+  // (upgrade TO) and a Min floor filter. At least one target must be chosen.
+  const renderUpgradeTargets = () => {
+    return `
+      <div class="upgrade-target-group">
+        <h3>Stemcell</h3>
+        <div class="filter-row">
+          <label for="upgrade-stemcell-filter">Target:</label>
+          <select id="upgrade-stemcell-filter">
+            <option value="">— keep current —</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="upgrade-stemcell-floor">Min (floor):</label>
+          <select id="upgrade-stemcell-floor">
+            <option value="">No minimum</option>
+          </select>
+        </div>
+      </div>
+      <div class="upgrade-target-group">
+        <h3>Releases</h3>
+        <div class="filter-row">
+          <label for="upgrade-release-filter">Target:</label>
+          <select id="upgrade-release-filter" disabled title="Select a single service to choose a release">
+            <option value="">— keep current —</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="upgrade-release-floor">Min (floor):</label>
+          <select id="upgrade-release-floor" disabled title="Select a single service to filter by release">
+            <option value="">No minimum</option>
+          </select>
+        </div>
+        <details class="upgrade-advanced">
+          <summary>Advanced — other releases</summary>
+          <div class="upgrade-advanced-releases">
+            <div class="upgrade-advanced-empty">Select a service to choose other releases.</div>
+          </div>
+        </details>
+      </div>
+    `;
+  };
+
+  // An instance's deployment name. An instance indexed before deployment names
+  // were recorded uses the broker's <plan>-<instance> name.
+  const upgradeDeploymentName = (id, details) => details.deployment_name || `${details.plan_id}-${id}`;
+
+  // The managed releases an instance's deployment runs, as "name/version"
+  // strings, from /b/bosh/deployment-releases.
+  const upgradeInstanceReleases = (id, details) =>
+    (window.upgradeDeploymentReleases || {})[upgradeDeploymentName(id, details)] || [];
+
+  // The version of the named release an instance's deployment runs, or ''.
+  const upgradeInstanceReleaseVersion = (id, details, name) => {
+    const release = upgradeInstanceReleases(id, details).find(r => r.split('/')[0] === name);
+    return release ? release.slice(name.length + 1) : '';
+  };
+
+  // The service's own release among the names: its -forge release, or its
+  // only release when it has no forge, as with PostgreSQL's postgres.
+  const pickServiceRelease = (names) => {
+    const forge = names.find(name => name.endsWith('-forge'));
+    if (forge) return forge;
+    return names.length === 1 ? names[0] : '';
+  };
+
+  // A service's own release, from the release names its plans declare in
+  // /b/status, or failing those, from the releases its instances run. The
+  // marketplace name plays no part, so a renamed service still finds it.
+  const upgradeServiceRelease = (serviceId) => {
+    const planNames = new Set();
+    const deployedNames = new Set();
+    Object.entries(window.serviceInstances || {}).forEach(([id, details]) => {
+      if (!details || details.deleted || details.service_id !== serviceId) return;
+      (details.plan?.releases || []).forEach(name => planNames.add(name));
+      upgradeInstanceReleases(id, details).forEach(release => deployedNames.add(release.split('/')[0]));
+    });
+    return pickServiceRelease(Array.from(planNames)) || pickServiceRelease(Array.from(deployedNames));
+  };
+
   // Render upgrade instance list
-  const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor) => {
+  const renderUpgradeInstances = (instances, serviceFilter, planFilter, stemcellFloor, releaseFloor) => {
     if (!instances || Object.keys(instances).length === 0) {
       return '<div class="no-instances p-4 text-center text-gray-500">No service instances available.</div>';
     }
@@ -2258,6 +2326,13 @@
         }
       });
     }
+
+    // Each service's own release, worked out once per render
+    const serviceReleases = {};
+    const serviceReleaseOf = (serviceId) => {
+      if (!(serviceId in serviceReleases)) serviceReleases[serviceId] = upgradeServiceRelease(serviceId);
+      return serviceReleases[serviceId];
+    };
 
     // Filter instances
     const filteredInstances = Object.entries(instances).filter(([id, details]) => {
@@ -2274,6 +2349,13 @@
       if (stemcellFloor) {
         if (!details.stemcell || !details.stemcell.version) return false;
         if (compareStemcellVersions(details.stemcell.version, stemcellFloor) < 0) return false;
+      }
+
+      // Apply release floor filter (the version of the service's own release)
+      if (releaseFloor) {
+        const rv = upgradeInstanceReleaseVersion(id, details, serviceReleaseOf(details.service_id));
+        if (!rv) return false;
+        if (compareStemcellVersions(rv, releaseFloor) < 0) return false;
       }
 
       return true;
@@ -2304,6 +2386,17 @@
         ? `<span class="upgrade-instance-stemcell" title="${stemcellInfo.name || ''}">${stemcellInfo.os || ''}/${stemcellInfo.version || ''}</span>`
         : '<span class="upgrade-instance-stemcell unknown">unknown</span>';
 
+      // The service's own release as its deployment runs it (e.g. "valkey-forge/1.4.3"),
+      // which loads after the list does
+      const releaseName = serviceReleaseOf(details.service_id);
+      const releaseVersion = releaseName ? upgradeInstanceReleaseVersion(id, details, releaseName) : '';
+      let releaseDisplay = '<span class="upgrade-instance-release unknown">unknown</span>';
+      if (releaseVersion) {
+        releaseDisplay = `<span class="upgrade-instance-release">${escapeHtml(`${releaseName}/${releaseVersion}`)}</span>`;
+      } else if ((window.upgradeDeploymentReleasesState || 'loading') === 'loading') {
+        releaseDisplay = '<span class="upgrade-instance-release unknown">loading...</span>';
+      }
+
       return `
         <div class="upgrade-instance-item ${isSelected ? 'selected' : ''}" data-instance-id="${id}" data-row-number="${rowNumber}" data-service-id="${details.service_id}" data-plan-id="${details.plan?.id || details.plan_id || ''}" data-stemcell-os="${stemcellInfo?.os || ''}" data-stemcell-version="${stemcellInfo?.version || ''}">
           <span class="upgrade-instance-row-number">${rowNumber}</span>
@@ -2317,6 +2410,9 @@
           </div>
           <div class="upgrade-instance-stemcell-container">
             ${stemcellDisplay}
+          </div>
+          <div class="upgrade-instance-release-container">
+            ${releaseDisplay}
           </div>
         </div>
       `;
@@ -2332,14 +2428,18 @@
   const updateUpgradeButton = () => {
     const button = document.getElementById('upgrade-start');
     const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
+    const releaseSelect = document.getElementById('upgrade-release-filter');
 
     if (!button) return;
 
     const count = selectedUpgradeInstances.size;
     const hasStemcell = stemcellSelect && stemcellSelect.value;
+    const hasRelease = releaseSelect && releaseSelect.value;
+    const hasAdvanced = Array.from(document.querySelectorAll('[id^="upgrade-advrel-"]')).some(s => s.value);
 
     button.textContent = `Upgrade Selected (${count})`;
-    button.disabled = count === 0 || !hasStemcell;
+    // At least one target (stemcell, forge release, or an advanced release) is required.
+    button.disabled = count === 0 || (!hasStemcell && !hasRelease && !hasAdvanced);
   };
 
   // Refresh the instance list based on current filters
@@ -2350,8 +2450,9 @@
     const serviceFilter = document.getElementById('upgrade-service-filter')?.value || '';
     const planFilter = document.getElementById('upgrade-plan-filter')?.value || '';
     const stemcellFloor = document.getElementById('upgrade-stemcell-floor')?.value || '';
+    const releaseFloor = document.getElementById('upgrade-release-floor')?.value || '';
 
-    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor);
+    instancesContainer.innerHTML = renderUpgradeInstances(window.serviceInstances, serviceFilter, planFilter, stemcellFloor, releaseFloor);
 
     // Set up checkbox handlers
     setupUpgradeInstanceHandlers();
@@ -2390,11 +2491,13 @@
     const upgradePanel = document.getElementById('upgrade');
     if (!upgradePanel) return;
 
-    const filtersContainer = upgradePanel.querySelector('.upgrade-filters');
-    if (!filtersContainer) return;
+    const servicesContainer = upgradePanel.querySelector('.upgrade-services');
+    const targetsContainer = upgradePanel.querySelector('.upgrade-targets');
+    if (!servicesContainer || !targetsContainer) return;
 
-    // Render filters
-    filtersContainer.innerHTML = renderUpgradeFilters();
+    // Render the Services (filters/selection) and Targets (stemcell/releases) panels
+    servicesContainer.innerHTML = renderUpgradeServices();
+    targetsContainer.innerHTML = renderUpgradeTargets();
 
     // Load stemcells from API
     try {
@@ -2418,6 +2521,187 @@
       console.error('Failed to load stemcells:', err);
     }
 
+    // The director's releases, grouped by name with the newest versions first, and the
+    // managed releases each deployment runs. Both load in the background once the
+    // instance list is up, so a slow director never holds up the list or the stemcell
+    // targets, and each listing's state is 'loading', 'loaded', or 'failed'.
+    window.upgradeDirectorReleases = [];
+    window.upgradeDirectorReleasesState = 'loading';
+    window.upgradeDeploymentReleases = {};
+    window.upgradeDeploymentReleasesState = 'loading';
+    window.upgradeCurrentRelease = '';
+
+    // Wire release Target + Min once (populate* below only rebuild their options).
+    const releaseSelectEl = document.getElementById('upgrade-release-filter');
+    if (releaseSelectEl) releaseSelectEl.addEventListener('change', updateUpgradeButton);
+    const releaseFloorEl = document.getElementById('upgrade-release-floor');
+    if (releaseFloorEl) releaseFloorEl.addEventListener('change', refreshUpgradeInstanceList);
+
+    // Choose the previous value again after a select's options are rebuilt, when it's still there.
+    const restoreChoice = (sel, previous) => {
+      if (previous && Array.from(sel.options).some(o => o.value === previous)) sel.value = previous;
+    };
+
+    // Populate the Target Release dropdown with the director's versions of the selected
+    // service's own release. The title says why it's disabled, and only claims the director
+    // lacks the release once the director's releases have loaded.
+    const populateReleaseFilter = (serviceId, keep) => {
+      const sel = document.getElementById('upgrade-release-filter');
+      if (!sel) return;
+      const previous = keep ? sel.value : '';
+      sel.innerHTML = '<option value="">— keep current —</option>';
+      sel.disabled = true;
+      window.upgradeCurrentRelease = '';
+      const releaseName = serviceId ? upgradeServiceRelease(serviceId) : '';
+      const release = (window.upgradeDirectorReleases || []).find(r => r.name === releaseName);
+      if (!serviceId) {
+        sel.title = 'Select a single service to choose a release';
+      } else if (!releaseName) {
+        sel.title = window.upgradeDeploymentReleasesState === 'loading'
+          ? 'Loading the releases this service runs...'
+          : 'No release of this service was found';
+      } else if (window.upgradeDirectorReleasesState === 'loading') {
+        sel.title = 'Loading the director\'s releases...';
+      } else if (window.upgradeDirectorReleasesState === 'failed') {
+        sel.title = 'The director\'s releases could not be loaded';
+      } else if (!release || !release.release_versions || release.release_versions.length === 0) {
+        sel.title = `No uploaded ${releaseName} releases on the director`;
+      } else {
+        window.upgradeCurrentRelease = release.name;
+        sel.disabled = false;
+        sel.title = '';
+        release.release_versions.forEach(rv => {
+          const opt = document.createElement('option');
+          opt.value = rv.version;
+          opt.textContent = release.name + '/' + rv.version;
+          sel.appendChild(opt);
+        });
+        restoreChoice(sel, previous);
+      }
+      updateUpgradeButton();
+    };
+
+    // Populate the Min Release floor filter with the versions of the selected service's own
+    // release that its instances run. It stays disabled until a single service is selected,
+    // because the versions of different services' releases don't compare.
+    const populateReleaseFloorFilter = (serviceId, keep) => {
+      const floorSelect = document.getElementById('upgrade-release-floor');
+      if (!floorSelect) return;
+      const previous = keep ? floorSelect.value : '';
+      floorSelect.innerHTML = '<option value="">No minimum</option>';
+      if (!serviceId) {
+        floorSelect.disabled = true;
+        floorSelect.title = 'Select a single service to filter by release';
+        return;
+      }
+      floorSelect.disabled = false;
+      floorSelect.title = '';
+      const releaseName = upgradeServiceRelease(serviceId);
+      const versions = new Set();
+      Object.entries(window.serviceInstances || {}).forEach(([id, details]) => {
+        if (details.deleted || details.service_id !== serviceId) return;
+        const rv = releaseName ? upgradeInstanceReleaseVersion(id, details, releaseName) : '';
+        if (rv) versions.add(rv);
+      });
+      const sorted = Array.from(versions).sort(compareStemcellVersions);
+      sorted.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        floorSelect.appendChild(opt);
+      });
+      restoreChoice(floorSelect, previous);
+    };
+
+    // Populate the "Advanced — other releases" pickers: one version dropdown per managed
+    // release the selected service's instances run, other than the service's own release
+    // (bpm, and rabbitmq's routing/etc.).
+    const populateAdvancedReleases = (serviceId, keep) => {
+      const container = document.querySelector('#upgrade .upgrade-advanced-releases');
+      if (!container) return;
+      const previous = {};
+      if (keep) {
+        container.querySelectorAll('select').forEach(sel => { previous[sel.dataset.releaseName] = sel.value; });
+      }
+      if (!serviceId) {
+        container.innerHTML = '<div class="upgrade-advanced-empty">Select a service to choose other releases.</div>';
+        updateUpgradeButton();
+        return;
+      }
+      // Union of the other managed release names across this service's instances.
+      const ownRelease = upgradeServiceRelease(serviceId);
+      const names = new Set();
+      Object.entries(window.serviceInstances || {}).forEach(([id, details]) => {
+        if (details.deleted || details.service_id !== serviceId) return;
+        upgradeInstanceReleases(id, details).forEach(rv => {
+          const name = (rv || '').split('/')[0];
+          if (name && name !== ownRelease) names.add(name);
+        });
+      });
+      if (names.size === 0) {
+        let message = 'No other releases for this service.';
+        if (window.upgradeDeploymentReleasesState === 'loading') message = 'Loading the releases this service runs...';
+        if (window.upgradeDeploymentReleasesState === 'failed') message = 'The releases this service runs could not be loaded.';
+        container.innerHTML = `<div class="upgrade-advanced-empty">${message}</div>`;
+        updateUpgradeButton();
+        return;
+      }
+      const relByName = {};
+      (window.upgradeDirectorReleases || []).forEach(r => { relByName[r.name] = r; });
+      container.innerHTML = Array.from(names).sort().map(name => {
+        const rel = relByName[name];
+        const versions = (rel && rel.release_versions) ? rel.release_versions : [];
+        const opts = ['<option value="">— keep current —</option>']
+          .concat(versions.map(rv => `<option value="${escapeAttribute(rv.version)}">${escapeHtml(rv.version)}</option>`))
+          .join('');
+        let disabled = '';
+        if (versions.length === 0) {
+          let reason = 'no uploaded versions on the director';
+          if (window.upgradeDirectorReleasesState === 'loading') reason = 'loading the director\'s releases';
+          if (window.upgradeDirectorReleasesState === 'failed') reason = 'the director\'s releases could not be loaded';
+          disabled = `disabled title="${escapeAttribute(reason)}"`;
+        }
+        return `<div class="filter-row">
+          <label for="upgrade-advrel-${escapeAttribute(name)}">${escapeHtml(name)}:</label>
+          <select id="upgrade-advrel-${escapeAttribute(name)}" data-release-name="${escapeAttribute(name)}" ${disabled}>${opts}</select>
+        </div>`;
+      }).join('');
+      container.querySelectorAll('select').forEach(sel => {
+        if (keep) restoreChoice(sel, previous[sel.dataset.releaseName]);
+        sel.addEventListener('change', updateUpgradeButton);
+      });
+      updateUpgradeButton();
+    };
+
+    // Rebuild the release views for the selected service, keeping the choices made,
+    // when a release listing answers.
+    const refreshReleaseViews = () => {
+      const serviceId = document.getElementById('upgrade-service-filter')?.value || '';
+      populateReleaseFilter(serviceId, true);
+      populateReleaseFloorFilter(serviceId, true);
+      populateAdvancedReleases(serviceId, true);
+      refreshUpgradeInstanceList();
+    };
+
+    // Load a release listing into window[dataKey], record whether it answered in
+    // window[stateKey], and rebuild the release views either way.
+    const loadReleaseListing = async (path, dataKey, stateKey, empty) => {
+      try {
+        const response = await fetch(path);
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        window[dataKey] = (await response.json()) || empty;
+        window[stateKey] = 'loaded';
+      } catch (err) {
+        console.error(`Failed to load ${path}:`, err);
+        window[stateKey] = 'failed';
+      }
+      refreshReleaseViews();
+    };
+
+    populateReleaseFilter('', false);
+    populateReleaseFloorFilter('', false);
+    populateAdvancedReleases('', false);
+
     // Populate service filter from catalog data
     const serviceSelect = document.getElementById('upgrade-service-filter');
     if (serviceSelect && window.plansData && window.plansData.services) {
@@ -2430,7 +2714,12 @@
 
       // Add change handler for service filter
       serviceSelect.addEventListener('change', () => {
+        // Clear the selection, so a release target never reaches instances the new filter hides
+        selectedUpgradeInstances.clear();
         updatePlanFilter(serviceSelect.value);
+        populateReleaseFilter(serviceSelect.value, false);
+        populateReleaseFloorFilter(serviceSelect.value, false);
+        populateAdvancedReleases(serviceSelect.value, false);
         refreshUpgradeInstanceList();
       });
     }
@@ -2527,6 +2816,10 @@
 
     // Initial render of instances
     refreshUpgradeInstanceList();
+
+    // Load the release listings in the background
+    loadReleaseListing('/b/bosh/releases', 'upgradeDirectorReleases', 'upgradeDirectorReleasesState', []);
+    loadReleaseListing('/b/bosh/deployment-releases', 'upgradeDeploymentReleases', 'upgradeDeploymentReleasesState', {});
 
     // Set up upgrade button handler
     setupUpgradeButtonHandler();
@@ -2639,6 +2932,23 @@
   let selectedTaskId = null;
   let upgradeTasksRefreshInterval = null;
 
+  // Describe a batch job's targets. A task summary carries its stemcell and
+  // releases as "name/version" strings, and a full task carries objects; a
+  // job that upgrades releases alone has no stemcell.
+  const describeUpgradeTargets = (task) => {
+    const target = task.target_stemcell;
+    const stemcell = typeof target === 'string'
+      ? target
+      : (target && target.os && target.version ? `${target.os}/${target.version}` : '');
+    const releases = (task.target_releases || []).map(r => typeof r === 'string' ? r : `${r.name}/${r.version}`);
+    return { stemcell, releases, label: [stemcell, ...releases].filter(Boolean).join(' + ') };
+  };
+
+  // A batch job's progress in percent: every instance that has settled, whatever its outcome.
+  const upgradeTaskProgress = (task) => (task.total_count > 0
+    ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0) + (task.unknown_count || 0)) / task.total_count * 100)
+    : 0);
+
   // Render the task list in the right panel
   const renderUpgradeTaskList = () => {
     const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
@@ -2653,14 +2963,14 @@
       const isSelected = task.id === selectedTaskId;
       const statusClass = getTaskStatusClass(task.status);
       const statusIcon = getTaskStatusIcon(task.status);
-      const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count) / task.total_count * 100) : 0;
-      const taskName = task.name || task.target_stemcell;
+      const progress = upgradeTaskProgress(task);
+      const taskName = task.name || describeUpgradeTargets(task).label;
 
       return `
         <div class="upgrade-task-item ${isSelected ? 'selected' : ''} ${statusClass}" data-task-id="${task.id}">
           <div class="upgrade-task-header">
             <span class="upgrade-task-status">${statusIcon}</span>
-            <span class="upgrade-task-name">${taskName}</span>
+            <span class="upgrade-task-name">${escapeHtml(taskName)}</span>
           </div>
           <div class="upgrade-task-progress">
             <div class="upgrade-task-progress-bar" style="width: ${progress}%"></div>
@@ -2757,16 +3067,17 @@
           <div class="instance-info">
             <div class="instance-id">${instance.instance_name || instance.instance_id}</div>
             <div class="instance-deployment">${instance.deployment_name || ''}</div>
+            ${(instance.applied_releases || []).length ? `<div class="instance-releases">Applied: ${escapeHtml(instance.applied_releases.map(r => `${r.name}/${r.version}`).join(', '))}</div>` : ''}
             <div class="instance-actions">
               ${instance.bosh_task_id ? `<button class="bosh-task-btn" onclick="showTaskDetails(${instance.bosh_task_id}, event)">BOSH Task: ${instance.bosh_task_id}</button>` : ''}
             </div>
-            ${instance.error ? `<div class="instance-error">${instance.error}</div>` : ''}
+            ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
           </div>
         </div>
       `;
     }).join('');
 
-    const progress = task.total_count > 0 ? Math.round((task.completed_count + task.failed_count + (task.cancelled_count || 0) + (task.skipped_count || 0) + (task.unknown_count || 0)) / task.total_count * 100) : 0;
+    const progress = upgradeTaskProgress(task);
     const isRunning = task.status === 'running';
     const isPaused = task.status === 'paused';
     const canControl = isRunning || isPaused;
@@ -2783,20 +3094,26 @@
       `;
     }
 
-    const jobName = task.name || `Upgrade to ${task.target_stemcell.os}/${task.target_stemcell.version}`;
+    const targets = describeUpgradeTargets(task);
+    const jobName = task.name || `Upgrade to ${targets.label}`;
 
     tasksContainer.innerHTML = `
       <div class="upgrade-task-detail">
         <div class="task-detail-header">
           <button class="back-to-list" onclick="window.backToTaskList()">&#8592; Back to Jobs</button>
-          <h3>${jobName}</h3>
+          <h3>${escapeHtml(jobName)}</h3>
           ${controlButtonsHtml}
         </div>
         <div class="task-detail-summary">
           <div class="summary-row">
             <span class="label">Target Stemcell:</span>
-            <span class="value">${task.target_stemcell.os}/${task.target_stemcell.version}</span>
+            <span class="value">${escapeHtml(targets.stemcell) || 'keep current'}</span>
           </div>
+          ${targets.releases.length ? `
+          <div class="summary-row">
+            <span class="label">Target Releases:</span>
+            <span class="value">${escapeHtml(targets.releases.join(', '))}</span>
+          </div>` : ''}
           <div class="summary-row">
             <span class="label">Status:</span>
             <span class="value status-${task.status}">${task.status}${isPaused ? ' (waiting to resume)' : ''}</span>
@@ -2949,8 +3266,23 @@
   // Start upgrade for selected instances
   const startUpgrade = async () => {
     const stemcellSelect = document.getElementById('upgrade-stemcell-filter');
-    if (!stemcellSelect || !stemcellSelect.value) {
-      alert('Please select a target stemcell');
+    const releaseSelect = document.getElementById('upgrade-release-filter');
+
+    const stemcellValue = stemcellSelect && stemcellSelect.value ? stemcellSelect.value : '';
+    const releaseValue = releaseSelect && releaseSelect.value ? releaseSelect.value : '';
+    const [os, version] = stemcellValue ? stemcellValue.split('/') : ['', ''];
+
+    // Collect release targets: the service's own release + any "advanced" sidecar picks.
+    const targetReleases = [];
+    if (releaseValue && window.upgradeCurrentRelease) {
+      targetReleases.push({ name: window.upgradeCurrentRelease, version: releaseValue });
+    }
+    document.querySelectorAll('[id^="upgrade-advrel-"]').forEach(sel => {
+      if (sel.value) targetReleases.push({ name: sel.dataset.releaseName, version: sel.value });
+    });
+
+    if (!stemcellValue && targetReleases.length === 0) {
+      alert('Please choose at least one target: a stemcell and/or a release');
       return;
     }
 
@@ -2959,11 +3291,13 @@
       return;
     }
 
-    const [os, version] = stemcellSelect.value.split('/');
     const instanceIds = Array.from(selectedUpgradeInstances);
 
-    // Prompt for job name
-    const defaultName = `Upgrade to ${os}/${version}`;
+    // Prompt for job name — default reflects whichever targets are set.
+    const targetParts = [];
+    if (stemcellValue) targetParts.push(`stemcell ${os}/${version}`);
+    targetReleases.forEach(r => targetParts.push(`${r.name}/${r.version}`));
+    const defaultName = `Upgrade to ${targetParts.join(' + ')}`;
     const jobName = await showPromptDialog({
       title: 'Create Batch Job',
       message: `Enter a name for this batch job (${instanceIds.length} instance${instanceIds.length > 1 ? 's' : ''} selected):`,
@@ -2984,7 +3318,8 @@
       target_stemcell: {
         os: os,
         version: version
-      }
+      },
+      target_releases: targetReleases
     };
 
     try {

@@ -10729,18 +10729,58 @@ span.config-type.resurrection {
   overflow: hidden;
 }
 
-#upgrade .upgrade-left-panel {
-  width: 400px;
-  border-right: 1px solid var(--border-primary);
+/* Left region (60%): Services + Targets on top, wide Instances below, footer action. */
+#upgrade .upgrade-main {
+  flex: 6;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background-color: var(--bg-sidebar);
-  flex-shrink: 0;
   height: 100%;
+  border-right: 1px solid var(--border-primary);
+  background-color: var(--bg-sidebar);
 }
 
-#upgrade .upgrade-left-panel h2 {
+#upgrade .upgrade-top {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  max-height: 45%; /* cap so the instance list below always stays visible */
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+#upgrade .upgrade-services-panel {
+  flex: 0 0 35%;
+  max-width: 35%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border-primary);
+}
+
+#upgrade .upgrade-targets-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Panel content scrolls internally (higher specificity than .upgrade-filters flex-shrink:0),
+   so a tall Targets panel (Advanced expanded) scrolls instead of hiding the instances. */
+#upgrade .upgrade-services-panel .upgrade-services,
+#upgrade .upgrade-targets-panel .upgrade-targets {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#upgrade .upgrade-main h2,
+#upgrade .upgrade-right-panel h2 {
   padding: 1em;
   margin: 0;
   background-color: var(--bg-secondary);
@@ -10748,6 +10788,51 @@ span.config-type.resurrection {
   font-size: 14pt;
   font-weight: 600;
   flex-shrink: 0;
+}
+
+/* Targets panel: stacked Stemcell / Releases groups. */
+#upgrade .upgrade-target-group {
+  margin-bottom: 1em;
+}
+
+#upgrade .upgrade-target-group:last-child {
+  margin-bottom: 0;
+}
+
+#upgrade .upgrade-target-group h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: 0.25rem;
+}
+
+#upgrade .upgrade-advanced {
+  margin-top: 0.5rem;
+}
+
+#upgrade .upgrade-advanced > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 0.25rem 0;
+}
+
+#upgrade .upgrade-advanced-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 0.25rem 0;
+}
+
+/* Footer action row under the instance list. */
+#upgrade .upgrade-footer {
+  padding: 0.75em 1em;
+  border-top: 1px solid var(--border-primary);
+  background-color: var(--bg-secondary);
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
 }
 
 #upgrade .upgrade-filters {
@@ -10858,7 +10943,8 @@ span.config-type.resurrection {
   gap: 0.5rem;
 }
 
-#upgrade .upgrade-actions button {
+#upgrade .upgrade-actions button,
+#upgrade .upgrade-footer button {
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
   border-radius: 0.375rem;
@@ -10866,27 +10952,32 @@ span.config-type.resurrection {
   transition: all 0.2s;
 }
 
-#upgrade .upgrade-actions .btn-secondary {
+#upgrade .upgrade-actions .btn-secondary,
+#upgrade .upgrade-footer .btn-secondary {
   background-color: var(--bg-hover);
   border: 1px solid var(--border-primary);
   color: var(--text-primary);
 }
 
-#upgrade .upgrade-actions .btn-secondary:hover {
+#upgrade .upgrade-actions .btn-secondary:hover,
+#upgrade .upgrade-footer .btn-secondary:hover {
   background-color: var(--bg-secondary);
 }
 
-#upgrade .upgrade-actions .btn-primary {
+#upgrade .upgrade-actions .btn-primary,
+#upgrade .upgrade-footer .btn-primary {
   background-color: #2563eb;
   border: 1px solid #2563eb;
   color: white;
 }
 
-#upgrade .upgrade-actions .btn-primary:hover {
+#upgrade .upgrade-actions .btn-primary:hover,
+#upgrade .upgrade-footer .btn-primary:hover {
   background-color: #1d4ed8;
 }
 
-#upgrade .upgrade-actions .btn-primary:disabled {
+#upgrade .upgrade-actions .btn-primary:disabled,
+#upgrade .upgrade-footer .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -10956,22 +11047,12 @@ span.config-type.resurrection {
 }
 
 #upgrade .upgrade-right-panel {
-  flex: 1;
+  flex: 4;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   height: 100%;
   min-width: 300px;
-}
-
-#upgrade .upgrade-right-panel h2 {
-  padding: 1em;
-  margin: 0;
-  background-color: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-primary);
-  font-size: 14pt;
-  font-weight: 600;
-  flex-shrink: 0;
 }
 
 #upgrade .upgrade-tasks {
@@ -11069,7 +11150,8 @@ span.config-type.resurrection {
   padding-left: 0.75rem;
 }
 
-#upgrade .upgrade-instance-stemcell {
+#upgrade .upgrade-instance-stemcell,
+#upgrade .upgrade-instance-release {
   display: inline-block;
   padding: 0.125rem 0.5rem;
   font-size: 0.6875rem;
@@ -11078,6 +11160,15 @@ span.config-type.resurrection {
   color: var(--text-secondary);
   border-radius: 0.25rem;
   border: 1px solid var(--border-primary);
+}
+
+#upgrade .upgrade-instance-release-container {
+  padding-left: 0.75rem;
+}
+
+#upgrade .upgrade-instance-release.unknown {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 #upgrade .upgrade-instance-stemcell.unknown {
@@ -11352,6 +11443,12 @@ span.config-type.resurrection {
 }
 
 #upgrade .upgrade-task-instance .instance-deployment {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 0.125rem;
+}
+
+#upgrade .upgrade-task-instance .instance-releases {
   font-size: 0.75rem;
   color: var(--text-secondary);
   margin-top: 0.125rem;
