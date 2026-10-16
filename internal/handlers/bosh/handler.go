@@ -122,6 +122,27 @@ func (h *Handler) GetStemcells(responseWriter http.ResponseWriter, req *http.Req
 	response.HandleJSON(responseWriter, result, nil)
 }
 
+// GetReleases returns the releases the BOSH director holds, one entry per
+// release name with its versions newest first, for choosing release
+// targets in an upgrade.
+func (h *Handler) GetReleases(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("bosh-releases")
+	logger.Debug("BOSH releases request")
+
+	releases, err := h.director.GetReleases(req.Context())
+	if err != nil {
+		logger.Error("Failed to get releases: %v", err)
+		response.HandleJSON(responseWriter, nil, err)
+
+		return
+	}
+
+	result := groupReleasesByName(releases)
+
+	logger.Debug("Returning %d releases", len(result))
+	response.HandleJSON(responseWriter, result, nil)
+}
+
 // filterRecentStemcells returns the N most recent stemcells per OS.
 // It filters to only include stemcells from CPIs ending in ".bosh" suffix
 // (e.g., "env-name.aws.bosh") to avoid duplicates from legacy CPIs.
@@ -399,4 +420,95 @@ func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData int
 	}
 
 	instances[instanceID] = instanceMap
+}
+
+// groupReleasesByName merges the director's entries that share a release
+// name, keeping the names in the order they first appear, and sorts each
+// release's versions newest first.
+func groupReleasesByName(releases []bosh.Release) []bosh.Release {
+	result := make([]bosh.Release, 0, len(releases))
+	index := make(map[string]int, len(releases))
+
+	for _, release := range releases {
+		position, seen := index[release.Name]
+		if !seen {
+			index[release.Name] = len(result)
+			result = append(result, bosh.Release{Name: release.Name})
+			position = len(result) - 1
+		}
+
+		result[position].ReleaseVersions = append(result[position].ReleaseVersions, release.ReleaseVersions...)
+	}
+
+	for i := range result {
+		versions := result[i].ReleaseVersions
+		sort.SliceStable(versions, func(a, b int) bool {
+			return compareVersions(versions[a].Version, versions[b].Version) > 0
+		})
+	}
+
+	return result
+}
+
+// compareVersions compares two release versions part by part. Each part
+// compares by its leading number first, so that 1.10 sorts above 1.9 and
+// 10 above 9+dev, and then by whatever follows the number, so that the
+// ordering stays consistent for parts such as 1a. A part with no leading
+// number sorts below one with a number. It returns a positive number when
+// left is newer, a negative one when right is newer, and zero when they
+// are the same.
+func compareVersions(left, right string) int {
+	leftParts := strings.Split(left, ".")
+	rightParts := strings.Split(right, ".")
+
+	for part := 0; part < len(leftParts) && part < len(rightParts); part++ {
+		result := compareVersionParts(leftParts[part], rightParts[part])
+		if result != 0 {
+			return result
+		}
+	}
+
+	return len(leftParts) - len(rightParts)
+}
+
+// compareVersionParts compares one part of two versions by its leading
+// number and then by its suffix. The numbers compare as digit strings with
+// their leading zeros dropped, so no part is too long to compare.
+func compareVersionParts(left, right string) int {
+	leftNumber, leftSuffix := splitVersionPart(left)
+	rightNumber, rightSuffix := splitVersionPart(right)
+
+	switch {
+	case (leftNumber == "") != (rightNumber == ""):
+		if leftNumber == "" {
+			return -1
+		}
+
+		return 1
+	case len(leftNumber) != len(rightNumber):
+		return len(leftNumber) - len(rightNumber)
+	}
+
+	result := strings.Compare(leftNumber, rightNumber)
+	if result != 0 {
+		return result
+	}
+
+	return strings.Compare(leftSuffix, rightSuffix)
+}
+
+// splitVersionPart splits a version part into its leading digits, without
+// leading zeros, and the rest. A part of zeros alone keeps a single "0".
+func splitVersionPart(part string) (string, string) {
+	digits := 0
+	for digits < len(part) && part[digits] >= '0' && part[digits] <= '9' {
+		digits++
+	}
+
+	number := strings.TrimLeft(part[:digits], "0")
+	if number == "" && digits > 0 {
+		number = "0"
+	}
+
+	return number, part[digits:]
 }
