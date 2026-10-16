@@ -550,9 +550,9 @@ func (c *Client) executeRequest(
 // handleResponse processes the response, handling redirects and errors.
 // sent is the token the request carried, which a 401 asks to replace.
 func (c *Client) handleResponse(ctx context.Context, response *Response, req *Request, sent sentAuth) (*Response, error) {
-	// Handle redirects. The client never follows one. The director's 302 to
-	// /tasks/<id> answers a request that starts a task. Any other redirect
-	// is an error.
+	// Handle redirects. The client never follows one. The director's 302 or
+	// 303 to /tasks/<id> answers a request that starts a task. Any other
+	// redirect is an error.
 	if response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < constants.HTTPStatusBadRequest {
 		return c.handleRedirect(response, req)
 	}
@@ -652,21 +652,30 @@ func refreshAfterStreamRejected(ctx context.Context, rejected *boshapi.APIError,
 		"but the rejected token was replaced, so sending the upload again carries a new token", rejected)
 }
 
-// handleRedirect reads the task ID from the Location header of a 302 answer
-// to a request that is not safe to resend, which may be absolute or relative.
+// isTaskRedirectStatus reports whether status is one the director uses to
+// point a task-creating request at its task. Sinatra's redirect sends a 303
+// for any request that is not a GET over HTTP/1.1 and a 302 otherwise. Every
+// other 3xx status is refused.
+func isTaskRedirectStatus(status int) bool {
+	return status == http.StatusFound || status == http.StatusSeeOther
+}
+
+// handleRedirect reads the task ID from the Location header of a 302 or 303
+// answer to a request that is not safe to resend, which may be absolute or
+// relative.
 // Only its path is used: the client always talks to the configured director
 // URL, whatever host the director put in Location. No request is made for the
 // task, so a failure after the director answered cannot lose its ID. Callers
 // that want the task description ask the director for the task by ID. Any
-// other redirect, and a 302 whose Location does not end in /tasks/<id>,
-// returns a *boshapi.RedirectError. A request marked NoTaskRedirect has no
-// task to read, so its error is the one for a call that expects the
-// director's own answer.
+// other redirect, and a 302 or 303 whose Location does not end in
+// /tasks/<id>, returns a *boshapi.RedirectError. A request marked
+// NoTaskRedirect has no task to read, so its error is the one for a call
+// that expects the director's own answer.
 func (c *Client) handleRedirect(response *Response, req *Request) (*Response, error) {
 	location := response.Headers.Get("Location")
 	mutation := isMutation(req)
 
-	if mutation && !req.NoTaskRedirect && response.StatusCode == http.StatusFound {
+	if mutation && !req.NoTaskRedirect && isTaskRedirectStatus(response.StatusCode) {
 		taskID, ok := taskIDFromLocation(location)
 		if ok {
 			response.Task = &boshapi.Task{ID: taskID, State: constants.TaskStateQueued}

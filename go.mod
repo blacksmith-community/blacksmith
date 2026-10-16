@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/andybalholm/brotli v1.2.0
-	github.com/fivetwenty-io/boshapi v0.283.8
+	github.com/fivetwenty-io/boshapi v0.283.9
 	github.com/fivetwenty-io/capi/v3 v3.229.1
 	github.com/fivetwenty-io/osbapi/v2 v2.0.4
 	github.com/geofffranks/spruce v1.31.1

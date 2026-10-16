@@ -67,7 +67,7 @@ github.com/cloudfoundry-community/vaultkv
 # github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
 ## explicit
 github.com/dgryski/go-rendezvous
-# github.com/fivetwenty-io/boshapi v0.283.8
+# github.com/fivetwenty-io/boshapi v0.283.9
 ## explicit; go 1.27.1
 github.com/fivetwenty-io/boshapi/internal/auth
 github.com/fivetwenty-io/boshapi/internal/client

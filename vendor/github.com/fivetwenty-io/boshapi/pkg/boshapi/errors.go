@@ -189,10 +189,12 @@ func (e *TransportError) Unwrap() error {
 
 // RedirectError reports a redirect answer that the client does not follow.
 // The client never follows a redirect, because resending a request body to
-// another place could repeat a change. A 302 to a request that starts a
-// director task is the director's normal answer, and its Location ends in
-// /tasks/<id>. Any other redirect, or a 302 whose Location holds no task ID,
-// comes back as this error.
+// another place could repeat a change. A 302 or 303 to a request that
+// starts a director task is the director's normal answer, and its Location
+// ends in /tasks/<id>. A director sends a 303 for any request that is not a
+// GET over HTTP/1.1. Any other redirect status, or a 302 or 303 whose
+// Location holds no task ID, comes back as this error, and the message names
+// the status.
 type RedirectError struct {
 	// Method is the HTTP method of the request.
 	Method string
@@ -235,8 +237,14 @@ func (e *RedirectError) Error() string {
 		return msg.String()
 	}
 
-	msg.WriteString(", and a redirect that does not end in /tasks/<id> gives no task ID to read. " +
-		"The director may have started a task or applied the change, and the request was not resent. ")
+	if e.Status == http.StatusFound || e.Status == http.StatusSeeOther {
+		msg.WriteString(", and a redirect that does not end in /tasks/<id> gives no task ID to read. ")
+	} else {
+		fmt.Fprintf(&msg, ", and the client reads a task ID only from a 302 or 303 to /tasks/<id>, "+
+			"so HTTP %d gives no task ID to read. ", e.Status)
+	}
+
+	msg.WriteString("The director may have started a task or applied the change, and the request was not resent. ")
 
 	if e.ContextID != "" {
 		fmt.Fprintf(&msg, "Look for a director task with context ID %s before you send it again. ", e.ContextID)

@@ -33,7 +33,7 @@ type Request struct {
 	CreatesTask bool
 	// NoTaskRedirect marks a mutation that does not start a task, such as
 	// the cancel of a task. Any redirect to it is a *boshapi.RedirectError,
-	// even a 302 to /tasks/<id>, because only a 2xx answer confirms that the
+	// even a 302 or 303 to /tasks/<id>, because only a 2xx answer confirms that the
 	// director accepted it.
 	NoTaskRedirect bool
 	// NoAuth sends the request without credentials, such as the GET /info
@@ -54,7 +54,7 @@ type Response struct {
 	StatusCode int
 	Body       []byte
 	Headers    http.Header
-	// Task is the task a 302 answer pointed at, read from the Location
+	// Task is the task a 302 or 303 answer pointed at, read from the Location
 	// header. It is nil for any other answer.
 	Task *boshapi.Task
 
@@ -75,7 +75,7 @@ type Response struct {
 const maxTaskAnswerBody = 1024
 
 // RequireTask returns the task a request that starts a director task
-// created. The director answers every such request with a 302 to /tasks/<id>,
+// created. The director answers every such request with a 302 or 303 to /tasks/<id>,
 // and the client turns that into Task without asking the director anything
 // more. Any other answer returns a *boshapi.TaskAnswerError, because the
 // director may have started a task whose ID the client cannot read.

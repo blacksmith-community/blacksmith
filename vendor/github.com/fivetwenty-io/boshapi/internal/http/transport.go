@@ -55,8 +55,8 @@ func NewClients(cfg *boshapi.Config) (*Clients, error) {
 }
 
 // noRedirect stops net/http following a redirect. The director answers a
-// task-creating request with a 302 whose Location header is the result, and
-// following a 307 or 308 would resend a mutation's body.
+// task-creating request with a 302 or 303 whose Location header is the
+// result, and following a 307 or 308 would resend a mutation's body.
 func noRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }

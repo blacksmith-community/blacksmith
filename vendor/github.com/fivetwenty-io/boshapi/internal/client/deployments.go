@@ -110,7 +110,7 @@ func (c *deploymentsClient) Deploy(ctx context.Context, manifest string, opts *b
 		query = opts.ToValues()
 	}
 
-	// The director answers with a 302 whose Location holds the task ID.
+	// The director answers with a 302 or 303 whose Location holds the task ID.
 	resp, err := c.httpClient.PostYAML(ctx, "/deployments", manifest, query)
 	if err != nil {
 		return nil, fmt.Errorf("deploying: %w", err)

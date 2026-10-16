@@ -48,7 +48,7 @@ type InstancesClient interface { //nolint:interfacebloat // public API; splittin
 	// (POST /deployments/{deployment}/instance_groups/{group}/{id}/actions/*).
 	// Unlike the state-change methods above, they act on exactly one instance
 	// and enqueue a single-instance director task. All operations return a
-	// task via 302 redirect.
+	// task via 302 or 303 redirect.
 	StopInstance(ctx context.Context, deployment, instanceGroup, indexOrID string, opts *StopInstanceOptions) (*Task, error)
 	StartInstance(ctx context.Context, deployment, instanceGroup, indexOrID string) (*Task, error)
 	RestartInstance(ctx context.Context, deployment, instanceGroup, indexOrID string, opts *RestartInstanceOptions) (*Task, error)

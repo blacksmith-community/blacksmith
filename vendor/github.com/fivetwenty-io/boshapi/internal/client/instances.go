@@ -226,7 +226,7 @@ func (c *instancesClient) Recreate(ctx context.Context, deployment, job, indexOr
 
 // postInstanceAction posts to a per-instance action route
 // (/deployments/{d}/instance_groups/{ig}/{id}/actions/{action}) and parses
-// the task ID from the 302 redirect.
+// the task ID from the 302 or 303 redirect.
 func (c *instancesClient) postInstanceAction(ctx context.Context, deployment, instanceGroup, indexOrID, action string, query url.Values) (*boshapi.Task, error) {
 	if err := checkPathSegments("Instances().postInstanceAction", "deployment", deployment, "instanceGroup", instanceGroup, "indexOrID", indexOrID); err != nil {
 		return nil, err
