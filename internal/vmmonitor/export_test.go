@@ -69,3 +69,9 @@ func (m *Monitor) MonitoredDeployment(instanceID string) (string, bool) {
 
 	return svc.DeploymentName, true
 }
+
+// ExtractOSFromStemcellName exposes the OS the monitor reads from a
+// stemcell name.
+func ExtractOSFromStemcellName(name string) string {
+	return extractOSFromStemcellName(name)
+}

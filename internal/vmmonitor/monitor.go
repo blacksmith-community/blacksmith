@@ -388,14 +388,19 @@ func extractStemcellFromVMs(vmsData interface{}) *StemcellInfo {
 }
 
 // extractOSFromStemcellName extracts the OS name from a full stemcell name.
+// Any ubuntu codename is recognised, so a release that does not exist yet
+// needs no change here.
 // e.g., "bosh-google-kvm-ubuntu-jammy-go_agent" -> "ubuntu-jammy"
 func extractOSFromStemcellName(name string) string {
-	// Common OS patterns in stemcell names
+	parts := strings.Split(name, "-")
+	for i, part := range parts {
+		if part == "ubuntu" && i+1 < len(parts) && isCodename(parts[i+1]) {
+			return "ubuntu-" + parts[i+1]
+		}
+	}
+
+	// Other OS patterns in stemcell names
 	osPatterns := []string{
-		"ubuntu-jammy",
-		"ubuntu-bionic",
-		"ubuntu-xenial",
-		"ubuntu-trusty",
 		"centos-7",
 		"windows2019",
 		"windows2016",
@@ -408,6 +413,21 @@ func extractOSFromStemcellName(name string) string {
 	}
 
 	return ""
+}
+
+// isCodename reports whether a name segment is a lowercase ubuntu codename.
+func isCodename(segment string) bool {
+	if segment == "" {
+		return false
+	}
+
+	for _, r := range segment {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // TriggerRefresh forces an immediate refresh of a service's VMs.
