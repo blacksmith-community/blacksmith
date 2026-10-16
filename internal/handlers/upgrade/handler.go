@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -112,7 +113,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	task, err := h.manager.CreateTask(r.Context(), req)
 	if err != nil {
 		h.logger.Error("Failed to create upgrade task: %v", err)
-		response.HandleJSON(w, nil, err)
+		writeCreateError(w, err)
 
 		return
 	}
@@ -241,4 +242,18 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("Updated upgrade settings: max_batch_jobs=%d", settings.MaxBatchJobs)
 	response.HandleJSON(w, map[string]interface{}{"success": true, "max_batch_jobs": settings.MaxBatchJobs}, nil)
+}
+
+// writeCreateError answers a failed CreateTask. An instance another
+// upgrade holds is a conflict, and a manager still loading the stored
+// upgrades is not ready yet, so a client can tell those from a failure.
+func writeCreateError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, upgrade.ErrInstanceBusy):
+		response.WriteError(writer, http.StatusConflict, err.Error())
+	case errors.Is(err, upgrade.ErrTasksLoading):
+		response.WriteError(writer, http.StatusServiceUnavailable, err.Error())
+	default:
+		response.HandleJSON(writer, nil, err)
+	}
 }

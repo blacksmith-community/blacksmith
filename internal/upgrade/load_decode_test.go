@@ -32,8 +32,8 @@ func (v *undecodableVault) Get(ctx context.Context, path string, result interfac
 }
 
 // A stored upgrade that can't be decoded is skipped with an Error that
-// names its record, so the load finishes and the other stored upgrades
-// resume.
+// names its record, so the load finishes, the other stored upgrades
+// resume, and new upgrades are accepted.
 //
 //nolint:paralleltest // the resumed upgrade waits on a shared test director
 func TestLoadSkipsAStoredUpgradeThatCannotBeDecoded(t *testing.T) {
@@ -65,4 +65,11 @@ func TestLoadSkipsAStoredUpgradeThatCannotBeDecoded(t *testing.T) {
 	if count := director.deployCount(nextDeployment); count != 0 {
 		t.Fatalf("expected no deploy of the undecodable upgrade's instance, got %d", count)
 	}
+
+	created, err := manager.CreateTask(t.Context(), stemcellRequest("instance-3"))
+	if err != nil {
+		t.Fatalf("expected a new upgrade once the load finished, got %v", err)
+	}
+
+	expectCompleted(t, manager, created.ID)
 }

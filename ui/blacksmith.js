@@ -3354,8 +3354,16 @@
         await fetchUpgradeTasks();
         selectUpgradeTask(task.id);
       } else {
-        const error = await response.text();
-        alert(`Failed to start upgrade: ${error}`);
+        // The broker answers with JSON that names the reason, such as an
+        // instance another upgrade holds, or upgrades still loading.
+        const body = await response.text();
+        let message = body;
+        try {
+          message = JSON.parse(body).error || body;
+        } catch (parseError) {
+          // A body that is not JSON is shown as it is.
+        }
+        alert(`Failed to start upgrade: ${message}`);
       }
     } catch (err) {
       console.error('Failed to start upgrade:', err);

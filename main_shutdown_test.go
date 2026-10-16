@@ -534,6 +534,14 @@ func TestShutdownStopsTheUpgradeManagerWiredAtBoot(t *testing.T) {
 
 	manager := handler.GetManager()
 
+	// The manager turns requests away until it has loaded the stored
+	// upgrades.
+	select {
+	case <-manager.Loaded():
+	case <-time.After(shutdownWait):
+		t.Fatal("the upgrade manager never finished loading the stored upgrades")
+	}
+
 	task, err := manager.CreateTask(t.Context(), upgrade.CreateTaskRequest{
 		InstanceIDs:    []string{shutdownInstanceID},
 		TargetStemcell: upgrade.StemcellTarget{OS: "ubuntu-noble", Version: "1.2"},

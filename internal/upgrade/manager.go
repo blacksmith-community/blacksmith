@@ -115,6 +115,8 @@ var (
 	ErrNoDirector           = errors.New("no BOSH director is configured to check the release targets against")
 	ErrTaskNotRunning       = errors.New("task is not running")
 	ErrTaskNotPaused        = errors.New("task is not paused")
+	ErrInstanceBusy         = errors.New("an unfinished upgrade task already holds the instance")
+	ErrTasksLoading         = errors.New("the stored upgrade tasks are still loading, so try again shortly")
 )
 
 // Manager manages upgrade tasks.
@@ -268,6 +270,13 @@ func (m *Manager) Stop() {
 	})
 }
 
+// Loaded returns a channel that is closed once the manager has loaded the
+// stored upgrade tasks, or Stop ended the load first. CreateTask turns a
+// request away with ErrTasksLoading until then.
+func (m *Manager) Loaded() <-chan struct{} {
+	return m.loaded
+}
+
 // CreateTask creates a new upgrade task.
 func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*UpgradeTask, error) {
 	if len(req.InstanceIDs) == 0 {
@@ -277,6 +286,15 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 	err := validateTargets(req)
 	if err != nil {
 		return nil, err
+	}
+
+	// Until the loader has put every stored upgrade in m.tasks, the busy
+	// check can't see the instances they hold. A request is turned away
+	// rather than held, since the load can wait out a long Vault outage.
+	select {
+	case <-m.loaded:
+	default:
+		return nil, ErrTasksLoading
 	}
 
 	// A release version the director lacks fails the request before the
@@ -307,7 +325,17 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		CreatedAt:      time.Now(),
 	}
 
+	// The check and the store share one critical section, so two requests
+	// for the same instance can't both pass the check.
 	m.mu.Lock()
+
+	err = m.instancesFree(req.InstanceIDs)
+	if err != nil {
+		m.mu.Unlock()
+
+		return nil, err
+	}
+
 	m.tasks[task.ID] = task
 	m.owned[task.ID] = true
 	created := copyTask(task)
@@ -2697,4 +2725,31 @@ func (m *Manager) endForReleaseTargets(ctx context.Context, task *UpgradeTask, c
 	if err != nil {
 		m.logger.Error("Failed to persist the ended task %s: %v", task.ID, err)
 	}
+}
+
+// instancesFree returns ErrInstanceBusy, naming the instance and the task,
+// when another upgrade task holds one of the instances. An unfinished task
+// holds each instance it has not settled, since a deploy of it may still
+// be sent or still be under way. Any other task holds a running or
+// interrupted instance while a processor still follows it, as runTask does
+// after a cancel and the loader does while it settles, since that deploy
+// may still be under way on the director. Callers hold m.mu.
+func (m *Manager) instancesFree(instanceIDs []string) error {
+	for _, other := range m.tasks {
+		unfinished := other.Status == TaskStatusPending || other.Status == TaskStatusRunning || other.Status == TaskStatusPaused
+		followed := m.owned[other.ID] || m.settling[other.ID] > 0
+
+		for _, instance := range other.Instances {
+			if !slices.Contains(instanceIDs, instance.InstanceID) {
+				continue
+			}
+
+			inFlight := instance.Status == InstanceStatusRunning || instance.Status == InstanceStatusInterrupted
+			if (unfinished && !instance.Status.settled()) || (followed && inFlight) {
+				return fmt.Errorf("%w: instance %s is in upgrade task %s", ErrInstanceBusy, instance.InstanceID, other.ID)
+			}
+		}
+	}
+
+	return nil
 }
