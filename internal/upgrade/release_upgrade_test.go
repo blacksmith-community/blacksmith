@@ -534,3 +534,34 @@ func TestResumedReleaseUpgradeChecksItsTargetsAgain(t *testing.T) {
 
 	expectStoppedForMissingReleases(t, manager, director, TaskStatusCompleted, []string{firstDeployment})
 }
+
+func TestTaskSummaryNamesTheTargets(t *testing.T) {
+	t.Parallel()
+
+	releasesOnly := releaseUpgrade(pendingInstance("instance-1", firstDeployment))
+
+	summary := releasesOnly.ToSummary()
+	if summary.TargetStemcell != "" || !slices.Equal(summary.TargetReleases, []string{redisForge + "/" + redisForgeTarget}) {
+		t.Fatalf("expected no stemcell and the forge release in the summary, got %+v", summary)
+	}
+
+	stemcellOnly := storedUpgrade(loadedTaskID, pendingInstance("instance-1", firstDeployment))
+
+	summary = stemcellOnly.ToSummary()
+	if summary.TargetStemcell != targetStemcellOS+"/"+targetStemcellVersion || len(summary.TargetReleases) != 0 {
+		t.Fatalf("expected the stemcell and no releases in the summary, got %+v", summary)
+	}
+}
+
+func TestTaskSummaryCountsSkippedAndCancelledInstances(t *testing.T) {
+	t.Parallel()
+
+	task := releaseUpgrade(pendingInstance("instance-1", firstDeployment))
+	task.SkippedCount = 2
+	task.CancelledCount = 1
+
+	summary := task.ToSummary()
+	if summary.SkippedCount != 2 || summary.CancelledCount != 1 {
+		t.Fatalf("expected the summary to carry 2 skipped and 1 cancelled instances, got %+v", summary)
+	}
+}

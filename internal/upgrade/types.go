@@ -170,24 +170,41 @@ type TaskSummary struct {
 	Name           string     `json:"name,omitempty"`
 	Status         TaskStatus `json:"status"`
 	TargetStemcell string     `json:"target_stemcell"`
+	TargetReleases []string   `json:"target_releases,omitempty"`
 	TotalCount     int        `json:"total_count"`
 	CompletedCount int        `json:"completed_count"`
 	FailedCount    int        `json:"failed_count"`
 	UnknownCount   int        `json:"unknown_count"`
+	SkippedCount   int        `json:"skipped_count"`
+	CancelledCount int        `json:"cancelled_count"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
 
-// ToSummary converts an UpgradeTask to a TaskSummary.
+// ToSummary converts an UpgradeTask to a TaskSummary. Each target reads
+// as name/version, and an upgrade of releases alone has no stemcell.
 func (t *UpgradeTask) ToSummary() TaskSummary {
+	stemcell := ""
+	if t.TargetStemcell.IsSet() {
+		stemcell = t.TargetStemcell.OS + "/" + t.TargetStemcell.Version
+	}
+
+	releases := make([]string, 0, len(t.TargetReleases))
+	for _, target := range t.TargetReleases {
+		releases = append(releases, target.Name+"/"+target.Version)
+	}
+
 	return TaskSummary{
 		ID:             t.ID,
 		Name:           t.Name,
 		Status:         t.Status,
-		TargetStemcell: t.TargetStemcell.OS + "/" + t.TargetStemcell.Version,
+		TargetStemcell: stemcell,
+		TargetReleases: releases,
 		TotalCount:     t.TotalCount,
 		CompletedCount: t.CompletedCount,
 		FailedCount:    t.FailedCount,
 		UnknownCount:   t.UnknownCount,
+		SkippedCount:   t.SkippedCount,
+		CancelledCount: t.CancelledCount,
 		CreatedAt:      t.CreatedAt,
 	}
 }
