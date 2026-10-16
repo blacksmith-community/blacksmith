@@ -2,6 +2,7 @@ package bosh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -10,8 +11,18 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/services"
 	"blacksmith/internal/vmmonitor"
 	"blacksmith/pkg/http/response"
+)
+
+const (
+	// forgeReleaseSuffix ends the name of every Blacksmith forge release.
+	forgeReleaseSuffix = "-forge"
+
+	// defaultDeploymentReleasesTimeout bounds the director call behind
+	// GetDeploymentReleases when the dependencies set no timeout.
+	defaultDeploymentReleasesTimeout = 5 * time.Second
 )
 
 // Handler handles BOSH-related endpoints.
@@ -22,6 +33,8 @@ type Handler struct {
 	director  interfaces.Director
 	broker    interfaces.Broker
 	vmMonitor interfaces.VMMonitor
+
+	deploymentReleasesTimeout time.Duration
 }
 
 // Dependencies contains all dependencies needed by the BOSH handler.
@@ -32,10 +45,19 @@ type Dependencies struct {
 	Director  interfaces.Director
 	Broker    interfaces.Broker
 	VMMonitor interfaces.VMMonitor
+
+	// DeploymentReleasesTimeout bounds the director call behind
+	// GetDeploymentReleases. Zero means five seconds.
+	DeploymentReleasesTimeout time.Duration
 }
 
 // NewHandler creates a new BOSH handler.
 func NewHandler(deps Dependencies) *Handler {
+	timeout := deps.DeploymentReleasesTimeout
+	if timeout <= 0 {
+		timeout = defaultDeploymentReleasesTimeout
+	}
+
 	return &Handler{
 		logger:    deps.Logger,
 		config:    deps.Config,
@@ -43,6 +65,8 @@ func NewHandler(deps Dependencies) *Handler {
 		director:  deps.Director,
 		broker:    deps.Broker,
 		vmMonitor: deps.VMMonitor,
+
+		deploymentReleasesTimeout: timeout,
 	}
 }
 
@@ -143,6 +167,58 @@ func (h *Handler) GetReleases(responseWriter http.ResponseWriter, req *http.Requ
 	response.HandleJSON(responseWriter, result, nil)
 }
 
+// GetDeploymentReleases returns, for each deployment the director lists,
+// the releases Blacksmith manages there as "name/version" strings, for
+// showing an instance's current release versions in an upgrade. A release
+// counts as managed when a plan manifest in the broker's catalog declares
+// it, or when its name ends in -forge, so releases a BOSH runtime config
+// adds, such as os-conf or bosh-dns, are left out, and so is a deployment
+// with no managed release. The director call is bounded by its own
+// timeout, and a director that doesn't answer in time gets a 504.
+func (h *Handler) GetDeploymentReleases(responseWriter http.ResponseWriter, req *http.Request) {
+	logger := h.logger.Named("bosh-deployment-releases")
+	logger.Debug("BOSH deployment releases request")
+
+	ctx, cancel := context.WithTimeout(req.Context(), h.deploymentReleasesTimeout)
+	defer cancel()
+
+	deployments, err := h.director.GetDeployments(ctx)
+	if err != nil {
+		logger.Error("Failed to list deployments for their releases: %v", err)
+
+		if errors.Is(err, context.DeadlineExceeded) {
+			response.WriteError(responseWriter, http.StatusGatewayTimeout, err.Error())
+
+			return
+		}
+
+		response.HandleJSON(responseWriter, nil, err)
+
+		return
+	}
+
+	managed := h.managedReleaseNames()
+	result := make(map[string][]string, len(deployments))
+
+	for _, deployment := range deployments {
+		managedReleases := make([]string, 0, len(deployment.Releases))
+
+		for _, release := range deployment.Releases {
+			name, _, _ := strings.Cut(release, "/")
+			if managed[name] || strings.HasSuffix(name, forgeReleaseSuffix) {
+				managedReleases = append(managedReleases, release)
+			}
+		}
+
+		if len(managedReleases) > 0 {
+			result[deployment.Name] = managedReleases
+		}
+	}
+
+	logger.Debug("Returning the managed releases of %d deployments", len(result))
+	response.HandleJSON(responseWriter, result, nil)
+}
+
 // filterRecentStemcells returns the N most recent stemcells per OS.
 // It filters to only include stemcells from CPIs ending in ".bosh" suffix
 // (e.g., "env-name.aws.bosh") to avoid duplicates from legacy CPIs.
@@ -204,6 +280,7 @@ func (h *Handler) GetStatus(responseWriter http.ResponseWriter, req *http.Reques
 				"description": plan.Description,
 				"limit":       plan.Limit,
 				"type":        plan.Type,
+				"releases":    planReleaseNames(plan),
 			}
 
 			if plan.Service != nil {
@@ -398,6 +475,25 @@ func (h *Handler) enrichInstancesWithVMStatus(ctx context.Context, instances map
 	}
 }
 
+// managedReleaseNames returns the names of the releases the broker's plan
+// manifests declare, which are the releases Blacksmith deploys and so may
+// upgrade.
+func (h *Handler) managedReleaseNames() map[string]bool {
+	names := make(map[string]bool)
+
+	if h.broker == nil {
+		return names
+	}
+
+	for _, plan := range h.broker.GetPlans() {
+		for _, name := range planReleaseNames(plan) {
+			names[name] = true
+		}
+	}
+
+	return names
+}
+
 // updateInstanceWithVMStatus updates an instance with VM status information.
 func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData interface{}, vmStatus *vmmonitor.VMStatus, instances map[string]interface{}) {
 	instanceMap, ok := instanceData.(map[string]interface{})
@@ -420,6 +516,26 @@ func (h *Handler) updateInstanceWithVMStatus(instanceID string, instanceData int
 	}
 
 	instances[instanceID] = instanceMap
+}
+
+// planReleaseNames returns the names of the releases the plan's manifest
+// declares, in manifest order.
+func planReleaseNames(plan services.Plan) []string {
+	releases, _ := plan.Manifest["releases"].([]interface{})
+	names := make([]string, 0, len(releases))
+
+	for _, release := range releases {
+		releaseMap, ok := release.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+
+		if name, ok := releaseMap["name"].(string); ok && name != "" {
+			names = append(names, name)
+		}
+	}
+
+	return names
 }
 
 // groupReleasesByName merges the director's entries that share a release

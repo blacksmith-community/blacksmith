@@ -14,7 +14,10 @@ import (
 	"blacksmith/pkg/logger"
 )
 
-const forgeRelease = "redis-forge"
+const (
+	forgeRelease = "redis-forge"
+	bpmRelease   = "bpm"
+)
 
 // requestKey marks the context of a test request, so a test can tell that
 // a director call ran under it.
@@ -76,7 +79,7 @@ func TestGetReleasesGroupsEachReleaseNewestFirst(t *testing.T) {
 
 	director := &releaseDirector{releases: []bosh.Release{
 		{Name: forgeRelease, ReleaseVersions: []bosh.ReleaseVersion{{Version: "1.9.0"}, {Version: "1.10.0"}, {Version: "1.4.3"}}},
-		{Name: "bpm", ReleaseVersions: []bosh.ReleaseVersion{{Version: "1.4.20"}, {Version: "1.4.3"}}},
+		{Name: bpmRelease, ReleaseVersions: []bosh.ReleaseVersion{{Version: "1.4.20"}, {Version: "1.4.3"}}},
 		{Name: forgeRelease, ReleaseVersions: []bosh.ReleaseVersion{{Version: "1.10.1"}}},
 	}}
 	handler := boshhandler.NewHandler(boshhandler.Dependencies{Logger: &logger.NoOpLogger{}, Director: director})
@@ -93,7 +96,7 @@ func TestGetReleasesGroupsEachReleaseNewestFirst(t *testing.T) {
 		t.Fatalf("decoding the releases: %v", err)
 	}
 
-	if len(releases) != 2 || releases[0].Name != forgeRelease || releases[1].Name != "bpm" {
+	if len(releases) != 2 || releases[0].Name != forgeRelease || releases[1].Name != bpmRelease {
 		t.Fatalf("expected redis-forge and then bpm, got %+v", releases)
 	}
 
