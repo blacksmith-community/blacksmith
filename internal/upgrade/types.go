@@ -1,6 +1,7 @@
 package upgrade
 
 import (
+	"strings"
 	"time"
 )
 
@@ -132,11 +133,35 @@ type ReleaseTarget struct {
 	Version string `json:"version"`
 }
 
-// CreateTaskRequest represents a request to create an upgrade task.
+// CreateTaskRequest represents a request to create an upgrade task. It
+// sets a stemcell target, release targets, or both. An empty stemcell
+// target keeps each instance's stemcell, and no release targets keep each
+// instance's releases.
 type CreateTaskRequest struct {
-	Name           string         `json:"name,omitempty"`
-	InstanceIDs    []string       `json:"instance_ids"`
-	TargetStemcell StemcellTarget `json:"target_stemcell"`
+	Name           string          `json:"name,omitempty"`
+	InstanceIDs    []string        `json:"instance_ids"`
+	TargetStemcell StemcellTarget  `json:"target_stemcell"`
+	TargetReleases []ReleaseTarget `json:"target_releases,omitempty"`
+}
+
+// DescribeTargets names the request's targets for the log. A request that
+// keeps each instance's stemcell names no stemcell.
+func (r CreateTaskRequest) DescribeTargets() string {
+	parts := make([]string, 0, 1+len(r.TargetReleases))
+
+	if r.TargetStemcell.OS != "" || r.TargetStemcell.Version != "" {
+		parts = append(parts, "stemcell "+r.TargetStemcell.OS+"/"+r.TargetStemcell.Version)
+	}
+
+	for _, target := range r.TargetReleases {
+		parts = append(parts, "release "+target.Name+"/"+target.Version)
+	}
+
+	if len(parts) == 0 {
+		return "no target"
+	}
+
+	return strings.Join(parts, ", ")
 }
 
 // TaskSummary represents a summary of an upgrade task for list views.

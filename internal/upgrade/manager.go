@@ -82,13 +82,38 @@ type adopter interface {
 // persistTaskTimeout bounds the Vault writes that save an upgrade task.
 const persistTaskTimeout = 10 * time.Second
 
+// releaseListingWaitMessage starts the message an instance shows while
+// its upgrade waits for the director to list its releases.
+const releaseListingWaitMessage = "waiting for the director to list its releases"
+
+// targetsOutcome says how an upgrade goes on after a check of its release
+// targets on the director.
+type targetsOutcome int
+
+const (
+	// targetsReady means the director holds every target, so the deploy
+	// goes on.
+	targetsReady targetsOutcome = iota
+	// targetsRetry means the listing failed and the check runs again.
+	targetsRetry
+	// targetsPaused means a pause came while the check waited, so the
+	// processing goes back to the pause wait.
+	targetsPaused
+	// targetsStop means the processing ends.
+	targetsStop
+)
+
 // Error variables for err113 compliance.
 var (
-	ErrTaskNotFound    = errors.New("upgrade task not found")
-	ErrNoInstances     = errors.New("no instances specified for upgrade")
-	ErrInvalidStemcell = errors.New("invalid stemcell target")
-	ErrTaskNotRunning  = errors.New("task is not running")
-	ErrTaskNotPaused   = errors.New("task is not paused")
+	ErrTaskNotFound         = errors.New("upgrade task not found")
+	ErrNoInstances          = errors.New("no instances specified for upgrade")
+	ErrNoUpgradeTarget      = errors.New("no upgrade target: set a stemcell, releases, or both")
+	ErrInvalidStemcell      = errors.New("invalid stemcell target")
+	ErrInvalidRelease       = errors.New("invalid release target: each needs a name and a version, and no release may be named twice")
+	ErrReleaseNotOnDirector = errors.New("the BOSH director does not hold these release versions, and Blacksmith never uploads one")
+	ErrNoDirector           = errors.New("no BOSH director is configured to check the release targets against")
+	ErrTaskNotRunning       = errors.New("task is not running")
+	ErrTaskNotPaused        = errors.New("task is not paused")
 )
 
 // Manager manages upgrade tasks.
@@ -248,12 +273,19 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		return nil, ErrNoInstances
 	}
 
-	if req.TargetStemcell.OS == "" || req.TargetStemcell.Version == "" {
-		return nil, ErrInvalidStemcell
+	err := validateTargets(req)
+	if err != nil {
+		return nil, err
 	}
 
-	m.logger.Info("Creating upgrade task for %d instances to stemcell %s/%s",
-		len(req.InstanceIDs), req.TargetStemcell.OS, req.TargetStemcell.Version)
+	// A release version the director lacks fails the request before the
+	// upgrade exists, so no deploy of it is ever sent.
+	err = m.checkReleasesOnDirector(ctx, req.TargetReleases)
+	if err != nil {
+		return nil, err
+	}
+
+	m.logger.Info("Creating upgrade task for %d instances to %s", len(req.InstanceIDs), req.DescribeTargets())
 
 	// Build instance list with deployment names
 	instances, err := m.buildInstanceList(ctx, req.InstanceIDs)
@@ -266,6 +298,7 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 		Name:           req.Name,
 		Status:         TaskStatusPending,
 		TargetStemcell: req.TargetStemcell,
+		TargetReleases: slices.Clone(req.TargetReleases),
 		Instances:      instances,
 		TotalCount:     len(instances),
 		CompletedCount: 0,
@@ -288,6 +321,32 @@ func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*Upgra
 	m.enqueue(task)
 
 	return created, nil
+}
+
+// validateTargets checks the request's targets. A stemcell target sets
+// its OS and its version, or neither, the request needs a stemcell target,
+// release targets, or both, and each release target names a release once
+// and sets its version.
+func validateTargets(req CreateTaskRequest) error {
+	if (req.TargetStemcell.OS == "") != (req.TargetStemcell.Version == "") {
+		return ErrInvalidStemcell
+	}
+
+	if !req.TargetStemcell.IsSet() && len(req.TargetReleases) == 0 {
+		return ErrNoUpgradeTarget
+	}
+
+	named := make(map[string]bool, len(req.TargetReleases))
+
+	for _, target := range req.TargetReleases {
+		if target.Name == "" || target.Version == "" || named[target.Name] {
+			return ErrInvalidRelease
+		}
+
+		named[target.Name] = true
+	}
+
+	return nil
 }
 
 // buildInstanceList builds the instance upgrade list with deployment information from vault.
@@ -1001,6 +1060,10 @@ func (m *Manager) PauseTask(ctx context.Context, taskID string) error {
 		m.logger.Error("Failed to persist paused state for task %s: %v", taskID, err)
 	}
 
+	// Wake a processor that waits for the director's releases, so it
+	// goes back to the pause wait at once.
+	m.signalTask(taskID)
+
 	return nil
 }
 
@@ -1029,14 +1092,7 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 	}
 
 	// Signal the task to continue processing
-	m.taskCancelLock.RLock()
-	if cancelCh, exists := m.taskCancelCh[taskID]; exists {
-		select {
-		case cancelCh <- struct{}{}:
-		default:
-		}
-	}
-	m.taskCancelLock.RUnlock()
+	m.signalTask(taskID)
 
 	// An upgrade with no processor, as a loaded one has, is queued once
 	// nothing of it is settling.
@@ -1204,7 +1260,9 @@ func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
 func (m *Manager) runTask(task *UpgradeTask) {
 	defer m.wg.Done()
 
-	cancelCh := make(chan struct{})
+	// The buffer keeps a signal sent while the processor isn't waiting on
+	// the channel, so a pause or a resume is never lost.
+	cancelCh := make(chan struct{}, 1)
 
 	m.taskCancelLock.Lock()
 	m.taskCancelCh[task.ID] = cancelCh
@@ -1267,6 +1325,26 @@ func (m *Manager) acquireSlot(task *UpgradeTask, cancelCh <-chan struct{}) (func
 	}
 }
 
+// signalTask wakes the upgrade's processor without blocking. The signal
+// waits in the channel's buffer when the processor isn't waiting yet, and
+// a signal already in the buffer covers this one. Each receiver reads the
+// upgrade's status again when it wakes, so a leftover signal only causes
+// one more check.
+func (m *Manager) signalTask(taskID string) {
+	m.taskCancelLock.RLock()
+	defer m.taskCancelLock.RUnlock()
+
+	cancelCh, exists := m.taskCancelCh[taskID]
+	if !exists {
+		return
+	}
+
+	select {
+	case cancelCh <- struct{}{}:
+	default:
+	}
+}
+
 // processTask processes a single upgrade task. A signal on cancelCh wakes
 // it from a pause, and a close of it is a cancel.
 func (m *Manager) processTask(task *UpgradeTask, cancelCh <-chan struct{}) {
@@ -1290,9 +1368,13 @@ func (m *Manager) processTask(task *UpgradeTask, cancelCh <-chan struct{}) {
 		m.logger.Error("Failed to persist task %s running state: %v", task.ID, err)
 	}
 
+	// The release targets are checked on the director again before this
+	// run's first deploy, and again after each resume from a pause.
+	targetsChecked := false
+
 	// Process each instance sequentially
 	for i := range task.Instances {
-		if !m.processInstance(task, &task.Instances[i], cancelCh) {
+		if !m.processInstance(task, &task.Instances[i], cancelCh, &targetsChecked) {
 			return
 		}
 	}
@@ -1334,49 +1416,14 @@ func (m *Manager) recoverTask(ctx context.Context, task *UpgradeTask) {
 }
 
 // processInstance takes one instance of an upgrade through the cancel
-// check, the pause wait, and its deploy, and reports whether the upgrade
-// goes on to its next instance. Its saves go on after Stop.
-func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) bool {
-	ctx := context.WithoutCancel(m.ctx)
-
-	// Check if task was cancelled
-	m.mu.RLock()
-
-	cancelled := task.Status == TaskStatusCancelled
-
-	m.mu.RUnlock()
-
-	if cancelled {
-		m.logger.Info("Task %s was cancelled, stopping processing", task.ID)
-		m.skipPendingInstances(ctx, task)
-
-		return false
-	}
-
-	// Check if task is paused - wait for resume or cancel
-	if !m.waitWhilePaused(ctx, task, cancelCh) {
-		return false
-	}
-
-	m.mu.RLock()
-
-	status := instance.Status
-
-	m.mu.RUnlock()
-
-	// An instance that has settled was counted when it settled, so a
-	// resumed upgrade skips it without counting it again.
-	if status.settled() {
-		return true
-	}
-
-	// An instance whose deploy is still in flight has not settled, so
-	// the upgrade stops here rather than deploy it again or finish
-	// while that deploy runs.
-	if status == InstanceStatusRunning || status == InstanceStatusInterrupted {
-		m.logger.Info("Instance %s of task %s is still %s, so the upgrade stops until it settles", instance.InstanceID, task.ID, status)
-
-		return false
+// check, the pause wait, the check of the release targets on the director,
+// and its deploy, and reports whether the upgrade goes on to its next
+// instance. targetsChecked records whether this run has checked the
+// targets since it started or was last resumed.
+func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}, targetsChecked *bool) bool {
+	deploy, goOn := m.readyToDeploy(task, instance, cancelCh, targetsChecked)
+	if !deploy {
+		return goOn
 	}
 
 	m.upgradeInstance(m.ctx, task, instance, cancelCh)
@@ -1390,6 +1437,93 @@ func (m *Manager) processInstance(task *UpgradeTask, instance *InstanceUpgrade, 
 	}
 
 	return true
+}
+
+// readyToDeploy takes the instance through the cancel check, the pause
+// wait, and the check of the release targets, and reports whether to
+// deploy it and, when not, whether the upgrade goes on to its next
+// instance. A pause that arrives during the release check sends it back
+// to the pause wait, so the instance waits for the resume, and the
+// resume checks the targets again. Its saves go on after Stop.
+func (m *Manager) readyToDeploy(task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}, targetsChecked *bool) (bool, bool) {
+	ctx := context.WithoutCancel(m.ctx)
+
+	for {
+		// Check if task was cancelled
+		m.mu.RLock()
+
+		cancelled := task.Status == TaskStatusCancelled
+
+		m.mu.RUnlock()
+
+		if cancelled {
+			m.logger.Info("Task %s was cancelled, stopping processing", task.ID)
+			m.skipPendingInstances(ctx, task)
+
+			return false, false
+		}
+
+		// Check if task is paused - wait for resume or cancel
+		goOn, waited := m.waitWhilePaused(ctx, task, cancelCh)
+		if !goOn {
+			return false, false
+		}
+
+		// A release version may have left the director during the pause.
+		if waited {
+			*targetsChecked = false
+		}
+
+		m.mu.RLock()
+
+		status := instance.Status
+
+		m.mu.RUnlock()
+
+		// An instance that has settled was counted when it settled, so a
+		// resumed upgrade skips it without counting it again.
+		if status.settled() {
+			return false, true
+		}
+
+		// An instance whose deploy is still in flight has not settled, so
+		// the upgrade stops here rather than deploy it again or finish
+		// while that deploy runs.
+		if status == InstanceStatusRunning || status == InstanceStatusInterrupted {
+			m.logger.Info("Instance %s of task %s is still %s, so the upgrade stops until it settles", instance.InstanceID, task.ID, status)
+
+			return false, false
+		}
+
+		if *targetsChecked {
+			return true, true
+		}
+
+		switch m.releaseTargetsOnDirector(m.ctx, task, instance, cancelCh) {
+		case targetsStop:
+			return false, false
+		case targetsPaused:
+			continue
+		case targetsReady, targetsRetry:
+		}
+
+		*targetsChecked = true
+
+		m.mu.RLock()
+
+		paused := task.Paused
+
+		m.mu.RUnlock()
+
+		if !paused {
+			return true, true
+		}
+
+		// The resume checks the targets again, however soon it comes.
+		*targetsChecked = false
+
+		m.logger.Info("Task %s was paused while it checked its release targets, so its next deploy waits for the resume", task.ID)
+	}
 }
 
 // startProcessing marks the upgrade running as its processing starts, and
@@ -1414,8 +1548,11 @@ func (m *Manager) startProcessing(task *UpgradeTask) bool {
 }
 
 // waitWhilePaused waits while the upgrade is paused, and reports whether
-// its processing goes on. A cancel ends the processing, and so does Stop.
-func (m *Manager) waitWhilePaused(ctx context.Context, task *UpgradeTask, cancelCh <-chan struct{}) bool {
+// its processing goes on and whether it waited. A cancel ends the
+// processing, and so does Stop.
+func (m *Manager) waitWhilePaused(ctx context.Context, task *UpgradeTask, cancelCh <-chan struct{}) (bool, bool) {
+	waited := false
+
 	for {
 		m.mu.RLock()
 
@@ -1428,12 +1565,14 @@ func (m *Manager) waitWhilePaused(ctx context.Context, task *UpgradeTask, cancel
 			m.logger.Info("Task %s was cancelled while paused, stopping processing", task.ID)
 			m.skipPendingInstances(ctx, task)
 
-			return false
+			return false, waited
 		}
 
 		if !isPaused {
-			return true
+			return true, waited
 		}
+
+		waited = true
 
 		m.logger.Debug("Task %s is paused, waiting for resume...", task.ID)
 
@@ -1443,7 +1582,7 @@ func (m *Manager) waitWhilePaused(ctx context.Context, task *UpgradeTask, cancel
 		case <-m.stopCh:
 			m.logger.Info("Manager stopping while task %s is paused", task.ID)
 
-			return false
+			return false, waited
 		case <-time.After(1 * time.Second):
 			// Periodic check
 		}
@@ -1458,13 +1597,7 @@ func (m *Manager) finishTask(ctx context.Context, task *UpgradeTask) {
 	if task.Status != TaskStatusCancelled {
 		completedAt := time.Now()
 		task.CompletedAt = &completedAt
-
-		if task.FailedCount > 0 && task.CompletedCount == 0 {
-			task.Status = TaskStatusFailed
-		} else {
-			// A partial success completes too.
-			task.Status = TaskStatusCompleted
-		}
+		task.Status = finishedStatus(task)
 	}
 
 	m.mu.Unlock()
@@ -1477,6 +1610,17 @@ func (m *Manager) finishTask(ctx context.Context, task *UpgradeTask) {
 
 	m.logger.Info("Upgrade task %s completed: %d/%d succeeded, %d failed, %d cancelled, %d with an unknown outcome",
 		task.ID, task.CompletedCount, task.TotalCount, task.FailedCount, task.CancelledCount, task.UnknownCount)
+}
+
+// finishedStatus returns the status an upgrade ends in once it deploys
+// nothing more. It fails when nothing succeeded, and a partial success
+// completes. The caller holds mu.
+func finishedStatus(task *UpgradeTask) TaskStatus {
+	if task.FailedCount > 0 && task.CompletedCount == 0 {
+		return TaskStatusFailed
+	}
+
+	return TaskStatusCompleted
 }
 
 // skipPendingLocked marks every pending instance of a cancelled upgrade
@@ -1810,7 +1954,9 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) [
 
 	m.settling[task.ID] = len(deploys)
 
-	cancelCh := make(chan struct{})
+	// The buffer keeps a signal sent while no settle waits on the
+	// channel, as runTask's does.
+	cancelCh := make(chan struct{}, 1)
 
 	m.taskCancelLock.Lock()
 	m.taskCancelCh[task.ID] = cancelCh
@@ -2317,5 +2463,213 @@ func (m *Manager) skipWithoutTargets(ctx context.Context, task *UpgradeTask, ins
 	err := m.persistTask(ctx, task)
 	if err != nil {
 		m.logger.Error("Failed to persist the skipped instance %s of task %s: %v", instance.InstanceID, task.ID, err)
+	}
+}
+
+// checkReleasesOnDirector checks that the director holds each target
+// release version, and names every one it lacks. Blacksmith never uploads
+// a release, so an upgrade to a version the director lacks could only
+// fail.
+func (m *Manager) checkReleasesOnDirector(ctx context.Context, targets []ReleaseTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+
+	if m.director == nil {
+		return ErrNoDirector
+	}
+
+	releases, err := m.director.GetReleases(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list the director's releases to check the release targets: %w", err)
+	}
+
+	held := make(map[ReleaseTarget]bool)
+
+	for _, release := range releases {
+		for _, version := range release.ReleaseVersions {
+			held[ReleaseTarget{Name: release.Name, Version: version.Version}] = true
+		}
+	}
+
+	var missing []string
+
+	for _, target := range targets {
+		if !held[target] {
+			missing = append(missing, target.Name+"/"+target.Version)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: %s", ErrReleaseNotOnDirector, strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+// releaseTargetsOnDirector checks the upgrade's release targets on the
+// director before a deploy, and reports how the upgrade goes on. A version
+// that left the director since the upgrade was created is final, so it
+// ends the upgrade, and every instance not yet started fails naming the
+// cause, so no deploy of it is sent. A director that can't list its
+// releases leaves the upgrade running, and the check waits and tries
+// again, showing why on the instance, until a listing passes or a cancel,
+// a pause, or Stop ends the wait. A manager that is stopping, which ends
+// ctx, leaves the upgrade as it is.
+func (m *Manager) releaseTargetsOnDirector(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}) targetsOutcome {
+	// The waiting message and the failure are saved even if Stop comes
+	// now.
+	persistCtx := context.WithoutCancel(ctx)
+	backoff := loadRetryBackoff
+
+	for {
+		// The targets are written once, when the upgrade is created, so
+		// they are read without the lock.
+		err := m.checkReleasesOnDirector(ctx, task.TargetReleases)
+		if err == nil {
+			m.clearListingWait(persistCtx, task, instance)
+
+			return targetsReady
+		}
+
+		if ctx.Err() != nil {
+			m.logger.Info("Manager stopping while it checked the release targets of task %s", task.ID)
+
+			return targetsStop
+		}
+
+		if errors.Is(err, ErrReleaseNotOnDirector) || errors.Is(err, ErrNoDirector) {
+			m.endForReleaseTargets(persistCtx, task, err)
+
+			return targetsStop
+		}
+
+		outcome := m.waitForReleaseListing(persistCtx, task, instance, cancelCh, err, backoff)
+		if outcome != targetsRetry {
+			return outcome
+		}
+
+		backoff = min(backoff+backoff, loadRetryBackoffMax)
+	}
+}
+
+// waitForReleaseListing shows on the instance that the upgrade waits for
+// the director to list its releases, and waits for the backoff given. It
+// reports targetsRetry when the check should run again, targetsPaused
+// when a pause came, and targetsStop when a cancel, which skips the
+// pending instances, or Stop came.
+func (m *Manager) waitForReleaseListing(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, cancelCh <-chan struct{}, listErr error, backoff time.Duration) targetsOutcome {
+	message := fmt.Sprintf("%s: %v", releaseListingWaitMessage, listErr)
+
+	m.mu.Lock()
+
+	changed := instance.Error != message
+	instance.Error = message
+
+	m.mu.Unlock()
+
+	m.logger.Error("Task %s can't check its release targets, so it checks again in %s: %v", task.ID, backoff, listErr)
+
+	if changed {
+		err := m.persistTask(ctx, task)
+		if err != nil {
+			m.logger.Error("Failed to persist the wait of task %s for the director's releases: %v", task.ID, err)
+		}
+	}
+
+	select {
+	case <-time.After(backoff):
+	case <-cancelCh:
+		// A pause, a resume, or a cancel; the status says which.
+	case <-m.stopCh:
+		m.logger.Info("Manager stopping while task %s waits for the director's releases", task.ID)
+
+		return targetsStop
+	}
+
+	m.mu.RLock()
+
+	cancelled := task.Status == TaskStatusCancelled
+	paused := task.Paused
+
+	m.mu.RUnlock()
+
+	if cancelled {
+		m.logger.Info("Task %s was cancelled while it waited for the director's releases, stopping processing", task.ID)
+		m.skipPendingInstances(ctx, task)
+
+		return targetsStop
+	}
+
+	if paused {
+		return targetsPaused
+	}
+
+	return targetsRetry
+}
+
+// clearListingWait clears the waiting message from the instance once a
+// release check passes, including one saved before a restart.
+func (m *Manager) clearListingWait(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade) {
+	m.mu.Lock()
+
+	cleared := instance.Status == InstanceStatusPending && strings.HasPrefix(instance.Error, releaseListingWaitMessage)
+	if cleared {
+		instance.Error = ""
+	}
+
+	m.mu.Unlock()
+
+	if !cleared {
+		return
+	}
+
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist task %s after its release check passed: %v", task.ID, err)
+	}
+}
+
+// endForReleaseTargets ends an upgrade whose release targets can't be
+// deployed. Each instance not yet started fails naming the cause, and the
+// upgrade, which is no longer paused, ends as finishTask would end it. A
+// cancelled upgrade skips its pending instances instead.
+func (m *Manager) endForReleaseTargets(ctx context.Context, task *UpgradeTask, cause error) {
+	m.mu.Lock()
+
+	if task.Status == TaskStatusCancelled {
+		m.mu.Unlock()
+		m.skipPendingInstances(ctx, task)
+
+		return
+	}
+
+	completedAt := time.Now()
+	message := fmt.Sprintf("not started, because the release targets can't be deployed: %v", cause)
+
+	for i := range task.Instances {
+		instance := &task.Instances[i]
+		if instance.Status != InstanceStatusPending {
+			continue
+		}
+
+		instance.Status = InstanceStatusFailed
+		instance.Error = message
+		instance.CompletedAt = &completedAt
+		task.FailedCount++
+	}
+
+	task.Paused = false
+	task.Status = finishedStatus(task)
+	task.CompletedAt = &completedAt
+	status := task.Status
+
+	m.mu.Unlock()
+
+	m.logger.Error("Task %s ended %s before its next deploy: %v", task.ID, status, cause)
+
+	err := m.persistTask(ctx, task)
+	if err != nil {
+		m.logger.Error("Failed to persist the ended task %s: %v", task.ID, err)
 	}
 }

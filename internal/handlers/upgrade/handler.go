@@ -107,8 +107,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("Creating upgrade task for %d instances, target: %s/%s",
-		len(req.InstanceIDs), req.TargetStemcell.OS, req.TargetStemcell.Version)
+	h.logger.Info("Creating upgrade task for %d instances, targets: %s", len(req.InstanceIDs), req.DescribeTargets())
 
 	task, err := h.manager.CreateTask(r.Context(), req)
 	if err != nil {

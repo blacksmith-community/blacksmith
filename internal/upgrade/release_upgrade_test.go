@@ -18,6 +18,9 @@ const (
 	// redisForgeTarget the version the release upgrades move it to.
 	redisForge       = "redis-forge"
 	redisForgeTarget = "9.9.9"
+	// rabbitmqForge is a release the director holds that no test
+	// deployment runs.
+	rabbitmqForge = "rabbitmq-forge"
 	// deployedBPMVersion is the bpm version every test deployment runs.
 	deployedBPMVersion = "1.4.20"
 	// deployedStemcellVersion is the stemcell version every test
@@ -26,7 +29,9 @@ const (
 )
 
 // releaseDirector is a resumeDirector whose deployments run the redis
-// forge and bpm releases, and which keeps every manifest it deploys.
+// forge and bpm releases, and which keeps every manifest it deploys. It
+// holds redis-forge 9.9.9 and 9.9.8, bpm 1.4.20, and rabbitmq-forge
+// 2.0.0, less any version the test withdraws.
 type releaseDirector struct {
 	*resumeDirector
 
@@ -35,10 +40,45 @@ type releaseDirector struct {
 	// abandoned names the deployments whose deploy task Blacksmith stops
 	// following, so the instance's outcome is never known.
 	abandoned map[string]bool
+	// withdrawn names the "name/version" releases the director no longer
+	// holds.
+	withdrawn map[string]bool
 }
 
 func newReleaseDirector() *releaseDirector {
-	return &releaseDirector{resumeDirector: newResumeDirector(), manifests: make(map[string][]string), abandoned: make(map[string]bool)}
+	return &releaseDirector{
+		resumeDirector: newResumeDirector(),
+		manifests:      make(map[string][]string),
+		abandoned:      make(map[string]bool),
+		withdrawn:      make(map[string]bool),
+	}
+}
+
+func (d *releaseDirector) GetReleases(_ context.Context) ([]bosh.Release, error) {
+	held := map[string][]string{
+		redisForge:    {redisForgeTarget, "9.9.8"},
+		bpmRelease:    {deployedBPMVersion},
+		rabbitmqForge: {"2.0.0"},
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	releases := make([]bosh.Release, 0, len(held))
+
+	for _, name := range []string{redisForge, bpmRelease, rabbitmqForge} {
+		release := bosh.Release{Name: name}
+
+		for _, version := range held[name] {
+			if !d.withdrawn[name+"/"+version] {
+				release.ReleaseVersions = append(release.ReleaseVersions, bosh.ReleaseVersion{Version: version})
+			}
+		}
+
+		releases = append(releases, release)
+	}
+
+	return releases, nil
 }
 
 func (d *releaseDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
@@ -90,6 +130,15 @@ func (d *releaseDirector) abandon(deployment string) {
 	defer d.mu.Unlock()
 
 	d.abandoned[deployment] = true
+}
+
+// withdrawTarget removes the redis forge target from the director's
+// releases.
+func (d *releaseDirector) withdrawTarget() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.withdrawn[redisForge+"/"+redisForgeTarget] = true
 }
 
 // deployed returns the manifest of the only deploy of the deployment, and
@@ -182,7 +231,7 @@ func TestReleaseUpgradeSkipsAnInstanceWithoutTheRelease(t *testing.T) {
 	vault := newWaitVault()
 
 	stored := releaseUpgrade(pendingInstance("instance-1", firstDeployment))
-	stored.TargetReleases = []ReleaseTarget{{Name: "rabbitmq-forge", Version: "2.0.0"}}
+	stored.TargetReleases = []ReleaseTarget{{Name: rabbitmqForge, Version: "2.0.0"}}
 	storeUpgrade(t, vault, stored)
 
 	manager := loadManager(t, director, vault)
@@ -403,4 +452,85 @@ func TestPausedReleaseUpgradeResumesWithItsTargets(t *testing.T) {
 	expectCompleted(t, manager, loadedTaskID)
 	expectReleaseBumped(t, director.deployed(t, firstDeployment), deployedStemcellVersion)
 	expectReleaseBumped(t, director.deployed(t, nextDeployment), deployedStemcellVersion)
+}
+
+// expectStoppedForMissingReleases fails the test unless the upgrade
+// ended in the status given, with each instance that had not started
+// failed for the missing release, and nothing deployed after the
+// instances already settled. It returns the upgrade as it ended.
+func expectStoppedForMissingReleases(t *testing.T, manager *Manager, director *releaseDirector, status TaskStatus, settledDeploys []string) UpgradeTask {
+	t.Helper()
+
+	done := eventuallyWithin(t, manager, loadedTaskID, waitTimeout, "the upgrade's end", func(current UpgradeTask) bool {
+		return current.Status == status
+	})
+
+	failed := done.Instances[len(done.Instances)-1]
+	if failed.Status != InstanceStatusFailed || !strings.Contains(failed.Error, redisForge+"/"+redisForgeTarget) || done.CompletedAt == nil {
+		t.Fatalf("expected the instance not started to fail naming %s/%s, got %+v", redisForge, redisForgeTarget, done)
+	}
+
+	if deploys := director.allDeploys(); !slices.Equal(deploys, settledDeploys) {
+		t.Fatalf("expected the deploys %v and no more, got %v", settledDeploys, deploys)
+	}
+
+	return done
+}
+
+// A release upgrade loaded after a restart checks its targets on the
+// director again before it deploys, and fails when a version is gone.
+//
+//nolint:paralleltest // the resumed upgrade waits on a shared test director
+func TestLoadedReleaseUpgradeFailsWhenTheDirectorLacksATarget(t *testing.T) {
+	director := newReleaseDirector()
+	director.withdrawTarget()
+
+	vault := newWaitVault()
+
+	storeUpgrade(t, vault, releaseUpgrade(pendingInstance("instance-1", firstDeployment)))
+
+	manager := loadManager(t, director, vault)
+
+	expectStoppedForMissingReleases(t, manager, director, TaskStatusFailed, nil)
+	eventuallySaved(t, vault, loadedTaskID, func(saved UpgradeTask) bool { return saved.Status == TaskStatusFailed })
+}
+
+// A paused release upgrade checks its targets on the director again when
+// it is resumed, and stops before its next deploy when a version is gone.
+// It completes, since an instance was already upgraded.
+//
+//nolint:paralleltest // the resumed upgrade waits on a shared test director
+func TestResumedReleaseUpgradeChecksItsTargetsAgain(t *testing.T) {
+	director := newReleaseDirector()
+	director.holdDeployment(firstDeployment)
+
+	vault := newWaitVault()
+
+	storeUpgrade(t, vault, releaseUpgrade(
+		pendingInstance("instance-1", firstDeployment),
+		pendingInstance("instance-2", nextDeployment)))
+
+	manager := loadManager(t, director, vault)
+
+	director.waitForWaitOn(t, 101)
+
+	err := manager.PauseTask(context.Background(), loadedTaskID)
+	if err != nil {
+		t.Fatalf("pausing the upgrade: %v", err)
+	}
+
+	director.releaseDeployment(firstDeployment)
+
+	eventuallyWithin(t, manager, loadedTaskID, waitTimeout, "the first instance's success", func(current UpgradeTask) bool {
+		return current.Instances[0].Status == InstanceStatusSuccess
+	})
+
+	director.withdrawTarget()
+
+	err = manager.ResumeTask(context.Background(), loadedTaskID)
+	if err != nil {
+		t.Fatalf("resuming the upgrade: %v", err)
+	}
+
+	expectStoppedForMissingReleases(t, manager, director, TaskStatusCompleted, []string{firstDeployment})
 }
