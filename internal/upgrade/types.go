@@ -113,6 +113,13 @@ type StemcellTarget struct {
 	Version string `json:"version"`
 }
 
+// ReleaseTarget names a BOSH release and the version to upgrade it to. The
+// version must already be on the director.
+type ReleaseTarget struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
 // CreateTaskRequest represents a request to create an upgrade task.
 type CreateTaskRequest struct {
 	Name           string         `json:"name,omitempty"`
