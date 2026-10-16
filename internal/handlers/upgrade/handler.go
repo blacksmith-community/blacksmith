@@ -103,7 +103,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Error("Failed to decode request body: %v", err)
-		response.HandleJSON(w, nil, err)
+		response.WriteError(w, http.StatusBadRequest, "invalid upgrade request: "+err.Error())
 
 		return
 	}
@@ -244,11 +244,19 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	response.HandleJSON(w, map[string]interface{}{"success": true, "max_batch_jobs": settings.MaxBatchJobs}, nil)
 }
 
-// writeCreateError answers a failed CreateTask. An instance another
-// upgrade holds is a conflict, and a manager still loading the stored
-// upgrades is not ready yet, so a client can tell those from a failure.
+// writeCreateError answers a failed CreateTask. A request that names no
+// instance, no valid target, or a release version the director lacks is
+// a bad request. An instance another upgrade holds is a conflict, and a
+// manager still loading the stored upgrades is not ready yet, so a client
+// can tell those from a failure.
 func writeCreateError(writer http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, upgrade.ErrNoInstances),
+		errors.Is(err, upgrade.ErrNoUpgradeTarget),
+		errors.Is(err, upgrade.ErrInvalidStemcell),
+		errors.Is(err, upgrade.ErrInvalidRelease),
+		errors.Is(err, upgrade.ErrReleaseNotOnDirector):
+		response.WriteError(writer, http.StatusBadRequest, err.Error())
 	case errors.Is(err, upgrade.ErrInstanceBusy):
 		response.WriteError(writer, http.StatusConflict, err.Error())
 	case errors.Is(err, upgrade.ErrTasksLoading):

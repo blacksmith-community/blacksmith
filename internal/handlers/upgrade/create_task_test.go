@@ -75,21 +75,29 @@ type createCase struct {
 // createCases returns a request for each combination of targets.
 func createCases() map[string]createCase {
 	return map[string]createCase{
+		"a body that is not JSON": {
+			body:   `{"instance_ids":`,
+			status: http.StatusBadRequest, says: "invalid upgrade request",
+		},
+		"no instances": {
+			body:   `{"instance_ids":[],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,
+			status: http.StatusBadRequest, says: "no instances",
+		},
 		"no target": {
 			body:   `{"instance_ids":["i-1"],"target_stemcell":{"os":"","version":""}}`,
-			status: http.StatusInternalServerError, says: "no upgrade target",
+			status: http.StatusBadRequest, says: "no upgrade target",
 		},
 		"a half-set stemcell": {
 			body:   `{"instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":""}}`,
-			status: http.StatusInternalServerError, says: "invalid stemcell target",
+			status: http.StatusBadRequest, says: "invalid stemcell target",
 		},
 		"a release with no version": {
 			body:   `{"instance_ids":["i-1"],"target_releases":[{"name":"redis-forge"}]}`,
-			status: http.StatusInternalServerError, says: "invalid release target",
+			status: http.StatusBadRequest, says: "invalid release target",
 		},
 		"a version the director lacks": {
 			body:   `{"instance_ids":["i-1"],"target_releases":[{"name":"redis-forge","version":"9.9.10"}]}`,
-			status: http.StatusInternalServerError, says: "redis-forge/9.9.10", listings: 1,
+			status: http.StatusBadRequest, says: "redis-forge/9.9.10", listings: 1,
 		},
 		"a stemcell alone": {
 			body:   `{"instance_ids":["i-1"],"target_stemcell":{"os":"ubuntu-noble","version":"1.2"}}`,
