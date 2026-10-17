@@ -12,6 +12,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/interfaces"
+	vaultPkg "blacksmith/pkg/vault"
 
 	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/google/uuid"
@@ -1735,7 +1736,9 @@ func (m *Manager) loadAndSettle() {
 
 // loadPersistedTasks loads every upgrade task saved in Vault. A failed read
 // of the index or of a task is retried until it succeeds or Stop ends the
-// load, so a Vault that starts after the broker never loses an upgrade. It
+// load, so a Vault that starts after the broker never loses an upgrade. A
+// task whose record can't be decoded is skipped and logged instead, since
+// no retry can read it, so the load still finishes. It
 // returns the tasks it loaded, and false when Stop ended the load. A task
 // already in memory, created after the broker started, is kept.
 func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
@@ -1761,17 +1764,39 @@ func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 	loaded := make([]*UpgradeTask, 0, len(tasksIndex))
 
 	for taskID := range tasksIndex {
-		var task *UpgradeTask
+		var (
+			task        *UpgradeTask
+			undecodable bool
+		)
 
 		taskPath := upgradeTasksVaultPath + "/" + taskID
 
 		taskExists, ok := m.readWithRetry("upgrade task "+taskID+" from Vault", func(ctx context.Context) (bool, error) {
 			task = &UpgradeTask{}
 
-			return m.vault.Get(ctx, taskPath, task)
+			exists, err := m.vault.Get(ctx, taskPath, task)
+			// A record that doesn't fit UpgradeTask reads the same way
+			// every time, so it isn't retried.
+			if errors.Is(err, vaultPkg.ErrCouldNotRemarshalData) {
+				undecodable = true
+
+				return false, nil
+			}
+
+			if err != nil {
+				return false, fmt.Errorf("reading %s: %w", taskPath, err)
+			}
+
+			return exists, nil
 		})
 		if !ok {
 			return nil, false
+		}
+
+		if undecodable {
+			m.logger.Error("Skipped upgrade task %s, because its record at %s can't be decoded; delete that record from Vault by hand", taskID, taskPath)
+
+			continue
 		}
 
 		if !taskExists {
