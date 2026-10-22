@@ -88,6 +88,8 @@ type Client struct {
 	tokens     tokenProvider
 	protected  []string
 	httpClient *http.Client
+	// bufferSeen lets a test look at the answer buffer after it was cleared.
+	bufferSeen func([]byte)
 }
 
 // request describes one CredHub call.

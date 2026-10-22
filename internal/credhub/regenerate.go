@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"sync/atomic"
 	"time"
 )
 
@@ -89,20 +90,10 @@ func (c *Client) Regenerate(ctx context.Context, certificateID string) (*Regener
 	ctx, cancel := context.WithTimeout(ctx, regenerateTimeout)
 	defer cancel()
 
-	var written bool
-
-	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) { written = info.Err == nil }}
-
-	endpoint := c.baseURL + certificatesPath + "/" + url.PathEscape(certificateID) + "/regenerate"
-
-	httpReq, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodPost, endpoint, bytes.NewReader([]byte(regenerateBody)))
+	httpReq, connected, err := c.regenerateRequest(ctx, certificateID, token)
 	if err != nil {
 		return nil, fmt.Errorf("CredHub %s: building the request: %w", opRegenerate, err)
 	}
-
-	httpReq.Header.Set("Authorization", bearerPrefix+token)
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("Content-Type", "application/json")
 
 	// The shared client caps every request at 15 s. This call has its own
 	// 30 s deadline, so it uses a copy without the client-wide cap.
@@ -111,7 +102,9 @@ func (c *Client) Regenerate(ctx context.Context, certificateID string) (*Regener
 
 	response, err := longClient.Do(httpReq)
 	if err != nil {
-		if !written {
+		// Once the connection was handed to the request, CredHub may have
+		// read it, so the outcome is open. Before that it is certain.
+		if !connected.Load() {
 			return nil, fmt.Errorf("CredHub %s: %w", opRegenerate, scrubbed(err, token))
 		}
 
@@ -126,6 +119,29 @@ func (c *Client) Regenerate(ctx context.Context, certificateID string) (*Regener
 	defer func() { _ = response.Body.Close() }()
 
 	return c.regenerateOutcome(ctx, response, token)
+}
+
+// regenerateRequest builds the one regenerate request. The flag it returns
+// is set once a connection has been handed to the request, which is the
+// point where a failure stops being certain. The request has no GetBody, so
+// no transport can replay it on a new connection.
+func (c *Client) regenerateRequest(ctx context.Context, certificateID, token string) (*http.Request, *atomic.Bool, error) {
+	connected := &atomic.Bool{}
+
+	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { connected.Store(true) }}
+	endpoint := c.baseURL + certificatesPath + "/" + url.PathEscape(certificateID) + "/regenerate"
+
+	httpReq, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodPost, endpoint, bytes.NewReader([]byte(regenerateBody)))
+	if err != nil {
+		return nil, nil, fmt.Errorf("new request: %w", err)
+	}
+
+	httpReq.GetBody = nil
+	httpReq.Header.Set("Authorization", bearerPrefix+token)
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	return httpReq, connected, nil
 }
 
 func (c *Client) regenerateOutcome(ctx context.Context, response *http.Response, token string) (*RegenerateResult, error) {
@@ -150,11 +166,21 @@ func (c *Client) regenerateOutcome(ctx context.Context, response *http.Response,
 		return nil, &UncertainError{Op: opRegenerate, Cause: causeStatus}
 	}
 
-	// One byte past the limit shows that the answer was longer.
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxRegenerateBody+1))
-	if err != nil {
-		clear(body)
+	// The buffer is allocated once, so no earlier copy of a key is left
+	// behind by a growing slice. One byte past the limit shows that the
+	// answer was longer.
+	buf := make([]byte, maxRegenerateBody+1)
 
+	defer func() {
+		clear(buf)
+
+		if c.bufferSeen != nil {
+			c.bufferSeen(buf)
+		}
+	}()
+
+	n, err := io.ReadFull(response.Body, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		cause := causeUnread
 		if ctx.Err() != nil {
 			cause = causeDeadline
@@ -163,18 +189,13 @@ func (c *Client) regenerateOutcome(ctx context.Context, response *http.Response,
 		return nil, &UncertainError{Op: opRegenerate, Cause: cause}
 	}
 
-	if len(body) > maxRegenerateBody {
-		clear(body)
-
+	if n > maxRegenerateBody {
 		return nil, &UncertainError{Op: opRegenerate, Cause: fmt.Sprintf("%s (%d bytes)", causeTooLarge, maxRegenerateBody)}
 	}
 
 	var parsed regenerateAnswer
 
-	err = json.Unmarshal(body, &parsed)
-
-	clear(body)
-
+	err = json.Unmarshal(buf[:n], &parsed)
 	if err != nil || parsed.ID == "" {
 		return nil, &UncertainError{Op: opRegenerate, Cause: causeUndecoded}
 	}

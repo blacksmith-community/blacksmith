@@ -2,6 +2,7 @@ package credhub
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"blacksmith/pkg/logger"
@@ -28,4 +29,17 @@ func SetCleanerRunTimeout(cleaner *Cleaner, timeout time.Duration) {
 // so a test of the deadline does not wait thirty seconds.
 func ProbeWithin(ctx context.Context, client *Client, directorName string, log logger.Logger, timeout time.Duration) error {
 	return probeWithin(ctx, client, directorName, log, timeout)
+}
+
+// SetRegenerateBufferHook makes Regenerate hand its answer buffer to hook
+// after it has been cleared.
+func SetRegenerateBufferHook(client *Client, hook func([]byte)) {
+	client.bufferSeen = hook
+}
+
+// RegenerateRequestForTest builds the request Regenerate sends.
+func RegenerateRequestForTest(ctx context.Context, client *Client, certificateID string) (*http.Request, error) {
+	request, _, err := client.regenerateRequest(ctx, certificateID, "token")
+
+	return request, err
 }

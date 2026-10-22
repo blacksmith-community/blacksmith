@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ const regenerateAnswerBody = `{"id":"v3","name":"/d/dep/redis_crt","type":"certi
 // regenerateFake records each regenerate request and answers with handler.
 type regenerateFake struct {
 	server *httptest.Server
+	tokens *fakeTokens
 	mu     sync.Mutex
 	bodies []string
 	paths  []string
@@ -29,7 +31,7 @@ type regenerateFake struct {
 func newRegenerateFake(t *testing.T, handler func(n int, writer http.ResponseWriter, request *http.Request)) *regenerateFake {
 	t.Helper()
 
-	fake := &regenerateFake{}
+	fake := &regenerateFake{tokens: &fakeTokens{}}
 	fake.server = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		body, _ := io.ReadAll(request.Body)
 
@@ -50,7 +52,7 @@ func newRegenerateFake(t *testing.T, handler func(n int, writer http.ResponseWri
 func (f *regenerateFake) client(t *testing.T) *credhub.Client {
 	t.Helper()
 
-	client, err := credhub.NewClient(credhub.ClientConfig{URL: f.server.URL, CACert: serverCA(f.server)}, &fakeTokens{}, nil)
+	client, err := credhub.NewClient(credhub.ClientConfig{URL: f.server.URL, CACert: serverCA(f.server)}, f.tokens, nil)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -205,14 +207,145 @@ func TestRegenerateResponseKeyNotRetained(t *testing.T) {
 	t.Parallel()
 
 	fake := newRegenerateFake(t, reply(http.StatusOK, regenerateAnswerBody))
+	client := fake.client(t)
 
-	got, err := fake.client(t).Regenerate(context.Background(), "c-1")
+	var seen []byte
+
+	credhub.SetRegenerateBufferHook(client, func(buf []byte) { seen = buf })
+
+	got, err := client.Regenerate(context.Background(), "c-1")
 	if err != nil {
 		t.Fatalf("Regenerate: %v", err)
 	}
 
 	if text := fmt.Sprintf("%+v", got); strings.Contains(text, "PRIVATE") || strings.Contains(text, "SECRET") {
 		t.Fatalf("result carries key text: %s", text)
+	}
+
+	if len(seen) == 0 {
+		t.Fatal("the buffer hook was never called")
+	}
+
+	if strings.Contains(string(seen), "PRIVATE") || strings.Contains(string(seen), "SECRET") || !allZero(seen) {
+		t.Fatal("the answer buffer still holds the answer after the call")
+	}
+}
+
+func allZero(buf []byte) bool {
+	for _, b := range buf {
+		if b != 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func TestRegenerateBufferClearedOnFailure(t *testing.T) {
+	t.Parallel()
+
+	fake := newRegenerateFake(t, reply(http.StatusOK, `{"id":"v3","value":{"private_key":"-----BEGIN RSA PRIVATE KEY-----SECRET`))
+	client := fake.client(t)
+
+	var seen []byte
+
+	credhub.SetRegenerateBufferHook(client, func(buf []byte) { seen = buf })
+
+	_, _ = client.Regenerate(context.Background(), "c-1")
+
+	if len(seen) == 0 || !allZero(seen) {
+		t.Fatal("the answer buffer must be cleared on a failed decode")
+	}
+}
+
+func TestRegenerateEmptyObjectAnswerIsUncertain(t *testing.T) {
+	t.Parallel()
+
+	fake := newRegenerateFake(t, reply(http.StatusOK, `{}`))
+
+	_, err := fake.client(t).Regenerate(context.Background(), "c-1")
+	if !credhub.IsUncertain(err) {
+		t.Fatalf("err = %v, want an uncertain error", err)
+	}
+}
+
+func TestRegenerate3xxIsUncertain(t *testing.T) {
+	t.Parallel()
+
+	fake := newRegenerateFake(t, reply(http.StatusFound, ``))
+
+	_, err := fake.client(t).Regenerate(context.Background(), "c-1")
+	if !credhub.IsUncertain(err) {
+		t.Fatalf("err = %v, want an uncertain error", err)
+	}
+}
+
+func TestRegenerate401InvalidatesTokenAndIsCertain(t *testing.T) {
+	t.Parallel()
+
+	fake := newRegenerateFake(t, reply(http.StatusUnauthorized, `{"error":"expired"}`))
+
+	_, err := fake.client(t).Regenerate(context.Background(), "c-1")
+	if err == nil || credhub.IsUncertain(err) {
+		t.Fatalf("err = %v, want a certain error", err)
+	}
+
+	if len(fake.tokens.invalidations()) != 1 {
+		t.Fatalf("invalidations = %v, want one", fake.tokens.invalidations())
+	}
+}
+
+func TestRegenerateRequestHasNoGetBody(t *testing.T) {
+	t.Parallel()
+
+	fake := newRegenerateFake(t, reply(http.StatusOK, regenerateAnswerBody))
+
+	request, err := credhub.RegenerateRequestForTest(context.Background(), fake.client(t), "c-1")
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+
+	if request.GetBody != nil {
+		t.Fatal("the request must not be replayable, so GetBody must be nil")
+	}
+}
+
+// A connection that never finishes its TLS handshake is a failure before
+// the request could be sent, so it is certain.
+func TestRegenerateStalledHandshakeIsCertain(t *testing.T) {
+	t.Parallel()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+
+			t.Cleanup(func() { _ = conn.Close() })
+		}
+	}()
+
+	other := newRegenerateFake(t, reply(http.StatusOK, regenerateAnswerBody))
+
+	client, err := credhub.NewClient(credhub.ClientConfig{URL: "https://" + listener.Addr().String(), CACert: serverCA(other.server)}, &fakeTokens{}, nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err = client.Regenerate(ctx, "c-1")
+	if err == nil || credhub.IsUncertain(err) {
+		t.Fatalf("err = %v, want a certain error", err)
 	}
 }
 
