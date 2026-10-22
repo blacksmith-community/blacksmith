@@ -14,7 +14,7 @@ import (
 
 const (
 	opCertificates     = "certificate metadata"
-	opCredentialList   = "credential versions"
+	opCredentialList   = "credential versions" //nolint:gosec // An operation label, not a credential.
 	opCertificateRead  = "certificate version"
 	certificatesPath   = "/api/v1/certificates"
 	maxMetadataBody    = 1 << 20

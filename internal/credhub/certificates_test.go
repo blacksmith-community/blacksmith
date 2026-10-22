@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	fakeKeyText = "-----BEGIN RSA PRIVATE KEY-----SECRET"
+	fakeKeyText = "-----BEGIN RSA PRIVATE KEY-----SECRET" //nolint:gosec // A fake marker; the tests check it never leaks.
 	redisCrt    = "/d/dep/redis_crt"
 )
 

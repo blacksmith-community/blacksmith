@@ -16,7 +16,7 @@ import (
 	"blacksmith/internal/credhub"
 )
 
-const regenerateAnswerBody = `{"id":"v3","name":"/d/dep/redis_crt","type":"certificate","value":{"certificate":"CERT","private_key":"-----BEGIN RSA PRIVATE KEY-----SECRET"}}`
+const regenerateAnswerBody = `{"id":"v3","name":"/d/dep/redis_crt","type":"certificate","value":{"certificate":"CERT","private_key":"-----BEGIN RSA PRIVATE KEY-----SECRET"}}` //nolint:gosec // A fake marker; the tests check it never leaks.
 
 // regenerateFake records each regenerate request and answers with handler.
 type regenerateFake struct {
@@ -154,7 +154,14 @@ func TestRegenerateDroppedAfterWriteIsUncertain(t *testing.T) {
 	t.Parallel()
 
 	fake := newRegenerateFake(t, func(_ int, writer http.ResponseWriter, _ *http.Request) {
-		conn, _, err := writer.(http.Hijacker).Hijack()
+		hijacker, ok := writer.(http.Hijacker)
+		if !ok {
+			t.Error("the response writer cannot be hijacked")
+
+			return
+		}
+
+		conn, _, err := hijacker.Hijack()
 		if err == nil {
 			_ = conn.Close()
 		}
@@ -315,7 +322,7 @@ func TestRegenerateRequestHasNoGetBody(t *testing.T) {
 func TestRegenerateStalledHandshakeIsCertain(t *testing.T) {
 	t.Parallel()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

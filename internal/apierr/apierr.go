@@ -25,7 +25,7 @@ const (
 	// 403.
 	CodeRotationDisabled     = "rotation_disabled"
 	CodePatchDisabled        = "patch_disabled"
-	CodeCredHubNotConfigured = "credhub_not_configured"
+	CodeCredHubNotConfigured = "credhub_not_configured" //nolint:gosec // An error code, not a credential.
 	CodeDirectorUnsupported  = "director_unsupported"
 	CodeInventoryDisabled    = "inventory_disabled"
 
@@ -53,7 +53,7 @@ const (
 
 	// 503.
 	CodeTasksLoading       = "tasks_loading"
-	CodeCredHubUnavailable = "credhub_unavailable"
+	CodeCredHubUnavailable = "credhub_unavailable" //nolint:gosec // An error code, not a credential.
 )
 
 // Error is an error that knows the HTTP status and code it should be
