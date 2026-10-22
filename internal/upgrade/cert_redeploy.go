@@ -241,7 +241,17 @@ func (m *Manager) rotateInstanceRedeploy(ctx context.Context, task *UpgradeTask,
 	m.markRotating(ctx, task, inst)
 
 	if !m.regenerationStarted(inst) {
-		if m.preflightStops(ctx, task, inst) || m.stopForChanges(ctx, task, inst, BeforeRegenerate) {
+		if m.preflightStops(ctx, task, inst) {
+			return m.instanceSettled(inst)
+		}
+
+		// A task cancelled by now ends the instance rather than stopping it
+		// for an approval.
+		if m.stopIfCancelled(ctx, task, inst, cancelledUnchanged) {
+			return true
+		}
+
+		if m.stopForChanges(ctx, task, inst, BeforeRegenerate) {
 			return m.instanceSettled(inst)
 		}
 
@@ -274,6 +284,12 @@ func (m *Manager) redeployFromMutation(ctx context.Context, task *UpgradeTask, i
 	}
 
 	m.markRotating(ctx, task, inst)
+
+	// A task cancelled by now ends the instance rather than stopping it for
+	// an approval.
+	if m.stopIfCancelled(ctx, task, inst, cancelledUndeployed) {
+		return true
+	}
 
 	if m.stopForChanges(ctx, task, inst, BeforeMutation) {
 		return m.instanceSettled(inst)
@@ -316,7 +332,7 @@ func (m *Manager) redeployFromMutation(ctx context.Context, task *UpgradeTask, i
 
 		return false
 	case manifestDigest(detail.Manifest) != view.approved.ManifestDigest:
-		m.awaitNewApproval(ctx, task, inst, []string{"The manifest changed since the preview."})
+		m.awaitNewApproval(ctx, task, inst, []string{"The manifest changed since the preview."}, cancelledUndeployed)
 
 		return false
 	}
@@ -504,15 +520,36 @@ func (m *Manager) stopForChanges(ctx context.Context, task *UpgradeTask, inst *I
 		return false
 	}
 
-	m.awaitNewApproval(ctx, task, inst, changes)
+	cancelled := cancelledUndeployed
+	if at == BeforeRegenerate {
+		cancelled = cancelledUnchanged
+	}
+
+	m.awaitNewApproval(ctx, task, inst, changes, cancelled)
 
 	return true
 }
 
 // awaitNewApproval makes the instance wait for an operator to approve the
-// changed effects, pauses the task, and saves it.
-func (m *Manager) awaitNewApproval(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, changes []string) {
+// changed effects, pauses the task, and saves it. A task cancelled while
+// the effects were re-checked ends the instance as cancelled, with the
+// message given, since it changes nothing more.
+func (m *Manager) awaitNewApproval(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, changes []string, cancelled string) {
 	m.mu.Lock()
+
+	if task.Status == TaskStatusCancelled {
+		m.cancelInstanceLocked(task, inst, cancelled)
+		m.mu.Unlock()
+
+		m.logger.Info("Instance %s of certificate task %s: %s", inst.InstanceID, task.ID, cancelled)
+
+		err := m.persistCertConfirmed(ctx, task)
+		if err != nil {
+			m.logger.Error("Certificate task %s: %v", task.ID, err)
+		}
+
+		return
+	}
 
 	if inst.Certificates == nil {
 		inst.Certificates = &InstanceRotation{}
@@ -550,15 +587,7 @@ func (m *Manager) stopIfCancelled(ctx context.Context, task *UpgradeTask, inst *
 		return false
 	}
 
-	if !inst.Status.settled() {
-		now := m.certNowLocked()
-		inst.Status = InstanceStatusCancelled
-		inst.CompletedAt = &now
-		inst.Error = message
-		task.CancelledCount++
-	}
-
-	m.releaseUnheldLocked(task)
+	m.cancelInstanceLocked(task, inst, message)
 
 	m.mu.Unlock()
 
@@ -570,6 +599,20 @@ func (m *Manager) stopIfCancelled(ctx context.Context, task *UpgradeTask, inst *
 	}
 
 	return true
+}
+
+// cancelInstanceLocked marks an unsettled instance of a cancelled task
+// cancelled with the message, and frees it. The caller holds mu.
+func (m *Manager) cancelInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade, message string) {
+	if !inst.Status.settled() {
+		now := m.certNowLocked()
+		inst.Status = InstanceStatusCancelled
+		inst.CompletedAt = &now
+		inst.Error = message
+		task.CancelledCount++
+	}
+
+	m.releaseUnheldLocked(task)
 }
 
 // certAfterDeploy is the certificate finisher. It records how the deploy's

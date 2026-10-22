@@ -205,6 +205,9 @@ type redeployDirector struct {
 
 	// taskState is the state GetTask reports, and done when it is empty.
 	taskState string
+
+	// onGetDeployment runs on each GetDeployment call.
+	onGetDeployment func()
 }
 
 func (d *redeployDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
@@ -240,6 +243,14 @@ func (d *redeployDirector) GetInfo(context.Context) (*bosh.Info, error) {
 }
 
 func (d *redeployDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+	d.mu.Lock()
+	hook := d.onGetDeployment
+	d.mu.Unlock()
+
+	if hook != nil {
+		hook()
+	}
+
 	if d.empty {
 		return nil, nil
 	}
@@ -1957,4 +1968,64 @@ func TestCertificateCancelEndsPausedProcessorsInstance(t *testing.T) {
 	waitUntil(t, "the cancelled instance to be saved", func() bool {
 		return env.stored().Instances[0].Status == InstanceStatusCancelled
 	})
+}
+
+// A task cancelled while the rotation reads the director ends the
+// instance as cancelled, even when the effects changed, rather than
+// stopping it for an approval that a cancelled task can't act on.
+//
+//nolint:paralleltest // the runner shares the manager's test seams
+func TestCertificateCancelBeforeApprovalStop(t *testing.T) {
+	cases := []struct {
+		name        string
+		regenerated bool
+		message     string
+	}{
+		{name: "before the regeneration", message: cancelledUnchanged},
+		{name: "before the deploy", regenerated: true, message: cancelledUndeployed},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			manager := env.newManager()
+
+			task := env.task()
+			if tc.regenerated {
+				task = env.idleTask(true)
+				task.Status = TaskStatusRunning
+				task.Paused = false
+			}
+
+			task.Instances[0].Certificates.Approved.ManifestDigest = "stale-digest"
+
+			var once sync.Once
+
+			env.director.mu.Lock()
+			env.director.onGetDeployment = func() {
+				once.Do(func() {
+					manager.mu.Lock()
+					task.Status = TaskStatusCancelled
+					manager.mu.Unlock()
+				})
+			}
+			env.director.mu.Unlock()
+
+			if !env.directRun(manager, &task) {
+				t.Fatal("expected the instance to settle")
+			}
+
+			manager.mu.RLock()
+			inst := task.Instances[0]
+			manager.mu.RUnlock()
+
+			if inst.Status != InstanceStatusCancelled || inst.Error != tc.message || inst.Certificates.Pending != nil {
+				t.Fatalf("expected the instance cancelled with %q, got %s: %q with %+v", tc.message, inst.Status, inst.Error, inst.Certificates.Pending)
+			}
+
+			if deploys := env.director.deploys(); len(deploys) != 0 {
+				t.Fatalf("expected no deploy, got %d", len(deploys))
+			}
+		})
+	}
 }
