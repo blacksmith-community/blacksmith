@@ -97,9 +97,9 @@ func NewRunner(client *ssh.Client, log logger.Logger) *Runner {
 // its output and exit status. Every argument is quoted, and a program or
 // an argument that may carry key content, such as a PEM marker, a key
 // body, a colon-hex dump, a line break, or a NUL, is refused before
-// anything is sent, so content can travel only on stdin. Each stream keeps at most limit bytes, or
-// DefaultOutputLimit when limit is not positive, and the rest is read
-// and dropped so the command can finish.
+// anything is sent, so content can travel only on stdin. Each stream
+// keeps at most limit bytes, or DefaultOutputLimit when limit is not
+// positive, and the rest is read and dropped so the command can finish.
 //
 // A command that exits with any status returns a nil error, and the
 // caller reads ExitCode. When ctx ends first, whether the session is
@@ -109,13 +109,14 @@ func NewRunner(client *ssh.Client, log logger.Logger) *Runner {
 // closed from then on, and the caller dials a new connection with
 // DialSSHHost. No error carries the command's output.
 //
-// No read of stdin starts after Run returns, and Run does not wait for a
-// read that is under way. Such a read may finish after Run returns, but
-// what it reads is wiped and dropped, never sent. A reader whose read
-// never returns keeps one goroutine of the SSH library alive, so stdin
-// should be an in-memory reader, such as a bytes.Reader. The caller may
-// wipe the buffer behind a bytes.Reader once Run has returned, because a
-// bytes.Reader read copies its bytes before it returns.
+// Run does not wait for a read of stdin that is under way, and a read
+// can even start just after Run returns, because the stop check and the
+// read are not one atomic step. What any such read returns is wiped and
+// dropped, never sent. A reader whose read never returns keeps one
+// goroutine of the SSH library alive, so stdin should be an in-memory
+// reader, such as a bytes.Reader. A caller that wipes the buffer behind
+// stdin calls Close on the runner first, so that no late read races the
+// wipe.
 func (r *Runner) Run(ctx context.Context, program string, args []string, stdin io.Reader, limit int64) (Result, error) {
 	command, err := r.prepare(ctx, program, args)
 	if err != nil {
