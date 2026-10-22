@@ -11831,3 +11831,100 @@ span.config-type.resurrection {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* ================================================================
+   Dialog requirements, tab focus, and the live region
+   ================================================================ */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dialog-modal:focus {
+  outline: none;
+}
+
+.dialog-modal-btn:focus-visible,
+.dialog-modal-input:focus-visible,
+.dialog-modal-choice-option input:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.dialog-modal-details {
+  margin: 0 0 16px 0;
+  padding: 0 0 0 20px;
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.dialog-modal-choice {
+  margin: 0 0 16px 0;
+  padding: 0;
+  border: 0;
+}
+
+.dialog-modal-choice-legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dialog-modal-choice-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: start;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.dialog-modal-choice-hint {
+  grid-column: 2;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dialog-modal-ack {
+  margin: 0 0 16px 0;
+}
+
+.dialog-modal-ack-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dialog-modal-error {
+  padding: 8px 10px;
+  border: 1px solid var(--cert-expired);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--cert-expired-fg);
+  background: var(--cert-expired-bg);
+}
+
+.dialog-modal-error[hidden] {
+  display: none;
+}
+
+.manifest-tab-btn:focus-visible,
+.cert-tab-btn:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: -2px;
+}

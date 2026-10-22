@@ -129,26 +129,65 @@
   // Custom Dialog Modal Functions (replaces browser confirm/prompt)
   // =================================================================
 
+  // The stack of open surfaces (modals, the confirmation dialog, and the
+  // drawer). Each surface is an object with a close() method. Escape and
+  // the focus traps act only for the topmost surface.
+  window.blacksmithSurfaces = window.blacksmithSurfaces || (() => {
+    const stack = [];
+    return {
+      push(surface) {
+        if (surface && !stack.includes(surface)) stack.push(surface);
+        return surface;
+      },
+      remove(surface) {
+        const index = stack.indexOf(surface);
+        if (index >= 0) stack.splice(index, 1);
+      },
+      top() {
+        return stack.length > 0 ? stack[stack.length - 1] : null;
+      },
+      isTop(surface) {
+        return stack.length > 0 && stack[stack.length - 1] === surface;
+      },
+      size() {
+        return stack.length;
+      }
+    };
+  })();
+
+  const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  // The focusable elements inside a root that are actually visible.
+  const focusableWithin = (root) => Array.from(root.querySelectorAll(FOCUSABLE_SELECTOR))
+    .filter((node) => !node.hidden && !node.closest('[hidden]') && node.style.display !== 'none' && node.getClientRects().length > 0);
+
+  // Puts focus back on the element that opened a surface, when it is still on the page.
+  const restoreFocus = (opener) => {
+    if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+      opener.focus();
+    }
+  };
+
   // Ensure dialog modal HTML exists in DOM
   const ensureDialogModal = () => {
     if (document.getElementById('dialog-modal-overlay')) return;
 
     const modalHTML = `
       <div id="dialog-modal-overlay" class="dialog-modal-overlay">
-        <div class="dialog-modal">
+        <div class="dialog-modal" role="dialog" aria-modal="true" aria-labelledby="dialog-modal-title" aria-describedby="dialog-modal-message" tabindex="-1">
           <div class="dialog-modal-header">
-            <svg class="dialog-modal-icon warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="dialog-modal-icon warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false">
               <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
             </svg>
-            <h3 class="dialog-modal-title"></h3>
+            <h3 class="dialog-modal-title" id="dialog-modal-title"></h3>
           </div>
           <div class="dialog-modal-body">
-            <p class="dialog-modal-message"></p>
-            <input type="text" class="dialog-modal-input" style="display: none;">
+            <p class="dialog-modal-message" id="dialog-modal-message"></p>
+            <input type="text" class="dialog-modal-input" style="display: none;" aria-labelledby="dialog-modal-message">
           </div>
           <div class="dialog-modal-footer">
-            <button class="dialog-modal-btn dialog-modal-btn-cancel">Cancel</button>
-            <button class="dialog-modal-btn dialog-modal-btn-confirm">Confirm</button>
+            <button type="button" class="dialog-modal-btn dialog-modal-btn-cancel" data-dialog-role="cancel">Cancel</button>
+            <button type="button" class="dialog-modal-btn dialog-modal-btn-confirm" data-dialog-role="confirm">Confirm</button>
           </div>
         </div>
       </div>
@@ -156,24 +195,114 @@
     document.body.insertAdjacentHTML('beforeend', modalHTML);
   };
 
-  // Show a confirm dialog (returns Promise<boolean>)
+  // Builds the optional parts of a confirmation dialog. Every value from
+  // the caller reaches the DOM through textContent or setAttribute.
+  const buildConfirmExtras = (options) => {
+    const extras = { nodes: [], ackInput: null, radios: [], errorEl: null };
+    const make = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      node.setAttribute('data-dialog-extra', 'true');
+      return node;
+    };
+
+    if (Array.isArray(options.details) && options.details.length > 0) {
+      const list = make('ul', 'dialog-modal-details');
+      options.details.forEach((detail) => {
+        const item = make('li');
+        if (detail && typeof detail === 'object') {
+          item.appendChild(make('strong', null, `${detail.label ?? ''}: `));
+          item.appendChild(document.createTextNode(String(detail.value ?? '')));
+        } else {
+          item.textContent = String(detail ?? '');
+        }
+        list.appendChild(item);
+      });
+      extras.nodes.push(list);
+    }
+
+    if (options.requireChoice && Array.isArray(options.requireChoice.options)) {
+      const choice = options.requireChoice;
+      const group = make('fieldset', 'dialog-modal-choice');
+      group.appendChild(make('legend', 'dialog-modal-choice-legend', choice.label || 'Choose one'));
+      choice.options.forEach((option, index) => {
+        const label = make('label', 'dialog-modal-choice-option');
+        const radio = make('input');
+        radio.type = 'radio';
+        radio.name = String(choice.name || 'choice');
+        radio.value = String(option.value);
+        radio.id = `dialog-modal-choice-${index}`;
+        extras.radios.push(radio);
+        label.appendChild(radio);
+        const text = make('span', 'dialog-modal-choice-text', option.label ?? option.value);
+        label.appendChild(text);
+        if (option.hint) {
+          const hint = make('span', 'dialog-modal-choice-hint', option.hint);
+          hint.id = `dialog-modal-choice-hint-${index}`;
+          radio.setAttribute('aria-describedby', hint.id);
+          label.appendChild(hint);
+        }
+        group.appendChild(label);
+      });
+      extras.nodes.push(group);
+    }
+
+    if (options.requireText) {
+      const wrap = make('div', 'dialog-modal-ack');
+      const label = make('label', 'dialog-modal-ack-label', `Type "${options.requireText}" to continue`);
+      label.setAttribute('for', 'dialog-modal-ack-input');
+      const input = make('input', 'dialog-modal-input dialog-modal-ack-input');
+      input.type = 'text';
+      input.id = 'dialog-modal-ack-input';
+      input.setAttribute('autocomplete', 'off');
+      input.setAttribute('autocapitalize', 'off');
+      input.setAttribute('spellcheck', 'false');
+      wrap.appendChild(label);
+      wrap.appendChild(input);
+      extras.ackInput = input;
+      extras.nodes.push(wrap);
+    }
+
+    const errorEl = make('div', 'dialog-modal-error');
+    errorEl.setAttribute('role', 'status');
+    errorEl.setAttribute('aria-live', 'polite');
+    errorEl.hidden = true;
+    extras.errorEl = errorEl;
+    extras.nodes.push(errorEl);
+    return extras;
+  };
+
+  // Show a confirm dialog. It resolves true or false for callers that pass
+  // none of details, requireText, and requireChoice. Otherwise it resolves
+  // {confirmed: true, text, choice}, or false when the operator cancels.
   const showConfirmDialog = (options = {}) => {
     return new Promise((resolve) => {
       ensureDialogModal();
 
       const overlay = document.getElementById('dialog-modal-overlay');
+      const dialog = overlay.querySelector('.dialog-modal');
       const titleEl = overlay.querySelector('.dialog-modal-title');
       const messageEl = overlay.querySelector('.dialog-modal-message');
       const inputEl = overlay.querySelector('.dialog-modal-input');
-      const cancelBtn = overlay.querySelector('.dialog-modal-btn-cancel');
-      const confirmBtn = overlay.querySelector('.dialog-modal-btn-confirm');
+      const cancelBtn = overlay.querySelector('[data-dialog-role="cancel"]');
+      const confirmBtn = overlay.querySelector('[data-dialog-role="confirm"]');
       const iconEl = overlay.querySelector('.dialog-modal-icon');
+      const body = overlay.querySelector('.dialog-modal-body');
+
+      const opener = document.activeElement;
+      const structured = Boolean(options.requireText || options.requireChoice ||
+        (Array.isArray(options.details) && options.details.length > 0));
 
       // Set content
       titleEl.textContent = options.title || 'Confirm';
       messageEl.textContent = options.message || 'Are you sure?';
       inputEl.style.display = 'none';
       inputEl.value = '';
+
+      overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
+      const extras = buildConfirmExtras(options);
+      extras.nodes.forEach((node) => body.appendChild(node));
 
       // Set button text
       cancelBtn.textContent = options.cancelText || 'Cancel';
@@ -187,52 +316,140 @@
       iconEl.classList.remove('warning', 'info');
       iconEl.classList.add(options.danger ? 'warning' : 'info');
 
+      let settled = false;
+      const surface = { close: () => finish(false) };
+      window.blacksmithSurfaces.push(surface);
+
       // Show modal
       overlay.classList.add('active');
 
+      const initialFocus = () => (extras.ackInput || cancelBtn);
+
       // Cleanup function
-      const cleanup = () => {
+      function cleanup() {
         overlay.classList.remove('active');
         cancelBtn.removeEventListener('click', handleCancel);
-        confirmBtn.removeEventListener('click', handleConfirm);
+        confirmBtn.removeEventListener('click', trySubmit);
         overlay.removeEventListener('click', handleOverlayClick);
         document.removeEventListener('keydown', handleKeydown);
-      };
+        document.removeEventListener('focusin', handleFocusIn);
+        overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
+        window.blacksmithSurfaces.remove(surface);
+        restoreFocus(opener);
+      }
 
-      const handleCancel = () => {
+      function finish(result) {
+        if (settled) return;
+        settled = true;
         cleanup();
-        resolve(false);
-      };
+        resolve(result);
+      }
 
-      const handleConfirm = () => {
-        cleanup();
-        resolve(true);
-      };
+      function handleCancel() {
+        finish(false);
+      }
 
-      const handleOverlayClick = (e) => {
+      // One path for the confirm button and the Enter key. It resolves only
+      // when every requirement holds, and otherwise says which one is missing.
+      function trySubmit() {
+        if (settled) return;
+        const problems = [];
+        let focusTarget = null;
+        let text = '';
+        let choice = null;
+
+        if (options.requireText) {
+          text = extras.ackInput.value.trim();
+          if (text !== String(options.requireText)) {
+            problems.push(`Type "${options.requireText}" in the field to continue.`);
+            focusTarget = focusTarget || extras.ackInput;
+          }
+        }
+
+        if (options.requireChoice) {
+          const selected = extras.radios.find((radio) => radio.checked);
+          if (selected) {
+            choice = selected.value;
+          } else {
+            problems.push('Choose one of the options to continue.');
+            focusTarget = focusTarget || extras.radios[0] || null;
+          }
+        }
+
+        if (problems.length > 0) {
+          extras.errorEl.textContent = problems.join(' ');
+          extras.errorEl.hidden = false;
+          if (focusTarget) focusTarget.focus();
+          return;
+        }
+
+        finish(structured ? { confirmed: true, text, choice } : true);
+      }
+
+      function handleOverlayClick(e) {
         if (e.target === overlay) {
-          cleanup();
-          resolve(false);
+          finish(false);
         }
-      };
+      }
 
-      const handleKeydown = (e) => {
-        if (e.key === 'Escape') {
-          cleanup();
-          resolve(false);
-        } else if (e.key === 'Enter') {
-          cleanup();
-          resolve(true);
+      // The keydown handler acts only for the topmost surface, and only
+      // while focus is inside the dialog. Tab keeps focus in the dialog.
+      function handleKeydown(e) {
+        if (!window.blacksmithSurfaces.isTop(surface)) return;
+
+        const active = document.activeElement;
+        const inside = dialog.contains(active);
+
+        if (e.key === 'Tab') {
+          const items = focusableWithin(dialog);
+          if (items.length === 0) {
+            e.preventDefault();
+            dialog.focus();
+            return;
+          }
+          const first = items[0];
+          const last = items[items.length - 1];
+          if (!inside) {
+            e.preventDefault();
+            (e.shiftKey ? last : first).focus();
+          } else if (e.shiftKey && (active === first || active === dialog)) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && active === last) {
+            e.preventDefault();
+            first.focus();
+          }
+          return;
         }
-      };
+
+        if (!inside) return;
+
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          finish(false);
+        } else if (e.key === 'Enter') {
+          if (active === confirmBtn || active === extras.ackInput) {
+            e.preventDefault();
+            trySubmit();
+          }
+        }
+      }
+
+      // Pulls focus back when something moves it out of the topmost dialog.
+      function handleFocusIn(e) {
+        if (window.blacksmithSurfaces.isTop(surface) && !dialog.contains(e.target)) {
+          initialFocus().focus();
+        }
+      }
 
       cancelBtn.addEventListener('click', handleCancel);
-      confirmBtn.addEventListener('click', handleConfirm);
+      confirmBtn.addEventListener('click', trySubmit);
       overlay.addEventListener('click', handleOverlayClick);
       document.addEventListener('keydown', handleKeydown);
+      document.addEventListener('focusin', handleFocusIn);
 
-      // Focus the confirm button
-      confirmBtn.focus();
+      // Focus Cancel first, or the acknowledgement field when there is one
+      initialFocus().focus();
     });
   };
 
@@ -242,12 +459,16 @@
       ensureDialogModal();
 
       const overlay = document.getElementById('dialog-modal-overlay');
+      const dialog = overlay.querySelector('.dialog-modal');
       const titleEl = overlay.querySelector('.dialog-modal-title');
       const messageEl = overlay.querySelector('.dialog-modal-message');
       const inputEl = overlay.querySelector('.dialog-modal-input');
-      const cancelBtn = overlay.querySelector('.dialog-modal-btn-cancel');
-      const confirmBtn = overlay.querySelector('.dialog-modal-btn-confirm');
+      const cancelBtn = overlay.querySelector('[data-dialog-role="cancel"]');
+      const confirmBtn = overlay.querySelector('[data-dialog-role="confirm"]');
       const iconEl = overlay.querySelector('.dialog-modal-icon');
+      const opener = document.activeElement;
+
+      overlay.querySelectorAll('[data-dialog-extra]').forEach((node) => node.remove());
 
       // Set content
       titleEl.textContent = options.title || 'Input';
@@ -268,6 +489,9 @@
       iconEl.classList.remove('warning');
       iconEl.classList.add('info');
 
+      const surface = { close: () => handleCancel() };
+      window.blacksmithSurfaces.push(surface);
+
       // Show modal
       overlay.classList.add('active');
 
@@ -279,6 +503,8 @@
         overlay.removeEventListener('click', handleOverlayClick);
         inputEl.removeEventListener('keydown', handleInputKeydown);
         document.removeEventListener('keydown', handleKeydown);
+        window.blacksmithSurfaces.remove(surface);
+        restoreFocus(opener);
       };
 
       const handleCancel = () => {
@@ -307,9 +533,22 @@
       };
 
       const handleKeydown = (e) => {
+        if (!window.blacksmithSurfaces.isTop(surface)) return;
         if (e.key === 'Escape') {
           cleanup();
           resolve(null);
+        } else if (e.key === 'Tab') {
+          const items = focusableWithin(dialog);
+          if (items.length === 0) return;
+          const first = items[0];
+          const last = items[items.length - 1];
+          if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
         }
       };
 
@@ -324,6 +563,145 @@
       inputEl.select();
     });
   };
+
+  window.showConfirmDialog = showConfirmDialog;
+
+  // =================================================================
+  // Navigation, live region, and tab group foundations
+  // =================================================================
+
+  // Writes a message to the polite live region so assistive technology
+  // announces it. The region is cleared first so a repeated message is
+  // announced again.
+  const announce = (text) => {
+    let region = document.getElementById('blacksmith-live-region');
+    if (!region) {
+      region = document.createElement('div');
+      region.id = 'blacksmith-live-region';
+      region.className = 'visually-hidden';
+      region.setAttribute('role', 'status');
+      region.setAttribute('aria-live', 'polite');
+      region.setAttribute('aria-atomic', 'true');
+      document.body.appendChild(region);
+    }
+    region.textContent = '';
+    setTimeout(() => {
+      region.textContent = String(text ?? '');
+    }, 50);
+  };
+
+  // switchTab lives inside the domReady callback. Calls that arrive before
+  // it is ready wait for it, and every call resolves after the tab's own
+  // initialisation has finished.
+  let resolveNavReady = null;
+  const navReady = new Promise((resolve) => {
+    resolveNavReady = resolve;
+  });
+
+  window.blacksmithNav = {
+    switchTab: (tabId) => navReady.then((switchTabFn) => switchTabFn(tabId)),
+    announce
+  };
+
+  // Makes a group of tab buttons a proper ARIA tab list. The buttons carry
+  // data-tab and data-group, and the panes carry the same pair. Left,
+  // Right, Home, and End move between tabs, the active tab is the only one
+  // in the tab order, and a click or a key press shows the matching pane.
+  //
+  // Options:
+  //   root          where to look for panes (default: the document)
+  //   paneSelector  the panes' selector (default: '.manifest-tab-pane')
+  //   tabSelector   the tab buttons' selector (default: 'button[data-tab]')
+  //   paneDisplay   the display value for the shown pane (default: 'block')
+  //   label         the tab list's accessible name
+  //   onSelect      called with the tab name after a tab is shown
+  const bindTabs = (tablist, options = {}) => {
+    if (!tablist || tablist.dataset.tabsBound === 'true') return null;
+
+    const tabs = Array.from(tablist.querySelectorAll(options.tabSelector || 'button[data-tab]'));
+    if (tabs.length === 0) return null;
+
+    const group = tabs[0].dataset.group || '';
+    const root = options.root || document;
+    const panes = Array.from(root.querySelectorAll(options.paneSelector || '.manifest-tab-pane'))
+      .filter((pane) => (pane.dataset.group || '') === group);
+    const paneDisplay = options.paneDisplay === undefined ? 'block' : options.paneDisplay;
+    const idPart = (value) => String(value).replace(/[^A-Za-z0-9_-]/g, '_');
+
+    tablist.dataset.tabsBound = 'true';
+    tablist.setAttribute('role', 'tablist');
+    if (options.label) tablist.setAttribute('aria-label', options.label);
+
+    tabs.forEach((tab) => {
+      const name = tab.dataset.tab;
+      const tabId = `${idPart(group)}-tab-${idPart(name)}`;
+      const paneId = `${idPart(group)}-panel-${idPart(name)}`;
+      const pane = panes.find((candidate) => candidate.dataset.tab === name);
+      tab.id = tab.id || tabId;
+      tab.setAttribute('role', 'tab');
+      if (pane) {
+        pane.id = pane.id || paneId;
+        pane.setAttribute('role', 'tabpanel');
+        pane.setAttribute('aria-labelledby', tab.id);
+        tab.setAttribute('aria-controls', pane.id);
+      }
+    });
+
+    const activate = (tab, moveFocus) => {
+      const name = tab.dataset.tab;
+      tabs.forEach((candidate) => {
+        const selected = candidate === tab;
+        candidate.classList.toggle('active', selected);
+        candidate.setAttribute('aria-selected', selected ? 'true' : 'false');
+        candidate.setAttribute('tabindex', selected ? '0' : '-1');
+      });
+      panes.forEach((pane) => {
+        const shown = pane.dataset.tab === name;
+        pane.classList.toggle('active', shown);
+        pane.style.display = shown ? paneDisplay : 'none';
+      });
+      if (moveFocus) tab.focus();
+      if (typeof options.onSelect === 'function') options.onSelect(name);
+    };
+
+    // Set the starting state without touching the panes' inline styles
+    // until a tab is chosen.
+    const initial = tabs.find((tab) => tab.classList.contains('active')) || tabs[0];
+    tabs.forEach((tab) => {
+      const selected = tab === initial;
+      tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+      tab.setAttribute('tabindex', selected ? '0' : '-1');
+    });
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => activate(tab, false));
+      tab.addEventListener('keydown', (event) => {
+        let target = null;
+        switch (event.key) {
+          case 'ArrowRight':
+            target = tabs[(index + 1) % tabs.length];
+            break;
+          case 'ArrowLeft':
+            target = tabs[(index - 1 + tabs.length) % tabs.length];
+            break;
+          case 'Home':
+            target = tabs[0];
+            break;
+          case 'End':
+            target = tabs[tabs.length - 1];
+            break;
+          default:
+            return;
+        }
+        event.preventDefault();
+        activate(target, true);
+      });
+    });
+
+    return { activate: (name) => { const tab = tabs.find((t) => t.dataset.tab === name); if (tab) activate(tab, false); } };
+  };
+
+  window.blacksmithTabs = { bind: bindTabs };
 
   // Universal Table Initialization - Auto-sort functionality
   const initializeAllTables = () => {
@@ -10463,13 +10841,13 @@
     console.log('Blacksmith UI initializing...');
 
     // Tab switching functionality
-    const switchTab = (tabId) => {
+    const switchTab = async (tabId) => {
       const targetPanel = document.getElementById(tabId);
       const targetButton = document.querySelector(`.tab-button[data-tab="${tabId}"]`);
 
       if (!targetPanel || !targetButton) {
         console.error('Tab or panel not found:', tabId);
-        return;
+        return false;
       }
 
       // Remove active class from all buttons and panels
@@ -10491,23 +10869,35 @@
       // Tab-specific initialization
       // (broker now handled as a sub-tab under blacksmith)
       if (tabId === 'upgrade') {
-        initUpgradeTab();
+        try {
+          await initUpgradeTab();
+        } catch (error) {
+          console.error('Failed to initialize the upgrade tab:', error);
+        }
       }
 
       // Re-initialize sorting for any tables in the newly activated tab
-      setTimeout(() => {
-        const tables = targetPanel.querySelectorAll('table[class*="table"]');
-        tables.forEach(table => {
-          // Extract table class name(s) that contain "table"
-          const classList = Array.from(table.classList);
-          const tableClass = classList.find(cls => cls.includes('table'));
-          if (tableClass) {
-            // Re-initialize sorting to ensure click handlers are properly attached
-            initializeSorting(tableClass);
-          }
-        });
-      }, 10);
+      await new Promise((resolve) => {
+        setTimeout(() => {
+          const tables = targetPanel.querySelectorAll('table[class*="table"]');
+          tables.forEach(table => {
+            // Extract table class name(s) that contain "table"
+            const classList = Array.from(table.classList);
+            const tableClass = classList.find(cls => cls.includes('table'));
+            if (tableClass) {
+              // Re-initialize sorting to ensure click handlers are properly attached
+              initializeSorting(tableClass);
+            }
+          });
+          resolve();
+        }, 10);
+      });
+
+      return true;
     };
+
+    // Let code outside this callback switch tabs
+    resolveNavReady(switchTab);
 
     // Set up click handlers for tabs
     document.querySelectorAll('.tab-button').forEach(button => {
@@ -10515,13 +10905,13 @@
         e.preventDefault();
         const tabId = button.dataset.tab;
         if (tabId) {
-          switchTab(tabId);
+          switchTab(tabId).catch((error) => console.error('Tab switch failed:', error));
         }
       });
     });
 
     // Ensure the default tab (blacksmith) is active on load
-    switchTab('blacksmith');
+    switchTab('blacksmith').catch((error) => console.error('Tab switch failed:', error));
 
     try {
       // First, try to fetch the catalog
@@ -11288,28 +11678,8 @@
                   'fetch-vm': (id) => window.fetchServiceVMCertificates(id),
                   'fetch-service-endpoint': (id) => window.fetchServiceEndpointCertificate(id)
                 }, instanceId);
-                const tabGroupId = `service-cert-tabs-${instanceId}`;
-                const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
-                const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
-
-                tabButtons.forEach(button => {
-                  button.addEventListener('click', () => {
-                    const tabName = button.dataset.tab;
-
-                    // Update active states
-                    tabButtons.forEach(btn => btn.classList.remove('active'));
-                    button.classList.add('active');
-
-                    tabPanes.forEach(pane => {
-                      if (pane.dataset.tab === tabName) {
-                        pane.classList.add('active');
-                        pane.style.display = 'block';
-                      } else {
-                        pane.classList.remove('active');
-                        pane.style.display = 'none';
-                      }
-                    });
-                  });
+                window.blacksmithTabs.bind(document.getElementById(`service-cert-tablist-${instanceId}`), {
+                  label: 'Service certificate sources'
                 });
               }, 100);
             }
@@ -11712,7 +12082,7 @@
     return `
       <div class="service-testing-container">
         <div class="manifest-details-container">
-          <div class="manifest-tabs-nav">
+          <div class="manifest-tabs-nav" id="cert-main-tablist">
             <button class="manifest-tab-btn active" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
             <button class="manifest-tab-btn" data-tab="config" data-group="${tabGroupId}">Config</button>
             <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
@@ -11862,28 +12232,8 @@
 
     // Set up tab switching for certificates tabs
     setTimeout(() => {
-      const tabGroupId = 'cert-main-tabs';
-      const tabButtons = document.querySelectorAll(`.manifest-tab-btn[data-group="${tabGroupId}"]`);
-      const tabPanes = document.querySelectorAll(`.manifest-tab-pane[data-group="${tabGroupId}"]`);
-
-      tabButtons.forEach(button => {
-        button.addEventListener('click', () => {
-          const tabName = button.dataset.tab;
-
-          // Update active states
-          tabButtons.forEach(btn => btn.classList.remove('active'));
-          button.classList.add('active');
-
-          tabPanes.forEach(pane => {
-            if (pane.dataset.tab === tabName) {
-              pane.classList.add('active');
-              pane.style.display = 'block';
-            } else {
-              pane.classList.remove('active');
-              pane.style.display = 'none';
-            }
-          });
-        });
+      window.blacksmithTabs.bind(document.getElementById('cert-main-tablist'), {
+        label: 'Certificate sources'
       });
     }, 100);
   };
@@ -14483,7 +14833,7 @@
     return `
       <div class="service-testing-container">
         <div class="manifest-details-container">
-          <div class="manifest-tabs-nav">
+          <div class="manifest-tabs-nav" id="service-cert-tablist-${safeId}">
             <button class="manifest-tab-btn active" data-tab="manifest" data-group="${tabGroupId}">Manifest</button>
             <button class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
             <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
@@ -15079,6 +15429,13 @@
     currentModal: null,
     modalStack: [],
 
+    // Per modal bookkeeping. Each handler is created once, and the same
+    // function is the one that gets removed.
+    modalState: new WeakMap(),
+
+    // The one document keydown handler, bound once for the manager.
+    boundKeydown: null,
+
     // Open a modal with optional configuration
     openModal: function (modalElement, config = {}) {
       if (!modalElement) {
@@ -15086,21 +15443,37 @@
         return false;
       }
 
-      console.log('Opening modal:', modalElement);
-
-      // Close existing modal if any
-      if (this.currentModal) {
-        this.closeModal(this.currentModal, false);
+      // Opening a modal that is already open changes nothing.
+      if (this.modalState.has(modalElement)) {
+        return true;
       }
+
+      // A modal that replaces another keeps the original opener, because
+      // focus is inside the modal that is about to close.
+      let opener = document.activeElement;
+      if (this.currentModal) {
+        const previous = this.modalState.get(this.currentModal);
+        if (previous && previous.opener) opener = previous.opener;
+        this.closeModal(this.currentModal, true, false);
+      }
+
+      const surface = { close: () => this.closeModal(modalElement) };
+      this.modalState.set(modalElement, { opener, surface, handlers: null });
 
       // Add to modal stack
       this.modalStack.push(modalElement);
       this.currentModal = modalElement;
+      window.blacksmithSurfaces.push(surface);
 
       // Add modal to DOM if not already in the document
       if (!document.body.contains(modalElement)) {
         document.body.appendChild(modalElement);
-        console.log('Modal added to DOM');
+      }
+
+      // A modal opened over the confirmation dialog has to sit above it.
+      const dialogOverlay = document.getElementById('dialog-modal-overlay');
+      if (dialogOverlay && dialogOverlay.classList.contains('active')) {
+        modalElement.style.zIndex = '10200';
       }
 
       // Prevent body scroll
@@ -15111,7 +15484,6 @@
 
       // Show modal with animation
       modalElement.classList.add('active');
-      console.log('Modal active class added');
 
       // Focus management
       this.trapFocus(modalElement);
@@ -15123,7 +15495,7 @@
     },
 
     // Close a modal
-    closeModal: function (modalElement, removeFromStack = true) {
+    closeModal: function (modalElement, removeFromStack = true, restoreOpenerFocus = true) {
       if (!modalElement) {
         modalElement = this.currentModal;
       }
@@ -15131,6 +15503,8 @@
       if (!modalElement) {
         return false;
       }
+
+      const state = this.modalState.get(modalElement);
 
       // Remove from modal stack if requested
       if (removeFromStack) {
@@ -15161,6 +15535,12 @@
       // Remove event listeners
       this.removeModalListeners(modalElement);
 
+      if (state) {
+        window.blacksmithSurfaces.remove(state.surface);
+        this.modalState.delete(modalElement);
+        if (restoreOpenerFocus) restoreFocus(state.opener);
+      }
+
       return true;
     },
 
@@ -15173,23 +15553,46 @@
 
     // Add event listeners to modal
     addModalListeners: function (modalElement) {
+      const state = this.modalState.get(modalElement);
+      if (!state || state.handlers) return;
+
+      const handlers = {
+        overlayClick: this.handleOverlayClick.bind(this),
+        closeClick: () => this.closeModal(modalElement),
+        closeButton: modalElement.querySelector('.modal-close')
+      };
+      state.handlers = handlers;
+
       // Close on overlay click
-      modalElement.addEventListener('click', this.handleOverlayClick.bind(this));
+      modalElement.addEventListener('click', handlers.overlayClick);
 
       // Close on close button click
-      const closeButton = modalElement.querySelector('.modal-close');
-      if (closeButton) {
-        closeButton.addEventListener('click', () => this.closeModal(modalElement));
+      if (handlers.closeButton) {
+        handlers.closeButton.addEventListener('click', handlers.closeClick);
       }
 
-      // Keyboard navigation
-      document.addEventListener('keydown', this.handleKeydown.bind(this));
+      // Keyboard navigation. Adding the same function again is a no-op, so
+      // the document never holds more than one.
+      if (!this.boundKeydown) {
+        this.boundKeydown = this.handleKeydown.bind(this);
+      }
+      document.addEventListener('keydown', this.boundKeydown);
     },
 
     // Remove event listeners from modal
     removeModalListeners: function (modalElement) {
-      modalElement.removeEventListener('click', this.handleOverlayClick.bind(this));
-      document.removeEventListener('keydown', this.handleKeydown.bind(this));
+      const state = this.modalState.get(modalElement);
+      if (state && state.handlers) {
+        modalElement.removeEventListener('click', state.handlers.overlayClick);
+        if (state.handlers.closeButton) {
+          state.handlers.closeButton.removeEventListener('click', state.handlers.closeClick);
+        }
+        state.handlers = null;
+      }
+
+      if (this.modalStack.length === 0 && this.boundKeydown) {
+        document.removeEventListener('keydown', this.boundKeydown);
+      }
     },
 
     // Handle overlay click (close modal if clicked outside content)
@@ -15199,9 +15602,16 @@
       }
     },
 
-    // Handle keyboard navigation
+    // True when the current modal is the topmost surface on the page.
+    isTopmost: function () {
+      if (!this.currentModal) return false;
+      const state = this.modalState.get(this.currentModal);
+      return Boolean(state) && window.blacksmithSurfaces.isTop(state.surface);
+    },
+
+    // Handle keyboard navigation. Escape closes only the topmost surface.
     handleKeydown: function (event) {
-      if (!this.currentModal) return;
+      if (!this.currentModal || !this.isTopmost()) return;
 
       switch (event.key) {
         case 'Escape':
@@ -15218,35 +15628,34 @@
     handleTabKey: function (event) {
       if (!this.currentModal) return;
 
-      const focusableElements = this.currentModal.querySelectorAll(
-        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
+      const focusableElements = focusableWithin(this.currentModal);
 
       if (focusableElements.length === 0) return;
 
       const firstElement = focusableElements[0];
       const lastElement = focusableElements[focusableElements.length - 1];
+      const active = document.activeElement;
+      const inside = this.currentModal.contains(active);
 
-      if (event.shiftKey) {
+      if (!inside) {
+        event.preventDefault();
+        (event.shiftKey ? lastElement : firstElement).focus();
+      } else if (event.shiftKey) {
         // Shift + Tab
-        if (document.activeElement === firstElement) {
+        if (active === firstElement) {
           event.preventDefault();
           lastElement.focus();
         }
-      } else {
+      } else if (active === lastElement) {
         // Tab
-        if (document.activeElement === lastElement) {
-          event.preventDefault();
-          firstElement.focus();
-        }
+        event.preventDefault();
+        firstElement.focus();
       }
     },
 
     // Trap focus within modal
     trapFocus: function (modalElement) {
-      const focusableElements = modalElement.querySelectorAll(
-        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
+      const focusableElements = Array.from(modalElement.querySelectorAll(FOCUSABLE_SELECTOR));
 
       if (focusableElements.length > 0) {
         focusableElements[0].focus();
@@ -15707,30 +16116,12 @@
 
     // Setup tab switching within the modal
     setupTabSwitching: function (modal, modalId) {
-      const tabGroupId = `cert-tabs-${modalId}`;
-      const tabs = modal.querySelectorAll(`.cert-tab-btn[data-group="${tabGroupId}"]`);
-      const panes = modal.querySelectorAll(`.cert-tab-pane[data-group="${tabGroupId}"]`);
-
-      tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-          const targetTab = tab.dataset.tab;
-
-          // Update tab states
-          tabs.forEach(t => t.classList.remove('active'));
-          tab.classList.add('active');
-
-          // Update pane states
-          panes.forEach(pane => {
-            pane.classList.remove('active');
-            pane.style.display = 'none';
-          });
-
-          const targetPane = modal.querySelector(`.cert-tab-pane[data-tab="${targetTab}"][data-group="${tabGroupId}"]`);
-          if (targetPane) {
-            targetPane.classList.add('active');
-            targetPane.style.display = '';
-          }
-        });
+      window.blacksmithTabs.bind(modal.querySelector('.cert-tabs-nav'), {
+        root: modal,
+        tabSelector: '.cert-tab-btn',
+        paneSelector: '.cert-tab-pane',
+        paneDisplay: '',
+        label: 'Certificate views'
       });
     },
 
