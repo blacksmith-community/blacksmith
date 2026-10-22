@@ -386,6 +386,7 @@ func (m *Manager) Stop() {
 		// and only while the context is live. Taking mu once here means
 		// every such Add has happened before Wait, or never will.
 		m.mu.Lock()
+		//lint:ignore SA2001 an empty critical section is the barrier
 		m.mu.Unlock() //nolint:staticcheck // an empty critical section is the barrier
 
 		m.wg.Wait()
