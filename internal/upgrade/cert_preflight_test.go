@@ -206,6 +206,22 @@ func TestCertPreflightOrder(t *testing.T) {
 			status: http.StatusBadRequest, code: apierr.CodeUnknownVariable,
 		},
 		{
+			name: "CredHub fails the read of a selected certificate",
+			inject: func(_ *testing.T, env *preflightEnv) {
+				env.credhub.failCertificatesRead(previewLeaf(waitDeployment), http.StatusBadGateway)
+			},
+			status: http.StatusServiceUnavailable, code: apierr.CodeCredHubUnavailable,
+		},
+		{
+			name: "the variable lies outside the deployment's namespace",
+			// The namespace rule comes before the variable lookup, which
+			// would report unknown_variable for this name.
+			inject: func(_ *testing.T, env *preflightEnv) {
+				env.inst().Certificates.Variables[0].Name = "/" + previewDirectorName + "/another-deployment/redis_crt"
+			},
+			status: http.StatusBadRequest, code: apierr.CodeNotRotatable,
+		},
+		{
 			name: "the variable is now a CA",
 			inject: func(_ *testing.T, env *preflightEnv) {
 				env.credhub.certificate(previewLeaf(waitDeployment), "cert-"+waitDeployment, "v1", true, validateNow.AddDate(0, 0, 5))
