@@ -44,6 +44,12 @@ const (
 	// rescanTimeout bounds the inventory scan that follows a settled
 	// rotation.
 	rescanTimeout = 2 * time.Minute
+
+	// cancelledVerifyAttempts is how many times a cancelled task tries to
+	// verify a done deploy whose reads fail, waiting verifyInterval at
+	// first and twice as long each time after, up to maxVerifyBackoff.
+	cancelledVerifyAttempts = 5
+	maxVerifyBackoff        = 2 * time.Minute
 )
 
 // errVerifyUnreadable marks a verification that could not read what it
@@ -74,6 +80,8 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 
 		goOn, _ := m.waitWhilePaused(persistCtx, task, cancelCh)
 		if !goOn {
+			m.verifyIfCancelled(ctx, task, inst)
+
 			return false
 		}
 
@@ -541,8 +549,11 @@ func (m *Manager) certAfterDeploy(ctx context.Context, task *UpgradeTask, inst *
 // waits while the instance's reservation waits for another holder, saves
 // phase deploy for certain, verifies, saves the result for certain, and
 // only then settles the instance, which frees it. A verification that
-// could not read what it checks pauses the task, and a resume verifies
-// again. Stop leaves the instance running, and the next load verifies it.
+// could not read what it checks, or a save that was not confirmed, pauses
+// a live task, and a resume verifies again. A cancelled task can't be
+// resumed, so it retries with backoff instead, and when the attempts run
+// out the instance waits for an operator to resolve the deploy's outcome.
+// Stop leaves the instance running, and the next load verifies it.
 func (m *Manager) verifyAndSettle(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
 	for m.reservationWaits(task, inst) {
 		select {
@@ -552,26 +563,71 @@ func (m *Manager) verifyAndSettle(ctx context.Context, task *UpgradeTask, inst *
 		}
 	}
 
-	m.mu.RLock()
-	deployment := inst.DeploymentName
-	m.mu.RUnlock()
+	backoff := m.verifyInterval
+
+	for attempt := 1; ; attempt++ {
+		failure := m.verifyAttempt(ctx, task, inst)
+
+		switch {
+		case failure == nil || ctx.Err() != nil:
+			return
+		case !m.taskCancelled(task):
+			failure.pause(ctx)
+
+			return
+		case attempt >= cancelledVerifyAttempts:
+			m.awaitVerifyDecision(ctx, task, inst, attempt, failure.err)
+
+			return
+		}
+
+		m.logger.Error("Certificate task %s is cancelled, so instance %s retries its verification in %s: %v", task.ID, inst.InstanceID, backoff, failure.err)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		backoff = min(2*backoff, maxVerifyBackoff)
+	}
+}
+
+// verifyFailure is an attempt to verify that could not finish, with the
+// way a live task pauses for it.
+type verifyFailure struct {
+	err   error
+	pause func(ctx context.Context)
+}
+
+// verifyAttempt makes one attempt to verify a done redeploy and settle the
+// instance. It returns nil once the instance settles or ctx ends, and a
+// failure when a read or a confirmed save did not succeed.
+func (m *Manager) verifyAttempt(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) *verifyFailure {
+	unconfirmed := func(step string, err error) *verifyFailure {
+		return &verifyFailure{
+			err:   fmt.Errorf("the save before Blacksmith could %s was not confirmed: %w", step, err),
+			pause: func(context.Context) { m.pauseUnconfirmed(task, inst, step) },
+		}
+	}
 
 	err := m.persistCertConfirmed(ctx, task)
 	if err != nil {
-		m.pauseUnconfirmed(task, inst, "verify the deploy of "+deployment)
-
-		return
+		return unconfirmed("verify the deploy of "+inst.DeploymentName, err)
 	}
 
 	err = m.verifyRedeploy(ctx, inst)
 
 	switch {
 	case ctx.Err() != nil:
-		return
+		return nil
 	case errors.Is(err, errVerifyUnreadable):
-		m.pauseWith(ctx, task, inst, fmt.Errorf("%w The deploy is done, so resume to verify it again", err)) //nolint:errcheck,gosec // pauseWith logs and saves it
-
-		return
+		return &verifyFailure{
+			err: err,
+			pause: func(ctx context.Context) {
+				m.pauseWith(ctx, task, inst, fmt.Errorf("%w. The deploy is done, so resume to verify it again", err)) //nolint:errcheck,gosec // pauseWith logs and saves it
+			},
+		}
 	}
 
 	ok, message := err == nil, ""
@@ -585,9 +641,7 @@ func (m *Manager) verifyAndSettle(ctx context.Context, task *UpgradeTask, inst *
 
 	err = m.persistCertConfirmed(ctx, task)
 	if err != nil {
-		m.pauseUnconfirmed(task, inst, "finish instance "+inst.InstanceID+" after its verification")
-
-		return
+		return unconfirmed("finish instance "+inst.InstanceID+" after its verification", err)
 	}
 
 	m.settleCertificateInstance(task, inst, ok, message)
@@ -596,6 +650,59 @@ func (m *Manager) verifyAndSettle(ctx context.Context, task *UpgradeTask, inst *
 	if err != nil {
 		m.logger.Error("Certificate task %s: %v", task.ID, err)
 	}
+
+	return nil
+}
+
+// taskCancelled reports whether the task was cancelled.
+func (m *Manager) taskCancelled(task *UpgradeTask) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return task.Status == TaskStatusCancelled
+}
+
+// awaitVerifyDecision records that a cancelled task's done deploy could not
+// be verified. The instance's outcome is unknown, it stays reserved, and
+// it waits for an operator to resolve the deploy's outcome, as a deploy
+// whose end Blacksmith can't learn does. No count changes.
+func (m *Manager) awaitVerifyDecision(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, attempts int, cause error) {
+	m.mu.Lock()
+
+	if inst.Certificates == nil {
+		inst.Certificates = &InstanceRotation{}
+	}
+
+	inst.Status = InstanceStatusOutcomeUnknown
+	inst.CompletedAt = nil
+	inst.Error = fmt.Sprintf("BOSH task %d finished the deploy, but Blacksmith could not verify the new certificates in %d attempts: %v. "+
+		"Check which certificates the deployment serves, then resolve the deploy's outcome.", followedTaskID(inst), attempts, cause)
+	inst.Certificates.Pending = &PendingDecision{
+		Kind:  DecisionResolveDeployOutcome,
+		Since: m.certNowLocked(),
+	}
+
+	pauseForDecisionLocked(task)
+
+	m.mu.Unlock()
+
+	m.logger.Error("Instance %s of certificate task %s waits for a decision: %s", inst.InstanceID, task.ID, inst.Error)
+
+	err := m.persistTask(context.WithoutCancel(ctx), task)
+	if err != nil {
+		m.logger.Error("Failed to save instance %s while it waits for a decision: %v", inst.InstanceID, err)
+	}
+}
+
+// verifyIfCancelled verifies an instance of a cancelled task whose done
+// deploy is on record, since the cancel ends the processor's wait and a
+// cancelled task is never resumed.
+func (m *Manager) verifyIfCancelled(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade) {
+	if ctx.Err() != nil || !m.taskCancelled(task) || m.nextCertificateStep(inst) != stepVerify {
+		return
+	}
+
+	m.verifyAndSettle(ctx, task, inst)
 }
 
 // settleCertificateInstance records the final outcome of a certificate

@@ -190,6 +190,11 @@ type redeployDirector struct {
 	finish   func(ctx context.Context, taskID int) (*bosh.Task, error)
 	applies  string
 	onDone   func()
+
+	// listFails is how many ListVariables calls fail before one succeeds,
+	// and a negative count fails every call. lists counts the calls.
+	listFails int
+	lists     int
 }
 
 func (d *redeployDirector) GetInfo(context.Context) (*bosh.Info, error) {
@@ -203,6 +208,16 @@ func (d *redeployDirector) GetDeployment(_ context.Context, name string) (*bosh.
 func (d *redeployDirector) ListVariables(context.Context, string) ([]bosh.Variable, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	d.lists++
+
+	if d.listFails != 0 {
+		if d.listFails > 0 {
+			d.listFails--
+		}
+
+		return nil, errors.New("director 503")
+	}
 
 	return []bosh.Variable{{ID: d.deployed, Name: regenLeaf}}, nil
 }
@@ -263,6 +278,22 @@ func (d *redeployDirector) CancelTask(_ context.Context, taskID int) error {
 	d.cancels = append(d.cancels, taskID)
 
 	return nil
+}
+
+// failLists makes the next n ListVariables calls fail, or every call when
+// n is negative.
+func (d *redeployDirector) failLists(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.listFails = n
+}
+
+func (d *redeployDirector) listCalls() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.lists
 }
 
 func (d *redeployDirector) deploys() []redeploySent {
@@ -1076,6 +1107,117 @@ func TestRedeployKeepsRecordedDeployEnd(t *testing.T) {
 
 	if waits := env.director.waited(); len(waits) != 0 {
 		t.Fatalf("expected no wait on the finished task, got %v", waits)
+	}
+
+	expectReleased(t, manager)
+}
+
+// cancelledDeployedTask returns a cancelled task whose deploy BOSH
+// finished before the restart, with the director and listener on v2.
+func (e *redeployEnv) cancelledDeployedTask() UpgradeTask {
+	e.madeNewVersion()
+	e.deployedNewVersion()
+
+	task := e.deployedTask()
+	task.Status = TaskStatusCancelled
+	task.Instances[0].Certificates.Deploy = &DeployOutcome{BOSHTaskID: redeployTaskID, State: boshTaskDone, FinishedAt: validateNow}
+
+	return task
+}
+
+// A cancelled task can't be resumed, so a read that fails while it
+// verifies a done deploy is retried, and the instance still completes and
+// frees its reservation.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployCancelledVerifyRetries(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.director.failLists(1)
+
+	manager := env.load(env.cancelledDeployedTask())
+
+	task := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if task.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", task.Status)
+	}
+
+	if calls := env.director.listCalls(); calls < 2 {
+		t.Fatalf("expected the failed read to be retried, got %d calls", calls)
+	}
+
+	expectReleased(t, manager)
+}
+
+// When the reads keep failing, the cancelled task's instance waits for an
+// operator to resolve the deploy's outcome, stays reserved, and is never
+// told to resume a task that can't be resumed.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployCancelledVerifyAwaitsDecision(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.director.failLists(-1)
+
+	manager := env.load(env.cancelledDeployedTask())
+
+	task := eventuallyInstance(t, manager, InstanceStatusOutcomeUnknown)
+	inst := task.Instances[0]
+
+	if inst.Certificates.Pending == nil || inst.Certificates.Pending.Kind != DecisionResolveDeployOutcome {
+		t.Fatalf("expected a resolve_deploy_outcome decision, got %+v", inst.Certificates.Pending)
+	}
+
+	if strings.Contains(strings.ToLower(inst.Error), "resume") {
+		t.Fatalf("expected no advice to resume a cancelled task, got %q", inst.Error)
+	}
+
+	if task.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", task.Status)
+	}
+
+	if calls := env.director.listCalls(); calls != cancelledVerifyAttempts {
+		t.Fatalf("expected %d attempts, got %d", cancelledVerifyAttempts, calls)
+	}
+
+	if saved := env.stored().Instances[0]; saved.Status != InstanceStatusOutcomeUnknown {
+		t.Fatalf("expected the decision to be saved, got %s", saved.Status)
+	}
+
+	expectHeld(t, manager)
+}
+
+// A live task pauses when its verification can't read, and a cancel of
+// the paused task still verifies the done deploy and frees the instance.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployCancelAfterVerifyPause(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	// The reads fail from the end of the deploy on, so only the
+	// verification meets them.
+	serveNew := env.director.onDone
+	env.director.onDone = func() {
+		serveNew()
+		env.director.failLists(-1)
+	}
+
+	manager := env.load(env.runningTask())
+
+	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusRunning || !strings.Contains(inst.Error, ". The deploy is done") {
+		t.Fatalf("expected a running instance paused to verify again, got %s: %q", inst.Status, inst.Error)
+	}
+
+	env.director.failLists(0)
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	task := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if task.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", task.Status)
 	}
 
 	expectReleased(t, manager)
