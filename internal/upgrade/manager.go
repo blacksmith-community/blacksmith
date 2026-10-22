@@ -3228,18 +3228,17 @@ func (m *Manager) endForReleaseTargets(ctx context.Context, task *UpgradeTask, c
 // processor still follows it, as runTask does after a cancel and the
 // loader does while it settles, since that deploy may still be under way
 // on the director. A certificate task holds every instance that is
-// running, interrupted, awaiting a decision, or of unknown outcome,
-// whatever its own status,
-// since a regeneration, a deploy, or a half-patched VM of it may still
-// need a decision or a rollback that only the task can make. The caller
-// holds mu.
+// running, interrupted, or waiting for a decision, whatever its own
+// status, since a regeneration, a deploy, or a half-patched VM of it may
+// still need a decision or a rollback that only the task can make. An
+// instance whose unknown outcome an operator abandoned waits for nothing,
+// so it is free. The caller holds mu.
 func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) bool {
 	unfinished := task.Status == TaskStatusPending || task.Status == TaskStatusRunning || task.Status == TaskStatusPaused
 	followed := m.owned[task.ID] || m.settling[task.ID] > 0
 	inFlight := inst.Status == InstanceStatusRunning || inst.Status == InstanceStatusInterrupted
 
-	waiting := inst.Status == StatusAwaitingDecision || inst.Status == InstanceStatusOutcomeUnknown
-	if task.KindOrDefault() == TaskKindCertificates && (inFlight || waiting) {
+	if task.KindOrDefault() == TaskKindCertificates && (inFlight || waitsForDecision(inst)) {
 		return true
 	}
 

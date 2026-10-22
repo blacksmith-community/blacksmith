@@ -125,6 +125,11 @@ type InstanceRotation struct {
 	// converge deploy, once its task reached a final state.
 	Deploy  *DeployOutcome   `json:"deploy_outcome,omitempty"`
 	Pending *PendingDecision `json:"pending_decision,omitempty"`
+	// DecisionRequestID is the client request ID of the latest operator
+	// decision applied to the instance, and DecisionDigest is the digest
+	// of its body, so a repeat of it applies once.
+	DecisionRequestID string `json:"decision_request_id,omitempty"`
+	DecisionDigest    string `json:"decision_digest,omitempty"`
 }
 
 // DeployOutcome is how the BOSH task of a rotation's deploy ended. A done

@@ -35,6 +35,10 @@ type taskManager interface {
 	PauseTask(ctx context.Context, taskID string) error
 	ResumeTask(ctx context.Context, taskID string) error
 	CancelTask(ctx context.Context, taskID string) error
+	RepreviewForDecision(ctx context.Context, taskID, instanceID string) (*upgrade.Preview, error)
+	ReconcileRegeneration(ctx context.Context, taskID, instanceID string, req upgrade.ReconcileRequest) error
+	ApproveChangedEffects(ctx context.Context, taskID, instanceID string, req upgrade.ApproveRequest) error
+	ResolveDeployOutcome(ctx context.Context, taskID, instanceID string, req upgrade.ResolveRequest) error
 	GetSettings() upgrade.Settings
 	UpdateSettings(ctx context.Context, settings upgrade.Settings) error
 }
@@ -132,6 +136,17 @@ func (h *Handler) GetManager() *upgrade.Manager {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/b/upgrade")
 
+	// The decision routes are matched before the task routes, so none of
+	// them is taken for a task action.
+	if r.Method == http.MethodPost {
+		taskID, instanceID, action, ok := decisionRoute(path)
+		if ok {
+			h.Decide(w, r, taskID, instanceID, action)
+
+			return
+		}
+	}
+
 	switch {
 	case path == "/tasks" && r.Method == http.MethodPost:
 		h.CreateTask(w, r)
@@ -157,6 +172,121 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("upgrade endpoint not found"))
 	}
+}
+
+// The instance decision routes under /tasks/{id}/instances/{instance-id}/.
+const (
+	decisionReconcile = "reconcile"
+	decisionApprove   = "approve"
+	decisionPreview   = "preview"
+	decisionResolve   = "resolve"
+)
+
+// decisionRoute splits /tasks/{id}/instances/{instance-id}/{action} into
+// its parts, and reports whether the path is a decision route.
+func decisionRoute(path string) (string, string, string, bool) {
+	rest, found := strings.CutPrefix(path, "/tasks/")
+	if !found {
+		return "", "", "", false
+	}
+
+	parts := strings.Split(rest, "/")
+	if len(parts) != 4 || parts[0] == "" || parts[1] != "instances" || parts[2] == "" {
+		return "", "", "", false
+	}
+
+	switch parts[3] {
+	case decisionReconcile, decisionApprove, decisionPreview, decisionResolve:
+		return parts[0], parts[2], parts[3], true
+	default:
+		return "", "", "", false
+	}
+}
+
+// Decide handles POST /b/upgrade/tasks/{id}/instances/{instance-id}/
+// reconcile, approve, resolve, and preview. A decision answers 200 with
+// the task as it stands after it, and preview answers 200 with the bound
+// preview. An error answers with its own status and code.
+func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanceID, action string) {
+	h.logger.Info("Decision %s on instance %s of task %s", action, instanceID, taskID)
+
+	if action == decisionPreview {
+		preview, err := h.tasks.RepreviewForDecision(r.Context(), taskID, instanceID)
+		if err != nil {
+			h.logger.Error("Failed to preview instance %s of task %s for its decision: %v", instanceID, taskID, err)
+			apierr.Write(w, err, http.StatusInternalServerError)
+
+			return
+		}
+
+		response.JSON(w, http.StatusOK, preview)
+
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	if err == nil {
+		err = h.decide(r.Context(), taskID, instanceID, action, body)
+	}
+
+	if err != nil {
+		h.logger.Error("Failed to apply decision %s on instance %s of task %s: %v", action, instanceID, taskID, err)
+		apierr.Write(w, err, http.StatusInternalServerError)
+
+		return
+	}
+
+	task, err := h.tasks.GetTask(taskID)
+	if err != nil {
+		apierr.Write(w, err, http.StatusInternalServerError)
+
+		return
+	}
+
+	response.JSON(w, http.StatusOK, task)
+}
+
+// decide decodes the body of the decision and hands it to the manager. A
+// body that does not decode is a bad request.
+func (h *Handler) decide(ctx context.Context, taskID, instanceID, action string, body []byte) error {
+	var err error
+
+	switch action {
+	case decisionReconcile:
+		var req upgrade.ReconcileRequest
+
+		err = decodeDecision(body, &req)
+		if err == nil {
+			err = h.tasks.ReconcileRegeneration(ctx, taskID, instanceID, req)
+		}
+	case decisionApprove:
+		var req upgrade.ApproveRequest
+
+		err = decodeDecision(body, &req)
+		if err == nil {
+			err = h.tasks.ApproveChangedEffects(ctx, taskID, instanceID, req)
+		}
+	default:
+		var req upgrade.ResolveRequest
+
+		err = decodeDecision(body, &req)
+		if err == nil {
+			err = h.tasks.ResolveDeployOutcome(ctx, taskID, instanceID, req)
+		}
+	}
+
+	return err //nolint:wrapcheck // the manager answers with the API error
+}
+
+// decodeDecision decodes a decision body, and answers 400 invalid_mode
+// for one that does not decode, since the action it carries can't be read.
+func decodeDecision(body []byte, req any) error {
+	err := json.Unmarshal(body, req)
+	if err != nil {
+		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidMode, "invalid decision request: "+err.Error())
+	}
+
+	return nil
 }
 
 // CanHandle returns true if this handler can handle the given path.

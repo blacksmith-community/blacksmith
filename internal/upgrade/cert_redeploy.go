@@ -99,9 +99,20 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 		case stepSettled:
 			return true
 		case stepDecision:
+			// An operator may have answered the decision since the step
+			// was read, and then the task must not pause again.
 			m.mu.Lock()
-			pauseForDecisionLocked(task)
+
+			waits := waitsForDecision(inst)
+			if waits {
+				pauseForDecisionLocked(task)
+			}
+
 			m.mu.Unlock()
+
+			if !waits {
+				continue
+			}
 
 			m.logger.Info("Instance %s of certificate task %s waits for a decision, so the task stays paused", inst.InstanceID, task.ID)
 
@@ -130,7 +141,7 @@ func (m *Manager) processCertificateInstance(task *UpgradeTask, inst *InstanceUp
 		}
 
 		m.mu.RLock()
-		settled := inst.Status.settled() && inst.Status != InstanceStatusOutcomeUnknown
+		settled := inst.Status.settled() && !waitsForDecision(inst)
 		paused := task.Paused
 		cancelled := task.Status == TaskStatusCancelled
 		m.mu.RUnlock()
@@ -166,7 +177,7 @@ func (m *Manager) nextCertificateStep(inst *InstanceUpgrade) certificateStep {
 	rotation := inst.Certificates
 
 	switch {
-	case inst.Status == StatusAwaitingDecision || inst.Status == InstanceStatusOutcomeUnknown:
+	case waitsForDecision(inst):
 		return stepDecision
 	case inst.Status.settled():
 		return stepSettled
@@ -389,6 +400,12 @@ func (m *Manager) regenerationStarted(inst *InstanceUpgrade) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return regenerationStartedLocked(inst)
+}
+
+// regenerationStartedLocked is regenerationStarted for a caller that
+// holds mu.
+func regenerationStartedLocked(inst *InstanceUpgrade) bool {
 	if inst.Certificates == nil {
 		return false
 	}
@@ -407,7 +424,25 @@ func (m *Manager) instanceSettled(inst *InstanceUpgrade) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return inst.Status.settled() && inst.Status != InstanceStatusOutcomeUnknown
+	return inst.Status.settled() && !waitsForDecision(inst)
+}
+
+// waitsForDecision reports whether a certificate instance waits for an
+// operator's decision. An instance awaiting a decision does, and so does
+// one of unknown outcome, unless an operator abandoned that outcome, which
+// closed the instance with phase done and no pending decision. The caller
+// holds mu.
+func waitsForDecision(inst *InstanceUpgrade) bool {
+	switch inst.Status {
+	case StatusAwaitingDecision:
+		return true
+	case InstanceStatusOutcomeUnknown:
+		rotation := inst.Certificates
+
+		return rotation == nil || rotation.Pending != nil || rotation.Phase != RotationPhaseDone
+	default:
+		return false
+	}
 }
 
 // preflightStops runs the preflight and reports whether it stopped the
@@ -733,8 +768,24 @@ func (m *Manager) verifyIfCancelled(ctx context.Context, task *UpgradeTask, inst
 // settled keeps its outcome and its count.
 func (m *Manager) settleCertificateInstance(task *UpgradeTask, inst *InstanceUpgrade, ok bool, message string) {
 	m.mu.Lock()
+	rescan, status := m.settleCertificateInstanceLocked(task, inst, ok, message)
+	m.mu.Unlock()
 
-	if !inst.Status.settled() || inst.Status == InstanceStatusOutcomeUnknown {
+	if ok {
+		m.logger.Info("Instance %s of certificate task %s rotated its certificates", inst.InstanceID, task.ID)
+	} else {
+		m.logger.Error("Instance %s of certificate task %s ended %s: %s", inst.InstanceID, task.ID, status, message)
+	}
+
+	rescan()
+}
+
+// settleCertificateInstanceLocked records the outcome as
+// settleCertificateInstance describes, and returns the function that
+// starts the inventory's scan, which the caller runs once it lets go of
+// mu, and the instance's status. The caller holds mu.
+func (m *Manager) settleCertificateInstanceLocked(task *UpgradeTask, inst *InstanceUpgrade, ok bool, message string) (func(), InstanceStatus) {
+	if !inst.Status.settled() || waitsForDecision(inst) {
 		now := m.certNowLocked()
 		inst.CompletedAt = &now
 
@@ -749,18 +800,7 @@ func (m *Manager) settleCertificateInstance(task *UpgradeTask, inst *InstanceUpg
 		}
 	}
 
-	rescan := m.endCertificateInstanceLocked(task, inst)
-	status := inst.Status
-
-	m.mu.Unlock()
-
-	if ok {
-		m.logger.Info("Instance %s of certificate task %s rotated its certificates", inst.InstanceID, task.ID)
-	} else {
-		m.logger.Error("Instance %s of certificate task %s ended %s: %s", inst.InstanceID, task.ID, status, message)
-	}
-
-	rescan()
+	return m.endCertificateInstanceLocked(task, inst), inst.Status
 }
 
 // endCertificateInstanceLocked closes a settled certificate instance. It

@@ -430,7 +430,8 @@ func (e *redeployEnv) setSwitches(rotation bool) {
 	e.switches = switches(rotation, false)
 }
 
-// scan is the inventory's scan of the instance, which shows v1 deployed.
+// scan is the inventory's scan of the instance, which shows v1 deployed
+// on its one VM.
 func (e *redeployEnv) scan(_ context.Context, instanceID string) (certinventory.InstanceScan, error) {
 	e.mu.Lock()
 	e.scans = append(e.scans, instanceID)
@@ -438,6 +439,7 @@ func (e *redeployEnv) scan(_ context.Context, instanceID string) (certinventory.
 
 	return certinventory.InstanceScan{
 		Ref: certinventory.InstanceRef{ID: instanceID, Deployment: waitDeployment},
+		VMs: []bosh.VM{{ID: "vm-1", CID: redeployVMCID, Job: "redis", Index: 0, IPs: []string{"127.0.0.1"}}},
 		Material: certinventory.ScanMaterial{
 			CredHub:    []certinventory.CredHubCert{{Name: regenLeaf, Deployed: e.oldLeaf, Versions: certinventory.Versions{SigningCA: regenCAName}}},
 			SigningCAs: map[string]*x509.Certificate{regenCAName: e.ca.cert},

@@ -276,3 +276,155 @@ type failingCertTasks struct {
 func (f *failingCertTasks) CreateCertificateTask(context.Context, upgrade.CreateCertificateTaskRequest) (*upgrade.UpgradeTask, bool, error) {
 	return nil, false, f.err
 }
+
+// decisionTasks is a taskManager that records each decision call and
+// answers it with err, and answers GetTask with the task.
+type decisionTasks struct {
+	taskManager
+
+	err error
+
+	mu    sync.Mutex
+	calls []string
+	got   []any
+}
+
+func (d *decisionTasks) record(call string, req any) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.calls = append(d.calls, call)
+	d.got = append(d.got, req)
+
+	return d.err
+}
+
+func (d *decisionTasks) GetTask(taskID string) (*upgrade.UpgradeTask, error) {
+	return &upgrade.UpgradeTask{ID: taskID, Kind: upgrade.TaskKindCertificates}, nil
+}
+
+func (d *decisionTasks) ReconcileRegeneration(_ context.Context, taskID, instanceID string, req upgrade.ReconcileRequest) error {
+	return d.record("reconcile "+taskID+" "+instanceID, req)
+}
+
+func (d *decisionTasks) ApproveChangedEffects(_ context.Context, taskID, instanceID string, req upgrade.ApproveRequest) error {
+	return d.record("approve "+taskID+" "+instanceID, req)
+}
+
+func (d *decisionTasks) ResolveDeployOutcome(_ context.Context, taskID, instanceID string, req upgrade.ResolveRequest) error {
+	return d.record("resolve "+taskID+" "+instanceID, req)
+}
+
+func (d *decisionTasks) RepreviewForDecision(_ context.Context, taskID, instanceID string) (*upgrade.Preview, error) {
+	err := d.record("preview "+taskID+" "+instanceID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &upgrade.Preview{ID: "pv-bound", Instances: []upgrade.PreviewInstance{}, Warnings: []string{}}, nil
+}
+
+// postDecision sends the body to the path and returns the status and the
+// decoded answer.
+func postDecision(t *testing.T, handler *Handler, path, body string) (int, map[string]interface{}) {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body)))
+
+	var answer map[string]interface{}
+
+	err := json.Unmarshal(rec.Body.Bytes(), &answer)
+	if err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+
+	return rec.Code, answer
+}
+
+// Each decision route reaches its manager call with the decoded body and
+// answers with the task, and the re-preview answers with the preview.
+func TestDecisionRoutes(t *testing.T) {
+	t.Parallel()
+
+	tasks := &decisionTasks{}
+	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: tasks}
+
+	routes := []struct {
+		path, body, call string
+		want             any
+	}{
+		{
+			"/b/upgrade/tasks/t1/instances/i1/reconcile",
+			`{"variable":"/d/dep/leaf","action":"adopt","version_id":"v2","client_request_id":"r1"}`,
+			"reconcile t1 i1",
+			upgrade.ReconcileRequest{Variable: "/d/dep/leaf", Action: "adopt", VersionID: "v2", ClientRequestID: "r1"},
+		},
+		{
+			"/b/upgrade/tasks/t1/instances/i1/approve",
+			`{"preview_id":"pv-bound","client_request_id":"r2"}`,
+			"approve t1 i1",
+			upgrade.ApproveRequest{PreviewID: "pv-bound", ClientRequestID: "r2"},
+		},
+		{
+			"/b/upgrade/tasks/t1/instances/i1/resolve",
+			`{"action":"verify"}`,
+			"resolve t1 i1",
+			upgrade.ResolveRequest{Action: "verify"},
+		},
+	}
+
+	for _, route := range routes {
+		status, answer := postDecision(t, handler, route.path, route.body)
+		if status != http.StatusOK || answer["id"] != "t1" {
+			t.Fatalf("%s: status %d, body %v", route.path, status, answer)
+		}
+
+		tasks.mu.Lock()
+		call, got := tasks.calls[len(tasks.calls)-1], tasks.got[len(tasks.got)-1]
+		tasks.mu.Unlock()
+
+		if call != route.call || got != route.want {
+			t.Fatalf("%s: called %q with %+v, want %q with %+v", route.path, call, got, route.call, route.want)
+		}
+	}
+
+	status, answer := postDecision(t, handler, "/b/upgrade/tasks/t1/instances/i1/preview", "")
+	if status != http.StatusOK || answer["preview_id"] != "pv-bound" {
+		t.Fatalf("preview: status %d, body %v", status, answer)
+	}
+}
+
+// A decision error answers with its own status and code, and a body that
+// does not decode is a bad request that reaches no manager call.
+func TestDecisionRoutesAnswerErrors(t *testing.T) {
+	t.Parallel()
+
+	tasks := &decisionTasks{err: apierr.New(http.StatusConflict, apierr.CodeNotAwaitingDecision, "The instance waits for no decision.")}
+	handler := &Handler{logger: logger.NewNoOpLogger(), tasks: tasks}
+
+	for _, action := range []string{"reconcile", "approve", "resolve", "preview"} {
+		status, answer := postDecision(t, handler, "/b/upgrade/tasks/t1/instances/i1/"+action, `{}`)
+		if status != http.StatusConflict || answer["code"] != apierr.CodeNotAwaitingDecision || answer["success"] != false ||
+			answer["error"] != "The instance waits for no decision." {
+			t.Fatalf("%s: status %d, body %v", action, status, answer)
+		}
+	}
+
+	tasks.mu.Lock()
+	before := len(tasks.calls)
+	tasks.mu.Unlock()
+
+	status, answer := postDecision(t, handler, "/b/upgrade/tasks/t1/instances/i1/reconcile", `{"action":`)
+	if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidMode || answer["success"] != false {
+		t.Fatalf("undecodable body: status %d, body %v", status, answer)
+	}
+
+	tasks.mu.Lock()
+	after := len(tasks.calls)
+	tasks.mu.Unlock()
+
+	if after != before {
+		t.Fatalf("expected no manager call for an undecodable body, got %d", after-before)
+	}
+}

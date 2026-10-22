@@ -120,6 +120,9 @@ type Preview struct {
 	forTask       string
 	forInstance   string
 	decisionSince time.Time
+	// selection holds the full names a bound preview selected on its
+	// instance, sorted.
+	selection []string
 }
 
 // storedPreview is a preview with the moment it expires.
