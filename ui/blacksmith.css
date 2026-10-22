@@ -12980,7 +12980,7 @@ span.config-type.resurrection {
   padding: 2px 8px;
 }
 
-#upgrade .upgrade-task-kind {
+#upgrade .task-kind-badge {
   margin-left: 8px;
   padding: 1px 8px;
   border: 1px solid var(--border-primary);
@@ -13321,4 +13321,148 @@ span.config-type.resurrection {
 #upgrade .rotate-result:not(:empty) {
   padding: 0.75em 1em;
   border-bottom: 1px solid var(--border-primary);
+}
+
+/* Certificate tasks in Batch Operations: the kind badge, the awaiting
+   badge, the awaiting-decision instance, and the decision panels. The
+   colours come from the certificate tokens, which each theme defines. */
+#upgrade .task-kind-badge--certificates {
+  color: var(--cert-ok-fg);
+  background: var(--cert-ok-bg);
+  border-color: var(--cert-ok);
+}
+
+#upgrade .task-awaiting-badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--cert-warning);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cert-warning-fg);
+  background: var(--cert-warning-bg);
+  white-space: nowrap;
+}
+
+#upgrade .upgrade-task-target {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+#upgrade .upgrade-task-instance.instance-awaiting-decision {
+  border-left: 3px solid var(--cert-warning);
+}
+
+#upgrade .status-icon.awaiting-decision {
+  color: var(--cert-warning-fg);
+  background: var(--cert-warning-bg);
+  border: 1px solid var(--cert-warning);
+  border-radius: 50%;
+  display: inline-block;
+  width: 1.4em;
+  height: 1.4em;
+  line-height: 1.3em;
+  text-align: center;
+  font-weight: 700;
+}
+
+#upgrade .upgrade-task-instance[data-decision-row]:focus-visible,
+#upgrade .cert-decision-error:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+#upgrade .cert-task-instance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+#upgrade .cert-task-phase {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#upgrade .cert-task-variables,
+#upgrade .cert-task-checks,
+#upgrade .cert-decision-changes {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+#upgrade .cert-task-variable {
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+#upgrade .cert-task-check--passed {
+  color: var(--cert-ok-fg);
+}
+
+#upgrade .cert-task-check--failed {
+  color: var(--cert-critical-fg);
+}
+
+#upgrade .cert-decision-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--cert-warning);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+#upgrade .cert-decision-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#upgrade .cert-decision-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#upgrade .cert-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+#upgrade .cert-candidate-head {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+#upgrade .cert-candidate-facts {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+#upgrade .cert-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#upgrade .cert-decision-error {
+  padding: 6px 10px;
+  border: 1px solid var(--cert-critical);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--cert-critical-fg);
+  background: var(--cert-critical-bg);
+  overflow-wrap: anywhere;
 }

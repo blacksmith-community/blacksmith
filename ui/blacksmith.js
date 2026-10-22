@@ -3047,6 +3047,7 @@
   // failed has no readAt, so the next pass reads it again.
   const HOLDER_DETAIL_MAX_AGE_MS = 30000;
   const holderDetails = new Map();
+  let awaitingSignature = '';
 
   // Reads the details of the active tasks to learn which instances they
   // hold. It reads a task again only when its status changed or its detail
@@ -3073,6 +3074,13 @@
         }
       }));
       setUpgradeHolders(computeUpgradeHolders(Array.from(holderDetails.values()).map((entry) => entry.detail)));
+      // The list shows which tasks wait on a decision, so it draws again when
+      // that changes.
+      const awaiting = Array.from(awaitingDecisionTaskIds()).sort().join(',');
+      if (awaiting !== awaitingSignature) {
+        awaitingSignature = awaiting;
+        if (!selectedTaskId) renderUpgradeTaskList();
+      }
     } finally {
       upgradeHoldersInFlight = false;
     }
@@ -4659,7 +4667,8 @@
     deployment_locked: 'The director is still working on this deployment. Try again when its task finishes.',
     not_awaiting_decision: 'That instance is not waiting for a decision any more. Refresh the task to see where it stands.',
     instance_busy: 'Another operation holds this instance. Wait for it to finish, then try again.',
-    credhub_unavailable: 'CredHub did not answer. Check its connection, then try again.'
+    credhub_unavailable: 'CredHub did not answer. Check its connection, then try again.',
+    invalid_request: 'The broker did not accept that request. Refresh the task, then try again.'
   };
 
   // The text to show for an API error: its message, and the advice for its
@@ -4800,8 +4809,15 @@
       const statusIcon = getTaskStatusIcon(task.status);
       const progress = upgradeTaskProgress(task);
       const taskName = task.name || task.target || describeUpgradeTargets(task).label;
-      const kindBadge = task.kind === 'certificates'
-        ? '<span class="upgrade-task-kind">Certificates</span>'
+      const isCertificates = task.kind === 'certificates';
+      const kindBadge = isCertificates
+        ? '<span class="task-kind-badge task-kind-badge--certificates">Certificates</span>'
+        : '';
+      const awaitingBadge = awaitingDecisionTaskIds().has(task.id)
+        ? '<span class="task-awaiting-badge">Awaiting decision</span>'
+        : '';
+      const targetLine = isCertificates && task.target
+        ? `<div class="upgrade-task-target">${escapeHtml(String(task.target))}</div>`
         : '';
 
       return `
@@ -4810,7 +4826,9 @@
             <span class="upgrade-task-status">${statusIcon}</span>
             <span class="upgrade-task-name">${escapeHtml(taskName)}</span>
             ${kindBadge}
+            ${awaitingBadge}
           </div>
+          ${targetLine}
           <div class="upgrade-task-progress">
             <div class="upgrade-task-progress-bar" style="width: ${Number(progress) || 0}%"></div>
           </div>
@@ -4906,19 +4924,385 @@
     }
   };
 
+  // ---- Certificate task detail and decisions ----
+
+  // The detail last drawn for each task, so a control can read the task's kind
+  // and mode, and the decision each instance is working on. A decision is
+  // busy while its dialog or request is open, and it keeps the error from
+  // its last failed answer until the operator tries again.
+  const taskDetailCache = new Map();
+  const decisionState = new Map();
+  const decisionKey = (taskId, instanceId) => `${taskId}|${instanceId}`;
+
+  // A day such as 2026-10-21 for a time from the broker. Go's zero time and
+  // a missing time both read as nothing.
+  const certDay = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime()) || date.getUTCFullYear() < 1971) return '';
+    return date.toISOString().slice(0, 10);
+  };
+
+  const confirmedAnswer = (answer) => answer === true || Boolean(answer && answer.confirmed);
+
+  const certInstanceName = (instance) => String(instance.instance_name || instance.instance_id || '');
+
+  // The task ids whose latest read shows an instance waiting on a decision.
+  // The holder poll reads those details, so this adds no request.
+  const awaitingDecisionTaskIds = () => {
+    const ids = new Set();
+    holderDetails.forEach((entry, id) => {
+      const instances = entry && entry.detail && Array.isArray(entry.detail.instances) ? entry.detail.instances : [];
+      if (instances.some((instance) => instance && instance.status === 'awaiting_decision')) ids.add(id);
+    });
+    return ids;
+  };
+
+  const redrawTaskDetail = (taskId) => {
+    const cached = taskDetailCache.get(taskId);
+    if (cached && selectedTaskId === taskId) renderTaskDetail(cached);
+  };
+
+  const findDecisionControl = (key, action) => {
+    const container = document.querySelector('#upgrade .upgrade-tasks');
+    if (!container) return null;
+    return Array.from(container.querySelectorAll('[data-decision-action]'))
+      .find((node) => node.dataset.decisionKey === key && node.dataset.decisionAction === action) || null;
+  };
+
+  const focusDecisionControl = (key, action) => {
+    const control = findDecisionControl(key, action);
+    if (control && typeof control.focus === 'function') control.focus({ preventScroll: true });
+  };
+
+  const focusDecisionTarget = (key, kind) => {
+    const container = document.querySelector('#upgrade .upgrade-tasks');
+    if (!container) return;
+    const selector = kind === 'error' ? '[data-decision-error]' : '[data-decision-row]';
+    const attr = kind === 'error' ? 'decisionError' : 'decisionRow';
+    const node = Array.from(container.querySelectorAll(selector)).find((n) => n.dataset[attr] === key);
+    if (node && typeof node.focus === 'function') node.focus({ preventScroll: true });
+  };
+
+  // Sends one decision. A success draws the task the broker returned, and a
+  // failure keeps its message on the instance, announces it, and leaves focus
+  // on that message. The code decides what the operator is told next, and the
+  // message text is only shown.
+  const sendDecision = async (task, instance, verb, body, action) => {
+    const key = decisionKey(task.id, instance.instance_id);
+    decisionState.set(key, { busy: true });
+    redrawTaskDetail(task.id);
+    try {
+      const url = `/b/upgrade/tasks/${encodeURIComponent(task.id)}/instances/${encodeURIComponent(instance.instance_id)}/${verb}`;
+      const { body: updated } = await rotatePostJSON(url, body);
+      decisionState.delete(key);
+      announce('Decision recorded.');
+      if (updated && typeof updated === 'object' && updated.id === task.id) {
+        taskDetailCache.set(task.id, updated);
+        redrawTaskDetail(task.id);
+      } else {
+        redrawTaskDetail(task.id);
+      }
+      focusDecisionTarget(key, 'row');
+      fetchUpgradeTasks();
+      return true;
+    } catch (err) {
+      const text = apiErrorText(err);
+      decisionState.set(key, { error: { code: err && err.code ? err.code : '', text } });
+      announce(`The decision was not recorded. ${text}`);
+      redrawTaskDetail(task.id);
+      focusDecisionTarget(key, 'error');
+      if (err && err.code === 'not_awaiting_decision') {
+        // The instance moved on, so read the task again to show where it stands.
+        try {
+          const fresh = await loadUpgradeTask(task.id);
+          taskDetailCache.set(task.id, fresh);
+          redrawTaskDetail(task.id);
+          focusDecisionTarget(key, 'error');
+        } catch (refreshError) {
+          console.error('Failed to refresh the task after a decision:', refreshError);
+        }
+      }
+      return false;
+    }
+  };
+
+  // Runs one decision button. The busy flag goes up before anything is
+  // awaited, so a second click while the dialog is open does nothing. The
+  // request ID is made when the dialog opens, so a repeat of the same
+  // answer applies once.
+  const runDecision = async (task, instance, action, flow) => {
+    const key = decisionKey(task.id, instance.instance_id);
+    const current = decisionState.get(key);
+    if (current && current.busy) return false;
+    decisionState.set(key, { busy: true });
+    const clientRequestId = newClientRequestId();
+    let outcome = null;
+    try {
+      outcome = await flow(clientRequestId);
+    } catch (err) {
+      decisionState.set(key, { error: { code: err && err.code ? err.code : '', text: apiErrorText(err) } });
+      announce(`That did not work. ${apiErrorText(err)}`);
+      redrawTaskDetail(task.id);
+      focusDecisionTarget(key, 'error');
+      return false;
+    }
+    if (!outcome) {
+      // The operator cancelled. Focus goes back to the control they used.
+      decisionState.delete(key);
+      redrawTaskDetail(task.id);
+      focusDecisionControl(key, action);
+      return false;
+    }
+    return sendDecision(task, instance, outcome.verb, { ...outcome.body, client_request_id: clientRequestId }, action);
+  };
+
+  const decisionButton = (task, instance, action, text, onClick, className) => {
+    const key = decisionKey(task.id, instance.instance_id);
+    const button = rotateEl('button', className || 'btn-secondary btn-sm', text);
+    button.type = 'button';
+    button.dataset.decisionAction = action;
+    button.dataset.decisionKey = key;
+    button.dataset.keepKey = `decision:${key}:${action}`;
+    const state = decisionState.get(key);
+    if (state && state.busy) button.disabled = true;
+    button.addEventListener('click', onClick);
+    return button;
+  };
+
+  const checkList = (checks) => {
+    const list = rotateEl('ul', 'cert-task-checks');
+    (Array.isArray(checks) ? checks : []).forEach((check) => {
+      if (!check) return;
+      const text = `${check.passed ? 'Passed' : 'Failed'}: ${check.name || 'check'}${check.detail ? `. ${check.detail}` : ''}`;
+      list.appendChild(rotateEl('li', check.passed ? 'cert-task-check cert-task-check--passed' : 'cert-task-check cert-task-check--failed', text));
+    });
+    return list;
+  };
+
+  const shortVersion = (id) => String(id || '').slice(0, 8);
+
+  // The reconciliation panel: what an uncertain regeneration may have made.
+  const buildReconcilePanel = (task, instance, pending) => {
+    const panel = rotateEl('div', 'cert-decision-panel');
+    panel.appendChild(rotateEl('h5', 'cert-decision-title', `Did the regeneration of ${pending.variable || 'this certificate'} happen?`));
+    panel.appendChild(rotateEl('p', 'cert-decision-text', 'The request to CredHub may or may not have made a new version. We list the versions it may have made, and we adopt one only if it passed its checks.'));
+    const candidates = Array.isArray(pending.candidates) ? pending.candidates : [];
+    if (candidates.length === 0) panel.appendChild(rotateEl('p', 'cert-decision-text', 'CredHub holds no version that this request could have made.'));
+    candidates.forEach((candidate) => {
+      const item = rotateEl('div', 'cert-candidate');
+      item.appendChild(rotateEl('div', 'cert-candidate-head', `Version ${shortVersion(candidate.version_id)}`));
+      const facts = [];
+      if (certDay(candidate.created_at)) facts.push(`Created ${certDay(candidate.created_at)}`);
+      facts.push(`Serial ${candidate.serial || 'unknown'}`);
+      facts.push(`Expires ${certDay(candidate.not_after) || 'unknown'}`);
+      item.appendChild(rotateEl('div', 'cert-candidate-facts', facts.join('. ')));
+      item.appendChild(checkList(candidate.checks));
+      if (candidate.valid) {
+        item.appendChild(decisionButton(task, instance, `adopt:${candidate.version_id}`, `Adopt version ${shortVersion(candidate.version_id)}`, () => {
+          runDecision(task, instance, `adopt:${candidate.version_id}`, async () => {
+            const answer = await showConfirmDialog({
+              title: `Adopt version ${shortVersion(candidate.version_id)}?`,
+              message: `The task will carry on with this version of ${pending.variable || 'the certificate'}.`,
+              confirmText: `Adopt version ${shortVersion(candidate.version_id)}`,
+              cancelText: 'Cancel'
+            });
+            return confirmedAnswer(answer)
+              ? { verb: 'reconcile', body: { variable: pending.variable, action: 'adopt', version_id: candidate.version_id } }
+              : null;
+          });
+        }, 'btn-primary btn-sm'));
+      } else {
+        item.appendChild(rotateEl('p', 'cert-decision-text', 'This version failed a check, so we cannot adopt it.'));
+      }
+      panel.appendChild(item);
+    });
+    const actions = rotateEl('div', 'cert-decision-actions');
+    actions.appendChild(decisionButton(task, instance, 'abandon', 'Abandon', () => {
+      runDecision(task, instance, 'abandon', async () => {
+        const answer = await showConfirmDialog({
+          title: 'Abandon this regeneration?',
+          message: `The task will not use any version found for ${pending.variable || 'this certificate'}.`,
+          confirmText: 'Abandon',
+          cancelText: 'Cancel',
+          danger: true
+        });
+        return confirmedAnswer(answer)
+          ? { verb: 'reconcile', body: { variable: pending.variable, action: 'abandon' } }
+          : null;
+      });
+    }));
+    panel.appendChild(actions);
+    return panel;
+  };
+
+  // The changed-effects panel: what differs from the preview.
+  const buildChangedEffectsPanel = (task, instance, pending) => {
+    const panel = rotateEl('div', 'cert-decision-panel');
+    panel.appendChild(rotateEl('h5', 'cert-decision-title', 'The effects changed since the preview'));
+    const changes = Array.isArray(pending.changes) ? pending.changes : [];
+    const list = rotateEl('ul', 'cert-decision-changes');
+    changes.forEach((change) => list.appendChild(rotateEl('li', '', String(change))));
+    panel.appendChild(list);
+    const mode = task.certificates && task.certificates.mode;
+    const actions = rotateEl('div', 'cert-decision-actions');
+    actions.appendChild(decisionButton(task, instance, 'preview', 'Preview again', () => {
+      runDecision(task, instance, 'preview', async () => {
+        const previewUrl = `/b/upgrade/tasks/${encodeURIComponent(task.id)}/instances/${encodeURIComponent(instance.instance_id)}/preview`;
+        const response = await fetch(previewUrl, { method: 'POST', headers: { Accept: 'application/json' } });
+        if (!response.ok) throw await readApiError(response);
+        const preview = await response.json();
+        if (!preview || !preview.preview_id) {
+          const error = new Error('The broker did not return a preview.');
+          error.code = 'invalid_request';
+          throw error;
+        }
+        const answer = await showConfirmDialog({
+          title: 'Approve the changed effects?',
+          message: 'Review what we are about to change, then approve it.',
+          details: buildPreviewDetails(preview, mode),
+          confirmText: 'Approve changes',
+          cancelText: 'Cancel',
+          danger: true
+        });
+        return confirmedAnswer(answer)
+          ? { verb: 'approve', body: { preview_id: preview.preview_id } }
+          : null;
+      });
+    }, 'btn-primary btn-sm'));
+    actions.appendChild(decisionButton(task, instance, 'skip', 'Skip this instance', () => {
+      runDecision(task, instance, 'skip', async () => {
+        const answer = await showConfirmDialog({
+          title: 'Skip this instance?',
+          message: `${certInstanceName(instance)} keeps its current certificates and the task moves on.`,
+          confirmText: 'Skip this instance',
+          cancelText: 'Cancel',
+          danger: true
+        });
+        return confirmedAnswer(answer)
+          ? { verb: 'approve', body: { action: 'skip' } }
+          : null;
+      });
+    }));
+    panel.appendChild(actions);
+    return panel;
+  };
+
+  // The deploy-outcome panel: Blacksmith could not learn how the deploy ended.
+  const buildDeployOutcomePanel = (task, instance) => {
+    const panel = rotateEl('div', 'cert-decision-panel');
+    panel.appendChild(rotateEl('h5', 'cert-decision-title', 'We could not learn how the deploy ended'));
+    panel.appendChild(rotateEl('p', 'cert-decision-text', 'Verify checks the instance now. Mark as failed frees the instance and fails it. Abandon leaves its outcome unknown and frees it.'));
+    const actions = rotateEl('div', 'cert-decision-actions');
+    actions.appendChild(decisionButton(task, instance, 'verify', 'Verify now', () => {
+      runDecision(task, instance, 'verify', async () => ({ verb: 'resolve', body: { action: 'verify' } }));
+    }, 'btn-primary btn-sm'));
+    [
+      ['failed', 'Mark as failed', 'Mark this instance as failed?', 'The instance fails and the task frees it. Nothing is rolled back.'],
+      ['abandon', 'Abandon', 'Abandon this instance?', 'The instance stays outcome unknown, and the task frees it. We record the decision in the audit log.']
+    ].forEach(([action, label, title, message]) => {
+      actions.appendChild(decisionButton(task, instance, action, label, () => {
+        runDecision(task, instance, action, async () => {
+          const answer = await showConfirmDialog({ title, message, confirmText: label, cancelText: 'Cancel', danger: true });
+          return confirmedAnswer(answer) ? { verb: 'resolve', body: { action } } : null;
+        });
+      }));
+    });
+    panel.appendChild(actions);
+    return panel;
+  };
+
+  const buildDecisionPanel = (task, instance) => {
+    const pending = instance.certificates && instance.certificates.pending_decision;
+    if (instance.status !== 'awaiting_decision' || !pending) return null;
+    if (pending.kind === 'reconcile_regeneration') return buildReconcilePanel(task, instance, pending);
+    if (pending.kind === 'approve_changed_effects') return buildChangedEffectsPanel(task, instance, pending);
+    if (pending.kind === 'resolve_deploy_outcome') return buildDeployOutcomePanel(task, instance);
+    return null;
+  };
+
+  // A failed certificate instance can be brought in line by a redeploy that
+  // picks up the versions CredHub already holds.
+  const buildRemediation = (task, instance) => {
+    const patch = task.certificates && task.certificates.mode === 'patch';
+    const label = patch ? 'Converge this instance' : 'Redeploy this instance';
+    const key = decisionKey(task.id, instance.instance_id);
+    const button = rotateEl('button', 'btn-secondary btn-sm', label);
+    button.type = 'button';
+    button.dataset.decisionAction = 'remediate';
+    button.dataset.decisionKey = key;
+    button.dataset.keepKey = `decision:${key}:remediate`;
+    button.addEventListener('click', async () => {
+      const result = await previewAndCreate({
+        mode: 'converge',
+        selections: [{ instance_id: instance.instance_id, variables: [] }],
+        origin: 'task-detail'
+      });
+      const resultHost = document.getElementById('rotate-result');
+      const errorShowing = Boolean(resultHost && resultHost.querySelector('[role="alert"]:not([hidden])'));
+      if (!errorShowing) focusDecisionControl(key, 'remediate');
+      return result;
+    });
+    return button;
+  };
+
+  // What one certificate instance shows under its name: the phase, each
+  // variable's old and new serial and expiry with its checks, and the
+  // decision it waits on or the remediation for a failure.
+  const buildCertificateInstance = (task, instance, error) => {
+    const wrap = rotateEl('div', 'cert-task-instance');
+    const rotation = instance.certificates;
+    if (rotation) {
+      wrap.appendChild(rotateEl('div', 'cert-task-phase', `Phase: ${rotation.phase || 'unknown'}`));
+      const variables = Array.isArray(rotation.variables) ? rotation.variables : [];
+      if (variables.length > 0) {
+        const list = rotateEl('ul', 'cert-task-variables');
+        variables.forEach((variable) => {
+          if (!variable) return;
+          const item = rotateEl('li', 'cert-task-variable');
+          item.appendChild(rotateEl('strong', 'cert-task-variable-name', String(variable.name || '')));
+          item.appendChild(rotateEl('div', 'cert-task-variable-serial', `Serial: was ${variable.old_serial || 'unknown'}, now ${variable.new_serial || 'not made yet'}`));
+          item.appendChild(rotateEl('div', 'cert-task-variable-expiry', `Expires: was ${certDay(variable.old_not_after) || 'unknown'}, now ${certDay(variable.new_not_after) || 'not made yet'}`));
+          if (variable.regenerate_state) item.appendChild(rotateEl('div', 'cert-task-variable-state', `Regeneration: ${String(variable.regenerate_state).replace(/_/g, ' ')}`));
+          if (Array.isArray(variable.validation) && variable.validation.length > 0) item.appendChild(checkList(variable.validation));
+          list.appendChild(item);
+        });
+        wrap.appendChild(list);
+      }
+    }
+    const panel = buildDecisionPanel(task, instance);
+    if (panel) wrap.appendChild(panel);
+    if (error) {
+      const box = rotateEl('div', 'cert-decision-error', error.text);
+      box.setAttribute('role', 'alert');
+      box.tabIndex = -1;
+      box.dataset.decisionError = decisionKey(task.id, instance.instance_id);
+      box.dataset.keepKey = `decision-error:${box.dataset.decisionError}`;
+      wrap.appendChild(box);
+    }
+    if (instance.status === 'failed') wrap.appendChild(buildRemediation(task, instance));
+    return wrap;
+  };
+
   // Render task detail view
   const renderTaskDetail = (task) => {
     const tasksContainer = document.querySelector('#upgrade .upgrade-tasks');
     if (!tasksContainer) return;
 
     const instances = task.instances || [];
-    const instancesHtml = instances.map(instance => {
+    const isCertificates = task.kind === 'certificates';
+    taskDetailCache.set(task.id, task);
+    const instancesHtml = instances.map((instance, index) => {
       const statusIcon = getInstanceStatusIcon(instance.status);
       const statusClass = getInstanceStatusClass(instance.status);
       const boshTaskId = Number(instance.bosh_task_id) || 0;
+      const rowKey = decisionKey(task.id, instance.instance_id);
+      const rowAttrs = isCertificates
+        ? ` data-decision-row="${escapeAttribute(rowKey)}" data-keep-key="inst:${escapeAttribute(rowKey)}" tabindex="-1"`
+        : '';
 
       return `
-        <div class="upgrade-task-instance ${statusClass}">
+        <div class="upgrade-task-instance ${statusClass}"${rowAttrs}>
           <span class="instance-status">${statusIcon}</span>
           <div class="instance-info">
             <div class="instance-id">${escapeHtml(instance.instance_name || instance.instance_id)}</div>
@@ -4928,6 +5312,7 @@
               ${boshTaskId ? `<button class="bosh-task-btn" onclick="showTaskDetails(${boshTaskId}, event)">BOSH Task: ${boshTaskId}</button>` : ''}
             </div>
             ${instance.error ? `<div class="instance-error">${escapeHtml(instance.error)}</div>` : ''}
+            ${isCertificates ? `<div class="cert-task-host" data-cert-index="${index}"></div>` : ''}
           </div>
         </div>
       `;
@@ -4937,6 +5322,10 @@
     const isRunning = task.status === 'running';
     const isPaused = task.status === 'paused';
     const canControl = isRunning || isPaused;
+    // A paused certificate task is still finishing its current VM or deploy
+    // while one of its instances runs.
+    const pauseRequested = isCertificates && isPaused && instances.some((instance) => instance && instance.status === 'running');
+    const hasFailedInstance = isCertificates && (Number(task.failed_count) > 0 || instances.some((instance) => instance && instance.status === 'failed'));
 
     // Build control buttons based on task status
     let controlButtonsHtml = '';
@@ -4944,13 +5333,12 @@
       controlButtonsHtml = `
         <div class="job-control-buttons">
           ${isRunning ? '<button type="button" class="job-control-btn pause-btn" data-task-action="pause" data-keep-key="action:pause">Pause</button>' : ''}
-          ${isPaused ? '<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">Resume</button>' : ''}
+          ${isPaused ? `<button type="button" class="job-control-btn resume-btn" data-task-action="resume" data-keep-key="action:resume">${hasFailedInstance ? 'Continue remaining instances' : 'Resume'}</button>` : ''}
           <button type="button" class="job-control-btn cancel-btn" data-task-action="cancel" data-keep-key="action:cancel">Cancel Job</button>
         </div>
       `;
     }
 
-    const isCertificates = task.kind === 'certificates';
     const targets = describeUpgradeTargets(task);
     const spec = task.certificates || {};
     const jobName = task.name || (isCertificates ? 'Certificate rotation' : `Upgrade to ${targets.label}`);
@@ -4988,8 +5376,12 @@
           ${targetRows}
           <div class="summary-row">
             <span class="label">Status:</span>
-            <span class="value status-${escapeAttribute(task.status)}">${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : ''}</span>
-          </div>
+            <span class="value status-${escapeAttribute(task.status)}">${isCertificates && isPaused ? (pauseRequested ? 'Pause requested' : 'Paused') : `${escapeHtml(task.status)}${isPaused ? ' (waiting to resume)' : ''}`}</span>
+          </div>${isCertificates && isPaused && hasFailedInstance ? `
+          <div class="summary-row">
+            <span class="label">Resume:</span>
+            <span class="value">Continue remaining instances. The failed instance is not retried.</span>
+          </div>` : ''}
           <div class="summary-row">
             <span class="label">Progress:</span>
             <span class="value">${Number(task.completed_count) || 0}/${Number(task.total_count) || 0} completed${task.failed_count ? `, ${Number(task.failed_count)} failed` : ''}${task.cancelled_count ? `, ${Number(task.cancelled_count)} cancelled` : ''}${task.skipped_count ? `, ${Number(task.skipped_count)} skipped` : ''}${task.unknown_count ? `, ${Number(task.unknown_count)} outcome unknown` : ''} (${progress}%)</span>
@@ -5005,6 +5397,14 @@
         </div>
       </div>
     `;
+      if (isCertificates) {
+        tasksContainer.querySelectorAll('.cert-task-host').forEach((host) => {
+          const instance = instances[Number(host.dataset.certIndex)];
+          if (!instance) return;
+          const state = decisionState.get(decisionKey(task.id, instance.instance_id));
+          host.appendChild(buildCertificateInstance(task, instance, state && state.error));
+        });
+      }
     });
 
     const actions = {
@@ -5029,6 +5429,7 @@
       case 'skipped': return '<span class="status-icon skipped">&#8594;</span>';
       case 'outcome_unknown': return '<span class="status-icon outcome-unknown">?</span>';
       case 'interrupted': return '<span class="status-icon interrupted">&#8214;</span>';
+      case 'awaiting_decision': return '<span class="status-icon awaiting-decision" role="img" aria-label="Awaiting decision" title="Awaiting decision">!</span>';
       default: return '';
     }
   };
@@ -5044,6 +5445,7 @@
       case 'skipped': return 'instance-skipped';
       case 'outcome_unknown': return 'instance-outcome-unknown';
       case 'interrupted': return 'instance-interrupted';
+      case 'awaiting_decision': return 'instance-awaiting-decision';
       default: return '';
     }
   };
@@ -5062,6 +5464,8 @@
       if (response.ok) {
         ensureTaskFeedback();
         window.Feedback.clear('upgrade-tasks');
+        const cached = taskDetailCache.get(taskId);
+        if (verb === 'pause' && cached && cached.kind === 'certificates') announce('Pause requested');
         fetchUpgradeTasks(); // Refresh the view
         return true;
       }
@@ -5089,13 +5493,29 @@
   window.cancelTask = async (taskId, event) => {
     if (event) event.stopPropagation();
 
-    const confirmed = await showConfirmDialog({
+    const cached = taskDetailCache.get(taskId);
+    const listed = upgradeTasks.find((task) => task.id === taskId);
+    const certificates = (cached && cached.kind === 'certificates') || (listed && listed.kind === 'certificates');
+    const patch = Boolean(cached && cached.certificates && cached.certificates.mode === 'patch');
+    let dialog = {
       title: 'Cancel Batch Job',
       message: 'Are you sure you want to cancel this job? This will cancel the current BOSH task and skip remaining instances.',
       confirmText: 'Cancel Job',
       cancelText: 'Keep Running',
       danger: true
-    });
+    };
+    if (certificates) {
+      dialog = {
+        title: 'Cancel certificate task',
+        message: patch
+          ? 'We finish the VM we are patching, then the task stops and the remaining VMs and instances are left as they are.'
+          : 'The running BOSH deploy is cancelled, so the instance may be partly rolled. The remaining instances are skipped.',
+        confirmText: patch ? 'Finish current VM and stop' : 'Cancel Job',
+        cancelText: 'Keep Running',
+        danger: true
+      };
+    }
+    const confirmed = await showConfirmDialog(dialog);
 
     if (!confirmed) return false;
 
