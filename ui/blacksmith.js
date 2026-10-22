@@ -3443,13 +3443,18 @@
       const rotation = rotateState.capabilities && rotateState.capabilities.rotation;
       const count = upgradeOperation === 'converge' ? summary.instances : summary.pairs - summary.stale;
       let blockedBy = '';
-      if (rotateState.busy) blockedBy = 'A preview is already under way.';
-      else if (rotateState.loadState === 'disabled') blockedBy = 'The certificate inventory is turned off.';
+      if (rotateState.loadState === 'disabled') blockedBy = 'The certificate inventory is turned off.';
       else if (rotation && rotation.enabled === false) blockedBy = rotation.reason || 'Certificate rotation is turned off.';
       else if (count <= 0) blockedBy = upgradeOperation === 'converge' ? 'Select at least one instance first.' : 'Select at least one certificate first.';
       button.textContent = rotateState.busy ? 'Previewing...' : rotateFooterLabel();
+      // A preview under way marks the button aria-disabled and leaves it
+      // enabled, so it keeps focus and the confirm dialog can hand focus
+      // back to it. startRotatePreview refuses a second run.
       button.disabled = blockedBy !== '';
-      if (blockedBy) button.title = blockedBy; else button.removeAttribute('title');
+      if (rotateState.busy) button.setAttribute('aria-disabled', 'true'); else button.removeAttribute('aria-disabled');
+      if (blockedBy) button.title = blockedBy;
+      else if (rotateState.busy) button.title = 'A preview is already under way.';
+      else button.removeAttribute('title');
     }
     renderRotateReview();
   };
@@ -3916,8 +3921,10 @@
   // task. Every rotate entry point calls this. The options are the mode
   // (redeploy, patch, or converge), the converge policy of a patch, the
   // selections as {instance_id, variables}, a task name and reason, an
-  // origin that names the entry point, and optionally a container for the
-  // result panel. It resolves {ok, task, existing}, {ok: false, cancelled},
+  // origin that labels the entry point, an optional onCreated(task, included)
+  // callback that runs after a create succeeds with the preview instances
+  // the task covers, and optionally a container for the result panel. It
+  // resolves {ok, task, existing}, {ok: false, cancelled},
   // or {ok: false, error}.
   const previewAndCreate = async (options = {}) => {
     const mode = ['redeploy', 'patch', 'converge'].includes(options.mode) ? options.mode : 'redeploy';
@@ -3995,7 +4002,7 @@
         reason: String(options.reason || '').trim()
       };
 
-      const outcome = await submitRotationCreate(createBody, converge, origin, host, report, () => previewAndCreate({ ...options, _note: PREVIEW_EXPIRED_NOTE }));
+      const outcome = await submitRotationCreate(createBody, converge, origin, host, report, () => previewAndCreate({ ...options, _note: PREVIEW_EXPIRED_NOTE }), included, options.onCreated);
       if (outcome.expired) {
         note = PREVIEW_EXPIRED_NOTE;
         continue;
@@ -4010,7 +4017,7 @@
   // reports expired so the caller opens a fresh one, and any other error
   // shows in the panel with a Retry that posts the same request again, with
   // the same client request ID.
-  const submitRotationCreate = async (createBody, converge, origin, host, report, reopen) => {
+  const submitRotationCreate = async (createBody, converge, origin, host, report, reopen, included, onCreated) => {
     try {
       const { status, body } = await rotatePostJSON('/b/upgrade/tasks', createBody);
       const existing = status === 200;
@@ -4021,16 +4028,15 @@
         });
         if (handle && handle.element) handle.element.dataset.origin = origin;
       }
-      if (origin === 'batch') {
-        if (converge) convergeSelected.clear(); else rotateSelection().clear();
-        rotateRefresh();
+      if (typeof onCreated === 'function') {
+        try { onCreated(body, included || []); } catch (callbackError) { console.error('onCreated failed', callbackError); }
       }
       fetchUpgradeTasks();
       return { ok: true, task: body, existing };
     } catch (err) {
       if (err && (err.code === 'preview_expired' || err.status === 410)) return { ok: false, expired: true };
       const retry = async () => {
-        const again = await submitRotationCreate(createBody, converge, origin, host, report, reopen);
+        const again = await submitRotationCreate(createBody, converge, origin, host, report, reopen, included, onCreated);
         if (again.expired) reopen();
       };
       report(converge ? 'The converge was not started' : 'The rotation was not started', rotateErrorText(err), retry);
@@ -4066,11 +4072,36 @@
         selections: Array.from(grouped.entries()).map(([instanceId, names]) => ({ instance_id: instanceId, variables: Array.from(names) })),
         name: rotateState.name,
         reason: rotateState.reason,
-        origin: 'batch'
+        origin: 'batch',
+        onCreated: (task, included) => {
+          // Clear only what the task took. An instance the preview left out
+          // keeps its selection so the operator can see why and retry.
+          const taken = new Set((included || []).map((instance) => instance && instance.instance_id));
+          if (converge) {
+            taken.forEach((id) => convergeSelected.delete(id));
+          } else {
+            const selection = rotateSelection();
+            taken.forEach((id) => {
+              const names = grouped.get(id);
+              const chosen = selection.get(id);
+              if (!names || !chosen) return;
+              names.forEach((name) => chosen.delete(name));
+              if (chosen.size === 0) selection.delete(id);
+            });
+          }
+          rotateRefresh();
+        }
       });
     } finally {
       rotateState.busy = false;
       updateOperationFooter();
+      const button = document.getElementById('rotate-preview');
+      const active = document.activeElement;
+      // The result panel (role region and alert) announces the outcome on
+      // its own, so focus goes back to the control the operator used.
+      const resultHost = document.getElementById('rotate-result');
+      const adrift = !active || active === document.body || Boolean(resultHost && resultHost.contains(active));
+      if (button && !button.disabled && adrift) button.focus({ preventScroll: true });
     }
   };
 
