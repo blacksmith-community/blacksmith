@@ -1020,3 +1020,77 @@ func TestRegenerateFailedCandidateListingNeverResends(t *testing.T) {
 
 	expectReconcile(t, env, 0)
 }
+
+// A request that never reached CredHub, or that CredHub turned away for
+// its token, made no new version, so the task pauses with the leaf back
+// at not_sent and sends it again on resume. The instance does not fail,
+// and the message does not say that CredHub refused the regeneration.
+func TestRegenerateCredHubOutagePausesForRetry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		err     error
+		message string
+	}{
+		{
+			name:    "the connection could not be made",
+			err:     errors.New("CredHub regenerate: dial tcp 10.0.0.9:8844: connect: connection refused"),
+			message: "Blacksmith could not reach CredHub to regenerate redis_crt",
+		},
+		{
+			name:    "the token could not be fetched",
+			err:     errors.New("CredHub regenerate: fetching a UAA token: 503 Service Unavailable"),
+			message: "Blacksmith could not reach CredHub to regenerate redis_crt",
+		},
+		{
+			name:    "CredHub did not accept the token",
+			err:     &credhub.APIError{Op: "regenerate", Status: http.StatusUnauthorized},
+			message: "CredHub did not accept Blacksmith's token when asked to regenerate redis_crt",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := newRegenEnv(t)
+			env.credhub.answer(func(string) (*credhub.RegenerateResult, error) { return nil, tc.err })
+
+			stop, err := env.run()
+			if !stop {
+				t.Fatal("expected the step to stop")
+			}
+
+			expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable)
+			expectSavedState(t, env, RegenerateNotSent, RegenerateNotSent)
+
+			task := env.current()
+			inst := task.Instances[0]
+
+			if task.Status != TaskStatusPaused || inst.Status != InstanceStatusRunning {
+				t.Fatalf("expected the task paused and the instance resumable, got %s and %s", task.Status, inst.Status)
+			}
+
+			if !strings.Contains(inst.Error, tc.message) || !strings.Contains(inst.Error, "made no new version") || strings.Contains(inst.Error, "CredHub refused") {
+				t.Fatalf("expected an accurate message, got %q", inst.Error)
+			}
+
+			// Once CredHub answers, resuming sends the request again.
+			env.credhub.answer(func(string) (*credhub.RegenerateResult, error) {
+				env.reissue(t, regenLeaf, "v2", func(*certSpec) {})
+
+				return &credhub.RegenerateResult{VersionID: "v2"}, nil
+			})
+
+			stop, err = env.run()
+			if stop || err != nil {
+				t.Fatalf("expected the resumed step to go on, got stop %v and %v", stop, err)
+			}
+
+			if n := env.credhub.regenerateCount(); n != 2 {
+				t.Fatalf("expected a second request on resume, got %d", n)
+			}
+		})
+	}
+}
