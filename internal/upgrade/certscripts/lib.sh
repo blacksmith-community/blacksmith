@@ -23,10 +23,10 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-readonly EXIT_USAGE=2
-readonly EXIT_DRIFT=10
-readonly EXIT_BACKUP=11
-readonly EXIT_RESTART=12
+# The scripts that follow this library use these, so shellcheck cannot
+# see the uses from here.
+# shellcheck disable=SC2034
+readonly EXIT_USAGE=2 EXIT_DRIFT=10 EXIT_BACKUP=11 EXIT_RESTART=12
 readonly EXIT_REFUSED=13
 
 # norm_hash prints the lowercase hex SHA-256 of a file after the same
@@ -50,4 +50,174 @@ norm_hash() {
 	# appears on a command line.
 	text=$(tr -d '\r' < "$file" | sed -e 's/[[:blank:]]*$//') || return 1
 	printf '%s\n' "$text" | sha256sum | cut -d ' ' -f 1
+}
+
+# The path validators. Each one returns 0 when it accepts and 13 when it
+# refuses, and a script exits with that code before it touches the path.
+# The patterns are the ones in paths.go. The checks of the VM's files
+# then add what only the VM can see.
+#
+# CERTPATCH_ROOT lets the tests put the VM's files under a temporary
+# directory. sudo resets the environment, so in production it is unset
+# and every path is the real one.
+
+readonly CP_LOGICAL_RE='^/var/vcap/jobs/[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$'
+readonly CP_PINNED_RE='^/var/vcap/data/jobs/[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+$'
+readonly CP_JOBDIR_RE='^/var/vcap/data/jobs/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+readonly CP_TASK_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+readonly CP_WORK_TAIL_RE='^[sb]/(0|[1-9][0-9]{0,8})$'
+readonly CP_MAX_PATH=1024
+readonly CP_WORK_ROOT=/var/vcap/data/certpatch
+
+# _cp_shaped <path> <pattern> accepts a path of the right length that
+# matches the pattern and has no empty, ".", or ".." segment.
+_cp_shaped() {
+	[ "${#1}" -le "$CP_MAX_PATH" ] || return 1
+	[[ $1 =~ $2 ]] || return 1
+
+	case "$1/" in
+	*//* | */./* | */../*) return 1 ;;
+	esac
+}
+
+# _cp_root prints the canonical test root, or nothing in production.
+_cp_root() {
+	local root=${CERTPATCH_ROOT:-}
+
+	[ -n "$root" ] || return 0
+	root=$(realpath -e -- "$root") || return 1
+	[ -d "$root" ] || return 1
+	[ "$root" = / ] && root=
+	printf '%s' "$root"
+}
+
+# _cp_root_dir <dir> accepts a directory owned by root that is not a
+# symlink. stat reports on the name itself, not on what it points to.
+_cp_root_dir() {
+	[ -d "$1" ] && [ ! -L "$1" ] || return 1
+	[ "$(stat -c %u -- "$1")" = 0 ]
+}
+
+# _cp_private_dir <dir> accepts a root-owned directory, not a symlink,
+# whose mode is exactly 0700.
+_cp_private_dir() {
+	_cp_root_dir "$1" || return 1
+	[ "$(stat -c %a -- "$1")" = 700 ]
+}
+
+# _cp_make_private <dir> creates a private directory with plain mkdir,
+# never mkdir -p, or accepts one that already exists only when it is
+# private. A name that appears between the check and mkdir makes mkdir
+# fail, which refuses.
+_cp_make_private() {
+	if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+		mkdir -m 0700 -- "$1" 2> /dev/null || return 1
+	fi
+
+	_cp_private_dir "$1"
+}
+
+# valid_task <task> accepts only a lowercase canonical UUID.
+valid_task() {
+	[ "$#" -eq 1 ] || return "$EXIT_REFUSED"
+	[[ $1 =~ $CP_TASK_RE ]] || return "$EXIT_REFUSED"
+}
+
+# valid_logical <path> accepts a path under /var/vcap/jobs/<job>/. Only
+# discovery reports such paths, and nothing writes to one.
+valid_logical() {
+	[ "$#" -eq 1 ] || return "$EXIT_REFUSED"
+	_cp_shaped "$1" "$CP_LOGICAL_RE" || return "$EXIT_REFUSED"
+}
+
+# valid_pinned <path> <jobdir> accepts a certificate or key file under
+# the job's resolved directory that discovery recorded. On top of the
+# pattern it requires that /var/vcap/jobs/<job> is a symlink that still
+# points at jobdir, that every directory from jobdir down to the file is
+# owned by root and is not a symlink, and that the file is a regular file
+# whose real path is the path itself.
+valid_pinned() {
+	[ "$#" -eq 2 ] || return "$EXIT_REFUSED"
+
+	local path=$1 jobdir=$2 root rest job link dir sub full real
+
+	_cp_shaped "$jobdir" "$CP_JOBDIR_RE" || return "$EXIT_REFUSED"
+	_cp_shaped "$path" "$CP_PINNED_RE" || return "$EXIT_REFUSED"
+	[[ $path == "$jobdir"/* ]] || return "$EXIT_REFUSED"
+
+	root=$(_cp_root) || return "$EXIT_REFUSED"
+
+	rest=${jobdir#/var/vcap/data/jobs/}
+	job=${rest%%/*}
+	link=$root/var/vcap/jobs/$job
+	[ -L "$link" ] || return "$EXIT_REFUSED"
+	[ "$(readlink -- "$link")" = "$root$jobdir" ] || return "$EXIT_REFUSED"
+
+	dir=$jobdir
+	sub=${path#"$jobdir"/}
+	_cp_root_dir "$root$dir" || return "$EXIT_REFUSED"
+
+	while [[ $sub == */* ]]; do
+		dir=$dir/${sub%%/*}
+		sub=${sub#*/}
+		_cp_root_dir "$root$dir" || return "$EXIT_REFUSED"
+	done
+
+	full=$root$path
+	[ -f "$full" ] && [ ! -L "$full" ] || return "$EXIT_REFUSED"
+	real=$(realpath -e -- "$full") || return "$EXIT_REFUSED"
+	[ "$real" = "$full" ] || return "$EXIT_REFUSED"
+}
+
+# valid_work <path> <task> accepts only the task's staging path s/<n> or
+# backup path b/<n>. It requires that the certpatch directory, the task's
+# directory, and the s or b directory are all private to root and none
+# is a symlink, and that anything already at the path is a regular file
+# and not a symlink.
+valid_work() {
+	[ "$#" -eq 2 ] || return "$EXIT_REFUSED"
+
+	local path=$1 task=$2 root tail full
+
+	valid_task "$task" || return "$EXIT_REFUSED"
+	[ "${#path}" -le "$CP_MAX_PATH" ] || return "$EXIT_REFUSED"
+	tail=${path#"$CP_WORK_ROOT/$task/"}
+	[ "$tail" != "$path" ] || return "$EXIT_REFUSED"
+	[[ $tail =~ $CP_WORK_TAIL_RE ]] || return "$EXIT_REFUSED"
+
+	root=$(_cp_root) || return "$EXIT_REFUSED"
+
+	_cp_private_dir "$root$CP_WORK_ROOT" || return "$EXIT_REFUSED"
+	_cp_private_dir "$root$CP_WORK_ROOT/$task" || return "$EXIT_REFUSED"
+	_cp_private_dir "$root$CP_WORK_ROOT/$task/${tail%%/*}" || return "$EXIT_REFUSED"
+
+	full=$root$path
+
+	if [ -e "$full" ] || [ -L "$full" ]; then
+		[ -f "$full" ] && [ ! -L "$full" ] || return "$EXIT_REFUSED"
+	fi
+}
+
+# make_work_dir <task> creates the task's private directory and its s
+# and b directories under /var/vcap/data/certpatch, after checking that
+# /var/vcap/data is a root-owned directory and not a symlink. A directory
+# that already exists is accepted only when it is root's, mode 0700, and
+# not a symlink, so a task that resumes reuses its own directory and a
+# planted one stops the script.
+make_work_dir() {
+	[ "$#" -eq 1 ] || return "$EXIT_REFUSED"
+
+	local task=$1 root base kind
+
+	valid_task "$task" || return "$EXIT_REFUSED"
+	root=$(_cp_root) || return "$EXIT_REFUSED"
+	base=$root$CP_WORK_ROOT
+
+	_cp_root_dir "$root/var/vcap/data" || return "$EXIT_REFUSED"
+	_cp_make_private "$base" || return "$EXIT_REFUSED"
+	_cp_make_private "$base/$task" || return "$EXIT_REFUSED"
+
+	for kind in s b; do
+		_cp_make_private "$base/$task/$kind" || return "$EXIT_REFUSED"
+	done
 }
