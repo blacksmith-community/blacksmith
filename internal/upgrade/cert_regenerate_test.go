@@ -148,20 +148,26 @@ func (v *regenVault) lastRecord(t *testing.T) UpgradeTask {
 
 // regenCredHub is an in-memory CredHub that logs each certificate read as
 // "read:<version>" and each regenerate request as "regenerate", and counts
-// the requests.
+// the requests. A read under an ended context fails, as the real client's
+// would, and failVersions fails the version listing of a name.
 type regenCredHub struct {
 	log *regenLog
 
-	mu          sync.Mutex
-	meta        map[string]credhub.CertificateMeta
-	versions    map[string][]credhub.CredentialVersion
-	pems        map[string]credhub.CertificatePublic
-	regenerate  func(certificateID string) (*credhub.RegenerateResult, error)
-	regenerates int
-	reads       []string
+	mu           sync.Mutex
+	meta         map[string]credhub.CertificateMeta
+	versions     map[string][]credhub.CredentialVersion
+	pems         map[string]credhub.CertificatePublic
+	failVersions map[string]error
+	regenerate   func(certificateID string) (*credhub.RegenerateResult, error)
+	regenerates  int
+	reads        []string
 }
 
-func (f *regenCredHub) CertificateMetadata(_ context.Context, name string) (*credhub.CertificateMeta, error) {
+func (f *regenCredHub) CertificateMetadata(ctx context.Context, name string) (*credhub.CertificateMeta, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("find %s: %w", name, err)
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -173,9 +179,17 @@ func (f *regenCredHub) CertificateMetadata(_ context.Context, name string) (*cre
 	return &meta, nil
 }
 
-func (f *regenCredHub) CredentialVersions(_ context.Context, name string, limit int) ([]credhub.CredentialVersion, error) {
+func (f *regenCredHub) CredentialVersions(ctx context.Context, name string, limit int) ([]credhub.CredentialVersion, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("versions of %s: %w", name, err)
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	if err := f.failVersions[name]; err != nil {
+		return nil, err
+	}
 
 	versions, ok := f.versions[name]
 	if !ok {
@@ -188,8 +202,12 @@ func (f *regenCredHub) CredentialVersions(_ context.Context, name string, limit 
 	return versions[:min(limit, len(versions))], nil
 }
 
-func (f *regenCredHub) CertificateVersion(_ context.Context, versionID string) (*credhub.CertificatePublic, error) {
+func (f *regenCredHub) CertificateVersion(ctx context.Context, versionID string) (*credhub.CertificatePublic, error) {
 	f.log.add("read:" + versionID)
+
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", versionID, err)
+	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -227,6 +245,19 @@ func (f *regenCredHub) addVersion(name, versionID string, createdAt time.Time, c
 		Certificate: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})),
 		CreatedAt:   createdAt,
 	}
+}
+
+// failVersionsOf makes the version listing of name fail with err, or
+// succeed again with a nil err.
+func (f *regenCredHub) failVersionsOf(name string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.failVersions == nil {
+		f.failVersions = make(map[string]error)
+	}
+
+	f.failVersions[name] = err
 }
 
 func (f *regenCredHub) regenerateCount() int {
@@ -379,7 +410,11 @@ func (e *regenEnv) setSwitches(rotation, patch bool) {
 func (e *regenEnv) inst() *InstanceUpgrade { return &e.task.Instances[0] }
 
 func (e *regenEnv) run() (bool, error) {
-	return e.manager.regenerateVariables(context.Background(), e.task, e.inst())
+	return e.runWith(context.Background())
+}
+
+func (e *regenEnv) runWith(ctx context.Context) (bool, error) {
+	return e.manager.regenerateVariables(ctx, e.task, e.inst())
 }
 
 // current returns a copy of the task as the manager holds it.
@@ -772,4 +807,216 @@ func TestRegenerateCertainErrorStopsBeforeLaterVariables(t *testing.T) {
 	if later := variables[1]; later.RegenerateState != RegenerateNotSent || later.Baseline != nil {
 		t.Fatalf("expected the later variable untouched, got %+v", later)
 	}
+}
+
+// expectSavedState checks the first variable's state in memory and in the
+// record the vault stored last.
+func expectSavedState(t *testing.T, env *regenEnv, memory, saved string) {
+	t.Helper()
+
+	if state := firstVariable(env.current()).RegenerateState; state != memory {
+		t.Fatalf("expected the variable at %s, got %s", memory, state)
+	}
+
+	if state := firstVariable(env.vault.lastRecord(t)).RegenerateState; state != saved {
+		t.Fatalf("expected %s saved, got %s", saved, state)
+	}
+}
+
+// A broker that stops while the request is in flight gets an uncertain
+// error under an ended context. That must reconcile and never go back to
+// not_sent, which would send the request again on the next start.
+func TestRegenerateUncertainDuringStopNeverResends(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	t.Cleanup(cancel)
+
+	env.credhub.answer(func(string) (*credhub.RegenerateResult, error) {
+		env.reissue(t, regenLeaf, "v2", func(*certSpec) {})
+		cancel()
+
+		return nil, &credhub.UncertainError{Op: "regenerate", Cause: "context canceled after the request was sent"}
+	})
+
+	stop, err := env.runWith(ctx)
+	if !stop || err == nil {
+		t.Fatalf("expected the step to stop with the ended context, got stop %v and %v", stop, err)
+	}
+
+	if n := env.credhub.regenerateCount(); n != 1 {
+		t.Fatalf("expected one regenerate request, got %d", n)
+	}
+
+	// The candidate listing can't run under the ended context, so Vault
+	// keeps sending, which the next start reconciles too.
+	expectSavedState(t, env, RegenerateOutcomeUnknown, RegenerateSending)
+
+	if status := env.current().Instances[0].Status; status == InstanceStatusFailed {
+		t.Fatal("expected the instance not to fail")
+	}
+
+	// Resuming lists the candidates and still sends nothing.
+	stop, err = env.run()
+	if !stop || err != nil {
+		t.Fatalf("expected the resumed step to stop for a decision, got stop %v and %v", stop, err)
+	}
+
+	expectReconcile(t, env, 1)
+}
+
+// A request that never reached CredHub because the broker was stopping
+// is certain, so the variable goes back to not_sent without failing the
+// instance.
+func TestRegenerateCertainErrorDuringStopGoesBackToNotSent(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	t.Cleanup(cancel)
+
+	env.credhub.answer(func(string) (*credhub.RegenerateResult, error) {
+		cancel()
+
+		return nil, fmt.Errorf("regenerate: %w", context.Canceled)
+	})
+
+	stop, err := env.runWith(ctx)
+	if !stop || !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the step to stop with the ended context, got stop %v and %v", stop, err)
+	}
+
+	if n := env.credhub.regenerateCount(); n != 1 {
+		t.Fatalf("expected one regenerate request, got %d", n)
+	}
+
+	expectSavedState(t, env, RegenerateNotSent, RegenerateNotSent)
+
+	if inst := env.current().Instances[0]; inst.Status != InstanceStatusRunning {
+		t.Fatalf("expected the instance still running, got %s: %q", inst.Status, inst.Error)
+	}
+}
+
+// An answer that names no version may still have made one, so it is
+// reconciled like an uncertain error.
+func TestRegenerateAnswerWithoutVersionReconciles(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	env.credhub.answer(func(string) (*credhub.RegenerateResult, error) {
+		env.reissue(t, regenLeaf, "v2", func(*certSpec) {})
+
+		return &credhub.RegenerateResult{Name: regenLeaf}, nil
+	})
+
+	stop, err := env.run()
+	if !stop || err != nil {
+		t.Fatalf("expected the step to stop for a decision, got stop %v and %v", stop, err)
+	}
+
+	expectReconcile(t, env, 1)
+}
+
+// A confirmed save that can't be confirmed pauses the task, and resuming
+// in the same process validates v2 without a second request.
+func TestRegenerateUnconfirmedConfirmedSaveResumesWithoutResending(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	env.vault.refuse = func(task UpgradeTask) bool { return firstVariable(task).RegenerateState == RegenerateConfirmed }
+
+	stop, err := env.run()
+	if !stop || !errors.Is(err, ErrSaveUnconfirmed) {
+		t.Fatalf("expected the step to stop with an unconfirmed save, got stop %v and %v", stop, err)
+	}
+
+	if task := env.current(); task.Status != TaskStatusPaused || !strings.Contains(task.Instances[0].Error, "could not confirm") {
+		t.Fatalf("expected the task paused for the save, got %s: %q", task.Status, task.Instances[0].Error)
+	}
+
+	expectSavedState(t, env, RegenerateConfirmed, RegenerateSending)
+
+	env.vault.script.Lock()
+	env.vault.refuse = nil
+	env.vault.script.Unlock()
+
+	stop, err = env.run()
+	if stop || err != nil {
+		t.Fatalf("expected the resumed step to go on, got stop %v and %v", stop, err)
+	}
+
+	if n := env.credhub.regenerateCount(); n != 1 {
+		t.Fatalf("expected one regenerate request in all, got %d", n)
+	}
+
+	saved := firstVariable(env.vault.lastRecord(t))
+	if saved.RegenerateState != RegenerateConfirmed || saved.NewVersionID != "v2" || !AllPassed(saved.Validation) || len(saved.Validation) == 0 {
+		t.Fatalf("expected v2 confirmed and validated, got %+v", saved)
+	}
+}
+
+// A baseline save that can't be confirmed sends nothing.
+func TestRegenerateUnconfirmedBaselineSendsNothing(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	env.vault.refuse = func(task UpgradeTask) bool { return firstVariable(task).RegenerateState == RegenerateNotSent }
+
+	stop, err := env.run()
+	if !stop || !errors.Is(err, ErrSaveUnconfirmed) {
+		t.Fatalf("expected the step to stop with an unconfirmed save, got stop %v and %v", stop, err)
+	}
+
+	if n := env.credhub.regenerateCount(); n != 0 {
+		t.Fatalf("expected no regenerate request, got %d", n)
+	}
+
+	if events := env.log.list(); slices.ContainsFunc(events, func(e string) bool { return strings.HasPrefix(e, "save:") }) {
+		t.Fatalf("expected nothing saved, got %v", events)
+	}
+
+	task := env.current()
+	if task.Status != TaskStatusPaused || firstVariable(task).RegenerateState != RegenerateNotSent {
+		t.Fatalf("expected the task paused with the leaf at not_sent, got %s and %s", task.Status, firstVariable(task).RegenerateState)
+	}
+}
+
+// A reconcile whose candidate listing fails stays in outcome_unknown, and
+// no later pass sends the request again.
+func TestRegenerateFailedCandidateListingNeverResends(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	env.reissue(t, regenLeaf, "v2", func(*certSpec) {})
+	env.setVariable(func(v *VariableRotation) {
+		v.Baseline = []string{"v1"}
+		v.RegenerateState = RegenerateSending
+	})
+	env.credhub.failVersionsOf(regenLeaf, &credhub.APIError{Op: "versions", Status: http.StatusServiceUnavailable})
+
+	for pass := range 2 {
+		stop, err := env.run()
+		if !stop {
+			t.Fatalf("pass %d: expected the step to stop", pass)
+		}
+
+		expectAPIError(t, err, http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable)
+		expectSavedState(t, env, RegenerateOutcomeUnknown, RegenerateOutcomeUnknown)
+
+		if task := env.current(); task.Status != TaskStatusPaused || task.Instances[0].Certificates.Pending != nil {
+			t.Fatalf("pass %d: expected the task paused with no decision yet, got %s and %+v", pass, task.Status, task.Instances[0].Certificates.Pending)
+		}
+	}
+
+	env.credhub.failVersionsOf(regenLeaf, nil)
+
+	stop, err := env.run()
+	if !stop || err != nil {
+		t.Fatalf("expected the step to stop for a decision, got stop %v and %v", stop, err)
+	}
+
+	expectReconcile(t, env, 0)
 }
