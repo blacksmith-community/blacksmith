@@ -11,6 +11,7 @@ import (
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/certinventory"
+	"blacksmith/internal/upgrade"
 	"blacksmith/pkg/http/response"
 	"blacksmith/pkg/logger"
 )
@@ -21,6 +22,8 @@ const (
 	scanStateRunning   = "running"
 	inventoryDisabled  = "Certificate inventory is off on this broker (certificates.inventory.enabled)."
 	scanUnavailableMsg = "The certificate scanner is not running."
+	noPreviewerMsg     = "Rotation previews are not available on this broker."
+	badPreviewBodyMsg  = "The preview body must be JSON with a mode and a list of selections."
 )
 
 // InventoryService is everything the inventory API reads from and asks of
@@ -35,21 +38,28 @@ type InventoryService interface {
 	Enabled() bool
 }
 
-// InventoryHandler serves the read-only certificate inventory API under
-// /b/certificates/.
+// RotationPreviewer builds rotation previews. The upgrade manager is one.
+type RotationPreviewer interface {
+	PreviewRotation(ctx context.Context, req upgrade.PreviewRequest) (*upgrade.Preview, error)
+}
+
+// InventoryHandler serves the certificate inventory API and the rotation
+// preview under /b/certificates/.
 type InventoryHandler struct {
-	svc InventoryService
-	log logger.Logger
+	svc       InventoryService
+	previewer RotationPreviewer
+	log       logger.Logger
 }
 
 // NewInventoryHandler returns a handler for the inventory API. A nil service
-// answers every request as if the inventory were switched off.
-func NewInventoryHandler(svc InventoryService, log logger.Logger) *InventoryHandler {
+// answers every request as if the inventory were switched off, and a nil
+// previewer answers a preview request with an internal error.
+func NewInventoryHandler(svc InventoryService, previewer RotationPreviewer, log logger.Logger) *InventoryHandler {
 	if log == nil {
 		log = logger.NewNoOpLogger()
 	}
 
-	return &InventoryHandler{svc: svc, log: log}
+	return &InventoryHandler{svc: svc, previewer: previewer, log: log}
 }
 
 // ServeHTTP resolves the route first, so a path that names no route answers
@@ -66,6 +76,8 @@ func (h *InventoryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		route = func() { h.inventory(w, r) }
 	case r.Method == http.MethodPost && path == "scan":
 		route = func() { h.scan(w, r) }
+	case r.Method == http.MethodPost && path == "rotation/preview":
+		route = func() { h.preview(w, r) }
 	case r.Method == http.MethodGet && len(segs) == 2 && segs[0] == "instances" && segs[1] != "":
 		route = func() { h.instance(w, r, segs[1]) }
 	case r.Method == http.MethodGet && len(segs) == 2 && segs[0] == "items" && segs[1] != "":
@@ -141,6 +153,39 @@ func (h *InventoryHandler) scan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.JSON(w, http.StatusAccepted, map[string]string{"scan_id": id, "state": scanStateRunning})
+}
+
+// preview answers a rotation preview. Every refusal comes from the manager
+// as an API error with its spec 9.4 status and code.
+func (h *InventoryHandler) preview(w http.ResponseWriter, r *http.Request) {
+	if h.previewer == nil {
+		apierr.Write(w, apierr.New(http.StatusInternalServerError, apierr.CodeInternal, noPreviewerMsg), http.StatusInternalServerError)
+
+		return
+	}
+
+	var req upgrade.PreviewRequest
+
+	err := json.NewDecoder(io.LimitReader(r.Body, maxInventoryBody)).Decode(&req)
+	if err != nil {
+		apierr.Write(w, apierr.New(http.StatusBadRequest, apierr.CodeNoSelections, badPreviewBodyMsg), http.StatusBadRequest)
+
+		return
+	}
+
+	preview, err := h.previewer.PreviewRotation(r.Context(), req)
+	if err != nil {
+		var apiErr *apierr.Error
+		if !errors.As(err, &apiErr) {
+			h.log.Errorf("certificate rotation preview failed: %v", err)
+		}
+
+		apierr.Write(w, err, http.StatusInternalServerError)
+
+		return
+	}
+
+	response.JSON(w, http.StatusOK, preview)
 }
 
 type instanceBody struct {

@@ -55,6 +55,9 @@ type Dependencies struct {
 	// Switches returns the certificate configuration switches as they stand
 	// now. When nil, rotation counts as off.
 	Switches func() config.CertificatesConfig
+	// Previews holds the rotation previews. The manager keeps its own
+	// store when it is nil.
+	Previews *upgrade.PreviewStore
 }
 
 // NewHandler creates a new upgrade handler. It applies the persisted
@@ -91,6 +94,7 @@ func configureManager(manager *upgrade.Manager, deps Dependencies) {
 		CredHub:      deps.CredHub,
 		CredHubState: deps.CredHubState,
 		Switches:     deps.Switches,
+		Previews:     deps.Previews,
 	}
 
 	if deps.Certificates != nil {

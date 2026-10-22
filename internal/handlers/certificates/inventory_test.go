@@ -81,7 +81,7 @@ func (f *fakeInventory) SaveSettings(_ context.Context, s certinventory.Settings
 func do(t *testing.T, svc *fakeInventory, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	h := certificates.NewInventoryHandler(svc, logger.NewNoOpLogger())
+	h := certificates.NewInventoryHandler(svc, nil, logger.NewNoOpLogger())
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	h.ServeHTTP(rec, req)

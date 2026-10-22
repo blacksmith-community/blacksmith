@@ -41,6 +41,9 @@ type Deps struct {
 	Settings func() certinventory.Settings
 	// Now returns the current time. It defaults to time.Now.
 	Now func() time.Time
+	// Previews holds the rotation previews. Configure gives the manager a
+	// store of its own when it is nil.
+	Previews *PreviewStore
 }
 
 // Configure gives the manager the dependencies its certificate tasks use. It
@@ -56,6 +59,10 @@ func (m *Manager) Configure(d Deps) error {
 
 	if d.Now == nil {
 		d.Now = time.Now
+	}
+
+	if d.Previews == nil {
+		d.Previews = NewPreviewStore(d.Now)
 	}
 
 	m.deps = d

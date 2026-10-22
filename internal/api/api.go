@@ -119,7 +119,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 
 	return apiHandlers{
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
-		inventory:         createInventoryHandler(deps),
+		inventory:         createInventoryHandler(deps, upgradeHandler.GetManager()),
 		cf:                cf.NewHandler(deps.Logger, deps.Config, deps.CFManager, deps.Vault),
 		instance:          instances.NewHandler(deps.Logger),
 		redis:             redis.NewHandler(deps.Logger, deps.Vault, deps.ServicesManager),
@@ -139,13 +139,13 @@ func createHandlers(deps Dependencies) apiHandlers {
 // createInventoryHandler hands the handler a true nil service when the broker
 // built none, because a nil *Service inside the interface would not compare
 // equal to nil.
-func createInventoryHandler(deps Dependencies) *certificates.InventoryHandler {
+func createInventoryHandler(deps Dependencies, previewer certificates.RotationPreviewer) *certificates.InventoryHandler {
 	var svc certificates.InventoryService
 	if deps.Certificates != nil {
 		svc = deps.Certificates
 	}
 
-	return certificates.NewInventoryHandler(svc, deps.Logger)
+	return certificates.NewInventoryHandler(svc, previewer, deps.Logger)
 }
 
 func createRabbitMQTestingHandler(deps Dependencies) *rabbitmqtesting.Handler {
@@ -266,6 +266,7 @@ func createUpgradeHandler(deps Dependencies) *upgradehandler.Handler {
 		CredHub:               credhubAPI,
 		Certificates:          deps.Certificates,
 		Switches:              deps.Switches,
+		Previews:              upgrade.NewPreviewStore(time.Now),
 	})
 }
 
