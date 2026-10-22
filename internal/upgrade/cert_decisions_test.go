@@ -866,3 +866,56 @@ func TestDecisionUnknownAction(t *testing.T) {
 
 	expectStillAwaiting(t, manager, StatusAwaitingDecision, DecisionApproveChangedEffects)
 }
+
+// A resolve's verification runs under the manager's context, so a client
+// that has gone away does not cut it short or fail the instance.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestResolveVerifyOutlivesRequest(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.load(env.awaitingOutcome())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := manager.ResolveDeployOutcome(ctx, certTaskID, waitInstanceID, ResolveRequest{Action: "verify"})
+	if err != nil {
+		t.Fatalf("ResolveDeployOutcome: %v", err)
+	}
+
+	if status := current(t, manager).Instances[0].Status; status != InstanceStatusSuccess {
+		t.Fatalf("expected the instance verified, got %s", status)
+	}
+
+	expectReleased(t, manager)
+}
+
+// A resolve's verification that finds the old version deployed fails the
+// instance with what it found, and frees it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestResolveVerifyFails(t *testing.T) {
+	env := newRedeployEnv(t)
+	stored := env.awaitingOutcome()
+
+	env.director.mu.Lock()
+	env.director.deployed = "v1"
+	env.director.mu.Unlock()
+
+	manager := env.load(stored)
+
+	err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "verify"})
+	if err != nil {
+		t.Fatalf("ResolveDeployOutcome: %v", err)
+	}
+
+	task := current(t, manager)
+	inst := task.Instances[0]
+
+	if inst.Status != InstanceStatusFailed || !strings.Contains(inst.Error, "not the new version v2") || task.FailedCount != 1 {
+		t.Fatalf("expected the instance failed for the old version, got %s: %q with %d failed", inst.Status, inst.Error, task.FailedCount)
+	}
+
+	expectReleased(t, manager)
+	waitUntil(t, "the task to finish", func() bool { return current(t, manager).Status == TaskStatusFailed })
+}

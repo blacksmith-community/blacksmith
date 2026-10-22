@@ -409,7 +409,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	case actionVerify:
 		m.mu.Unlock()
 
-		verifyErr := m.verifyRedeploy(ctx, inst)
+		verifyErr := m.verifyNow(inst)
 		if errors.Is(verifyErr, errVerifyUnreadable) {
 			return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 				"Blacksmith could not verify the deploy now, so the instance still waits for this decision: "+verifyErr.Error())
@@ -452,6 +452,22 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	m.resumeAfterDecision(ctx, task, req.Action != actionAbandon && !ok)
 
 	return nil
+}
+
+// verifyNow runs a resolve's verification of the instance's deploy under
+// the manager's context and its own deadline, so a client that goes away
+// does not fail the instance. A verification that ctx's end cut short
+// could not read what it checks, so the instance keeps waiting.
+func (m *Manager) verifyNow(inst *InstanceUpgrade) error {
+	ctx, cancel := context.WithTimeout(m.ctx, resolveVerifyTimeout)
+	defer cancel()
+
+	err := m.verifyRedeploy(ctx, inst)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, errVerifyUnreadable) {
+		return fmt.Errorf("%w: the verification did not finish within %v: %w", errVerifyUnreadable, resolveVerifyTimeout, err)
+	}
+
+	return err
 }
 
 // decisionsReady turns a decision away until the loader has put every

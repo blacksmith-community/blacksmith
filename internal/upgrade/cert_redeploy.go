@@ -46,6 +46,9 @@ const (
 	// rotation.
 	rescanTimeout = 2 * time.Minute
 
+	// resolveVerifyTimeout bounds the verification a resolve request runs.
+	resolveVerifyTimeout = 2 * time.Minute
+
 	// cancelledVerifyAttempts is how many times a cancelled task tries to
 	// verify a done deploy whose reads fail, waiting verifyInterval at
 	// first and twice as long each time after, up to maxVerifyBackoff.
