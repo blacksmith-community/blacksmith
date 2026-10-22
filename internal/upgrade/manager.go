@@ -2217,6 +2217,10 @@ type loadedDeploy struct {
 	contextID    string
 	unknownSince time.Time
 	cancelCh     chan struct{}
+
+	// ended is set for a certificate deploy whose end is on record, which
+	// is finished from that record without asking the director again.
+	ended bool
 }
 
 // settleLoadedTasks settles each instance of the loaded upgrades that is
@@ -2278,7 +2282,9 @@ func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
 
 	for _, deploy := range deploys {
 		if deploy.taskID > 0 {
-			m.adoptTask(deploy.taskID)
+			if !deploy.ended {
+				m.adoptTask(deploy.taskID)
+			}
 
 			continue
 		}
@@ -2376,6 +2382,7 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) (
 			taskID:       taskID,
 			contextID:    contextID,
 			unknownSince: unknownSince,
+			ended:        certificates && deployEnded(instance, taskID),
 		})
 	}
 
@@ -2507,6 +2514,8 @@ func (m *Manager) settleLoadedDeploy(deploy loadedDeploy) {
 	defer m.endSettling(deploy)
 
 	switch {
+	case deploy.ended:
+		m.finishRecordedDeploy(deploy)
 	case deploy.taskID > 0:
 		m.followDeployTask(m.ctx, deploy.task, deploy.instance, deploy.taskID, deploy.cancelCh)
 	case deploy.contextID != "":

@@ -1034,3 +1034,22 @@ func (m *Manager) pauseNeverStartedLocked(task *UpgradeTask) {
 
 	m.logger.Info("Certificate task %s changed nothing before Blacksmith restarted, so it loads paused until an operator resumes it", task.ID)
 }
+
+// finishRecordedDeploy ends the following of a loaded certificate deploy
+// whose end is already on record. It hands the recorded end to the
+// finisher without asking the director again, so a director that has
+// pruned the task, or a stop during the follow, can't turn a recorded done
+// into an unknown outcome.
+func (m *Manager) finishRecordedDeploy(deploy loadedDeploy) {
+	m.mu.RLock()
+	outcome := *deploy.instance.Certificates.Deploy
+	m.mu.RUnlock()
+
+	m.logger.Info("BOSH task %d of instance %s ended %s before Blacksmith stopped, so its outcome comes from the record",
+		outcome.BOSHTaskID, deploy.instance.InstanceID, outcome.State)
+
+	finished := &bosh.Task{ID: outcome.BOSHTaskID, State: outcome.State, Result: outcome.Result}
+
+	m.finishFollowedDeploy(m.ctx, deploy.task, deploy.instance, deploy.taskID, finished)
+	m.persistSettled(context.WithoutCancel(m.ctx), deploy.task)
+}

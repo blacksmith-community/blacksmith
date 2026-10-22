@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"slices"
@@ -616,9 +617,8 @@ func TestRedeployHoldsGuardUntilVerified(t *testing.T) {
 	expectReleased(t, manager)
 }
 
-// A restart after BOSH finished but before the verification follows the
-// finished task again, which ends at once, and then verifies, with no new
-// deploy.
+// A restart after BOSH finished but before the verification takes the
+// deploy's end from the record and then verifies, with no new deploy.
 //
 //nolint:paralleltest // the manager's loader shares test seams
 func TestRedeployRestartAfterDeployBeforeVerify(t *testing.T) {
@@ -1048,4 +1048,35 @@ func TestRedeployRestartMidDeployVerifies(t *testing.T) {
 	}
 
 	expectReleased(t, second)
+}
+
+// A restart that finds the deploy's end on record verifies from that
+// record, so a director that can no longer answer for the task does not
+// turn the done deploy into an unknown one.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployKeepsRecordedDeployEnd(t *testing.T) {
+	env := newRedeployEnv(t)
+	env.madeNewVersion()
+	env.deployedNewVersion()
+
+	env.director.finish = func(context.Context, int) (*bosh.Task, error) {
+		return nil, errors.New("director 500")
+	}
+
+	stored := env.deployedTask()
+	stored.Instances[0].Certificates.Deploy = &DeployOutcome{BOSHTaskID: redeployTaskID, State: boshTaskDone, FinishedAt: validateNow}
+
+	manager := env.load(stored)
+
+	task := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if task.Instances[0].Certificates.Phase != RotationPhaseDone {
+		t.Fatalf("expected phase done, got %s", task.Instances[0].Certificates.Phase)
+	}
+
+	if waits := env.director.waited(); len(waits) != 0 {
+		t.Fatalf("expected no wait on the finished task, got %v", waits)
+	}
+
+	expectReleased(t, manager)
 }
