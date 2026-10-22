@@ -528,7 +528,7 @@ func (b *Broker) Deprovision(
 	// accepted.
 	claim := &operationClaim{operation: operationTypeDeprovision, claimed: time.Now()}
 
-	held, claimed, err := b.claimOperation(instanceID, details.PlanID+"-"+instanceID, claim)
+	held, claimed, err := b.claimOperation(instanceID, b.deprovisionDeployment(ctx, instanceID, details.PlanID, logger), claim)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, guardBusyAnswer(instanceID, operationTypeDeprovision, err, logger)
 	}
@@ -1065,6 +1065,33 @@ func (b *Broker) claimOperation(instanceID, deployment string, claim *operationC
 	claim.release = release
 
 	return nil, true, nil
+}
+
+// deprovisionDeployment names the deployment a deprovision of instanceID
+// reserves in the mutation guard. It is the deployment the instance's index
+// entry records, which is the one the delete names, and the reconciler can
+// have moved it away from the plan's name. When the index has no entry, or
+// the entry can't be read, it is the deployment the plan and the instance
+// ID name, and the guard's instance key covers the instance either way.
+func (b *Broker) deprovisionDeployment(ctx context.Context, instanceID, planID string, logger logger.Logger) string {
+	fallback := planID + "-" + instanceID
+
+	if b.Guard == nil || b.Vault == nil {
+		return fallback
+	}
+
+	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
+	if err != nil {
+		logger.Warning("Could not read the index entry of instance %s, so its deprovision reserves deployment %s: %s", instanceID, fallback, err)
+
+		return fallback
+	}
+
+	if !exists {
+		return fallback
+	}
+
+	return deploymentNameForInstance(instanceID, instance)
 }
 
 // operationHolderKind names the guard holder kind of a claim's operation.

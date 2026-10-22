@@ -355,3 +355,48 @@ func TestReadoptHoldsGuard(t *testing.T) {
 
 	waitUntilFree(t, "re-adoption gives its claim up and frees the guard", brokerInstance, guard, fixture.instanceID)
 }
+
+// A deprovision reserves the deployment its instance records, which can
+// differ from the one the plan and the instance ID name, so a deployment
+// action on the recorded deployment refuses it.
+func TestDeprovisionReservesRecordedDeployment(t *testing.T) {
+	t.Parallel()
+
+	fixture := newDeprovisionFixture(t, "deprovision-recorded")
+	fixture.deployment = "recorded-" + fixture.instanceID
+
+	err := fixture.vault.Index(t.Context(), fixture.instanceID, map[string]interface{}{
+		serviceIDKey:      guardServiceID,
+		indexPlanIDKey:    guardPlanID,
+		deploymentNameKey: fixture.deployment,
+	})
+	if err != nil {
+		t.Fatalf("indexing the instance: %v", err)
+	}
+
+	guard := mutation.NewGuard(time.Now)
+
+	release, err := guard.Acquire("", fixture.deployment, mutation.Holder{
+		Kind:        mutation.KindDeploymentAction,
+		Description: "restart from the UI",
+	})
+	if err != nil {
+		t.Fatalf("holding the deployment: %v", err)
+	}
+	defer release()
+
+	brokerInstance := guardedBroker(t, fixture.director, fixture.vault, guard)
+
+	async, err := fixture.deprovision(t, brokerInstance)
+	if !errors.Is(err, osbapi.ErrConcurrencyError) || async {
+		t.Fatalf("Deprovision = async %v, err %v, want a ConcurrencyError", async, err)
+	}
+
+	if !strings.Contains(err.Error(), "restart from the UI") {
+		t.Fatalf("Deprovision error %q does not name the holder", err)
+	}
+
+	if calls := fixture.director.Calls("DeleteDeployment"); len(calls) != 0 {
+		t.Fatalf("the director got deletes %v, want none", calls)
+	}
+}
