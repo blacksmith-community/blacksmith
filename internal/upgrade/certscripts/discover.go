@@ -19,9 +19,9 @@ const SudoCheckCommand = "sudo -n true"
 // regenerated, when SudoCheckCommand fails.
 var ErrNoPasswordlessSudo = errors.New("passwordless sudo is not available for BOSH SSH users")
 
-// ErrPatchUnsafe is the error BuildConsumers wraps when discovery shows
-// that patching this VM in place is not safe, so the operator should
-// redeploy instead.
+// ErrPatchUnsafe is the error ParseDiscovery, BuildConsumers, and
+// RequireConsumers wrap when discovery shows that patching in place is
+// not safe, so the operator should redeploy instead.
 var ErrPatchUnsafe = errors.New("certscripts: patch in place is not safe on this VM")
 
 // Match is one file that discovery found. For a whole-file match, Path is
@@ -107,12 +107,38 @@ var (
 	errProcess      = errors.New("the process name is malformed")
 )
 
+// layoutError is a job laid out on the VM in a way that patching cannot
+// follow, as opposed to output that breaks the contract.
+type layoutError struct {
+	job string
+	err error
+}
+
+func (e *layoutError) Error() string { return e.err.Error() }
+
+func (e *layoutError) Unwrap() error { return e.err }
+
+// lineError wraps the fault in a line of discovery output. A job's layout
+// wraps ErrPatchUnsafe and names the job, so the operator is told to
+// redeploy, and every other fault wraps ErrMalformedOutput.
+func lineError(line int, err error) error {
+	var layout *layoutError
+	if errors.As(err, &layout) {
+		return fmt.Errorf("%w: the job %s is laid out in a way patching cannot follow (line %d): %w",
+			ErrPatchUnsafe, layout.job, line, layout.err)
+	}
+
+	return fmt.Errorf("%w: line %d: %w", ErrMalformedOutput, line, err)
+}
+
 // ParseDiscovery reads discover.sh output. It checks every line, and it
 // runs ValidPinnedTarget on every match and every embedded file against
-// its job's jobdir line, so a file outside its job's resolved directory,
-// a job directory that is not /var/vcap/data/jobs/<job>/<version>, and a
-// value the script printed as ! all reject the whole output. Matches and
-// embedded files come back sorted by job and path.
+// its job's jobdir line. A file outside its job's resolved directory, a
+// job directory that is not /var/vcap/data/jobs/<job>/<version>, and a
+// path the script printed as ! reject the whole output with an error that
+// wraps ErrPatchUnsafe and names the job. Any other fault rejects it with
+// ErrMalformedOutput. Matches and embedded files come back sorted by job
+// and path.
 func ParseDiscovery(out []byte) (*Discovery, error) {
 	records, err := ParseRecords(out, discoveryKinds())
 	if err != nil {
@@ -130,14 +156,14 @@ func ParseDiscovery(out []byte) (*Discovery, error) {
 
 		err := found.addJobDir(record.Fields)
 		if err != nil {
-			return nil, fmt.Errorf("%w: line %d: %w", ErrMalformedOutput, record.Line, err)
+			return nil, lineError(record.Line, err)
 		}
 	}
 
 	for _, record := range records {
 		err := found.add(record)
 		if err != nil {
-			return nil, fmt.Errorf("%w: line %d: %w", ErrMalformedOutput, record.Line, err)
+			return nil, lineError(record.Line, err)
 		}
 	}
 
@@ -176,7 +202,7 @@ func (d *Discovery) addJobDir(pairs map[string]string) error {
 	}
 
 	if !shaped(path, jobDirPath) || !strings.HasPrefix(path, "/var/vcap/data/jobs/"+job+"/") {
-		return errJobDir
+		return &layoutError{job: job, err: errJobDir}
 	}
 
 	if _, seen := d.JobDirs[job]; seen {
@@ -243,7 +269,7 @@ func (d *Discovery) file(pairs map[string]string, whole bool) (Match, error) {
 
 	err = ValidPinnedTarget(match.Path, jobDir)
 	if err != nil {
-		return Match{}, err
+		return Match{}, &layoutError{job: match.Job, err: err}
 	}
 
 	if !hashValue.MatchString(match.Hash) {

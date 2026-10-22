@@ -36,6 +36,7 @@ const (
 
 	valkeyJob     = "valkey"
 	bpmJob        = "bpm"
+	redisJob      = "redis"
 	otherVariable = "other_tls"
 	noConsumer    = "no consumer"
 )
@@ -439,25 +440,17 @@ func TestParseDiscoveryRejects(t *testing.T) {
 	fields := " hash=" + hashA + " owner=root:root mode=0644 rootdirs=yes"
 
 	bad := map[string]string{
-		"match outside its job":      match("path=" + bpmJobDir + "/x.crt" + fields),
-		"match through ..":           match("path=" + valkeyJobDir + "/../x.crt" + fields),
-		"match with a refused path":  match("path=!" + fields),
-		"match with no jobdir":       "match job=redis path=/var/vcap/data/jobs/redis/1/x.crt" + fields + "\n",
-		"match with a short hash":    match("path=" + valkeyCert + " hash=abc owner=root:root mode=0644 rootdirs=yes"),
-		"match with a bad mode":      match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=644 rootdirs=yes"),
-		"match with a bad rootdirs":  match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=0644 rootdirs=maybe"),
-		"match with a bad owner":     match("path=" + valkeyCert + " hash=" + hashA + " owner=root mode=0644 rootdirs=yes"),
-		"match missing a field":      match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=0644"),
-		"embedded outside its job":   "embedded job=valkey path=/etc/x.pem hash=" + hashA + "\n",
-		"jobdir with a refused path": "jobdir job=redis path=!\n",
-		"jobdir of another job":      "jobdir job=redis path=" + bpmJobDir + "\n",
-		"jobdir with a colon":        "jobdir job=redis path=/var/vcap/data/jobs/redis/a:b\n",
-		"jobdir repeated":            "jobdir job=valkey path=" + valkeyJobDir + "\n",
-		"jobdir one level up":        "jobdir job=redis path=/var/vcap/data/jobs/redis\n",
-		"unknown kind":               "secret job=valkey\n",
-		"bare kind":                  "match\n",
-		"proc with a bad name":       "proc job=valkey name=-c\n",
-		"control character":          "proc job=valkey name=a\x1bb\n",
+		"match with no jobdir":      "match job=redis path=/var/vcap/data/jobs/redis/1/x.crt" + fields + "\n",
+		"match with a short hash":   match("path=" + valkeyCert + " hash=abc owner=root:root mode=0644 rootdirs=yes"),
+		"match with a bad mode":     match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=644 rootdirs=yes"),
+		"match with a bad rootdirs": match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=0644 rootdirs=maybe"),
+		"match with a bad owner":    match("path=" + valkeyCert + " hash=" + hashA + " owner=root mode=0644 rootdirs=yes"),
+		"match missing a field":     match("path=" + valkeyCert + " hash=" + hashA + " owner=root:root mode=0644"),
+		"jobdir repeated":           "jobdir job=valkey path=" + valkeyJobDir + "\n",
+		"unknown kind":              "secret job=valkey\n",
+		"bare kind":                 "match\n",
+		"proc with a bad name":      "proc job=valkey name=-c\n",
+		"control character":         "proc job=valkey name=a\x1bb\n",
 	}
 
 	for name, extra := range bad {
@@ -474,6 +467,51 @@ func TestParseDiscoveryRejects(t *testing.T) {
 
 		if !errors.Is(err, certscripts.ErrMalformedOutput) {
 			t.Errorf("%s: error %v is not ErrMalformedOutput", name, err)
+		}
+	}
+}
+
+// TestParseDiscoveryRefusesLayout shows that a job laid out in a way
+// patching cannot follow, as opposed to output that breaks the contract,
+// is refused as unsafe to patch, with the job named, so the operator is
+// told to redeploy.
+func TestParseDiscoveryRefusesLayout(t *testing.T) {
+	t.Parallel()
+
+	good := discoveryText(hashA, hashB)
+	match := func(rest string) string { return "match job=valkey " + rest + "\n" }
+	fields := " hash=" + hashA + " owner=root:root mode=0644 rootdirs=yes"
+
+	for name, row := range map[string]struct {
+		extra string
+		job   string
+	}{
+		"match outside its job":      {match("path=" + bpmJobDir + "/x.crt" + fields), valkeyJob},
+		"match through ..":           {match("path=" + valkeyJobDir + "/../x.crt" + fields), valkeyJob},
+		"match with a refused path":  {match("path=!" + fields), valkeyJob},
+		"embedded outside its job":   {"embedded job=valkey path=/etc/x.pem hash=" + hashA + "\n", valkeyJob},
+		"jobdir with a refused path": {"jobdir job=redis path=!\n", redisJob},
+		"jobdir of another job":      {"jobdir job=redis path=" + bpmJobDir + "\n", redisJob},
+		"jobdir with a colon":        {"jobdir job=redis path=/var/vcap/data/jobs/redis/a:b\n", redisJob},
+		"jobdir one level up":        {"jobdir job=redis path=/var/vcap/data/jobs/redis\n", redisJob},
+	} {
+		found, err := certscripts.ParseDiscovery([]byte(good + row.extra))
+		if found != nil {
+			t.Errorf("%s: ParseDiscovery returned a result with its error", name)
+		}
+
+		if !errors.Is(err, certscripts.ErrPatchUnsafe) {
+			t.Errorf("%s: error %v is not ErrPatchUnsafe", name, err)
+
+			continue
+		}
+
+		if errors.Is(err, certscripts.ErrMalformedOutput) {
+			t.Errorf("%s: error %v is ErrMalformedOutput too", name, err)
+		}
+
+		if !strings.Contains(err.Error(), "the job "+row.job+" ") {
+			t.Errorf("%s: error %q does not name the job %s", name, err, row.job)
 		}
 	}
 }
