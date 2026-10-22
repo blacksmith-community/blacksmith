@@ -26,6 +26,7 @@ import (
 	"blacksmith/internal/inflight"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/manifest"
+	"blacksmith/internal/mutation"
 	"blacksmith/internal/planstore"
 	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
@@ -154,6 +155,12 @@ type Broker struct {
 	// from it. When nil, that work runs under context.Background().
 	ServiceContext context.Context
 
+	// Guard is the broker's one mutation guard, which upgrades, certificate
+	// work, and deployment actions share. A provision or deprovision holds
+	// it for the instance as long as it holds the operation claim. When
+	// nil, the broker reserves nothing in a guard.
+	Guard *mutation.Guard
+
 	// VM monitoring integration
 	vmMonitor interfaces.VMMonitor
 
@@ -238,6 +245,11 @@ type operationClaim struct {
 	// operation a previous run of the broker started. It holds no request,
 	// so a repeated provision is answered from the stored instance.
 	readopted bool
+
+	// release frees the claim's reservation in the mutation guard. It is
+	// set once the claim is taken, before any other goroutine can give the
+	// claim up, and is nil when the broker has no guard.
+	release func()
 }
 
 // IsBroker implements the interfaces.Broker interface.
@@ -427,7 +439,11 @@ func (b *Broker) Provision(
 	// provision must not run alongside a deprovision of the same ID.
 	claim := &operationClaim{operation: operationTypeProvision, request: copyProvisionRequest(details), claimed: time.Now()}
 
-	held, claimed := b.claimOperation(instanceID, claim)
+	held, claimed, err := b.claimOperation(instanceID, details.PlanID+"-"+instanceID, claim)
+	if err != nil {
+		return osbapi.ProvisionResponse{}, false, guardBusyAnswer(instanceID, operationTypeProvision, err, logger)
+	}
+
 	if !claimed {
 		return b.answerProvisionWhileClaimed(ctx, instanceID, details, held, logger)
 	}
@@ -512,7 +528,11 @@ func (b *Broker) Deprovision(
 	// accepted.
 	claim := &operationClaim{operation: operationTypeDeprovision, claimed: time.Now()}
 
-	held, claimed := b.claimOperation(instanceID, claim)
+	held, claimed, err := b.claimOperation(instanceID, details.PlanID+"-"+instanceID, claim)
+	if err != nil {
+		return osbapi.DeprovisionResponse{}, false, guardBusyAnswer(instanceID, operationTypeDeprovision, err, logger)
+	}
+
 	if !claimed {
 		return b.answerDeprovisionWhileClaimed(instanceID, held, logger)
 	}
@@ -1006,28 +1026,82 @@ func (b *Broker) GetInstanceLock(instanceID string) *sync.Mutex {
 	return mutexForInstance
 }
 
-// claimOperation claims instanceID for claim's operation in one atomic step.
+// claimOperation claims instanceID for claim's operation in one atomic step,
+// and then reserves the instance and its deployment in the mutation guard.
 // It reports whether the claim was taken. When it was not, it returns the
 // claim another operation holds, or nil when the stored value is not a claim.
-func (b *Broker) claimOperation(instanceID string, claim *operationClaim) (*operationClaim, bool) {
+//
+// The claim comes first, so a request that repeats an operation this
+// process already runs is answered from that operation's claim, as it was
+// before the guard existed, and never finds the instance busy with its
+// own operation. When another holder has the guard, the claim is given up
+// at once and the guard's *mutation.BusyError is returned, which names that
+// holder.
+func (b *Broker) claimOperation(instanceID, deployment string, claim *operationClaim) (*operationClaim, bool, error) {
 	stored, loaded := b.activeOperations.LoadOrStore(instanceID, claim)
-	if !loaded {
-		return nil, true
+	if loaded {
+		held, ok := stored.(*operationClaim)
+		if !ok {
+			return nil, false, nil
+		}
+
+		return held, false, nil
 	}
 
-	held, ok := stored.(*operationClaim)
-	if !ok {
-		return nil, false
+	if b.Guard == nil {
+		return nil, true, nil
 	}
 
-	return held, false
+	release, err := b.Guard.Acquire(instanceID, deployment, mutation.Holder{
+		Kind:        operationHolderKind(claim.operation),
+		Description: claim.operation + " of " + instanceID,
+	})
+	if err != nil {
+		b.activeOperations.CompareAndDelete(instanceID, claim)
+
+		return nil, false, fmt.Errorf("reserving instance %s for its %s: %w", instanceID, claim.operation, err)
+	}
+
+	claim.release = release
+
+	return nil, true, nil
 }
 
-// releaseOperation gives up claim on instanceID. It removes the stored claim
-// only when it is this one, so it can never remove a claim another operation
-// took after this one.
+// operationHolderKind names the guard holder kind of a claim's operation.
+func operationHolderKind(operation string) mutation.HolderKind {
+	if operation == operationTypeDeprovision {
+		return mutation.KindDeprovision
+	}
+
+	return mutation.KindProvision
+}
+
+// releaseOperation gives up claim on instanceID, and frees its reservation
+// in the mutation guard. It removes the stored claim only when it is this
+// one, so it can never remove a claim another operation took after this
+// one, and the guard's release frees only this claim's reservation.
 func (b *Broker) releaseOperation(instanceID string, claim *operationClaim) {
 	b.activeOperations.CompareAndDelete(instanceID, claim)
+
+	if claim.release != nil {
+		claim.release()
+	}
+}
+
+// guardBusyAnswer is the 422 ConcurrencyError a provision or deprovision
+// gets while another operation holds the instance in the mutation guard,
+// so the platform retries it later.
+func guardBusyAnswer(instanceID, operation string, err error, logger logger.Logger) error {
+	holder := "another operation"
+
+	var busy *mutation.BusyError
+	if errors.As(err, &busy) {
+		holder = busy.Holder.Description
+	}
+
+	logger.Warning("Rejecting %s of instance %s: %s holds the instance", operation, instanceID, holder)
+
+	return fmt.Errorf("%w: instance %s is busy with %s", osbapi.ErrConcurrencyError, instanceID, holder)
 }
 
 // operationActive reports whether an operation of the given type holds the

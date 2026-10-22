@@ -109,8 +109,8 @@ func (b *Broker) ProvisionActive(instanceID string) bool {
 func (b *Broker) HoldOperationClaim(instanceID, operation string) func() {
 	claim := &operationClaim{operation: operation, claimed: time.Now()}
 
-	_, claimed := b.claimOperation(instanceID, claim)
-	if !claimed {
+	_, claimed, err := b.claimOperation(instanceID, "", claim)
+	if err != nil || !claimed {
 		panic("an operation claim is already held on instance " + instanceID)
 	}
 

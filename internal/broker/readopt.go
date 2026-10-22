@@ -175,8 +175,14 @@ func (b *Broker) ReadoptInFlightOperations(ctx context.Context) error {
 		claim := &operationClaim{operation: operation.recorded.Action, claimed: loaded, readopted: true}
 		claim.launched.Store(true)
 
-		held, ok := b.claimOperation(operation.instanceID, claim)
-		if !ok {
+		held, taken, err := b.claimOperation(operation.instanceID, operation.deploymentName, claim)
+		if err != nil {
+			logger.Error("Instance %s is held in the mutation guard, so its recorded %s is not re-adopted: %s", operation.instanceID, operation.recorded.Action, err)
+
+			continue
+		}
+
+		if !taken {
 			heldOperation := "an operation"
 			if held != nil {
 				heldOperation = "a " + held.operation

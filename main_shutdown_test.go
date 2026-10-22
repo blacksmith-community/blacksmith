@@ -513,7 +513,7 @@ func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logge
 	// manager with no endpoints.
 	cfManager := internalCF.NewManagerFromExternal(nil, logger)
 
-	apiHandler, upgradeHandler := createAPIHandler(cfg, brokerInstance, vault, boshDirector, batchDirector, cfManager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
+	apiHandler, upgradeHandler := createAPIHandler(cfg, brokerInstance, vault, boshDirector, batchDirector, cfManager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
 
 	_, cancel := context.WithCancelCause(context.Background())
 

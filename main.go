@@ -1149,14 +1149,23 @@ func getUIHandler(config *config.Config) http.Handler {
 	return &broker.NullHandler{}
 }
 
-func initializeBroker(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, shieldClient shield.Client, logger loggerPkg.Logger) (*broker.Broker, error) {
-	brokerInstance := &broker.Broker{
+// newBroker builds the broker around the one mutation guard. The API reads
+// the guard back from the broker, so the broker's provisions and
+// deprovisions, the upgrade manager, and the deployment actions all reserve
+// instances in the same guard.
+func newBroker(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, shieldClient shield.Client, guard *mutation.Guard) *broker.Broker {
+	return &broker.Broker{
 		Vault:         vault,
 		BOSH:          boshDirector,
 		Shield:        shieldClient,
 		Config:        config,
 		InstanceLocks: make(map[string]*sync.Mutex),
+		Guard:         guard,
 	}
+}
+
+func initializeBroker(config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, shieldClient shield.Client, guard *mutation.Guard, logger loggerPkg.Logger) (*broker.Broker, error) {
+	brokerInstance := newBroker(config, vault, boshDirector, shieldClient, guard)
 
 	var err error
 
@@ -1209,7 +1218,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
 	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
 	rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService, rabbitmqPluginsAuditService *rabbitmq.PluginsAuditService,
-	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, certificates *certinventory.Service, guard *mutation.Guard, logger loggerPkg.Logger) (*broker.API, *upgradehandler.Handler) {
+	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, certificates *certinventory.Service, logger loggerPkg.Logger) (*broker.API, *upgradehandler.Handler) {
 	// A nil director pointer inside an interface would not compare equal to
 	// nil, so the API gets a true nil for each director initializeBOSH did
 	// not build. The upgrade handler then falls back to the pooled director,
@@ -1255,7 +1264,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		SecurityMiddleware:             services.NewSecurityMiddleware(logger.Named("security").Debug),
 		Reconciler:                     reconciler,
 		Certificates:                   certificates,
-		Guard:                          guard,
+		Guard:                          brokerInstance.Guard,
 	})
 
 	return &broker.API{
@@ -1378,10 +1387,11 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	}
 
 	// The broker has exactly one mutation guard, and every operation that
-	// changes an instance reserves it through this one.
+	// changes an instance reserves it through this one. The broker holds it,
+	// and the API reads it back from the broker.
 	guard := mutation.NewGuard(time.Now)
 
-	brokerInstance, credhubClient, err := setupBrokerAndUI(bootCtx, config, vault, boshDirector, logger)
+	brokerInstance, credhubClient, err := setupBrokerAndUI(bootCtx, config, vault, boshDirector, guard, logger)
 	if err != nil {
 		return err
 	}
@@ -1412,7 +1422,7 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
 
-	sshService, apiHandler, upgradeHandler, certificates := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, guard, logger)
+	sshService, apiHandler, upgradeHandler, certificates := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
 
 	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancelWithCause, logger)
@@ -1429,10 +1439,10 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 	return nil
 }
 
-func setupBrokerAndUI(ctx context.Context, config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) (*broker.Broker, *credhub.Client, error) {
+func setupBrokerAndUI(ctx context.Context, config *config.Config, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, guard *mutation.Guard, logger loggerPkg.Logger) (*broker.Broker, *credhub.Client, error) {
 	shieldClient := initializeShieldClient(config, logger)
 
-	brokerInstance, err := initializeBroker(config, vault, boshDirector, shieldClient, logger)
+	brokerInstance, err := initializeBroker(config, vault, boshDirector, shieldClient, guard, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize broker: %w", err)
 	}
@@ -1560,7 +1570,7 @@ func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirecto
 	return nil
 }
 
-func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, guard *mutation.Guard, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API, *upgradehandler.Handler, *certinventory.Service) {
+func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API, *upgradehandler.Handler, *certinventory.Service) {
 	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
 
 	uiHandler := getUIHandler(config)
@@ -1570,7 +1580,7 @@ func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, v
 	apiHandler, upgradeHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
-		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, certificates, guard, logger)
+		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, certificates, logger)
 
 	return sshService, apiHandler, upgradeHandler, certificates
 }
