@@ -203,11 +203,11 @@ func TestCredHubClientBuiltWhenCleanupDisabled(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.BOSH.CACert = caPEM
-	cfg.CredHub = config.CredHubConfig{
+	cfg.CredHub = config.CredHubConfig{ //nolint:gosec // The client secret is a placeholder, not a credential.
 		URL:          "https://10.0.0.6:8844",
 		CACert:       caPEM,
 		ClientID:     "blacksmith_credhub",
-		ClientSecret: "not-a-real-secret", //nolint:gosec // A placeholder, not a credential.
+		ClientSecret: "not-a-real-secret",
 		DirectorName: "lab-bosh",
 		UAAURL:       "https://10.0.0.6:8443",
 	}
