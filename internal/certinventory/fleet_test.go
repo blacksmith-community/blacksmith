@@ -1,0 +1,368 @@
+package certinventory
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
+	"fmt"
+	mrand "math/rand/v2"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"blacksmith/internal/bosh"
+	"blacksmith/internal/credhub"
+)
+
+var (
+	fleetNow  = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	fleetCaps = Capabilities{
+		CredHub: credhub.StateConfigured, ForceLatest: true, RotationEnabled: true,
+		DirectorName: "ws-bosh", ProbeEnabled: true,
+	}
+)
+
+const servicesCAName = "/ws-bosh/blacksmith_services_ca"
+
+func fleetScan(id string, at time.Time) InstanceScan {
+	return InstanceScan{
+		Ref:       InstanceRef{ID: id, Name: "node-" + id, Deployment: "redis-" + id, ServiceName: "redis", PlanName: "cluster-7"},
+		ScannedAt: at, LastSuccessAt: at,
+	}
+}
+
+func brokerScan(at time.Time) InstanceScan {
+	return InstanceScan{Ref: InstanceRef{ID: BrokerScanID, Name: "broker"}, ScannedAt: at, LastSuccessAt: at}
+}
+
+// sharedCAFleet builds 40 instance scans that each carry the services CA as
+// a manifest literal, plus a broker scan with the CA file and its CredHub
+// copy.
+func sharedCAFleet(t *testing.T) ([]InstanceScan, issued) {
+	t.Helper()
+
+	ca := issue(t, issueSpec{cn: "services-ca", serial: 9, isCA: true, notAfter: 400 * time.Hour})
+	at := fleetNow.Add(-time.Minute)
+
+	var scans []InstanceScan
+
+	for n := 0; n < 40; n++ {
+		id := fmt.Sprintf("i%02d", n)
+		s := fleetScan(id, at)
+		s.Material.Raw = []RawObservation{rawObs(SourceManifest, instOwner(id), "instance_groups[0].properties.ca", ca.cert)}
+		scans = append(scans, s)
+	}
+
+	b := brokerScan(at)
+	broker := Owner{Kind: OwnerBroker}
+	b.Material.Raw = []RawObservation{rawObs(SourceBroker, broker, "/var/vcap/jobs/blacksmith/config/tls/blacksmith_services_ca", ca.cert)}
+	b.Material.CredHub = []CredHubCert{{Name: servicesCAName, Owner: broker, Deployed: ca.cert}}
+
+	return append(scans, b), ca
+}
+
+func TestFleetGroupsSharedCAAcrossScans(t *testing.T) {
+	t.Parallel()
+
+	scans, _ := sharedCAFleet(t)
+	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
+
+	certs := fleet.Certificates()
+	if len(certs) != 1 {
+		t.Fatalf("got %d certificates, want 1", len(certs))
+	}
+
+	c := certs[0]
+	if c.Key != servicesCAName {
+		t.Errorf("key %q, want the CredHub name", c.Key)
+	}
+
+	if c.AffectedInstances != 40 {
+		t.Errorf("affected instances %d, want 40", c.AffectedInstances)
+	}
+
+	hasBroker := false
+
+	for _, o := range c.Owners {
+		hasBroker = hasBroker || o.Kind == OwnerBroker
+	}
+
+	if !hasBroker {
+		t.Errorf("no broker owner in %v", c.Owners[:2])
+	}
+}
+
+func TestFleetStampsCredHubObservedAt(t *testing.T) {
+	t.Parallel()
+
+	scans, _ := sharedCAFleet(t)
+	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
+
+	for _, o := range fleet.Certificates()[0].Observations {
+		if o.Source == SourceCredHub && !o.ObservedAt.Equal(fleetNow.Add(-time.Minute)) {
+			t.Errorf("credhub observation ObservedAt %v, want the scan time", o.ObservedAt)
+		}
+	}
+}
+
+func TestFleetStaleScanMarksCredHubObservation(t *testing.T) {
+	t.Parallel()
+
+	leaf := issue(t, issueSpec{cn: "redis", serial: 3})
+	old := fleetNow.Add(-6 * time.Hour)
+	s := fleetScan("i1", old)
+	s.Stale = true
+	s.Err = "scan timed out after 60s"
+	s.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i1/redis_crt", Owner: instOwner("i1"), Deployed: leaf.cert}}
+
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+
+	obs := c.Observations[0]
+	if obs.State != StateStale || !obs.ObservedAt.Equal(old) {
+		t.Errorf("observation state %q at %v, want stale at %v", obs.State, obs.ObservedAt, old)
+	}
+
+	if !c.Coverage.Stale {
+		t.Error("coverage does not say stale")
+	}
+}
+
+func TestFleetMergesCredHubNameAcrossScans(t *testing.T) {
+	t.Parallel()
+
+	oldCert := issue(t, issueSpec{cn: "old", serial: 1})
+	newCert := issue(t, issueSpec{cn: "new", serial: 2})
+	name := "/ws-bosh/shared/crt"
+
+	a := fleetScan("a", fleetNow.Add(-2*time.Hour))
+	a.Material.CredHub = []CredHubCert{{Name: name, Owner: instOwner("a"), Deployed: oldCert.cert, Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v1"}}}
+	b := fleetScan("b", fleetNow.Add(-time.Minute))
+	b.Material.CredHub = []CredHubCert{{Name: name, Owner: instOwner("b"), Deployed: newCert.cert, Versions: Versions{DeployedVersionID: "v2", LatestVersionID: "v2"}}}
+
+	for _, order := range [][]InstanceScan{{a, b}, {b, a}} {
+		certs := Aggregate(order, DefaultSettings(), fleetCaps, fleetNow).Certificates()
+		if len(certs) != 1 {
+			t.Fatalf("got %d certificates, want 1", len(certs))
+		}
+
+		c := certs[0]
+		if c.Versions.DeployedVersionID != "v2" || c.CommonName != "new" {
+			t.Errorf("kept versions %q (%s), want the newest scan's", c.Versions.DeployedVersionID, c.CommonName)
+		}
+
+		if len(c.Owners) != 2 || c.AffectedInstances != 2 || len(c.Observations) != 2 {
+			t.Errorf("owners %d, affected %d, observations %d, want 2 each", len(c.Owners), c.AffectedInstances, len(c.Observations))
+		}
+
+		for _, o := range c.Observations {
+			if o.ObservedAt.IsZero() {
+				t.Errorf("observation of %s has no time", o.Owner.InstanceID)
+			}
+		}
+	}
+}
+
+func TestFleetIDsStableAcrossScanOrder(t *testing.T) {
+	t.Parallel()
+
+	scans, _ := sharedCAFleet(t)
+
+	for n := 0; n < 5; n++ {
+		leaf := issue(t, issueSpec{cn: "leaf", serial: int64(20 + n)})
+		id := fmt.Sprintf("i%02d", n)
+		scans[n].Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-" + id + "/crt", Owner: instOwner(id), Deployed: leaf.cert}}
+	}
+
+	render := func(in []InstanceScan) string {
+		resp := BuildResponse(Aggregate(in, DefaultSettings(), fleetCaps, fleetNow), Filter{}, DefaultSettings(), fleetCaps, ScanState{}, fleetNow)
+
+		raw, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return string(raw)
+	}
+
+	want := render(scans)
+
+	rng := mrand.New(mrand.NewPCG(1, 2))
+
+	for n := 0; n < 5; n++ {
+		shuffled := append([]InstanceScan(nil), scans...)
+		rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+
+		if got := render(shuffled); got != want {
+			t.Fatalf("shuffle %d changed the response", n)
+		}
+	}
+}
+
+func TestFleetItemServesPublicPEM(t *testing.T) {
+	t.Parallel()
+
+	scans, ca := sharedCAFleet(t)
+	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
+
+	detail, ok := fleet.Item(fleet.Certificates()[0].ID)
+	if !ok {
+		t.Fatal("Item did not find the certificate")
+	}
+
+	if strings.Contains(detail.PEM, "PRIVATE KEY") || !strings.Contains(detail.PEM, "BEGIN CERTIFICATE") {
+		t.Fatalf("unexpected PEM %q", detail.PEM)
+	}
+
+	parsed, err := ParsePEMCertificates([]byte(detail.PEM))
+	if err != nil || len(parsed) != 1 || !parsed[0].Equal(ca.cert) {
+		t.Fatalf("PEM does not parse back to the CA: %v", err)
+	}
+
+	if detail.Facts.CommonName != "services-ca" {
+		t.Errorf("facts common name %q", detail.Facts.CommonName)
+	}
+
+	if _, ok := fleet.Item("nope"); ok {
+		t.Error("Item found an unknown ID")
+	}
+}
+
+func TestFleetRemovingOneInstance(t *testing.T) {
+	t.Parallel()
+
+	scans, _ := sharedCAFleet(t)
+	full := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	less := Aggregate(scans[1:], DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+
+	if less.AffectedInstances != 39 || less.ID != full.ID {
+		t.Errorf("affected %d, id %q, want 39 and %q", less.AffectedInstances, less.ID, full.ID)
+	}
+}
+
+func TestFleetDeployPendingFinding(t *testing.T) {
+	t.Parallel()
+
+	leaf := issue(t, issueSpec{cn: "redis", serial: 3})
+	s := fleetScan("i1", fleetNow)
+	s.Material.CredHub = []CredHubCert{{
+		Name: "/ws-bosh/redis-i1/crt", Owner: instOwner("i1"), Deployed: leaf.cert,
+		Versions: Versions{DeployedVersionID: "v1", LatestVersionID: "v2"},
+	}}
+
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	if !hasFinding(c, FindingDeployPending) {
+		t.Fatalf("no deploy_pending in %+v", c.Findings)
+	}
+}
+
+func TestFleetCoverageFromExpectedListeners(t *testing.T) {
+	t.Parallel()
+
+	leaf := issue(t, issueSpec{cn: "redis", serial: 3})
+	owner := instOwner("i1")
+	name := "/ws-bosh/redis-i1/redis_crt"
+	listener := &Listener{Group: "redis", Job: "redis", Variable: "redis_crt", Port: 6379, Name: "tls"}
+
+	s := fleetScan("i1", fleetNow)
+	s.Material.CredHub = []CredHubCert{{Name: name, Owner: owner, Deployed: leaf.cert}}
+
+	for n := 0; n < 3; n++ {
+		s.Material.Expected = append(s.Material.Expected, ExpectedListener{Key: name, Locator: fmt.Sprintf("redis/%d:6379", n)})
+	}
+
+	for n := 0; n < 2; n++ {
+		r := rawObs(SourceProbe, owner, fmt.Sprintf("redis/%d 10.0.0.%d:6379", n, n), leaf.cert)
+		r.Listener = listener
+		s.Material.Raw = append(s.Material.Raw, r)
+	}
+
+	failed := RawObservation{
+		Observation: Observation{Source: SourceProbe, Owner: owner, Locator: "redis/2 10.0.0.9:6379", State: StateFailed, Error: "timeout"},
+		Listener:    listener,
+	}
+	s.Material.Raw = append(s.Material.Raw, failed)
+
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+	if c.Coverage.ExpectedListeners != 3 || c.Coverage.ObservedListeners != 2 || c.Coverage.FailedListeners != 1 {
+		t.Errorf("coverage %+v, want expected 3, observed 2, failed 1", c.Coverage)
+	}
+
+	if c.Coverage.Complete {
+		t.Error("coverage reads complete with a failed probe")
+	}
+}
+
+func TestFleetFindingsSeeRepresentatives(t *testing.T) {
+	t.Parallel()
+
+	short := issue(t, issueSpec{cn: "short-ca", serial: 1, isCA: true, notAfter: 12 * time.Hour})
+	weakKey, err := rsa.GenerateKey(rand.Reader, 1024)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	leaf, _ := makeCert(t, certSpec{cn: "weak-leaf", subject: &weakKey.PublicKey, parent: short.cert, parentK: short.key, serial: 7})
+
+	s := fleetScan("i1", fleetNow)
+	s.Material.Raw = []RawObservation{
+		rawObs(SourceManifest, instOwner("i1"), "instance_groups[0].properties.ca", short.cert),
+		rawObs(SourceManifest, instOwner("i1"), "instance_groups[0].properties.crt", leaf),
+	}
+
+	fleet := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, fleetNow)
+	c := findCert(t, fleet.Certificates(), "sha256:"+Fingerprint(leaf))
+
+	for _, code := range []string{FindingWeakKey, FindingIssuerExpiresFirst} {
+		if !hasFinding(c, code) {
+			t.Errorf("leaf lacks %s: %+v", code, c.Findings)
+		}
+	}
+}
+
+func TestFleetRotatabilityUsesOwningInstance(t *testing.T) {
+	t.Parallel()
+
+	leaf := issue(t, issueSpec{cn: "redis", serial: 3})
+	s := fleetScan("i1", fleetNow)
+	s.VMs = []bosh.VM{{Job: "redis", Index: 0}, {Job: "redis", Index: 1}, {Job: "redis", Index: 2}}
+	s.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i1/crt", Owner: instOwner("i1"), Deployed: leaf.cert}}
+
+	caps := fleetCaps
+	caps.PatchEnabled = true
+
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), caps, fleetNow).Certificates()[0]
+	if !c.Rotation.Allowed || !reflect.DeepEqual(c.Rotation.Modes, []string{ModeRedeploy}) {
+		t.Fatalf("rotation %+v, want redeploy only on a three-VM instance with no gate", c.Rotation)
+	}
+
+	s.HealthGate = "redis-cluster"
+
+	c = Aggregate([]InstanceScan{s}, DefaultSettings(), caps, fleetNow).Certificates()[0]
+	if !reflect.DeepEqual(c.Rotation.Modes, []string{ModeRedeploy, ModePatch}) {
+		t.Fatalf("rotation %+v, want patch with a gate", c.Rotation)
+	}
+}
+
+func TestFleetExpiryAndAttention(t *testing.T) {
+	t.Parallel()
+
+	soon := issue(t, issueSpec{cn: "soon", serial: 3, notAfter: 3*24*time.Hour + time.Hour})
+
+	s := fleetScan("i1", time.Now())
+	s.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i1/crt", Owner: instOwner("i1"), Deployed: soon.cert}}
+
+	c := Aggregate([]InstanceScan{s}, DefaultSettings(), fleetCaps, time.Now()).Certificates()[0]
+	if c.Expiry != ExpiryCritical || c.DaysLeft == nil || *c.DaysLeft != 3 || !c.Attention {
+		t.Errorf("expiry %q days %v attention %v, want critical, 3, true", c.Expiry, c.DaysLeft, c.Attention)
+	}
+
+	unread := fleetScan("i2", time.Now())
+	unread.Material.CredHub = []CredHubCert{{Name: "/ws-bosh/redis-i2/crt", Owner: instOwner("i2"), Err: "CredHub not configured"}}
+
+	c = Aggregate([]InstanceScan{unread}, DefaultSettings(), fleetCaps, time.Now()).Certificates()[0]
+	if c.Expiry != ExpiryUnknown || c.ExpiryReason != "CredHub not configured" {
+		t.Errorf("expiry %q reason %q, want unknown with the read error", c.Expiry, c.ExpiryReason)
+	}
+}

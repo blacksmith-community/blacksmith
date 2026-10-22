@@ -17,9 +17,11 @@ const (
 // computes it once and passes it in, so RotatabilityOf never parses a
 // version itself.
 type Capabilities struct {
-	CredHub           credhub.CapabilityState
-	CredHubReason     string
-	DirectorVersion   string
+	CredHub         credhub.CapabilityState
+	CredHubReason   string
+	DirectorVersion string
+	// DirectorName is the name in every CredHub path the director owns.
+	DirectorName      string
 	ForceLatest       bool
 	ForceLatestReason string
 	RotationEnabled   bool

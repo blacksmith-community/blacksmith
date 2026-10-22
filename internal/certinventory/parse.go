@@ -22,18 +22,18 @@ const (
 
 // CertFacts holds what a certificate says about itself.
 type CertFacts struct {
-	CommonName     string
-	Issuer         string
-	SubjectKeyID   string
-	AuthorityKeyID string
-	DNSNames       []string
-	IPAddresses    []string
-	ExtKeyUsages   []string
-	KeyAlgorithm   string
-	KeyBits        int
-	Serial         string
-	NotBefore      time.Time
-	NotAfter       time.Time
+	CommonName     string    `json:"common_name,omitempty"`
+	Issuer         string    `json:"issuer,omitempty"`
+	SubjectKeyID   string    `json:"subject_key_id,omitempty"`
+	AuthorityKeyID string    `json:"authority_key_id,omitempty"`
+	DNSNames       []string  `json:"dns_names,omitempty"`
+	IPAddresses    []string  `json:"ip_addresses,omitempty"`
+	ExtKeyUsages   []string  `json:"ext_key_usages,omitempty"`
+	KeyAlgorithm   string    `json:"key_algorithm,omitempty"`
+	KeyBits        int       `json:"key_bits,omitempty"`
+	Serial         string    `json:"serial,omitempty"`
+	NotBefore      time.Time `json:"not_before"`
+	NotAfter       time.Time `json:"not_after"`
 }
 
 // ParsePEMCertificates returns every CERTIFICATE block in order. It skips
