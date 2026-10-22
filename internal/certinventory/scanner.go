@@ -17,6 +17,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/credhub"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/upgrade/certscripts"
 )
 
 // Deadlines for one scan. The instance deadline comes from the settings;
@@ -103,7 +104,9 @@ type InstanceScan struct {
 	VMs       []bosh.VM
 	Variables []bosh.Variable
 	// HealthGate names the health check that patch mode runs between the
-	// VMs of a cluster. The scanner leaves it empty for now.
+	// VMs of a cluster, as certscripts.GateFor gives it for the service
+	// and the VM count. It is empty for a multi-VM service with no gate,
+	// and when the VM list could not be read.
 	HealthGate string
 	// ScannedAt is when the scan began.
 	ScannedAt     time.Time
@@ -272,7 +275,7 @@ func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings
 	})
 
 	owner := instanceOwner(ref, deployment)
-	scan := InstanceScan{Facts: facts, VMs: vms, Variables: vars}
+	scan := InstanceScan{Facts: facts, VMs: vms, Variables: vars, HealthGate: certscripts.GateFor(ref.ServiceName, len(vms))}
 
 	scan.Material.Raw = literalObservations(facts, owner, s.now())
 

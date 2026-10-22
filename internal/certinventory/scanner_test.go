@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -414,7 +415,7 @@ func TestScanInstanceWithoutCredHub(t *testing.T) {
 		t.Errorf("times: scanned %v last success %v stale %v", scan.ScannedAt, scan.LastSuccessAt, scan.Stale)
 	}
 
-	if scan.Facts == nil || len(scan.VMs) != 1 || len(scan.Variables) != 2 || scan.HealthGate != "" {
+	if scan.Facts == nil || len(scan.VMs) != 1 || len(scan.Variables) != 2 || scan.HealthGate != "single-vm" {
 		t.Errorf("facts %v vms %d variables %d gate %q", scan.Facts != nil, len(scan.VMs), len(scan.Variables), scan.HealthGate)
 	}
 }
@@ -1213,6 +1214,52 @@ func TestScanInstanceVMsFailureKeepsExpected(t *testing.T) {
 
 	if len(scan.Material.CredHub) != 1 {
 		t.Errorf("CredHub = %d entries, want the variable still listed", len(scan.Material.CredHub))
+	}
+}
+
+func TestScanInstanceSetsHealthGate(t *testing.T) {
+	t.Parallel()
+
+	scan := func(service string, vms int) InstanceScan {
+		fixture := scannerFixture{
+			director: &fakeDirector{
+				manifest: loadManifest(t, "redis-cluster-7.yml"),
+				vars:     []bosh.Variable{{ID: "v1", Name: "/ws-bosh/redis-7a1b/redis_cluster_crt"}},
+				vms:      redisVMs(vms),
+			},
+			state:    credhub.StateNotConfigured,
+			settings: DefaultSettings(),
+			leaf:     &fakeLeaf{},
+		}
+
+		ref := testRef("redis-7a1b")
+		ref.ServiceName = service
+
+		got := fixture.scanner().ScanInstance(context.Background(), ref)
+		if got.Err != "" {
+			t.Fatalf("scan failed: %s", got.Err)
+		}
+
+		return got
+	}
+
+	cluster := scan("valkey", 3)
+	if cluster.HealthGate != "valkey-cluster" {
+		t.Errorf("three Valkey VMs have gate %q, want valkey-cluster", cluster.HealthGate)
+	}
+
+	if single := scan("valkey", 1); single.HealthGate != "single-vm" {
+		t.Errorf("one VM has gate %q, want single-vm", single.HealthGate)
+	}
+
+	if none := scan("postgresql", 3); none.HealthGate != "" {
+		t.Errorf("three VMs of a service with no gate have gate %q, want none", none.HealthGate)
+	}
+
+	got := RotatabilityOf(rotLeaf(), allOn(), "bosh-lab", len(cluster.VMs), cluster.HealthGate)
+	if want := []string{ModeRedeploy, ModePatch}; !got.Allowed || !reflect.DeepEqual(got.Modes, want) {
+		t.Errorf("the three-VM Valkey leaf is offered %v (allowed %v, reasons %v), want %v",
+			got.Modes, got.Allowed, got.Reasons, want)
 	}
 }
 
