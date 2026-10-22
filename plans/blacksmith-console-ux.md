@@ -205,9 +205,40 @@ technology session or live deployment acceptance test was performed.
 Proposed atomic order: regression tests; plan selection fix; immediate manifest
 navigation; quick navigation and async safety; visual styling; design/review
 record and check instructions. Tests intentionally precede their implementation.
-Do not push, merge or deploy as part of this task. Offer `/commit sync` after
+Initial scope excluded push, merge and deploy; the user subsequently authorized
+a lab preview deployment, recorded below. Offer `/commit sync` after
 commits, and retain `/commit plan` as the review entry point.
 
 Completion: implementation and both adversarial reviews are finished. Local
 commits are separated by the groups above; the worktree is ready for review.
-Nothing has been pushed, merged, or deployed.
+Nothing has been pushed or merged.
+
+## Lab preview deployment — 2026-10-22
+
+- [x] Deploy via `ocfp --no-log` SCP/SSH through bloc
+  `ocfp-lab-wayneeseguin` bastion, then BOSH SCP/SSH.
+- [x] Preserve previous assets at
+  `/var/vcap/data/blacksmith-console-backup-20261022` on the broker VM.
+- [x] Install `index.html`, `blacksmith.js`, `navigation.js`, and `console.css`
+  into `/var/vcap/packages/blacksmith/ui` without restarting services.
+- [x] Verify all four assets return authenticated HTTPS 200 with bytes matching
+  the local worktree; TLS certificate validation enabled.
+- [x] Confirm Blacksmith, Vault, route registrar and BOSH DNS remain running.
+
+Deployment: `ocfp-lab-wayneeseguin-ocf-blacksmith`, instance
+`blacksmith/ac1eae28-8eea-4c2e-94a0-083d5d09358b` (10.108.24.67).
+Preview URL: https://blacksmith.system.ocf.wayneeseguin.lab.fivetwenty.io/
+The original lab documentation hostname omitted `system` and returned 404;
+the user supplied the correct route. Existing authentication remains enabled.
+
+Preview source includes commit `c66a16d`, which refreshes the script cache key.
+The deployed base stylesheet matched the worktree before installation.
+No broker operations were submitted during verification. Live browser workflow
+acceptance remains for user review; the 37 browser checks above used fixtures.
+
+This is a static-asset preview patch, not a new BOSH release. A subsequent BOSH
+deployment/package replacement can overwrite it. Permanent rollout requires
+integrating the branch and packaging these assets into the Blacksmith release.
+Rollback: restore `index.html` and `blacksmith.js` from the backup directory and
+remove the newly added `navigation.js` and `console.css` (neither existed before
+this deployment). No service restart is necessary for static asset rollback.
