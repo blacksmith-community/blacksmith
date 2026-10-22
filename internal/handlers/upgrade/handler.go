@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -224,7 +225,7 @@ func (h *Handler) Decide(w http.ResponseWriter, r *http.Request, taskID, instanc
 		return
 	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	body, err := readDecision(w, r)
 	if err == nil {
 		err = h.decide(r.Context(), taskID, instanceID, action, body)
 	}
@@ -278,12 +279,29 @@ func (h *Handler) decide(ctx context.Context, taskID, instanceID, action string,
 	return err //nolint:wrapcheck // the manager answers with the API error
 }
 
-// decodeDecision decodes a decision body, and answers 400 invalid_mode
-// for one that does not decode, since the action it carries can't be read.
+// readDecision reads a decision body of at most maxCreateBody bytes, and
+// answers 400 invalid_request for one that is too large or can't be read.
+func readDecision(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	if err == nil {
+		return body, nil
+	}
+
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return nil, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
+			fmt.Sprintf("The decision request is larger than %d bytes.", tooLarge.Limit))
+	}
+
+	return nil, apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest, "Blacksmith could not read the decision request: "+err.Error())
+}
+
+// decodeDecision decodes a decision body, and answers 400 invalid_request
+// for one that is not valid JSON.
 func decodeDecision(body []byte, req any) error {
 	err := json.Unmarshal(body, req)
 	if err != nil {
-		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidMode, "invalid decision request: "+err.Error())
+		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest, "The decision request is not valid JSON: "+err.Error())
 	}
 
 	return nil

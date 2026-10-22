@@ -162,7 +162,7 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 		}
 	case actionSkip:
 	default:
-		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidMode,
+		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
 			fmt.Sprintf("The action %q is not one an approval takes. Send a preview_id, or the action skip.", req.Action))
 	}
 
@@ -261,7 +261,7 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 		}
 	case actionAbandon:
 	default:
-		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidMode,
+		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
 			fmt.Sprintf("The action %q is not one a reconciliation takes. Send adopt or abandon.", req.Action))
 	}
 
@@ -373,7 +373,7 @@ func (m *Manager) ResolveDeployOutcome(ctx context.Context, taskID, instanceID s
 	switch req.Action {
 	case actionVerify, actionFailed, actionAbandon:
 	default:
-		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidMode,
+		return apierr.New(http.StatusBadRequest, apierr.CodeInvalidRequest,
 			fmt.Sprintf("The action %q is not one a resolution takes. Send verify, failed, or abandon.", req.Action))
 	}
 

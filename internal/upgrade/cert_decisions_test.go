@@ -845,3 +845,24 @@ func TestSettlingDecisionsWithRotationOff(t *testing.T) {
 		expectReleased(t, manager)
 	})
 }
+
+// A decision request that names an action its endpoint does not take is
+// an invalid request, and the instance keeps waiting.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestDecisionUnknownAction(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.load(env.awaitingApproval())
+	ctx := context.Background()
+
+	err := manager.ApproveChangedEffects(ctx, certTaskID, waitInstanceID, ApproveRequest{Action: "shuffle"})
+	expectAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
+
+	err = manager.ReconcileRegeneration(ctx, certTaskID, waitInstanceID, ReconcileRequest{Variable: regenLeaf, Action: "shuffle"})
+	expectAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
+
+	err = manager.ResolveDeployOutcome(ctx, certTaskID, waitInstanceID, ResolveRequest{Action: "shuffle"})
+	expectAPIError(t, err, http.StatusBadRequest, apierr.CodeInvalidRequest)
+
+	expectStillAwaiting(t, manager, StatusAwaitingDecision, DecisionApproveChangedEffects)
+}

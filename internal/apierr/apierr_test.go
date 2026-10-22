@@ -69,6 +69,7 @@ func TestCodesMatchSpec(t *testing.T) {
 	t.Parallel()
 
 	table := []struct{ got, want string }{
+		{apierr.CodeInvalidRequest, "invalid_request"},
 		{apierr.CodeNoSelections, "no_selections"},
 		{apierr.CodeInvalidMode, "invalid_mode"},
 		{apierr.CodeUnknownVariable, "unknown_variable"},
@@ -100,8 +101,8 @@ func TestCodesMatchSpec(t *testing.T) {
 		{apierr.CodeCredHubUnavailable, "credhub_unavailable"},
 	}
 
-	if len(table) != 29 {
-		t.Fatalf("table has %d codes, want 29", len(table))
+	if len(table) != 30 {
+		t.Fatalf("table has %d codes, want 30", len(table))
 	}
 
 	for _, row := range table {

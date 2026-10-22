@@ -396,7 +396,8 @@ func TestDecisionRoutes(t *testing.T) {
 }
 
 // A decision error answers with its own status and code, and a body that
-// does not decode is a bad request that reaches no manager call.
+// does not decode or is too large is a bad request that reaches no manager
+// call.
 func TestDecisionRoutesAnswerErrors(t *testing.T) {
 	t.Parallel()
 
@@ -416,8 +417,15 @@ func TestDecisionRoutesAnswerErrors(t *testing.T) {
 	tasks.mu.Unlock()
 
 	status, answer := postDecision(t, handler, "/b/upgrade/tasks/t1/instances/i1/reconcile", `{"action":`)
-	if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidMode || answer["success"] != false {
+	if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidRequest || answer["success"] != false {
 		t.Fatalf("undecodable body: status %d, body %v", status, answer)
+	}
+
+	oversized := `{"action":"verify","client_request_id":"` + strings.Repeat("x", maxCreateBody) + `"}`
+
+	status, answer = postDecision(t, handler, "/b/upgrade/tasks/t1/instances/i1/resolve", oversized)
+	if status != http.StatusBadRequest || answer["code"] != apierr.CodeInvalidRequest || answer["success"] != false {
+		t.Fatalf("oversized body: status %d, body %v", status, answer)
 	}
 
 	tasks.mu.Lock()

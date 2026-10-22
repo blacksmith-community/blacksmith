@@ -12,6 +12,7 @@ import (
 // Codes returned in the "code" field of an API error body.
 const (
 	// 400.
+	CodeInvalidRequest   = "invalid_request"
 	CodeNoSelections     = "no_selections"
 	CodeInvalidMode      = "invalid_mode"
 	CodeUnknownVariable  = "unknown_variable"
