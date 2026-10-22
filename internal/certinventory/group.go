@@ -46,7 +46,8 @@ type RawObservation struct {
 // certificates, in the order spec 7.3 gives. It returns the certificates
 // sorted by ID, and a map from each certificate ID to its representative
 // public certificate. The representative is the CredHub deployed version
-// when there is one, and otherwise the first observation in ID order.
+// when there is one, then the first observation in ID order that carries a
+// certificate, and last the CredHub latest version.
 //
 // Group leaves Expiry, DaysLeft, Health, Attention, Findings, Coverage, and
 // Rotation for later steps. It must run once over the whole fleet's
@@ -134,7 +135,7 @@ func Group(credhub []CredHubCert, raw []RawObservation) ([]Certificate, map[stri
 		if obs.Fingerprint == "" {
 			// Nothing identifies it, but dropping it would hide a failure
 			// and let coverage read complete, so it gets a group of its own.
-			id, key = hashID("probe:"+obs.Owner.InstanceID+obs.Locator), obs.Locator
+			id, key = hashID("probe:"+obs.Owner.InstanceID+"\x00"+obs.Locator), obs.Locator
 		}
 
 		g, ok := groups[id]
@@ -221,6 +222,10 @@ func (g *group) build() (Certificate, *x509.Certificate) {
 	sort.Slice(c.Owners, func(a, b int) bool { return ownerLess(c.Owners[a], c.Owners[b]) })
 
 	c.AffectedInstances = len(instances)
+
+	if rep == nil && g.credhub != nil {
+		rep = g.credhub.Latest
+	}
 
 	if rep != nil {
 		f := Facts(rep)

@@ -347,7 +347,7 @@ func TestGroupKeepsFailedObservationWithoutListener(t *testing.T) {
 	ApplyFindings(certs, FindingInput{})
 
 	c := findCert(t, certs, "10.0.0.9:6379")
-	if c.ID != hashID("probe:"+"i9"+"10.0.0.9:6379") {
+	if c.ID != hashID("probe:"+"i9"+"\x00"+"10.0.0.9:6379") {
 		t.Errorf("ID %q", c.ID)
 	}
 
@@ -416,5 +416,90 @@ func TestGroupRepresentativeWithoutDeployedIsFirstObservation(t *testing.T) {
 	certs, reps := Group([]CredHubCert{ch}, []RawObservation{r})
 	if got := reps[certs[0].ID]; got == nil || !reflect.DeepEqual(got.Raw, seen.Raw) {
 		t.Error("representative should be the first observation when nothing is deployed")
+	}
+}
+
+func TestGroupLatestOnlyVariableUsesLatestAsRepresentative(t *testing.T) {
+	t.Parallel()
+
+	latest := groupLeaf(t, "pending", 7)
+	ch := CredHubCert{Name: "/d/redis/pending_crt", Owner: instOwner("i1"), Latest: latest}
+
+	certs, reps := Group([]CredHubCert{ch}, nil)
+	if len(certs) != 1 {
+		t.Fatalf("got %d certificates, want 1", len(certs))
+	}
+
+	c := certs[0]
+	if reps[c.ID] != latest {
+		t.Fatal("the latest version should be the representative")
+	}
+
+	if c.CommonName != "pending" || c.Kind == "" {
+		t.Errorf("facts not filled from the latest version: CN %q, kind %q", c.CommonName, c.Kind)
+	}
+}
+
+func TestGroupDeployedOutranksObservationAndLatest(t *testing.T) {
+	t.Parallel()
+
+	deployed := groupLeaf(t, "deployed", 1)
+	latest := groupLeaf(t, "latest", 2)
+	other := groupLeaf(t, "other", 3)
+	owner := instOwner("i1")
+	ch := CredHubCert{Name: "/d/redis/crt", Owner: owner, Deployed: deployed, Latest: latest}
+
+	probe := rawObs(SourceProbe, owner, "10.0.0.1:1", other)
+	probe.Listener = &Listener{Variable: "crt"}
+
+	certs, reps := Group([]CredHubCert{ch}, []RawObservation{probe})
+	if len(certs) != 1 {
+		t.Fatalf("got %d certificates, want 1", len(certs))
+	}
+
+	if got := reps[certs[0].ID]; got != deployed {
+		t.Errorf("representative CN %q, want deployed", got.Subject.CommonName)
+	}
+}
+
+func TestGroupObservationOutranksLatest(t *testing.T) {
+	t.Parallel()
+
+	latest := groupLeaf(t, "latest", 2)
+	other := groupLeaf(t, "other", 3)
+	owner := instOwner("i1")
+	ch := CredHubCert{Name: "/d/redis/crt", Owner: owner, Latest: latest}
+	probe := rawObs(SourceProbe, owner, "10.0.0.1:1", other)
+	probe.Listener = &Listener{Variable: "crt"}
+
+	certs, reps := Group([]CredHubCert{ch}, []RawObservation{probe})
+	if len(certs) != 1 {
+		t.Fatalf("got %d certificates, want 1", len(certs))
+	}
+
+	if got := reps[certs[0].ID]; got != other {
+		t.Errorf("representative CN %q, want the observed certificate", got.Subject.CommonName)
+	}
+}
+
+func TestGroupFailedProbeIDsSeparateInstanceFromLocator(t *testing.T) {
+	t.Parallel()
+
+	failed := func(instance, locator string) RawObservation {
+		return RawObservation{Observation: Observation{
+			Source:  SourceProbe,
+			Owner:   Owner{Kind: OwnerInstance, InstanceID: instance},
+			Locator: locator,
+			State:   StateFailed,
+		}}
+	}
+
+	certs, _ := Group(nil, []RawObservation{failed("i1", "0.x"), failed("i10", ".x")})
+	if len(certs) != 2 {
+		t.Fatalf("got %d certificates, want 2 distinct failures", len(certs))
+	}
+
+	if certs[0].ID == certs[1].ID {
+		t.Errorf("both failures share ID %s", certs[0].ID)
 	}
 }
