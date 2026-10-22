@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"blacksmith/internal/certinventory"
 	"blacksmith/internal/handlers/blacksmith"
 	"blacksmith/internal/handlers/bosh"
 	"blacksmith/internal/handlers/certificates"
@@ -74,11 +75,15 @@ type Dependencies struct {
 	WebSocketHandler               interfaces.WebSocketHandler
 	SecurityMiddleware             *services.SecurityMiddleware
 	Reconciler                     blacksmith.ReconcilerInterface
+	// Certificates serves /b/certificates/. When nil, the routes answer
+	// inventory_disabled.
+	Certificates *certinventory.Service
 }
 
 // NewInternalAPI creates a new internal API with the refactored structure.
 type apiHandlers struct {
 	certificate       *certificates.Handler
+	inventory         *certificates.InventoryHandler
 	cf                *cf.Handler
 	instance          *instances.Handler
 	redis             *redis.Handler
@@ -97,6 +102,7 @@ type apiHandlers struct {
 func createHandlers(deps Dependencies) apiHandlers {
 	return apiHandlers{
 		certificate:       certificates.NewHandler(deps.Config, deps.Logger, deps.Broker),
+		inventory:         createInventoryHandler(deps),
 		cf:                cf.NewHandler(deps.Logger, deps.Config, deps.CFManager, deps.Vault),
 		instance:          instances.NewHandler(deps.Logger),
 		redis:             redis.NewHandler(deps.Logger, deps.Vault, deps.ServicesManager),
@@ -111,6 +117,18 @@ func createHandlers(deps Dependencies) apiHandlers {
 		services:          createServicesHandler(deps),
 		upgrade:           createUpgradeHandler(deps),
 	}
+}
+
+// createInventoryHandler hands the handler a true nil service when the broker
+// built none, because a nil *Service inside the interface would not compare
+// equal to nil.
+func createInventoryHandler(deps Dependencies) *certificates.InventoryHandler {
+	var svc certificates.InventoryService
+	if deps.Certificates != nil {
+		svc = deps.Certificates
+	}
+
+	return certificates.NewInventoryHandler(svc, deps.Logger)
 }
 
 func createRabbitMQTestingHandler(deps Dependencies) *rabbitmqtesting.Handler {
@@ -295,10 +313,7 @@ func registerRoutes(router *routing.Router, handlers apiHandlers, deps Dependenc
 
 	// Certificate endpoints
 	router.RegisterHandler("/b/internal/certificates", http.HandlerFunc(handlers.certificate.HandleCertificatesRequest))
-	router.RegisterHandler("/b/certificates/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		_, _ = w.Write([]byte("certificate listing not yet implemented"))
-	}))
+	router.RegisterHandler("/b/certificates/", handlers.inventory)
 
 	// CF endpoints
 	router.RegisterHandler("/b/cf/", handlers.cf)

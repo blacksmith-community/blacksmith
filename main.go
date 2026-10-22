@@ -22,6 +22,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/ssh"
 	"blacksmith/internal/broker"
+	"blacksmith/internal/certinventory"
 	internalCF "blacksmith/internal/cf"
 	"blacksmith/internal/compression"
 	"blacksmith/internal/config"
@@ -1207,7 +1208,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 	rabbitmqMetadataService *rabbitmq.MetadataService, rabbitmqExecutorService *rabbitmq.ExecutorService,
 	rabbitmqAuditService *rabbitmq.AuditService, rabbitmqPluginsMetadataService *rabbitmq.PluginsMetadataService,
 	rabbitmqPluginsExecutorService *rabbitmq.PluginsExecutorService, rabbitmqPluginsAuditService *rabbitmq.PluginsAuditService,
-	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, logger loggerPkg.Logger) (*broker.API, *upgradehandler.Handler) {
+	webSocketHandler *websocket.SSHHandler, uiHandler http.Handler, certificates *certinventory.Service, logger loggerPkg.Logger) (*broker.API, *upgradehandler.Handler) {
 	// A nil director pointer inside an interface would not compare equal to
 	// nil, so the API gets a true nil for each director initializeBOSH did
 	// not build. The upgrade handler then falls back to the pooled director,
@@ -1252,6 +1253,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 		WebSocketHandler:               webSocketHandler,
 		SecurityMiddleware:             services.NewSecurityMiddleware(logger.Named("security").Debug),
 		Reconciler:                     reconciler,
+		Certificates:                   certificates,
 	})
 
 	return &broker.API{
@@ -1404,16 +1406,18 @@ func runService(configPath string, buildInfo BuildInfo, logger loggerPkg.Logger)
 
 	startBackgroundServices(config, vault, cfManager, reconciler, vmMonitor, ctx, logger)
 
-	sshService, apiHandler, upgradeHandler := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
+	sshService, apiHandler, upgradeHandler, certificates := setupServicesAndAPI(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler, logger)
 	defer closeSSHService(sshService, logger)
 
 	serverWaitGroup, servers := runServersAndMaintenance(config, apiHandler, brokerInstance, vault, ctx, cancelWithCause, logger)
 
-	startCredHubProbe(ctx, config, brokerInstance, credhubClient, logger)
+	certificates.Start(ctx)
+
+	startCredHubProbe(ctx, config, brokerInstance, credhubClient, certificates, logger)
 
 	waitForShutdownSignal(sigChan, ctx, logger)
 
-	shutdown(shutdownDepsFor(servers, cancelWithCause, reconciler, vmMonitor, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger))
+	shutdown(shutdownDepsFor(servers, cancelWithCause, reconciler, vmMonitor, upgradeHandler, certificates, brokerInstance, batchDirector, boshDirector, logger))
 	serverWaitGroup.Wait()
 
 	return nil
@@ -1497,8 +1501,8 @@ func setupCredHubCleanup(ctx context.Context, config *config.Config, brokerInsta
 // startCredHubProbe checks in the background that CredHub and its UAA accept
 // the cleanup client, then logs the orphan sweep mode. A failed probe leaves
 // cleanup on, because every cleanup tries again and logs its own failure.
-func startCredHubProbe(ctx context.Context, config *config.Config, brokerInstance *broker.Broker, client *credhub.Client, logger loggerPkg.Logger) {
-	if client == nil || !config.CredHub.Cleanup.Enabled {
+func startCredHubProbe(ctx context.Context, config *config.Config, brokerInstance *broker.Broker, client *credhub.Client, certificates *certinventory.Service, logger loggerPkg.Logger) {
+	if client == nil {
 		return
 	}
 
@@ -1506,11 +1510,18 @@ func startCredHubProbe(ctx context.Context, config *config.Config, brokerInstanc
 		defer func() {
 			recovered := recover()
 			if recovered != nil {
-				logger.Error("CredHub cleanup startup probe panicked, and the broker keeps running with cleanup enabled: %v", recovered)
+				logger.Error("CredHub startup probe panicked, and the broker keeps running: %v", recovered)
 			}
 		}()
 
-		_ = credhub.Probe(ctx, client, config.CredHub.DirectorName, loggerPkg.Get().Named("credhub"))
+		if !config.CredHub.Cleanup.Enabled {
+			certificates.ProbeCredHub(ctx)
+
+			return
+		}
+
+		err := credhub.Probe(ctx, client, config.CredHub.DirectorName, loggerPkg.Get().Named("credhub"))
+		certificates.SetCredHubProbe(err)
 
 		logger.Info("CredHub orphan sweep mode is %s", brokerInstance.CredentialSweepMode())
 	}()
@@ -1543,17 +1554,19 @@ func setupVMMonitor(vault *internalVault.Vault, boshDirector *bosh.PooledDirecto
 	return nil
 }
 
-func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API, *upgradehandler.Handler) {
+func setupServicesAndAPI(config *config.Config, brokerInstance *broker.Broker, vault *internalVault.Vault, boshDirector *bosh.PooledDirector, batchDirector *bosh.BatchDirector, cfManager *internalCF.Manager, vmMonitor *vmmonitor.Monitor, reconciler *recovery.ReconcilerAdapter, logger loggerPkg.Logger) (*ssh.ServiceImpl, *broker.API, *upgradehandler.Handler, *certinventory.Service) {
 	sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService, rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService, rabbitmqPluginsAuditService, webSocketHandler := initializeServices(config, brokerInstance, vault, logger)
 
 	uiHandler := getUIHandler(config)
 
+	certificates := newCertificateService(config, brokerInstance, vault, boshDirector, logger)
+
 	apiHandler, upgradeHandler := createAPIHandler(config, brokerInstance, vault, boshDirector, batchDirector, cfManager, vmMonitor, reconciler,
 		sshService, rabbitmqSSHService, rabbitmqMetadataService, rabbitmqExecutorService,
 		rabbitmqAuditService, rabbitmqPluginsMetadataService, rabbitmqPluginsExecutorService,
-		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, logger)
+		rabbitmqPluginsAuditService, webSocketHandler, uiHandler, certificates, logger)
 
-	return sshService, apiHandler, upgradeHandler
+	return sshService, apiHandler, upgradeHandler, certificates
 }
 
 func closeSSHService(sshService *ssh.ServiceImpl, logger loggerPkg.Logger) {
@@ -1609,16 +1622,17 @@ type backgroundWaiter interface {
 
 // shutdownDeps holds everything shutdown stops. A nil field is skipped.
 type shutdownDeps struct {
-	servers    []httpServer
-	ssh        sshShutdowner
-	cancel     context.CancelCauseFunc
-	reconciler failingStopper
-	monitor    stopper
-	upgrades   stopper
-	background backgroundWaiter
-	batch      stopper
-	pool       stopper
-	logger     loggerPkg.Logger
+	servers      []httpServer
+	ssh          sshShutdowner
+	cancel       context.CancelCauseFunc
+	reconciler   failingStopper
+	monitor      stopper
+	upgrades     stopper
+	certificates stopper
+	background   backgroundWaiter
+	batch        stopper
+	pool         stopper
+	logger       loggerPkg.Logger
 }
 
 // shutdownStep is one named step of shutdown.
@@ -1662,6 +1676,10 @@ func (deps shutdownDeps) steps() []shutdownStep {
 
 	if deps.upgrades != nil {
 		steps = append(steps, shutdownStep{name: "stop the upgrade manager", run: func(context.Context) { deps.upgrades.Stop() }})
+	}
+
+	if deps.certificates != nil {
+		steps = append(steps, shutdownStep{name: "stop the certificate scheduler", run: func(context.Context) { deps.certificates.Stop() }})
 	}
 
 	if deps.background != nil {
@@ -1727,7 +1745,7 @@ func (deps shutdownDeps) stopServers(ctx context.Context) {
 // so each part the broker does not have becomes a true nil, which shutdown
 // skips.
 func shutdownDepsFor(servers []*http.Server, cancel context.CancelCauseFunc, reconciler *recovery.ReconcilerAdapter, vmMonitor *vmmonitor.Monitor,
-	upgradeHandler *upgradehandler.Handler, brokerInstance *broker.Broker, batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector,
+	upgradeHandler *upgradehandler.Handler, certificates *certinventory.Service, brokerInstance *broker.Broker, batchDirector *bosh.BatchDirector, boshDirector *bosh.PooledDirector,
 	logger loggerPkg.Logger) shutdownDeps {
 	deps := shutdownDeps{cancel: cancel, logger: logger}
 
@@ -1747,6 +1765,10 @@ func shutdownDepsFor(servers []*http.Server, cancel context.CancelCauseFunc, rec
 
 	if upgradeHandler != nil {
 		deps.upgrades = upgradeHandler
+	}
+
+	if certificates != nil {
+		deps.certificates = certificates
 	}
 
 	if brokerInstance != nil {

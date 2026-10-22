@@ -18,6 +18,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/bosh/boshtest"
 	"blacksmith/internal/broker"
+	"blacksmith/internal/certinventory"
 	internalCF "blacksmith/internal/cf"
 	"blacksmith/internal/config"
 	"blacksmith/internal/upgrade"
@@ -227,12 +228,12 @@ func TestShutdownSendsTheSSHCleanupsRightAfterTheServers(t *testing.T) {
 
 	pool := bosh.NewPooledDirector(nil, 1, time.Second, nil)
 
-	wired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, pool, newShutdownLog())
+	wired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, pool, newShutdownLog())
 	if wired.ssh != pool {
 		t.Errorf("expected shutdown to send the SSH cleanups through the pooled director, got %#v", wired.ssh)
 	}
 
-	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.ssh != nil {
+	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.ssh != nil {
 		t.Errorf("expected no SSH cleanups without a director, got %#v", unwired.ssh)
 	}
 }
@@ -512,11 +513,11 @@ func bootAPI(t *testing.T, cfg *config.Config, vault *internalVault.Vault, logge
 	// manager with no endpoints.
 	cfManager := internalCF.NewManagerFromExternal(nil, logger)
 
-	apiHandler, upgradeHandler := createAPIHandler(cfg, brokerInstance, vault, boshDirector, batchDirector, cfManager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
+	apiHandler, upgradeHandler := createAPIHandler(cfg, brokerInstance, vault, boshDirector, batchDirector, cfManager, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
 
 	_, cancel := context.WithCancelCause(context.Background())
 
-	return apiHandler, shutdownDepsFor(nil, cancel, nil, nil, upgradeHandler, brokerInstance, batchDirector, boshDirector, logger)
+	return apiHandler, shutdownDepsFor(nil, cancel, nil, nil, upgradeHandler, nil, brokerInstance, batchDirector, boshDirector, logger)
 }
 
 //nolint:paralleltest // the test reads the package's shutdown deadlines
@@ -607,4 +608,51 @@ func TestBootAndShutdownWithoutABOSHDirector(t *testing.T) {
 	}
 
 	shutdown(deps)
+}
+
+// Shutdown stops the certificate scheduler, and a broker with no inventory
+// leaves the step out instead of holding a nil pointer in the interface.
+//
+//nolint:paralleltest // the test reads the package's shutdown deadlines
+func TestShutdownStopsCertificateScheduler(t *testing.T) {
+	log := &stepLog{}
+
+	deps := fakeShutdownDeps(log, newShutdownLog())
+	deps.certificates = fakeStopper{log: log, name: "certificates"}
+
+	shutdown(deps)
+
+	want := []string{"servers", "ssh", "cancel", "reconciler", "monitor", "upgrades", "certificates", "background", "batch", "pool"}
+	if got := log.order(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected the shutdown steps in the order %v, got %v", want, got)
+	}
+
+	if unwired := shutdownDepsFor(nil, nil, nil, nil, nil, nil, nil, nil, nil, newShutdownLog()); unwired.certificates != nil {
+		t.Errorf("expected no certificate step without a service, got %#v", unwired.certificates)
+	}
+
+	svc := certinventory.NewService(certinventory.ServiceDeps{
+		Scanner:          certinventory.ScannerDeps{Director: fakeInfoDirector{}},
+		List:             func(context.Context) ([]certinventory.InstanceRef, error) { return nil, nil },
+		InventoryEnabled: true,
+	})
+	svc.Start(t.Context())
+
+	wired := shutdownDepsFor(nil, nil, nil, nil, nil, svc, nil, nil, nil, newShutdownLog())
+	if wired.certificates == nil {
+		t.Fatal("the certificate service never reached shutdown")
+	}
+
+	shutdown(wired)
+
+	if id, ok := svc.RequestScan(nil); ok || id != "" {
+		t.Errorf("the scheduler still accepts scans after shutdown, got %q, %v", id, ok)
+	}
+}
+
+// fakeInfoDirector answers only what the service reads at start.
+type fakeInfoDirector struct{ certinventory.DirectorReader }
+
+func (fakeInfoDirector) GetInfo(context.Context) (*bosh.Info, error) {
+	return &bosh.Info{Name: "ws-bosh", Version: "282.0.0"}, nil
 }
