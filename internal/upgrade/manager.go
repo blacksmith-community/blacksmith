@@ -65,6 +65,16 @@ var loadRetryBackoff = 5 * time.Second
 // loadRetryBackoffMax is the longest the loader waits between reads.
 const loadRetryBackoffMax = time.Minute
 
+// Restoring a loaded task's reservation waits for a holder other than an
+// upgrade or a certificate task, such as a deprovision the broker
+// re-adopted at boot, to free the instance. The loader tries again every
+// restoreRetryInterval for up to restoreWaitBound before it closes
+// loaded, and keeps trying in the background after that.
+const (
+	restoreWaitBound     = 15 * time.Second
+	restoreRetryInterval = 250 * time.Millisecond
+)
+
 // taskQueueCapacity is how many upgrades the queue holds before a send
 // waits for the dispatcher. A test lowers it.
 //
@@ -209,6 +219,26 @@ type Manager struct {
 	// requests finds a certificate task by the client request ID that
 	// created it, so a retried create finds the task it already made.
 	requests *requestIndex
+
+	// waiting holds, under mu, each instance of a loaded task that must be
+	// reserved but that another kind of holder had in the guard when the
+	// task was loaded, oldest task first. No task resumes while it has an
+	// instance waiting, and no new task can take a waiting instance.
+	waiting []waitingReservation
+
+	// restoreWait and restoreRetry are restoreWaitBound and
+	// restoreRetryInterval, which a test shortens before Start.
+	restoreWait  time.Duration
+	restoreRetry time.Duration
+}
+
+// waitingReservation is an instance of a loaded task that waits for
+// another holder to free it in the guard. index is the instance's place in
+// the task's instances.
+type waitingReservation struct {
+	task   *UpgradeTask
+	index  int
+	holder mutation.Holder
 }
 
 // taskSnapshot is a copy of an upgrade task taken under the manager's lock,
@@ -249,6 +279,8 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		guard:        mutation.NewGuard(time.Now),
 		reservations: make(map[string]map[string]func()),
 		requests:     newRequestIndex(),
+		restoreWait:  restoreWaitBound,
+		restoreRetry: restoreRetryInterval,
 	}
 
 	// The manager's context is a root. The manager lives as long as the
@@ -1783,8 +1815,8 @@ func (m *Manager) skipPendingLocked(task *UpgradeTask) int {
 // resumeIfReady moves on an upgrade that has no processor, deciding under
 // mu. A running upgrade, or a pending one that was queued but never
 // processed before a restart, that is not paused, has no instance
-// settling, and is not owned becomes owned and is queued, once no lookup
-// of a loaded deploy is still running. A cancelled upgrade with no
+// settling or waiting for its reservation, and is not owned becomes owned
+// and is queued, once no lookup of a loaded deploy is still running. A cancelled upgrade with no
 // instance settling skips its pending instances. Anything else waits for
 // its settles, the lookups, its resume, or its processor, and a manager
 // that is stopping queues nothing. With no BOSH director, an upgrade that
@@ -1799,7 +1831,7 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	// The upgrade path never runs a certificate task, so none is queued.
 	upgrade := task.KindOrDefault() == TaskKindUpgrade
 
-	ready := upgrade && settled && m.lookups == 0 && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
+	ready := upgrade && settled && m.lookups == 0 && !m.waitingLocked(task.ID) && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
 	noDirector := ready && m.director == nil
 
 	queue := ready && !noDirector
@@ -1866,6 +1898,7 @@ func (m *Manager) loadAndSettle() {
 	}
 
 	m.settleLoadedTasks(tasks)
+	m.awaitWaitingReservations()
 
 	// Each upgrade resumes on its own, so one upgrade's slow settle never
 	// holds back another.
@@ -3079,10 +3112,17 @@ func (m *Manager) acquireLocked(task *UpgradeTask, inst *InstanceUpgrade) error 
 // reserveNewLocked reserves every instance of a new upgrade. When any
 // instance is busy, it frees each reservation it took, so a refused
 // upgrade holds nothing, and returns the guard's error, which names the
-// holder. The caller holds mu.
+// holder. An instance a loaded task waits to reserve is busy with that
+// task. The caller holds mu.
 func (m *Manager) reserveNewLocked(task *UpgradeTask) error {
 	for i := range task.Instances {
 		inst := &task.Instances[i]
+
+		if waiter, waiting := m.waiterLocked(inst.InstanceID); waiting {
+			m.releaseAllLocked(task.ID)
+
+			return fmt.Errorf("%w, so instance %s can't be upgraded", &mutation.BusyError{Holder: taskHolder(waiter)}, inst.InstanceID)
+		}
 
 		err := m.acquireLocked(task, inst)
 		if err != nil {
@@ -3142,11 +3182,13 @@ func (m *Manager) holdsInstanceLocked(task *UpgradeTask, instanceID string) bool
 }
 
 // restoreReservationsLocked reserves every instance the upgrade must hold,
-// as the loader does for each upgrade it reads from Vault. Two saved
-// upgrades can only both hold an instance when their records are corrupt,
-// so the later one's instance fails, naming the upgrade that holds it, and
-// no deploy of it is sent. It reports whether it changed the upgrade. The
-// caller holds mu.
+// as the loader does for each task it reads from Vault. Two saved tasks
+// can only both hold an instance when their records are corrupt, so the
+// later one's instance fails, naming the task that holds it, and no deploy
+// of it is sent. Any other holder, such as a deprovision the broker
+// re-adopted at boot, leaves the instance as it is, waiting for its
+// reservation, and the instance is reserved once that holder frees it. It
+// reports whether it changed the task. The caller holds mu.
 func (m *Manager) restoreReservationsLocked(task *UpgradeTask) bool {
 	changed := false
 
@@ -3168,22 +3210,226 @@ func (m *Manager) restoreReservationsLocked(task *UpgradeTask) bool {
 			continue
 		}
 
-		holder := "task " + busy.Holder.TaskID
-		if busy.Holder.TaskID == "" {
-			holder = busy.Holder.Description
+		if !heldByTask(busy.Holder) {
+			m.waiting = append(m.waiting, waitingReservation{task: task, index: i, holder: busy.Holder})
+
+			m.logger.Info("Upgrade task %s waits for %s to free instance %s before it reserves the instance", task.ID, busy.Holder.Description, inst.InstanceID)
+
+			continue
 		}
 
-		completedAt := time.Now()
-		inst.Status = InstanceStatusFailed
-		inst.Error = "instance reserved by " + holder
-		inst.CompletedAt = &completedAt
-		task.FailedCount++
-		changed = true
+		m.failReservedLocked(task, inst, busy.Holder)
 
-		m.logger.Error("Upgrade task %s failed instance %s, because %s already holds it", task.ID, inst.InstanceID, holder)
+		changed = true
 	}
 
 	return changed
+}
+
+// heldByTask reports whether the holder is an upgrade or a certificate
+// task, the two kinds the manager holds instances for.
+func heldByTask(holder mutation.Holder) bool {
+	return holder.Kind == mutation.KindUpgrade || holder.Kind == mutation.KindCertificates
+}
+
+// failReservedLocked fails a loaded task's instance that another task
+// holds, naming that task. The caller holds mu.
+func (m *Manager) failReservedLocked(task *UpgradeTask, inst *InstanceUpgrade, holder mutation.Holder) {
+	name := "task " + holder.TaskID
+	if holder.TaskID == "" {
+		name = holder.Description
+	}
+
+	completedAt := time.Now()
+	inst.Status = InstanceStatusFailed
+	inst.Error = "instance reserved by " + name
+	inst.CompletedAt = &completedAt
+	task.FailedCount++
+
+	m.logger.Error("Upgrade task %s failed instance %s, because %s already holds it", task.ID, inst.InstanceID, name)
+}
+
+// waitingLocked reports whether the task has an instance waiting for its
+// reservation. The caller holds mu.
+func (m *Manager) waitingLocked(taskID string) bool {
+	for _, waiter := range m.waiting {
+		if waiter.task.ID == taskID {
+			return true
+		}
+	}
+
+	return false
+}
+
+// waiterLocked returns the loaded task that waits to reserve the instance,
+// if any. The caller holds mu.
+func (m *Manager) waiterLocked(instanceID string) (*UpgradeTask, bool) {
+	for _, waiter := range m.waiting {
+		if waiter.task.Instances[waiter.index].InstanceID == instanceID {
+			return waiter.task, true
+		}
+	}
+
+	return nil, false
+}
+
+// retryWaitingLocked tries again to reserve each waiting instance, oldest
+// task first. An instance the task no longer has to hold stops waiting,
+// and so does one it reserves. One that another task took meanwhile fails
+// as restoreReservationsLocked fails it. It returns the tasks that waited
+// and no longer wait for any instance, and the tasks it changed. The
+// caller holds mu.
+func (m *Manager) retryWaitingLocked() ([]*UpgradeTask, []*UpgradeTask) {
+	var (
+		changed   []*UpgradeTask
+		remaining []waitingReservation
+		touched   []*UpgradeTask
+	)
+
+	for _, waiter := range m.waiting {
+		task := waiter.task
+		inst := &task.Instances[waiter.index]
+
+		if !slices.Contains(touched, task) {
+			touched = append(touched, task)
+		}
+
+		if !m.shouldHoldLocked(task, inst) {
+			continue
+		}
+
+		err := m.acquireLocked(task, inst)
+		if err == nil {
+			m.logger.Info("Upgrade task %s reserved instance %s once %s freed it", task.ID, inst.InstanceID, waiter.holder.Description)
+
+			continue
+		}
+
+		var busy *mutation.BusyError
+		if !errors.As(err, &busy) {
+			m.logger.Error("Upgrade task %s could not reserve instance %s: %v", task.ID, inst.InstanceID, err)
+
+			remaining = append(remaining, waiter)
+
+			continue
+		}
+
+		if heldByTask(busy.Holder) {
+			m.failReservedLocked(task, inst, busy.Holder)
+			changed = append(changed, task)
+
+			continue
+		}
+
+		waiter.holder = busy.Holder
+		remaining = append(remaining, waiter)
+	}
+
+	m.waiting = remaining
+
+	var freed []*UpgradeTask
+
+	for _, task := range touched {
+		if !m.waitingLocked(task.ID) {
+			freed = append(freed, task)
+		}
+	}
+
+	return freed, changed
+}
+
+// awaitWaitingReservations tries again to reserve the waiting instances
+// every restoreRetry, for up to restoreWait, so the loaded gate closes
+// with them reserved when their holders free them in time. It never holds
+// the gate longer than that, since a holder can keep an instance for as
+// long as a BOSH task runs, and it hands what still waits to
+// retryWaitingInBackground. Each waiting instance keeps its state
+// meanwhile, and the loader follows its deploy as it follows any other.
+func (m *Manager) awaitWaitingReservations() {
+	m.mu.Lock()
+	waiting := len(m.waiting)
+	m.mu.Unlock()
+
+	if waiting == 0 {
+		return
+	}
+
+	deadline := time.NewTimer(m.restoreWait)
+	defer deadline.Stop()
+
+	ticker := time.NewTicker(m.restoreRetry)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			m.logger.Info("%d instances of the loaded tasks still wait for other holders after %s, so the load finishes and their reservations are taken in the background", waiting, m.restoreWait)
+
+			m.wg.Add(1)
+
+			go m.retryWaitingInBackground()
+
+			return
+		case <-m.stopCh:
+			return
+		}
+
+		m.mu.Lock()
+		_, changed := m.retryWaitingLocked()
+		waiting = len(m.waiting)
+		m.mu.Unlock()
+
+		m.persistRestored(changed)
+
+		if waiting == 0 {
+			return
+		}
+	}
+}
+
+// retryWaitingInBackground tries again to reserve the waiting instances
+// every restoreRetry until none waits or Stop ends it. Each task that no
+// longer waits for any instance moves on as resumeIfReady decides.
+func (m *Manager) retryWaitingInBackground() {
+	defer m.wg.Done()
+
+	ticker := time.NewTicker(m.restoreRetry)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+		case <-m.stopCh:
+			return
+		}
+
+		m.mu.Lock()
+		freed, changed := m.retryWaitingLocked()
+		waiting := len(m.waiting)
+		m.mu.Unlock()
+
+		m.persistRestored(changed)
+
+		for _, task := range freed {
+			m.resumeIfReady(task)
+		}
+
+		if waiting == 0 {
+			return
+		}
+	}
+}
+
+// persistRestored saves each task whose instance failed while its
+// reservations were restored.
+func (m *Manager) persistRestored(changed []*UpgradeTask) {
+	for _, task := range changed {
+		err := m.persistTask(context.WithoutCancel(m.ctx), task)
+		if err != nil {
+			m.logger.Error("Failed to persist upgrade task %s after its reservations were restored: %v", task.ID, err)
+		}
+	}
 }
 
 // restoreLoadedReservations reserves the instances of the loaded upgrades
@@ -3192,7 +3438,9 @@ func (m *Manager) restoreReservationsLocked(task *UpgradeTask) bool {
 // interrupted instance it loads, whatever its upgrade's status, so each
 // upgrade counts those as settling while its reservations are restored,
 // and prepareSettlingLocked sets the count again from what is then still
-// in flight. An upgrade whose instance failed here is saved again.
+// in flight. An upgrade whose instance failed here is saved again. An
+// instance another kind of holder has waits for its reservation, as
+// awaitWaitingReservations describes.
 func (m *Manager) restoreLoadedReservations(loaded []*UpgradeTask) {
 	ordered := slices.Clone(loaded)
 	slices.SortStableFunc(ordered, func(first, second *UpgradeTask) int {
@@ -3226,10 +3474,5 @@ func (m *Manager) restoreLoadedReservations(loaded []*UpgradeTask) {
 	}
 	m.mu.Unlock()
 
-	for _, task := range changed {
-		err := m.persistTask(context.WithoutCancel(m.ctx), task)
-		if err != nil {
-			m.logger.Error("Failed to persist upgrade task %s after its reservations were restored: %v", task.ID, err)
-		}
-	}
+	m.persistRestored(changed)
 }

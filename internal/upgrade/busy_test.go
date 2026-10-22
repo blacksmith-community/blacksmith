@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/mutation"
@@ -480,5 +481,96 @@ func TestTerminalInstancesReleaseTheirReservations(t *testing.T) {
 				return current.Status == TaskStatusCompleted || current.Status == TaskStatusFailed
 			})
 		})
+	}
+}
+
+// A deprovision the broker re-adopted at boot can still hold an instance
+// that a stored upgrade must hold. That is no corrupt record, so the
+// upgrade's instance keeps its state and its deploy is followed, the load
+// finishes after a bounded wait, no new upgrade can take the instance,
+// and the upgrade reserves it once the deprovision frees it.
+func TestLoadWaitsForAnotherHolder(t *testing.T) {
+	t.Parallel()
+
+	director := newResumeDirector()
+	director.holdAdopted()
+	t.Cleanup(func() { director.release(adoptedTaskID) })
+
+	guard := mutation.NewGuard(time.Now)
+
+	freeDeprovision, err := guard.Acquire(waitInstanceID, adoptedDeployment, mutation.Holder{
+		Kind:        mutation.KindDeprovision,
+		Description: "deprovision of " + adoptedDeployment,
+	})
+	if err != nil {
+		t.Fatalf("holding %s: %v", waitInstanceID, err)
+	}
+
+	t.Cleanup(freeDeprovision)
+
+	vault := newWaitVault()
+	storeUpgrade(t, vault, storedUpgrade(loadedTaskID, inFlight(adoptedDeployment, InstanceStatusRunning, adoptedTaskID, loadedContextID)))
+
+	manager := NewManager(&logger.NoOpLogger{}, director, vault)
+	manager.SetGuard(guard)
+	manager.restoreWait = 50 * time.Millisecond
+	manager.restoreRetry = 5 * time.Millisecond
+	t.Cleanup(manager.Stop)
+	manager.Start()
+
+	waitForLoad(t, manager)
+	director.waitForWaitOn(t, adoptedTaskID)
+
+	expectWaitingFor(t, manager, guard)
+
+	freeDeprovision()
+
+	waitUntil(t, "the upgrade's reservation of "+waitInstanceID, func() bool {
+		holder, held := guard.Holder(waitInstanceID, "")
+
+		return held && holder.Kind == mutation.KindUpgrade && holder.TaskID == loadedTaskID
+	})
+
+	director.release(adoptedTaskID)
+
+	settled := eventuallyWithin(t, manager, loadedTaskID, waitTimeout, "the settle of the followed deploy", func(current UpgradeTask) bool {
+		return current.Instances[0].Status == InstanceStatusSuccess
+	})
+
+	if settled.FailedCount != 0 {
+		t.Fatalf("expected no failed instance, got %+v", settled)
+	}
+
+	eventuallyFree(t, manager, waitInstanceID)
+
+	if director.deployCount(adoptedDeployment) != 0 {
+		t.Fatalf("expected no new deploy of %s, got %d", adoptedDeployment, director.deployCount(adoptedDeployment))
+	}
+}
+
+// expectWaitingFor fails the test unless the stored upgrade's instance
+// still runs while the deprovision holds it, and a new upgrade of the
+// instance is busy with the stored one.
+func expectWaitingFor(t *testing.T, manager *Manager, guard *mutation.Guard) {
+	t.Helper()
+
+	loaded, err := manager.GetTask(loadedTaskID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+
+	if loaded.Instances[0].Status != InstanceStatusRunning || loaded.FailedCount != 0 {
+		t.Fatalf("expected the instance to keep running while the deprovision holds it, got %+v", loaded.Instances[0])
+	}
+
+	if holder, _ := guard.Holder(waitInstanceID, ""); holder.Kind != mutation.KindDeprovision {
+		t.Fatalf("expected the deprovision to still hold %s, got %+v", waitInstanceID, holder)
+	}
+
+	_, err = manager.CreateTask(t.Context(), stemcellRequest(waitInstanceID))
+
+	var busy *mutation.BusyError
+	if !errors.Is(err, ErrInstanceBusy) || !errors.As(err, &busy) || busy.Holder.TaskID != loadedTaskID {
+		t.Fatalf("expected a new upgrade to be busy with %s, got %v", loadedTaskID, err)
 	}
 }
