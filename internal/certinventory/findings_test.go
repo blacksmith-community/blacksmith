@@ -47,7 +47,7 @@ func issue(t *testing.T, s issueSpec) issued {
 		ExtKeyUsage:           s.ext,
 		BasicConstraintsValid: true,
 		IsCA:                  s.isCA,
-		SubjectKeyId:          []byte{0x01, byte(s.serial)},
+		SubjectKeyId:          []byte{0x01, byte(s.serial)}, //nolint:gosec // Test serials are small.
 		SignatureAlgorithm:    s.sigAlgo,
 	}
 	if s.isCA {
@@ -467,7 +467,7 @@ func TestCoverageCounts(t *testing.T) {
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // The test reads its own testdata.
 	if err != nil {
 		t.Fatal(err)
 	}

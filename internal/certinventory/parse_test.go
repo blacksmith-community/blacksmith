@@ -56,7 +56,7 @@ func makeCert(t *testing.T, s certSpec) (*x509.Certificate, []byte) {
 		BasicConstraintsValid: s.isCA,
 		IsCA:                  s.isCA,
 		KeyUsage:              s.keyUsage,
-		SubjectKeyId:          []byte{0xab, 0xcd, byte(s.serial)},
+		SubjectKeyId:          []byte{0xab, 0xcd, byte(s.serial)}, //nolint:gosec // Test serials are small.
 		SignatureAlgorithm:    s.sigAlgo,
 	}
 
@@ -161,7 +161,7 @@ func TestWeaknessFindings(t *testing.T) {
 	signer := ecKey(t, elliptic.P256())
 	ca, _ := makeCert(t, certSpec{cn: "ca", isCA: true, subject: signer.Public(), selfKey: signer, serial: 1})
 
-	rsa1024, err := rsa.GenerateKey(rand.Reader, 1024)
+	rsa1024, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // A deliberately weak key exercises the weak-key finding.
 	if err != nil {
 		t.Fatal(err)
 	}

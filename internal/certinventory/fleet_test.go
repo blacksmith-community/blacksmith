@@ -205,7 +205,7 @@ func TestFleetIDsStableAcrossScanOrder(t *testing.T) {
 
 	want := render(scans)
 
-	rng := mrand.New(mrand.NewPCG(1, 2))
+	rng := mrand.New(mrand.NewPCG(1, 2)) //nolint:gosec // A seeded generator makes the shuffle repeatable.
 
 	for n := 0; n < 5; n++ {
 		shuffled := append([]InstanceScan(nil), scans...)
@@ -315,7 +315,7 @@ func TestFleetFindingsSeeRepresentatives(t *testing.T) {
 	t.Parallel()
 
 	short := issue(t, issueSpec{cn: "short-ca", serial: 1, isCA: true, notAfter: 12 * time.Hour})
-	weakKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	weakKey, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // A deliberately weak key exercises the weak-key finding.
 
 	if err != nil {
 		t.Fatal(err)

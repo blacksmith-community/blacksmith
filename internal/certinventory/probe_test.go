@@ -54,11 +54,11 @@ func TestProberCapturesLeafWhenClientCertRequired(t *testing.T) {
 }
 
 func TestProberTimeout(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := listenLocal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	var (
 		mu    sync.Mutex
@@ -100,7 +100,7 @@ func TestProberTimeout(t *testing.T) {
 
 	var ne net.Error
 
-	if !errors.Is(err, context.DeadlineExceeded) && !(errors.As(err, &ne) && ne.Timeout()) {
+	if !errors.Is(err, context.DeadlineExceeded) && (!errors.As(err, &ne) || !ne.Timeout()) {
 		t.Errorf("error is not a timeout: %v", err)
 	}
 }
@@ -116,7 +116,7 @@ func TestProberSendsServerName(t *testing.T) {
 		GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
 			names <- h.ServerName
 
-			return nil, nil
+			return nil, nil //nolint:nilnil // A nil config tells the server to keep its own.
 		},
 	}
 	srv.StartTLS()
@@ -137,11 +137,11 @@ func TestProberSendsServerName(t *testing.T) {
 }
 
 func TestProberFailsWhenNothingSpeaksTLS(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := listenLocal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	go func() {
 		c, err := ln.Accept()
@@ -158,7 +158,7 @@ func TestProberFailsWhenNothingSpeaksTLS(t *testing.T) {
 }
 
 func TestProberFailsWhenRefused(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := listenLocal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,4 +213,9 @@ func TestVerifyChain(t *testing.T) {
 	if err := VerifyChain(nil, nil, roots, now); err == nil {
 		t.Error("a nil leaf should fail")
 	}
+}
+
+// listenLocal opens a TCP listener on a free loopback port.
+func listenLocal() (net.Listener, error) {
+	return (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 }

@@ -13,7 +13,7 @@ import (
 func loadManifest(t *testing.T, name string) string {
 	t.Helper()
 
-	raw, err := os.ReadFile(filepath.Join("testdata", "manifests", name))
+	raw, err := os.ReadFile(filepath.Join("testdata", "manifests", name)) //nolint:gosec // The test reads its own testdata.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,12 @@ func TestWalkManifestSkipsPrivateKeys(t *testing.T) {
 		}
 	}
 
-	if len(facts.Jobs) != 1 || facts.Jobs[0].Properties["tls"].(map[string]interface{})["name"] != "kept" {
+	if len(facts.Jobs) != 1 {
+		t.Fatalf("other properties should survive: %+v", facts.Jobs)
+	}
+
+	tlsProps, ok := facts.Jobs[0].Properties["tls"].(map[string]interface{})
+	if !ok || tlsProps["name"] != "kept" {
 		t.Errorf("other properties should survive: %+v", facts.Jobs)
 	}
 }

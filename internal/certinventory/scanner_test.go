@@ -285,12 +285,20 @@ func serveTLS(t *testing.T, leaf issued) int {
 				return
 			}
 
-			_ = conn.(*tls.Conn).Handshake()
+			if tc, ok := conn.(*tls.Conn); ok {
+				_ = tc.Handshake()
+			}
+
 			_ = conn.Close()
 		}
 	}()
 
-	return ln.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address is %T, want *net.TCPAddr", ln.Addr())
+	}
+
+	return tcpAddr.Port
 }
 
 type scannerFixture struct {
@@ -468,7 +476,7 @@ func TestScanInstanceCredHubUnavailable(t *testing.T) {
 		}
 	}
 
-	raw, err := json.Marshal(scan)
+	raw, err := json.Marshal(scan) //nolint:musttag // The test checks the default encoding for key material.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,7 +772,7 @@ func TestScanInstanceReadsOnlyHostFields(t *testing.T) {
 		t.Errorf("Hosts = %v, want %v", scan.Material.Hosts, want)
 	}
 
-	raw, err := json.Marshal(scan)
+	raw, err := json.Marshal(scan) //nolint:musttag // The test checks the default encoding for key material.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -831,7 +839,7 @@ func TestScanInstanceNeverRetainsKeys(t *testing.T) {
 		t.Fatalf("CredHub = %+v, want the deployed certificate", scan.Material.CredHub)
 	}
 
-	raw, err := json.Marshal(scan)
+	raw, err := json.Marshal(scan) //nolint:musttag // The test checks the default encoding for key material.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1076,7 +1084,7 @@ func TestScanInstanceRecordsFailedReads(t *testing.T) {
 		t.Errorf("Vault hosts failure = %+v, %v", hosts, ok)
 	}
 
-	raw, err := json.Marshal(scan)
+	raw, err := json.Marshal(scan) //nolint:musttag // The test checks the default encoding for key material.
 	if err != nil {
 		t.Fatal(err)
 	}

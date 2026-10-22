@@ -307,27 +307,39 @@ func TestResponseJSONShape(t *testing.T) {
 		}
 	}
 
-	c := got["capabilities"].(map[string]any)
+	c := asMap(t, got["capabilities"])
 
-	cred := c["credhub"].(map[string]any)
+	cred := asMap(t, c["credhub"])
 	if cred["state"] != "not_configured" || cred["reason"] == "" {
 		t.Errorf("credhub block %v", cred)
 	}
 
-	rot := c["rotation"].(map[string]any)
+	rot := asMap(t, c["rotation"])
 	if rot["enabled"] != false || rot["reason"] != "CredHub not configured" {
 		t.Errorf("rotation block %v", rot)
 	}
 
-	if d := c["director"].(map[string]any); d["version"] != "282.0.5" || d["force_latest_variables"] != true {
+	if d := asMap(t, c["director"]); d["version"] != "282.0.5" || d["force_latest_variables"] != true {
 		t.Errorf("director block %v", d)
 	}
 
-	if p := c["patch_in_place"].(map[string]any); p["enabled"] != false || p["reason"] != "certificates.patch_in_place.enabled is false" {
+	if p := asMap(t, c["patch_in_place"]); p["enabled"] != false || p["reason"] != "certificates.patch_in_place.enabled is false" {
 		t.Errorf("patch block %v", p)
 	}
 
-	if s := got["settings"].(map[string]any); s["warning_days"] != float64(30) || s["critical_days"] != float64(7) {
+	if s := asMap(t, got["settings"]); s["warning_days"] != float64(30) || s["critical_days"] != float64(7) {
 		t.Errorf("settings block %v", s)
 	}
+}
+
+// asMap returns v as a JSON object, and fails the test when it is not one.
+func asMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("got %T, want a JSON object", v)
+	}
+
+	return m
 }
