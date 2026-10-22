@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	shortJobDir  = "/var/vcap/data/jobs/j/v"
 	vcapData     = "/var/vcap/data"
 	valkeyJobs   = vcapData + "/jobs/valkey"
 	pinnedJobDir = valkeyJobs + "/abc"
@@ -73,10 +74,41 @@ type pinnedCase struct {
 	ok     bool
 }
 
+// longPinnedPath returns a path of exactly n bytes under the job
+// directory /var/vcap/data/jobs/j/v, made of segments short enough for
+// any filesystem.
+func longPinnedPath(n int) string {
+	path := shortJobDir
+
+	for len(path) < n {
+		segment := min(200, n-len(path)-1)
+		if segment < 1 {
+			// One byte is left, which no segment can fill on its own,
+			// so lengthen the last one.
+			path += "x"
+
+			continue
+		}
+
+		path += "/" + strings.Repeat("a", segment)
+	}
+
+	return path
+}
+
 func pinnedCases() []pinnedCase {
 	return []pinnedCase{
 		{pinnedTarget, pinnedJobDir, true},
 		{pinnedJobDir + "/server.crt", pinnedJobDir, true},
+		{"/var/vcap/data/jobs/my-job_1.2/0a1b2c3d4e-f5a6b7/config/tls/ca.pem", "/var/vcap/data/jobs/my-job_1.2/0a1b2c3d4e-f5a6b7", true},
+		{"/var/vcap/data/jobs/redis/1.2.3/config/a.b.c.key", "/var/vcap/data/jobs/redis/1.2.3", true},
+		{"/var/vcap/data/jobs/Valkey/ABC_def/Config/Server.CRT", "/var/vcap/data/jobs/Valkey/ABC_def", true},
+		{shortJobDir + "/a/b/c/d/e/f.crt", shortJobDir, true},
+		{shortJobDir + "/config/-cert.pem", shortJobDir, true},
+		{shortJobDir + "/a..b/...x/.hidden", shortJobDir, true},
+		{"/var/vcap/data/jobs/.j/..v/x", "/var/vcap/data/jobs/.j/..v", true},
+		{longPinnedPath(1024), shortJobDir, true},
+		{longPinnedPath(1025), shortJobDir, false},
 		{"/var/vcap/data/jobs/valkey/def/config/server.crt", pinnedJobDir, false},
 		{"/var/vcap/data/jobs/valkey/abcd/config/server.crt", pinnedJobDir, false},
 		{"/var/vcap/data/jobs/valkey/abc/../x", pinnedJobDir, false},
@@ -103,6 +135,12 @@ func pinnedCases() []pinnedCase {
 func TestValidPinnedTarget(t *testing.T) {
 	t.Parallel()
 
+	for _, n := range []int{1024, 1025} {
+		if got := len(longPinnedPath(n)); got != n {
+			t.Fatalf("longPinnedPath(%d) is %d bytes long", n, got)
+		}
+	}
+
 	for _, tc := range pinnedCases() {
 		err := certscripts.ValidPinnedTarget(tc.path, tc.jobDir)
 		checkVerdict(t, "ValidPinnedTarget", tc.path+" in "+tc.jobDir, tc.ok, err)
@@ -123,6 +161,14 @@ func workCases() []workCase {
 		{own + "/s/0", testTaskID, true},
 		{own + "/b/3", testTaskID, true},
 		{own + "/s/12", testTaskID, true},
+		{own + "/s/1", testTaskID, true},
+		{own + "/b/0", testTaskID, true},
+		{own + "/b/9", testTaskID, true},
+		{own + "/s/10", testTaskID, true},
+		{own + "/b/123456789", testTaskID, true},
+		{own + "/s/999999999", testTaskID, true},
+		{workBase + otherTaskID + "/s/0", otherTaskID, true},
+		{own + "/s/1234567890", testTaskID, false},
 		{workBase + otherTaskID + "/s/0", testTaskID, false},
 		{own + "/s/x", testTaskID, false},
 		{own + "/s/-1", testTaskID, false},
@@ -265,20 +311,71 @@ func TestValidatorShapeParityWithBash(t *testing.T) {
 			t.Errorf("valid_task %q exited %d, want %d", tc.path, got, shapeExit(tc.ok))
 		}
 	}
+}
 
-	// The shell adds checks of the VM's files to these two, so an input
-	// the Go side refuses must be refused there too, while an accepted
-	// one depends on the files and is tested below.
-	for _, tc := range pinnedCases() {
-		if !tc.ok && libCheck(t, root, "valid_pinned", tc.path, tc.jobDir) != refusedExit {
-			t.Errorf("valid_pinned %q %q did not refuse", tc.path, tc.jobDir)
+// TestPinnedParityWithBash gives each pinned shape that Go accepts a real
+// tree in which bash must accept it too, and runs each shape that Go
+// refuses against a tree holding the usual files, where bash must refuse
+// it. The shell adds checks of the VM's files, so a tree is needed for a
+// fair answer.
+func TestPinnedParityWithBash(t *testing.T) {
+	t.Parallel()
+
+	accepted := 0
+
+	for _, shape := range pinnedCases() {
+		if !shape.ok {
+			tree := newVMTree(t)
+			if got := libCheck(t, tree.root, "valid_pinned", shape.path, shape.jobDir); got != refusedExit {
+				t.Errorf("valid_pinned %q %q exited %d, want 13", shape.path, shape.jobDir, got)
+			}
+
+			continue
+		}
+
+		accepted++
+
+		tree := newPinnedTree(t, shape.path, shape.jobDir)
+		if got := libCheck(t, tree.root, "valid_pinned", shape.path, shape.jobDir); got != 0 {
+			t.Errorf("valid_pinned %q %q exited %d in a valid tree, want 0", shape.path, shape.jobDir, got)
 		}
 	}
 
-	for _, tc := range workCases() {
-		if !tc.ok && libCheck(t, root, "valid_work", tc.path, tc.task) != refusedExit {
-			t.Errorf("valid_work %q %q did not refuse", tc.path, tc.task)
+	if accepted < 8 {
+		t.Errorf("the table has %d accepted pinned shapes, want at least 8", accepted)
+	}
+}
+
+// TestWorkParityWithBash runs every work shape against a tree in which
+// both tasks' private directories exist, so bash must accept exactly
+// what Go accepts.
+func TestWorkParityWithBash(t *testing.T) {
+	t.Parallel()
+
+	accepted := 0
+
+	for _, shape := range workCases() {
+		tree := newVMTree(t)
+
+		for _, task := range []string{testTaskID, otherTaskID} {
+			if got := tree.makeWorkDir(t, task); got != 0 {
+				t.Fatalf("make_work_dir %s exited %d", task, got)
+			}
 		}
+
+		want := refusedExit
+		if shape.ok {
+			want = 0
+			accepted++
+		}
+
+		if got := libCheck(t, tree.root, "valid_work", shape.path, shape.task); got != want {
+			t.Errorf("valid_work %q %q exited %d, want %d", shape.path, shape.task, got, want)
+		}
+	}
+
+	if accepted < 8 {
+		t.Errorf("the table has %d accepted work shapes, want at least 8", accepted)
 	}
 }
 
@@ -333,6 +430,28 @@ func newVMTree(t *testing.T) *vmTree {
 	tree.write(t, "/var/vcap/data/jobs/valkey/def/config/server.crt", "def\n")
 	tree.write(t, "/etc/shadow-fixture", "shadow\n")
 	symlink(t, tree.at(pinnedJobDir), tree.at("/var/vcap/jobs/valkey"))
+
+	return tree
+}
+
+// newPinnedTree builds a tree that holds only the file path, under
+// jobDir, with /var/vcap/jobs/<job> pointing at jobDir.
+func newPinnedTree(t *testing.T, path, jobDir string) *vmTree {
+	t.Helper()
+	requireRoot(t)
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, _, _ := strings.Cut(strings.TrimPrefix(jobDir, vcapData+"/jobs/"), "/")
+
+	tree := &vmTree{root: root}
+	tree.mkdir(t, "/var/vcap/jobs")
+	tree.mkdir(t, filepath.Dir(path))
+	tree.write(t, path, "old\n")
+	symlink(t, tree.at(jobDir), tree.at("/var/vcap/jobs/"+job))
 
 	return tree
 }
