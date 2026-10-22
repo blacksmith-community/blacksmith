@@ -852,3 +852,81 @@ func TestSchedulerAcceptsScannerInterface(t *testing.T) {
 
 	var _ instanceScanner = (*Scanner)(nil)
 }
+
+func TestRescanKeepsLastGoodCertificate(t *testing.T) {
+	t.Parallel()
+
+	good := issue(t, issueSpec{cn: "redis.bosh", serial: 9})
+	name := "/ws-bosh/svc-a/redis_crt"
+	first := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	notAfter := good.cert.NotAfter
+
+	sc := newFakeScanner()
+	sc.result = func(ref InstanceRef, n int) InstanceScan {
+		at := first.Add(time.Duration(n-1) * time.Hour)
+		owner := Owner{Kind: OwnerInstance, InstanceID: ref.ID}
+
+		ch := CredHubCert{Name: name, Owner: owner, Versions: Versions{DeployedVersionID: "v1"}}
+		if n == 1 {
+			ch.Deployed, ch.Latest = good.cert, good.cert
+			ch.Versions = Versions{CertificateID: "cert-id", DeployedVersionID: "v1", LatestVersionID: "v1",
+				DeployedNotAfter: &notAfter, LatestNotAfter: &notAfter}
+		} else {
+			ch.Err = "CredHub unavailable: certificate metadata: 503"
+		}
+
+		return InstanceScan{Ref: ref, Material: ScanMaterial{CredHub: []CredHubCert{ch}}, ScannedAt: at, LastSuccessAt: at}
+	}
+
+	var cache Cache
+
+	s := newTestScheduler(t, sc, &cache, staticLister("a"), nil, settingsWith(4, 60))
+
+	for round := 1; round <= 3; round++ {
+		id, _ := s.RequestScan(nil)
+		waitScan(t, s, id)
+
+		if round == 1 {
+			continue
+		}
+
+		got, _ := cache.Get("a")
+		if len(got.Material.CredHub) != 1 {
+			t.Fatalf("round %d: CredHub = %d entries", round, len(got.Material.CredHub))
+		}
+
+		c := got.Material.CredHub[0]
+		if c.Deployed == nil || Fingerprint(c.Deployed) != Fingerprint(good.cert) {
+			t.Fatalf("round %d: the last good certificate was lost", round)
+		}
+
+		if c.Err != "CredHub unavailable: certificate metadata: 503" {
+			t.Errorf("round %d: Err = %q, want the new error", round, c.Err)
+		}
+
+		if c.Versions.CertificateID != "cert-id" || c.Versions.DeployedNotAfter == nil {
+			t.Errorf("round %d: versions = %+v, want the last good ones", round, c.Versions)
+		}
+
+		var stale []RawObservation
+
+		for _, r := range got.Material.Raw {
+			if r.Source == SourceCredHub && r.Locator == name && r.State == StateStale {
+				stale = append(stale, r)
+			}
+		}
+
+		if len(stale) != 1 || !stale[0].ObservedAt.Equal(first) || stale[0].Fingerprint != Fingerprint(good.cert) {
+			t.Errorf("round %d: stale observations = %+v, want one from the first scan", round, stale)
+		}
+
+		cov := coverageFor(t, got.Material, name)
+		if !cov.Stale || cov.Complete {
+			t.Errorf("round %d: coverage = %+v, want stale and incomplete", round, cov)
+		}
+	}
+
+	if sc.count("a") != 3 {
+		t.Errorf("scans = %d, want 3", sc.count("a"))
+	}
+}

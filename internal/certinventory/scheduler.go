@@ -8,6 +8,7 @@ import (
 	"fmt"
 	mrand "math/rand/v2"
 	"net/http"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -522,6 +523,10 @@ func (s *Scheduler) store(scan InstanceScan) {
 	id := scan.Ref.ID
 
 	if scan.Err == "" {
+		if prev, ok := s.cache.Get(id); ok {
+			scan.Material = keepLastGood(scan.Material, prev)
+		}
+
 		s.cache.Put(scan)
 
 		s.mu.Lock()
@@ -547,6 +552,82 @@ func (s *Scheduler) store(scan InstanceScan) {
 	s.mu.Lock()
 	s.errs[id] = e
 	s.mu.Unlock()
+}
+
+// keepLastGood returns m with the last good certificate of every CredHub
+// variable this scan could not read. A variable whose read failed, and
+// which the previous scan held a certificate for, keeps that certificate
+// and its versions along with the new error. A stale observation from the
+// time of the good read goes with it, so the certificate's coverage says it
+// is stale (spec 7.10). The previous scan's material is never changed.
+func keepLastGood(m ScanMaterial, prev InstanceScan) ScanMaterial {
+	good := map[string]CredHubCert{}
+
+	for _, ch := range prev.Material.CredHub {
+		if ch.Deployed != nil {
+			good[ch.Name] = ch
+		}
+	}
+
+	if len(good) == 0 {
+		return m
+	}
+
+	// observedAt is when each carried certificate was last read, which a
+	// carry from an earlier carry keeps.
+	observedAt := map[string]time.Time{}
+
+	for _, r := range prev.Material.Raw {
+		if r.Source == SourceCredHub && r.State == StateStale {
+			observedAt[r.Locator] = r.ObservedAt
+		}
+	}
+
+	var credhub []CredHubCert
+
+	for i, ch := range m.CredHub {
+		last, ok := good[ch.Name]
+		if ch.Err == "" || ch.Deployed != nil || !ok {
+			continue
+		}
+
+		if credhub == nil {
+			credhub = slices.Clone(m.CredHub)
+			m.Raw = slices.Clip(m.Raw)
+		}
+
+		ch.Deployed, ch.Latest, ch.Versions = last.Deployed, last.Latest, last.Versions
+		ch.Chain = slices.Clone(last.Chain)
+		credhub[i] = ch
+
+		at, ok := observedAt[ch.Name]
+		if !ok {
+			at = prev.ScannedAt
+		}
+
+		notAfter := last.Deployed.NotAfter
+
+		m.Raw = append(m.Raw, RawObservation{
+			Observation: Observation{
+				Source:      SourceCredHub,
+				Owner:       ch.Owner,
+				Locator:     ch.Name,
+				Fingerprint: Fingerprint(last.Deployed),
+				Serial:      last.Deployed.SerialNumber.Text(16),
+				NotAfter:    &notAfter,
+				Matches:     MatchDeployed,
+				State:       StateStale,
+				ObservedAt:  at,
+			},
+			Cert: last.Deployed,
+		})
+	}
+
+	if credhub != nil {
+		m.CredHub = credhub
+	}
+
+	return m
 }
 
 // drop removes every cached instance the index no longer lists, keeping the
