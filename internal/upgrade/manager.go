@@ -246,6 +246,9 @@ type Manager struct {
 	// certificate create is using, so the creates that share one run one at
 	// a time.
 	createLocks map[string]*requestLock
+
+	// certFinisher ends the following of a certificate instance's deploy.
+	certFinisher certFinisher
 }
 
 // waitingReservation is an instance of a loaded task that waits for
@@ -300,6 +303,8 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		createRetry:  createRetryInterval,
 		createLocks:  make(map[string]*requestLock),
 	}
+
+	m.certFinisher = deployContract{m: m}
 
 	// The manager's context is a root. The manager lives as long as the
 	// broker, NewManager receives no context, and Stop is what ends it, so
@@ -929,7 +934,7 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 		return
 	}
 
-	m.settleInstance(task, instance, taskID, finished)
+	m.finishFollowedDeploy(ctx, task, instance, taskID, finished)
 	m.persistTask(persistCtx, task) //nolint:errcheck
 }
 
@@ -974,7 +979,7 @@ func (m *Manager) awaitLostAnswer(ctx context.Context, task *UpgradeTask, instan
 			instance.BOSHTaskID = taskID
 			m.mu.Unlock()
 
-			m.settleInstance(task, instance, taskID, finished)
+			m.finishFollowedDeploy(ctx, task, instance, taskID, finished)
 			m.persistTask(persistCtx, task) //nolint:errcheck
 
 			return
@@ -1188,9 +1193,28 @@ func (m *Manager) awaitDeployTask(ctx context.Context, task *UpgradeTask, instan
 	}
 }
 
+// finishFollowedDeploy ends the following of a deploy whose BOSH task
+// ended, or whose wait returned no task. An upgrade instance is settled
+// from the task's final state. A certificate instance goes to the
+// certificate finisher, which may keep it reserved while it checks what
+// the deploy applied. Every path that follows a deploy to its end comes
+// here, so a restart after BOSH finished ends the same way a live run
+// does.
+func (m *Manager) finishFollowedDeploy(ctx context.Context, task *UpgradeTask, instance *InstanceUpgrade, taskID int, finished *bosh.Task) {
+	if task.KindOrDefault() == TaskKindCertificates {
+		m.certFinisher.certAfterDeploy(ctx, task, instance, taskID, finished)
+
+		return
+	}
+
+	m.settleInstance(task, instance, taskID, finished)
+}
+
 // settleInstance records the outcome of an upgrade instance from the final
-// state of its deploy task. It alone settles an instance that started. A
-// wait that ended with no task and no error is a failed wait.
+// state of its deploy task. It alone settles an upgrade instance that
+// started, and finishFollowedDeploy sends a certificate instance to the
+// certificate finisher instead. A wait that ended with no task and no
+// error is a failed wait.
 func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, taskID int, finished *bosh.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1198,12 +1222,6 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 	// Deferred calls run in reverse, so the settled instance is released
 	// before the lock is.
 	defer m.releaseUnheldLocked(task)
-
-	if task.KindOrDefault() == TaskKindCertificates {
-		m.settleCertificateDeployLocked(task, instance, taskID, finished)
-
-		return
-	}
 
 	completedAt := time.Now()
 	instance.CompletedAt = &completedAt

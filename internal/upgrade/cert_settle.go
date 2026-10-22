@@ -1,6 +1,7 @@
 package upgrade
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -116,4 +117,34 @@ func pauseForDecisionLocked(task *UpgradeTask) {
 		task.Status = TaskStatusPaused
 		task.Paused = true
 	}
+}
+
+// certFinisher ends the following of a certificate instance's deploy once
+// its BOSH task has ended, or its wait returned no task.
+type certFinisher interface {
+	certAfterDeploy(ctx context.Context, task *UpgradeTask, inst *InstanceUpgrade, taskID int, finished *bosh.Task)
+}
+
+// deployContract is the certificate finisher that records the deploy's
+// outcome and goes no further.
+type deployContract struct {
+	m *Manager
+}
+
+func (c deployContract) certAfterDeploy(_ context.Context, task *UpgradeTask, inst *InstanceUpgrade, taskID int, finished *bosh.Task) {
+	c.m.settleCertificateDeploy(task, inst, taskID, finished)
+}
+
+// settleCertificateDeploy records how a certificate instance's deploy
+// ended, as settleCertificateDeployLocked does, and releases what the task
+// no longer holds.
+func (m *Manager) settleCertificateDeploy(task *UpgradeTask, inst *InstanceUpgrade, taskID int, finished *bosh.Task) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Deferred calls run in reverse, so the settled instance is released
+	// before the lock is.
+	defer m.releaseUnheldLocked(task)
+
+	m.settleCertificateDeployLocked(task, inst, taskID, finished)
 }
