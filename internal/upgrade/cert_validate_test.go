@@ -217,3 +217,18 @@ func TestAllPassedEmptyAndFailing(t *testing.T) {
 		t.Error("a failing check must fail the list")
 	}
 }
+
+func TestValidateNewMissingCertificateIsAParseFailure(t *testing.T) {
+	t.Parallel()
+
+	ca := newTestCA(t, "signing-ca")
+	cert, _ := ca.issue(t, baseSpec())
+
+	for name, pair := range map[string][2]*x509.Certificate{"no old": {nil, cert}, "no new": {cert, nil}} {
+		checks := ValidateNew(pair[0], pair[1], ca.cert, nil, validateNow)
+
+		if len(checks) != 1 || checks[0].Name != CheckParse || checks[0].Passed {
+			t.Errorf("%s: checks = %+v, want one failed parse check", name, checks)
+		}
+	}
+}

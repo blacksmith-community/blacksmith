@@ -11,6 +11,7 @@ import (
 
 // Names of the checks ValidateNew runs.
 const (
+	CheckParse       = "parse"
 	CheckKeyMatch    = "key_match"
 	CheckCAVerify    = "ca_verify"
 	CheckCommonName  = "common_name"
@@ -36,7 +37,7 @@ type publicKeyer interface {
 // instead of failed.
 func ValidateNew(oldCert, newCert, signingCA *x509.Certificate, key crypto.PrivateKey, now time.Time) []Check {
 	if oldCert == nil || newCert == nil {
-		return []Check{{Name: CheckCommonName, Detail: "The old or the new certificate is missing, so nothing can be compared."}}
+		return []Check{{Name: CheckParse, Detail: "The old or the new certificate is missing, so nothing can be compared."}}
 	}
 
 	var checks []Check
