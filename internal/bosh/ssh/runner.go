@@ -208,9 +208,12 @@ func (r *Runner) openSession(ctx context.Context, shown string) (*ssh.Session, e
 	select {
 	case got := <-opened:
 		if got.err != nil {
-			r.log.Debugf("Could not open an SSH session to run %s", shown)
+			// The library's error can carry the reason the VM's sshd
+			// gave, which is free text, so it reaches only a log line,
+			// escaped by ForLog, and never the error.
+			r.log.Debugf("Could not open an SSH session to run %s: %s", shown, ForLog([]byte(got.err.Error())))
 
-			return nil, fmt.Errorf("%w: %w", ErrSessionNotOpened, got.err)
+			return nil, ErrSessionNotOpened
 		}
 
 		return got.session, nil

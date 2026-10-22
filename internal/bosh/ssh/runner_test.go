@@ -44,6 +44,9 @@ type runnerVM struct {
 
 	channels atomic.Int32
 	execs    atomic.Int32
+	// rejectText, when set, makes the VM refuse every session channel
+	// with this text as the reason.
+	rejectText atomic.Pointer[string]
 
 	mu    sync.Mutex
 	conns []net.Conn
@@ -134,6 +137,12 @@ func (s *runnerVM) serve(conn net.Conn) {
 	for newChannel := range channels {
 		if newChannel.ChannelType() != "session" {
 			_ = newChannel.Reject(ssh.UnknownChannelType, "session only")
+
+			continue
+		}
+
+		if reason := s.rejectText.Load(); reason != nil {
+			_ = newChannel.Reject(ssh.Prohibited, *reason)
 
 			continue
 		}
@@ -363,6 +372,34 @@ func TestRunnerRefusesContentInArgs(t *testing.T) {
 
 	for _, line := range log.all() {
 		if strings.Contains(line, "BEGIN") || strings.Contains(line, "PRIVATE") || strings.Contains(line, testKeyBody) {
+			t.Errorf("the runner logged %q", line)
+		}
+	}
+}
+
+// The reason a VM's sshd gives for refusing a session is free text, so
+// it reaches neither the error nor a raw log line.
+func TestRunnerKeepsSSHDTextOutOfErrors(t *testing.T) {
+	t.Parallel()
+
+	fakeVM := startRunnerVM(t, func(string, ssh.Channel, <-chan struct{}) uint32 { return 0 })
+	reason := "no sessions today\nINFO forged " + testKeyBody
+	fakeVM.rejectText.Store(&reason)
+
+	log := &runnerLog{}
+	runner := boshssh.NewRunner(fakeVM.dial(t), log)
+
+	_, err := runner.Run(t.Context(), catProgram, nil, nil, 0)
+	if !errors.Is(err, boshssh.ErrSessionNotOpened) {
+		t.Fatalf("Run returned %v, want ErrSessionNotOpened", err)
+	}
+
+	if got, want := err.Error(), boshssh.ErrSessionNotOpened.Error(); got != want {
+		t.Errorf("Run returned the error %q, want %q", got, want)
+	}
+
+	for _, line := range log.all() {
+		if strings.ContainsAny(line, "\n\r") || strings.Contains(line, testKeyBody) {
 			t.Errorf("the runner logged %q", line)
 		}
 	}
