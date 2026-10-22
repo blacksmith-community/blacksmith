@@ -1,0 +1,11 @@
+check process redis
+  with pidfile /var/vcap/sys/run/bpm/redis/redis.pid
+  start program "/var/vcap/jobs/bpm/bin/bpm start redis"
+  stop program "/var/vcap/jobs/bpm/bin/bpm stop redis"
+  group vcap
+
+  CHECK PROCESS redis-exporter
+  with pidfile /var/vcap/sys/run/bpm/redis/exporter.pid
+  group vcap
+
+check file redis-config with path /var/vcap/jobs/redis/config/redis.conf

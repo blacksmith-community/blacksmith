@@ -1,0 +1,5 @@
+check process valkey
+  with pidfile /var/vcap/sys/run/bpm/valkey/valkey.pid
+  start program "/var/vcap/jobs/bpm/bin/bpm start valkey"
+  stop program "/var/vcap/jobs/bpm/bin/bpm stop valkey"
+  group vcap

@@ -1,0 +1,11 @@
+check process blacksmith
+  with pidfile /var/vcap/sys/run/bpm/blacksmith/blacksmith.pid
+  start program "/var/vcap/jobs/bpm/bin/bpm start blacksmith"
+  stop program "/var/vcap/jobs/bpm/bin/bpm stop blacksmith"
+  group vcap
+
+check process blacksmith-ui
+  with pidfile /var/vcap/sys/run/bpm/blacksmith/ui.pid
+  start program "/var/vcap/jobs/bpm/bin/bpm start blacksmith -p ui"
+  stop program "/var/vcap/jobs/bpm/bin/bpm stop blacksmith -p ui"
+  group vcap

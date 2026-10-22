@@ -1,0 +1,5 @@
+check process bpm
+  with pidfile /var/vcap/sys/run/bpm/bpm.pid
+  start program "/var/vcap/jobs/bpm/bin/start"
+  stop program "/var/vcap/jobs/bpm/bin/stop"
+  group vcap

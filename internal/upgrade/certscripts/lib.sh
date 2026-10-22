@@ -2,8 +2,10 @@
 # broker sends it, followed by one script, to `sudo -n /bin/bash -s --`
 # on stdin, so nothing here is ever installed on the VM.
 #
-# Every script prints its results one line at a time as key=value pairs
-# whose values hold no spaces, and exits with one of these codes.
+# Every script prints its results one line at a time. A line is either
+# key=value pairs, or a word that names the kind of line followed by
+# key=value pairs, and no value holds a space. Every script exits with
+# one of these codes.
 #
 #   0   success
 #   2   a usage error
@@ -75,6 +77,7 @@ readonly CP_TASK_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 readonly CP_WORK_TAIL_RE='^[sb]/(0|[1-9][0-9]{0,8})$'
 readonly CP_MAX_PATH=1024
 readonly CP_WORK_ROOT=/var/vcap/data/certpatch
+readonly CP_HASH_RE='^[0-9a-f]{64}$'
 
 # _cp_shaped <path> <pattern> accepts a path of the right length that
 # matches the pattern and has no empty, ".", or ".." segment.
@@ -158,6 +161,14 @@ _cp_make_private() {
 valid_task() {
 	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
 	[[ $1 =~ $CP_TASK_RE ]] || return "$EXIT_REFUSED"
+}
+
+# valid_hash <hash> accepts a lowercase hex SHA-256, the form norm_hash
+# prints. A hash is an argument from the broker and never a path, so a
+# malformed one is a usage error.
+valid_hash() {
+	[ "$#" -eq 1 ] || return "$EXIT_USAGE"
+	[[ $1 =~ $CP_HASH_RE ]] || return "$EXIT_USAGE"
 }
 
 # valid_logical <path> accepts a path under /var/vcap/jobs/<job>/. Only

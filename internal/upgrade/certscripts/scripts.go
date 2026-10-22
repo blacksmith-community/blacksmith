@@ -147,9 +147,52 @@ func ParseLines(out []byte, allowed map[string]bool) ([]map[string]string, error
 	return results, nil
 }
 
+// Record is one line of output that starts with a word naming its kind,
+// such as `match job=valkey path=...`. Line is the line's number in the
+// output, counting from 1.
+type Record struct {
+	Kind   string
+	Fields map[string]string
+	Line   int
+}
+
+// ParseRecords reads a script's output whose lines each start with a word
+// that names the kind of line, followed by key=value fields as ParseLines
+// reads them. kinds maps each kind of line to the keys it may hold. Empty
+// lines are skipped. A kind outside kinds, a kind with no fields, and
+// every fault ParseLines refuses fail the whole parse, with an error that
+// names the line by number and never repeats the output.
+func ParseRecords(out []byte, kinds map[string]map[string]bool) ([]Record, error) {
+	lines := strings.Split(string(out), "\n")
+	records := make([]Record, 0, len(lines))
+
+	for index, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		kind, rest, _ := strings.Cut(line, " ")
+
+		allowed, known := kinds[kind]
+		if !known {
+			return nil, fmt.Errorf("%w: line %d: %w", ErrMalformedOutput, index+1, errKind)
+		}
+
+		fields, err := parseLine(rest, allowed)
+		if err != nil {
+			return nil, fmt.Errorf("%w: line %d: %w", ErrMalformedOutput, index+1, err)
+		}
+
+		records = append(records, Record{Kind: kind, Fields: fields, Line: index + 1})
+	}
+
+	return records, nil
+}
+
 // The ways a line of output can break the contract. None of them repeats
 // the output.
 var (
+	errKind     = errors.New("the line does not start with a known kind")
 	errEncoding = errors.New("the line is not valid UTF-8")
 	errControl  = errors.New("the line holds a control character")
 	errNoPair   = errors.New("a field is not a key=value pair")
