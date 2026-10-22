@@ -13274,3 +13274,41 @@ span.config-type.resurrection {
   background-color: var(--cert-critical-bg);
   font-size: 0.75rem;
 }
+
+/* Rotation mode choice and the result panel host. */
+#upgrade .rotate-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+#upgrade .rotate-mode legend {
+  padding: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+#upgrade .rotate-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+#upgrade .rotate-mode-option:has(input:disabled) {
+  color: var(--text-secondary);
+}
+
+#upgrade .rotate-mode .rotate-op-hint {
+  flex: 1 1 100%;
+}
+
+#upgrade .rotate-result:not(:empty) {
+  padding: 0.75em 1em;
+  border-bottom: 1px solid var(--border-primary);
+}

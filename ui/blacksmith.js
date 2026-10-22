@@ -2906,6 +2906,8 @@
     imported: false,
     mode: 'redeploy',
     name: '',
+    reason: '',
+    busy: false,
     reviewOpen: false,
     lastLoad: 0,
     loadSeq: 0
@@ -3404,9 +3406,16 @@
       line.textContent = text;
     }
     if (button) {
-      button.textContent = rotateFooterLabel();
-      button.disabled = true;
-      button.title = 'Previewing a rotation is not available yet.';
+      const rotation = rotateState.capabilities && rotateState.capabilities.rotation;
+      const count = upgradeOperation === 'converge' ? summary.instances : summary.pairs - summary.stale;
+      let blockedBy = '';
+      if (rotateState.busy) blockedBy = 'A preview is already under way.';
+      else if (rotateState.loadState === 'disabled') blockedBy = 'The certificate inventory is turned off.';
+      else if (rotation && rotation.enabled === false) blockedBy = rotation.reason || 'Certificate rotation is turned off.';
+      else if (count <= 0) blockedBy = upgradeOperation === 'converge' ? 'Select at least one instance first.' : 'Select at least one certificate first.';
+      button.textContent = rotateState.busy ? 'Previewing...' : rotateFooterLabel();
+      button.disabled = blockedBy !== '';
+      if (blockedBy) button.title = blockedBy; else button.removeAttribute('title');
     }
     renderRotateReview();
   };
@@ -3506,6 +3515,33 @@
     pane.appendChild(bulk);
 
     if (upgradeOperation === 'rotate') {
+      const modeGroup = rotateEl('fieldset', 'rotate-mode');
+      modeGroup.id = 'rotate-mode';
+      modeGroup.appendChild(rotateEl('legend', '', 'Mode'));
+      [['redeploy', 'Redeploy'], ['patch', 'Patch in place']].forEach(([value, text]) => {
+        const label = rotateEl('label', 'rotate-mode-option');
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'rotate-mode';
+        radio.id = `rotate-mode-${value}`;
+        radio.value = value;
+        radio.checked = value === rotateState.mode;
+        if (value === 'patch') {
+          radio.disabled = true;
+          radio.checked = false;
+          radio.setAttribute('aria-describedby', 'rotate-mode-patch-reason');
+        } else {
+          radio.addEventListener('change', () => { if (radio.checked) rotateState.mode = value; });
+        }
+        label.appendChild(radio);
+        label.appendChild(rotateEl('span', '', text));
+        modeGroup.appendChild(label);
+      });
+      const patchReason = rotateEl('p', 'rotate-op-hint', PATCH_UNAVAILABLE_REASON);
+      patchReason.id = 'rotate-mode-patch-reason';
+      modeGroup.appendChild(patchReason);
+      pane.appendChild(modeGroup);
+
       const row = rotateEl('div', 'filter-row rotate-threshold-row');
       const label = rotateEl('label', '', 'Expiring within');
       label.setAttribute('for', 'rotate-threshold');
@@ -3552,6 +3588,19 @@
     nameRow.appendChild(nameLabel);
     nameRow.appendChild(nameInput);
     pane.appendChild(nameRow);
+
+    const reasonRow = rotateEl('div', 'filter-row rotate-name-row');
+    const reasonLabel = rotateEl('label', '', 'Reason');
+    reasonLabel.setAttribute('for', 'rotate-reason');
+    const reasonInput = document.createElement('input');
+    reasonInput.type = 'text';
+    reasonInput.id = 'rotate-reason';
+    reasonInput.placeholder = 'Optional';
+    reasonInput.value = rotateState.reason;
+    reasonInput.addEventListener('input', () => { rotateState.reason = reasonInput.value; });
+    reasonRow.appendChild(reasonLabel);
+    reasonRow.appendChild(reasonInput);
+    pane.appendChild(reasonRow);
     container.appendChild(pane);
     renderRotateNotice();
   };
@@ -3581,6 +3630,7 @@
     preview.type = 'button';
     preview.id = 'rotate-preview';
     preview.disabled = true;
+    preview.addEventListener('click', startRotatePreview);
     actions.appendChild(reviewButton);
     actions.appendChild(preview);
     pane.appendChild(actions);
@@ -3726,6 +3776,268 @@
       fieldset.appendChild(label);
     });
     main.insertBefore(fieldset, top);
+  };
+
+  // =====================================================
+  // Rotation preview, confirmation, and creation
+  // =====================================================
+
+  const PREVIEW_EXPIRED_NOTE = 'The state changed since the preview, so here is a fresh one.';
+  const ROTATE_CONFIRM_WORD = 'rotate';
+  const ROTATE_TYPED_THRESHOLD = 10;
+  const ROTATE_MODE_LABELS = {
+    redeploy: 'Redeploy',
+    patch: 'Patch in place',
+    converge: 'Converge'
+  };
+  const PATCH_UNAVAILABLE_REASON = 'Patching in place is not available yet, so a rotation redeploys the instance.';
+
+  // The text to show for an error from the preview or the create request.
+  // It is the server's message, with advice for the codes that have some.
+  const rotateErrorText = (err) => apiErrorText(err);
+
+  // The lines of the confirmation dialog for a preview. Each is a string or
+  // a label and value, and the dialog shows them as text.
+  const buildPreviewDetails = (preview, mode) => {
+    const instances = Array.isArray(preview && preview.instances) ? preview.instances : [];
+    const included = instances.filter((instance) => instance && !instance.blocked);
+    const excluded = instances.filter((instance) => instance && instance.blocked);
+    const details = [{ label: 'Mode', value: ROTATE_MODE_LABELS[mode] || String(mode) }];
+    details.push({
+      label: 'Instances',
+      value: excluded.length > 0
+        ? `${included.length} to change, ${excluded.length} excluded`
+        : String(included.length)
+    });
+    included.forEach((instance) => {
+      const name = instance.instance_name || instance.instance_id;
+      const where = [instance.service, instance.plan].filter(Boolean).join(' / ');
+      const facts = [pluralize(Number(instance.vms) || 0, 'VM')];
+      if (instance.gate) facts.push(`health gate ${instance.gate}`);
+      let value = facts.join(', ');
+      if (instance.impact) value += `. ${instance.impact}`;
+      details.push({ label: where ? `${name} (${where})` : String(name), value });
+      const selected = Array.isArray(instance.selected) ? instance.selected : [];
+      if (mode !== 'converge' && selected.length > 0) {
+        details.push({
+          label: `Rotates on ${name}`,
+          value: selected.map((variable) => (typeof variable.days_left === 'number'
+            ? `${variable.name} (${variable.days_left} days left)`
+            : String(variable.name))).join('; ')
+        });
+      }
+      const additional = Array.isArray(instance.additional) ? instance.additional : [];
+      if (additional.length > 0) {
+        details.push({ label: `Also changes on ${name}`, value: additional.map((pair) => String(pair.name)).join('; ') });
+      }
+    });
+    excluded.forEach((instance) => {
+      const name = instance.instance_name || instance.instance_id;
+      details.push({ label: `Excluded: ${name}`, value: instance.blocked.message || instance.blocked.code || 'It cannot take part.' });
+    });
+    (Array.isArray(preview && preview.warnings) ? preview.warnings : []).forEach((warning) => {
+      details.push(`Warning: ${warning}`);
+    });
+    return details;
+  };
+
+  // Where results show: the top of the Batch Jobs column.
+  const rotateResultHost = () => {
+    const right = document.querySelector('#upgrade .upgrade-right-panel');
+    if (!right) return null;
+    let host = document.getElementById('rotate-result');
+    if (!host) {
+      host = rotateEl('div', 'rotate-result');
+      host.id = 'rotate-result';
+      const heading = right.querySelector('h2');
+      right.insertBefore(host, heading ? heading.nextSibling : right.firstChild);
+    }
+    return host;
+  };
+
+  const rotatePostJSON = async (url, body) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) throw await readApiError(response);
+    return { status: response.status, body: await response.json() };
+  };
+
+  // A UUID for a create request. Browsers outside a secure context lack
+  // randomUUID, and getRandomValues stands in for it there.
+  const newClientRequestId = () => {
+    const cryptoApi = window.crypto;
+    if (cryptoApi && typeof cryptoApi.randomUUID === 'function') return cryptoApi.randomUUID();
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  };
+
+  // Previews a rotation, asks the operator to confirm it, and creates the
+  // task. Every rotate entry point calls this. The options are the mode
+  // (redeploy, patch, or converge), the converge policy of a patch, the
+  // selections as {instance_id, variables}, a task name and reason, an
+  // origin that names the entry point, and optionally a container for the
+  // result panel. It resolves {ok, task, existing}, {ok: false, cancelled},
+  // or {ok: false, error}.
+  const previewAndCreate = async (options = {}) => {
+    const mode = ['redeploy', 'patch', 'converge'].includes(options.mode) ? options.mode : 'redeploy';
+    const origin = String(options.origin || '');
+    const host = options.container || rotateResultHost();
+    const report = (title, error, retry) => {
+      if (host) {
+        const handle = window.blacksmithResultPanel(host, { title, error, retry });
+        if (handle && handle.element) handle.element.dataset.origin = origin;
+      } else {
+        window.Feedback.error(`${title}. ${error}`, { toast: true });
+      }
+    };
+
+    const selections = (Array.isArray(options.selections) ? options.selections : [])
+      .map((selection) => ({
+        instance_id: String(selection.instance_id || ''),
+        variables: mode === 'converge' ? [] : Array.from(selection.variables || []).map(String)
+      }))
+      .filter((selection) => selection.instance_id && (mode === 'converge' || selection.variables.length > 0));
+    if (selections.length === 0) {
+      const error = new Error(mode === 'converge' ? 'Select at least one instance first.' : 'Select at least one certificate first.');
+      error.code = 'no_selections';
+      report('Nothing to preview', error.message);
+      return { ok: false, error };
+    }
+
+    const previewBody = { mode, selections };
+    if (mode === 'patch' && options.converge) previewBody.converge = options.converge;
+    let note = options._note || '';
+
+    for (let round = 0; round < 3; round++) {
+      let preview;
+      try {
+        preview = (await rotatePostJSON('/b/certificates/rotation/preview', previewBody)).body;
+      } catch (err) {
+        report('The preview failed', rotateErrorText(err), () => previewAndCreate({ ...options, _note: note }));
+        return { ok: false, error: err };
+      }
+
+      const instances = Array.isArray(preview && preview.instances) ? preview.instances : [];
+      const included = instances.filter((instance) => instance && !instance.blocked);
+      if (!preview || !preview.preview_id || included.length === 0) {
+        const reasons = instances.filter((instance) => instance && instance.blocked)
+          .map((instance) => `${instance.instance_name || instance.instance_id}: ${instance.blocked.message || instance.blocked.code}`);
+        report('Nothing can be changed', reasons.length > 0
+          ? `Every selected instance is excluded. ${reasons.join(' ')}`
+          : 'The preview did not include any instance to change.');
+        return { ok: false, blocked: true };
+      }
+
+      // One ID per opening of the dialog, which every retry of this create reuses.
+      const clientRequestId = newClientRequestId();
+      const converge = mode === 'converge';
+      const answer = await showConfirmDialog({
+        title: converge ? 'Converge these instances?' : 'Rotate these certificates?',
+        message: `${note ? `${note} ` : ''}Review what we are about to change, then confirm.`,
+        details: buildPreviewDetails(preview, mode),
+        confirmText: converge ? 'Converge' : 'Rotate',
+        cancelText: 'Cancel',
+        danger: true,
+        requireText: included.length > ROTATE_TYPED_THRESHOLD ? ROTATE_CONFIRM_WORD : undefined
+      });
+      if (!answer || (answer !== true && !answer.confirmed)) return { ok: false, cancelled: true };
+
+      const certificateCount = included.reduce((sum, instance) => sum + (Array.isArray(instance.selected) ? instance.selected.length : 0), 0);
+      const defaultName = converge
+        ? `Converge ${pluralize(included.length, 'instance')}`
+        : `Rotate ${pluralize(certificateCount, 'certificate')} on ${pluralize(included.length, 'instance')}`;
+      const createBody = {
+        kind: 'certificates',
+        preview_id: preview.preview_id,
+        client_request_id: clientRequestId,
+        name: String(options.name || '').trim() || defaultName,
+        reason: String(options.reason || '').trim()
+      };
+
+      const outcome = await submitRotationCreate(createBody, converge, origin, host, report, () => previewAndCreate({ ...options, _note: PREVIEW_EXPIRED_NOTE }));
+      if (outcome.expired) {
+        note = PREVIEW_EXPIRED_NOTE;
+        continue;
+      }
+      return outcome;
+    }
+    report('The preview keeps changing', 'The state changed again before we could confirm. Preview once more when it settles.');
+    return { ok: false };
+  };
+
+  // Posts the create. A success shows the result panel, an expired preview
+  // reports expired so the caller opens a fresh one, and any other error
+  // shows in the panel with a Retry that posts the same request again, with
+  // the same client request ID.
+  const submitRotationCreate = async (createBody, converge, origin, host, report, reopen) => {
+    try {
+      const { status, body } = await rotatePostJSON('/b/upgrade/tasks', createBody);
+      const existing = status === 200;
+      if (host) {
+        const handle = window.blacksmithResultPanel(host, {
+          title: existing ? 'This request was already started' : (converge ? 'Converge started' : 'Rotation started'),
+          taskId: body && body.id
+        });
+        if (handle && handle.element) handle.element.dataset.origin = origin;
+      }
+      if (origin === 'batch') {
+        if (converge) convergeSelected.clear(); else rotateSelection().clear();
+        rotateRefresh();
+      }
+      fetchUpgradeTasks();
+      return { ok: true, task: body, existing };
+    } catch (err) {
+      if (err && (err.code === 'preview_expired' || err.status === 410)) return { ok: false, expired: true };
+      const retry = async () => {
+        const again = await submitRotationCreate(createBody, converge, origin, host, report, reopen);
+        if (again.expired) reopen();
+      };
+      report(converge ? 'The converge was not started' : 'The rotation was not started', rotateErrorText(err), retry);
+      return { ok: false, error: err };
+    }
+  };
+
+  window.blacksmithRotate = { previewAndCreate };
+
+  // The footer button of rotate and converge mode.
+  const startRotatePreview = async () => {
+    if (rotateState.busy || upgradeOperation === 'upgrade') return;
+    const converge = upgradeOperation === 'converge';
+    const grouped = new Map();
+    let skipped = 0;
+    if (converge) {
+      convergeSelected.forEach((id) => grouped.set(id, new Set()));
+    } else {
+      rotatePairs().forEach(([id, name]) => {
+        if (!rotatePairEligible(id, name)) { skipped++; return; }
+        if (!grouped.has(id)) grouped.set(id, new Set());
+        grouped.get(id).add(name);
+      });
+    }
+    if (skipped > 0) {
+      window.Feedback.info(`${pluralize(skipped, 'selected certificate')} no longer eligible, so we left ${skipped === 1 ? 'it' : 'them'} out.`, { toast: true });
+    }
+    rotateState.busy = true;
+    updateOperationFooter();
+    try {
+      await previewAndCreate({
+        mode: converge ? 'converge' : rotateState.mode,
+        selections: Array.from(grouped.entries()).map(([instanceId, names]) => ({ instance_id: instanceId, variables: Array.from(names) })),
+        name: rotateState.name,
+        reason: rotateState.reason,
+        origin: 'batch'
+      });
+    } finally {
+      rotateState.busy = false;
+      updateOperationFooter();
+    }
   };
 
   // Set up handlers for upgrade instance checkboxes
