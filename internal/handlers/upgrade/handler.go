@@ -297,9 +297,9 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 // writeCreateError answers a failed CreateTask. A request that names no
 // instance, no valid target, a release version the director lacks, or a
-// kind this endpoint does not create is a bad request. An instance another upgrade holds is a conflict, and a
-// manager still loading the stored upgrades is not ready yet, so a client
-// can tell those from a failure.
+// kind this endpoint does not create is a bad request. An instance another
+// upgrade holds is a conflict, and a manager still loading the stored
+// upgrades is not ready yet, so a client can tell those from a failure.
 func writeCreateError(writer http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, upgrade.ErrNoInstances),
