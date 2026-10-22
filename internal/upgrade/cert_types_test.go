@@ -780,3 +780,37 @@ func TestUpgradeSummaryTarget(t *testing.T) {
 		t.Fatalf("expected the release alone, got %q", target)
 	}
 }
+
+// The summary counts the instances that wait on a decision, and a
+// cancelled task keeps the count so its decisions stay visible.
+func TestSummaryCountsAwaitingDecisions(t *testing.T) {
+	t.Parallel()
+
+	task := UpgradeTask{
+		Kind:   TaskKindCertificates,
+		Status: TaskStatusCancelled,
+		Instances: []InstanceUpgrade{
+			{InstanceID: "a", Certificates: &InstanceRotation{Pending: &PendingDecision{}}},
+			{InstanceID: "b", Certificates: &InstanceRotation{}},
+			{InstanceID: "c", Certificates: &InstanceRotation{Pending: &PendingDecision{}}},
+			{InstanceID: "d"},
+		},
+	}
+
+	if got := task.ToSummary().AwaitingDecisionCount; got != 2 {
+		t.Fatalf("expected 2 awaiting instances on a cancelled task, got %d", got)
+	}
+
+	raw, err := json.Marshal(task.ToSummary())
+	if err != nil {
+		t.Fatalf("encoding the summary: %v", err)
+	}
+
+	if !strings.Contains(string(raw), `"awaiting_decision_count":2`) {
+		t.Fatalf("expected the count in the JSON, got %s", raw)
+	}
+
+	if none := (&UpgradeTask{}).ToSummary().AwaitingDecisionCount; none != 0 {
+		t.Fatalf("expected 0 for a task with no instances, got %d", none)
+	}
+}

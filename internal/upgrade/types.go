@@ -203,16 +203,34 @@ type TaskSummary struct {
 	Status TaskStatus `json:"status"`
 	// Target describes what the task does, such as the stemcell and
 	// releases of an upgrade or "Patch, 2 certificates".
-	Target         string    `json:"target"`
-	TargetStemcell string    `json:"target_stemcell"`
-	TargetReleases []string  `json:"target_releases,omitempty"`
-	TotalCount     int       `json:"total_count"`
-	CompletedCount int       `json:"completed_count"`
-	FailedCount    int       `json:"failed_count"`
-	UnknownCount   int       `json:"unknown_count"`
-	SkippedCount   int       `json:"skipped_count"`
-	CancelledCount int       `json:"cancelled_count"`
-	CreatedAt      time.Time `json:"created_at"`
+	Target         string   `json:"target"`
+	TargetStemcell string   `json:"target_stemcell"`
+	TargetReleases []string `json:"target_releases,omitempty"`
+	TotalCount     int      `json:"total_count"`
+	CompletedCount int      `json:"completed_count"`
+	FailedCount    int      `json:"failed_count"`
+	UnknownCount   int      `json:"unknown_count"`
+	SkippedCount   int      `json:"skipped_count"`
+	CancelledCount int      `json:"cancelled_count"`
+	// AwaitingDecisionCount is how many of the task's instances wait on an
+	// operator decision. A cancelled task still counts them, because its
+	// decisions can be resolved.
+	AwaitingDecisionCount int       `json:"awaiting_decision_count"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
+// awaitingDecisionCount counts the instances with a pending decision.
+func (t *UpgradeTask) awaitingDecisionCount() int {
+	count := 0
+
+	for index := range t.Instances {
+		rotation := t.Instances[index].Certificates
+		if rotation != nil && rotation.Pending != nil {
+			count++
+		}
+	}
+
+	return count
 }
 
 // ToSummary converts an UpgradeTask to a TaskSummary. Each target reads
@@ -230,6 +248,8 @@ func (t *UpgradeTask) ToSummary() TaskSummary {
 		SkippedCount:   t.SkippedCount,
 		CancelledCount: t.CancelledCount,
 		CreatedAt:      t.CreatedAt,
+
+		AwaitingDecisionCount: t.awaitingDecisionCount(),
 	}
 
 	if summary.Kind == TaskKindCertificates {
