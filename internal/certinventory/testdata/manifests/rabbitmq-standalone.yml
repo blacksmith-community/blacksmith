@@ -1,0 +1,48 @@
+name: rabbitmq-9e8f
+variables:
+- name: rabbitmq_metrics_emitter_crt
+  type: certificate
+  options:
+    ca: /ws-bosh/ws-blacksmith/blacksmith_services_ca
+    common_name: ws-rabbitmq-metrics-emitter.bosh
+- name: rabbitmq_standalone_crt
+  type: certificate
+  options:
+    ca: /ws-bosh/ws-blacksmith/blacksmith_services_ca
+    common_name: ws-rabbitmq-standalone.bosh
+instance_groups:
+- name: standalone
+  instances: 1
+  jobs:
+  - name: bpm
+    release: bpm
+  - name: rabbitmq
+    release: rabbitmq-forge
+    properties:
+      rabbitmq:
+        plan: standalone
+        tls:
+          enabled: true
+          dual-mode: false
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            MIIBaDCCAQ2gAwIBAgIBATAKBggqhkjOPQQDAjAbMRkwFwYDVQQDExB0ZXN0LXNl
+            cnZpY2VzLWNhMB4XDTI2MTAyMjA5NDIwM1oXDTM2MTAxOTEwNDIwM1owGzEZMBcG
+            A1UEAxMQdGVzdC1zZXJ2aWNlcy1jYTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IA
+            BG5MuWrsoOP+oF3N53bq9L+SrCc0430sekUKVXDEoiJq1GLAFLRSCPGdnnkaBuzD
+            is+5S6Tm3GE15GrLVEIOEAOjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8E
+            BTADAQH/MB0GA1UdDgQWBBSmmFr6h+LA3CwWA7ldNW5zMmuHEDAKBggqhkjOPQQD
+            AgNJADBGAiEAjS6EtpTYzg+9eEeDQKF4bD32rtX6tex7ftQVn4Q2szgCIQC6JIgy
+            qW3qJSt9DfyRRB+2WdOIrlPp7usfnYFsKzEfyA==
+            -----END CERTIFICATE-----
+          crt: ((rabbitmq_standalone_crt.certificate))
+          key: ((rabbitmq_standalone_crt.private_key))
+      management:
+        enabled: true
+  - name: rabbitmq-metrics-emitter
+    release: rabbitmq-metrics-emitter
+    properties:
+      rabbitmq_metrics_emitter:
+        client:
+          cert: ((rabbitmq_metrics_emitter_crt.certificate))
+          key: ((rabbitmq_metrics_emitter_crt.private_key))

@@ -1,0 +1,33 @@
+name: redis-7a1b
+variables:
+- name: redis_cluster_crt
+  type: certificate
+  options:
+    ca: /ws-bosh/ws-blacksmith/blacksmith_services_ca
+    common_name: ws-redis-cluster.bosh
+instance_groups:
+- name: redis
+  instances: 3
+  jobs:
+  - name: bpm
+    release: bpm
+  - name: cluster-7
+    release: redis-forge
+    properties:
+      redis:
+        tls:
+          enabled: true
+          dual-mode: false
+          ca: |
+            -----BEGIN CERTIFICATE-----
+            MIIBaDCCAQ2gAwIBAgIBATAKBggqhkjOPQQDAjAbMRkwFwYDVQQDExB0ZXN0LXNl
+            cnZpY2VzLWNhMB4XDTI2MTAyMjA5NDIwM1oXDTM2MTAxOTEwNDIwM1owGzEZMBcG
+            A1UEAxMQdGVzdC1zZXJ2aWNlcy1jYTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IA
+            BG5MuWrsoOP+oF3N53bq9L+SrCc0430sekUKVXDEoiJq1GLAFLRSCPGdnnkaBuzD
+            is+5S6Tm3GE15GrLVEIOEAOjQjBAMA4GA1UdDwEB/wQEAwICBDAPBgNVHRMBAf8E
+            BTADAQH/MB0GA1UdDgQWBBSmmFr6h+LA3CwWA7ldNW5zMmuHEDAKBggqhkjOPQQD
+            AgNJADBGAiEAjS6EtpTYzg+9eEeDQKF4bD32rtX6tex7ftQVn4Q2szgCIQC6JIgy
+            qW3qJSt9DfyRRB+2WdOIrlPp7usfnYFsKzEfyA==
+            -----END CERTIFICATE-----
+          ca_cert: ((redis_cluster_crt.certificate))
+          ca_key: ((redis_cluster_crt.private_key))
