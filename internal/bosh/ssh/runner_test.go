@@ -335,11 +335,14 @@ func TestRunnerRefusesContentInArgs(t *testing.T) {
 		program string
 		args    []string
 	}{
-		"a certificate header": {catProgram, []string{"-----BEGIN CERTIFICATE-----"}},
-		"a key word":           {catProgram, []string{"x", "RSA PRIVATE"}},
-		"a newline":            {catProgram, []string{"a\nb"}},
-		"a NUL":                {catProgram, []string{"a\x00b"}},
-		"a newline in program": {"cat\nrm", nil},
+		"a certificate header":  {catProgram, []string{"-----BEGIN CERTIFICATE-----"}},
+		"a key word":            {catProgram, []string{"x", "RSA PRIVATE"}},
+		"a newline":             {catProgram, []string{"a\nb"}},
+		"a NUL":                 {catProgram, []string{"a\x00b"}},
+		"a newline in program":  {"cat\nrm", nil},
+		"a bare key body line":  {catProgram, []string{"-in", testKeyBody}},
+		"a key body as program": {testKeyBody, nil},
+		"an escape character":   {catProgram, []string{"a\x1bb"}},
 	}
 
 	for name, testCase := range cases {
@@ -348,7 +351,8 @@ func TestRunnerRefusesContentInArgs(t *testing.T) {
 			t.Errorf("%s: Run returned %v, want boshssh.ErrContentInArgs", name, err)
 		}
 
-		if err != nil && (strings.Contains(err.Error(), "BEGIN") || strings.Contains(err.Error(), "PRIVATE")) {
+		if err != nil && (strings.Contains(err.Error(), "BEGIN") || strings.Contains(err.Error(), "PRIVATE") ||
+			strings.Contains(err.Error(), testKeyBody)) {
 			t.Errorf("%s: the error %q repeats the argument", name, err)
 		}
 	}
@@ -358,8 +362,34 @@ func TestRunnerRefusesContentInArgs(t *testing.T) {
 	}
 
 	for _, line := range log.all() {
-		if strings.Contains(line, "BEGIN") || strings.Contains(line, "PRIVATE") {
+		if strings.Contains(line, "BEGIN") || strings.Contains(line, "PRIVATE") || strings.Contains(line, testKeyBody) {
 			t.Errorf("the runner logged %q", line)
+		}
+	}
+}
+
+// Paths and lowercase hex hashes are not key content, so they still
+// travel as arguments.
+func TestRunnerAllowsPathsAndHashesInArgs(t *testing.T) {
+	t.Parallel()
+
+	fakeVM := startRunnerVM(t, func(command string, channel ssh.Channel, _ <-chan struct{}) uint32 {
+		_, _ = io.WriteString(channel, command)
+
+		return 0
+	})
+	runner := boshssh.NewRunner(fakeVM.dial(t), &runnerLog{})
+
+	args := []string{"/var/vcap/jobs/nginx/config/tls/server.crt", testHash, "sha256=" + testHash, "a\tb"}
+
+	result, err := runner.Run(t.Context(), "sha256sum", args, nil, 0)
+	if err != nil {
+		t.Fatalf("Run returned %v, want nil", err)
+	}
+
+	for _, arg := range args[:3] {
+		if !strings.Contains(string(result.Stdout), arg) {
+			t.Errorf("the VM ran %q, which lacks the argument %q", result.Stdout, arg)
 		}
 	}
 }

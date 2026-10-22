@@ -371,10 +371,12 @@ func checkCommandLine(program string, args []string) error {
 	return nil
 }
 
-// carriesContent reports whether s holds a PEM marker word, a line break,
-// or a NUL.
+// carriesContent reports whether s holds a line break or a NUL, or any
+// text Withheld would keep out of a log line, such as a PEM marker word,
+// a long base64 run, or a hex key dump. A command line reaches the VM's
+// process list and audit log, so it is held to the same rule as output.
 func carriesContent(s string) bool {
-	return strings.Contains(s, "BEGIN") || strings.Contains(s, "PRIVATE") || strings.ContainsAny(s, "\n\r\x00")
+	return strings.ContainsAny(s, "\n\r\x00") || Withheld([]byte(s))
 }
 
 // stdinGate passes the caller's stdin to the session until stop, and
