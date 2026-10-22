@@ -56,3 +56,23 @@ func TestForLog(t *testing.T) {
 		t.Errorf("ForLog of a hash = %q, want %q", got, want)
 	}
 }
+
+// ForLog escapes line breaks, tabs, backslashes, and characters a
+// terminal does not print, so text a VM printed can never start a log
+// line of its own.
+func TestForLogEscapesControlCharacters(t *testing.T) {
+	t.Parallel()
+
+	for stream, want := range map[string]string{
+		"state=old\nINFO forged line": `state=old\nINFO forged line`,
+		"done\rINFO overwritten":      `done\rINFO overwritten`,
+		"a\tb":                        `a\tb`,
+		`C:\path`:                     `C:\\path`,
+		"line\u2028separator":         `line\u2028separator`,
+		"plain text, déjà vu":         "plain text, déjà vu",
+	} {
+		if got := boshssh.ForLog([]byte(stream)); got != want {
+			t.Errorf("ForLog(%q) = %q, want %q", stream, got, want)
+		}
+	}
+}

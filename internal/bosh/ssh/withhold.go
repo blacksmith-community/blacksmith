@@ -3,6 +3,9 @@ package ssh
 import (
 	"bytes"
 	"fmt"
+	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 // minWithheldRun is the shortest run of base64 characters that withholds a
@@ -53,13 +56,57 @@ func Withheld(stream []byte) bool {
 
 // ForLog is the only form in which command output reaches a log line. It
 // returns the text of a stream Withheld passes, and for any other stream
-// only its size, as "[output withheld, N bytes]".
+// only its size, as "[output withheld, N bytes]". The text is escaped as
+// escapeForLog does, so output a VM printed can never forge a log line or
+// send a terminal escape sequence.
 func ForLog(stream []byte) string {
 	if Withheld(stream) {
 		return fmt.Sprintf("[output withheld, %d bytes]", len(stream))
 	}
 
-	return string(stream)
+	return escapeForLog(stream)
+}
+
+// escapeForLog writes stream with every character a log line must not
+// carry raw replaced by an escape. A newline, a carriage return, and a
+// tab become \n, \r, and \t, and a backslash is doubled, so an escape
+// in the result is never ambiguous. Any other C0 control character and
+// DEL become \xNN, a C1 control character or any other rune that is not
+// printable, such as a line separator, becomes \uNNNN, and a byte that
+// is not UTF-8 becomes \xNN.
+func escapeForLog(stream []byte) string {
+	var out strings.Builder
+
+	out.Grow(len(stream))
+
+	for len(stream) > 0 {
+		char, size := utf8.DecodeRune(stream)
+
+		switch {
+		case char == utf8.RuneError && size == 1:
+			fmt.Fprintf(&out, `\x%02x`, stream[0])
+		case char == '\\':
+			out.WriteString(`\\`)
+		case char == '\n':
+			out.WriteString(`\n`)
+		case char == '\r':
+			out.WriteString(`\r`)
+		case char == '\t':
+			out.WriteString(`\t`)
+		case char < utf8.RuneSelf && !strconv.IsPrint(char):
+			fmt.Fprintf(&out, `\x%02x`, char)
+		case !strconv.IsPrint(char) && char <= 0xFFFF:
+			fmt.Fprintf(&out, `\u%04x`, char)
+		case !strconv.IsPrint(char):
+			fmt.Fprintf(&out, `\U%08x`, char)
+		default:
+			out.Write(stream[:size])
+		}
+
+		stream = stream[size:]
+	}
+
+	return out.String()
 }
 
 // isBase64 reports whether c is in the standard base64 alphabet. The '='
