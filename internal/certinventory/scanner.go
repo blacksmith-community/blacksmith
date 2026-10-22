@@ -260,29 +260,31 @@ func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings
 		return InstanceScan{}, fmt.Errorf("read the manifest of %s: %w", deployment, err)
 	}
 
-	vars, err := within(ctx, DirectorCallTimeout, func(c context.Context) ([]bosh.Variable, error) {
+	// Without the manifest nothing else can be read, but a failed variable
+	// or VM list only marks its own sources failed, and the scan answers
+	// with the rest.
+	vars, varsErr := within(ctx, DirectorCallTimeout, func(c context.Context) ([]bosh.Variable, error) {
 		return s.deps.Director.ListVariables(c, deployment)
 	})
-	if err != nil {
-		return InstanceScan{}, fmt.Errorf("list the variables of %s: %w", deployment, err)
-	}
 
-	vms, err := within(ctx, DirectorCallTimeout, func(c context.Context) ([]bosh.VM, error) {
+	vms, vmsErr := within(ctx, DirectorCallTimeout, func(c context.Context) ([]bosh.VM, error) {
 		return s.deps.Director.GetDeploymentVMs(c, deployment)
 	})
-	if err != nil {
-		return InstanceScan{}, fmt.Errorf("list the VMs of %s: %w", deployment, err)
-	}
 
 	owner := instanceOwner(ref, deployment)
 	scan := InstanceScan{Facts: facts, VMs: vms, Variables: vars}
 
 	scan.Material.Raw = literalObservations(facts, owner, s.now())
 
-	var failed []RawObservation
+	if varsErr != nil {
+		scan.Material.CredHub = unreadCertificates(facts, director, deployment, owner,
+			"the director's variable list could not be read: "+varsErr.Error())
+	} else {
+		var failed []RawObservation
 
-	scan.Material.CredHub, scan.Material.SigningCAs, failed = s.readCredHub(ctx, director, deployment, facts, vars, owner)
-	scan.Material.Raw = append(scan.Material.Raw, failed...)
+		scan.Material.CredHub, scan.Material.SigningCAs, failed = s.readCredHub(ctx, director, deployment, facts, vars, owner)
+		scan.Material.Raw = append(scan.Material.Raw, failed...)
+	}
 
 	hosts, hostsFailed := s.readHosts(ctx, ref.ID, owner)
 	scan.Material.Hosts = hosts
@@ -294,7 +296,13 @@ func (s *Scanner) scanInstance(ctx context.Context, ref InstanceRef, st Settings
 	if st.ProbeEnabled {
 		listeners := ListenerRules(facts)
 		scan.Material.Expected = expectedListeners(listeners, facts, vms, director, deployment)
-		scan.Material.Raw = append(scan.Material.Raw, s.probeVMs(ctx, listeners, vms, owner)...)
+
+		if vmsErr != nil {
+			scan.Material.Raw = append(scan.Material.Raw, s.unprobed(listeners, facts, owner,
+				errors.New("the director's VM list could not be read: "+vmsErr.Error()))...)
+		} else {
+			scan.Material.Raw = append(scan.Material.Raw, s.probeVMs(ctx, listeners, vms, owner)...)
+		}
 	}
 
 	return scan, nil
@@ -491,6 +499,27 @@ func certificateNames(facts *ManifestFacts, director, deployment string) (map[st
 	}
 
 	return names, signers
+}
+
+// unreadCertificates lists every certificate variable the manifest names,
+// each failed with msg, for a scan that cannot tell which versions are
+// deployed.
+func unreadCertificates(facts *ManifestFacts, director, deployment string, owner Owner, msg string) []CredHubCert {
+	names, signers := certificateNames(facts, director, deployment)
+
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+
+	sort.Strings(sorted)
+
+	out := make([]CredHubCert, 0, len(sorted))
+	for _, name := range sorted {
+		out = append(out, CredHubCert{Name: name, Owner: owner, Versions: Versions{SigningCA: signers[name]}, Err: msg})
+	}
+
+	return out
 }
 
 // readCredHub builds one CredHubCert for each certificate variable the
@@ -914,6 +943,21 @@ func expectedListeners(listeners []Listener, facts *ManifestFacts, vms []bosh.VM
 				Key:     key,
 				Locator: l.Group + "/" + strconv.Itoa(i) + ":" + strconv.Itoa(l.Port),
 			})
+		}
+	}
+
+	return out
+}
+
+// unprobed fails every listener the manifest promises, one per instance of
+// its group, for a scan that has no VMs to dial.
+func (s *Scanner) unprobed(listeners []Listener, facts *ManifestFacts, owner Owner, err error) []RawObservation {
+	var out []RawObservation
+
+	for _, l := range listeners {
+		for i := 0; i < facts.Groups[l.Group]; i++ {
+			task := probeTask{vm: bosh.VM{Job: l.Group, Index: i}, listener: listenerFor(l)}
+			out = append(out, s.failedProbe(task, owner, err))
 		}
 	}
 

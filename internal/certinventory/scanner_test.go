@@ -32,6 +32,8 @@ type fakeDirector struct {
 	manifest string
 	vars     []bosh.Variable
 	vms      []bosh.VM
+	varsErr  error
+	vmsErr   error
 	block    chan struct{}
 
 	mu    sync.Mutex
@@ -64,11 +66,19 @@ func (f *fakeDirector) GetDeployment(_ context.Context, name string) (*bosh.Depl
 func (f *fakeDirector) GetDeploymentVMs(_ context.Context, name string) ([]bosh.VM, error) {
 	f.record("vms " + name)
 
+	if f.vmsErr != nil {
+		return nil, f.vmsErr
+	}
+
 	return f.vms, nil
 }
 
 func (f *fakeDirector) ListVariables(_ context.Context, name string) ([]bosh.Variable, error) {
 	f.record("variables " + name)
+
+	if f.varsErr != nil {
+		return nil, f.varsErr
+	}
 
 	return f.vars, nil
 }
@@ -1098,5 +1108,102 @@ func TestScanInstanceMissingCredentialsIsNotAFailure(t *testing.T) {
 	scan := f.scanner().ScanInstance(context.Background(), testRef("redis-7a1b"))
 	if _, ok := findRaw(scan, SourceVault, testInstanceID+"/credentials"); ok {
 		t.Error("an instance without stored credentials got a failed Vault read")
+	}
+}
+
+func TestScanInstanceVariablesFailureKeepsTheRest(t *testing.T) {
+	t.Parallel()
+
+	served := issue(t, issueSpec{cn: "rabbitmq.bosh", serial: 7})
+	port := serveTLS(t, served)
+
+	dep := "rabbitmq-1"
+	name := "/ws-bosh/rabbitmq-1/rabbitmq_crt"
+	ch := &fakeCredHub{}
+	f := scannerFixture{
+		director: &fakeDirector{
+			manifest: rabbitManifest(port),
+			varsErr:  errors.New("director answered 500"),
+			vms:      []bosh.VM{{CID: "vm-0", Job: "standalone", Index: 0, IPs: []string{"127.0.0.1"}}},
+		},
+		credhub:  ch,
+		state:    credhub.StateConfigured,
+		settings: DefaultSettings(),
+	}
+
+	scan := f.scanner().ScanInstance(context.Background(), testRef(dep))
+	if scan.Err != "" {
+		t.Fatalf("a failed variable list failed the whole scan: %s", scan.Err)
+	}
+
+	if len(scan.Material.CredHub) != 1 {
+		t.Fatalf("CredHub = %+v, want the manifest's certificate marked failed", scan.Material.CredHub)
+	}
+
+	c := scan.Material.CredHub[0]
+	if c.Name != name || c.Deployed != nil || !strings.Contains(c.Err, "variable") || !strings.Contains(c.Err, "director answered 500") {
+		t.Errorf("CredHub entry = name %q err %q", c.Name, c.Err)
+	}
+
+	ch.mu.Lock()
+	calls := len(ch.calls)
+	ch.mu.Unlock()
+
+	if calls != 0 {
+		t.Errorf("CredHub was read %d times without the deployed versions", calls)
+	}
+
+	probes := probeObservations(scan)
+	if len(probes) != 1 || probes[0].State != StateOK {
+		t.Errorf("probes = %+v, want the listener still probed", probes)
+	}
+
+	if cov := coverageFor(t, scan.Material, name); cov.Complete || cov.SourceStates[SourceCredHub] != StateFailed {
+		t.Errorf("coverage = %+v, want incomplete with CredHub failed", cov)
+	}
+}
+
+func TestScanInstanceVMsFailureKeepsExpected(t *testing.T) {
+	t.Parallel()
+
+	leaf := &fakeLeaf{}
+	f := scannerFixture{
+		director: &fakeDirector{
+			manifest: loadManifest(t, "redis-cluster-7.yml"),
+			vars:     []bosh.Variable{{ID: "v1", Name: "/ws-bosh/redis-7a1b/redis_cluster_crt"}},
+			vmsErr:   errors.New("director answered 502"),
+		},
+		state:    credhub.StateNotConfigured,
+		settings: DefaultSettings(),
+		leaf:     leaf,
+	}
+
+	scan := f.scanner().ScanInstance(context.Background(), testRef("redis-7a1b"))
+	if scan.Err != "" {
+		t.Fatalf("a failed VM list failed the whole scan: %s", scan.Err)
+	}
+
+	if len(scan.Material.Expected) != 3 {
+		t.Errorf("expected listeners = %+v, want 3 from the manifest", scan.Material.Expected)
+	}
+
+	if got := leaf.dialed(); len(got) != 0 {
+		t.Errorf("dialled %v without a VM list", got)
+	}
+
+	probes := probeObservations(scan)
+	if len(probes) != 3 {
+		t.Fatalf("probe observations = %d, want 3 failed", len(probes))
+	}
+
+	for _, p := range probes {
+		if p.State != StateFailed || !strings.Contains(p.Error, "director answered 502") ||
+			p.Listener == nil || p.Listener.Variable != "redis_cluster_crt" {
+			t.Errorf("probe %s = state %q err %q listener %+v", p.Locator, p.State, p.Error, p.Listener)
+		}
+	}
+
+	if len(scan.Material.CredHub) != 1 {
+		t.Errorf("CredHub = %d entries, want the variable still listed", len(scan.Material.CredHub))
 	}
 }
