@@ -272,7 +272,7 @@ func writeCreateError(writer http.ResponseWriter, err error) {
 		response.WriteError(writer, http.StatusBadRequest, err.Error())
 	case errors.Is(err, upgrade.ErrInstanceBusy):
 		// The guard's error names the operation that holds the instance.
-		response.WriteErrorCode(writer, http.StatusConflict, apierr.CodeInstanceBusy, err.Error())
+		apierr.Write(writer, apierr.Wrap(http.StatusConflict, apierr.CodeInstanceBusy, err), http.StatusConflict)
 	case errors.Is(err, upgrade.ErrTasksLoading):
 		response.WriteError(writer, http.StatusServiceUnavailable, err.Error())
 	default:

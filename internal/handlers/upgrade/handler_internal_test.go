@@ -127,6 +127,10 @@ func TestCreateBusyIsCodedWithTheHolder(t *testing.T) {
 			if answer["code"] != "instance_busy" || answer["success"] != false || !strings.Contains(message, "certificate rotation of redis-7a1b") {
 				t.Fatalf("unexpected body: %v", answer)
 			}
+
+			if len(answer) != 3 {
+				t.Fatalf("body = %v, want only success, error, and code", answer)
+			}
 		})
 	}
 }
