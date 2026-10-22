@@ -2,12 +2,20 @@ package certificates_test
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"blacksmith/internal/handlers/certificates"
 	pkgCertificates "blacksmith/pkg/certificates"
@@ -19,12 +27,12 @@ func NewTestLogger(component, _ string) logger.Logger {
 }
 
 // testConfig implements the Config interface for testing.
-type testConfig struct{}
+type testConfig struct{ boshCACert string }
 
 func (c *testConfig) GetBrokerTLSEnabled() bool       { return false }
 func (c *testConfig) GetBrokerTLSCertificate() string { return "" }
 func (c *testConfig) GetVaultCACert() string          { return "" }
-func (c *testConfig) GetBOSHCACert() string           { return "" }
+func (c *testConfig) GetBOSHCACert() string           { return c.boshCACert }
 
 type certificateRequestTestCase struct {
 	name           string
@@ -772,4 +780,62 @@ func TestCertificateResponse_Structure(t *testing.T) {
 	if unmarshaled.Data.Metadata.Source != response.Data.Metadata.Source {
 		t.Errorf("Metadata source not preserved")
 	}
+}
+
+func TestBlacksmithCertificatesIncludesBOSHCAFromPEM(t *testing.T) {
+	t.Parallel()
+
+	const commonName = "Test BOSH CA"
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+
+	pemText := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+
+	api := certificates.NewHandler(&testConfig{boshCACert: pemText}, NewTestLogger("test", "INFO"), nil)
+
+	recorder := httptest.NewRecorder()
+	api.HandleBlacksmithCertificates(recorder, httptest.NewRequest(http.MethodGet, "/b/internal/certificates/blacksmith", nil))
+
+	var response pkgCertificates.CertificateResponse
+
+	err = json.Unmarshal(recorder.Body.Bytes(), &response)
+	if err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+
+	for _, item := range response.Data.Certificates {
+		if item.Name != "BOSH CA Certificate" {
+			continue
+		}
+
+		if item.Path != "config:bosh.cacert" {
+			t.Errorf("Path = %q, want config:bosh.cacert", item.Path)
+		}
+
+		if item.Details.Subject.CommonName != commonName {
+			t.Errorf("common name = %q, want %q", item.Details.Subject.CommonName, commonName)
+		}
+
+		return
+	}
+
+	t.Fatalf("BOSH CA Certificate item missing from %d items", len(response.Data.Certificates))
 }

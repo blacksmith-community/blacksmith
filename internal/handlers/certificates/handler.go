@@ -354,7 +354,7 @@ func (h *Handler) loadBOSHCACertificate(ctx context.Context, cfg interface {
 		return
 	}
 
-	cert, err := h.loadCertificateFromFile(ctx, boshCACert, "BOSH CA Certificate")
+	cert, err := h.loadCertificateFromPEM(ctx, boshCACert, "BOSH CA Certificate", "config:bosh.cacert")
 	if err != nil {
 		log.Error("failed to load BOSH CA certificate: %s", err)
 
@@ -868,6 +868,25 @@ func (h *Handler) loadCertificateFromFile(ctx context.Context, filePath, name st
 	return &certificates.CertificateListItem{
 		Name:    name,
 		Path:    filePath,
+		Details: *certInfo,
+	}, nil
+}
+
+// loadCertificateFromPEM parses a certificate from PEM text that the
+// configuration holds, and reports path as where it came from.
+func (h *Handler) loadCertificateFromPEM(ctx context.Context, pemText, name, path string) (*certificates.CertificateListItem, error) {
+	if !strings.Contains(pemText, "BEGIN CERTIFICATE") {
+		return nil, certificates.ErrFileDoesNotContainCertificate
+	}
+
+	certInfo, err := certificates.ParseCertificateFromPEM(ctx, pemText)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	return &certificates.CertificateListItem{
+		Name:    name,
+		Path:    path,
 		Details: *certInfo,
 	}, nil
 }
