@@ -20107,7 +20107,15 @@
       const credhub = ((resp.capabilities || {}).credhub || {}).state;
       const scanErrors = Array.isArray((resp.scan || {}).errors) ? resp.scan.errors.length : 0;
       let failedListeners = 0;
-      view.fleet.forEach((cert) => { failedListeners += Number(cert.coverage && cert.coverage.failed_listeners) || 0; });
+      view.fleet.forEach((cert) => {
+        const observations = Array.isArray(cert.observations) ? cert.observations : [];
+        if (observations.length > 0) sawObservations = true;
+        observations.forEach((obs) => {
+          if (obs && obs.source === 'probe' && obs.state === 'failed' && obs.locator) failedLocators.add(obs.locator);
+        });
+        failedListeners += Number(cert.coverage && cert.coverage.failed_listeners) || 0;
+      });
+      if (sawObservations) failedListeners = failedLocators.size;
 
       const gaps = [];
       if ((s.expiry_unknown || 0) > 0) gaps.push(`${plural(s.expiry_unknown, 'certificate')} ${s.expiry_unknown === 1 ? 'has' : 'have'} an unknown expiry`);
@@ -20161,6 +20169,11 @@
         { label: 'Critical', tone: 'critical', count: (s) => s.critical, pressed: () => state.expiry.includes('critical'), toggle: () => toggleValue('expiry', 'critical') },
         { label: 'Warning', tone: 'warning', count: (s) => s.warning, pressed: () => state.expiry.includes('warning'), toggle: () => toggleValue('expiry', 'warning') },
         { label: 'Expiry OK', tone: 'ok', count: (s) => s.expiry_ok, pressed: () => state.expiry.includes('ok'), toggle: () => toggleValue('expiry', 'ok') },
+      // One dead listener shared by many certificates is one dead listener,
+      // so we count distinct probe locators. Without observation data we
+      // fall back to the per-certificate counts.
+      const failedLocators = new Set();
+      let sawObservations = false;
         { label: 'Unknown', tone: 'unknown', count: (s) => s.expiry_unknown, pressed: () => state.expiry.includes('unknown'), toggle: () => toggleValue('expiry', 'unknown') }
       ]
     };
