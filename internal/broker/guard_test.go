@@ -189,6 +189,38 @@ func (f *deprovisionFixture) deprovision(t *testing.T, brokerInstance *broker.Br
 	return async, err //nolint:wrapcheck // the test reads the broker's own answer
 }
 
+// The guard is freed before the claim is removed, so a request that finds
+// the claim gone never finds the instance busy with the operation that
+// just ended.
+func TestReleaseOperationFreesGuardFirst(t *testing.T) {
+	t.Parallel()
+
+	guard := mutation.NewGuard(time.Now)
+	brokerInstance := guardedBroker(t, testutil.NewScriptedBOSHDirector(), nil, guard)
+
+	if !brokerInstance.ClaimStoredWhenGuardFreed("release-order") {
+		t.Fatal("the claim was removed before its reservation in the guard was freed")
+	}
+
+	if brokerInstance.OperationClaimed("release-order") {
+		t.Fatal("the claim is still stored after it was given up")
+	}
+
+	if snapshot := guard.Snapshot(); len(snapshot) != 0 {
+		t.Fatalf("guard after the release = %v, want empty", snapshot)
+	}
+}
+
+// waitUntilFree waits until the broker holds no claim on the instance and
+// the guard holds nothing.
+func waitUntilFree(t *testing.T, what string, brokerInstance *broker.Broker, guard *mutation.Guard, instanceID string) {
+	t.Helper()
+
+	waitUntil(t, what, func() bool {
+		return !brokerInstance.OperationClaimed(instanceID) && len(guard.Snapshot()) == 0
+	})
+}
+
 //nolint:paralleltest // each subtest runs an in-process vault
 func TestDeprovisionReleasesGuardOnCompletion(t *testing.T) {
 	t.Run("the deprovision finishes", deprovisionFinishesFreesGuard)
@@ -237,11 +269,7 @@ func deprovisionFinishesFreesGuard(t *testing.T) {
 
 	close(proceed)
 
-	waitUntil(t, "the deprovision gives its claim up", func() bool { return !brokerInstance.OperationClaimed(fixture.instanceID) })
-
-	if snapshot := guard.Snapshot(); len(snapshot) != 0 {
-		t.Fatalf("guard after the deprovision = %v, want empty", snapshot)
-	}
+	waitUntilFree(t, "the deprovision gives its claim up and frees the guard", brokerInstance, guard, fixture.instanceID)
 }
 
 // deprovisionFailureFreesGuard checks that a deprovision whose accept chain
@@ -283,11 +311,7 @@ func deleteFailureFreesGuard(t *testing.T) {
 		t.Fatalf("Deprovision = async %v, err %v, want accepted", async, err)
 	}
 
-	waitUntil(t, "the deprovision gives its claim up", func() bool { return !brokerInstance.OperationClaimed(fixture.instanceID) })
-
-	if snapshot := guard.Snapshot(); len(snapshot) != 0 {
-		t.Fatalf("guard after the failed delete = %v, want empty", snapshot)
-	}
+	waitUntilFree(t, "the deprovision gives its claim up and frees the guard", brokerInstance, guard, fixture.instanceID)
 }
 
 //nolint:paralleltest // the test changes the package's re-adoption bound
@@ -329,9 +353,5 @@ func TestReadoptHoldsGuard(t *testing.T) {
 		t.Fatalf("a deployment action acquired the guard while re-adoption held it: %v", err)
 	}
 
-	waitUntil(t, "re-adoption gives its claim up", func() bool { return !brokerInstance.OperationClaimed(fixture.instanceID) })
-
-	if snapshot := guard.Snapshot(); len(snapshot) != 0 {
-		t.Fatalf("guard after re-adoption ended = %v, want empty", snapshot)
-	}
+	waitUntilFree(t, "re-adoption gives its claim up and frees the guard", brokerInstance, guard, fixture.instanceID)
 }

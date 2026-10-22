@@ -1076,16 +1076,18 @@ func operationHolderKind(operation string) mutation.HolderKind {
 	return mutation.KindProvision
 }
 
-// releaseOperation gives up claim on instanceID, and frees its reservation
-// in the mutation guard. It removes the stored claim only when it is this
-// one, so it can never remove a claim another operation took after this
-// one, and the guard's release frees only this claim's reservation.
+// releaseOperation frees claim's reservation in the mutation guard, and
+// then gives up the claim on instanceID. The guard goes first, so a
+// request that finds the claim gone never finds the instance busy with
+// the operation that just ended. It removes the stored claim only when it
+// is this one, so it can never remove a claim another operation took after
+// this one, and the guard's release frees only this claim's reservation.
 func (b *Broker) releaseOperation(instanceID string, claim *operationClaim) {
-	b.activeOperations.CompareAndDelete(instanceID, claim)
-
 	if claim.release != nil {
 		claim.release()
 	}
+
+	b.activeOperations.CompareAndDelete(instanceID, claim)
 }
 
 // guardBusyAnswer is the 422 ConcurrencyError a provision or deprovision

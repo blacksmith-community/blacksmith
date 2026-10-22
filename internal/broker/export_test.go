@@ -117,6 +117,33 @@ func (b *Broker) HoldOperationClaim(instanceID, operation string) func() {
 	return func() { b.releaseOperation(instanceID, claim) }
 }
 
+// ClaimStoredWhenGuardFreed takes a claim on instanceID, gives it up, and
+// reports whether the claim was still stored when its reservation in the
+// mutation guard was freed.
+func (b *Broker) ClaimStoredWhenGuardFreed(instanceID string) bool {
+	claim := &operationClaim{operation: operationTypeProvision, claimed: time.Now()}
+
+	_, claimed, err := b.claimOperation(instanceID, "", claim)
+	if err != nil || !claimed {
+		panic("an operation claim is already held on instance " + instanceID)
+	}
+
+	var stored bool
+
+	free := claim.release
+	claim.release = func() {
+		stored = b.OperationClaimed(instanceID)
+
+		if free != nil {
+			free()
+		}
+	}
+
+	b.releaseOperation(instanceID, claim)
+
+	return stored
+}
+
 // DeprovisionActive reports whether a deprovision of instanceID is in flight
 // in this process, from its accept chain until its goroutine returns.
 func (b *Broker) DeprovisionActive(instanceID string) bool {
