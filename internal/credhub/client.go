@@ -1,6 +1,7 @@
 package credhub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,7 @@ var (
 	ErrInvalidCredHubURL = errors.New("CredHub URL must be an https URL")
 	ErrNoTokenProvider   = errors.New("CredHub client needs a token provider")
 	ErrBadFindAnswer     = errors.New("CredHub find answer is not valid JSON")
+	ErrAnswerTooLarge    = errors.New("CredHub answer is larger than the limit")
 )
 
 // tokenProvider is what the client needs from a TokenSource.
@@ -49,7 +51,7 @@ type ClientConfig struct {
 // carries CredHub's error text cut to 200 characters, never a token, and
 // never a request or response body beyond that text.
 type APIError struct {
-	// Op is "find" or "delete".
+	// Op names the operation that failed, such as "find" or "delete".
 	Op string
 	// Status is the HTTP status CredHub answered.
 	Status int
@@ -74,14 +76,30 @@ func (e *APIError) Error() string {
 	return message
 }
 
-// Client is a CredHub client that can find credential names under a path and
-// delete one credential by its exact name. It has no way to read a value,
-// set, generate, or regenerate a credential, or change a permission.
+// Client is a CredHub client that can find credential names under a path,
+// delete one credential by its exact name, and read certificate metadata,
+// version lists, and the public half of a certificate. It has no way to
+// read a secret value or a private key, to set, generate, or regenerate a
+// credential, or to change a permission.
 type Client struct {
 	baseURL    string
 	tokens     tokenProvider
 	protected  []string
 	httpClient *http.Client
+}
+
+// request describes one CredHub call.
+type request struct {
+	operation string
+	method    string
+	path      string
+	query     url.Values
+	body      []byte
+	// maxBody bounds the answer. Zero means the answer is not read.
+	maxBody int64
+	// opaqueErrors drops all of CredHub's error text from a failure. Every
+	// call that can carry a secret value sets it.
+	opaqueErrors bool
 }
 
 type findResponse struct {
@@ -131,7 +149,13 @@ func NewClient(cfg ClientConfig, tokens tokenProvider, protectedPrefixes []strin
 // CredHub matches the path with SQL LIKE, so callers must filter the names
 // again with an exact prefix.
 func (c *Client) FindByPath(ctx context.Context, path string) ([]string, error) {
-	body, err := c.send(ctx, opFind, http.MethodGet, url.Values{"path": {path}}, maxFindBody)
+	body, err := c.send(ctx, request{
+		operation: opFind,
+		method:    http.MethodGet,
+		path:      dataPath,
+		query:     url.Values{"path": {path}},
+		maxBody:   maxFindBody,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +189,12 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 		}
 	}
 
-	_, err := c.send(ctx, opDelete, http.MethodDelete, url.Values{"name": {name}}, 0)
+	_, err := c.send(ctx, request{
+		operation: opDelete,
+		method:    http.MethodDelete,
+		path:      dataPath,
+		query:     url.Values{"name": {name}},
+	})
 
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
@@ -177,13 +206,13 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 
 // send makes one request and, when CredHub answers 401, invalidates the
 // rejected token and makes it once more with a fresh one.
-func (c *Client) send(ctx context.Context, operation, method string, query url.Values, maxBody int64) ([]byte, error) {
+func (c *Client) send(ctx context.Context, req request) ([]byte, error) {
 	token, err := c.token(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("CredHub %s: %w", operation, err)
+		return nil, fmt.Errorf("CredHub %s: %w", req.operation, err)
 	}
 
-	body, err := c.attempt(ctx, operation, method, query, token, maxBody)
+	body, err := c.attempt(ctx, req, token)
 
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
@@ -194,10 +223,10 @@ func (c *Client) send(ctx context.Context, operation, method string, query url.V
 
 	token, err = c.token(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("CredHub %s after a 401: %w", operation, err)
+		return nil, fmt.Errorf("CredHub %s after a 401: %w", req.operation, err)
 	}
 
-	body, err = c.attempt(ctx, operation, method, query, token, maxBody)
+	body, err = c.attempt(ctx, req, token)
 	if errors.As(err, &apiErr) {
 		apiErr.Refreshed = true
 	}
@@ -218,47 +247,79 @@ func (c *Client) token(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-func (c *Client) attempt(ctx context.Context, operation, method string, query url.Values, token string, maxBody int64) ([]byte, error) {
+func (c *Client) attempt(ctx context.Context, req request, token string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+dataPath+"?"+query.Encode(), nil)
+	var payload io.Reader
+	if req.body != nil {
+		payload = bytes.NewReader(req.body)
+	}
+
+	request, err := http.NewRequestWithContext(ctx, req.method, c.baseURL+req.path+"?"+req.query.Encode(), payload)
 	if err != nil {
-		return nil, fmt.Errorf("CredHub %s: building the request: %w", operation, err)
+		return nil, fmt.Errorf("CredHub %s: building the request: %w", req.operation, err)
 	}
 
 	request.Header.Set("Authorization", bearerPrefix+token)
 	request.Header.Set("Accept", "application/json")
 
+	if req.body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("CredHub %s: %w", operation, scrubbed(err, token))
+		return nil, fmt.Errorf("CredHub %s: %w", req.operation, scrubbed(err, token))
 	}
 
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		raw, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
-
-		var parsed credhubErrorResponse
-
-		_ = json.Unmarshal(raw, &parsed)
-
-		return nil, &APIError{
-			Op:      operation,
-			Status:  response.StatusCode,
-			Message: cut(redact(parsed.Error, token)),
-		}
+		return nil, failure(req, response, token)
 	}
 
-	if maxBody == 0 {
+	if req.maxBody == 0 {
 		return nil, nil
 	}
 
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxBody))
+	// One byte past the limit shows that the answer was longer, which a
+	// plain LimitReader would hide by cutting it short.
+	body, err := io.ReadAll(io.LimitReader(response.Body, req.maxBody+1))
 	if err != nil {
-		return nil, fmt.Errorf("CredHub %s: reading the answer: %w", operation, scrubbed(err, token))
+		clear(body)
+
+		return nil, fmt.Errorf("CredHub %s: reading the answer: %w", req.operation, scrubbed(err, token))
+	}
+
+	if int64(len(body)) > req.maxBody {
+		clear(body)
+
+		return nil, fmt.Errorf("CredHub %s: %w (%d bytes)", req.operation, ErrAnswerTooLarge, req.maxBody)
 	}
 
 	return body, nil
+}
+
+// failure turns a non-2xx answer into an APIError. For an opaque request it
+// reads the error body only to drain it and keeps none of its text, because
+// a request that can carry a value can get an error that echoes one.
+func failure(req request, response *http.Response, token string) error {
+	raw, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
+
+	if req.opaqueErrors {
+		clear(raw)
+
+		return &APIError{Op: req.operation, Status: response.StatusCode}
+	}
+
+	var parsed credhubErrorResponse
+
+	_ = json.Unmarshal(raw, &parsed)
+
+	return &APIError{
+		Op:      req.operation,
+		Status:  response.StatusCode,
+		Message: cut(redact(parsed.Error, token)),
+	}
 }

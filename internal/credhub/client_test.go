@@ -444,7 +444,7 @@ func TestClientErrorsNeverCarryTheToken(t *testing.T) {
 	assertNoMarkers(t, err.Error())
 }
 
-func TestClientHasOnlyFindAndDelete(t *testing.T) {
+func TestClientHasNoWriteMethods(t *testing.T) {
 	t.Parallel()
 
 	clientType := reflect.TypeFor[*credhub.Client]()
@@ -454,7 +454,10 @@ func TestClientHasOnlyFindAndDelete(t *testing.T) {
 		methods = append(methods, clientType.Method(i).Name)
 	}
 
-	if want := []string{"Delete", "FindByPath"}; !slices.Equal(methods, want) {
+	// Delete is the only write. The other methods read names, metadata, and
+	// the public half of a certificate.
+	want := []string{"CertificateMetadata", "CertificateVersion", "CredentialVersions", "Delete", "FindByPath"}
+	if !slices.Equal(methods, want) {
 		t.Fatalf("Client methods = %q, want only %q", methods, want)
 	}
 }
