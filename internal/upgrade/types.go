@@ -52,6 +52,10 @@ const (
 	// on the director, and the instance keeps its task ID or context ID so
 	// it can be found after a restart.
 	InstanceStatusInterrupted InstanceStatus = "interrupted"
+	// StatusAwaitingDecision indicates a certificate instance waits on an
+	// operator's answer before it goes on. It keeps its reservation and
+	// counts as unfinished.
+	StatusAwaitingDecision InstanceStatus = "awaiting_decision"
 )
 
 // settled reports whether an instance in the status has settled, which
@@ -60,7 +64,7 @@ func (s InstanceStatus) settled() bool {
 	switch s {
 	case InstanceStatusSuccess, InstanceStatusFailed, InstanceStatusCancelled, InstanceStatusSkipped, InstanceStatusOutcomeUnknown:
 		return true
-	case InstanceStatusPending, InstanceStatusRunning, InstanceStatusInterrupted:
+	case InstanceStatusPending, InstanceStatusRunning, InstanceStatusInterrupted, StatusAwaitingDecision:
 		return false
 	default:
 		return false
@@ -88,12 +92,18 @@ type InstanceUpgrade struct {
 	Error           string          `json:"error,omitempty"`
 	StartedAt       *time.Time      `json:"started_at,omitempty"`
 	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
+	// Certificates is the instance's rotation record, and is set on a
+	// certificate task only.
+	Certificates *InstanceRotation `json:"certificates,omitempty"`
 }
 
 // UpgradeTask represents a batch upgrade task.
 type UpgradeTask struct {
-	ID             string         `json:"id"`
-	Name           string         `json:"name,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// Kind is empty on records saved before tasks had a kind, which are
+	// upgrades. KindOrDefault reads it.
+	Kind           TaskKind       `json:"kind,omitempty"`
 	Status         TaskStatus     `json:"status"`
 	Paused         bool           `json:"paused"`
 	TargetStemcell StemcellTarget `json:"target_stemcell"`
@@ -112,6 +122,21 @@ type UpgradeTask struct {
 	StartedAt    *time.Time `json:"started_at,omitempty"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 	CreatedBy    string     `json:"created_by,omitempty"`
+	// Certificates is what a certificate task was asked to do, and is nil
+	// on an upgrade.
+	Certificates *CertificateTaskSpec `json:"certificates,omitempty"`
+	// ClientRequestID is the ID the client sent with the create request,
+	// so a retried request finds the task it already made.
+	ClientRequestID string `json:"client_request_id,omitempty"`
+	// RequestDigest is the SHA-256 of the create request's body without
+	// its client request ID.
+	RequestDigest string `json:"request_digest,omitempty"`
+	// CreatedFrom names where the task was created, such as "ui".
+	CreatedFrom string `json:"created_from,omitempty"`
+	// Revision counts the task's confirmed saves.
+	Revision uint64 `json:"revision,omitempty"`
+	// CreationConfirmed is set once the task's first save is confirmed.
+	CreationConfirmed bool `json:"creation_confirmed,omitempty"`
 }
 
 // StemcellTarget represents the target stemcell for an upgrade.
@@ -138,6 +163,9 @@ type ReleaseTarget struct {
 // target keeps each instance's stemcell, and no release targets keep each
 // instance's releases.
 type CreateTaskRequest struct {
+	// Kind is empty or "upgrade" for an upgrade. A certificate task is
+	// created through CreateCertificateTask instead.
+	Kind           TaskKind        `json:"kind,omitempty"`
 	Name           string          `json:"name,omitempty"`
 	InstanceIDs    []string        `json:"instance_ids"`
 	TargetStemcell StemcellTarget  `json:"target_stemcell"`
@@ -166,23 +194,47 @@ func (r CreateTaskRequest) DescribeTargets() string {
 
 // TaskSummary represents a summary of an upgrade task for list views.
 type TaskSummary struct {
-	ID             string     `json:"id"`
-	Name           string     `json:"name,omitempty"`
-	Status         TaskStatus `json:"status"`
-	TargetStemcell string     `json:"target_stemcell"`
-	TargetReleases []string   `json:"target_releases,omitempty"`
-	TotalCount     int        `json:"total_count"`
-	CompletedCount int        `json:"completed_count"`
-	FailedCount    int        `json:"failed_count"`
-	UnknownCount   int        `json:"unknown_count"`
-	SkippedCount   int        `json:"skipped_count"`
-	CancelledCount int        `json:"cancelled_count"`
-	CreatedAt      time.Time  `json:"created_at"`
+	ID     string     `json:"id"`
+	Name   string     `json:"name,omitempty"`
+	Kind   TaskKind   `json:"kind"`
+	Status TaskStatus `json:"status"`
+	// Target describes what the task does, such as the stemcell and
+	// releases of an upgrade or "Patch, 2 certificates".
+	Target         string    `json:"target"`
+	TargetStemcell string    `json:"target_stemcell"`
+	TargetReleases []string  `json:"target_releases,omitempty"`
+	TotalCount     int       `json:"total_count"`
+	CompletedCount int       `json:"completed_count"`
+	FailedCount    int       `json:"failed_count"`
+	UnknownCount   int       `json:"unknown_count"`
+	SkippedCount   int       `json:"skipped_count"`
+	CancelledCount int       `json:"cancelled_count"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ToSummary converts an UpgradeTask to a TaskSummary. Each target reads
 // as name/version, and an upgrade of releases alone has no stemcell.
 func (t *UpgradeTask) ToSummary() TaskSummary {
+	summary := TaskSummary{
+		ID:             t.ID,
+		Name:           t.Name,
+		Kind:           t.KindOrDefault(),
+		Status:         t.Status,
+		TotalCount:     t.TotalCount,
+		CompletedCount: t.CompletedCount,
+		FailedCount:    t.FailedCount,
+		UnknownCount:   t.UnknownCount,
+		SkippedCount:   t.SkippedCount,
+		CancelledCount: t.CancelledCount,
+		CreatedAt:      t.CreatedAt,
+	}
+
+	if summary.Kind == TaskKindCertificates {
+		summary.Target = certificateTarget(t)
+
+		return summary
+	}
+
 	stemcell := ""
 	if t.TargetStemcell.IsSet() {
 		stemcell = t.TargetStemcell.OS + "/" + t.TargetStemcell.Version
@@ -193,20 +245,17 @@ func (t *UpgradeTask) ToSummary() TaskSummary {
 		releases = append(releases, target.Name+"/"+target.Version)
 	}
 
-	return TaskSummary{
-		ID:             t.ID,
-		Name:           t.Name,
-		Status:         t.Status,
-		TargetStemcell: stemcell,
-		TargetReleases: releases,
-		TotalCount:     t.TotalCount,
-		CompletedCount: t.CompletedCount,
-		FailedCount:    t.FailedCount,
-		UnknownCount:   t.UnknownCount,
-		SkippedCount:   t.SkippedCount,
-		CancelledCount: t.CancelledCount,
-		CreatedAt:      t.CreatedAt,
+	summary.TargetStemcell = stemcell
+	summary.TargetReleases = releases
+
+	parts := releases
+	if stemcell != "" {
+		parts = append([]string{stemcell}, releases...)
 	}
+
+	summary.Target = strings.Join(parts, ", ")
+
+	return summary
 }
 
 // Settings represents upgrade manager settings.

@@ -120,6 +120,11 @@ var (
 	// it sees an instance held by any broker operation, not only an upgrade.
 	ErrInstanceBusy = mutation.ErrInstanceBusy
 	ErrTasksLoading = errors.New("the stored upgrade tasks are still loading, so try again shortly")
+	// ErrCertificateTaskKind turns a certificate task away from
+	// CreateTask, which builds upgrades only.
+	ErrCertificateTaskKind = errors.New("certificate tasks are created through CreateCertificateTask")
+	// ErrInvalidTaskKind names a task kind the manager does not know.
+	ErrInvalidTaskKind = errors.New("invalid task kind: it must be upgrade or certificates")
 )
 
 // Manager manages upgrade tasks.
@@ -200,6 +205,10 @@ type Manager struct {
 	// reservations holds, under mu, the release of each instance an
 	// upgrade has reserved in the guard, by task ID and then instance ID.
 	reservations map[string]map[string]func()
+
+	// requests finds a certificate task by the client request ID that
+	// created it, so a retried create finds the task it already made.
+	requests *requestIndex
 }
 
 // taskSnapshot is a copy of an upgrade task taken under the manager's lock,
@@ -234,6 +243,7 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		owned:        make(map[string]bool),
 		guard:        mutation.NewGuard(time.Now),
 		reservations: make(map[string]map[string]func()),
+		requests:     newRequestIndex(),
 	}
 
 	// The manager's context is a root. The manager lives as long as the
@@ -316,6 +326,14 @@ func (m *Manager) Loaded() <-chan struct{} {
 
 // CreateTask creates a new upgrade task.
 func (m *Manager) CreateTask(ctx context.Context, req CreateTaskRequest) (*UpgradeTask, error) {
+	switch req.Kind {
+	case "", TaskKindUpgrade:
+	case TaskKindCertificates:
+		return nil, ErrCertificateTaskKind
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrInvalidTaskKind, req.Kind)
+	}
+
 	if len(req.InstanceIDs) == 0 {
 		return nil, ErrNoInstances
 	}
@@ -511,6 +529,14 @@ func (m *Manager) dispatchTasks() {
 
 			return
 		case task := <-m.taskQueue:
+			// The upgrade path never runs a certificate task. One that
+			// reaches the queue is let go, and keeps its reservations.
+			if task.KindOrDefault() != TaskKindUpgrade {
+				m.dropFromQueue(task)
+
+				continue
+			}
+
 			// Spawn a goroutine for each task to allow parallel processing
 			m.wg.Add(1)
 
@@ -1344,6 +1370,17 @@ func (m *Manager) SetOnMaxBatchJobsChanged(callback func(maxJobs int)) {
 	m.onMaxBatchJobsChanged = callback
 }
 
+// dropFromQueue lets go of a queued task the upgrade path does not run. It
+// stops being owned, and it keeps the reservations it still needs.
+func (m *Manager) dropFromQueue(task *UpgradeTask) {
+	m.mu.Lock()
+	delete(m.owned, task.ID)
+	m.releaseUnheldLocked(task)
+	m.mu.Unlock()
+
+	m.logger.Info("Skipping %s task %s in the upgrade queue", task.KindOrDefault(), task.ID)
+}
+
 // runTask runs one queued upgrade. Its cancel channel is registered before
 // it waits for a slot, so a cancel or a resume during that wait reaches it,
 // and the upgrade stops being owned once its processing returns.
@@ -1754,7 +1791,10 @@ func (m *Manager) resumeIfReady(task *UpgradeTask) {
 	resumable := task.Status == TaskStatusRunning || task.Status == TaskStatusPending
 	status := task.Status
 
-	ready := settled && m.lookups == 0 && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
+	// The upgrade path never runs a certificate task, so none is queued.
+	upgrade := task.KindOrDefault() == TaskKindUpgrade
+
+	ready := upgrade && settled && m.lookups == 0 && m.ctx.Err() == nil && resumable && !task.Paused && !m.owned[task.ID]
 	noDirector := ready && m.director == nil
 
 	queue := ready && !noDirector
@@ -1829,29 +1869,58 @@ func (m *Manager) loadAndSettle() {
 	}
 }
 
-// loadPersistedTasks loads every upgrade task saved in Vault. A failed read
-// of the index or of a task is retried until it succeeds or Stop ends the
-// load, so a Vault that starts after the broker never loses an upgrade. A
+// loadPersistedTasks loads every task saved in Vault, the upgrades from
+// the upgrade tasks index and the certificate tasks from theirs. A failed
+// read of an index or of a task is retried until it succeeds or Stop ends
+// the load, so a Vault that starts after the broker never loses a task. A
 // task whose record can't be decoded is skipped and logged instead, since
-// no retry can read it, so the load still finishes. It
-// returns the tasks it loaded, and false when Stop ended the load. A task
-// already in memory, created after the broker started, is kept.
+// no retry can read it, so the load still finishes. A record whose kind
+// does not belong under the index that names it is skipped and logged too,
+// so it never runs as the wrong kind. It rebuilds the request index from
+// the loaded tasks and restores their reservations. It returns the tasks
+// it loaded, and false when Stop ended the load. A task already in memory,
+// created after the broker started, is kept.
 func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
-	m.logger.Debug("Loading persisted upgrade tasks from vault")
+	var loaded []*UpgradeTask
+
+	for _, kind := range []TaskKind{TaskKindUpgrade, TaskKindCertificates} {
+		tasks, ok := m.loadIndex(kind)
+		if !ok {
+			return nil, false
+		}
+
+		loaded = append(loaded, tasks...)
+	}
+
+	for _, task := range loaded {
+		m.requests.Put(task.ClientRequestID, task.ID, task.RequestDigest)
+	}
+
+	m.restoreLoadedReservations(loaded)
+
+	return loaded, true
+}
+
+// loadIndex loads every task the index of the kind names, as
+// loadPersistedTasks describes. It returns false when Stop ended the load.
+func (m *Manager) loadIndex(kind TaskKind) ([]*UpgradeTask, bool) {
+	indexPath := tasksIndexPath(kind)
+
+	m.logger.Debug("Loading persisted %s tasks from vault", kind)
 
 	var tasksIndex map[string]interface{}
 
-	exists, ok := m.readWithRetry("the upgrade tasks index from Vault", func(ctx context.Context) (bool, error) {
+	exists, ok := m.readWithRetry("the "+string(kind)+" tasks index from Vault", func(ctx context.Context) (bool, error) {
 		tasksIndex = nil
 
-		return m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
+		return m.vault.Get(ctx, indexPath, &tasksIndex)
 	})
 	if !ok {
 		return nil, false
 	}
 
 	if !exists {
-		m.logger.Debug("No persisted upgrade tasks found")
+		m.logger.Debug("No persisted %s tasks found", kind)
 
 		return nil, true
 	}
@@ -1859,44 +1928,12 @@ func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 	loaded := make([]*UpgradeTask, 0, len(tasksIndex))
 
 	for taskID := range tasksIndex {
-		var (
-			task        *UpgradeTask
-			undecodable bool
-		)
-
-		taskPath := upgradeTasksVaultPath + "/" + taskID
-
-		taskExists, ok := m.readWithRetry("upgrade task "+taskID+" from Vault", func(ctx context.Context) (bool, error) {
-			task = &UpgradeTask{}
-
-			exists, err := m.vault.Get(ctx, taskPath, task)
-			// A record that doesn't fit UpgradeTask reads the same way
-			// every time, so it isn't retried.
-			if errors.Is(err, vaultPkg.ErrCouldNotRemarshalData) {
-				undecodable = true
-
-				return false, nil
-			}
-
-			if err != nil {
-				return false, fmt.Errorf("reading %s: %w", taskPath, err)
-			}
-
-			return exists, nil
-		})
-		if !ok {
+		task, read := m.readTaskRecord(kind, taskID)
+		if !read {
 			return nil, false
 		}
 
-		if undecodable {
-			m.logger.Error("Skipped upgrade task %s, because its record at %s can't be decoded; delete that record from Vault by hand", taskID, taskPath)
-
-			continue
-		}
-
-		if !taskExists {
-			m.logger.Debug("Task %s not found at path %s", taskID, taskPath)
-
+		if task == nil {
 			continue
 		}
 
@@ -1915,11 +1952,62 @@ func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 		loaded = append(loaded, task)
 	}
 
-	m.logger.Info("Loaded %d persisted upgrade tasks", len(loaded))
-
-	m.restoreLoadedReservations(loaded)
+	m.logger.Info("Loaded %d persisted %s tasks", len(loaded), kind)
 
 	return loaded, true
+}
+
+// readTaskRecord reads the record of a task the index of the kind names,
+// retrying a failed read as loadPersistedTasks describes. It returns nil
+// for a record that is missing, can't be decoded, or is of another kind,
+// and logs the last two. It returns false when Stop ended the read.
+func (m *Manager) readTaskRecord(kind TaskKind, taskID string) (*UpgradeTask, bool) {
+	var (
+		task        *UpgradeTask
+		undecodable bool
+	)
+
+	indexPath := tasksIndexPath(kind)
+	taskPath := indexPath + "/" + taskID
+
+	taskExists, read := m.readWithRetry(string(kind)+" task "+taskID+" from Vault", func(ctx context.Context) (bool, error) {
+		task = &UpgradeTask{}
+
+		exists, err := m.vault.Get(ctx, taskPath, task)
+		// A record that doesn't fit UpgradeTask reads the same way every
+		// time, so it isn't retried.
+		if errors.Is(err, vaultPkg.ErrCouldNotRemarshalData) {
+			undecodable = true
+
+			return false, nil
+		}
+
+		if err != nil {
+			return false, fmt.Errorf("reading %s: %w", taskPath, err)
+		}
+
+		return exists, nil
+	})
+	if !read {
+		return nil, false
+	}
+
+	switch {
+	case undecodable:
+		m.logger.Error("Skipped %s task %s, because its record at %s can't be decoded; delete that record from Vault by hand", kind, taskID, taskPath)
+
+		return nil, true
+	case !taskExists:
+		m.logger.Debug("Task %s not found at path %s", taskID, taskPath)
+
+		return nil, true
+	case task.KindOrDefault() != kind:
+		m.logger.Error("Skipped task %s, because its record at %s is a %s task under the %s index; move or delete that record in Vault by hand", taskID, taskPath, task.KindOrDefault(), indexPath)
+
+		return nil, true
+	default:
+		return task, true
+	}
 }
 
 // readWithRetry runs read under the manager's context until it succeeds,
@@ -1976,11 +2064,27 @@ func (m *Manager) settleLoadedTasks(tasks []*UpgradeTask) {
 	loadedAt := time.Now()
 	deploys := make([]loadedDeploy, 0, len(tasks))
 
+	var changed []*UpgradeTask
+
 	m.mu.Lock()
 	for _, task := range tasks {
-		deploys = append(deploys, m.prepareSettlingLocked(task, loadedAt)...)
+		found, taskChanged := m.prepareSettlingLocked(task, loadedAt)
+		deploys = append(deploys, found...)
+
+		if taskChanged {
+			changed = append(changed, task)
+		}
 	}
 	m.mu.Unlock()
+
+	// A certificate instance turned to wait on a decision is saved before
+	// the load finishes, so the decision outlives another restart.
+	for _, task := range changed {
+		err := m.persistTask(context.WithoutCancel(m.ctx), task)
+		if err != nil {
+			m.logger.Error("Failed to persist task %s after it was loaded: %v", task.ID, err)
+		}
+	}
 
 	if len(deploys) == 0 {
 		return
@@ -2042,16 +2146,41 @@ func (m *Manager) endLookup() {
 	}
 }
 
-// prepareSettlingLocked finds the instances of a loaded upgrade whose
-// deploy was in flight, sets the upgrade's settling count, and registers
-// the cancel channel their settles share. The caller holds mu.
-func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) []loadedDeploy {
-	var deploys []loadedDeploy
+// prepareSettlingLocked finds the instances of a loaded task whose deploy
+// was in flight, sets the task's settling count, and registers the cancel
+// channel their settles share. A certificate instance is settled by its
+// rotation phase, as prepareCertificateLocked describes. It reports
+// whether it changed the task, which the caller then saves. The caller
+// holds mu.
+func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) ([]loadedDeploy, bool) {
+	var (
+		deploys []loadedDeploy
+		changed bool
+	)
+
+	certificates := task.KindOrDefault() == TaskKindCertificates
 
 	for i := range task.Instances {
 		instance := &task.Instances[i]
 		if instance.Status != InstanceStatusRunning && instance.Status != InstanceStatusInterrupted {
 			continue
+		}
+
+		taskID, contextID := instance.BOSHTaskID, instance.ContextID
+
+		if certificates {
+			settle, instanceChanged := m.prepareCertificateLocked(task, instance, loadedAt)
+			changed = changed || instanceChanged
+
+			if !settle {
+				continue
+			}
+
+			// A converge deploy saved its IDs on the rotation record when
+			// the instance holds none of its own.
+			if converge := instance.Certificates.Converge; instance.Certificates.Phase == RotationPhaseConverge && converge != nil && taskID == 0 && contextID == "" {
+				taskID, contextID = converge.BOSHTaskID, converge.ContextID
+			}
 		}
 
 		// A deploy whose answer was lost before UnknownSince was saved has
@@ -2064,8 +2193,8 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) [
 		deploys = append(deploys, loadedDeploy{
 			task:         task,
 			instance:     instance,
-			taskID:       instance.BOSHTaskID,
-			contextID:    instance.ContextID,
+			taskID:       taskID,
+			contextID:    contextID,
 			unknownSince: unknownSince,
 		})
 	}
@@ -2076,7 +2205,7 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) [
 	if len(deploys) == 0 {
 		delete(m.settling, task.ID)
 
-		return nil
+		return nil, changed
 	}
 
 	m.settling[task.ID] = len(deploys)
@@ -2095,7 +2224,67 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) [
 
 	m.logger.Info("Upgrade task %s has %d instances whose deploys were in flight when Blacksmith stopped, so it settles them", task.ID, len(deploys))
 
-	return deploys
+	return deploys, changed
+}
+
+// prepareCertificateLocked decides how a loaded certificate instance that
+// was running or interrupted settles. A variable whose regeneration was
+// being sent, or whose outcome was already unknown, may or may not have a
+// new version in CredHub, and no lookup on the director can tell, so the
+// variable's outcome is unknown, the instance waits for an operator to
+// reconcile it, and the task pauses. An instance in the deploy or converge
+// phase settles its deploy as an upgrade instance does. An instance in any
+// other phase is left as it is. It reports whether the instance's deploy
+// settles, and whether it changed the task. The caller holds mu.
+func (m *Manager) prepareCertificateLocked(task *UpgradeTask, instance *InstanceUpgrade, loadedAt time.Time) (bool, bool) {
+	rotation := instance.Certificates
+	if rotation == nil {
+		return false, false
+	}
+
+	uncertain := ""
+
+	for i := range rotation.Variables {
+		variable := &rotation.Variables[i]
+		if variable.RegenerateState != RegenerateSending && variable.RegenerateState != RegenerateOutcomeUnknown {
+			continue
+		}
+
+		variable.RegenerateState = RegenerateOutcomeUnknown
+
+		if uncertain == "" {
+			uncertain = variable.Name
+		}
+	}
+
+	if uncertain != "" {
+		instance.Status = StatusAwaitingDecision
+		instance.Error = fmt.Sprintf("Blacksmith stopped while it asked CredHub to regenerate %s, so it can't tell whether a new version was made. Choose the version to keep before the rotation goes on.", uncertain)
+		rotation.Pending = &PendingDecision{
+			Kind:     DecisionReconcileRegeneration,
+			Variable: uncertain,
+			Since:    loadedAt,
+		}
+
+		// A cancelled task stays cancelled, and an unfinished one pauses.
+		if task.Status == TaskStatusRunning || task.Status == TaskStatusPending || task.Status == TaskStatusPaused {
+			task.Status = TaskStatusPaused
+			task.Paused = true
+		}
+
+		m.logger.Info("Certificate task %s paused, because instance %s waits for a decision on the regeneration of %s", task.ID, instance.InstanceID, uncertain)
+
+		return false, true
+	}
+
+	switch rotation.Phase {
+	case RotationPhaseDeploy, RotationPhaseConverge:
+		return true, false
+	case RotationPhasePreflight, RotationPhaseDiscover, RotationPhaseRegenerate, RotationPhasePatch, RotationPhaseDone:
+		return false, false
+	default:
+		return false, false
+	}
 }
 
 // interruptWithoutDirector marks each loaded instance whose deploy was in
@@ -2358,6 +2547,7 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 	copied.TargetReleases = slices.Clone(task.TargetReleases)
 	copied.StartedAt = copyTime(task.StartedAt)
 	copied.CompletedAt = copyTime(task.CompletedAt)
+	copied.Certificates = task.Certificates.Clone()
 
 	if task.Instances != nil {
 		copied.Instances = make([]InstanceUpgrade, len(task.Instances))
@@ -2367,6 +2557,7 @@ func copyTask(task *UpgradeTask) *UpgradeTask {
 			instance.AppliedReleases = slices.Clone(instance.AppliedReleases)
 			instance.StartedAt = copyTime(instance.StartedAt)
 			instance.CompletedAt = copyTime(instance.CompletedAt)
+			instance.Certificates = instance.Certificates.Clone()
 			copied.Instances[i] = instance
 		}
 	}
@@ -2431,8 +2622,8 @@ func (m *Manager) writeSnapshot(ctx context.Context, snapshot taskSnapshot) erro
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), persistTaskTimeout)
 	defer cancel()
 
-	// Save the full task data
-	taskPath := upgradeTasksVaultPath + "/" + task.ID
+	// Save the full task data under its kind's index
+	taskPath := taskRecordPath(task)
 
 	err := m.vault.Put(ctx, taskPath, task)
 	if err != nil {
@@ -2451,16 +2642,18 @@ func (m *Manager) writeSnapshot(ctx context.Context, snapshot taskSnapshot) erro
 	return nil
 }
 
-// addToTasksIndex records the task in the tasks index. The read, the
+// addToTasksIndex records the task in the index of its kind. The read, the
 // change, and the write run under indexMu, so two tasks saved at once never
 // lose each other's entries.
 func (m *Manager) addToTasksIndex(ctx context.Context, task *UpgradeTask) error {
 	m.indexMu.Lock()
 	defer m.indexMu.Unlock()
 
+	indexPath := tasksIndexPath(task.KindOrDefault())
+
 	var tasksIndex map[string]interface{}
 
-	exists, err := m.vault.Get(ctx, upgradeTasksVaultPath, &tasksIndex)
+	exists, err := m.vault.Get(ctx, indexPath, &tasksIndex)
 	if err != nil {
 		// A fresh map written over an index that could not be read would
 		// drop every other task from it, and loadPersistedTasks would forget
@@ -2480,7 +2673,7 @@ func (m *Manager) addToTasksIndex(ctx context.Context, task *UpgradeTask) error 
 		"created_at": task.CreatedAt.Unix(),
 	}
 
-	err = m.vault.Put(ctx, upgradeTasksVaultPath, tasksIndex)
+	err = m.vault.Put(ctx, indexPath, tasksIndex)
 	if err != nil {
 		return fmt.Errorf("failed to update tasks index: %w", err)
 	}
@@ -2826,8 +3019,23 @@ func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) boo
 	return (unfinished && !inst.Status.settled()) || (followed && inFlight)
 }
 
-// upgradeHolder describes the upgrade to whoever finds its instances busy.
-func upgradeHolder(task *UpgradeTask) mutation.Holder {
+// taskHolder describes the task to whoever finds its instances busy. A
+// certificate task holds its instances as a certificate rotation, and any
+// other task as an upgrade.
+func taskHolder(task *UpgradeTask) mutation.Holder {
+	if task.KindOrDefault() == TaskKindCertificates {
+		description := "certificate rotation task " + task.ID
+		if task.Name != "" {
+			description = fmt.Sprintf("certificate rotation %q", task.Name)
+		}
+
+		return mutation.Holder{
+			Kind:        mutation.KindCertificates,
+			TaskID:      task.ID,
+			Description: description,
+		}
+	}
+
 	description := "upgrade task " + task.ID
 	if task.Name != "" {
 		description = fmt.Sprintf("upgrade %q", task.Name)
@@ -2849,7 +3057,7 @@ func (m *Manager) acquireLocked(task *UpgradeTask, inst *InstanceUpgrade) error 
 		return nil
 	}
 
-	release, err := m.guard.Acquire(inst.InstanceID, inst.DeploymentName, upgradeHolder(task))
+	release, err := m.guard.Acquire(inst.InstanceID, inst.DeploymentName, taskHolder(task))
 	if err != nil {
 		return err //nolint:wrapcheck // the caller names the instance
 	}
