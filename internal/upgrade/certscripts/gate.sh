@@ -27,15 +27,15 @@ readonly GT_CLUSTER_RE='^cluster_(state:[a-z]+|(slots_assigned|slots_ok|slots_pf
 readonly GT_PORT_RE='^[0-9]{1,5}$'
 readonly GT_NODE_RE='^export RABBITMQ_NODENAME="([A-Za-z0-9_.@-]+)"$'
 
-# _gt_last <path>... prints the last of the paths that is a regular
-# file. The glob sorts, so with several versions of a package,
-# the last is the highest of them.
-_gt_last() {
+# _gt_highest <path>... prints the path with the highest version among
+# the paths that are regular files. The glob sorts by bytes, which puts
+# valkey-10 before valkey-9, so the paths are put in version order first.
+_gt_highest() {
 	local path found=''
 
-	for path in "$@"; do
+	while IFS= read -r path; do
 		[ -f "$path" ] && found=$path
-	done
+	done < <(printf '%s\n' "$@" | sort -V)
 
 	[ -n "$found" ] || return 1
 	printf '%s' "$found"
@@ -74,7 +74,7 @@ _gt_redis() {
 	done < "${files[0]}"
 
 	for name in "$@"; do
-		cli=$(_gt_last "$root"/var/vcap/packages/*/bin/"$name") && break
+		cli=$(_gt_highest "$root"/var/vcap/packages/*/bin/"$name") && break
 	done
 
 	[ -n "$cli" ] && [ -x "$cli" ] || return 1

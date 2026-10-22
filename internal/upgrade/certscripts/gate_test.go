@@ -336,6 +336,35 @@ func TestGateRedisPlainPort(t *testing.T) {
 	}
 }
 
+// TestGatePicksHighestVersion shows that with several versions of the
+// CLI's package installed, the gate runs the highest version, which is
+// valkey-10 here and not valkey-9, the last in the glob's order.
+func TestGatePicksHighestVersion(t *testing.T) {
+	t.Parallel()
+
+	const (
+		config = "/var/vcap/jobs/cluster/config/valkey.conf"
+		newest = "/var/vcap/packages/valkey-10/bin/valkey-cli"
+		older  = "/var/vcap/packages/valkey-9/bin/valkey-cli"
+	)
+
+	tree := newGateTree(t, config, "port 6379\n", newest)
+	tree.mkdir(t, filepath.Dir(older))
+	tree.writeMode(t, older, fakeCLI, 0o755)
+
+	if _, code := runScript(t, tree.root, nil, "gate", "valkey-cluster"); code != 0 {
+		t.Fatalf("gate exited %d, want 0", code)
+	}
+
+	if !tree.exists(t, filepath.Dir(newest)+"/argv.log") {
+		t.Error("the gate did not run the valkey-10 CLI")
+	}
+
+	if tree.exists(t, filepath.Dir(older)+"/argv.log") {
+		t.Error("the gate ran the valkey-9 CLI")
+	}
+}
+
 func TestGateRefusesUnknownGate(t *testing.T) {
 	t.Parallel()
 
