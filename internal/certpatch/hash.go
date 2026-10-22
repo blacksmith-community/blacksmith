@@ -3,7 +3,6 @@
 package certpatch
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 )
@@ -14,17 +13,58 @@ import (
 // spaces and tabs from each line, drops trailing newlines, and appends
 // exactly one newline. The shell function on the VM applies the same rule.
 func NormalisedHash(b []byte) string {
-	text := bytes.ReplaceAll(b, []byte{'\r'}, nil)
-	lines := bytes.Split(text, []byte{'\n'})
+	return normalisedHash(b, nil)
+}
 
-	for i, line := range lines {
-		lines[i] = bytes.TrimRight(line, " \t")
+// normalisedHash does the work in one buffer that it clears before it
+// returns, because the input can be a private key. seen, when set, receives
+// that buffer after it was cleared, so a test can check it.
+func normalisedHash(b []byte, seen func([]byte)) string {
+	out := make([]byte, 0, len(b)+1)
+
+	defer func() {
+		out = out[:cap(out)]
+
+		clear(out)
+
+		if seen != nil {
+			seen(out)
+		}
+	}()
+
+	lineStart := 0
+
+	for _, c := range b {
+		switch c {
+		case '\r':
+		case '\n':
+			out = trimLine(out, lineStart)
+			out = append(out, '\n')
+			lineStart = len(out)
+		default:
+			out = append(out, c)
+		}
 	}
 
-	joined := bytes.TrimRight(bytes.Join(lines, []byte{'\n'}), "\n")
-	joined = append(joined, '\n')
+	out = trimLine(out, lineStart)
 
-	sum := sha256.Sum256(joined)
+	for len(out) > 0 && out[len(out)-1] == '\n' {
+		out = out[:len(out)-1]
+	}
+
+	out = append(out, '\n')
+
+	sum := sha256.Sum256(out)
 
 	return hex.EncodeToString(sum[:])
+}
+
+// trimLine drops trailing spaces and tabs from the line that starts at
+// lineStart.
+func trimLine(out []byte, lineStart int) []byte {
+	for len(out) > lineStart && (out[len(out)-1] == ' ' || out[len(out)-1] == '\t') {
+		out = out[:len(out)-1]
+	}
+
+	return out
 }
