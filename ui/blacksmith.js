@@ -3931,6 +3931,7 @@
     const origin = String(options.origin || '');
     const host = options.container || rotateResultHost();
     const report = (title, error, retry) => {
+      announce(`${title}. ${error}`);
       if (host) {
         const handle = window.blacksmithResultPanel(host, { title, error, retry });
         if (handle && handle.element) handle.element.dataset.origin = origin;
@@ -4097,10 +4098,12 @@
       updateOperationFooter();
       const button = document.getElementById('rotate-preview');
       const active = document.activeElement;
-      // The result panel (role region and alert) announces the outcome on
-      // its own, so focus goes back to the control the operator used.
+      // An error stays on the result panel, which holds the message and its
+      // Retry button. Anything else hands focus back to the control the
+      // operator used.
       const resultHost = document.getElementById('rotate-result');
-      const adrift = !active || active === document.body || Boolean(resultHost && resultHost.contains(active));
+      const errorShowing = Boolean(resultHost && resultHost.querySelector('[role="alert"]'));
+      const adrift = !errorShowing && (!active || active === document.body || Boolean(resultHost && resultHost.contains(active)));
       if (button && !button.disabled && adrift) button.focus({ preventScroll: true });
     }
   };
