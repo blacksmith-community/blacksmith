@@ -327,6 +327,37 @@ func (m *Manager) credhubReady() error {
 	return apierr.New(http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable, message+".")
 }
 
+// directorCall runs one director call under its own deadline of
+// certinventory.DirectorCallTimeout, the way the inventory scan bounds its
+// director calls, and returns when the call or the deadline finishes. A
+// call that ignores its context keeps running in the background, but the
+// caller no longer waits for it, and its result is dropped.
+func directorCall[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
+	callCtx, cancel := context.WithTimeout(ctx, certinventory.DirectorCallTimeout)
+	defer cancel()
+
+	type result struct {
+		value T
+		err   error
+	}
+
+	done := make(chan result, 1)
+
+	go func() {
+		value, err := call(callCtx)
+		done <- result{value, err}
+	}()
+
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-callCtx.Done():
+		var zero T
+
+		return zero, fmt.Errorf("the director did not answer in time: %w", callCtx.Err())
+	}
+}
+
 // rotationDirector asks the director for its name and checks that its
 // version accepts force_latest_variables.
 func (m *Manager) rotationDirector(ctx context.Context) (string, error) {
@@ -334,7 +365,7 @@ func (m *Manager) rotationDirector(ctx context.Context) (string, error) {
 		return "", apierr.New(http.StatusForbidden, apierr.CodeDirectorUnsupported, "Blacksmith has no BOSH director, so it can't rotate certificates.")
 	}
 
-	info, err := m.director.GetInfo(ctx)
+	info, err := directorCall(ctx, m.director.GetInfo)
 	if err != nil {
 		return "", apierr.New(http.StatusInternalServerError, apierr.CodeInternal, fmt.Sprintf("The BOSH director did not report its version: %v", err))
 	}
@@ -426,7 +457,9 @@ func (m *Manager) previewInstance(ctx context.Context, req PreviewRequest, sel S
 func (m *Manager) previewDeployment(ctx context.Context, inst *PreviewInstance, req PreviewRequest, sel Selection, directorName string, scan certinventory.InstanceScan) {
 	deployment := scan.Ref.Deployment
 
-	detail, err := m.director.GetDeployment(ctx, deployment)
+	detail, err := directorCall(ctx, func(c context.Context) (*bosh.DeploymentDetail, error) {
+		return m.director.GetDeployment(c, deployment)
+	})
 
 	switch {
 	case errors.Is(err, bosh.ErrDeploymentNotFound):
@@ -443,14 +476,18 @@ func (m *Manager) previewDeployment(ctx context.Context, inst *PreviewInstance, 
 		return
 	}
 
-	variables, err := m.director.ListVariables(ctx, deployment)
+	variables, err := directorCall(ctx, func(c context.Context) ([]bosh.Variable, error) {
+		return m.director.ListVariables(c, deployment)
+	})
 	if err != nil {
 		inst.failure = internalPreviewError(fmt.Sprintf("The director did not list the variables of deployment %s: %v", deployment, err))
 
 		return
 	}
 
-	running, err := m.director.FindRunningTasksForDeployment(ctx, deployment)
+	running, err := directorCall(ctx, func(c context.Context) ([]bosh.Task, error) {
+		return m.director.FindRunningTasksForDeployment(c, deployment)
+	})
 	if err != nil {
 		inst.failure = internalPreviewError(fmt.Sprintf("The director did not list the tasks of deployment %s: %v", deployment, err))
 

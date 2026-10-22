@@ -61,18 +61,40 @@ type previewDirector struct {
 	manifests map[string]string
 	variables map[string][]bosh.Variable
 	running   map[string][]bosh.Task
+	// deadlines holds, by call, how long each call had left before its
+	// context's deadline, or zero for a call whose context had none.
+	deadlines map[string][]time.Duration
 }
 
-func (d *previewDirector) GetInfo(context.Context) (*bosh.Info, error) {
+// note records how long the call has before its context's deadline. The
+// caller holds mu.
+func (d *previewDirector) note(ctx context.Context, call string) {
+	if d.deadlines == nil {
+		d.deadlines = make(map[string][]time.Duration)
+	}
+
+	var left time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		left = time.Until(deadline)
+	}
+
+	d.deadlines[call] = append(d.deadlines[call], left)
+}
+
+func (d *previewDirector) GetInfo(ctx context.Context) (*bosh.Info, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	d.note(ctx, "GetInfo")
 
 	return &bosh.Info{Name: previewDirectorName, Version: d.version}, nil
 }
 
-func (d *previewDirector) GetDeployment(_ context.Context, name string) (*bosh.DeploymentDetail, error) {
+func (d *previewDirector) GetDeployment(ctx context.Context, name string) (*bosh.DeploymentDetail, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	d.note(ctx, "GetDeployment")
 
 	manifest, ok := d.manifests[name]
 	if !ok {
@@ -82,16 +104,20 @@ func (d *previewDirector) GetDeployment(_ context.Context, name string) (*bosh.D
 	return &bosh.DeploymentDetail{Name: name, Manifest: manifest}, nil
 }
 
-func (d *previewDirector) ListVariables(_ context.Context, deployment string) ([]bosh.Variable, error) {
+func (d *previewDirector) ListVariables(ctx context.Context, deployment string) ([]bosh.Variable, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	d.note(ctx, "ListVariables")
 
 	return append([]bosh.Variable(nil), d.variables[deployment]...), nil
 }
 
-func (d *previewDirector) FindRunningTasksForDeployment(_ context.Context, deployment string) ([]bosh.Task, error) {
+func (d *previewDirector) FindRunningTasksForDeployment(ctx context.Context, deployment string) ([]bosh.Task, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	d.note(ctx, "FindRunningTasksForDeployment")
 
 	return append([]bosh.Task(nil), d.running[deployment]...), nil
 }
@@ -443,6 +469,32 @@ func TestPreviewBindsDigestVersionsAndCIDs(t *testing.T) {
 	stored, err := env.manager.certDeps().Previews.Get(preview.ID)
 	if err != nil || stored != preview {
 		t.Fatalf("expected the preview to be stored, got %v and %v", stored, err)
+	}
+}
+
+// Each director call the preview makes runs under its own deadline of at
+// most certinventory.DirectorCallTimeout, so a slow director can't hold a
+// preview past the broker's write timeout.
+func TestPreviewBoundsEachDirectorCall(t *testing.T) {
+	t.Parallel()
+
+	env := newPreviewEnv(t)
+	previewOf(t, env, redeploy(waitInstanceID))
+
+	env.director.mu.Lock()
+	defer env.director.mu.Unlock()
+
+	for _, call := range []string{"GetInfo", "GetDeployment", "ListVariables", "FindRunningTasksForDeployment"} {
+		lefts := env.director.deadlines[call]
+		if len(lefts) == 0 {
+			t.Fatalf("the preview never called %s", call)
+		}
+
+		for _, left := range lefts {
+			if left <= 0 || left > certinventory.DirectorCallTimeout {
+				t.Fatalf("%s ran with %v before its deadline, want a deadline within %v", call, left, certinventory.DirectorCallTimeout)
+			}
+		}
 	}
 }
 
