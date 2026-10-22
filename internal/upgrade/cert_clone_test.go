@@ -25,6 +25,7 @@ func cloneSamples() []any {
 		VMJournal{},
 		FileEntry{},
 		&ConvergeDeploy{},
+		&DeployOutcome{},
 	}
 }
 

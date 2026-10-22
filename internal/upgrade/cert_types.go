@@ -96,6 +96,9 @@ const (
 	// DecisionApproveChangedEffects asks for approval of effects that
 	// changed since the preview.
 	DecisionApproveChangedEffects = "approve_changed_effects"
+	// DecisionResolveDeployOutcome asks what became of a deploy whose BOSH
+	// outcome Blacksmith could not learn.
+	DecisionResolveDeployOutcome = "resolve_deploy_outcome"
 )
 
 // CertificateTaskSpec is what a certificate task was asked to do.
@@ -116,9 +119,26 @@ type InstanceRotation struct {
 	VMs       []VMJournal        `json:"vms,omitempty"`
 	// Gate names the health gate: "redis-cluster", "valkey-cluster",
 	// "rabbitmq-cluster", or "single-vm".
-	Gate     string           `json:"gate,omitempty"`
-	Converge *ConvergeDeploy  `json:"converge,omitempty"`
-	Pending  *PendingDecision `json:"pending_decision,omitempty"`
+	Gate     string          `json:"gate,omitempty"`
+	Converge *ConvergeDeploy `json:"converge,omitempty"`
+	// Deploy is the BOSH outcome of the instance's latest deploy or
+	// converge deploy, once its task reached a final state.
+	Deploy  *DeployOutcome   `json:"deploy_outcome,omitempty"`
+	Pending *PendingDecision `json:"pending_decision,omitempty"`
+}
+
+// DeployOutcome is how the BOSH task of a rotation's deploy ended. A done
+// task does not finish the instance, which succeeds only once the
+// deployed variable versions and the listeners show the new
+// certificates.
+type DeployOutcome struct {
+	BOSHTaskID int `json:"bosh_task_id"`
+	// State is the task's final state on the director, such as done,
+	// error, timeout, or cancelled.
+	State string `json:"state"`
+	// Result is the director's result text for the task.
+	Result     string    `json:"result,omitempty"`
+	FinishedAt time.Time `json:"finished_at"`
 }
 
 // ApprovedEffects is what the operator approved for an instance in the
@@ -166,8 +186,8 @@ type VariableRotation struct {
 // PendingDecision is a question an instance waits on an operator to
 // answer.
 type PendingDecision struct {
-	// Kind is DecisionReconcileRegeneration or
-	// DecisionApproveChangedEffects.
+	// Kind is DecisionReconcileRegeneration,
+	// DecisionApproveChangedEffects, or DecisionResolveDeployOutcome.
 	Kind       string      `json:"kind"`
 	Variable   string      `json:"variable,omitempty"`
 	Candidates []Candidate `json:"candidates,omitempty"`

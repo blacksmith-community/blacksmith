@@ -830,6 +830,19 @@ func (m *Manager) followDeployTask(ctx context.Context, task *UpgradeTask, insta
 		}
 
 		m.mu.Lock()
+		if task.KindOrDefault() == TaskKindCertificates {
+			m.awaitDeployDecisionLocked(task, instance,
+				fmt.Sprintf("Blacksmith stopped waiting for BOSH task %d, which may still be running: %v.", taskID, err))
+			m.mu.Unlock()
+
+			saveErr := m.persistTask(persistCtx, task)
+			if saveErr != nil {
+				m.logger.Error("Failed to save instance %s while it waits for a decision: %v", instance.InstanceID, saveErr)
+			}
+
+			return
+		}
+
 		instance.Status = InstanceStatusFailed
 		instance.Error = fmt.Sprintf("stopped waiting for BOSH task %d, which may still be running: %v", taskID, err)
 		task.FailedCount++
@@ -964,6 +977,13 @@ func (m *Manager) settleLostAnswer(task *UpgradeTask, instance *InstanceUpgrade,
 			replaced = superseded.Error()
 		}
 
+		// A later deploy may or may not have applied the new versions.
+		if task.KindOrDefault() == TaskKindCertificates {
+			m.awaitDeployDecisionLocked(task, instance, fmt.Sprintf("The deploy's answer was lost, and %s.", replaced))
+
+			return true
+		}
+
 		completedAt := time.Now()
 		instance.CompletedAt = &completedAt
 		instance.Status = InstanceStatusSkipped
@@ -981,6 +1001,13 @@ func (m *Manager) settleLostAnswer(task *UpgradeTask, instance *InstanceUpgrade,
 	case errors.Is(err, bosh.ErrNoTaskWithContextID):
 		m.mu.Lock()
 		defer m.mu.Unlock()
+
+		if task.KindOrDefault() == TaskKindCertificates {
+			m.awaitDeployDecisionLocked(task, instance,
+				fmt.Sprintf("No BOSH task with context ID %s turned up within %v after the deploy's answer was lost.", contextID, bosh.UnknownOutcomeGrace))
+
+			return true
+		}
 
 		completedAt := time.Now()
 		instance.CompletedAt = &completedAt
@@ -1009,6 +1036,13 @@ func (m *Manager) settleOutcomeUnknown(task *UpgradeTask, instance *InstanceUpgr
 	followed := ""
 	if taskID > 0 {
 		followed = fmt.Sprintf(" (BOSH task %d)", taskID)
+	}
+
+	if task.KindOrDefault() == TaskKindCertificates {
+		m.awaitDeployDecisionLocked(task, instance,
+			fmt.Sprintf("Blacksmith stopped following the deploy%s before its outcome was known: %s.", followed, reason))
+
+		return
 	}
 
 	completedAt := time.Now()
@@ -1088,6 +1122,12 @@ func (m *Manager) settleInstance(task *UpgradeTask, instance *InstanceUpgrade, t
 	// Deferred calls run in reverse, so the settled instance is released
 	// before the lock is.
 	defer m.releaseUnheldLocked(task)
+
+	if task.KindOrDefault() == TaskKindCertificates {
+		m.settleCertificateDeployLocked(task, instance, taskID, finished)
+
+		return
+	}
 
 	completedAt := time.Now()
 	instance.CompletedAt = &completedAt
@@ -2219,6 +2259,12 @@ func (m *Manager) prepareSettlingLocked(task *UpgradeTask, loadedAt time.Time) (
 			if converge := instance.Certificates.Converge; instance.Certificates.Phase == RotationPhaseConverge && converge != nil && taskID == 0 && contextID == "" {
 				taskID, contextID = converge.BOSHTaskID, converge.ContextID
 			}
+
+			// The outcome of this deploy's task is already on record, so
+			// the rotation's runner takes it from there.
+			if outcome := instance.Certificates.Deploy; outcome != nil && taskID > 0 && outcome.BOSHTaskID == taskID {
+				continue
+			}
 		}
 
 		// A deploy whose answer was lost before UnknownSince was saved has
@@ -2305,10 +2351,7 @@ func (m *Manager) prepareCertificateLocked(task *UpgradeTask, instance *Instance
 		}
 
 		// A cancelled task stays cancelled, and an unfinished one pauses.
-		if task.Status == TaskStatusRunning || task.Status == TaskStatusPending || task.Status == TaskStatusPaused {
-			task.Status = TaskStatusPaused
-			task.Paused = true
-		}
+		pauseForDecisionLocked(task)
 
 		m.logger.Info("Certificate task %s paused, because instance %s waits for a decision on the regeneration of %s", task.ID, instance.InstanceID, uncertain)
 
@@ -3049,7 +3092,8 @@ func (m *Manager) endForReleaseTargets(ctx context.Context, task *UpgradeTask, c
 // processor still follows it, as runTask does after a cancel and the
 // loader does while it settles, since that deploy may still be under way
 // on the director. A certificate task holds every instance that is
-// running, interrupted, or awaiting a decision, whatever its own status,
+// running, interrupted, awaiting a decision, or of unknown outcome,
+// whatever its own status,
 // since a regeneration, a deploy, or a half-patched VM of it may still
 // need a decision or a rollback that only the task can make. The caller
 // holds mu.
@@ -3058,7 +3102,8 @@ func (m *Manager) shouldHoldLocked(task *UpgradeTask, inst *InstanceUpgrade) boo
 	followed := m.owned[task.ID] || m.settling[task.ID] > 0
 	inFlight := inst.Status == InstanceStatusRunning || inst.Status == InstanceStatusInterrupted
 
-	if task.KindOrDefault() == TaskKindCertificates && (inFlight || inst.Status == StatusAwaitingDecision) {
+	waiting := inst.Status == StatusAwaitingDecision || inst.Status == InstanceStatusOutcomeUnknown
+	if task.KindOrDefault() == TaskKindCertificates && (inFlight || waiting) {
 		return true
 	}
 

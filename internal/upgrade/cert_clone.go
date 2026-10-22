@@ -43,6 +43,7 @@ func (r *InstanceRotation) Clone() *InstanceRotation {
 	copied.Variables = cloneEach(r.Variables, VariableRotation.Clone)
 	copied.VMs = cloneEach(r.VMs, VMJournal.Clone)
 	copied.Converge = r.Converge.Clone()
+	copied.Deploy = r.Deploy.Clone()
 	copied.Pending = r.Pending.Clone()
 
 	return &copied
@@ -95,6 +96,17 @@ func (c *ConvergeDeploy) Clone() *ConvergeDeploy {
 	}
 
 	copied := *c
+
+	return &copied
+}
+
+// Clone returns a copy of the deploy's outcome.
+func (o *DeployOutcome) Clone() *DeployOutcome {
+	if o == nil {
+		return nil
+	}
+
+	copied := *o
 
 	return &copied
 }
