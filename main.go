@@ -1272,6 +1272,7 @@ func createAPIHandler(config *config.Config, brokerInstance *broker.Broker, vaul
 	upgradeHandler := internalAPI.UpgradeHandler()
 	if upgradeHandler != nil {
 		brokerInstance.SetTasksLoaded(upgradeHandler.GetManager().Loaded())
+		brokerInstance.SetTaskWaiters(upgradeHandler.GetManager())
 	}
 
 	return &broker.API{

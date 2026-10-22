@@ -167,6 +167,11 @@ type Broker struct {
 	// ConcurrencyError. When it was never set, nothing is waited for.
 	tasksLoaded atomic.Pointer[<-chan struct{}]
 
+	// taskWaiters reports a stored task that waits to reserve an instance
+	// the guard holds for no one yet. When it was never set, no task
+	// waits.
+	taskWaiters atomic.Pointer[TaskWaiters]
+
 	// VM monitoring integration
 	vmMonitor interfaces.VMMonitor
 
@@ -1072,6 +1077,16 @@ func (b *Broker) claimOperation(instanceID, deployment string, claim *operationC
 		return nil, true, nil
 	}
 
+	// A stored task that waits for the instance owns it, though the guard
+	// holds it for no one between the task's retries. The waiting list
+	// only shrinks once the tasks are loaded, so a task that stops waiting
+	// here already holds the instance, and the guard refuses it below.
+	if holder, waiting := b.storedTaskWaiting(instanceID, deployment); waiting {
+		b.activeOperations.CompareAndDelete(instanceID, claim)
+
+		return nil, false, fmt.Errorf("reserving instance %s for its %s: %w", instanceID, claim.operation, &mutation.BusyError{Holder: holder})
+	}
+
 	release, err := b.Guard.Acquire(instanceID, deployment, mutation.Holder{
 		Kind:        operationHolderKind(claim.operation),
 		Description: claim.operation + " of " + instanceID,
@@ -1159,6 +1174,31 @@ func (b *Broker) releaseOperation(instanceID string, claim *operationClaim) {
 // re-adopts at boot never wait for it.
 func (b *Broker) SetTasksLoaded(loaded <-chan struct{}) {
 	b.tasksLoaded.Store(&loaded)
+}
+
+// TaskWaiters reports the stored task that waits to reserve an instance,
+// or an instance of a deployment, in the mutation guard once its current
+// holder frees it. The upgrade manager's waiting list answers it.
+type TaskWaiters interface {
+	WaitingFor(instanceID, deployment string) (mutation.Holder, bool)
+}
+
+// SetTaskWaiters hands the broker the upgrade manager's waiting list. A
+// provision or deprovision of an instance a stored task waits for gets
+// 422 ConcurrencyError, even while the guard holds it for no one.
+func (b *Broker) SetTaskWaiters(waiters TaskWaiters) {
+	b.taskWaiters.Store(&waiters)
+}
+
+// storedTaskWaiting reports the stored task that waits to reserve the
+// instance or the deployment, when the waiting list was set.
+func (b *Broker) storedTaskWaiting(instanceID, deployment string) (mutation.Holder, bool) {
+	waiters := b.taskWaiters.Load()
+	if waiters == nil || *waiters == nil {
+		return mutation.Holder{}, false
+	}
+
+	return (*waiters).WaitingFor(instanceID, deployment)
 }
 
 // tasksLoadingAnswer is the 422 ConcurrencyError a provision or

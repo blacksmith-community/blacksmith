@@ -26,6 +26,7 @@ import (
 	"blacksmith/internal/middleware"
 	"blacksmith/internal/mutation"
 	"blacksmith/internal/routing"
+	"blacksmith/internal/upgrade"
 	pkgmiddleware "blacksmith/pkg/http/middleware"
 	"blacksmith/pkg/services"
 )
@@ -120,7 +121,7 @@ func createHandlers(deps Dependencies) apiHandlers {
 		bosh:              createBOSHHandler(deps),
 		blacksmith:        createBlacksmithHandler(deps),
 		tasks:             createTasksHandler(deps),
-		deployments:       createDeploymentsHandler(deps, upgradeHandler.GetManager().Loaded()),
+		deployments:       createDeploymentsHandler(deps, upgradeHandler.GetManager()),
 		configuration:     createConfigurationHandler(deps),
 		services:          createServicesHandler(deps),
 		upgrade:           upgradeHandler,
@@ -202,14 +203,15 @@ func createTasksHandler(deps Dependencies) *tasks.Handler {
 	})
 }
 
-func createDeploymentsHandler(deps Dependencies, tasksLoaded <-chan struct{}) *deployments.Handler {
+func createDeploymentsHandler(deps Dependencies, tasks *upgrade.Manager) *deployments.Handler {
 	return deployments.NewHandler(deployments.Dependencies{
 		Logger:      deps.Logger,
 		Config:      deps.Config,
 		Vault:       deps.Vault,
 		Director:    deps.Director,
 		Guard:       deps.Guard,
-		TasksLoaded: tasksLoaded,
+		TasksLoaded: tasks.Loaded(),
+		TaskWaiters: tasks,
 	})
 }
 

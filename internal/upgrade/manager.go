@@ -3326,6 +3326,37 @@ func (m *Manager) waiterLocked(instanceID string) (*UpgradeTask, bool) {
 	return nil, false
 }
 
+// WaitingFor reports the stored task that waits to reserve the instance,
+// or an instance of the deployment, in the guard once its current holder
+// frees it. Between the retries the guard can be free while the task
+// still owns the instance, so a caller that reserves an instance or a
+// deployment checks this as well and answers busy with the holder it
+// returns. An empty instanceID or deployment matches nothing.
+func (m *Manager) WaitingFor(instanceID, deployment string) (mutation.Holder, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, waiter := range m.waiting {
+		inst := &waiter.task.Instances[waiter.index]
+
+		matches := (instanceID != "" && inst.InstanceID == instanceID) || (deployment != "" && inst.DeploymentName == deployment)
+		if !matches || !m.shouldHoldLocked(waiter.task, inst) {
+			continue
+		}
+
+		holder := taskHolder(waiter.task)
+		if waiter.task.Name != "" {
+			holder.Description += " (task " + waiter.task.ID + ")"
+		}
+
+		holder.Description += ", which waits to reserve it"
+
+		return holder, true
+	}
+
+	return mutation.Holder{}, false
+}
+
 // retryWaitingLocked tries again to reserve each waiting instance, oldest
 // task first. An instance the task no longer has to hold stops waiting,
 // and so does one it reserves. One that another task took meanwhile fails

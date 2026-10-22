@@ -48,6 +48,7 @@ type Handler struct {
 	director interfaces.Director
 	guard    *mutation.Guard
 	loaded   <-chan struct{}
+	waiters  TaskWaiters
 }
 
 // Dependencies contains all dependencies needed by the Deployments handler.
@@ -65,6 +66,17 @@ type Dependencies struct {
 	// action that changes a deployment answers 503. A nil TasksLoaded
 	// waits for nothing.
 	TasksLoaded <-chan struct{}
+	// TaskWaiters reports a stored task that waits to reserve a
+	// deployment the guard holds for no one yet, and each action that
+	// changes that deployment answers 409. A nil TaskWaiters reports none.
+	TaskWaiters TaskWaiters
+}
+
+// TaskWaiters reports the stored task that waits to reserve an instance,
+// or an instance of a deployment, in the mutation guard once its current
+// holder frees it. The upgrade manager's waiting list answers it.
+type TaskWaiters interface {
+	WaitingFor(instanceID, deployment string) (mutation.Holder, bool)
 }
 
 // Deployment represents a BOSH deployment.
@@ -99,6 +111,7 @@ func NewHandler(deps Dependencies) *Handler {
 		director: deps.Director,
 		guard:    deps.Guard,
 		loaded:   deps.TasksLoaded,
+		waiters:  deps.TaskWaiters,
 	}
 }
 
@@ -1040,10 +1053,7 @@ func (h *Handler) reserveDeployment(writer http.ResponseWriter, logger interface
 		return func() {}, true
 	}
 
-	release, err := h.guard.Acquire("", deploymentName, mutation.Holder{
-		Kind:        mutation.KindDeploymentAction,
-		Description: action + " from the UI",
-	})
+	release, err := h.acquireDeployment(deploymentName, action)
 	if err == nil {
 		return release, true
 	}
@@ -1061,6 +1071,30 @@ func (h *Handler) reserveDeployment(writer http.ResponseWriter, logger interface
 	apierr.Write(writer, err, http.StatusInternalServerError)
 
 	return nil, false
+}
+
+// acquireDeployment reserves the deployment in the guard for the action.
+// A stored task that waits for the deployment owns it, though the guard
+// holds it for no one between the task's retries, so the deployment is
+// busy with that task. The waiting list only shrinks once the tasks are
+// loaded, so a task that stops waiting here already holds the deployment,
+// and the guard refuses it.
+func (h *Handler) acquireDeployment(deploymentName, action string) (func(), error) {
+	if h.waiters != nil {
+		if holder, waiting := h.waiters.WaitingFor("", deploymentName); waiting {
+			return nil, &mutation.BusyError{Holder: holder}
+		}
+	}
+
+	release, err := h.guard.Acquire("", deploymentName, mutation.Holder{
+		Kind:        mutation.KindDeploymentAction,
+		Description: action + " from the UI",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reserving deployment %s: %w", deploymentName, err)
+	}
+
+	return release, nil
 }
 
 // tasksLoaded reports whether the stored upgrade and certificate tasks are

@@ -446,3 +446,66 @@ func TestOperationsWaitForLoadedTasks(t *testing.T) {
 		t.Fatalf("the director got %d deploys or deletes, want none", calls)
 	}
 }
+
+// storedWaiter stands in for the upgrade manager's waiting list, with one
+// stored task that waits to reserve instanceID once its holder frees it.
+type storedWaiter struct {
+	instanceID string
+	holder     mutation.Holder
+}
+
+func (w storedWaiter) WaitingFor(instanceID, _ string) (mutation.Holder, bool) {
+	return w.holder, instanceID == w.instanceID
+}
+
+// A stored task that waits to reserve an instance owns it even while the
+// guard is free between its retries, so a deprovision or provision that
+// arrives after the earlier holder lets go gets 422 ConcurrencyError
+// naming the task, claims nothing, and sends nothing to the director.
+func TestOperationsRefuseAnInstanceAStoredTaskWaitsFor(t *testing.T) {
+	t.Parallel()
+
+	fixture := newDeprovisionFixture(t, "waited-1")
+	guard := mutation.NewGuard(time.Now)
+
+	release, err := guard.Acquire("", fixture.deployment, mutation.Holder{
+		Kind:        mutation.KindDeploymentAction,
+		Description: "restart from the UI",
+	})
+	if err != nil {
+		t.Fatalf("holding the deployment: %v", err)
+	}
+
+	brokerInstance := guardedBroker(t, fixture.director, fixture.vault, guard)
+	brokerInstance.SetTaskWaiters(storedWaiter{instanceID: fixture.instanceID, holder: mutation.Holder{
+		Kind:        mutation.KindCertificates,
+		TaskID:      "rotate-1",
+		Description: `certificate rotation "rotate", which waits to reserve it`,
+	}})
+
+	release()
+
+	async, err := fixture.deprovision(t, brokerInstance)
+	if !errors.Is(err, osbapi.ErrConcurrencyError) || async || !strings.Contains(err.Error(), `certificate rotation "rotate"`) {
+		t.Fatalf("Deprovision = async %v, err %v, want a ConcurrencyError naming the stored task", async, err)
+	}
+
+	_, async, err = brokerInstance.Provision(t.Context(), fixture.instanceID, osbapi.ProvisionRequest{
+		ServiceID: guardServiceID, PlanID: guardPlanID, OrganizationGUID: "org", SpaceGUID: "space",
+	}, true)
+	if !errors.Is(err, osbapi.ErrConcurrencyError) || async || !strings.Contains(err.Error(), `certificate rotation "rotate"`) {
+		t.Fatalf("Provision = async %v, err %v, want a ConcurrencyError naming the stored task", async, err)
+	}
+
+	if brokerInstance.OperationClaimed(fixture.instanceID) {
+		t.Fatal("an operation refused for a waiting task kept a claim")
+	}
+
+	if held := guard.Snapshot(); len(held) != 0 {
+		t.Fatalf("guard holds %v, want nothing", held)
+	}
+
+	if calls := len(fixture.director.Calls("CreateDeployment")) + len(fixture.director.Calls("DeleteDeployment")); calls != 0 {
+		t.Fatalf("the director got %d deploys or deletes, want none", calls)
+	}
+}

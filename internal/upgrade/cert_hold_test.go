@@ -3,6 +3,7 @@ package upgrade
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,4 +125,49 @@ func TestCancelledCertificateInstanceWaitsForAnotherHolder(t *testing.T) {
 
 		return held && holder.Kind == mutation.KindCertificates && holder.TaskID == certTaskID
 	})
+}
+
+// Once the load stops waiting on a holder, a waiting instance is free in
+// the guard until the next retry reserves it, so WaitingFor names the
+// stored task that owns it, by the instance or by its deployment.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestWaitingForNamesTheStoredTaskBetweenRetries(t *testing.T) {
+	guard := mutation.NewGuard(time.Now)
+
+	freeDeprovision, err := guard.Acquire(waitInstanceID, waitDeployment, mutation.Holder{
+		Kind:        mutation.KindDeprovision,
+		Description: "deprovision of " + waitDeployment,
+	})
+	if err != nil {
+		t.Fatalf("holding %s: %v", waitInstanceID, err)
+	}
+
+	vault := newWaitVault()
+	storeCertificateTask(t, vault, patchingTask(TaskStatusCancelled))
+
+	manager := NewManager(&logger.NoOpLogger{}, newWaitDirector(), vault)
+	manager.SetGuard(guard)
+	manager.restoreWait = 20 * time.Millisecond
+	manager.restoreRetry = time.Hour
+	t.Cleanup(manager.Stop)
+	manager.Start()
+
+	waitForLoad(t, manager)
+	freeDeprovision()
+
+	if holder, held := guard.Holder(waitInstanceID, waitDeployment); held {
+		t.Fatalf("expected the guard to be free before the next retry, held by %+v", holder)
+	}
+
+	for _, key := range [][2]string{{waitInstanceID, ""}, {"", waitDeployment}} {
+		holder, waiting := manager.WaitingFor(key[0], key[1])
+		if !waiting || holder.TaskID != certTaskID || holder.Kind != mutation.KindCertificates || !strings.Contains(holder.Description, "waits to reserve") {
+			t.Fatalf("WaitingFor(%q, %q) = %+v, %v, want the stored certificate task", key[0], key[1], holder, waiting)
+		}
+	}
+
+	if holder, waiting := manager.WaitingFor(certSecondInstance, "redis-"+certSecondInstance); waiting {
+		t.Fatalf("expected no task to wait for another instance, got %+v", holder)
+	}
 }

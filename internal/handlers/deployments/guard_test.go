@@ -324,3 +324,77 @@ func TestDeploymentActionsWaitForLoadedTasks(t *testing.T) {
 		})
 	}
 }
+
+// storedWaiter stands in for the upgrade manager's waiting list, with one
+// stored task that waits to reserve deployment once its holder frees it.
+type storedWaiter struct {
+	deployment string
+	holder     mutation.Holder
+}
+
+func (w storedWaiter) WaitingFor(_, deployment string) (mutation.Holder, bool) {
+	return w.holder, deployment == w.deployment
+}
+
+// A stored task that waits to reserve a deployment owns it even while the
+// guard is free between its retries, so every mutating action that arrives
+// after the earlier holder lets go answers 409 instance_busy naming the
+// task, sends nothing to the director, and holds nothing.
+func TestDeploymentActionsRefuseADeploymentAStoredTaskWaitsFor(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range deploymentActions() {
+		t.Run(action.name, func(t *testing.T) {
+			t.Parallel()
+
+			guard := mutation.NewGuard(time.Now)
+
+			release, err := guard.Acquire("", guardedDeployment, mutation.Holder{
+				Kind:        mutation.KindDeprovision,
+				Description: "deprovision of 7a1b",
+			})
+			if err != nil {
+				t.Fatalf("holding the deployment: %v", err)
+			}
+
+			director := newRecordingDirector(guard, false)
+			handler := deployments.NewHandler(deployments.Dependencies{
+				Logger:   logger.NewNoOpLogger(),
+				Director: director,
+				Guard:    guard,
+				TaskWaiters: storedWaiter{deployment: guardedDeployment, holder: mutation.Holder{
+					Kind:        mutation.KindCertificates,
+					TaskID:      "rotate-1",
+					Description: `certificate rotation "rotate", which waits to reserve it`,
+				}},
+			})
+
+			release()
+
+			recorder := serveAction(t, handler, action)
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409: %s", recorder.Code, recorder.Body.String())
+			}
+
+			var body map[string]interface{}
+
+			err = json.Unmarshal(recorder.Body.Bytes(), &body)
+			if err != nil {
+				t.Fatalf("expected a JSON body, got %q: %v", recorder.Body.String(), err)
+			}
+
+			message, _ := body["error"].(string)
+			if body["code"] != apierr.CodeInstanceBusy || !strings.Contains(message, `certificate rotation "rotate"`) {
+				t.Errorf("body = %v, want code %s naming the stored task", body, apierr.CodeInstanceBusy)
+			}
+
+			if calls, _ := director.recorded(); len(calls) != 0 {
+				t.Errorf("director calls = %v, want none", calls)
+			}
+
+			if held := guard.Snapshot(); len(held) != 0 {
+				t.Errorf("guard holds %v, want nothing", held)
+			}
+		})
+	}
+}
