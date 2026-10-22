@@ -307,16 +307,42 @@ _pt_running() {
 	return 1
 }
 
-# restart asks monit to restart each process and then polls monit's
-# summary every 2 seconds until every one is running. It gives up after
-# 300 seconds, or CERTPATCH_RESTART_TIMEOUT in the tests, and names each
-# process that is still not running.
+# _pt_pid <status> <process> prints the pid that monit's status gives the
+# process, or nothing when it gives none. monit 5.2.5 prints a process as
+# a `Process 'name'` line followed by indented lines, one of which is
+# `pid` followed by blanks and the number.
+_pt_pid() {
+	local line inside=0 header field
+
+	header="^Process '([^']+)'[[:blank:]]*$"
+	field='^[[:blank:]]+pid[[:blank:]]+([0-9]+)[[:blank:]]*$'
+
+	while IFS= read -r line; do
+		line=${line%$'\r'}
+
+		if [[ $line =~ ^[^[:blank:]] ]]; then
+			inside=0
+			[[ $line =~ $header ]] && [ "${BASH_REMATCH[1]}" = "$2" ] && inside=1
+		elif [ "$inside" = 1 ] && [[ $line =~ $field ]]; then
+			printf '%s' "${BASH_REMATCH[1]}"
+			return 0
+		fi
+	done <<< "$1"
+}
+
+# restart records each process's pid from monit's status, asks monit to
+# restart each process, and then polls every 2 seconds until monit's
+# summary shows every one running and its status gives every one a pid
+# other than the recorded one. A restart that monit accepts but never
+# carries out leaves the old pid, so it never counts as done. restart
+# gives up after 300 seconds, or CERTPATCH_RESTART_TIMEOUT in the tests,
+# and names each process that is still waiting.
 restart() {
 	[ "$#" -ge 2 ] || return "$EXIT_USAGE"
 	valid_task "$1" || return
 	shift
 
-	local root monit name summary limit deadline waiting=()
+	local root monit name status summary limit deadline pid i before=() waiting=()
 
 	for name in "$@"; do
 		[[ $name =~ $PT_PROC_RE ]] || return "$EXIT_USAGE"
@@ -331,6 +357,15 @@ restart() {
 
 	deadline=$((SECONDS + limit))
 
+	if ! status=$(timeout 30 "$monit" status 2> /dev/null); then
+		printf 'drift name=%s\n' "$@"
+		return "$EXIT_RESTART"
+	fi
+
+	for name in "$@"; do
+		before+=("$(_pt_pid "$status" "$name")")
+	done
+
 	for name in "$@"; do
 		if ! timeout 60 "$monit" restart "$name" > /dev/null 2>&1; then
 			printf 'drift name=%s\n' "$name"
@@ -342,10 +377,18 @@ restart() {
 		sleep 2
 
 		summary=$(timeout 30 "$monit" summary 2> /dev/null) || summary=
+		status=$(timeout 30 "$monit" status 2> /dev/null) || status=
 		waiting=()
+		i=0
 
 		for name in "$@"; do
-			_pt_running "$summary" "$name" || waiting+=("$name")
+			pid=$(_pt_pid "$status" "$name")
+
+			if ! _pt_running "$summary" "$name" || [ -z "$pid" ] || [ "$pid" = "${before[i]}" ]; then
+				waiting+=("$name")
+			fi
+
+			i=$((i + 1))
 		done
 
 		[ "${#waiting[@]}" -gt 0 ] || break

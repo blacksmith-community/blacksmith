@@ -655,12 +655,28 @@ func TestCleanupRefusesOtherPaths(t *testing.T) {
 	})
 }
 
-// fakeMonit is a monit that logs each restart and prints a summary in
-// the monit 5.2.5 form, with the valkey process in the given state.
+// fakeMonit is a monit that logs each restart and prints a summary and a
+// status in the monit 5.2.5 forms, with the valkey process in the given
+// state. valkey starts with pid 100 and valkey-exporter with pid 200.
+// When monit.renew exists, a restart gives the process a new pid, and
+// without it a restart leaves the old process in place.
 const fakeMonit = `#!/bin/sh
+dir=${0%/*}
+
+pid() {
+	n=$2
+	if grep -qx "$1" "$dir/monit.renewed" 2> /dev/null; then
+		n=$((n + 1))
+	fi
+	echo "$n"
+}
+
 case "$1" in
 restart)
-	echo "restart $2" >> "${0%/*}/monit.log"
+	echo "restart $2" >> "$dir/monit.log"
+	if [ -f "$dir/monit.renew" ]; then
+		echo "$2" >> "$dir/monit.renewed"
+	fi
 	;;
 summary)
 	echo "The Monit daemon 5.2.5 uptime: 3h 2m "
@@ -669,25 +685,50 @@ summary)
 	echo "Process 'valkey-exporter'           running"
 	echo "System 'system_localhost'           running"
 	;;
+status)
+	echo "The Monit daemon 5.2.5 uptime: 3h 2m "
+	printf '\n'
+	echo "Process 'valkey'"
+	echo "  status                            STATE"
+	echo "  monitoring status                 monitored"
+	echo "  pid                               $(pid valkey 100)"
+	echo "  parent pid                        1"
+	echo "  uptime                            3h 2m "
+	printf '\n'
+	echo "Process 'valkey-exporter'"
+	echo "  status                            running"
+	echo "  monitoring status                 monitored"
+	echo "  pid                               $(pid valkey-exporter 200)"
+	echo "  parent pid                        1"
+	echo "  uptime                            3h 2m "
+	printf '\n'
+	echo "System 'system_localhost'"
+	echo "  status                            running"
+	;;
 *)
 	exit 1
 	;;
 esac
 `
 
-// installMonit puts a fake monit where BOSH installs the real one.
-func (v *vmTree) installMonit(t *testing.T, state string) {
+// installMonit puts a fake monit where BOSH installs the real one. renew
+// says whether a restart starts a new process.
+func (v *vmTree) installMonit(t *testing.T, state string, renew bool) {
 	t.Helper()
 
 	v.mkdir(t, "/var/vcap/bosh/bin")
-	v.writeMode(t, monitPath, strings.Replace(fakeMonit, "STATE", state, 1), 0o755)
+	v.writeMode(t, monitPath, strings.ReplaceAll(fakeMonit, "STATE", state), 0o755)
+
+	if renew {
+		v.write(t, "/var/vcap/bosh/bin/monit.renew", "")
+	}
 }
 
 func TestRestartWaitsForRunning(t *testing.T) {
 	t.Parallel()
 
 	tree := newPatchTree(t)
-	tree.installMonit(t, "running")
+	tree.installMonit(t, "running", true)
 
 	out, code := tree.patch(t, "restart", testTaskID, "valkey", "valkey-exporter")
 	if code != 0 {
@@ -702,7 +743,7 @@ func TestRestartTimeout(t *testing.T) {
 	t.Parallel()
 
 	tree := newPatchTree(t)
-	tree.installMonit(t, "not monitored")
+	tree.installMonit(t, "not monitored", true)
 
 	started := time.Now()
 
@@ -716,6 +757,23 @@ func TestRestartTimeout(t *testing.T) {
 	}
 
 	wantOutput(t, out, "drift name=valkey\n")
+}
+
+// TestRestartNeedsNewProcess shows that a restart monit accepted but never
+// carried out fails, because each process still runs with the pid it had
+// before.
+func TestRestartNeedsNewProcess(t *testing.T) {
+	t.Parallel()
+
+	tree := newPatchTree(t)
+	tree.installMonit(t, "running", false)
+
+	out, code := runScript(t, tree.root, []string{"CERTPATCH_RESTART_TIMEOUT=3"}, "patch", "restart", testTaskID, "valkey", "valkey-exporter")
+	if code != restartExit {
+		t.Fatalf("restart that kept the old processes exited %d, want 12", code)
+	}
+
+	wantOutput(t, out, "drift name=valkey\ndrift name=valkey-exporter\n")
 }
 
 func TestPatchRefusesBadArguments(t *testing.T) {
