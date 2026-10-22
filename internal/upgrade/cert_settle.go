@@ -73,9 +73,14 @@ func (m *Manager) awaitDeployDecisionLocked(task *UpgradeTask, instance *Instanc
 		instance.Certificates = &InstanceRotation{}
 	}
 
+	lookFor := "the deployment's latest task"
+	if contextID := followedContextID(instance); contextID != "" {
+		lookFor = "context ID " + contextID
+	}
+
 	instance.Status = InstanceStatusOutcomeUnknown
 	instance.CompletedAt = nil
-	instance.Error = fmt.Sprintf("%s Check the director's task list for context ID %s, then decide how the rotation goes on.", why, instance.ContextID)
+	instance.Error = fmt.Sprintf("%s Check the director's task list for %s, then decide how the rotation goes on.", why, lookFor)
 	instance.Certificates.Pending = &PendingDecision{
 		Kind:  DecisionResolveDeployOutcome,
 		Since: time.Now(),
@@ -84,6 +89,23 @@ func (m *Manager) awaitDeployDecisionLocked(task *UpgradeTask, instance *Instanc
 	pauseForDecisionLocked(task)
 
 	m.logger.Error("Instance %s of %s waits for a decision: %s", instance.InstanceID, instance.DeploymentName, instance.Error)
+}
+
+// followedContextID returns the context ID of the deploy a certificate
+// instance follows. A converge deploy saves its context ID on the
+// rotation's converge record when the instance holds none of its own, as
+// the loader reads it. Following the deploy puts its task ID on the
+// instance, so only the context ID tells which record to read.
+func followedContextID(instance *InstanceUpgrade) string {
+	if instance.ContextID != "" {
+		return instance.ContextID
+	}
+
+	if rotation := instance.Certificates; rotation != nil && rotation.Phase == RotationPhaseConverge && rotation.Converge != nil {
+		return rotation.Converge.ContextID
+	}
+
+	return ""
 }
 
 // pauseForDecisionLocked pauses a certificate task one of whose instances

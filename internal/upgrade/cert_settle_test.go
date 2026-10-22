@@ -4,6 +4,7 @@ package upgrade
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -330,4 +331,36 @@ func TestCancelledDeployThatOutlivesTheWaitAwaitsADecision(t *testing.T) {
 
 		return saved != nil && saved.Kind == DecisionResolveDeployOutcome
 	})
+}
+
+// A converge deploy saves its IDs on the rotation's converge record, not
+// on the instance, so a decision on its outcome names the converge's
+// context ID for the operator to look up.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestConvergeDecisionNamesTheConvergeContextID(t *testing.T) {
+	const convergeContextID = "converge-context-7"
+
+	vault := newWaitVault()
+
+	stored := deployingTask()
+	stored.Certificates.Mode = RotationModeConverge
+
+	inst := &stored.Instances[0]
+	inst.BOSHTaskID = 0
+	inst.ContextID = ""
+	inst.Certificates.Phase = RotationPhaseConverge
+	inst.Certificates.Converge = &ConvergeDeploy{ContextID: convergeContextID, BOSHTaskID: waitDeployTaskID}
+
+	storeCertificateTask(t, vault, stored)
+
+	director := &settleDirector{err: fmt.Errorf("%w: BOSH task %d could not be read", bosh.ErrWatchAbandoned, waitDeployTaskID)}
+	manager := loadManager(t, director, vault)
+
+	task := settledLoad(t, manager)
+	expectAwaitingDeployDecision(t, manager, task)
+
+	if message := task.Instances[0].Error; !strings.Contains(message, "context ID "+convergeContextID) {
+		t.Fatalf("expected the decision to name context ID %s, got %q", convergeContextID, message)
+	}
 }
