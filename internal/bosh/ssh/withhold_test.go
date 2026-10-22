@@ -1,6 +1,7 @@
 package ssh_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,6 +13,31 @@ const testKeyBody = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9U
 
 // testHash is a SHA-256 hash in lowercase hex.
 const testHash = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+// colonHex renders count hex byte pairs separated by colons, as openssl
+// prints key material, with perLine pairs on each indented line.
+func colonHex(count int, upper bool, perLine int) string {
+	var out strings.Builder
+
+	for pairIndex := range count {
+		if pairIndex%perLine == 0 {
+			out.WriteString("\n    ")
+		}
+
+		pair := fmt.Sprintf("%02x", (pairIndex*37+11)%256)
+		if upper {
+			pair = strings.ToUpper(pair)
+		}
+
+		out.WriteString(pair)
+
+		if pairIndex < count-1 {
+			out.WriteString(":")
+		}
+	}
+
+	return out.String()
+}
 
 func TestWithheld(t *testing.T) {
 	t.Parallel()
@@ -34,6 +60,17 @@ func TestWithheld(t *testing.T) {
 		"a long uppercase hex run":                 {strings.ToUpper(testHash), true},
 		"empty":                                    {"", false},
 		"a hash with a key body later in the text": {"hash=" + testHash + " " + testKeyBody, true},
+		"text with line breaks and tabs":           {"state=old\r\n\tpath=/var/vcap/data/x\n", false},
+		"raw DER that is not UTF-8":                {"\x30\x82\x04\xbd\x02\x01\x00", true},
+		"raw DER that is valid UTF-8":              {"\x30\x13\x02\x01\x05", true},
+		"a NUL":                                    {"ok\x00", true},
+		"an ANSI escape sequence":                  {"\x1b[31mred", true},
+		"DEL":                                      {"ok\x7f", true},
+		"a C1 control character":                   {"ok\u0085", true},
+		"15 colon-separated hex pairs":             {colonHex(15, false, 15), false},
+		"16 colon-separated hex pairs":             {colonHex(16, false, 16), true},
+		"16 uppercase colon-separated hex pairs":   {colonHex(16, true, 16), true},
+		"an openssl pkey -text dump":               {"Private-Key: (2048 bit, 2 primes)\nmodulus:\n" + colonHex(45, false, 15), true},
 	}
 
 	for name, testCase := range cases {
