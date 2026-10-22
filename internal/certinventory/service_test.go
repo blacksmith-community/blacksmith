@@ -2,6 +2,7 @@ package certinventory
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -284,5 +285,58 @@ func TestServiceCachesDirectorFailure(t *testing.T) {
 
 	if got := dir.calls.Load(); got != 2 {
 		t.Errorf("after the backoff GetInfo ran %d times, want 2", got)
+	}
+}
+
+func TestServiceRescansBrokerOnceWhenServicesCAIsLearned(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+
+	svc := NewService(ServiceDeps{
+		Scanner: ScannerDeps{Director: &fakeDirector{manifest: "name: d\n"}, Vault: newFakeVault(), Prober: Prober{Timeout: time.Second}, DirectorName: testDirector},
+		List:    func(context.Context) ([]InstanceRef, error) { return nil, nil },
+		Broker: func() BrokerSources {
+			calls.Add(1)
+
+			return BrokerSources{}
+		},
+		InventoryEnabled: true,
+		Now:              func() time.Time { return fleetNow },
+	})
+
+	ctx := context.Background()
+
+	svc.Response(ctx, Filter{})
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("a fleet with no services CA made %d broker calls, want 0", got)
+	}
+
+	svc.cache.Put(InstanceScan{
+		Ref: InstanceRef{ID: "i1"}, ScannedAt: fleetNow, LastSuccessAt: fleetNow,
+		Material: ScanMaterial{SigningCAs: map[string]*x509.Certificate{"/ws-bosh/ws-blacksmith/blacksmith_services_ca": nil}},
+	})
+
+	svc.Response(ctx, Filter{})
+
+	// One call reads the configured sources once, and the rescan makes the
+	// second.
+	deadline := time.Now().Add(3 * time.Second)
+	for calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("learning the services CA name gave %d broker calls, want 2", got)
+	}
+
+	svc.cache.Put(InstanceScan{Ref: InstanceRef{ID: "i2"}, ScannedAt: fleetNow, LastSuccessAt: fleetNow})
+	svc.Response(ctx, Filter{})
+	svc.Response(ctx, Filter{Attention: true})
+	time.Sleep(150 * time.Millisecond)
+
+	if got := calls.Load(); got != 2 {
+		t.Errorf("the broker was rescanned again: %d calls", got)
 	}
 }

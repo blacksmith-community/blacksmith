@@ -11,6 +11,7 @@ import (
 	"blacksmith/internal/certinventory"
 	"blacksmith/internal/config"
 	"blacksmith/internal/interfaces"
+	"blacksmith/internal/services"
 	internalVault "blacksmith/internal/vault"
 	loggerPkg "blacksmith/pkg/logger"
 	vaultPkg "blacksmith/pkg/vault"
@@ -42,7 +43,7 @@ func newCertificateService(cfg *config.Config, brokerInstance *broker.Broker, va
 	return certinventory.NewService(certinventory.ServiceDeps{
 		Scanner:          scanner,
 		CredHubClient:    brokerInstance.CredHubClient,
-		List:             instanceLister(brokerInstance, vault),
+		List:             listerFor(brokerInstance, vault),
 		Broker:           func() certinventory.BrokerSources { return brokerSources(cfg) },
 		InventoryEnabled: enabled,
 		RotationEnabled:  cfg.Certificates.RotationEnabled(),
@@ -58,20 +59,32 @@ type indexEntry struct {
 	InstanceName string `json:"instance_name,omitempty"`
 }
 
-// instanceLister lists the instances in the Vault index that feeds /b/status,
-// naming each one's service and plan from the broker's catalog.
-func instanceLister(brokerInstance *broker.Broker, vault *internalVault.Vault) certinventory.InstanceLister {
-	return func(ctx context.Context) ([]certinventory.InstanceRef, error) {
-		if vault == nil {
-			return nil, nil
-		}
+// instanceRecord is the only part of an instance's own Vault record the
+// inventory reads. The record also holds credentials, which a decode into
+// this struct drops.
+type instanceRecord struct {
+	InstanceName   string `json:"instance_name"`
+	DeploymentName string `json:"deployment_name"`
+}
 
-		idx, err := vault.GetIndex(ctx, "db")
+// indexSource is the part of the Vault client the lister reads.
+type indexSource interface {
+	GetIndex(ctx context.Context, path string) (*vaultPkg.Index, error)
+	Get(ctx context.Context, path string, out interface{}) (bool, error)
+}
+
+// instanceLister lists the instances in the Vault index that feeds /b/status.
+// It names each instance from its own Vault record, as /b/status does, and
+// falls back to the deployment name so every owner has a readable label. The
+// catalog supplies the service and plan names.
+func instanceLister(plans func() map[string]services.Plan, src indexSource) certinventory.InstanceLister {
+	return func(ctx context.Context) ([]certinventory.InstanceRef, error) {
+		idx, err := src.GetIndex(ctx, "db")
 		if err != nil {
 			return nil, fmt.Errorf("list service instances: %w", err)
 		}
 
-		plans := brokerInstance.GetPlans()
+		catalog := plans()
 
 		var refs []certinventory.InstanceRef
 
@@ -86,15 +99,39 @@ func instanceLister(brokerInstance *broker.Broker, vault *internalVault.Vault) c
 				continue
 			}
 
+			var record instanceRecord
+
+			found, err := src.Get(ctx, id, &record)
+			if err != nil {
+				found = false
+			}
+
+			if found {
+				if record.InstanceName != "" {
+					entry.InstanceName = record.InstanceName
+				}
+
+				if record.DeploymentName != "" {
+					entry.DeploymentName = record.DeploymentName
+				}
+			}
+
+			deployment := entry.DeploymentNameFor(id)
+
+			name := entry.InstanceName
+			if name == "" {
+				name = deployment
+			}
+
 			ref := certinventory.InstanceRef{
 				ID:         id,
-				Name:       entry.InstanceName,
-				Deployment: entry.DeploymentNameFor(id),
+				Name:       name,
+				Deployment: deployment,
 				ServiceID:  entry.ServiceID,
 				PlanID:     entry.PlanID,
 			}
 
-			if plan, ok := plans[entry.ServiceID+"/"+entry.PlanID]; ok {
+			if plan, ok := catalog[entry.ServiceID+"/"+entry.PlanID]; ok {
 				ref.PlanName = plan.Name
 				if plan.Service != nil {
 					ref.ServiceName = plan.Service.Name
@@ -136,4 +173,15 @@ func brokerSources(cfg *config.Config) certinventory.BrokerSources {
 	}
 
 	return src
+}
+
+// listerFor returns the instance lister over the broker's catalog and Vault.
+// With no Vault it lists nothing, and it never puts a nil *Vault in the
+// interface.
+func listerFor(brokerInstance *broker.Broker, vault *internalVault.Vault) certinventory.InstanceLister {
+	if vault == nil {
+		return func(context.Context) ([]certinventory.InstanceRef, error) { return nil, nil }
+	}
+
+	return instanceLister(brokerInstance.GetPlans, vault)
 }

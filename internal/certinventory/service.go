@@ -81,6 +81,12 @@ type Service struct {
 	infoFailedAt time.Time
 	infoFetching bool
 
+	// sentCA is the services CA name the last broker scan was given, or the
+	// name a rescan was started for.
+	sentCA       string
+	configCAOnce sync.Once
+	configCA     string
+
 	// noDirector is true when the broker has no BOSH director.
 	noDirector bool
 }
@@ -304,6 +310,8 @@ func (s *Service) current() (*Fleet, Settings, Capabilities) {
 	s.caps = caps
 	s.builtGen, s.builtSet, s.builtCapV, s.hasBuilt = gen, set, s.capVersion, true
 
+	s.rescanBrokerLocked()
+
 	return s.fleet, set, caps
 }
 
@@ -404,15 +412,51 @@ func (s *Service) brokerSources() BrokerSources {
 		return src
 	}
 
+	if name := s.servicesCAFromCache(); name != "" {
+		src.ServicesCAName = name
+
+		s.mu.Lock()
+		s.sentCA = name
+		s.mu.Unlock()
+	}
+
+	return src
+}
+
+// servicesCAFromCache returns the services CA name any cached instance scan
+// names, or an empty string.
+func (s *Service) servicesCAFromCache() string {
 	for _, scan := range s.cache.Snapshot() {
 		for name := range scan.Material.SigningCAs {
 			if name[strings.LastIndex(name, "/")+1:] == servicesCAVariable {
-				src.ServicesCAName = name
-
-				return src
+				return name
 			}
 		}
 	}
 
-	return src
+	return ""
+}
+
+// rescanBrokerLocked starts one broker scan the first time the services CA
+// name becomes known after the last broker scan ran without it, so drift
+// detection does not wait a whole interval.
+func (s *Service) rescanBrokerLocked() {
+	if !s.deps.InventoryEnabled || s.deps.Broker == nil || s.sentCA != "" {
+		return
+	}
+
+	name := s.servicesCAFromCache()
+	if name == "" {
+		return
+	}
+
+	s.configCAOnce.Do(func() { s.configCA = s.deps.Broker().ServicesCAName })
+
+	if s.configCA != "" {
+		return
+	}
+
+	s.sentCA = name
+
+	go func() { _, _ = s.sched.ScanInstanceNow(context.Background(), BrokerScanID) }()
 }
