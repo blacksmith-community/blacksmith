@@ -55,6 +55,16 @@ var certRefPattern = regexp.MustCompile(`\(\(\s*([^()\s]+?)\.certificate\s*\)\)`
 // WalkManifest reads a deployed manifest and collects its certificate facts.
 // It never reports a value that holds a private key.
 func WalkManifest(manifest string) (*ManifestFacts, error) {
+	return walkManifest(manifest, walkLimits{aliases: maxAliasUses, nodes: maxNodesVisited})
+}
+
+// walkLimits holds the budgets for one pass of the walk.
+type walkLimits struct {
+	aliases int
+	nodes   int
+}
+
+func walkManifest(manifest string, limits walkLimits) (*ManifestFacts, error) {
 	var doc yaml.Node
 
 	if err := yaml.Unmarshal([]byte(manifest), &doc); err != nil {
@@ -72,6 +82,7 @@ func WalkManifest(manifest string) (*ManifestFacts, error) {
 		},
 		active:  map[*yaml.Node]bool{},
 		merging: map[*yaml.Node]bool{},
+		limits:  limits,
 	}
 
 	root := &doc
@@ -104,12 +115,28 @@ func ResolveCredHubName(director, deployment, name string) string {
 }
 
 // Limits that keep an untrusted manifest from costing unbounded time or
-// memory. A real director manifest stays far below all of them.
+// memory. The alias and node limits apply to each pass over the manifest,
+// because the generic, value, refs, and structural passes each walk the same
+// subtrees again. A real director manifest stays far below all of them.
 const (
 	maxWalkDepth    = 200
-	maxAliasUses    = 10000
-	maxNodesVisited = 500000
+	maxAliasUses    = 100000
+	maxNodesVisited = 2000000
 )
+
+// The passes of the walk. Each one has its own alias and node budget.
+const (
+	passStructure = iota
+	passGeneric
+	passValue
+	passRefs
+	passCount
+)
+
+type passBudget struct {
+	aliases int
+	visited int
+}
 
 type walker struct {
 	facts   *ManifestFacts
@@ -117,8 +144,20 @@ type walker struct {
 	merging map[*yaml.Node]bool
 	err     error
 	depth   int
-	aliases int
-	visited int
+	limits  walkLimits
+	pass    int
+	budgets [passCount]passBudget
+}
+
+// inPass runs fn with the budgets of the given pass and then returns to the
+// pass it was called from. The counters start at zero for each walk.
+func (w *walker) inPass(pass int, fn func()) {
+	prev := w.pass
+	w.pass = pass
+
+	defer func() { w.pass = prev }()
+
+	fn()
 }
 
 // stop records the first limit that tripped. Every later step sees the error
@@ -136,9 +175,11 @@ func (w *walker) enter() bool {
 		return false
 	}
 
-	w.visited++
-	if w.visited > maxNodesVisited {
-		w.stop("the manifest is too large to walk (more than %d nodes)", maxNodesVisited)
+	b := &w.budgets[w.pass]
+
+	b.visited++
+	if b.visited > w.limits.nodes {
+		w.stop("the manifest is too large to walk (more than %d nodes)", w.limits.nodes)
 
 		return false
 	}
@@ -161,12 +202,14 @@ func (w *walker) leave() { w.depth-- }
 var emptyNode = &yaml.Node{Kind: yaml.ScalarNode}
 
 // deref follows an alias to the node it names. Each alias followed spends
-// from a budget shared by the whole walk.
+// from a budget of the current pass.
 func (w *walker) deref(n *yaml.Node) *yaml.Node {
 	for n != nil && n.Kind == yaml.AliasNode {
-		w.aliases++
-		if w.aliases > maxAliasUses {
-			w.stop("the manifest uses more than %d aliases", maxAliasUses)
+		b := &w.budgets[w.pass]
+
+		b.aliases++
+		if b.aliases > w.limits.aliases {
+			w.stop("the manifest uses more than %d aliases", w.limits.aliases)
 
 			return emptyNode
 		}
@@ -256,11 +299,11 @@ func (w *walker) top(root *yaml.Node) {
 			}
 		case "variables":
 			w.variables(val)
-			w.generic(val, "variables", "")
+			w.inPass(passGeneric, func() { w.generic(val, "variables", "") })
 		case "instance_groups":
 			w.instanceGroups(val)
 		default:
-			w.generic(val, p.key.Value, "")
+			w.inPass(passGeneric, func() { w.generic(val, p.key.Value, "") })
 		}
 	}
 }
@@ -344,11 +387,11 @@ func (w *walker) instanceGroups(n *yaml.Node) {
 					}
 				}
 
-				w.generic(v, joinPath(path, "instances"), group)
+				w.inPass(passGeneric, func() { w.generic(v, joinPath(path, "instances"), group) })
 			case "jobs":
 				w.jobs(v, joinPath(path, "jobs"), group)
 			default:
-				w.generic(v, joinPath(path, p.key.Value), group)
+				w.inPass(passGeneric, func() { w.generic(v, joinPath(path, p.key.Value), group) })
 			}
 		}
 	}
@@ -376,12 +419,20 @@ func (w *walker) jobs(n *yaml.Node, path, group string) {
 				job.Job = scalar(v)
 			case "properties":
 				if v.Kind == yaml.MappingNode {
-					job.Properties = w.value(v).(map[string]interface{})
-					w.refs(v, "", job.CertRefs)
+					w.inPass(passValue, func() {
+						props, _ := w.value(v).(map[string]interface{})
+						job.Properties = props
+					})
+
+					if w.err != nil {
+						return
+					}
+
+					w.inPass(passRefs, func() { w.refs(v, "", job.CertRefs) })
 				}
 			}
 
-			w.generic(v, joinPath(jobPath, p.key.Value), group)
+			w.inPass(passGeneric, func() { w.generic(v, joinPath(jobPath, p.key.Value), group) })
 		}
 
 		w.facts.Jobs = append(w.facts.Jobs, job)

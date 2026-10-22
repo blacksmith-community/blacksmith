@@ -300,3 +300,61 @@ func assertWalkReturns(t *testing.T, manifest string) {
 		t.Fatal("WalkManifest did not return")
 	}
 }
+
+// anchoredManifest builds a manifest the way a real director manifest uses
+// YAML anchors: every group merges a shared map, every job merges a shared
+// job map, and each job carries aliased properties.
+func anchoredManifest(groups, jobs, props int) string {
+	var b strings.Builder
+
+	b.WriteString("name: d\nshared_group: &g\n  azs: [z1]\n  stemcell: default\nshared_job: &jp\n  release: r\nshared_value: &v\n  enabled: true\n")
+	b.WriteString("instance_groups:\n")
+
+	for g := 0; g < groups; g++ {
+		fmt.Fprintf(&b, "- <<: *g\n  name: g%d\n  instances: 1\n  jobs:\n", g)
+
+		for j := 0; j < jobs; j++ {
+			fmt.Fprintf(&b, "  - <<: *jp\n    name: j%d\n    properties:\n", j)
+
+			for p := 0; p < props; p++ {
+				fmt.Fprintf(&b, "      p%d: *v\n", p)
+			}
+		}
+	}
+
+	return b.String()
+}
+
+func TestWalkManifestLargeAnchoredManifest(t *testing.T) {
+	facts, err := WalkManifest(anchoredManifest(50, 8, 10))
+	if err != nil {
+		t.Fatalf("a real anchored manifest should walk: %v", err)
+	}
+
+	if len(facts.Jobs) != 400 {
+		t.Errorf("got %d jobs, want 400", len(facts.Jobs))
+	}
+}
+
+// A budget that trips while a job's properties are converted must come back
+// as an error, never as a panic.
+func TestWalkManifestBudgetTripNeverPanics(t *testing.T) {
+	manifest := anchoredManifest(2, 2, 3)
+
+	tripped := 0
+
+	for nodes := 1; nodes < 400; nodes++ {
+		_, err := walkManifest(manifest, walkLimits{aliases: 100000, nodes: nodes})
+		if err != nil {
+			tripped++
+		}
+	}
+
+	if tripped == 0 {
+		t.Fatal("the node budget never tripped")
+	}
+
+	for aliases := 0; aliases < 100; aliases++ {
+		_, _ = walkManifest(manifest, walkLimits{aliases: aliases, nodes: 100000})
+	}
+}
