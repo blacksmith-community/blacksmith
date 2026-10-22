@@ -22,6 +22,7 @@ import (
 
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/config"
+	"blacksmith/internal/credhub"
 	"blacksmith/internal/inflight"
 	"blacksmith/internal/interfaces"
 	"blacksmith/internal/manifest"
@@ -182,6 +183,11 @@ type Broker struct {
 	// CredentialFinder lists the director CredHub paths the orphan sweep
 	// examines. The sweep does nothing without it.
 	CredentialFinder credentialFinder
+
+	// CredHubClient reads certificates and versions from the director's
+	// CredHub. It is set whenever the credhub block holds a connection,
+	// whether or not cleanup is enabled, and is nil otherwise.
+	CredHubClient *credhub.Client
 
 	// credentialCleanups tracks the cleanup and sweep goroutines, so tests
 	// and a shutdown can wait for them.

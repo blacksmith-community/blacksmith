@@ -1432,33 +1432,51 @@ func setupBrokerAndUI(ctx context.Context, config *config.Config, vault *interna
 	return brokerInstance, credhubClient, nil
 }
 
-// setupCredHubCleanup builds the CredHub cleaner when credhub.cleanup.enabled
-// is true and hands it to the broker. A block with no connection at all gets
-// one warning, and every problem in a partial block is logged in one line.
-// Either way cleanup stays off, so a bad credhub block never stops the broker
+// setupCredHubCleanup builds the CredHub client whenever the credhub block
+// holds a connection, and keeps it on the broker for the certificate reads.
+// It also builds the cleaner and hands it to the broker when
+// credhub.cleanup.enabled is true. A block with no connection at all gets
+// one warning when cleanup is on, and every problem in a partial block is
+// logged in one line. Either way a bad credhub block never stops the broker
 // from starting. It makes at most one /info call and no UAA or CredHub
 // call.
 func setupCredHubCleanup(ctx context.Context, config *config.Config, brokerInstance *broker.Broker, boshDirector *bosh.PooledDirector, logger loggerPkg.Logger) *credhub.Client {
-	if !config.CredHub.Cleanup.Enabled {
-		logger.Info("CredHub cleanup is disabled (credhub.cleanup.enabled is false), so deprovisioned instances keep their director CredHub variables")
+	cleanupEnabled := config.CredHub.Cleanup.Enabled
 
-		return nil
+	if !cleanupEnabled {
+		logger.Info("CredHub cleanup is disabled (credhub.cleanup.enabled is false), so deprovisioned instances keep their director CredHub variables")
 	}
 
 	// Cleanup is on by default, so a broker nobody gave a CredHub connection
 	// lands here. That is not a configuration error to list, only a gap to
 	// name once.
 	if !config.CredHub.Configured() {
-		logger.Warn("CredHub cleanup is on by default, but this broker has no CredHub connection (credhub.url, credhub.ca_cert, credhub.client_secret, and credhub.director_name are all empty), so cleanup is off and deprovisioned instances keep their director CredHub variables. On a Genesis deployment, the BOSH kit's blacksmith-integration feature supplies the connection.")
+		if cleanupEnabled {
+			logger.Warn("CredHub cleanup is on by default, but this broker has no CredHub connection (credhub.url, credhub.ca_cert, credhub.client_secret, and credhub.director_name are all empty), so cleanup is off and deprovisioned instances keep their director CredHub variables. On a Genesis deployment, the BOSH kit's blacksmith-integration feature supplies the connection.")
+		}
 
 		return nil
 	}
 
 	// A nil *PooledDirector inside the interface would not compare equal to
-	// nil, so BuildCleaner gets a true nil when there is no director.
+	// nil, so the builders get a true nil when there is no director.
 	var director bosh.Director
 	if boshDirector != nil {
 		director = boshDirector
+	}
+
+	if !cleanupEnabled {
+		client, problems := credhub.BuildClient(ctx, config.CredHub, config.BOSH.CACert, director, loggerPkg.Get().Named("credhub"))
+		if len(problems) > 0 {
+			logger.Error("The CredHub connection has %d problem(s), so certificate reads from CredHub are unavailable: %s. Fix the credhub configuration and restart the broker.",
+				len(problems), strings.Join(problems, "; "))
+
+			return nil
+		}
+
+		brokerInstance.CredHubClient = client
+
+		return client
 	}
 
 	cleaner, client, problems := credhub.BuildCleaner(ctx, config.CredHub, config.BOSH.CACert, director, brokerInstance.CatalogPlanIDs, loggerPkg.Get().Named("credhub"))
@@ -1471,6 +1489,7 @@ func setupCredHubCleanup(ctx context.Context, config *config.Config, brokerInsta
 
 	brokerInstance.CredentialCleaner = cleaner
 	brokerInstance.CredentialFinder = client
+	brokerInstance.CredHubClient = client
 
 	return client
 }
@@ -1479,7 +1498,7 @@ func setupCredHubCleanup(ctx context.Context, config *config.Config, brokerInsta
 // the cleanup client, then logs the orphan sweep mode. A failed probe leaves
 // cleanup on, because every cleanup tries again and logs its own failure.
 func startCredHubProbe(ctx context.Context, config *config.Config, brokerInstance *broker.Broker, client *credhub.Client, logger loggerPkg.Logger) {
-	if client == nil {
+	if client == nil || !config.CredHub.Cleanup.Enabled {
 		return
 	}
 

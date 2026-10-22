@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/pem"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -185,5 +188,47 @@ func TestSetupCredHubCleanupDisabledStaysQuiet(t *testing.T) {
 
 	if warnings := logger.lines("warn"); len(warnings) != 0 {
 		t.Errorf("a deliberately disabled cleanup must not warn: %q", warnings)
+	}
+}
+
+// A configured connection yields a client for certificate reads even when
+// cleanup is off, and cleanup itself stays off.
+func TestCredHubClientBuiltWhenCleanupDisabled(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+
+	caPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
+
+	cfg := &config.Config{}
+	cfg.BOSH.CACert = caPEM
+	cfg.CredHub = config.CredHubConfig{
+		URL:          "https://10.0.0.6:8844",
+		CACert:       caPEM,
+		ClientID:     "blacksmith_credhub",
+		ClientSecret: "not-a-real-secret",
+		DirectorName: "lab-bosh",
+		UAAURL:       "https://10.0.0.6:8443",
+	}
+
+	logger := newRecordingLogger()
+	brokerInstance := &broker.Broker{}
+
+	client := setupCredHubCleanup(context.Background(), cfg, brokerInstance, scriptedPool(t), logger)
+	if client == nil {
+		t.Fatalf("expected a CredHub client for a configured block, got problems %q", logger.lines("error"))
+	}
+
+	if brokerInstance.CredHubClient != client {
+		t.Error("expected the broker to keep the CredHub client")
+	}
+
+	if brokerInstance.CredentialCleaner != nil || brokerInstance.CredentialFinder != nil {
+		t.Error("expected cleanup to stay off while credhub.cleanup.enabled is false")
+	}
+
+	if errs := logger.lines("error"); len(errs) != 0 {
+		t.Errorf("expected no errors, got %q", errs)
 	}
 }

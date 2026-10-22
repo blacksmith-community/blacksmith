@@ -22,8 +22,8 @@ const (
 	probeDeployment = "blacksmith-credhub-probe"
 )
 
-// BuildCleaner builds the cleaner and its CredHub client from the credhub
-// configuration. It returns no cleaner and every problem it found when the
+// BuildCleaner builds the cleaner and its CredHub client, through
+// BuildClient, from the credhub configuration. It returns no cleaner and every problem it found when the
 // configuration is invalid, cleanup is disabled, or the UAA URL cannot be
 // found. The UAA URL is credhub.uaa_url, or else the one the director reports
 // in /info, and the UAA is trusted through boshCACert. BuildCleaner makes at
@@ -50,20 +50,9 @@ func BuildCleaner(ctx context.Context, cfg config.CredHubConfig, boshCACert stri
 		return nil, nil, problems
 	}
 
-	tokens, infoName, problem := buildTokenSource(ctx, cfg, boshCACert, director, log)
-	if problem != "" {
-		return nil, nil, []string{problem}
-	}
-
-	protected := ProtectedPrefixes(Policy{
-		DirectorName:         cfg.DirectorName,
-		InfoDirectorName:     infoName,
-		ProtectedDeployments: cfg.Cleanup.ProtectedDeployments,
-	})
-
-	client, err := NewClient(ClientConfig{URL: cfg.URL, CACert: cfg.CACert}, tokens, protected)
-	if err != nil {
-		return nil, nil, []string{"the CredHub client for " + redactURL(cfg.URL) + " could not be built (" + err.Error() + ")"}
+	client, problems := BuildClient(ctx, cfg, boshCACert, director, log)
+	if len(problems) > 0 {
+		return nil, nil, problems
 	}
 
 	policy := func() Policy {
