@@ -230,6 +230,12 @@ func getBasicEndpointTestCases() []struct {
 			name:           "Certificate endpoint routing test",
 			method:         "GET",
 			path:           "/b/certificates/list",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "Certificate inventory with no service",
+			method:         "GET",
+			path:           "/b/certificates/inventory",
 			expectedStatus: http.StatusForbidden,
 		},
 		{

@@ -54,6 +54,20 @@ func TestParseFilterRepeatsAndErrors(t *testing.T) {
 	}
 }
 
+func TestParseFilterFindingIsClosedSet(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []string{"chain_broken", "services_ca_drift", "pinned_ca_mismatch", "signing_ca_changed", "patch_reverted", "unconverged",
+		"issuer_expires_first", "san_mismatch", "served_mismatch", "weak_key", "weak_signature", "deploy_pending", "probe_failed"} {
+		if _, err := ParseFilter(url.Values{"finding": {code}}); err != nil {
+			t.Errorf("finding=%s rejected: %v", code, err)
+		}
+	}
+
+	_, err := ParseFilter(url.Values{"finding": {"chain_broken", "made_up"}})
+	wantInvalidFilter(t, err, "made_up")
+}
+
 func TestParseFilterUnknownKeys(t *testing.T) {
 	t.Parallel()
 

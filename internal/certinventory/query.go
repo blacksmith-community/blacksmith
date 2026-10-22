@@ -30,6 +30,12 @@ var (
 	expiryValues = []string{string(ExpiryExpired), string(ExpiryCritical), string(ExpiryWarning), string(ExpiryOK), string(ExpiryUnknown)}
 	healthValues = []string{string(HealthError), string(HealthWarning), string(HealthOK), string(HealthUnknown)}
 	kindValues   = []string{string(KindCA), string(KindIntermediate), string(KindLeaf)}
+	// findingValues is the closed set of finding codes from the spec.
+	findingValues = []string{
+		FindingChainBroken, FindingServicesCADrift, FindingPinnedCAMismatch, FindingSigningCAChanged,
+		"patch_reverted", "unconverged", FindingIssuerExpiresFirst, FindingSANMismatch, FindingServedMismatch,
+		FindingWeakKey, FindingWeakSignature, FindingDeployPending, FindingProbeFailed,
+	}
 	sourceValues = []string{
 		string(SourceCredHub), string(SourceManifest), string(SourceProbe), string(SourceBroker),
 		string(SourceTrustStore), string(SourcePlatform), string(SourceVault),
@@ -77,7 +83,7 @@ func ParseFilter(v url.Values) (Filter, error) {
 		case "instance":
 			f.Instance = values
 		case "finding":
-			f.Finding = values
+			f.Finding, err = enumValues(key, values, findingValues)
 		case "attention":
 			f.Attention, err = boolValue(key, values)
 		case "summary_only":

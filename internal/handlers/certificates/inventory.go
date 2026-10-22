@@ -52,33 +52,41 @@ func NewInventoryHandler(svc InventoryService, log logger.Logger) *InventoryHand
 	return &InventoryHandler{svc: svc, log: log}
 }
 
-// ServeHTTP routes a request to the matching inventory endpoint.
+// ServeHTTP resolves the route first, so a path that names no route answers
+// 404 even when the inventory is off. Only a known route answers
+// inventory_disabled.
 func (h *InventoryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, inventoryPrefix), "/")
+	segs := strings.Split(path, "/")
+
+	var route func()
+
+	switch {
+	case r.Method == http.MethodGet && path == "inventory":
+		route = func() { h.inventory(w, r) }
+	case r.Method == http.MethodPost && path == "scan":
+		route = func() { h.scan(w, r) }
+	case r.Method == http.MethodGet && len(segs) == 2 && segs[0] == "instances" && segs[1] != "":
+		route = func() { h.instance(w, r, segs[1]) }
+	case r.Method == http.MethodGet && len(segs) == 2 && segs[0] == "items" && segs[1] != "":
+		route = func() { h.item(w, segs[1]) }
+	case r.Method == http.MethodGet && path == "settings":
+		route = func() { response.JSON(w, http.StatusOK, h.svc.Settings()) }
+	case r.Method == http.MethodPut && path == "settings":
+		route = func() { h.saveSettings(w, r) }
+	default:
+		apierr.Write(w, apierr.New(http.StatusNotFound, apierr.CodeNotFound, "No certificate endpoint answers "+r.Method+" "+r.URL.Path+"."), http.StatusNotFound)
+
+		return
+	}
+
 	if h.svc == nil || !h.svc.Enabled() {
 		apierr.Write(w, apierr.New(http.StatusForbidden, apierr.CodeInventoryDisabled, inventoryDisabled), http.StatusForbidden)
 
 		return
 	}
 
-	path := strings.Trim(strings.TrimPrefix(r.URL.Path, inventoryPrefix), "/")
-	segs := strings.Split(path, "/")
-
-	switch {
-	case r.Method == http.MethodGet && path == "inventory":
-		h.inventory(w, r)
-	case r.Method == http.MethodPost && path == "scan":
-		h.scan(w, r)
-	case r.Method == http.MethodGet && len(segs) == 2 && segs[0] == "instances" && segs[1] != "":
-		h.instance(w, r, segs[1])
-	case r.Method == http.MethodGet && len(segs) == 2 && segs[0] == "items" && segs[1] != "":
-		h.item(w, segs[1])
-	case r.Method == http.MethodGet && path == "settings":
-		response.JSON(w, http.StatusOK, h.svc.Settings())
-	case r.Method == http.MethodPut && path == "settings":
-		h.saveSettings(w, r)
-	default:
-		apierr.Write(w, apierr.New(http.StatusNotFound, apierr.CodeNotFound, "No certificate endpoint answers "+r.Method+" "+r.URL.Path+"."), http.StatusNotFound)
-	}
+	route()
 }
 
 func (h *InventoryHandler) inventory(w http.ResponseWriter, r *http.Request) {
