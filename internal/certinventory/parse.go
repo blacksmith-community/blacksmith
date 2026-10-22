@@ -165,6 +165,7 @@ func WeaknessFindings(c *x509.Certificate) []Finding {
 		})
 	}
 
+	//nolint:exhaustive // Only the algorithms named here are weak; every other one is fine.
 	switch c.SignatureAlgorithm {
 	case x509.MD2WithRSA, x509.MD5WithRSA, x509.SHA1WithRSA, x509.DSAWithSHA1, x509.ECDSAWithSHA1:
 		out = append(out, Finding{

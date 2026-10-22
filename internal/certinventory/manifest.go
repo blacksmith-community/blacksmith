@@ -470,6 +470,9 @@ func (w *walker) generic(n *yaml.Node, path, group string) {
 		}
 
 		delete(w.active, n)
+	case yaml.DocumentNode, yaml.AliasNode:
+		// Aliases are resolved by deref, and a document node holds no
+		// certificate text of its own.
 	}
 }
 
@@ -539,6 +542,8 @@ func (w *walker) value(n *yaml.Node) interface{} {
 		}
 
 		return v
+	case yaml.DocumentNode, yaml.AliasNode:
+		// Aliases are resolved by deref, and a document node holds no value.
 	}
 
 	return nil
@@ -582,5 +587,8 @@ func (w *walker) refs(n *yaml.Node, path string, out map[string]string) {
 		}
 
 		delete(w.active, n)
+	case yaml.DocumentNode, yaml.AliasNode:
+		// Aliases are resolved by deref, and a document node holds no
+		// references of its own.
 	}
 }

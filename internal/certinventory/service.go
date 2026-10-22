@@ -220,7 +220,7 @@ func (s *Service) ProbeCredHub(ctx context.Context) {
 
 	director := s.deps.Scanner.DirectorName
 	if director == "" {
-		director = s.directorName()
+		director = s.directorName() //nolint:contextcheck // The shared director lookup outlives any one caller, so it uses its own timeout.
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, credhub.ProbeTimeout)
@@ -275,7 +275,7 @@ func (s *Service) SaveSettings(ctx context.Context, st Settings) error {
 
 // Response answers the inventory for filter from the cached fleet.
 func (s *Service) Response(_ context.Context, filter Filter) InventoryResponse {
-	fleet, set, caps := s.current()
+	fleet, set, caps := s.current() //nolint:contextcheck // The shared director lookup outlives any one caller, so it uses its own timeout.
 
 	return BuildResponse(fleet, filter, set, caps, s.sched.State(), s.deps.Now())
 }

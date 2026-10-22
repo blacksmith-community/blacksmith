@@ -104,7 +104,7 @@ type Scheduler struct {
 	now      func() time.Time
 	after    func(time.Duration) <-chan time.Time
 
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx // The scheduler owns this lifecycle context; Stop cancels it.
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
@@ -425,7 +425,7 @@ func (s *Scheduler) ScanInstanceNow(ctx context.Context, id string) (InstanceSca
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	defer context.AfterFunc(s.ctx, cancel)()
+	defer context.AfterFunc(s.ctx, cancel)() //nolint:contextcheck // Stop cancels the scheduler context, which must end a forced scan too.
 
 	if err := ctx.Err(); err != nil {
 		return InstanceScan{}, err

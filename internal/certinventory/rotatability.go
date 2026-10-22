@@ -44,6 +44,7 @@ func RotatabilityOf(c *Certificate, caps Capabilities, director string, vmCount 
 		reasons = append(reasons, "This certificate is not a CredHub variable, so Blacksmith cannot rotate it.")
 	}
 
+	//nolint:exhaustive // The default branch covers the unreachable and refused states.
 	switch caps.CredHub {
 	case credhub.StateConfigured:
 	case credhub.StateNotConfigured:
@@ -61,6 +62,7 @@ func RotatabilityOf(c *Certificate, caps Capabilities, director string, vmCount 
 		reasons = append(reasons, fmt.Sprintf("The name %s is not under /%s/<deployment>/, so the certificate does not belong to this instance alone.", c.Key, director))
 	}
 
+	//nolint:exhaustive // The default branch covers the CA and intermediate kinds.
 	switch c.Kind {
 	case KindLeaf:
 	case "":

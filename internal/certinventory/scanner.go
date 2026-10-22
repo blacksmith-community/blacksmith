@@ -30,8 +30,8 @@ const (
 	// cluster whose listeners all hang still finishes inside its deadline.
 	maxProbesInFlight = 8
 
-	msgCredHubNotConfigured = "CredHub not configured"
-	msgCredHubUnavailable   = "CredHub unavailable"
+	msgCredHubNotConfigured = "CredHub not configured" //nolint:gosec // A status message, not a credential.
+	msgCredHubUnavailable   = "CredHub unavailable"    //nolint:gosec // A status message, not a credential.
 )
 
 // DirectorReader is the part of the BOSH director the scanner reads.
@@ -428,6 +428,7 @@ func isNil(v any) bool {
 
 	rv := reflect.ValueOf(v)
 
+	//nolint:exhaustive // Only the nilable kinds matter; every other kind is never nil.
 	switch rv.Kind() {
 	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
 		return rv.IsNil()
@@ -454,6 +455,8 @@ func (s *Scanner) credhubBlocked() string {
 		return ""
 	case credhub.StateNotConfigured:
 		return msgCredHubNotConfigured
+	case credhub.StateUnreachable, credhub.StateRefused:
+		// These fall through to the unavailable message below.
 	}
 
 	if reason == "" {

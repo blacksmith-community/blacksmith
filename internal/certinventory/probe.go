@@ -43,22 +43,12 @@ func (p Prober) Leaf(ctx context.Context, addr, serverName string) (*x509.Certif
 
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{},
-		Config: &tls.Config{
-			ServerName: serverName,
-			//nolint:gosec // The probe reads the presented certificate; it does not trust it.
-			InsecureSkipVerify: true,
-			// The floor is TLS 1.2, so a listener that only offers TLS 1.0 or
-			// 1.1 fails the handshake and reports as unreachable.
-			MinVersion: tls.VersionTLS12,
-			VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-				raw = make([][]byte, len(rawCerts))
-				for i, c := range rawCerts {
-					raw[i] = append([]byte(nil), c...)
-				}
-
-				return nil
-			},
-		},
+		Config: probeTLSConfig(serverName, func(rawCerts [][]byte) {
+			raw = make([][]byte, len(rawCerts))
+			for i, c := range rawCerts {
+				raw[i] = append([]byte(nil), c...)
+			}
+		}),
 	}
 
 	conn, dialErr := dialer.DialContext(ctx, "tcp", addr)
@@ -112,4 +102,26 @@ func VerifyChain(leaf *x509.Certificate, intermediates []*x509.Certificate, root
 	}
 
 	return nil
+}
+
+// probeTLSConfig builds the client configuration for a probe. It skips
+// verification and hands the presented chain to capture. It turns session
+// tickets off and leaves the client session cache unset, so every probe does
+// a full handshake and a resumed session can never skip the certificate the
+// server presents.
+func probeTLSConfig(serverName string, capture func([][]byte)) *tls.Config {
+	return &tls.Config{
+		ServerName: serverName,
+		//nolint:gosec // The probe reads the presented certificate; it does not trust it.
+		InsecureSkipVerify: true,
+		// The floor is TLS 1.2, so a listener that only offers TLS 1.0 or
+		// 1.1 fails the handshake and reports as unreachable.
+		MinVersion:             tls.VersionTLS12,
+		SessionTicketsDisabled: true,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			capture(rawCerts)
+
+			return nil
+		},
+	}
 }

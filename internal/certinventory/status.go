@@ -86,6 +86,7 @@ func Summarize(certs []Certificate) Summary {
 	for i := range certs {
 		c := &certs[i]
 
+		//nolint:exhaustive // The default branch counts ExpiryUnknown.
 		switch c.Expiry {
 		case ExpiryExpired:
 			s.Expired++

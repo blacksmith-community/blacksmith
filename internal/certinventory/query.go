@@ -302,6 +302,7 @@ func (c Capabilities) rotationState() (bool, string) {
 		return false, "BOSH director unavailable"
 	}
 
+	//nolint:exhaustive // The default branch covers the unreachable and refused states.
 	switch c.CredHub {
 	case credhub.StateConfigured:
 	case credhub.StateNotConfigured:
