@@ -3250,11 +3250,13 @@ func (b *Broker) launchAsyncProvisioning(ctx context.Context, instanceID string,
 	b.track("provision of instance "+instanceID, func() {
 		// The claim Provision took stays in place while the goroutine runs,
 		// so a deprovision or a repeated provision is answered from it. It
-		// is given up on every return, a panic included.
+		// is given up on every return, a panic included. Its reservation in
+		// the mutation guard passes to the teardown of an abandoned
+		// deployment, which keeps it until its delete monitor ends.
 		defer b.releaseOperation(instanceID, claim)
 		defer cancelAsync()
 
-		b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan)
+		b.provisionAsync(asyncCtx, instanceID, detailsMap, *plan, claim.takeRelease)
 	})
 
 	return true, nil

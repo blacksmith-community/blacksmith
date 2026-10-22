@@ -142,3 +142,95 @@ func TestDeleteMonitorShutdownFreesGuard(t *testing.T) {
 
 	waitUntil(t, "the stopped delete monitor frees the guard", func() bool { return len(guard.Snapshot()) == 0 })
 }
+
+// abandonedTeardown starts the teardown of an abandoned deployment from a
+// provision that holds the instance in the guard, with a delete task that
+// runs until finish is called, and waits until the delete monitor polls
+// the task.
+func abandonedTeardown(t *testing.T, instanceID string) monitoredRun {
+	t.Helper()
+
+	fixture := newDeprovisionFixture(t, instanceID)
+	guard := mutation.NewGuard(time.Now)
+
+	var finished atomic.Bool
+
+	fixture.director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
+		return &bosh.Task{ID: guardDeleteID, State: outcomeTaskProcessing, Description: outcomeDeleteDeployment}, nil
+	}
+	fixture.director.GetTaskFn = func(taskID int) (*bosh.Task, error) {
+		state := outcomeTaskProcessing
+		if finished.Load() {
+			state = outcomeTaskDone
+		}
+
+		return &bosh.Task{ID: taskID, State: state, Description: outcomeDeleteDeployment}, nil
+	}
+	fixture.director.WaitForTaskFn = fixture.director.GetTaskFn
+
+	release, err := guard.Acquire(instanceID, fixture.deployment, mutation.Holder{
+		Kind:        mutation.KindProvision,
+		Description: "provision of " + instanceID,
+	})
+	if err != nil {
+		t.Fatalf("reserving %s for its provision: %v", instanceID, err)
+	}
+
+	brokerInstance := guardedBroker(t, fixture.director, fixture.vault, guard)
+	brokerInstance.TearDownAbandonedDeploymentHolding(t.Context(), instanceID, fixture.deployment, release)
+
+	waitUntil(t, "the delete monitor polls the task", func() bool { return len(fixture.director.Calls("GetTask")) > 0 })
+
+	return monitoredRun{fixture: fixture, guard: guard, finish: func() { finished.Store(true) }}
+}
+
+// The teardown of an abandoned deployment keeps the provision's
+// reservation while its delete monitor follows the delete task, and frees
+// it once the monitor ends.
+//
+//nolint:paralleltest // the test changes the package's task poll interval
+func TestAbandonedTeardownHoldsGuardThroughDeleteMonitor(t *testing.T) {
+	defer broker.SetTaskPollInterval(10 * time.Millisecond)()
+
+	run := abandonedTeardown(t, "abandoned-monitored")
+	fixture, guard, finish := run.fixture, run.guard, run.finish
+
+	defer finish()
+
+	holder, held := guard.Holder(fixture.instanceID, fixture.deployment)
+	if !held || holder.Kind != mutation.KindProvision {
+		t.Fatalf("Holder while the delete monitor runs = %+v, %v, want the provision", holder, held)
+	}
+
+	finish()
+
+	waitUntil(t, "the delete monitor frees the guard", func() bool { return len(guard.Snapshot()) == 0 })
+}
+
+// A teardown whose delete fails frees the reservation when it returns,
+// since no monitor follows a delete.
+//
+//nolint:paralleltest // each run starts an in-process vault
+func TestAbandonedTeardownFreesGuardWhenTheDeleteFails(t *testing.T) {
+	fixture := newDeprovisionFixture(t, "abandoned-delete-fails")
+	guard := mutation.NewGuard(time.Now)
+
+	fixture.director.DeleteDeploymentFn = func(string) (*bosh.Task, error) {
+		return nil, errGuardDeleteAnswerUnclear
+	}
+
+	release, err := guard.Acquire(fixture.instanceID, fixture.deployment, mutation.Holder{
+		Kind:        mutation.KindProvision,
+		Description: "provision of " + fixture.instanceID,
+	})
+	if err != nil {
+		t.Fatalf("reserving %s for its provision: %v", fixture.instanceID, err)
+	}
+
+	brokerInstance := guardedBroker(t, fixture.director, fixture.vault, guard)
+	brokerInstance.TearDownAbandonedDeploymentHolding(t.Context(), fixture.instanceID, fixture.deployment, release)
+
+	if holder, held := guard.Holder(fixture.instanceID, fixture.deployment); held {
+		t.Fatalf("expected the failed teardown to free the guard, held by %+v", holder)
+	}
+}

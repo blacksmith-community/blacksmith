@@ -231,6 +231,10 @@ type provisioningPhase struct {
 	// contextID is the context ID the deploy request carries. It is on
 	// record from the provision's first record on.
 	contextID string
+	// takeRelease hands over the provision's reservation in the mutation
+	// guard, which the teardown of an abandoned deployment keeps until its
+	// delete monitor ends.
+	takeRelease func() func()
 }
 
 // failStep records the provision as failed at the step named by summary. When
@@ -465,7 +469,7 @@ func (p *provisioningPhase) createDeployment(ctx context.Context, plan services.
 	// instance Cloud Foundry no longer has, so tear the deployment down instead.
 	if !p.instanceStillIndexed(ctx) {
 		p.logger.Warning("Instance %s was deprovisioned while deployment %s was being created; deleting the deployment instead of recording it", p.instanceID, deploymentName)
-		p.broker.tearDownAbandonedDeployment(ctx, p.instanceID, deploymentName, task.ID, p.logger)
+		p.broker.tearDownAbandonedDeployment(ctx, p.instanceID, deploymentName, task.ID, p.takeRelease(), p.logger)
 
 		return false
 	}
@@ -545,7 +549,20 @@ func (p *provisioningPhase) instanceStillIndexed(ctx context.Context) bool {
 // running, and the orphan sweep removes the deployment later. Once the
 // task stops, the teardown runs the same delete-with-retry and background
 // monitoring as deprovisionAsync and leaves the instance out of the index.
-func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string, createTaskID int, logger logger.Logger) {
+//
+// release frees the provision's reservation in the mutation guard. Like
+// deprovisionAsync, the teardown passes it to the delete monitor once that
+// starts, so the instance stays reserved while its delete task runs, and
+// runs it on every other way out, a panic included.
+func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string, createTaskID int, release func(), logger logger.Logger) { //nolint:contextcheck // the delete monitor outlives ctx and runs under the service context
+	monitored := false
+
+	defer func() {
+		if !monitored {
+			release()
+		}
+	}()
+
 	// The provision context may be nearly spent by now, so the teardown keeps
 	// its values and sets its own deadline. The delete waits on the director
 	// task, so it gets the same bound as a regular deprovision.
@@ -591,8 +608,13 @@ func (b *Broker) tearDownAbandonedDeployment(ctx context.Context, instanceID, de
 	phase.trackDeletionProgress(ctx, deleteTask)
 
 	monitorCtx := b.serviceContext()
+	monitored = true
 
 	b.track(fmt.Sprintf("deprovision monitor of instance %s (BOSH task %d)", phase.instanceID, deleteTask.ID), func() {
+		// The monitor frees the reservation on every return, a panic
+		// included.
+		defer release()
+
 		phase.monitorAndCleanupTask(monitorCtx, deleteTask)
 	})
 }
@@ -1022,38 +1044,14 @@ func (d *deprovisioningPhase) trackDeletionProgress(ctx context.Context, task *b
 }
 
 // provisionAsync handles the actual provisioning work in a background goroutine.
-func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details interface{}, plan services.Plan) {
+func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details interface{}, plan services.Plan, takeRelease func() func()) {
 	startTime := time.Now()
 	logger := logger.Get().Named("broker")
 	logger.Info("Starting async provisioning for instance %s (plan: %s)", instanceID, plan.ID)
 
-	// Initialize params for tracking
-	params := make(map[interface{}]interface{})
-
-	// The deploy request carries this context ID. It goes on record now,
-	// before anything is sent, so a restart at any point leaves an ID to
-	// look the deploy task up by.
-	contextID := uuid.NewString()
-
-	// Track initial state
-	recordCtx, cancelRecord := recordContext(ctx)
-	err := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, "provision", "Starting provisioning process", contextID, 0, params)
-
-	cancelRecord()
-
-	if err != nil {
-		logger.Error("failed to initialize provision tracking: %s", err)
-
+	phase, ok := b.startProvisioningPhase(ctx, instanceID, takeRelease, logger)
+	if !ok {
 		return
-	}
-
-	// Create provisioning phase helper
-	phase := &provisioningPhase{
-		broker:     b,
-		instanceID: instanceID,
-		logger:     logger,
-		params:     params,
-		contextID:  contextID,
 	}
 
 	// Execute provisioning phases with timing
@@ -1084,8 +1082,8 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 
 	phaseStart = time.Now()
 
-	manifest, ok := phase.generateAndStoreManifest(ctx, plan, defaults)
-	if !ok {
+	manifest, stored := phase.generateAndStoreManifest(ctx, plan, defaults)
+	if !stored {
 		return
 	}
 
@@ -1103,6 +1101,36 @@ func (b *Broker) provisionAsync(ctx context.Context, instanceID string, details 
 
 	phase.createDeployment(ctx, plan, manifest)
 	logger.Info("Deployment creation completed in %v (total provisioning time: %v)", time.Since(phaseStart), time.Since(startTime))
+}
+
+// startProvisioningPhase puts the provision's first record, with the
+// context ID its deploy request will carry, in Vault and returns the
+// phase helper that runs the rest. The ID goes on record before anything
+// is sent, so a restart at any point leaves an ID to look the deploy task
+// up by. It reports false when the record could not be written.
+func (b *Broker) startProvisioningPhase(ctx context.Context, instanceID string, takeRelease func() func(), logger logger.Logger) (*provisioningPhase, bool) {
+	params := make(map[interface{}]interface{})
+	contextID := uuid.NewString()
+
+	recordCtx, cancelRecord := recordContext(ctx)
+	err := b.Vault.TrackProgressWithContextID(recordCtx, instanceID, "provision", "Starting provisioning process", contextID, 0, params)
+
+	cancelRecord()
+
+	if err != nil {
+		logger.Error("failed to initialize provision tracking: %s", err)
+
+		return nil, false
+	}
+
+	return &provisioningPhase{
+		broker:      b,
+		instanceID:  instanceID,
+		logger:      logger,
+		params:      params,
+		contextID:   contextID,
+		takeRelease: takeRelease,
+	}, true
 }
 
 // deprovisionAsync handles the actual deprovisioning work in a background goroutine.

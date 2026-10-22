@@ -228,13 +228,20 @@ func (b *Broker) CleanupFailedDeployment(ctx context.Context, deploymentName str
 // instance was deprovisioned while the deploy was running, for a deploy
 // whose task is not known.
 func (b *Broker) TearDownAbandonedDeployment(ctx context.Context, instanceID, deploymentName string) {
-	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, 0, logger.Get().Named("broker"))
+	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, 0, func() {}, logger.Get().Named("broker"))
 }
 
 // TearDownAbandonedDeploymentOfTask exposes the same teardown for a deploy
 // that ran as the given create task.
 func (b *Broker) TearDownAbandonedDeploymentOfTask(ctx context.Context, instanceID, deploymentName string, createTaskID int) {
-	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, createTaskID, logger.Get().Named("broker"))
+	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, createTaskID, func() {}, logger.Get().Named("broker"))
+}
+
+// TearDownAbandonedDeploymentHolding exposes the teardown of a deploy
+// whose task is not known, run by a provision that holds the instance's
+// reservation in the mutation guard and frees it with release.
+func (b *Broker) TearDownAbandonedDeploymentHolding(ctx context.Context, instanceID, deploymentName string, release func()) {
+	b.tearDownAbandonedDeployment(ctx, instanceID, deploymentName, 0, release, logger.Get().Named("broker"))
 }
 
 // SetAbandonedCreateWait sets how long the teardown of an abandoned
