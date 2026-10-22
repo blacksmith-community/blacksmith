@@ -3,6 +3,7 @@ package upgrade
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,6 +11,8 @@ import (
 
 	"blacksmith/internal/apierr"
 	"blacksmith/internal/mutation"
+
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 )
 
 // decisionSince is when the fixtures' decisions were asked.
@@ -1038,4 +1041,60 @@ func TestResolveWhileDeployRuns(t *testing.T) {
 	}
 
 	expectReleased(t, manager)
+}
+
+// A deploy task the director has purged answers task not found, and it
+// has ended, so verify and failed settle the instance. Any other director
+// error still leaves the instance waiting.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestResolveAfterDeployTaskPurged(t *testing.T) {
+	purged := &boshapi.APIError{StatusCode: http.StatusNotFound, Code: boshapi.ErrorCodeTaskNotFound, Description: "Task 4711 not found"}
+
+	for _, tc := range []struct {
+		action string
+		status InstanceStatus
+	}{
+		{action: "verify", status: InstanceStatusSuccess},
+		{action: "failed", status: InstanceStatusFailed},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			manager := env.load(env.awaitingOutcome())
+
+			env.director.mu.Lock()
+			env.director.taskErr = fmt.Errorf("get BOSH task: %w", purged)
+			env.director.mu.Unlock()
+
+			err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: tc.action})
+			if err != nil {
+				t.Fatalf("ResolveDeployOutcome: %v", err)
+			}
+
+			if inst := current(t, manager).Instances[0]; inst.Status != tc.status || inst.Certificates.Pending != nil {
+				t.Fatalf("expected a settled %s instance, got %s with %+v", tc.status, inst.Status, inst.Certificates.Pending)
+			}
+
+			expectReleased(t, manager)
+		})
+	}
+
+	for name, failure := range map[string]error{
+		"route not found": &boshapi.APIError{StatusCode: http.StatusNotFound, Description: "Endpoint '/tasks/4711' not found."},
+		"server error":    &boshapi.APIError{StatusCode: http.StatusInternalServerError, Code: 100},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newRedeployEnv(t)
+			manager := env.load(env.awaitingOutcome())
+
+			env.director.mu.Lock()
+			env.director.taskErr = failure
+			env.director.mu.Unlock()
+
+			err := manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "verify"})
+			expectAPIError(t, err, http.StatusInternalServerError, apierr.CodeInternal)
+
+			expectStillAwaiting(t, manager, InstanceStatusOutcomeUnknown, DecisionResolveDeployOutcome)
+		})
+	}
 }

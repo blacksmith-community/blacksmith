@@ -206,6 +206,9 @@ type redeployDirector struct {
 	// taskState is the state GetTask reports, and done when it is empty.
 	taskState string
 
+	// taskErr, when set, is the error GetTask answers with.
+	taskErr error
+
 	// onGetDeployment runs on each GetDeployment call.
 	onGetDeployment func()
 }
@@ -213,6 +216,10 @@ type redeployDirector struct {
 func (d *redeployDirector) GetTask(_ context.Context, taskID int) (*bosh.Task, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	if d.taskErr != nil {
+		return nil, d.taskErr
+	}
 
 	state := d.taskState
 	if state == "" {

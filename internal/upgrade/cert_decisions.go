@@ -12,6 +12,7 @@ import (
 	"blacksmith/internal/bosh"
 	"blacksmith/internal/certinventory"
 
+	"github.com/fivetwenty-io/boshapi/pkg/boshapi"
 	"github.com/google/uuid"
 )
 
@@ -499,8 +500,9 @@ func recordedDeployTask(inst *InstanceUpgrade) int {
 // has ended, under the manager's context, before a resolve settles the
 // instance by its outcome. A task that still runs answers 409
 // deployment_locked, and a task the director can't report on answers 500,
-// and either way the instance keeps waiting for the decision. An instance
-// with no recorded task has nothing to wait for.
+// and either way the instance keeps waiting for the decision. A task the
+// director no longer knows, as after it purges old tasks, has ended. An
+// instance with no recorded task has nothing to wait for.
 func (m *Manager) deployTaskEnded(taskID int, deployment string) error {
 	if taskID <= 0 {
 		return nil
@@ -509,6 +511,12 @@ func (m *Manager) deployTaskEnded(taskID int, deployment string) error {
 	boshTask, err := directorCall(m.ctx, func(c context.Context) (*bosh.Task, error) {
 		return m.director.GetTask(c, taskID)
 	})
+	if directorTaskGone(err) {
+		m.logger.Info("Director task %d of deployment %s is no longer known to the director, so it has ended", taskID, deployment)
+
+		return nil
+	}
+
 	if err != nil || boshTask == nil {
 		if err == nil {
 			err = errors.New("the director reported no task")
@@ -524,6 +532,16 @@ func (m *Manager) deployTaskEnded(taskID int, deployment string) error {
 	}
 
 	return nil
+}
+
+// directorTaskGone reports whether the director answered 404 task not
+// found, which it does for a task it has purged.
+func directorTaskGone(err error) bool {
+	var apiErr *boshapi.APIError
+
+	return errors.As(err, &apiErr) &&
+		apiErr.StatusCode == http.StatusNotFound &&
+		apiErr.Code == boshapi.ErrorCodeTaskNotFound
 }
 
 // directorTaskRunning reports whether a director task in the state given
