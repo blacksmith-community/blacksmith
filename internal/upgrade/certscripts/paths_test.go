@@ -773,3 +773,35 @@ func TestOnVMAcceptsStockLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestOnVMRefusesHardLinkedTarget(t *testing.T) {
+	t.Parallel()
+
+	tree := newVMTree(t)
+	tree.replace(t, pinnedTarget)
+
+	err := os.Link(tree.at("/etc/shadow-fixture"), tree.at(pinnedTarget))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := tree.writePinned(t, pinnedTarget); got != refusedExit {
+		t.Errorf("a write to a hard-linked target exited %d, want 13", got)
+	}
+
+	tree.assert(t, "/etc/shadow-fixture", "shadow\n")
+
+	// A second name for the target inside the job's own tree counts too.
+	tree = newVMTree(t)
+
+	err = os.Link(tree.at(pinnedTarget), tree.at(pinnedJobDir+"/server.crt.copy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := tree.writePinned(t, pinnedTarget); got != refusedExit {
+		t.Errorf("a write to a target with two names exited %d, want 13", got)
+	}
+
+	tree.assert(t, pinnedTarget, "old\n")
+}

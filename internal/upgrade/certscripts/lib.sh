@@ -165,8 +165,9 @@ valid_logical() {
 # pattern it requires that /var/vcap/jobs/<job> is a symlink that still
 # points at jobdir, that every directory from / down to the file's parent
 # is owned by root, is not a symlink, and is not writable by group or
-# other, and that the file is a regular file whose real path is the path
-# itself.
+# other, and that the file is a regular file with one link whose real
+# path is the path itself. A second link would let the write change a
+# file outside the job's tree.
 valid_pinned() {
 	[ "$#" -eq 2 ] || return "$EXIT_REFUSED"
 
@@ -188,6 +189,7 @@ valid_pinned() {
 
 	full=$root$path
 	[ -f "$full" ] && [ ! -L "$full" ] || return "$EXIT_REFUSED"
+	[ "$(stat -c %h -- "$full")" = 1 ] || return "$EXIT_REFUSED"
 	real=$(realpath -e -- "$full") || return "$EXIT_REFUSED"
 	[ "$real" = "$full" ] || return "$EXIT_REFUSED"
 }
