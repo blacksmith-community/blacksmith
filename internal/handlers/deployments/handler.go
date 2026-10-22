@@ -1010,9 +1010,6 @@ func extractOSFromStemcell(name string) string {
 	return "linux"
 }
 
-// warnIgnoredForce warns when a job-state request carries force. The
-// director ignores force on job-state changes, so it is never sent, and the
-// request goes ahead without it.
 // reserveDeployment holds the deployment in the mutation guard for the
 // named action, so the action never changes a deployment that an upgrade,
 // a certificate rotation, or a broker operation is changing. When another
@@ -1049,6 +1046,9 @@ func (h *Handler) reserveDeployment(writer http.ResponseWriter, logger interface
 	return nil, false
 }
 
+// warnIgnoredForce warns when a job-state request carries force. The
+// director ignores force on job-state changes, so it is never sent, and the
+// request goes ahead without it.
 func warnIgnoredForce(logger interfaces.Logger, req *http.Request) {
 	if req.URL.Query().Has("force") {
 		logger.Warning("The BOSH director ignores force on job-state changes, so %s %s goes ahead without it", req.Method, req.URL.Path)
