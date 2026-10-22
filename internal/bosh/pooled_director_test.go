@@ -2098,17 +2098,55 @@ func TestPooledFollowerUsesALifetimeContextAndNotTheCallers(t *testing.T) {
 func TestPooledSlotIsHeldThroughALostAnswerWhileTheFollowerLooks(t *testing.T) {
 	t.Parallel()
 
+	type lostEntry struct {
+		name        string
+		description string
+		operation   string
+		contextID   string
+		run         func(ctx context.Context, director deployer) (*bosh.Task, error)
+	}
+
+	entries := make([]lostEntry, 0, len(deployEntries)+1)
 	for _, entry := range deployEntries {
+		entries = append(entries, lostEntry{
+			name:        entry.name,
+			description: bosh.DeployTaskDescription,
+			operation:   poolUpdate,
+			contextID:   poolUpdateContext,
+			run: func(ctx context.Context, director deployer) (*bosh.Task, error) {
+				return entry.deploy(ctx, director, poolDeployment, "name: "+poolDeployment)
+			},
+		})
+	}
+
+	entries = append(entries, lostEntry{
+		name:        "delete",
+		description: poolDeleteDesc,
+		operation:   poolDelete,
+		contextID:   poolDeleteContext,
+		run: func(ctx context.Context, director deployer) (*bosh.Task, error) {
+			deleter, ok := director.(interface {
+				DeleteDeployment(ctx context.Context, name string) (*bosh.Task, error)
+			})
+			if !ok {
+				return nil, errors.New("the pool cannot delete a deployment")
+			}
+
+			return deleter.DeleteDeployment(ctx, poolDeployment)
+		},
+	})
+
+	for _, entry := range entries {
 		t.Run(entry.name, func(t *testing.T) {
 			t.Parallel()
 
 			base := newFakePoolBase()
-			base.addTask(9, poolDeployment, bosh.DeployTaskDescription)
+			base.addTask(9, poolDeployment, entry.description)
 			base.contextAnswers = []int{0, 0, 9}
-			base.answers[poolUpdate] = fakePoolAnswer{err: poolLostAnswer(poolUpdate, poolDeployment, poolUpdateContext)}
+			base.answers[entry.operation] = fakePoolAnswer{err: poolLostAnswer(entry.operation, poolDeployment, entry.contextID)}
 			pool, clock, _ := newTestPool(t, base, 1)
 
-			_, err := entry.deploy(t.Context(), pool, poolDeployment, "name: "+poolDeployment)
+			_, err := entry.run(t.Context(), pool)
 			if !errors.Is(err, bosh.ErrOutcomeUnknown) {
 				t.Fatalf("expected the lost answer, got %v", err)
 			}

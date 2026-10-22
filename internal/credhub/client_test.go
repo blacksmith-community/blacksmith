@@ -444,7 +444,7 @@ func TestClientErrorsNeverCarryTheToken(t *testing.T) {
 	assertNoMarkers(t, err.Error())
 }
 
-func TestClientHasNoWriteMethods(t *testing.T) {
+func TestClientMethodsAreReadsAndDeleteOnly(t *testing.T) {
 	t.Parallel()
 
 	clientType := reflect.TypeFor[*credhub.Client]()

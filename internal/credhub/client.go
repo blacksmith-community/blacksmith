@@ -26,6 +26,7 @@ const (
 // Client errors.
 var (
 	ErrNotFound          = errors.New("credential does not exist")
+	ErrEmptyVersionID    = errors.New("refusing to read a certificate version with an empty ID")
 	ErrProtectedName     = errors.New("refusing to delete a credential under a protected prefix")
 	ErrEmptyName         = errors.New("refusing to delete a credential with an empty name")
 	ErrInvalidCredHubURL = errors.New("CredHub URL must be an https URL")

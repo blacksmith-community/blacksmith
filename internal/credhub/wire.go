@@ -22,15 +22,16 @@ const (
 	probeDeployment = "blacksmith-credhub-probe"
 )
 
-// BuildCleaner builds the cleaner and its CredHub client, through
-// BuildClient, from the credhub configuration. It returns no cleaner and every problem it found when the
-// configuration is invalid, cleanup is disabled, or the UAA URL cannot be
-// found. The UAA URL is credhub.uaa_url, or else the one the director reports
-// in /info, and the UAA is trusted through boshCACert. BuildCleaner makes at
-// most one /info call and never calls UAA or CredHub, so it cannot hold up
-// startup. When that /info call fails, the cleaner is still built and looks
-// the UAA URL up again when it first needs a token. plans is read on every cleanup run, so the catalog's plan IDs are
-// always current. No problem ever carries the client secret.
+// BuildCleaner builds the cleaner and its CredHub client, through BuildClient,
+// from the credhub configuration. It returns no cleaner and every problem it
+// found when the configuration is invalid, cleanup is disabled, or the UAA URL
+// cannot be found. The UAA URL is credhub.uaa_url, or else the one the director
+// reports in /info, and the UAA is trusted through boshCACert. BuildCleaner
+// makes at most one /info call and never calls UAA or CredHub, so it cannot
+// hold up startup. When that /info call fails, the cleaner is still built and
+// looks the UAA URL up again when it first needs a token. plans is read on
+// every cleanup run, so the catalog's plan IDs are always current. No problem
+// ever carries the client secret.
 func BuildCleaner(ctx context.Context, cfg config.CredHubConfig, boshCACert string, director directorProber, plans func() []string, log logger.Logger) (*Cleaner, *Client, []string) {
 	if !cfg.Cleanup.Enabled {
 		return nil, nil, []string{"credhub.cleanup.enabled is false, so there is no cleaner to build"}

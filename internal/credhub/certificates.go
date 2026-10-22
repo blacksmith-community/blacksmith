@@ -180,6 +180,10 @@ func (c *Client) CredentialVersions(ctx context.Context, name string, limit int)
 // CertificateVersion returns the certificate and the CA of one version, and
 // never its private key.
 func (c *Client) CertificateVersion(ctx context.Context, versionID string) (*CertificatePublic, error) {
+	if versionID == "" {
+		return nil, ErrEmptyVersionID
+	}
+
 	body, err := c.send(ctx, request{
 		operation:    opCertificateRead,
 		method:       http.MethodGet,

@@ -503,7 +503,12 @@ func (b *BatchDirector) GetInstances(ctx context.Context, deployment string) ([]
 }
 
 func (b *BatchDirector) ListVariables(ctx context.Context, deployment string) ([]Variable, error) {
-	return b.director.ListVariables(ctx, deployment)
+	variables, err := b.director.ListVariables(ctx, deployment)
+	if err != nil {
+		return nil, fmt.Errorf("list the variables of deployment %s: %w", deployment, err)
+	}
+
+	return variables, nil
 }
 
 func (b *BatchDirector) GetPoolStats() (*PoolStats, error) {

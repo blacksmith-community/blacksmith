@@ -231,6 +231,17 @@ func TestCertificateVersionTruncatedAnswerHidesBody(t *testing.T) {
 	}
 }
 
+func TestCertificateVersionRefusesAnEmptyID(t *testing.T) {
+	t.Parallel()
+
+	fake := newReadServer(t, answer(`{}`))
+
+	_, err := fake.client(t).CertificateVersion(context.Background(), "")
+	if !errors.Is(err, credhub.ErrEmptyVersionID) {
+		t.Fatalf("err = %v, want ErrEmptyVersionID", err)
+	}
+}
+
 func TestCertificateVersionBodyOverLimit(t *testing.T) {
 	t.Parallel()
 

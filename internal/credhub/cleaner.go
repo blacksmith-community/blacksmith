@@ -423,6 +423,9 @@ func explainFailure(operation string, err error) (string, string) {
 	case isTLSFailure(err):
 		return "credhub.ca_cert does not match the CA or certificate CredHub presents, which happens after credhub_tls rotates",
 			"the bosh exodus credhub_ca_cert against the certificate CredHub presents"
+	case errors.Is(err, ErrAnswerTooLarge):
+		return "the prefix lists more credentials than the find answer limit allows",
+			"how many credentials sit under the prefix, and whether it is too broad"
 	case errors.Is(err, ErrBadFindAnswer):
 		return "something other than CredHub answered at credhub.url",
 			"credhub.url"

@@ -664,6 +664,7 @@ func TestExplainFailureCoversEveryRow(t *testing.T) {
 		{name: "refused", op: findOp, err: fmt.Errorf("CredHub find: %w", errConnRefused), causes: "CredHub on the director is down", check: "monit summary"},
 		{name: "timeout", op: findOp, err: fmt.Errorf("CredHub find: %w", context.DeadlineExceeded), causes: "CredHub on the director is down", check: "monit summary"},
 		{name: "protected", op: deleteOp, err: credhub.ErrProtectedName, causes: "protected", check: "on purpose"},
+		{name: "answer too large", op: findOp, err: fmt.Errorf("CredHub find: %w", credhub.ErrAnswerTooLarge), causes: "more credentials than the find answer limit allows", check: "too broad"},
 		{name: "bad answer", op: findOp, err: credhub.ErrBadFindAnswer, causes: credhubURLField, check: credhubURLField},
 		{name: "unexpected status", op: deleteOp, err: &credhub.APIError{Op: deleteOp, Status: 400}, causes: "unexpected", check: credhubURLField},
 	}
