@@ -483,7 +483,8 @@ func droppedChanges(left map[string]VersionPair, format string) []string {
 }
 
 // createdChanges requires each selected variable's latest version to be
-// the one the task made.
+// the one the task made. A selected variable with no new version is a
+// change too, because nothing may be deployed or patched for it.
 func createdChanges(approved []VersionPair, variables []VariableRotation, now effectsNow) []string {
 	made := make(map[string]string, len(variables))
 	for _, variable := range variables {
@@ -496,13 +497,11 @@ func createdChanges(approved []VersionPair, variables []VariableRotation, now ef
 		name := shortName(pair.Name)
 
 		want := made[pair.Name]
-		if want == "" {
-			want = pair.LatestVersionID
-		}
-
 		latest, ok := now.latest[pair.Name]
 
 		switch {
+		case want == "":
+			changes = append(changes, name+" has no version that this task made.")
 		case !ok:
 			changes = append(changes, name+" has no version in CredHub any more.")
 		case latest != want:

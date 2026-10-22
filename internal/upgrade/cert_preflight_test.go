@@ -359,6 +359,11 @@ func TestRecheckEffects(t *testing.T) {
 			want: []string{"redis_crt has a newer version (v4) that this task did not create."},
 		},
 		{
+			name: "the selected leaf has no new version before mutating", at: BeforeMutation,
+			setup: func(*preflightEnv) {},
+			want:  []string{"redis_crt has no version that this task made."},
+		},
+		{
 			name: "the selected leaf gained a version before regenerating", at: BeforeRegenerate,
 			setup: func(env *preflightEnv) { env.credhub.setLatest(leaf, "v4") },
 			want:  []string{"redis_crt has a newer version (v4) than the preview listed (v1)."},
