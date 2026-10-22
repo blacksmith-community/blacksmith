@@ -549,7 +549,12 @@ func (b *Broker) Deprovision(
 	// accepted.
 	claim := &operationClaim{operation: operationTypeDeprovision, claimed: time.Now()}
 
-	held, claimed, err := b.claimOperation(instanceID, b.deprovisionDeployment(ctx, instanceID, details.PlanID, logger), claim)
+	deployment, err := b.deprovisionDeployment(ctx, instanceID, details.PlanID, logger)
+	if err != nil {
+		return osbapi.DeprovisionResponse{}, false, err
+	}
+
+	held, claimed, err := b.claimOperation(instanceID, deployment, claim)
 	if err != nil {
 		return osbapi.DeprovisionResponse{}, false, guardBusyAnswer(instanceID, operationTypeDeprovision, err, logger)
 	}
@@ -1102,33 +1107,6 @@ func (b *Broker) claimOperation(instanceID, deployment string, claim *operationC
 	return nil, true, nil
 }
 
-// deprovisionDeployment names the deployment a deprovision of instanceID
-// reserves in the mutation guard. It is the deployment the instance's index
-// entry records, which is the one the delete names, and the reconciler can
-// have moved it away from the plan's name. When the index has no entry, or
-// the entry can't be read, it is the deployment the plan and the instance
-// ID name, and the guard's instance key covers the instance either way.
-func (b *Broker) deprovisionDeployment(ctx context.Context, instanceID, planID string, logger logger.Logger) string {
-	fallback := planID + "-" + instanceID
-
-	if b.Guard == nil || b.Vault == nil {
-		return fallback
-	}
-
-	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
-	if err != nil {
-		logger.Warning("Could not read the index entry of instance %s, so its deprovision reserves deployment %s: %s", instanceID, fallback, err)
-
-		return fallback
-	}
-
-	if !exists {
-		return fallback
-	}
-
-	return deploymentNameForInstance(instanceID, instance)
-}
-
 // takeRelease hands the claim's reservation in the mutation guard to the
 // caller, so releaseOperation no longer frees it. It returns a function
 // that does nothing when the claim holds no reservation. Only the
@@ -1188,6 +1166,35 @@ type TaskWaiters interface {
 // 422 ConcurrencyError, even while the guard holds it for no one.
 func (b *Broker) SetTaskWaiters(waiters TaskWaiters) {
 	b.taskWaiters.Store(&waiters)
+}
+
+// deprovisionDeployment names the deployment a deprovision of instanceID
+// reserves in the mutation guard. It is the deployment the instance's index
+// entry records, which is the one the delete names, and the reconciler can
+// have moved it away from the plan's name. When the index has no entry,
+// it is the deployment the plan and the instance ID name. When the entry
+// can't be read, the deployment is unknown, so it returns a 422
+// ConcurrencyError, which the platform retries, rather than reserve a
+// deployment the delete may not name.
+func (b *Broker) deprovisionDeployment(ctx context.Context, instanceID, planID string, logger logger.Logger) (string, error) {
+	fallback := planID + "-" + instanceID
+
+	if b.Guard == nil || b.Vault == nil {
+		return fallback, nil
+	}
+
+	instance, exists, err := b.Vault.FindInstance(ctx, instanceID)
+	if err != nil {
+		logger.Warning("Rejecting deprovision of instance %s: its index entry could not be read: %s", instanceID, err)
+
+		return "", fmt.Errorf("%w: the index entry of instance %s could not be read, so its deprovision can't tell which deployment it deletes", osbapi.ErrConcurrencyError, instanceID)
+	}
+
+	if !exists {
+		return fallback, nil
+	}
+
+	return deploymentNameForInstance(instanceID, instance), nil
 }
 
 // storedTaskWaiting reports the stored task that waits to reserve the

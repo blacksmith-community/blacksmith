@@ -509,3 +509,74 @@ func TestOperationsRefuseAnInstanceAStoredTaskWaitsFor(t *testing.T) {
 		t.Fatalf("the director got %d deploys or deletes, want none", calls)
 	}
 }
+
+// A deprovision whose index entry can't be read can't tell which
+// deployment the delete names, so it gets 422 ConcurrencyError, which the
+// platform retries, and claims, reserves, and deletes nothing.
+func TestDeprovisionRefusedWhenTheIndexReadFails(t *testing.T) {
+	t.Parallel()
+
+	const instanceID = "unreadable-1"
+
+	guard := mutation.NewGuard(time.Now)
+	director := testutil.NewScriptedBOSHDirector()
+	unreachable := internalVault.New("http://127.0.0.1:1", "unused-token", true)
+	brokerInstance := guardedBroker(t, director, unreachable, guard)
+
+	_, async, err := brokerInstance.Deprovision(t.Context(), instanceID, osbapi.DeprovisionRequest{
+		ServiceID: guardServiceID, PlanID: guardPlanID,
+	}, true)
+	if !errors.Is(err, osbapi.ErrConcurrencyError) || async || !strings.Contains(err.Error(), "index entry") {
+		t.Fatalf("Deprovision = async %v, err %v, want a ConcurrencyError about the index entry", async, err)
+	}
+
+	if brokerInstance.OperationClaimed(instanceID) {
+		t.Fatal("a deprovision refused for an unreadable index entry kept a claim")
+	}
+
+	if held := guard.Snapshot(); len(held) != 0 {
+		t.Fatalf("guard holds %v, want nothing", held)
+	}
+
+	if calls := director.Calls("DeleteDeployment"); len(calls) != 0 {
+		t.Fatalf("the director got deletes %v, want none", calls)
+	}
+}
+
+// A deprovision of an instance with no index entry reserves the
+// deployment its plan and instance ID name.
+func TestDeprovisionWithoutAnIndexEntryReservesThePlanDeployment(t *testing.T) {
+	t.Parallel()
+
+	const instanceID = "unindexed-1"
+
+	server, err := testutil.NewVaultDevServer(t)
+	if err != nil {
+		t.Fatalf("starting the in-process vault: %v", err)
+	}
+
+	guard := mutation.NewGuard(time.Now)
+
+	release, err := guard.Acquire("", guardPlanID+"-"+instanceID, mutation.Holder{
+		Kind:        mutation.KindDeploymentAction,
+		Description: "restart from the UI",
+	})
+	if err != nil {
+		t.Fatalf("holding the deployment: %v", err)
+	}
+	defer release()
+
+	director := testutil.NewScriptedBOSHDirector()
+	brokerInstance := guardedBroker(t, director, internalVault.New(server.Addr, server.RootToken, true), guard)
+
+	_, async, err := brokerInstance.Deprovision(t.Context(), instanceID, osbapi.DeprovisionRequest{
+		ServiceID: guardServiceID, PlanID: guardPlanID,
+	}, true)
+	if !errors.Is(err, osbapi.ErrConcurrencyError) || async || !strings.Contains(err.Error(), "restart from the UI") {
+		t.Fatalf("Deprovision = async %v, err %v, want a ConcurrencyError naming the holder of %s-%s", async, err, guardPlanID, instanceID)
+	}
+
+	if calls := director.Calls("DeleteDeployment"); len(calls) != 0 {
+		t.Fatalf("the director got deletes %v, want none", calls)
+	}
+}
