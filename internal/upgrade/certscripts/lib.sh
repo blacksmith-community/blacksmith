@@ -36,6 +36,11 @@ readonly EXIT_REFUSED=13
 # that cannot be read, or that holds a NUL byte, prints nothing and
 # returns 1, because the shell cannot carry a NUL through the steps below
 # and would otherwise hash different text from the broker.
+#
+# norm_hash follows symlinks, as [ -f ] and the reads below do, so on its
+# own it would hash any file root can read. Every caller runs valid_pinned
+# or valid_work on the path first, and never passes a path that has not
+# been validated.
 norm_hash() {
 	local file=$1 size kept text
 
