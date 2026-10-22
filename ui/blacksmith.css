@@ -12877,3 +12877,53 @@ span.config-type.resurrection {
   margin: 8px 0 0;
   font-size: 13px;
 }
+
+/* ================================================================
+   Broker certificate overview and runbooks
+   ================================================================ */
+
+.cert-ov-drift-title {
+  color: var(--cert-expired-fg);
+}
+
+.cert-ov-runbooks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.cert-ov-runbook {
+  padding: 8px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.cert-ov-runbook > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cert-ov-runbook > summary:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.cert-ov-runbook[open] > summary {
+  margin-bottom: 8px;
+}
+
+.cert-ov-runbook-heading {
+  margin: 12px 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cert-ov-runbook .cert-runbook-notes {
+  margin-left: 20px;
+}
+
+.cert-ov-runbook ol.cert-runbook-notes {
+  list-style: decimal;
+}

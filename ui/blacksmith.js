@@ -12099,14 +12099,22 @@
       <div class="service-testing-container">
         <div class="manifest-details-container">
           <div class="manifest-tabs-nav" id="cert-main-tablist">
-            <button class="manifest-tab-btn active" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
+            <button class="manifest-tab-btn active" data-tab="overview" data-group="${tabGroupId}">Overview</button>
+            <button class="manifest-tab-btn" data-tab="trusted" data-group="${tabGroupId}">Trusted</button>
             <button class="manifest-tab-btn" data-tab="config" data-group="${tabGroupId}">Config</button>
             <button class="manifest-tab-btn" data-tab="endpoint" data-group="${tabGroupId}">Endpoint</button>
           </div>
 
           <div class="manifest-tab-content">
+            <!-- Overview Tab -->
+            <div class="manifest-tab-pane active" data-tab="overview" data-group="${tabGroupId}">
+              <div class="operation-content">
+                <div id="cert-broker-overview" class="cert-ov"></div>
+              </div>
+            </div>
+
             <!-- Trusted Certificates Tab -->
-            <div class="manifest-tab-pane active" data-tab="trusted" data-group="${tabGroupId}">
+            <div class="manifest-tab-pane" data-tab="trusted" data-group="${tabGroupId}">
               <div class="operation-content">
                 <table class="operation-form">
                   <tr>
@@ -12245,6 +12253,8 @@
         element.style.display = 'none';
       }
     });
+
+    CertOverview.mountBroker(document.getElementById('cert-broker-overview'));
 
     // Set up tab switching for certificates tabs
     setTimeout(() => {
@@ -16096,8 +16106,11 @@
   const CertOverview = (() => {
     const el = CertView.el;
 
+    const KIT_MANUAL_URL = 'https://github.com/genesis-community/blacksmith-genesis-kit/blob/main/MANUAL.md';
     const ROTATION_WAIT_TEXT = 'Rotation arrives with certificates.rotation.enabled';
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const SCAN_POLL_MS = 1500;
+    const SCAN_POLL_LIMIT = 40;
 
     const button = (className, text) => {
       const node = el('button', className, text);
@@ -16161,6 +16174,30 @@
     };
 
     // ----- table -----
+
+    // A readable name for a certificate. The broker's own certificates
+    // have no variable name, so we name them from where they were read.
+    const brokerLabel = (cert) => {
+      const observations = cert.observations || [];
+      const at = (test) => observations.some((o) => test(String(o.locator || ''), o));
+      const platform = observations.find((o) => o.source === 'probe' && o.owner && o.owner.kind === 'platform');
+      if (platform) {
+        const name = String(platform.owner.instance_name || '').toLowerCase();
+        if (name === 'director') return 'BOSH director (served)';
+        if (name === 'uaa') return 'UAA (served)';
+        if (name === 'credhub') return 'CredHub (served)';
+        return `${platform.owner.instance_name || 'Platform endpoint'} (served)`;
+      }
+      if (at((l) => l === 'config:broker.tls.certificate')) return 'Broker HTTPS listener';
+      if (at((l) => /services_ca$/.test(l)) || /services_ca/.test(String(cert.variable || ''))) {
+        const count = observations.length;
+        return `Services CA (${count} ${count === 1 ? 'source' : 'sources'})`;
+      }
+      if (at((l) => l === 'config:bosh.cacert')) return 'BOSH CA';
+      if (at((l) => l === 'config:credhub.ca_cert')) return 'CredHub CA';
+      if (at((l) => l === 'config:vault.cacert')) return 'Vault CA';
+      return cert.variable || cert.common_name || cert.key || 'Certificate';
+    };
 
     const instanceLabel = (cert) => cert.variable || cert.common_name || cert.key || 'Certificate';
 
@@ -16251,6 +16288,94 @@
         lines.push(line);
       });
       return lines;
+    };
+
+    // ----- runbooks -----
+
+    const runbookCommands = (commands) => {
+      const text = commands.join('\n');
+      const head = el('div', 'cert-runbook-commands');
+      head.appendChild(el('pre', 'cert-runbook-pre', text));
+      head.appendChild(CertView.copyButton('Copy commands', text, 'Copy'));
+      return head;
+    };
+
+    const bullets = (notes) => {
+      const list = el('ul', 'cert-runbook-notes');
+      notes.forEach((note) => list.appendChild(el('li', null, note)));
+      return list;
+    };
+
+    const brokerEnv = () => {
+      const env = window.blacksmithData && typeof window.blacksmithData.env === 'string' ? window.blacksmithData.env.trim() : '';
+      return env && env !== 'Unknown' ? env : '';
+    };
+
+    const disclosure = (id, title) => {
+      const details = el('details', 'cert-ov-runbook');
+      details.id = id;
+      details.appendChild(el('summary', null, title));
+      return details;
+    };
+
+    const buildRunbooks = () => {
+      const env = brokerEnv();
+      const name = env || '<env>';
+      const wrap = el('div', 'cert-ov-runbooks');
+      const envNote = env
+        ? 'Check the exact command form against your Genesis version before running it.'
+        : 'The broker did not report its Genesis environment name. We replace <env> with the name of the environment that deploys Blacksmith, and we check the command form against our Genesis version before running it.';
+
+      const https = disclosure('cert-ov-runbook-https', 'Runbook: renew the broker HTTPS certificate');
+      https.appendChild(el('p', null, 'The broker HTTPS certificate belongs to the Blacksmith kit, so we rotate it through Genesis. We run the two commands below in order against the environment that deploys Blacksmith.'));
+      https.appendChild(runbookCommands([`genesis ${name} rotate-secrets broker/server`, `genesis ${name} deploy`]));
+      https.appendChild(bullets([
+        'Genesis leaves secrets marked as fixed alone unless the command includes -P. With -P it rotates every problematic secret in one pass.',
+        envNote
+      ]));
+      wrap.appendChild(https);
+
+      const ca = disclosure('cert-ov-runbook-ca', 'Runbook: services CA renewal (supported) and rekey (external procedure)');
+      ca.appendChild(el('h4', 'cert-ov-runbook-heading', 'Renewal under the same key, which this release supports'));
+      ca.appendChild(el('p', null, 'Genesis keeps the existing key and subject when it renews a certificate, so a renewed CA still verifies every leaf the old one signed and no leaf needs reissuing. We run the two commands below in order.'));
+      ca.appendChild(runbookCommands([`genesis ${name} rotate-secrets broker/ca`, `genesis ${name} deploy`]));
+      ca.appendChild(bullets([
+        'The deploy rewrites the broker services CA file, and the post-deploy hook seeds the renewed CA into the director CredHub.',
+        'App trust stores need the renewed CA before the old one expires, because many TLS stacks check the validity of a trust anchor.',
+        'RabbitMQ instances keep the old literal copy of the CA until their manifests are regenerated, which today needs forge work.',
+        envNote
+      ]));
+      ca.appendChild(el('h4', 'cert-ov-runbook-heading', 'Rekey, which is an external procedure'));
+      ca.appendChild(el('p', null, 'A compromised CA key needs a new key. Rotation deliberately refuses to issue leaves from a CA that did not sign the deployed leaf, so this feature does not run a rekey for us. The steps below happen outside Blacksmith.'));
+      const steps = el('ol', 'cert-runbook-notes');
+      [
+        'Distribute a bundle holding both CAs to every app trust store and to the broker services CA file.',
+        'Set the new CA in CredHub, regenerate each instance leaf with the credhub CLI, and deploy each instance with bosh deploy --force-latest-variables.',
+        'Remove the old CA from the bundles only after the inventory shows no leaf chaining to it.'
+      ].forEach((step) => steps.appendChild(el('li', null, step)));
+      ca.appendChild(steps);
+      ca.appendChild(el('p', 'cert-muted', 'The kit generates only one broker/ca today. This procedure needs kit work and lab validation before anyone follows it on a customer environment.'));
+      wrap.appendChild(ca);
+
+      const credhub = disclosure('cert-ov-runbook-credhub', 'How to enable CredHub certificates and rotation');
+      credhub.appendChild(el('p', null, 'The Blacksmith kit renders the broker credhub block only when the BOSH director exodus record holds all five blacksmith_credhub_* keys. The BOSH kit release that creates the blacksmith_credhub UAA client writes those keys.'));
+      const enable = el('ol', 'cert-runbook-notes');
+      [
+        'Deploy the BOSH kit release that creates the blacksmith_credhub client on the director.',
+        'Redeploy Blacksmith, so the kit renders the credhub block.',
+        'Turn on certificates.rotation.enabled in the kit parameters, and redeploy Blacksmith again.'
+      ].forEach((step) => enable.appendChild(el('li', null, step)));
+      credhub.appendChild(enable);
+      const more = el('p', null, 'For the details, we follow the ');
+      const link = el('a', null, 'Blacksmith kit manual');
+      link.setAttribute('href', KIT_MANUAL_URL);
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener noreferrer');
+      more.appendChild(link);
+      more.appendChild(document.createTextNode('.'));
+      credhub.appendChild(more);
+      wrap.appendChild(credhub);
+      return wrap;
     };
 
     // ----- instance overview -----
@@ -16405,7 +16530,108 @@
       listContainer.replaceChildren(...nodes);
     };
 
-    return { mountInstance, loadManifest, ROTATION_WAIT_TEXT };
+    // ----- broker overview -----
+
+    const hasDrift = (certs) => certs.some((cert) => (cert.findings || []).some((f) => f.code === 'services_ca_drift'));
+
+    const driftCard = (certs) => {
+      let message = '';
+      certs.forEach((cert) => {
+        (cert.findings || []).forEach((f) => { if (!message && f.code === 'services_ca_drift') message = f.message || ''; });
+      });
+      const card = notice('error', 'alert');
+      card.appendChild(el('strong', 'cert-ov-drift-title', 'Services CA drift. '));
+      card.appendChild(el('span', 'cert-notice-text', message || 'The broker file and the director CredHub hold different services CAs, so new leaves would be signed by a CA your apps may not trust.'));
+      const help = button('cert-action-btn cert-ov-drift-help', 'What to do');
+      help.addEventListener('click', () => {
+        const target = document.getElementById('cert-ov-runbook-ca');
+        if (!target) return;
+        target.open = true;
+        const summary = target.querySelector('summary');
+        if (summary) summary.focus();
+        if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'nearest' });
+      });
+      card.appendChild(help);
+      return card;
+    };
+
+    const waitForScan = async (container, token) => {
+      for (let i = 0; i < SCAN_POLL_LIMIT; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, SCAN_POLL_MS));
+        if (!current(container, token)) return false;
+        const res = await request('/b/certificates/inventory?summary_only=true');
+        if (!current(container, token)) return false;
+        if (!res.ok || !res.body || !res.body.scan || res.body.scan.state !== 'running') return true;
+      }
+      return true;
+    };
+
+    const mountBroker = async (container, opts = {}) => {
+      if (!container) return;
+      const token = newToken(container);
+      const reload = () => mountBroker(container);
+
+      const bar = (busy) => {
+        const row = el('div', 'cert-ov-bar');
+        row.appendChild(el('h4', 'cert-ov-title', 'Broker and platform certificates'));
+        const actions = el('div', 'cert-ov-actions');
+        const rescan = button('cert-action-btn cert-ov-rescan', 'Rescan');
+        rescan.disabled = busy;
+        if (busy) rescan.setAttribute('aria-busy', 'true');
+        rescan.addEventListener('click', async () => {
+          const t = newToken(container);
+          container.replaceChildren(bar(true), loading('Rescanning the broker and platform...'));
+          const started = await request('/b/certificates/scan', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instance_ids: ['_broker'] })
+          });
+          if (!current(container, t)) return;
+          if (!started.ok) {
+            const block = CertView.errorBlock({ message: errorText(started, 'The rescan request'), onRetry: reload });
+            block.setAttribute('role', 'alert');
+            container.replaceChildren(bar(false), block);
+            return;
+          }
+          if (!(await waitForScan(container, t))) return;
+          mountBroker(container, { announceDone: true });
+        });
+        actions.appendChild(rescan);
+        row.appendChild(actions);
+        return row;
+      };
+
+      container.replaceChildren(bar(true), loading('Reading the broker and platform certificates...'));
+      container.setAttribute('aria-busy', 'true');
+
+      const res = await request('/b/certificates/inventory?owner=broker&owner=platform');
+      if (!current(container, token)) return;
+      container.removeAttribute('aria-busy');
+
+      if (!res.ok || !res.body || typeof res.body !== 'object') {
+        const block = CertView.errorBlock({ message: errorText(res, 'The certificate inventory'), onRetry: reload });
+        block.setAttribute('role', 'alert');
+        container.replaceChildren(bar(false), block, buildRunbooks());
+        return;
+      }
+
+      const certs = Array.isArray(res.body.certificates) ? res.body.certificates : [];
+      const nodes = [bar(false)];
+      if (hasDrift(certs)) nodes.push(driftCard(certs));
+      if (certs.length === 0) {
+        const scan = res.body.scan || {};
+        nodes.push(el('p', 'cert-muted', scan.state === 'running'
+          ? 'The first scan is still running. The broker and platform certificates appear when it finishes.'
+          : 'No broker or platform certificates are in the inventory yet.'));
+      } else {
+        nodes.push(certTable(certs, { labeler: brokerLabel, caption: 'Broker and platform certificates' }));
+      }
+      nodes.push(buildRunbooks());
+      container.replaceChildren(...nodes);
+      if (opts.announceDone) announce('Rescan finished.');
+    };
+
+    return { mountInstance, mountBroker, loadManifest, brokerLabel, ROTATION_WAIT_TEXT };
   })();
 
   // Certificate Inspector Modal functionality
