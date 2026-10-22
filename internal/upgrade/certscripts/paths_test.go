@@ -12,7 +12,9 @@ import (
 )
 
 const (
-	pinnedJobDir = "/var/vcap/data/jobs/valkey/abc"
+	vcapData     = "/var/vcap/data"
+	valkeyJobs   = vcapData + "/jobs/valkey"
+	pinnedJobDir = valkeyJobs + "/abc"
 	pinnedTarget = pinnedJobDir + "/config/server.crt"
 	otherTaskID  = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	workBase     = "/var/vcap/data/certpatch/"
@@ -87,7 +89,7 @@ func pinnedCases() []pinnedCase {
 		{"/var/vcap/data/jobs/valkey/abc/x y", pinnedJobDir, false},
 		{"/etc/shadow", pinnedJobDir, false},
 		{pinnedTarget, "", false},
-		{pinnedTarget, "/var/vcap/data/jobs/valkey", false},
+		{pinnedTarget, valkeyJobs, false},
 		{pinnedTarget, "/var/vcap/data/jobs/valkey/abc/", false},
 		{"/var/vcap/data/jobs/valkey/abc/config/x", "/var/vcap/data/jobs/valkey/abc/config", false},
 		{"/var/vcap/data/jobs/../abc/x", "/var/vcap/data/jobs/../abc", false},
@@ -627,7 +629,7 @@ func TestOnVMRefusesPlantedStagingFile(t *testing.T) {
 	// A data directory that is not owned by root stops make_work_dir
 	// before it creates anything.
 	tree = newVMTree(t)
-	tree.giveToVCAP(t, "/var/vcap/data")
+	tree.giveToVCAP(t, vcapData)
 
 	if got := tree.makeWorkDir(t, testTaskID); got != refusedExit {
 		t.Errorf("with /var/vcap/data owned by vcap make_work_dir exited %d, want 13", got)
@@ -675,5 +677,99 @@ func TestOnVMRefusesTraversal(t *testing.T) {
 
 	if got := tree.makeWorkDir(t, "../../etc"); got != refusedExit {
 		t.Errorf("make_work_dir with a .. task exited %d, want 13", got)
+	}
+}
+
+func TestOnVMRefusesWritableDirectory(t *testing.T) {
+	t.Parallel()
+
+	// Each directory on the way to the target, from the stand-in for /
+	// down to the target's parent, made writable by a non-root user.
+	writable := map[string]os.FileMode{
+		"":                       0o777,
+		"/var":                   0o757,
+		"/var/vcap":              0o775,
+		vcapData:                 0o777,
+		"/var/vcap/data/jobs":    0o777,
+		valkeyJobs:               0o775,
+		pinnedJobDir:             0o777,
+		pinnedJobDir + "/config": 0o775,
+	}
+
+	for dir, mode := range writable {
+		tree := newVMTree(t)
+		tree.chmod(t, dir, mode)
+
+		if got := tree.writePinned(t, pinnedTarget); got != refusedExit {
+			t.Errorf("with %q at mode %o the pinned write exited %d, want 13", dir, mode, got)
+		}
+
+		tree.assert(t, pinnedTarget, "old\n")
+	}
+
+	staged := workBase + testTaskID + "/s/0"
+
+	for _, dir := range []string{"", "/var", "/var/vcap", vcapData} {
+		tree := newVMTree(t)
+		if got := tree.makeWorkDir(t, testTaskID); got != 0 {
+			t.Fatalf("make_work_dir on a clean tree exited %d", got)
+		}
+
+		tree.chmod(t, dir, 0o777)
+
+		if got := tree.makeWorkDir(t, testTaskID); got != refusedExit {
+			t.Errorf("with %q at mode 777 make_work_dir exited %d, want 13", dir, got)
+		}
+
+		if got := tree.writeWork(t, staged); got != refusedExit {
+			t.Errorf("with %q at mode 777 the staging write exited %d, want 13", dir, got)
+		}
+
+		_, err := os.Lstat(tree.at(staged))
+		if err == nil {
+			t.Errorf("with %q at mode 777 the refused write created the staging file", dir)
+		}
+	}
+
+	tree := newVMTree(t)
+	tree.chmod(t, vcapData, 0o777)
+
+	if got := tree.makeWorkDir(t, testTaskID); got != refusedExit {
+		t.Errorf("with a 0777 /var/vcap/data make_work_dir exited %d, want 13", got)
+	}
+
+	_, err := os.Lstat(tree.at(workBase))
+	if err == nil {
+		t.Error("make_work_dir created the certpatch directory under a writable parent")
+	}
+}
+
+func TestOnVMAcceptsStockLayout(t *testing.T) {
+	t.Parallel()
+
+	dirs := []string{
+		vcapData, "/var/vcap/data/jobs", valkeyJobs,
+		pinnedJobDir, pinnedJobDir + "/config",
+	}
+
+	for _, mode := range []os.FileMode{0o755, 0o750} {
+		tree := newVMTree(t)
+		for _, dir := range dirs {
+			tree.chmod(t, dir, mode)
+		}
+
+		if got := tree.writePinned(t, pinnedTarget); got != 0 {
+			t.Errorf("with directories at mode %o the pinned write exited %d, want 0", mode, got)
+		}
+
+		tree.assert(t, pinnedTarget, "new\n")
+
+		if got := tree.makeWorkDir(t, testTaskID); got != 0 {
+			t.Errorf("with directories at mode %o make_work_dir exited %d, want 0", mode, got)
+		}
+
+		if got := tree.writeWork(t, workBase+testTaskID+"/b/0"); got != 0 {
+			t.Errorf("with directories at mode %o the backup write exited %d, want 0", mode, got)
+		}
 	}
 }

@@ -91,17 +91,47 @@ _cp_root() {
 	printf '%s' "$root"
 }
 
-# _cp_root_dir <dir> accepts a directory owned by root that is not a
-# symlink. stat reports on the name itself, not on what it points to.
-_cp_root_dir() {
+# _cp_secure_dir <dir> accepts a directory that is not a symlink, is
+# owned by root, and has neither the group nor the other write bit. stat
+# reports on the name itself, not on what it points to. No exception is
+# made for a sticky directory, because none belongs on these paths.
+_cp_secure_dir() {
+	local info uid mode
+
 	[ -d "$1" ] && [ ! -L "$1" ] || return 1
-	[ "$(stat -c %u -- "$1")" = 0 ]
+	info=$(stat -c '%u %a' -- "$1") || return 1
+	uid=${info% *}
+	mode=${info#* }
+	[ "$uid" = 0 ] || return 1
+	(((8#$mode & 8#022) == 0))
 }
 
-# _cp_private_dir <dir> accepts a root-owned directory, not a symlink,
-# whose mode is exactly 0700.
+# _cp_secure_chain <root> <dir> accepts the absolute directory <dir> only
+# when it and every directory above it, up to and including /, pass
+# _cp_secure_dir. Only root can then rename, replace, or add an entry
+# anywhere on the way down, so a check made here still holds when the
+# script writes. <root> stands in for / in the tests.
+_cp_secure_chain() {
+	local root=$1 rest=${2#/} dir=
+
+	_cp_secure_dir "${root:-/}" || return 1
+
+	while [ -n "$rest" ]; do
+		dir=$dir/${rest%%/*}
+
+		case $rest in
+		*/*) rest=${rest#*/} ;;
+		*) rest= ;;
+		esac
+
+		_cp_secure_dir "$root$dir" || return 1
+	done
+}
+
+# _cp_private_dir <dir> accepts a directory that passes _cp_secure_dir
+# and whose mode is exactly 0700.
 _cp_private_dir() {
-	_cp_root_dir "$1" || return 1
+	_cp_secure_dir "$1" || return 1
 	[ "$(stat -c %a -- "$1")" = 700 ]
 }
 
@@ -133,13 +163,14 @@ valid_logical() {
 # valid_pinned <path> <jobdir> accepts a certificate or key file under
 # the job's resolved directory that discovery recorded. On top of the
 # pattern it requires that /var/vcap/jobs/<job> is a symlink that still
-# points at jobdir, that every directory from jobdir down to the file is
-# owned by root and is not a symlink, and that the file is a regular file
-# whose real path is the path itself.
+# points at jobdir, that every directory from / down to the file's parent
+# is owned by root, is not a symlink, and is not writable by group or
+# other, and that the file is a regular file whose real path is the path
+# itself.
 valid_pinned() {
 	[ "$#" -eq 2 ] || return "$EXIT_REFUSED"
 
-	local path=$1 jobdir=$2 root rest job link dir sub full real
+	local path=$1 jobdir=$2 root rest job link full real
 
 	_cp_shaped "$jobdir" "$CP_JOBDIR_RE" || return "$EXIT_REFUSED"
 	_cp_shaped "$path" "$CP_PINNED_RE" || return "$EXIT_REFUSED"
@@ -153,15 +184,7 @@ valid_pinned() {
 	[ -L "$link" ] || return "$EXIT_REFUSED"
 	[ "$(readlink -- "$link")" = "$root$jobdir" ] || return "$EXIT_REFUSED"
 
-	dir=$jobdir
-	sub=${path#"$jobdir"/}
-	_cp_root_dir "$root$dir" || return "$EXIT_REFUSED"
-
-	while [[ $sub == */* ]]; do
-		dir=$dir/${sub%%/*}
-		sub=${sub#*/}
-		_cp_root_dir "$root$dir" || return "$EXIT_REFUSED"
-	done
+	_cp_secure_chain "$root" "${path%/*}" || return "$EXIT_REFUSED"
 
 	full=$root$path
 	[ -f "$full" ] && [ ! -L "$full" ] || return "$EXIT_REFUSED"
@@ -170,10 +193,11 @@ valid_pinned() {
 }
 
 # valid_work <path> <task> accepts only the task's staging path s/<n> or
-# backup path b/<n>. It requires that the certpatch directory, the task's
-# directory, and the s or b directory are all private to root and none
-# is a symlink, and that anything already at the path is a regular file
-# and not a symlink.
+# backup path b/<n>. It requires that every directory from / down to
+# /var/vcap/data is secure, as for a pinned target, that the certpatch
+# directory, the task's directory, and the s or b directory are all
+# private to root and none is a symlink, and that anything already at
+# the path is a regular file and not a symlink.
 valid_work() {
 	[ "$#" -eq 2 ] || return "$EXIT_REFUSED"
 
@@ -187,6 +211,7 @@ valid_work() {
 
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 
+	_cp_secure_chain "$root" /var/vcap/data || return "$EXIT_REFUSED"
 	_cp_private_dir "$root$CP_WORK_ROOT" || return "$EXIT_REFUSED"
 	_cp_private_dir "$root$CP_WORK_ROOT/$task" || return "$EXIT_REFUSED"
 	_cp_private_dir "$root$CP_WORK_ROOT/$task/${tail%%/*}" || return "$EXIT_REFUSED"
@@ -200,7 +225,7 @@ valid_work() {
 
 # make_work_dir <task> creates the task's private directory and its s
 # and b directories under /var/vcap/data/certpatch, after checking that
-# /var/vcap/data is a root-owned directory and not a symlink. A directory
+# every directory from / down to /var/vcap/data is secure. A directory
 # that already exists is accepted only when it is root's, mode 0700, and
 # not a symlink, so a task that resumes reuses its own directory and a
 # planted one stops the script.
@@ -213,7 +238,7 @@ make_work_dir() {
 	root=$(_cp_root) || return "$EXIT_REFUSED"
 	base=$root$CP_WORK_ROOT
 
-	_cp_root_dir "$root/var/vcap/data" || return "$EXIT_REFUSED"
+	_cp_secure_chain "$root" /var/vcap/data || return "$EXIT_REFUSED"
 	_cp_make_private "$base" || return "$EXIT_REFUSED"
 	_cp_make_private "$base/$task" || return "$EXIT_REFUSED"
 
