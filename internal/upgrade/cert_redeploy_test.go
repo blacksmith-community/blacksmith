@@ -1084,6 +1084,52 @@ func TestRedeployNeverStartedTaskLoadsPaused(t *testing.T) {
 	expectHeld(t, manager)
 }
 
+// Resuming a task that loaded paused because it never started clears the
+// never-started message from the instances still waiting their turn.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestRedeployResumeClearsNeverStartedMessage(t *testing.T) {
+	env := newRedeployEnv(t)
+
+	stored := env.task()
+	stored.Status = TaskStatusPending
+	second := env.task().Instances[0]
+	second.InstanceID = "instance-2"
+	second.DeploymentName = "redis-instance-2"
+	stored.Instances = append(stored.Instances, second)
+	stored.TotalCount = 2
+
+	manager := env.load(stored)
+
+	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	if waiting := current(t, manager).Instances[1]; waiting.Error != neverStartedMessage {
+		t.Fatalf("expected the paused task to show the never-started message, got %q", waiting.Error)
+	}
+
+	accepted, release := env.listener.hold()
+	t.Cleanup(release)
+
+	if err := manager.ResumeTask(context.Background(), certTaskID); err != nil {
+		t.Fatalf("ResumeTask: %v", err)
+	}
+
+	select {
+	case <-accepted:
+	case <-time.After(waitTimeout):
+		t.Fatal("the listener was never probed")
+	}
+
+	task := current(t, manager)
+	if task.Instances[1].Status != InstanceStatusPending || task.Instances[1].Error != "" {
+		t.Fatalf("expected the waiting instance to be pending with no message, got %s: %q", task.Instances[1].Status, task.Instances[1].Error)
+	}
+
+	if saved := env.stored(); saved.Instances[1].Error != "" {
+		t.Fatalf("expected the saved waiting instance to have no message, got %q", saved.Instances[1].Error)
+	}
+}
+
 // runningTask returns the task as a restart finds it once the instance
 // started, before its regeneration, so the loaded task runs at once.
 func (e *redeployEnv) runningTask() UpgradeTask {

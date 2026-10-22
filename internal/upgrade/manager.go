@@ -1351,6 +1351,11 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 
 	task.Paused = false
 	task.Status = TaskStatusRunning
+
+	if task.KindOrDefault() == TaskKindCertificates {
+		clearNeverStartedLocked(task)
+	}
+
 	m.logger.Info("Resumed task %s", taskID)
 	m.mu.Unlock()
 

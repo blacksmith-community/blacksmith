@@ -1181,6 +1181,18 @@ func (m *Manager) pauseNeverStartedLocked(task *UpgradeTask) {
 	m.logger.Info("Certificate task %s changed nothing before Blacksmith restarted, so it loads paused until an operator resumes it", task.ID)
 }
 
+// clearNeverStartedLocked clears the never-started message from the
+// instances still pending once an operator resumes the task, since the
+// resume answers it. The caller holds mu.
+func clearNeverStartedLocked(task *UpgradeTask) {
+	for i := range task.Instances {
+		inst := &task.Instances[i]
+		if inst.Status == InstanceStatusPending && inst.Error == neverStartedMessage {
+			inst.Error = ""
+		}
+	}
+}
+
 // finishRecordedDeploy ends the following of a loaded certificate deploy
 // whose end is already on record. It hands the recorded end to the
 // finisher without asking the director again, so a director that has
