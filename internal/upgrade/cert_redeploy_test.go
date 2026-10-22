@@ -1300,9 +1300,11 @@ func TestRedeployCancelledVerifyAwaitsDecision(t *testing.T) {
 		t.Fatalf("expected %d attempts, got %d", cancelledVerifyAttempts, calls)
 	}
 
-	if saved := env.stored().Instances[0]; saved.Status != InstanceStatusOutcomeUnknown {
-		t.Fatalf("expected the decision to be saved, got %s", saved.Status)
-	}
+	// The decision is saved after it is made, so the test waits for the
+	// save rather than reading the store at once.
+	waitUntil(t, "the decision to be saved", func() bool {
+		return env.stored().Instances[0].Status == InstanceStatusOutcomeUnknown
+	})
 
 	expectHeld(t, manager)
 }
