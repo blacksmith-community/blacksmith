@@ -2058,3 +2058,81 @@ func TestStepEnd(t *testing.T) {
 		}
 	}
 }
+
+// loadedVerifyPause returns a running task whose done deploy is on
+// record, loaded while the director can't list the deployment's
+// variables, so the loader's verification pauses it, as a restart that
+// came after the deploy ended finds it.
+func (e *redeployEnv) loadedVerifyPause(t *testing.T) *Manager {
+	t.Helper()
+
+	e.madeNewVersion()
+	e.deployedNewVersion()
+
+	task := e.deployedTask()
+	task.Instances[0].Certificates.Deploy = &DeployOutcome{BOSHTaskID: redeployTaskID, State: boshTaskDone, FinishedAt: validateNow}
+
+	e.director.failLists(-1)
+
+	manager := e.load(task)
+
+	waitUntil(t, "the task to pause", func() bool { return current(t, manager).Status == TaskStatusPaused })
+
+	if inst := current(t, manager).Instances[0]; inst.Status != InstanceStatusRunning || !strings.Contains(inst.Error, ". The deploy is done") {
+		t.Fatalf("expected a running instance paused to verify again, got %s: %q", inst.Status, inst.Error)
+	}
+
+	return manager
+}
+
+// A cancel of a task whose loaded verification paused verifies the done
+// deploy now, since nothing processes the task and a cancelled task is
+// never resumed, so the instance does not stay held.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelVerifiesLoadedPause(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.loadedVerifyPause(t)
+
+	env.director.failLists(0)
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	task := eventuallyInstance(t, manager, InstanceStatusSuccess)
+	if task.Status != TaskStatusCancelled {
+		t.Fatalf("expected the task to stay cancelled, got %s", task.Status)
+	}
+
+	expectReleased(t, manager)
+}
+
+// When the reads still fail after the cancel, the instance waits for an
+// operator to resolve the deploy's outcome, and resolving it frees it.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestCertificateCancelLoadedPauseAwaitsResolve(t *testing.T) {
+	env := newRedeployEnv(t)
+	manager := env.loadedVerifyPause(t)
+
+	err := manager.CancelTask(context.Background(), certTaskID)
+	if err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+
+	task := eventuallyInstance(t, manager, InstanceStatusOutcomeUnknown)
+	if pending := task.Instances[0].Certificates.Pending; pending == nil || pending.Kind != DecisionResolveDeployOutcome {
+		t.Fatalf("expected the instance to wait for resolve_deploy_outcome, got %+v", pending)
+	}
+
+	expectHeld(t, manager)
+
+	err = manager.ResolveDeployOutcome(context.Background(), certTaskID, waitInstanceID, ResolveRequest{Action: "abandon"})
+	if err != nil {
+		t.Fatalf("ResolveDeployOutcome: %v", err)
+	}
+
+	expectReleased(t, manager)
+}

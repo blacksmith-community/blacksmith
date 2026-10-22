@@ -1391,10 +1391,12 @@ func (m *Manager) ResumeTask(ctx context.Context, taskID string) error {
 // leaves every instance's status and the counts to the upgrade, which
 // records each instance's outcome from its task's final state. The
 // manager's lock is never held across a director call. A certificate
-// instance that is verifying a done deploy finishes its verification. A
-// running instance of a certificate redeploy that nothing follows and
-// that has nothing in flight is cancelled here, or by its processor once
-// it stops, so none stays reserved with nothing following it.
+// instance that is verifying a done deploy finishes its verification, and
+// one whose done deploy waits to be verified, with nothing processing the
+// task, is verified now. A running instance of a certificate redeploy that
+// nothing follows and that has nothing in flight is cancelled here, or by
+// its processor once it stops, so none stays reserved with nothing
+// following it.
 func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	m.mu.Lock()
 	task, exists := m.tasks[taskID]
@@ -1431,6 +1433,7 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	task.CompletedAt = &completedAt
 
 	ended := m.cancelIdleLocked(task)
+	verify := m.verifyCancelledLocked(task)
 
 	// No deploy of a pending instance is sent once the upgrade is
 	// cancelled, so those are free now, and a running one stays held while
@@ -1441,6 +1444,8 @@ func (m *Manager) CancelTask(ctx context.Context, taskID string) error {
 	if ended > 0 {
 		m.logger.Info("Cancelled %d idle instances of certificate task %s", ended, taskID)
 	}
+
+	verify()
 
 	for _, deploy := range running {
 		m.cancelDeployTask(ctx, deploy.instanceID, deploy.boshTaskID)

@@ -214,6 +214,12 @@ func (m *Manager) nextCertificateStep(inst *InstanceUpgrade) certificateStep {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return certificateStepLocked(inst)
+}
+
+// certificateStepLocked picks the instance's next step, as
+// nextCertificateStep does. The caller holds mu for reading.
+func certificateStepLocked(inst *InstanceUpgrade) certificateStep {
 	rotation := inst.Certificates
 
 	switch {
@@ -962,6 +968,57 @@ func regenerationUncertainLocked(inst *InstanceUpgrade) bool {
 	return slices.ContainsFunc(inst.Certificates.Variables, func(v VariableRotation) bool {
 		return v.RegenerateState == RegenerateSending || v.RegenerateState == RegenerateOutcomeUnknown
 	})
+}
+
+// verifyCancelledLocked makes the settle of each instance of a cancelled
+// certificate task whose done deploy is on record, when nothing processes
+// or settles the task, as when the loader's verification paused it. A
+// cancelled task is never resumed, so without it such an instance would
+// stay reserved, with nothing to verify it. Each instance counts as a
+// settle of the task, so nothing else ends it meanwhile, and the function
+// it returns starts the verifications, which the caller runs once it lets
+// go of mu. Each one verifies as a cancelled task's processor does: it
+// retries reads that fail and, when they keep failing, makes the instance
+// wait for an operator to resolve the deploy's outcome. A manager that is
+// stopping starts none, since the next load verifies them. The caller
+// holds mu.
+func (m *Manager) verifyCancelledLocked(task *UpgradeTask) func() {
+	if task.Status != TaskStatusCancelled || task.KindOrDefault() != TaskKindCertificates ||
+		m.owned[task.ID] || m.settling[task.ID] > 0 || m.ctx.Err() != nil {
+		return func() {}
+	}
+
+	var verify []*InstanceUpgrade
+
+	for i := range task.Instances {
+		if inst := &task.Instances[i]; certificateStepLocked(inst) == stepVerify {
+			verify = append(verify, inst)
+		}
+	}
+
+	if len(verify) == 0 {
+		return func() {}
+	}
+
+	m.settling[task.ID] += len(verify)
+	m.wg.Add(len(verify))
+
+	return func() {
+		for _, inst := range verify {
+			go m.verifyCancelled(task, inst)
+		}
+	}
+}
+
+// verifyCancelled verifies one instance that verifyCancelledLocked counted
+// as a settle of its cancelled task, and ends that settle.
+func (m *Manager) verifyCancelled(task *UpgradeTask, inst *InstanceUpgrade) {
+	defer m.wg.Done()
+	defer m.endSettling(loadedDeploy{task: task, instance: inst})
+
+	m.logger.Info("Certificate task %s is cancelled, so instance %s verifies its done deploy now", task.ID, inst.InstanceID)
+
+	m.verifyAndSettle(m.ctx, task, inst)
 }
 
 // verifyIfCancelled verifies an instance of a cancelled task whose done
