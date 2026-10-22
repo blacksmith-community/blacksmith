@@ -123,9 +123,11 @@ func (h *InventoryHandler) scan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	id, ok := h.svc.RequestScan(req.InstanceIDs)
-	if !ok || id == "" {
-		apierr.Write(w, apierr.New(http.StatusServiceUnavailable, apierr.CodeInternal, scanUnavailableMsg), http.StatusServiceUnavailable)
+	// The second value says a scan was already running, and the caller
+	// gets that scan's ID. Only an empty ID means no scan can start.
+	id, _ := h.svc.RequestScan(req.InstanceIDs)
+	if id == "" {
+		apierr.Write(w, apierr.New(http.StatusInternalServerError, apierr.CodeInternal, scanUnavailableMsg), http.StatusInternalServerError)
 
 		return
 	}

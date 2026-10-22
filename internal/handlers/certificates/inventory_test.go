@@ -19,6 +19,7 @@ type fakeInventory struct {
 	filter      certinventory.Filter
 	scanIDs     []string
 	scanID      string
+	scanRunning bool
 	scanErr     error
 	saved       *certinventory.Settings
 	saveErr     error
@@ -49,7 +50,7 @@ func (f *fakeInventory) Item(id string) (certinventory.ItemDetail, bool) {
 func (f *fakeInventory) RequestScan(ids []string) (string, bool) {
 	f.scanIDs = ids
 
-	return f.scanID, f.scanID != ""
+	return f.scanID, f.scanRunning
 }
 
 func (f *fakeInventory) ScanInstance(_ context.Context, id string) (certinventory.InstanceScan, error) {
@@ -132,7 +133,8 @@ func TestInventoryRoutes(t *testing.T) {
 		{"settings not json", &fakeInventory{enabled: true}, "PUT", "/b/certificates/settings", `nope`, 400, "invalid_settings"},
 		{"settings store down", &fakeInventory{enabled: true, saveErr: errors.New("vault down")}, "PUT", "/b/certificates/settings", `{}`, 500, "internal_error"},
 		{"scan", &fakeInventory{enabled: true, scanID: "s1"}, "POST", "/b/certificates/scan", "", 202, ""},
-		{"scan stopped", &fakeInventory{enabled: true}, "POST", "/b/certificates/scan", "", 503, "internal_error"},
+		{"scan already running", &fakeInventory{enabled: true, scanID: "s1", scanRunning: true}, "POST", "/b/certificates/scan", "", 202, ""},
+		{"scan stopped", &fakeInventory{enabled: true}, "POST", "/b/certificates/scan", "", 500, "internal_error"},
 		{"scan bad body", &fakeInventory{enabled: true, scanID: "s1"}, "POST", "/b/certificates/scan", `{`, 400, "invalid_filter"},
 		{"instance", &fakeInventory{enabled: true}, "GET", "/b/certificates/instances/i1", "", 200, ""},
 		{"instance unknown", &fakeInventory{enabled: true, scanErr: certinventory.ErrUnknownInstance}, "GET", "/b/certificates/instances/zz", "", 404, "instance_not_found"},
@@ -174,8 +176,20 @@ func TestInventoryPassesFilter(t *testing.T) {
 func TestInventoryScanBody(t *testing.T) {
 	t.Parallel()
 
-	svc := &fakeInventory{enabled: true, scanID: "s1"}
+	for _, running := range []bool{false, true} {
+		checkScanBody(t, running)
+	}
+}
+
+func checkScanBody(t *testing.T, running bool) {
+	t.Helper()
+
+	svc := &fakeInventory{enabled: true, scanID: "s1", scanRunning: running}
 	rec := do(t, svc, "POST", "/b/certificates/scan", `{"instance_ids":["i1","i2"]}`)
+
+	if rec.Code != 202 {
+		t.Fatalf("running=%v gave status %d, want 202", running, rec.Code)
+	}
 
 	var body map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
