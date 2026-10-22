@@ -24,7 +24,8 @@ const confirmedWrites = 3
 // when it returns an error.
 //
 // It bumps the task's revision and takes a snapshot under mu, then writes
-// the snapshot through writeSnapshot. A save that writeSnapshot drops
+// the snapshot through writeSnapshotWithin, so every write and read runs
+// under the one deadline the save takes. A save that is dropped
 // counts as confirmed, because a newer snapshot already landed. A write
 // that returns an error may still have stored the record, so the record is
 // read back: a revision at or above the snapshot's confirms it, and an
@@ -66,7 +67,7 @@ func (m *Manager) confirmRecord(ctx context.Context, snapshot taskSnapshot) erro
 	var writeErr error
 
 	for attempt := 1; attempt <= confirmedWrites; attempt++ {
-		writeErr = m.writeSnapshot(ctx, snapshot)
+		writeErr = m.writeSnapshotWithin(ctx, snapshot)
 		if writeErr == nil {
 			return nil
 		}

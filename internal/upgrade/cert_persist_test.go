@@ -473,3 +473,65 @@ func TestErrSaveUnconfirmedMatchesBothNames(t *testing.T) {
 		t.Fatalf("expected the certinventory name to match the upgrade name")
 	}
 }
+
+// slowVault is a confirmVault whose writes of the record take delay
+// before they are scripted, and which notes the deadline each one runs
+// under.
+type slowVault struct {
+	*confirmVault
+
+	delay     time.Duration
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (v *slowVault) Put(ctx context.Context, path string, data interface{}) error {
+	if path == certRecordPath {
+		deadline, _ := ctx.Deadline()
+
+		v.mu.Lock()
+		v.deadlines = append(v.deadlines, deadline)
+		v.mu.Unlock()
+
+		time.Sleep(v.delay)
+	}
+
+	return v.confirmVault.Put(ctx, path, data)
+}
+
+// Every write of a confirmed save runs under the save's one deadline, so
+// a slow write that fails leaves the next write only what remains of
+// persistTaskTimeout, never a fresh one.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestConfirmedSaveKeepsOneDeadline(t *testing.T) {
+	vault := &slowVault{confirmVault: newConfirmVault(), delay: 50 * time.Millisecond}
+	manager, task := confirmManager(t, vault.confirmVault)
+	manager.vault = vault
+
+	vault.scriptPut(certRecordPath, 1, 0)
+
+	start := time.Now()
+
+	err := manager.persistCertConfirmed(context.Background(), task)
+	if err != nil {
+		t.Fatalf("expected the second write to confirm the save, got %v", err)
+	}
+
+	vault.mu.Lock()
+	deadlines := append([]time.Time(nil), vault.deadlines...)
+	vault.mu.Unlock()
+
+	if len(deadlines) != 2 {
+		t.Fatalf("expected two writes of the record, got %d", len(deadlines))
+	}
+
+	// The save takes its deadline a moment after start, and well within
+	// the delay of one write.
+	latest := start.Add(persistTaskTimeout + vault.delay/2)
+	for i, deadline := range deadlines {
+		if deadline.IsZero() || deadline.After(latest) || !deadline.Equal(deadlines[0]) {
+			t.Fatalf("write %d ran under deadline %v, want the save's one deadline %v, no later than %v", i+1, deadline, deadlines[0], latest)
+		}
+	}
+}
