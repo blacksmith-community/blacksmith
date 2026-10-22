@@ -25,6 +25,10 @@ var (
 
 const servicesCAName = "/ws-bosh/blacksmith_services_ca"
 
+// sharedBrokerAt is the broker scan's own time in sharedCAFleet, distinct
+// from the time of every instance scan.
+var sharedBrokerAt = fleetNow.Add(-7 * time.Minute)
+
 func fleetScan(id string, at time.Time) InstanceScan {
 	return InstanceScan{
 		Ref:       InstanceRef{ID: id, Name: "node-" + id, Deployment: "redis-" + id, ServiceName: "redis", PlanName: "cluster-7"},
@@ -54,7 +58,7 @@ func sharedCAFleet(t *testing.T) ([]InstanceScan, issued) {
 		scans = append(scans, s)
 	}
 
-	b := brokerScan(at)
+	b := brokerScan(sharedBrokerAt)
 	broker := Owner{Kind: OwnerBroker}
 	b.Material.Raw = []RawObservation{rawObs(SourceBroker, broker, "/var/vcap/jobs/blacksmith/config/tls/blacksmith_services_ca", ca.cert)}
 	b.Material.CredHub = []CredHubCert{{Name: servicesCAName, Owner: broker, Deployed: ca.cert}}
@@ -89,7 +93,7 @@ func TestFleetGroupsSharedCAAcrossScans(t *testing.T) {
 	}
 
 	if !hasBroker {
-		t.Errorf("no broker owner in %v", c.Owners[:2])
+		t.Errorf("no broker owner in %v", c.Owners[:min(2, len(c.Owners))])
 	}
 }
 
@@ -99,10 +103,24 @@ func TestFleetStampsCredHubObservedAt(t *testing.T) {
 	scans, _ := sharedCAFleet(t)
 	fleet := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow)
 
+	credhubSeen := 0
+
 	for _, o := range fleet.Certificates()[0].Observations {
-		if o.Source == SourceCredHub && !o.ObservedAt.Equal(fleetNow.Add(-time.Minute)) {
-			t.Errorf("credhub observation ObservedAt %v, want the scan time", o.ObservedAt)
+		if o.Source != SourceCredHub {
+			continue
 		}
+
+		credhubSeen++
+
+		// Only the broker scan read the CredHub copy, and its time differs
+		// from every instance scan, so stamping from another scan fails.
+		if !o.ObservedAt.Equal(sharedBrokerAt) {
+			t.Errorf("credhub observation ObservedAt %v, want the broker scan time %v", o.ObservedAt, sharedBrokerAt)
+		}
+	}
+
+	if credhubSeen == 0 {
+		t.Fatal("the certificate has no CredHub observation to check")
 	}
 }
 
@@ -364,5 +382,75 @@ func TestFleetExpiryAndAttention(t *testing.T) {
 	c = Aggregate([]InstanceScan{unread}, DefaultSettings(), fleetCaps, time.Now()).Certificates()[0]
 	if c.Expiry != ExpiryUnknown || c.ExpiryReason != "CredHub not configured" {
 		t.Errorf("expiry %q reason %q, want unknown with the read error", c.Expiry, c.ExpiryReason)
+	}
+}
+
+func TestFleetCredHubTieGoesToLowestInstanceID(t *testing.T) {
+	t.Parallel()
+
+	first := issue(t, issueSpec{cn: "from-a", serial: 1})
+	second := issue(t, issueSpec{cn: "from-b", serial: 2})
+	name := "/ws-bosh/shared/crt"
+	at := fleetNow.Add(-time.Minute)
+
+	a := fleetScan("a", at)
+	a.Material.CredHub = []CredHubCert{{Name: name, Owner: instOwner("a"), Deployed: first.cert}}
+	b := fleetScan("b", at)
+	b.Material.CredHub = []CredHubCert{{Name: name, Owner: instOwner("b"), Deployed: second.cert}}
+
+	// The order of the input must not matter either.
+	for _, scans := range [][]InstanceScan{{a, b}, {b, a}} {
+		certs := Aggregate(scans, DefaultSettings(), fleetCaps, fleetNow).Certificates()
+		if len(certs) != 1 {
+			t.Fatalf("got %d certificates, want 1", len(certs))
+		}
+
+		if got := certs[0].CommonName; got != "from-a" {
+			t.Errorf("tie chose %q, want the certificate from the lowest instance ID", got)
+		}
+
+		if len(certs[0].Owners) != 2 {
+			t.Errorf("owners %v, want both instances", certs[0].Owners)
+		}
+	}
+}
+
+func TestFleetStaleScanMarksRawObservations(t *testing.T) {
+	t.Parallel()
+
+	leaf := issue(t, issueSpec{cn: "literal", serial: 4})
+	old := fleetNow.Add(-6 * time.Hour)
+
+	stale := fleetScan("i1", old)
+	stale.Stale = true
+	stale.Material.Raw = []RawObservation{rawObs(SourceManifest, instOwner("i1"), "instance_groups[0].properties.crt", leaf.cert)}
+
+	certs := Aggregate([]InstanceScan{stale}, DefaultSettings(), fleetCaps, fleetNow).Certificates()
+	if len(certs) != 1 {
+		t.Fatalf("got %d certificates, want 1", len(certs))
+	}
+
+	states := map[Source]string{}
+	for _, o := range certs[0].Observations {
+		states[o.Source] = o.State
+	}
+
+	if states[SourceManifest] != StateStale {
+		t.Errorf("manifest observation state %q, want stale", states[SourceManifest])
+	}
+
+	// A fresh scan of the same certificate keeps its own state.
+	fresh := fleetScan("i2", fleetNow.Add(-time.Minute))
+	fresh.Material.Raw = []RawObservation{rawObs(SourceManifest, instOwner("i2"), "instance_groups[0].properties.crt", leaf.cert)}
+
+	merged := Aggregate([]InstanceScan{stale, fresh}, DefaultSettings(), fleetCaps, fleetNow).Certificates()[0]
+
+	counts := map[string]int{}
+	for _, o := range merged.Observations {
+		counts[o.State]++
+	}
+
+	if counts[StateStale] != 1 || counts[StateOK] != 1 {
+		t.Errorf("states after merging a stale and a fresh scan = %v, want one stale and one ok", counts)
 	}
 }
