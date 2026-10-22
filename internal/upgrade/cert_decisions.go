@@ -139,16 +139,12 @@ func (m *Manager) RepreviewForDecision(ctx context.Context, taskID, instanceID s
 // ApproveChangedEffects answers an approve_changed_effects decision. With
 // a preview_id it approves the effects of a preview that
 // RepreviewForDecision bound to this decision, copies them into the
-// instance's approval, and resumes the task. With the action skip it marks
-// the instance skipped and frees it. It checks the switches first, because
-// the decision lets the task go on to write.
+// instance's approval, and resumes the task. It checks the switches first,
+// because the approval lets the task go on to write. With the action skip
+// it marks the instance skipped and frees it, whatever the switches say,
+// since a skip settles only the broker's own state.
 func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID string, req ApproveRequest) error {
 	err := m.decisionsReady()
-	if err != nil {
-		return err
-	}
-
-	err = m.certWritesAllowed(m.decisionMode(taskID))
 	if err != nil {
 		return err
 	}
@@ -158,6 +154,11 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 		if req.PreviewID == "" {
 			return apierr.New(http.StatusBadRequest, apierr.CodeApprovalMismatch,
 				"Name the preview_id of a preview of this decision, or skip the instance with the action skip.")
+		}
+
+		err = m.certWritesAllowed(m.decisionMode(taskID))
+		if err != nil {
+			return err
 		}
 	case actionSkip:
 	default:
@@ -238,16 +239,12 @@ func (m *Manager) ApproveChangedEffects(ctx context.Context, taskID, instanceID 
 // ReconcileRegeneration answers a reconcile_regeneration decision. Adopt
 // takes a candidate version that passed every check as the variable's new
 // version and resumes the task, whose runner re-checks the approved
-// effects before the deploy. Abandon fails the instance with the
-// regeneration abandoned and frees it. It checks the switches first,
-// because the decision lets the task go on to write.
+// effects before the deploy. It checks the switches first, because an
+// adoption lets the task go on to write. Abandon fails the instance with
+// the regeneration abandoned and frees it, whatever the switches say,
+// since it settles only the broker's own state.
 func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID string, req ReconcileRequest) error {
 	err := m.decisionsReady()
-	if err != nil {
-		return err
-	}
-
-	err = m.certWritesAllowed(m.decisionMode(taskID))
 	if err != nil {
 		return err
 	}
@@ -256,6 +253,11 @@ func (m *Manager) ReconcileRegeneration(ctx context.Context, taskID, instanceID 
 	case actionAdopt:
 		if req.VersionID == "" {
 			return apierr.New(http.StatusBadRequest, apierr.CodeCandidateInvalid, "Name the version_id of the candidate to adopt.")
+		}
+
+		err = m.certWritesAllowed(m.decisionMode(taskID))
+		if err != nil {
+			return err
 		}
 	case actionAbandon:
 	default:

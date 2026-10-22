@@ -524,9 +524,6 @@ func TestDecisionWithRotationOff(t *testing.T) {
 	})
 	expectAPIError(t, err, http.StatusForbidden, apierr.CodeRotationDisabled)
 
-	err = manager.ApproveChangedEffects(context.Background(), certTaskID, waitInstanceID, ApproveRequest{Action: "skip"})
-	expectAPIError(t, err, http.StatusForbidden, apierr.CodeRotationDisabled)
-
 	expectStillAwaiting(t, manager, StatusAwaitingDecision, DecisionReconcileRegeneration)
 
 	task := current(t, manager)
@@ -802,4 +799,49 @@ func TestDecisionReplaySavesAgain(t *testing.T) {
 	if got := env.stored().Instances[0].Certificates.DecisionRequestID; got != "approve-1" {
 		t.Fatalf("expected Vault to hold the approval's request ID, got %q", got)
 	}
+}
+
+// With rotation off, an operator can still free a held instance, since a
+// skip or an abandon settles only the broker's own state.
+//
+//nolint:paralleltest // the manager's loader shares test seams
+func TestSettlingDecisionsWithRotationOff(t *testing.T) {
+	t.Run("skip", func(t *testing.T) {
+		env := newRedeployEnv(t)
+		manager := env.load(env.awaitingApproval())
+		env.setSwitches(false)
+
+		err := manager.ApproveChangedEffects(context.Background(), certTaskID, waitInstanceID, ApproveRequest{PreviewID: "pv-any"})
+		expectAPIError(t, err, http.StatusForbidden, apierr.CodeRotationDisabled)
+
+		err = manager.ApproveChangedEffects(context.Background(), certTaskID, waitInstanceID, ApproveRequest{Action: "skip"})
+		if err != nil {
+			t.Fatalf("ApproveChangedEffects: %v", err)
+		}
+
+		if status := current(t, manager).Instances[0].Status; status != InstanceStatusSkipped {
+			t.Fatalf("expected the instance skipped, got %s", status)
+		}
+
+		expectReleased(t, manager)
+	})
+
+	t.Run("abandon", func(t *testing.T) {
+		env := newRedeployEnv(t)
+		env.madeNewVersion()
+
+		manager := env.load(env.awaitingReconcile(nil))
+		env.setSwitches(false)
+
+		err := manager.ReconcileRegeneration(context.Background(), certTaskID, waitInstanceID, ReconcileRequest{Variable: regenLeaf, Action: "abandon"})
+		if err != nil {
+			t.Fatalf("ReconcileRegeneration: %v", err)
+		}
+
+		if status := current(t, manager).Instances[0].Status; status != InstanceStatusFailed {
+			t.Fatalf("expected the instance failed, got %s", status)
+		}
+
+		expectReleased(t, manager)
+	})
 }
