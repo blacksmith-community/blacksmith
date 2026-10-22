@@ -35,9 +35,11 @@ type vmsDirector struct {
 	vms map[string][]bosh.VM
 }
 
-func (d *vmsDirector) GetDeploymentVMs(_ context.Context, deployment string) ([]bosh.VM, error) {
+func (d *vmsDirector) GetDeploymentVMs(ctx context.Context, deployment string) ([]bosh.VM, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	d.note(ctx, "GetDeploymentVMs")
 
 	return append([]bosh.VM(nil), d.vms[deployment]...), nil
 }
@@ -401,6 +403,45 @@ func TestRecheckEffects(t *testing.T) {
 				t.Fatalf("expected changes %q, got %q", tc.want, changes)
 			}
 		})
+	}
+}
+
+// Each director call the preflight and the re-checks make runs under its
+// own deadline of at most certinventory.DirectorCallTimeout, so a slow
+// director can't hold a task step for as long as the adapter's HTTP
+// timeout allows.
+func TestPreflightBoundsEachDirectorCall(t *testing.T) {
+	t.Parallel()
+
+	env := newPreflightEnv(t, RotationModeRedeploy)
+	env.editDirector(func(d *previewDirector) { d.deadlines = nil })
+
+	err := env.preflight()
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+
+	for _, at := range []RecheckPoint{BeforeRegenerate, BeforeMutation, BeforeConverge} {
+		_, err = env.recheck(at)
+		if err != nil {
+			t.Fatalf("recheckEffects at %d: %v", at, err)
+		}
+	}
+
+	env.director.mu.Lock()
+	defer env.director.mu.Unlock()
+
+	for _, call := range []string{"GetInfo", "FindRunningTasksForDeployment", "ListVariables", "GetDeployment", "GetDeploymentVMs"} {
+		lefts := env.director.deadlines[call]
+		if len(lefts) == 0 {
+			t.Fatalf("the preflight and re-checks never called %s", call)
+		}
+
+		for _, left := range lefts {
+			if left <= 0 || left > certinventory.DirectorCallTimeout {
+				t.Fatalf("%s ran with %v before its deadline, want a deadline within %v", call, left, certinventory.DirectorCallTimeout)
+			}
+		}
 	}
 }
 

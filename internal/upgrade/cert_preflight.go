@@ -135,7 +135,9 @@ func (m *Manager) preflightGuard(taskID, instanceID, deployment string) error {
 // the queued, processing, and cancelling states, and a cancelling task
 // still holds the deployment's lock, so any task it lists blocks.
 func (m *Manager) preflightNoDirectorTask(ctx context.Context, deployment string) error {
-	running, err := m.director.FindRunningTasksForDeployment(ctx, deployment)
+	running, err := directorCall(ctx, func(c context.Context) ([]bosh.Task, error) {
+		return m.director.FindRunningTasksForDeployment(c, deployment)
+	})
 	if err != nil {
 		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			fmt.Sprintf("The director did not list the tasks of deployment %s: %v", deployment, err))
@@ -160,7 +162,9 @@ func (m *Manager) preflightVariables(ctx context.Context, instanceID, deployment
 			"Blacksmith is not set up to read certificates, so it can't check the selected ones.")
 	}
 
-	variables, err := m.director.ListVariables(ctx, deployment)
+	variables, err := directorCall(ctx, func(c context.Context) ([]bosh.Variable, error) {
+		return m.director.ListVariables(c, deployment)
+	})
 	if err != nil {
 		return apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			fmt.Sprintf("The director did not list the variables of deployment %s: %v", deployment, err))
@@ -232,7 +236,9 @@ func (m *Manager) readEffects(ctx context.Context, deployment string) (effectsNo
 			"CredHub is not configured, so the task can't check its effects.")
 	}
 
-	detail, err := m.director.GetDeployment(ctx, deployment)
+	detail, err := directorCall(ctx, func(c context.Context) (*bosh.DeploymentDetail, error) {
+		return m.director.GetDeployment(c, deployment)
+	})
 
 	switch {
 	case err != nil:
@@ -243,7 +249,9 @@ func (m *Manager) readEffects(ctx context.Context, deployment string) (effectsNo
 			fmt.Sprintf("The director returned no manifest for deployment %s.", deployment))
 	}
 
-	variables, err := m.director.ListVariables(ctx, deployment)
+	variables, err := directorCall(ctx, func(c context.Context) ([]bosh.Variable, error) {
+		return m.director.ListVariables(c, deployment)
+	})
 	if err != nil {
 		return effectsNow{}, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			fmt.Sprintf("The director did not list the variables of deployment %s: %v", deployment, err))
@@ -352,7 +360,9 @@ func (m *Manager) recheckEffects(ctx context.Context, task *UpgradeTask, inst *I
 
 // recheckVMs compares the deployment's VM CIDs with the approved ones.
 func (m *Manager) recheckVMs(ctx context.Context, deployment string, approved []string) ([]string, error) {
-	vms, err := m.director.GetDeploymentVMs(ctx, deployment)
+	vms, err := directorCall(ctx, func(c context.Context) ([]bosh.VM, error) {
+		return m.director.GetDeploymentVMs(c, deployment)
+	})
 	if err != nil {
 		return nil, apierr.New(http.StatusInternalServerError, apierr.CodeInternal,
 			fmt.Sprintf("The director did not list the VMs of deployment %s: %v", deployment, err))
