@@ -135,7 +135,10 @@ type UpgradeTask struct {
 	CreatedFrom string `json:"created_from,omitempty"`
 	// Revision counts the task's confirmed saves.
 	Revision uint64 `json:"revision,omitempty"`
-	// CreationConfirmed is set once the task's first save is confirmed.
+	// CreationConfirmed is true on a certificate task once a save that
+	// carries it is confirmed, which happens only after the task's first
+	// save was confirmed. The loader fails a certificate task without it,
+	// since its create never finished.
 	CreationConfirmed bool `json:"creation_confirmed,omitempty"`
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -28,6 +29,7 @@ type Handler struct {
 // taskManager is the part of the upgrade manager that the handlers call.
 type taskManager interface {
 	CreateTask(ctx context.Context, req upgrade.CreateTaskRequest) (*upgrade.UpgradeTask, error)
+	CreateCertificateTask(ctx context.Context, req upgrade.CreateCertificateTaskRequest) (*upgrade.UpgradeTask, bool, error)
 	GetTask(taskID string) (*upgrade.UpgradeTask, error)
 	ListTasks() []*upgrade.UpgradeTask
 	PauseTask(ctx context.Context, taskID string) error
@@ -158,13 +160,44 @@ func (h *Handler) CanHandle(path string) bool {
 	return strings.HasPrefix(path, "/b/upgrade/")
 }
 
-// CreateTask handles POST /b/upgrade/tasks - creates a new upgrade task.
+// maxCreateBody bounds the body of a create request.
+const maxCreateBody = 1 << 20
+
+// CreateTask handles POST /b/upgrade/tasks, which creates an upgrade task,
+// or a certificate task when the body's kind is certificates.
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("Create upgrade task request")
 
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCreateBody))
+	if err != nil {
+		h.logger.Error("Failed to read request body: %v", err)
+		response.WriteError(w, http.StatusBadRequest, "invalid upgrade request: "+err.Error())
+
+		return
+	}
+
+	var kind struct {
+		Kind upgrade.TaskKind `json:"kind"`
+	}
+
+	err = json.Unmarshal(body, &kind)
+	if err != nil {
+		h.logger.Error("Failed to decode request body: %v", err)
+		response.WriteError(w, http.StatusBadRequest, "invalid upgrade request: "+err.Error())
+
+		return
+	}
+
+	if kind.Kind == upgrade.TaskKindCertificates {
+		h.createCertificateTask(w, r, body)
+
+		return
+	}
+
 	var req upgrade.CreateTaskRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	err = json.Unmarshal(body, &req)
+	if err != nil {
 		h.logger.Error("Failed to decode request body: %v", err)
 		response.WriteError(w, http.StatusBadRequest, "invalid upgrade request: "+err.Error())
 
@@ -183,6 +216,49 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("Created upgrade task %s", task.ID)
 	response.HandleJSON(w, task, nil)
+}
+
+// createCertificateTask creates a certificate task from the preview the
+// body names. A new task answers 201 and a retry that found the task its
+// request ID already made answers 200, both with the task. Any created_from
+// in the body is ignored, because the request type has no such field.
+func (h *Handler) createCertificateTask(w http.ResponseWriter, r *http.Request, body []byte) {
+	var req upgrade.CreateCertificateTaskRequest
+
+	err := json.Unmarshal(body, &req)
+	if err != nil {
+		h.logger.Error("Failed to decode certificate task request: %v", err)
+		response.WriteErrorCode(w, http.StatusBadRequest, apierr.CodeNoSelections, "invalid certificate task request: "+err.Error())
+
+		return
+	}
+
+	h.logger.Info("Creating certificate task from preview %s", req.PreviewID)
+
+	task, existing, err := h.tasks.CreateCertificateTask(r.Context(), req)
+	if err != nil {
+		h.logger.Error("Failed to create certificate task: %v", err)
+
+		if errors.Is(err, upgrade.ErrTasksLoading) {
+			writeCreateError(w, err)
+
+			return
+		}
+
+		// Every other failure carries its own status and code, and one that
+		// doesn't is an internal error.
+		apierr.Write(w, err, http.StatusInternalServerError)
+
+		return
+	}
+
+	status := http.StatusCreated
+	if existing {
+		status = http.StatusOK
+	}
+
+	h.logger.Info("Answered certificate task %s, existing: %t", task.ID, existing)
+	response.JSON(w, status, task)
 }
 
 // ListTasks handles GET /b/upgrade/tasks - returns all upgrade tasks.
@@ -299,13 +375,18 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	response.HandleJSON(w, map[string]interface{}{"success": true, "max_batch_jobs": settings.MaxBatchJobs}, nil)
 }
 
-// writeCreateError answers a failed CreateTask. A request that names no
+// writeCreateError answers a failed CreateTask. An error that carries its
+// own status and code answers with them. A request that names no
 // instance, no valid target, a release version the director lacks, or a
 // kind this endpoint does not create is a bad request. An instance another
 // upgrade holds is a conflict, and a manager still loading the stored
 // upgrades is not ready yet, so a client can tell those from a failure.
 func writeCreateError(writer http.ResponseWriter, err error) {
+	var apiErr *apierr.Error
+
 	switch {
+	case errors.As(err, &apiErr):
+		apierr.Write(writer, err, http.StatusInternalServerError)
 	case errors.Is(err, upgrade.ErrNoInstances),
 		errors.Is(err, upgrade.ErrNoUpgradeTarget),
 		errors.Is(err, upgrade.ErrInvalidStemcell),

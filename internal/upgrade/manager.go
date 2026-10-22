@@ -237,6 +237,15 @@ type Manager struct {
 	// restoreRetryInterval, which a test shortens before Start.
 	restoreWait  time.Duration
 	restoreRetry time.Duration
+
+	// createRetry is createRetryInterval, which a test shortens before a
+	// create.
+	createRetry time.Duration
+
+	// createLocks holds, under mu, the lock for each client request ID a
+	// certificate create is using, so the creates that share one run one at
+	// a time.
+	createLocks map[string]*requestLock
 }
 
 // waitingReservation is an instance of a loaded task that waits for
@@ -288,6 +297,8 @@ func NewManager(logger interfaces.Logger, director interfaces.Director, vault in
 		requests:     newRequestIndex(),
 		restoreWait:  restoreWaitBound,
 		restoreRetry: restoreRetryInterval,
+		createRetry:  createRetryInterval,
+		createLocks:  make(map[string]*requestLock),
 	}
 
 	// The manager's context is a root. The manager lives as long as the
@@ -2013,7 +2024,8 @@ func (m *Manager) loadAndSettle() {
 // no retry can read it, so the load still finishes. A record whose kind
 // does not belong under the index that names it is skipped and logged too,
 // so it never runs as the wrong kind. It rebuilds the request index from
-// the loaded tasks and restores their reservations. It returns the tasks
+// the loaded tasks and restores their reservations, after failing each
+// certificate task whose creation was never confirmed. It returns the tasks
 // it loaded, and false when Stop ended the load. A task already in memory,
 // created after the broker started, is kept.
 func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
@@ -2028,11 +2040,16 @@ func (m *Manager) loadPersistedTasks() ([]*UpgradeTask, bool) {
 		loaded = append(loaded, tasks...)
 	}
 
-	for _, task := range loaded {
+	// A certificate task whose creation was never confirmed is failed
+	// here, so it never runs, and neither indexes its request ID nor holds
+	// its instances.
+	kept := m.failLoadedOrphans(loaded)
+
+	for _, task := range kept {
 		m.requests.Put(task.ClientRequestID, task.ID, task.RequestDigest)
 	}
 
-	m.restoreLoadedReservations(loaded)
+	m.restoreLoadedReservations(kept)
 
 	return loaded, true
 }
@@ -3247,20 +3264,25 @@ func (m *Manager) acquireLocked(task *UpgradeTask, inst *InstanceUpgrade) error 
 // holder. An instance a loaded task waits to reserve is busy with that
 // task. The caller holds mu.
 func (m *Manager) reserveNewLocked(task *UpgradeTask) error {
+	verb := "upgraded"
+	if task.KindOrDefault() == TaskKindCertificates {
+		verb = "rotated"
+	}
+
 	for i := range task.Instances {
 		inst := &task.Instances[i]
 
 		if waiter, waiting := m.waiterLocked(inst.InstanceID); waiting {
 			m.releaseAllLocked(task.ID)
 
-			return fmt.Errorf("%w, so instance %s can't be upgraded", &mutation.BusyError{Holder: taskHolder(waiter)}, inst.InstanceID)
+			return fmt.Errorf("%w, so instance %s can't be %s", &mutation.BusyError{Holder: taskHolder(waiter)}, inst.InstanceID, verb)
 		}
 
 		err := m.acquireLocked(task, inst)
 		if err != nil {
 			m.releaseAllLocked(task.ID)
 
-			return fmt.Errorf("%w, so instance %s can't be upgraded", err, inst.InstanceID)
+			return fmt.Errorf("%w, so instance %s can't be %s", err, inst.InstanceID, verb)
 		}
 	}
 

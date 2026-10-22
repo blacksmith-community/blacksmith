@@ -72,9 +72,10 @@ func fullCertificateTask() UpgradeTask {
 			Reason:    "expires in 6 days",
 			PreviewID: "7d6c5b4a-3928-4170-8f6e-5d4c3b2a1908",
 		},
-		ClientRequestID: certRequestID,
-		RequestDigest:   certRequestDigest,
-		CreatedFrom:     "ui",
+		ClientRequestID:   certRequestID,
+		RequestDigest:     certRequestDigest,
+		CreatedFrom:       "ui",
+		CreationConfirmed: true,
 		Instances: []InstanceUpgrade{{
 			InstanceID:     waitInstanceID,
 			DeploymentName: waitDeployment,
