@@ -172,7 +172,7 @@ func (m *Manager) sendRegenerate(ctx context.Context, api CredHubAPI, task *Upgr
 
 	// The switches are read once more after the save, so turning rotation
 	// off while the save was under way still stops the request.
-	err = m.certWritesAllowed(certTaskMode(task))
+	err = m.certWritesAllowed(m.rotationMode(task))
 	if err != nil {
 		m.changeVariable(inst, index, func(v *VariableRotation) { v.RegenerateState = RegenerateNotSent })
 
@@ -226,6 +226,15 @@ func (m *Manager) certainRegenerateFailure(ctx context.Context, task *UpgradeTas
 		return m.pauseWith(ctx, task, inst, apierr.New(http.StatusServiceUnavailable, apierr.CodeCredHubUnavailable,
 			fmt.Sprintf("Blacksmith could not reach CredHub to regenerate %s, so CredHub made no new version. Resume once CredHub answers: %v", short, err)))
 	}
+}
+
+// rotationMode reads the task's rotation mode under mu, as certTaskMode
+// requires. The caller does not hold mu.
+func (m *Manager) rotationMode(task *UpgradeTask) RotationMode {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return certTaskMode(task)
 }
 
 // confirmRegeneration saves the version CredHub named before anything

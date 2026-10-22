@@ -1094,3 +1094,38 @@ func TestRegenerateCredHubOutagePausesForRetry(t *testing.T) {
 		})
 	}
 }
+
+// The step reads the task's rotation mode under mu, so a writer that
+// holds mu never races it.
+func TestRegenerateReadsModeUnderLock(t *testing.T) {
+	t.Parallel()
+
+	env := newRegenEnv(t)
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+
+	go func() {
+		defer close(stopped)
+
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+
+			env.manager.mu.Lock()
+			env.task.Certificates.Mode = RotationModeRedeploy
+			env.manager.mu.Unlock()
+		}
+	}()
+
+	stop, err := env.run()
+
+	close(done)
+	<-stopped
+
+	if stop || err != nil {
+		t.Fatalf("expected the step to go on, got stop %v and %v", stop, err)
+	}
+}
